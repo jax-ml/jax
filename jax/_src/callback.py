@@ -39,6 +39,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
+from jax._src.sharding import Sharding
 from jax._src.typing import Array
 import numpy as np
 
@@ -74,7 +75,7 @@ def pure_callback_impl(
     *args,
     result_avals,
     callback: _FlatCallback,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     vmap_method: str | None,
 ):
   del sharding, vmap_method, result_avals
@@ -104,7 +105,7 @@ def pure_callback_abstract_eval(
     *avals,
     callback: _FlatCallback,
     result_avals,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     vmap_method: str | None,
 ):
   del avals, callback, sharding, vmap_method
@@ -148,7 +149,7 @@ def _get_sdy_array_list_for_callbacks(avals: Sequence[core.ShapedArray]) -> SdyA
 
 
 def _callback_op_sharding(
-    axis_context, sharding: SingleDeviceSharding | None, avals_out
+    axis_context, sharding: Sharding | None, avals_out
 ):
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # If we have fully manual sharding during lowering, that means the JAX
@@ -218,7 +219,7 @@ def _callback_op_sharding(
 
 
 def pure_callback_lowering(
-    ctx, *args, callback: _FlatCallback, sharding: SingleDeviceSharding | None, **params
+    ctx, *args, callback: _FlatCallback, sharding: Sharding | None, **params
 ):
   def _callback(*flat_args):
     return tuple(
@@ -261,7 +262,7 @@ def pure_callback(
     callback: Callable[..., Any],
     result_shape_dtypes: Any,
     *args: Any,
-    sharding: SingleDeviceSharding | None = None,
+    sharding: Sharding | None = None,
     vmap_method: str | None = None,
     **kwargs: Any,
 ):
@@ -418,7 +419,7 @@ def io_callback_impl(
     *args,
     result_avals,
     callback: _FlatCallback,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     ordered: bool,
 ):
   del result_avals, sharding, ordered
@@ -448,7 +449,7 @@ def io_callback_abstract_eval(
     *avals,
     callback: _FlatCallback,
     result_avals,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     ordered: bool,
 ):
   del avals, sharding, callback
@@ -537,7 +538,7 @@ def io_callback(
     callback: Callable[..., Any],
     result_shape_dtypes: Any,
     *args: Any,
-    sharding: SingleDeviceSharding | None = None,
+    sharding: Sharding | None = None,
     ordered: bool = False,
     **kwargs: Any,
 ):
