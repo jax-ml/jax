@@ -87,7 +87,6 @@ operations.
    :caption: Modeling workflows
    :maxdepth: 1
 
-   gradient-checkpointing
    aot
    export/index
 
