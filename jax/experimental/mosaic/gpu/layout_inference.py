@@ -2010,8 +2010,7 @@ def _with_transforms_constraint_system(
   if tiling.value is not None:
     if not cs.is_valid_assignment(var, tiling):
       raise ValueError(
-          f"Cannot apply tiling {tiling.value} to memref with shape"
-          f" shape {source.shape}."
+          f"Cannot apply tiling {tiling.value} to memref with shape {source.shape}."
       )
   assignments: dict[cs.Variable, cs.Constant] = {var: tiling}
   return cs.ConstraintSystem(assignments=assignments), {var: [source, dest]}
