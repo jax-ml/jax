@@ -1065,12 +1065,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     np.testing.assert_array_equal(kernel(), np.ones((128,), dtype=jnp.float32))
 
-  @parameterized.parameters(True, False)
-  def test_barrier_test(self, use_single_warp):
-
+  def test_barrier_test(self):
     @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((5,), jnp.int32),
         scratch_shapes=[plgpu.Barrier(num_barriers=2)],
     )
     def kernel(o_ref, barrier_ref):
@@ -1082,13 +1080,26 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         o_ref[3] = plgpu.barrier_test(barrier_ref.at[1]).astype(jnp.int32)
         plgpu.barrier_arrive(barrier_ref.at[1])
         o_ref[4] = plgpu.barrier_test(barrier_ref.at[1]).astype(jnp.int32)
+      plgpu.warp_map(lambda warp_id: pl.when(warp_id == 0)(test_barrier))
 
-      if use_single_warp:
-        plgpu.warp_map(lambda warp_id: pl.when(warp_id == 0)(test_barrier))
-      else:
-        test_barrier()
+    np.testing.assert_array_equal(kernel(), np.array([0, 0, 1, 0, 1]))
 
-    np.testing.assert_array_equal(kernel()[:5], np.array([0, 0, 1, 0, 1]))
+  def test_barrier_test_is_rejected_in_non_warp_context(self):
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_shapes=[plgpu.Barrier()],
+    )
+    def kernel(o_ref, barrier_ref):
+      o_ref[...] = plgpu.barrier_test(barrier_ref).astype(jnp.int32)
+
+    # This is a `NotImplementedError`, but adding a test in order to not add it
+    # back without thinking deeply about it.
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Unimplemented primitive in Pallas Mosaic GPU lowering",
+    ):
+      kernel()
 
   @parameterized.named_parameters(
       {

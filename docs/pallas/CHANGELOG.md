@@ -22,7 +22,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
-  * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`.
+  * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`
+    only supported in a warp context.
 
 * Changes
 
