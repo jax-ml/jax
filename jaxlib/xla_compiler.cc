@@ -1382,6 +1382,25 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("__repr__",
            [](const xla::HloSharding& self) { return self.ToString(); })
       .def("to_proto", &xla::HloSharding::ToProto)
+      .def("V3ToV2Sharding",
+           [](const xla::HloSharding& self) -> xla::HloSharding {
+             std::function<xla::HloSharding(const xla::HloSharding&)> recurse =
+                 [&](const xla::HloSharding& s) -> xla::HloSharding {
+               if (s.IsTuple()) {
+                 std::vector<xla::HloSharding> elements;
+                 elements.reserve(s.tuple_elements().size());
+                 for (const auto& element : s.tuple_elements()) {
+                   elements.push_back(recurse(element));
+                 }
+                 return xla::HloSharding::FlatTuple(std::move(elements));
+               }
+               if (s.UseNamedShardingLeaf()) {
+                 return xla::HloSharding::V3ToV2Sharding(s.named_sharding());
+               }
+               return s;
+             };
+             return recurse(self);
+           })
       .def("get_axis_sizes", [](const xla::HloSharding& self) {
         // If returning the SmallVector, we encounter the error "unable to
         // convert function return value to a Python type!".
