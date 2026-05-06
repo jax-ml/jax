@@ -30,7 +30,7 @@ import re
 import threading
 import types
 from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar, final,
-                    overload, Union, TYPE_CHECKING)
+                    overload, Union, TYPE_CHECKING, Literal as Literal_)
 import warnings
 import weakref
 
@@ -3511,7 +3511,7 @@ def check_jaxpr(jaxpr: Jaxpr):
   """
   @functools.cache
   def ctx_factory():
-    ctx = JaxprPpContext()
+    ctx = JaxprPpContext(_dropvars(jaxpr))
     pp_settings = JaxprPpSettings()
     try: pp_jaxpr(jaxpr, ctx, pp_settings)  # side-effect on ctx, build variable names
     except: pass
@@ -3543,8 +3543,16 @@ class MutableTypecheckVal:
   aval : AbstractValue
   mutable_qdd : MutableQuasiDynamicData
 
-
-
+@partial(weakref_lru_cache, trace_context_in_key=False)
+def _dropvars(jaxpr: Jaxpr) -> dict[Var, Literal_['_']]:
+  varnames: dict[Var, Literal_['_']] = {}
+  used: set[Var] = {atom for atom in jaxpr.outvars if isinstance(atom, Var)}
+  for eqn in jaxpr.eqns[::-1]:
+    for v in eqn.outvars:
+      if not v in used:
+        varnames[v] = '_'
+    used.update(atom for atom in eqn.invars if isinstance(atom, Var))
+  return varnames
 
 
 def _check_jaxpr(
@@ -3917,7 +3925,7 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
                       custom_pp_eqn_rules : bool = True,
                       name_stack: bool = False,
                       print_effects: bool = False) -> pp.Doc:
-    context = JaxprPpContext()
+    context = JaxprPpContext(_dropvars(jaxpr_to_print))
     settings = JaxprPpSettings(
         source_info=source_info,
         print_shapes=print_shapes,
@@ -3980,24 +3988,20 @@ def _encode_digits_alphabetic(n: int) -> str:
     s = chr(97 + i % 26) + s
   return s
 
-# A JaxprPpContext allows us to globally uniquify variable names within nested
-# Jaxprs.
+# A JaxprPpContext allows globally unique variable names within nested Jaxprs.
 class JaxprPpContext:
   var_names: defaultdict[Var, str]
-  # Shared jaxprs are those that are used multiple times and are printed
-  # first.
+  # Shared jaxprs are those that are used multiple times and are printed first.
   shared_jaxprs: MutableMapping[Jaxpr, str]  # maps shared jaxpr to its name
   shared_jaxpr_names: MutableSet[str]
 
-  def __init__(self) -> None:
+  def __init__(self, var_names: dict | None = None) -> None:
     self.shared_jaxprs = {}
     self.shared_jaxpr_names = set()
     fresh_names: Iterator[str] = (
-        name
-        for i in it.count()
-        if (name := _encode_digits_alphabetic(i)) not in self.shared_jaxpr_names
-    )
-    self.var_names = defaultdict(fresh_names.__next__)
+        name for i in it.count()
+        if (name := _encode_digits_alphabetic(i)) not in self.shared_jaxpr_names)
+    self.var_names = defaultdict(fresh_names.__next__, var_names or {})
 
   def suggest_same_var_names(self,
                              for_vars: Sequence[Atom],
