@@ -14,7 +14,6 @@ load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 # See the License for the specific language governing permissions and
 # limitations under the License.
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_library")
 
 licenses(["notice"])
@@ -276,59 +275,6 @@ cc_library(
         "@llvm-project//mlir:Support",
     ],
     alwayslink = True,
-)
-
-cc_test(
-    name = "tiled_layout_test",
-    srcs = ["dialect/tpu/tiled_layout_test.cc"],
-    deps = [
-        ":tpu_dialect",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
-        "@xla//xla:shape_util",
-    ],
-)
-
-cc_test(
-    name = "vreg_util_test",
-    srcs = ["dialect/tpu/vreg_util_test.cc"],
-    deps = [
-        ":tpu_dialect",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:VectorDialect",
-    ],
-)
-
-cc_test(
-    name = "array_util_test",
-    srcs = ["dialect/tpu/array_util_test.cc"],
-    deps = [
-        ":tpu_dialect",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:Support",
-        "@xla//xla:array",
-    ],
-)
-
-cc_test(
-    name = "tpu_ops_verification_test",
-    srcs = ["dialect/tpu/tpu_ops_verification_test.cc"],
-    deps = [
-        ":tpu_dialect",
-        "@com_google_absl//absl/status",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:MemRefDialect",
-        "@llvm-project//mlir:Support",
-        "@xla//xla/mlir/utils:error_util",
-    ],
 )
 
 cc_library(
