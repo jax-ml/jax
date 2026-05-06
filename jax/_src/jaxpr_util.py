@@ -21,7 +21,6 @@ from collections import Counter
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 import gzip
-import html
 import itertools
 import json
 import logging
@@ -32,6 +31,7 @@ from typing import Any, Union
 from jax._src import config
 from jax._src import core
 from jax._src import path
+from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lib import xla_client
@@ -339,7 +339,10 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
   # 1. Render jaxpr to string and get source map
   source_map_output: list[list[tuple[int, int, Any]]] = []
   rendered_str = jaxpr.pretty_print(
-      source_map=source_map_output, use_color=False
+      source_map=source_map_output,
+      use_color=True,
+      output_format=pp.OutputFormat.HTML,
+      separable_lines=True,
   )
 
   # 2. Process source map and build traceback DAG
@@ -394,19 +397,19 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
     last_idx = 0
     for start, end, tb in spans:
       if start > last_idx:
-        result.append(html.escape(line[last_idx:start]))
+        result.append(line[last_idx:start])
 
       tb_node_idx = process_tb(tb)
       if tb_node_idx is not None:
         result.append(f'<span class="traceable" data-tb-idx="{tb_node_idx}">')
-        result.append(html.escape(line[start:end]))
+        result.append(line[start:end])
         result.append("</span>")
       else:
-        result.append(html.escape(line[start:end]))
+        result.append(line[start:end])
       last_idx = end
 
     if last_idx < len(line):
-      result.append(html.escape(line[last_idx:]))
+      result.append(line[last_idx:])
 
     html_lines.append("".join(result))
 
@@ -509,6 +512,24 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
   .frame-file {{ color: #5f6368; }}
   .frame-func {{ color: #1a73e8; font-weight: bold; }}
   .frame-loc {{ color: #80868b; }}
+  .ansi-fg-30 {{ color: black; }}
+  .ansi-fg-31 {{ color: #ea4335; }} /* red */
+  .ansi-fg-32 {{ color: #34a853; }} /* green */
+  .ansi-fg-33 {{ color: #fbcb05; }} /* yellow */
+  .ansi-fg-34 {{ color: #4285f4; }} /* blue */
+  .ansi-fg-35 {{ color: #a142f4; }} /* magenta */
+  .ansi-fg-36 {{ color: #24b6d2; }} /* cyan */
+  .ansi-fg-37 {{ color: white; }}
+  .ansi-bg-40 {{ background-color: black; }}
+  .ansi-bg-41 {{ background-color: #ea4335; }} /* red */
+  .ansi-bg-42 {{ background-color: #34a853; }} /* green */
+  .ansi-bg-43 {{ background-color: #fbcb05; }} /* yellow */
+  .ansi-bg-44 {{ background-color: #4285f4; }} /* blue */
+  .ansi-bg-45 {{ background-color: #a142f4; }} /* magenta */
+  .ansi-bg-46 {{ background-color: #24b6d2; }} /* cyan */
+  .ansi-bg-47 {{ background-color: white; }}
+  .ansi-intensity-1 {{ font-weight: bold; }}
+  .ansi-intensity-2 {{ opacity: 0.6; }}
   #search-controls {{
     margin-bottom: 10px;
   }}
