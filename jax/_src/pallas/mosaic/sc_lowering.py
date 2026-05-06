@@ -592,7 +592,6 @@ def _load_lowering_rule(
         "Integer indexing of refs that follows a non-trivial slice is not"
         " supported on SC"
     )
-  del sizes  # Currently unused.
   if not all(s == 1 for s in strides):
     raise NotImplementedError(
         "Get only supports slices with stride 1, got {strides}"
@@ -617,10 +616,26 @@ def _load_lowering_rule(
 
   if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Get", out_aval)
-  vec_type = ir.VectorType.get(
+  out_vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
-  return tpu.vector_load(vec_type, ref, indices=starts, strides=[], mask=mask)
+  if not ctx.lowering_context.needs_layout_passes:
+    return tpu.vector_load(
+        out_vec_type, ref, indices=starts, strides=[], mask=mask
+    )
+  # Load at the full memref rank, keeping integer-indexed dims as size 1,
+  # because apply-vector-layout requires the vector rank to match the memref.
+  memref_vec_shape = cast(
+      Sequence[int],
+      [1 if squeeze else s for s, squeeze in zip(sizes, squeeze_dims)],
+  )
+  memref_vec_type = ir.VectorType.get(
+      memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
+  )
+  load_val = tpu.vector_load(
+      memref_vec_type, ref, indices=starts, strides=[], mask=mask
+  )
+  return vector.shape_cast(out_vec_type, load_val)
 
 
 @register_lowering_rule(state_primitives.swap_p)
@@ -702,11 +717,29 @@ def _store_lowering_rule(
 
   if not ctx.lowering_context.needs_layout_passes:
     _check_aval_is_supported("Swap", out_aval)
-  vec_type = ir.VectorType.get(
+  out_vec_type = ir.VectorType.get(
       out_aval.shape, _dtype_to_ir_type(out_aval.dtype)
   )
-  old_val = tpu.vector_load(vec_type, ref, starts, strides=[], mask=mask)
-  tpu.vector_store(val, ref, starts, strides=[], mask=mask, add=add)
+  if not ctx.lowering_context.needs_layout_passes:
+    old_val = tpu.vector_load(out_vec_type, ref, starts, strides=[], mask=mask)
+    _ = tpu.vector_store(
+        val, ref, indices=starts, strides=[], mask=mask, add=add
+    )
+    return old_val
+  # Load and store at the full memref rank, keeping integer-indexed dims as
+  # size 1, because apply-vector-layout requires the vector rank to match
+  # the memref.
+  memref_vec_shape = cast(
+      Sequence[int],
+      [1 if squeeze else s for s, squeeze in zip(sizes, squeeze_dims)],
+  )
+  memref_vec_type = ir.VectorType.get(
+      memref_vec_shape, _dtype_to_ir_type(out_aval.dtype)
+  )
+  old_val = tpu.vector_load(memref_vec_type, ref, starts, strides=[], mask=mask)
+  old_val = vector.shape_cast(out_vec_type, old_val)
+  val_memref_rank = vector.shape_cast(memref_vec_type, val)
+  tpu.vector_store(val_memref_rank, ref, starts, strides=[], mask=mask, add=add)
   return old_val
 
 
