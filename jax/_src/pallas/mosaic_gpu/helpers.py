@@ -308,6 +308,7 @@ def dynamic_scheduling_loop(
     grid_names: Sequence[Hashable],
     *,
     thread_axis: Hashable | None = None,
+    cluster_axes: tuple[str | tuple[str, ...], ...] = (),
     init_carry: None = None
 ) -> Callable[[Callable[[NDLoopInfo], None]], None]:
   ...
@@ -318,6 +319,7 @@ def dynamic_scheduling_loop(
     grid_names: Sequence[Hashable],
     *,
     thread_axis: Hashable | None = None,
+    cluster_axes: tuple[str | tuple[str, ...], ...] = (),
     init_carry: _T
 ) -> Callable[[Callable[[NDLoopInfo, _T], _T]], _T]:
   ...
@@ -326,6 +328,7 @@ def dynamic_scheduling_loop(
 def dynamic_scheduling_loop(
     grid_names,
     thread_axis = None,
+    cluster_axes = (),
     init_carry = None):
   """A loop over program instances using dynamic work scheduling.
 
@@ -346,6 +349,8 @@ def dynamic_scheduling_loop(
     grid_names: The names of the axes in the grid.
     thread_axis: The name of the thread axis. This must be passed in if
       the kernel uses multiple threads.
+    cluster_axes: The name of the cluster axes. This must be passed in if the
+      kernel uses a cluster size > 1.
     init_carry: An optional initial carry for the loop. If passed in, the
       body function should expect a ``carry`` keyword argument and return
       the next carry value.
@@ -401,12 +406,26 @@ def dynamic_scheduling_loop(
 
       return None if user_carry is None else final_user_carry
 
-    barrier = gpu_core.Barrier(num_arrivals=num_threads, num_barriers=num_slots)
+    if cluster_axes:
+      cancel_used_barrier = gpu_core.ClusterBarrier(
+          collective_axes=cluster_axes,
+          num_arrivals=num_threads,
+          num_barriers=num_slots,
+      )
+    else:
+      cancel_used_barrier = gpu_core.Barrier(
+          num_arrivals=num_threads,
+          num_barriers=num_slots,
+      )
+    try_cancel_barrier = gpu_core.Barrier(
+        num_arrivals=num_threads,
+        num_barriers=num_slots,
+    )
     return pallas_primitives.run_scoped(
         _scoped,
         try_cancel_buffer=gpu_core.TryClusterCancelResult(num_slots),
-        try_cancel_barrier=barrier,
-        cancel_used_barrier=barrier,
+        try_cancel_barrier=try_cancel_barrier,
+        cancel_used_barrier=cancel_used_barrier,
         collective_axes=thread_axis,
     )
   return decorator
