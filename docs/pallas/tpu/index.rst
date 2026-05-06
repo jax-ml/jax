@@ -14,4 +14,5 @@ TPU specific documentation.
    core_map
    sparsecore
    prng
+   hardware
 
