@@ -1430,9 +1430,7 @@ def _handle_dtype_bitcast(
   # which refuses to take in our source ref. This is because `memref.view` only
   # works on a super restricted set of `memref`s. E.g., it does not work if an
   # offset is specified, which can be the case for our SMEM refs.
-  smem = mgpu_utils.WORKGROUP_NVPTX_ADDRESS_SPACE
-  ref = mgpu_utils.memref_ptr(ref)
-  return mgpu_utils.ptr_as_memref(ref, result_type, ptr_memory_space=smem)
+  return mgpu_utils.ptr_as_memref(mgpu_utils.memref_ptr(ref), result_type)
 
 
 def _extract_aliased_ref(

@@ -620,6 +620,7 @@ llvm::LogicalResult CustomPrimitiveOp::verify() {
         "Custom primitive must have a layout for each vector operand.");
   }
 
+  // TODO(bchetioui): Don't require transforms for barrier memrefs.
   if (num_smem_ref_operands != getInTransforms().size()) {
     return emitOpError(
         "Custom primitive must have transforms for each memref operand in "

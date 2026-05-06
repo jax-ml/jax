@@ -71,15 +71,19 @@ WORKGROUP_NVPTX_ADDRESS_SPACE = gpu_address_space_to_nvptx(
 )
 
 
-def ptr_as_memref(
-    ptr, memref_ty: ir.MemRefType, ptr_memory_space: int | None = None
-):
+def ptr_as_memref(ptr, memref_ty: ir.MemRefType):
+  ptr_ty = llvm.PointerType(ptr.type)
+  if ptr_ty.address_space != (get_memref_llvm_address_space(memref_ty) or 0):
+    raise ValueError(
+        f"Pointer address space {ptr_ty.address_space} does not match "
+        f"memref memory space {memref_ty.memory_space}."
+    )
+
   strides, offset = memref_ty.get_strides_and_offset()
   if offset != 0:
     raise ValueError("Non-zero offset is not supported for ptr_as_memref")
   i64 = ir.IntegerType.get_signless(64)
   rank = len(memref_ty.shape)
-  ptr_ty = llvm.PointerType.get(ptr_memory_space)
   desc_ty_fields = [ptr_ty, ptr_ty, i64]
   if rank > 0:
     desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
@@ -1271,7 +1275,9 @@ class DialectBarrierRef:
     num_barriers = self.barrier_ref.num_barriers
     shape = () if num_barriers == 1 else (num_barriers,)
     barrier_type = dialect.BarrierType.get(self.orders_tensor_core)
-    memref_type = ir.MemRefType.get(shape, barrier_type)
+    ptr_type = llvm.PointerType(self.get_ptr().type)
+    assert ptr_type.address_space == WORKGROUP_NVPTX_ADDRESS_SPACE
+    memref_type = ir.MemRefType.get(shape, barrier_type, memory_space=smem())
     result = builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
     assert isinstance(result, ir.Value)
     return result
@@ -1288,7 +1294,7 @@ class DialectBarrierRef:
           f"!mosaic_gpu.barrier, but got {barrier.type}"
       )
 
-    ptr_type = llvm.PointerType.get(WORKGROUP_NVPTX_ADDRESS_SPACE)
+    ptr_type = llvm.PointerType.get(get_memref_llvm_address_space(memref_type))
     addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
     assert isinstance(addr, ir.Value)
     return cls(
@@ -1729,19 +1735,20 @@ def warp_tree_reduce(value, op, group_size):
 _MEMORY_SPACES = {f"#gpu.address_space<{str(x)}>": x for x in gpu.AddressSpace}
 
 
+def get_memref_llvm_address_space(memref_ty: ir.MemRefType) -> int | None:
+  if (memory_space := memref_ty.memory_space) is None:
+    return None
+  if isinstance(memory_space, ir.IntegerAttr):
+    return memory_space.value
+  return gpu_address_space_to_nvptx(_MEMORY_SPACES[str(memory_space)])
+
+
 def memref_ptr(memref_arg):
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
   rank = len(memref_ty.shape)
-
-  if (memory_space := memref_ty.memory_space) is None:
-    space = None
-  elif isinstance(memory_space, ir.IntegerAttr):
-    space = memory_space.value
-  else:
-    space = gpu_address_space_to_nvptx(_MEMORY_SPACES[str(memory_space)])
-
-  ptr_ty = llvm.PointerType.get(space)
+  address_space = get_memref_llvm_address_space(memref_ty)
+  ptr_ty = llvm.PointerType.get(address_space)
   desc_ty_fields = [ptr_ty, ptr_ty, i64]
   if rank > 0:
     desc_ty_fields += [llvm.ArrayType.get(i64, rank)] * 2
@@ -2301,9 +2308,7 @@ def get_cluster_ref(
   idxs[dim] = idx
   flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
   return ptr_as_memref(
-      get_cluster_ptr(memref_ptr(ref), flat_block, generic),
-      result_type,
-      ptr_memory_space=None if generic else 7,
+      get_cluster_ptr(memref_ptr(ref), flat_block, generic), result_type
   )
 
 
