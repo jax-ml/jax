@@ -68,10 +68,8 @@ else
   exit 1
 fi
 
-FREETHREADED_FLAG=""
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
   JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
-  FREETHREADED_FLAG="--bazel_options=--@rules_python//python/config_settings:py_freethreaded=yes"
 fi
 
 if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
@@ -117,8 +115,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     $cuda_version_flag \
     --verbose --detailed_timestamped_log \
     --output_path="$JAXCI_OUTPUT_DIR" \
-    $artifact_tag_flags \
-    $FREETHREADED_FLAG
+    $artifact_tag_flags
 
   # If building release artifacts, we also build a release candidate ("rc")
   # tagged wheel.
@@ -131,8 +128,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
       $cuda_version_flag \
       --verbose --detailed_timestamped_log \
       --output_path="$JAXCI_OUTPUT_DIR" \
-      $artifact_tag_flags --bazel_options=--repo_env=ML_WHEEL_VERSION_SUFFIX="$JAXCI_WHEEL_RC_VERSION" \
-      $FREETHREADED_FLAG
+      $artifact_tag_flags --bazel_options=--repo_env=ML_WHEEL_VERSION_SUFFIX="$JAXCI_WHEEL_RC_VERSION"
   fi
 
   # If building `jaxlib` or `jax-cuda-plugin` or `jax-cuda-pjrt` for Linux, we
