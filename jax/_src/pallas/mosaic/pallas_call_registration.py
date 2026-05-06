@@ -404,6 +404,7 @@ def pallas_call_tpu_lowering_rule(
     mosaic_params = compiler_params
 
   kernel_type = mosaic_params.kernel_type
+  _check_sparsecore_availability(kernel_type)
 
   # `mesh` argument is the core mesh if provided by the user (e.g. in core_map).
   # If it's None, we create a default mesh based on the kernel type.
@@ -429,8 +430,6 @@ def pallas_call_tpu_lowering_rule(
     else:
       raise ValueError(f"Unsupported kernel type: {kernel_type}")
   mpmd_meshes = {kernel_type: mesh}
-
-  _check_sparsecore_availability(kernel_type)
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
