@@ -523,13 +523,13 @@ py_import(
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
 py_import(
     name = "pypi_jax_cuda_plugin_with_cuda_deps",
-    wheel = "@pypi_jax_cuda{cuda}_plugin//:whl".format(cuda = cuda_major_version),
+    wheel = "@pypi//jax_cuda{cuda}_plugin".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
 py_import(
     name = "pypi_jax_cuda_pjrt_with_cuda_deps",
-    wheel = "@pypi_jax_cuda{cuda}_pjrt//:whl".format(cuda = cuda_major_version),
+    wheel = "@pypi//jax_cuda{cuda}_pjrt".format(cuda = cuda_major_version),
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
