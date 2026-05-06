@@ -113,7 +113,10 @@ single_version_override(
 
 single_version_override(
     module_name = "protobuf",
-    patches = ["//third_party/protobuf:protobuf_arena.patch"],
+    patches = [
+        "//third_party/protobuf:protobuf_arena.patch",
+        "//third_party/protobuf:fix_message_lite_incomplete_type.patch",
+    ],
     version = "32.1",
 )
 
@@ -206,6 +209,9 @@ use_repo(
     "cuda_nvtx",
     "cuda_nvvm",
 )
+
+nvshmem_redist = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
+use_repo(nvshmem_redist, "nvidia_nvshmem")
 
 ### Toolchains
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
