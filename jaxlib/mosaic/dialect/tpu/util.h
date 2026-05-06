@@ -166,6 +166,7 @@ template <bool adjust_bool = false>
 int8_t getTypeBitwidth(Type ty) {
   if (auto integer_ty = dyn_cast<IntegerType>(ty)) {
     const unsigned width = integer_ty.getWidth();
+    CHECK_LE(width, 64) << "Unsupported bitwidth: " << width;
     if constexpr (adjust_bool) {
       // We store only one i1 per vreg element.
       return width == 1 ? 32 : width;
