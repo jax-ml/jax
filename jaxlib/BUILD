@@ -615,6 +615,7 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_custom_partitioner_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
         "@xla//xla/python:custom_call_batch_partitioner",
         "@xla//xla/python:custom_partition_callback",
         "@xla//xla/python:debug_callback_partitioner",
