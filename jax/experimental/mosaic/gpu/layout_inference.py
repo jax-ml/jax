@@ -2051,12 +2051,25 @@ def _async_load_store_constraint_system(
     if size == -1:
       # This dimension does not appear in the final smem memref shape.
       continue
+    if isinstance(index.type, ir.VectorType):
+      tiling_multiple.append(size)
+      continue
     tiling_multiple.append(dynamic_gcd(size, index))
 
   operand_index = 1 if isinstance(op, mgpu.AsyncLoadOp) else 0
   operand = ValueSite(op, VariableType.OPERAND, operand_index)
   var = ctx.producer_ref(operand)
-  constraints = [cs.Divides(expr=var, tiling_multiple=tuple(tiling_multiple))]
+  constraints: list[cs.Divides | cs.MinorDimByteAligned] = [
+      cs.Divides(expr=var, tiling_multiple=tuple(tiling_multiple))
+  ]
+  if any(isinstance(idx.type, ir.VectorType) for idx in op.indices):
+    element_bitwidth = utils.bitwidth(op.source.type.element_type)
+    # This is a hardware constraint coming from how TMA gather/scatter4 works.
+    # Transfers need to be 1024 bit-aligned, in each transfer we issue 4 rows
+    # so each row must be 256 bit-aligned.
+    divisor = (1024 // 4) // element_bitwidth
+    constraints.append(cs.MinorDimByteAligned(expr=var, divisor=divisor))
+
   value_sites_for_variable = {var: [operand]}
   value_sites, assignments = _vector_value_sites_and_assignments_for_async_ops(op)
   value_sites_for_variable.update(value_sites)

@@ -1359,9 +1359,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   def test_copy_gmem_to_smem_gather(self, transforms):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100")
-    if transforms:
-      # Failed to infer a possible set of layouts.
-      self.skip_if_wg_semantics()
     dtype = jnp.int32
     out_shape = (64, 128)
     shape = (128, 64 + out_shape[-1])
