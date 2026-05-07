@@ -141,7 +141,16 @@ def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
 
 
 def deserialize(ser: bytearray) -> _export.Exported:
-  """Deserializes an Exported."""
+  """Deserializes an Exported.
+
+  The serialized byte array is trusted input. ``deserialize`` reconstructs
+  an :class:`Exported` from its fields (including ``mlir_module_serialized``
+  and the embedded ``disabled_safety_checks`` set) without re-running the
+  validation performed at export time. Callers must ensure the blob comes
+  from a trusted source; do not ``deserialize`` byte arrays of unknown
+  provenance, as the resulting :class:`Exported` may compile and call
+  arbitrary jaxlib custom-call targets when invoked.
+  """
   exp = ser_flatbuf.Exported.GetRootAsExported(ser)
   return _deserialize_exported(exp)
 
