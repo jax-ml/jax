@@ -52,7 +52,8 @@ config.parse_flags_with_absl()
 FAKE_COMPILE_TIME = 10
 _counts = Counter()  # Map event name to count
 
-def increment_event_count(event):
+def increment_event_count(event, **kwargs):
+  del kwargs  # Unused
   _counts[event] += 1
 
 monitoring.register_event_listener(increment_event_count)

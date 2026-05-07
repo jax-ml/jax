@@ -31,6 +31,7 @@ from jax._src.monitoring import (
     register_event_listener as register_event_listener,
     register_event_time_span_listener as register_event_time_span_listener,
     register_scalar_listener as register_scalar_listener,
+    tags as tags,
     unregister_event_duration_listener as unregister_event_duration_listener,
     unregister_event_listener as unregister_event_listener,
     unregister_event_time_span_listener as unregister_event_time_span_listener,
