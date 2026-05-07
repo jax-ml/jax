@@ -541,3 +541,18 @@ class PGLEProfiler:
               "and then profiling a second run that has the "
               "JAX_COMPILATION_CACHE_EXPECT_PGLE option enabled.",
               RuntimeWarning)
+          
+
+import atexit
+
+_jax_profile_dir = os.environ.get("JAX_PROFILE")
+if _jax_profile_dir:
+  def _stop_trace_at_exit():
+    if _profile_state.profile_session:
+      stop_trace()
+
+  try:
+    start_trace(_jax_profile_dir)
+    atexit.register(_stop_trace_at_exit)
+  except Exception as e:
+    logger.warning("Failed to auto-start JAX profiling: %s", e)
