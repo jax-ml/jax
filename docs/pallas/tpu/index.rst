@@ -1,3 +1,5 @@
+.. _pallas_tpu:
+
 Pallas TPU
 ==========
 TPU specific documentation.
