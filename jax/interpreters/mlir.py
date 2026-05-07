@@ -44,7 +44,6 @@ from jax._src.interpreters.mlir import (
   ir as ir,
   ir_attribute as ir_attribute,
   ir_constant as ir_constant,
-  ir_constants as ir_constants,
   ir_type_handlers as ir_type_handlers,
   jaxpr_subcomp as jaxpr_subcomp,
   lower_fun as lower_fun,
