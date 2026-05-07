@@ -46,12 +46,12 @@ parser.add_argument(
     "--platform_version",
     default=None,
     required=True,
-    help="Target CUDA/ROCM version. Required.",
+    help="Target CUDA/ROCM/ONEAPI version. Required.",
 )
 parser.add_argument(
     "--editable",
     action="store_true",
-    help="Create an 'editable' jax cuda/rocm plugin build instead of a wheel.",
+    help="Create an 'editable' jax cuda/rocm/oneapi plugin build instead of a wheel.",
 )
 parser.add_argument(
     "--enable-cuda",
@@ -61,6 +61,10 @@ parser.add_argument(
     "--enable-rocm",
     default=False,
     help="Should we build with ROCM enabled?")
+parser.add_argument(
+    "--enable-oneapi",
+    default=False,
+    help="Should we build with ONEAPI enabled?")
 parser.add_argument(
     "--srcs", help="source files for the wheel", action="append"
 )
@@ -202,9 +206,57 @@ def prepare_wheel_rocm(
   )
 
 
+def prepare_wheel_oneapi(
+    wheel_sources_path: pathlib.Path, *, cpu, oneapi_version, wheel_sources
+):
+  """Assembles a source tree for the oneapi plugin wheel in `wheel_sources_path`."""
+  source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
+  # Sanitize oneapi_version for package names (replace dots with underscores)
+  sanitized_version = oneapi_version.replace(".", "_")
+  wheel_sources_map = build_utils.create_wheel_sources_map(
+      wheel_sources,
+      root_packages=[
+          "jax_plugins",
+          f"jax_oneapi{sanitized_version}_plugin",
+          "jaxlib",
+      ],
+  )
+  copy_files = functools.partial(
+      build_utils.copy_file,
+      runfiles=r,
+      wheel_sources_map=wheel_sources_map,
+  )
+
+  copy_files(
+      f"{source_file_prefix}jax_plugins/oneapi/plugin_pyproject.toml",
+      dst_dir=wheel_sources_path,
+      dst_filename="pyproject.toml",
+  )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/oneapi/plugin_setup.py",
+      dst_dir=wheel_sources_path,
+      dst_filename="setup.py",
+  )
+  build_utils.update_setup_with_oneapi_version(wheel_sources_path, oneapi_version)
+  write_setup_cfg(wheel_sources_path, cpu)
+
+  plugin_dir = wheel_sources_path / f"jax_oneapi{sanitized_version}_plugin"
+  plugin_dir.mkdir(parents=True, exist_ok=True)
+  (plugin_dir / "__init__.py").touch()
+  copy_files(
+      dst_dir=plugin_dir,
+      src_files=[
+          f"{source_file_prefix}jaxlib/oneapi/oneapi_plugin_extension.{pyext}",
+          f"{source_file_prefix}jaxlib/version.py",
+      ],
+  )
+
+
 # Build wheel for cuda kernels
 if args.enable_rocm:
   tmpdir = tempfile.TemporaryDirectory(prefix="jax_rocm_plugin")
+elif args.enable_oneapi:
+  tmpdir = tempfile.TemporaryDirectory(prefix="jax_oneapi_plugin")
 else:
   tmpdir = tempfile.TemporaryDirectory(prefix="jax_cuda_plugin")
 sources_path = tmpdir.name
@@ -227,6 +279,14 @@ try:
         wheel_sources=args.srcs,
     )
     package_name = f"jax rocm{args.platform_version} plugin"
+  elif args.enable_oneapi:
+    prepare_wheel_oneapi(
+        pathlib.Path(sources_path),
+        cpu=args.cpu,
+        oneapi_version=args.platform_version,
+        wheel_sources=args.srcs,
+    )
+    package_name = f"jax oneapi{args.platform_version} plugin"
   if args.editable:
     build_utils.build_editable(sources_path, args.output_path, package_name)
   else:
