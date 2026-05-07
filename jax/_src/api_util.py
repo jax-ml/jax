@@ -367,7 +367,7 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
           hint += (f" In particular, you're passing in a single argument which "
                    f"means that {name} might need to be wrapped in "
                    f"a singleton tuple.")
-    dummy_tree = tree_unflatten(treedef, [PytreeLeaf()] * treedef.num_leaves)
+    dummy_tree = tree_unflatten(treedef, [None] * treedef.num_leaves)
     errors = prefix_errors(axis_tree, dummy_tree)
     if errors:
       details = "\n  ".join(e(name).args[0] for e in errors)
@@ -431,7 +431,7 @@ def flatten_axis_resources(what, tree, shardings, tupled_args):
 
   # Because we only have the `tree` treedef and not the full pytree here,
   # we construct a dummy tree to compare against. Revise this in callers?
-  dummy_tree = tree_unflatten(tree, [PytreeLeaf()] * tree.num_leaves)
+  dummy_tree = tree_unflatten(tree, [None] * tree.num_leaves)
   errors = prefix_errors(axis_tree, dummy_tree)
   if errors:
     details = "\n".join(e(what).args[0] for e in errors)
