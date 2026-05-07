@@ -261,6 +261,7 @@ Linear algebra operators (jax.lax.linalg)
     ormqr
     qdwh
     qr
+    qr_multiply
     schur
     svd
     SvdAlgorithm
