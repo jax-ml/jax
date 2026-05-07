@@ -263,6 +263,42 @@ class RandomOutShardingTest(RandomTestBase):
     self.assertTrue(result.sharding.is_equivalent_to(sharding, result.ndim))
     self.assertTrue(result.sharding.is_equivalent_to(sharding, jit_result.ndim))
 
+_SHAPE_CASES = [
+    ('beta', lambda key, shape: random.beta(key, jnp.ones(shape, jnp.float32), jnp.ones(shape, jnp.float32), shape=shape)),
+    ('binomial', lambda key, shape: random.binomial(key, jnp.full(shape, 10., jnp.float32), jnp.full(shape, 0.5, jnp.float32), shape=shape)),
+    ('chisquare', lambda key, shape: random.chisquare(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    # ('double_sided_maxwell', lambda key, shape: random.double_sided_maxwell(key, loc=jnp.zeros(shape, jnp.float32), scale=jnp.ones(shape, jnp.float32), shape=shape)),
+    ('f', lambda key, shape: random.f(key, jnp.ones(shape, jnp.float32), jnp.ones(shape, jnp.float32), shape=shape)),
+    ('gamma', lambda key, shape: random.gamma(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('geometric', lambda key, shape: random.geometric(key, jnp.full(shape, 0.5, jnp.float32), shape=shape)),
+    ('loggamma', lambda key, shape: random.loggamma(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('lognormal', lambda key, shape: random.lognormal(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('pareto', lambda key, shape: random.pareto(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('poisson', lambda key, shape: random.poisson(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('randint', lambda key, shape: random.randint(key, shape=shape, minval=jnp.zeros(shape, jnp.int32), maxval=jnp.full(shape, 10, jnp.int32))),
+    ('rayleigh', lambda key, shape: random.rayleigh(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('t', lambda key, shape: random.t(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('triangular', lambda key, shape: random.triangular(key, jnp.zeros(shape, jnp.float32), jnp.full(shape, 0.5, jnp.float32), jnp.ones(shape, jnp.float32), shape=shape)),
+    ('truncated_normal', lambda key, shape: random.truncated_normal(key, lower=jnp.full(shape, -2., jnp.float32), upper=jnp.full(shape, 2., jnp.float32), shape=shape)),
+    ('uniform', lambda key, shape: random.uniform(key, shape=shape, minval=jnp.zeros(shape, jnp.float32), maxval=jnp.ones(shape, jnp.float32))),
+    ('wald', lambda key, shape: random.wald(key, jnp.ones(shape, jnp.float32), shape=shape)),
+    ('weibull_min', lambda key, shape: random.weibull_min(key, jnp.ones(shape, jnp.float32), jnp.ones(shape, jnp.float32), shape=shape)),
+]
+
+
+class RandomShapeTest(RandomTestBase):
+  """Tests that shape arguments are obeyed for jax.random functions."""
+
+  @parameterized.named_parameters(_SHAPE_CASES)
+  def test_shape(self, fn):
+    key = random.key(0)
+    shape = (3, 4)
+    result = fn(key, shape)
+    self.assertEqual(result.shape, shape)
+    jit_result = jax.jit(fn, static_argnums=(1,))(key, shape)
+    self.assertEqual(jit_result.shape, shape)
+
+
 class DistributionsTest(RandomTestBase):
   """
   Tests of distribution statistics that need only be run with the default PRNG.
