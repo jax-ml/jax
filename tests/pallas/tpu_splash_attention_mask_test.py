@@ -22,6 +22,7 @@ import jax
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask_info as mask_info_lib
+from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
 import jax.numpy as jnp
 import numpy as np
 
@@ -2380,6 +2381,47 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     self.assertArraysEqual(mask_info.mask_next, _expected_mask_next)
     self.assertArraysEqual(mask_info.data_next, _expected_data_next)
 
+  @parameterized.product(
+    shape=[(128, 128), (256, 256), (256, 512),(512, 256), (512, 512)],
+    seed=[0, 1, 2],
+    mask_type=['causal', 'random', 'full'],)
+  def test_numpy_mask_jit_vs_eager(self, shape, seed,mask_type):
+    q_len, kv_len = shape
+    batch_size = 2
+    num_heads = 2
+    head_dim = 128
+
+    q = jax.random.normal(jax.random.key(seed), (batch_size, num_heads, q_len, head_dim))
+    k = jax.random.normal(jax.random.key(seed + 1), (batch_size, num_heads, kv_len, head_dim))
+    v = jax.random.normal(jax.random.key(seed + 2), (batch_size, num_heads, kv_len, head_dim))
+
+    mask_factories = {
+        'causal': lambda: np.tril(np.ones((q_len, kv_len), dtype=np.bool_)),
+        'random': lambda: mask_lib.make_random_mask((q_len, kv_len), 0.5, seed=seed),
+        'full': lambda: np.ones((q_len, kv_len), dtype=np.bool_),
+    }
+    dense_mask = mask_factories[mask_type]()
+
+    def run_attention(query, key, value, mask_array):
+        mask = mask_lib.NumpyMask(array=mask_array)
+        multi_head_mask = mask_lib.MultiHeadMask(
+            masks=(mask,) * num_heads
+        )
+        kernel = splash_attention_kernel.make_splash_mha(
+            mask=multi_head_mask,
+            head_shards=1,
+            q_seq_shards=1,
+        )
+        return jax.vmap(kernel)(query, key, value)
+
+    eager_output = run_attention(q, k, v, dense_mask)
+    jit_output = jax.jit(run_attention)(q, k, v, dense_mask)
+
+    # Attention output should match between eager and jit. Under jit, NumpyMask
+    # arrays become tracers and are routed through the dynamic mask path, producing
+    # different intermediate representations, but the final result must be identical .
+
+    self.assertArraysEqual(eager_output, jit_output)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
