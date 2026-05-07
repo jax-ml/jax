@@ -41,6 +41,10 @@ on:
         description: "ROCm tag for container image (e.g., rocm720)"
         type: string
         default: "rocm720"
+      rocm-release-version:
+        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        type: string
+        default: ""
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: choice
@@ -85,6 +89,10 @@ on:
         description: "ROCm tag for container image (e.g., rocm720)"
         type: string
         default: "rocm720"
+      rocm-release-version:
+        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        type: string
+        default: ""
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: string
@@ -141,6 +149,7 @@ jobs:
         with:
           python: ${{ inputs.python }}
           rocm-version: ${{ inputs.rocm-version }}
+          rocm-release-version: ${{ inputs.rocm-release-version }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
