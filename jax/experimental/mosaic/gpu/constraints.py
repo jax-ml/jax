@@ -677,6 +677,34 @@ class Divides:
 
 
 @dataclasses.dataclass(frozen=True)
+class MinorDimByteAligned:
+  """States that the minor dimension of the `expr` tiling is divisible by `divisor`."""
+  expr: Expression
+  divisor: int
+
+  def holds(self) -> bool | None:
+    match self.expr:
+      case SMEMTiling(value=None):
+        return True
+      case SMEMTiling(value=lc.TileTransform(tiling=t)):
+        tiling = t
+      case RegisterLayout(value=fa.TiledLayout() as layout):
+        tiling = layout.base_tile_shape
+      case TMEMLayout(value):
+        tiling = value.base_tile_shape
+      case _:
+        return None
+
+    if not tiling:
+      return True
+
+    return tiling[-1] % self.divisor == 0
+
+  def __str__(self):
+    return f"{self.expr}.tiling[-1] % {self.divisor} == 0"
+
+
+@dataclasses.dataclass(frozen=True)
 class IsValidMmaTiling:
   """States that the `expr` SMEM tiling must be compatible with MMA requirements.
 
@@ -753,6 +781,7 @@ Constraint = (
     | IsValidMmaTiling
     | Divides
     | IsSupportedBroadcast
+    | MinorDimByteAligned
 )
 
 
@@ -802,6 +831,11 @@ def reduce_constraint(
       if isinstance(expr_red, Unsatisfiable):
         return Unsatisfiable()
       return Divides(expr_red, tiling_multiple)
+    case MinorDimByteAligned(expr=expr, divisor=divisor):
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      return MinorDimByteAligned(expr_red, divisor)
     case IsSupportedBroadcast(src=src, dst=dst, dims=dims):
       src_red = reduce_expression(src, assignments)
       dst_red = reduce_expression(dst, assignments)
@@ -864,6 +898,8 @@ class ConstraintSystem:
         case IsValidMmaTiling(expr=expr):
           extract_variables(expr)
         case Divides(expr=expr):
+          extract_variables(expr)
+        case MinorDimByteAligned(expr=expr):
           extract_variables(expr)
         case IsSupportedBroadcast(src=src, dst=dst):
           extract_variables(src)
