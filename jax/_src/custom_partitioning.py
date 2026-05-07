@@ -190,7 +190,8 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
         "Mismatch in result shapes. %s vs %s"
         % (repr(closed_jaxpr.out_avals), repr(tiled_results))
     )
-  axis_context = sharding_impls.SPMDAxisContext(mesh, frozenset(mesh.axis_names))
+  axis_context = sharding_impls.SPMDAxisContext(
+      mesh.abstract_mesh, frozenset(mesh.axis_names))
   with core.extend_axis_env_nd(mesh.shape.items()):
     module = mlir.build_mlir_module_helper(
         closed_jaxpr,
@@ -590,7 +591,10 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
                            am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
-    devices = axis_context.mesh._flat_devices_tuple
+    devices = axis_context.device_assignment
+    if devices is None:
+      raise AssertionError(
+          'Please file a bug at https://github.com/jax-ml/jax/issues')
   else:
     devices = None
 

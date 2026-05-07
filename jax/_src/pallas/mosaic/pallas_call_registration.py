@@ -466,7 +466,7 @@ def pallas_call_tpu_lowering_rule(
         jaxpr,
         dimension_semantics=mosaic_params.dimension_semantics,
         kernel_type=kernel_type,
-        mesh=jax_mesh,
+        mesh=jax_mesh,  # type: ignore
         dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
         mpmd_meshes=mpmd_meshes,
     )
@@ -696,7 +696,7 @@ def mpmd_map_tpu_lowering_rule(
           ctx,
           mosaic_module,
           jaxpr,
-          jax_mesh=jax_mesh,
+          jax_mesh=jax_mesh,  # type: ignore
           pallas_mesh=mesh,
           name=mlir.sanitize_name(jaxpr.debug_info.func_name),
           dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),

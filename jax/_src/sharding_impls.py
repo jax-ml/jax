@@ -352,8 +352,9 @@ class SPMDAxisContext:
   as well as a set of mesh axes that are currently lowered in the MANUAL
   sharding mode.
   """
-  mesh: Mesh
+  mesh: AbstractMesh
   manual_axes: frozenset[MeshAxisName] = frozenset()
+  device_assignment: tuple[xc.Device, ...] | None = None
 
 
 @dataclasses.dataclass(frozen=True)

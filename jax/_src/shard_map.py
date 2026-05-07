@@ -926,13 +926,6 @@ def _get_token_sharding(
   return ns._to_sdy_sharding(0)
 
 
-def _get_spmdaxis_ctx_mesh(mesh):
-  if isinstance(mesh, AbstractMesh):
-    concrete_mesh = get_concrete_mesh()
-    return concrete_mesh if not concrete_mesh.empty else mesh
-  return mesh
-
-
 def _shard_map_lowering_shardy(
     ctx: mlir.LoweringRuleContext, in_nodes,
     jaxpr: core.Jaxpr, mesh, in_specs, out_specs, manual_axes, check_vma):
@@ -944,8 +937,11 @@ def _shard_map_lowering_shardy(
     shardy_manual_axes = manual_axes - axis_ctx.manual_axes
   else:
     shardy_manual_axes = manual_axes
+  prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
+  da = (mesh._flat_devices_tuple
+        if prim_requires_devices and isinstance(mesh, Mesh) else None)
   new_axis_context = sharding_impls.SPMDAxisContext(
-      _get_spmdaxis_ctx_mesh(mesh), manual_axes)
+      mesh.abstract_mesh, manual_axes, da)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
 
   tokens = [ctx.tokens_in.get(eff) for eff in ctx.tokens_in.effects()]
@@ -1051,8 +1047,11 @@ def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
   out_avals_ = [x.aval for x in jaxpr.outvars]
   in_nodes_ = map(partial(_xla_shard, ctx, mesh, manual_axes), in_specs,
                   ctx.avals_in, in_avals_, in_nodes)
+  prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
+  da = (mesh._flat_devices_tuple
+        if prim_requires_devices and isinstance(mesh, Mesh) else None)
   new_axis_context = sharding_impls.SPMDAxisContext(
-      _get_spmdaxis_ctx_mesh(mesh), manual_axes)
+      mesh.abstract_mesh, manual_axes, da)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
     out_nodes_, tokens_out = mlir.call_lowering(

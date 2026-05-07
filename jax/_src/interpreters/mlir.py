@@ -1331,7 +1331,6 @@ def lower_jaxpr_to_module(
   dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new._get_vars()),
                                            all_dim_poly, set())))
 
-
   ctx = ModuleContext(backend=backend,
                       platforms=platforms, axis_context=axis_context,
                       keepalives=keepalives,
@@ -3158,9 +3157,8 @@ def build_mlir_module_helper(
       closed_jaxpr.effects)
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {closed_jaxpr.effects}')
-  lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
-      num_const_args=0,
-      in_avals=closed_jaxpr.in_avals,
+  lowering_result = lower_jaxpr_to_module(
+      name, closed_jaxpr, num_const_args=0, in_avals=closed_jaxpr.in_avals,
       backend=backend, ordered_effects=[],
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
       axis_context=axis_context, platforms=platforms,
