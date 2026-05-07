@@ -10,7 +10,7 @@ that use or interface with JAX.
    :caption: Extensible JAX internals
    :maxdepth: 1
 
-   notebooks/Writing_custom_interpreters_in_Jax
+   notebooks/Writing_custom_interpreters_in_JAX
    jax.extend
 
 .. toctree::

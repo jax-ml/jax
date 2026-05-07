@@ -340,7 +340,7 @@ np.testing.assert_array_equal(x @ y, matmul(x, y))
 
 ## Performance of pipelined kernels
 
-Our above analysis about FLOPs vs memory usage applies at a coarse scale i.e. when we are looking at the the size of a the total matrix multiplication. However, remember that in practice, we are pipelining the execution of a blocked matrix multiplication, meaning we have a loop in which we are doing matrix multiplication with smaller blocks.
+Our above analysis about FLOPs vs memory usage applies at a coarse scale i.e. when we are looking at the size of the total matrix multiplication. However, remember that in practice, we are pipelining the execution of a blocked matrix multiplication, meaning we have a loop in which we are doing matrix multiplication with smaller blocks.
 
 This means that we actually care about the FLOPs vs memory bandwidth usage of each individual instance of the kernel, not the global FLOPs vs memory bandwidth usage.
 
