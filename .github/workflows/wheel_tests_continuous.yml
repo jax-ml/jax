@@ -308,7 +308,9 @@ jobs:
           runner: ["linux-x86-64-1gpu-amd"]
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
           python: ["3.11", "3.12", "3.13", "3.14"]
-          rocm-version: ["7"]
+          rocm: [
+            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", manylinux-image: ""},
+          ]
           exclude:
             - artifact: "jax-rocm-pjrt"
               python: "3.12"
@@ -316,15 +318,17 @@ jobs:
               python: "3.13"
             - artifact: "jax-rocm-pjrt"
               python: "3.14"
-    name: "Build ${{ format('{0}', 'ROCm') }} artifacts"
+    name: "Build ROCm artifacts (${{ matrix.rocm.label }})"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
-      rocm-version: ${{ matrix.rocm-version }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      manylinux-image: ${{ matrix.rocm.manylinux-image }}
       clone_main_xla: 1
       upload_artifacts_to_s3: true
-      s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
+      s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-rocm:
     if: ${{ !cancelled() }}
@@ -340,17 +344,18 @@ jobs:
           runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
           python: ["3.11"]
           rocm: [
-            {version: "7.2.0", tag: "rocm720"},
+            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
           ]
-    name: "Pytest ROCm (JAX artifacts version = ${{ format('{0}', 'head') }})"
+    name: "Pytest ROCm (${{ matrix.rocm.label }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
-      rocm-version: ${{ matrix.rocm.version }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
       rocm-tag: ${{ matrix.rocm.tag }}
       jaxlib-version: "head"
-      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
-      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
+      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri || 'gs://jax-nightly-artifacts/latest' }}
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
     if: ${{ !cancelled() }}
@@ -365,15 +370,20 @@ jobs:
         matrix:
           runner: ["linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
           python: ["3.11"]
-          rocm-version: ["7"]
+          rocm: [
+            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
+          ]
           enable-x64: [0]
-    name: "Bazel ROCm tests (JAX artifacts version = ${{ format('{0}', 'head') }})"
+    name: "Bazel ROCm (${{ matrix.rocm.label }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
-      rocm-version: ${{ matrix.rocm-version }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      rocm-tag: ${{ matrix.rocm.tag }}
       enable-x64: ${{ matrix.enable-x64 }}
-      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri || 'gs://jax-nightly-artifacts/latest' }}
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
       build_jaxlib: ${{ 'false' }}
       build_jax: ${{ 'false' }}
       jaxlib-version: "head"
