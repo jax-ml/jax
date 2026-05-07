@@ -36,11 +36,15 @@ on:
       rocm-version:
         description: "Which ROCM version to test?"
         type: string
-        default: "7"
+        default: "7.2.0"
       rocm-tag:
         description: "ROCm tag for container image (e.g., rocm720)"
         type: string
         default: "rocm720"
+      rocm-release-version:
+        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        type: string
+        default: ""
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string
@@ -78,6 +82,10 @@ on:
         description: 'Whether to run multi-accelerator tests'
         required: false
         default: 'false'
+        type: string
+      s3_download_uri:
+        description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
+        default: 'latest'
         type: string
       clone_main_xla:
         description: "Should latest XLA be used?"
@@ -134,10 +142,12 @@ jobs:
         with:
           python: ${{ inputs.python }}
           rocm-version: ${{ inputs.rocm-version }}
+          rocm-release-version: ${{ inputs.rocm-release-version }}
           download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
+          s3_download_uri: ${{ inputs.s3_download_uri }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c

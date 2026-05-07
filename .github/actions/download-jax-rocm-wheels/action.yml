@@ -7,8 +7,11 @@ inputs:
     description: "Which python version should the artifact be downloaded for?"
     required: true
   rocm-version:
-    description: "Which ROCm version should the artifact be downloaded for?"
+    description: "ROCm version (e.g., 7.2.0). Major version is extracted for wheel filename matching."
     default: "7.2.0"
+  rocm-release-version:
+    description: "Release version for S3 LATEST pointer resolution (e.g., 7.2.0 or therock-latest). Defaults to rocm-version."
+    default: ""
   jaxlib-version:
     description: "Which jaxlib version to download? (head/pypi_latest)"
     default: "head"
@@ -88,7 +91,8 @@ runs:
             # Resolve ROCm plugin/PJRT wheels path via CloudFront.
             ROCM_WHEELS_BASE_URL="https://d22q5eopkfeftw.cloudfront.net"
             if [[ "${INPUTS_S3_DOWNLOAD_URI}" == "latest" ]]; then
-              RESOLVED_S3_URI=$(curl -fsSL "${ROCM_WHEELS_BASE_URL}/rocm-wheels/LATEST" | tr -d '[:space:]')
+              LATEST_KEY="rocm-wheels/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${INPUTS_ROCM_FULL_VERSION}/LATEST"
+              RESOLVED_S3_URI=$(curl -fsSL "${ROCM_WHEELS_BASE_URL}/${LATEST_KEY}" | tr -d '[:space:]')
               WHEELS_PATH="${RESOLVED_S3_URI#s3://jax-ci-amd/}"
               echo "Resolved LATEST pointer to: ${WHEELS_PATH}"
             else
@@ -99,9 +103,9 @@ runs:
             echo "Downloading ROCm wheels from ${WHEELS_URL}..."
 
             LISTING=$(curl -fsSL "${WHEELS_URL}/")
-            FILES=$(echo "$LISTING" | grep -oE 'href="[^"]+\.whl"' | cut -d'"' -f2)
-            PJRT_FILE=$(echo "$FILES" | grep "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-" | head -n1)
-            PLUGIN_FILE=$(echo "$FILES" | grep "jax_rocm${JAXCI_ROCM_VERSION}_plugin-" | grep "${PYTHON_MAJOR_MINOR}" | head -n1)
+            FILES=$(echo "$LISTING" | grep -oE 'href="[^"]+\.whl"' | cut -d'"' -f2 || true)
+            PJRT_FILE=$(echo "$FILES" | grep "jax_rocm${JAXCI_ROCM_VERSION}_pjrt-" | head -n1 || true)
+            PLUGIN_FILE=$(echo "$FILES" | grep "jax_rocm${JAXCI_ROCM_VERSION}_plugin-" | grep "${PYTHON_MAJOR_MINOR}" | head -n1 || true)
 
             if [[ -z "${PJRT_FILE}" || -z "${PLUGIN_FILE}" ]]; then
               echo "Could not find ROCm PJRT or plugin wheels in ${WHEELS_URL}"
@@ -129,6 +133,7 @@ runs:
         INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
         INPUTS_PYTHON: ${{ inputs.python }}
         INPUTS_S3_DOWNLOAD_URI: ${{ inputs.s3_download_uri }}
+        INPUTS_ROCM_FULL_VERSION: ${{ inputs.rocm-release-version || inputs.rocm-version }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
       shell: bash
       if: steps.download-wheel-artifacts.outcome == 'failure'
