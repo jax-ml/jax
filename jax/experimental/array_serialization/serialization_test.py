@@ -613,6 +613,36 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(spec['kvstore']['base']['path'], 'ckpt/dir')
     self.assertEqual(spec['kvstore']['path'], 'array_name')
 
+  def test_get_tensorstore_spec_edge_cases(self):
+    cases = [
+        ('local_special', '/tmp/file?name.txt', False, None,
+         {'kvstore': {'driver': 'gfile', 'path': '/tmp/file?name.txt'}}),
+        ('file_url', 'file:///tmp/foo', False, None,
+         {'kvstore': {'driver': 'gfile', 'path': '/tmp/foo'}}),
+        ('gs_shallow_process', 'gs://bucket/array', True, 0,
+         {'kvstore': {'driver': 'ocdbt',
+                      'base': {'driver': 'gcs', 'bucket': 'bucket',
+                               'path': 'process_0'}, 'path': 'array'}}),
+        ('gs_shallow_no_process', 'gs://bucket/array', True, None,
+         {'kvstore': {'driver': 'ocdbt',
+                      'base': {'driver': 'gcs', 'bucket': 'bucket',
+                               'path': ''}, 'path': 'array'}}),
+        ('trailing_slash', 'gs://bucket/dir/array/', True, None,
+         {'kvstore': {'driver': 'ocdbt',
+                      'base': {'driver': 'gcs', 'bucket': 'bucket',
+                               'path': 'dir'}, 'path': 'array'}}),
+        ('root_path', '/', True, 0,
+         {'kvstore': {'driver': 'ocdbt',
+                      'base': {'driver': 'gfile', 'path': '/'},
+                      'path': 'process_0'}}),
+    ]
+
+    for name, path, ocdbt, process_idx, expected_spec in cases:
+      with self.subTest(name=name):
+        spec = ts_impl.get_tensorstore_spec(path, ocdbt=ocdbt,
+                                            process_idx=process_idx)
+        self.assertEqual(spec['kvstore'], expected_spec['kvstore'])
+
   def test_get_tensorstore_spec_not_absolute_path(self):
     path = 'my/ckpt/path'
     with self.assertRaisesRegex(ValueError,
