@@ -26,6 +26,8 @@ limitations under the License.
 #include <utility>
 #include <variant>
 #include <vector>
+#include <unordered_map>
+#include <functional>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
