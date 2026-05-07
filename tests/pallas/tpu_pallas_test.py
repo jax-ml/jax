@@ -3831,6 +3831,44 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
+  @parameterized.parameters(
+      (
+          lambda sem, i: pl.semaphore_signal(sem, device_id={'x': i}),
+          r'\{x: \w+\}',
+      ),
+      (
+          lambda sem, i: pl.semaphore_signal(sem, device_id=(i, i + 1)),
+          r'\(\w+, \w+\)',
+      ),
+      (
+          lambda sem, i: pl.semaphore_signal(sem, device_id=i),
+          r'(?m)semaphore_signal \S+ \S+ \S+$',
+      ),
+      (
+          lambda sem, i: pl.semaphore_signal(sem, device_id={'x': (i, i + 1)}),
+          r'\{x: \(\w+, \w+\)\}',
+      ),
+      (
+          lambda sem, i: pl.semaphore_signal(sem, device_id=None),
+          r'(?m)semaphore_signal \S+ \S+$',
+      ),
+  )
+  def test_semaphore_signal_pretty_print(self, body_fn, expected_regex):
+    def body(sem, i):
+      body_fn(sem, i)
+      return []
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+        wrap_init(body, 2),
+        [
+            pltpu.SemaphoreType.REGULAR.get_ref_aval(),
+            jax.core.ShapedArray((), jnp.int32),
+        ],
+    )
+    printed = jaxpr.pretty_print(use_color=False)
+    self.assertIn('semaphore_signal', printed)
+    self.assertRegex(printed, expected_regex)
+
 
 class MiscellaneousTest(ptu.PallasTPUTest):
   """Tests for reported bugs. Only pass in interpret mode unless fixed."""
