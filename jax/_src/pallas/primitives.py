@@ -1033,6 +1033,32 @@ def _semaphore_signal_abstract_eval(
       effs.add(pallas_core.comms_effect)
   return [], effs
 
+
+def _pp_device_id(device_id, context):
+  if device_id is None:
+    return pp.text("None")
+  elif isinstance(device_id, dict):
+    items = []
+    for k, v in device_id.items():
+      item = pp.concat([pp.text(f"{k}: "), _pp_device_id(v, context)])
+      items.append(item)
+    return pp.concat(
+        [pp.text("{"), pp.join(pp.text(", "), items), pp.text("}")]
+    )
+  elif isinstance(device_id, tuple):
+    items = [_pp_device_id(v, context) for v in device_id]
+    return pp.concat(
+        [pp.text("("), pp.join(pp.text(", "), items), pp.text(")")]
+    )
+  elif isinstance(device_id, list):
+    items = [_pp_device_id(v, context) for v in device_id]
+    return pp.concat(
+        [pp.text("["), pp.join(pp.text(", "), items), pp.text("]")]
+    )
+  else:
+    return pp.text(jax_core.pp_var(device_id, context))
+
+
 def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
                              context: jax_core.JaxprPpContext,
                              settings: jax_core.JaxprPpSettings):
@@ -1057,12 +1083,9 @@ def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
     flat_device_ids = tree_util.tree_leaves(device_ids)
     if not flat_device_ids:
       return out
-    device_ids_pp = [pp.text(jax_core.pp_var(flat_device_ids[0], context))]
-    for device_id in flat_device_ids[1:]:
-      device_ids_pp.append(pp.text(" "))
-      device_ids_pp.append(pp.text(jax_core.pp_var(device_id, context)))
-    out = pp.concat([out, pp.concat(device_ids_pp)])
+    out = pp.concat([out, pp.text(" "), _pp_device_id(device_ids, context)])
   return out
+
 jax_core.pp_eqn_rules[semaphore_signal_p] = _semaphore_signal_pp_eqn
 
 
