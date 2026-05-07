@@ -545,7 +545,7 @@ class Scratch:
     [load_op_user] = load_op.result.uses
     device_ptr = load_op_user.owner
     assert device_ptr.operation.name == "builtin.unrealized_conversion_cast"
-    return alloc_op, load_op, device_ptr.result  # pyrefly: ignore[bad-return]
+    return alloc_op, load_op, device_ptr.result
 
   def device_ptr(self) -> ir.Value:
     _, _, device_ptr = self._find_alloc_load_and_device_ptr()
@@ -765,7 +765,7 @@ class LaunchContext:
     gep = llvm.GEPOp(
         ptr_ty, self.scratch.device_ptr(), [], [alloc_base], i8, llvm.GEPNoWrapFlags.none
     )
-    gep.move_after(self.scratch.device_ptr().owner)  # pyrefly: ignore[bad-argument-type]
+    gep.move_after(self.scratch.device_ptr().owner)
     return device_init(gep.result)
 
   def _recompute_peer_id(
