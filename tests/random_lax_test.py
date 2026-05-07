@@ -46,7 +46,6 @@ complex_dtypes = jtu.dtypes.complex
 int_dtypes = jtu.dtypes.all_integer
 uint_dtypes = jtu.dtypes.all_unsigned
 
-
 @jtu.with_config(jax_legacy_prng_key='allow')
 class RandomTestBase(jtu.JaxTestCase):
 
@@ -262,6 +261,51 @@ class RandomOutShardingTest(RandomTestBase):
       jit_result = jax.jit(fn, static_argnums=(1, 2))(key, n, sharding)
     self.assertTrue(result.sharding.is_equivalent_to(sharding, result.ndim))
     self.assertTrue(result.sharding.is_equivalent_to(sharding, jit_result.ndim))
+
+_DTYPE_CASES = [
+    ('beta', float_dtypes, lambda key, dtype: random.beta(key, np.array(0.5, np.float16), np.array(0.5, np.float16), shape=(10,), dtype=dtype)),
+    ('binomial', float_dtypes, lambda key, dtype: random.binomial(key, np.array(10., np.float16), np.array(0.5, np.float16), shape=(10,), dtype=dtype)),
+    ('chisquare', float_dtypes, lambda key, dtype: random.chisquare(key, np.array(2.0, np.float16), shape=(10,), dtype=dtype)),
+    ('dirichlet', float_dtypes, lambda key, dtype: random.dirichlet(key, np.ones(3, np.float16), shape=(10,), dtype=dtype)),
+    # ('double_sided_maxwell', float_dtypes, lambda key, dtype: random.double_sided_maxwell(key, loc=np.array(0., np.float16), scale=np.array(1., np.float16), shape=(10,), dtype=dtype)),
+    ('f', float_dtypes, lambda key, dtype: random.f(key, np.array(2.0, np.float16), np.array(2.0, np.float16), shape=(10,), dtype=dtype)),
+    ('gamma', float_dtypes, lambda key, dtype: random.gamma(key, np.array(2.0, np.float16), shape=(10,), dtype=dtype)),
+    ('geometric', int_dtypes + uint_dtypes, lambda key, dtype: random.geometric(key, np.array(0.5, np.float16), shape=(10,), dtype=dtype)),
+    ('loggamma', float_dtypes, lambda key, dtype: random.loggamma(key, np.array(2.0, np.float16), shape=(10,), dtype=dtype)),
+    # ('lognormal', float_dtypes, lambda key, dtype: random.lognormal(key, np.array(1.0, np.float16), shape=(10,), dtype=dtype)),
+    ('pareto', float_dtypes, lambda key, dtype: random.pareto(key, np.array(3.0, np.float16), shape=(10,), dtype=dtype)),
+    ('poisson', int_dtypes + uint_dtypes, lambda key, dtype: random.poisson(key, np.array(3.0, np.float16), shape=(10,), dtype=dtype)),
+    ('randint', int_dtypes + uint_dtypes, lambda key, dtype: random.randint(key, shape=(10,), minval=np.array(0, np.int32), maxval=np.array(10, np.int32), dtype=dtype)),
+    ('rayleigh', float_dtypes, lambda key, dtype: random.rayleigh(key, np.array(0.5, np.float16), shape=(10,), dtype=dtype)),
+    ('t', float_dtypes, lambda key, dtype: random.t(key, np.array(10.0, np.float16), shape=(10,), dtype=dtype)),
+    # ('triangular', float_dtypes, lambda key, dtype: random.triangular(key, np.array(0., np.float16), np.array(0.5, np.float16), np.array(1., np.float16), shape=(10,), dtype=dtype)),
+    ('truncated_normal', float_dtypes, lambda key, dtype: random.truncated_normal(key, lower=np.array(-2., np.float16), upper=np.array(2., np.float16), shape=(10,), dtype=dtype)),
+    ('uniform', float_dtypes, lambda key, dtype: random.uniform(key, shape=(10,), minval=np.array(0., np.float16), maxval=np.array(1., np.float16), dtype=dtype)),
+    ('wald', float_dtypes, lambda key, dtype: random.wald(key, np.array(1.0, np.float16), shape=(10,), dtype=dtype)),
+    # ('weibull_min', float_dtypes, lambda key, dtype: random.weibull_min(key, np.array(1.0, np.float16), np.array(1.0, np.float16), shape=(10,), dtype=dtype)),
+]
+
+class RandomDtypeTest(RandomTestBase):
+  """Tests that dtype arguments are obeyed for jax.random functions."""
+
+  @parameterized.named_parameters(_DTYPE_CASES)
+  @jax.numpy_dtype_promotion('standard')
+  def test_dtype(self, testing_dtypes, fn):
+    key = random.key(0)
+    for dtype in testing_dtypes:
+      with self.subTest(f"{dtype=}"):
+        jitted = jax.jit(fn, static_argnums=(1,))
+        if dtypes.safe_to_cast(np.float16, dtype):
+          result = fn(key, dtype)
+          self.assertEqual(result.dtype, dtype)
+          jit_result = jitted(key, dtype)
+          self.assertEqual(jit_result.dtype, dtype)
+        else:
+          pass
+          # No samplers currently do this, but they should!
+          # self.assertRaises(dtypes.TypePromotionError, fn, key, dtype)
+          # self.assertRaises(dtypes.TypePromotionError, jitted, key, dtype)
+
 
 class DistributionsTest(RandomTestBase):
   """
