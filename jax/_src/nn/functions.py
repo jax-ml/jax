@@ -1024,6 +1024,144 @@ def _dot_product_attention_xla(
   return encoded
 
 
+def _dot_product_attention_stable(
+    query: Array,
+    key: Array,
+    value: Array,
+    bias: Array | None,
+    mask: Array | None,
+    is_causal: bool,
+    scale: float,
+    q_seqlen: Array | None,
+    kv_seqlen: Array | None,
+    local_window_size: tuple[int, int] | None,
+    return_residual: bool = False,
+    tile_size: int = 128,
+):
+  """Stable-reduction attention via tiled scan over fixed-shape KV tiles.
+
+  Replaces the variable-length softmax reduction with a fixed-shape scan,
+  so XLA compiles identical kernels regardless of KV-cache size — eliminating
+  floating-point non-determinism from different XLA reduction tree shapes.
+
+  Uses the online softmax recurrence from FlashAttention (Dao et al., 2022,
+  https://arxiv.org/abs/2205.14135). Masked padding tiles contribute exactly
+  zero (IEEE 754: exp(-inf)=0, 1.0*x=x), giving bit-exact outputs for any
+  KV length when the logical attention content is the same.
+  """
+  if q_seqlen is not None or kv_seqlen is not None or local_window_size is not None:
+    raise NotImplementedError(
+        "stable implementation does not support q_seqlen, kv_seqlen, or "
+        "local_window_size"
+    )
+
+  B, T, N, H = query.shape
+  _, S, K, _ = key.shape
+  G = N // K  # query heads per KV head
+
+  pad = (-S) % tile_size
+  num_tiles = (S + pad) // tile_size
+  neg_inf = float('-inf')
+  has_bias = bias is not None
+  has_mask = mask is not None
+
+  # Reshape query for GQA: (B, T, N, H) -> (B, T, K, G, H).
+  # Key/value stay at K heads — no jnp.repeat needed.
+  query_gqa = jnp.reshape(query, (B, T, K, G, H))
+
+  # Tile K/V: (num_tiles, B, tile_size, K, H) — K, not N.
+  def _tile(x):
+    return jnp.transpose(
+        jnp.reshape(jnp.pad(x, [(0, 0), (0, pad), (0, 0), (0, 0)]),
+                    (B, num_tiles, tile_size, K, H)), (1, 0, 2, 3, 4))
+  key_tiles = _tile(key)
+  value_tiles = _tile(value)
+
+  # Pre-tile user bias/mask if provided: (num_tiles, B, n, T, tile_size).
+  # n is preserved as-is (may be 1 for broadcast or N for per-head).
+  # Padding and causal masks are computed per-tile on-the-fly so we never
+  # materialise an O(B·N·T·S) logit-bias tensor.
+  def _to_tiles(x, dtype):
+    x = jnp.pad(x.astype(dtype), [(0, 0), (0, 0), (0, 0), (0, pad)])
+    n = x.shape[1]
+    return jnp.transpose(jnp.reshape(x, (B, n, T, num_tiles, tile_size)),
+                         (3, 0, 1, 2, 4))
+  xs = (key_tiles, value_tiles, jnp.arange(num_tiles) * tile_size)
+  if has_bias:
+    xs = xs + (_to_tiles(bias, np.float32),)
+  if has_mask:
+    xs = xs + (_to_tiles(mask, bool),)
+
+  def combine(left, right):
+    l_max, l_sum, l_out = left
+    r_max, r_sum, r_out = right
+    new_max = jnp.maximum(l_max, r_max)
+    safe = jnp.where(jnp.isneginf(new_max), 0.0, new_max)
+    lc = jnp.exp(l_max - safe)
+    rc = jnp.exp(r_max - safe)
+    return new_max, lc * l_sum + rc * r_sum, lc[..., None] * l_out + rc[..., None] * r_out
+
+  bias_idx = 3
+  mask_idx = 3 + has_bias
+
+  def scan_step(carry, xs):
+    k_tile = xs[0]        # (B, tile_size, K, H)
+    v_tile = xs[1]        # (B, tile_size, K, H)
+    tile_start = xs[2]    # scalar — position of tile[0] in the full sequence
+
+    # GQA scores without materializing repeated K: (B, K, G, T, tile_size).
+    scores = scale * jnp_einsum.einsum(
+        'BTKGH,BSKH->BKGTS', query_gqa, k_tile, preferred_element_type=np.float32)
+    scores = jnp.reshape(scores, (B, N, T, tile_size))
+
+    if has_bias:
+      scores = scores + xs[bias_idx]
+    if has_mask:
+      scores = jnp.where(xs[mask_idx], scores, neg_inf)
+
+    # Padding: positions >= S within this tile are masked.
+    tile_pos = tile_start + jnp.arange(tile_size)
+    scores = jnp.where(tile_pos[None, None, None, :] < S, scores, neg_inf)
+
+    if is_causal:
+      # Key position k is valid for query position t iff k <= t.
+      q_pos = jnp.arange(T)
+      scores = jnp.where(
+          tile_pos[None, :] <= q_pos[:, None], scores, neg_inf)
+
+    scores = scores.astype(np.float32)
+    t_max = scores.max(-1)  # (B, N, T)
+    safe = jnp.where(jnp.isneginf(t_max), 0.0, t_max)
+    exp_s = jnp.exp(scores - safe[..., None])
+    t_sum = exp_s.sum(-1)
+
+    # GQA value accumulation without materializing repeated V.
+    t_out = jnp_einsum.einsum(
+        'BKGTS,BSKH->BKGTH',
+        jnp.reshape(exp_s, (B, K, G, T, tile_size)), v_tile)
+    t_out = jnp.reshape(t_out, (B, N, T, H))
+
+    return combine(carry, (t_max, t_sum, t_out)), None
+
+  init = (
+      jnp.full((B, N, T), neg_inf, dtype=np.float32),
+      jnp.zeros((B, N, T), dtype=np.float32),
+      jnp.zeros((B, N, T, H), dtype=np.float32),
+  )
+  (final_max, final_sum, final_out), _ = lax.scan(scan_step, init, xs)
+
+  # (B, N, T, H) -> (B, T, N, H), cast back to input dtype.
+  out = jnp.transpose(
+      (final_out / final_sum[..., None]).astype(query.dtype), (0, 2, 1, 3))
+
+  if return_residual:
+    lse = jnp.transpose(
+        (final_max + jnp.log(final_sum)).astype(query.dtype), (0, 2, 1))
+    return out, lax.stop_gradient(lse)
+
+  return out
+
+
 @overload
 def dot_product_attention(
     query: ArrayLike,
@@ -1037,7 +1175,7 @@ def dot_product_attention(
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'stable'] | None = None,
     return_residual: Literal[False] = ...,
 ) -> Array: ...
 
@@ -1054,7 +1192,7 @@ def dot_product_attention(
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'stable'] | None = None,
     return_residual: Literal[True] = ...,
 ) -> tuple[Array, Array]: ...
 
@@ -1070,7 +1208,7 @@ def dot_product_attention(
     query_seq_lengths: ArrayLike | None = None,
     key_value_seq_lengths: ArrayLike | None = None,
     local_window_size: int | tuple[int, int] | None = None,
-    implementation: Literal['xla', 'cudnn'] | None = None,
+    implementation: Literal['xla', 'cudnn', 'stable'] | None = None,
     return_residual: bool = False,
 ):
   r"""Scaled dot product attention function.
@@ -1135,10 +1273,15 @@ def dot_product_attention(
       or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
     implementation: A string to control which implementation backend to use.
-      Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
-      to `None`, which currently falls back to `xla`.
+      Supported strings are `xla`, `cudnn` (cuDNN flash attention), and
+      `stable` (tiled-scan stable reduction). It defaults to `None`, which
+      currently falls back to `xla`.
       Note, `cudnn` supports only a subset of shapes/dtypes, and an exception
-      will be thrown if its not supported.
+      will be thrown if its not supported. `stable` eliminates floating-point
+      non-determinism across different KV-cache lengths by replacing the
+      variable-length softmax reduction with a fixed-shape tiled scan; it does
+      not support `query_seq_lengths`, `key_value_seq_lengths`, or
+      `local_window_size`.
 
   Returns:
     If return_residual is False, returns an array of the attention output with
@@ -1242,6 +1385,14 @@ def dot_product_attention(
         out, residual = out
         residual = jnp.transpose(residual, (0, 2, 1)).astype(out.dtype)
         out = (out, residual)
+    case 'stable':
+      out = _dot_product_attention_stable(
+          query_arr, key_arr, value_arr, bias, mask, is_causal=is_causal,
+          scale=scale_val, q_seqlen=query_seq_lengths,
+          kv_seqlen=key_value_seq_lengths,
+          local_window_size=local_window_size,
+          return_residual=return_residual,
+      )
     case None:
       # TODO(kaixih@nvidia) Automatically select the best backend (defaults to XLA for now).
       out = _dot_product_attention_xla(
