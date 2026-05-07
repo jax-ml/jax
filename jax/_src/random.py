@@ -65,6 +65,28 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 ### utilities
 
+def check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: ArrayLike):
+  arg_shapes = [np.shape(a) for a in args]
+  if shape is None:
+    shape = lax.broadcast_shapes(*arg_shapes)
+  else:
+    shape = core.canonicalize_shape(shape)
+    _check_shape(name, shape, *arg_shapes)
+  return shape
+
+
+def check_lub_types(name: str, dtype: DTypeLike, *args) -> DTypeLike:
+  arg_dtype = jnp.result_type(*[np.dtype(a) for a in args])
+  if dtype is None:
+    return arg_dtype
+  try:
+    if dtypes.safe_to_cast(arg_dtype, dtype):
+      return dtype
+  except dtypes.TypePromotionError:
+    pass
+  raise dtypes.TypePromotionError(f"In arguments to {name}, cannot safely cast arguments of join type {arg_dtype} to {dtype}")
+
+
 def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
@@ -2941,7 +2963,9 @@ def triangular(key: ArrayLike,
                mode: RealArray,
                right: RealArray,
                shape: Shape | None = None,
-               dtype: DTypeLikeFloat | None = None) -> Array:
+               dtype: DTypeLikeFloat | None = None,
+               *,
+               out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Triangular random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2965,33 +2989,38 @@ def triangular(key: ArrayLike,
       shape. Must be broadcast-compatible with ``left``,``mode`` and ``right``.
       The default (None) produces a result shape equal to ``left.shape``, ``mode.shape``
       and ``right.shape``.
-    dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+    dtype: optional, a float dtype for the returned values defaulting to the
+      least upper bound of the ``left``, ``mode`` and ``argument`` types.
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``left.shape``, ``mode.shape`` and ``right.shape``.
   """
   key, _ = _check_prng_key("triangular", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
-  if not dtypes.issubdtype(dtype, np.floating):
-    raise ValueError("dtype argument to `triangular` must be a float "
-                     f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _triangular(key, left, mode, right, shape, dtype)
+  if dtype is not None:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
+    if not dtypes.issubdtype(dtype, np.floating):
+      raise ValueError("dtype argument to `triangular` must be a float "
+                      f"dtype, got {dtype}")
+  shape = check_broadcast_shapes("triangular", shape, left, mode, right)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "triangular", shape)
+  return maybe_auto_axes(_triangular, out_sharding, shape=shape, dtype=dtype)(key, left, mode, right)
 
 @jit(static_argnums=(4, 5), inline=True)
 def _triangular(key, left, mode, right, shape, dtype) -> Array:
   # https://en.wikipedia.org/wiki/Triangular_distribution#Generating_triangular-distributed_random_variates
-  if shape is None:
-    shape =  lax.broadcast_shapes(np.shape(left), np.shape(mode), np.shape(right))
-  else:
-    _check_shape("triangular", shape, np.shape(left), np.shape(mode), np.shape(right))
-  left = jnp.broadcast_to(left, shape)
-  mode = jnp.broadcast_to(mode, shape)
-  right = jnp.broadcast_to(right, shape)
+  dtype = check_lub_types("triangular", dtype, left, mode, right)
+  left = jnp.broadcast_to(lax.convert_element_type(left, dtype), shape)
+  right = jnp.broadcast_to(lax.convert_element_type(right, dtype), shape)
+  mode = jnp.broadcast_to(lax.convert_element_type(mode, dtype), shape)
   fc = (mode - left) / (right - left)
   u = uniform(key, shape, dtype)
   out1 = left + lax.sqrt(u * (right - left) * (mode - left))
