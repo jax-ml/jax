@@ -306,10 +306,17 @@ def _pallas_call_jvp_rule(
     print(f"\nThe jaxpr for the jvp of pallas_call {debug_info.func_src_info}:")
     print(jvp_jaxpr)
   in_bms, out_bms = split_list(grid_mapping.block_mappings, [len(primals)])
-  jvp_bms = (*in_bms, *in_bms, *out_bms, *out_bms)
+  # jvp_jaxpr.invars only contain tangent vars for primals whose tangents
+  # survived the nonzero_tangents filter above; match that here so jvp_bms
+  # stays consistent with jvp_jaxpr.invars (otherwise downstream lowerings
+  # safe_zip on the length mismatch).
+  in_bms_for_tangents = tuple(
+      bm for bm, nz in zip(in_bms, nonzero_tangents) if nz
+  )
+  jvp_bms = (*in_bms, *in_bms_for_tangents, *out_bms, *out_bms)
   jvp_grid_mapping = grid_mapping.replace(
       block_mappings=jvp_bms,
-      num_inputs=grid_mapping.num_inputs * 2,
+      num_inputs=grid_mapping.num_inputs + len(tangents),
       num_outputs=grid_mapping.num_outputs * 2,
   )
   if cost_estimate is not None:
