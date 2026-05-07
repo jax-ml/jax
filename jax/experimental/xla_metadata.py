@@ -26,8 +26,8 @@ import contextlib
 
 from jax._src.xla_metadata import (
     set_xla_metadata as set_xla_metadata,
-    xla_metadata_call as xla_metadata_call,
     xla_metadata_call2 as xla_metadata_call2,
+    xla_metadata_call as xla_metadata_call,
 )
 
 
