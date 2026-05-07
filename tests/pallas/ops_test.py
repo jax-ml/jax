@@ -1173,12 +1173,8 @@ class OpsTest(PallasBaseTest):
           and not jtu.is_cloud_tpu_at_least(2026, 4, 27)
       ):
         self.skipTest("requires newer libTPU")
-      if (
-          fn == jnp.log1p
-          and dtype == "bfloat16"
-          and not jtu.is_cloud_tpu_at_least(2026, 5, 12)
-      ):
-        self.skipTest("requires newer libTPU")
+      if fn == jnp.log1p and dtype == "bfloat16":
+        self.skipTest(f"bfloat16 {fn.__name__} is not supported on TPU")
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
           jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
