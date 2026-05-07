@@ -13,8 +13,6 @@ load("@xla//:workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()
 
-# Initialize Hermetic toolchains
-# Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
     sha256 = "cb7635622ea526c8923a5ead6e99dc2ba55cde6ae9613bf9b2d34b3f000f29ce",
