@@ -80,12 +80,27 @@ class KernelCall {
       size_t ptr_divisibility;
     };
 
+    struct TensorDescriptor {
+      uint32_t rank;
+      std::string dtype;
+      std::vector<uint64_t> shape;
+      std::vector<int64_t> strides;
+      std::vector<uint32_t> block_shape;
+      bool padding_nan;
+      bool round_f32_to_tf32;
+      uint32_t nv_swizzle;
+      uint32_t nv_elem_size;
+      uint32_t nv_elem_type;
+      std::vector<uint32_t> nv_block_size;
+      bool nv_fp4_padded;
+    };
+
     static absl::StatusOr<Parameter> FromProto(
         const jax_triton::TritonKernelCall_Parameter& proto);
     jax_triton::TritonKernelCall_Parameter ToProto() const;
 
     std::variant<Array, bool, int32_t, uint32_t, int64_t, uint64_t, float,
-                 double>
+                 double, TensorDescriptor>
         value;
   };
 
@@ -101,6 +116,8 @@ class KernelCall {
   jax_triton::TritonKernelCall ToProto() const;
 
   bool CanLaunchOnDevice(gpuDevice_t) const;
+
+  const Kernel& kernel() const { return kernel_; }
 
  private:
   absl::Status LaunchImpl(gpuStream_t stream, void** buffers,

@@ -113,6 +113,28 @@ NB_MODULE(_triton, m) {
           }
         }));
 
+  m.def("create_tensor_descriptor_parameter",
+        [](uint32_t rank, std::string dtype, std::vector<uint64_t> shape,
+           std::vector<int64_t> strides, std::vector<uint32_t> block_shape,
+           bool padding_nan, bool round_f32_to_tf32, uint32_t nv_swizzle,
+           uint32_t nv_elem_size, uint32_t nv_elem_type,
+           std::vector<uint32_t> nv_block_size, bool nv_fp4_padded) {
+          return KernelCall::Parameter{
+              KernelCall::Parameter::TensorDescriptor{
+                  rank,
+                  std::move(dtype),
+                  std::move(shape),
+                  std::move(strides),
+                  std::move(block_shape),
+                  padding_nan,
+                  round_f32_to_tf32,
+                  nv_swizzle,
+                  nv_elem_size,
+                  nv_elem_type,
+                  std::move(nv_block_size),
+                  nv_fp4_padded}};
+        });
+
   nb::class_<KernelCall>(m, "TritonKernelCall")
       .def(nb::init<Kernel, uint32_t, uint32_t, uint32_t,
                     std::vector<KernelCall::Parameter>>())

@@ -539,6 +539,28 @@ KernelCall::Parameter::FromProto(
     case TritonKernelCall_Parameter::kF64:
       param.value = proto.f64();
       break;
+    case TritonKernelCall_Parameter::kTensorDescriptor: {
+      const auto& td = proto.tensor_descriptor();
+      TensorDescriptor desc;
+      desc.rank = td.rank();
+      desc.dtype = td.dtype();
+      desc.shape.assign(td.shape().begin(), td.shape().end());
+      desc.strides.assign(td.strides().begin(), td.strides().end());
+      desc.block_shape.assign(td.block_shape().begin(),
+                              td.block_shape().end());
+      desc.padding_nan = td.padding_nan();
+      desc.round_f32_to_tf32 = td.round_f32_to_tf32();
+      if (td.has_nv_tma_meta()) {
+        desc.nv_swizzle = td.nv_tma_meta().swizzle();
+        desc.nv_elem_size = td.nv_tma_meta().elem_size();
+        desc.nv_elem_type = td.nv_tma_meta().elem_type();
+        desc.nv_block_size.assign(td.nv_tma_meta().block_size().begin(),
+                                  td.nv_tma_meta().block_size().end());
+        desc.nv_fp4_padded = td.nv_tma_meta().fp4_padded();
+      }
+      param.value = std::move(desc);
+      break;
+    }
     default:
       return absl::InvalidArgumentError("Unknown scalar parameter type.");
   }
@@ -568,6 +590,22 @@ jax_triton::TritonKernelCall_Parameter KernelCall::Parameter::ToProto() const {
     proto.set_u64(std::get<uint64_t>(value));
   } else if (std::holds_alternative<float>(value)) {
     proto.set_f32(std::get<float>(value));
+  } else if (std::holds_alternative<TensorDescriptor>(value)) {
+    const auto& desc = std::get<TensorDescriptor>(value);
+    auto* td = proto.mutable_tensor_descriptor();
+    td->set_rank(desc.rank);
+    td->set_dtype(desc.dtype);
+    for (uint64_t s : desc.shape) td->add_shape(s);
+    for (int64_t s : desc.strides) td->add_strides(s);
+    for (uint32_t b : desc.block_shape) td->add_block_shape(b);
+    td->set_padding_nan(desc.padding_nan);
+    td->set_round_f32_to_tf32(desc.round_f32_to_tf32);
+    auto* meta = td->mutable_nv_tma_meta();
+    meta->set_swizzle(desc.nv_swizzle);
+    meta->set_elem_size(desc.nv_elem_size);
+    meta->set_elem_type(desc.nv_elem_type);
+    for (uint32_t b : desc.nv_block_size) meta->add_block_size(b);
+    meta->set_fp4_padded(desc.nv_fp4_padded);
   } else {
     CHECK(std::holds_alternative<double>(value));
     proto.set_f64(std::get<double>(value));
@@ -592,6 +630,121 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers,
 
 namespace {
 
+#ifdef JAX_GPU_CUDA
+absl::StatusOr<CUtensorMapDataType> DtypeToCuTensorMapType(
+    const std::string& dtype) {
+  if (dtype == "uint8" || dtype == "int8" || dtype == "u8" || dtype == "i8") {
+    return CU_TENSOR_MAP_DATA_TYPE_UINT8;
+  } else if (dtype == "uint16" || dtype == "int16" || dtype == "u16" ||
+             dtype == "i16") {
+    return CU_TENSOR_MAP_DATA_TYPE_UINT16;
+  } else if (dtype == "uint32" || dtype == "int32" || dtype == "u32" ||
+             dtype == "i32") {
+    return CU_TENSOR_MAP_DATA_TYPE_UINT32;
+  } else if (dtype == "uint64" || dtype == "int64" || dtype == "u64" ||
+             dtype == "i64") {
+    return CU_TENSOR_MAP_DATA_TYPE_UINT64;
+  } else if (dtype == "float16" || dtype == "fp16") {
+    return CU_TENSOR_MAP_DATA_TYPE_FLOAT16;
+  } else if (dtype == "bfloat16" || dtype == "bf16") {
+    return CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
+  } else if (dtype == "float32" || dtype == "fp32") {
+    return CU_TENSOR_MAP_DATA_TYPE_FLOAT32;
+  } else if (dtype == "float64" || dtype == "fp64") {
+    return CU_TENSOR_MAP_DATA_TYPE_FLOAT64;
+  }
+  return absl::InvalidArgumentError(
+      absl::StrFormat("Unsupported dtype for CUtensorMap: %s", dtype));
+}
+
+uint32_t DtypeByteWidth(const std::string& dtype) {
+  if (dtype == "uint8" || dtype == "int8" || dtype == "u8" || dtype == "i8")
+    return 1;
+  if (dtype == "uint16" || dtype == "int16" || dtype == "u16" ||
+      dtype == "i16" || dtype == "float16" || dtype == "fp16" ||
+      dtype == "bfloat16" || dtype == "bf16")
+    return 2;
+  if (dtype == "uint32" || dtype == "int32" || dtype == "u32" ||
+      dtype == "i32" || dtype == "float32" || dtype == "fp32")
+    return 4;
+  if (dtype == "uint64" || dtype == "int64" || dtype == "u64" ||
+      dtype == "i64" || dtype == "float64" || dtype == "fp64")
+    return 8;
+  return 0;
+}
+
+absl::StatusOr<CUtensorMapSwizzle> SwizzleToCuSwizzle(uint32_t swizzle) {
+  switch (swizzle) {
+    case 0:
+      return CU_TENSOR_MAP_SWIZZLE_NONE;
+    case 1:
+      return CU_TENSOR_MAP_SWIZZLE_32B;
+    case 2:
+      return CU_TENSOR_MAP_SWIZZLE_64B;
+    case 3:
+      return CU_TENSOR_MAP_SWIZZLE_128B;
+    default:
+      return absl::InvalidArgumentError(
+          absl::StrFormat("Unknown swizzle mode: %u", swizzle));
+  }
+}
+
+absl::Status EncodeCuTensorMap(
+    CUtensorMap* tma_desc, void* base_addr,
+    const KernelCall::Parameter::TensorDescriptor& desc) {
+  JAX_ASSIGN_OR_RETURN(CUtensorMapDataType data_type,
+                       DtypeToCuTensorMapType(desc.dtype));
+  uint32_t elem_bytes = DtypeByteWidth(desc.dtype);
+  if (elem_bytes == 0) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("Cannot determine byte width for dtype: %s",
+                        desc.dtype));
+  }
+
+  uint32_t rank = desc.rank;
+  if (rank < 1 || rank > 5) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("TMA rank must be in [1, 5], got %u", rank));
+  }
+
+  cuuint64_t tma_sizes[5] = {1, 1, 1, 1, 1};
+  for (uint32_t i = 0; i < rank; ++i) {
+    tma_sizes[i] = static_cast<cuuint64_t>(desc.shape[rank - i - 1]);
+  }
+
+  cuuint64_t tma_strides[5] = {1, 1, 1, 1, 1};
+  for (uint32_t i = 0; i < rank - 1; ++i) {
+    tma_strides[i] = static_cast<cuuint64_t>(
+        desc.strides[rank - i - 2] * elem_bytes);
+  }
+
+  cuuint32_t tma_box_dim[5] = {1, 1, 1, 1, 1};
+  for (uint32_t i = 0; i < rank; ++i) {
+    tma_box_dim[i] =
+        static_cast<cuuint32_t>(desc.block_shape[rank - i - 1]);
+  }
+
+  cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
+
+  auto swizzle_or = SwizzleToCuSwizzle(desc.nv_swizzle);
+  if (ABSL_PREDICT_FALSE(!swizzle_or.ok())) {
+    return swizzle_or.status();
+  }
+  CUtensorMapSwizzle swizzle = *std::move(swizzle_or);
+
+  CUtensorMapFloatOOBfill oob_fill = desc.padding_nan
+      ? CU_TENSOR_MAP_FLOAT_OOB_FILL_NAN_REQUEST_ZERO_FMA
+      : CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
+
+  GPU_RETURN_IF_ERROR(cuTensorMapEncodeTiled(
+      tma_desc, data_type, rank, base_addr, tma_sizes, tma_strides,
+      tma_box_dim, element_strides, CU_TENSOR_MAP_INTERLEAVE_NONE, swizzle,
+      CU_TENSOR_MAP_L2_PROMOTION_NONE, oob_fill));
+
+  return absl::OkStatus();
+}
+#endif  // JAX_GPU_CUDA
+
 void* AlignPointer(void* ptr, size_t alignment) {
   auto addr = reinterpret_cast<uintptr_t>(ptr);
   auto aligned = (addr + alignment - 1) & ~(alignment - 1);
@@ -604,6 +757,12 @@ absl::Status KernelCall::LaunchImpl(gpuStream_t stream, void** buffers,
                                     ::xla::ffi::ScratchAllocator* scratch) {
   std::vector<void*> params;
   params.reserve(parameters_.size() + 2);
+
+#ifdef JAX_GPU_CUDA
+  // CUtensorMap objects must stay alive until kernel launch is enqueued.
+  // Each is 128 bytes and must be 64-byte aligned.
+  std::vector<std::unique_ptr<CUtensorMap>> tma_descriptors;
+#endif
 
   for (size_t i = 0; i < parameters_.size(); ++i) {
     const Parameter& param = parameters_[i];
@@ -624,6 +783,28 @@ absl::Status KernelCall::LaunchImpl(gpuStream_t stream, void** buffers,
             gpuMemsetD8Async(cu_ptr, 0, array.bytes_to_zero, stream));
       }
       params.push_back(&ptr);
+#ifdef JAX_GPU_CUDA
+    } else if (std::holds_alternative<Parameter::TensorDescriptor>(
+                   param.value)) {
+      const auto& desc = std::get<Parameter::TensorDescriptor>(param.value);
+
+      void*& base_ptr = *(buffers++);
+
+      auto tma_desc = std::make_unique<CUtensorMap>();
+      JAX_RETURN_IF_ERROR(
+          EncodeCuTensorMap(tma_desc.get(), base_ptr, desc));
+      params.push_back(tma_desc.get());
+      tma_descriptors.push_back(std::move(tma_desc));
+
+      // Triton's ABI expects rank shape scalars followed by rank stride scalars
+      // after the descriptor. Those are the next 2*rank parameters in the list.
+#else
+    } else if (std::holds_alternative<Parameter::TensorDescriptor>(
+                   param.value)) {
+      return absl::UnimplementedError(
+          "TensorDescriptor parameters require CUDA (TMA is not supported on "
+          "this platform).");
+#endif  // JAX_GPU_CUDA
     } else {
       params.push_back(const_cast<void*>(std::visit(
           [](auto&& arg) { return reinterpret_cast<const void*>(&arg); },

@@ -17,11 +17,31 @@ message TritonKernel {
   uint64 global_scratch_align = 12;
 }
 
+message NvTmaDescriptorMeta {
+  uint32 swizzle = 1;
+  uint32 elem_size = 2;
+  uint32 elem_type = 3;
+  repeated uint32 block_size = 4;
+  bool fp4_padded = 5;
+  bool is_im2col = 6;
+}
+
 message TritonKernelCall {
   message Parameter {
     message Array {
       uint64 bytes_to_zero = 1;
       uint64 ptr_divisibility = 2;
+    }
+
+    message TensorDescriptor {
+      uint32 rank = 1;
+      string dtype = 2;
+      repeated uint64 shape = 3;
+      repeated int64 strides = 4;
+      repeated uint32 block_shape = 5;
+      bool padding_nan = 6;
+      bool round_f32_to_tf32 = 7;
+      NvTmaDescriptorMeta nv_tma_meta = 8;
     }
 
     oneof value {
@@ -33,6 +53,7 @@ message TritonKernelCall {
       uint64 u64 = 6;
       float f32 = 7;
       double f64 = 8;
+      TensorDescriptor tensor_descriptor = 9;
     }
   }
 
