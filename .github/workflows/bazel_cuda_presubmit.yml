@@ -26,6 +26,7 @@ concurrency:
 permissions: {}
 jobs:
   build-cuda-artifacts:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -45,7 +46,7 @@ jobs:
       upload_artifacts_to_gcs: false
 
   run-tests:
-    if: github.event.repository.fork == false
+    if: github.event.repository.fork == false && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cuda.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:

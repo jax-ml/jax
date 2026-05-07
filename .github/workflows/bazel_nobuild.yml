@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   bazel-dependency-violations:
+    if: github.repository_owner == 'jax-ml'
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: Bazel dependency violations
     # End Presubmit Naming Check github-bazel-nobuild
