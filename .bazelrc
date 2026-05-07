@@ -29,6 +29,8 @@ common --experimental_cc_shared_library
 
 common --incompatible_enable_cc_toolchain_resolution
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
+common --repo_env=LLVM_VERSION=22
+common --repo_env=SYSROOT_DIST=linux_glibc_2_31
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
@@ -148,8 +150,8 @@ common:nonccl --define=no_nccl_support=true
 
 common:posix --copt=-fvisibility=hidden
 common:posix --copt=-Wno-sign-compare
-common:posix --cxxopt=-std=c++17
-common:posix --host_cxxopt=-std=c++17
+common:posix --cxxopt=-std=c++20
+common:posix --host_cxxopt=-std=c++20
 
 common:avx_posix --copt=-mavx
 common:avx_posix --host_copt=-mavx
@@ -322,7 +324,7 @@ common:ci_linux_x86_64_clang_local --repo_env=TF_SYSROOT="/dt9"
 # Clang path needs to be set for remote toolchain to be configured correctly.
 common:ci_linux_x86_64_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
-common:ci_linux_x86_64_cuda_common --config=build_cuda_with_nvcc
+common:ci_linux_x86_64_cuda_common --config=build_cuda_with_clang
 common:ci_linux_x86_64_cuda_common --config=ci_linux_x86_64
 
 # The toolchain in `--config=cuda` needs to be read before the toolchain in
@@ -344,7 +346,7 @@ common:ci_linux_aarch64_base --test_env=OMP_NUM_THREADS=8
 common:ci_linux_aarch64 --config=ci_linux_aarch64_base
 
 common:ci_linux_aarch64_cuda_common --config=ci_linux_aarch64_base
-common:ci_linux_aarch64_cuda_common --config=build_cuda_with_nvcc
+common:ci_linux_aarch64_cuda_common --config=build_cuda_with_clang
 
 # Aarch64 builds use CLANG_CUDA_COMPILER_PATH, which allows Clang to compile C++
 # targets and NVCC to compile CUDA targets.
