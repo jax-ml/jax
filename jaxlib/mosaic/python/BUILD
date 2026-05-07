@@ -96,7 +96,6 @@ py_library(
     srcs = [
         "layout_defs.py",
     ],
-    strict_deps = False,
     visibility = [
         "//visibility:public",
     ],

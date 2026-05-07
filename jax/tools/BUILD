@@ -30,7 +30,6 @@ py_library(
     srcs = [
         "pgo_nsys_converter.py",
     ],
-    strict_deps = False,
 )
 
 py_library(

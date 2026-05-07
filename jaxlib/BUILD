@@ -484,7 +484,6 @@ nanobind_pywrap_extension(
 py_binary(
     name = "backport_stubs",
     srcs = ["backport_stubs.py"],
-    strict_deps = False,
 )
 
 cc_library(

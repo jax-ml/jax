@@ -38,7 +38,6 @@ cc_proto_library(
 py_library(
     name = "mosaic_gpu",
     data = [":libmosaic_gpu_runtime.so"],
-    strict_deps = False,
     deps = [":_mosaic_gpu_ext"],
 )
 

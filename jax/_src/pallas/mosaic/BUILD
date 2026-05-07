@@ -29,7 +29,6 @@ py_library(
         "__init__.py",
         "core.py",
     ],
-    strict_deps = False,
     deps = [
         "//jax",
         "//jax/_src:core",
@@ -45,7 +44,6 @@ py_library(
 py_library(
     name = "error_handling",
     srcs = ["error_handling.py"],
-    strict_deps = False,
     deps = [
         "//jax/_src:compiler",
         "//jax/_src:traceback_util",
@@ -236,7 +234,6 @@ py_library(
 py_library(
     name = "helpers",
     srcs = ["helpers.py"],
-    strict_deps = False,
     deps = [
         ":core",
         ":primitives",

@@ -40,7 +40,6 @@ py_library(
         "__init__.py",
         "interpret_pallas_call.py",
     ],
-    strict_deps = False,
     deps = [
         ":params",
         ":race_detection_state",

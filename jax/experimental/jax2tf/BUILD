@@ -30,7 +30,6 @@ package(
 py_library(
     name = "jax2tf",
     srcs = ["__init__.py"],
-    strict_deps = False,
     visibility = ["//visibility:public"],
     deps = [":jax2tf_internal"],
 )

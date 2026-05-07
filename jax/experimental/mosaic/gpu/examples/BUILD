@@ -34,7 +34,6 @@ py_library(
     srcs = [
         "__init__.py",
     ],
-    strict_deps = False,
     visibility = ["//jax:internal"],
 )
 

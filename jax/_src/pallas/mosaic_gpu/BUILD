@@ -31,7 +31,6 @@ package(
 py_library(
     name = "mosaic_gpu",
     srcs = ["__init__.py"],
-    strict_deps = False,
     deps = [
         ":core",
         ":pallas_call_registration",

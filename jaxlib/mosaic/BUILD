@@ -28,7 +28,6 @@ package(
 
 py_library(
     name = "mosaic",
-    strict_deps = False,
     deps = [
         "//jaxlib/mosaic/python:gpu_dialect",
         "//jaxlib/mosaic/python:tpu_dialect",
