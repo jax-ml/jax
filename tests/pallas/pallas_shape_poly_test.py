@@ -496,7 +496,8 @@ class ExportTestWithTriton(jtu.JaxTestCase):
     self.assertRegex(
         exp.mlir_module(),
         r"stablehlo.custom_call"
-        r" @__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"",
+        # TODO(slebedev): Remove the first option once jaxlib is >0.10.0.
+        r" @(__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"|triton_kernel_call_ffi)",
     )
 
   def test_cross_platform(self):
@@ -516,8 +517,7 @@ class ExportTestWithTriton(jtu.JaxTestCase):
       )(x, y)
 
     platforms = ["tpu"]
-    # TODO(b/394629193): Remove True once the bug is fixed.
-    if True or (triton is not None and triton.has_compilation_handler("cuda")):
+    if triton is not None and triton.has_compilation_handler("cuda"):
       # Only include CUDA if GPU support is linked in.
       platforms.append("cuda")
 
@@ -528,6 +528,7 @@ class ExportTestWithTriton(jtu.JaxTestCase):
         # The Pallas GPU custom call is not enabled for export by default.
         disabled_checks=[
             export.DisabledSafetyCheck.custom_call("triton_kernel_call"),
+            export.DisabledSafetyCheck.custom_call("triton_kernel_call_ffi"),
             export.DisabledSafetyCheck.custom_call("__gpu$xla.gpu.triton"),
         ],
     )(a, a)
