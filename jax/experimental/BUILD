@@ -17,6 +17,7 @@ load(
     "buffer_callback_internal_users",
     "experimental_transfer_users",
     "if_cuda_is_configured",
+    "if_oss",
     "jax_visibility",
     "mosaic_gpu_internal_users",
     "mosaic_internal_users",
@@ -795,5 +796,10 @@ filegroup(
         "scheduling_groups.py",
         "shard_map.py",
     ],
-    visibility = ["//jax:internal"],
+    visibility = [
+        "//jax:internal",
+    ] + if_oss(
+        [],
+        ["//third_party/py/accelerator_microbenchmarks:__subpackages__"],
+    ),
 )
