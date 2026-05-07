@@ -274,7 +274,7 @@ class RefIndexer:
   def __getitem__(self, slc) -> TransformedRef:
     if not isinstance(slc, tuple):
       slc = (slc,)
-    from jax._src.state import indexing
+    from jax._src.state import indexing  # pyrefly: ignore[missing-import]
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
     if (
         isinstance(self.ref_or_view, TransformedRef)

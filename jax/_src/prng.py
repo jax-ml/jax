@@ -1343,8 +1343,8 @@ register_prng(unsafe_rbg_prng_impl)
 
 # Register export serialization for PRNG key types.
 try:
-  from jax._src.export import serialization
-  from jax._src.export import serialization_generated as ser_flatbuf
+  from jax._src.export import serialization  # pyrefly: ignore[missing-import]
+  from jax._src.export import serialization_generated as ser_flatbuf  # pyrefly: ignore[missing-import]
 except ImportError:
   # This can happen if flatbuffers is not installed, in which case export
   # serialization is not supported and it is safe to skip the registration.

@@ -24,7 +24,7 @@ import numpy as np
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   # compression.zstd should be present in Python 3.14+
-  from compression import zstd
+  from compression import zstd  # pyrefly: ignore[missing-import]
 except ImportError:
   zstd = None
 

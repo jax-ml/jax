@@ -1404,7 +1404,7 @@ def lower_jaxpr_into_unpipelined_module(
       window_params.append(ir.DictAttr.get())
       continue
 
-    rank = len(aval.shape)
+    rank = len(aval.shape)  # pyrefly: ignore[missing-attribute]
     exprs = [ir.AffineConstantExpr.get(0)] * rank
     affine_map = ir.AffineMap.get(len(grid), 0, exprs)
     block_params = dict[str, ir.Attribute](

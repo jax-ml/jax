@@ -2442,17 +2442,17 @@ def _tcgen05_mma_lowering(
 
   with mgpu.when(predicate):
     tcgen05.mma(
-        acc,
-        a_ref,
-        b_ref,
-        a_swizzle=int(lhs_swizzle),
-        b_swizzle=int(rhs_swizzle),
-        a_scale=a_scale_ref,
-        b_scale=b_scale_ref,
-        a_sparse_metadata=a_sparse_metadata_ref,
-        accumulate=accumulate,
-        collective=collective,
-    )
+              acc,
+              a_ref,
+              b_ref,
+              a_swizzle=int(lhs_swizzle),
+              b_swizzle=int(rhs_swizzle),
+              a_scale=a_scale_ref,  # pyrefly: ignore[bad-argument-type]
+              b_scale=b_scale_ref,  # pyrefly: ignore[bad-argument-type]
+              a_sparse_metadata=a_sparse_metadata_ref,
+              accumulate=accumulate,
+              collective=collective,
+          )
     if arrive:
       assert barrier_ref is not None
       tcgen05.commit_arrive(barrier_ref,
