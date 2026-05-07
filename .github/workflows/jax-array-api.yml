@@ -19,6 +19,7 @@ env:
 
 jobs:
   build:
+    if: github.repository_owner == 'jax-ml'
     runs-on: linux-x86-n4-16
     container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     strategy:

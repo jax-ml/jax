@@ -9,6 +9,7 @@ permissions: {}
 
 jobs:
   verify-squash:
+    if: github.repository_owner == 'jax-ml'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

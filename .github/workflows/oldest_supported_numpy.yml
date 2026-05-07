@@ -21,7 +21,7 @@ env:
 
 jobs:
   test-oldest-supported-numpy:
-    if: ${{ github.event.repository.fork == false && !startsWith(github.head_ref, 'release/') }}
+    if: ${{ github.repository_owner == 'jax-ml' && github.event.repository.fork == false && !startsWith(github.head_ref, 'release/') }}
     defaults:
       run:
         shell: bash

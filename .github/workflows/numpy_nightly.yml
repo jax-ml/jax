@@ -29,6 +29,7 @@ env:
 
 jobs:
   test-nightly-numpy:
+    if: github.repository_owner == 'jax-ml'
     defaults:
       run:
         shell: bash

@@ -171,6 +171,7 @@ jobs:
 
 
   documentation_render:
+    if: github.repository_owner == 'jax-ml'
     name: Documentation - render documentation
     runs-on: linux-x86-n4-16
     container:
@@ -215,6 +216,7 @@ jobs:
         PORTSERVER_ADDRESS=@unittest-portserver $PYTHON_BIN -m sphinx -j auto --color -W --keep-going -b html docs docs/build/html
 
   ffi:
+    if: github.repository_owner == 'jax-ml'
     name: FFI example
     runs-on: linux-x86-g2-16-l4-1gpu
     container:
