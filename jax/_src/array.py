@@ -445,7 +445,10 @@ class ArrayImpl(basearray.Array):
     elif self.platform() == "gpu":
       platform_version = _get_device(self).client.platform_version
       if "cuda" in platform_version:
-        dl_device_type = DLDeviceType.kDLCUDA
+        if self.sharding.memory_kind == "pinned_host":
+          dl_device_type = DLDeviceType.kDLCUDAHost
+        else:
+          dl_device_type = DLDeviceType.kDLCUDA
       elif "rocm" in platform_version:
         dl_device_type = DLDeviceType.kDLROCM
       else:
