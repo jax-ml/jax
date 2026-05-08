@@ -23,6 +23,7 @@ import enum
 from typing import Any, Literal
 
 import jax
+from jax._src import api
 from jax._src import core as jax_core
 from jax._src import linear_util as lu
 from jax._src import state
@@ -103,7 +104,7 @@ class CompilerParams:
       Mosaic.
     serialization_format: The serialization format for the kernel body.
     kernel_type: Specify if the kernel is meant to run on TensorCore or one of
-      the SparseCores
+      the SparseCore subcores.
     disable_bounds_checks: Disable bounds checks in the kernel.
     disable_semaphore_checks: Disable semaphore checks in the kernel.
     skip_device_barrier: Skip the default device barrier for the kernel.
@@ -132,7 +133,7 @@ class CompilerParams:
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
-  kernel_type: CoreType = CoreType.TC
+  kernel_type: CoreType | api.NotSpecified = api.NotSpecified()
   disable_bounds_checks: bool = False
   disable_semaphore_checks: bool = False
   skip_device_barrier: bool = False
@@ -152,7 +153,7 @@ class CompilerParams:
       flags: Mapping[str, Any] | None = None,
       internal_scratch_in_bytes: int | None = None,
       serialization_format: int = 1,
-      kernel_type: CoreType = CoreType.TC,
+      kernel_type: CoreType | api.NotSpecified = api.NotSpecified(),
       disable_bounds_checks: bool = False,
       disable_semaphore_checks: bool = False,
       skip_device_barrier: bool = False,

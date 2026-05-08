@@ -31,6 +31,7 @@ py_library(
     ],
     deps = [
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:deprecations",
         "//jax/_src:frozen_dict",
@@ -78,6 +79,7 @@ py_library(
         ":lowering",
         ":sc_lowering",
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:frozen_dict",

@@ -20,9 +20,10 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import json
-from typing import Any, cast
+from typing import cast
 
 import jax
+from jax._src import api
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -37,8 +38,8 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
-from jax._src.pallas.mosaic import helpers
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.pallas.mosaic import helpers
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering
@@ -273,6 +274,9 @@ def _lower_to_custom_call(
     jax_mesh,
 ):
   kernel_type = mosaic_params.kernel_type
+  if isinstance(kernel_type, api.NotSpecified):
+    kernel_type = tpu_core.CoreType.TC
+
   input_output_aliases = tuple(
       (a[0] + num_dynamic_grid_bounds, a[1]) for a in input_output_aliases
   )
@@ -404,32 +408,46 @@ def pallas_call_tpu_lowering_rule(
     mosaic_params = compiler_params
 
   kernel_type = mosaic_params.kernel_type
-  _check_sparsecore_availability(kernel_type)
 
   # `mesh` argument is the core mesh if provided by the user (e.g. in core_map).
   # If it's None, we create a default mesh based on the kernel type.
   # TODO(rdyro): Remove once we have a way of explicitly passing a mesh here.
   if mesh is None:
-    if kernel_type == tpu_core.CoreType.TC:
-      # TODO(rdyro): In cross-compilation, TPU info might not be available.
-      # Remove this once we always have an explicit mesh.
-      try:
-        num_cores = tpu_info.get_tpu_info().num_cores
-      except ValueError:
-        num_cores = 1
-      mesh = tpu_core.create_tensorcore_mesh(
-          axis_name="tensorcore_unnamed_core", num_cores=num_cores
+    if isinstance(kernel_type, api.NotSpecified):
+      # Default to TC for backwards compatibility.
+      kernel_type = tpu_core.CoreType.TC
+
+    _check_sparsecore_availability(kernel_type)
+
+    match kernel_type:
+      case tpu_core.CoreType.TC:
+        # TODO(rdyro): In cross-compilation, TPU info might not be available.
+        # Remove this once we always have an explicit mesh.
+        try:
+          num_cores = tpu_info.get_tpu_info().num_cores
+        except ValueError:
+          num_cores = 1
+        mesh = tpu_core.create_tensorcore_mesh(
+            axis_name="tensorcore_unnamed_core", num_cores=num_cores
+        )
+      case tpu_core.CoreType.SC_SCALAR_SUBCORE:
+        mesh = sc_core.ScalarSubcoreMesh(axis_name="sparsecore_unnamed_core")
+      case tpu_core.CoreType.SC_VECTOR_SUBCORE:
+        mesh = sc_core.VectorSubcoreMesh(
+            core_axis_name="sparsecore_unnamed_core",
+            subcore_axis_name="sparsecore_unnamed_subcore",
+        )
+    mpmd_meshes = {mesh.core_type: mesh}
+  else:
+    if isinstance(kernel_type, api.NotSpecified):
+      kernel_type = mesh.core_type
+    elif kernel_type != mesh.core_type:
+      raise ValueError(
+          f"pltpu.CompilerParams({compiler_params=}) does not match"
+          f" {mesh.core_type=}. Remove kernel_type= from compiler params "
+          " or ensure the value is consistent with the mesh."
       )
-    elif kernel_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
-      mesh = sc_core.ScalarSubcoreMesh(axis_name="sparsecore_unnamed_core")
-    elif kernel_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
-      mesh = sc_core.VectorSubcoreMesh(
-          core_axis_name="sparsecore_unnamed_core",
-          subcore_axis_name="sparsecore_unnamed_subcore",
-      )
-    else:
-      raise ValueError(f"Unsupported kernel type: {kernel_type}")
-  mpmd_meshes = {kernel_type: mesh}
+    mpmd_meshes = {kernel_type: mesh}
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
@@ -456,8 +474,6 @@ def pallas_call_tpu_lowering_rule(
           use_tc_tiling=mosaic_params.use_tc_tiling_on_sc,
           needs_layout_passes=mosaic_params.needs_layout_passes,
       )
-    case _:
-      raise ValueError(f"Unsupported kernel type: {mosaic_params.kernel_type}")
 
   with mlir_ctx, ir.Location.unknown(mlir_ctx):
     mosaic_module = lower_jaxpr_to_module(
@@ -723,7 +739,7 @@ def mpmd_map_tpu_lowering_rule(
       # This will hopefully cause a runtime error if ``kernel_type`` is ever
       # accessed.
       mosaic_params = dataclasses.replace(
-          mosaic_params, kernel_type=cast(Any, object())
+          mosaic_params, kernel_type=api.NotSpecified()
       )
 
   def _maybe_expand_scalar_input(is_scalar, in_node, aval):
