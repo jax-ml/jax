@@ -276,7 +276,8 @@ def _pallas_call_jvp_rule(
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   nonzero_tangents_with_outputs = nonzero_tangents + [True] * grid_mapping.num_outputs
   closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
-  jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, nonzero_tangents_with_outputs, [])
+  with grid_mapping.trace_env():
+    jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, nonzero_tangents_with_outputs, [])
   jvp_jaxpr, () = jvp_jaxpr_.jaxpr, jvp_jaxpr_.consts  # TODO consts
   # `pallas_call` takes in inputs and returns outputs but its jaxpr *does not*.
   # `pallas_call` takes in a stateful jaxpr, meaning the jaxpr accepts input
