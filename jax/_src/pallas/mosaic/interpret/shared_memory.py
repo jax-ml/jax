@@ -580,11 +580,12 @@ class SharedMemory:
     """Returns tuples (semaphore, global_core_id) for all semaphores with a nonzero count for the core with `global_core_id`."""
     result = []
     with self.lock:
-      for _, sem in self.sem.items() | self.fixed_id_sem.items():
-        with sem.cv:
-          for gci in self.get_global_core_ids(device_id):
-            if sem.count_by_core[gci] != 0:
-              result.append((sem, gci))
+      sems = self.sem.items() | self.fixed_id_sem.items()
+    for _, sem in sems:
+      with sem.cv:
+        for gci in self.get_global_core_ids(device_id):
+          if sem.count_by_core[gci] != 0:
+            result.append((sem, gci))
     return result
 
   def get_next_buffer_id(self, device_id: int, local_core_id: int) -> int:
