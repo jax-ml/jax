@@ -3788,6 +3788,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertEmpty(jaxpr.consts)
       self.assertIs(const, inner_pjit_jaxpr.consts[0])
 
+    def test_typed_ndarray_closed_over_constant_lowering(self):
+      if not config.use_simplified_jaxpr_constants.value:
+        self.skipTest('Requires use_simplified_jaxpr_constants=True')
+
+        const = literals.TypedNdArray(
+        np.array([2]), weak_type=False)
+    @jax.jit
+    def f():
+      return jnp.sum(const)
+
+    traced = f.trace()
+    traced.lower()
+    
   def test_lowering_cache_hit_with_closed_over_constants_jit(self):
     np_inp = np.arange(8)
     arr = jnp.arange(8)

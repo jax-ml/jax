@@ -1064,8 +1064,14 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
     # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
     # not allow None as the sharding.
-    arg_s, committed = ((arg.sharding, arg.committed) if arg.sharding is not None
-                        else (UNSPECIFIED, False))
+    if not hasattr(arg, 'sharding'):
+      arg_s, committed = UNSPECIFIED, False
+    else:
+      arg_s, committed = (
+          (arg.sharding, arg.committed)
+          if arg.sharding is not None
+          else (UNSPECIFIED, False))
+      
     if isinstance(arg_s, NamedSharding) and arg_s.mesh.empty:
       arg_s, committed = UNSPECIFIED, False
     if isinstance(pjit_in_s, UnspecifiedValue):
