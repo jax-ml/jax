@@ -479,8 +479,22 @@ cc_library(
         ":cudnn_rnn_kernels",
         ":cusolver_kernels_ffi",
         ":cusparse_kernels",
-        ":triton_kernels",
+        ":triton_support",
         "//jaxlib/mosaic/gpu:mosaic_gpu_support",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "triton_support",
+    srcs = ["//jaxlib/gpu:triton_support.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cuda_vendor",
+        ":triton_kernels",
+        "//jaxlib:kernel_helpers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_target_registry",
