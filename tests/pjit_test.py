@@ -3788,12 +3788,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertEmpty(jaxpr.consts)
       self.assertIs(const, inner_pjit_jaxpr.consts[0])
 
-    def test_typed_ndarray_closed_over_constant_lowering(self):
-      if not config.use_simplified_jaxpr_constants.value:
-        self.skipTest('Requires use_simplified_jaxpr_constants=True')
+  def test_typed_ndarray_closed_over_constant_lowering(self):
+    if not config.use_simplified_jaxpr_constants.value:
+      self.skipTest('Requires use_simplified_jaxpr_constants=True')
 
-        const = literals.TypedNdArray(
+    const = literals.TypedNdArray(
         np.array([2]), weak_type=False)
+
     @jax.jit
     def f():
       return jnp.sum(const)
