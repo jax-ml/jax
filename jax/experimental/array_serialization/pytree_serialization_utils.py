@@ -23,9 +23,8 @@ from types import ModuleType
 from concurrent.futures import Future
 from typing import Any, TypeVar
 
-import jax
 from jax._src.export.serialization import (flatbuffers, _serialize_pytreedef,
-                                           _deserialize_pytreedef_to_pytree,
+                                           _deserialize_pytreedef,
                                            ser_flatbuf)
 from jax.export import register_pytree_node_serialization
 
@@ -80,5 +79,5 @@ def serialize_pytreedef(node) -> dict[str, Any]:
 def deserialize_pytreedef(pytreedef_repr: dict[str, Any]):
   buf = base64.b64decode(pytreedef_repr[_TREE_REPR_KEY])
   exp = ser_flatbuf.PyTreeDef.GetRootAs(buf)
-  treestruct = jax.tree.structure(_deserialize_pytreedef_to_pytree(exp))
+  treestruct = _deserialize_pytreedef(exp)
   return treestruct

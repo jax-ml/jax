@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 import dataclasses
 import itertools
 from functools import partial
@@ -295,12 +295,6 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
                                                    unique_named_shardings)
 
   fun_name = exp.FunctionName().decode("utf-8")
-  _, in_tree = tree_util.tracing_registry.flatten(
-      _deserialize_pytreedef_to_pytree(exp.InTree())
-  )
-  _, out_tree = tree_util.tracing_registry.flatten(
-      _deserialize_pytreedef_to_pytree(exp.OutTree())
-  )
 
   # TODO(necula): remove the fallback to NrDevicesShort and mark
   # the field "deprecated" once we abandon the old
@@ -393,6 +387,9 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
     in_shardings = (None,) * len(in_shardings)
     out_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], out_shardings)
     out_shardings = (None,) * len(out_shardings)
+
+  in_tree = _deserialize_pytreedef(exp.InTree(), in_avals)
+  out_tree = _deserialize_pytreedef(exp.OutTree(), out_avals)
 
   platforms = tuple(
       exp.Platforms(i).decode("utf-8")
@@ -512,17 +509,40 @@ def _serialize_pytreedef(
   return ser_flatbuf.PyTreeDefEnd(builder)
 
 
-def _deserialize_pytreedef_to_pytree(p: ser_flatbuf.PyTreeDef):
+def _deserialize_pytreedef(
+    p: ser_flatbuf.PyTreeDef,
+    py_tree_leaves: Sequence[Any] | None = None,
+) -> tree_util.PyTreeDef:
   # We construct a PyTree and later we'll flatten it to get the PyTreeDef.
-  # TODO: is there a more direct way to construct a PyTreeDef?
+  # In some cases the placeholder can cause issues when building the PyTree
+  # (e.g. if some custom objects in the tree expect array-like leaves with
+  # specific dims). To support these cases we allow passing the actual leaves.
+  # TODO: is there a more direct way to construct a PyTreeDef without having to
+  # construct the PyTree? (which would avoid the need for leaves).
+  if py_tree_leaves is not None:
+    leaf_iterator = iter(py_tree_leaves)
+  else:
+    # 0.0 placeholder if no leaves are provided.
+    leaf_iterator = itertools.repeat(0.0)
+  pytree = _deserialize_pytreedef_to_pytree(p, leaf_iterator)
+  if py_tree_leaves is not None:
+    assert not (list(leaf_iterator))  # Should be exhausted.
+  return tree_util.tree_structure(pytree)
+
+
+def _deserialize_pytreedef_to_pytree(
+    p: ser_flatbuf.PyTreeDef,
+    leaf_iterator: Iterator[Any],
+) -> tree_util.PyTree:
+  """Deserializes a PyTreeDef into a PyTree using an iterator over leaves."""
   kind = p.Kind()
   nr_children = p.ChildrenLength()
   children = [
-      _deserialize_pytreedef_to_pytree(p.Children(i))
+      _deserialize_pytreedef_to_pytree(p.Children(i), leaf_iterator)
       for i in range(nr_children)
   ]
   if kind == ser_flatbuf.PyTreeDefKind.leaf:
-    return 0.0
+    return next(leaf_iterator)
   elif kind == ser_flatbuf.PyTreeDefKind.none:
     return None
   elif kind == ser_flatbuf.PyTreeDefKind.tuple:
