@@ -1,0 +1,23 @@
+name: CI - Wheel Tests (Nightly/Release)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-runner:
+    runs-on: linux-x86-64-8gpu-amd
+
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+        rocm-version: ["7.2.0"]
+
+    steps:
+      - name: Test runner label
+        run: |
+          echo "python=${{ matrix.python-version }}"
+          echo "rocm=${{ matrix.rocm-version }}"
