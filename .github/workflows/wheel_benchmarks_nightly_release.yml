@@ -1,4 +1,4 @@
-name: CI - Wheel Tests (Nightly/Release)
+name: CI - Wheel Benchmarks (Nightly/Release)
 
 on:
   workflow_dispatch:
