@@ -1711,6 +1711,13 @@ numpy_rank_promotion = enum_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
+auto_pvary = bool_state(
+    name='jax_auto_pvary',
+    default=True,  # TODO(yashkatariya): False
+    help=('If True, automatically insert `pvary` to match VMAs on simple ops.'),
+    include_in_jit_key=True,
+    include_in_trace_context=True)
+
 default_matmul_precision = optional_enum_state(
     name='jax_default_matmul_precision',
     enum_values=[

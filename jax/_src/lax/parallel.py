@@ -1640,9 +1640,8 @@ batching.fancy_primitive_batchers[ragged_all_to_all_p] = _ragged_all_to_all_batc
 
 
 def insert_collective_pvary(axis_name, x):
-  if not config._check_vma.value:
+  if not config.auto_pvary.value or not config._check_vma.value:
     return x
-
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   aval = core.typeof(x)
   names_union = set(axis_name) | aval.mat.varying
@@ -1946,7 +1945,7 @@ def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
   axes_ = frozenset(axis_name)
   def bind(leaf):
     in_vma = core.typeof(leaf).mat.varying
-    if vary_names := axes_ - in_vma:
+    if config.auto_pvary.value and (vary_names := axes_ - in_vma):
       leaf = pvary(leaf, tuple(vary_names))
     return all_gather_invariant_p.bind(
         leaf,
@@ -2359,12 +2358,10 @@ batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
 def bind_psum_invariant(leaf, *, axes, axis_index_groups, is_async):
   if axis_index_groups is not None:
     raise NotImplementedError
-  axes_ = frozenset(axes)
-  in_vma = core.typeof(leaf).mat.varying
-  arg = (pvary(leaf, tuple(pbroadcast_names))
-         if (pbroadcast_names := axes_ - in_vma) else leaf)
+  if config.auto_pvary.value and (names := set(axes) - core.typeof(leaf).mat.varying):
+    leaf = pvary(leaf, tuple(names))
   prim = psum_invariant_start_p if is_async else psum_invariant_p
-  return prim.bind(arg, axes=axes)
+  return prim.bind(leaf, axes=axes)
 
 psum_invariant_p = core.Primitive('psum_invariant')
 

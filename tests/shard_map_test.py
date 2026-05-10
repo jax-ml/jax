@@ -5318,6 +5318,20 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f(arr1, arr2)  # doesn't crash
 
+  @parameterized.parameters(True, False)
+  @jtu.with_explicit_mesh((2,), 'i')
+  def test_no_auto_pvary_config(self, jit, mesh):
+    @jax.smap(in_axes=(0, None), out_axes=0, axis_name='i')
+    def f(x, y):
+      return x * y
+    if jit:
+      f = jax.jit(f)
+    x = jax.device_put(jnp.zeros((2, 2)), jax.P('i', None))
+    y = jax.device_put(jnp.zeros((2, 2)), jax.P())
+    with self.assertRaisesRegex(ValueError, 'requires varying manual axes to match'):
+      with config.auto_pvary(False):
+        f(x, y)
+
 
 class FunSpec(NamedTuple):
   name: str

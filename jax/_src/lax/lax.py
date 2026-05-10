@@ -3754,20 +3754,21 @@ def full_like(x: ArrayLike | DuckTypedArray,
       sharding = x.sharding  # pyrefly: ignore[missing-attribute]
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
-  val, _ = full_like_insert_pvary(val, x)
+  val = _full_like_insert_pvary(val, x)
   return val
 
-
-def full_like_insert_pvary(val, x):
+def _full_like_insert_pvary(val, x):
+  if not config.auto_pvary.value:
+    return val
   from jax._src.state.types import TransformedRef  # pyrefly: ignore[missing-import]
   if isinstance(x, TransformedRef):
     all_varying = frozenset.union(*[
-        typeof(x).mat.varying for x in tree_util.FlatTree.flatten(x).vals
+        typeof(l).mat.varying for l in tree_util.FlatTree.flatten(x).vals
     ])
-    return core.pvary(val, all_varying), x
+    return core.pvary(val, all_varying)
   else:
-    return core.standard_insert_pvary(val, x)
-
+    val, _ = core.standard_insert_pvary(val, x)
+    return val
 
 def collapse(operand: Array, start_dimension: int,
              stop_dimension: int | None = None) -> Array:
