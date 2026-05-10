@@ -66,6 +66,11 @@ Serialization is broken down into two stages:
      an alternative serialization to TensorFlow graph that can be used
      for interoperation with TensorFlow.
 
+:::{warning}
+The serialized bytearray must be trusted input. If you deserialized it, when
+you execute it, it may execute any custom call registered in the jaxlib.
+:::
+
 ## Support for reverse-mode AD
 
 Serialization can optionally support higher-order reverse-mode AD. This is done

@@ -141,7 +141,11 @@ def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
 
 
 def deserialize(ser: bytearray) -> _export.Exported:
-  """Deserializes an Exported."""
+  """Deserializes an Exported.
+
+  The serialized bytearray must be trusted input. If you deserialized it, when
+  you execute it, it may execute any custom call registered in the jaxlib.
+  """
   exp = ser_flatbuf.Exported.GetRootAsExported(ser)
   return _deserialize_exported(exp)
 
