@@ -100,21 +100,60 @@ class PallasSCTest(jtu.JaxTestCase):
   def sc_info(self):
     return plsc.get_sparse_core_info()
 
-  def vector_subcore_kernel(self, *, compiler_params=None, **kwargs):
-    if compiler_params is None:
-      compiler_params = pltpu.CompilerParams()
-    return functools.partial(
-        pl.pallas_call,
-        **kwargs,
-        compiler_params=compiler_params.replace(
-            kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
-            use_tc_tiling_on_sc=self.USE_TC_TILING,
-        ),
+  def vector_subcore_kernel(
+      self,
+      *,
+      out_shape,
+      scratch_shapes=(),
+      grid=None,
+      in_specs=None,
+      out_specs=None,
+      compiler_params=pltpu.CompilerParams(),
+  ):
+    if compiler_params.dimension_semantics is not None:
+      raise NotImplementedError(
+          "pltpu.CompilerParams(dimension_semantics=) is not supported. Use"
+          " pl.kernel and pltpu.emit_pipeline directly instead."
+      )
+    compiler_params = compiler_params.replace(
+        use_tc_tiling_on_sc=self.USE_TC_TILING,
+    )
+    mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=1,
     )
 
-  def kernel(self, compiler_params=None, **kwargs):
-    if compiler_params is None:
-      compiler_params = pltpu.CompilerParams()
+    def decorator(fn):
+      @pl.kernel(
+          out_type=out_shape,
+          mesh=mesh,
+          scratch_types=dict(scratch_args=scratch_shapes),
+          compiler_params=compiler_params,
+      )
+      def wrapper(*args_hbm, scratch_args):
+        @functools.partial(
+            pltpu.emit_pipeline,
+            grid=(1,) if grid is None else grid,
+            in_specs=[pl.BlockSpec()] * (
+                len(args_hbm) - len(jax.tree.leaves(out_shape))
+            )
+            if in_specs is None
+            else in_specs,
+            out_specs=jax.tree.map(lambda _: pl.BlockSpec(), out_shape)
+            if out_specs is None
+            else out_specs,
+        )
+        def pipeline(*args):
+          fn(*args, *scratch_args)
+
+        pipeline(*args_hbm)
+
+      return wrapper
+
+    return decorator
+
+  def kernel(self, compiler_params=pltpu.CompilerParams(), **kwargs):
     return functools.partial(
         pl.kernel,
         compiler_params=compiler_params.replace(
@@ -1758,7 +1797,7 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(output, expected.reshape(-1))
 
   @parameterized.parameters(
-      (lambda x_ref: x_ref, r"may not be.*Ref<default>\{"),
+      (lambda x_ref: x_ref, r"may not be.*Ref<\w+>\{"),
       (lambda x_ref: x_ref.at[pl.ds(0, 8)], r"TransformedRefs are not allowed"),
   )
   def test_parallel_loop_disallows_ref_carries(self, carry_fn, expected_regex):
