@@ -4917,6 +4917,43 @@ class MiscellaneousInterpretTest(MiscellaneousTest):
     np.testing.assert_array_equal(result, np.ones((1,), dtype=jnp.float32))
 
 
+class EmitPipelineTest(ptu.PallasTPUTest):
+
+  @parameterized.product(
+    tile_major=(1, 2, 4, 8,),
+    dtype=[jnp.int32, jnp.int16, jnp.int8]
+  )
+  def test_emit_pipeline_small_window(self, tile_major, dtype):
+    if not jtu.is_cloud_tpu_at_least(2026, 5, 16):
+      self.skipTest("Needs a newer libTPU")
+    tile_major *= 32 // jnp.iinfo(dtype).bits
+
+    def kernel(x_ref, y_ref, o_ref):
+      def body(x_vmem, y_vmem, o_vmem):
+        o_vmem[...] = (x_vmem[...].astype(jnp.int32) + y_vmem[...].astype(jnp.int32)).astype(dtype)
+
+      pltpu.emit_pipeline(
+          body,
+          grid=(128 // tile_major, 2),
+          in_specs=(
+              pl.BlockSpec((tile_major, 128), lambda i, j: (i, j)),
+              pl.BlockSpec((tile_major, 128), lambda i, j: (i, j)),
+          ),
+          out_specs=pl.BlockSpec((tile_major, 128), lambda i, j: (i, j)),
+      )(x_ref, y_ref, o_ref)
+
+    x = jax.random.randint(jax.random.key(1234), (128, 256,), -40, 40, dtype=dtype)
+    y = jax.random.randint(jax.random.key(2345), (128, 256,), -40, 40, dtype=dtype)
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((128, 256), dtype),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)] * 2,
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+    )(x, y)
+
+    np.testing.assert_array_equal(out, x + y)
+
+
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
