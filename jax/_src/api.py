@@ -1701,7 +1701,7 @@ def _vjp(fun, *primals, has_aux=False):
     assert aux_tree is not None
     return out_primals, f_vjp, tree_unflatten(aux_tree, aux)
 
-def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
+def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, log, in_tree, out_tree,
                    args_res, opaque_res, *maybe_ct_refs):
   if not maybe_ct_refs:
     maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
@@ -1715,17 +1715,17 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                   ad.RefAccum(v.aval, x) if _is_ref(x) else ad.NullAccum(v.aval)
                   if isinstance(x, DontWant) else ad.ValAccum(v.aval)
                   for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
-  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
+  return Partial(partial(_vjp3_bwd, log, in_tree, out_tree, out_known, jaxpr,
                          out_primal_avals), residuals, maybe_accums)
 
-def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
+def _vjp3_bwd(log, in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
               maybe_accums, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct)
   if out_tree != out_tree_:
     _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
-  ad.backward_pass3(jaxpr, True, residuals, maybe_accums, cts_flat)
+  ad.backward_pass3(jaxpr, log, True, residuals, maybe_accums, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else
              DidntWant() if isinstance(x, ad.NullAccum) else GradRef()
              for x in maybe_accums]
@@ -1832,16 +1832,17 @@ class VJP:
   args_res: list[Any]
   opaque_residuals: list[Any]
   jaxpr = property(lambda self: self.fun.args[2])
+  log : Any = None  # log for bwd pass
 
   def __call__(self, out_ct, *extra_args):
     if extra_args:
       name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
       raise TypeError(_vjp_too_many_args(name, len(extra_args) + 1))
-    return self.fun(self.in_tree, self.out_tree, self.args_res,
+    return self.fun(self.log, self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals)(out_ct)
 
   def with_refs(self, *maybe_ct_refs):
-    return self.fun(self.in_tree, self.out_tree, self.args_res,
+    return self.fun(self.log, self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals, *maybe_ct_refs)
 
   # Only safe to put these in cache keys if residuals aren't mutated. Beware!

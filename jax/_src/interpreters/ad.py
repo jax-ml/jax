@@ -379,7 +379,7 @@ def get_primitive_transpose(p):
 
 
 def backward_pass3(
-    jaxpr: core.Jaxpr, transform_stack: bool,
+    jaxpr: core.Jaxpr, log, transform_stack: bool,
     consts: Sequence[Array], primals_in: Sequence[Array | Ref | GradAccum],
     cotangents_in: Sequence[Array]) -> None:
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
@@ -438,7 +438,7 @@ def backward_pass3(
             cts_in, = cts_in
           if eqn.primitive in fancy_transposes:
             rule = fancy_transposes[eqn.primitive]
-            rule(cts_in, *map(read, eqn.invars), **eqn.params)
+            rule(log, cts_in, *map(read, eqn.invars), **eqn.params)
           else:
             rule = get_primitive_transpose(eqn.primitive)
             primals = map(read, eqn.invars)
@@ -1159,7 +1159,7 @@ def defbilinear(prim, lhs_rule, rhs_rule):
   # TODO(mattjj,yashkatariya): remove next line if downstream doesnt need it
   primitive_transposes[prim] = partial(bilinear_transpose, lhs_rule, rhs_rule)
 
-def fancy_bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
+def fancy_bilinear_transpose(lhs_rule, rhs_rule, _, cotangent, x, y, **kwargs):
   assert isinstance(x, GradAccum) ^ isinstance(y, GradAccum), (x, y)
   if isinstance(x, GradAccum):
     if type(cotangent) is not Zero and not isinstance(x, NullAccum):

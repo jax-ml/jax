@@ -23,6 +23,7 @@ from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_map, safe_zip
+from jax.experimental.hijax import VJPHiPrimitive
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -60,6 +61,35 @@ class WriterTest(jtu.JaxTestCase):
     assert l.read() == [1]
     f(l, 2)
     assert l.read() == [1, 2]
+
+  def test_bwd_writing(self):
+    def f(x):
+      y = x * x
+      y = save_cotangent(y)
+      return y
+
+    _, f_vjp = jax.vjp(f, 1.0)
+    log = Log()
+    f_vjp.log = log
+    f_vjp(2.0)
+    assert log.read() == [2.0]
+
+
+class SaveCotangent(VJPHiPrimitive):
+  def __init__(self, in_aval):
+    self.in_avals = (in_aval,)
+    self.out_aval = in_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x): return x
+  def vjp_fwd(self, _, x): return x, ()
+  def vjp_bwd(self, log, _, ct, x_accum):
+    log.append(ct)
+    x_accum.accum(ct)
+
+def save_cotangent(x):
+  return SaveCotangent(core.typeof(x))(x)
 
 # TODO: generalize to other monoids (e.g. dict of lists)
 class Log:
