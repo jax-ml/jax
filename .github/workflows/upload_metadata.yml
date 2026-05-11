@@ -62,7 +62,14 @@ jobs:
           # Download logs
           curl -f -s -L -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/$REPO/actions/runs/$WORKFLOW_RUN_ID/logs" > logs.zip
-          unzip logs.zip -d logs
+
+          # Check if zip file is empty before unzipping
+          if [ -s logs.zip ]; then
+            unzip logs.zip -d logs
+          else
+            echo "Warning: logs.zip is empty or not found. Creating empty logs directory."
+            mkdir logs
+          fi
 
           # Path sanitization
           SAFE_NAME="${WORKFLOW_RUN_NAME//\//-}"
