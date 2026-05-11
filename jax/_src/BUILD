@@ -1279,6 +1279,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":partial_eval",
+        ":partition_spec",
         ":remat",
         ":state_types",
         ":traceback_util",

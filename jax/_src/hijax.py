@@ -33,6 +33,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
+from jax._src.partition_spec import PartitionSpec
 from jax._src.custom_derivatives import (
     CustomVJPPrimal, _temporary_dtype_exception, _check_for_returned_refs)
 from jax._src.errors import UnexpectedTracerError
@@ -905,7 +906,7 @@ class Static:
 
 class MappingSpec: pass
 class HiPspec:
-  def to_lo(self) -> HiPspec: assert False, "must override"
+  def to_lo(self) -> tuple[PartitionSpec, ...]: assert False, "must override"
   def to_tangent_spec(self) -> HiPspec: assert False, "must override"
   def to_ct_spec(self) -> HiPspec: assert False, "must override"
 
