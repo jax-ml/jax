@@ -315,7 +315,10 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
         e, *_ = prefix_errors(out_specs, ans)
         raise e('shard_map out_specs') from None
       def add_implicit_pvary_and_unreduced(val, spec):
-        if not isinstance(spec, P): return val
+        if not config.auto_pcast.value:
+          return val
+        if not isinstance(spec, P):
+          return val
         aval = typeof(val)
         val = pvary(val, tuple(_spec_to_vma(spec) - aval.mat.varying))
         return (lax_parallel.vary_unreduced_cast(val, tuple(unreduced))

@@ -98,7 +98,7 @@ def _reduce_window(
       raise ValueError(
         'reduce_window output must have the same tree structure as the operands'
         f' {operand_tree} vs. {out_tree}')
-    flat_operands = core.standard_insert_pvary(*flat_operands)
+    flat_operands = core.auto_insert_reshard(*flat_operands)
     out_flat = reduce_window_p.bind(
         *flat_operands,
         *flat_init_values,
@@ -289,7 +289,7 @@ def _select_and_scatter(operand: Array, select: Callable,
     select, core.typeof(init_value))
   scatter_jaxpr, scatter_consts = lax._reduction_jaxpr(
     scatter, core.typeof(init_value))
-  operand, source, init_value = core.standard_insert_pvary(
+  operand, source, init_value = core.auto_insert_reshard(
       operand, source, init_value)
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
@@ -302,7 +302,7 @@ def _select_and_scatter_add(source: Array, operand: Array,
                             window_dimensions: core.Shape,
                             window_strides: Sequence[int],
                             padding: Sequence[tuple[int, int]]) -> Array:
-  source, operand = core.standard_insert_pvary(source, operand)
+  source, operand = core.auto_insert_reshard(source, operand)
   return select_and_scatter_add_p.bind(
       source, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -338,7 +338,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
     An array containing the elements in `tangents` corresponding to the output
     of the reduction of `operand` fin each window.
   """
-  tangents, operand = core.standard_insert_pvary(tangents, operand)
+  tangents, operand = core.auto_insert_reshard(tangents, operand)
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),

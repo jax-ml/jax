@@ -415,7 +415,7 @@ def searchsorted(
   Returns:
     An array specifying the insertion locations of `query` into `sorted_arr`.
   """
-  sorted_arr, query = core.standard_insert_pvary(sorted_arr, query)
+  sorted_arr, query = core.auto_insert_reshard(sorted_arr, query)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
   prim = SearchSorted(
     core.typeof(sorted_arr),
@@ -442,7 +442,7 @@ def searchsorted_via_expand(
     dtype: DTypeLike = "int32",
 ):
   """Compute searchsorted() without binding the hijax primitive."""
-  sorted_arr, query = core.standard_insert_pvary(sorted_arr, query)
+  sorted_arr, query = core.auto_insert_reshard(sorted_arr, query)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
   prim = SearchSorted(
     core.typeof(sorted_arr),
@@ -479,7 +479,7 @@ def nonzero(
   Returns:
     Tuple of length ``len(axes)`` containing the indices of each nonzero value.
   """
-  a, = core.standard_insert_pvary(a)
+  a, = core.auto_insert_reshard(a)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "nonzero")
   axes = util.canonicalize_axis_tuple(axes, np.ndim(a))
   prim = Nonzero(

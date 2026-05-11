@@ -3339,7 +3339,7 @@ def clone(key):
 
 
 def random_insert_pvary(name, key, *args):
-  if not config._check_vma.value:
+  if not config._check_vma.value or not config.auto_pcast.value:
     return key, args
   if not args:
     return key, args

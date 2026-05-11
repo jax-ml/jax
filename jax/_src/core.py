@@ -2679,12 +2679,12 @@ def insert_reduced_reshard(args):
       out.append(arg)
   return out
 
-def standard_insert_pvary(*args):
+def auto_insert_reshard(*args):
   if not args:
     return args
   if not config._check_vma.value:
     return insert_reduced_reshard(args)
-  if not config.auto_pvary.value:
+  if not config.auto_pcast.value:
     return args
   in_vma = [aval.mat.varying if isinstance(aval := typeof(a), ShapedArray)
             else frozenset() for a in args]

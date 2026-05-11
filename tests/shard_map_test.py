@@ -5320,7 +5320,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @parameterized.parameters(True, False)
   @jtu.with_explicit_mesh((2,), 'i')
-  def test_no_auto_pvary_config(self, jit, mesh):
+  def test_no_auto_pcast_config(self, jit, mesh):
     @jax.smap(in_axes=(0, None), out_axes=0, axis_name='i')
     def f(x, y):
       return x * y
@@ -5329,7 +5329,7 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jax.device_put(jnp.zeros((2, 2)), jax.P('i', None))
     y = jax.device_put(jnp.zeros((2, 2)), jax.P())
     with self.assertRaisesRegex(ValueError, 'requires varying manual axes to match'):
-      with config.auto_pvary(False):
+      with config.auto_pcast(False):
         f(x, y)
 
 

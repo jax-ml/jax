@@ -75,7 +75,8 @@ from jax._src.config import (
   transfer_guard_device_to_host as transfer_guard_device_to_host,
   make_user_context as make_user_context,
   remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
-  thread_guard as thread_guard
+  thread_guard as thread_guard,
+  auto_pcast as auto_pcast,
 )
 
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval

@@ -176,7 +176,7 @@ def conv_general_dilated(
           preferred_element_type, "conv_general_dilated"
       )
   )
-  lhs, rhs = core.standard_insert_pvary(lhs, rhs)
+  lhs, rhs = core.auto_insert_reshard(lhs, rhs)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),

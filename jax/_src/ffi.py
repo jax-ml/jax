@@ -551,7 +551,7 @@ def ffi_call(
               "and an output with a different layout "
               f"{static_output_layouts[o_idx]}.")
         static_input_output_aliases.append((i_idx, o_idx))
-    args = core.standard_insert_pvary(*args)
+    args = core.auto_insert_reshard(*args)
     results = ffi_call_p.bind(
         *args,
         result_avals=result_avals,

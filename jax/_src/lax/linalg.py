@@ -123,7 +123,7 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
     A new upper-triangular matrix :math:`R` defining the Cholesky decomposition
     of :math:`A + w \, w^T`.
   """
-  r_matrix, w_vector = core.standard_insert_pvary(r_matrix, w_vector)
+  r_matrix, w_vector = core.auto_insert_reshard(r_matrix, w_vector)
   return cholesky_update_p.bind(r_matrix, w_vector)
 
 
@@ -323,7 +323,7 @@ def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
     A batch of orthogonal (unitary) matrices with the same shape as ``a``,
     containing the products of the elementary Householder reflectors.
   """
-  a, taus = core.standard_insert_pvary(a, taus)
+  a, taus = core.auto_insert_reshard(a, taus)
   return householder_product_p.bind(a, taus)
 
 
@@ -602,7 +602,7 @@ def symmetric_product(
     ``symmetrize_output`` is ``True``, the upper triangle is filled with the
     transpose of the lower triangle, and the whole matrix is valid.
   """
-  a_matrix, c_matrix = core.standard_insert_pvary(a_matrix, c_matrix)
+  a_matrix, c_matrix = core.auto_insert_reshard(a_matrix, c_matrix)
   result = symmetric_product_p.bind(a_matrix, c_matrix, alpha=alpha, beta=beta)
   if symmetrize_output:
     upper_half = lax.transpose(
@@ -660,7 +660,7 @@ def triangular_solve(
   singleton = np.ndim(b) == np.ndim(a) - 1
   if singleton:
     b = lax.expand_dims(b, (-1 if left_side else -2,))
-  a, b = core.standard_insert_pvary(a, b)
+  a, b = core.auto_insert_reshard(a, b)
   out = triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
@@ -732,7 +732,7 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array, *,
   """
   if perturb_singular and jaxlib_version < (0, 10):
     raise RuntimeError("perturb_singular=True requires jaxlib >= 0.10.0.")
-  dl, d, du, b = core.standard_insert_pvary(dl, d, du, b)
+  dl, d, du, b = core.auto_insert_reshard(dl, d, du, b)
   return tridiagonal_solve_p.bind(
     dl, d, du, b, perturb_singular=perturb_singular)
 
@@ -1518,7 +1518,7 @@ def ormqr(a: ArrayLike, taus: ArrayLike, c: ArrayLike, *,
     - :func:`jax.scipy.linalg.qr_multiply`: Higher-level API for computing
       Q @ C or C @ Q from a matrix ``a`` directly.
   """
-  a, taus, c = core.standard_insert_pvary(a, taus, c)
+  a, taus, c = core.auto_insert_reshard(a, taus, c)
   return ormqr_p.bind(a, taus, c, left=left, transpose=transpose)
 
 
@@ -1911,7 +1911,7 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
   if m == 0 or k == 0:
     return permutation
   upper = np.array(k, np.int32) if is_constant_dim(k) else k
-  permutation, swaps = core.standard_insert_pvary(permutation, swaps)
+  permutation, swaps = core.auto_insert_reshard(permutation, swaps)
   result, _ = control_flow.fori_loop(np.array(0, np.int32), upper,
                                      _lu_pivots_body_fn, (permutation, swaps))
   return result
@@ -2026,7 +2026,7 @@ def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
     elementary Householder reflectors, and ``jpvt`` is the column-pivot indices
     such that ``a[:, jpvt] = q @ r``.
   """
-  a, jpvt = core.standard_insert_pvary(a, jpvt)
+  a, jpvt = core.auto_insert_reshard(a, jpvt)
   a_out, jpvt_out, taus = geqp3_p.bind(a, jpvt, use_magma=use_magma)
   return a_out, jpvt_out, taus
 

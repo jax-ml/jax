@@ -334,7 +334,7 @@ def nextafter(x1: ArrayLike, x2: ArrayLike) -> Array:
 
     For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
   """
-  x1, x2 = core.standard_insert_pvary(x1, x2)
+  x1, x2 = core.auto_insert_reshard(x1, x2)
   return nextafter_p.bind(x1, x2)
 
 @export
@@ -745,7 +745,7 @@ def atan2(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.atan2: https://openxla.org/stablehlo/spec#atan2
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return atan2_p.bind(x, y)
 
 @export
@@ -815,7 +815,7 @@ def complex(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.complex: https://openxla.org/stablehlo/spec#complex
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return complex_p.bind(x, y)
 
 @export
@@ -887,7 +887,7 @@ def pow(x: ArrayLike, y: ArrayLike) -> Array:
   .. _stablehlo.convert: https://openxla.org/stablehlo/spec#convert
   .. _stablehlo.pow: https://openxla.org/stablehlo/spec#pow
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return pow_p.bind(x, y)
 
 @export
@@ -1042,7 +1042,7 @@ def bitwise_and(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.and: https://openxla.org/stablehlo/spec#and
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return and_p.bind(x, y)
 
 @export
@@ -1069,7 +1069,7 @@ def bitwise_or(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.or: https://openxla.org/stablehlo/spec#or
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return or_p.bind(x, y)
 
 @export
@@ -1096,7 +1096,7 @@ def bitwise_xor(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.xor: https://openxla.org/stablehlo/spec#xor
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return xor_p.bind(x, y)
 
 @export
@@ -1161,7 +1161,7 @@ def add(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.add: https://openxla.org/stablehlo/spec#add
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return add_p.bind(x, y)
 
 @export
@@ -1185,7 +1185,7 @@ def sub(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.subtract: https://openxla.org/stablehlo/spec#subtract
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return sub_p.bind(x, y)
 
 @export
@@ -1215,7 +1215,7 @@ def mul(x: ArrayLike, y: ArrayLike, *, out_dtype: DTypeLike | None = None
 
   .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return mul_p.bind(x, y, out_dtype=out_dtype)
 
 @export
@@ -1245,7 +1245,7 @@ def div(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.divide: https://openxla.org/stablehlo/spec#divide
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return div_p.bind(x, y)
 
 @export
@@ -1273,7 +1273,7 @@ def rem(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.remainder: https://openxla.org/stablehlo/spec#remainder
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return rem_p.bind(x, y)
 
 @export
@@ -1299,7 +1299,7 @@ def max(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.maximum: https://openxla.org/stablehlo/spec#maximum
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return max_p.bind(x, y)
 
 @export
@@ -1325,7 +1325,7 @@ def min(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.minimum: https://openxla.org/stablehlo/spec#minimum
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return min_p.bind(x, y)
 
 @export
@@ -1351,7 +1351,7 @@ def shift_left(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.shift_left: https://openxla.org/stablehlo/spec#shift_left
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return shift_left_p.bind(x, y)
 
 @export
@@ -1378,7 +1378,7 @@ def shift_right_arithmetic(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.shift_right_arithmetic: https://openxla.org/stablehlo/spec#shift_right_arithmetic
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return shift_right_arithmetic_p.bind(x, y)
 
 @export
@@ -1405,7 +1405,7 @@ def shift_right_logical(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.shift_right_logical: https://openxla.org/stablehlo/spec#shift_right_logical
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return shift_right_logical_p.bind(x, y)
 
 @export
@@ -1436,7 +1436,7 @@ def eq(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return eq_p.bind(x, y)
 
 @export
@@ -1467,7 +1467,7 @@ def ne(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return ne_p.bind(x, y)
 
 @export
@@ -1498,7 +1498,7 @@ def ge(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return ge_p.bind(x, y)
 
 @export
@@ -1529,7 +1529,7 @@ def gt(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return gt_p.bind(x, y)
 
 @export
@@ -1560,7 +1560,7 @@ def le(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return le_p.bind(x, y)
 
 @export
@@ -1591,7 +1591,7 @@ def lt(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
   """
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return lt_p.bind(x, y)
 
 @export
@@ -1779,7 +1779,7 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
   x & \text{otherwise}
   \end{cases}`.
   """
-  min, x, max = core.standard_insert_pvary(min, x, max)
+  min, x, max = core.auto_insert_reshard(min, x, max)
   return clamp_p.bind(min, x, max)
 
 
@@ -1893,7 +1893,7 @@ def composite(
           HashableArray(v) if isinstance(v, np.ndarray) else v for v in leaves
       )
       attributes.append((k, leaves, treedef))
-    flat_consts_and_args = core.standard_insert_pvary(*consts, *flat_args)
+    flat_consts_and_args = core.auto_insert_reshard(*consts, *flat_args)
     out_flat = composite_p.bind(
         *flat_consts_and_args,
         name=name,
@@ -2019,7 +2019,7 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
     op, = operands
     if isinstance(op, Array):
       return op
-  operands = core.standard_insert_pvary(*operands)
+  operands = core.auto_insert_reshard(*operands)
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
@@ -2532,7 +2532,7 @@ def dot(lhs: ArrayLike, rhs: ArrayLike, *,
   preferred_element_type = (
       None if preferred_element_type is None else
       dtypes.check_and_canonicalize_user_dtype(preferred_element_type, 'dot'))
-  lhs, rhs = core.standard_insert_pvary(lhs, rhs)
+  lhs, rhs = core.auto_insert_reshard(lhs, rhs)
   return dot_general_p.bind(lhs, rhs,
                             dimension_numbers=(cdims, bdims),
                             precision=canonicalize_precision(precision),
@@ -2673,7 +2673,7 @@ def ragged_dot_general(
     extra leading dimension of size `g` in the case where the lhs ragged
     dimension is a contracting dimension.
   """
-  lhs, rhs, group_sizes = core.standard_insert_pvary(lhs, rhs, group_sizes)
+  lhs, rhs, group_sizes = core.auto_insert_reshard(lhs, rhs, group_sizes)
   out_sharding = canonicalize_sharding(out_sharding, 'ragged_dot_general')
   return ragged_dot_general_p.bind(
       lhs,
@@ -3007,7 +3007,7 @@ def pad(operand: ArrayLike, padding_value: ArrayLike,
     >>> lax.pad(x, 0, [(-1, -2, 0)])
     Array([2, 3], dtype=int32)
   """
-  operand, padding_value = core.standard_insert_pvary(operand, padding_value)
+  operand, padding_value = core.auto_insert_reshard(operand, padding_value)
   return pad_p.bind(operand, padding_value, padding_config=tuple(padding_config))
 
 def rev(operand: ArrayLike, dimensions: Sequence[int]) -> Array:
@@ -3040,7 +3040,7 @@ def select(pred: ArrayLike, on_true: ArrayLike, on_false: ArrayLike) -> Array:
   """
   # Caution! The select_n_p primitive has the *opposite* order of arguments to
   # select(). This is because it implements `select_n`.
-  pred, on_false, on_true = core.standard_insert_pvary(
+  pred, on_false, on_true = core.auto_insert_reshard(
       pred, on_false, on_true)
   return select_n_p.bind(pred, on_false, on_true)
 
@@ -3067,7 +3067,7 @@ def select_n(which: ArrayLike, *cases: ArrayLike) -> Array:
   """
   if len(cases) == 0:
     raise ValueError("select_n() must have at least one case")
-  which_pvary, *cases_pvary = core.standard_insert_pvary(which, *cases)
+  which_pvary, *cases_pvary = core.auto_insert_reshard(which, *cases)
   return select_n_p.bind(which_pvary, *cases_pvary)
 
 
@@ -3138,8 +3138,8 @@ def reduce(operands: Any,
     flat_init_avals = safe_map(core.typeof, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, comp_debug, tuple(flat_init_avals), init_value_tree)
-    flat_operands = core.standard_insert_pvary(*flat_operands)
-    flat_init_values = core.standard_insert_pvary(*flat_init_values)
+    flat_operands = core.auto_insert_reshard(*flat_operands)
+    flat_init_values = core.auto_insert_reshard(*flat_init_values)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
                         jaxpr=closed_jaxpr, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
@@ -3442,7 +3442,7 @@ def sort(operand: Array | Sequence[Array], dimension: int = -1,
     if not (1 <= num_keys <= len(operand)):
       raise ValueError(f"{num_keys=} must be between 1 and {len(operand)=}")
     dimension = canonicalize_axis(dimension, len(operand[0].shape))
-    operand = core.standard_insert_pvary(*operand)
+    operand = core.auto_insert_reshard(*operand)
     return tuple(sort_p.bind(*operand, dimension=dimension,
                              is_stable=is_stable, num_keys=num_keys))
   else:
@@ -3758,7 +3758,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
   return val
 
 def _full_like_insert_pvary(val, x):
-  if not config.auto_pvary.value:
+  if not config.auto_pcast.value:
     return val
   from jax._src.state.types import TransformedRef  # pyrefly: ignore[missing-import]
   if isinstance(x, TransformedRef):
@@ -3767,7 +3767,7 @@ def _full_like_insert_pvary(val, x):
     ])
     return core.pvary(val, all_varying)
   else:
-    val, _ = core.standard_insert_pvary(val, x)
+    val, _ = core.auto_insert_reshard(val, x)
     return val
 
 def collapse(operand: Array, start_dimension: int,
@@ -8349,7 +8349,7 @@ def _sort_lt_comparator(*operands, num_keys=1):
   x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
   p: Array | None = None
   for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
-    xk, yk = core.standard_insert_pvary(xk, yk)
+    xk, yk = core.auto_insert_reshard(xk, yk)
     p = (bitwise_or(lt_to_p.bind(xk, yk), bitwise_and(eq_to_p.bind(xk, yk), p)) if p is not None
          else lt_to_p.bind(xk, yk))
   return p
@@ -8360,7 +8360,7 @@ def _sort_le_comparator(*operands, num_keys=1):
   x_keys, y_keys = _operands_to_keys(*operands, num_keys=num_keys)
   p: Array | None = None
   for xk, yk in zip(x_keys[::-1], y_keys[::-1]):
-    xk, yk = core.standard_insert_pvary(xk, yk)
+    xk, yk = core.auto_insert_reshard(xk, yk)
     p = (bitwise_or(lt_to_p.bind(xk, yk), bitwise_and(eq_to_p.bind(xk, yk), p)) if p is not None
          else le_to_p.bind(xk, yk))
   return p
@@ -8603,7 +8603,7 @@ def after_all(*operands):
   """Merges one or more XLA token values. Experimental.
 
   Wraps the XLA after all operator."""
-  operands = core.standard_insert_pvary(*operands)
+  operands = core.auto_insert_reshard(*operands)
   return after_all_p.bind(*operands)
 
 def _after_all_abstract_eval(*operands):
@@ -8634,7 +8634,7 @@ def rng_uniform(a, b, shape):
 
   This API may be removed at any time.
   """
-  a, b = core.standard_insert_pvary(a, b)
+  a, b = core.auto_insert_reshard(a, b)
   return rng_uniform_p.bind(a, b, shape=tuple(shape))
 
 def _rng_uniform_abstract_eval(a, b, *, shape):
@@ -9339,7 +9339,7 @@ def optimization_barrier(operand, /):
     Array(0., dtype=float32, weak_type=True)
   """
   flat_args, treedef = tree_util.tree_flatten(operand)
-  flat_args = core.standard_insert_pvary(*flat_args)
+  flat_args = core.auto_insert_reshard(*flat_args)
   out = optimization_barrier_p.bind(*flat_args)
   return tree_util.tree_unflatten(treedef, out)
 

@@ -1435,7 +1435,7 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
       " To recover this behavior, use solve(a, b[..., None]).squeeze(-1).")
 
   signature = "(m,m),(m)->(m)" if b.ndim == 1 else "(m,m),(m,n)->(m,n)"
-  a, b = core.standard_insert_pvary(a, b)
+  a, b = core.auto_insert_reshard(a, b)
   return jnp.vectorize(lax_linalg._solve, signature=signature)(a, b)
 
 
