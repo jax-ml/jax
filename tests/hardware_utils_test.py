@@ -59,7 +59,7 @@ class TestGetShmSize(absltest.TestCase):
   def test_dev_shm_exists(self):
     """Should return shm size in MB when /dev/shm exists."""
     with patch("os.path.exists", return_value=True):
-      with patch("os.statvfs") as mock_statvfs:
+      with patch("os.statvfs", create=True) as mock_statvfs:
         mock_stat = Mock()
         mock_stat.f_blocks = 128 * 1024
         mock_stat.f_frsize = 1024
@@ -77,7 +77,7 @@ class TestGetShmSize(absltest.TestCase):
   def test_statvfs_exception(self):
     """Should return 0 on statvfs exception."""
     with patch("os.path.exists", return_value=True):
-      with patch("os.statvfs", side_effect=OSError("Error")):
+      with patch("os.statvfs", side_effect=OSError("Error"), create=True):
         size = get_shm_size_impl()
         self.assertEqual(size, 0)
 
