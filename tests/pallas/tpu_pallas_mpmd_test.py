@@ -719,6 +719,34 @@ class MpmdTest(PallasSCTest):
       with jax.sharding.set_mesh(device_mesh):
         test_mpmd_map()
 
+  def test_mpmd_map_semaphore_mesh_enforcement(self):
+    v_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="s_core", subcore_axis_name="subcore", num_cores=1,
+        num_subcores=1)
+    s_mesh = plsc.ScalarSubcoreMesh(axis_name="s_core", num_cores=1)
+
+    dummy_fn = lambda *_: None
+
+    # Case 1: MPMD with 1 mesh and semaphore WITHOUT mesh should PASS
+    pl.kernel(
+        body=[dummy_fn],
+        mesh=[v_mesh],
+        out_type=jax.ShapeDtypeStruct([self.num_lanes], jnp.int32),
+        scratch_types=[pltpu.SemaphoreType.REGULAR(())],
+    )()
+
+    # Case 2: MPMD with 2 meshes and semaphore WITHOUT mesh should FAIL
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        r"MPMD map with more than one mesh requires scratch_type to have",
+    ):
+      pl.kernel(
+          body=[dummy_fn, dummy_fn],
+          mesh=[v_mesh, s_mesh],
+          out_type=jax.ShapeDtypeStruct([self.num_lanes], jnp.int32),
+          scratch_types=[pltpu.SemaphoreType.REGULAR(())],
+      )()
+
 
 @dataclasses.dataclass(frozen=True)
 class WeirdTuple:
