@@ -169,6 +169,8 @@ jax.scipy.special
    beta
    betainc
    betaln
+   boxcox
+   boxcox1p
    comb
    dawsn
    digamma

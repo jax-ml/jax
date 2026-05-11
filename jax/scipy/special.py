@@ -21,6 +21,8 @@ from jax._src.scipy.special import (
   beta as beta,
   betainc as betainc,
   betaln as betaln,
+  boxcox as boxcox,
+  boxcox1p as boxcox1p,
   comb as comb,
   dawsn as dawsn,
   digamma as digamma,
