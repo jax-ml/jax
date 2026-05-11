@@ -8,13 +8,14 @@ bazel_dep(name = "abseil-cpp", version = "20260107.1", repo_name = "com_google_a
 bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
 bazel_dep(name = "grpc", version = "1.78.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
-bazel_dep(name = "pybind11_bazel", version = "2.13.6")
-bazel_dep(name = "rules_cc", version = "0.2.9")
+bazel_dep(name = "pybind11_bazel", version = "3.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_python", version = "1.8.5")
-bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
+bazel_dep(name = "zlib", version = "1.3.2")
 
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
@@ -42,15 +43,6 @@ single_version_override(
     version = "1.78.0",
 )
 
-# TODO: The linker input from curl causes linking error for //jaxlib:libjax_common.so
-# https://github.com/bazelbuild/bazel-central-registry/blob/9bf492585e2deea72df928318d16b1be2964e32b/modules/curl/8.11.0/overlay/BUILD.bazel#L282-L284
-# Figure out why and if it's possible to avoid this patch.
-single_version_override(
-    module_name = "curl",
-    patches = ["//third_party/curl:remove_linker_script.patch"],
-    version = "8.11.0",
-)
-
 ##############################################################
 # Dependencies defined in XLA via module extensions
 ##############################################################
@@ -68,6 +60,7 @@ use_repo(llvm, "llvm-project")
 third_party = use_extension("@xla//third_party/extensions:third_party.bzl", "third_party_ext")
 use_repo(
     third_party,
+    "compute_library",
     "dlpack",
     "eigen_archive",
     "gloo",
@@ -97,17 +90,23 @@ use_repo(remote_execution_configure, "local_config_remote_execution")
 # Python dependencies
 ##############################################################
 
-# TODO: upstream, otherwise we have to duplicate the patches in jax
 single_version_override(
-    module_name = "rules_python",
+    module_name = "protobuf",
     patch_strip = 1,
     patches = [
-        "//third_party/py:rules_python_pip_version.patch",
-        "//third_party/py:rules_python_freethreaded.patch",
-        "//third_party/py:rules_python_versions.patch",
-        "//third_party/py:rules_python_scope.patch",
+        "//third_party/protobuf:protobuf_arena.patch",
+        "//third_party/protobuf:fix_message_lite_incomplete_type.patch",
     ],
-    version = "1.8.5",
+    version = "32.1",
+)
+
+single_version_override(
+    module_name = "abseil-cpp",
+    patch_strip = 1,
+    patches = [
+        "//third_party/absl:btree.patch",
+    ],
+    version = "20260107.1",
 )
 
 ### Toolchains
@@ -134,12 +133,26 @@ python.toolchain(python_version = "3.14")
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 
 [pip.parse(
+    download_only = True,
+    experimental_index_url = "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
     extra_hub_aliases = {
         "numpy": ["numpy_headers"],
     },
     hub_name = "jax_pypi",
     python_version = python_version,
+    requirements_by_platform = {} if python_version in [
+        "3.11",
+        "3.12",
+    ] else {
+        "//build:requirements_lock_{}_ft.txt".format(python_version.replace(".", "_")): "linux_x86_64_freethreaded,windows_x86_64_freethreaded,linux_aarch64_freethreaded,osx_aarch64_freethreaded",
+    },
     requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
+    target_platforms = [
+        # Explicitly list both x86_64 and aarch64 to ensure cross-compilation works.
+        "{os}_x86_64",
+        "{os}_aarch64",
+        "{os}_{arch}_freethreaded",
+    ],
     whl_modifications = {
         "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
     },
@@ -180,7 +193,6 @@ use_repo(cuda_json_ext, "cuda_redist_json")
 cuda_redist_init_ext = use_extension("@rules_ml_toolchain//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
 use_repo(
     cuda_redist_init_ext,
-    "cuda_cccl",
     "cuda_crt",
     "cuda_cublas",
     "cuda_cudart",
@@ -190,12 +202,26 @@ use_repo(
     "cuda_curand",
     "cuda_cusolver",
     "cuda_cusparse",
+    "cuda_driver",
     "cuda_nvcc",
     "cuda_nvdisasm",
     "cuda_nvjitlink",
     "cuda_nvml",
+    "cuda_nvrtc",
     "cuda_nvtx",
     "cuda_nvvm",
+)
+
+nvshmem_redist = use_extension("@rules_ml_toolchain//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
+use_repo(nvshmem_redist, "nvidia_nvshmem")
+
+# Use the newer version of cuda_cccl from XLA
+cccl_extension = use_extension("@xla//third_party/cccl:cccl_extension.bzl", "cccl_extension")
+use_repo(cccl_extension, "cuda_cccl")
+
+override_repo(
+    cuda_redist_init_ext,
+    cuda_cccl = "cuda_cccl",
 )
 
 ### Toolchains
