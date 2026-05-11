@@ -467,39 +467,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "gpu_pallas_distributed_multiprocess_test",
-    srcs = ["gpu_pallas_distributed_test.py"],
-    args = [
-        "--num_processes=2",
-        "--gpus_per_process=1",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        # Need to use 2 physical GPUs since test checks P2P memory access unavailable with MIG
-        # partitioning.
-        "gpu_h100x2_full",
-        "gpu_b200x2",
-    ],
-    env = {
-        "MULTIPROCESS_TEST": "1",
-    },
-    tags = [
-        "mosaic_gpu_test",
-        "multiaccelerator",
-    ],
-    deps = [
-        "//jax/_src:test_multiprocess",
-        "//jax/experimental:pallas_experimental_gpu_ops",
-        "//jax/experimental:pallas_mosaic_gpu",
-        "//jax/extend",
-    ] + py_deps([
-        "portpicker",
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "gpu_pallas_distributed_nvshmem_test",
     srcs = ["gpu_pallas_distributed_test.py"],
     args = [
@@ -508,14 +475,11 @@ jax_multiplatform_test(
     ],
     enable_backends = [],
     enable_configs = [
-        # Need to use 2 physical GPUs since test checks P2P memory access unavailable with MIG
-        # partitioning.
-        "gpu_h100x2_full",
+        "gpu_h100x2_full",  # Times out without _full
         "gpu_b200x2",
     ],
     env = {
         "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-        "MULTIPROCESS_TEST": "1",
     },
     tags = [
         "mosaic_gpu_test",
@@ -538,9 +502,7 @@ jax_multiplatform_test(
     srcs = ["gpu_pallas_distributed_test.py"],
     enable_backends = [],
     enable_configs = [
-        # Need to use 2 physical GPUs since test checks P2P memory access unavailable with MIG
-        # partitioning.
-        "gpu_h100x2_full",
+        "gpu_h100x2_full",  # We need a 2 physical GPUs since otherwise the test will be skipped
         "gpu_b200x2",
     ],
     tags = [

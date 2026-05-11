@@ -35,6 +35,7 @@ from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as _pl
+import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as _plgpu
 from jax.experimental.pallas.ops.gpu.all_gather_mgpu import all_gather
 from jax.experimental.pallas.ops.gpu.reduce_scatter_mgpu import reduce_scatter
@@ -79,10 +80,6 @@ def is_nvshmem_used():
         and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
 
 
-def is_multiprocess():
-  return "MULTIPROCESS_TEST" in os.environ
-
-
 def get_reduction_impl(reduction):
   match reduction:
     case "add":
@@ -101,11 +98,9 @@ def get_reduction_impl(reduction):
       raise ValueError(reduction)
 
 
-_TestCaseBase = (
-    jt_multiprocess.MultiProcessTest
-    if is_multiprocess()
-    else parameterized.TestCase
-)
+_TestCaseBase = (jt_multiprocess.MultiProcessTest
+                 if is_nvshmem_used() is None
+                 else parameterized.TestCase)
 
 
 class MonkeyPatchTest:
@@ -141,6 +136,11 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
     if (not jtu.is_device_cuda() or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
+    if not mgpu.supports_cross_device_collectives():
+      self.skipTest(
+          "Skip test since cross-device collectives are not supported"
+          " (either NVSHMEM is not available in multi-process mode, or mixed"
+          " mode is used).")
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
 
@@ -1113,7 +1113,7 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
       self.skipTest("Not all local devices support multicast")
 
   def test_collective_metadata_with_nvshmem_raises(self):
-    if is_multiprocess():
+    if is_nvshmem_used():
       self.skipTest("This test runs only in single-process mode.")
 
     def kernel(y_ref, sem):
@@ -1430,8 +1430,6 @@ if __name__ == '__main__':
       )
     else:
       os.environ["XLA_FLAGS"] = additional_xla_flags
-
-  if is_multiprocess():
     jt_multiprocess.main()
   else:
     config.config_with_absl()

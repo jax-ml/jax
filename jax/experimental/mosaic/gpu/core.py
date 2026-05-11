@@ -269,11 +269,7 @@ def _mosaic_gpu_lowering_rule(
       ),
   )
 
-  # If NVSHMEM is available it will be used by default, otherwise we will use
-  # collective metadata.
-  if is_multi_device_module and (
-      is_single_process_multi_device_topology() or not is_nvshmem_available()
-  ):
+  if is_multi_device_module and is_single_process_multi_device_topology():
     backend_config["xla_replica_ids"] = ir.StringAttr.get(
         ",".join(map(str, replica_ids))
     )
@@ -881,15 +877,11 @@ def _lower_as_gpu_kernel(
       num_params = 0
 
       # Collective metadata parameter is used to lower collective operations
-      # in a single-process setup or in multi-process when nvshmem is not
-      # available.
+      # in a single-process setup.
       if (
           jax_mesh is not None
           and jax_mesh.size > 1
-          and (
-              is_single_process_multi_device_topology()
-              or not is_nvshmem_available()
-          )
+          and is_single_process_multi_device_topology()
       ):
         num_params = len(arg_refs)
         num_peers = jax_mesh.size
@@ -1046,6 +1038,9 @@ def as_gpu_kernel(
       body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec,
       cluster, module_name, kernel_name, thread_semantics, inout_shape
   )
+
+  if is_device_collective and not supports_cross_device_collectives():
+    raise RuntimeError("Kernel is a cross-device collective but no support is available.")
 
   expected_arg_tys, expected_arg_treedef = jax.tree.flatten((*in_shape, *inout_shape))
   def _check_args(*args):
