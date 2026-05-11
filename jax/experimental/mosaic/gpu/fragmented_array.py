@@ -2649,9 +2649,14 @@ class FragmentedArray:
 
     # Here we handle all conversions involving f8 types.
     # TODO(apaszke): Figure out proper satfinite control.
-    supported_f8_f16: dict[ir.Type, ir.Type] = {
-        f8e4m3fn: f16, f8e5m2: f16, f8e8m0fnu: bf16
+    supported_f8_f16: dict[ir.Type, tuple[ir.Type, ...]] = {
+        f8e4m3fn: (f16,), f8e5m2: (f16,), f8e8m0fnu: (bf16,)
     }
+    if ptx_isa_version >= 92:
+      # Technically those downcasts are already supported in 91, but the casts
+      # only become symmetric in 92 so that's what we use as the cutoff.
+      supported_f8_f16[f8e4m3fn] += (bf16,)
+      supported_f8_f16[f8e5m2] += (bf16,)
     f8_ptx_names: dict[ir.Type, str] = {
         f8e4m3fn: "e4m3", f8e5m2: "e5m2", f8e8m0fnu: "ue8m0"
     }
@@ -2694,14 +2699,15 @@ class FragmentedArray:
       return pairwise_convert(f"cvt.{ptx_round}.satfinite.{name_8}x2.f32")
     # No f8 type supports direct conversion to f32, so we go via 16-bit floats.
     if cur_dtype in f8_types and new_dtype == f32:
-      return self.astype(supported_f8_f16[cur_dtype]).astype(f32)
+      # We can pick any of the supported f16 types.
+      return self.astype(supported_f8_f16[cur_dtype][0]).astype(f32)
     # f8 <-> f16
-    if new_dtype in f8_types and cur_dtype == supported_f8_f16[new_dtype]:
+    if new_dtype in f8_types and cur_dtype in supported_f8_f16[new_dtype]:
       name_16 = f16_ptx_names[cur_dtype]
       name_8 = f8_ptx_names[new_dtype]
       ptx_round = get_fp8_rounding(new_dtype)
       return pairwise_convert(f"cvt.{ptx_round}.satfinite.{name_8}x2.{name_16}x2")
-    if cur_dtype in f8_types and new_dtype == supported_f8_f16[cur_dtype]:
+    if cur_dtype in f8_types and new_dtype in supported_f8_f16[cur_dtype]:
       name_8 = f8_ptx_names[cur_dtype]
       name_16 = f16_ptx_names[new_dtype]
       return pairwise_convert(f"cvt.rn.{name_16}x2.{name_8}x2")
@@ -2711,18 +2717,30 @@ class FragmentedArray:
         new_dtype in f16_types and cur_dtype in f8_types
     ):
       # Remap the 16-bit type to the supported one.
-      ok_cur_dtype = supported_f8_f16.get(new_dtype, cur_dtype)
-      ok_new_dtype = supported_f8_f16.get(cur_dtype, new_dtype)
+      supported_16 = supported_f8_f16[cur_dtype if cur_dtype in f8_types else new_dtype]
+      ok_new_dtype = " or ".join(map(str, supported_16))
+      ptx_hint = ""
+      if ptx_isa_version < 92 and f8e8m0fnu not in {cur_dtype, new_dtype}:
+        ptx_hint = (
+            " This conversion would be supported if a newer CUDA (ptxas)"
+            " version was available."
+        )
       raise NotImplementedError(
           f"Hardware has no support for converting from {cur_dtype} to"
-          f" {new_dtype} (only cast from {ok_cur_dtype} to {ok_new_dtype} is"
+          f" {new_dtype} (only cast from {cur_dtype} to {ok_new_dtype} is"
           " supported). Cast to f32 first and then to the target type"
-          " (expensive, but sufficient)."
+          " (expensive, but sufficient)." + ptx_hint
       )
     # Repack through a shared 16-bit type.
     if cur_dtype in f8_types and new_dtype in f8_types:
-      if supported_f8_f16[cur_dtype] == supported_f8_f16[new_dtype]:
-        return self.astype(supported_f8_f16[cur_dtype]).astype(new_dtype)
+      # We don't use set intersection to avoid introducing non-determinism.
+      common_f16 = next(
+          (e for e in supported_f8_f16[cur_dtype]
+          if e in supported_f8_f16[new_dtype]),
+          None
+      )
+      if common_f16 is not None:
+        return self.astype(common_f16).astype(new_dtype)
       raise NotImplementedError(
           f"Conversion from {cur_dtype} to {new_dtype} must go through f32,"
           " which is expensive. Cast to f32 explicitly if you really want it."
@@ -2740,13 +2758,12 @@ class FragmentedArray:
         new_dtype == f4e2m1fn and cur_dtype in f8_ptx_names
     ):
       f8_type = new_dtype if cur_dtype == f4e2m1fn else cur_dtype
-      if supported_f8_f16[f8_type] == f16:
+      if f16 in supported_f8_f16[f8_type]:
         return self.astype(f16).astype(new_dtype)
       if ptx_isa_version >= 92:
-        assert supported_f8_f16[f8_type] == bf16
+        assert bf16 in supported_f8_f16[f8_type]
         return self.astype(bf16).astype(new_dtype)
-      else:
-        return self.astype(f32).astype(new_dtype)
+      return self.astype(f32).astype(new_dtype)
     if cur_dtype == f4e2m1fn and new_dtype == f32:
       return self.astype(f16).astype(f32)
     if new_dtype == f4e2m1fn and cur_dtype in {bf16, f16}:
