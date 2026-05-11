@@ -336,7 +336,7 @@ class IndexerOpsTest(PallasBaseTest):
       self.skipTest("Only supported in interpret mode")
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.zeros_like(o_ref)
-      new_o_ref = o_ref.at[pl.ds(0, 8)].at[0].at[pl.ds(0, 4), pl.ds(0, 4)]
+      new_o_ref = o_ref.at[:8].at[0].at[:4, pl.ds(0, 4)]
       new_o_ref[...] = x_ref[...]
 
     x = jax.random.normal(jax.random.key(0), shape=(4, 4))

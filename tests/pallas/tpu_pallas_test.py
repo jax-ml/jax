@@ -1328,7 +1328,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
   def test_hbm_hbm_dma_with_memory_space_annotation_aliased_input(self):
     def kernel(x_hbm_ref, aliased_y_input, y_hbm_ref):
       del aliased_y_input
-      pltpu.sync_copy(x_hbm_ref.at[:2], y_hbm_ref.at[pl.ds(1, 2)])
+      pltpu.sync_copy(x_hbm_ref.at[:2], y_hbm_ref.at[1:2])
     x = jnp.arange(8 * 128.).reshape(8, 128)
     y_init = -jnp.arange(8 * 128.).reshape(8, 128)
 
@@ -1683,10 +1683,10 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(x_hbm_ref, y_ref):
       def body(sem):
         dma1 = pltpu.async_copy(
-            x_hbm_ref.at[pl.ds(0, 8)], y_ref.at[pl.ds(0, 8)], sem
+            x_hbm_ref.at[:8], y_ref.at[:8], sem
         )
         dma2 = pltpu.async_copy(
-            x_hbm_ref.at[pl.ds(8, 8)], y_ref.at[pl.ds(8, 8)], sem
+            x_hbm_ref.at[8:8], y_ref.at[8:8], sem
         )
         dma1.wait()
         dma2.wait()
@@ -1706,10 +1706,10 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(x_hbm_ref, y_ref):
       def body(sem):
         dma1 = pltpu.async_copy(
-            x_hbm_ref.at[0], y_ref.at[pl.ds(0, 8)], sem
+            x_hbm_ref.at[0], y_ref.at[:8], sem
         )
         dma2 = pltpu.async_copy(
-            x_hbm_ref.at[1], y_ref.at[pl.ds(8, 8)], sem
+            x_hbm_ref.at[1], y_ref.at[8:8], sem
         )
         dma1.wait()
         dma2.wait()
@@ -1733,11 +1733,11 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       def body(sem):
         for i in range(3):
           dma1 = pltpu.async_copy(
-              x_hbm_ref.at[pl.ds(i, 1)].at[0, 0], y_ref.at[i].at[pl.ds(0, 8)],
+              x_hbm_ref.at[pl.ds(i, 1)].at[0, 0], y_ref.at[i].at[:8],
               sem
           )
           dma2 = pltpu.async_copy(
-              x_hbm_ref.at[pl.ds(i, 1)].at[0, 1], y_ref.at[i].at[pl.ds(8, 8)],
+              x_hbm_ref.at[pl.ds(i, 1)].at[0, 1], y_ref.at[i].at[8:8],
               sem
           )
           dma1.wait()
@@ -1761,10 +1761,10 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     def kernel(x_hbm_ref, y_ref):
       def body(sem):
         dma1 = pltpu.async_copy(
-            x_hbm_ref.at[:, :, 0], y_ref.at[pl.ds(0, 8)], sem
+            x_hbm_ref.at[:, :, 0], y_ref.at[:8], sem
         )
         dma2 = pltpu.async_copy(
-            x_hbm_ref.at[:, :, 1], y_ref.at[pl.ds(8, 8)], sem
+            x_hbm_ref.at[:, :, 1], y_ref.at[8:8], sem
         )
         dma1.wait()
         dma2.wait()

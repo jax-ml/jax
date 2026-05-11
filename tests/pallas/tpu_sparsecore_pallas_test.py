@@ -1798,7 +1798,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.parameters(
       (lambda x_ref: x_ref, r"may not be.*Ref<\w+>\{"),
-      (lambda x_ref: x_ref.at[pl.ds(0, 8)], r"TransformedRefs are not allowed"),
+      (lambda x_ref: x_ref.at[:8], r"TransformedRefs are not allowed"),
   )
   def test_parallel_loop_disallows_ref_carries(self, carry_fn, expected_regex):
     x = jnp.arange(2 * self.num_lanes, dtype=jnp.int32)

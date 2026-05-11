@@ -875,8 +875,8 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
     def body(i, j):
       # Unsafe because it depends on the side-effect of "previous" iterations,
       # which may be executed in parallel or reordered.
-      mask = x_ref[pl.ds(0, 8)] < j
-      x_ref[pl.ds(0, 8)] += jnp.where(mask, j + jnp.arange(8), 0)
+      mask = x_ref[:8] < j
+      x_ref[:8] += jnp.where(mask, j + jnp.arange(8), 0)
       return j + 1
 
   Args:

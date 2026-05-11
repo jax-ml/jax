@@ -1016,7 +1016,7 @@ class PallasCallElementIndexingTest(ptu.PallasTest):
     result_ty = jax.ShapeDtypeStruct((15 * 8, 128), jnp.float32)
 
     def kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[pl.ds(0, 8)] + x_ref[pl.ds(8, 8)]
+      o_ref[...] = x_ref[:8] + x_ref[8:8]
 
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
     y = self.pallas_call(
@@ -1045,7 +1045,7 @@ class PallasCallElementIndexingTest(ptu.PallasTest):
     result_ty = jax.ShapeDtypeStruct((8, 128), jnp.float32)
 
     def kernel(x_ref, y_ref):
-      y_ref[...] = x_ref[pl.ds(0, 8)]
+      y_ref[...] = x_ref[:8]
 
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
     y = self.pallas_call(

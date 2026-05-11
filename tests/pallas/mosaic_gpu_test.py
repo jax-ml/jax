@@ -1173,8 +1173,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       plgpu.copy_gmem_to_smem(x_ref_gmem, scratch_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
       x_sliced = scratch_ref.at[0, :, :]  # shape=(64, 64)
-      o_ref[pl.ds(0, 32), :] = x_sliced[pl.ds(0, 32), :]
-      o_ref[pl.ds(32, 32), :] = x_sliced[pl.ds(32, 32), :]
+      o_ref[:32, :] = x_sliced[:32, :]
+      o_ref[32:32] = x_sliced[32:32]
     np.testing.assert_array_equal(extract_x0(x), x[0])
 
   def test_gmem_to_smem_with_multiple_smem_indexers_and_transforms(self):

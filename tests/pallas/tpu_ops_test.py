@@ -186,7 +186,7 @@ class OpsTest(ptu.PallasTPUTest):
     if not self.INTERPRET and jtu.get_tpu_version() < 4 and bitwidth < 8:
       self.skipTest("Requires TPUv4+ for sub-byte types")
     def kernel(x_ref, y_ref):
-      y_ref[...] = jnp.broadcast_to(x_ref[pl.ds(3, 1)], y_ref.shape).astype(y_ref.dtype)
+      y_ref[...] = jnp.broadcast_to(x_ref[3:1], y_ref.shape).astype(y_ref.dtype)
     m, n = 4, 1152
     x = jax.random.randint(
         jax.random.key(12), (m, n), minval=-1000, maxval=1000, dtype=jnp.int32
