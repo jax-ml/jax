@@ -149,6 +149,10 @@ class DebugCheckTest(jtu.JaxTestCase):
     )
 
     if not oob:
+      # TODO(b/479427406): Remove this once the bug is fixed.
+      if jtu.is_device_tpu(7, "x"):
+        self.skipTest("Bounds checker fails on TPU v7x")
+
       # No errors expected.
       jax.block_until_ready(compiled_kernel(x, indices))
       return
