@@ -5017,7 +5017,9 @@ def _dim_as_value_lowering(ctx: LoweringRuleContext, *, dim):
   return ir_constant(placeholder, mlir_type=_dtype_to_ir_type(jnp.int32))
 
 
-@register_lowering_rule(tpu_primitives.touch_p)
+@register_lowering_rule(
+    tpu_primitives.touch_p, kernel_types=[*tpu_core.CoreType]
+)
 def _touch_lowering_rule(ctx: LoweringRuleContext, x: jax.Array):
   del ctx, x
   return []

@@ -142,7 +142,8 @@ def _mpmd_map_discharge_rule(
     for eff in jaxpr.effects:
       if isinstance(eff, (state.WriteEffect, state.AccumEffect)):
         write_index = eff.input_index
-        if write_index < len(avals_in):
+        if (write_index < len(avals_in)
+            and isinstance(avals_in[write_index], state.AbstractRef)):
           write_indices.add(write_index)
 
   write_indices = sorted(write_indices)
