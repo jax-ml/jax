@@ -2114,6 +2114,14 @@ class FragmentedArray:
       return FragmentedArray(
           _registers=self.registers, _layout=self.layout, _is_signed=is_signed
       )
+
+    ptx_isa_version = 0
+    if (
+        min(utils.bitwidth(cur_dtype), utils.bitwidth(new_dtype)) <= 8
+        and mgpu_lib is not None
+    ):
+      ptx_isa_version = mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version()  # type: ignore
+
     any_reg = self.registers.flat[0]
     reg_type = any_reg.type
     is_vector_reg = isinstance(reg_type, ir.VectorType)
@@ -2260,11 +2268,7 @@ class FragmentedArray:
           assert 0 <= part < 4
 
           # `cvt` with `.s2f6x2` instruction type introduced in PTX ISA v9.1
-          if (
-              utils.get_arch().major >= 10
-              and mgpu_lib is not None
-              and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() >= 91  # pylint: disable=protected-access
-          ):
+          if utils.get_arch().major >= 10 and ptx_isa_version >= 91:
             int_reg = llvm.inline_asm(
                 i32,
                 [reg],
@@ -2617,7 +2621,6 @@ class FragmentedArray:
       longest_useful_vector = 32 // min(src_bitwidth, tgt_bitwidth)
       # We query the ptxas isa version as a proxy for PTX version. Old ptxas
       # binaries miscompile some of the patterns we generate here.
-      ptx_isa_version = mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version()  # type: ignore
       for idx, reg in np.ndenumerate(self.registers):
         reg = utils.bitcast(reg, ir.VectorType.get((vector_len,), src_int_ty))
         if vector_len % 2:
@@ -2730,11 +2733,7 @@ class FragmentedArray:
           "f4e2m1fn casts only supported on Blackwell and newer GPUs"
       )
     if cur_dtype == f4e2m1fn and new_dtype in {bf16, f16}:
-      if (
-          new_dtype == bf16
-          and mgpu_lib is not None
-          and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() < 92  # pylint: disable=protected-access
-      ):
+      if new_dtype == bf16 and ptx_isa_version < 92:
         return self.astype(f32).astype(bf16)
       return pairwise_convert(f"cvt.rn.{f16_ptx_names[new_dtype]}x2.e2m1x2")
     if (cur_dtype == f4e2m1fn and new_dtype in f8_ptx_names) or (
@@ -2743,10 +2742,7 @@ class FragmentedArray:
       f8_type = new_dtype if cur_dtype == f4e2m1fn else cur_dtype
       if supported_f8_f16[f8_type] == f16:
         return self.astype(f16).astype(new_dtype)
-      if (
-          mgpu_lib is not None
-          and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() >= 92  # pylint: disable=protected-access
-      ):
+      if ptx_isa_version >= 92:
         assert supported_f8_f16[f8_type] == bf16
         return self.astype(bf16).astype(new_dtype)
       else:
@@ -2754,10 +2750,7 @@ class FragmentedArray:
     if cur_dtype == f4e2m1fn and new_dtype == f32:
       return self.astype(f16).astype(f32)
     if new_dtype == f4e2m1fn and cur_dtype in {bf16, f16}:
-      if (
-          mgpu_lib is not None
-          and mgpu_lib._mosaic_gpu_ext._get_ptxas_isa_version() >= 91  # pylint: disable=protected-access
-      ):
+      if ptx_isa_version >= 91:
         return pairwise_convert(f"cvt.rn.satfinite.e2m1x2.{f16_ptx_names[cur_dtype]}x2")
       else:
         return self.astype(f32).astype(f4e2m1fn)
