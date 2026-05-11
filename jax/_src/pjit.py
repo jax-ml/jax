@@ -522,7 +522,7 @@ def _trace_for_jit(
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
         jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+      jaxpr, out_avals = pe.trace_to_jaxpr_with_loggers(fun, in_type, dbg, qdd_token)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports

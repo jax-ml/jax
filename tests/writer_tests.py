@@ -47,6 +47,20 @@ class WriterTest(jtu.JaxTestCase):
     f(2)
     assert l.read() == [1, 2]
 
+  @parameterized.parameters([True, False])
+  def test_writer_explicit_arg(self, jit):
+    l = Log()
+    def f(l, x):
+      l.append(x)
+
+    if jit:
+      f = jax.jit(f)
+
+    f(l, 1)
+    assert l.read() == [1]
+    f(l, 2)
+    assert l.read() == [1, 2]
+
 # TODO: generalize to other monoids (e.g. dict of lists)
 class Log:
   def __init__(self):

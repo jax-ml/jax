@@ -2267,11 +2267,10 @@ def trace_to_jaxpr(
       fun_returns_flat_tree =fun_returns_flat_tree,
       requires_low=requires_low)
 
-  # out_avals, out_logger_avals = out_avals_loggers.unpack()
-  # out_logger_avals_pt = out_logger_avals.unflatten()
-  # assert not out_logger_avals_pt
-  # return jaxpr, out_avals
-  return jaxpr, out_avals_loggers
+  out_avals, out_logger_avals = out_avals_loggers.unpack()
+  out_logger_avals_pt = out_logger_avals.unflatten()
+  assert not out_logger_avals_pt
+  return jaxpr, out_avals
 
 @weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr_with_loggers(
