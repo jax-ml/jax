@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 _extra_flag_prefixes: list[str] = []
 
+_compiler_version_resolver = None
+
+
 def add_flag_prefixes(flag_prefixes: list[str]) -> None:
   """Add flag prefixes to include in the cache key. Call prior to get().
   """
@@ -270,6 +273,7 @@ xla_flags_to_exclude_from_cache_key = [
     "--xla_tpu_sdc_checker_no_logging_if_callbacks_are_present",
     "--xla_gpu_cuda_data_dir",
     "--xla_gpu_experimental_autotune_cache_mode",
+    "--xla_tpu_compiler_variant",
 ]
 
 env_override_flags_to_exclude_from_cache_key = {
@@ -358,9 +362,22 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
   # N.B. all XLA flags that take an argument must use '=' and not a space
   # (e.g. --xla_force_host_platform_device_count=8) (I think).
   for flag in sorted(xla_flags):
-    if flag.split("=")[0] in xla_flags_to_exclude_from_cache_key:
+    flag_name = flag.split("=")[0]
+    if flag_name in xla_flags_to_exclude_from_cache_key:
       logger.debug("Not including XLA flag in cache key: %s", flag)
       continue
+    if flag_name == "--xla_tpu_compiler_version":
+      flag_val = flag.split("=", 1)[1] if "=" in flag else ""
+      if flag_val and _compiler_version_resolver:
+        # Add an assertion to help type checkers understand _compiler_version_resolver is not None.
+        assert _compiler_version_resolver is not None
+        try:
+          resolved = _compiler_version_resolver.resolve_candidate(flag_val)  # pyrefly: ignore
+          logger.debug("Resolved TPU compiler version: %s", resolved)
+          _hash_string(hash_obj, f"--xla_tpu_compiler_version={resolved}")
+          continue
+        except Exception as e:
+          logger.warning("Failed to resolve compiler version: %s", e)
     logger.debug("Including XLA flag in cache key: %s", flag)
     _hash_string(hash_obj, flag)
 
