@@ -1185,22 +1185,40 @@ struct HoistReinterpretCastOutOfWarpMap
     mlir::Block& body = op->getRegion(0).getBlocks().front();
     for (auto [i, operand, body_operand] :
         llvm::enumerate(op->getOperands(), body.getArguments())) {
-      // It is not safe to rewrite the type of the argument if it has other
-      // uses, as this would affect other operations that we currently do not
-      // handle.
-      if (body_operand.hasOneUse()) {
-        mlir::Operation* user = *body_operand.user_begin();
-        if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
-          mlir::IRMapping mapping;
-          mapping.map(rc_op.getOperand(), operand);
-          rewriter.modifyOpInPlace(op, [&]() {
+      Type user_type = nullptr;
+      // It is only safe to rewrite the type of the argument if all of its uses
+      // are reinterpret_cast operations producing the same return type.
+      if (body_operand.hasNUsesOrMore(1) &&
+          absl::c_all_of(
+              body_operand.getUsers(), [&user_type](mlir::Operation* user) {
+                if (auto rc_op = llvm::dyn_cast<ReinterpretCastOp>(user)) {
+                  if (!user_type) {
+                    user_type = rc_op.getType();
+                  }
+                  return rc_op.getType() == user_type;
+                }
+                return false;
+              })) {
+        auto rc_op = llvm::cast<ReinterpretCastOp>(*body_operand.user_begin());
+        mlir::IRMapping mapping;
+        mapping.map(rc_op.getOperand(), operand);
+        rewriter.modifyOpInPlace(op, [&]() {
             op->setOperand(i, rewriter.clone(*rc_op, mapping)->getResult(0));
-            body_operand.setType(rc_op.getType());
+            body_operand.setType(user_type);
           });
-          rewriter.replaceAllUsesWith(rc_op, body_operand);
-          rewriter.eraseOp(rc_op);
-          modified = true;
+        // Copy the users of the body operand to a vector because we need to
+        // iterate over them twice to avoid invalidating the iterator: once to
+        // replace them with the body operand and once to erase them.
+        std::vector<mlir::Operation*> users_to_erase(
+          body_operand.user_begin(), body_operand.user_end());
+        for (auto user : body_operand.getUsers()) {
+          rewriter.replaceAllUsesWith(llvm::cast<ReinterpretCastOp>(user),
+                                      body_operand);
         }
+        for (auto user : users_to_erase) {
+          rewriter.eraseOp(user);
+        }
+        modified = true;
       }
     }
     return modified ? mlir::success() : mlir::failure();

@@ -1802,6 +1802,48 @@ ir.MLIRError,
     [use] = rc_op.result.uses
     self.assertIsInstance(use.owner, mgpu.dialect.WarpMapOp)
 
+  def test_reinterpret_cast_inside_warp_map_is_hoisted_when_all_consumers_are_identical_reinterpret_casts(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty0 = ir.MemRefType.get((4,), ir.F16Type.get())
+      ref_ty1 = ir.MemRefType.get((2, 2), ir.F16Type.get())
+      [ref] = undefs(ref_ty0)
+      warp_map = mgpu.dialect.WarpMapOp(operands=[ref])
+      with ir.InsertionPoint(warp_map.body):
+        mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
+        mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+    rc_ops = self.find_ops(mgpu.dialect.ReinterpretCastOp)
+    self.assertLen(rc_ops, 1)
+    [rc_op] = rc_ops
+    [use] = rc_op.result.uses
+    self.assertIsInstance(use.owner, mgpu.dialect.WarpMapOp)
+
+  def test_reinterpret_cast_inside_warp_map_is_not_hoisted_when_consumers_have_different_types(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty0 = ir.MemRefType.get((4,), ir.F16Type.get())
+      ref_ty1 = ir.MemRefType.get((2, 2), ir.F16Type.get())
+      ref_ty2 = ir.MemRefType.get((4, 1), ir.F16Type.get())
+      [ref] = undefs(ref_ty0)
+      warp_map = mgpu.dialect.WarpMapOp(operands=[ref])
+      with ir.InsertionPoint(warp_map.body):
+        a = mgpu.dialect.reinterpret_cast(ref_ty1, warp_map.body.arguments[0])
+        b = mgpu.dialect.reinterpret_cast(ref_ty2, warp_map.body.arguments[0])
+        # Add an arbitrary side-effecting user in order to prevent the casts
+        # from being DCE'd.
+        mgpu.dialect.optimization_barrier([a, b])
+    pm = mlir_interpreter.passmanager.PassManager.parse(
+        "builtin.module(canonicalize)", self.module.context
+    )
+    pm.run(self.module.operation)
+    rc_ops = self.find_ops(mgpu.dialect.ReinterpretCastOp)
+    self.assertLen(rc_ops, 2)
+    [rc_op1, rc_op2] = rc_ops
+    self.assertEqual(rc_op1.parent, warp_map)
+    self.assertEqual(rc_op2.parent, warp_map)
+
   def test_reinterpret_cast_of_reinterpret_cast_is_folded(self):
 
     bf16 = ir.BF16Type.get()
