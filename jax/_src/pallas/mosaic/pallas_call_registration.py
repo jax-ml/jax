@@ -406,6 +406,30 @@ def pallas_call_tpu_lowering_rule(
   kernel_type = mosaic_params.kernel_type
   _check_sparsecore_availability(kernel_type)
 
+  # `mesh` argument is the core mesh if provided by the user (e.g. in core_map).
+  # If it's None, we create a default mesh based on the kernel type.
+  # TODO(rdyro): Remove once we have a way of explicitly passing a mesh here.
+  if mesh is None:
+    if kernel_type == tpu_core.CoreType.TC:
+      # TODO(rdyro): In cross-compilation, TPU info might not be available.
+      # Remove this once we always have an explicit mesh.
+      try:
+        num_cores = tpu_info.get_tpu_info().num_cores
+      except ValueError:
+        num_cores = 1
+      mesh = tpu_core.create_tensorcore_mesh(
+          axis_name="tensorcore_unnamed_core", num_cores=num_cores
+      )
+    elif kernel_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
+      mesh = sc_core.ScalarSubcoreMesh(axis_name="sparsecore_unnamed_core")
+    elif kernel_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
+      mesh = sc_core.VectorSubcoreMesh(
+          core_axis_name="sparsecore_unnamed_core",
+          subcore_axis_name="sparsecore_unnamed_subcore",
+      )
+    else:
+      raise ValueError(f"Unsupported kernel type: {kernel_type}")
+  mpmd_meshes = {kernel_type: mesh}
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
@@ -444,6 +468,7 @@ def pallas_call_tpu_lowering_rule(
         kernel_type=kernel_type,
         mesh=jax_mesh,
         dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+        mpmd_meshes=mpmd_meshes,
     )
 
   if debug:
@@ -675,6 +700,7 @@ def mpmd_map_tpu_lowering_rule(
           pallas_mesh=mesh,
           name=mlir.sanitize_name(jaxpr.debug_info.func_name),
           dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+          mpmd_meshes=mpmd_meshes_map,
           num_scratch=num_scratch,
       )
 
