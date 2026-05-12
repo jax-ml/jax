@@ -25,6 +25,7 @@ from jax._src.scipy.special import (
   entr as entr,
   erf as erf,
   erfc as erfc,
+  erfcx as erfcx,
   erfinv as erfinv,
   exp1 as exp1,
   expi as expi,

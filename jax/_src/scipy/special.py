@@ -519,6 +519,7 @@ def erf(x: ArrayLike) -> Array:
 
   See also:
     - :func:`jax.scipy.special.erfc`
+    - :func:`jax.scipy.special.erfcx`
     - :func:`jax.scipy.special.erfinv`
   """
   x, = promote_args_inexact("erf", x)
@@ -548,6 +549,7 @@ def erfc(x: ArrayLike) -> Array:
 
   See also:
     - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.erfcx`
     - :func:`jax.scipy.special.erfinv`
   """
   x, = promote_args_inexact("erfc", x)
@@ -576,6 +578,71 @@ def erfinv(x: ArrayLike) -> Array:
   """
   x, = promote_args_inexact("erfinv", x)
   return lax.erf_inv(x)
+
+
+def erfcx(x: ArrayLike) -> Array:
+  r"""Scaled complementary error function.
+
+  JAX implementation of :obj:`scipy.special.erfcx`.
+
+  .. math::
+
+     \mathrm{erfcx}(x) = e^{x^2} \mathrm{erfc}(x)
+
+  This is numerically stable for large positive ``x``, unlike the naive
+  formula which overflows.
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of the scaled complementary error function.
+
+  See also:
+    - :func:`jax.scipy.special.erfc`
+    - :func:`jax.scipy.special.erf`
+  """
+  x, = promote_args_inexact("erfcx", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("erfcx does not support complex-valued inputs.")
+  return _erfcx(x)
+
+
+@custom_derivatives.custom_jvp
+def _erfcx(x: Array) -> Array:
+  if x.dtype == np.float64:
+    # At threshold ~26.6, first omitted term |c_9|/x^18 ~ 1e-21 << eps64 ~ 2e-16.
+    return _erfcx_impl(x, nterms=9)
+  elif x.dtype == np.float32:
+    # At threshold ~9.4, first omitted term |c_5|/x^10 ~ 5e-9 << eps32 ~ 1e-7.
+    return _erfcx_impl(x, nterms=5)
+  else:  # float16, bfloat16 — upcast to float32
+    return _erfcx_impl(x.astype(np.float32), nterms=5).astype(x.dtype)
+
+_erfcx.defjvps(
+    lambda g, ans, x: g * (2 * x * ans - _lax_const(x, 2. / np.sqrt(np.pi))))
+
+
+def _erfcx_asymptotic(x: Array, nterms: int) -> Array:
+  # Asymptotic expansion: erfcx(x) ~ (1/(sqrt(pi)*x)) * P(1/x^2)
+  # P(t) = sum_{k=0}^{N} c_k * t^k,  c_k = (-1)^k * (2k-1)!! / 2^k
+  # Coefficients in descending order of degree (k=8..0) for jnp.polyval.
+  _coeffs = [7918.06640625, -1055.7421875, 162.421875, -29.53125, 6.5625,
+             -1.875, .75, -.5, 1.]
+  t = _lax_const(x, 1.) / lax.square(x)
+  p = jnp.polyval(np.array(_coeffs[-nterms:], dtype=x.dtype), t)
+  return p / (x * _lax_const(x, np.sqrt(np.pi)))
+
+
+def _erfcx_impl(x: Array, nterms: int) -> Array:
+  # Switch to asymptotic expansion when exp(x^2) would overflow.
+  # Overflow occurs when x^2 > log(fmax), i.e. x > sqrt(log(fmax)).
+  threshold = np.sqrt(np.log(dtypes.finfo(x.dtype).max))
+  large = x > _lax_const(x, threshold)
+  safe_x = lax.select(large, lax.full_like(x, 1.), x)
+  direct = lax.exp(lax.square(safe_x)) * lax.erfc(safe_x)
+  asymp = _erfcx_asymptotic(x, nterms)
+  return lax.select(large, asymp, direct)
 
 
 @custom_derivatives.custom_jvp
