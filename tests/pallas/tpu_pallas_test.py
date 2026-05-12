@@ -4964,6 +4964,14 @@ class EmitPipelineTest(ptu.PallasTPUTest):
   def test_emit_pipeline_small_window(self, tile_major, dtype):
     if not jtu.is_cloud_tpu_at_least(2026, 5, 16):
       self.skipTest("Needs a newer libTPU")
+    if not jtu.is_device_tpu_at_least(4) and tile_major == 1:
+      expect_ctx = self.assertRaisesRegex(
+          error_handling.MosaicError,
+          'The contiguous inner slice in the DMA transfer',
+      )
+    else:
+      expect_ctx = contextlib.nullcontext()
+
     tile_major *= 32 // jnp.iinfo(dtype).bits
 
     def kernel(x_ref, y_ref, o_ref):
@@ -4982,14 +4990,14 @@ class EmitPipelineTest(ptu.PallasTPUTest):
 
     x = jax.random.randint(jax.random.key(1234), (128, 256,), -40, 40, dtype=dtype)
     y = jax.random.randint(jax.random.key(2345), (128, 256,), -40, 40, dtype=dtype)
-    out = self.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct((128, 256), dtype),
-        in_specs=[pl.BlockSpec(memory_space=pl.ANY)] * 2,
-        out_specs=pl.BlockSpec(memory_space=pl.ANY),
-    )(x, y)
-
-    np.testing.assert_array_equal(out, x + y)
+    with expect_ctx:
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((128, 256), dtype),
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)] * 2,
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+      )(x, y)
+      np.testing.assert_array_equal(out, x + y)
 
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
