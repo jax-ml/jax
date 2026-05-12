@@ -4216,9 +4216,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
       )()
 
   def test_wgmma_reshaped_rhs_unit_tiling(self):
-    # NotImplementedError: No layout inference rule defined
-    # for %collapse_shape = memref.collapse_shape
-    self.skip_if_wg_semantics()
     def kernel(lhs_ref, rhs_ref, out_ref, lhs_smem, rhs_smem, barrier_ref):
       plgpu.copy_gmem_to_smem(lhs_ref, lhs_smem, barrier_ref)
       plgpu.copy_gmem_to_smem(rhs_ref, rhs_smem, barrier_ref)

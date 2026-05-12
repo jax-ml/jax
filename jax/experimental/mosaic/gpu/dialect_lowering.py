@@ -35,6 +35,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
+from . import constraints as cs
 from . import fragmented_array as fa
 from . import inference_utils
 from . import launch_context as lc
@@ -2135,6 +2136,111 @@ def _memref_expand_shape_op_lowering_rule(
       new_expand_shape_op.result, op.result.type, out_transforms
   )
   return [wrapped_ref]
+
+
+# TODO(bchetioui): find a way to consolidate the logic that is shared logic with
+# layout inference. It is not entirely clear what the best approach is.
+def _check_collapse_shape(
+    op: memref.CollapseShapeOp,
+    in_transforms: Sequence[lc.MemRefTransform],
+    out_transforms: Sequence[lc.MemRefTransform],
+):
+  if len(in_transforms) != len(out_transforms):
+    raise ValueError(
+        "Expected the same number of in/out transforms, but got "
+        f"{in_transforms=} and {out_transforms=}"
+    )
+  if not in_transforms:
+    return
+  t_in, *in_transforms = in_transforms
+  t_out, *_ = out_transforms
+  if (in_transforms or
+      not isinstance(t_in, lc.TileTransform) or
+      not isinstance(t_out, lc.TileTransform)):
+    raise NotImplementedError(
+        "Only a single tiling transform is supported when collapsing a shape, "
+        f"but got {in_transforms=} and {out_transforms=}"
+    )
+  src_ty = ir.MemRefType(op.src.type)
+  strides, _ = src_ty.get_strides_and_offset()
+  if strides != utils.get_contiguous_strides(src_ty.shape):
+    raise NotImplementedError(
+        "Collapsing the shape of a memref with non-contiguous strides is not "
+        "supported"
+    )
+  reassociation = tuple(len(ir.ArrayAttr(idx)) for idx in op.reassociation)
+
+  collapsed_tiling = cs.reduce_expression(
+      cs.CollapseShape(cs.SMEMTiling(t_in), tuple(src_ty.shape),
+                       reassociation),
+      {},
+  )
+
+  if isinstance(collapsed_tiling, cs.Unsatisfiable):
+    raise ValueError(f"Input tiling {t_in.tiling} is not compatible with {op}")
+
+  assert isinstance(collapsed_tiling, cs.SMEMTiling)
+  expected_t_out = collapsed_tiling.value
+  assert expected_t_out is not None
+  if expected_t_out != t_out:
+    raise ValueError(
+        "Input/output tiling mismatch when attempting to collapse a shape. "
+        f"Expected output tiling to be {expected_t_out.tiling} for input "
+        f"tiling {t_in.tiling}, but got {t_out.tiling}"
+    )
+
+
+@_register_lowering(memref.CollapseShapeOp, support_warp_semantics=True)
+def _memref_collapse_shape_op_lowering_rule(
+    ctx: LoweringContext, op: memref.CollapseShapeOp
+) -> Sequence[ir.Value]:
+  del ctx
+
+  [in_transforms_attr] = inference_utils.in_transforms(op)
+  [out_transforms_attr] = inference_utils.out_transforms(op)
+
+  in_swizzle, in_transforms = swizzle_and_transforms_from_transforms_attr(
+      in_transforms_attr)
+  out_swizzle, out_transforms = swizzle_and_transforms_from_transforms_attr(
+      out_transforms_attr)
+
+  if in_swizzle != out_swizzle:
+    raise ValueError(
+        f"Swizzle mismatch. In transforms swizzle: {in_swizzle}, out transforms"
+        f" swizzle {out_swizzle}."
+    )
+  _check_collapse_shape(op, in_transforms, out_transforms)
+  reassociation = [
+      [ir.IntegerAttr(i).value for i in ir.ArrayAttr(dims)]
+      for dims in op.reassociation
+  ]
+  new_reassociation = reassociation.copy()
+  if in_transforms:
+    [t_in] = in_transforms
+    assert isinstance(t_in, lc.TileTransform)
+    tiling_rank = to_process =  len(t_in.tiling)
+    for index_from_end, dims in enumerate(reassociation[::-1]):
+      to_process -= len(dims)
+      if to_process < 0:
+        # This should be caught by `_check_collapse_shape` today, but we check
+        # it here as well in case `cs.CollapseShape` ever changes to allow this.
+        raise ValueError(
+            f"Reassociation {reassociation} is not compatible with tiling "
+            f"{t_in.tiling}, as it causes tiled and untiled dimensions to "
+            "be collapsed together"
+        )
+      if to_process == 0:
+        for t_dims in reassociation[-index_from_end - 1:]:
+          new_reassociation.append([dim + tiling_rank for dim in t_dims])
+        break
+    assert to_process == 0
+
+  result = memref.collapse_shape(
+      transform_type(op.result.type, out_transforms),
+      unwrap_transformed_memref(op.src, in_transforms_attr),
+      new_reassociation,
+  )
+  return [wrap_transformed_memref(result, op.result.type, out_transforms_attr)]
 
 
 @_register_lowering(memref.LoadOp)

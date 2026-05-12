@@ -47,6 +47,9 @@ except ImportError:
 
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
+# TODO(bchetioui): simplify other use sites to use the aliases directly.
+TileTransformAttr = mgpu.dialect.TileTransformAttr
+SwizzleTransformAttr = mgpu.dialect.SwizzleTransformAttr
 
 
 config.parse_flags_with_absl()
@@ -2221,6 +2224,69 @@ class DialectLoweringTest(MosaicGpuTest):
 
     with self.assertRaisesRegex(ValueError, "Cannot tile a transpose"):
       mgpu.lower_mgpu_dialect(self.module, None)
+
+  @parameterized.parameters(
+      # We use lambdas here because we need a MLIR context to be set to produce
+      # the relevant attributes.
+      (lambda: [TileTransformAttr.get((16, 32))],
+       lambda: [TileTransformAttr.get((32, 16))],
+       r"Input tiling .* is not compatible with"),
+      (lambda: [TileTransformAttr.get((1, 16))],
+       lambda: [TileTransformAttr.get((1, 16))],
+       "Input/output tiling mismatch"),
+      (lambda: [TileTransformAttr.get((1, 16))],
+       lambda: [],
+       "Expected the same number of in/out transforms"),
+      (lambda: [SwizzleTransformAttr.get(16)],
+       lambda: [SwizzleTransformAttr.get(32)],
+       "Swizzle mismatch"),
+  )
+  def test_lowering_memref_collapse_shape_with_incompatible_transforms_raises(
+      self, in_transforms_fn, out_transforms_fn, error_regex
+  ):
+    with ir.InsertionPoint(self.module.body):
+      in_transforms = ir.ArrayAttr.get([
+          ir.ArrayAttr.get(in_transforms_fn())
+      ])
+      out_transforms = ir.ArrayAttr.get([
+          ir.ArrayAttr.get(out_transforms_fn())
+      ])
+      smem = mgpu_utils.smem()
+      bf16 = ir.BF16Type.get()
+      in_ty = ir.MemRefType.get((128, 128), bf16, memory_space=smem)
+      out_ty = ir.MemRefType.get((128 * 128,), bf16, memory_space=smem)
+      smem = mgpu.dialect.slice_smem(in_ty, 0)
+      smem.owner.attributes["out_transforms"] = in_transforms
+      collapsed = memref.collapse_shape(out_ty, smem, [[0, 1]])
+      collapsed.owner.attributes["in_transforms"] = in_transforms
+      collapsed.owner.attributes["out_transforms"] = out_transforms
+    with self.assertRaisesRegex(ValueError, error_regex):
+      mgpu.lower_mgpu_dialect(self.module, None)
+
+  def test_lowering_memref_collapse_shape_tiles_reassociation_correctly(self):
+    with ir.InsertionPoint(self.module.body):
+      in_transforms = ir.ArrayAttr.get([
+          ir.ArrayAttr.get([TileTransformAttr.get((1, 16))])
+      ])
+      out_transforms = ir.ArrayAttr.get([
+          ir.ArrayAttr.get([TileTransformAttr.get((16,))])
+      ])
+      smem = mgpu_utils.smem()
+      bf16 = ir.BF16Type.get()
+      in_ty = ir.MemRefType.get((10, 128, 128), bf16, memory_space=smem)
+      out_ty = ir.MemRefType.get((10, 128 * 128,), bf16, memory_space=smem)
+      smem = mgpu.dialect.slice_smem(in_ty, 0)
+      smem.owner.attributes["out_transforms"] = in_transforms
+      collapsed = memref.collapse_shape(out_ty, smem, [[0], [1, 2]])
+      collapsed.owner.attributes["in_transforms"] = in_transforms
+      collapsed.owner.attributes["out_transforms"] = out_transforms
+    mgpu.lower_mgpu_dialect(self.module, None)
+    [collapse_shape] = self.find_ops(memref.CollapseShapeOp)
+    self.assertIsInstance(collapse_shape, memref.CollapseShapeOp)
+    reassociation = [
+        [d.value for d in dims] for dims in collapse_shape.reassociation
+    ]
+    self.assertEqual(reassociation, [[0], [1, 2], [3, 4]])
 
   def test_optimized_gmem_transfers_are_not_supported(self):
     def body(ctx, input, output, scratch):
