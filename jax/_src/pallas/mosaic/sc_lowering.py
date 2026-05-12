@@ -13,7 +13,7 @@
 # limitations under the License.
 """Lowering for Pallas TPU SparseCore."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import itertools
@@ -137,7 +137,6 @@ def lower_pipelined_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     use_tc_tiling: bool | None = None,
-    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
     needs_layout_passes: bool = False,
 ) -> ir.Module:
   module = ir.Module.create()
@@ -152,7 +151,6 @@ def lower_pipelined_jaxpr_to_module(
       mesh=mesh,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       use_tc_tiling=use_tc_tiling,
-      mpmd_meshes=mpmd_meshes,
       needs_layout_passes=needs_layout_passes,
   )
   return module
@@ -170,7 +168,6 @@ def lower_pipelined_jaxpr_into_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     use_tc_tiling: bool | None = None,
-    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
     needs_layout_passes: bool = False,
 ) -> None:
   if dynamic_shape_replacement_enabled:
@@ -335,7 +332,6 @@ def lower_pipelined_jaxpr_into_module(
         dimension_semantics=dimension_semantics,
         kernel_type=kernel_type,
         mesh=mesh,
-        mpmd_meshes=mpmd_meshes,
         needs_layout_passes=needs_layout_passes,
     )
 
@@ -351,11 +347,9 @@ def lower_jaxpr_into_module(
     kernel_type: tpu_core.CoreType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
-    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
     needs_layout_passes: bool = False,
 ):
   """Lowers a Jaxpr to a Mosaic SparseCore module."""
-  assert mpmd_meshes is not None, "mpmd_meshes must be provided."
   if dynamic_shape_replacement_enabled:
     raise NotImplementedError(
         "Dynamic shape replacement is not supported for SparseCore."
@@ -368,7 +362,6 @@ def lower_jaxpr_into_module(
       dimension_semantics,
       mesh=mesh,
       kernel_type=kernel_type,
-      mpmd_meshes=mpmd_meshes,
   )
   sym_tab = ir.SymbolTable(module.operation)
   func_op = lower_jaxpr_to_func(
@@ -405,7 +398,6 @@ def lower_jaxpr_into_module(
         forward_compatible=lowering_context.is_forward_compat(),
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-        mpmd_meshes=mpmd_meshes,
     )
     assert mlir_func.verify(), mlir_func
     module.body.append(mlir_func)
@@ -432,7 +424,6 @@ class MosaicGridMapping(tc_lowering.MosaicGridMapping):
       dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
       mesh: mesh_lib.Mesh | None,
       kernel_type: tpu_core.CoreType,
-      mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
   ):
     if any(
         isinstance(var.aval, sc_core.AbstractRef)
@@ -450,7 +441,6 @@ class MosaicGridMapping(tc_lowering.MosaicGridMapping):
         mesh,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         kernel_type=kernel_type,
-        mpmd_meshes=mpmd_meshes,
     )
 
 
@@ -507,7 +497,6 @@ def lower_jaxpr_to_func(
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-        mpmd_meshes=mosaic_grid_mapping.mpmd_meshes,
         needs_layout_passes=needs_layout_passes,
     )
     return tc_lowering.jaxpr_subcomp(
@@ -933,13 +922,12 @@ def _dma_start_lowering_rule(
     )
   core_index = None
   if device_id is not None:
-    kernel_type = ctx.lowering_context.kernel_type
     if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
-      dest_kernel_type = sem_aval.memory_space.mesh.core_type
+      dest_mesh = sem_aval.memory_space.mesh
     else:
-      dest_kernel_type = kernel_type
+      dest_mesh = None
     device_id, core_index = tc_lowering._device_id_to_logical(
-        ctx, device_id, device_id_type, device_id_aval, dest_kernel_type
+        ctx, device_id, device_id_type, device_id_aval, dest_mesh
     )
 
   # If not ``None``, we lower to an indirect DMA instead.
@@ -1016,8 +1004,12 @@ def _dma_wait_lowering_rule(
     i32 = ir.IntegerType.get_signless(32)
     core_id = device_id = arith.constant(i32, ir.IntegerAttr.get(i32, 0))
   elif device_id is not None:
+    if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
+      dest_mesh = sem_aval.memory_space.mesh
+    else:
+      dest_mesh = None
     device_id, core_id = tc_lowering._device_id_to_logical(
-        ctx, device_id, device_id_type, device_id_aval
+        ctx, device_id, device_id_type, device_id_aval, dest_mesh
     )
     if core_id:
       raise NotImplementedError(
