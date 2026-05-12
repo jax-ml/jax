@@ -733,7 +733,7 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr',
             remat_partial_eval_custom_params_updater)
 
-def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
+def remat_transpose(log, out_cts, *args, jaxpr, prevent_cse, **params):
   # TODO(mattjj): avoid round-tripping into UndefinedPrimals
   args_ = [ad.UndefinedPrimal(x.aval) if isinstance(x, ad.GradAccum) else x
            for x in args]
@@ -742,7 +742,7 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   in_linear = [ad.is_undefined_primal(x) for x in args_]
   out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
   transposed_jaxpr_, in_zeros = transpose_jaxpr(
-      pe.close_jaxpr(jaxpr), in_linear, out_zeros)
+      pe.close_jaxpr(jaxpr), log, in_linear, out_zeros)
   transposed_jaxpr, consts = transposed_jaxpr_.jaxpr, transposed_jaxpr_.consts
   transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
   flat_args, _ = tree_flatten((args_, out_cts))
@@ -758,17 +758,17 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
 ad.fancy_transposes[remat_p] = remat_transpose
 
 # TODO(mattjj): move this to ad.py
-def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
+def transpose_jaxpr(jaxpr: core.ClosedJaxpr, log, in_linear: bool | Sequence[bool],
                     out_zeros: bool | Sequence[bool],
                     ) -> tuple[core.ClosedJaxpr, list[bool]]:
   if isinstance(in_linear, bool):
     in_linear = (in_linear,) * len(jaxpr.in_avals)
   if isinstance(out_zeros, bool):
     out_zeros = (out_zeros,) * len(jaxpr.out_avals)
-  return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros))
+  return _transpose_jaxpr(jaxpr, log, tuple(in_linear), tuple(out_zeros))
 
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
+def _transpose_jaxpr(jaxpr: core.ClosedJaxpr, log,
                      in_lin: Sequence[bool],
                      out_zeros: Sequence[bool]):
   in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
@@ -792,7 +792,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
     dummy_args = [ad.UndefinedPrimal(aval) for aval in lin_jaxpr.in_avals[len(consts):]]
-    in_cts = ad.backward_pass(lin_jaxpr.jaxpr, False, lin_jaxpr.consts,
+    in_cts = ad.backward_pass(lin_jaxpr.jaxpr, log, False, lin_jaxpr.consts,
                               [*consts, *dummy_args], out_cts)
     in_cts = in_cts[len(consts):]
 

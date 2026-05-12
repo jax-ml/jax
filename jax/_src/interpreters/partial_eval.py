@@ -2335,8 +2335,7 @@ def trace_to_jaxpr_with_loggers(
                           for x in ans]
 
     _check_no_returned_refs(debug_info, list(flat_out_tracers))
-    # TODO: debug info
-    jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), None,
+    jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
                                          source_info)
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)

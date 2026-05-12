@@ -1114,7 +1114,7 @@ def _rearrange_mutable_binders(
   if config.enable_checks.value: core.check_jaxpr(new_jaxpr)
   return ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
-def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
+def _scan_transpose_fancy(log, cts, *args, reverse, length, num_consts,
                           num_carry, jaxpr, unroll):
   linear = [isinstance(x, ad.GradAccum) for x in args]
   consts_lin, init_lin, xs_lin = split_list(linear, [num_consts, num_carry])
@@ -1164,7 +1164,7 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
   trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, accum_typeof(x)) for x in immut_xs_dot)
   jaxpr_trans = _transpose_scan_jaxpr_fancy(
-      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
+      jaxpr, log, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
 
   # run it
   outs = scan_p.bind(
@@ -1183,7 +1183,7 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
 #           --- consts ----  ----- carry ------  --------- ext --------
 @weakref_lru_cache
 def _transpose_scan_jaxpr_fancy(
-    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals
+    jaxpr, log, trans_tree, trans_avals, lin_refs, immut_xs_avals
 ) -> core.ClosedJaxpr:
   def transposed(*args):
     args = [ad.RefAccum(typeof(x).inner_aval, x) if l else x
@@ -1195,7 +1195,7 @@ def _transpose_scan_jaxpr_fancy(
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
     primals = (ires + mut_consts_bar + immut_consts_dot + carry_dot + mut_xs_bar
                + immut_xs_dot + eres)
-    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, primals, ct_carry + ct_ys)
+    ad.backward_pass3(jaxpr.jaxpr, log, False, jaxpr.consts, primals, ct_carry + ct_ys)
     return [ad.instantiate_zeros(x.freeze()) for x in primals
             if isinstance(x, ad.ValAccum)]
 

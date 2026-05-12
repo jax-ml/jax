@@ -835,33 +835,33 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   return [True, *used_inputs], new_eqn
 
 
-def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
+def _cond_transpose_fancy(log, cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
                    else a for x in in_flat)
   trans_branches, out_trees = unzip2(
-      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args))
+      _transpose_jaxpr_fancy(j, log, in_tree, in_avals, specs, (False,) * len(args))
       for j in branches)
   out_nzs = [[not isinstance(x, ad.Zero) for x in tree_unflatten(t, j.out_avals)]
              for t, j in zip(out_trees, trans_branches)]
   out_nz = tuple(map(partial(functools.reduce, operator.or_), zip(*out_nzs)))
   trans_branches, out_trees = unzip2(
-      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz) for j in branches)
+      _transpose_jaxpr_fancy(j, log, in_tree, in_avals, specs, out_nz) for j in branches)
   out_tree, = set(out_trees)
   cts_out = cond_p.bind(index, *in_flat, branches=(*trans_branches,), **params)
   for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
     if isinstance(x, ad.ValAccum): x.accum(ct)
 
 @util.weakref_lru_cache
-def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
+def _transpose_jaxpr_fancy(jaxpr, log, in_tree, in_avals, specs, inst_out):
   cell = lambda: None
   maybe_inst = lambda x, inst: ad.instantiate_zeros(x) if inst else x
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+    ad.backward_pass3(jaxpr.jaxpr, log, False, jaxpr.consts, args, cts_in)
     cts_out = [maybe_inst(x.freeze(), inst) if isinstance(x, ad.ValAccum)
                else None for x, inst in zip(args, inst_out)]
     cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]

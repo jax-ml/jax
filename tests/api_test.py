@@ -2915,7 +2915,6 @@ class APITest(jtu.JaxTestCase):
       return jnp.tanh(jnp.dot(x, y) + 3.)
 
     out_shape = api.eval_shape(fun)
-
     self.assertEqual(out_shape.shape, (2, 4))
 
   def test_eval_shape_tuple_unpacking(self):

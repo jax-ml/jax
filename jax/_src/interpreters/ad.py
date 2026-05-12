@@ -576,10 +576,10 @@ def accum_typeof(x):
     return typeof(x)
 
 # TODO(mattjj): this is for for backward (get it?) compatibility. Remove, maybe.
-def backward_pass(jaxpr, transform_stack: bool, consts, primals_in, cts_in):
+def backward_pass(jaxpr, log, transform_stack: bool, consts, primals_in, cts_in):
   primals_in = [ValAccum(x.aval) if isinstance(x, UndefinedPrimal) else x
                 for x in primals_in]
-  backward_pass3(jaxpr, transform_stack, consts, primals_in, cts_in)
+  backward_pass3(jaxpr, log, transform_stack, consts, primals_in, cts_in)
   return [x.freeze() if isinstance(x, ValAccum) else p2cz(x)
           for x in primals_in]
 
@@ -1215,7 +1215,7 @@ def traceable(f, store, in_tree, *primals_and_tangents):
   store.store(out_tree)
   return out_flat
 
-def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
+def call_transpose_fancy(primitive, log, cts, *args, call_jaxpr, **params):
   if call_jaxpr.constvars: raise NotImplementedError
   primals_ctrefs, specs = project_accums(args)
   flat_args, treedef = tree_flatten((primals_ctrefs, cts))
@@ -1225,7 +1225,7 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
   def transposed(*flat_args):
     primals_ctrefs, cts = tree_unflatten(treedef, flat_args)
     args = unproject_accums(specs, primals_ctrefs)
-    backward_pass3(call_jaxpr, False, (), args, cts)
+    backward_pass3(call_jaxpr, log, False, (), args, cts)
     cts_out = [x.freeze() if isinstance(x, ValAccum) else None for x in args]
     cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
     return cts_out

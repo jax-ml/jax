@@ -170,7 +170,7 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
     api_util.maybe_recursive_nan_check(e, fun, args, kwargs)  # should always raise.
     raise RuntimeError("Internal error") from e  # fall-back error to be safe.
 
-  outs, loggers = tree_unflatten(p.out_tree, out_flat)
+  outs, loggers = p.out_avals.update(out_flat).unflatten()
   for logger, vals in loggers.items():
     logger.extend(vals)
   return (outs, out_flat, p.out_tree, args_flat,
@@ -449,7 +449,8 @@ class PjitParams(NamedTuple):
   params: dict[str, Any]
   in_avals: tuple[core.AbstractValue, ...]  # Not including the const_args
   in_tree: PyTreeDef  # Not including the const_args
-  out_tree: PyTreeDef
+  out_tree: PyTreeDef # Not including log outputs
+  out_avals: FlatTree  # Both explicit outputs and log outputs
   arg_names: tuple[str, ...]  # Not including the const_args
 
 
@@ -557,8 +558,9 @@ def _trace_for_jit(
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(consts) + len(avals_ft))
+          len(donated_invars) == len(consts) + len(avals_ft)) 
 
+  explicit_out_avals, _ = out_avals.unpack()
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -573,7 +575,7 @@ def _trace_for_jit(
       compiler_options_kvs=ji.compiler_options_kvs,
   )
   return PjitParams(consts, params, avals_ft.vals, avals_ft.tree_without_statics,
-                    out_avals.tree, dbg.safe_arg_names(len(avals_ft)))
+                    explicit_out_avals.tree, out_avals, dbg.safe_arg_names(len(avals_ft)))
 
 
 @dataclass(slots=True)
@@ -1840,14 +1842,14 @@ pe.partial_eval_jaxpr_custom_rules[jit_p] = \
 
 
 def _pjit_transpose_fancy(
-    cts_in, *args, jaxpr, in_shardings, out_shardings, in_layouts,
+    log, cts_in, *args, jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, donated_invars, ctx_mesh, name, keep_unused, inline,
     compiler_options_kvs):
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
               else a for x in in_flat]
-  trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
+  trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, log, in_tree, (*in_avals,), specs)
 
   trans_in_shardings = (
       [s for x, s in zip(args, in_shardings)
@@ -1887,12 +1889,12 @@ def _pjit_transpose_fancy(
     if isinstance(x, ad.ValAccum): x.accum(ct)
 
 @weakref_lru_cache
-def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
+def _transpose_jaxpr_fancy(jaxpr, log, in_tree, in_avals, specs):
   cell = lambda: None
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+    ad.backward_pass3(jaxpr.jaxpr, log, False, jaxpr.consts, args, cts_in)
     cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
     cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
     return cts_out

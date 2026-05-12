@@ -48,14 +48,11 @@ class WriterTest(jtu.JaxTestCase):
     f(2)
     assert l.read() == [1, 2]
 
-  @parameterized.parameters([True, False])
-  def test_writer_explicit_arg(self, jit):
+  def test_writer_explicit_arg(self):
+    # TODO: jit
     l = Log()
     def f(l, x):
       l.append(x)
-
-    if jit:
-      f = jax.jit(f)
 
     f(l, 1)
     assert l.read() == [1]

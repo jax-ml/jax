@@ -608,7 +608,7 @@ ad.primitive_jvps[addupdate_p] = addupdate_jvp_rule
 
 ##  get/swap/addupdate transpose rules
 
-def _get_transpose_fancy(g, ref_, *idx, tree):
+def _get_transpose_fancy(_, g, ref_, *idx, tree):
   transforms = tree_util.tree_unflatten(tree, idx)
   if transforms and type(g) is not ad_util.Zero:
     addupdate_p.bind(ref_.inst().ref, g, *idx, tree=tree)
@@ -616,7 +616,7 @@ def _get_transpose_fancy(g, ref_, *idx, tree):
     ref_.accum(g)
 ad.fancy_transposes[get_p] = _get_transpose_fancy
 
-def _swap_transpose_fancy(g, ref_, x, *idx, **params):
+def _swap_transpose_fancy(_, g, ref_, x, *idx, **params):
   if ref_.ref is None and type(g) is ad_util.Zero:
     return
   elif ref_.ref is None:
@@ -626,7 +626,7 @@ def _swap_transpose_fancy(g, ref_, x, *idx, **params):
     x.accum(x_bar)
 ad.fancy_transposes[swap_p] = _swap_transpose_fancy
 
-def addupdate_transpose_fancy(cts_in, ref_, x, *idx, **params):
+def addupdate_transpose_fancy(_, cts_in, ref_, x, *idx, **params):
   if ref_.ref is not None and isinstance(x, ad.GradAccum):
     x_bar = get_p.bind(ref_.ref, *idx, **params)
     x.accum(x_bar)
