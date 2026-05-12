@@ -494,6 +494,45 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(out, x[0])
 
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.int32, jnp.int8, jnp.float8_e4m3fn],
+      no_pipelining=[False, True],
+  )
+  def test_poison_buffers(self, dtype, no_pipelining):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[:4, :] = x_ref[:4, :]
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((8, 128), dtype),
+        mesh=pltpu.create_tensorcore_mesh('core'),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(1,),
+          in_specs=pl.BlockSpec((8, 128), lambda i: (0,)),
+          out_specs=pl.BlockSpec((8, 128), lambda i: (0,)),
+          no_pipelining=no_pipelining,
+          poison_buffers=True,
+      )(x_hbm_ref, o_hbm_ref)
+
+    x = jnp.ones((8, 128), dtype=dtype)
+    out = kernel(x)
+
+    # First half should be 1s (copied from x)
+    np.testing.assert_allclose(
+        out[:4, :].astype(jnp.float32), x[:4, :].astype(jnp.float32)
+    )
+
+    # Second half should be poisoned
+    if jnp.issubdtype(dtype, jnp.floating):
+      self.assertTrue(np.isnan(out[4:, :].astype(jnp.float32)).all())
+    else:
+      expected_poison = jnp.iinfo(dtype).min
+      np.testing.assert_array_equal(
+          out[4:, :].astype(jnp.int32), expected_poison
+      )
+
 
 class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 

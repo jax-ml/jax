@@ -1547,6 +1547,25 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     tpu_helpers.sync_copy(window_ref, hbm_ref)
 
 
+def _get_poison_value(dtype):
+  if jnp.issubdtype(dtype, jnp.floating):
+    return jnp.array(jnp.nan, dtype=dtype)
+  elif jnp.issubdtype(dtype, jnp.integer):
+    return jnp.array(jnp.iinfo(dtype).min, dtype=dtype)
+  elif dtype == jnp.bool_:
+    return jnp.array(True, dtype=dtype)
+  else:
+    raise ValueError(f"Unsupported dtype for poisoning: {dtype}")
+
+
+def _poison_bref(bref):
+  if bref.window_ref is not None:
+    poison_val = _get_poison_value(bref.window_ref.dtype)
+    poison_val = jnp.broadcast_to(poison_val, bref.window_ref.shape)
+    bref.window_ref[...] = poison_val
+  return bref
+
+
 def emit_pipeline(
     body,
     *,
@@ -1559,6 +1578,7 @@ def emit_pipeline(
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
     no_pipelining: bool = False,
+    poison_buffers: bool = False,
     _explicit_indices: bool = False,
 ):
   """Creates a function to emit a manual pallas pipeline.
@@ -1689,6 +1709,8 @@ def emit_pipeline(
       # Debugging mode where all copies are synchronous.
       initial_indices = (0,) * len(grid)
       brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
+      if poison_buffers:
+        brefs = map_brefs(_poison_bref, brefs)
 
       @functools.partial(
           jax.lax.fori_loop,
@@ -1727,6 +1749,8 @@ def emit_pipeline(
         initial_indices = (0,) * len(grid)
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
+        if poison_buffers:
+          brefs = map_brefs(_poison_bref, brefs)
         def _sync_copy_in(bref, ref):
           if bref.is_trivial_windowing and bref.window_ref is not None:
             sync_copy(ref, bref, initial_indices)
