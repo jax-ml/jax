@@ -1596,6 +1596,11 @@ jax_multiplatform_test(
     srcs = ["gpu_pallas_interpret_distributed_test.py"],
     enable_backends = ["cpu"],
     shard_count = 8,
+    tags = [
+        # Times out.
+        "noasan",
+        "notsan",
+    ],
     deps = [
         "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
         "//jax/experimental:pallas",
