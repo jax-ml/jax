@@ -2701,10 +2701,10 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> No
     return
   if not ctx.jaxpr_eqn_ctx.xla_metadata:
     return
-  ctx_attributes = {
-      k: ir.StringAttr.get(str(v).lower())
-      for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items()
-  }
+  ctx_attributes = {}
+  for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items():
+    v_str = str(v).lower() if isinstance(v, bool) else str(v)
+    ctx_attributes[k] = ir.StringAttr.get(v_str)
   if isinstance(op, ir.Operation):
     _update_frontend_attributes(op, ctx_attributes)
 
