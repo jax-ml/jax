@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "jax_py_test",
     "py_deps",
     "pytype_strict_library",
 )
@@ -188,4 +189,13 @@ pytype_strict_library(
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
     ] + py_deps("numpy"),
+)
+
+jax_py_test(
+    name = "test_concat",
+    srcs = ["test_concat.py"],
+    deps = [
+        ":block_spec",
+        "//jax",
+    ] + py_deps("numpy") + py_deps("absl/testing"),
 )
