@@ -91,6 +91,15 @@ use_repo(remote_execution_configure, "local_config_remote_execution")
 ##############################################################
 
 single_version_override(
+    module_name = "rules_python",
+    patch_strip = 1,
+    patches = [
+        "//third_party/py:rules_python_local_wheel.patch",
+    ],
+    version = "1.8.5",
+)
+
+single_version_override(
     module_name = "protobuf",
     patch_strip = 1,
     patches = [

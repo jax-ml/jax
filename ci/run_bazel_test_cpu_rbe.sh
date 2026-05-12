@@ -51,7 +51,7 @@ if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
 fi
 
 if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -59,7 +59,7 @@ fi
 
 BZLMOD_CONFIG=""
 if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
-  BZLMOD_CONFIG="--config=bzlmod"
+  BZLMOD_CONFIG=""
 fi
 
  # TODO(b/446172564): Remove this condition when the test is fixed on all
