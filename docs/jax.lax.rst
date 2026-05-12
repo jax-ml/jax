@@ -121,6 +121,7 @@ Operators
     max
     min
     mul
+    mulhi
     ne
     neg
     nextafter

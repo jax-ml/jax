@@ -371,6 +371,7 @@ def lax_ops():
       op_record(
           "mul", 2, default_dtypes + complex_dtypes, test_util.rand_small
       ),
+      op_record("mulhi", 2, int_dtypes + uint_dtypes, test_util.rand_fullrange),
       op_record(
           "div", 2, default_dtypes + complex_dtypes, test_util.rand_nonzero
       ),

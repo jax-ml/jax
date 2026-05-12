@@ -142,6 +142,8 @@ from jax._src.lax.lax import (
   min_p as min_p,
   mul as mul,
   mul_p as mul_p,
+  mulhi as mulhi,
+  mulhi_p as mulhi_p,
   ne as ne,
   ne_p as ne_p,
   neg as neg,
