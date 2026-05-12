@@ -16,6 +16,15 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.pallas.core import (
-    GridMapping as GridMapping,
+    BlockDim as BlockDim,
+    BlockSpec as BlockSpec,
+    Blocked as Blocked,
+    BoundedSlice as BoundedSlice,
+    DynamicGridDim as DynamicGridDim,
+    Element as Element,
+    GridAxis as GridAxis,
+    GridSpec as GridSpec,
+    Indirect as Indirect,
+    Squeezed as Squeezed,
     register_lowering_rule as register_lowering_rule,
 )
