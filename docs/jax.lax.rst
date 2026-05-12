@@ -175,6 +175,7 @@ Operators
     sqrt
     square
     squeeze
+    stack
     stage
     sub
     tan
@@ -182,6 +183,7 @@ Operators
     tile
     top_k
     transpose
+    unstack
     zeta
 
 .. _lax-control-flow:

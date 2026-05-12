@@ -1833,6 +1833,37 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
   ret_type = get_join_type(ir.RankedTensorType(rhs.type))
   return tt_dialect.join(ret_type, lhs, rhs)
 
+@register_lowering(jax._src.lax.lax.stack_p)
+def _stack_lowering_rule(ctx: LoweringRuleContext, *args, axis):
+  if len(args) != 2:
+    raise NotImplementedError("Only 2-argument stack is supported in Triton.")
+  [x_aval, y_aval] = ctx.avals_in
+  x, y = args
+  if axis != x_aval.ndim:
+    raise NotImplementedError("Only stack along the last dimension is supported in Triton.")
+
+  x = _ensure_ir_value(x, x_aval)
+  y = _ensure_ir_value(y, y_aval)
+
+  ty = ir.RankedTensorType(x.type)
+  shape = list(ty.shape)
+  shape.append(2)
+  ret_type = ir.RankedTensorType.get(shape, ty.element_type, ty.encoding)
+
+  return tt_dialect.join(ret_type, x, y)
+
+
+@register_lowering(jax._src.lax.lax.unstack_p)
+def _unstack_lowering_rule(ctx: LoweringRuleContext, x, *, axis):
+  [x_aval] = ctx.avals_in
+  if x_aval.shape[axis] != 2:
+    raise NotImplementedError("Only unstack of size 2 is supported in Triton.")
+  if axis != x_aval.ndim - 1:
+    raise NotImplementedError("Only unstack along the last dimension is supported in Triton.")
+
+  x = _ensure_ir_value(x, x_aval)
+  return tuple(tt_dialect.split(x))
+
 
 @register_lowering(lax.split_p)
 def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
