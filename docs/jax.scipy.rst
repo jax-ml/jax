@@ -168,6 +168,7 @@ jax.scipy.special
    entr
    erf
    erfc
+   erfcx
    erfinv
    exp1
    expi

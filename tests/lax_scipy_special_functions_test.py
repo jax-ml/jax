@@ -96,6 +96,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "erfc", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
+        "erfcx", 1, float_dtypes, jtu.rand_default, True
+    ),
+    op_record(
         "erfinv", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
@@ -230,6 +233,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       jtu.check_grads(partial_lax_op, diff_args, order=1,
                       atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                       rtol=.1, eps=1e-3)
+
+  def testErfcxLargeX(self):
+    # Verify no overflow and agreement with scipy in the asymptotic regime
+    # (float32: x > ~9.4, float64: x > ~26.6 — where exp(x^2) would overflow naively)
+    x = np.array([10., 20., 50., 100.], dtype=np.float32)
+    jax_val = lsp_special.erfcx(x)
+    scipy_val = osp_special.erfcx(x)
+    self.assertAllClose(jax_val, scipy_val, rtol=1e-5)
+    if jax.config.x64_enabled:
+      x = np.array([27., 50., 100., 500.], dtype=np.float64)
+      jax_val = lsp_special.erfcx(x)
+      scipy_val = osp_special.erfcx(x)
+      self.assertAllClose(jax_val, scipy_val, rtol=1e-12)
 
   @jtu.sample_product(
       n=[0, 1, 2, 3, 10, 50]
