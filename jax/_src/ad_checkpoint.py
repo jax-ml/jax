@@ -27,7 +27,6 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src import linear_util as lu
 from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -47,7 +46,7 @@ from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map, tree_leaves, Partial, tracing_registry)
+    tree_map, tree_leaves, Partial, tracing_registry, FlatTree)
 from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
@@ -480,9 +479,9 @@ def _trace_to_jaxpr(fun: Callable,
                     in_avals: Sequence[core.AbstractValue],
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
-  flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug), in_tree)
+  in_avals_flat_tree = FlatTree(in_avals, in_tree, False)
   try:
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals_flat_tree, debug)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -494,7 +493,7 @@ def _trace_to_jaxpr(fun: Callable,
           "\n")
       e.args = msg,
     raise
-  return pe.convert_constvars_jaxpr(jaxpr), consts, out_tree()
+  return pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr), closed_jaxpr.consts, out_avals.tree
 
 
 ### Utilities
@@ -803,11 +802,10 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     return in_cts_nz
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
-  transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(
-      transposed_wrapped, in_avals)
-  transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
-  return transposed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
+  in_avals_flat_tree = FlatTree.flatten((tuple(in_avals), {}))
+  transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
+      transposed, in_avals_flat_tree, dbg)
+  return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars

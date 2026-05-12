@@ -2186,8 +2186,8 @@ def explain(keys, fun, in_avals, debug_info, *context, **_):
   return logger.log(logging.WARNING, "\n".join(msg))
 
 def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
-  new_ctx, (new_tree, new_dbg, new_qdd, *_), () = new_key
-  old_ctx, (old_tree, old_dbg, old_qdd, *_), () = old_key
+  new_ctx, (new_tree, new_dbg, *_), () = new_key
+  old_ctx, (old_tree, old_dbg, *_), () = old_key
   return (diff_ctx(new_ctx, old_ctx) or
           diff_trees(new_tree.tree, old_tree.tree) or
           diff_debug(new_dbg, old_dbg) or
