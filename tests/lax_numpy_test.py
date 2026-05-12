@@ -5744,7 +5744,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda: jax.jit(jnp.zeros)(2))
 
   def testTraceMethod(self):
-    x = self.rng().randn(3, 4).astype(jnp.float_)
+    x = self.rng().randn(3, 4).astype(float)
     self.assertAllClose(x.trace(), jnp.array(x).trace())
     self.assertAllClose(x.trace(), jax.jit(lambda y: y.trace())(x))
 
