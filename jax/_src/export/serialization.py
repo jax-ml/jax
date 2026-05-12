@@ -641,6 +641,16 @@ def _serialize_abstract_device(builder: flatbuffers.Builder,
     ser_flatbuf.AbstractDeviceAddNumCores(builder, device.num_cores)
   return ser_flatbuf.AbstractDeviceEnd(builder)
 
+def get_platform_from_device_kind(device_kind) -> str:
+  dk = device_kind.lower()
+  if 'cpu' in dk:
+    return 'cpu'
+  elif 'tpu' in dk:
+    return 'tpu'
+  elif 'nvidia' in dk:
+    return 'gpu'
+  else:
+    assert False
 
 def _deserialize_abstract_device(
     ser_abs_device: ser_flatbuf.AbstractDevice | None
@@ -649,7 +659,8 @@ def _deserialize_abstract_device(
     return None
   device_kind = ser_abs_device.DeviceKind().decode("utf-8")
   num_cores: int | None = ser_abs_device.NumCores()
-  return mesh.AbstractDevice(device_kind, num_cores)
+  plat = get_platform_from_device_kind(device_kind)
+  return mesh.AbstractDevice(device_kind, num_cores, plat)
 
 
 def _serialize_abstract_mesh(builder: flatbuffers.Builder,

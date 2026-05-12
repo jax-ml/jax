@@ -1248,6 +1248,11 @@ def _pjit_lower(
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None) -> pxla.MeshComputation:
+  if (isinstance(ctx_mesh, mesh_lib.AbstractMesh) and
+      (abd := ctx_mesh.abstract_device) is not None):
+    plat = (abd.platform,)
+    lowering_platforms = (plat if lowering_platforms is None else
+                          lowering_platforms + plat)
   return pxla.lower_sharding_computation(
       jaxpr, 'jit', name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),

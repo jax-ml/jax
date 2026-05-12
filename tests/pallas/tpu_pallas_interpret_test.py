@@ -345,7 +345,7 @@ class InterpretTest(jtu.JaxTestCase):
       pltpu.reset_tpu_interpret_mode_state()
     elif buffer_bounds == 'padded':
       abstract_mesh = jax.sharding.AbstractMesh(
-          (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1)
+          (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
       )
       with jax.sharding.use_abstract_mesh(abstract_mesh):
         out = np.array(run().block_until_ready())
@@ -391,7 +391,7 @@ class InterpretTest(jtu.JaxTestCase):
       pltpu.reset_tpu_interpret_mode_state()
     elif buffer_bounds == 'padded':
       abstract_mesh = jax.sharding.AbstractMesh(
-          (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1)
+          (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
       )
       with jax.sharding.use_abstract_mesh(abstract_mesh):
         out = np.array(run().block_until_ready())
@@ -430,7 +430,7 @@ class InterpretTest(jtu.JaxTestCase):
       # SMEM is never padded, so writing at index 10 of a (10, 128) buffer
       # is always out-of-bounds.
       abstract_mesh = jax.sharding.AbstractMesh(
-          (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1)
+          (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
       )
       with jax.sharding.use_abstract_mesh(abstract_mesh):
         with self.assertRaisesRegex(Exception, 'Out-of-bounds write'):
@@ -440,7 +440,7 @@ class InterpretTest(jtu.JaxTestCase):
       if buffer_bounds == 'padded':
         # VMEM is padded to (16, 128), so the write at index 10 succeeds.
         abstract_mesh = jax.sharding.AbstractMesh(
-            (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1)
+            (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
         )
         with jax.sharding.use_abstract_mesh(abstract_mesh):
           out = np.array(run().block_until_ready())
@@ -514,7 +514,7 @@ class InterpretTest(jtu.JaxTestCase):
     mask = np.full((8, 128), True)
 
     abstract_mesh = jax.sharding.AbstractMesh(
-        (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1)
+        (), (), abstract_device=jax.sharding.AbstractDevice('TPU v6e', 1, 'tpu')
     )
     with jax.sharding.use_abstract_mesh(abstract_mesh):
       out = f(i, j, x, jnp.array(mask)).block_until_ready()

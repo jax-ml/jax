@@ -417,7 +417,7 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
       else:
         num_cores = None
       abstract_device = AbstractDevice(
-          device_kind=d.device_kind, num_cores=num_cores)
+          device_kind=d.device_kind, num_cores=num_cores, platform=d.platform)
     return AbstractMesh(
         self.axis_sizes, self.axis_names, axis_types=self.axis_types,
         abstract_device=abstract_device)
@@ -438,12 +438,14 @@ thread_resources = _ThreadResourcesLocalState()
 class AbstractDevice:
   device_kind: str
   num_cores: int | None
+  platform: str
 
   def __repr__(self):
     return (f"AbstractDevice({self._repr()})")
 
   def _repr(self):
-    return f"device_kind={self.device_kind}, num_cores={self.num_cores}"
+    return (f"device_kind={self.device_kind}, num_cores={self.num_cores}, "
+            f"platform={self.platform}")
 
 
 @immutable

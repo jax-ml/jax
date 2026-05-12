@@ -4723,6 +4723,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "of rank 2"):
       jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=P(None, 'x', None))
 
+  def test_yash(self):
+    mesh = jtu.create_mesh((1,), ('x',), axis_types=(AxisType.Explicit,))
+    am = mesh.abstract_mesh
+
+    @jax.jit
+    def f(x):
+      return x * 3
+
+    with jax.sharding.use_abstract_mesh(am):
+      f.trace(np.arange(8)).lower()  # doesn't crash
+
 
 class ShardingInTypesTest(jtu.JaxTestCase):
 
@@ -8879,7 +8890,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with jtu.count_jit_tracing_cache_miss() as tracing_count:
       f(inp)
       with jax.sharding.use_abstract_mesh(abstract_mesh.update(
-          abstract_device=AbstractDevice('tpu', None))):  # induces a cache miss
+          abstract_device=AbstractDevice('tpu', None, 'tpu'))):  # induces a cache miss
         f(inp)
     self.assertEqual(tracing_count(), 2)  # twice for f
 
