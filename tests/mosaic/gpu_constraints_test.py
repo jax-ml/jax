@@ -803,6 +803,42 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
     self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
 
+  @parameterized.named_parameters(
+      ("invalid_reassociation_empty_dims", (0,), "must contain at least one dimension"),
+      ("invalid_reassociation_wrong_rank", (2,), "equal to the rank of the source shape"),
+  )
+  def test_collapse_shape_invalid_reassociation_raises(self, reassociation, msg):
+    with self.assertRaisesRegex(ValueError, msg):
+      shape = (2, 4, 6)
+      cs.CollapseShape(cs.Variable(0), shape, reassociation)
+
+  @parameterized.named_parameters(
+      ("tiling_does_not_divide_shape", (2, 4, 8), (3, 4, 8), (1, 1, 1)),
+      ("multiple_non_unit_tiled_and_tiling_dimensions", (2, 4, 8), (4, 8, 16), (2, 1)),
+      ("collapsing_tiled_and_untiled_dimensions", (2, 4), (2, 4, 8), (2, 1)),
+      ("leading_full_dimensions", (4, 8), (4, 16), (2,)),
+      ("trailing_unit_dimensions", (4, 1), (16, 16), (2,))
+  )
+  def test_reduce_collapse_shape_is_unsatisfiable_(self, tiling, shape, reassociation):
+    expr = cs.CollapseShape(
+        cs.SMEMTiling(lc.TileTransform(tiling)), shape, reassociation
+    )
+    self.assertIsInstance(cs.reduce_expression(expr, assignments={}), cs.Unsatisfiable)
+
+  @parameterized.named_parameters(
+      ("leading_unit_dimensions", (1, 2, 8), (4, 4, 16), (2, 1), (2, 8)),
+      ("trailing_full_dimensions", (4, 8), (4, 8, 8), (1, 2), (32,)),
+      ("leading_unit_and_trailing_full_dimensions", (1, 4, 8), (4, 8, 8), (3,), (32,))
+  )
+  def test_reduce_collapse_shape_reduces_tiling_(
+      self, tiling, shape, reassociation, reassociated_tiling
+  ):
+    expr = cs.CollapseShape(
+        cs.SMEMTiling(lc.TileTransform(tiling)), shape, reassociation
+    )
+    self.assertEqual(cs.reduce_expression(expr, assignments={}),
+                     cs.SMEMTiling(lc.TileTransform(reassociated_tiling)))
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
