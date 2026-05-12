@@ -11135,7 +11135,7 @@ class UtilTest(jtu.JaxTestCase):
 
     hs1 = xc.HloSharding.from_proto(op1)
     hs2 = xc.HloSharding.from_proto(op2)
-    self.assertFalse(op_shardings.are_hlo_shardings_equal(hs1, hs2))
+    self.assertNotEqual(hs1, hs2)
     self.assertNotEqual(hash(hs1), hash(hs2))
 
   def test_hlo_sharding_iota_tile_error(self):
