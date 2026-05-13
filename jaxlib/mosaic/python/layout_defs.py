@@ -55,4 +55,4 @@ class ImplicitDim(enum.IntEnum):
   MINOR_AND_SECOND_MINOR = -3
 
   def __repr__(self) -> str:
-    return str(int(self))
+    return f"ImplicitDim.{self.name}"
