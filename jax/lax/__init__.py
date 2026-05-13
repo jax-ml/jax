@@ -225,8 +225,6 @@ from jax._src.lax.lax import (
   square_p as square_p,
   squeeze as squeeze,
   squeeze_p as squeeze_p,
-  stack as stack,
-  stack_p as stack_p,
   stop_gradient as stop_gradient,
   sub as sub,
   sub_p as sub_p,
@@ -240,8 +238,6 @@ from jax._src.lax.lax import (
   top_k_p as top_k_p,
   transpose as transpose,
   transpose_p as transpose_p,
-  unstack as unstack,
-  unstack_p as unstack_p,
   xor_p as xor_p,
   empty as empty,
 )

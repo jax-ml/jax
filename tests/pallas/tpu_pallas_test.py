@@ -3811,69 +3811,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(x, y)
     np.testing.assert_array_equal(out, np.stack([x, y], axis=1))
 
-  def test_float32_stack_one_operand(self):
-    x = np.arange(128, dtype=jnp.float32).reshape(1, 128)
-
-    def kernel(x_ref, out_ref):
-      out_ref[...] = jnp.stack([x_ref[...]], axis=1)
-
-    out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct((1, 1, 128), jnp.float32)
-    )(x)
-    np.testing.assert_array_equal(out, np.stack([x], axis=1))
-
-  def test_scalar_stack(self):
-    x = np.array(1.0, dtype=np.float32)
-    y = np.array(2.0, dtype=np.float32)
-
-    def kernel(x_ref, y_ref, out_ref):
-      out_ref[...] = jnp.stack([x_ref[...], y_ref[...]], axis=0)
-
-    out = self.pallas_call(
-        kernel,
-        in_specs=[
-            pl.BlockSpec(memory_space=pltpu.SMEM),
-            pl.BlockSpec(memory_space=pltpu.SMEM),
-        ],
-        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-    )(x, y)
-    np.testing.assert_array_equal(out, np.stack([x, y], axis=0))
-
-  def test_float32_unstack(self):
-    x = np.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
-
-    def kernel(x_ref, out1_ref, out2_ref):
-      out1, out2 = jnp.unstack(x_ref[...], axis=0)
-      out1_ref[...] = out1
-      out2_ref[...] = out2
-
-    out1, out2 = self.pallas_call(
-        kernel, out_shape=(jax.ShapeDtypeStruct((128,), jnp.float32),
-                           jax.ShapeDtypeStruct((128,), jnp.float32))
-    )(x)
-    np.testing.assert_array_equal(out1, x[0])
-    np.testing.assert_array_equal(out2, x[1])
-
-  def test_scalar_unstack(self):
-    x = np.array([1.0, 2.0], dtype=np.float32)
-
-    def kernel(x_ref, out1_ref, out2_ref):
-      out1, out2 = jnp.unstack(x_ref[...], axis=0)
-      out1_ref[...] = out1
-      out2_ref[...] = out2
-
-    out1, out2 = self.pallas_call(
-        kernel,
-        out_specs=(
-            pl.BlockSpec(memory_space=pltpu.SMEM),
-            pl.BlockSpec(memory_space=pltpu.SMEM),
-        ),
-        out_shape=(jax.ShapeDtypeStruct((), jnp.float32),
-                   jax.ShapeDtypeStruct((), jnp.float32)),
-    )(x)
-    np.testing.assert_array_equal(out1, x[0])
-    np.testing.assert_array_equal(out2, x[1])
-
   def test_lane_to_chunk_reshape_bf16(self):
     x = np.arange(256 * 1024, dtype=jnp.bfloat16).reshape(1, 256, 1024)
 

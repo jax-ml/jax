@@ -4378,11 +4378,14 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
     return concatenate(expand_dims(arrays, axis + 1), axis=axis, dtype=dtype)
   else:
     arrays = util.ensure_arraylike_tuple("stack", arrays)
-    if dtype is not None:
-      arrays = [asarray(a, dtype=dtype) for a in arrays]
-    else:
-      arrays = util.promote_dtypes(*arrays)
-    return lax.stack(arrays, axis=axis)
+    shape0 = np.shape(arrays[0])
+    axis = _canonicalize_axis(axis, len(shape0) + 1)
+    new_arrays = []
+    for a in arrays:
+      if np.shape(a) != shape0:
+        raise ValueError("All input arrays must have the same shape.")
+      new_arrays.append(expand_dims(a, axis))
+    return concatenate(new_arrays, axis=axis, dtype=dtype)
 
 
 @export
@@ -4418,7 +4421,16 @@ def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
            [4, 5, 6]], dtype=int32)
   """
   x = util.ensure_arraylike("unstack", x)
-  return lax.unstack(x, axis=axis)
+  if x.ndim == 0:
+    raise ValueError(
+      "Unstack requires arrays with rank > 0, however a scalar array was "
+      "passed."
+    )
+  dimensions = (axis,)
+  return tuple(
+    lax.squeeze(t, dimensions)
+    for t in lax.split(x, (1,) * x.shape[axis], axis=axis)
+  )
 
 
 @export

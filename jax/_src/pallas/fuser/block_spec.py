@@ -1488,16 +1488,6 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
   return valid_block.astype(out_dtype)
 
 
-@register_eval_rule(lax.stack_p)
-def _stack_eval_rule(ctx: KernelEvalContext, *args, axis):
-  return jax.lax.stack(args, axis=axis)
-
-
-@register_eval_rule(lax.unstack_p)
-def _unstack_eval_rule(ctx: KernelEvalContext, x, *, axis):
-  return jax.lax.unstack(x, axis=axis)
-
-
 @register_pull_block_spec_rule(lax.concatenate_p)
 def _concatenate_rule(
     ctx: PullRuleContext,
@@ -1562,78 +1552,6 @@ def _concatenate_rule(
         block_index_transform=new_block_index_transform
     )
   return [make_block_transform(i) for i in range(len(ctx.avals_in))]
-
-
-@register_pull_block_spec_rule(lax.stack_p)
-def _stack_pull_rule(
-    ctx: PullRuleContext,
-    block_transform: BlockIndexTransform,
-    *,
-    axis: int,
-):
-  block_shape = block_transform.block_shape
-  is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
-  if any(is_element_block):
-    raise NotImplementedError(
-        'Stack with Element indexing is not yet supported.'
-    )
-  block_dim = block_shape[axis]
-  if block_dim is None or isinstance(block_dim, pallas_core.Squeezed):
-    block_dim = 1
-
-  n = len(ctx.avals_in)
-  if block_dim != n:
-    raise NotImplementedError(
-        "Stacking only supported when the block size along the stack axis "
-        f"equals the number of inputs. Got block_dim={block_dim}, expected {n}."
-    )
-
-  new_block_shape = list(block_transform.block_shape)
-  new_block_shape.pop(axis)
-
-  def make_block_transform(child_index: int):
-    def new_block_index_transform(*idxs):
-      idx = list(block_transform.block_index_transform(*idxs))
-      idx.pop(axis)
-      return tuple(idx)
-
-    return block_transform.replace(
-        block_shape=tuple(new_block_shape),
-        block_index_transform=new_block_index_transform
-    )
-
-  return [make_block_transform(i) for i in range(n)]
-
-
-@register_pull_block_spec_rule(lax.unstack_p)
-def _unstack_pull_rule(
-    ctx: PullRuleContext,
-    out_block_transforms: tuple[BlockIndexTransform, ...],
-    *,
-    axis: int,
-):
-  valid_transforms = [
-      bt for bt in out_block_transforms if bt is not no_block_index_transform
-  ]
-  if not valid_transforms:
-    return [no_block_index_transform]
-
-  block_transform = valid_transforms[0]
-  n = len(out_block_transforms)
-
-  new_block_shape = list(block_transform.block_shape)
-  new_block_shape.insert(axis, pallas_core.Blocked(n))
-
-  def new_block_index_transform(*idxs):
-    idx = list(block_transform.block_index_transform(*idxs))
-    idx.insert(axis, 0)
-    return tuple(idx)
-
-  new_block_transform = block_transform.replace(
-      block_shape=tuple(new_block_shape),
-      block_index_transform=new_block_index_transform
-  )
-  return [new_block_transform]
 
 
 @register_usage_rule(lax.broadcast_in_dim_p)
@@ -2831,62 +2749,3 @@ def _concatenate_push_rule(
       for block_shape in block_shapes
   )
   return pallas_core.BlockSpec(tuple(new_block_shape), _new_index_map)
-
-
-@register_push_block_spec_rule(lax.stack_p)
-def _stack_push_rule(
-    ctx: PushRuleContext,
-    *block_specs: pallas_core.BlockSpec,
-    axis: int,
-):
-  avals_in = ctx.avals_in
-  assert all(hasattr(aval_in, 'shape') for aval_in in avals_in)
-
-  def _new_index_map(*args):
-    all_indices = [block_spec.index_map(*args) for block_spec in block_specs]
-    if not all(
-        (all_indices[0][i] is all_indices[j][i])
-        for i in range(len(all_indices[0]))
-        for j in range(len(all_indices))
-    ):
-      raise ValueError(
-          'Cannot statically prove that all input blocks to stack are the'
-          ' same.'
-      )
-    base_indices = list(all_indices[0])
-    base_indices.insert(axis, 0)
-    return tuple(base_indices)
-
-  new_block_shape = list(block_specs[0].block_shape)
-  new_block_shape.insert(axis, len(block_specs))
-
-  return pallas_core.BlockSpec(tuple(new_block_shape), _new_index_map)
-
-
-@register_push_block_spec_rule(lax.unstack_p)
-def _unstack_push_rule(
-    ctx: PushRuleContext,
-    block_spec: pallas_core.BlockSpec,
-    *,
-    axis: int,
-):
-  aval_in = ctx.avals_in[0]
-  assert isinstance(aval_in, core.ShapedArray)
-  block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
-
-  n = aval_in.shape[axis]
-  if block_shape[axis] != pallas_core.Blocked(n):
-    raise NotImplementedError(
-        f'unstack not supported yet: {block_shape=}, {aval_in=}, {axis=}'
-    )
-
-  new_block_shape = list(block_spec.block_shape)
-  new_block_shape.pop(axis)
-
-  def _new_index_map(*args):
-    idx = list(block_spec.index_map(*args))
-    idx.pop(axis)
-    return tuple(idx)
-
-  out_block_spec = pallas_core.BlockSpec(tuple(new_block_shape), _new_index_map)
-  return [out_block_spec] * n

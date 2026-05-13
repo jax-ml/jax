@@ -10008,44 +10008,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       f(x)
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_stack(self, mesh):
-    @jax.jit
-    def f(x, y):
-      return jnp.stack([x, y], axis=0)
-
-    x = jax.device_put(np.ones((32, 64)), P('x', None))
-    y = jax.device_put(np.ones((32, 64)), P('x', None))
-    out = f(x, y)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x', None)))
-    self.check_wsc_in_lowered(f.lower(x, y).as_text())
-
-    grad_f = jax.jit(jax.grad(lambda x, y: f(x, y).sum(), argnums=(0, 1)))
-    out_g = grad_f(x, y)
-    self.assertEqual(out_g[0].sharding, NamedSharding(mesh, P('x', None)))
-    self.assertEqual(out_g[1].sharding, NamedSharding(mesh, P('x', None)))
-
-  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
-  def test_unstack(self, mesh):
-    @jax.jit
-    def f(x):
-      return jnp.unstack(x, axis=0)
-
-    x = jax.device_put(np.ones((2, 32, 64)), P(None, 'x', None))
-    out = f(x)
-    self.assertEqual(out[0].sharding, NamedSharding(mesh, P('x', None)))
-    self.assertEqual(out[1].sharding, NamedSharding(mesh, P('x', None)))
-    self.check_wsc_in_lowered(f.lower(x).as_text())
-
-    grad_f = jax.jit(jax.grad(lambda x: sum(y.sum() for y in f(x))))
-    out_g = grad_f(x)
-    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, 'x', None)))
-
-    x_bad = jax.device_put(np.ones((2, 32, 64)), P('x', None, None))
-    with self.assertRaisesRegex(
-        core.ShardingTypeError, "unstack operand cannot be sharded on the unstacking axis"):
-      f(x_bad)
-
-  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_vmap_grad_axis_error(self, mesh):
     def einsum_loss(a, b):
       einsum_out = jnp.einsum('xyz,wz->xyw', b, a, out_sharding=jax.P())

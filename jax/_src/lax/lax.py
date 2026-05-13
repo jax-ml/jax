@@ -2043,57 +2043,6 @@ def split(operand: ArrayLike, sizes: Sequence[DimSize],
                       axis=canonicalize_axis(axis, operand.ndim))
 
 
-def stack(operands: Sequence[ArrayLike], axis: int = 0) -> Array:
-  """Joins a sequence of arrays along a new axis.
-
-  Args:
-    operands: a sequence of arrays to stack. All arrays must have the same shape.
-    axis: the axis along which to stack the arrays.
-
-  Returns:
-    An array containing the stacked operands.
-
-  Examples:
-    >>> import jax.numpy as jnp
-    >>> from jax import lax
-    >>> x = jnp.array([1, 2])
-    >>> y = jnp.array([3, 4])
-    >>> lax.stack([x, y], axis=0)
-    Array([[1, 2],
-           [3, 4]], dtype=int32)
-    >>> lax.stack([x, y], axis=1)
-    Array([[1, 3],
-           [2, 4]], dtype=int32)
-  """
-  arrays = [asarray(op) for op in operands]
-  axis = canonicalize_axis(axis, arrays[0].ndim + 1)
-  arrays = core.auto_insert_reshard(*arrays)
-  return stack_p.bind(*arrays, axis=axis)
-
-def unstack(x: ArrayLike, axis: int = 0) -> tuple[Array, ...]:
-  """Unstacks an array along an axis.
-
-  Args:
-    x: the array to unstack.
-    axis: the axis along which to unstack the array.
-
-  Returns:
-    A tuple of arrays, split along `axis`.
-
-  Examples:
-    >>> import jax.numpy as jnp
-    >>> from jax import lax
-    >>> x = jnp.array([[1, 2], [3, 4]])
-    >>> lax.unstack(x, axis=0)
-    (Array([1, 2], dtype=int32), Array([3, 4], dtype=int32))
-    >>> lax.unstack(x, axis=1)
-    (Array([1, 3], dtype=int32), Array([2, 4], dtype=int32))
-  """
-  arr = asarray(x)
-  axis = canonicalize_axis(axis, arr.ndim)
-  return tuple(unstack_p.bind(arr, axis=axis))
-
-
 _precision_strings: dict[Any, Precision] = {}
 
 class Precision(enum.Enum):
@@ -7090,7 +7039,8 @@ ad.deflinear2(concatenate_p, _concatenate_transpose_rule)
 ad.primitive_transposes[concatenate_p] = _concatenate_transpose_rule
 batching.primitive_batchers[concatenate_p] = _concatenate_batch_rule
 
-def _concatenate_tree(xs, dimension: int):
+def _concatenate_lower(ctx, *xs, dimension):
+  aval_out, = ctx.avals_out
   # concatenate can be slow to compile for wide concatenations, so form a
   # tree of concatenations as a workaround especially for op-by-op mode.
   # (https://github.com/jax-ml/jax/issues/653).
@@ -7100,205 +7050,12 @@ def _concatenate_tree(xs, dimension: int):
   while len(current_xs) > 1:
     current_xs = [hlo.concatenate(current_xs[i:i+k], dimension_attr)
                   for i in range(0, len(current_xs), k)]
-  return current_xs[0]
 
-def _concatenate_lower(ctx, *xs, dimension):
-  aval_out, = ctx.avals_out
-  out = _concatenate_tree(xs, dimension)
+  out = current_xs[0]
+
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(concatenate_p, _concatenate_lower)
-
-# --- stack and unstack primitives ---
-
-def _stack_shape_rule(*operands, axis):
-  if not operands:
-    msg = "stack expects at least one operand, got 0."
-    raise ValueError(msg)
-  if len({op.ndim for op in operands}) != 1:
-    msg = "Cannot stack arrays with different numbers of dimensions: got {}."
-    raise ValueError(msg.format(", ".join(str(o.shape) for o in operands)))
-  if len({op.shape for op in operands}) != 1:
-    msg = "All input arrays must have the same shape. Got {}."
-    raise ValueError(msg.format(", ".join(str(o.shape) for o in operands)))
-
-  shape = list(operands[0].shape)
-  shape.insert(axis, len(operands))
-  return tuple(shape)
-
-def _stack_dtype_rule(*operands, axis):
-  check_same_dtypes('stack', *operands)
-  return operands[0].dtype
-
-def _stack_sharding_rule(*operands, axis):
-  non_empty_s = [o.sharding for o in operands if not o.sharding.mesh.empty]
-  if not non_empty_s:
-    return core.get_cur_mesh_sharding()
-  if not all(s == non_empty_s[0] for s in non_empty_s):
-    ss = ", ".join(str(o.sharding) for o in operands)
-    raise core.ShardingTypeError(
-        f"All operands should have the same sharding. Got shardings {ss}")
-
-  s = non_empty_s[0]
-  new_spec = list(s.spec)
-  new_spec.insert(axis, None)
-  return s.update(spec=s.spec.update(partitions=tuple(new_spec)))
-
-def _stack_transpose_rule(ct, *operands, axis):
-  if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(o.aval.to_ct_aval()) if ad.is_undefined_primal(o)
-            else None for o in operands]
-  return unstack_p.bind(ct, axis=axis)
-
-def _stack_lower(ctx, *xs, axis):
-  x_aval = ctx.avals_in[0]
-  aval_out, = ctx.avals_out
-  ndim = x_aval.ndim
-
-  new_shape = list(x_aval.shape)
-  new_shape.insert(axis, 1)
-
-  broadcast_dimensions = [i for i in range(ndim + 1) if i != axis]
-
-  out_sharding = aval_out.sharding
-  expanded_xs = []
-  for x, aval in zip(xs, ctx.avals_in):
-    expanded_aval = aval.update(shape=new_shape, sharding=out_sharding)
-    expanded_x = mlir.broadcast_in_dim(
-        ctx, x, expanded_aval, broadcast_dimensions=broadcast_dimensions)
-    expanded_xs.append(expanded_x)
-
-  out = _concatenate_tree(expanded_xs, axis)
-  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
-
-def _stack_batch_rule(batched_args, batch_dims, *, axis):
-  bdim = batch_dims[0]
-  if all(b == bdim for b in batch_dims) and bdim is not None:
-    if axis <= bdim:
-      out_axis = axis
-      out_bdim = bdim + 1
-    else:
-      out_axis = axis + 1
-      out_bdim = bdim
-    return stack_p.bind(*batched_args, axis=out_axis), out_bdim
-  else:
-    size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
-                if bdim is not None)
-    operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
-                else broadcast(op, (size,))
-                for op, bdim in zip(batched_args, batch_dims)]
-    return stack_p.bind(*operands, axis=axis + 1), 0
-
-def _stack_ur_rule(*operands, **kwargs):
-  out_unreduced = _concatenate_unreduced_rule(*operands, **kwargs)
-  out_reduced = _concatenate_reduced_rule(*operands, **kwargs)
-  return out_unreduced, out_reduced
-
-stack_p = standard_primitive(
-    _stack_shape_rule, _stack_dtype_rule, 'stack',
-    sharding_rule=_stack_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'stack'),
-    ur_rule=_stack_ur_rule)
-ad.deflinear2(stack_p, _stack_transpose_rule)
-mlir.register_lowering(stack_p, _stack_lower)
-
-
-def _unstack_shape_rule(operand, *, axis):
-  if operand.ndim == 0:
-    msg = "unstack requires arrays with rank > 0, however a scalar array of shape {} was passed."
-    raise ValueError(msg.format(operand.shape))
-  shape = list(operand.shape)
-  num_results = shape.pop(axis)
-  return (tuple(shape),) * num_results
-
-def _unstack_dtype_rule(operand, *, axis):
-  num_results = operand.shape[axis]
-  return (operand.dtype,) * num_results
-
-def _unstack_weak_type_rule(operand, *, axis):
-  num_results = operand.shape[axis]
-  return (operand.weak_type,) * num_results
-
-def _unstack_sharding_rule(operand, *, axis):
-  if operand.sharding.spec[axis] is not None:
-    raise core.ShardingTypeError(
-        f"unstack operand cannot be sharded on the unstacking axis {axis}. "
-        f"Got operand type={operand.str_short(True)}"
-    )
-  out_shapes = _unstack_shape_rule(operand, axis=axis)
-  new_spec = list(operand.sharding.spec)
-  new_spec.pop(axis)
-  out_sharding = operand.sharding.update(
-    spec=operand.sharding.spec.update(partitions=tuple(new_spec)))
-  return [out_sharding] * len(out_shapes)
-
-def _unstack_vma_rule(operand, *, axis):
-  out_vma = core.standard_vma_rule('unstack', operand)
-  return [out_vma] * operand.shape[axis]
-
-def _unstack_ur_rule(operand, *, axis):
-  return [getu(operand)] * operand.shape[axis], [getr(operand)] * operand.shape[axis]
-
-def _unstack_transpose_rule(cotangents, operand, *, axis):
-  if all(type(ct) is ad_util.Zero for ct in cotangents):
-    return [ad_util.Zero(operand.aval.to_ct_aval())]
-  cotangents = [ct.instantiate() if type(ct) is ad_util.Zero else ct
-                for ct in cotangents]
-  return [stack_p.bind(*cotangents, axis=axis)]
-
-def _unstack_lower(ctx, x, *, axis):
-  x_aval, = ctx.avals_in
-
-  start_indices = [0] * x_aval.ndim
-  limit_indices = list(x_aval.shape)
-  strides = (1,) * x_aval.ndim
-
-  slice_shape = list(x_aval.shape)
-  slice_shape[axis] = 1
-  slice_shape = tuple(slice_shape)
-
-  outs = []
-  for aval_out in ctx.avals_out:
-    limit_indices[axis] = start_indices[axis] + 1
-    slice_out = mlir.slice_op(ctx, x, x_aval.update(shape=slice_shape),
-                              start_indices=start_indices,
-                              limit_indices=limit_indices, strides=strides)
-    squeezed_out = mlir.reshape(ctx, slice_out, aval_out)
-    outs.append(mlir.lower_with_sharding_in_types(ctx, squeezed_out, aval_out))
-
-    start_indices[axis] = limit_indices[axis]
-
-  return outs
-
-def _unstack_batch_rule(batched_args, batch_dims, *, axis):
-  operand, = batched_args
-  bdim, = batch_dims
-
-  if bdim is None:
-    return unstack(operand, axis=axis), (None,) * operand.shape[axis]
-
-  if axis < bdim:
-    out_axis = axis
-    out_bdim = bdim - 1
-  else:
-    out_axis = axis + 1
-    out_bdim = bdim
-
-  results = unstack_p.bind(operand, axis=out_axis)
-  return results, (out_bdim,) * len(results)
-
-unstack_p = core.Primitive('unstack')
-unstack_p.multiple_results = True
-unstack_p.def_abstract_eval(
-    partial(standard_multi_result_abstract_eval, unstack_p, _unstack_shape_rule,
-            _unstack_dtype_rule, _unstack_weak_type_rule, _unstack_sharding_rule,
-            _unstack_vma_rule, _unstack_ur_rule))
-unstack_p.def_impl(partial(dispatch.apply_primitive, unstack_p))
-ad.deflinear2(unstack_p, _unstack_transpose_rule)
-mlir.register_lowering(unstack_p, _unstack_lower)
-
-batching.primitive_batchers[stack_p] = _stack_batch_rule
-batching.primitive_batchers[unstack_p] = _unstack_batch_rule
 
 
 def _split_shape_rule(operand, *, sizes, axis):

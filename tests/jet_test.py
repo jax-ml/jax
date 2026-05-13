@@ -62,10 +62,6 @@ class JetTest(jtu.JaxTestCase):
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
 
-    outer_struct = jax.tree_util.tree_structure([1] * len(expected_terms))
-    inner_struct = jax.tree_util.tree_structure(y)
-    expected_terms = jax.tree_util.tree_transpose(outer_struct, inner_struct, expected_terms)
-
     self.assertAllClose(y, expected_y, atol=atol, rtol=rtol,
                         check_dtypes=check_dtypes)
 
@@ -439,30 +435,6 @@ class JetTest(jtu.JaxTestCase):
       return grad(jacfwd(F))(0.)
 
     self.check_jet(h, (0.,), ([1., 2., 3.],), rtol=1e-3)
-
-  def test_stack(self):
-    order = 3
-    rng = self.rng()
-    x1 = rng.randn(2, 3)
-    x2 = rng.randn(2, 3)
-    primals = (x1, x2)
-    terms_in1 = [rng.randn(*x1.shape) for _ in range(order)]
-    terms_in2 = [rng.randn(*x2.shape) for _ in range(order)]
-    series_in = (terms_in1, terms_in2)
-    self.check_jet(lambda *xs: jnp.stack(xs, axis=0), primals, series_in, atol=1e-3, rtol=1e-3)
-    self.check_jet(lambda *xs: jnp.stack(xs, axis=1), primals, series_in, atol=1e-3, rtol=1e-3)
-    self.check_jet(lambda *xs: jnp.stack(xs, axis=-1), primals, series_in, atol=1e-3, rtol=1e-3)
-
-  def test_unstack(self):
-    order = 3
-    rng = self.rng()
-    x = rng.randn(4, 2, 3)
-    primals = (x,)
-    terms_in = [rng.randn(*x.shape) for _ in range(order)]
-    series_in = (terms_in,)
-    self.check_jet(lambda x: lax.unstack(x, axis=0), primals, series_in, atol=1e-3, rtol=1e-3)
-    self.check_jet(lambda x: lax.unstack(x, axis=1), primals, series_in, atol=1e-3, rtol=1e-3)
-    self.check_jet(lambda x: lax.unstack(x, axis=-1), primals, series_in, atol=1e-3, rtol=1e-3)
 
 
 if __name__ == '__main__':

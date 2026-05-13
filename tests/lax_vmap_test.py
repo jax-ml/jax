@@ -362,22 +362,6 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng,
                         multiple_results=True)
 
-  def testStack(self):
-    shape = (2, 3)
-    dtype = np.float32
-    rng = jtu.rand_default(self.rng())
-    op = lambda x, y: lax.stack([x, y], axis=0)
-    for bdims in lax_test_util.all_bdims(shape, shape):
-      self._CheckBatching(op, 5, bdims, (shape, shape), (dtype, dtype), rng)
-
-  def testUnstack(self):
-    shape = (2, 3)
-    dtype = np.float32
-    rng = jtu.rand_default(self.rng())
-    op = lambda x: lax.unstack(x, axis=0)
-    for bdims in lax_test_util.all_bdims(shape):
-      self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng,
-                          multiple_results=True)
   @jtu.sample_product(
     [dict(shape=shape, perm=perm, bdims=bdims)
       for shape, perm in [
