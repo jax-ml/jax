@@ -1141,6 +1141,7 @@ def dynamic_slice_in_dim(operand: Array | np.ndarray,
                        allow_negative_indices=allow_negative)
 
 
+@api.jit(static_argnames=["axis", "keepdims", "allow_negative_indices"])
 def dynamic_index_in_dim(operand: Array | np.ndarray,
                          index: ArrayLike,
                          axis: int = 0, keepdims: bool = True,
@@ -1271,6 +1272,7 @@ def dynamic_update_slice_in_dim(operand: Array | np.ndarray,
                               allow_negative_indices=allow_negative)
 
 
+@api.jit(static_argnames=["axis", "allow_negative_indices"])
 def dynamic_update_index_in_dim(operand: Array | np.ndarray,
                                 update: ArrayLike, index: ArrayLike,
                                 axis: int, *,

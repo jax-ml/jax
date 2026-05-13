@@ -1017,10 +1017,6 @@ def _multi_slice(self: Array,
 
 # The next two functions are related to iter(array), implemented here to
 # avoid circular imports.
-@api.jit
-def _unstack(x: Array) -> list[Array]:
-  dims = (0,)
-  return [lax.squeeze(t, dims) for t in lax.split(x, (1,) * x.shape[0])]
 
 def _chunk_iter(x, size):
   if size > x.shape[0]:
@@ -1503,7 +1499,7 @@ _array_methods = {
 
 _impl_only_array_methods = {
   "_chunk_iter": _chunk_iter,
-  "_unstack": _unstack,
+  "_unstack": lax.unstack,
 }
 
 _array_properties = {

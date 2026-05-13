@@ -4386,7 +4386,7 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
 
 
 @export
-@api.jit(static_argnames="axis")
+@api.jit(static_argnames="axis", inline=True)
 def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
   """Unstack an array along an axis.
 
