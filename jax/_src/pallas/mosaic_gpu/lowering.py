@@ -1919,6 +1919,12 @@ def _get_lowering_rule(
   )
   del x_ref  # Don't use x_ref anymore. Use x_smem instead!
 
+  if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
+    swizzle = transforms[0].swizzle
+    transforms = transforms[1:]
+  else:
+    swizzle = None
+
   if transforms and isinstance(transforms[-1], state_types.TransposeTransform):
     permutation = transforms[-1].permutation
     transforms = transforms[:-1]
@@ -1937,9 +1943,11 @@ def _get_lowering_rule(
     return mgpu.FragmentedArray.splat(val, shape=(), is_signed=is_signed)
 
   match transforms:
-    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntilingTransform(tiling)):
+    case (gpu_core.UntilingTransform(tiling),):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
+      if swizzle is None:
+        raise NotImplementedError("Tiling without swizzle is not supported.")
       bw = dtypes.itemsize_bits(ctx.avals_out[0].dtype)
       expected_minor_tiling = swizzle * 8 // bw
       if tiling[-1] != expected_minor_tiling:
@@ -1970,6 +1978,10 @@ def _get_lowering_rule(
             raise ValueError(
                 f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
             )
+          if swizzle is not None:
+            raise NotImplementedError(
+                "Unsupported swizzle transform with strided layout"
+            )
           return mgpu.FragmentedArray.load_strided(
               x_smem,
               is_signed=is_signed,
@@ -1977,6 +1989,10 @@ def _get_lowering_rule(
           )
         case None:
           assert permutation is None  # strided/transposed rejected above.
+          if swizzle is not None:
+            raise NotImplementedError(
+                "Unsupported swizzle transform with strided layout"
+            )
           return mgpu.FragmentedArray.load_strided(x_smem, is_signed=is_signed)
         case _:
           assert isinstance(ctx.out_layout_hint, mgpu.TiledLayout)
@@ -1986,7 +2002,7 @@ def _get_lowering_rule(
               x_smem,
               is_signed=is_signed,
               layout=ctx.out_layout_hint,
-              swizzle=16,
+              swizzle=swizzle or 16,
               optimized=optimized,
           )
     case _:
@@ -2064,6 +2080,12 @@ def _swap_lowering_rule(
   if ctx.module_ctx.auto_barriers:
     barrier()  # Make sure reads have completed before we write.
 
+  if transforms and isinstance(transforms[0], gpu_core.UnswizzleRef):
+    swizzle = transforms[0].swizzle
+    transforms = transforms[1:]
+  else:
+    swizzle = None
+
   if transforms and isinstance(transforms[-1], state_types.TransposeTransform):
     permutation = transforms[-1].permutation
     transforms = transforms[:-1]
@@ -2085,9 +2107,11 @@ def _swap_lowering_rule(
           is_signed=mgpu_utils.is_signed(v_aval.dtype),
       )
       value.store_untiled(x_smem)
-    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntilingTransform(tiling)):
+    case (gpu_core.UntilingTransform(tiling),):
       if len(tiling) != 2:
         raise NotImplementedError(f"Only 2D tiling is supported, got: {tiling}")
+      if swizzle is None:
+        raise NotImplementedError("Tiling without swizzle is not supported.")
       bw = dtypes.itemsize_bits(v_aval.dtype)
       expected_minor_tiling = swizzle * 8 // bw
       if tiling[-1] != expected_minor_tiling:
@@ -2120,11 +2144,16 @@ def _swap_lowering_rule(
               x_smem,
               layout=value.layout,
               is_signed=mgpu_utils.is_signed(v_aval.dtype),
+              swizzle=swizzle or 16,
               optimized=False,
           )
-          value.store_untiled(x_smem, optimized=False)
+          value.store_untiled(x_smem, swizzle=swizzle or 16, optimized=False)
         case _:
           assert permutation is None  # strided/transposed rejected above.
+          if swizzle is not None:
+            raise NotImplementedError(
+                "Unsupported swizzle transform with strided layout"
+            )
           old_value = mgpu.FragmentedArray.load_strided(
               x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
           )
