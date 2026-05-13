@@ -1,14 +1,20 @@
 # #############################################################################
 # All default build options below. These apply to all build commands.
 # #############################################################################
-# TODO: Enable Bzlmod
-common --noenable_bzlmod
+# Enable Bzlmod (Default)
+common --config=bzlmod
 common:bzlmod --enable_bzlmod --noenable_workspace
 ## Make sure direct dependencies specified match the resolved version.
 common:bzlmod --check_direct_dependencies=warning
 ## Canonical repo names become `@foo+` instead of `@foo~`
 ## TODO: Remove after upgrading to Bazel 8
 common:bzlmod --incompatible_use_plus_in_repo_names
+
+# Enable WORKSPACE (To be removed after Bzlmod migration)
+common:workspace --noenable_bzlmod --enable_workspace
+
+# Disable empty glob checks.
+common --noincompatible_disallow_empty_glob
 
 # Make Bazel print out all options from rc files.
 common --announce_rc
