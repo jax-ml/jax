@@ -30,6 +30,7 @@ from jax._src.scipy.linalg import (
   expm_frechet as expm_frechet,
   fiedler as fiedler,
   hadamard as hadamard,
+  helmert as helmert,
   hessenberg as hessenberg,
   hankel as hankel,
   hilbert as hilbert,
