@@ -2265,6 +2265,32 @@ class VectorSubcoreTest(PallasSCTest):
     y = kernel(*xs)
     np.testing.assert_array_equal(y, x)
 
+  @parameterized.parameters(
+      (jnp.int32, (16,), 42),
+      (jnp.int16, (32,), 42),
+      (jnp.int16, (2, 16), 42),
+      (jnp.int8, (64,), 42),
+      (jnp.int8, (4, 16), 42),
+      (jnp.float32, (16,), 42.0),
+      (jnp.bfloat16, (32,), 42.0),
+      (jnp.bfloat16, (2, 16), 42.0),
+      (jnp.float8_e5m2, (64,), 7.0),
+      (jnp.float8_e5m2, (4, 16), 7.0),
+  )
+  def test_store_splat_constant(self, dtype, shape, val):
+    if not jtu.is_cloud_tpu_at_least(2026, 5, 20):
+      self.skipTest("Needs a newer libTPU")
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.full(shape, val, dtype=dtype)
+
+    expected = jnp.full(shape, val, dtype=dtype)
+    np.testing.assert_array_equal(kernel(), expected)
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True
