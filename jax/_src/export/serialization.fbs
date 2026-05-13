@@ -15,6 +15,7 @@
 // To regenerate the serialization_generated.py, install flatc (e.g.,
 // from Homebrew) and then:
 //
+//  0.  cd jax/_src/export
 //  1.  Run flatc --python --gen-onefile serialization.fbs
 //  2.  Delete the trailing newlines at the end
 //  3.  Add back the licence comment at the start
@@ -102,6 +103,7 @@ enum AxisType: byte {
 table AbstractDevice {
   device_kind: string;
   num_cores: uint32 = null;
+  platform: string;  // Added 5/15/2026 (v11)
 }
 
 table AbstractMesh {
