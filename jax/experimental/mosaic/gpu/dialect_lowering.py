@@ -1734,7 +1734,7 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.SliceSMEMOp)
+@_register_lowering(mgpu.SliceSMEMOp, support_warp_semantics=True)
 def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
