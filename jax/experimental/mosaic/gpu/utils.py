@@ -2076,6 +2076,13 @@ def is_known_divisible(value: ir.Value, divisor: int, max_depth=10) -> bool:
   def_op = value.owner
 
   match def_op:
+    case ir.Block() as block:
+      op = block.owner
+      if isinstance(op, dialect.WarpMapOp):
+        arg_index = list(block.arguments).index(value)  # pyrefly: ignore[bad-argument-type]
+        operand = op.operands[arg_index]
+        return is_known_divisible(operand, divisor, new_depth)
+      return False
     case arith.IndexCastOp():
       return is_known_divisible(def_op.in_, divisor, max_depth - 1)
     case arith.ConstantOp():
