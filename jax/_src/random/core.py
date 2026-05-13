@@ -1112,8 +1112,7 @@ def truncated_normal(key: ArrayLike,
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
     Returns values in the open interval ``(lower, upper)``.
   """
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("truncated_normal", shape, lower, upper)
   key, _ = _check_prng_key("truncated_normal", key)
   out_sharding = canonicalize_sharding(out_sharding, "truncated_normal")
   dtype = dtypes.check_and_canonicalize_user_dtype(
@@ -1121,6 +1120,7 @@ def truncated_normal(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
                      f"dtype, got {dtype}")
+  _check_all_safe_to_cast("truncated_normal", dtype, lower, upper)
   return maybe_auto_axes(_truncated_normal, out_sharding,
                          shape=shape, dtype=dtype)(key, lower, upper)
 
