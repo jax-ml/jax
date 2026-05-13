@@ -642,15 +642,15 @@ def _serialize_abstract_device(builder: flatbuffers.Builder,
   return ser_flatbuf.AbstractDeviceEnd(builder)
 
 def get_platform_from_device_kind(device_kind) -> str:
-  dk = device_kind.lower()
-  if 'cpu' in dk:
+  device_kind = device_kind.lower()
+  if 'cpu' in device_kind:
     return 'cpu'
-  elif 'tpu' in dk:
+  elif 'tpu' in device_kind:
     return 'tpu'
-  elif 'nvidia' in dk:
+  elif any(x in device_kind for x in ['nvidia', 'tesla']):
     return 'gpu'
   else:
-    assert False
+    raise ValueError(f'Got unexpected {device_kind=}')
 
 def _deserialize_abstract_device(
     ser_abs_device: ser_flatbuf.AbstractDevice | None
