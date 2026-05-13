@@ -53,6 +53,7 @@ from jax._src.scipy.special import (
   multigammaln as multigammaln,
   ndtr as ndtr,
   ndtri as ndtri,
+  owens_t as owens_t,
   poch as poch,
   polygamma as polygamma,
   rel_entr as rel_entr,
