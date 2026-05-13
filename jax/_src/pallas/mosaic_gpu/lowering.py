@@ -1922,12 +1922,13 @@ def _get_lowering_rule(
   if transforms and isinstance(transforms[-1], state_types.TransposeTransform):
     permutation = transforms[-1].permutation
     transforms = transforms[:-1]
-    if not transposed:
-      raise ValueError(
-          "Either both the ref and the value are transposed or neither is."
-      )
   else:
     permutation = None
+
+  if transposed != (permutation is not None):
+    raise ValueError(
+        "Either both the ref and the value are transposed or neither is."
+    )
 
   is_signed = mgpu_utils.is_signed(dtype)
 
@@ -2066,12 +2067,13 @@ def _swap_lowering_rule(
   if transforms and isinstance(transforms[-1], state_types.TransposeTransform):
     permutation = transforms[-1].permutation
     transforms = transforms[:-1]
-    if not transposed_value:
-      raise ValueError(
-          "Either both the ref and the value are transposed or neither is."
-      )
   else:
     permutation = None
+
+  if transposed_value != (permutation is not None):
+    raise ValueError(
+        "Either both the ref and the value are transposed or neither is."
+    )
 
   match transforms:
     case _ if math.prod(ctx.avals_out[0].shape) == 1:  # Scalar case.
