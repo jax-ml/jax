@@ -28,7 +28,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import numpy as jnp
-from jax._src.numpy.ufuncs import isposinf, isneginf, sinc
+from jax._src.numpy.ufuncs import arctan, isposinf, isneginf, sinc
 from jax._src.api import jit, jvp, vmap
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy import einsum as jnp_einsum
@@ -3403,6 +3403,124 @@ hyp2f1.defjvps(
   lambda c_dot, primal_out, a, b, c, x: _hyp2f1_c_derivative(a, b, c, x) * c_dot,
   lambda x_dot, primal_out, a, b, c, x: _hyp2f1_x_derivative(a, b, c, x) * x_dot
 )
+
+
+# 13-point Gauss-type quadrature on the canonical Owen's T integral
+#   T(h, a) = (1/2π) ∫_0^a exp(-h²(1+u²)/2) / (1+u²) du,
+# under the substitution u² = a²·t, which absorbs the 1/(2π) factor and
+# the Jacobian into the tabulated weights so that
+#   T(h, a) ≈ a · Σ_i w_i · exp(-h²(1+a²·t_i)/2) / (1+a²·t_i).
+# Patefield & Tandy (2000) Method T5: https://www.jstatsoft.org/v05/i05/paper
+_OWENS_T_QUAD_PTS = np.array([
+    0.0035082039676451715, 0.031279042338030754,
+    0.085266826283219451,  0.16245071730812277,
+    0.25851196049125435,   0.36807553840697534,
+    0.48501092905604697,   0.60277514152618577,
+    0.71477884217753227,   0.81475510988760099,
+    0.89711029755948966,   0.95723808085944262,
+    0.99178832974629704,
+])
+
+_OWENS_T_QUAD_WTS = np.array([
+    0.018831438115323503, 0.018567086243977649,
+    0.018042093461223386, 0.017263829606398753,
+    0.016243219975989857, 0.014994592034116705,
+    0.013535474469662088, 0.011886351605820165,
+    0.010070377242777432, 0.0081130545742299587,
+    0.0060419009528470239, 0.0038862217010742058,
+    0.0016793031084546090,
+])
+
+
+def _owens_t_quadrature(h, a):
+  quad_pts = jnp.expand_dims(_OWENS_T_QUAD_PTS, tuple(range(a.ndim)))
+  r = jnp.square(a)[..., None] * quad_pts
+  integrand = jnp.exp(-0.5 * jnp.square(h)[..., None] * (1. + r)) / (1. + r)
+  return a * (integrand @ _OWENS_T_QUAD_WTS)
+
+
+@custom_derivatives.custom_jvp
+def _owens_t_impl(h, a):
+  h = jnp.abs(h)
+  abs_a = jnp.abs(a)
+  root_2 = _lax_const(h, np.sqrt(2))
+  h_normed = h / root_2
+
+  modified_a = jnp.where(abs_a <= 1., abs_a, jnp.reciprocal(abs_a))
+  modified_h = jnp.where(abs_a <= 1., h, abs_a * h)
+
+  result = _owens_t_quadrature(modified_h, modified_a)
+
+  # Exact values for h=0 and a=1
+  result = jnp.where(modified_h == 0., arctan(modified_a) / (2 * np.pi), result)
+  result = jnp.where(
+      modified_a == 1.,
+      0.125 * lax.erfc(-modified_h / root_2) * lax.erfc(modified_h / root_2),
+      result)
+
+  # Reciprocal correction for |a| > 1
+  normh = lax.erfc(h_normed)
+  normah = lax.erfc(abs_a * h_normed)
+  result = jnp.where(
+      abs_a > 1.,
+      jnp.where(
+          abs_a * h <= 0.67,
+          (0.25 - 0.25 * lax.erf(h_normed) * lax.erf(abs_a * h_normed)
+           - result),
+          0.25 * (normh + normah - normh * normah) - result),
+      result)
+
+  result = lax.sign(a) * result
+  return jnp.where(jnp.isnan(a) | jnp.isnan(h), jnp.full_like(result, jnp.nan), result)
+
+
+def _owens_t_jvp(primals, tangents):
+  (h, a) = primals
+  (dh, da) = tangents
+  result = _owens_t_impl(h, a)
+  root_2 = _lax_const(h, np.sqrt(2))
+  # ∂T/∂h = -exp(-h²/2) · erf(ah/√2) / (2√(2π))
+  dout_dh = (-lax.exp(-0.5 * lax.square(h)) * lax.erf(a * h / root_2)
+             / (2. * _lax_const(h, np.sqrt(2. * np.pi))))
+  # ∂T/∂a = exp(-½(a²+1)h²) / (2π(a²+1))
+  dout_da = (lax.exp(-0.5 * (lax.square(a) + 1.) * lax.square(h))
+             / (2. * np.pi * (lax.square(a) + 1.)))
+  return result, (dout_dh * dh + dout_da * da).astype(result.dtype)
+
+_owens_t_impl.defjvp(_owens_t_jvp)
+
+
+def owens_t(h: ArrayLike, a: ArrayLike) -> Array:
+  r"""Owen's T function.
+
+  JAX implementation of :obj:`scipy.special.owens_t`.
+
+  Computes Owen's T function:
+
+  .. math::
+
+     T(h, a) = \frac{1}{2\pi} \int_0^a
+         \frac{\exp\!\left(-\tfrac{1}{2}h^2(1+x^2)\right)}{1+x^2} \, dx
+
+  Computed via 13-point Gauss-type quadrature on the canonical integral
+  form (Patefield & Tandy 2000 method T5).
+  The full 18-region dispatch from Patefield & Tandy is
+  intentionally avoided because XLA evaluates every branch of a
+  ``where`` / ``select`` unconditionally, which turns per-region
+  dispatch into added cost rather than savings.
+
+  Args:
+    h: array_like, real-valued.
+    a: array_like, real-valued.
+
+  Returns:
+    Array of Owen's T values with dtype matching the promoted inputs.
+
+  See also:
+    :func:`jax.scipy.special.ndtr`
+  """
+  h, a = promote_args_inexact("owens_t", h, a)
+  return _owens_t_impl(h, a)
 
 
 def softmax(x: ArrayLike,
