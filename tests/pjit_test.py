@@ -36,12 +36,14 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax._src import literals
+from jax._src import pretty_printer as pp
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src.xla_metadata import set_xla_metadata
 from jax._src import prng
+from jax._src.lib import jaxlib_extension_version
 from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
                           AbstractDevice)
 from jax.experimental import multihost_utils
@@ -1111,6 +1113,60 @@ class PJitTest(jtu.BufferDonationTestCase):
                 ] c
               in (d,) }
         """).strip(),
+    )
+
+  @unittest.skipIf(jaxlib_extension_version < 452, "Requires jaxlib 0.10.1")
+  def test_pretty_print_html(self):
+    f = pjit(lambda x: x**2)
+    g = pjit(lambda x: f(x) + f(x))
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(g)(x)
+    html_output = jaxpr.pretty_print(use_color=False, output_format=pp.OutputFormat.HTML)
+    self.assertEqual(
+        html_output,
+        textwrap.dedent("""
+            let <a id="g_lambda">lambda</a> = { lambda ; <a id="v_a">a</a>:f32[1]. let <a id="v_b">b</a>:f32[1] = integer_pow[y=2] <a href="#v_a">a</a> in (<a href="#v_b">b</a>,) } in
+            { lambda ; <a id="v_c">c</a>:f32[1]. let
+                <a id="v_d">d</a>:f32[1] = jit[
+                  name=&lt;lambda&gt;
+                  jaxpr={ lambda ; <a id="v_c">c</a>:f32[1]. let
+                      <a id="v_e">e</a>:f32[1] = jit[name=&lt;lambda&gt; jaxpr=<a href="#g_lambda">lambda</a>] <a href="#v_c">c</a>
+                      <a id="v_f">f</a>:f32[1] = jit[name=&lt;lambda&gt; jaxpr=<a href="#g_lambda">lambda</a>] <a href="#v_c">c</a>
+                      <a id="v_d">d</a>:f32[1] = add <a href="#v_e">e</a> <a href="#v_f">f</a>
+                    in (<a href="#v_d">d</a>,) }
+                ] <a href="#v_c">c</a>
+              in (<a href="#v_d">d</a>,) }
+        """).strip(),
+    )
+
+  def test_pretty_print_nested_shared_jaxprs(self):
+    @pjit
+    def inner_fn(x):
+      return x + 1.0
+
+    @pjit
+    def outer_fn(x):
+      y = inner_fn(x)
+      z = inner_fn(x)
+      return y + z
+
+    x = jnp.array([1.0], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(lambda x: outer_fn(x) + outer_fn(x))(x)
+    self.assertEqual(
+        jaxpr.pretty_print(use_color=False),
+        textwrap.dedent("""
+            let outer_fn = { lambda ; a:f32[1]. let
+                b:f32[1] = jit[name=inner_fn jaxpr=inner_fn] a
+                c:f32[1] = jit[name=inner_fn jaxpr=inner_fn] a
+                d:f32[1] = add b c
+              in (d,) } in
+            let inner_fn = { lambda ; e:f32[1]. let f:f32[1] = add e 1.0:f32[] in (f,) } in
+            { lambda ; g:f32[1]. let
+                h:f32[1] = jit[name=outer_fn jaxpr=outer_fn] g
+                i:f32[1] = jit[name=outer_fn jaxpr=outer_fn] g
+                j:f32[1] = add h i
+              in (j,) }
+        """).strip()
     )
 
   def test_pretty_print_pjit_id(self):

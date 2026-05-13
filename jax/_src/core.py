@@ -3970,8 +3970,8 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
 
     # Pull jaxprs occurring more than once to the top-level, making sure
     # that their names are unique.
-    docs = []
     name_counts = Counter[str]()
+    shared = []
     for jaxpr, c in jaxpr_counts.items():
       if c == 1:
         continue
@@ -3982,9 +3982,13 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
         name_counts[name] += 1
       else:
         name_counts[name] += 1
-      docs.append(pp_shared_jaxpr(name, jaxpr, context, settings))
       context.shared_jaxpr_names.add(name)
       context.shared_jaxprs[jaxpr] = name
+      shared.append((name, jaxpr))
+
+    docs = []
+    for name, jaxpr in shared:
+      docs.append(pp_shared_jaxpr(name, jaxpr, context, settings))
     docs.append(pp_jaxpr(jaxpr_to_print, context, settings))
     return pp.concat(docs)
 
@@ -4174,9 +4178,13 @@ def pp_shared_jaxpr(
     context: JaxprPpContext,
     settings: JaxprPpSettings,
 ) -> pp.Doc:
+  eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, settings)
+  pp_skeleton = pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
   return pp.concat([
-      pp.text("let " + name + " = "),
-      pp_jaxpr(jaxpr, context, settings),
+      pp.text("let "),
+      pp.text(name, anchor=f"g_{name}"),
+      pp.text(" = "),
+      pp_skeleton,
       pp.text(" in"),
       pp.brk(),
   ])
@@ -4188,7 +4196,7 @@ def pp_jaxpr(
     settings: JaxprPpSettings,
 ) -> pp.Doc:
   if name := context.shared_jaxprs.get(jaxpr):
-    return pp.text(name)
+    return pp.text(name, href=f"#g_{name}")
   eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, settings)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
 

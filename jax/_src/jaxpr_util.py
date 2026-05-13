@@ -591,7 +591,7 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
     const allLines = data.lines;
 
     const varDefinitions = {{}};
-    const anchorRegex = /<a id="v_([^"]+)"/g;
+    const anchorRegex = /<a id="(?:v_|g_)([^"]+)"/g;
     allLines.forEach((line, idx) => {{
       let match;
       while ((match = anchorRegex.exec(line)) !== null) {{
@@ -662,11 +662,11 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
     // Event Delegation
     let selectedElement = null;
     container.addEventListener('click', (e) => {{
-      const link = e.target.closest('a[href^="#v_"]');
+      const link = e.target.closest('a[href^="#v_"], a[href^="#g_"]');
       if (link) {{
         e.preventDefault();
         const href = link.getAttribute('href');
-        const varName = href.substring(3); // strip "#v_"
+        const varName = href.substring(3); // strip "#v_" or "#g_"
         const lineIdx = varDefinitions[varName];
         if (lineIdx !== undefined) {{
           scrollToLine(lineIdx);
