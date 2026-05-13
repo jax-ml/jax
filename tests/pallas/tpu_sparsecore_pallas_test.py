@@ -2280,6 +2280,8 @@ class VectorSubcoreTest(PallasSCTest):
   def test_store_splat_constant(self, dtype, shape, val):
     if not jtu.is_cloud_tpu_at_least(2026, 5, 20):
       self.skipTest("Needs a newer libTPU")
+    if len(shape) == 1 and jax.dtypes.itemsize_bits(dtype) < 32:
+      self.skipTest("Load/store for interleaved-minor-128 unsupported")
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
