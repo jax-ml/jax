@@ -71,7 +71,8 @@ SerT = TypeVar("SerT")
 #   This version is backwards compatible with Version 2 to 8.
 # Version 10, April 4th, 2026, optimizes serialization of duplicate shardings,
 #   abstract meshes and avals.
-_SERIALIZATION_VERSION = 10
+# Version 11, May 15th, 2026, add AbstractDevice.platform.
+_SERIALIZATION_VERSION = 11
 
 
 @dataclasses.dataclass
@@ -634,13 +635,16 @@ def _serialize_abstract_device(builder: flatbuffers.Builder,
   if device is None:
     return 0
   device_kind = builder.CreateString(device.device_kind)
+  platform = builder.CreateString(device.platform)
 
   ser_flatbuf.AbstractDeviceStart(builder)
   ser_flatbuf.AbstractDeviceAddDeviceKind(builder, device_kind)
   if device.num_cores is not None:
     ser_flatbuf.AbstractDeviceAddNumCores(builder, device.num_cores)
+  ser_flatbuf.AbstractDeviceAddPlatform(builder, platform)
   return ser_flatbuf.AbstractDeviceEnd(builder)
 
+# TODO(necula): remove 6 months after 5/15/2026
 def get_platform_from_device_kind(device_kind) -> str:
   device_kind = device_kind.lower()
   if 'cpu' in device_kind:
@@ -659,8 +663,11 @@ def _deserialize_abstract_device(
     return None
   device_kind = ser_abs_device.DeviceKind().decode("utf-8")
   num_cores: int | None = ser_abs_device.NumCores()
-  plat = get_platform_from_device_kind(device_kind)
-  return mesh.AbstractDevice(device_kind, num_cores, plat)
+  if (platform := ser_abs_device.Platform()):
+    platform = platform.decode("utf-8")
+  else:
+    platform = get_platform_from_device_kind(device_kind)
+  return mesh.AbstractDevice(device_kind, num_cores, platform)
 
 
 def _serialize_abstract_mesh(builder: flatbuffers.Builder,
