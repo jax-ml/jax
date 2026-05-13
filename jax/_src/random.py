@@ -2847,7 +2847,9 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
 def wald(key: ArrayLike,
          mean: RealArray,
          shape: Shape | None = None,
-         dtype: DTypeLikeFloat | None = None) -> Array:
+         dtype: DTypeLikeFloat | None = None,
+         *,
+         out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Wald random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -2868,6 +2870,14 @@ def wald(key: ArrayLike,
       (None) produces a result shape equal to ``np.shape(mean)``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
@@ -2879,16 +2889,13 @@ def wald(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `wald` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _wald(key, mean, shape, dtype)
+  shape = _check_broadcast_shapes("wald", shape, mean)
+  out_sharding = canonicalize_sharding(out_sharding, "wald")
+  _check_all_safe_to_cast("wald", dtype, mean)
+  return maybe_auto_axes(_wald, out_sharding, shape=shape, dtype=dtype)(key, mean)
 
 @jit(static_argnums=(2, 3))
 def _wald(key, mean, shape, dtype) -> Array:
-  if shape is None:
-    shape =  np.shape(mean)
-  else:
-    _check_shape("wald", shape, np.shape(mean))
   k1, k2 = _split(key, 2)
   mean = mean.astype(dtype)
   mean = jnp.broadcast_to(mean, shape)
