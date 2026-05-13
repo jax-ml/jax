@@ -142,6 +142,17 @@ jobs:
           printf '  %s\n' "${test_targets[@]}"
           echo "Bazel profile directory: ${PROFILE_DIR}"
 
+          cat << EOF >> MODULE.bazel
+          python.override(minor_mapping = {"${PYTHON_VERSION}": "${PYTHON_VERSION}.12"})
+          python.single_version_platform_override(
+              platform = "x86_64-unknown-linux-gnu",
+              python_version = "${PYTHON_VERSION}.12",
+              urls = ["${CPYTHON_URL}"],
+              sha256 = "${CPYTHON_SHA256}",
+              strip_prefix = "${CPYTHON_PREFIX}",
+          )
+          EOF
+
           bazel_status=0
           bazel_args=(
             test
