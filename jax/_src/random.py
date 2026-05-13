@@ -643,7 +643,7 @@ def randint(key: ArrayLike,
   key, _ = _check_prng_key("randint", key)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
-  shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("randint", shape, minval, maxval)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "randint", shape)
 
   if not dtypes.issubdtype(dtype, np.integer):
