@@ -91,6 +91,16 @@ use_repo(remote_execution_configure, "local_config_remote_execution")
 ##############################################################
 
 single_version_override(
+    module_name = "rules_python",
+    patch_strip = 1,
+    patches = [
+        # Upstreamed at https://github.com/bazel-contrib/rules_python/pull/3768
+        "//third_party/py:rules_python_local_wheel.patch",
+    ],
+    version = "1.8.5",
+)
+
+single_version_override(
     module_name = "protobuf",
     patch_strip = 1,
     patches = [
@@ -139,6 +149,9 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
         "numpy": ["numpy_headers"],
     },
     hub_name = "jax_pypi",
+    local_wheels = {
+        "libtpu": "dist/libtpu-*.whl",  # On CI, we use the downloaded nightly version of libtpu.
+    },
     python_version = python_version,
     requirements_by_platform = {} if python_version in [
         "3.11",
