@@ -112,6 +112,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "gammaln", 1, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
+        "comb", 2, float_dtypes, jtu.rand_positive, False
+    ),
+    op_record(
         "factorial", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
@@ -257,6 +260,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     args_maker = lambda: []
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
     self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
+
+  @parameterized.parameters(
+      ([-1, -1, 5, 5], [0, 2, -1, 7], False),
+      ([0, 0], [0, 4], True),
+  )
+  def testCombBoundaryValues(self, N_samples, k_samples, repetition):
+    dtype = dtypes.default_float_dtype()
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    args_maker = lambda: (np.array(N_samples, dtype=dtype), np.array(k_samples, dtype=dtype))
+    scipy_op = functools.partial(osp_special.comb, repetition=repetition)
+    lax_op = functools.partial(lsp_special.comb, repetition=repetition)
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, rtol=rtol)
+    self._CompileAndCheck(lax_op, args_maker, rtol=rtol)
 
   def testGammaSign(self):
     dtype = jnp.zeros(0).dtype  # default float dtype.
