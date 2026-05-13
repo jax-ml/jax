@@ -1050,8 +1050,10 @@ def tile_strides(
 
 def transform_type(
     ref_ty: ir.MemRefType,
-    transforms: tuple[lc.MemRefTransform, ...],
+    transforms: tuple[lc.MemRefTransform, ...] | ir.ArrayAttr,
 ) -> ir.MemRefType:
+  if isinstance(transforms, ir.ArrayAttr):
+    _, transforms = swizzle_and_transforms_from_transforms_attr(transforms)
   if not (utils.is_smem_ref(ref_ty) or utils.is_cluster_smem_ref(ref_ty)):
     raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
   if utils.is_cluster_smem_ref(ref_ty):
@@ -1864,7 +1866,7 @@ def _memref_subview_op_lowering_rule(
         offset = op.offsets[dynamic_offset_index]
         dynamic_offset_index += 1
       indices.append(utils.DynamicSlice(offset, size))
-    return [_tmem_ref_to_ir(ref.slice(*indices))]
+    return [_tmem_ref_to_ir(ref.slice(*indices), op.result.type)]
 
   in_transforms = inference_utils.in_transforms(op)[0]
   out_transforms = inference_utils.out_transforms(op)[0]
@@ -1957,54 +1959,69 @@ def _memref_subview_op_lowering_rule(
   return [wrapped_ref]
 
 
+# memref.cast shows up when we slice a ref with a dynamic index, that later gets
+# folded into a constant. At that time, the sliced ref type is simplified from
+# having a dynamic offset to a constant offset. However, downstream consumer ops
+# still expect the offset to be dynamic, forcing the insertion of a memref.cast
+# op to reintroduce the dynamic offset.
 @_register_lowering(memref.CastOp, support_warp_semantics=True)
 def _memref_cast_op_lowering_rule(
     ctx: LoweringContext, op: memref.CastOp
 ) -> Sequence[ir.Value]:
-  """Lowering rule for memref.CastOp.
-  Only casts that add a dynamic offset are supported.
-  """
   del ctx
-
-  in_transforms = inference_utils.in_transforms(op)[0]
-  out_transforms = inference_utils.out_transforms(op)[0]
-  if in_transforms != out_transforms:
-    raise NotImplementedError(
-        "CastOp transforms for the input and output refs must be identical."
-    )
-
   in_ty = ir.MemRefType(op.source.type)
   out_ty = ir.MemRefType(op.result.type)
-  if in_ty.element_type != out_ty.element_type:
-    raise NotImplementedError(
-        "CastOp only supports casts between memrefs with the same element type."
-    )
-  if in_ty.shape != out_ty.shape:
-    raise NotImplementedError(
-        "CastOp only supports casts between memrefs with the same shape."
-    )
   in_strides, _ = in_ty.get_strides_and_offset()
-  out_strides, out_offset = out_ty.get_strides_and_offset()
-  if in_strides != out_strides:
+  out_strides, _ = out_ty.get_strides_and_offset()
+
+  unoffseted_in_ty = ir.MemRefType.get(
+      in_ty.shape,
+      in_ty.element_type,
+      memory_space=in_ty.memory_space,
+      layout=ir.StridedLayoutAttr.get(0, in_strides),
+  )
+  unoffseted_out_ty = ir.MemRefType.get(
+      out_ty.shape,
+      out_ty.element_type,
+      memory_space=out_ty.memory_space,
+      layout=ir.StridedLayoutAttr.get(0, out_strides),
+  )
+
+  if unoffseted_in_ty != unoffseted_out_ty:
     raise NotImplementedError(
-        "CastOp only supports casts between memrefs with the same strides."
+        "Only support memref.cast where the input and output types are the "
+        f"same up to offset, but got {in_ty=} and {out_ty=}."
     )
 
-  unwrapped_source_ref = unwrap_transformed_memref(op.source, in_transforms)
-  in_transformed_ty = ir.MemRefType(unwrapped_source_ref.type)
-  transformed_strides, _ = in_transformed_ty.get_strides_and_offset()
-  out_layout = ir.StridedLayoutAttr.get(out_offset, transformed_strides)
-  out_transformed_ty = ir.MemRefType.get(
-      in_transformed_ty.shape,
-      in_transformed_ty.element_type,
-      memory_space=in_transformed_ty.memory_space,
-      layout=out_layout,
+  memory_space = ir.MemRefType(op.result.type).memory_space
+  if memory_space == utils.smem():
+    [in_transforms] = inference_utils.in_transforms(op)
+    [out_transforms] = inference_utils.out_transforms(op)
+    if in_transforms != out_transforms:
+      raise NotImplementedError(
+          "memref.cast transforms must have identical transforms for both "
+          f"input and output but got {in_transforms=} and {out_transforms=}"
+      )
+    result = memref.cast(
+        transform_type(ir.MemRefType(op.result.type), out_transforms),
+        unwrap_transformed_memref(op.source, in_transforms),
+    )
+    return [wrap_transformed_memref(result, op.result.type, out_transforms)]
+
+  if memory_space == utils.tmem():
+    [in_tmem_layout] = inference_utils.in_tmem_layouts(op)
+    [out_tmem_layout] = inference_utils.out_tmem_layouts(op)
+    if in_tmem_layout != out_tmem_layout:
+      raise NotImplementedError(
+          "memref.cast tmem layouts must be identical for both input and"
+          f" output but got {in_tmem_layout=} and {out_tmem_layout=}"
+      )
+    return [_tmem_ref_to_ir(_tmem_ref_from_ir(op.source, in_tmem_layout),
+                            op.result.type)]
+
+  raise NotImplementedError(
+      f"Unsupported memory space when lowering memref.cast: {memory_space}"
   )
-  new_cast_op = memref.CastOp(out_transformed_ty, unwrapped_source_ref)
-  wrapped_ref = wrap_transformed_memref(
-      new_cast_op.result, op.result.type, out_transforms
-  )
-  return [wrapped_ref]
 
 
 def _permutation_to_affine_map_attr(
@@ -2391,9 +2408,8 @@ def _tmem_ref_from_ir(
   return tcgen05.TMEMRef(tmem_addr, shape, el_ty, tmem_layout)
 
 
-def _tmem_ref_to_ir(ref: tcgen05.TMEMRef) -> ir.Value:
+def _tmem_ref_to_ir(ref: tcgen05.TMEMRef, ty: ir.MemRefType) -> ir.Value:
   """Returns an IR value from a TMEMRef."""
-  ty = ir.MemRefType.get(ref.shape, ref.dtype, memory_space=utils.tmem())
   conversion_cast = builtin.UnrealizedConversionCastOp([ty], [ref.address])
   conversion_cast.attributes["layout"] = layouts_lib.to_layout_attr(ref.layout)
   return conversion_cast.result

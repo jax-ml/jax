@@ -4402,6 +4402,40 @@ class PallasCallSm90AWGTest(
 
 class PallasCallTCGen05Test(PallasTCGen05Test):
 
+  def test_warp_specialized_tmem_slice(self):
+    dtype = jnp.float32
+
+    def kernel(in_ref, out_ref, smem, tmem, barrier):
+      smem[...] = plgpu.load(in_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      # This is a regression test which requires a dynamic, foldable offset.
+      # This allows us to produce a dynamic offset under the hood that later
+      # gets simplified away during MLIR canonicalization passes.
+      c0 = lax.axis_index("x") * 0
+
+      @plgpu.warp_map
+      def _(warp_id):
+        @pl.when(warp_id == 0)
+        def _():
+          plgpu.async_copy_smem_to_tmem(smem, tmem.at[:, pl.ds(c0, 32)])
+          plgpu.tcgen05_commit_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+
+      out_ref[...] = plgpu.async_load_tmem(tmem.at[:, pl.ds(c0, 32)])
+
+    f = self.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((128, 32), dtype),
+        grid=(1,),
+        grid_names=("x",),
+        scratch_shapes=(
+            plgpu.SMEM((128, 32), dtype,
+                       transforms=self.default_transforms(dtype=dtype)),
+            plgpu.TMEM((128, 64), dtype),
+            plgpu.Barrier(orders_tensor_core=True)),
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=(128, 32), dtype=dtype)
+    np.testing.assert_array_equal(f(x), x)
+
   def test_print_layout_tmem(self):
     shape = (128, 256)
 
