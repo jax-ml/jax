@@ -25,7 +25,7 @@ from jax._src import core
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.indexing import Slice, dslice, ds  # noqa: F401
-from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
+from jax._src.state import types as state_types
 from jax._src.typing import Array
 from jax._src.util import merge_lists
 from jax._src.util import partition_list

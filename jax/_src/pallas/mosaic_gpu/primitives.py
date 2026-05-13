@@ -584,7 +584,7 @@ def _async_store_smem_lowering(
     atomic_type = None
     if atomic is not None:
       atomic_type = _atomic_op_type_to_int(AtomicOpType(atomic))
-    mgpu.dialect.async_store_smem(  # pyrefly: ignore[missing-attribute]
+    mgpu.dialect.async_store_smem(
         src,
         ref_smem,
         barrier.as_barrier_memref(),
