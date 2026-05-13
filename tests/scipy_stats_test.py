@@ -597,6 +597,20 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       )
       self._CompileAndCheck(lax_fun, args_maker)
 
+  def testExponPpfNonunitScale(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/36757.
+    # ppf(q, scale=s) must equal -s * log(1 - q).
+    # The previous implementation divided q by scale inside log1p, giving
+    # wrong results for any scale != 1.
+    q = np.array([0.4, 0.4, 0.5, 0.9])
+    loc = np.array([0.0, 0.0, 1.0, 0.0])
+    scale = np.array([0.5, 1e-3, 2.0, 3.0])
+    expected = osp_stats.expon.ppf(q, loc=loc, scale=scale)
+    actual = lsp_stats.expon.ppf(
+        jnp.array(q), jnp.array(loc), jnp.array(scale))
+    self.assertAllClose(actual, expected, rtol=1e-4, atol=1e-4,
+                        check_dtypes=False)
+
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
