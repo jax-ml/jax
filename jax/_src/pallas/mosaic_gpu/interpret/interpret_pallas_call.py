@@ -414,7 +414,7 @@ def interpret_pallas_call(
       jaxpr.invars[grid_mapping.slice_block_ops], [grid_mapping.num_inputs]
   )
 
-  def _kernel(thread_id, grid_point_coords):
+  def _kernel(thread_id, _, grid_point_coords):
     # Note that the copying from `GMEM` buffers here could introduce races when
     # multiple threads copy to the same kernel input buffer. For this to happen,
     # (a) there must be multiple threads and (b) the targeted kernel input
@@ -470,7 +470,11 @@ def interpret_pallas_call(
         grid_dims, loop_idx
     )
     thread_map.thread_map(
-        _kernel, math.prod(cluster_dims) * num_threads, grid_point_coords
+        _kernel,
+        math.prod(cluster_dims) * num_threads,
+        jnp.int32(0),
+        grid_point_coords,
+        use_ordered_callback=True,
     )
     # TODO(nrink): Determine if any synchronization between the vector clocks is
     # required at this point, i.e. when a set of concurrent threads is done.

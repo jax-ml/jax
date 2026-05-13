@@ -30,7 +30,7 @@ def _run_jaxpr(jaxpr, consts, *args):
   return
 
 
-def _thread_map_callback(jaxpr, num_threads, consts, invals):
+def _thread_map_callback(jaxpr, token, num_threads, consts, invals):
   # TODO(jburnim): Convert all JAX values in `consts` and `invals` to NumPy
   # values before passing them to a different thread.
   num_threads = int(num_threads)
@@ -55,9 +55,12 @@ def _thread_map_callback(jaxpr, num_threads, consts, invals):
     # TODO(jburnim): Use ExceptionGroup once JAX requires Python 3.11.
     # raise ExceptionGroup('Exceptions raised during _thread_map', exceptions)
     raise exceptions[0]
+  return token
 
 
-def _call_threadmap_callback(jaxpr, num_threads, consts, invals):
+def _call_threadmap_callback(
+    token, jaxpr, num_threads, consts, invals, use_ordered_callback
+):
   # NOTE: At runtime, _thread_map_callback will lower and compile the
   # given jaxpr.  (JAX's caches should ensure the jaxpr is only lowered and
   # compiled once.)
@@ -68,25 +71,32 @@ def _call_threadmap_callback(jaxpr, num_threads, consts, invals):
   # function to the callback?
   return callback.io_callback(
       functools.partial(_thread_map_callback, jaxpr),
-      (),
+      jax.ShapeDtypeStruct((), jnp.int32),
+      token,
       num_threads,
       consts,
       invals,
-      ordered=True,
+      ordered=use_ordered_callback,
   )
 
 
-def thread_map(f, num_threads, *args):
-  """Executes `f(thread_id, *args)` for `num_threads` threads."""
+def thread_map(f, num_threads, token, *args, use_ordered_callback=False):
+  """Executes `f(thread_id, token, *args)` for `num_threads` threads."""
 
   if num_threads == 1:
-    f(jnp.int32(0), *args)
-    return
+    # We're running `f` in the same JAX computation as the caller, so we thread
+    # the token through.
+    return f(jnp.int32(0), token, *args)
 
   def _f(core_or_thread_index, *args):
-    f(core_or_thread_index, *args)
-    return ()
+    # We are running `f` in sparate JAX computations on different threads from
+    # the caller, so there cannot be any jaxpr-level dependencies/ordering
+    # between IO callbacks in `f` and in the caller.  We pass a distinct value
+    # (instead of the caller's `token`) to make this more clear.
+    return f(core_or_thread_index, jnp.int32(42), *args)
 
   jaxpr = jax.make_jaxpr(_f)(jnp.int32(0), *args)
 
-  _call_threadmap_callback(jaxpr.jaxpr, num_threads, jaxpr.consts, args)
+  return _call_threadmap_callback(
+      token, jaxpr.jaxpr, num_threads, jaxpr.consts, args, use_ordered_callback
+  )
