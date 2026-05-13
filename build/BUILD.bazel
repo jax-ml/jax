@@ -13,7 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-load("@python_version_repo//:py_version.bzl", "REQUIREMENTS")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("//jaxlib:jax.bzl", "all_py_deps")
@@ -52,52 +51,55 @@ filegroup(
 
 [
     compile_pip_requirements(
-        name = "requirements" + suffix,
+        name = "requirements_" + python_version.replace(".", "_") + suffix,
         srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
             "--rebuild",
-            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+            "--index-url=https://pypi.org/simple",
         ],
         generate_hashes = True,
-        requirements_txt = REQUIREMENTS,
+        requirements_txt = "//build:requirements_lock_{}{}.txt".format(python_version.replace(".", "_"), suffix),
     )
+    for python_version in ["3.11", "3.12", "3.13", "3.14"]
     for suffix, requirements in COMBOS
 ]
 
 [
     compile_pip_requirements(
-        name = "requirements_nightly" + suffix,
+        name = "requirements_nightly_" + python_version.replace(".", "_") + suffix,
         srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
-            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+            "--index-url=https://pypi.org/simple",
             "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
             "--pre",
             "--upgrade",
         ],
         generate_hashes = False,
-        requirements_txt = REQUIREMENTS,
+        requirements_txt = "//build:requirements_lock_{}{}.txt".format(python_version.replace(".", "_"), suffix),
     )
+    for python_version in ["3.11", "3.12", "3.13", "3.14"]
     for suffix, requirements in COMBOS
 ]
 
 [
     compile_pip_requirements(
-        name = "requirements_dev" + suffix,
+        name = "requirements_dev_" + python_version.replace(".", "_") + suffix,
         srcs = requirements,
         extra_args = [
             "--allow-unsafe",
             "--build-isolation",
             "--upgrade",
             "--rebuild",
-            "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+            "--index-url=https://pypi.org/simple",
         ],
         generate_hashes = False,
-        requirements_txt = REQUIREMENTS,
+        requirements_txt = "//build:requirements_lock_{}{}.txt".format(python_version.replace(".", "_"), suffix),
     )
+    for python_version in ["3.11", "3.12", "3.13", "3.14"]
     for suffix, requirements in COMBOS
 ]
 
