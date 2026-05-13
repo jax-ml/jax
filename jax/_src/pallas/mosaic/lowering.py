@@ -2694,6 +2694,9 @@ def _dot_general_lowering_rule(
         precision=precision_attr,
     )
   else:
+    # Contracting second minor is to transpose the lhs. Only try fusing if it's
+    # an implicit transpose.
+    implicit_transpose = (ctx.avals_in[0].ndim - 2) in lhs_dims
     return tpu.matmul(
         out_type,
         x,
@@ -2702,7 +2705,8 @@ def _dot_general_lowering_rule(
         dimension_numbers=tpu_dot_dims,
         precision=precision_attr,
         transpose_lhs_hint=not ctx.forward_compatible
-        and ctx.lowering_context.fuse_transposed_lhs_in_matmul,
+        and ctx.lowering_context.fuse_transposed_lhs_in_matmul
+        and implicit_transpose,
     )
 
 
