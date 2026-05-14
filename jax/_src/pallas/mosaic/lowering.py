@@ -1320,23 +1320,6 @@ def lower_jaxpr_into_unpipelined_module(
       core_type=pallas_mesh.core_type,
   )
 
-  if pallas_mesh.core_type in (
-      tpu_core.CoreType.SC_SCALAR_SUBCORE,
-      tpu_core.CoreType.SC_VECTOR_SUBCORE,
-  ):
-    arg_attrs = [ir.DictAttr.get({})] * num_grid
-    for arg in func_op.arguments[
-        num_grid : len(func_op.arguments) - num_scratch
-    ]:
-      d: dict[str, ir.Attribute] = {}
-      if (
-          str(arg.type.memory_space) == "#tpu.memory_space<hbm>"
-          or str(arg.type.memory_space) == "#tpu.memory_space<semaphore_mem>"
-      ):
-        d["sc.persistent"] = ir.UnitAttr.get()
-      arg_attrs.append(ir.DictAttr.get(d))
-    arg_attrs.extend([ir.DictAttr.get({})] * num_scratch)
-    func_op.arg_attrs = ir.ArrayAttr.get(arg_attrs)
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{pallas_mesh.core_type}>"
   )
@@ -1358,20 +1341,15 @@ def lower_jaxpr_into_unpipelined_module(
   window_params = []
   for v in jaxpr.invars[:-num_scratch] if num_scratch > 0 else jaxpr.invars:
     aval = v.aval
-    tpu_memory_space = None
-    if isinstance(aval, state.AbstractRef):
-      block_memory_space = aval.memory_space
-      if block_memory_space is None:
-        block_memory_space = pallas_core.MemorySpace.ANY
-      tpu_memory_space = tpu_core.memory_space_to_tpu_memory_space(
-          block_memory_space, pallas_mesh.core_type
-      )
+    assert isinstance(aval, state.AbstractRef), aval
+    block_memory_space = aval.memory_space
+    if block_memory_space is None:
+      block_memory_space = pallas_core.MemorySpace.ANY
+    tpu_memory_space = tpu_core.memory_space_to_tpu_memory_space(
+        block_memory_space, pallas_mesh.core_type
+    )
 
-    if not isinstance(aval, state.AbstractRef):
-      window_params.append(ir.DictAttr.get())
-      assert False
-      continue
-
+    # TODO(slebedev): Update the SparseCore compiler to allow this.
     is_sc = pallas_mesh.core_type in (
         tpu_core.CoreType.SC_SCALAR_SUBCORE,
         tpu_core.CoreType.SC_VECTOR_SUBCORE,
