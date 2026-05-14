@@ -1793,6 +1793,79 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(inp).as_text()
     self.assertIn("_xla_compute_type", lowered_text)
 
+
+class SparsecoreOffloadTest(jtu.JaxTestCase):
+
+  def test_sparsecore_supported_scatter2(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    dnums = jax.lax.ScatterDimensionNumbers(
+        update_window_dims=(),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,),
+    )
+
+    @jax.jit
+    def f_tc(operand, indices, updates):
+      return jax.lax.scatter_add(operand, indices, updates, dnums)
+
+    @compute_on2(
+        compute_type="tpu_sparsecore",
+        out_memory_spaces=jax.memory.Space.Device,
+        compiler_options={'sparse_core_config': {'core_ids': [0]}},
+    )
+    def f_sc(operand, indices, updates):
+      return jax.lax.scatter_add(operand, indices, updates, dnums)
+
+    inputs = (
+        np.linspace(0, 1, 15677312).reshape(15677312),
+        np.random.randint(15677312, size=524288).reshape(524288, 1),
+        np.linspace(0, 1, 524288).reshape(524288),
+    )
+
+    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+
+    compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
+    compiled_text = compiled_f_sc.as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
+  def test_sparsecore_supported_scatter(self):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    dnums = jax.lax.ScatterDimensionNumbers(
+        update_window_dims=(),
+        inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,),
+    )
+
+    @jax.jit
+    def f_tc(operand, indices, updates):
+      return jax.lax.scatter_add(operand, indices, updates, dnums)
+
+    @compute_on("tpu_sparsecore")
+    def f_sc(operand, indices, updates):
+      return jax.lax.scatter_add(operand, indices, updates, dnums)
+
+    inputs = (
+        np.linspace(0, 1, 15677312).reshape(15677312),
+        np.random.randint(15677312, size=524288).reshape(524288, 1),
+        np.linspace(0, 1, 524288).reshape(524288),
+    )
+
+    self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
+
+    compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
+    compiled_text = compiled_f_sc.as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
   def test_sparsecore_unsupported_gather(self):
     if not (
         jax.devices()[0].device_kind == "TPU v5"
@@ -1806,7 +1879,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     slice_sizes = (1, 3)
 
     @compute_on("tpu_sparsecore")
-    @jax.jit
     def f_sc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
@@ -1842,7 +1914,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
     @compute_on("tpu_sparsecore")
-    @jax.jit
     def f_sc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
@@ -1871,7 +1942,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     )
 
     @compute_on("tpu_sparsecore")
-    @jax.jit
     def f_sc(operand, indices, updates):
       return jax.lax.scatter(operand, indices, updates, dnums)
 
@@ -1891,38 +1961,126 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertTrue(unsupported_scatter)
     self.assertIn("UNIMPLEMENTED", error_msg)
 
-  def test_sparsecore_supported_scatter(self):
-    if not (
-        jax.devices()[0].device_kind == "TPU v5"
-        or jtu.is_device_tpu_at_least(6)
-    ):
+  def test_sparsecore_supported_gather2(self):
+    if not (jax.devices()[0].device_kind == "TPU v5"
+            or jtu.is_device_tpu_at_least(6)):
       self.skipTest("Does not have a sparsecore present")
 
-    dnums = jax.lax.ScatterDimensionNumbers(
-        update_window_dims=(),
-        inserted_window_dims=(0,),
-        scatter_dims_to_operand_dims=(0,),
+    dnums = jax.lax.GatherDimensionNumbers(
+        offset_dims=(1,), collapsed_slice_dims=(0,), start_index_map=(0,)
     )
+    slice_sizes = (1, 128)
 
     @jax.jit
-    def f_tc(operand, indices, updates):
-      return jax.lax.scatter_add(operand, indices, updates, dnums)
+    def f_tc(operand, indices):
+      return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
-    @compute_on("tpu_sparsecore")
-    @jax.jit
-    def f_sc(operand, indices, updates):
-      return jax.lax.scatter_add(operand, indices, updates, dnums)
+    @compute_on2(
+        compute_type="tpu_sparsecore",
+        out_memory_spaces=jax.memory.Space.Device,
+        compiler_options={'sparse_core_config': {'core_ids': [0]}},
+    )
+    def f_sc(operand, indices):
+      return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
     inputs = (
-        np.linspace(0, 1, 15677312).reshape(15677312),
-        np.random.randint(15677312, size=524288).reshape(524288, 1),
-        np.linspace(0, 1, 524288).reshape(524288),
+        np.linspace(0, 1, 122479 * 128).reshape(122479, 128),
+        np.random.randint(2, size=32768).reshape(32768, 1),
     )
 
     self.assertAllClose(f_tc(*inputs), f_sc(*inputs))
 
     compiled_f_sc = jax.jit(f_sc).lower(*inputs).compile()
     compiled_text = compiled_f_sc.as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
+  @jtu.with_explicit_mesh((8,), 'x')
+  def test_sparsecore_fsdp_ag_offload(self, mesh):
+    if not (jax.devices()[0].device_kind == "TPU v5"
+            or jtu.is_device_tpu_at_least(6)):
+      self.skipTest("Does not have a sparsecore present")
+
+    arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P('x', None))
+    arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P('x', None))
+
+    @compute_on2(compute_type='tpu_sparsecore',
+                 out_memory_spaces=jax.memory.Space.Device)
+    def ag(arr):
+      return jax.lax.all_gather(arr, 'x', tiled=True)
+
+    @jax.jit
+    @jax.shard_map(in_specs=(P('x', None), P('x', None)),
+                   out_specs=P('x', None))
+    def f(x, y):
+      y = ag(y)
+      return x @ y
+
+    f(arr1, arr2)  # doesn't crash
+
+    if jtu.is_device_tpu_at_least(7):
+      compiled_text = f.lower(arr1, arr2).compile().as_text()
+    else:
+      compiled_text = f.lower(arr1, arr2).compile(
+          {'xla_tpu_enable_sparse_core_collective_offload_all_gather': 'true'}
+          ).as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
+  def test_sparsecore_rs_offload(self):
+    if not (jax.devices()[0].device_kind == "TPU v5"
+            or jtu.is_device_tpu_at_least(6)):
+      self.skipTest("Does not have a sparsecore present")
+
+    mesh = jtu.create_mesh((8,), "x")
+    arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
+
+    @compute_on("tpu_sparsecore")
+    def sparsecore_psum_scatter(x):
+      return jax.lax.psum_scatter(x, "x", tiled=True)
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=P("x"), out_specs=P("x"))
+    def f(x):
+      y = sparsecore_psum_scatter(x)
+      return y * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    if jtu.is_device_tpu_at_least(7):
+      compiled_text = f.lower(arr).compile().as_text()
+    else:
+      compiled_text = f.lower(arr).compile(
+          {'xla_tpu_enable_sparse_core_collective_offload_reduce_scatter': 'true'}
+          ).as_text()
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
+  def test_sparsecore_ar_offload(self):
+    if not (jax.devices()[0].device_kind == "TPU v5"
+            or jtu.is_device_tpu_at_least(6)):
+      self.skipTest("Does not have a sparsecore present")
+
+    mesh = jtu.create_mesh((8,), "x")
+    arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
+
+    @compute_on("tpu_sparsecore")
+    def sparsecore_psum(x):
+      return jax.lax.psum(x, "x")
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=P("x"), out_specs=P())
+    def f(x):
+      y = sparsecore_psum(x)
+      return y * 2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+    if jtu.is_device_tpu_at_least(7):
+      compiled_text = f.lower(arr).compile().as_text()
+    else:
+      compiled_text = f.lower(arr).compile(
+          {'xla_tpu_enable_sparse_core_collective_offload_all_reduce': 'true'}
+          ).as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
 
