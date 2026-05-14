@@ -1,3 +1,4 @@
+# TODO(yuriit): Remove this after testing.
 name: CI - Address Sanitizer (nightly)
 
 on:

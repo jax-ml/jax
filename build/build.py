@@ -251,9 +251,19 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
   cuda_group.add_argument(
       "--build_cuda_with_clang",
       action="store_true",
+      default=True,
       help="""
-        Should CUDA code be compiled using Clang? The default behavior is to
-        compile CUDA with NVCC.
+        Should CUDA code be compiled using Clang? This is default behavior.
+        """,
+  )
+
+  cuda_group.add_argument(
+      "--build_cuda_with_nvcc",
+      action="store_false",
+      default=False,
+      help="""
+        Should CUDA code be compiled using NVCC? The default behavior is to
+        compile CUDA with Clang.
         """,
   )
 
@@ -575,6 +585,11 @@ async def main():
     if clang_major_version < 19:
       wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
   else:
+    if (
+        "jaxlib" in args.wheels or "cuda" in args.wheels
+    ) and utils.is_linux_x86_64(arch, os_name):
+      wheel_build_command_base.append("--config=linux_x86_64")
+
     # TODO:(yuriit) Check version of Clang when it will be available outside
     # of rules_ml_toolchain. Current hermetic Clang version is 18
     wheel_build_command_base.append("--define=xnn_enable_avxvnniint8=false")
@@ -635,12 +650,12 @@ async def main():
       wheel_build_command_base.append(
           f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
       )
-    if args.build_cuda_with_clang:
-      logging.debug("Building CUDA with Clang")
-      wheel_build_command_base.append("--config=build_cuda_with_clang")
-    else:
+    if args.build_cuda_with_nvcc:
       logging.debug("Building CUDA with NVCC")
       wheel_build_command_base.append("--config=build_cuda_with_nvcc")
+    else:
+      logging.debug("Building CUDA with Clang")
+      wheel_build_command_base.append("--config=build_cuda_with_clang")
 
     if args.cuda_version:
       logging.debug("Hermetic CUDA version: %s", args.cuda_version)
