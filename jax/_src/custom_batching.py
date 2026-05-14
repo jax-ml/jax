@@ -15,11 +15,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 import functools
 import operator
+from typing import Any
 
 from jax._src import api
+from jax._src import api_util
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import linear_util as lu
@@ -27,14 +28,19 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.interpreters.batching import not_mapped
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
-                                tree_unflatten, treedef_tuple)
+from jax._src.interpreters.batching import not_mapped
+from jax._src.tree_util import (
+    FlatTree,
+    tree_flatten,
+    tree_map,
+    tree_structure,
+    tree_unflatten,
+    treedef_tuple,
+)
 
 
 source_info_util.register_exclusion(__file__)
@@ -155,23 +161,29 @@ class custom_vmap:
           f"No batching rule defined for custom_vmap function {debug_fun.func_name} "
           "using def_vmap.")
     args_flat, in_tree = tree_flatten(args)
-    flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(self.fun, debug_info=debug_fun),
-        in_tree)
+    def flat_fun(*flat_args):
+      args = tree_unflatten(in_tree, flat_args)
+      return self.fun(*args)
+
     in_avals = [core.typeof(x) for x in args_flat]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+        flat_fun, FlatTree.flatten_args(*in_avals), debug_fun
+    )
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
     debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
                                      (0, args, args), {})
-    out_flat = custom_vmap_p.bind(*consts, *args_flat,
-                                  call=closed_call,
-                                  rule=ClosedRule(self.vmap_rule,
-                                                  debug_rule),
-                                  in_tree=in_tree,
-                                  out_tree=out_tree())
-    return tree_unflatten(out_tree(), out_flat)
+    out_flat = custom_vmap_p.bind(
+        *consts,
+        *args_flat,
+        call=closed_call,
+        rule=ClosedRule(self.vmap_rule, debug_rule),
+        in_tree=in_tree,
+        out_tree=out_avals.tree,
+    )
+    return tree_unflatten(out_avals.tree, out_flat)
 
 
 ### utils

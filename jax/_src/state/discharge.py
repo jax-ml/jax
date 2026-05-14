@@ -25,23 +25,24 @@ from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import tree_util
-from jax._src import custom_derivatives
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
-from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
+from jax._src.state.primitives import addupdate_p, get_p, pin, swap_p, unpin
 from jax._src.state.types import (
     AbstractRef, BitcastTransform, RefEffect, ReshapeTransform, get_ref_aval_from_value,
     uninitialized,)
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
+from jax._src.tree_util import FlatTree
 from jax._src.typing import Array
 from jax._src.util import (foreach, safe_map, safe_zip, split_list, unzip2,
                            weakref_lru_cache)
@@ -83,10 +84,14 @@ def discharge_state(
   in_avals = [v.aval.inner_aval
               if isinstance(v.aval, AbstractRef) and d
               else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
-  eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
-                                    should_discharge, consts),
-                            debug_info=jaxpr.debug_info.with_unknown_names())
-  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals, lower=True)
+  fn = partial(_eval_jaxpr_discharge_state, jaxpr, should_discharge, consts)
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      fn,
+      FlatTree.flatten_args(*in_avals),
+      jaxpr.debug_info.with_unknown_names(),
+      requires_low=True,
+  )
+  new_jaxpr, new_consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   return new_jaxpr, new_consts
 
 # TODO(mattjj): migrate callers to discharge_state2 for caching
@@ -823,11 +828,15 @@ def _initial_style_jaxpr(fun: Callable,
                          in_tree: api_util.PyTreeDef,
                          in_avals: Sequence[core.AbstractValue],
                          debug: core.DebugInfo):
-  fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug),
-      tree_util.treedef_tuple((in_tree,)))
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun_, in_avals)
-  return jaxpr, consts, out_tree_thunk()
+
+  def flat_fun(*flat_args):
+    args = tree_util.tree_unflatten(in_tree, flat_args)
+    return fun(args)
+
+  closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+      flat_fun, FlatTree.flatten_args(*in_avals), debug
+  )
+  return closed_jaxpr.jaxpr, closed_jaxpr.consts, out_avals.tree
 
 
 T = TypeVar('T')
