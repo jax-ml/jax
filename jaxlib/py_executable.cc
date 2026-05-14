@@ -56,6 +56,7 @@ limitations under the License.
 #include "jaxlib/traceback.h"
 #include "xla/future.h"
 #include "xla/hlo/ir/hlo_module.h"
+#include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
@@ -611,6 +612,23 @@ void PyLoadedExecutable::Register(nb::module_& m) {
              return xla::ifrt::ToPjRtAttributeMap(std::move(map));
            })
       .def_prop_ro("traceback", &PyLoadedExecutable::traceback)
+      .def_prop_ro(
+          "unsafe_executable_pointer",
+          [](PyLoadedExecutable& self) -> std::uintptr_t {
+            if (auto* pjrt_comp = llvm::dyn_cast_or_null<
+                    ifrt::PjRtCompatibleLoadedExecutable>(
+                    self.ifrt_loaded_executable())) {
+              if (auto* pjrt_exec = pjrt_comp->pjrt_loaded_executable()) {
+                if (auto* c_api_exec =
+                        dynamic_cast<xla::PjRtCApiLoadedExecutable*>(
+                            pjrt_exec)) {
+                  return reinterpret_cast<std::uintptr_t>(
+                      c_api_exec->c_loaded_executable());
+                }
+              }
+            }
+            return 0;
+          })
       .def_prop_ro("fingerprint", [](PyLoadedExecutable* exec) -> nb::object {
         if (exec->fingerprint().has_value()) {
           return nb::bytes(exec->fingerprint()->data(),

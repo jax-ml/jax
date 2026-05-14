@@ -1045,6 +1045,7 @@ cc_library(
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt:pjrt_layout",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/pjrt/c_api_client:pjrt_c_api_client",
         "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python:nb_absl_span",
         "@xla//xla/python:nb_helpers",

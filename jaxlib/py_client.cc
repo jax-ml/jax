@@ -61,6 +61,7 @@ limitations under the License.
 #include "jaxlib/traceback.h"
 #include "jaxlib/util.h"
 #include "xla/literal.h"
+#include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -803,6 +804,22 @@ PyType_Slot PyClient::slots_[] = {
   py_local_client.def_prop_ro("platform", &PyClient::platform_name)
       .def_prop_ro("_raw_platform", &PyClient::raw_platform_name)
       .def_prop_ro("platform_version", &PyClient::platform_version)
+      .def_prop_ro(
+          "unsafe_client_pointer",
+          [](PyClient& self) -> std::uintptr_t {
+            if (auto* pjrt_comp =
+                    llvm::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
+                        self.ifrt_client())) {
+              if (auto* pjrt_client = pjrt_comp->pjrt_client()) {
+                if (auto* c_api_client =
+                        dynamic_cast<xla::PjRtCApiClient*>(pjrt_client)) {
+                  return reinterpret_cast<std::uintptr_t>(
+                      c_api_client->pjrt_c_client());
+                }
+              }
+            }
+            return 0;
+          })
       .def_prop_ro("runtime_type", &PyClient::runtime_type)
       .def("device_count", &PyClient::device_count)
       .def("local_device_count", &PyClient::addressable_device_count)
