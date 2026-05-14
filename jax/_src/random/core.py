@@ -29,7 +29,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import numpy as jnp
-from jax._src import prng
+from jax._src.random import prng
 from jax._src import xla_bridge
 from jax._src.mesh import get_abstract_mesh
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P

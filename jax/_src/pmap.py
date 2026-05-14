@@ -26,7 +26,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import pjit as pjit_lib
-from jax._src import prng
+from jax._src.random import prng
 from jax._src import sharding_impls
 from jax._src import stages
 from jax._src import traceback_util

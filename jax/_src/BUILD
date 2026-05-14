@@ -1661,8 +1661,9 @@ pytype_strict_library(
 pytype_strict_library(
     name = "random",
     srcs = [
-        "prng.py",
-        "random.py",
+        "random/__init__.py",
+        "random/core.py",
+        "random/prng.py",
     ],
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("random"),
@@ -1700,7 +1701,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "stateful_rng",
     srcs = [
-        "stateful_rng.py",
+        "random/stateful_rng.py",
     ],
     type_checking = "pyrefly",
     deps = [

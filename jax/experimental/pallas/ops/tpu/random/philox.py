@@ -15,7 +15,7 @@
 from collections.abc import Sequence
 import jax
 from jax import typing
-from jax._src import prng
+from jax._src.random import prng
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
