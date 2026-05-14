@@ -145,14 +145,13 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
       flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name),
       mlir.flatten_ir_values(args))
 
+  dict_attr = {"inlineable": ir.StringAttr.get("false")}
   if compute_type.startswith("gpu_stream:"):
-    dict_attr = {
-        "_xla_stream_annotation": ir.StringAttr.get(compute_type.split(":")[1]),
-        "inlineable": ir.StringAttr.get("false"),
-    }
+    stream_id = compute_type.split(":")[1]
+    dict_attr |= {"_xla_stream_annotation": ir.StringAttr.get(stream_id)}
   else:
     ctype = mlir.map_compute_type(compute_type)
-    dict_attr = {"_xla_compute_type": ir.StringAttr.get(ctype)}
+    dict_attr |= {"_xla_compute_type": ir.StringAttr.get(ctype)}
 
   if compiler_options_json is not None:
     dict_attr |= {'backend_config': ir.StringAttr.get(compiler_options_json)}

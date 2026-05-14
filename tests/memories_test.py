@@ -1802,7 +1802,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
       return jax.lax.scatter_add(operand, indices, updates, dnums)
 
     @compute_on2(
-        compute_type="tpu_sparsecore",
+        compute_type="tpu_sparsecore",third_party/py/jax/_src/compute_on.py
         out_memory_spaces=jax.memory.Space.Device,
         compiler_options={'sparse_core_config': {'core_ids': [0]}},
     )
