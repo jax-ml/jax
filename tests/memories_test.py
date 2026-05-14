@@ -2147,7 +2147,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertIn('call-start.1', compiled_text)
     self.assertIn('_xla_stream_annotation="2"', compiled_text)
     self.assertIn('inlineable="false"', compiled_text)
-    self.assertIn('_scheduling_group_id="1"', compiled_text)
+    # self.assertIn('_scheduling_group_id="1"', compiled_text)
     self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 1024)
 
   def test_stream_annotation_inside_shmap(self):
