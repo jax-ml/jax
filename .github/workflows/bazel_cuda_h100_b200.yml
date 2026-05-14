@@ -28,6 +28,24 @@ on:
         options:
         - 'pinned'
         - 'head'
+        - 'commit'
+      xla_commit:
+        description: 'XLA commit SHA used by tests (only respected if xla_track is "commit").'
+        type: string
+        required: false
+      jobs_to_run:
+        description: 'Which jobs to run?'
+        type: choice
+        required: true
+        default: 'all'
+        options:
+        - 'all'
+        - 'single_b200'
+        - 'multi_h100'
+      bazel_targets:
+        description: 'Custom Bazel targets to run (space-separated, overrides defaults)'
+        type: string
+        required: false
   pull_request:
     branches:
       - main
@@ -37,8 +55,7 @@ on:
 permissions: {}
 
 # - For PRs, group by PR number and cancel stale in-progress runs.
-# - For workflow_dispatch events, group by actor+ref. Cancel stale in-progress runs from the same
-#   actor on the same ref, except on main.
+# - For workflow_dispatch events, group by run_id so multiple dispatches can run in parallel.
 # - Never cancel scheduled runs.
 concurrency:
   group: >-
@@ -48,14 +65,14 @@ concurrency:
          && format('pr-{0}', github.event.pull_request.number))
 
         || (github.event_name == 'workflow_dispatch'
-            && format('dispatch-{0}-{1}', github.actor, github.ref))
+            && format('dispatch-{0}', github.run_id))
 
         || format('ref-{0}', github.ref)
     }}
   cancel-in-progress: >-
     ${{
         github.ref != 'refs/heads/main' &&
-        (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+        github.event_name == 'pull_request'
     }}
 
 defaults:
@@ -68,7 +85,9 @@ jobs:
       ${{
           github.event.repository.fork == false
           && (github.event_name == 'schedule'
-              || github.event_name == 'workflow_dispatch'
+              || (github.event_name == 'workflow_dispatch'
+                  && (github.event.inputs.jobs_to_run == 'all'
+                      || github.event.inputs.jobs_to_run == 'single_b200'))
               || contains(github.event.pull_request.labels.*.name,
                           'CI Optional GPU Presubmit'))
       }}
@@ -87,6 +106,7 @@ jobs:
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
           JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
+          JAXCI_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
           JAXCI_BAZEL_TARGETS: |
             //tests:cudnn_fusion_test_gpu
             //tests:scaled_matmul_stablehlo_test_gpu
@@ -99,7 +119,12 @@ jobs:
           JAXCI_LOCAL_TEST_JOBS: '8'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
           JAXCI_TEST_TIMEOUT: '420'
-        run: bash ./ci/run_bazel_cuda_targeted_tests.sh
+          CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}
+        run: |
+          if [[ -n "${CUSTOM_BAZEL_TARGETS}" ]]; then
+            export JAXCI_BAZEL_TARGETS="${CUSTOM_BAZEL_TARGETS// /$'\n'}"
+          fi
+          bash ./ci/run_bazel_cuda_targeted_tests.sh
       - name: Upload test artifacts
         if: always()
         continue-on-error: true
@@ -114,7 +139,9 @@ jobs:
           github.event.repository.fork == false &&
           (
               github.event_name == 'schedule'
-              || github.event_name == 'workflow_dispatch'
+              || (github.event_name == 'workflow_dispatch'
+                  && (github.event.inputs.jobs_to_run == 'all'
+                      || github.event.inputs.jobs_to_run == 'multi_h100'))
               || contains(github.event.pull_request.labels.*.name,
                           'CI Optional GPU Presubmit')
           )
@@ -134,6 +161,7 @@ jobs:
         env:
           JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
           JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
+          JAXCI_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
           JAXCI_BAZEL_TARGETS: |
             //tests/mosaic:gpu_tests
             //tests/pallas:gpu_tests
@@ -148,7 +176,12 @@ jobs:
           JAXCI_TEST_TAG_FILTERS: 'multiaccelerator'
           JAXCI_LOCAL_TEST_JOBS: '8'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
-        run: bash ./ci/run_bazel_cuda_targeted_tests.sh
+          CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}
+        run: |
+          if [[ -n "${CUSTOM_BAZEL_TARGETS}" ]]; then
+            export JAXCI_BAZEL_TARGETS="${CUSTOM_BAZEL_TARGETS// /$'\n'}"
+          fi
+          bash ./ci/run_bazel_cuda_targeted_tests.sh
       - name: Upload test artifacts
         if: always()
         continue-on-error: true

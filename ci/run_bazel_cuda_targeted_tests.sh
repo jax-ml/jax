@@ -29,7 +29,7 @@
 #   JAXCI_ACCELERATOR_COUNT: value for JAX_ACCELERATOR_COUNT when run_under is enabled (default: 1)
 #   JAXCI_TESTS_PER_ACCELERATOR: value for JAX_TESTS_PER_ACCELERATOR when run_under is enabled (default: 8)
 #   JAXCI_HERMETIC_PYTHON_VERSION: Hermetic Python version (default: 3.14)
-#   JAXCI_XLA_TRACK: XLA source to use, "pinned" or "head" (default: pinned)
+#   JAXCI_XLA_TRACK: XLA source to use, "pinned", "head", or "commit" (default: pinned)
 
 set -euox pipefail
 
@@ -47,8 +47,8 @@ if [[ ! "${hermetic_python_version}" =~ ^3\.[0-9]+$ ]]; then
 fi
 
 xla_track="${JAXCI_XLA_TRACK:-pinned}"
-if [[ "${xla_track}" != 'pinned' && "${xla_track}" != 'head' ]]; then
-  echo "Invalid JAXCI_XLA_TRACK value: ${xla_track}. Expected 'pinned' or 'head'."
+if [[ "${xla_track}" != 'pinned' && "${xla_track}" != 'head' && "${xla_track}" != 'commit' ]]; then
+  echo "Invalid JAXCI_XLA_TRACK value: ${xla_track}. Expected 'pinned', 'head', or 'commit'."
   exit 1
 fi
 
@@ -87,9 +87,9 @@ bazel_args=(
   --color=yes
 )
 
-if [[ "${xla_track}" == 'head' ]]; then
+if [[ "${xla_track}" == 'head' || "${xla_track}" == 'commit' ]]; then
   if [[ -z "${JAXCI_XLA_GIT_DIR:-}" ]]; then
-    echo 'JAXCI_XLA_GIT_DIR is not set for XLA track "head".'
+    echo "JAXCI_XLA_GIT_DIR is not set for XLA track \"${xla_track}\"."
     exit 1
   fi
   bazel_args+=(--override_repository=xla="${JAXCI_XLA_GIT_DIR}")
