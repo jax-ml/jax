@@ -22,6 +22,8 @@ Remember to align the itemized text with the first line of an item within a list
     kernels either perform no checking or use
     {func}`jax.experimental.pallas.debug_check` for conditionally-enabled
     runtime checks.
+  * {func}`jax.experimental.pallas.kernel` now always aliases Refs that are
+    passed in or closed-over.
 
 ### Mosaic GPU
 
