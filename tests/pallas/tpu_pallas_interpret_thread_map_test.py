@@ -20,9 +20,10 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
-import jax.numpy as jnp
+
 
 jax.config.parse_flags_with_absl()
+jax.config.update('jax_threefry_partitionable', True)
 
 
 # TODO(jburnim): Figure out how to safely run different instance of TPU
@@ -56,12 +57,11 @@ class InterpretThreadMapTest(jtu.JaxTestCase):
       with lock:
         concurrent_calls[0] -= 1
 
-    def f(core_index, token):
+    def f(core_index):
       del core_index
       jax.experimental.io_callback(_barrier, (), ordered=True)
-      return token
 
-    thread_map(f, 8, jnp.int32(0))
+    thread_map(f, 8)
     self.assertEqual(max_concurrent_calls[0], 8)
     # `thread_map` returns only after all threads have completed, so the final
     # value of `concurrent_calls` should be zero.

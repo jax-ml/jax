@@ -21,7 +21,6 @@ contains only tests that do not use shard_map.
 from collections.abc import Callable
 import dataclasses
 import functools
-from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -82,15 +81,12 @@ class GridPointRecorderContext:
   def __exit__(self, ty, value, traceback):
     ...
 
-  def get_recorder(
-      self,
-  ) -> Callable[[Any, tuple[np.int32, ...], np.int32], Any]:
-    def _recorder(token, grid_point, core_id):
+  def get_recorder(self) -> Callable[[tuple[np.int32, ...], np.int32], None]:
+    def _recorder(grid_point, core_id):
       processed_grid_point = ProcessedGridPoint(
           tuple(int(coord) for coord in grid_point), int(core_id)
       )
       self._grid_points.append(processed_grid_point)
-      return token
 
     return _recorder
 

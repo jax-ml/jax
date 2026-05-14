@@ -15,7 +15,7 @@
 from collections.abc import Callable
 import dataclasses
 import enum
-from typing import Any, Literal
+from typing import Literal
 
 from jax._src import callback
 import numpy as np
@@ -178,7 +178,7 @@ class InterpretParams(SharedInterpretParams):
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
   random_seed: int | None = None
   grid_point_recorder: (
-      Callable[[Any, tuple[np.int32, ...], np.int32], Any] | None
+      Callable[[tuple[np.int32, ...], np.int32], None] | None
   ) = None
   allow_hbm_allocation_in_run_scoped: bool = False
   buffer_bounds: Literal["logical", "padded"] = "logical"
@@ -189,4 +189,4 @@ class InterpretParams(SharedInterpretParams):
 
 
 def get_interpret_effects():
-  return {callback._IOEffect}
+  return {callback._OrderedIOEffect}
