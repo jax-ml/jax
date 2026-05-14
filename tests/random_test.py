@@ -41,7 +41,7 @@ from jax._src import test_util as jtu
 from jax import vmap
 
 from jax._src import random as jax_random
-from jax._src.random import prng as prng_internal
+from jax._src import prng as prng_internal
 
 config.parse_flags_with_absl()
 

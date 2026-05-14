@@ -28,7 +28,7 @@ from jax._src import api_util
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import pjit
-from jax._src.random import prng
+from jax._src import prng
 from jax._src import random
 from jax._src import source_info_util
 from jax._src import traceback_util

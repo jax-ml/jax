@@ -24,7 +24,7 @@ from jax._src import core, util
 from jax._src import dispatch
 from jax._src import ops
 from jax._src import pjit
-from jax._src.random import prng
+from jax._src import prng
 from jax._src import random
 from jax._src import shard_map
 from jax._src import callback

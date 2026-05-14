@@ -35,7 +35,7 @@ from jax._src.sharding_impls import (
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
-from jax._src.random import prng
+from jax._src import prng
 from jax._src.lib import jaxlib_extension_version
 
 

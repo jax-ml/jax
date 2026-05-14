@@ -14,7 +14,7 @@
 
 """Experimental random APIs."""
 
-from jax._src.random.stateful_rng import (
+from jax._src.stateful_rng import (
     stateful_rng as stateful_rng,
     StatefulPRNG as StatefulPRNG,
 )

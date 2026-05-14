@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from jax.sharding import NamedSharding
 from jax._src import api
 from jax._src import core
-from jax._src.random import prng
+from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util

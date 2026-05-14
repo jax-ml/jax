@@ -38,7 +38,7 @@ from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import hijax
 from jax._src import pjit
-from jax._src.random import prng
+from jax._src import prng
 from jax._src import state
 from jax._src import tree_util
 from jax._src import typing

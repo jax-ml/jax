@@ -14,7 +14,7 @@
 
 from collections.abc import Callable, Hashable
 
-from jax._src.random import prng
+from jax._src import prng
 from jax._src import random
 from jax._src.typing import Array
 

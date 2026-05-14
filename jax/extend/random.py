@@ -19,7 +19,7 @@ from jax._src.extend.random import (
   define_prng_impl as define_prng_impl,
 )
 
-from jax._src.random.prng import (
+from jax._src.prng import (
   random_seed as random_seed,
   seed_with_impl as seed_with_impl,
   threefry2x32_p as threefry2x32_p,

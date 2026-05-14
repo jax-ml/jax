@@ -1020,7 +1020,7 @@ def iota_2x32_shape(shape):
 
     >>> import numpy as np
     >>> from jax import lax
-    >>> from jax._src.random import prng
+    >>> from jax._src import prng
 
     >>> prng.iota_2x32_shape((3, 4))
     [Array([[0, 0, 0, 0],

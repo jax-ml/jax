@@ -24,7 +24,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
-from jax._src.random import prng as jax_prng
+from jax._src import prng as jax_prng
 from jax._src import random as jax_random
 from jax._src import state
 from jax._src import tree_util

@@ -229,7 +229,7 @@ from jax._src.pjit import (
     sharding_constraint_p as sharding_constraint_p,
 )
 
-from jax._src.random.prng import (
+from jax._src.prng import (
   random_bits_p as random_bits_p,
   random_fold_in_p as random_fold_in_p,
   random_seed_p as random_seed_p,
@@ -237,7 +237,7 @@ from jax._src.random.prng import (
   threefry2x32_p as threefry2x32_p,
 )
 
-from jax._src.random.core import random_gamma_p as random_gamma_p
+from jax._src.random import random_gamma_p as random_gamma_p
 
 from jax._src.state.primitives import (
   get_p as get_p,

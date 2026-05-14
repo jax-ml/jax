@@ -31,11 +31,11 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src.random.core import _safe_int_to_float, _check_broadcast_shapes
+from jax._src.random import _safe_int_to_float, _check_broadcast_shapes
 from jax._src import test_util as jtu
 from jax import vmap
 
-from jax._src.random import prng as prng_internal
+from jax._src import prng as prng_internal
 
 config.parse_flags_with_absl()
 
