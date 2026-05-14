@@ -32,7 +32,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.state.discharge import register_partial_discharge_rule, discharge_state
@@ -770,8 +769,7 @@ def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
       aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))
       return outs + list(aug_residuals)
 
-    wrapped_f_aug = lu.wrap_init(f_aug, debug_info=jaxpr.jaxpr.debug_info)
-    return _make_closed_jaxpr(wrapped_f_aug, jaxpr.in_avals)
+    return _make_closed_jaxpr(f_aug, jaxpr.in_avals, jaxpr.jaxpr.debug_info)
 
   return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
 
@@ -856,7 +854,6 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
 
 @util.weakref_lru_cache
 def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
-  cell = lambda: None
   maybe_inst = lambda x, inst: ad.instantiate_zeros(x) if inst else x
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
@@ -864,12 +861,12 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
     ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [maybe_inst(x.freeze(), inst) if isinstance(x, ad.ValAccum)
                else None for x, inst in zip(args, inst_out)]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
+  closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+      transposed, FlatTree.flatten_args(*in_avals), dbg
+  )
+  return closed_jaxpr, out_avals.tree
 
 
 def _cond_typecheck(bind_time, *in_atoms, branches, **params):

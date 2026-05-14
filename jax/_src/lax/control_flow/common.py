@@ -16,18 +16,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import os
 from functools import partial
+import os
 from typing import Any
 
 from jax._src import ad_util
-from jax._src import core
 from jax._src import config
-from jax._src import linear_util as lu
-from jax._src.util import weakref_lru_cache, safe_map
+from jax._src import core
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (equality_errors_pytreedef, tree_map,
-                                tree_unflatten, keystr)
+from jax._src.tree_util import (
+    FlatTree,
+    equality_errors_pytreedef,
+    keystr,
+    tree_map,
+    tree_unflatten,
+)
+from jax._src.util import safe_map, weakref_lru_cache
 
 map, unsafe_map = safe_map, map
 
@@ -138,10 +142,17 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=Fa
 def _prune_zeros(ts):
   return [t for t in ts if type(t) is not ad_util.Zero]
 
-def _make_closed_jaxpr(traceable: lu.WrappedFun,
-                       in_avals: Sequence[core.AbstractValue]):
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts)
+
+def _make_closed_jaxpr(
+    traceable,
+    in_avals: Sequence[core.AbstractValue],
+    debug_info: core.DebugInfo,
+):
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      traceable, FlatTree.flatten_args(*in_avals), debug_info
+  )
+  return closed_jaxpr
+
 
 def _show_diff(array1, array2):
   if core.typematch(array1, array2):

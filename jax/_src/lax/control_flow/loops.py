@@ -34,46 +34,51 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
+from jax._src import sharding_impls as sharding
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
-from jax._src.api_util import (
-    check_no_aliased_ref_args, _check_no_aliased_closed_over_refs,
+from jax._src import xla_bridge as xb
+from jax._src.api_util import ( _check_no_aliased_closed_over_refs,
+    check_no_aliased_ref_args,
     check_no_transformed_refs_args)
 from jax._src.core import (
-  ShapedArray, typeof, cur_qdd, ClosedJaxpr, AbstractValue)
+    AbstractValue,
+    ClosedJaxpr,
+    ShapedArray,
+    cur_qdd,
+    typeof,
+)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax._src import sharding_impls as sharding
-from jax._src.mesh import use_abstract_mesh
 from jax._src.lax import lax
-from jax._src.lax import utils as lax_utils
 from jax._src.lax import slicing
+from jax._src.lax import utils as lax_utils
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
-    _avals_short, _prune_zeros, _typecheck_param,
-    _make_closed_jaxpr)
+    _avals_short,
+    _make_closed_jaxpr, _prune_zeros, _typecheck_param)
 from jax._src.lax.other import logaddexp
-from jax._src.pjit import auto_axes, PartitionSpec as P, reshard
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib import jaxlib_extension_version
+from jax._src.mesh import use_abstract_mesh
+from jax._src.pjit import PartitionSpec as P, auto_axes, reshard
 from jax._src.sharding_impls import canonicalize_sharding
-from jax._src.state import discharge as state_discharge, AbstractRef
+from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
+from jax._src.tree_util import ( FlatTree,
+    keystr, tree_flatten, tree_map, tree_unflatten,
+    treedef_is_leaf)
 from jax._src.typing import Array
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
-    split_list_checked, unzip2, weakref_lru_cache, subs_list)
-from jax._src import xla_bridge as xb
-from jax._src.tree_util import (
-    keystr, tree_flatten, tree_map, tree_unflatten,
-    treedef_is_leaf, FlatTree)
+    split_list_checked, subs_list, unzip2, weakref_lru_cache)
 import numpy as np
 
 _map = safe_map
@@ -1200,8 +1205,7 @@ def _transpose_scan_jaxpr_fancy(
             if isinstance(x, ad.ValAccum)]
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  transposed_wrapped = lu.wrap_init(transposed, debug_info=dbg)
-  return _make_closed_jaxpr(transposed_wrapped, trans_avals)
+  return _make_closed_jaxpr(transposed, trans_avals, dbg)
 
 
 def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,

@@ -38,7 +38,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import ffi
-from jax._src import linear_util as lu
 from jax._src import literals
 from jax._src import pjit
 from jax._src import pretty_printer as pp
@@ -1789,9 +1788,16 @@ def _trace_composite_to_jaxpr(fun: Callable,
                               in_avals: Sequence[core.AbstractValue],
                               name: str,
                               debug_info: core.DebugInfo):
-  flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info), in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+
+  def flat_fun(*flat_args):
+    args = tree_util.tree_unflatten(in_tree, flat_args)
+    return fun(*args)
+
+  in_avals_flat_tree = tree_util.FlatTree.flatten_args(*in_avals)
+  closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+      flat_fun, in_avals_flat_tree, debug_info
+  )
+  consts = closed_jaxpr.consts
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError(
         "Found a JAX Tracer as a constant in the decomposition for the "
@@ -1799,8 +1805,9 @@ def _trace_composite_to_jaxpr(fun: Callable,
         "closes over a value that is involved in a JAX transformation. "
         "Any values that aren't explicitly known at compile time must be "
         "explicitly passed as arguments to the composite.")
-  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
-  return closed_jaxpr, consts, out_tree
+  # Absorb consts into jaxpr invars (matching behavior of old convert_constvars_jaxpr)
+  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr))
+  return closed_jaxpr, consts, out_avals.tree
 
 
 def composite(
@@ -1901,7 +1908,7 @@ def composite(
         version=version,
         jaxpr=closed_jaxpr,
     )
-    return tree_util.tree_unflatten(out_tree(), out_flat)
+    return tree_util.tree_unflatten(out_tree, out_flat)
 
   return _decorator
 
@@ -3206,16 +3213,15 @@ def _reduction_jaxpr(computation: Callable,
           f"Reduction functions should only return an array.\n"
           f"Full return value: {result}")
     return (result,)
-  comp_wrapped = lu.wrap_init(
-      comp,
-      debug_info=api_util.debug_info("reduction_jaxpr", computation,
-                                     (aval, aval), {}))
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(comp_wrapped, (aval, aval))
-  if any(isinstance(c, core.Tracer) for c in consts):
+  dbg = api_util.debug_info('reduction_jaxpr', computation, (aval, aval), {})
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      comp, tree_util.FlatTree.flatten_args(aval, aval), dbg
+  )
+  if any(isinstance(c, core.Tracer) for c in closed_jaxpr.consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
         "at https://github.com/jax-ml/jax.")
-  return jaxpr, tuple(consts)
+  return closed_jaxpr.jaxpr, tuple(closed_jaxpr.consts)
 
 @cache()
 def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
@@ -3224,14 +3230,19 @@ def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
                               aval_tree: tree_util.PyTreeDef):
   avals = tree_util.tree_unflatten(aval_tree, flat_avals)
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
-  comp = lu.wrap_init(computation, debug_info=debug_info)
-  flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
-  if any(isinstance(c, core.Tracer) for c in consts):
+  def flat_computation(*flat_args):
+    xs, ys = tree_util.tree_unflatten(in_tree, flat_args)
+    return computation(xs, ys)
+
+  in_avals_flat_tree = tree_util.FlatTree.flatten_args(*flat_in_avals)
+  closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+      flat_computation, in_avals_flat_tree, debug_info
+  )
+  if any(isinstance(c, core.Tracer) for c in closed_jaxpr.consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
         "at https://github.com/jax-ml/jax.")
-  return core.ClosedJaxpr(jaxpr, consts), out_tree()
+  return closed_jaxpr, out_avals.tree
 
 def _get_monoid_reducer(monoid_op: Callable,
                         xs: Sequence[Array]) -> Callable | None:
