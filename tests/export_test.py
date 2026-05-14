@@ -2070,11 +2070,13 @@ class JaxExportTest(jtu.JaxTestCase):
       res_exp = exp.call(a_device)
       self.assertArraysAllClose(res_native, res_exp)
 
+  @jtu.run_on_devices('tpu')
   def test_compute_on_host(self):
     operand = np.float32(0.)
 
     @jax.jit
-    @compute_on.compute_on("device_host")
+    @compute_on.compute_on2(compute_type="device_host",
+                            out_memory_spaces=jax.memory.Space.Device)
     def f_host(x):
       # Adds 1 on CPU, which should be the result on all platforms because
       # this code should always run on the host.
@@ -2082,9 +2084,9 @@ class JaxExportTest(jtu.JaxTestCase):
                                         cpu=lambda x: x + np.float32(1.),
                                         default=lambda x: x + np.float32(2.))
 
-    self.assertAllClose(np.float32(1.), f_host(operand))
+    self.assertAllClose(np.float32(2.), f_host(operand))
     exp = get_exported(f_host, platforms=("cpu", "tpu", "cuda", "rocm"))(operand)
-    self.assertAllClose(np.float32(1.), exp.call(operand))
+    self.assertAllClose(np.float32(2.), exp.call(operand))
 
   @jtu.parameterized_filterable(
     kwargs=[

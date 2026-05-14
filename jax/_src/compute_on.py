@@ -121,6 +121,9 @@ compute_on_p.def_effectful_abstract_eval(_compute_on_abstract_eval)
 
 def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
                          compiler_options_json):
+  if dispatch.jaxpr_has_primitive(jaxpr, 'compute_on'):
+    raise ValueError("Nesting `compute_on` with different compute types is "
+                     "not allowed.")
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
   const_args, const_avals = unzip2(const_args_and_avals)
   const_arg_values = [
