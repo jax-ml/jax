@@ -190,6 +190,15 @@ class JaxprStatsTest(jtu.JaxTestCase):
     self.assertIn("frames", data)
     self.assertIn("dag", data)
     self.assertIn("strings", data)
+    self.assertIn("string_to_lines", data)
+
+    string_to_lines = data["string_to_lines"]
+    self.assertIsInstance(string_to_lines, dict)
+    for k, v in string_to_lines.items():
+      self.assertTrue(k.isdigit())
+      self.assertIsInstance(v, list)
+      self.assertTrue(all(isinstance(i, int) for i in v))
+
 
     # Verify that the pretty printed jaxpr lines are present
     lines = data["lines"]

@@ -387,6 +387,7 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
   # 3. Generate HTML lines with spans
   lines = rendered_str.splitlines()
   html_lines = []
+  line_to_nodes = defaultdict(set)
 
   for i, line in enumerate(lines):
     spans = source_map_output[i] if i < len(source_map_output) else []
@@ -404,6 +405,7 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
         result.append(f'<span class="traceable" data-tb-idx="{tb_node_idx}">')
         result.append(line[start:end])
         result.append("</span>")
+        line_to_nodes[i].add(tb_node_idx)
       else:
         result.append(line[start:end])
       last_idx = end
@@ -437,6 +439,18 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
         "col": frame.start_column,
     })
 
+  # 5. Build string_to_lines map
+  string_to_lines = defaultdict(set)
+  for i, node_indices in line_to_nodes.items():
+    for node_idx in node_indices:
+      curr = node_idx
+      while curr is not None:
+        node = dag_nodes[curr]
+        frame_data = final_frames[node["frame_idx"]]
+        string_to_lines[frame_data["file_idx"]].add(i)
+        string_to_lines[frame_data["func_idx"]].add(i)
+        curr = node["parent"]
+
   # 5. Construct final HTML and compress data
 
   data = {
@@ -444,6 +458,7 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
       "dag": dag_nodes,
       "strings": list(string_to_idx),
       "lines": html_lines,
+      "string_to_lines": {str(k): list(v) for k, v in string_to_lines.items()},
   }
 
   json_data = json.dumps(data)
@@ -603,6 +618,7 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
     const dag = data.dag;
     const strings = data.strings;
     const allLines = data.lines;
+    const stringToLines = data.string_to_lines;
 
     const varDefinitions = {{}};
     const anchorRegex = /<a id="(?:v_|g_)([^"]+)"/g;
@@ -771,11 +787,26 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
       currentMatchIdx = -1;
 
       if (query) {{
+        // 1. Find matching lines from stringToLines reverse map
+        const matchingLinesSet = new Set();
+        strings.forEach((str, idx) => {{
+          if (str.toLowerCase().includes(query)) {{
+            const lines = stringToLines[idx];
+            if (lines) {{
+              lines.forEach(l => matchingLinesSet.add(l));
+            }}
+          }}
+        }});
+
+        // 2. Combine with direct text matches (fallback/addition)
         allLines.forEach((line, idx) => {{
-          // Strip HTML tags for searching
-          const text = line.replace(/<[^>]*>/g, '').toLowerCase();
-          if (text.includes(query)) {{
+          if (matchingLinesSet.has(idx)) {{
             matchingLines.push(idx);
+          }} else {{
+            const text = line.replace(/<[^>]*>/g, '').toLowerCase();
+            if (text.includes(query)) {{
+              matchingLines.push(idx);
+            }}
           }}
         }});
       }}
