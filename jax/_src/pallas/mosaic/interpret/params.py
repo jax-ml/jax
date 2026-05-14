@@ -189,4 +189,4 @@ class InterpretParams(SharedInterpretParams):
 
 
 def get_interpret_effects():
-  return {callback._IOEffect}
+  return {callback._OrderedIOEffect, callback._IOEffect}

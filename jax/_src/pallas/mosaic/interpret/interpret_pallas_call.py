@@ -127,6 +127,10 @@ def _clear_shared_memory():
     _shared_memory = None
 
 
+def ordering_barrier(token):
+  return token
+
+
 def _initialize_shared_memory(
     token, device_id, num_devices, num_cores_per_device, *, interpret_params
 ):
@@ -1864,6 +1868,12 @@ def interpret_pallas_call(
 
   token = jnp.array(42, dtype=jnp.int32)
 
+  # We pass our `token` through an ordered IO callback at the start and end of
+  # the interpreted kernel, to ensure that execution of this interpreted kernel
+  # cannot overlap with the interpretation of any other kernel.
+  token = callback.io_callback(
+      ordering_barrier, TOKEN_SHAPE_DTYPE, token, ordered=True)
+
   token = callback.io_callback(
       functools.partial(
           _initialize_shared_memory, interpret_params=interpret_params
@@ -2434,5 +2444,8 @@ def interpret_pallas_call(
   # shared memory.
   token = callback.io_callback(
       _clean_up_shared_memory, TOKEN_SHAPE_DTYPE, token, device_id)
+
+  callback.io_callback(
+      ordering_barrier, TOKEN_SHAPE_DTYPE, token, ordered=True)
 
   return ret
