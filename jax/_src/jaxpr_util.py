@@ -462,8 +462,13 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
     margin: 0;
     height: 100vh;
   }}
-  #jaxpr-container {{
+  #left-pane-wrapper {{
     flex: 7;
+    display: flex;
+    overflow: hidden;
+  }}
+  #jaxpr-container {{
+    flex: 1;
     overflow: auto;
     padding: 10px;
     background-color: #f5f5f5;
@@ -485,6 +490,12 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
     padding: 10px;
     background-color: #fff;
     border-left: 1px solid #ccc;
+  }}
+  #mini-map {{
+    width: 30px;
+    background-color: #f0f0f0;
+    border-left: 1px solid #ddd;
+    cursor: pointer;
   }}
   .traceable {{
     cursor: pointer;
@@ -547,10 +558,13 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
 </head>
 <body>
 
-<div id="jaxpr-container">
-  <div id="virtual-scroll-spacer" style="position: relative;">
-    <div id="visible-lines-container" style="position: absolute; top: 0; left: 0; right: 0;"></div>
+<div id="left-pane-wrapper">
+  <div id="jaxpr-container">
+    <div id="virtual-scroll-spacer" style="position: relative;">
+      <div id="visible-lines-container" style="position: absolute; top: 0; left: 0; right: 0;"></div>
+    </div>
   </div>
+  <canvas id="mini-map"></canvas>
 </div>
 
 <div id="pane-divider"></div>
@@ -606,6 +620,8 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
     const container = document.getElementById('jaxpr-container');
     const spacer = document.getElementById('virtual-scroll-spacer');
     const visibleContainer = document.getElementById('visible-lines-container');
+    const miniMap = document.getElementById('mini-map');
+    const miniMapCtx = miniMap.getContext('2d');
 
     const MAX_HEIGHT = 10000000; // Reduce to 10M pixels to be safer with browser limits
     const totalHeight = allLines.length * lineHeight;
@@ -655,8 +671,18 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
       }}
     }}
 
-    container.addEventListener('scroll', renderVisibleLines);
-    window.addEventListener('resize', renderVisibleLines);
+    let scrollTicking = false;
+    container.addEventListener('scroll', () => {{
+      if (!scrollTicking) {{
+        window.requestAnimationFrame(() => {{
+          renderVisibleLines();
+          drawMiniMap();
+          scrollTicking = false;
+        }});
+        scrollTicking = true;
+      }}
+    }});
+    // Removed old resize listener, handled at the bottom
     renderVisibleLines();
 
     // Event Delegation
@@ -756,6 +782,7 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
 
       updateSearchUI();
       renderVisibleLines();
+      drawMiniMap();
     }}
 
     function updateSearchUI() {{
@@ -792,11 +819,71 @@ def jaxpr_to_html(jaxpr: core.Jaxpr) -> str:
 
       const lineIdx = matchingLines[currentMatchIdx];
       scrollToLine(lineIdx);
+      drawMiniMap();
     }}
+
+    function drawMiniMap() {{
+      const width = miniMap.clientWidth;
+      const height = miniMap.clientHeight;
+      miniMap.width = width;
+      miniMap.height = height;
+
+      miniMapCtx.clearRect(0, 0, width, height);
+
+      if (allLines.length === 0) return;
+
+      // Draw search matches
+      miniMapCtx.fillStyle = '#fff59d';
+      matchingLines.forEach(lineIdx => {{
+        const y = (lineIdx / allLines.length) * height;
+        miniMapCtx.fillRect(0, y, width, 2);
+      }});
+
+      // Draw current match
+      if (currentMatchIdx !== -1) {{
+        const lineIdx = matchingLines[currentMatchIdx];
+        const y = (lineIdx / allLines.length) * height;
+        miniMapCtx.fillStyle = '#f57f17';
+        miniMapCtx.fillRect(0, y - 1, width, 4);
+      }}
+
+      // Draw viewport highlight
+      const scrollTop = container.scrollTop;
+      const containerHeight = container.clientHeight;
+      const scale = useScaling ? ((totalHeight - containerHeight) / (MAX_HEIGHT - containerHeight)) : 1.0;
+      const virtualScrollTop = scrollTop * scale;
+
+      const viewportStartLine = virtualScrollTop / lineHeight;
+      const viewportEndLine = (virtualScrollTop + containerHeight) / lineHeight;
+
+      const yStart = (viewportStartLine / allLines.length) * height;
+      const yEnd = (viewportEndLine / allLines.length) * height;
+
+      miniMapCtx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+      miniMapCtx.fillRect(0, yStart, width, yEnd - yStart);
+      miniMapCtx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+      miniMapCtx.strokeRect(0, yStart, width, yEnd - yStart);
+    }}
+
+    window.addEventListener('resize', () => {{
+      renderVisibleLines();
+      drawMiniMap();
+    }});
+
+    miniMap.addEventListener('click', (e) => {{
+      const rect = miniMap.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const height = rect.height;
+      const lineIdx = Math.floor((y / height) * allLines.length);
+      scrollToLine(Math.min(lineIdx, allLines.length - 1));
+    }});
 
     searchInput.addEventListener('input', performSearch);
     searchPrev.addEventListener('click', () => goToMatch(currentMatchIdx - 1));
     searchNext.addEventListener('click', () => goToMatch(currentMatchIdx + 1));
+
+    // Initial draw
+    drawMiniMap();
   }});
 
   // Simple resizable pane logic
