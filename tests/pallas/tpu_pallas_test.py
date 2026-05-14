@@ -2623,23 +2623,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     y = test(x)
     np.testing.assert_array_equal(y, jnp.tile(x, reps))
 
-  def test_repeat_compat(self):
-    def test_kernel(x_ref, o_ref):
-      x = x_ref[...]
-      o_ref[...] = pltpu.repeat(x, 2, axis=1)
-
-    x = jnp.arange(2048, dtype=jnp.float32).reshape((8, 256))
-    @jax.jit
-    def test(x: jax.Array) -> jax.Array:
-      return pl.pallas_call(
-          test_kernel,
-          out_shape=jax.ShapeDtypeStruct((8, 512), x.dtype),
-      )(x)
-
-    with self.assertWarnsRegex(DeprecationWarning, "pltpu.repeat is deprecated"):
-      y = test(x)
-    np.testing.assert_array_equal(y, jnp.tile(x, (1, 2)))
-
   def test_mixed_precision_dot(self):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('float8_e4m3b11fnuz not supported on TPU generations <= 4')
