@@ -4334,13 +4334,11 @@ def _alloc_value(
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")
 
 
-@register_lowering_rule(primitives.run_scoped_p)
+@register_lowering_rule(
+    primitives.run_scoped_p, kernel_types=[*tpu_core.CoreType]
+)
 def _run_scoped_lowering_rule(
-    ctx: LoweringRuleContext,
-    *consts,
-    jaxpr,
-    collective_axes,
-    alloc_fn=_alloc_value,
+    ctx: LoweringRuleContext, *consts, jaxpr, collective_axes
 ):
   if collective_axes:
     raise NotImplementedError("run_scoped lowering does not support collective axes")
@@ -4349,7 +4347,7 @@ def _run_scoped_lowering_rule(
   with ctx.lowering_context.grid_name_context():
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   with ir.InsertionPoint(region.body):
-    args = map(lambda aval: alloc_fn(aval, ctx=ctx), in_avals)
+    args = map(lambda aval: _alloc_value(aval, ctx=ctx), in_avals)
     block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None
                          for a in in_avals)
     block_shapes = tuple(map(_maybe_physicalize_block_shape,

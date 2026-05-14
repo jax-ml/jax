@@ -59,8 +59,8 @@ CoreMemorySpace = pallas_core.CoreMemorySpace
 ShapedAbstractValue = tc_lowering.ShapedAbstractValue
 
 LoweringContext = tc_lowering.LoweringContext
-
 LoweringRuleContext = tc_lowering.LoweringRuleContext
+MosaicGridMapping = tc_lowering.MosaicGridMapping
 
 _dtype_to_ir_type = tc_lowering._dtype_to_ir_type
 _make_index = tc_lowering._make_index
@@ -362,6 +362,7 @@ def lower_jaxpr_into_module(
       dimension_semantics,
       mesh=mesh,
       kernel_type=kernel_type,
+      dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
   )
   sym_tab = ir.SymbolTable(module.operation)
   func_op = lower_jaxpr_to_func(
@@ -411,37 +412,6 @@ def lower_jaxpr_into_module(
     )
     window_params.append(ir.DictAttr.get(block_params))
   func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
-
-
-@dataclasses.dataclass(init=False)
-class MosaicGridMapping(tc_lowering.MosaicGridMapping):
-  """Abstracts a grid mapping for Mosaic SparseCore."""
-
-  def __init__(
-      self,
-      jaxpr: jax_core.Jaxpr,
-      grid_mapping: pallas_core.GridMapping,
-      dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
-      mesh: mesh_lib.Mesh | None,
-      kernel_type: tpu_core.CoreType,
-  ):
-    if any(
-        isinstance(var.aval, sc_core.AbstractRef)
-        for var in jaxpr.invars[grid_mapping.slice_scratch_ops]
-    ):
-      # TODO(slebedev): Support tiling annotations for kernel operands.
-      raise NotImplementedError(
-          "`plsc.MemoryRef`s are not supported as scratch operands to the"
-          " kernel. Allocate them in the kernel body via `pl.run_scoped`."
-      )
-    super().__init__(
-        jaxpr,
-        grid_mapping,
-        dimension_semantics,
-        mesh,
-        dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-        kernel_type=kernel_type,
-    )
 
 
 def lower_jaxpr_to_func(
@@ -1173,19 +1143,6 @@ def _has_indirect_offsets(
   )
 
 
-@register_lowering_rule(pallas_primitives.run_scoped_p)
-def _run_scoped_lowering_rule(
-    ctx: LoweringRuleContext, *consts, jaxpr, collective_axes
-):
-  return tc_lowering._run_scoped_lowering_rule(
-      ctx,
-      *consts,
-      jaxpr=jaxpr,
-      collective_axes=collective_axes,
-      alloc_fn=_alloc_value,
-  )
-
-
 @register_lowering_rule(pallas_primitives.jaxpr_call_p)
 def _jaxpr_call_lowering_rule(
     ctx: LoweringRuleContext,
@@ -1251,7 +1208,7 @@ def _jaxpr_call_lowering_rule(
 def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
   del ty, memory_space
   [aval_out] = ctx.avals_out
-  return _alloc_value(aval_out, ctx=ctx)
+  return tc_lowering._alloc_value(aval_out, ctx=ctx)
 
 
 @register_lowering_rule(
@@ -1311,44 +1268,3 @@ def _rev_lowering_rule(ctx: LoweringRuleContext, x, dimensions):
       arith.subi(cdim_vec, tpu.iota(cdim_vec.type, dimensions=[0])),
       dimensions=[0],
   )
-
-
-def _default_tile_strides(
-    tiling: sc_core.Tiling, shape: Sequence[int]
-) -> Sequence[int]:
-  """Returns default tile strides for a given shape and tiling."""
-  assert tiling
-
-  cdiv = lambda a, b: (a + b - 1) // b
-
-  strides = [0] * len(shape)
-  stride = 1
-  first_tile, *_ = tiling
-  for d in reversed(range(len(shape))):
-    assert shape[d] != ir.ShapedType.get_dynamic_size()
-    strides[d] = stride
-    if d >= len(shape) - len(first_tile):
-      tile_d = d - (len(shape) - len(first_tile))
-      stride *= cdiv(shape[d], first_tile[tile_d])
-    else:
-      stride *= shape[d]
-  return strides
-
-
-def _alloc_value(
-    aval: jax_core.AbstractValue | tc_lowering.ShapedAbstractValue, *, ctx: LoweringRuleContext
-) -> ir.Value:
-  if isinstance(aval, sc_core.AbstractRef) and aval.tiling is not None:
-    tiling = "".join(f"({','.join(map(str, tile))})" for tile in aval.tiling)
-    strides = _default_tile_strides(aval.tiling, aval.shape)
-    out_type = ir.MemRefType.get(
-        aval.shape,
-        _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
-        layout=ir.Attribute.parse(f"#tpu.tiled<{tiling},{strides}>"),
-        memory_space=tc_lowering._memory_space_to_mosaic_attribute(
-            aval.memory_space,
-            kernel_type=ctx.lowering_context.kernel_type,
-        ),
-    )
-    return memref.alloca(out_type, [], [])
-  return tc_lowering._alloc_value(aval, ctx=ctx)

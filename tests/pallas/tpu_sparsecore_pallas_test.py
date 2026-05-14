@@ -1381,21 +1381,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
-  def test_run_scoped_with_tiling(self):
-    x = jnp.arange(self.num_lanes)
-
-    @self.vector_subcore_kernel(out_shape=x)
-    @pl.with_scoped(
-        plsc.MemoryRef(x.shape, x.dtype, memory_space=pltpu.VMEM, tiling=[(8,)])
-    )
-    def kernel(x_ref, o_ref, scratch_ref):
-      scratch_ref[...] = x_ref[...]
-      o_ref[...] = scratch_ref[...]
-
-    # Just make sure it compiles. The unrolling logic in the SC compiler
-    # does not yet handle tiled layouts properly, so the result is wrong.
-    _ = kernel(x)
-
   @parameterized.parameters(pltpu.VMEM, pltpu.SMEM)
   def test_empty_ref(self, memory_space):
     @self.vector_subcore_kernel(
