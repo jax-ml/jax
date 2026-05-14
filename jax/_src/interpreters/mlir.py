@@ -2677,6 +2677,7 @@ def _update_frontend_attributes(op, attrs):
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(attrs)
 
 
+# TODO(yashkatariya): Delete this after legacy compute_on is deleted.
 def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is None or ctx.jaxpr_eqn_ctx.compute_type is None:
     return

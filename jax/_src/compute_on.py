@@ -44,21 +44,10 @@ def extend_compute_type(c_type: str | None):
 
   prev = config.compute_on_context_manager.swap_local(c_type)
   try:
-    if prev is not None and prev is not config_ext.unset and c_type != prev:
-      raise NotImplementedError(
-          'Nesting `compute_on` with different compute types is not supported'
-          f' yet. Current compute_on type: {prev}')
     yield c_type
   finally:
     config.compute_on_context_manager.set_local(prev)
 
-
-def _check_valid(c_type: str):
-  if (c_type not in {'device_host', 'device', 'tpu_sparsecore'}
-      and not c_type.startswith("gpu_stream:")):
-    raise ValueError(
-        f'Invalid compute type {c_type}. Current supported values '
-        'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
 
 @contextmanager
 def compute_on(compute_type: str):
@@ -69,6 +58,15 @@ def compute_on(compute_type: str):
   with extend_compute_type(compute_type):
     yield
 
+
+def _check_valid(c_type: str):
+  if (c_type not in {'device_host', 'device', 'tpu_sparsecore'}
+      and not c_type.startswith("gpu_stream:")):
+    raise ValueError(
+        f'Invalid compute type {c_type}. Current supported values '
+        'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
+
+
 def compute_on2(f=None, *, compute_type, out_memory_spaces,
                 compiler_options=None):
   kwargs = dict(compute_type=compute_type, out_memory_spaces=out_memory_spaces,
@@ -78,15 +76,20 @@ def compute_on2(f=None, *, compute_type, out_memory_spaces,
   return _compute_on2(f, **kwargs)
 
 def _compute_on2(f, *, compute_type, out_memory_spaces, compiler_options):
+  if not isinstance(compute_type, str):
+    raise TypeError("`compute_on`'s compute_type argument must be a string.")
+  _check_valid(compute_type)
+
   def wrapped(*args):
     dbg = debug_info('compute_on', f, args, {})
     args_flat, in_tree = tree_flatten(args)
     in_avals = tuple(core.shaped_abstractify(x) for x in args_flat)
-    jaxpr, out_tree = _trace_to_jaxpr(f, in_avals, in_tree, dbg)
-    if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
-      jaxpr, consts = pe.separate_consts(jaxpr)
-    else:
-      consts = []
+    with extend_compute_type(compute_type):
+      jaxpr, out_tree = _trace_to_jaxpr(f, in_avals, in_tree, dbg)
+      if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
+        jaxpr, consts = pe.separate_consts(jaxpr)
+      else:
+        consts = []
     out_memory_spaces_flat = flatten_axes(
         "compute_on out_memory_spaces", out_tree, out_memory_spaces)
     compiler_options_json = (None if compiler_options is None else
@@ -292,8 +295,8 @@ def _compute_on_transpose(cts_in, *primals_in, jaxpr, compute_type,
   return tree_unflatten(out_tree, cts_out)
 ad.primitive_transposes[compute_on_p] = _compute_on_transpose
 
-def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
-                                ) -> tuple[list[bool], pe.JaxprEqn | None]:
+def dce_jaxpr_compute_on_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
+                              ) -> tuple[list[bool], pe.JaxprEqn | None]:
   if not any(used_outputs) and not pe.has_effects(eqn):
     return [False] * len(eqn.invars), None
 
@@ -315,4 +318,4 @@ def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
         eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
-pe.dce_rules[compute_on_p] = dce_jaxpr_xla_metadata_rule
+pe.dce_rules[compute_on_p] = dce_jaxpr_compute_on_rule

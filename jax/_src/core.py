@@ -341,37 +341,25 @@ class JaxprEqnContextManager:
     self.context = context
 
   def __enter__(self):
-    self.prev_compute_type = config.compute_on_context_manager.swap_local(
-        self.context.compute_type
-    )
-    if (
-        self.prev_compute_type is not None
-        and self.prev_compute_type is not config_ext.unset
-        and self.context.compute_type != self.prev_compute_type
-    ):
-      config.compute_on_context_manager.set_local(self.prev_compute_type)
-      raise NotImplementedError(
-          "Nesting `compute_on` with different compute types is not supported"
-          f" yet. Current compute_on type: {self.prev_compute_type}"
-      )
-
-    self.prev_threefry_partitionable = config.threefry_partitionable.swap_local(
-        self.context.threefry_partitionable)
     if self.context.xla_metadata:
       self.prev_xla_metadata = config.xla_metadata_context_manager.get_local()
       updated = xla_metadata_lib.update_metadata(
           self.prev_xla_metadata, self.context.xla_metadata)
       config.xla_metadata_context_manager.set_local(updated)
+    self.prev_threefry_partitionable = config.threefry_partitionable.swap_local(
+        self.context.threefry_partitionable)
+    self.prev_compute_type = config.compute_on_context_manager.swap_local(
+        self.context.compute_type)
     self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
         self.context.cur_abstract_mesh)
     self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
         self.context.remove_size_one_mesh_axis)
 
   def __exit__(self, exc_type, exc_value, traceback):
-    config.compute_on_context_manager.set_local(self.prev_compute_type)
-    config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
     if self.context.xla_metadata:
       config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
+    config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
+    config.compute_on_context_manager.set_local(self.prev_compute_type)
     config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
     config.remove_size_one_mesh_axis_from_type.set_local(self.prev_remove_size_one_mesh_axis)
 

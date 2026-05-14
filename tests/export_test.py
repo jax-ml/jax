@@ -2084,9 +2084,9 @@ class JaxExportTest(jtu.JaxTestCase):
                                         cpu=lambda x: x + np.float32(1.),
                                         default=lambda x: x + np.float32(2.))
 
-    self.assertAllClose(np.float32(2.), f_host(operand))
+    self.assertAllClose(np.float32(1.), f_host(operand))
     exp = get_exported(f_host, platforms=("cpu", "tpu", "cuda", "rocm"))(operand)
-    self.assertAllClose(np.float32(2.), exp.call(operand))
+    self.assertAllClose(np.float32(1.), exp.call(operand))
 
   @jtu.parameterized_filterable(
     kwargs=[

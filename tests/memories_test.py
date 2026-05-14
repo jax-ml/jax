@@ -1520,8 +1520,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     dtype = np.float32
     operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
 
-    from jax.experimental.compute_on import compute_on  # type: ignore
-    @compute_on("device_host")
+    @compute_on2(compute_type="device_host",
+                 out_memory_spaces=jax.memory.Space.Device)
     @jax.jit
     def g(x):
       return lax.linalg.qr(x, full_matrices=True)
@@ -1532,8 +1532,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       x, _ = g(x)
       return x
 
-    out = f(operand)  # doesn't crash
     lowered_text = f.lower(operand).as_text()
+    out = f(operand)
     self.assertIn('@lapack_sgeqrf', lowered_text)
     if jtu.test_device_matches(["tpu"]):
       self.assertIn("@Qr", lowered_text)
@@ -1715,7 +1715,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     jax.jit(fn2)(x_host)  # doesn't crash
 
   def test_compute_on_cache_miss(self):
-    @jax.jit
     def f(x):
       return x * 2
 
@@ -1741,9 +1740,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       return jax.lax.platform_dependent(
           x, cpu=lambda x: x + 1., default=lambda x: x + 2.)
 
-    self.assertAllClose(jnp.float32(2.0), f_host(operand))
+    self.assertAllClose(jnp.float32(1.0), f_host(operand))
     self.assertAllClose(
-        jnp.float32(2.0), f_host.lower(operand).compile()(operand)
+        jnp.float32(1.0), f_host.lower(operand).compile()(operand)
     )
 
   def test_offload_take_host(self):
