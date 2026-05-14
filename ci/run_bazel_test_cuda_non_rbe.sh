@@ -143,7 +143,10 @@ set +e
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
+TEST_ARTIFACTS_DIR="test-artifacts-single"
+mkdir -p "$TEST_ARTIFACTS_DIR"
 bazel "${single_accelerator_bazel_test_args[@]}" \
+  --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
   --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
   --test_output=errors \
   --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
@@ -155,10 +158,13 @@ bazel "${single_accelerator_bazel_test_args[@]}" \
 
 # Store the return value of the first bazel command.
 first_bazel_cmd_retval=$?
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
+ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE...
+TEST_ARTIFACTS_DIR="test-artifacts-multi"
+mkdir -p "$TEST_ARTIFACTS_DIR"
 bazel "${common_bazel_test_args[@]}" \
+  --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
   --test_output=errors \
   --local_test_jobs=8 \
   --test_tag_filters=multiaccelerator \
@@ -167,7 +173,7 @@ bazel "${common_bazel_test_args[@]}" \
 
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
+ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
 # Merge results with prefixes to avoid overwriting
 { set +x; } 2>/dev/null

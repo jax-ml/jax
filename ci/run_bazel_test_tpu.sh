@@ -89,7 +89,10 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   fi
 
   # Run single-accelerator tests in parallel
+  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
   bazel test \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
@@ -119,10 +122,13 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run multi-accelerator across all chips
+  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
   bazel test \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
@@ -148,11 +154,14 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 else
 
   # Run single-accelerator tests in parallel
+  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
   bazel test \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
@@ -197,10 +206,13 @@ else
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run multi-accelerator across all chips
+  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
   bazel test \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
@@ -230,7 +242,7 @@ else
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 fi
 
 # Merge results with prefixes to avoid overwriting

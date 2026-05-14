@@ -55,7 +55,10 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+TEST_ARTIFACTS_DIR="test-artifacts"
+mkdir -p "$TEST_ARTIFACTS_DIR"
 bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
+      --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
       $OVERRIDE_XLA_REPO \
@@ -76,5 +79,5 @@ bazel test --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests \
       //jaxlib/tools:check_gpu_wheel_sources_test || bazel_retval=$?
 
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 exit "${bazel_retval:-0}"
