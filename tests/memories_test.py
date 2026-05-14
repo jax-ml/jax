@@ -1850,7 +1850,8 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_tc(operand, indices, updates):
       return jax.lax.scatter_add(operand, indices, updates, dnums)
 
-    @compute_on("tpu_sparsecore")
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices, updates):
       return jax.lax.scatter_add(operand, indices, updates, dnums)
 
@@ -1878,7 +1879,8 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     )
     slice_sizes = (1, 3)
 
-    @compute_on("tpu_sparsecore")
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
@@ -1913,7 +1915,8 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_tc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
-    @compute_on("tpu_sparsecore")
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
@@ -1941,7 +1944,8 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
         scatter_dims_to_operand_dims=(0,),
     )
 
-    @compute_on("tpu_sparsecore")
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices, updates):
       return jax.lax.scatter(operand, indices, updates, dnums)
 
@@ -2033,7 +2037,8 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((8,), "x")
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
 
-    @compute_on("tpu_sparsecore")
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
     def sparsecore_psum_scatter(x):
       return jax.lax.psum_scatter(x, "x", tiled=True)
 
@@ -2062,7 +2067,8 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((8,), "x")
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
 
-    @compute_on("tpu_sparsecore")
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
     def sparsecore_psum(x):
       return jax.lax.psum(x, "x")
 
