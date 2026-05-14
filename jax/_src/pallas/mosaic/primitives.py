@@ -29,6 +29,7 @@ from jax._src import random as jax_random
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
@@ -1040,6 +1041,15 @@ def touch(ref: jax.Array | state.TransformedRef) -> None:
 @touch_p.def_effectful_abstract_eval
 def _touch_abstract_eval(ref: jax.Array):
   return [], {state.ReadEffect(0), state.WriteEffect(0)}
+
+
+def _touch_batch_rule(args, dims):
+  del dims
+  touch_p.bind(*args)
+  return [], ()
+
+
+batching.primitive_batchers[touch_p] = _touch_batch_rule
 
 
 trace_value_p = jax_core.Primitive("trace_value")

@@ -29,17 +29,18 @@ from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
+from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state import discharge as state_discharge
 from jax._src.typing import Array
-
 
 _T = TypeVar("_T")
 
@@ -142,7 +143,9 @@ def _mpmd_map_discharge_rule(
     for eff in jaxpr.effects:
       if isinstance(eff, (state.WriteEffect, state.AccumEffect)):
         write_index = eff.input_index
-        if write_index < len(avals_in):
+        if write_index < len(avals_in) and isinstance(
+            avals_in[write_index], state.AbstractRef
+        ):
           write_indices.add(write_index)
 
   write_indices = sorted(write_indices)
@@ -233,9 +236,91 @@ def _mpmd_map_dce_rule(
 pe.dce_rules[mpmd_map_p] = _mpmd_map_dce_rule
 
 
+def _mpmd_map_batching_rule(
+    axis_data,
+    args,
+    dims,
+    *,
+    jaxprs,
+    meshes,
+    out_avals,
+    input_output_aliases,
+    **params,
+):
+  if all(d is batching.not_mapped for d in dims):
+    out = mpmd_map_p.bind(
+        *args,
+        jaxprs=jaxprs,
+        meshes=meshes,
+        out_avals=out_avals,
+        input_output_aliases=input_output_aliases,
+        **params,
+    )
+    return out, (None,) * len(out)
+
+  for jaxpr in jaxprs:
+    for var, dim in zip(jaxpr.invars[: len(args)], dims):
+      if (
+          not isinstance(var.aval, state.AbstractRef)
+          and dim is not batching.not_mapped
+      ):
+        raise ValueError(
+            "Closed-over scalar constants cannot be batched. Pass them as"
+            " inputs instead."
+        )
+
+  if axis_data.size != 1:
+    raise NotImplementedError(
+        "mpmd_map only supports batching with a batch dimension of 1, got"
+        f" {axis_data.size}"
+    )
+
+  squeezed_args = []
+  for arg, dim in zip(args, dims):
+    if dim is batching.not_mapped:
+      squeezed_args.append(arg)
+    elif isinstance(arg_aval := jax_core.typeof(arg), state.AbstractRef):
+      # This is a bit of a hack. We rely on the fact that JAX does not have
+      # true mutable refs, and thus it is effectively free to squeeze-copy
+      # the underlying array like we do below.
+      #
+      # TODO(slebedev): Add first class support for ``TransformedRef``s to
+      # ``mpmd_map`` and get rid of this.
+      squeezed_args.append(
+          jax_core.new_ref(
+              jnp.squeeze(arg[...], dim),
+              memory_space=arg_aval.memory_space,
+          )
+      )
+    else:
+      squeezed_args.append(jnp.squeeze(arg, dim))
+
+  outs = mpmd_map_p.bind(
+      *squeezed_args,
+      jaxprs=jaxprs,
+      meshes=meshes,
+      out_avals=out_avals,
+      input_output_aliases=input_output_aliases,
+      **params,
+  )
+
+  for arg, squeezed_arg, dim in zip(args, squeezed_args, dims):
+    if dim is batching.not_mapped:
+      continue
+    if isinstance(jax_core.typeof(arg), state.AbstractRef):
+      arg[...] = jnp.expand_dims(jax_core.freeze(squeezed_arg), dim)
+
+  return [jnp.expand_dims(out, 0) for out in outs], (0,) * len(outs)
+
+
+batching.fancy_primitive_batchers[mpmd_map_p] = _mpmd_map_batching_rule
+
+
 def _mpmd_map_is_high(*args, jaxprs, **params):
   del args, params
   return any(jaxpr.is_high for jaxpr in jaxprs)
+
+
 mpmd_map_p.is_high = _mpmd_map_is_high
 
 
@@ -484,7 +569,8 @@ def mpmd_map(
     metadata: dict[str, str] | None = None,
 ) -> Callable[..., _T]:
   interpret = (
-      config.pallas_tpu_interpret_mode_context_manager.value or interpret)
+      config.pallas_tpu_interpret_mode_context_manager.value or interpret
+  )
   return _mpmd_map(
       meshes_and_fns,
       out_types,
@@ -608,9 +694,7 @@ def _dedup_consts_and_unify_jaxpr_signatures(
       )
 
       # Extract only the consts used by this jaxpr.
-      c_map = {
-          id(uc): arg for uc, arg in zip(unique_consts, unique_const_args)
-      }
+      c_map = {id(uc): arg for uc, arg in zip(unique_consts, unique_const_args)}
       mapped_consts = [c_map[id(c)] for c in original_consts]
 
       eval_args = in_args + out_args + scratch_args
@@ -621,10 +705,7 @@ def _dedup_consts_and_unify_jaxpr_signatures(
 
   new_jaxprs = []
   tracing_avals = (
-      in_avals_flat
-      + unique_const_avals
-      + out_avals_flat
-      + scratch_avals_flat
+      in_avals_flat + unique_const_avals + out_avals_flat + scratch_avals_flat
   )
   for jaxpr, consts in zip(jaxprs, consts_per_fn):
     debug_info = api_util.debug_info(
@@ -636,8 +717,10 @@ def _dedup_consts_and_unify_jaxpr_signatures(
     wrapped_fun = lu.wrap_init(
         make_rewritten_body(jaxpr, consts), debug_info=debug_info
     )
-    with (jax_core.extend_axis_env_nd(super_mesh_shape.items()),
-          config._check_vma(False)):
+    with (
+        jax_core.extend_axis_env_nd(super_mesh_shape.items()),
+        config._check_vma(False),
+    ):
       new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
           wrapped_fun, tracing_avals
       )
@@ -783,8 +866,10 @@ def _mpmd_map(
       flat_fun, out_tree_thunk = api_util.flatten_fun(
           lu.wrap_init(fn, debug_info=debug_info), kernel_aval_tree
       )
-      with (jax_core.extend_axis_env_nd(super_mesh_shape.items()),
-            config._check_vma(False)):
+      with (
+          jax_core.extend_axis_env_nd(super_mesh_shape.items()),
+          config._check_vma(False),
+      ):
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
             flat_fun, flat_kernel_avals
         )
@@ -803,8 +888,13 @@ def _mpmd_map(
       # If we close over any constants in the kernel functions, we need to
       # deduplicate them and then unify the jaxpr signatures.
       jaxprs, consts = _dedup_consts_and_unify_jaxpr_signatures(
-          jaxprs, consts_per_fn, flat_args, unflat_in_avals, unflat_out_avals,
-          flat_kernel_avals, super_mesh_shape
+          jaxprs,
+          consts_per_fn,
+          flat_args,
+          unflat_in_avals,
+          unflat_out_avals,
+          flat_kernel_avals,
+          super_mesh_shape,
       )
     else:
       consts: list[Array] = []

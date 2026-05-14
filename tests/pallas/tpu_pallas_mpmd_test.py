@@ -527,6 +527,51 @@ class MpmdTest(PallasSCTest):
 
     np.testing.assert_array_equal(x, f(x))
 
+  def test_vmap(self):
+
+    @pl.kernel(mesh=from_core_type(SCV))
+    def kernel(x_hbm_ref):
+      pltpu.touch(x_hbm_ref)
+
+    x = jnp.arange(self.sc_info.num_lanes, dtype=jnp.int32)
+    _ = jax.vmap(kernel)(x[jnp.newaxis])
+
+  def test_vmap_captured_scalar_error(self):
+    def run_kernel(zero):
+
+      @pl.kernel(mesh=from_core_type(SCV))
+      def kernel(x_hbm_ref):
+        x_hbm_ref[...] = jnp.broadcast_to(zero, x_hbm_ref.shape)
+
+      x = jnp.arange(self.sc_info.num_lanes, dtype=jnp.int32)
+      kernel(x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Closed-over scalar constants cannot be batched"
+    ):
+      jax.vmap(run_kernel)(jnp.int32(0)[jnp.newaxis])
+
+  def test_vmap_with_refs(self):
+    def run_kernel(x):
+      x_hbm_ref = jax.new_ref(x)
+
+      @pl.kernel(
+          mesh=from_core_type(SCV),
+          scratch_types=(pltpu.VMEM.like(x),),
+      )
+      def kernel(scratch_ref):
+        pltpu.sync_copy(x_hbm_ref, scratch_ref)
+        scratch_ref[...] += 1
+        pltpu.sync_copy(scratch_ref, x_hbm_ref)
+
+      _ = kernel()
+      return jax.freeze(x_hbm_ref)
+
+    x = jnp.arange(self.sc_info.num_lanes, dtype=jnp.int32)
+    out = jax.vmap(run_kernel)(x[jnp.newaxis])
+    np.testing.assert_array_equal(out, x[jnp.newaxis] + 1)
+
   @parameterized.product(
       use_tc_tiling=(False, True), full_core_spec=(True, False),
       signalling_direction=("scs_to_tec", "tec_to_scs", "both"),
