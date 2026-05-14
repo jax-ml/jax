@@ -92,3 +92,7 @@ jobs:
       build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
       clone_main_xla: 0
+
+  test-gcloud-spaces:
+    uses: ./.github/workflows/test_gcloud_spaces.yml
+    name: "Test gcloud spaces"

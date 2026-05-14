@@ -1,0 +1,77 @@
+name: Verify gcloud storage spaces on Windows
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  test-windows-quotes:
+    runs-on: windows-x86-n2-16
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3  # v6.0.0
+        with:
+          persist-credentials: false
+
+      - name: Test Quoting Behaviors (Spaces + Wildcards)
+        shell: cmd
+        run: |
+          @echo off
+
+          :: 1. Define a test URI containing spaces
+          :: (We use a public bucket or configure permissions accordingly)
+          set "INPUTS_GCS_DOWNLOAD_URI=gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/1380/1"
+
+          echo ==========================================
+          echo Test 1: Pattern A (Quotes around Base only)
+          echo ==========================================
+          echo Command: call gcloud storage cp "%INPUTS_GCS_DOWNLOAD_URI%"/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl .
+
+          call gcloud storage cp "%INPUTS_GCS_DOWNLOAD_URI%"/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl .
+          if errorlevel 1 (
+              echo TEST 1 FAILED!
+          ) else (
+              echo TEST 1 SUCCEEDED!
+          )
+
+          echo.
+          echo ==========================================
+          echo Test 2: Pattern B (Fully Quote-Wrapped)
+          echo ==========================================
+          echo Command: call gcloud storage cp "%INPUTS_GCS_DOWNLOAD_URI%/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl" .
+
+          call gcloud storage cp "%INPUTS_GCS_DOWNLOAD_URI%/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl" .
+          if errorlevel 1 (
+              echo TEST 2 FAILED!
+          ) else (
+              echo TEST 2 SUCCEEDED!
+          )
+
+          echo.
+          echo ==========================================
+          echo Test 3: Pattern A with space in suffix (Should Fail)
+          echo ==========================================
+          set "BASE_URI=gs://general-ml-ci-transient/jax-github-actions/jax-fork"
+          echo Command: call gcloud storage cp "%BASE_URI%"/CI - Wheel Tests (Continuous)/1380/1/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl .
+
+          call gcloud storage cp "%BASE_URI%"/CI - Wheel Tests (Continuous)/1380/1/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl .
+          if errorlevel 1 (
+              echo TEST 3 FAILED!
+          ) else (
+              echo TEST 3 SUCCEEDED!
+          )
+
+          echo.
+          echo ==========================================
+          echo Test 4: Pattern B with space in suffix (Should Succeed)
+          echo ==========================================
+          echo Command: call gcloud storage cp "%BASE_URI%/CI - Wheel Tests (Continuous)/1380/1/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl" .
+
+          call gcloud storage cp "%BASE_URI%/CI - Wheel Tests (Continuous)/1380/1/jax-0.8.3.dev20260116+eae118d6c-py3-none-any.whl" .
+          if errorlevel 1 (
+              echo TEST 4 FAILED!
+          ) else (
+              echo TEST 4 SUCCEEDED!
+          )
+
+
