@@ -21,12 +21,13 @@ import json
 import zlib
 
 import jax
+from jax._src import core as jax_core
 from jax._src import frozen_dict
-import jax._src.core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import triton
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import core as triton_core
@@ -97,8 +98,8 @@ def pallas_call_lowering(
   except RuntimeError:
     # GPU device is not available. Fall back to the minimum CC supported by Triton.
     # TODO(slebedev): Make the fallback CC configurable.
-    arch_name = "8.0"
-    compute_capability = 80
+    arch_name = "9.0"
+    compute_capability = 90
   else:
     arch_name = str(gpu_device.compute_capability)
     if lowering_platform == "rocm":
@@ -126,9 +127,8 @@ def pallas_call_lowering(
   if metadata is not None:
     serialized_metadata = json.dumps(dict(metadata))
 
-  # TODO(b/394629193): Remove True once the bug is fixed.
-  if True:
-    # AOT Triton compilation is only available on jaxlib 0.5.1+.
+  # TODO(b/394629193): Remove this once the minimum jaxlib version is >0.10.1.
+  if jaxlib_version <= (0, 10, 1):
     out_types = [
       ir.RankedTensorType.get(bm.array_aval.shape,
                               mlir.dtype_to_ir_type(bm.array_aval.dtype))
@@ -169,7 +169,7 @@ def pallas_call_lowering(
       num_stages=num_stages,
   )
   kernel = triton_kernel_call_lib.TritonKernel(
-      debug_info.func_name,
+      name,
       num_warps,
       1,
       compilation_result.smem_bytes,
@@ -192,16 +192,21 @@ def pallas_call_lowering(
   if jaxlib_extension_version >= 444:
     return mlir.custom_call(
         call_target_name="triton_kernel_call_ffi",
-        result_types=mlir.flatten_ir_types(
-            [mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out]
-        ),
+        result_types=mlir.flatten_ir_types([
+            mlir.aval_to_ir_type(ctx.module_context, aval)
+            for aval in ctx.avals_out
+        ]),
         operands=in_nodes,
-        backend_config={"opaque": ir.StringAttr.get(zlib.compress(
-            kernel_call.to_proto(
-                debug_info.func_name,
-                (serialized_metadata or "").encode(),
-            )
-        ))},
+        backend_config=dict(
+            name=ir.StringAttr.get(name),
+            opaque=ir.StringAttr.get(
+                zlib.compress(
+                    kernel_call.to_proto(
+                        name, (serialized_metadata or "").encode()
+                    )
+                )
+            ),
+        ),
         operand_layouts=avals_to_layouts(ctx.avals_in),
         result_layouts=avals_to_layouts(ctx.avals_out),
         operand_output_aliases=dict(input_output_aliases),
