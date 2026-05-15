@@ -1282,6 +1282,15 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "random_impl_test",
+    srcs = ["random_impl_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "random_lax_test",
     srcs = ["random_lax_test.py"],
     backend_tags = {

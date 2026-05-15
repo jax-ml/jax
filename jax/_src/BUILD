@@ -1663,6 +1663,7 @@ pytype_strict_library(
     srcs = [
         "random/__init__.py",
         "random/core.py",
+        "random/philox2x32.py",
         "random/prng.py",
     ],
     type_checking = "pyrefly",

@@ -200,8 +200,9 @@ class PrngTest(jtu.JaxTestCase):
     # jax_default_prng_impl config enum state definition directly,
     # rather than copying manually here?
     self.assertIn('threefry2x32', prng_internal.prngs)
-    self.assertIn('rbg',          prng_internal.prngs)
-    self.assertIn('unsafe_rbg',   prng_internal.prngs)
+    self.assertIn('philox2x32', prng_internal.prngs)
+    self.assertIn('rbg', prng_internal.prngs)
+    self.assertIn('unsafe_rbg', prng_internal.prngs)
 
   def testThreefry2x32(self):
     # We test the hash by comparing to known values provided in the test code of
