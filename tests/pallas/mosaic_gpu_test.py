@@ -8249,5 +8249,24 @@ class DistributedWGTest(
   ...
 
 
+@jtu.with_config(jax_pallas_poison_buffers=True)
+class MosaicGPUPoisonTest(PallasTest, jtu.CudaArchSpecificTest):
+
+  def test_poison_buffers_nyi(self):
+    def kernel(o_ref):
+      scratch = jax.empty_ref(
+          jax.ShapeDtypeStruct((128,), jnp.float32), memory_space=plgpu.SMEM
+      )
+      o_ref[...] = scratch[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Buffer poisoning is not supported on GPU yet"
+    ):
+      self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+      )()
+
+
 if __name__ == "__main__":
   absltest.main()

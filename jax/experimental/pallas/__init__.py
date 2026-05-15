@@ -30,6 +30,7 @@ from jax._src.pallas.core import debug_check as debug_check
 from jax._src.pallas.core import debug_checks_enabled as debug_checks_enabled
 from jax._src.pallas.core import Element as Element
 from jax._src.pallas.core import enable_debug_checks as enable_debug_checks
+from jax._src.pallas.core import enable_poison_buffers as enable_poison_buffers
 from jax._src.pallas.core import GridSpec as GridSpec
 from jax._src.pallas.core import Indirect as Indirect
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir

@@ -2272,3 +2272,12 @@ jax_mosaic_allow_hlo = bool_state(
     default=False,
     help='Allow hlo dialects in Mosaic',
 )
+
+jax_pallas_poison_buffers = bool_state(
+    name="jax_pallas_poison_buffers",
+    default=False,
+    help=(
+        "If set, scratch buffers allocated by Pallas (e.g., in run_scoped)"
+        " are initialized with poison values (NaN for floats) at allocation time."
+    ),
+)

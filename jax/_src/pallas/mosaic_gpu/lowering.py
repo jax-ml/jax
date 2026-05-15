@@ -3307,6 +3307,8 @@ def _debug_print_lowering_rule(
 def _run_scoped_lowering_rule(
     ctx: LoweringRuleContext, *consts, jaxpr: jax_core.Jaxpr, collective_axes
 ):
+  if pallas_core.poison_buffers_enabled():
+    raise NotImplementedError("Buffer poisoning is not supported on GPU yet.")
   input_refs = []
   should_discharge = []
   wg_axis = ctx.module_ctx.axis_names.wg

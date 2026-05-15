@@ -13,6 +13,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* New features
+
+  * Added {data}`jax.experimental.pallas.enable_poison_buffers` (config flag
+    `jax_pallas_poison_buffers`) to poison (initialize with NaNs or lowest
+    possible integers) any scratch buffers allocated by Pallas in Mosaic TPU
+    lowering for debugging.
+
 * Changes
 
   * Added {func}`jax.experimental.pallas.align_to`, a utility that rounds a

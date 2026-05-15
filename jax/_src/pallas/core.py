@@ -154,6 +154,15 @@ def debug_checks_enabled() -> bool:
   return config.jax_pallas_enable_debug_checks.value
 
 
+enable_poison_buffers = config.jax_pallas_poison_buffers
+
+
+def poison_buffers_enabled() -> bool:
+  """Returns whether Pallas buffer poisoning is enabled."""
+  return config.jax_pallas_poison_buffers.value
+
+
+
 def debug_check(condition, message):
   """Check the condition if
   :func:`~jax.experimental.pallas.enable_debug_checks` is set, otherwise

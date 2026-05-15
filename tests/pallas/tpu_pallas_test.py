@@ -2385,6 +2385,49 @@ class PallasCallTest(ptu.PallasTPUTest):
         compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
+
+@jtu.with_config(jax_pallas_poison_buffers=True)
+class PallasCallPoisonTest(ptu.PallasTPUTest):
+
+  def test_poison_buffers(self):
+    if self.INTERPRET:
+      self.skipTest('Only works on Mosaic TPU.')
+
+    def kernel(out_f32_ref, out_i32_ref, out_i8_ref, out_bool_ref):
+      scratch_f32 = jax.empty_ref(
+          jax.ShapeDtypeStruct((8, 128), jnp.float32), memory_space=pltpu.VMEM
+      )
+      scratch_i32 = jax.empty_ref(
+          jax.ShapeDtypeStruct((8, 128), jnp.int32), memory_space=pltpu.VMEM
+      )
+      scratch_i8 = jax.empty_ref(
+          jax.ShapeDtypeStruct((8, 128), jnp.int8), memory_space=pltpu.VMEM
+      )
+      scratch_bool = jax.empty_ref(
+          jax.ShapeDtypeStruct((8, 128), jnp.bool_), memory_space=pltpu.VMEM
+      )
+
+      out_f32_ref[...] = scratch_f32[...]
+      out_i32_ref[...] = scratch_i32[...]
+      out_i8_ref[...] = scratch_i8[...]
+      out_bool_ref[...] = scratch_bool[...]
+
+    y_f32, y_i32, y_i8, y_bool = self.pallas_call(
+        kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            jax.ShapeDtypeStruct((8, 128), jnp.int32),
+            jax.ShapeDtypeStruct((8, 128), jnp.int8),
+            jax.ShapeDtypeStruct((8, 128), jnp.bool_),
+        ),
+        out_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)] * 4,
+    )()
+
+    self.assertTrue(np.all(np.isnan(y_f32)))
+    self.assertTrue(np.all(y_i32 == -(1 << 31)))
+    self.assertTrue(np.all(y_i8 == -128))
+    self.assertTrue(np.all(y_bool == True))
+
   @parameterized.parameters([
       pl.Buffered(1),
       pl.Buffered(2),
