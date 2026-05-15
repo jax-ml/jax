@@ -23,7 +23,6 @@ import json
 from typing import Any, cast
 
 import jax
-from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import frozen_dict
@@ -469,7 +468,9 @@ def pallas_call_tpu_lowering_rule(
 
 
 def _rewrite_jaxpr_for_lowering(
-    jaxpr: jax_core.Jaxpr, mesh: pallas_core.Mesh, all_meshes: Sequence[pallas_core.Mesh]
+    jaxpr: jax_core.Jaxpr,
+    mesh: pallas_core.Mesh,
+    all_meshes: tuple[pallas_core.Mesh, ...],
 ) -> jax_core.Jaxpr:
   # If the jaxpr has any scalar shaped arrays as inputs, they must have come
   # from closed over scalars. We need to rewrite the jaxpr to actually take in
@@ -556,11 +557,7 @@ def _rewrite_jaxpr_for_lowering(
 
     return jax_core.eval_jaxpr(jaxpr, jaxpr.constvars, *processed_args)
 
-  super_mesh_shape = mpmd.get_super_mesh_shape(all_meshes)
-  with (
-      jax_core.extend_axis_env_nd(super_mesh_shape.items()),
-      config._check_vma(False),
-  ):
+  with mpmd.mpmd_map_tracing_context(mesh, all_meshes):
     new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(
             new_body, debug_info=jaxpr.debug_info.with_unknown_names()
@@ -665,7 +662,9 @@ def mpmd_map_tpu_lowering_rule(
           )
 
       if any(is_scalar_input):
-        jaxpr = _rewrite_jaxpr_for_lowering(jaxpr, mesh, [*meshes, *external_meshes])
+        jaxpr = _rewrite_jaxpr_for_lowering(
+            jaxpr, mesh, (*meshes, *external_meshes)
+        )
 
       lower_fn(
           ctx,

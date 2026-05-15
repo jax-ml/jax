@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import contextlib
 import functools
 import itertools as it
-from typing import Any, TypeVar, cast
+from typing import Any, Generator, TypeVar, cast
 
 from jax._src import api
 from jax._src import api_util
@@ -45,6 +45,34 @@ from jax._src.typing import Array
 _T = TypeVar("_T")
 
 
+def get_super_mesh_shape(
+    meshes: Iterable[pallas_core.Mesh],
+) -> Mapping[str, int]:
+  super_mesh_shape = {}
+  for mesh in meshes:
+    for k, v in mesh.shape.items():
+      # An extra check since `check_is_compatible_with` should catch it.
+      assert (
+          k not in super_mesh_shape or super_mesh_shape[k] == v
+      ), f"Conflicting size for axis {k}"
+      super_mesh_shape[k] = v
+  return super_mesh_shape
+
+
+@contextlib.contextmanager
+def mpmd_map_tracing_context(
+  mesh: pallas_core.Mesh,
+  other_meshes: tuple[pallas_core.Mesh, ...],
+) -> Generator[None, None, None]:
+  del mesh  # Will be needed in follow up.
+  super_mesh_shape = get_super_mesh_shape(other_meshes)
+  with (
+      jax_core.extend_axis_env_nd(super_mesh_shape.items()),
+      config._check_vma(False),
+  ):
+    yield
+
+
 mpmd_map_p = hijax.HiPrimitive("mpmd_map")
 mpmd_map_p.multiple_results = True
 
@@ -67,7 +95,7 @@ def _mpmd_map_abstract_eval(
     meshes,
     **params,
 ):
-  del params  # Unused.
+  del params, compiler_params  # Unused.
 
   effs = {*pallas_core.get_interpret_effects(interpret)}
   all_mesh_axis_names = {
@@ -108,15 +136,13 @@ def _mpmd_map_abstract_eval(
   return out_avals, effs
 
 
-def _mpmd_map_typecheck_rule(ctx_factory, *in_atoms, meshes, **params):
+def _mpmd_map_typecheck_rule(
+    ctx_factory, *in_atoms, **params
+):
   del ctx_factory  # Unused.
-  ctx = contextlib.ExitStack()
-  for mesh in meshes:
-    ctx.enter_context(jax_core.extend_axis_env_nd(mesh.shape.items()))
-  with ctx:
-    return _mpmd_map_abstract_eval(
-        *(x.aval for x in in_atoms), meshes=meshes, **params
-    )
+  return _mpmd_map_abstract_eval(
+      *(x.aval for x in in_atoms), **params
+  )
 
 
 jax_core.custom_typechecks[mpmd_map_p] = _mpmd_map_typecheck_rule
@@ -148,7 +174,7 @@ def _mpmd_map_discharge_rule(
   num_out_new = len(io_indices)
 
   new_jaxprs = []
-  super_mesh_shape = get_super_mesh_shape(it.chain(meshes, external_meshes))
+  all_meshes = (*meshes, *external_meshes)
 
   def _rewrite_to_include_new_outputs(jaxpr):
 
@@ -181,11 +207,8 @@ def _mpmd_map_discharge_rule(
     new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, tracing_avals)
     return new_jaxpr
 
-  with (
-      jax_core.extend_axis_env_nd(super_mesh_shape.items()),
-      config._check_vma(False),
-  ):
-    for jaxpr in jaxprs:
+  for mesh, jaxpr in zip(meshes, jaxprs):
+    with mpmd_map_tracing_context(mesh, all_meshes):
       new_jaxprs.append(_rewrite_to_include_new_outputs(jaxpr))
 
   assert all(
@@ -350,13 +373,10 @@ def _mpmd_map_to_lojax(
 
   lo_out_avals = [lo_aval for aval in out_avals for lo_aval in aval.lo_ty()]
 
-  super_mesh_shape = get_super_mesh_shape(it.chain(meshes, external_meshes))
+  all_meshes = (*meshes, *external_meshes)
   lo_jaxprs = []
-  with (
-      jax_core.extend_axis_env_nd(super_mesh_shape.items()),
-      config._check_vma(False),
-  ):
-    for jaxpr in jaxprs:
+  for mesh, jaxpr in zip(meshes, jaxprs):
+    with mpmd_map_tracing_context(mesh, all_meshes):
       closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
       closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
       assert not closed_lo_jaxpr.consts
@@ -652,7 +672,8 @@ def _dedup_consts_and_unify_jaxpr_signatures(
     unflat_in_avals: Sequence[jax_core.AbstractValue],
     unflat_out_avals: Sequence[jax_core.AbstractValue],
     flat_kernel_avals: Sequence[jax_core.AbstractValue],
-    super_mesh_shape: Mapping[str, int],
+    meshes: Sequence[pallas_core.Mesh],
+    all_meshes: tuple[pallas_core.Mesh, ...],
 ) -> tuple[list[jax_core.Jaxpr], list[Array]]:
   # Example:
   #   c1, c2, c3 are closed-over refs.
@@ -704,7 +725,7 @@ def _dedup_consts_and_unify_jaxpr_signatures(
   tracing_avals = (
       in_avals_flat + unique_const_avals + out_avals_flat + scratch_avals_flat
   )
-  for jaxpr, consts in zip(jaxprs, consts_per_fn):
+  for mesh, jaxpr, consts in zip(meshes, jaxprs, consts_per_fn):
     debug_info = api_util.debug_info(
         "mpmd_map_closed_over",
         make_rewritten_body(jaxpr, consts),
@@ -714,30 +735,13 @@ def _dedup_consts_and_unify_jaxpr_signatures(
     wrapped_fun = lu.wrap_init(
         make_rewritten_body(jaxpr, consts), debug_info=debug_info
     )
-    with (
-        jax_core.extend_axis_env_nd(super_mesh_shape.items()),
-        config._check_vma(False),
-    ):
+    with mpmd_map_tracing_context(mesh, all_meshes):
       new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
           wrapped_fun, tracing_avals
       )
     assert not new_consts
     new_jaxprs.append(new_jaxpr)
   return new_jaxprs, unique_consts
-
-
-def get_super_mesh_shape(
-    meshes: Iterable[pallas_core.Mesh],
-) -> Mapping[str, int]:
-  super_mesh_shape = {}
-  for mesh in meshes:
-    for k, v in mesh.shape.items():
-      # An extra check since `check_is_compatible_with` should catch it.
-      assert (
-          k not in super_mesh_shape or super_mesh_shape[k] == v
-      ), f"Conflicting size for axis {k}"
-      super_mesh_shape[k] = v
-  return super_mesh_shape
 
 
 def _mpmd_map(
@@ -824,14 +828,13 @@ def _mpmd_map(
       ):
         external_meshes.append(aval.memory_space.mesh)
 
-    all_meshes = [*meshes, *external_meshes]
+    all_meshes = (*meshes, *external_meshes)
     # Check that meshes are compatible with each other (e.g, have a consistent
     # core axis name in the sparsecore).
     for i, mesh in enumerate(all_meshes):
       for other_mesh in list(all_meshes)[i + 1 :]:
         mesh.check_is_compatible_with(other_mesh)
 
-    super_mesh_shape = get_super_mesh_shape(all_meshes)
     unflat_in_avals = in_tree.unflatten(flat_avals)
     unflat_out_avals = out_tree.unflatten(flat_out_avals)
     unflat_scratch_types = scratch_tree.unflatten(flat_scratch_types)
@@ -856,17 +859,14 @@ def _mpmd_map(
 
     jaxprs: list[jax_core.Jaxpr] = []
     consts_per_fn = []
-    for _, fn in meshes_and_fns:
+    for mesh, fn in meshes_and_fns:
       debug_info = api_util.debug_info("mpmd_map", fn, flat_kernel_avals, {})
       if name is not None:
         debug_info = debug_info.replace_func_name(name)
       flat_fun, out_tree_thunk = api_util.flatten_fun(
           lu.wrap_init(fn, debug_info=debug_info), kernel_aval_tree
       )
-      with (
-          jax_core.extend_axis_env_nd(super_mesh_shape.items()),
-          config._check_vma(False),
-      ):
+      with mpmd_map_tracing_context(mesh, all_meshes):
         jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
             flat_fun, flat_kernel_avals
         )
@@ -891,7 +891,8 @@ def _mpmd_map(
           unflat_in_avals,
           unflat_out_avals,
           flat_kernel_avals,
-          super_mesh_shape,
+          meshes,
+          all_meshes,
       )
     else:
       consts: list[Array] = []
