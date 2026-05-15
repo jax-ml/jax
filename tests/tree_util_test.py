@@ -26,7 +26,7 @@ from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src.tree_util import (
-    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef,
+    prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
 import jax.numpy as jnp
 
@@ -835,7 +835,7 @@ class TreeTest(jtu.JaxTestCase):
   def testFlattenWithPathWithIsLeafArgument(self):
     def is_empty(x):
       try:
-        children, _ = flatten_one_level(x)
+        children, _ = tree_util.flatten_one_level(x)
       except ValueError:
         return True  # Cannot flatten x; means it must be a leaf
       return len(children) == 0
@@ -961,16 +961,43 @@ class TreeTest(jtu.JaxTestCase):
     tree1 = {'a': 1,
              'sub': [jnp.array((1, 2)), ATuple(foo=(), bar=[None])],
              'obj': AnObject2(x=EmptyTuple(), y=0, z='constantdef')}
-    self.assertEqual(flatten_one_level(tree1["sub"])[0],
+    self.assertEqual(tree_util.flatten_one_level(tree1["sub"])[0],
                      tree1["sub"])
-    self.assertEqual(flatten_one_level(tree1["sub"][1])[0],
+    self.assertEqual(tree_util.flatten_one_level(tree1["sub"][1])[0],
                      [(), [None]])
-    self.assertEqual(flatten_one_level(tree1["obj"])[0],
+    self.assertEqual(tree_util.flatten_one_level(tree1["obj"])[0],
                      [EmptyTuple(), 0])
     with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
-      flatten_one_level(1)
+      tree_util.flatten_one_level(1)
     with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
-      flatten_one_level(jnp.array((1, 2)))
+      tree_util.flatten_one_level(jnp.array((1, 2)))
+
+  def testFlattenOneLevelWithKeys(self):
+    EmptyTuple = collections.namedtuple("EmptyTuple", ())
+    tree1 = {'a': 1,
+             'sub': [jnp.array((1, 2)), ATuple(foo=(), bar=[None])],
+             'obj': AnObject2(x=EmptyTuple(), y=0, z='constantdef')}
+
+    # Dict
+    children, meta = tree_util.flatten_one_level_with_keys(tree1)
+    self.assertEqual(list(children), [(DictKey('a'), 1),
+                                       (DictKey('obj'), tree1['obj']),
+                                       (DictKey('sub'), tree1['sub'])])
+    self.assertEqual(meta, ('a', 'obj', 'sub'))
+
+    # List
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"])
+    self.assertEqual(list(children), [(SequenceKey(0), tree1["sub"][0]),
+                                       (SequenceKey(1), tree1["sub"][1])])
+    self.assertIsNone(meta)
+
+    # Custom object with keys
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["obj"])
+    self.assertEqual(list(children), [("x", EmptyTuple()), ("y", 0)])
+    self.assertEqual(meta, 'constantdef')
+
+    with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
+      tree_util.flatten_one_level_with_keys(1)
 
   def testOptionalFlatten(self):
     @tree_util.register_pytree_with_keys_class

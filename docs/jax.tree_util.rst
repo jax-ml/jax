@@ -13,6 +13,8 @@ List of Functions
 
    Partial
    all_leaves
+   flatten_one_level
+   flatten_one_level_with_keys
    is_tree_node
    register_dataclass
    register_pytree_node
