@@ -1021,7 +1021,6 @@ pytype_strict_library(
         ":sharding_impls",
         ":source_info_util",
         ":state_types",
-        ":tree_util",
         ":typing",
         ":util",
         ":xla_bridge",

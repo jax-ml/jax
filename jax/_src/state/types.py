@@ -705,6 +705,3 @@ class AbstractLinVal(core.AbstractValue):
   shape = property(lambda self: self.inner_aval.shape)
   dtype = property(lambda self: self.inner_aval.dtype)
   ndim = property(lambda self: self.inner_aval.ndim)
-
-  def raise_val(self, val): return val
-  def lower_val(self, val): return [val]
