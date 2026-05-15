@@ -271,6 +271,10 @@ class State(config_ext.Config[_T]):
       self._update_global_hook(default)
     config_states[name] = self
 
+  @property
+  def name(self):
+    return self._name
+
   def __bool__(self) -> NoReturn:
     raise TypeError(
         "bool() not supported for instances of type '{0}' "

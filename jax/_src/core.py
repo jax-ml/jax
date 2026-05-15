@@ -333,9 +333,7 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
 # We also in effect fuse four other context managers into one, mostly to
 # save allocations.
 class JaxprEqnContextManager:
-  __slots__ = ['context', 'prev_compute_type', 'prev_threefry_partitionable',
-               'prev_xla_metadata', 'prev_abstract_mesh',
-               'prev_remove_size_one_mesh_axis']
+  __slots__ = ['context', 'prevs', 'prev_xla_metadata']
 
   def __init__(self, context):
     self.context = context
@@ -346,28 +344,18 @@ class JaxprEqnContextManager:
       updated = xla_metadata_lib.update_metadata(
           self.prev_xla_metadata, self.context.xla_metadata)
       config.xla_metadata_context_manager.set_local(updated)
-    self.prev_threefry_partitionable = config.threefry_partitionable.swap_local(
-        self.context.threefry_partitionable)
-    self.prev_compute_type = config.compute_on_context_manager.swap_local(
-        self.context.compute_type)
-    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
-        self.context.cur_abstract_mesh)
-    self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
-        self.context.remove_size_one_mesh_axis)
+    self.prevs = [(c, c.swap_local(v)) for c, v in self.context.configs]
 
   def __exit__(self, exc_type, exc_value, traceback):
     if self.context.xla_metadata:
       config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
-    config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
-    config.compute_on_context_manager.set_local(self.prev_compute_type)
-    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
-    config.remove_size_one_mesh_axis_from_type.set_local(self.prev_remove_size_one_mesh_axis)
-
+    for c, prev in self.prevs:
+      c.set_local(prev)
 
 class JaxprEqnContext:
 
-  __slots__ = ['compute_type', 'threefry_partitionable', 'xla_metadata',
-               'cur_abstract_mesh', 'remove_size_one_mesh_axis']
+  __slots__ = ['compute_type', 'threefry_partitionable', 'cur_abstract_mesh',
+               'remove_size_one_mesh_axis', 'xla_metadata', 'configs']
 
   compute_type: str | None
   threefry_partitionable: bool
@@ -380,33 +368,32 @@ class JaxprEqnContext:
     self.threefry_partitionable = config.threefry_partitionable.value
     self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     self.remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.value
+    # Don't put xla_metadata in configs cause it does extra stuff for __enter__
     self.xla_metadata = xla_metadata_lib.current_xla_metadata()
+    self.configs = [(config.compute_on_context_manager, self.compute_type),
+                    (config.threefry_partitionable, self.threefry_partitionable),
+                    (config.abstract_mesh_context_manager, self.cur_abstract_mesh),
+                    (config.remove_size_one_mesh_axis_from_type, self.remove_size_one_mesh_axis)]
 
   @property
   def manager(self):
     return JaxprEqnContextManager(self)
 
   def __repr__(self):
-    return (
-        f"JaxprEqnContext(compute_type={self.compute_type}, "
-        f"threefry_partitionable={self.threefry_partitionable}, "
-        f"cur_abstract_mesh={self.cur_abstract_mesh}, "
-        f"remove_size_one_mesh_axis={self.remove_size_one_mesh_axis}, "
-        f"xla_metadata={self.xla_metadata})"
-    )
+    s = [f"{c.name}={v}" for c, v in self.configs]
+    s = ', '.join(s)
+    return f"JaxprEqnContext({s}, xla_metadata={self.xla_metadata})"
 
   def __hash__(self):
-    return hash((self.compute_type, self.threefry_partitionable,
-                 self.cur_abstract_mesh, self.remove_size_one_mesh_axis,
+    configs_val = tuple(v for _, v in self.configs)
+    return hash((configs_val,
                  (None if self.xla_metadata is None else
                   tuple(sorted(self.xla_metadata.items())))))
 
   def __eq__(self, other):
-    return (self.compute_type == other.compute_type and
-            self.threefry_partitionable == other.threefry_partitionable and
-            self.cur_abstract_mesh == other.cur_abstract_mesh and
-            self.remove_size_one_mesh_axis == other.remove_size_one_mesh_axis and
-            self.xla_metadata == other.xla_metadata)
+    self_val = tuple(v for _, v in self.configs)
+    other_val = tuple(v for _, v in other.configs)
+    return self_val == other_val and self.xla_metadata == other.xla_metadata
 
 
 class JaxprEqn:
