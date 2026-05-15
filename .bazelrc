@@ -73,6 +73,16 @@ common:linux --copt=-Wno-array-parameter
 common:linux --copt=-Wno-deprecated-register
 common:linux --copt=-Wno-register
 
+common:linux_x86_64 --repo_env=LLVM_VERSION=22
+common:linux_x86_64 --repo_env=SYSROOT_DIST=linux_glibc_2_31
+common:linux_x86_64 --@rules_ml_toolchain//common:stdlib=libc++
+common:linux_x86_64 --@rules_ml_toolchain//common:static_libcxx=true
+common:linux_x86_64 --cxxopt=-std=c++20
+common:linux_x86_64 --host_cxxopt=-std=c++20
+common:linux_x86_64 --copt="-UFMT_ENFORCE_COMPILE_STRING"
+common:linux_x86_64 --copt=-Dconsteval=constexpr
+common:linux_x86_64 --copt=-Wno-error=unused-command-line-argument
+
 common:macos --config=posix
 common:macos --apple_platform_type=macos
 
@@ -310,7 +320,7 @@ common:macos_cache_push --config=macos_cache --remote_upload_local_results=true 
 # Bazel tests.
 # #############################################################################
 # Linux x86 CI configs
-common:ci_linux_x86_64 --config=avx_linux --config=avx_posix
+common:ci_linux_x86_64 --config=avx_linux --config=avx_posix --config=linux_x86_64
 common:ci_linux_x86_64 --config=mkl_open_source_only
 common:ci_linux_x86_64 --config=clang --verbose_failures=true
 common:ci_linux_x86_64 --color=yes
@@ -325,7 +335,7 @@ common:ci_linux_x86_64_clang_local --repo_env=TF_SYSROOT="/dt9"
 # Clang path needs to be set for remote toolchain to be configured correctly.
 common:ci_linux_x86_64_clang_local --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
-common:ci_linux_x86_64_cuda_common --config=build_cuda_with_nvcc
+common:ci_linux_x86_64_cuda_common --config=build_cuda_with_clang
 common:ci_linux_x86_64_cuda_common --config=ci_linux_x86_64
 
 # The toolchain in `--config=cuda` needs to be read before the toolchain in
