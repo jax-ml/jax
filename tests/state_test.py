@@ -822,6 +822,21 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertLen(f_jaxpr.out_avals, 2)
     self.assertLen(jaxpr.outvars, 3)
 
+  def test_discharge_call_primitive(self):
+    def f(y_ref, x):
+      def g(x):
+        y_ref[...] = x + 1.0
+        return []
+      return core.call_p.bind(x, subfuns=(wrap_init(g, 1),))
+
+    y_ref_aval = shaped_array_ref((), jnp.float32)
+    x_aval = core.ShapedArray((), jnp.float32)
+    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+        wrap_init(f, 2), [y_ref_aval, x_aval])
+
+    # This should successfully discharge without a TypeError.
+    discharge_state(stateful_jaxpr, consts, should_discharge=[True, False])
+
 
 def index_arrays(size, idx_shape):
   valid_idx = hps.integers(min_value=-size, max_value=size - 1)

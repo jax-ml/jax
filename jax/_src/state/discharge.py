@@ -659,9 +659,13 @@ def _call_primitive_discharge_rule(
   discharged_call_jaxpr = discharged_closed_jaxpr.jaxpr
   discharged_consts = discharged_closed_jaxpr.consts
   discharged_call_jaxpr = pe.convert_constvars_jaxpr(discharged_call_jaxpr)
-  out_and_ref_vals = prim.bind(fun, *discharged_consts, *args,
-                               call_jaxpr=discharged_call_jaxpr,
-                               **kwargs)
+  out_and_ref_vals = prim.bind(
+      *discharged_consts,
+      *args,
+      subfuns=(fun,),
+      call_jaxpr=discharged_call_jaxpr,
+      **kwargs,
+  )
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
