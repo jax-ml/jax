@@ -950,7 +950,11 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     lowered_text = f.lower(jnp.arange(8)).as_text('hlo')
     self.assertRegex(lowered_text,
-                     'to_apply.*frontend_attributes={_xla_compute_type="host"}')
+                     r'to_apply.*frontend_attributes={_xla_compute_type="host".*}')
+
+    compiled_text = f.lower(jnp.arange(8)).compile().as_text()
+    self.assertRegex(compiled_text, r"custom-call-start")
+    self.assertRegex(compiled_text, r"custom-call-done")
 
   def test_compute_on_reduction(self):
     out_s = make_single_device_sharding(
