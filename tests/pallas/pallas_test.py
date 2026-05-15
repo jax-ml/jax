@@ -33,7 +33,6 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import hijax
 from jax._src import test_util as jtu
-from jax._src.pallas import pallas_call
 from jax._src.pallas import pallas_test_util as ptu
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
@@ -391,7 +390,7 @@ class PallasCallTest(ptu.PallasTest):
     super().setUp()
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
     self.enter_context(mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS))
 
   def test_pallas_call_infers_backend_from_compiler_params(self):
@@ -931,7 +930,7 @@ class PallasCallElementIndexingTest(ptu.PallasTest):
     super().setUp()
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_block_spec_element(self):
     def show_program_ids(
@@ -1103,7 +1102,7 @@ class ApiErrorTest(ptu.PallasTest):
     super().setUp()
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
@@ -1362,7 +1361,7 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
     super().setUp()
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_vector_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
@@ -1475,7 +1474,7 @@ class PallasControlFlowTest(ptu.PallasTest):
       self.skipTest("Control flow not supported in interpret mode yet.")
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_loop_with_unused_i_no_int(self):
     @functools.partial(
@@ -2353,7 +2352,7 @@ class PallasCallAutodifferentiationTest(ptu.PallasTest):
     self.grad_tol = jtu.default_gradient_tolerance[np.dtype(jnp.float32)]
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   @parameterized.named_parameters(*AD_TEST_CASES)
   def test_jvp(self, impl):
@@ -2583,7 +2582,7 @@ class PallasCallNamedGridTest(ptu.PallasTest):
     super().setUp()
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_named_grid(self):
 
@@ -2811,7 +2810,7 @@ class PallasHiJaxTest(ptu.PallasTest):
     super().setUp()
     # TODO(bchetioui): Remove this once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_pass_weird_tuple_into_pallas_call(self):
 

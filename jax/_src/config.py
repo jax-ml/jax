@@ -2240,7 +2240,35 @@ jax_ragged_dot_use_gpu_pallas_triton_lowering = bool_state(
 )
 
 jax_pallas_verbose_errors = bool_flag(
-    "jax_pallas_verbose_errors",
-    default=bool_env("JAX_PALLAS_VERBOSE_ERRORS", False),
-    help="If True, print verbose error messages for Pallas kernels.",
+    'jax_pallas_verbose_errors',
+    default=bool_env('JAX_PALLAS_VERBOSE_ERRORS', False),
+    help='If True, print verbose error messages for Pallas kernels.',
+)
+
+jax_pallas_enable_debug_checks = bool_state(
+    name='jax_pallas_enable_debug_checks',
+    default=False,
+    help=(
+        'If set, ``pl.debug_check`` calls are checked at runtime. Otherwise,'
+        ' they are a noop.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_pallas_use_mosaic_gpu = bool_state(
+    name='jax_pallas_use_mosaic_gpu',
+    default=bool_env('JAX_PALLAS_USE_MOSAIC_GPU', True),
+    help=(
+        'If True, lower Pallas kernels to the experimental Mosaic GPU'
+        ' dialect, instead of Triton IR.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+jax_mosaic_allow_hlo = bool_state(
+    name='jax_mosaic_allow_hlo',
+    default=False,
+    help='Allow hlo dialects in Mosaic',
 )

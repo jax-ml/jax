@@ -28,12 +28,12 @@ import jax
 from jax import api_util
 from jax import lax
 from jax import random
+from jax._src import config
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
-from jax._src.pallas import pallas_call
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
 from jax.experimental import pallas as pl
@@ -62,7 +62,7 @@ import hypothesis.strategies as hps
 jax.config.parse_flags_with_absl()
 htu.setup_hypothesis(max_examples=50)
 
-use_mosaic_gpu = pallas_call._PALLAS_USE_MOSAIC_GPU.value
+use_mosaic_gpu = config.jax_pallas_use_mosaic_gpu.value
 
 intx = dtypes.default_int_dtype()
 floatx = dtypes.default_float_dtype()

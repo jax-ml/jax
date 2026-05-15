@@ -844,15 +844,6 @@ def _trace_kernel_to_jaxpr(
   return jaxpr, tuple(consts)
 
 
-_PALLAS_USE_MOSAIC_GPU = config.bool_state(
-    "jax_pallas_use_mosaic_gpu",
-    default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", True),
-    help=(
-        "If True, lower Pallas kernels to the experimental Mosaic GPU"
-        " dialect, instead of Triton IR."
-    ),
-)
-
 
 def _unsupported_lowering_error(platform: str) -> Exception:
   return ValueError(
@@ -922,14 +913,16 @@ def _pallas_call_lowering(
       from jax._src.pallas.mosaic_gpu import core as mgpu_core
       if (
           isinstance(compiler_params, mgpu_core.CompilerParams)
-          or (compiler_params is None and _PALLAS_USE_MOSAIC_GPU.value)
+          or (compiler_params is None and
+              config.jax_pallas_use_mosaic_gpu.value)
       ):
         backend = mosaic_gpu_backend
     if triton_backend is not None:
       from jax._src.pallas.triton import core as triton_core
       if (
           isinstance(compiler_params, triton_core.CompilerParams)
-          or (compiler_params is None and not _PALLAS_USE_MOSAIC_GPU.value)
+          or (compiler_params is None and
+              not config.jax_pallas_use_mosaic_gpu.value)
       ):
         backend = triton_backend
 

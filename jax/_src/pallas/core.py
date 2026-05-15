@@ -146,22 +146,12 @@ class CompilerParams(Protocol):
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
 
-_ENABLE_DEBUG_CHECKS = config.bool_state(
-    "jax_pallas_enable_debug_checks",
-    default=False,
-    help=(
-        "If set, ``pl.debug_check`` calls are checked at runtime. Otherwise,"
-        " they are a noop."
-    ),
-)
-
-
-enable_debug_checks = _ENABLE_DEBUG_CHECKS
+enable_debug_checks = config.jax_pallas_enable_debug_checks
 
 
 def debug_checks_enabled() -> bool:
   """Returns runtime checks are enabled."""
-  return _ENABLE_DEBUG_CHECKS.value
+  return config.jax_pallas_enable_debug_checks.value
 
 
 def debug_check(condition, message):

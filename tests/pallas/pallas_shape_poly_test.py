@@ -107,7 +107,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     super().setUp()
     # TODO(bchetioui): Remove this for H100+ once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic
@@ -489,7 +489,7 @@ class ExportTestWithTriton(jtu.JaxTestCase):
   def setUp(self):
     if triton is None:
       self.skipTest("Triton is not available on this platform")
-    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
     super().setUp()
 
   def _check_cuda_export(self, exp):
@@ -564,7 +564,7 @@ class ExportTestWithMosaicGpu(ExportTestWithTriton):
           "LLVM seems to care about the compute capability if a GPU is present"
       )
     super().setUp()
-    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(True))
 
   def _check_cuda_export(self, exp):
     self.assertRegex(
