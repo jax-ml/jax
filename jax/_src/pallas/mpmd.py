@@ -40,6 +40,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state import discharge as state_discharge
+from jax._src.tree_util import FlatTree
 from jax._src.typing import Array
 
 _T = TypeVar("_T")
@@ -203,9 +204,10 @@ def _mpmd_map_discharge_rule(
     debug_info = api_util.debug_info(
         "mpmd_map_discharge", new_body, tracing_avals, {}
     )
-    wrapped_fun = lu.wrap_init(new_body, debug_info=debug_info)
-    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, tracing_avals)
-    return new_jaxpr
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        new_body, FlatTree.flatten_args(*tracing_avals), debug_info
+    )
+    return closed_jaxpr.jaxpr
 
   for mesh, jaxpr in zip(meshes, jaxprs):
     with mpmd_map_tracing_context(mesh, all_meshes):
@@ -730,15 +732,14 @@ def _dedup_consts_and_unify_jaxpr_signatures(
         tracing_avals,
         {},
     )
-    wrapped_fun = lu.wrap_init(
-        make_rewritten_body(jaxpr, consts), debug_info=debug_info
-    )
     with mpmd_map_tracing_context(mesh, all_meshes):
-      new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-          wrapped_fun, tracing_avals
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          make_rewritten_body(jaxpr, consts),
+          FlatTree.flatten_args(*tracing_avals),
+          debug_info,
       )
-    assert not new_consts
-    new_jaxprs.append(new_jaxpr)
+    assert not closed_jaxpr.consts
+    new_jaxprs.append(closed_jaxpr.jaxpr)
   return new_jaxprs, unique_consts
 
 

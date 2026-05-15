@@ -64,6 +64,7 @@ from jax._src.state import primitives as sp
 from jax._src.state import types as state_types
 from jax._src.state.types import ReshapeTransform
 from jax._src.state.types import TransposeTransform
+from jax._src.tree_util import FlatTree
 from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
@@ -848,15 +849,19 @@ def lower_pipelined_jaxpr_to_module(
     )(*refs)
 
   with grid_mapping.trace_env():
-    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()),
-        [
+    dbg = jaxpr.debug_info.with_unknown_names()
+    new_closed_jaxpr, _ = pe.trace_to_jaxpr(
+        pipeline_fn,
+        FlatTree.flatten_args(*[
             gpu_core.GMEM(
                 bm.array_aval.shape, bm.array_aval.dtype
             ).get_ref_aval()
             for bm in block_mappings
-        ],
+        ]),
+        dbg,
     )
+    new_jaxpr = new_closed_jaxpr.jaxpr
+    new_consts = new_closed_jaxpr.consts
     assert not new_consts
 
   axis_names = (

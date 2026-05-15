@@ -25,7 +25,6 @@ import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import frozen_dict
-from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
@@ -42,6 +41,7 @@ from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import sc_lowering  # noqa: F401
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import types as state_types
+from jax._src.tree_util import FlatTree
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 
@@ -521,14 +521,12 @@ def _rewrite_jaxpr_for_lowering(
     return jax_core.eval_jaxpr(jaxpr, jaxpr.constvars, *processed_args)
 
   with mpmd.mpmd_map_tracing_context(mesh, all_meshes):
-    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            new_body, debug_info=jaxpr.debug_info.with_unknown_names()
-        ),
-        new_in_avals,
+    dbg = jaxpr.debug_info.with_unknown_names()
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        new_body, FlatTree.flatten_args(*new_in_avals), dbg
     )
-  assert not new_consts
-  return new_jaxpr
+  assert not closed_jaxpr.consts
+  return closed_jaxpr.jaxpr
 
 
 def mpmd_map_tpu_lowering_rule(
