@@ -18,6 +18,8 @@ To work around https://github.com/jax-ml/jax/issues/25671 , this file
 contains only tests that use shard_map.
 """
 
+import functools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -713,17 +715,49 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       detect_races=[True, False])
   def test_reduce_scatter_sum_with_emit_pipeline_example(
       self, dma_execution_mode, detect_races):
-    self.skipTest('requires a patched pallas.emit_pipeline to specify/fake '
-                  'the TPU generation')
-    if jax.config.jax_enable_x64:
-      self.skipTest('pallas.emit_pipeline + x64 is not currently supported')
     num_devices = jax.device_count()
     partition = P(None, 'x')
     mesh = jtu.create_mesh((num_devices,), ('x',))
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
+    jax.set_mesh(mesh)
+
+    def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
+      """Performs a barrier with neighbors on the global barrier semaphore.
+
+      Optionally performs a second barrier, which prevents a potential race
+      when reusing the same collective_id across kernel invocations.
+      """
+      barrier_sem = pltpu.get_barrier_semaphore()
+      for neighbor in [left_neighbor, right_neighbor]:
+        pl.semaphore_signal(
+          barrier_sem,
+          inc=1,
+          device_id=(neighbor,),
+          device_id_type=pl.DeviceIdType.MESH,
+        )
+      pl.semaphore_wait(barrier_sem, 2)
+      if double_barrier:
+        # The double-barrier prevents a race condition where one neighbor can
+        # re-enter the kernel again on a subsequent call and increment the
+        # barrier semaphore a second time. This would unblock the current device
+        # even if the other neighbor is not ready yet.
+        # To implement a double-barrier, we stack-allocate a second REGULAR
+        # semaphore using run_scoped.
+        @functools.partial(pl.run_scoped,
+                           second_barrier=pltpu.SemaphoreType.REGULAR)
+        def _(second_barrier):
+          for neighbor in [left_neighbor, right_neighbor]:
+            pl.semaphore_signal(
+              second_barrier,
+              inc=1,
+              device_id=(neighbor,),
+              device_id_type=pl.DeviceIdType.MESH,
+            )
+          pl.semaphore_wait(second_barrier, 2)
+
     # We pick a large outer kernel block size that we do not want to place
-    # in VMEM. For pedagogical purposes we use (4096, 4096), although in
+    # in VMEM. For pedagogical purposes we use (512, 512), although in
     # principle this can be much larger.
     outer_block_size = (512, 512)
     # We pick a smaller VMEM block size for the inner kernel.
@@ -745,7 +779,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     inner_block_spec = pl.BlockSpec(
       index_map=lambda i, j: (i, j),
       block_shape=inner_block_size,
-      memory_space=pl.ANY,
+      memory_space=pltpu.VMEM,
     )
 
     LEFT = 0
@@ -757,9 +791,9 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     def signal(left_or_right, semaphore):
       my_id = lax.axis_index('x')
       if left_or_right == LEFT:
-        neighbor = mod(my_id - 1, num_devices)
+        neighbor = mod(my_id - 1, jnp.int32(num_devices))
       else:
-        neighbor = mod(my_id + 1, num_devices)
+        neighbor = mod(my_id + 1, jnp.int32(num_devices))
       pl.semaphore_signal(
           semaphore,
           inc=1,
@@ -784,14 +818,14 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       is_start = jnp.logical_and(outer_step == 0, phase == 0)
       last_iteration = outer_step == pl.num_programs(0) - 1
 
-      working_slot = lax.rem(outer_step, 2)
+      working_slot = lax.rem(outer_step, jnp.int32(2))
       receiving_slot = 1 - working_slot
       my_id = lax.axis_index('x')
-      right_neighbor = mod(my_id + 1, num_devices)
-      left_neighbor = mod(my_id - 1, num_devices)
+      right_neighbor = mod(my_id + 1, jnp.int32(num_devices))
+      left_neighbor = mod(my_id - 1, jnp.int32(num_devices))
 
-      left_copy_device = mod(my_id + outer_step + 1, num_devices)
-      right_copy_device = mod(my_id - outer_step - 1, num_devices)
+      left_copy_device = mod(my_id + outer_step + 1, jnp.int32(num_devices))
+      right_copy_device = mod(my_id - outer_step - 1, jnp.int32(num_devices))
       left_copy_slice = pl.ds(0, outer_block_size[0] // 2)
       right_copy_slice = pl.ds(outer_block_size[0] // 2, outer_block_size[0] // 2)
       current_phase_slice = pl.ds(
@@ -838,20 +872,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       def _():
         # Barrier with both neighbors at the start, since we will be
         # communicating with both.
-        barrier_sem = pltpu.get_barrier_semaphore()
-        pl.semaphore_signal(
-          barrier_sem,
-          inc=1,
-          device_id=(left_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
-        )
-        pl.semaphore_signal(
-          barrier_sem,
-          inc=1,
-          device_id=(right_neighbor,),
-          device_id_type=pl.DeviceIdType.MESH,
-        )
-        pl.semaphore_wait(barrier_sem, 2)
+        local_barrier(left_neighbor, right_neighbor)
 
         initial_left_copy.start()
         initial_left_copy.wait()
@@ -879,32 +900,34 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           left_copy.start()
 
       # --- Body ---
-      def inner_kernel(input_ref, accum_ref):
-        # TODO(levskaya): if we want this test to actually work again we need to
-        # do manual accumulation correctly, zero'ing out accum_ref on init.
-        # tha old automatic emit_pipeline accumulation behavior is gone.
-        accum_ref[...] += input_ref[...]
-
-      accum_pipeline = pltpu.emit_pipeline(
-        inner_kernel,
-        in_specs=[inner_block_spec],
-        out_specs=inner_block_spec,
-        grid=inner_grid,
-      )
+      def inner_kernel(input_ref, accum_in_ref, accum_out_ref):
+        accum_out_ref[...] = accum_in_ref[...] + input_ref[...]
 
       @pl.when(~last_iteration)
       def _():
         @pl.when(phase == LEFT)
         def _():
-          accum_pipeline(
+          pltpu.emit_pipeline(
+            inner_kernel,
+            in_specs=[inner_block_spec, inner_block_spec],
+            out_specs=inner_block_spec,
+            grid=inner_grid,
+          )(
             x_ref.at[left_copy_device, left_copy_slice],
+            hbm_scratch.at[working_slot, left_copy_slice],
             hbm_scratch.at[working_slot, left_copy_slice],
           )
 
         @pl.when(phase == RIGHT)
         def _():
-          accum_pipeline(
+          pltpu.emit_pipeline(
+            inner_kernel,
+            in_specs=[inner_block_spec, inner_block_spec],
+            out_specs=inner_block_spec,
+            grid=inner_grid,
+          )(
             x_ref.at[right_copy_device, right_copy_slice],
+            hbm_scratch.at[working_slot, right_copy_slice],
             hbm_scratch.at[working_slot, right_copy_slice],
           )
 
@@ -980,19 +1003,26 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         out_shape=out_shape,
         grid_spec=grid_spec,
         interpret=pltpu.InterpretParams(
-            dma_execution_mode=dma_execution_mode, detect_races=detect_races),
+            dma_execution_mode=dma_execution_mode,
+            detect_races=detect_races,
+            uninitialized_memory='zero'
+        ),
         compiler_params=pltpu.CompilerParams(collective_id=19),
       )(input_arr)[0]
 
-    pallas_result = jax.jit(
-      shard_map.shard_map(
-        pallas_reduce_scatter,
-        mesh=mesh,
-        in_specs=P(None, 'x'),
-        out_specs=P('x', None),
-        check_vma=False,
-      )
-    )(input_arr)
+    with jax.sharding.use_abstract_mesh(
+          mesh.abstract_mesh.update(
+              abstract_device=jax.sharding.AbstractDevice(
+                  device_kind='TPU v6e', num_cores=1, platform='tpu')
+          )
+    ):
+      pallas_result = jax.jit(
+          shard_map.shard_map(
+              pallas_reduce_scatter,
+              in_specs=P(None, 'x'),
+              out_specs=P('x', None),
+              check_vma=False,
+      ))(input_arr)
     pallas_result = jax.block_until_ready(pallas_result)
 
     def lax_reduce_sum_scatter(x):
@@ -1002,7 +1032,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     xla_result = jax.jit(
         shard_map.shard_map(
             lax_reduce_sum_scatter,
-            mesh=mesh,
             in_specs=P(None, 'x'),
             out_specs=P('x', None),
         )
