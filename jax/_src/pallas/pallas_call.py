@@ -362,15 +362,18 @@ def _batch_block_mapping(
     return tuple(unflat_indices)
   idx_avals = [pallas_core.index_map_grid_aval, *block_mapping.index_map_jaxpr.in_avals]
 
-  block_mapping_flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
+  flat_fun_nokw, out_tree = api_util.flatten_fun_nokwargs(
       lu.wrap_init(_block_map_function,
                    debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()),
       tree_util.tree_structure(idx_avals))
+  def flat_fun(*flat_args):
+    return flat_fun_nokw.call_wrapped(*flat_args)
   with grid_mapping.trace_env():
-    block_mapping_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-        block_mapping_flat_fn,
-        idx_avals)
-  new_index_map_out_tree = out_tree_thunk()
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        flat_fun, tree_util.FlatTree.flatten_args(*idx_avals),
+        block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names())
+    block_mapping_jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
+  new_index_map_out_tree = out_tree()
   shape = block_mapping.block_shape
   if dim is batching.not_mapped:
     new_block_shape = shape
@@ -812,11 +815,14 @@ def _trace_kernel_to_jaxpr(
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
   )
+  def flat_fun(*args):
+    return wrapped_kernel_fun.call_wrapped(*args)
+
   with grid_mapping.trace_env(), config._check_vma(False):
     with config.mutable_array_checks(False):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-          wrapped_kernel_fun, kernel_avals
-      )
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_fun, tree_util.FlatTree.flatten_args(*kernel_avals), debug_info)
+      jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
       jaxpr, _ = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars),
                               instantiate=True)
     if consts:
@@ -1068,18 +1074,19 @@ def _pallas_call_state_discharge_rule(
           ],
       )
   )
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_rewritten_body,
-                   debug_info=jaxpr.debug_info.with_unknown_names()),
-      [
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      _rewritten_body,
+      tree_util.FlatTree.flatten_args(
           *index_map_avals,
           *ref_avals,
           *jaxpr_in_avals,
           *ref_avals,
           *jaxpr_out_avals,
-          *jaxpr_rest_avals,
-      ],
+          *jaxpr_rest_avals
+      ),
+      jaxpr.debug_info.with_unknown_names()
   )
+  new_jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   out_flat = pallas_call_p.bind(
       *consts,
       *dynamic_grid_bounds,

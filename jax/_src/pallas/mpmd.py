@@ -177,8 +177,9 @@ def _mpmd_map_discharge_rule(
     debug_info = api_util.debug_info(
         "mpmd_map_discharge", new_body, tracing_avals, {}
     )
-    wrapped_fun = lu.wrap_init(new_body, debug_info=debug_info)
-    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, tracing_avals)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        new_body, tree_util.FlatTree.flatten_args(*tracing_avals), debug_info)
+    new_jaxpr = closed_jaxpr.jaxpr
     return new_jaxpr
 
   with (
@@ -711,16 +712,14 @@ def _dedup_consts_and_unify_jaxpr_signatures(
         tracing_avals,
         {},
     )
-    wrapped_fun = lu.wrap_init(
-        make_rewritten_body(jaxpr, consts), debug_info=debug_info
-    )
+    fun_to_trace = make_rewritten_body(jaxpr, consts)
     with (
         jax_core.extend_axis_env_nd(super_mesh_shape.items()),
         config._check_vma(False),
     ):
-      new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-          wrapped_fun, tracing_avals
-      )
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          fun_to_trace, tree_util.FlatTree.flatten_args(*tracing_avals), debug_info)
+      new_jaxpr, new_consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     assert not new_consts
     new_jaxprs.append(new_jaxpr)
   return new_jaxprs, unique_consts
@@ -860,16 +859,19 @@ def _mpmd_map(
       debug_info = api_util.debug_info("mpmd_map", fn, flat_kernel_avals, {})
       if name is not None:
         debug_info = debug_info.replace_func_name(name)
-      flat_fun, out_tree_thunk = api_util.flatten_fun(
+      flat_fun_nokw, out_tree_thunk = api_util.flatten_fun(
           lu.wrap_init(fn, debug_info=debug_info), kernel_aval_tree
       )
+      def flat_fun_plain(*args):
+        return flat_fun_nokw.call_wrapped(*args)
+
       with (
           jax_core.extend_axis_env_nd(super_mesh_shape.items()),
           config._check_vma(False),
       ):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-            flat_fun, flat_kernel_avals
-        )
+        closed_jaxpr, _ = pe.trace_to_jaxpr(
+            flat_fun_plain, tree_util.FlatTree.flatten_args(*flat_kernel_avals), debug_info)
+        jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
       fun_out_tree = out_tree_thunk()
       if fun_out_tree != tree_util.tree_structure(None):
         raise ValueError(
