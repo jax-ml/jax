@@ -959,7 +959,7 @@ class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
 
   # TODO(dougalm): deprecate/delete
   def full_lower(self):
-    raise NotImplementedError("must override: ", type(self))
+    return self
 
   def __iter__(self):
     if not hasattr(self.aval, "_iter"):
