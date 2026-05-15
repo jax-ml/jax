@@ -32,7 +32,7 @@ from jax._src import array
 from jax._src import sharding_impls
 from jax._src.interpreters import pxla
 from jax._src import pjit as pjit_lib
-from jax._src import prng
+from jax._src.random import prng
 from jax.sharding import PartitionSpec as P
 from jax._src import distributed
 from jax._src.util import safe_zip

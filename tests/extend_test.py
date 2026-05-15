@@ -22,7 +22,7 @@ from jax._src import abstract_arrays
 from jax._src import api
 from jax._src import core
 from jax._src import linear_util
-from jax._src import prng
+from jax._src.random import prng
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir

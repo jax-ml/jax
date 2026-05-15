@@ -19,7 +19,7 @@ from jax import numpy as jnp
 from jax import random as jax_api_random
 from jax._src import blocked_sampler
 from jax._src import dtypes
-from jax._src import prng as jax_prng
+from jax._src.random import prng as jax_prng
 from jax._src import typing
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import primitives as tpu_primitives

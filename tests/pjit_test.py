@@ -42,7 +42,7 @@ from jax import lax
 from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src.xla_metadata import set_xla_metadata
-from jax._src import prng
+from jax._src.random import prng
 from jax._src.lib import jaxlib_extension_version
 from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
                           AbstractDevice)
