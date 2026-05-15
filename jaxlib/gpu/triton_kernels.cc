@@ -42,6 +42,7 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -152,26 +153,29 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
     }
   };
 
-  static absl::Mutex mutex;
+  static absl::Mutex cached_images_mutex;
   static auto& module_images =
       *new absl::flat_hash_map<KeyType, std::unique_ptr<ModuleImage>, KeyHash,
                                KeyEq>
-          ABSL_GUARDED_BY(mutex);
+          ABSL_GUARDED_BY(cached_images_mutex);
 
   auto lookup_key = LookupKeyType{std::string_view(kernel_name),
                                   shared_mem_bytes, ptx, compute_capability};
+  {
+    // Allow threads to lookup in parallel
+    absl::ReaderMutexLock reader_lock(cached_images_mutex);
+    auto it = module_images.find(lookup_key);
+    if (it != module_images.end()) return it->second.get();
+  }
 
-  absl::MutexLock lock(mutex);
-  auto it = module_images.find(lookup_key);
-  if (it != module_images.end()) return it->second.get();
-
+  std::vector<uint8_t> module_image;
 #ifdef JAX_GPU_HIP  // For HIP/ROCM just read the hsaco file
   std::string result_blob;
   std::string fname{ptx};
   tsl::Env* env = tsl::Env::Default();
   TF_RETURN_IF_ERROR(tsl::ReadFileToString(env, fname, &result_blob));
   TF_RETURN_IF_ERROR(env->DeleteFile(fname));
-  std::vector<uint8_t> module_image(result_blob.begin(), result_blob.end());
+  module_image.assign(result_blob.begin(), result_blob.end());
 #else
   // TODO(cjfj): Support `TRITON_PTXAS_PATH` environment variable?
   int cc_major = compute_capability / 10;
@@ -211,7 +215,7 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
                       absl::StrAppend(s, absl::CEscape(v));
                     }));
 
-  JAX_ASSIGN_OR_RETURN(std::vector<uint8_t> module_image,
+  JAX_ASSIGN_OR_RETURN(module_image,
                        stream_executor::CompileGpuAsm(
                            cc, std::string(ptx),
                            stream_executor::GpuAsmOpts(
@@ -219,14 +223,16 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
                                /*preferred_cuda_dir=*/"", ptxas_extra_flags)));
 #endif
 
+  absl::MutexLock writer_lock(cached_images_mutex);
   auto key = KeyType{kernel_name, shared_mem_bytes, ptx, compute_capability};
   // the `key` object must be created before we move kernel_name below.
-  auto [it2, success] = module_images.insert(
-      {std::move(key),
-       std::make_unique<ModuleImage>(
-           std::move(kernel_name), std::move(module_image), shared_mem_bytes)});
-  CHECK(success);
-  return it2->second.get();
+  auto [it, success] = module_images.try_emplace(std::move(key), nullptr);
+
+  if (success) {
+    it->second = std::make_unique<ModuleImage>(
+        std::get<0>(it->first), std::move(module_image), shared_mem_bytes);
+  }
+  return it->second.get();
 }
 
 absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
@@ -250,59 +256,48 @@ absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
 
 absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
                                           gpuStream_t stream, void** buffers) {
-  static absl::Mutex mutex;
-  static auto& kernel_calls =
-      *new absl::flat_hash_map<std::string,
-                               absl::StatusOr<std::unique_ptr<KernelCall>>>
-          ABSL_GUARDED_BY(mutex);
-
-  {
-    // Fast path uses reader lock (as hash map look-up is relatively slow).
-    absl::ReaderMutexLock lock(mutex);
-    auto it = kernel_calls.find(opaque);
-    if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) {
-      JAX_RETURN_IF_ERROR(it->second.status());
-      return it->second->get();
-    }
-  }
-
   if (opaque.empty()) {
     return absl::InvalidArgumentError("Opaque data is empty.");
   }
 
-  absl::MutexLock lock(mutex);
+  static absl::Mutex kernel_calls_mutex;
+  static auto& kernel_calls =
+      *new absl::flat_hash_map<std::string,
+                               absl::StatusOr<std::unique_ptr<KernelCall>>>
+          ABSL_GUARDED_BY(kernel_calls_mutex);
 
-  auto get_kernel_call = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
-    // The opaque data is a zlib compressed protobuf.
-    JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
+  absl::MutexLock writer_lock(kernel_calls_mutex);
+  auto [it, success] = kernel_calls.try_emplace(std::string(opaque),
+                                                absl::InternalError("Pending"));
+  if (success) {
+    it->second = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
+      // The opaque data is a zlib compressed protobuf.
+      JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
 
-    jax_triton::TritonAnyKernelCall proto;
-    if (!proto.ParseFromString(serialized)) {
-      return absl::InvalidArgumentError("Failed to parse serialized data.");
-    }
-
-    if (proto.has_kernel_call()) {
-      JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                           KernelCall::FromProto(proto.kernel_call()));
-      return std::make_unique<KernelCall>(std::move(kernel_call_));
-    } else if (proto.has_autotuned_kernel_call()) {
-      JAX_ASSIGN_OR_RETURN(
-          AutotunedKernelCall autotuned_call,
-          AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
-      {
-        JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                             AutotunedKernelCall::Autotune(
-                                 std::move(autotuned_call), stream, buffers));
-        return std::make_unique<KernelCall>(std::move(kernel_call_));
+      jax_triton::TritonAnyKernelCall proto;
+      if (!proto.ParseFromString(serialized)) {
+        return absl::InvalidArgumentError("Failed to parse serialized data.");
       }
-    } else {
-      return absl::InvalidArgumentError("Unknown kernel call type.");
-    }
-  };
 
-  // We released the reader lock, so it may have been written by another thread.
-  // Create a new entry if it already exists or create a new one.
-  auto it = kernel_calls.emplace(std::string(opaque), get_kernel_call()).first;
+      if (proto.has_kernel_call()) {
+        JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
+                             KernelCall::FromProto(proto.kernel_call()));
+        return std::make_unique<KernelCall>(std::move(kernel_call_));
+      } else if (proto.has_autotuned_kernel_call()) {
+        JAX_ASSIGN_OR_RETURN(
+            AutotunedKernelCall autotuned_call,
+            AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
+        {
+          JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
+                               AutotunedKernelCall::Autotune(
+                                   std::move(autotuned_call), stream, buffers));
+          return std::make_unique<KernelCall>(std::move(kernel_call_));
+        }
+      } else {
+        return absl::InvalidArgumentError("Unknown kernel call type.");
+      }
+    }();
+  }
 
   JAX_RETURN_IF_ERROR(it->second.status());
   return it->second->get();
@@ -319,10 +314,12 @@ class ModuleImage {
         shared_mem_bytes_(shared_mem_bytes) {}
 
   absl::StatusOr<gpuFunction_t> GetFunctionForContext(gpuContext_t context) {
-    absl::MutexLock lock(mutex_);
-    auto it = functions_.find(context);
-    if (ABSL_PREDICT_TRUE(it != functions_.end())) {
-      return it->second;
+    {
+      absl::ReaderMutexLock reader_lock(mutex_);
+      auto it = functions_.find(context);
+      if (ABSL_PREDICT_TRUE(it != functions_.end())) {
+        return it->second;
+      }
     }
 
     GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
@@ -335,13 +332,24 @@ class ModuleImage {
 
     gpuModule_t module;
     GPU_RETURN_IF_ERROR(gpuModuleLoadData(&module, module_image_.data()));
-    modules_.push_back(OwnedGPUmodule(module, gpuModuleDeleter()));
 
     gpuFunction_t function;
-    GPU_RETURN_IF_ERROR(
+    absl::Status function_status = JAX_AS_STATUS(
         gpuModuleGetFunction(&function, module, kernel_name_.c_str()));
-    auto [_, success] = functions_.insert({context, function});
-    CHECK(success);
+
+    if (!function_status.ok()) {
+      JAX_AS_STATUS(gpuModuleUnload(module)).IgnoreError();
+      return function_status;
+    }
+
+    absl::MutexLock writer_lock(mutex_);
+    auto [it, success] = functions_.try_emplace(context, function);
+    if (!success) {
+      JAX_AS_STATUS(gpuModuleUnload(module)).IgnoreError();
+      return it->second;
+    }
+
+    modules_.push_back(OwnedGPUmodule(module, gpuModuleDeleter()));
 
     // The maximum permitted static shared memory allocation in CUDA is 48kB,
     // but we can expose more to the kernel using dynamic shared memory.
@@ -820,7 +828,8 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
   return ::xla::ffi::Error::Success();
 }
 
-// For command buffer support, make sure that the kernel cache is populated during initialization.
+// For command buffer support, make sure that the kernel cache is populated
+// during initialization.
 ::xla::ffi::Error TritonKernelCallFfiInitialize(gpuStream_t stream,
                                       std::string_view opaque,
                                       ::xla::ffi::RemainingArgs args,
