@@ -68,7 +68,8 @@ from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
 from jax._src.tree_util import (
-    keystr, tree_flatten, tree_map, tree_unflatten, treedef_is_leaf)
+    keystr, tree_flatten, tree_map, tree_unflatten, tree_leaves,
+    treedef_is_leaf)
 from jax._src.typing import Array
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
@@ -807,7 +808,7 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int,
       ft.pack((c_ok, k_ok.map(lambda _: False), xs_ok)))
   for _ in range(1 + num_carry):
     nzs = const_nz + carry_nz + xs_nz
-    primal_jaxpr, num_res_out, nzs_out, in_fwd_res, tangent_jaxpr = \
+    primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
         ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=allow_fwds,
                            instantiate=carry_nz + [False] * num_ys, is_vjp=is_vjp)
     carry_nz_out = nzs_out[:num_carry]
@@ -817,11 +818,12 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int,
       carry_nz = _map(operator.or_, carry_nz, carry_nz_out)
   else:
     assert False, "Fixpoint not reached"
-  num_res_in = len(in_fwd_res)
-  num_primals_out = len(primal_jaxpr.out_avals) - num_res_out
+  primal_out_avals, ures_out_avals, sres_out_avals = out_tree.unpack()
+  num_res_in = len(in_fwd_res) + len(sres_out_avals)
+  num_primals_out = len(primal_out_avals)
 
-  # At this point all non-forwarded residuals produced by primal_jaxpr are at
-  # the end. We want to hoist out loop-invariant ones:
+  # At this point all non-forwarded unstructured residuals produced by
+  # primal_jaxpr are at the end. We want to hoist out loop-invariant ones:
   # Before:
   #  [*const_primals_in , *carry_ext_primals_in] -> [*primals_out, *non_fwd_res]
   # After:
@@ -830,8 +832,9 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int,
   #  non_fwd_res = merge_lists(which_hoisted, ext_res, hoisted_res)
   const_primals_in, carry_ext_primals_in = split_list(primals_in, [num_consts])
   primal_jaxpr, const_primals_in_, which_hoisted, hoisted_res = \
-      _scan_known_hoisting(primal_jaxpr, const_primals_in, num_res_out)
-  del num_res_out
+      _scan_known_hoisting(primal_jaxpr, const_primals_in, len(ures_out_avals), len(sres_out_avals))
+  num_ures_out = len(ures_out_avals) - sum(which_hoisted)
+  del ures_out_avals
 
   # To make tangent_jaxpr match the scan calling convention, move to the back
   # binders that don't correspond to hoisted or const-forwarded residuals.
@@ -844,7 +847,7 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int,
                  for f in in_fwd_res]
   assert next(which_hoisted_, None) is None
   tangent_jaxpr = pe.move_binders_to_back(
-      tangent_jaxpr, res_to_move + [False] * num_tangents_in)
+      tangent_jaxpr, res_to_move + [False] * num_tangents_in + [True] * len(sres_out_avals))
 
   # Run the primal scan (if it has any outputs or effects).
   if not primal_jaxpr.out_avals and not primal_jaxpr.effects:
@@ -856,47 +859,51 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int,
         reverse=reverse, length=length, unroll=unroll,
         ft_in=ft.pack((ft.nones(len(const_primals_in_)), carry_g, xs_g)),
         ft_out=ft.pack((carry_g, (ft_out.unpack()[1],
-                                  ft.nones(which_hoisted.count(False))))))
+                                  ft.nones(num_ures_out + len(sres_out_avals))))))
   primals_out, ext_res = split_list(out, [num_primals_out])
+  ext_ures, sres_flat = split_list_checked(ext_res, [num_ures_out, len(sres_out_avals)])
 
   # Complete res using hoisted_res and input forwards.
-  res = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in],
-                  merge_lists(which_hoisted, ext_res, hoisted_res))
+  ures = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in],
+                   merge_lists(which_hoisted, ext_ures, hoisted_res))
 
-  def tangent_fun(res, *tangents):
-    int_res, ext_res = partition_list(res_to_move, res)
+  def tangent_fun(ures, sres, *tangents):
+    sres_flat = tree_leaves(sres)
+    int_res, ext_res = partition_list(res_to_move, ures)
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
     nz_consts_g, nz_carry_g, nz_xs_g = ft_in.filter_with_mask(nzs).unpack()
     nz_tangents_out = scan_p.bind(
-        *int_res, *nz_tangents, *ext_res, jaxpr=tangent_jaxpr, reverse=reverse,
-        length=length, unroll=unroll,
+        *int_res, *nz_tangents, *ext_res, *sres_flat, jaxpr=tangent_jaxpr,
+        reverse=reverse, length=length, unroll=unroll,
         ft_in=ft.pack(((ft.nones(len(int_res)), nz_consts_g), nz_carry_g,
-                       (nz_xs_g, ft.nones(len(ext_res))))),
+                       (nz_xs_g, ft.nones(len(ext_res) + len(sres_flat))))),
         ft_out=ft_out.filter_with_mask(nzs_out))
     tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.outvars]
     return list(ft_out.filter_with_mask(nzs_out).update(nz_tangents_out)
                 .unfilter().map3(tangent_avals_out, nzs_out,
                                  lambda t, a, nz: t if nz else ad.Zero(a)))
 
-  return primals_out, nzs_out, res, tangent_fun
+  sres = sres_out_avals.update(sres_flat).unflatten()
+  return primals_out, nzs_out, ures, sres, tangent_fun
 
-def _scan_known_hoisting(jaxpr_known, known_consts, num_res):
+def _scan_known_hoisting(jaxpr_known, known_consts, num_ures, num_sres):
   # To disable:
   # return jaxpr_known, known_consts, [False] * num_res, []
 
   consts = [pe.PartialVal.unknown(a) if isinstance(a := typeof(c), AbstractRef)
             else pe.PartialVal.known(c) for c in known_consts]
   others = _map(pe.PartialVal.unknown, jaxpr_known.in_avals[len(consts):])
-  num_known_outs = len(jaxpr_known.out_avals) - num_res
+  num_known_outs = len(jaxpr_known.out_avals) - num_ures - num_sres
+  inst = [True] * num_known_outs + [False] * num_ures + [True] * num_sres
   with source_info_util.reset_name_stack():
     jaxpr_known_, pvals_out, new_known_consts = pe.trace_to_jaxpr_nounits(
         lu.wrap_init(core.jaxpr_as_fun(jaxpr_known),
                      debug_info=jaxpr_known.debug_info),
-        consts + others, instantiate=[True] * num_known_outs + [False] * num_res)
+        consts + others, instantiate=inst)
   jaxpr_known = pe.convert_constvars_jaxpr(jaxpr_known_)
-  res_pvals = pvals_out[num_known_outs:]
-  which_hoisted = [pval.is_known() for pval in res_pvals]
-  hoisted_res = [pval.get_known() for pval in res_pvals if pval.is_known()]
+  _, ures_pvals, _ = split_list(pvals_out, [num_known_outs, num_ures])
+  which_hoisted = [pval.is_known() for pval in ures_pvals]
+  hoisted_res = [pval.get_known() for pval in ures_pvals if pval.is_known()]
   mut_consts = [c for c in known_consts if isinstance(typeof(c), AbstractRef)]
   return jaxpr_known, [*new_known_consts, *mut_consts], which_hoisted, hoisted_res
 
@@ -948,7 +955,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   #   non_fwd_res = merge_lists(which_hoisted, ext_res, hoisted_res)
   known_consts, known_ins = split_list(known_ins, [num_consts_known])
   jaxpr_known, known_consts_, which_hoisted, hoisted_res = \
-      _scan_known_hoisting(jaxpr_known, known_consts, num_res_out)
+      _scan_known_hoisting(jaxpr_known, known_consts, num_res_out, 0)
   del num_res_out  # changed
 
   # To make jaxpr_unknown match the scan calling convention, move to the back

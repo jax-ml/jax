@@ -24,7 +24,7 @@ from typing import Any, TypeVar
 
 from jax._src import flattree as ft
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
+    tree_flatten, tree_unflatten, tree_leaves, tree_flatten_with_path, keystr,
     equality_errors_pytreedef)
 from jax._src import ad_util
 from jax._src import api_util
@@ -532,37 +532,42 @@ def _cond_linearize(is_vjp, nzs, *primals_in, branches, **params):
   nzs_out = [ad.linearize_jaxpr(jaxpr, nzs, allow_fwds=False, is_vjp=is_vjp)[2]
              for jaxpr in branches]
   nzs_out = map(any, zip(*nzs_out))
-  primal_jaxprs, tangent_jaxprs, branch_res_avals = [], [], []
+  fwd_jaxprs, tangent_jaxprs, branch_ures_avals, branch_sres_avals = [], [], [], []
   for jaxpr in branches:
-    primal_jaxpr, num_res_out, _, _, tangent_jaxpr = \
+    fwd_jaxpr, fwd_out_tree, _, _, tangent_jaxpr = \
         ad.linearize_jaxpr(jaxpr, nzs, instantiate=nzs_out, allow_fwds=False, is_vjp=is_vjp)
-    res_avals = primal_jaxpr.out_avals[len(primal_jaxpr.out_avals)-num_res_out:]
-    primal_jaxprs.append(primal_jaxpr)
+    _, ures_avals, sres_avals = fwd_out_tree.unpack()
+    fwd_jaxprs.append(fwd_jaxpr)
     tangent_jaxprs.append(tangent_jaxpr)
-    branch_res_avals.append(res_avals)
+    branch_ures_avals.append(ures_avals.unflatten())
+    branch_sres_avals.append(sres_avals)
+  branch_sres_avals = ft.pack(tuple(branch_sres_avals))
 
-  all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
-  primal_jaxprs = _join_cond_outputs(
-      primal_jaxprs, all_res_avals, res_avals_per_branch, len(nzs_out))
+  merged_ures_avals, ures_aval_indices = _merge_branch_residuals(branch_ures_avals)
+  fwd_jaxprs = _join_cond_outputs(
+      fwd_jaxprs, merged_ures_avals, ures_aval_indices, branch_sres_avals, len(nzs_out))
   tangent_jaxprs = _join_cond_pe_staged_jaxpr_inputs(
-      tangent_jaxprs, all_res_avals, res_avals_per_branch)
+      tangent_jaxprs, merged_ures_avals, ures_aval_indices, branch_sres_avals, sum(nzs))
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
-  primals_res_out = cond_p.bind(*primals_in, branches=primal_jaxprs, **params)
+  primals_res_out = cond_p.bind(*primals_in, branches=(*fwd_jaxprs,), **params)
   primals, res = split_list(primals_res_out, [len(nzs_out)])
+  ures, sres_flat = split_list_checked(res, [len(merged_ures_avals), len(branch_sres_avals)])
 
-  def tangent_fun(res, *tangents_in):
+  def tangent_fun(res, sres, *tangents_in):
+    sres_flat = tree_leaves(sres['branch_residuals'])
     nz_tangents_in = [t for t in tangents_in if not isinstance(t, ad.Zero)]
-    nz_tangents_out = cond_p.bind(*res, *nz_tangents_in,
-                                  branches=tangent_jaxprs, **params)
+    nz_tangents_out = cond_p.bind(sres['idx'], *res, *nz_tangents_in, *sres_flat,
+                                  branches=(*tangent_jaxprs,), **params)
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
                    for (aval, nz) in zip(tangent_avals_out, nzs_out)]
-    assert next(nz_tangents_out_, None) is None
+    assert next(nz_tangents_out_, sentinel := object()) is sentinel
     return tangents_out
 
   idx, *_ = primals_in
-  return primals, nzs_out, [idx, *res], tangent_fun
+  sres = {'idx': idx, 'branch_residuals': branch_sres_avals.update(sres_flat).unflatten()}
+  return primals, nzs_out, ures, sres, tangent_fun
 
 
 def _cond_jvp(primals, tangents, *, branches, **params):
@@ -624,29 +629,30 @@ def _cond_partial_eval(trace, *tracers, branches, **params):
   num_res = len(all_res_avals)
 
   num_known_outs = len(out_uks) - sum(out_uks)
+  dummy = ft.flatten([[]] * len(branches_known))
   branches_known = _join_cond_outputs(
-      branches_known, all_res_avals, res_avals_per_branch, num_known_outs)
+      branches_known, all_res_avals, res_avals_per_branch, dummy, num_known_outs)
   branches_unknown = _join_cond_pe_staged_jaxpr_inputs(
-      branches_unknown, all_res_avals, res_avals_per_branch)
+      branches_unknown, all_res_avals, res_avals_per_branch, dummy, sum(ops_uk))
   assert all(all(map(core.typematch, j.out_avals, branches_known[0].out_avals))
              for j in branches_known[1:])
 
   in_consts = [t.pval.get_known() for t in tracers if t.pval.is_known()]
-  out_consts_res = cond_p.bind(*in_consts, branches=branches_known,
+  out_consts_res = cond_p.bind(*in_consts, branches=(*branches_known,),
                                **params)
   out_consts, res = split_list(out_consts_res, [len(out_consts_res) - num_res])
 
-  index_tracer = trace.instantiate_const(tracers[0])
+  idx_tracer = trace.instantiate_const(tracers[0])
   ops_tracers = [trace.instantiate_const(t)
                  for uk, t in zip(in_unknowns[1:], tracers[1:]) if uk]
   res_tracers = map(trace.new_instantiated_const, res)
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
                  for aval in branches_unknown[0].out_avals]
-  params = dict(branches=branches_unknown, **params)
+  params = dict(branches=(*branches_unknown,), **params)
   name_stack = source_info_util.current_name_stack()[len(trace.name_stack):]
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
-      trace, [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
+      trace, [idx_tracer, *res_tracers, *ops_tracers], out_tracers, cond_p, params,
       _join_cond_effects(branches_unknown), source)
   for t in out_tracers: t.recipe = eqn
   return util.merge_lists(out_uks, out_consts, out_tracers)
@@ -698,10 +704,11 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   all_res_avals, res_avals_per_branch = _merge_branch_residuals(branch_res_avals)
   num_res = len(all_res_avals)
   num_known_outs = len(unks_out) - sum(unks_out)
+  dummy = ft.flatten([[]] * len(branches_known_))
   branches_known = _join_cond_outputs(
-      branches_known_, all_res_avals, res_avals_per_branch, num_known_outs)
+      branches_known_, all_res_avals, res_avals_per_branch, dummy, num_known_outs)
   branches_staged = _join_cond_pe_staged_jaxpr_inputs(
-      branches_staged_, all_res_avals, res_avals_per_branch)
+      branches_staged_, all_res_avals, res_avals_per_branch, dummy, len(ops_uk))
   assert all(all(map(core.typematch, j.out_avals, branches_known[0].out_avals))
              for j in branches_known[1:])
 
@@ -711,7 +718,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # Build the known eqn.
   ins_known, _ = partition_list(unks_in, eqn.invars)  # includes index invar
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
-  params_known = dict(branches=branches_known, **eqn_rest_params)
+  params_known = dict(branches=(*branches_known,), **eqn_rest_params)
   effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
@@ -719,7 +726,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 
   # Build the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
-  params_staged = dict(branches=branches_staged, **eqn_rest_params)
+  params_staged = dict(branches=(*branches_staged,), **eqn_rest_params)
   effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
@@ -753,11 +760,11 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
 # [x], [y], [x, x]             -> [x, y, x],    [[0], [1], [0, 2]]
 # [x], [x], [x, x]             -> [x, x],       [[0], [0], [0, 1]]
 # [y, x, x], [x, z, y], [z, x] -> [y, x, x, z], [[0, 1, 2], [1, 3, 0], [3, 1]]
-def _merge_branch_residuals(branch_res_avals):
+def _merge_branch_residuals(branch_ures_avals):
   def enumerate_equal(xs):
     counts = {v: itertools.count() for v in set(xs)}
     return [(x, next(counts[x])) for x in xs]
-  branch_res_tagged_avals = map(enumerate_equal, branch_res_avals)
+  branch_res_tagged_avals = map(enumerate_equal, branch_ures_avals)
   all_tagged_avals = _ordered_unique(util.concatenate(branch_res_tagged_avals))
   indices = {v: i for i, v in enumerate(all_tagged_avals)}
   branch_indices = [
@@ -768,40 +775,41 @@ def _merge_branch_residuals(branch_res_avals):
 # This function augments branch outputs to agree with the merged residual
 # format: each branch is made to return zero-filled values in the places of
 # residual outputs that it does not populate.
-def _join_cond_outputs(jaxprs: Sequence[core.Jaxpr],
-                       all_res_avals, res_aval_indices_per_jaxpr,
-                       num_non_res_outputs) -> tuple[core.Jaxpr, ...]:
-  def augment_jaxpr(jaxpr: core.Jaxpr,
-                    res_indices):
+def _join_cond_outputs(
+    jaxprs, merged_ures_avals, ures_aval_indices_per_jaxpr, sres_avals, num_primals_out
+  ) -> list[core.Jaxpr]:
+  def augment_jaxpr(jaxpr: core.Jaxpr, ures_indices, idx):
     def f_aug(*args):
       outs_and_residuals = core.jaxpr_as_fun(jaxpr)(*args)
-      outs, residuals = split_list(outs_and_residuals, [num_non_res_outputs])
-      aug_residuals = map(ad_util.empty_like_aval, all_res_avals)
-      aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))
-      return outs + list(aug_residuals)
+      outs, ures, sres = split_list(outs_and_residuals, [num_primals_out, len(ures_indices)])
+      aug_ures = map(ad_util.empty_like_aval, merged_ures_avals)
+      aug_ures = util.subvals(aug_ures, zip(ures_indices, ures))
+      aug_sres = sres_avals.map(ad_util.empty_like_aval).unpack()
+      aug_sres = util.subvals(aug_sres, [(idx, aug_sres[idx].update(sres))])
+      return [*outs, *aug_ures, *itertools.chain.from_iterable(aug_sres)]
 
     return _make_closed_jaxpr(f_aug, jaxpr.in_avals, jaxpr.debug_info)
 
-  return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
+  return map(augment_jaxpr, jaxprs, ures_aval_indices_per_jaxpr, range(len(jaxprs)))
 
 # This function augments branch inputs to agree with the merged residual format:
 # each branch is made to accept all residuals, even though it will ignore those
 # that it does not read.
 def _join_cond_pe_staged_jaxpr_inputs(
-    jaxprs: Sequence[core.Jaxpr], all_res_avals,
-    res_aval_indices_per_jaxpr) -> tuple[core.Jaxpr, ...]:
-  all_res_vars = map(core.Var, all_res_avals)
+    jaxprs, merged_ures_avals, res_aval_indices_per_jaxpr, sres_avals, num_tangents
+  ) -> list[core.Jaxpr]:
+  all_ures_vars = map(core.Var, merged_ures_avals)
+  all_sres_vars = sres_avals.map(core.Var).unpack()
 
-  def augment_jaxpr(jaxpr: core.Jaxpr, res_indices) -> core.Jaxpr:
-    num_res = len(res_indices)
-    res_vars = jaxpr.invars[:num_res]
-    non_res_vars = jaxpr.invars[num_res:]
+  def augment_jaxpr(jaxpr: core.Jaxpr, ures_indices, idx):
+    ures_vars, tangent_vars, sres_vars = \
+        split_list(jaxpr.invars, [len(ures_indices), num_tangents])
+    aug_ures_vars = util.subvals(all_ures_vars, zip(ures_indices, ures_vars))
+    aug_sres_vars = util.subvals(all_sres_vars, [(idx, all_sres_vars[idx].update(sres_vars))])
+    invars = [*aug_ures_vars, *tangent_vars, *itertools.chain.from_iterable(aug_sres_vars)]
+    return jaxpr.replace(invars=invars)
 
-    aug_res_vars = list(util.subvals(all_res_vars, zip(res_indices, res_vars)))
-    aug_invars = aug_res_vars + non_res_vars
-    return jaxpr.replace(invars=aug_invars)
-
-  return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
+  return map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr, range(len(jaxprs)))
 
 def _ordered_unique(xs):
   d = collections.OrderedDict((x, None) for x in xs)
@@ -948,14 +956,15 @@ def _cond_remat(trace, *args, branches, **params):
     _, res_avals = split_list_checked(jaxpr_fwd.out_avals, [len(jaxpr.out_avals), num_res])
     branch_res_avals.append(res_avals)
   merged_avals, branch_res_avals = _merge_branch_residuals(branch_res_avals)
+  dummy = ft.flatten([[]] * len(branches))
   branches_fwd = _join_cond_outputs(
-      branches_fwd, merged_avals, branch_res_avals, len(jaxpr.out_avals))
+      branches_fwd, merged_avals, branch_res_avals, dummy, len(jaxpr.out_avals))
   branches_rem = _join_cond_pe_staged_jaxpr_inputs(
-      branches_rem, merged_avals, branch_res_avals)
-  all_out = cond_p.bind(*args, branches=branches_fwd, **params)
+      branches_rem, merged_avals, branch_res_avals, dummy, len(jaxpr.in_avals))
+  all_out = cond_p.bind(*args, branches=(*branches_fwd,), **params)
   primals_out, res = split_list(all_out, [len(jaxpr.out_avals)])
   def rem(idx, *args):
-    return cond_p.bind(idx, *res, *args, branches=branches_rem, **params)
+    return cond_p.bind(idx, *res, *args, branches=(*branches_rem,), **params)
   return primals_out, rem
 
 

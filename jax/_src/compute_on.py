@@ -218,14 +218,16 @@ ad.primitive_jvps[compute_on_p] = _compute_on_jvp
 
 def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
                     out_memory_spaces, compiler_options_json):
-  (primal_jaxpr, num_res_out, nzs_out, in_fwd_res,
-   tangent_jaxpr) = ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
+      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  _, ures_avals, () = out_tree.unpack()
+  num_res_out = len(ures_avals)
 
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
-  def tangent_fun(residuals, *tangents):
+  def tangent_fun(residuals, _, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     assert len(residuals) + len(tangents_nz) == len(tangent_jaxpr.invars), (
         len(residuals), len(tangents_nz), len(tangent_jaxpr.invars))
@@ -246,7 +248,7 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
                           compiler_options_json=compiler_options_json)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_res_out])
   residuals_ans = subs_list(in_fwd_res, [*jaxpr.consts, *primals], residuals_ans)
-  return primal_ans, nzs_out, residuals_ans, tangent_fun
+  return primal_ans, nzs_out, residuals_ans, None, tangent_fun
 ad.primitive_linearizations[compute_on_p] = _compute_on_lin
 
 def _compute_on_partial_eval(trace: pe.JaxprTrace, *in_tracers, jaxpr,

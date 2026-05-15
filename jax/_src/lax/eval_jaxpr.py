@@ -67,14 +67,16 @@ def _eval_jaxpr_batching_rule(axis_data, args, dims, *, jaxpr):
 batching.fancy_primitive_batchers[eval_jaxpr_p] = _eval_jaxpr_batching_rule
 
 def _eval_jaxpr_linearize(is_vjp, nzs, *primals_in, jaxpr):
-  lin_out = ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
-  primal_jaxpr, num_res_out, nzs_out, in_fwd_res, tangent_jaxpr = lin_out
+  primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
+      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  _, ures_avals, () = out_tree.unpack()
+  num_res_out = len(ures_avals)
   primals_and_res = eval_jaxpr_p.bind(*primals_in, jaxpr=primal_jaxpr)
   primals_out, non_fwd_res = split_list(
       primals_and_res, [len(primals_and_res) - num_res_out])
   res = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in], non_fwd_res)
 
-  def tangent_fun(res, *tangents):
+  def tangent_fun(res, _, *tangents):
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
     nz_tangents_out = eval_jaxpr_p.bind(*res, *nz_tangents, jaxpr=tangent_jaxpr)
     tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.outvars]
@@ -84,7 +86,7 @@ def _eval_jaxpr_linearize(is_vjp, nzs, *primals_in, jaxpr):
     assert next(nz_tangents_out_, None) is None
     return tangents_out
 
-  return primals_out, nzs_out, res, tangent_fun
+  return primals_out, nzs_out, res, None, tangent_fun
 ad.primitive_linearizations[eval_jaxpr_p] = _eval_jaxpr_linearize
 
 def _eval_jaxpr_transpose(ct, *args, jaxpr):

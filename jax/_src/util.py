@@ -197,8 +197,7 @@ def merge_lists(bs: Sequence[bool], l0: Sequence[T1], l1: Sequence[T2]
   assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)
   i0, i1 = iter(l0), iter(l1)
   out: list[T1 | T2] = [next(i1) if b else next(i0) for b in bs]
-  sentinel = object()
-  assert next(i0, sentinel) is next(i1, sentinel) is sentinel
+  assert next(i0, sentinel := object()) is next(i1, sentinel) is sentinel
   return out
 
 def subs_list(
@@ -206,8 +205,7 @@ def subs_list(
 ) -> list[T]:
   base_ = iter(base)
   out = [src[i] if i is not None else next(base_) for i in subs]
-  sentinel = object()
-  assert next(base_, sentinel) is sentinel
+  assert next(base_, sentinel := object()) is sentinel
   return out
 
 def subs_list2(
@@ -218,8 +216,7 @@ def subs_list2(
   base_ = iter(base)
   out = [src1[f1] if f1 is not None else src2[f2] if f2 is not None else
          next(base_) for f1, f2, in zip(subs1, subs2)]
-  sentinel = object()
-  assert next(base_, sentinel) is sentinel
+  assert next(base_, sentinel := object()) is sentinel
   return out
 
 def concatenate(xs: Iterable[Sequence[T]]) -> list[T]:
