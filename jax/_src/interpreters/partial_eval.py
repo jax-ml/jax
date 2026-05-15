@@ -36,7 +36,6 @@ from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import tree_util
-from jax._src import xla_metadata_lib
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, AbstractValue,
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
@@ -609,11 +608,7 @@ def new_eqn_recipe(trace: JaxprTrace,
     assert ("donated_invars" not in params or
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [t.aval for t in out_tracers]
-  ctx = ctx or JaxprEqnContext(
-      config.compute_on_context_manager.value,
-      config.threefry_partitionable.value,
-      xla_metadata_lib.current_xla_metadata(),
-  )
+  ctx = ctx or JaxprEqnContext()
   return JaxprEqnRecipe(next(trace.counter), tuple(in_tracers), map(ref, out_tracers),
                         out_avals, primitive, params, effects, source_info,
                         ctx)
@@ -994,8 +989,7 @@ def _partial_eval_jaxpr_custom_cached(
                 srcs=(None,),
                 copy_semantics=(ArrayCopySemantics.ALWAYS_COPY,),
             ),
-            set(), source_info_util.new_source_info(),
-            JaxprEqnContext(None, False))
+            set(), source_info_util.new_source_info(), JaxprEqnContext())
         known_eqns.append(offload_eqn)
         # resvars are known and available in the backward jaxpr.
         foreach(partial(write, False, True), resvars)
@@ -1009,8 +1003,7 @@ def _partial_eval_jaxpr_custom_cached(
               srcs=(None,),
               copy_semantics=(ArrayCopySemantics.ALWAYS_COPY,)
             ),
-            set(), source_info_util.new_source_info(),
-            JaxprEqnContext(None, False))
+            set(), source_info_util.new_source_info(), JaxprEqnContext())
         staged_eqns.append(reload_eqn)
         # outvars are known and available in the backward jaxpr.
         foreach(partial(write, False, True), eqn.outvars)
@@ -1865,10 +1858,7 @@ class DynamicJaxprTrace(core.Trace):
   def make_eqn(self, in_tracers, out_avals, primitive, params,
                effects, source_info=None, ctx = None):
     source_info = source_info or source_info_util.new_source_info()
-    ctx = ctx or JaxprEqnContext(
-        config.compute_on_context_manager.value,
-        config.threefry_partitionable.value,
-        xla_metadata_lib.current_xla_metadata())
+    ctx = ctx or JaxprEqnContext()
     outvars = map(self.frame.newvar, out_avals)
     if config.enable_checks.value:
       assert all(isinstance(x, DynamicJaxprTracer) for x in in_tracers)

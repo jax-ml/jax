@@ -375,13 +375,12 @@ class JaxprEqnContext:
   cur_abstract_mesh: mesh_lib.AbstractMesh
   remove_size_one_mesh_axis: bool
 
-  def __init__(self, compute_type: str | None, threefry_partitionable: bool,
-               xla_metadata: dict[str, Any] | None = None):
-    self.compute_type = compute_type
-    self.threefry_partitionable = threefry_partitionable
+  def __init__(self):
+    self.compute_type = config.compute_on_context_manager.value
+    self.threefry_partitionable = config.threefry_partitionable.value
     self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     self.remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.value
-    self.xla_metadata = xla_metadata
+    self.xla_metadata = xla_metadata_lib.current_xla_metadata()
 
   @property
   def manager(self):
@@ -467,10 +466,7 @@ class JaxprEqn:
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
-  ctx = ctx or JaxprEqnContext(
-      config.compute_on_context_manager.value,
-      config.threefry_partitionable.value,
-      xla_metadata_lib.current_xla_metadata())
+  ctx = ctx or JaxprEqnContext()
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
