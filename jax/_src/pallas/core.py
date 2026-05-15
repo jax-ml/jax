@@ -638,15 +638,18 @@ class BlockSpec:
         fake_index_map_args,
         fake_index_map_kwargs,
     )
-    flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
+    flat_fun_nokw, out_tree = api_util.flatten_fun(
         lu.wrap_init(index_map_func, debug_info=debug_info), index_map_tree
     )
+    def flat_fun(*flat_args):
+      return flat_fun_nokw.call_wrapped(*flat_args)
+
     with tracing_grid_env(grid, vmapped_dims):
-      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
-          flat_index_map_fun, index_map_avals
-      )
-    index_map_out_tree = index_map_out_tree_thunk()
-    unflat_avals = tree_util.tree_unflatten(index_map_out_tree, out_avals)
+      closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+          flat_fun, tree_util.FlatTree.flatten_args(*index_map_avals), debug_info)
+      jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
+    index_map_out_tree = out_tree()
+    unflat_avals = tree_util.tree_unflatten(index_map_out_tree, list(out_avals))
 
     if len(unflat_avals) != len(block_shape):
       raise ValueError(
@@ -1527,16 +1530,21 @@ def core_map(
 
     flat_args, in_tree = tree_util.tree_flatten(fun_args)
     debug_info = api_util.debug_info("pallas_core_map", f, *fun_args)  # pyrefly: ignore[bad-argument-type]
-    flat_fun, out_tree_thunk = api_util.flatten_fun(
+    flat_fun_nokw, out_tree_thunk = api_util.flatten_fun(
         lu.wrap_init(f, debug_info=debug_info), in_tree
     )
     ref_avals = tuple(t.get_ref_aval() for t in flat_args)
+    def flat_fun_plain(*args):
+      return flat_fun_nokw.call_wrapped(*args)
+
     with (
         tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
         jax_core.extend_axis_env_nd(mesh.shape.items()),
         config._check_vma(False),
     ):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, ref_avals)
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_fun_plain, tree_util.FlatTree.flatten_args(*ref_avals), debug_info)
+      jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
 
     out_tree = out_tree_thunk()
     if out_tree != tree_util.tree_structure(None):

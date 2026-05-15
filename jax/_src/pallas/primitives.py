@@ -708,8 +708,13 @@ def run_scoped(
   # parent scope). Jax can't reason about effects to references that
   # are not in the invars of an operation so we just put them all
   # there.
+  def flat_fun_plain(*args):
+    return flat_fun.call_wrapped(*args)
   with config.mutable_array_checks(False):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        flat_fun_plain, tree_util.FlatTree.flatten_args(*avals),
+        api_util.debug_info("pallas run_scoped", f, types, kw_types))
+    jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   out = run_scoped_p.bind(*consts, jaxpr=jaxpr, collective_axes=collective_axes)
   return tree_util.tree_unflatten(out_tree_thunk(), out)
 
