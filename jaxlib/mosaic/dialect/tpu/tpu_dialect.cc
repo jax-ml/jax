@@ -196,15 +196,20 @@ void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
   results.add<MemRefDimOfSlice, MemRefDimOfSqueeze>(getContext());
 }
 
-CoreType GetCoreTypeOfParentOp(Operation& op) {
+Operation* GetParentOpWithCoreType(Operation& op) {
   Operation* parent = &op;
   while ((parent = parent->getParentOp())) {
     if (auto core_type = TPUDialect::GetCoreTypeAttr(parent);
         core_type.has_value()) {
-      return *core_type;
+      return parent;
     }
   }
-  return CoreType::kTc;
+  return nullptr;
+}
+
+CoreType GetCoreTypeOfParentOp(Operation& op) {
+  Operation* parent = GetParentOpWithCoreType(op);
+  return parent ? *TPUDialect::GetCoreTypeAttr(parent) : CoreType::kTc;
 }
 
 absl::StatusOr<func::FuncOp> GetFuncWithCoreType(ModuleOp module,

@@ -75,6 +75,10 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
+// Finds the first parent op that has the `tpu.core_type` annotation.
+// If no such annotation is found, returns nullptr.
+Operation* GetParentOpWithCoreType(Operation& op);
+
 // Determine the core type of the given op based on the `tpu.core_type`
 // annotation of its first parent op that has the annotation. If no such
 // annotation is found, returns kTc.

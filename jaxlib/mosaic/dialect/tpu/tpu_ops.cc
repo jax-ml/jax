@@ -2510,6 +2510,41 @@ LogicalResult FetchAndAddSyncOp::verify() {
   return success();
 }
 
+LogicalResult CoreIdOp::verify() {
+  Operation* parent = GetParentOpWithCoreType(**this);
+  if (parent == nullptr) {
+    return emitOpError("Failed to infer the core type from parent ops");
+  }
+  CoreType core_type = *TPUDialect::GetCoreTypeAttr(parent);
+  if (core_type == CoreType::kTc) {
+    return emitOpError("Unsupported core type: ") << core_type;
+  }
+  // Querying Core ID is not supported under dimension semantics.
+  if (auto func_op = getOperation()->getParentOfType<func::FuncOp>();
+      func_op != nullptr &&
+      func_op->getAttrOfType<ArrayAttr>("dimension_semantics") != nullptr) {
+    return failure();
+  }
+  return success();
+}
+
+LogicalResult SubcoreIdOp::verify() {
+  Operation* parent = GetParentOpWithCoreType(**this);
+  if (parent == nullptr) {
+    return emitOpError("Failed to infer the core type from parent ops");
+  }
+  CoreType core_type = *TPUDialect::GetCoreTypeAttr(parent);
+  if (core_type == CoreType::kTc) {
+    return emitOpError("Unsupported core type: ") << core_type;
+  }
+  // Subcore ID is not supported under dimension semantics.
+  if (auto func_op = getOperation()->getParentOfType<func::FuncOp>();
+      func_op != nullptr &&
+      func_op->getAttrOfType<ArrayAttr>("dimension_semantics") != nullptr) {
+    return failure();
+  }
+  return success();
+}
 }  // namespace tpu
 }  // namespace mlir
 

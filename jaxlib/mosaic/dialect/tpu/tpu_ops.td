@@ -1305,6 +1305,24 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
+// Returns the logical ID of the current core.
+// Querying Core ID is not supported in kernels that use dimension semantics.
+def TPU_CoreIdOp : TPU_Op<"core_id", [Pure]> {
+  let arguments = (ins);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+  let hasVerifier = 1;
+}
+
+// Returns the logical ID of the current subcore.
+// Querying Subcore ID is not supported in kernels that use dimension semantics.
+def TPU_SubcoreIdOp : TPU_Op<"subcore_id", [Pure]> {
+  let arguments = (ins);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+  let hasVerifier = 1;
+}
+
 def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
   let arguments = (ins MemRefOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>:$semaphore);
   let results = (outs I32:$result);
