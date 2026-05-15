@@ -118,15 +118,17 @@ ad.primitive_jvps[xla_metadata_call_p] = _xla_metadata_call_jvp
 
 
 def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, **meta):
-  (primal_jaxpr, num_residuals_out, nzs_out, in_fwd_res,
-   tangent_jaxpr) = ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
+      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  _, ures_avals, () = out_tree.unpack()
+  num_residuals_out = len(ures_avals)
 
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
-  def tangent_fun(residuals, *tangents):
+  def tangent_fun(residuals, _, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
     assert len(residuals) + len(tangents_nz) == len(tangent_jaxpr.invars), (
         len(residuals), len(tangents_nz), len(tangent_jaxpr.invars))
@@ -141,7 +143,7 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, **meta):
   ans = xla_metadata_call_p.bind(*primals, jaxpr=primal_jaxpr, **meta)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
   residuals_ans = subs_list(in_fwd_res, [*jaxpr.consts, *primals], residuals_ans)
-  return primal_ans, nzs_out, residuals_ans, tangent_fun
+  return primal_ans, nzs_out, residuals_ans, None, tangent_fun
 ad.primitive_linearizations[xla_metadata_call_p] = _xla_metadata_call_lin
 
 

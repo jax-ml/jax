@@ -1695,19 +1695,15 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
   all_names = _all_newly_manual_mesh_names(mesh, manual_axes)
 
   def f_lin(*primals):
-    res, ans_aux, lin_data = ad.linearize_subtrace_2(
+    ans_aux, res, lin_data = ad.linearize_subtrace_2(
       f, trace.is_vjp, trace.tag, nzs_in, debug_info, primals)
     primals_out, out_specs = ans_aux.unpack_aux()
-
-    res_avals, _, _, _, in_fwd, out_fwd = lin_data
-    res_avals = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
-                 if f1 is None and f2 is None]
-    res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
-    new_out_specs = (*res_specs, *out_specs)
-    res = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
-           for x in res]
-    res_and_primal = FlatTree.pack((FlatTree.flatten(res), primals_out))
-    return res_and_primal.with_aux((lin_data, out_specs)).with_aux(new_out_specs)
+    _, res_avals = lin_data[0].unpack()
+    res_specs = res_avals.map(lambda a: a.nospec(mesh, check_vma, all_names))
+    new_out_specs = (*out_specs, *res_specs)
+    res = res.map(lambda x: lax.broadcast(x, (1,)) if getattr(x, 'shape', None) == () else x)
+    outs = FlatTree.pack((primals_out, res))
+    return outs.with_aux((lin_data, out_specs)).with_aux(new_out_specs)
 
   fwd_params = dict(
       mesh=mesh, in_specs=in_specs,
@@ -1716,25 +1712,32 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
   all_results_aux = shard_map_p.bind_with_trace(
       trace.parent_trace, tuple(primals), avals, dict(fwd_params, subfuns=(f_lin,)))
   all_results, (lin_data, out_specs) = all_results_aux.unpack_aux()
-  res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = lin_data
-  non_fwd_res, primals_out = all_results.unpack()
-  residuals = subs_list2(in_fwd, out_fwd, primals, (*primals_out,), non_fwd_res)
-  args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
-                     for aval, f1, f2 in zip(res_avals, in_fwd, out_fwd)]
+  fwd_out_ty, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = lin_data
+  primals_out, res = all_results.unpack()
+  non_fwd_ures, sres = res.unpack()
+  ures = subs_list2(in_fwd, out_fwd, primals, (*primals_out,), non_fwd_ures)
+  primal_out_avals, res_avals = fwd_out_ty.unpack()
+  ures_avals_nonfwd, sres_avals = res_avals.unpack()
+  ures_avals = subs_list2(in_fwd, out_fwd, avals, (*primal_out_avals,), ures_avals_nonfwd)
+  ures_to_promote = [getattr(a, 'shape', None) == ()
+                     and f1 is None and f2 is None
+                     for a, f1, f2 in zip(ures_avals, in_fwd, out_fwd)]
+  sres_to_promote = list(sres_avals.map(lambda x: getattr(x, 'shape', None) == ()))
+  args_to_promote = ures_to_promote + [False] * (len(env) + sum(nzs_in)) + sres_to_promote
   with (_extend_axis_env(mesh, manual_axes),
         use_abstract_mesh(_as_manual_mesh(mesh, manual_axes)),
         config._check_vma(check_vma)):
     lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
-  res_avals2 = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
-                if f1 is None and f2 is None]
-  res_avals_iter = iter(res_avals2)
-  res_specs = [in_specs[f1] if f1 is not None else out_specs[f2] if f2 is not None
-               else next(res_avals_iter).nospec(mesh, check_vma, all_names)
+  ures_avals_iter = iter(ures_avals_nonfwd)
+  ures_specs = [in_specs[f1] if f1 is not None else out_specs[f2] if f2 is not None
+               else next(ures_avals_iter).nospec(mesh, check_vma, all_names)
                for f1, f2 in zip(in_fwd, out_fwd)]
-  assert next(res_avals_iter, None) is None
+  assert next(ures_avals_iter, sentinel := object()) is sentinel
   env_specs = [_repspec(typeof(e)) for e in env]
-  new_in_specs = (*res_specs, *env_specs,
-                  *(s.to_tangent_spec() for s, nz in zip(in_specs, nzs_in) if nz))
+  sres_specs = sres_avals.map(lambda x: x.nospec(mesh, check_vma, all_names))
+  new_in_specs = (*ures_specs, *env_specs,
+                  *(s.to_tangent_spec() for s, nz in zip(in_specs, nzs_in) if nz),
+                  *sres_specs)
   tangent_out_specs = tuple(s.to_tangent_spec() for s, nz in zip(out_specs, nzs_out) if nz)
   tangent_params = dict(
       mesh=mesh, in_specs=new_in_specs,
@@ -1746,10 +1749,9 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
     return FlatTree.flatten(ans).with_aux(tangent_out_specs)
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
-  args = (*residuals, *env, *nz_tangents_in)
-  avals = [typeof(x) for x in args]
+  args = (*ures, *env, *nz_tangents_in, *sres)
   nz_tangents_out = shard_map_p.bind_with_trace(
-      trace.tangent_trace, args, avals,
+      trace.tangent_trace, args, map(typeof, args),
       dict(tangent_params, subfuns=(f_tangent,)))
   nz_tangents_out_iter = iter(nz_tangents_out)
   tangents_out = [next(nz_tangents_out_iter) if nz else ad.p2tz(primal)
@@ -1759,13 +1761,14 @@ ad.LinearizeTrace.process_shard_map = _shard_map_linearize
 
 
 def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
-  def fun(*res_and_args):
-    res, args = split_list(res_and_args, [len(jaxpr.constvars)])
-    res = [_rem_singleton(x) if w else x for x, w in zip(res, which)]
-    return core.eval_jaxpr(jaxpr, res, *args)
+  which = list(which) + [False] * (len(jaxpr.constvars) + len(jaxpr.invars) - len(which))
+  def fun(*args):
+    args = [_rem_singleton(x) if w else x for x, w in zip(args, which)]
+    consts, args = split_list(args, [len(jaxpr.constvars)])
+    return core.eval_jaxpr(jaxpr, consts, *args)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
-               for v, w in zip(jaxpr.constvars, which)]
-  in_avals = FlatTree.flatten(((*res_avals, *[v.aval for v in jaxpr.invars]), {}))
+               for v, w in zip(it.chain(jaxpr.constvars, jaxpr.invars), which)]
+  in_avals = FlatTree.flatten(((*res_avals,), {}))
   closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
   closed_jaxpr, _ = pe.separate_consts(closed_jaxpr)
   return closed_jaxpr.jaxpr

@@ -113,7 +113,7 @@ def _fused_lin(_is_vjp, nzs, *primals, jaxpr, out_spaces):
   primals_out = fused_p.bind(*primals, jaxpr=jaxpr, out_spaces=out_spaces)
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
-  def fused_lin(primals, *tangents):
+  def fused_lin(primals, _, *tangents):
     nz_tangents = [t for t in tangents if not isinstance(t, ad.Zero)]
     inputs = [x for x, u in zip([*primals, *nz_tangents], used_inputs) if u]
     nz_outs = fused_p.bind(*inputs, jaxpr=jaxpr_lin, out_spaces=spaces_lin)
@@ -123,7 +123,7 @@ def _fused_lin(_is_vjp, nzs, *primals, jaxpr, out_spaces):
     assert next(nz_outs_, None) is None
     return outs
 
-  return primals_out, out_nzs, primals, fused_lin
+  return primals_out, out_nzs, primals, None, fused_lin
 ad.primitive_linearizations[fused_p] = _fused_lin
 
 def _fused_transpose(cts_in, *primals_in, jaxpr, out_spaces):

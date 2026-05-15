@@ -4522,8 +4522,10 @@ def _sin_lowering(ctx, x, accuracy):
 
 def _sin_lin(_is_vjp, nzs, x, accuracy):
   nz, = nzs
-  return (sin_p.bind(x, accuracy=accuracy), nz, cos(x),
-          lambda cos_x, t: mul(t, cos_x))
+  return (sin_p.bind(x, accuracy=accuracy), nz, (), {'dougal': cos(x)},
+          lambda _, cos_x, t: mul(t, cos_x['dougal']))
+  return (sin_p.bind(x, accuracy=accuracy), nz, cos(x), None,
+          lambda cos_x, _, t: mul(t, cos_x))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x, accuracy: mul(g, cos(x, accuracy=accuracy)))

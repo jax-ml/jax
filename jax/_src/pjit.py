@@ -71,12 +71,13 @@ from jax._src.layout import Format, Layout, AutoLayoutSingleton, get_layout_for_
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, tree_structure, treedef_children,
+    tree_flatten, tree_unflatten, tree_leaves, tree_structure, treedef_children,
     PyTreeDef, none_leaf_registry as none_lr, tree_map, FlatTree)
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
-    split_list, weakref_lru_cache, merge_lists, subs_list, fun_name)
+    split_list, split_list_checked, weakref_lru_cache, merge_lists, subs_list,
+    fun_name)
 from jax._src.lib import jax_jit
 
 map, unsafe_map = safe_map, map
@@ -1022,7 +1023,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     return pjit_in_shardings
 
   resolved_in_shardings: list[PjitSharding] = []
-  for arg, pjit_in_s in zip(args, pjit_in_shardings):
+  for i, (arg, pjit_in_s) in enumerate(zip(args, pjit_in_shardings)):
     # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
     # not allow None as the sharding.
     arg_s, committed = ((arg.sharding, arg.committed) if arg.sharding is not None
@@ -1539,78 +1540,77 @@ ad.primitive_jvps[jit_p] = _pjit_jvp
 def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings,
                     in_layouts, out_layouts, donated_invars, ctx_mesh, name,
                     keep_unused, inline, compiler_options_kvs):
-  (primal_jaxpr, num_residuals_out, nzs_out, in_fwd_res,
-   tangent_jaxpr) = ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
-  num_residuals_in = len(in_fwd_res)
-  num_primals_out = len(primal_jaxpr.out_avals) - num_residuals_out
-
-  res_shardings_in = (UNSPECIFIED,) * num_residuals_in
-  res_layouts_in = (None,) * num_residuals_in
-  res_donated = (False,) * num_residuals_in
+  fwd_jaxpr, fwd_out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
+      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  primal_out_avals, ures_out_avals, sres_out_avals = fwd_out_tree.unpack()
+  num_residuals_out = len(ures_out_avals) + len(sres_out_avals)
   primal_out_shardings = tuple(out_shardings) + (UNSPECIFIED,) * num_residuals_out
   primal_out_layouts = tuple(out_layouts) + (None,) * num_residuals_out
 
-  config.enable_checks.value and core.check_jaxpr(primal_jaxpr.jaxpr)
+  config.enable_checks.value and core.check_jaxpr(fwd_jaxpr.jaxpr)
   config.enable_checks.value and core.check_jaxpr(tangent_jaxpr.jaxpr)
 
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
   # Input-to-output forwarding.
-  in_fwd = pe._jaxpr_forwarding(primal_jaxpr.jaxpr)
-  in_fwd_primal, in_fwd_res_ = split_list(in_fwd, [num_primals_out])
-  assert all(f is None for f in in_fwd_res_)
+  in_fwd = pe._jaxpr_forwarding(fwd_jaxpr.jaxpr)
+  in_fwd_primal, in_fwd_ures, in_fwd_sres = \
+      split_list(in_fwd, [len(primal_out_avals), len(ures_out_avals)])
+  assert all(f is None for f in in_fwd_ures)
   in_fwd = [
       fwd if isinstance(os, UnspecifiedValue) and ol is None else None
       for os, ol, fwd in zip(out_shardings, out_layouts, in_fwd_primal)
-  ] + in_fwd_res_
-  del in_fwd_res_, in_fwd_primal
+  ] + in_fwd_ures + [None] * len(in_fwd_sres)
+  del in_fwd_primal, in_fwd_ures, in_fwd_sres
   keep = [f is None for f in in_fwd]
-  primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr, keep)
+  fwd_jaxpr = pe.prune_closed_jaxpr_outputs(fwd_jaxpr, keep)
   primal_out_shardings = keep_where(primal_out_shardings, keep)
   primal_out_layouts = keep_where(primal_out_layouts, keep)
-  _, kept_res = split_list(keep, [num_primals_out])
+  _, kept_res = split_list(keep, [len(primal_out_avals)])
   num_kept_residuals = sum(kept_res)
-  del keep, kept_res, num_primals_out
+  del keep, kept_res, primal_out_avals
 
   # Output-to-output forwarding.
-  num_primals_out = len(primal_jaxpr.out_avals) - num_kept_residuals
-  out_vars, res_vars = split_list(primal_jaxpr.jaxpr.outvars, [num_primals_out])
+  num_primals_out = len(fwd_jaxpr.out_avals) - num_kept_residuals
+  out_vars, res_vars = split_list(fwd_jaxpr.jaxpr.outvars, [num_primals_out])
   idx_map = {id(v): i for i, v in enumerate(out_vars)}
   out_fwd = [None] * num_primals_out + [idx_map.get(id(v)) for v in res_vars]
   keep = [f is None for f in out_fwd]
-  primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr, keep)
+  fwd_jaxpr = pe.prune_closed_jaxpr_outputs(fwd_jaxpr, keep)
   primal_out_shardings = keep_where(primal_out_shardings, keep)
   primal_out_layouts = keep_where(primal_out_layouts, keep)
   del keep
 
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
 
-  def tangent_fun(residuals, *tangents):
+  def _pad(nzs, primal_stuff, filler):
+    return ((filler,) * len(in_fwd_res) + _filter_zeros(nzs, primal_stuff) +
+            (filler,) * len(sres_out_avals))
+
+  def tangent_fun(residuals, structured_residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
+    sres_flat = tree_leaves(structured_residuals)
     nz_tangents_out = jit_p.bind(
-        *residuals, *tangents_nz, jaxpr=tangent_jaxpr,
-        in_shardings=res_shardings_in + _filter_zeros(nzs, in_shardings),
+        *residuals, *tangents_nz, *sres_flat, jaxpr=tangent_jaxpr,
+        in_shardings=_pad(nzs, in_shardings, UNSPECIFIED),
+        in_layouts=_pad(nzs, in_layouts, None),
+        donated_invars=_pad(nzs, donated_invars, False),
         out_shardings=_filter_zeros(nzs_out, out_shardings),
-        in_layouts=res_layouts_in + _filter_zeros(nzs, in_layouts),
         out_layouts=_filter_zeros(nzs_out, out_layouts),
-        donated_invars=res_donated + _filter_zeros(nzs, donated_invars),
-        ctx_mesh=ctx_mesh,
-        name=name,
-        keep_unused=keep_unused,
-        inline=inline,
+        ctx_mesh=ctx_mesh, name=name, keep_unused=keep_unused, inline=inline,
         compiler_options_kvs=compiler_options_kvs)
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad.Zero(aval)
                    for (aval, nz) in zip(tangent_avals_out, nzs_out)]
-    assert next(nz_tangents_out_, None) is None
+    assert next(nz_tangents_out_, sentinel := object()) is sentinel
     return tangents_out
 
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
-  assert len(in_shardings) == len(primal_jaxpr.in_avals)
-  ans = jit_p.bind(*primals_in, jaxpr=primal_jaxpr,
+  assert len(in_shardings) == len(fwd_jaxpr.in_avals)
+  ans = jit_p.bind(*primals_in, jaxpr=fwd_jaxpr,
                    in_shardings=in_shardings,
                    out_shardings=primal_out_shardings,
                    in_layouts=in_layouts,
@@ -1624,8 +1624,10 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
   ans = subs_list(out_fwd, ans, ans)
   ans = subs_list(in_fwd, primals_in, ans)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
-  residuals_ans = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in], residuals_ans)
-  return primal_ans, nzs_out, residuals_ans, tangent_fun
+  ures, sres_flat = split_list_checked(residuals_ans, [len(ures_out_avals), len(sres_out_avals)])
+  ures = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in], ures)
+  sres = sres_out_avals.update(sres_flat).unflatten()
+  return primal_ans, nzs_out, ures, sres, tangent_fun
 ad.primitive_linearizations[jit_p] = _pjit_linearize
 
 

@@ -1451,11 +1451,7 @@ dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
 @weakref_lru_cache
 def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
-  # The `jaxpr.replace()` is making a copy of the Jaxpr, without which
-  # the cache value would have a strong reference to the same Jaxpr as
-  # the key, and we would never gc the cache entry. This works because
-  # Jaxpr is hashed by id, and the cache entry is dead is the key is dead.
-  return ClosedJaxpr(jaxpr.replace(), ())
+  return ClosedJaxpr(jaxpr.replace(), ())  # `replace` avoids reference cycle
 
 def move_invars_right(jaxpr: ClosedJaxpr, to_move: Sequence[bool]):
   return _move_invars_right(jaxpr, tuple(to_move))

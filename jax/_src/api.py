@@ -1539,7 +1539,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
     jaxtree_fun, out_tree = flatten_fun_nokwargs2(f, in_tree)
   else:
     jaxtree_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-  out_primals, out_known, jaxpr, consts, *maybe_aux = ad.linearize(
+  out_primals, out_known, jaxpr, consts, structured_residuals, *maybe_aux = ad.linearize(
       jaxtree_fun, *primals_flat, has_aux=has_aux)
   if has_aux:
     out_tree, aux_tree = out_tree()
@@ -1549,7 +1549,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   in_avals = list(map(core.typeof, primals_flat))
   out_avals = list(map(core.typeof, out_primals))
   lifted_jvp = Partial(partial(_lift_linearized, jaxpr, in_avals, out_avals,
-                               (in_tree, out_tree), out_known), consts)
+                               (in_tree, out_tree), out_known), consts, structured_residuals)
   if has_aux:
     [aux] = maybe_aux
     assert aux_tree is not None
@@ -1558,7 +1558,8 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
     [] = maybe_aux
     return out_primal_py, lifted_jvp
 
-def _lift_linearized(jaxpr, in_avals, out_avals, io_tree, out_known, consts, *py_args):
+def _lift_linearized(jaxpr, in_avals, out_avals, io_tree, out_known,
+                     consts, structured_residuals, *py_args):
   def fun(*tangents):
     tangent_avals = list(map(core.typeof, tangents))
     for primal_aval, tangent_aval in zip(in_avals, tangent_avals):
@@ -1586,7 +1587,8 @@ def _lift_linearized(jaxpr, in_avals, out_avals, io_tree, out_known, consts, *py
             "the original primal values:\n"
             f"Got tangent aval {tangent_aval} for primal aval {primal_aval} "
             f"but expected {expected_tangent_aval}.{extra_msg}")
-    tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
+    sres_flat = tree_leaves(structured_residuals)
+    tangents_out = eval_jaxpr(jaxpr, consts, *tangents, *sres_flat)
     tangents_out_ = iter(tangents_out)
     full_out = [a2tz(aval).instantiate() if known else next(tangents_out_)
                 for aval, known in zip(out_avals, out_known)]
@@ -1673,13 +1675,13 @@ def _vjp(fun, *primals, has_aux=False):
     dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primals_flat, out_known, jaxpr, residuals = ad.linearize(
+    out_primals_flat, out_known, jaxpr, residuals, structured_residuals = ad.linearize(
         flat_fun, *primals_flat, is_vjp=True)
     out_tree = out_tree()
     aux = aux_tree = None
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primals_flat, out_known, jaxpr, residuals, aux = ad.linearize(
+    out_primals_flat, out_known, jaxpr, residuals, structured_residuals, aux = ad.linearize(
         flat_fun, *primals_flat, has_aux=True, is_vjp=True)
     out_tree, aux_tree = out_aux_trees()
     del out_aux_trees
@@ -1692,7 +1694,7 @@ def _vjp(fun, *primals, has_aux=False):
                          in_tree, primals_flat)
   out_primal_avals = [typeof(x) for x in out_primals_flat]
   f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
-              in_tree, out_tree, list(args_res), opaque_residuals)
+              in_tree, out_tree, list(args_res), opaque_residuals, structured_residuals)
   out_primals = tree_unflatten(out_tree, out_primals_flat)
   if not has_aux:
     return out_primals, f_vjp
@@ -1702,7 +1704,7 @@ def _vjp(fun, *primals, has_aux=False):
     return out_primals, f_vjp, tree_unflatten(aux_tree, aux)
 
 def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
-                   args_res, opaque_res, *maybe_ct_refs):
+                   args_res, opaque_res, structured_res, *maybe_ct_refs):
   if not maybe_ct_refs:
     maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
   else:
@@ -1714,18 +1716,19 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
   maybe_accums = [x if isinstance(x, ad.GradAccum) else
                   ad.RefAccum(v.aval, x) if _is_ref(x) else ad.NullAccum(v.aval)
                   if isinstance(x, DontWant) else ad.ValAccum(v.aval)
-                  for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
+                  for v, x in unsafe_zip(jaxpr.invars, maybe_ct_refs_flat)]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
-                         out_primal_avals), residuals, maybe_accums)
+                         out_primal_avals), residuals, structured_res, maybe_accums)
 
 def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
-              maybe_accums, out_ct):
+              structured_res, maybe_accums, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct)
   if out_tree != out_tree_:
     _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
-  ad.backward_pass3(jaxpr, True, residuals, maybe_accums, cts_flat)
+  primals_in = [*maybe_accums, *tree_leaves(structured_res)]
+  ad.backward_pass3(jaxpr, True, residuals, primals_in, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else
              DidntWant() if isinstance(x, ad.NullAccum) else GradRef()
              for x in maybe_accums]
@@ -1831,6 +1834,7 @@ class VJP:
   out_tree: PyTreeDef
   args_res: list[Any]
   opaque_residuals: list[Any]
+  structured_residuals: list[Any]
   jaxpr = property(lambda self: self.fun.args[2])
 
   def __call__(self, out_ct, *extra_args):
@@ -1838,11 +1842,12 @@ class VJP:
       name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
       raise TypeError(_vjp_too_many_args(name, len(extra_args) + 1))
     return self.fun(self.in_tree, self.out_tree, self.args_res,
-                    self.opaque_residuals)(out_ct)
+                    self.opaque_residuals, self.structured_residuals)(out_ct)
 
   def with_refs(self, *maybe_ct_refs):
     return self.fun(self.in_tree, self.out_tree, self.args_res,
-                    self.opaque_residuals, *maybe_ct_refs)
+                    self.opaque_residuals, self.structured_residuals,
+                    *maybe_ct_refs)
 
   # Only safe to put these in cache keys if residuals aren't mutated. Beware!
   __hash__ = object.__hash__
@@ -1850,7 +1855,7 @@ class VJP:
 
 register_pytree_node(
     VJP,
-    lambda vjp: ((vjp.args_res, vjp.opaque_residuals),
+    lambda vjp: ((vjp.args_res, vjp.opaque_residuals, vjp.structured_residuals),
                  (vjp.fun, vjp.in_tree, vjp.out_tree)),
     lambda meta, args_res: VJP(*meta, *args_res))
 
