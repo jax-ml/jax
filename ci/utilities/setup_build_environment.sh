@@ -16,6 +16,9 @@
 # Set up the build environment for JAX CI jobs. This script depends on the
 # "JAXCI_" environment variables set or sourced in the build script.
 
+readonly JAXCI_CUDA_OOM_TEST_XLA_COMMIT="4c1b00509e646d13a9cf443cd10c866810ed923d"
+readonly JAXCI_CUDA_OOM_TEST_XLA_REVERT_COMMIT="d3a17722ef0781dd17c28f53f80f541a5f8259ed"
+
 # Preemptively mark the JAX git directory as safe. This is necessary for JAX CI
 # jobs running on Linux runners in GitHub Actions. Without this, git complains
 # that the directory has dubious ownership and refuses to run any commands.
@@ -25,17 +28,24 @@
 # TODO(b/375073267): Remove this once we understand why git repositories are
 # being marked as unsafe inside the self-hosted runners.
 if [[ ! $(uname -s) =~ "MSYS_NT" ]]; then
-  git config --global --add safe.directory $JAXCI_JAX_GIT_DIR
+  git config --global --add safe.directory "$JAXCI_JAX_GIT_DIR"
+  git config --global --add safe.directory '*'
+  git config --global user.name 'JAX CI'
+  git config --global user.email 'jax-ci@google.com'
 fi
 
 function clone_main_xla() {
   echo "Cloning XLA at HEAD to $(pwd)/xla"
-  git clone --depth=1 https://github.com/openxla/xla.git $(pwd)/xla
+  git clone --depth=256 https://github.com/openxla/xla.git $(pwd)/xla
   cd $(pwd)/xla
   echo "XLA commit: $(git log -1 --format=%H)"
   cd ..
   export JAXCI_XLA_GIT_DIR=$(pwd)/xla
 }
+
+if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
+  export JAXCI_XLA_COMMIT="$JAXCI_CUDA_OOM_TEST_XLA_COMMIT"
+fi
 
 # Clone XLA at HEAD if required.
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
@@ -50,21 +60,31 @@ if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
 fi
 
 # If a XLA commit is provided, check out XLA at that commit.
-if [[ ! -z "$JAXCI_XLA_COMMIT" ]]; then
+if [[ -n "${JAXCI_XLA_COMMIT:-}" ]]; then
   # Clone XLA at HEAD if a path to local XLA is not provided.
-  if [[ -z "$JAXCI_XLA_GIT_DIR" ]]; then
+  if [[ -z "${JAXCI_XLA_GIT_DIR:-}" ]]; then
     clone_main_xla
   fi
   pushd "$JAXCI_XLA_GIT_DIR"
 
-  git fetch --depth=1 origin "$JAXCI_XLA_COMMIT"
+  git fetch --depth=256 origin "$JAXCI_XLA_COMMIT"
   echo "JAXCI_XLA_COMMIT is set. Checking out XLA at $JAXCI_XLA_COMMIT"
   git checkout "$JAXCI_XLA_COMMIT"
+
+  if [[ "$JAXCI_XLA_COMMIT" == "$JAXCI_CUDA_OOM_TEST_XLA_COMMIT" ]]; then
+    if [[ "${JAXCI_REVERT_CUDA_OOM_COMMIT:-1}" == "1" ]]; then
+      echo "Reverting suspected CUDA OOM XLA commit $JAXCI_CUDA_OOM_TEST_XLA_REVERT_COMMIT"
+      git revert --no-edit "$JAXCI_CUDA_OOM_TEST_XLA_REVERT_COMMIT"
+      echo "XLA commit after suspect revert: $(git log -1 --format=%H)"
+    else
+      echo "Leaving suspected CUDA OOM XLA commit $JAXCI_CUDA_OOM_TEST_XLA_REVERT_COMMIT in place"
+    fi
+  fi
 
   popd
 fi
 
-if [[ ! -z ${JAXCI_XLA_GIT_DIR} ]]; then
+if [[ -n "${JAXCI_XLA_GIT_DIR:-}" ]]; then
   echo "INFO: Overriding XLA to be read from $JAXCI_XLA_GIT_DIR instead of the"
   echo "pinned version in the WORKSPACE."
   echo "If you would like to revert this behavior, unset JAXCI_CLONE_MAIN_XLA"

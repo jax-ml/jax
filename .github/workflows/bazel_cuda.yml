@@ -86,6 +86,14 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      revert-cuda-oom-commit:
+        description: "Whether to revert the CUDA OOM suspect XLA commit"
+        type: string
+        default: "1"
+      bazel-test-targets:
+        description: 'Optional space-separated Bazel CUDA test target override'
+        type: string
+        default: ''
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -108,7 +116,9 @@ jobs:
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_REVERT_CUDA_OOM_COMMIT: ${{ inputs.revert-cuda-oom-commit }}
       JAXCI_BUILD_ARTIFACT_WITH_RBE: ${{ inputs.build_artifacts_with_rbe }}
+      JAXCI_BAZEL_CUDA_TEST_TARGETS: ${{ inputs.bazel-test-targets }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||

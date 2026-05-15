@@ -134,6 +134,14 @@ if [[ "$JAXCI_BUILD_JAXLIB" == "false" || "$JAXCI_BUILD_JAX" == "false" ]]; then
   )
   single_accelerator_test_targets+=(//tests:local_wheel_smoke_test_gpu)
 fi
+multi_accelerator_test_targets=(
+  //tests:gpu_tests
+  //tests/pallas:gpu_tests
+  //tests/multiprocess:gpu_tests
+)
+if [[ -n "${JAXCI_BAZEL_CUDA_TEST_TARGETS:-}" ]]; then
+  read -r -a multi_accelerator_test_targets <<< "$JAXCI_BAZEL_CUDA_TEST_TARGETS"
+fi
 
 # Don't abort the script if one command fails to ensure we run both test
 # commands below.
@@ -143,22 +151,27 @@ set +e
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
-TEST_ARTIFACTS_DIR="test-artifacts-single"
-mkdir -p "$TEST_ARTIFACTS_DIR"
-bazel "${single_accelerator_bazel_test_args[@]}" \
-  --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
-  --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
-  --test_output=errors \
-  --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
-  --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
-  --local_test_jobs=$num_test_jobs \
-  --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-  --test_tag_filters=-multiaccelerator \
-  "${single_accelerator_test_targets[@]}"
+first_bazel_cmd_retval=0
+if [[ -z "${JAXCI_BAZEL_CUDA_TEST_TARGETS:-}" ]]; then
+  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
+  bazel "${single_accelerator_bazel_test_args[@]}" \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
+    --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+    --test_output=errors \
+    --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
+    --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
+    --local_test_jobs=$num_test_jobs \
+    --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+    --test_tag_filters=-multiaccelerator \
+    "${single_accelerator_test_targets[@]}"
 
-# Store the return value of the first bazel command.
-first_bazel_cmd_retval=$?
-ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
+  # Store the return value of the first bazel command.
+  first_bazel_cmd_retval=$?
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
+else
+  echo "Skipping single accelerator tests because JAXCI_BAZEL_CUDA_TEST_TARGETS is set."
+fi
 
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE...
 TEST_ARTIFACTS_DIR="test-artifacts-multi"
@@ -168,8 +181,7 @@ bazel "${common_bazel_test_args[@]}" \
   --test_output=errors \
   --local_test_jobs=8 \
   --test_tag_filters=multiaccelerator \
-  //tests:gpu_tests //tests/pallas:gpu_tests \
-  //tests/multiprocess:gpu_tests
+  "${multi_accelerator_test_targets[@]}"
 
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
