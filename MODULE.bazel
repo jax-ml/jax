@@ -30,9 +30,9 @@ archive_override(
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-SrTyccoJ+p5DG5r13tgj/PA5MtlK2Y9pV/E1I/U7oHA=",
-    strip_prefix = "xla-9b635916ecc6df6efee62d8e4b0c7ef87ef84d69",
-    urls = ["https://github.com/openxla/xla/archive/9b635916ecc6df6efee62d8e4b0c7ef87ef84d69.tar.gz"],
+    integrity = "sha256-UlVBxfEoyPPZVGusTO3NaSOTPQhfl6mMJN92Co+6Xhw=",
+    strip_prefix = "xla-e061eccf80c80ccce6dedf85cae86c085980d012",
+    urls = ["https://github.com/openxla/xla/archive/e061eccf80c80ccce6dedf85cae86c085980d012.tar.gz"],
 )
 
 # TODO: upstream, otherwise we have to duplicate the patches in jax
