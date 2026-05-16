@@ -243,9 +243,6 @@ class MpmdTest(PallasSCTest):
   @parameterized.product(use_tc_tiling=[False, True],
                          scratch_structure=[tuple, dict])
   def test_parallel_subkernels(self, use_tc_tiling, scratch_structure):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
-      self.skipTest("Needs a newer libtpu")
-
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="s_core",
         subcore_axis_name="subcore",
@@ -304,9 +301,6 @@ class MpmdTest(PallasSCTest):
 
   @parameterized.product(use_tc_tiling=[False, True])
   def test_parallel_subkernels_with_kernel(self, use_tc_tiling):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
-      self.skipTest("Needs a newer libtpu")
-
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="s_core",
         subcore_axis_name="subcore",
@@ -723,9 +717,6 @@ class MpmdTest(PallasSCTest):
     np.testing.assert_array_equal(o2, x2)
 
   def test_parallel_subkernels_semaphores_missing_subcore_axis(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 1):
-      self.skipTest("Need a newer libtpu")
-
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="s_core",
         subcore_axis_name="subcore",
@@ -949,8 +940,6 @@ class MpmdHijaxTest(jtu.JaxTestCase):
   def test_parallel_subkernels_hijax(self):
     if pltpu.get_tpu_info().sparse_core is None:
       self.skipTest("Test needs a TPU with a sparse core")
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 28):
-      self.skipTest("Needs a newer libtpu")
     xt = WeirdTuple(
         x0=jnp.ones((8, 128), dtype=jnp.int32),
         x1=jnp.zeros((8,), dtype=jnp.int32),
