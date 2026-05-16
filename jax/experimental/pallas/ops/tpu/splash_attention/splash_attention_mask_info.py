@@ -27,7 +27,7 @@ from jax.core import Tracer
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 import jax.numpy as jnp
 import numpy as np
-
+from jax._src.pallas.mosaic.tpu_info import get_tpu_info
 
 # Logic for processing NumPy masks for kernels
 class MaskInfo(NamedTuple):
@@ -595,8 +595,47 @@ def _process_mask(
            and isinstance(m.array, Tracer)
             for m in mask.masks)
 
+  def _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count,
+                          q_block_size, kv_block_size, is_dkv):
+    """Check that the size of the mask metadata fits in SMEM."""
+
+    tpu_info = get_tpu_info()
+    smem_limit = tpu_info.smem_capacity_bytes
+
+    def _downcast_dtype_size(max_val):
+      if max_val <= np.iinfo(np.int8).max:
+        return np.dtype(np.int8).itemsize
+      elif max_val <= np.iinfo(np.int16).max:
+        return np.dtype(np.int16).itemsize
+      return np.dtype(np.int32).itemsize
+
+    elements = heads_per_shard * q_blocks_per_shard * kv_blocks_count
+    data_next_max = q_blocks_per_shard if is_dkv else kv_blocks_count
+    required_smem_bytes = (
+        elements * 1                                       # block_mask: always int8
+        + elements * _downcast_dtype_size(data_next_max)   # data_next
+        + elements * _downcast_dtype_size(elements)        # mask_next
+    )
+
+    if required_smem_bytes > smem_limit:
+      # When block size increases, element counts drop. It also enables aggressive
+      # downcasting (smaller dtypes), so actual SMEM usage drops faster than the linear estimate.
+      # Future work may explore rectangular block sizes as current symmetric block
+      # size will always be safe, just potentially larger than strictly necessary.
+      default_block_size = 128
+      block_size = math.sqrt(
+            (required_smem_bytes * q_block_size * kv_block_size) / smem_limit
+        )
+      min_block_size = math.ceil(block_size / default_block_size) * default_block_size
+      raise ValueError(
+            f"Splash attention mask metadata requires {required_smem_bytes / (1024*1024):.2f} MiB "
+            f"but SMEM limit is {smem_limit / (1024*1024):.2f} MiB. "
+            f"Rebuild mask and attention with block_sizes=({min_block_size}, {min_block_size})."
+        )
+
   if _is_numpy_mask_with_traced_arrays(mask):
     jax_mask = jnp.stack([m.array for m in mask.masks if isinstance(m, mask_lib.NumpyMask)])
+    _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count, q_block_size, kv_block_size, is_dkv)
     return _process_dynamic_mask(
           jax_mask,
           block_shape,
