@@ -125,6 +125,7 @@ static ffi::Error ParallelBatchMap(
 
 //== Triangular System Solver ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error TriMatrixEquationSolver<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, ffi::Buffer<dtype> y,
@@ -172,6 +173,7 @@ ffi::Error TriMatrixEquationSolver<dtype, IntType>::Kernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error TriMatrixEquationSolverKernel(
@@ -198,6 +200,7 @@ template struct TriMatrixEquationSolver<ffi::DataType::C128, int64_t>;
 
 //== LU Decomposition ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error LuDecomposition<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -269,6 +272,7 @@ ffi::Error LuDecomposition<dtype, IntType>::Kernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error LuDecompositionKernel(ffi::ThreadPool thread_pool,
@@ -295,6 +299,7 @@ template struct LuDecomposition<ffi::DataType::C128, int64_t>;
 
 //== QR Factorization ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error QrFactorization<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -348,6 +353,7 @@ ffi::Error QrFactorization<dtype, IntType>::Kernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error QrFactorizationKernel(ffi::ThreadPool thread_pool,
@@ -384,6 +390,7 @@ template struct QrFactorization<ffi::DataType::C128, int64_t>;
 //== Column Pivoting QR Factorization ==//
 
 // lapack geqp3
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -491,6 +498,7 @@ ffi::Error PivotingQrFactorization<dtype, IntType>::Kernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error PivotingQrFactorizationKernel(
@@ -534,6 +542,7 @@ template struct PivotingQrFactorization<ffi::DataType::C128, int64_t>;
 //== Orthogonal QR                                      ==//
 //== Computes orthogonal matrix Q from QR Decomposition ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error OrthogonalQr<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, ffi::Buffer<dtype> tau,
@@ -587,6 +596,7 @@ ffi::Error OrthogonalQr<dtype, IntType>::Kernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error OrthogonalQrKernel(ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -622,6 +632,7 @@ template struct OrthogonalQr<ffi::DataType::C128, int64_t>;
 
 //== Orthogonal QR Multiply ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error OrthogonalQrMultiply<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> a, ffi::Buffer<dtype> tau,
@@ -696,6 +707,7 @@ ffi::Error OrthogonalQrMultiply<dtype, IntType>::Kernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype, typename IntType>
 int64_t OrthogonalQrMultiply<dtype, IntType>::GetWorkspaceSize(
@@ -734,6 +746,7 @@ ffi::Error OrthogonalQrMultiplyKernel(ffi::ThreadPool thread_pool,
 
 //== Cholesky Factorization ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error CholeskyFactorization<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
@@ -778,6 +791,7 @@ ffi::Error CholeskyFactorization<dtype, IntType>::Kernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error CholeskyFactorizationKernel(ffi::ThreadPool thread_pool,
@@ -818,9 +832,13 @@ bool ShouldParallelizeSVD(int64_t batch_size, int64_t rows, int64_t cols,
 
   const int64_t kMinMatrixSizeForParallelization = 8 * 8;
 
-  return matrix_size >= kMinMatrixSizeForParallelization && batch_size > 1;
+  if (batch_size <= 1) {
+    return false;
+  }
+  return matrix_size >= kMinMatrixSizeForParallelization;
 }
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 static ffi::Error SvdKernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -951,6 +969,7 @@ static ffi::Error SvdKernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype, typename IntType>
 static int64_t SvdGetWorkspaceSize(IntType x_rows, IntType x_cols,
@@ -979,6 +998,7 @@ static int64_t SvdGetWorkspaceSize(IntType x_rows, IntType x_cols,
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 static ffi::Error SvdQRKernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -1101,6 +1121,7 @@ static ffi::Error SvdQRKernel(
         }
       });
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype, typename IntType>
 static absl::StatusOr<IntType> SvdQRGetWorkspaceSize(
@@ -1278,6 +1299,7 @@ int64_t eig::GetIntWorkspaceSize(int64_t x_cols, ComputationMode mode) {
   }
 }
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecompositionSymmetric<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
@@ -1340,6 +1362,7 @@ ffi::Error EigenvalueDecompositionSymmetric<dtype, IntType>::Kernel(
       });
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionSymmetricKernel(
@@ -1376,6 +1399,7 @@ int64_t GetRealWorkspaceSize(int64_t x_cols, ComputationMode mode) {
 
 }  // namespace eig
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecompositionHermitian<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
@@ -1449,6 +1473,7 @@ ffi::Error EigenvalueDecompositionHermitian<dtype, IntType>::Kernel(
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionHermitianKernel(
+// EVOLVE-BLOCK-END
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> eigenvalues,
@@ -1470,6 +1495,7 @@ template struct EigenvalueDecompositionHermitian<ffi::DataType::C64, int64_t>;
 template struct EigenvalueDecompositionHermitian<ffi::DataType::C128, int32_t>;
 template struct EigenvalueDecompositionHermitian<ffi::DataType::C128, int64_t>;
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecomposition<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -1570,6 +1596,7 @@ ffi::Error EigenvalueDecomposition<dtype, IntType>::Kernel(
       });
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionKernel(
@@ -1590,6 +1617,7 @@ ffi::Error EigenvalueDecompositionKernel(
       eigvecs_left, eigvecs_right, info);
 }
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error EigenvalueDecompositionComplex<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -1676,6 +1704,7 @@ ffi::Error EigenvalueDecompositionComplex<dtype, IntType>::Kernel(
 
 template <ffi::DataType dtype>
 ffi::Error EigenvalueDecompositionComplexKernel(
+// EVOLVE-BLOCK-END
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
     eig::ComputationMode compute_left, eig::ComputationMode compute_right,
     ffi::ResultBuffer<dtype> eigvals, ffi::ResultBuffer<dtype> eigvecs_left,
@@ -1735,6 +1764,7 @@ template struct EigenvalueDecompositionComplex<ffi::DataType::C128, int64_t>;
 
 //== Schur Decomposition ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error SchurDecomposition<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -1831,6 +1861,7 @@ ffi::Error SchurDecomposition<dtype, IntType>::Kernel(
 
 template <ffi::DataType dtype>
 ffi::Error SchurDecompositionKernel(
+// EVOLVE-BLOCK-END
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
     schur::ComputationMode mode, schur::Sort sort,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> schur_vectors,
@@ -1850,6 +1881,7 @@ ffi::Error SchurDecompositionKernel(
       eigvals_imag, selected_eigvals, info);
 }
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error SchurDecompositionComplex<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
@@ -1938,6 +1970,7 @@ ffi::Error SchurDecompositionComplex<dtype, IntType>::Kernel(
 
 template <ffi::DataType dtype>
 ffi::Error SchurDecompositionComplexKernel(
+// EVOLVE-BLOCK-END
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
     schur::ComputationMode mode, schur::Sort sort,
     ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> schur_vectors,
@@ -1995,6 +2028,7 @@ template struct SchurDecompositionComplex<ffi::DataType::C128, int64_t>;
 
 //== Hessenberg Decomposition ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error HessenbergDecomposition<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, int32_t low,
@@ -2051,6 +2085,7 @@ ffi::Error HessenbergDecomposition<dtype, IntType>::Kernel(
 
 template <ffi::DataType dtype>
 ffi::Error HessenbergDecompositionKernel(
+// EVOLVE-BLOCK-END
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, int32_t low,
     int32_t high, ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<dtype> tau,
     ffi::ResultBuffer<LapackIntDtype> info) {
@@ -2084,6 +2119,7 @@ template struct HessenbergDecomposition<ffi::DataType::C128, int64_t>;
 
 //== Tridiagonal Reduction ==//
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error TridiagonalReduction<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
@@ -2151,6 +2187,7 @@ ffi::Error TridiagonalReduction<dtype, IntType>::Kernel(
 
 template <ffi::DataType dtype>
 ffi::Error TridiagonalReductionKernel(
+// EVOLVE-BLOCK-END
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x, MatrixParams::UpLo uplo,
     ffi::ResultBuffer<dtype> x_out,
     ffi::ResultBuffer<ffi::ToReal(dtype)> diagonal,
@@ -2189,6 +2226,7 @@ template struct TridiagonalReduction<ffi::DataType::C128, int64_t>;
 
 // lapack gtsv
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType dtype, typename IntType>
 ffi::Error TridiagonalSolver<dtype, IntType>::Kernel(
     ffi::ThreadPool thread_pool, ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d,
@@ -2248,6 +2286,7 @@ ffi::Error TridiagonalSolver<dtype, IntType>::Kernel(
 
 template <ffi::DataType dtype>
 ffi::Error TridiagonalSolverKernel(ffi::ThreadPool thread_pool,
+// EVOLVE-BLOCK-END
                                    ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d,
                                    ffi::Buffer<dtype> du, ffi::Buffer<dtype> b,
                                    ffi::ResultBuffer<dtype> dl_out,

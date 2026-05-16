@@ -104,6 +104,7 @@ inline absl::StatusOr<gpuDataType> SolverDataType(ffi::DataType dataType,
 
 // LU decomposition: getrf
 
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error GetrfImpl(int64_t batch, int64_t rows, int64_t cols,
                      gpuStream_t stream, ffi::ScratchAllocator& scratch,
@@ -205,9 +206,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GetrfFfi, GetrfDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // ipiv
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
 // QR decomposition: geqrf
 
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error GeqrfImpl(int64_t batch, int64_t rows, int64_t cols,
                      gpuStream_t stream, ffi::ScratchAllocator& scratch,
@@ -316,9 +319,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GeqrfFfi, GeqrfDispatch,
                                   .Ret<ffi::AnyBuffer>()  // out
                                   .Ret<ffi::AnyBuffer>()  // tau
 );
+// EVOLVE-BLOCK-END
 
 // Householder transformations: orgqr
 
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error OrgqrImpl(int64_t batch, int64_t rows, int64_t cols, int64_t size,
                      gpuStream_t stream, ffi::ScratchAllocator& scratch,
@@ -413,6 +418,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrgqrFfi, OrgqrDispatch,
                                   .Arg<ffi::AnyBuffer>()  // tau
                                   .Ret<ffi::AnyBuffer>()  // out
 );
+// EVOLVE-BLOCK-END
 
 // Householder multiply: ormqr/unmqr
 
@@ -427,6 +433,7 @@ gpublasOperation_t TransposeOp() {
   }
 }
 
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error OrmqrImpl(int64_t batch, int64_t c_rows, int64_t c_cols, int64_t k,
                      int64_t a_rows, int64_t a_cols, bool left, bool transpose,
@@ -521,9 +528,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(OrmqrFfi, OrmqrDispatch,
                                   .Attr<bool>("transpose")
                                   .Ret<ffi::AnyBuffer>()  // out
 );
+// EVOLVE-BLOCK-END
 
 // Cholesky decomposition: potrf
 
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error PotrfImpl(int64_t batch, int64_t size, gpuStream_t stream,
                      ffi::ScratchAllocator& scratch, bool lower,
@@ -627,6 +636,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(PotrfFfi, PotrfDispatch,
                                   .Ret<ffi::AnyBuffer>()         // out
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
 // Symmetric (Hermitian) eigendecomposition:
 // * Jacobi algorithm: syevj/heevj (batches of matrices up to 32)
@@ -647,6 +657,7 @@ absl::StatusOr<bool> IsSyevBatchedSupported() {
   return version >= 11701;
 }
 
+// EVOLVE-BLOCK-START
 ffi::Error Syevd64Impl(int64_t batch, int64_t n, gpuStream_t stream,
                        ffi::ScratchAllocator& scratch, bool lower,
                        ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
@@ -884,9 +895,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SyevdFfi, SyevdDispatch,
                                   .Ret<ffi::AnyBuffer>()         // w
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
 // Symmetric rank-k update: syrk
 
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error SyrkImpl(gpuStream_t stream, bool transpose, ffi::AnyBuffer a,
                     ffi::AnyBuffer c_in, ffi::AnyBuffer alpha,
@@ -962,9 +975,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SyrkFfi, SyrkDispatch,
                                   .Arg<ffi::AnyBuffer>()    // beta
                                   .Ret<ffi::AnyBuffer>()    // c_out
 );
+// EVOLVE-BLOCK-END
 
 // Singular Value Decomposition: gesvd
 
+// EVOLVE-BLOCK-START
 #if JAX_GPU_HAVE_64_BIT
 
 ffi::Error Gesvd64Impl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
@@ -1156,7 +1171,9 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdFfi, GesvdDispatch,
                                   .Ret<ffi::AnyBuffer>()         // vt
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error GesvdjImpl(int64_t batch, int64_t rows, int64_t cols,
                       gpuStream_t stream, ffi::ScratchAllocator& scratch,
@@ -1278,6 +1295,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::AnyBuffer>()         // v
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
 #ifdef JAX_GPU_HIP
 // Workspace size from LAPACK formula instead of querying rocsolver. A
@@ -1317,6 +1335,7 @@ size_t GesddWorkspaceSizeFromFormula(signed char job, int m, int n) {
 }  // namespace
 
 // Singular Value Decomposition (divide-and-conquer): gesdd (ROCm rocsolver).
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
                      gpuStream_t stream, ffi::ScratchAllocator& scratch,
@@ -1438,10 +1457,11 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesddFfi, GesddDispatch,
                                   .Ret<ffi::AnyBuffer>()         // vt
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 #endif  // JAX_GPU_HIP
 
 // Singular Value Decomposition: gesvdp (Polar decomposition)
-
+// EVOLVE-BLOCK-START
 #ifdef JAX_GPU_CUDA
 
 ffi::Error GesvdpImpl(int64_t batch, int64_t m, int64_t n, gpuStream_t stream,
@@ -1570,9 +1590,10 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdpFfi, GesvdpDispatch,
                                   .Ret<ffi::AnyBuffer>()         // v
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
 // csrlsvqr: Linear system solve via Sparse QR
-
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error CsrlsvqrImpl(int64_t n, int64_t nnz, double tol, int reorder,
                         gpuStream_t stream, ffi::AnyBuffer csrValA,
@@ -1646,11 +1667,12 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(CsrlsvqrFfi, CsrlsvqrDispatch,
                                   .Arg<ffi::AnyBuffer>()         // b
                                   .Ret<ffi::AnyBuffer>()         // x
 );
+// EVOLVE-BLOCK-END
 
 #endif  // JAX_GPU_CUDA
 
 // Symmetric tridiagonal reduction: sytrd
-
+// EVOLVE-BLOCK-START
 template <typename T>
 ffi::Error SytrdImpl(int64_t batch, int64_t size, gpuStream_t stream,
                      ffi::ScratchAllocator& scratch, bool lower,
@@ -1743,9 +1765,10 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(SytrdFfi, SytrdDispatch,
                                   .Ret<ffi::AnyBuffer>()         // tau
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
 // General eigenvalue decomposition: geev
-
+// EVOLVE-BLOCK-START
 #if JAX_GPU_HAVE_SOLVER_GEEV
 
 ffi::Error GeevImpl(gpuStream_t stream, ffi::ScratchAllocator scratch,
@@ -1867,6 +1890,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GeevFfi, GeevImpl,
                                   .Ret<ffi::AnyBuffer>()         // vr
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+// EVOLVE-BLOCK-END
 
 #endif  // JAX_GPU_HAVE_SOLVER_GEEV
 
