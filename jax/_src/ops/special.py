@@ -100,9 +100,15 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
     # `0 * inf = NaN` at `b == 0`, `a == +inf` positions. Mask those NaNs back
     # to 0 (the mathematically intended contribution) after the multiplication
     # so that the gradient with respect to `b` at `b == 0`, finite-`a` positions
-    # passes through correctly (the NaN mask does not trigger there).
+    # passes through correctly (the NaN mask does not trigger there). Scope the
+    # mask to `b == 0` positions so legitimate NaNs that arise from NaN inputs
+    # in `a` or `b` (at `b != 0` positions) are preserved as NaN.
     exp_a = lax.mul(exp_a, b_arr)
-    exp_a = lax.select(ufuncs.isnan(exp_a), lax.full_like(exp_a, 0), exp_a)
+    exp_a = lax.select(
+        lax.bitwise_and(lax.eq(b_arr, lax.full_like(b_arr, 0)), ufuncs.isnan(exp_a)),
+        lax.full_like(exp_a, 0),
+        exp_a,
+    )
   sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where)
   sign = lax.sign(sumexp)
   if return_sign or not np.issubdtype(a_arr.dtype, np.complexfloating):

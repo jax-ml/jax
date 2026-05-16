@@ -189,6 +189,15 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(actual_fwd, expected)
     self.assertAllClose(actual_rev, expected)
 
+  def testLogSumExpPreservesNaN(self):
+    # Companion to testLogSumExpZeroBGrad: the NaN mask introduced for the
+    # `0 * inf` corner at `b == 0` positions must NOT swallow legitimate NaN
+    # values arising from NaN inputs at `b != 0` positions.
+    self.assertTrue(jnp.isnan(lsp_special.logsumexp(
+        jnp.array([jnp.nan, 0.0]), b=jnp.array([1.0, 1.0]))))
+    self.assertTrue(jnp.isnan(lsp_special.logsumexp(
+        jnp.array([0.0, 0.0]), b=jnp.array([1.0, jnp.nan]))))
+
   def testLogSumExpOnes(self):
     # Regression test for https://github.com/jax-ml/jax/issues/7390
     args_maker = lambda: [np.ones(4, dtype='float32')]
