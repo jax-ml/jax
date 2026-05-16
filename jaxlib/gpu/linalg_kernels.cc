@@ -73,11 +73,13 @@ ffi::Error CholeskyUpdateFfiImpl(gpuStream_t stream, ffi::AnyBuffer matrix_in,
         gpuMemcpyAsync(vector, vector_in.untyped_data(), vector_in.size_bytes(),
                        gpuMemcpyDeviceToDevice, stream)));
   }
+// EVOLVE-BLOCK-START
   for (auto n = 0; n < batch; ++n) {
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(LaunchCholeskyUpdateFfiKernel(
         stream, matrix, vector, size, is_single_precision)));
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   }
+// EVOLVE-BLOCK-END
   return ffi::Error::Success();
 }
 }  // namespace

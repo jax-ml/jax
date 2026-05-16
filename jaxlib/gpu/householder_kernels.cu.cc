@@ -62,12 +62,15 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel(
   const T* tau = tau_data + batch_idx * k;
   T* c = c_data + batch_idx * m * n;  // c is m x n, ldc = m
 
+// EVOLVE-BLOCK-START
   if constexpr (IsOrgqr) {
     for (int r = 0; r < m; ++r) {
       c[r + col_idx * m] = (r == col_idx) ? T(1) : T(0);
     }
   }
+// EVOLVE-BLOCK-END
 
+// EVOLVE-BLOCK-START
   for (int step = 0; step < k; ++step) {
     // H_1...H_k * C applies H_k first (reverse), H_k^H...H_1^H * C applies
     // H_1^H first (forward)
@@ -82,10 +85,12 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel(
     // This thread's scalar w is the element W[col], i.e., w = v^H C[:, col].
     // Recall the 'v' vectors are packed into the lower triangle of `a`.
     T w = c[i + col_idx * m];  // Implicit leading `1` coefficient.
+// EVOLVE-BLOCK-START
     for (int r = i + 1; r < m; ++r) {
       // $w \leftarrow w + \overline{A_{r, i}} C_{r, \text{col}}$
       w = w + Eigen::numext::conj(a[r + i * lda]) * c[r + col_idx * m];
     }
+// EVOLVE-BLOCK-END
 
     T t_w = t * w;
     // The outer product update is $C \leftarrow C - \tau v W$, where $W = v^H
@@ -94,13 +99,16 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel(
     // $r = i$, $v_i = 1$:
     c[i + col_idx * m] = c[i + col_idx * m] - t_w;
     // For $r > i$, $v_r = A_{r, i}$:
+// EVOLVE-BLOCK-START
     for (int r = i + 1; r < m; ++r) {
       c[r + col_idx * m] = c[r + col_idx * m] - a[r + i * lda] * t_w;
     }
+// EVOLVE-BLOCK-END
   }
 #endif
 }
 
+// EVOLVE-BLOCK-START
 // Applies the product of elementary reflectors from the right (parallelized
 // over rows) to c, which is updated in-place. a, tau, and c_data are all
 // batch-major. The matrices must be column major within each batch element.
@@ -122,6 +130,7 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedRightKernel(
   const T* tau = tau_data + batch_idx * k;
   T* c = c_data + batch_idx * m * n;  // c is m x n, ldc = m
 
+// EVOLVE-BLOCK-START
   for (int step = 0; step < k; ++step) {
     // C * H_1...H_k applies H_1 first (forward), C * H_k^H...H_1^H applies
     // H_k^H first (reverse)
@@ -134,25 +143,30 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedRightKernel(
 
     // From $C H = C - \tau (C v) v^H$, let the column vector $U = C v$.
     T u = c[row_idx + i * m];
+// EVOLVE-BLOCK-START
     for (int col = i + 1; col < n; ++col) {
       // $u \leftarrow u + C_{\text{row}, c} A_{c, i}$
       u = u + c[row_idx + col * m] * a[col + i * lda];
     }
+// EVOLVE-BLOCK-END
 
     T u_t = u * t;
     // The row update is $c_{row} \leftarrow c_{row} - u_t v^H$. Since $v[i] =
     // 1$ and $v[col > i] = A_{col, i}$: $C_{\text{row}, i} \leftarrow
     // C_{\text{row}, i} - u_t$
     c[row_idx + i * m] = c[row_idx + i * m] - u_t;
+// EVOLVE-BLOCK-START
     for (int col = i + 1; col < n; ++col) {
       // $C_{\text{row}, col} \leftarrow C_{\text{row}, col} - u_t
       // \overline{A_{col, i}}$
       c[row_idx + col * m] =
           c[row_idx + col * m] - u_t * Eigen::numext::conj(a[col + i * lda]);
     }
+// EVOLVE-BLOCK-END
 
     // Each thread works on its own row.
   }
+// EVOLVE-BLOCK-END
 #endif
 }
 

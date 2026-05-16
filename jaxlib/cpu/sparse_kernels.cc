@@ -63,6 +63,7 @@ static ffi::Future CsrSparseDenseKernelImpl(
     return ffi::Future(promise);
   } else {
     std::vector<int64_t> batch_sizes;
+// EVOLVE-BLOCK-START
     {
       int64_t running_batch_nnz = 0;
       int64_t running_number_rows = 0;
@@ -84,10 +85,12 @@ static ffi::Future CsrSparseDenseKernelImpl(
         }
       }
     }
+// EVOLVE-BLOCK-END
 
     ffi::CountDownPromise promise(batch_sizes.size());
     ffi::Future future(promise);
     int64_t batch_start = 0;
+// EVOLVE-BLOCK-START
     for (int64_t size : batch_sizes) {
       thread_pool.Schedule([out_matrix, lhs_matrix, rhs_matrix, batch_start,
                             size, promise]() mutable {
@@ -97,6 +100,7 @@ static ffi::Future CsrSparseDenseKernelImpl(
       });
       batch_start += size;
     }
+// EVOLVE-BLOCK-END
     return future;
   }
 }

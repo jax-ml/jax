@@ -69,33 +69,43 @@ __global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
     // We are conservative and use 20 rounds.
     x[0] = x[0] + ks[0];
     x[1] = x[1] + ks[1];
+// EVOLVE-BLOCK-START
     for (int i = 0; i < 4; ++i) {
       round(x, rotations[i]);
     }
+// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[1];
     x[1] = x[1] + ks[2] + 1u;
+// EVOLVE-BLOCK-START
     for (int i = 4; i < 8; ++i) {
       round(x, rotations[i]);
     }
+// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[2];
     x[1] = x[1] + ks[0] + 2u;
+// EVOLVE-BLOCK-START
     for (int i = 0; i < 4; ++i) {
       round(x, rotations[i]);
     }
+// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[0];
     x[1] = x[1] + ks[1] + 3u;
+// EVOLVE-BLOCK-START
     for (int i = 4; i < 8; ++i) {
       round(x, rotations[i]);
     }
+// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[1];
     x[1] = x[1] + ks[2] + 4u;
+// EVOLVE-BLOCK-START
     for (int i = 0; i < 4; ++i) {
       round(x, rotations[i]);
     }
+// EVOLVE-BLOCK-END
 
     out0[idx] = x[0] + ks[2];
     out1[idx] = x[1] + ks[0] + 5u;

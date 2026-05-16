@@ -56,6 +56,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
       auto* du_ptr = reinterpret_cast<const float*>(du_data);
       auto* b_ptr = reinterpret_cast<const float*>(b_data);
       auto* x_out_ptr = reinterpret_cast<float*>(x_out_data);
+// EVOLVE-BLOCK-START
       for (int64_t i = 0; i < batch_count; ++i) {
         SolveWithGaussianEliminationWithPivotingAndPerturbSingular<float>(
             b_rows, b_cols, dl_ptr, d_ptr, du_ptr, b_ptr, x_out_ptr,
@@ -66,6 +67,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
         b_ptr += b_step;
         x_out_ptr += b_step;
       }
+// EVOLVE-BLOCK-END
       break;
     }
     case ffi::DataType::F64: {
@@ -76,6 +78,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
       auto* du_ptr = reinterpret_cast<const double*>(du_data);
       auto* b_ptr = reinterpret_cast<const double*>(b_data);
       auto* x_out_ptr = reinterpret_cast<double*>(x_out_data);
+// EVOLVE-BLOCK-START
       for (int64_t i = 0; i < batch_count; ++i) {
         SolveWithGaussianEliminationWithPivotingAndPerturbSingular<double>(
             b_rows, b_cols, dl_ptr, d_ptr, du_ptr, b_ptr, x_out_ptr,
@@ -86,6 +89,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
         b_ptr += b_step;
         x_out_ptr += b_step;
       }
+// EVOLVE-BLOCK-END
       break;
     }
     case ffi::DataType::C64: {
@@ -96,6 +100,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
       auto* du_ptr = reinterpret_cast<const std::complex<float>*>(du_data);
       auto* b_ptr = reinterpret_cast<const std::complex<float>*>(b_data);
       auto* x_out_ptr = reinterpret_cast<std::complex<float>*>(x_out_data);
+// EVOLVE-BLOCK-START
       for (int64_t i = 0; i < batch_count; ++i) {
         SolveWithGaussianEliminationWithPivotingAndPerturbSingular<
             std::complex<float>>(b_rows, b_cols, dl_ptr, d_ptr, du_ptr, b_ptr,
@@ -107,6 +112,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
         b_ptr += b_step;
         x_out_ptr += b_step;
       }
+// EVOLVE-BLOCK-END
       break;
     }
     case ffi::DataType::C128: {
@@ -117,6 +123,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
       auto* du_ptr = reinterpret_cast<const std::complex<double>*>(du_data);
       auto* b_ptr = reinterpret_cast<const std::complex<double>*>(b_data);
       auto* x_out_ptr = reinterpret_cast<std::complex<double>*>(x_out_data);
+// EVOLVE-BLOCK-START
       for (int64_t i = 0; i < batch_count; ++i) {
         SolveWithGaussianEliminationWithPivotingAndPerturbSingular<
             std::complex<double>>(b_rows, b_cols, dl_ptr, d_ptr, du_ptr, b_ptr,
@@ -128,6 +135,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
         b_ptr += b_step;
         x_out_ptr += b_step;
       }
+// EVOLVE-BLOCK-END
       break;
     }
     default:

@@ -33,6 +33,7 @@ namespace JAX_GPU_NAMESPACE {
 namespace {
 
 template <typename T>
+// EVOLVE-BLOCK-START
 __device__ void drotg(T* da, T* db, T* c, T* s) {
   if (*db == 0) {
     *c = 1.;
@@ -46,6 +47,7 @@ __device__ void drotg(T* da, T* db, T* c, T* s) {
   *c = a * rh;
   *s = -(b * rh);
 }
+// EVOLVE-BLOCK-END
 
 template <typename T>
 __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
@@ -54,6 +56,7 @@ __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
 
   T c, s;
 
+// EVOLVE-BLOCK-START
   for (int step = 0; step < 2 * nSize; ++step) {
     grid.sync();
 
@@ -68,6 +71,7 @@ __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
     uVector[i] = s * rMatrix[k * nSize + i] + c * uVector[i];
     rMatrix[k * nSize + i] = r_i;
   }
+// EVOLVE-BLOCK-END
 }
 }  // namespace
 
@@ -112,6 +116,7 @@ gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
 
 namespace {
 
+// EVOLVE-BLOCK-START
 __device__ void ComputePermutation(const std::int32_t* pivots,
                                    std::int32_t* permutation_out,
                                    const std::int32_t pivot_size,
@@ -132,7 +137,9 @@ __device__ void ComputePermutation(const std::int32_t* pivots,
     permutation_out[pivots[i]] = swap_temporary;
   }
 }
+// EVOLVE-BLOCK-END
 
+// EVOLVE-BLOCK-START
 __global__ void LuPivotsToPermutationKernel(
     const std::int32_t* pivots, std::int32_t* permutation_out,
     const std::int64_t batch_size, const std::int32_t pivot_size,
@@ -145,6 +152,7 @@ __global__ void LuPivotsToPermutationKernel(
                        permutation_size);
   }
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace
 
@@ -166,6 +174,7 @@ void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
 namespace {
 
 template <typename T>
+// EVOLVE-BLOCK-START
 __global__ void TridiagonalSolvePerturbedKernel(
     std::int64_t batch_size, int n, int k_rhs, const T* subdiag, const T* diag,
     const T* superdiag, const T* rhs, T* x, void* workspace) {
@@ -180,6 +189,7 @@ __global__ void TridiagonalSolvePerturbedKernel(
         rhs_row_workspace);
   }
 }
+// EVOLVE-BLOCK-END
 
 template <typename T>
 void LaunchTridiagonalSolvePerturbedKernelBody(
