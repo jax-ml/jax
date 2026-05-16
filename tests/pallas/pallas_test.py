@@ -2553,7 +2553,7 @@ class PallasCheckifyTest(ptu.PallasTest):
       checkify.check(False, "second check failed")
     input_ = jnp.arange(4, dtype=jnp.int32)
     out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
-    with pl.enable_debug_checks(True):
+    with config.jax_pallas_enable_debug_checks(True):
       pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
       pallas_call(input_)  # This should log "second check failed"
 
@@ -2566,7 +2566,7 @@ class PallasCheckifyTest(ptu.PallasTest):
       pl.debug_check(False, "failed check")  # This check always fails.
     input_ = jnp.arange(4, dtype=jnp.int32)
     out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
-    with pl.enable_debug_checks(False):
+    with config.jax_pallas_enable_debug_checks(False):
       pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
       result = pallas_call(input_)
     np.testing.assert_allclose(result, input_)

@@ -34,6 +34,7 @@ import jax
 from jax import export
 from jax import lax
 from jax import sharding
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -1802,7 +1803,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       jax.block_until_ready(kernel(src, offset))
 
   def test_check(self):
-    self.enter_context(pl.enable_debug_checks(True))
+    self.enter_context(config.jax_pallas_enable_debug_checks(True))
 
     @functools.partial(
         self.pallas_call,

@@ -27,9 +27,9 @@ from jax._src.pallas.core import CompilerParams as CompilerParams
 from jax._src.pallas.core import core_map as core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import debug_check as debug_check
-from jax._src.pallas.core import debug_checks_enabled as debug_checks_enabled
+from jax._src.pallas.core import debug_checks_enabled as _deprecated_debug_checks_enabled
 from jax._src.pallas.core import Element as Element
-from jax._src.pallas.core import enable_debug_checks as enable_debug_checks
+from jax._src.pallas.core import enable_debug_checks as _deprecated_enable_debug_checks
 from jax._src.pallas.core import enable_poison_buffers as enable_poison_buffers
 from jax._src.pallas.core import GridSpec as GridSpec
 from jax._src.pallas.core import Indirect as Indirect
@@ -79,3 +79,27 @@ from jax._src.state.primitives import broadcast_to as broadcast_to
 
 ANY = MemorySpace.ANY
 HOST = MemorySpace.HOST
+
+_deprecations = {
+    # Added May 15, 2026
+    "enable_debug_checks": (
+        "jax.experimental.pallas.enable_debug_checks is deprecated, "
+        "use config.jax_pallas_enable_debug_checks instead.",
+        _deprecated_enable_debug_checks,
+    ),
+    "debug_checks_enabled": (
+        "jax.experimental.pallas.debug_checks_enabled is deprecated, "
+        "use config.jax_pallas_enable_debug_checks instead.",
+        _deprecated_debug_checks_enabled,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  enable_debug_checks = _deprecated_enable_debug_checks
+  debug_checks_enabled = _deprecated_debug_checks_enabled
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

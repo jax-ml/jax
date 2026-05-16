@@ -32,6 +32,11 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.experimental.pallas.kernel` now always aliases Refs that are
     passed in or closed-over.
 
+* Deprecations
+
+  * `pl.enable_debug_checks`, `pl.debug_checks_enabled` are deprecated. Use
+     `config.jax_pallas_enable_debug_checks`.
+
 ### TPU
 
 * Removals
