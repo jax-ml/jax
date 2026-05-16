@@ -515,8 +515,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         returns_token=True,
         sharding=op_sharding,
     )
-    ctx.set_tokens_out(
-        ctx.tokens_in.update_tokens(mlir.TokenSet({_OrderedIOEffect: token})))
+    ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
   else:
     result, _, _ = emit_python_callback(
         ctx,

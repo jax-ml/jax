@@ -33,7 +33,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src import effects as effects_lib
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
@@ -1367,7 +1367,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
                    jaxpr: core.ClosedJaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, donated_invars,
                    ctx_mesh, keep_unused, inline, compiler_options_kvs):
-  effects = list(effects_lib.ordered_effects.filter_in(jaxpr.effects))
+  effects = list(ctx.tokens_in.effects())
   output_types = [mlir.aval_to_ir_types(ctx.module_context, a) for a in ctx.avals_out]
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = mlir.flatten_ir_types(output_types)
@@ -1778,7 +1778,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
                           unknown_jaxpr.effects,
                           source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
-  if effects_lib.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
+  if effects.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
     trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))
   return merge_lists(unknown_outs, known_out_vals, unknown_tracers_out)
 

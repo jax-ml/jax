@@ -1513,8 +1513,6 @@ class TokenSet:
   primitives. A `TokenSet` encapsulates a set of HLO tokens that will be
   used by the lowering rules.
   """
-  __slots__ = ("_tokens",)
-
   _tokens: collections.OrderedDict[core.Effect, Token]
 
   def __init__(self, *args: Any, **kwargs: Any):
@@ -1544,8 +1542,6 @@ class TokenSet:
 
   def update_tokens(self, tokens: TokenSet) -> TokenSet:
     """Returns a new `TokenSet` with tokens replaced with ones from the input `TokenSet`."""
-    if not tokens:
-      return self
     new_tokens = []
     for eff in self.effects():
       if eff in tokens._tokens:
@@ -2016,7 +2012,6 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
 
 _uncacheable_primitives: set[core.Primitive] = set()
 
-_empty_token_set = TokenSet()
 
 def jaxpr_subcomp(
     ctx: ModuleContext,
@@ -2088,46 +2083,36 @@ def jaxpr_subcomp(
           log_closed_over_constant(v, eqn, jaxpr._debug_info)
 
     in_nodes = tuple(map(read, eqn.invars))
+    assert all(_is_ir_values(v) for v in in_nodes), (eqn, in_nodes)
+
+    avals_in = tuple(v.aval for v in eqn.invars)
+    ordered_effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
+    tokens_in = tokens.subset(ordered_effects)
 
     eqn_name_stack = name_stack + eqn.source_info.name_stack
     traceback = (eqn.source_info.traceback or xc.Traceback()) + outer_traceback
-
-    can_cache_lowering = (eqn.primitive not in _uncacheable_primitives)
-    avals_in = tuple(v.aval for v in eqn.invars)
-
-    if can_cache_lowering:
-      cache_key = LoweringCacheKey(
-          primitive=eqn.primitive,
-          eqn_ctx=eqn.ctx,
-          avals_in=avals_in,
-          effects=frozenset(eqn.effects),
-          params=tuple(sorted(eqn.params.items())),
-          platforms=tuple(ctx.platforms),
-      )
-      cache_entry = ctx.lowering_cache.get(cache_key, None)
-      loc = source_info_to_location(ctx, None, eqn_name_stack, traceback)
-      with loc:
-        if cache_entry is None:
-          assert cache_key is not None
-          cache_entry = _cached_lowering_miss(
-              ctx, eqn, cache_key, avals_in, **eqn.params
+    loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack, traceback)
+    with (source_info_util.user_context(eqn.source_info.traceback), loc,
+          eqn.ctx.manager):
+      # TODO(mattjj, phawkins): support caching for dynamic shapes.
+      can_cache_lowering = (
+          eqn.primitive not in _uncacheable_primitives)
+      if can_cache_lowering:
+        loc = source_info_to_location(ctx, None, eqn_name_stack, traceback)
+        with loc:
+          out_nodes, tokens_out = _cached_lowering(
+              ctx, eqn, tokens_in, tuple(dim_var_values), const_lowering,
+              *in_nodes, **eqn.params,
           )
-        out_nodes, tokens_out = _emit_cached_call(
-            ctx, eqn, tokens, tuple(dim_var_values), const_lowering,
-            cache_entry, *in_nodes
-        )
-    else:
-      # If we cannot cache the lowering, lower inline.
-      loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack, traceback)
-      with (source_info_util.user_context(eqn.source_info.traceback), loc,
-            eqn.ctx.manager):
+      else:
+        # If we cannot cache the lowering, lower inline.
         axis_size_env = None
         rule_ctx = LoweringRuleContext(
             module_context=ctx, primitive=eqn.primitive,
             name_stack=eqn_name_stack,
             traceback=eqn.source_info.traceback,
             avals_in=avals_in,
-            avals_out=tuple(v.aval for v in eqn.outvars), tokens_in=tokens,
+            avals_out=tuple(v.aval for v in eqn.outvars), tokens_in=tokens_in,
             tokens_out=None, jaxpr_eqn_ctx=eqn.ctx,
             dim_var_values=dim_var_values,
             axis_size_env=axis_size_env,
@@ -2137,8 +2122,10 @@ def jaxpr_subcomp(
             **eqn.params)
         tokens_out = rule_ctx.tokens_out
 
-    if tokens_out is not None:
-      tokens = tokens_out
+      assert len(out_nodes) == len(eqn.outvars), (out_nodes, eqn)
+      if ordered_effects:
+        assert tokens_out is not None
+        tokens = tokens.update_tokens(tokens_out)
 
     foreach(write, eqn.outvars, out_nodes)
   return tuple(read(v) for v in jaxpr.outvars), tokens
@@ -2154,24 +2141,38 @@ class CachedLoweringRule(Protocol):
       ...
 
 
-def _cached_lowering_miss(
+def _cached_lowering(
     ctx: ModuleContext,
     eqn: core.JaxprEqn,
-    cache_key: LoweringCacheKey,
-    avals_in: tuple[core.AbstractValue, ...],
+    tokens_in: TokenSet,
+    dim_var_values: tuple[ir.Value, ...],
+    const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
+    *args,
     **params,
-) -> LoweringCacheValue:
-  """Lowers a jaxpr equation and populates the cache.
+) -> tuple[Sequence[IrValues], TokenSet]:
+  """Lowers a jaxpr equation, using a cache.
 
   The jaxpr equation's lowering is emitted as an out-of-line MLIR function, and
   that function's construction is cached in the event that we see a similar
   equation. For each such equation we either inline the function body or emit
   an out-of-line call to it, depending on whether any of the lowering rules
   opted out of inlining."""
-  ordered_effects = (tuple(effects_lib.ordered_effects.filter_in(eqn.effects))
-                     if eqn.effects else ())
-  with (source_info_util.user_context(eqn.source_info.traceback),
-        eqn.ctx.manager):
+  avals_in = tuple(v.aval for v in eqn.invars)
+  ordered_effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
+  cache_key = LoweringCacheKey(
+      primitive=eqn.primitive,
+      eqn_ctx=eqn.ctx,
+      avals_in=avals_in,
+      effects=frozenset(eqn.effects),
+      params=tuple(sorted(eqn.params.items())),
+      platforms=tuple(ctx.platforms),
+  )
+  try:
+    cache_entry = ctx.lowering_cache.get(cache_key, None)
+  except TypeError:
+    print("Unable to hash key: ", eqn)
+    raise
+  if cache_entry is None:
     avals_out = map(lambda v: v.aval, eqn.outvars)
     cache_entry = _emit_lowering_rule_as_fun(
         partial(_uncached_lowering, eqn.primitive, eqn.ctx, eqn.effects),
@@ -2179,51 +2180,29 @@ def _cached_lowering_miss(
         **params,
     )
     ctx.lowering_cache[cache_key] = cache_entry
-    return cache_entry
 
-
-def _emit_cached_call(
-    ctx: ModuleContext,
-    eqn: core.JaxprEqn,
-    tokens_in: TokenSet,
-    dim_var_values: tuple[ir.Value, ...],
-    const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
-    cache_entry: LoweringCacheValue,
-    *args,
-) -> tuple[Sequence[IrValues], TokenSet]:
-  """Emits a call to an already cached lowering function."""
+  tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
   const_arg_values = tuple(
       ir_constants(c, const_lowering=const_lowering, aval=aval)
       for c, aval in zip(cache_entry.const_args, cache_entry.const_arg_avals)
   )
-  if not eqn.effects:
-    ordered_effects = ()
-    tokens_in_args = ()
-  else:
-    ordered_effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
-    tokens_in_args = tuple(tokens_in.get(eff) for eff in ordered_effects)
-
-  flat_args = flatten_ir_values(
+  args = flatten_ir_values(
       dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
     if jaxlib_extension_version >= 443:
-      outs = jax_mlir_ext.inlined_func_call(cache_entry.func.operation, flat_args)
+      outs = jax_mlir_ext.inlined_func_call(cache_entry.func.operation, args)
     else:
       outs = jax_mlir_ext.inlined_func_call(
-          cache_entry.func, flat_args, ir.InsertionPoint.current.block)  # pyrefly: ignore[bad-argument-type]
+          cache_entry.func, args, ir.InsertionPoint.current.block)  # pyrefly: ignore[bad-argument-type]
   else:
     outs = func_dialect.CallOp(
         flatten_ir_types(cache_entry.output_types),
         ir.FlatSymbolRefAttr.get(cache_entry.func.sym_name.value),
-        flat_args
+        args
     ).results
   out_nodes = unflatten_ir_values_like_types(outs, cache_entry.output_types)
-
-  if not eqn.effects:
-    return out_nodes, tokens_in
-
   token_outs, out_nodes = util.split_list(out_nodes, [len(ordered_effects)])
-  return out_nodes, tokens_in.update_tokens(TokenSet(zip(ordered_effects, token_outs)))
+  return out_nodes, TokenSet(zip(ordered_effects, token_outs))
 
 
 def _emit_lowering_rule_as_fun(
@@ -2343,8 +2322,7 @@ def _uncached_lowering(
     raise ValueError("Output of translation rule must be iterable: "
                       f"{primitive}, got output {ans}") from e
 
-  ordered_effects = list(effects_lib.ordered_effects.filter_in(effects))
-  if ordered_effects:
+  if ctx.tokens_in.effects():
     # If there were ordered effects in the primitive, there should be output
     # tokens we need for subsequent ordered effects.
     tokens_out = ctx.tokens_out
@@ -2667,14 +2645,12 @@ def core_call_lowering(ctx: LoweringRuleContext,
                        call_jaxpr: core.ClosedJaxpr | core.Jaxpr):
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = pe.close_jaxpr(call_jaxpr)
-  effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
-  tokens_in = ctx.tokens_in.subset(effects)
   out_nodes, tokens = call_lowering(
       name, call_jaxpr, backend, ctx.module_context,
-      ctx.avals_in, ctx.avals_out, tokens_in, *args,
+      ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
       dim_var_values=ctx.dim_var_values,
       const_lowering=ctx.const_lowering)
-  ctx.set_tokens_out(ctx.tokens_in.update_tokens(tokens))
+  ctx.set_tokens_out(tokens)
   return out_nodes
 
 register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
