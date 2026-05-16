@@ -85,29 +85,21 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
            : small * (one + std::numeric_limits<RealScalar>::epsilon()));
   constexpr RealScalar bignum = one / safemin;
 
-// EVOLVE-BLOCK-START
   RealScalar abs_pivot = Eigen::numext::abs(pivot);
-// EVOLVE-BLOCK-START
   if (abs_pivot >= one) {
     return;
   }
-// EVOLVE-BLOCK-END
 
   // Safeguard against infinite loop if 'perturb' is zero.
   // 'perturb' should never have magnitude smaller than safemin.
-// EVOLVE-BLOCK-START
   perturb = std::max(Eigen::numext::abs(perturb), safemin);
   // Make sure perturb and pivot have the same sign.
   perturb = std::copysign(perturb, real(pivot));
-// EVOLVE-BLOCK-END
 
   bool stop = false;
-// EVOLVE-BLOCK-START
   const RealScalar max_factor = rhs_row.derived().array().abs().maxCoeff();
-// EVOLVE-BLOCK-END
 
   while (abs_pivot < one && !stop) {
-// EVOLVE-BLOCK-START
     if (abs_pivot < safemin) {
       if (abs_pivot == RealScalar(0.0) || max_factor * safemin > abs_pivot) {
         pivot += perturb;
@@ -123,10 +115,8 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
     } else {
       stop = true;
     }
-// EVOLVE-BLOCK-END
     abs_pivot = Eigen::numext::abs(pivot);
   }
-// EVOLVE-BLOCK-END
 }
 
 // This function roughly follows LAPACK's xLAGTF + xLAGTS routines.
@@ -156,7 +146,6 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
     int n, int k_rhs, const Scalar* subdiag_ptr, const Scalar* diag_ptr,
     const Scalar* superdiag_ptr, const Scalar* rhs_ptr, Scalar* x_ptr,
     Scalar* u_workspace, Scalar* rhs_row_workspace) {
-// EVOLVE-BLOCK-START
   using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
   using InputMatrixMap =
       Eigen::Map<const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic,
@@ -182,7 +171,6 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
     return;
   }
 
-// EVOLVE-BLOCK-START
   if (n == 1) {
     Scalar p = diag(0);
     RealScalar eps = std::numeric_limits<RealScalar>::epsilon();
@@ -192,11 +180,17 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
     x.row(0) = rhs_row / p;
     return;
   }
-// EVOLVE-BLOCK-END
 
+  // The three columns in u are the diagonal, superdiagonal, and second
+  // superdiagonal, respectively, of the U matrix in the LU decomposition
+  // of the input matrix (subject to row exchanges due to pivoting). For
+  // a pivoted tridiagonal matrix, the U matrix has at most two non-zero
+  // superdiagonals.
   Eigen::Map<Eigen::Array<Scalar, Eigen::Dynamic, 3>> u(u_workspace, n, 3);
   u.setZero();
 
+  // We accumulate max( abs( U(i,j) ) ) in max_abs_u for use in perturbing
+  // near-zero pivots during the solution phase.
   u(0, 0) = diag(0);
   u(0, 1) = superdiag(0);
   RealScalar max_abs_u =
@@ -204,36 +198,36 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
   RealScalar scale1 = Eigen::numext::abs(u(0, 0)) + Eigen::numext::abs(u(0, 1));
   x.row(0) = rhs.row(0);
 
-// EVOLVE-BLOCK-START
   for (int k = 0; k < n - 1; ++k) {
+    // The non-zeros in the (k+1)-st row are
+    //    [ ... subdiag(k+1) (diag(k+1)-shift) superdiag(k+1) ... ]
     u(k + 1, 0) = diag(k + 1);
     RealScalar scale2 =
         Eigen::numext::abs(subdiag(k + 1)) + Eigen::numext::abs(u(k + 1, 0));
     if (k < n - 2) scale2 += Eigen::numext::abs(superdiag(k + 1));
 
     if (subdiag(k + 1) == zero) {
+      // The sub-diagonal in the k+1 row is already zero. Move to the next
+      // row.
       scale1 = scale2;
       u(k + 1, 1) = superdiag(k + 1);
       u(k, 2) = zero;
       x.row(k + 1) = rhs.row(k + 1);
     } else {
-// EVOLVE-BLOCK-START
       const RealScalar piv1 =
           u(k, 0) == zero ? realzero : Eigen::numext::abs(u(k, 0)) / scale1;
       const RealScalar piv2 = Eigen::numext::abs(subdiag(k + 1)) / scale2;
-// EVOLVE-BLOCK-END
 
       if (piv2 <= piv1) {
-// EVOLVE-BLOCK-START
+        // No row pivoting needed.
         scale1 = scale2;
         const Scalar factor = subdiag(k + 1) / u(k, 0);
         u(k + 1, 0) -= factor * u(k, 1);
         u(k + 1, 1) = superdiag(k + 1);
         u(k, 2) = zero;
         x.row(k + 1) = rhs.row(k + 1) - factor * x.row(k);
-// EVOLVE-BLOCK-END
       } else {
-// EVOLVE-BLOCK-START
+        // Swap rows k and k+1
         const Scalar factor = u(k, 0) / subdiag(k + 1);
         const Scalar utmp = u(k, 1);
         u(k, 0) = subdiag(k + 1);
@@ -249,52 +243,43 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
 
         scale1 =
             Eigen::numext::abs(u(k + 1, 0)) + Eigen::numext::abs(u(k + 1, 1));
-// EVOLVE-BLOCK-END
       }
     }
     if (k < n - 2) {
-// EVOLVE-BLOCK-START
       for (int i = 0; i < 3; ++i) {
         max_abs_u = std::max(max_abs_u, Eigen::numext::abs(u(k, i)));
       }
-// EVOLVE-BLOCK-END
     }
   }
-// EVOLVE-BLOCK-END
   max_abs_u = std::max(max_abs_u, Eigen::numext::abs(u(n - 1, 0)));
 
-// EVOLVE-BLOCK-START
   RealScalar eps = std::numeric_limits<RealScalar>::epsilon();
   RealScalar perturb = eps * max_abs_u;
-// EVOLVE-BLOCK-END
 
-// EVOLVE-BLOCK-START
+  // We have already solved L z = P rhs above. Now we solve U x = z,
+  // possibly perturbing small pivots to avoid overflow. The variable perturb
+  // contains eps * max( abs( u(:,:) ) ). If tiny pivots are encountered,
+  // they are perturbed by a small amount on the scale of perturb to avoid
+  // overflow or scaled up to avoid underflow.
+  // Back substitution
   Scalar p = u(n - 1, 0);
   rhs_row = x.row(n - 1);
   MaybePerturbPivot(perturb, p, rhs_row);
   x.row(n - 1) = rhs_row * (Scalar(1.0) / p);
-// EVOLVE-BLOCK-END
 
   if (n > 1) {
-// EVOLVE-BLOCK-START
     p = u(n - 2, 0);
     rhs_row = x.row(n - 2) - u(n - 2, 1) * x.row(n - 1);
     MaybePerturbPivot(std::copysign(perturb, real(p)), p, rhs_row);
     x.row(n - 2) = rhs_row * (Scalar(1.0) / p);
-// EVOLVE-BLOCK-END
   }
 
-// EVOLVE-BLOCK-START
   for (int k = n - 3; k >= 0; --k) {
     p = u(k, 0);
-// EVOLVE-BLOCK-START
     rhs_row = x.row(k) - u(k, 1) * x.row(k + 1) - u(k, 2) * x.row(k + 2);
     MaybePerturbPivot(std::copysign(perturb, real(p)), p, rhs_row);
-// EVOLVE-BLOCK-END
     x.row(k) = rhs_row * (Scalar(1.0) / p);
   }
-// EVOLVE-BLOCK-END
-// EVOLVE-BLOCK-END
 }
 
 }  // namespace jax
