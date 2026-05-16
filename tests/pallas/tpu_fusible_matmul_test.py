@@ -1114,6 +1114,75 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=5e-5,
     )
 
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_dot_dot_fusion(self, dtype, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+    w = jax.random.normal(k2, (512, 512), dtype)
+
+    def chained_matmul(x, y, w):
+      out = jnp.dot(x, y, preferred_element_type=jnp.float32).astype(dtype)
+      return fusible_matmul(out, w, impl=impl)
+
+    @jit_no_excess_precision
+    def chained_matmul_ref(x, y, w):
+      return mm_ref(mm_ref(x, y), w)
+
+    fused_matmul = jax.jit(fuser.fuse(chained_matmul))
+    fused_out = fused_matmul(x, y, w)
+
+    if impl is not KernelImpl.CORE_MAP:
+      # Core_map has unsupported state discharge for some reason.
+      unfused_matmul = jax.jit(chained_matmul)
+      unfused_out = unfused_matmul(x, y, w)
+      if pltpu.get_tpu_info().generation >= 6:
+        # 256 MXU changes some tols.
+        np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
+      else:
+        np.testing.assert_array_equal(fused_out, unfused_out)
+    np.testing.assert_allclose(
+        fused_out,
+        chained_matmul_ref(x, y, w),
+        # Tol is higher because of double matmul
+        atol=0.4,
+    )
+
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_dot_transpose_dot_fusion(self, dtype, impl):
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+    w = jax.random.normal(k2, (512, 512), dtype)
+
+    def chained_matmul(x, y, w):
+      y = y.T
+      out = jnp.dot(x, y, preferred_element_type=jnp.float32).astype(dtype)
+      return fusible_matmul(out, w, impl=impl)
+
+    @jit_no_excess_precision
+    def chained_matmul_ref(x, y, w):
+      return mm_ref(mm_ref(x, y.T), w)
+
+    fused_matmul = jax.jit(fuser.fuse(chained_matmul))
+    fused_out = fused_matmul(x, y, w)
+
+    if impl is not KernelImpl.CORE_MAP:
+      # Core_map has unsupported state discharge for some reason.
+      unfused_matmul = jax.jit(chained_matmul)
+      unfused_out = unfused_matmul(x, y, w)
+      if pltpu.get_tpu_info().generation >= 6:
+        # 256 MXU changes some tols.
+        np.testing.assert_allclose(fused_out, unfused_out, atol=0.4)
+      else:
+        np.testing.assert_array_equal(fused_out, unfused_out)
+    np.testing.assert_allclose(
+        fused_out,
+        chained_matmul_ref(x, y, w),
+        # Tol is higher because of double matmul
+        atol=0.4,
+    )
+
 
 def dot_ref(x, y, *, bm=128, bk=128, bn=128):
   # Meant to precisely mimic the numerics of the kernel

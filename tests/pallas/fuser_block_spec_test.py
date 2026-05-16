@@ -1293,6 +1293,45 @@ class PullBlockSpecTest(jtu.JaxTestCase):
       )
       del kernel_fn, value_block_specs, in_block_specs
 
+  def test_dot_general_pull(self):
+    lhs_type = jax.ShapeDtypeStruct((512, 256), jnp.float32)
+    rhs_type = jax.ShapeDtypeStruct((256, 128), jnp.float32)
+
+    def f(x, y):
+      return jax.lax.dot_general(x, y, (((1,), (0,)), ((), ())))
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, lhs_type, rhs_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128, 64), lambda i, j, k: (i, j))
+    kernel_fn, (value_block_specs, *in_block_specs), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid_len=3,
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, lhs_type, rhs_type)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertLen(in_block_specs, 2)
+    lhs_block_spec, rhs_block_spec = in_block_specs
+
+    self.assertEqual(lhs_block_spec.block_shape, (128, 256))
+    self.assertEqual(lhs_block_spec.index_map(0, 1, 2), (0, 0))
+
+    self.assertEqual(rhs_block_spec.block_shape, (256, 64))
+    self.assertEqual(rhs_block_spec.index_map(0, 1, 2), (0, 1))
+
+    x = np.ones((128, 256), dtype=np.float32)
+    y = np.ones((256, 64), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y),
+        jax.lax.dot_general(x, y, (((1,), (0,)), ((), ()))),
+    )
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 
