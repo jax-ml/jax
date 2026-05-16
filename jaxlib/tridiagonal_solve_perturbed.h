@@ -74,14 +74,16 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
   using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
   using std::real;
   constexpr RealScalar one(1.0);
-  const RealScalar tiny = std::numeric_limits<RealScalar>::min();
-  const RealScalar small = one / std::numeric_limits<RealScalar>::max();
+  // std::numeric_limits<T>::min/max/epsilon are constexpr in C++11+,
+  // so these constants are evaluated at compile time.
+  constexpr RealScalar tiny = std::numeric_limits<RealScalar>::min();
+  constexpr RealScalar small = one / std::numeric_limits<RealScalar>::max();
   // The following logic is extracted from xLAMCH in LAPACK.
-  const RealScalar safemin =
+  constexpr RealScalar safemin =
       (small < tiny
            ? tiny
            : small * (one + std::numeric_limits<RealScalar>::epsilon()));
-  const RealScalar bignum = one / safemin;
+  constexpr RealScalar bignum = one / safemin;
 
   RealScalar abs_pivot = Eigen::numext::abs(pivot);
   if (abs_pivot >= one) {
