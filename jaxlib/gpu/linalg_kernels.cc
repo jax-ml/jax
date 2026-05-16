@@ -32,6 +32,7 @@ namespace JAX_GPU_NAMESPACE {
 namespace ffi = xla::ffi;
 
 namespace {
+// EVOLVE-BLOCK-START
 ffi::Error CholeskyUpdateFfiImpl(gpuStream_t stream, ffi::AnyBuffer matrix_in,
                                  ffi::AnyBuffer vector_in,
                                  ffi::Result<ffi::AnyBuffer> matrix_out,
@@ -73,15 +74,14 @@ ffi::Error CholeskyUpdateFfiImpl(gpuStream_t stream, ffi::AnyBuffer matrix_in,
         gpuMemcpyAsync(vector, vector_in.untyped_data(), vector_in.size_bytes(),
                        gpuMemcpyDeviceToDevice, stream)));
   }
-// EVOLVE-BLOCK-START
   for (auto n = 0; n < batch; ++n) {
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(LaunchCholeskyUpdateFfiKernel(
         stream, matrix, vector, size, is_single_precision)));
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   }
-// EVOLVE-BLOCK-END
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 }  // namespace
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(CholeskyUpdateFfi, CholeskyUpdateFfiImpl,
@@ -93,6 +93,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(CholeskyUpdateFfi, CholeskyUpdateFfiImpl,
                                   .Ret<ffi::AnyBuffer>());
 
 namespace {
+// EVOLVE-BLOCK-START
 ffi::Error LuPivotsToPermutationImpl(
     gpuStream_t stream, ffi::Buffer<ffi::DataType::S32> pivots,
     ffi::Result<ffi::Buffer<ffi::DataType::S32>> permutation) {
@@ -117,6 +118,7 @@ ffi::Error LuPivotsToPermutationImpl(
   FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 }  // namespace
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(LuPivotsToPermutation, LuPivotsToPermutationImpl,
@@ -126,6 +128,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(LuPivotsToPermutation, LuPivotsToPermutationImpl,
                                   .Ret<ffi::Buffer<ffi::DataType::S32>>());
 
 namespace {
+// EVOLVE-BLOCK-START
 ffi::Error TridiagonalSolvePerturbedImpl(
     gpuStream_t stream, ffi::ScratchAllocator scratch, ffi::AnyBuffer subdiag,
     ffi::AnyBuffer diag, ffi::AnyBuffer superdiag, ffi::AnyBuffer rhs,
@@ -177,6 +180,7 @@ ffi::Error TridiagonalSolvePerturbedImpl(
   FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 }  // namespace
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(TridiagonalSolvePerturbedFfi,

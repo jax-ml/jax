@@ -68,6 +68,7 @@ namespace jax {
 // the i'th row of the solution as rhs[i,:] * (1 / pivot). This logic is
 // extracted from the LAPACK routine xLAGTS.
 template <typename Scalar, typename Derived>
+// EVOLVE-BLOCK-START
 EIGEN_DEVICE_FUNC void MaybePerturbPivot(
     typename Eigen::NumTraits<Scalar>::Real perturb, Scalar& pivot,
     Eigen::DenseBase<Derived>& rhs_row) {
@@ -85,7 +86,6 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
            : small * (one + std::numeric_limits<RealScalar>::epsilon()));
   constexpr RealScalar bignum = one / safemin;
 
-// EVOLVE-BLOCK-START
   RealScalar abs_pivot = Eigen::numext::abs(pivot);
   if (abs_pivot >= one) {
     return;
@@ -101,7 +101,6 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
   const RealScalar max_factor = rhs_row.derived().array().abs().maxCoeff();
 
   while (abs_pivot < one && !stop) {
-// EVOLVE-BLOCK-START
     if (abs_pivot < safemin) {
       if (abs_pivot == RealScalar(0.0) || max_factor * safemin > abs_pivot) {
         pivot += perturb;
@@ -118,10 +117,9 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
       stop = true;
     }
     abs_pivot = Eigen::numext::abs(pivot);
-// EVOLVE-BLOCK-END
   }
-// EVOLVE-BLOCK-END
 }
+// EVOLVE-BLOCK-END
 
 // This function roughly follows LAPACK's xLAGTF + xLAGTS routines.
 //
@@ -145,12 +143,12 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
 // and pivoting information, and the forward solve is done on-the-fly
 // during factorization, instead of requiring a separate loop.
 template <typename Scalar>
+// EVOLVE-BLOCK-START
 EIGEN_DEVICE_FUNC void
 SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
     int n, int k_rhs, const Scalar* subdiag_ptr, const Scalar* diag_ptr,
     const Scalar* superdiag_ptr, const Scalar* rhs_ptr, Scalar* x_ptr,
     Scalar* u_workspace, Scalar* rhs_row_workspace) {
-// EVOLVE-BLOCK-START
   using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
   using InputMatrixMap =
       Eigen::Map<const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic,
@@ -203,14 +201,17 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
   RealScalar scale1 = Eigen::numext::abs(u(0, 0)) + Eigen::numext::abs(u(0, 1));
   x.row(0) = rhs.row(0);
 
-// EVOLVE-BLOCK-START
   for (int k = 0; k < n - 1; ++k) {
+    // The non-zeros in the (k+1)-st row are
+    //    [ ... subdiag(k+1) (diag(k+1)-shift) superdiag(k+1) ... ]
     u(k + 1, 0) = diag(k + 1);
     RealScalar scale2 =
         Eigen::numext::abs(subdiag(k + 1)) + Eigen::numext::abs(u(k + 1, 0));
     if (k < n - 2) scale2 += Eigen::numext::abs(superdiag(k + 1));
 
     if (subdiag(k + 1) == zero) {
+      // The sub-diagonal in the k+1 row is already zero. Move to the next
+      // row.
       scale1 = scale2;
       u(k + 1, 1) = superdiag(k + 1);
       u(k, 2) = zero;
@@ -221,6 +222,7 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
       const RealScalar piv2 = Eigen::numext::abs(subdiag(k + 1)) / scale2;
 
       if (piv2 <= piv1) {
+        // No row pivoting needed.
         scale1 = scale2;
         const Scalar factor = subdiag(k + 1) / u(k, 0);
         u(k + 1, 0) -= factor * u(k, 1);
@@ -228,6 +230,7 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
         u(k, 2) = zero;
         x.row(k + 1) = rhs.row(k + 1) - factor * x.row(k);
       } else {
+        // Swap rows k and k+1
         const Scalar factor = u(k, 0) / subdiag(k + 1);
         const Scalar utmp = u(k, 1);
         u(k, 0) = subdiag(k + 1);
@@ -246,14 +249,11 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
       }
     }
     if (k < n - 2) {
-// EVOLVE-BLOCK-START
       for (int i = 0; i < 3; ++i) {
         max_abs_u = std::max(max_abs_u, Eigen::numext::abs(u(k, i)));
       }
-// EVOLVE-BLOCK-END
     }
   }
-// EVOLVE-BLOCK-END
   max_abs_u = std::max(max_abs_u, Eigen::numext::abs(u(n - 1, 0)));
 
   RealScalar eps = std::numeric_limits<RealScalar>::epsilon();
@@ -277,16 +277,14 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
     x.row(n - 2) = rhs_row * (Scalar(1.0) / p);
   }
 
-// EVOLVE-BLOCK-START
   for (int k = n - 3; k >= 0; --k) {
     p = u(k, 0);
     rhs_row = x.row(k) - u(k, 1) * x.row(k + 1) - u(k, 2) * x.row(k + 2);
     MaybePerturbPivot(std::copysign(perturb, real(p)), p, rhs_row);
     x.row(k) = rhs_row * (Scalar(1.0) / p);
   }
-// EVOLVE-BLOCK-END
-// EVOLVE-BLOCK-END
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace jax
 

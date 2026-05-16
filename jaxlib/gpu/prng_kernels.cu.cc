@@ -25,6 +25,7 @@ namespace JAX_GPU_NAMESPACE {
 namespace {
 
 __global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
+// EVOLVE-BLOCK-START
                                    const std::uint32_t* key1,
                                    const std::uint32_t* data0,
                                    const std::uint32_t* data1,
@@ -69,43 +70,33 @@ __global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
     // We are conservative and use 20 rounds.
     x[0] = x[0] + ks[0];
     x[1] = x[1] + ks[1];
-// EVOLVE-BLOCK-START
     for (int i = 0; i < 4; ++i) {
       round(x, rotations[i]);
     }
-// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[1];
     x[1] = x[1] + ks[2] + 1u;
-// EVOLVE-BLOCK-START
     for (int i = 4; i < 8; ++i) {
       round(x, rotations[i]);
     }
-// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[2];
     x[1] = x[1] + ks[0] + 2u;
-// EVOLVE-BLOCK-START
     for (int i = 0; i < 4; ++i) {
       round(x, rotations[i]);
     }
-// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[0];
     x[1] = x[1] + ks[1] + 3u;
-// EVOLVE-BLOCK-START
     for (int i = 4; i < 8; ++i) {
       round(x, rotations[i]);
     }
-// EVOLVE-BLOCK-END
 
     x[0] = x[0] + ks[1];
     x[1] = x[1] + ks[2] + 4u;
-// EVOLVE-BLOCK-START
     for (int i = 0; i < 4; ++i) {
       round(x, rotations[i]);
     }
-// EVOLVE-BLOCK-END
 
     out0[idx] = x[0] + ks[2];
     out1[idx] = x[1] + ks[0] + 5u;
@@ -115,6 +106,7 @@ __global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
 }  // namespace
 
 void LaunchThreeFry2x32KernelFfi(gpuStream_t stream, std::int64_t n,
+// EVOLVE-BLOCK-START
                                  std::uint32_t* keys0, std::uint32_t* keys1,
                                  std::uint32_t* data0, std::uint32_t* data1,
                                  std::uint32_t* out0, std::uint32_t* out1) {
@@ -125,6 +117,7 @@ void LaunchThreeFry2x32KernelFfi(gpuStream_t stream, std::int64_t n,
                        stream>>>(keys0, keys1, data0, data1, out0, out1, n,
                                  nullptr);
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

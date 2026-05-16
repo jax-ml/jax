@@ -40,6 +40,7 @@ using InputMap = Eigen::Map<const MatrixT, Eigen::Aligned32>;
 template <typename MatrixT>
 using OutputMap = Eigen::Map<MatrixT, Eigen::Aligned32>;
 
+// EVOLVE-BLOCK-START
 template <typename ElementType, typename StorageType>
 static ffi::Future CsrSparseDenseKernelImpl(
     const InputMap<SparseMatrixType<ElementType, StorageType>>& lhs_matrix,
@@ -63,7 +64,6 @@ static ffi::Future CsrSparseDenseKernelImpl(
     return ffi::Future(promise);
   } else {
     std::vector<int64_t> batch_sizes;
-// EVOLVE-BLOCK-START
     {
       int64_t running_batch_nnz = 0;
       int64_t running_number_rows = 0;
@@ -85,12 +85,10 @@ static ffi::Future CsrSparseDenseKernelImpl(
         }
       }
     }
-// EVOLVE-BLOCK-END
 
     ffi::CountDownPromise promise(batch_sizes.size());
     ffi::Future future(promise);
     int64_t batch_start = 0;
-// EVOLVE-BLOCK-START
     for (int64_t size : batch_sizes) {
       thread_pool.Schedule([out_matrix, lhs_matrix, rhs_matrix, batch_start,
                             size, promise]() mutable {
@@ -100,10 +98,10 @@ static ffi::Future CsrSparseDenseKernelImpl(
       });
       batch_start += size;
     }
-// EVOLVE-BLOCK-END
     return future;
   }
 }
+// EVOLVE-BLOCK-END
 
 template <typename ElementType, typename StorageType>
 static ffi::Future CsrSparseDenseKernelTypedDispatch(
