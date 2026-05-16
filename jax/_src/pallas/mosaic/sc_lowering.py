@@ -13,20 +13,28 @@
 # limitations under the License.
 """Lowering for Pallas TPU SparseCore."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
-from typing import Any, NoReturn, cast
+import itertools
+from typing import Any, cast, NoReturn
 
+from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import lax
+from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
 from jax._src import numpy as jnp
+from jax._src import source_info_util
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
 from jax._src.pallas import core as pallas_core
@@ -35,6 +43,7 @@ from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering as tc_lowering
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import sc_core
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax.experimental.mosaic.dialects import tpu
@@ -54,9 +63,433 @@ LoweringRuleContext = tc_lowering.LoweringRuleContext
 MosaicGridMapping = tc_lowering.MosaicGridMapping
 
 _dtype_to_ir_type = tc_lowering._dtype_to_ir_type
+_make_index = tc_lowering._make_index
 _transform_ref = tc_lowering._transform_ref
 _dma_unflatten = tpu_primitives._dma_unflatten
 _get_ref_and_transforms = tpu_primitives._get_ref_and_transforms
+_get_ref = tpu_primitives._get_ref
+
+
+def dynamic_shape_replacement_fn(x):
+  return x
+
+
+def _block_spec_from_block_mapping(
+    bm: pallas_core.BlockMapping,
+    which_parallel: Sequence[bool],
+    default_memory_space: MemorySpace,
+    grid: tuple[int | Any, ...] = (),
+) -> pallas_core.BlockSpec:
+  eval_index_map = functools.partial(
+      jax_core.eval_jaxpr,
+      bm.index_map_jaxpr.jaxpr,
+      bm.index_map_jaxpr.consts,
+  )
+
+  def index_map(*indices):
+    # Inject the parallel indices into the sequential ones coming from
+    # `emit_pipeline`.
+    new_indices = util.merge_lists(
+        which_parallel,
+        indices,
+        [
+            0 if isinstance(g, int) and g == 1
+            else pallas_primitives.program_id(axis - 1)
+            for axis, is_parallel, g in zip(
+                itertools.accumulate(which_parallel), which_parallel, grid
+            )
+            if is_parallel
+        ],
+    )
+    return eval_index_map(*new_indices)
+
+  memory_space = bm.transformed_block_aval.memory_space
+  if memory_space is None or memory_space is pallas_core.MemorySpace.DEFAULT:
+    memory_space = default_memory_space
+
+  return pallas_core.BlockSpec(
+      bm.block_shape, index_map, memory_space=memory_space
+  )
+
+
+def _trace_index_map_to_jaxpr(
+    index_map: Callable[..., Any],
+    debug_info: jax_core.DebugInfo,
+    index_map_tree: Any,
+    index_map_avals: Sequence[jax_core.AbstractValue],
+) -> jax_core.ClosedJaxpr:
+  flat_fun, _ = api_util.flatten_fun(
+      lu.wrap_init(index_map, debug_info=debug_info), index_map_tree
+  )
+  index_map_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      flat_fun, index_map_avals
+  )
+  return jax_core.ClosedJaxpr(index_map_jaxpr, consts)
+
+
+def lower_pipelined_jaxpr_to_module(
+    lowering_context: mlir.LoweringRuleContext,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.CoreType,
+    mesh: mesh_lib.Mesh | None = None,
+    dynamic_shape_replacement_enabled: bool = False,
+    use_tc_tiling: bool | None = None,
+    needs_layout_passes: bool = False,
+) -> ir.Module:
+  module = ir.Module.create()
+  lower_pipelined_jaxpr_into_module(
+      lowering_context,
+      module,
+      grid_mapping,
+      jaxpr,
+      name=mlir.sanitize_name(jaxpr.debug_info.func_name),
+      dimension_semantics=dimension_semantics,
+      kernel_type=kernel_type,
+      mesh=mesh,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+      use_tc_tiling=use_tc_tiling,
+      needs_layout_passes=needs_layout_passes,
+  )
+  return module
+
+
+def lower_pipelined_jaxpr_into_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.CoreType,
+    mesh: mesh_lib.Mesh | None = None,
+    dynamic_shape_replacement_enabled: bool = False,
+    use_tc_tiling: bool | None = None,
+    needs_layout_passes: bool = False,
+) -> None:
+  if dynamic_shape_replacement_enabled:
+    raise NotImplementedError(
+        "Dynamic shape replacement is not supported for SparseCore."
+    )
+
+  grid = grid_mapping.grid
+  block_mappings = grid_mapping.block_mappings
+
+  if dimension_semantics is None:
+    dimension_semantics = ("arbitrary",) * len(grid)
+  dimension_semantics: Sequence[tpu_core.LiteralDimensionSemantics] = tuple(  # pyrefly: ignore[redefinition]
+      map(tc_lowering._canonicalize_dimension_semantic, dimension_semantics)
+  )
+
+  is_semaphore = []
+  for bm in grid_mapping.block_mappings:
+    for bd in bm.block_shape:
+      if not isinstance(bd, (pallas_core.Squeezed, pallas_core.Blocked)):
+        raise NotImplementedError(
+            "Unsupported block dimension type: "
+            f"{type(bd)} for block shape: {bm.block_shape}"
+        )
+    is_semaphore.append(bm.block_aval.memory_space is MemorySpace.SEMAPHORE)
+
+  # Split out semaphores, because they do not need to be pipelined.
+  block_mappings, sem_block_mappings = util.partition_list(
+      is_semaphore, block_mappings
+  )
+  in_block_mappings, out_block_mappings = util.split_list(
+      block_mappings,
+      [grid_mapping.num_inputs - sum(is_semaphore[: grid_mapping.num_inputs])],
+  )
+
+  assert len(dimension_semantics) == len(grid)
+  which_parallel = [ds != "arbitrary" for ds in dimension_semantics]
+  sequential_grid = tuple(
+      d for axis, d in enumerate(grid) if not which_parallel[axis]
+  )
+  parallel_grid = tuple(
+      d for axis, d in enumerate(grid) if which_parallel[axis]
+  )
+
+  from jax._src.pallas.mosaic import pipeline  # pyrefly: ignore[missing-module-attribute]
+
+  def pipeline_fn(*refs_and_scratch):
+    refs, scratch_refs = util.split_list(refs_and_scratch, [len(is_semaphore)])
+    refs, sem_refs = util.partition_list(is_semaphore, refs)
+
+    def body_fn(indices, *refs):
+      program_ids_template = util.merge_lists(
+          which_parallel, indices, [None] * sum(which_parallel)
+      )
+      assert len(refs) + len(sem_refs) + len(scratch_refs) == len(jaxpr.invars)
+      return pallas_primitives._jaxpr_call(
+          jaxpr,
+          *util.merge_lists(is_semaphore, refs, sem_refs),
+          *scratch_refs,
+          program_ids=program_ids_template,
+      )
+
+    tiling = (
+        tpu_info.Tiling.COMPACT
+        if use_tc_tiling
+        else tpu_info.Tiling.SPARSE_CORE
+    )
+    make_block_spec = functools.partial(
+        _block_spec_from_block_mapping,
+        which_parallel=which_parallel,
+        default_memory_space=MemorySpace.SMEM
+        if kernel_type is tpu_core.CoreType.SC_SCALAR_SUBCORE
+        else MemorySpace.VMEM,
+        grid=grid,
+    )
+    pipeline.emit_pipeline(
+        body_fn,
+        grid=sequential_grid,  # pyrefly: ignore[bad-argument-type]
+        in_specs=map(make_block_spec, in_block_mappings),
+        out_specs=map(make_block_spec, out_block_mappings),
+        tiling=tiling,
+        _explicit_indices=True,
+    )(*refs)
+    return ()  # ``wrap_init`` does not support functions returning None.
+
+  with grid_mapping.trace_env():
+    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(
+            pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()
+        ),
+        util.merge_lists(
+            is_semaphore,
+            [
+                MemorySpace.HBM(
+                    bm.array_aval.shape, bm.array_aval.dtype
+                ).get_ref_aval()
+                for bm in block_mappings
+            ],
+            [bm.transformed_block_aval for bm in sem_block_mappings],
+        )
+        + jaxpr.in_avals[grid_mapping.slice_scratch_ops],
+    )
+    assert not new_consts
+
+  parallel_index_map_avals, parallel_index_map_tree = tree_util.tree_flatten(
+      ((jax_core.ShapedArray((), jnp.int32),) * len(parallel_grid), {})
+  )
+  parallel_block_mappings = []
+  for bm in block_mappings:
+    debug_info = bm.index_map_jaxpr.jaxpr.debug_info
+    if debug_info.arg_names is not None:
+      debug_info = debug_info._replace(
+          arg_names=tuple(
+              name
+              for name, is_parallel in zip(
+                  debug_info.arg_names, which_parallel
+              )
+              if is_parallel
+          )
+      )
+    with pallas_core.tracing_grid_env(
+        parallel_grid, grid_mapping.vmapped_dims
+    ):
+      new_index_map_jaxpr = _trace_index_map_to_jaxpr(
+          lambda *args: (0,) * len(bm.block_shape),
+          debug_info,
+          parallel_index_map_tree,
+          parallel_index_map_avals,
+      )
+    parallel_block_mappings.append(
+        bm.replace(
+            index_map_jaxpr=new_index_map_jaxpr,
+            block_shape=tuple(map(pallas_core.Blocked, bm.array_aval.shape)),
+            transformed_block_aval=MemorySpace.HBM(
+                bm.array_aval.shape, bm.array_aval.dtype
+            ).get_ref_aval(),
+        )
+    )
+
+  grid_mapping = grid_mapping.replace(
+      grid=parallel_grid,
+      index_map_avals=parallel_index_map_avals,
+      index_map_tree=parallel_index_map_tree,
+      block_mappings=tuple(
+          util.merge_lists(
+              is_semaphore, parallel_block_mappings, sem_block_mappings
+          )
+      ),
+  )
+  dimension_semantics = [
+      ds
+      for axis, ds in enumerate(dimension_semantics)
+      if which_parallel[axis]
+  ]
+  with grid_mapping.trace_env():
+    lower_jaxpr_into_module(
+        lowering_context,
+        module,
+        grid_mapping,
+        new_jaxpr,
+        name=name,
+        dimension_semantics=dimension_semantics,
+        kernel_type=kernel_type,
+        mesh=mesh,
+        needs_layout_passes=needs_layout_passes,
+    )
+
+
+def lower_jaxpr_into_module(
+    lowering_context: mlir.LoweringRuleContext,
+    module: ir.Module,
+    grid_mapping: pallas_core.GridMapping,
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    dimension_semantics: Sequence[tpu_core.DimensionSemantics] | None,
+    kernel_type: tpu_core.CoreType,
+    mesh: mesh_lib.Mesh | None = None,
+    dynamic_shape_replacement_enabled: bool = False,
+    needs_layout_passes: bool = False,
+):
+  """Lowers a Jaxpr to a Mosaic SparseCore module."""
+  if dynamic_shape_replacement_enabled:
+    raise NotImplementedError(
+        "Dynamic shape replacement is not supported for SparseCore."
+    )
+
+  backend = lowering_context.module_context.get_backend(optional=True)
+  mosaic_grid_mapping = MosaicGridMapping(
+      jaxpr,
+      grid_mapping,
+      dimension_semantics,
+      mesh=mesh,
+      kernel_type=kernel_type,
+      dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+  )
+  sym_tab = ir.SymbolTable(module.operation)
+  func_op = lower_jaxpr_to_func(
+      jaxpr,
+      name=name,
+      kernel_type=kernel_type,
+      mosaic_grid_mapping=mosaic_grid_mapping,
+      forward_compatible=lowering_context.is_forward_compat(),
+      backend=backend,
+      needs_layout_passes=needs_layout_passes,
+  )
+  module.body.append(func_op)
+  sym_tab.insert(func_op)
+  assert mosaic_grid_mapping.grid is not None
+  assert all(isinstance(d, int) for d in mosaic_grid_mapping.grid)
+  func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(
+      cast(tuple[int, ...], mosaic_grid_mapping.grid)
+  )
+  func_op.attributes["dimension_semantics"] = (
+      mosaic_grid_mapping.get_dimension_semantics()
+  )
+  if not mosaic_grid_mapping.grid:
+    # No need for "window_params" if the grid is empty.
+    return
+  window_params = []
+  for i, bm in enumerate(grid_mapping.block_mappings):
+    func_name = f"{name}_transform_{i}"
+    mlir_func = tc_lowering.lower_jaxpr_to_transform_func(
+        bm.index_map_jaxpr.jaxpr,
+        bm.block_aval,
+        name=func_name,
+        mosaic_grid_mapping=mosaic_grid_mapping,
+        kernel_type=kernel_type,
+        forward_compatible=lowering_context.is_forward_compat(),
+        backend=backend,
+        dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+    )
+    assert mlir_func.verify(), mlir_func
+    module.body.append(mlir_func)
+    assert func_name not in sym_tab
+    sym_tab.insert(mlir_func)
+
+    block_shape = list(pallas_core._get_block_shape(bm.block_shape))
+    block_params = dict[str, ir.Attribute](
+        window_bounds=ir.DenseI64ArrayAttr.get(block_shape),
+        transform_indices=ir.FlatSymbolRefAttr.get(func_name),
+    )
+    window_params.append(ir.DictAttr.get(block_params))
+  func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
+
+
+def lower_jaxpr_to_func(
+    jaxpr: jax_core.Jaxpr,
+    *,
+    name: str,
+    kernel_type: tpu_core.CoreType,
+    mosaic_grid_mapping: MosaicGridMapping,
+    forward_compatible: bool,
+    backend: Any | None,
+    needs_layout_passes: bool = False,
+) -> func.FuncOp:
+  """Lowers a Jaxpr to a Mosaic SparseCore function."""
+  num_grid = len(mosaic_grid_mapping.grid_types)
+  num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
+  if num_scalar_prefetch:
+    raise NotImplementedError("Scalar prefetch not supported.")
+  num_scratch = len(mosaic_grid_mapping.scratch_types)
+  arg_types = [
+      *mosaic_grid_mapping.grid_types,
+      *mosaic_grid_mapping.scalar_prefetch_types,
+      *mosaic_grid_mapping.operand_types,
+      *mosaic_grid_mapping.scratch_types,
+  ]
+  arg_block_shapes = [
+      *mosaic_grid_mapping.scalar_prefetch_block_shapes,
+      *mosaic_grid_mapping.operand_block_shapes,
+      *mosaic_grid_mapping.scratch_block_shapes,
+  ]
+
+  def body_func(*args: ir.Value):
+    grid_indices, scalar_prefetch, operands_and_scratch = util.split_list(
+        args, [num_grid, num_scalar_prefetch]
+    )
+    grid_indices = mosaic_grid_mapping.get_grid_indices(
+        grid_indices, maybe_include_mapped_dims=False
+    )
+    jaxpr_indices = tuple(
+        idx
+        for i, idx in enumerate(grid_indices)
+        if i not in mosaic_grid_mapping.vmapped_dims
+    )
+    lowering_context = LoweringContext(
+        mosaic_grid_mapping.grid,  # pyrefly: ignore[bad-argument-type]
+        mosaic_grid_mapping.grid_names,
+        mosaic_grid_mapping.vmapped_dims,
+        jaxpr_indices,
+        arg_block_shapes,
+        source_info_util.NameStack(),
+        jax_mesh_context=mosaic_grid_mapping.mesh_info,
+        traceback_caches=mlir.TracebackCaches(),
+        kernel_type=kernel_type,
+        forward_compatible=forward_compatible,
+        backend=backend,
+        dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        needs_layout_passes=needs_layout_passes,
+    )
+    return tc_lowering.jaxpr_subcomp(
+          lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
+    )
+
+  body: Any = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
+  func_op = cast(func.FuncOp, body.func_op)
+  func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
+      f"#tpu.core_type<{kernel_type}>"
+  )
+  func_op.attributes["scratch_operands"] = ir.IntegerAttr.get(
+      ir.IntegerType.get_signless(64), num_scratch
+  )
+
+  try:
+    func_op.verify()
+  except Exception as e:
+    raise ValueError(
+        f"Body failed to verify: {func_op}.\nThis is an internal error. Please"
+        " report a bug at https://github.com/jax-ml/jax/issues/new/choose."
+    ) from e
+  return func_op
 
 
 register_lowering_rule = functools.partial(
