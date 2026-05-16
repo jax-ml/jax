@@ -102,6 +102,8 @@ class CompilerParams:
     internal_scratch_in_bytes: The size of the internal scratch space used by
       Mosaic.
     serialization_format: The serialization format for the kernel body.
+    kernel_type: Specify if the kernel is meant to run on TensorCore or one of
+      the SparseCores
     disable_bounds_checks: Disable bounds checks in the kernel.
     disable_semaphore_checks: Disable semaphore checks in the kernel.
     skip_device_barrier: Skip the default device barrier for the kernel.
@@ -130,13 +132,14 @@ class CompilerParams:
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
+  kernel_type: CoreType = CoreType.TC
   disable_bounds_checks: bool = False
   disable_semaphore_checks: bool = False
   skip_device_barrier: bool = False
   allow_collective_id_without_custom_barrier: bool = False
   shape_invariant_numerics: bool = True
   use_tc_tiling_on_sc: bool | None = None
-  needs_layout_passes: bool = True
+  needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
 
   def __init__(
@@ -149,13 +152,14 @@ class CompilerParams:
       flags: Mapping[str, Any] | None = None,
       internal_scratch_in_bytes: int | None = None,
       serialization_format: int = 1,
+      kernel_type: CoreType = CoreType.TC,
       disable_bounds_checks: bool = False,
       disable_semaphore_checks: bool = False,
       skip_device_barrier: bool = False,
       allow_collective_id_without_custom_barrier: bool = False,
       shape_invariant_numerics: bool = True,
       use_tc_tiling_on_sc: bool | None = None,
-      needs_layout_passes: bool = True,
+      needs_layout_passes: bool | None = None,
       fuse_transposed_lhs_in_matmul: bool = False,
   ):
     object.__setattr__(
@@ -178,6 +182,7 @@ class CompilerParams:
         self, "internal_scratch_in_bytes", internal_scratch_in_bytes
     )
     object.__setattr__(self, "serialization_format", serialization_format)
+    object.__setattr__(self, "kernel_type", kernel_type)
     object.__setattr__(self, "disable_bounds_checks", disable_bounds_checks)
     object.__setattr__(
         self, "disable_semaphore_checks", disable_semaphore_checks

@@ -182,10 +182,7 @@ class DebugPrintTest(PallasSCTest):
     debug_int = 1234552
     debug_float = 12344.625
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_hbm_ref, _):
       pl.debug_print("Memref", x_hbm_ref)
       x = x_hbm_ref[...] + 100
@@ -233,7 +230,6 @@ class DebugPrintTest(PallasSCTest):
         mesh=plsc.ScalarSubcoreMesh(
             axis_name="x", num_cores=self.sc_info.num_cores
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(int32s_hbm_ref, int16s_hbm_ref, int8s_hbm_ref, o_hbm_ref):
       @functools.partial(
@@ -410,7 +406,8 @@ class VectorSubcoreTest(PallasSCTest):
       self.skipTest("Needs newer libtpu")
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=(100,), dtype=jnp.int32)
+        out_shape=jax.ShapeDtypeStruct(shape=(100,), dtype=jnp.int32),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
@@ -421,10 +418,7 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.product(major_dim=[2, 3, 4])
   def test_get_index(self, major_dim):
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(
-            shape=(self.num_lanes,), dtype=jnp.int32
-        ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        out_shape=jax.ShapeDtypeStruct(shape=(self.num_lanes,), dtype=jnp.int32),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = lax.fori_loop(
@@ -879,10 +873,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
 
@@ -895,8 +886,7 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), x.dtype),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), x.dtype)
     )
     def kernel(x_ref, indices0_ref, indices1_ref, o_ref):
       o_ref[...] = plsc.load_gather(
@@ -914,10 +904,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
       for i in range(num_steps):
@@ -934,10 +921,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       o_ref[...] = plsc.load_gather(
           x_ref, [indices_ref[...]], mask=mask_fn(x_ref[...])
@@ -952,10 +936,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       plsc.store_scatter(o_ref, [indices_ref[...]], x_ref[...])
 
@@ -970,10 +951,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jnp.zeros_like(o_ref)
@@ -992,10 +970,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       indices = indices_ref[...]
       for i in range(num_steps):
@@ -1015,10 +990,7 @@ class VectorSubcoreTest(PallasSCTest):
         jax.random.key(42), jnp.arange(self.num_lanes)
     )
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, o_ref):
       x = x_ref[...]
       o_ref[...] = jnp.ones_like(o_ref)
@@ -1033,10 +1005,7 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.parameters(*MASK_FNS)
   def test_load_expanded(self, mask_fn):
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(
-            shape=(self.num_lanes,), dtype=jnp.int32
-        ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        out_shape=jax.ShapeDtypeStruct(shape=(self.num_lanes,), dtype=jnp.int32)
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.load_expanded(x_ref.at[...], mask=mask_fn(x_ref[...]))
@@ -1049,10 +1018,7 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.parameters(*MASK_FNS)
   def test_store_compressed(self, mask_fn):
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(
-            shape=(self.num_lanes,), dtype=jnp.int32
-        ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        out_shape=jax.ShapeDtypeStruct(shape=(self.num_lanes,), dtype=jnp.int32)
     )
     def kernel(x_ref, o_ref):
       x = x_ref[...]
@@ -1083,8 +1049,7 @@ class VectorSubcoreTest(PallasSCTest):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(
             shape=(self.num_lanes,), dtype=jnp.int32
-        ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        )
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.zeros_like(o_ref)
@@ -1114,8 +1079,7 @@ class VectorSubcoreTest(PallasSCTest):
     )
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(shape=new_shape, dtype=new_dtype),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        out_shape=jax.ShapeDtypeStruct(shape=new_shape, dtype=new_dtype)
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.bitcast(x_ref[...], o_ref.dtype)
@@ -1126,7 +1090,6 @@ class VectorSubcoreTest(PallasSCTest):
   def test_lax_bitcast(self):
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.uint32),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...].view(o_ref.dtype)
@@ -1146,9 +1109,7 @@ class VectorSubcoreTest(PallasSCTest):
 
   def test_store_to_bitcast(self):
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(
-            shape=(1, self.num_lanes), dtype=jnp.int32
-        ),
+        out_shape=jax.ShapeDtypeStruct(shape=(1, self.num_lanes), dtype=jnp.int32)
     )
     def kernel(o_ref):
       o_ref_i16 = o_ref.bitcast(jnp.int16)
@@ -1166,8 +1127,7 @@ class VectorSubcoreTest(PallasSCTest):
     shape = (self.num_lanes,)
 
     @self.vector_subcore_kernel(
-        out_shape=(jax.ShapeDtypeStruct((self.num_lanes,), dtype),) * 2,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        out_shape=(jax.ShapeDtypeStruct((self.num_lanes,), dtype),) * 2
     )
     def kernel(a_ref, b_ref, oa_ref, ob_ref):
       ab = plsc.pack(a_ref[...], b_ref[...], format=pack_format)
@@ -1188,7 +1148,6 @@ class VectorSubcoreTest(PallasSCTest):
             jax.ShapeDtypeStruct(shape, jnp.int32),
             jax.ShapeDtypeStruct(shape, jnp.int32),
         ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, counts_ref, mask_ref):
       counts_ref[...], mask = plsc.scan_count(x_ref[...])
@@ -1215,10 +1174,7 @@ class VectorSubcoreTest(PallasSCTest):
     key = jax.random.key(42)
     x = jax.random.randint(key, [self.num_lanes], 0, 100)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       mask = x_ref[...] < 50
       # TODO: b/434208146 - Test with reduce!=1 when we support v6e packed masks
@@ -1232,10 +1188,7 @@ class VectorSubcoreTest(PallasSCTest):
     key = jax.random.key(42)
     x = jax.random.randint(key, [self.num_lanes], 0, 100)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.arange(self.num_lanes) + x_ref[...]
 
@@ -1244,10 +1197,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_write_to_transformed_ref(self):
     x = jnp.arange(2 * self.num_lanes)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       plsc.store_compressed(
           o_ref.at[pl.ds(5, self.num_lanes)],
@@ -1262,10 +1212,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_load_transformed_ref(self):
     x = jnp.arange(2 * self.num_lanes)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       o_ref[pl.ds(5, self.num_lanes)] = plsc.load_expanded(
           x_ref.at[pl.ds(2, self.num_lanes)],
@@ -1360,10 +1307,7 @@ class VectorSubcoreTest(PallasSCTest):
       raise NotImplementedError("Unsupported case")
     x = jnp.array(data)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       mask = x_ref[...] == 1
       # TODO: b/434208146 - Test with reduce!=1 when we support v6e packed masks
@@ -1525,10 +1469,8 @@ class VectorSubcoreTest(PallasSCTest):
                 num_cores=1,
                 num_subcores=num_subcores,
             ),
-            compiler_params=pltpu.CompilerParams(
-                #needs_layout_passes=False,
-                use_tc_tiling_on_sc=self.USE_TC_TILING
-            ),
+            compiler_params=pltpu.CompilerParams().replace(
+                use_tc_tiling_on_sc=self.USE_TC_TILING)
         )(arr)
         self.assertEqual(out.aval.mat.varying, {'x', 'y'})
         return out
@@ -1659,9 +1601,7 @@ class VectorSubcoreTest(PallasSCTest):
           effectful_op(scratch_ref[...])
           pltpu.sync_copy(scratch_ref, o_ref)
         pl.run_scoped(with_scratch, pltpu.VMEM(x.shape, x.dtype))
-      pl.core_map(
-          mesh, compiler_params=pltpu.CompilerParams(needs_layout_passes=False)
-      )(lambda: body(*refs))
+      pl.core_map(mesh)(lambda: body(*refs))
 
     _, out = jax.jit(state_discharge.run_state(stateful))(
         (x, jnp.empty_like(x)))
@@ -1695,9 +1635,9 @@ class VectorSubcoreTest(PallasSCTest):
       ((2, 10, 16), (2, 160), jnp.bfloat16),
   )
   def test_reshape(self, in_shape, out_shape, dtype):
-
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(out_shape, dtype)
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = (
@@ -1711,10 +1651,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_cumsum(self, dtype):
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.cumsum(x_ref[...])
 
@@ -1724,10 +1661,7 @@ class VectorSubcoreTest(PallasSCTest):
                          op=[jnp.sum, jnp.max, jnp.min])
   def test_reductions(self, dtype, op):
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.full(o_ref.shape, op(x_ref[...]))
     np.testing.assert_array_equal(kernel(x)[0], op(x))
@@ -1739,10 +1673,7 @@ class VectorSubcoreTest(PallasSCTest):
   @parameterized.product(dtype=[jnp.bool], op=[jnp.all, jnp.any])
   def test_binary_reductions(self, dtype, op):
     x = jnp.ones(self.sc_info.num_lanes, dtype=dtype)
-    @self.vector_subcore_kernel(
-        out_shape=x.astype(jnp.int32),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x.astype(jnp.int32))
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.full(o_ref.shape, op(x_ref[...] != 0)).astype(jnp.int32)
     np.testing.assert_array_equal(
@@ -1767,10 +1698,7 @@ class VectorSubcoreTest(PallasSCTest):
   def test_masked_cumsum(self, dtype):
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.cumsum(x_ref[...], mask=(x_ref[...] % 2) == 1)
 
@@ -1781,10 +1709,7 @@ class VectorSubcoreTest(PallasSCTest):
     x = np.arange(self.sc_info.num_lanes, dtype=dtype)
     np.random.shuffle(x)
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.cummax(x_ref[...], mask=(x_ref[...] % 2) == 1)
 
@@ -1811,7 +1736,6 @@ class VectorSubcoreTest(PallasSCTest):
         grid=(nsubcores,),
         in_specs=[pl.BlockSpec([chunk_size * nchunks], lambda i: (i,))],
         out_specs=pl.BlockSpec([chunk_size * nchunks], lambda i: (i,)),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
     )
     def kernel(x_ref, o_ref):
       @pl.when(pl.program_id(0) < nsubcores)
@@ -1856,8 +1780,7 @@ class VectorSubcoreTest(PallasSCTest):
 
     with self.assertRaisesRegex(TypeError, expected_regex):
 
-      @self.vector_subcore_kernel(
-          out_shape=x)
+      @self.vector_subcore_kernel(out_shape=x)
       def kernel(x_ref, o_ref):
         @plsc.parallel_loop(0, 1, carry=carry_fn(x_ref))
         def _(i, carry):
@@ -2095,10 +2018,7 @@ class VectorSubcoreTest(PallasSCTest):
     indices[[0, -2]] = 2  # Verify non-unique works.
     indices[1] = -2  # Verify negative indices work.
 
-    @self.vector_subcore_kernel(
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, out_ref):
       out_ref[...] = x_ref[...][indices_ref[...]]
 
@@ -2114,7 +2034,10 @@ class VectorSubcoreTest(PallasSCTest):
     x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
     indices = jax.random.randint(key, shape, 0, shape[dim], dtype=np.int32)
 
-    @self.vector_subcore_kernel(out_shape=x)
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
     def kernel(x_ref, indices_ref, out_ref):
       out_ref[...] = jnp.take_along_axis(
           x_ref[...], indices_ref[...], axis=dim, mode="promise_in_bounds"
@@ -2140,10 +2063,7 @@ class VectorSubcoreTest(PallasSCTest):
     mask = np.random.choice([True, False], size=vec_dim) if use_mask else None
     maybe_mask_arg = (mask.astype(jnp.int32),) if use_mask else ()
 
-    @self.vector_subcore_kernel(
-        out_shape=(keys, values, *maybe_mask_arg),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=(keys, values, *maybe_mask_arg))
     def kernel(*args):
       if use_mask:
         mask_ref, *args, o_mask_ref = args
@@ -2184,10 +2104,7 @@ class VectorSubcoreTest(PallasSCTest):
     keys = np.arange(vec_dim, dtype=dtype)
     np.random.shuffle(keys)
 
-    @self.vector_subcore_kernel(
-        out_shape=(keys, keys),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=(keys, keys))
     def kernel(x_ref, o1_ref, o2_ref):
       o1_ref[...] = jnp.sort(x_ref[...], descending=True)
       o2_ref[...] = jnp.flip(x_ref[...], axis=-1)
@@ -2208,10 +2125,7 @@ class VectorSubcoreTest(PallasSCTest):
     values = [np.arange(vec_dim, dtype=dtype) for dtype in values_dtypes]
     _ = [np.random.shuffle(v) for v in values]
 
-    @self.vector_subcore_kernel(
-        out_shape=(keys, *values),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
-    )
+    @self.vector_subcore_kernel(out_shape=(keys, *values))
     def kernel(*args):
       keys_ref, *values_refs = args[: len(args) // 2]
       keys_out, *all_values_out = jax.lax.sort(
@@ -2354,7 +2268,10 @@ class VectorSubcoreTest(PallasSCTest):
     if len(shape) == 1 and jax.dtypes.itemsize_bits(dtype) < 32:
       self.skipTest("Load/store for interleaved-minor-128 unsupported")
 
-    @self.vector_subcore_kernel(out_shape=jax.ShapeDtypeStruct(shape, dtype))
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=True),
+    )
     def kernel(o_ref):
       o_ref[...] = jnp.full(shape, val, dtype=dtype)
 
@@ -2912,6 +2829,7 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
     return mesh
 
   def test_sparsecore_availability_check(self):
+
     @jax.jit
     @pl.kernel(
         out_type=jax.ShapeDtypeStruct((8,), jnp.float32),
