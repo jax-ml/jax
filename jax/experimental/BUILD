@@ -598,6 +598,7 @@ pytype_strict_library(
     visibility = [":serialize_executable_users"],
     deps = [
         "//jax",
+        "//jax/_src:config",
         "//jax/_src/lib",
     ],
 )

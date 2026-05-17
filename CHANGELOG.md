@@ -37,6 +37,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * Added `jax.random.key_dtype` to get the dtype corresponding to a PRNG
       implementation name.
     * `jax.random.key` and `wrap_key_data` now accept a `dtype` argument.
+  * The {func}`jax.experimental.serialize_executable.deserialize_and_load`
+    now enforces an allow list of modules that unpickle can access. This can
+    be controlled with the configuration value
+    {func}`config.jax_deserialize_executable_enforce_module_allowlist`.
 
 * Breaking changes
   * `with mesh:` context manager has been deprecated. Please use

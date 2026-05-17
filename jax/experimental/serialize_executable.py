@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import pickle
 import io
+import re
 
 import jax
+from jax._src import config
 from jax._src.lib import xla_client as xc
 from collections.abc import Sequence
 
@@ -78,6 +80,26 @@ def deserialize_and_load(serialized,
       loaded_compiled_obj, [], args_info, out_tree, no_kwargs=no_kwargs)
 
 
+ # This prevents arbitrary code execution from pickle payloads.
+_ALLOWED_CLASS_UNPICKLE: re.Pattern = re.compile(
+    '|'.join([
+        r'jax\._src\.interpreters\.pxla\.(UnloadedMeshExecutable\b|AllArgsInfo\b)',
+        r'(jax\.)?jaxlib\._jax\.DeviceList',
+        r'jax\._src\.core\.(ShapedArray|ManualAxisType|MemorySpace)',
+        r'jax\._src\.layout\.(Layout|AutoLayoutSingleton)',
+        r'jax\._src\.linear_util\.DebugInfo',
+        r'jax\._src\.mesh\.(AbstractMesh|AxisType|AbstractDevice|Mesh)',
+        r'jax\._src\.named_sharding\._unpickle_named_sharding',
+        r'jax\.P',
+        r'jax\.sharding\.PartitionSpec',
+        r'jax\._src\.partition_spec\.unpickle_pspec',
+        r'jax\._src\.sharding_impls\._unpickle_single_device_sharding',
+        r'jax\._src\.stages\.ArgInfo',
+        r'numpy\.(?:dtype|ndarray|(?:_?core\.multiarray\._reconstruct))',
+      ])
+)
+
+
 class _JaxPjrtPickler(pickle.Pickler):
   device_types = (xc.Device,)
   client_types = (xc.Client,)
@@ -110,6 +132,16 @@ class _JaxPjrtUnpickler(pickle.Unpickler):
             f'{(device_backend.platform, device_backend.platform_version)}')
     self.devices_by_id = {d.id: d for d in execution_devices}
     self.execution_devices = xc.DeviceList(tuple(execution_devices))
+
+  def find_class(self, module: str, name: str) -> type:
+    if (config.jax_deserialize_executable_enforce_module_allowlist.value and
+        not re.fullmatch(_ALLOWED_CLASS_UNPICKLE, f'{module}.{name}')):
+      raise ValueError(
+          'The serialized executable references disallowed name: '
+          f'{module}.{name}. File a bug with JAX if this is a JAX-internal '
+          'name. To disable this check use '
+          'config.jax_deserialize_executable_enforce_module_allowlist.')
+    return super().find_class(module, name)
 
   def persistent_load(self, pid):
     if pid[0] == 'exec':

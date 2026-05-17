@@ -1086,6 +1086,17 @@ jax_serialization_version = int_state(
     )
 )
 
+jax_deserialize_executable_enforce_module_allowlist = bool_state(
+    name='jax_deserialize_executable_enforce_module_allowlist',
+    default=True,
+    help=(
+        'When True, serialized_executable.deserialize_and_load will restrict '
+        'unpickle to load only specific classes during deserialization. '
+        'When False, unpickle is unrestricted, with the usual vulnerabilities '
+        'when using untrusted serialized artifacts.'
+    )
+)
+
 jax_export_calling_convention_version = int_state(
     name='jax_export_calling_convention_version',
     # Note: bump the default calling convention version at least one month after
