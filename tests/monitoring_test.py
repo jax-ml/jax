@@ -16,6 +16,7 @@
 Verify that callbacks are registered/uregistered and invoked correctly to record
 events.
 """
+import jax
 from absl.testing import absltest
 from jax import monitoring
 from jax._src import monitoring as jax_src_monitoring
@@ -30,12 +31,16 @@ class MonitoringTest(absltest.TestCase):
   def test_record_event(self):
     events = []
     counters = {}  # Map event names to frequency.
-    def increment_event_counter(event):
+    def increment_event_counter(event, **kwargs):
+      del kwargs
       if event not in counters:
         counters[event] = 0
       counters[event] += 1
+
     # Test that we can register multiple callbacks.
-    monitoring.register_event_listener(events.append)
+    monitoring.register_event_listener(
+        lambda event, **kwargs: events.append(event)
+    )
     monitoring.register_event_listener(increment_event_counter)
 
     monitoring.record_event("test_unique_event")
@@ -141,6 +146,36 @@ class MonitoringTest(absltest.TestCase):
 
     with self.assertRaises(AssertionError):
       jax_src_monitoring.unregister_event_listener(callback)
+
+  def test_monitoring_tags(self):
+    observed_kwargs = []
+
+    def callback(_event, _duration, **kwargs):
+      observed_kwargs.append(kwargs)
+
+    monitoring.register_event_duration_secs_listener(callback)
+    with monitoring.tags("key1=val1,key2=val2"):
+      monitoring.record_event_duration_secs("test_event", 1.0)
+    self.assertLen(observed_kwargs, 1)
+    self.assertEqual(
+        observed_kwargs[0], {"tags": {"key1": "val1", "key2": "val2"}}
+    )
+
+  def test_monitoring_tags_global(self):
+    observed_kwargs = []
+
+    def callback(_event, _duration, **kwargs):
+      observed_kwargs.append(kwargs)
+
+    monitoring.register_event_duration_secs_listener(callback)
+
+    # Update globally
+    jax.config.update('jax_monitoring_tags', 'x=10')
+    monitoring.record_event_duration_secs("test_event", 1.0)
+    self.assertEqual(observed_kwargs[-1]["tags"], {"x": "10"})
+
+    # Reset
+    jax.config.update('jax_monitoring_tags', '')
 
 if __name__ == "__main__":
   absltest.main()

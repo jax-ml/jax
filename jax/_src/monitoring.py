@@ -23,33 +23,56 @@ aggregation/exporting.
 
 from __future__ import annotations
 
+import threading
 from typing import Protocol
+
+from jax._src import config
 
 
 class EventListenerWithMetadata(Protocol):
 
-  def __call__(self, event: str, **kwargs: str | int) -> None:
+  def __call__(
+      self,
+      event: str,
+      tags: dict[str, str] | None = None,  # pytype: disable=redfined-outer-name
+      **kwargs: str | int,
+  ) -> None:
     ...
 
 
 class EventDurationListenerWithMetadata(Protocol):
 
-  def __call__(self, event: str, duration_secs: float,
-               **kwargs: str | int) -> None:
+  def __call__(
+      self,
+      event: str,
+      duration_secs: float,
+      tags: dict[str, str] | None = None,  # pytype: disable=redfined-outer-name
+      **kwargs: str | int,
+  ) -> None:
     ...
 
 
 class EventTimeSpanListenerWithMetadata(Protocol):
 
   def __call__(
-      self, event: str, start_time: float, end_time: float, **kwargs: str | int
+      self,
+      event: str,
+      start_time: float,
+      end_time: float,
+      tags: dict[str, str] | None = None,  # pytype: disable=redfined-outer-name
+      **kwargs: str | int,
   ) -> None:
     ...
+
 
 class ScalarListenerWithMetadata(Protocol):
 
   def __call__(
-      self, event: str, value: float | int, **kwargs: str | int,
+      self,
+      event: str,
+      value: float | int,
+      tags: dict[str, str] | None = None,  # pytype: disable=redfined-outer-name
+      **kwargs: str | int,
   ) -> None:
     ...
 
@@ -60,6 +83,52 @@ _event_time_span_listeners: list[EventTimeSpanListenerWithMetadata] = []
 _scalar_listeners: list[ScalarListenerWithMetadata] = []
 
 
+def parse_tags(tags_str: str) -> dict[str, str]:
+  parsed_tags = {}
+  if tags_str:
+    for pair in tags_str.split(','):
+      if '=' in pair:
+        key, val = pair.split('=', 1)
+        parsed_tags[key] = val
+      elif pair:
+        parsed_tags[pair] = ''
+  return parsed_tags
+
+
+_thread_local = threading.local()
+_global_parsed_tags = parse_tags('')
+
+
+def _update_global(val: str):
+  global _global_parsed_tags
+  _global_parsed_tags = parse_tags(val)
+
+
+def _update_thread_local(val: str | None):
+  if val is None:
+    _thread_local.parsed_tags = None
+  else:
+    _thread_local.parsed_tags = parse_tags(val)
+
+
+tags = config.string_state(
+    name='jax_monitoring_tags',
+    default='',
+    help='Tags for JAX monitoring, e.g., "key1=val1,key2=val2"',
+    update_global_hook=_update_global,
+    update_thread_local_hook=_update_thread_local,
+)
+
+
+def get_tags() -> dict[str, str]:
+  if (
+      hasattr(_thread_local, 'parsed_tags')
+      and _thread_local.parsed_tags is not None
+  ):
+    return _thread_local.parsed_tags
+  return _global_parsed_tags
+
+
 def record_event(event: str, **kwargs: str | int) -> None:
   """Record an event.
 
@@ -67,7 +136,7 @@ def record_event(event: str, **kwargs: str | int) -> None:
   same order across all invocations of this method for the same event.
   """
   for callback in _event_listeners:
-    callback(event, **kwargs)
+    callback(event, tags=get_tags(), **kwargs)
 
 
 def record_event_duration_secs(event: str, duration: float,
@@ -78,7 +147,7 @@ def record_event_duration_secs(event: str, duration: float,
   same order across all invocations of this method for the same event.
   """
   for callback in _event_duration_secs_listeners:
-    callback(event, duration, **kwargs)
+    callback(event, duration, tags=get_tags(), **kwargs)
 
 
 def record_event_time_span(
@@ -86,7 +155,7 @@ def record_event_time_span(
 ) -> None:
   """Record an event start and end time in seconds (float)."""
   for callback in _event_time_span_listeners:
-    callback(event, start_time, end_time, **kwargs)
+    callback(event, start_time, end_time, tags=get_tags(), **kwargs)
 
 
 def record_scalar(
@@ -94,7 +163,7 @@ def record_scalar(
 ) -> None:
   """Record a scalar summary value."""
   for callback in _scalar_listeners:
-    callback(event, value, **kwargs)
+    callback(event, value, tags=get_tags(), **kwargs)
 
 
 def register_event_listener(
