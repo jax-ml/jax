@@ -13,23 +13,23 @@
 # limitations under the License.
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 from contextlib import contextmanager
 from functools import partial
-from collections.abc import Sequence
 import json
 
 from jax._src import config
-from jax._src.lib import xla_client
-from jax._src import dispatch
 from jax._src import core
-from jax._src import linear_util as lu
+from jax._src import dispatch
+from jax._src.api_util import debug_info, flatten_axes
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
-from jax._src.tree_util import tree_flatten, tree_unflatten
-from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
-                           split_list, subs_list)
-from jax._src.api_util import debug_info, flatten_fun_nokwargs, flatten_axes
-from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.tree_util import FlatTree, tree_flatten, tree_unflatten
+from jax._src.util import ( safe_map, safe_zip,
+                           split_list, subs_list, unzip2, weakref_lru_cache)
 
 config_ext = xla_client._xla.config
 map, unsafe_map = safe_map, map
@@ -103,10 +103,15 @@ def _compute_on2(f, *, compute_type, out_memory_spaces, compiler_options):
 
 @weakref_lru_cache
 def _trace_to_jaxpr(fun, in_avals, in_tree, dbg):
-  f = lu.wrap_init(fun, debug_info=dbg)
-  f, out_tree = flatten_fun_nokwargs(f, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts), out_tree()
+
+  def flat_fun(*flat_args):
+    args = tree_unflatten(in_tree, flat_args)
+    return fun(*args)
+
+  closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+      flat_fun, FlatTree.flatten_args(*in_avals), dbg
+  )
+  return closed_jaxpr, out_avals.tree
 
 compute_on_p = core.Primitive('compute_on')
 compute_on_p.multiple_results = True
@@ -275,9 +280,10 @@ def _transpose_jaxpr(jaxpr, in_avals, in_tree):
     cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      transposed, FlatTree.flatten_args(*in_avals), dbg
+  )
+  return closed_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 
 def _compute_on_transpose(cts_in, *primals_in, jaxpr, compute_type,
                           out_memory_spaces, compiler_options_json):

@@ -526,11 +526,18 @@ class custom_partitioning:
       static_args = ()
       f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug), args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
-    flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
+    flat_fun_nokw, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
+
+    def flat_fun(*flat_args):
+      return flat_fun_nokw.call_wrapped(*flat_args)
+
     in_avals = [core.typeof(x) for x in args_flat]
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+      closed_jaxpr, _ = pe.trace_to_jaxpr(
+          flat_fun, tree_util.FlatTree.flatten_args(*in_avals), debug
+      )
+      jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
     assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 

@@ -38,7 +38,6 @@ from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import hashable_array
 from jax._src import jaxpr_util
-from jax._src import linear_util as lu
 from jax._src import literals
 from jax._src import path
 from jax._src import sharding_impls
@@ -59,6 +58,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import NamedSharding, SdyArray, SdyArrayList
 from jax._src.state.types import AbstractRef
+from jax._src.tree_util import FlatTree
 from jax._src.typing import ArrayLike
 from jax._src.util import foreach
 import numpy as np
@@ -2520,11 +2520,14 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   as `avals_out`."""
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params,
-        debug_info=api_util.debug_info("lower_fun", fun, args, {}))
-
-    jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
-        wrapped_fun, ctx.avals_in, lower=True)
+    f_to_trace = partial(f, **params)
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        f_to_trace,
+        FlatTree.flatten_args(*ctx.avals_in),
+        api_util.debug_info("lower_fun", fun, args, {}),
+        requires_low=True,
+    )
+    jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
       from jax._src.interpreters import pxla  # pyrefly: ignore[missing-module-attribute]
