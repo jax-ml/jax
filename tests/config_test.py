@@ -122,6 +122,11 @@ class ConfigTest(jtu.JaxTestCase):
       cloud_tpu_init()
       self.assertEqual(config.jax_platforms.value, 'platform_A')
 
+  def test_trace_context_names(self):
+    from jax._src.lib import jaxlib_extension_version  # type: ignore
+    if jaxlib_extension_version < 455: self.skipTest('jaxlib < 455')
+    self.assertLen(config.trace_context_names(), len(config.trace_context()))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

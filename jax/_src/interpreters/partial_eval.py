@@ -48,6 +48,7 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            weakref_lru_cache, multi_weakref_lru_cache,
                            subs_list, foreach, test_event)
+from jax._src.lib import jaxlib_extension_version
 
 
 map, unsafe_map = safe_map, map
@@ -2176,20 +2177,45 @@ def explain(keys, fun, in_avals, debug_info, *context, **_):
   return logger.log(logging.WARNING, "\n".join(msg))
 
 def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
+  """Explain the diff between two tracing cache keys.
+  Returns:
+    A tuple of (severity, num_diffs, explanation) for the diff between the two
+    keys. Severity is an int, where lower is better.
+  """
   new_ctx, (new_tree, new_dbg, *_), () = new_key
   old_ctx, (old_tree, old_dbg, *_), () = old_key
-  return (diff_ctx(new_ctx, old_ctx) or
+  return (diff_tracing_ctx(new_ctx, old_ctx) or
           diff_trees(new_tree.tree, old_tree.tree) or
           diff_debug(new_dbg, old_dbg) or
           diff_types(new_dbg, new_tree.vals, old_tree.vals) or
           (4, 0, 'cache miss explanation unavailable'))
 
-def diff_ctx(new_ctx, old_ctx):
+def diff_tracing_ctx(new_ctx, old_ctx) -> tuple[int, int, str] | None:
+  if new_ctx == old_ctx: return None
+  diffs: list[str] = []
   msg = "Tracing context doesn't match, e.g. due to config or context manager."
-  num_diff = sum(map(op.ne, new_ctx, old_ctx))
-  if num_diff: return 0, num_diff, msg
+  if len(new_ctx) != len(old_ctx):
+    num_diff = abs(len(new_ctx) - len(old_ctx))
+    diffs.append("  * number of tracing context values differs: "
+                f"now {len(new_ctx)} and before {len(old_ctx)}")
+    return 0, num_diff, msg + "\n" + "\n".join(diffs)
 
-def diff_trees(new_tree, old_tree):
+  num_diff = sum(map(op.ne, new_ctx, old_ctx))
+  if jaxlib_extension_version < 455:
+    return 0, num_diff, msg
+
+  context_names = config.trace_context_names()
+  if len(context_names) != len(new_ctx):
+    diffs.append("  * number of tracing context names differs: "
+                  f"context_names {len(context_names)} vs "
+                  f"context length {len(new_ctx)}")
+    return 0, num_diff, msg + "\n" + "\n".join(diffs)
+  for name, new, old in zip(context_names, new_ctx, old_ctx):
+    if new != old:
+      diffs.append(f"  * {name} differs: now {new} and before {old}")
+  return 0, num_diff, msg + "\n" + "\n".join(diffs)
+
+def diff_trees(new_tree, old_tree) -> tuple[int, int, str] | None:
   errs = tree_util.equality_errors_pytreedef(new_tree, old_tree)
   tree_diffs = []
   for path, thing1, thing2, explanation in errs:
@@ -2199,12 +2225,12 @@ def diff_trees(new_tree, old_tree):
   msg = 'different input pytree:\n' + '\n'.join(tree_diffs)
   if tree_diffs: return 1, len(tree_diffs), msg
 
-def diff_debug(new_dbg, old_dbg):
+def diff_debug(new_dbg, old_dbg) -> tuple[int, int, str] | None:
   msg = "Debug info doesn't match."
   num_diff = sum(map(op.ne, new_dbg, old_dbg))
   if num_diff: return 2, num_diff, msg
 
-def diff_types(dbg, new_leaves, old_leaves):
+def diff_types(dbg, new_leaves, old_leaves) -> tuple[int, int, str] | None:
   if new_leaves == old_leaves: return
   diffs = []
   add_weak_type_hint = False

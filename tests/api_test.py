@@ -4944,6 +4944,7 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_tracing_config(self):
+    from jax._src.lib import jaxlib_extension_version  # type: ignore
     @jax.jit
     def f(x, y): return jnp.sin(x) + y
 
@@ -4955,12 +4956,11 @@ class APITest(jtu.JaxTestCase):
           with jax.default_matmul_precision("high"):
             f(0., 1.)
 
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-    self.assertTrue(1 <= len(cm.output) <= expected_log_len)
     msg = cm.output[0]
     self.assertIn("racing context", msg)
-    # self.assertIn("now warn and before", msg)
-    # self.assertIn("now high and before", msg)
+    if jaxlib_extension_version >= 455:
+      self.assertIn("now warn and before", msg)
+      self.assertIn("now high and before", msg)
     self.assertNotIn("explanation unavailable!", msg)
 
   @unittest.skip('TODO(mattjj): re-enable after updating cache miss explainer')
