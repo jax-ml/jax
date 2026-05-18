@@ -8,7 +8,7 @@ jax.scipy.cluster
 
 .. autosummary::
    :toctree: _autosummary
-   
+
    vq
 
 jax.scipy.fft
@@ -166,6 +166,7 @@ jax.scipy.special
    beta
    betainc
    betaln
+   comb
    digamma
    entr
    erf
