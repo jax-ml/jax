@@ -34,8 +34,7 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Deprecations
 
-  * `pl.enable_debug_checks`, `pl.debug_checks_enabled` are deprecated. Use
-     `config.jax_pallas_enable_debug_checks`.
+  * `pl.debug_checks_enabled` is deprecated. Use `pl.enable_debug_checks.value`.
 
 ### Mosaic GPU
 
