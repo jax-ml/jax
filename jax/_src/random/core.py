@@ -1267,8 +1267,8 @@ def beta(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `beta` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  _check_all_safe_to_cast("beta", dtype, a, b)
+  shape = _check_broadcast_shapes("beta", shape, a, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "beta", shape)
 
   return maybe_auto_axes(_beta, out_sharding,
