@@ -21,7 +21,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import math
-from typing import Any, assert_never, final
+from typing import Any, TYPE_CHECKING, assert_never, cast, final
 
 import numpy as np
 
@@ -392,29 +392,54 @@ def reduce_expression(
       assert_never(expr)
 
 
+class _BaseConstraint(abc.ABC):
+
+  @property
+  @abc.abstractmethod
+  def _is_constant(self) -> bool:
+    """Returns true all expressions this constraint depends on are `Constant`, false otherwise."""
+
+  def holds(self) -> bool | None:
+    if self._is_constant:
+      return self._constant_holds()
+    else:
+      return None
+
+  @abc.abstractmethod
+  def _constant_holds(self) -> bool:
+    """Evaluates the constraint when all underlying expressions are constants."""
+
+
 @dataclasses.dataclass(frozen=True)
-class AlwaysTrue:
+class AlwaysTrue(_BaseConstraint):
   def holds(self) -> bool | None:
     return True
 
+  def _constant_holds(self) -> bool:
+    raise NotImplementedError
+
+  @property
+  def _is_constant(self):
+    raise NotImplementedError
+
 
 @dataclasses.dataclass(frozen=True)
-class Equals:
+class Equals(_BaseConstraint):
   """States that `lhs` and `rhs` are equal."""
   lhs: Expression
   rhs: Expression
+
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.lhs, Constant) and isinstance(self.rhs, Constant)
 
   def canonicalize(self) -> Constraint:
     if self.lhs == self.rhs:
       return AlwaysTrue()
     return self
 
-  def holds(self) -> bool | None:
-    if self.lhs == self.rhs:
-      return True
-    if isinstance(self.lhs, Constant) and isinstance(self.rhs, Constant):
-      return False
-    return None
+  def _constant_holds(self) -> bool:
+    return self.lhs == self.rhs
 
   def __str__(self):
     return f"Equals({self.lhs} == {self.rhs})"
@@ -451,7 +476,7 @@ def _is_supported_tiled_relayout(
 
 
 @dataclasses.dataclass(frozen=True)
-class Relayout:
+class Relayout(_BaseConstraint):
   """States that `source` must be relayout-able to `target`.
 
   Relayout-ability here is not defined as a fundamental property of layouts, but
@@ -491,22 +516,24 @@ class Relayout:
       case _:
         return self
 
-  def holds(self) -> bool | None:
-    """Returns whether the relayout constraint holds.
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.source, Constant) and isinstance(self.target, Constant)
 
-    Returns `None` if the constraint can't be checked.
-    """
+  def _constant_holds(self) -> bool:
     source = self.source
     target = self.target
-
-    # Fast path for syntactically identical expressions.
-    if source == target:
-      return True
 
     if not isinstance(source, RegisterLayout) or not isinstance(
         target, RegisterLayout
     ):
-      return None
+      raise ValueError(
+          f"Relayout can only be applied to registers, got source {self.source}"
+          f" to {self.target}"
+      )
+
+    if source == target:
+      return True
 
     source_layout, target_layout = source.value, target.value
     match source_layout, target_layout:
@@ -528,18 +555,15 @@ class Relayout:
 
 
 @dataclasses.dataclass(frozen=True)
-class IsTransferable(abc.ABC):
+class IsTransferable(_BaseConstraint, abc.ABC):
   """States that `source` layout must be transferable across memory spaces to `target` layout."""
   source: Expression
   target: Expression
   shape: tuple[int, ...]
 
-  def holds(self) -> bool | None:
-    """Returns whether the constraint holds.
-
-    Returns `None` if the constraint can't be checked.
-    """
-    raise NotImplementedError("Holds must be implemented by subclasses.")
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.source, Constant) and isinstance(self.target, Constant)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -590,19 +614,17 @@ class IsTransferableTmemRegisters(IsTransferable):
       return True
     return False
 
-  def holds(self) -> bool | None:
+  def _constant_holds(self) -> bool:
     match self.source, self.target:
       case RegisterLayout(value=src), TMEMLayout(value=dst):
         return self.is_valid_tmem_transfer(dst, src)
       case TMEMLayout(value=src), RegisterLayout(value=dst):
         return self.is_valid_tmem_transfer(src, dst)
-      case src, dst if isinstance(src, Constant) and isinstance(dst, Constant):
+      case _:
         raise ValueError(
-            f"{src} -> {dst} is not a TMEM <-> Registers"
+            f"{self.source} -> {self.target} is not a TMEM <-> Registers"
             " transfer."
         )
-      case _:
-        return None
 
   def __str__(self):
     return f"IsTransferableTmemRegisters({self.source} ⟶ {self.target})"
@@ -702,37 +724,35 @@ class IsTransferableSmemRegisters(IsTransferable):
     except fa.TransferPlanDerivationError:
       return False
 
-  def holds(self) -> bool | None:
+  def _constant_holds(self) -> bool:
     match self.source, self.target:
       case SMEMTransforms(tiling=src), RegisterLayout(value=dst):
         return self._is_supported_smem_transfer(src, dst)
       case RegisterLayout(value=src), SMEMTransforms(tiling=dst):
         return self._is_supported_smem_transfer(dst, src)
-      case src, dst if isinstance(src, Constant) and isinstance(dst, Constant):
-        raise ValueError(
-            f"{src} -> {dst} is not a SMEM <-> Registers transfer."
-        )
       case _:
-        return None
+        raise ValueError(
+            f"{self.source} -> {self.target} is not a SMEM <-> Registers transfer."
+        )
 
   def __str__(self):
     return f"IsTransferableSmemRegisters({self.source} ⟶ {self.target})"
 
 
 @dataclasses.dataclass(frozen=True)
-class NotOfType:
+class NotOfType(_BaseConstraint):
   """States that `expr` is not an instance of `type`."""
 
   expr: Expression
   type: type[fa.FragmentedLayout]
 
-  def holds(self) -> bool | None:
-    """Whether the distinctiveness constraint holds.
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.expr, Constant)
 
-    Returns `None` if the constraint can't be checked.
-    """
-    if not isinstance(self.expr, Constant):
-      return None
+  def _constant_holds(self) -> bool:
+    # TODO(olechwierowicz): We should raise here because this constraint is
+    # supposed to be used only for register expressions.
     if not isinstance(self.expr, RegisterLayout):
       return True
     return not isinstance(self.expr.value, self.type)
@@ -742,7 +762,7 @@ class NotOfType:
 
 
 @dataclasses.dataclass(frozen=True)
-class Divides:
+class Divides(_BaseConstraint):
   """States that the `expr` tiling is a divisor of `tiling_multiple`.
 
   That is to say that, for each tiled dimension in `expr`, the dimension must
@@ -762,7 +782,12 @@ class Divides:
   expr: Expression
   tiling_multiple: tuple[int, ...]
 
-  def holds(self) -> bool | None:
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.expr, Constant)
+
+  def _constant_holds(self) -> bool:
+    assert isinstance(self.expr, Constant)
     match self.expr:
       case SMEMTransforms(tiling=None):
         # If there is no tiling, then this holds trivially.
@@ -777,8 +802,12 @@ class Divides:
         tiling = layout.base_tile_shape
       case TMEMLayout(value):
         tiling = value.base_tile_shape
-      case _:
-        return None
+      # We check the case below only because type checker does not recognize
+      # we've covered all `RegisterLayout` or `SMEMTransforms` cases.
+      case SMEMTransforms() | RegisterLayout():
+        raise ValueError(f"Unhandled expression: {self.expr}")
+      case _ as never:
+        assert_never(never)
 
     if len(tiling) > len(self.tiling_multiple):
       # The rank of the tiling is larger than the rank of the constraint. This
@@ -795,7 +824,7 @@ class Divides:
 
 
 @dataclasses.dataclass(frozen=True)
-class MinorDimDivisibleBy:
+class MinorDimDivisibleBy(_BaseConstraint):
   """States that the minor dimension of the `expr` tiling is divisible by `divisor`.
 
   If the last dimension is untiled, then `true` is returned.
@@ -805,16 +834,23 @@ class MinorDimDivisibleBy:
   expr: Expression
   divisor: int
 
-  def holds(self) -> bool | None:
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.expr, Constant)
+
+  def _constant_holds(self) -> bool:
+    assert isinstance(self.expr, Constant)
     match self.expr:
       case SMEMTransforms(tiling=None):
         return True
       case SMEMTransforms(tiling=lc.TileTransform(tiling=t)):
         tiling = t
-      case c if isinstance(c, Constant):
-        raise ValueError(f"Unexpected value {c} in MinorDimDivisibleBy constraint")
-      case _:
-        return None
+      case RegisterLayout() | SMEMTransforms() | TMEMLayout():
+        raise ValueError(
+            f"Unexpected expression {self.expr} in MinorDimDivisibleBy constraint"
+        )
+      case _ as never:
+        assert_never(never)
 
     if not tiling:
       return True
@@ -826,7 +862,7 @@ class MinorDimDivisibleBy:
 
 
 @dataclasses.dataclass(frozen=True)
-class IsValidMmaTiling:
+class IsValidMmaTiling(_BaseConstraint):
   """States that the `expr` SMEM tiling must be compatible with MMA requirements.
 
   For both tcgen05.mma and wgmma, tiling is valid if it is of the form
@@ -841,7 +877,12 @@ class IsValidMmaTiling:
   bitwidth: int
   allow_unswizzled: bool = False
 
-  def holds(self) -> bool | None:
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.expr, Constant)
+
+  def _constant_holds(self) -> bool:
+    assert isinstance(self.expr, Constant)
     match self.expr:
       case SMEMTransforms(tiling=None):
         return False
@@ -849,17 +890,17 @@ class IsValidMmaTiling:
         swizzles = [16, 32, 64, 128] if self.allow_unswizzled else [32, 64, 128]
         valid_tilings = {(8, s * 8 // self.bitwidth) for s in swizzles}
         return t in valid_tilings
-      case RegisterLayout() | TMEMLayout() as c:
-        raise ValueError(f"Unexpected value {c} in IsValidMmaTiling constraint")
-      case _:
-        return None
+      case RegisterLayout() | TMEMLayout() | SMEMTransforms():
+        raise ValueError(f"Unexpected value {self.expr} in IsValidMmaTiling constraint")
+      case _ as never:
+        assert_never(never)
 
   def __str__(self):
     return f"IsValidMMATiling({self.expr}, {self.bitwidth}, allow_unswizzled={self.allow_unswizzled})"
 
 
 @dataclasses.dataclass(frozen=True)
-class IsSupportedBroadcast:
+class IsSupportedBroadcast(_BaseConstraint):
   """States that `src` can be broadcasted to `dst`.
 
   See `FragmentedArray.broadcast_in_dim` for more details.
@@ -869,7 +910,12 @@ class IsSupportedBroadcast:
   dst: Expression
   dims: tuple[int, ...]
 
-  def holds(self) -> bool | None:
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.src, Constant) and isinstance(self.dst, Constant)
+
+  def _constant_holds(self) -> bool:
+    assert isinstance(self.src, Constant) and isinstance(self.dst, Constant)
     match self.src, self.dst:
       case RegisterLayout(
           value=fa.WGStridedFragLayout() as src_layout
@@ -879,13 +925,11 @@ class IsSupportedBroadcast:
         # This is an intentionally loose check. We rely on the presence of a
         # `src = Reduce(dst)` constraint to enforce correctness.
         return type(src_layout) == type(dst_layout)
-      case src, dst if isinstance(src, Constant) and isinstance(dst, Constant):
+      case _:
         raise ValueError(
-            f"Unexpected values {src=} {dst=} in IsSupportedBroadcast"
+            f"Unexpected values {self.src=} {self.dst=} in IsSupportedBroadcast"
             " constraint"
         )
-      case _:
-        return None
 
   def __str__(self):
     return (
@@ -905,6 +949,9 @@ Constraint = (
     | MinorDimDivisibleBy
     | AlwaysTrue
 )
+
+if TYPE_CHECKING:
+  _: _BaseConstraint = cast(Constraint, None)
 
 
 def reduce_constraint(
