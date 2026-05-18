@@ -46,7 +46,6 @@ from absl.testing import absltest, parameterized
 import jax
 from jax import device_put, float0, grad, hessian, jacfwd, jacrev, jit
 from jax import lax
-from jax._src.lax.control_flow.loops import eval_jaxpr_p
 from jax import tree_util
 from jax._src import api, api_util, dtypes, lib
 from jax._src import array
@@ -63,6 +62,7 @@ from jax._src.ad_checkpoint import saved_residuals, remat3, checkpoint_name3
 from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.sharding_impls import make_single_device_sharding
 import jax._src.util as jax_util

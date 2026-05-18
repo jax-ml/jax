@@ -49,6 +49,7 @@ from jax._src.util import (HashablePartial, unzip2, partition_list, merge_lists,
                            split_list, subs_list2, fun_name as util_fun_name)
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
+from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -1386,11 +1387,8 @@ class ShardMapTrace(core.Trace):
                          out_mats)
 
   def process_call(self, call_primitive, fun, tracers, params, /):
-    raise NotImplementedError(
-        f"Eager evaluation of `{call_primitive}` inside a `shard_map` isn't "
-        "yet supported. Put a `jax.jit` around the `shard_map`-decorated "
-        "function, and open a feature request at "
-        "https://github.com/jax-ml/jax/issues !")
+    with core.set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
@@ -1888,7 +1886,7 @@ def _add_reshapes(which: Sequence[bool],
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars
 
   def known(*args):
-    out = core.eval_jaxpr(jaxpr_known, (), *args)
+    out = eval_jaxpr_p.bind(*args, jaxpr=core.ClosedJaxpr(jaxpr_known, ()))
     out_known, res = split_list(out, [len(out) - sum(which)])
     res = [_add_singleton(x) if not x.shape else x for x in res]
     return [*out_known, *res]
@@ -1900,7 +1898,8 @@ def _add_reshapes(which: Sequence[bool],
   def staged(*args):
     res_, ins = split_list(args, [len(which)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res_, which_)]
-    return core.eval_jaxpr(jaxpr_staged, (), *res, *ins)
+    closed_jaxpr_staged = core.ClosedJaxpr(jaxpr_staged, ())
+    return eval_jaxpr_p.bind(*res, *ins, jaxpr=closed_jaxpr_staged)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
   avals_in = (*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]])
