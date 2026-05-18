@@ -393,9 +393,13 @@ jax.scipy.stats.laplace
   :toctree: _autosummary
 
    cdf
+   isf
+   logcdf
    logpdf
+   logsf
    pdf
    ppf
+   sf
 
 jax.scipy.stats.logistic
 ~~~~~~~~~~~~~~~~~~~~~~~~
