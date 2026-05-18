@@ -8026,7 +8026,7 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
                              out_sharding=typeof(cases[0]).sharding)
   if np.ndim(which) > np.ndim(cases[0]):
     assert np.ndim(cases[0]) == 0
-    cases = [broadcast(c, which.shape) for c in cases]
+    cases = [broadcast_like(c, which) for c in cases]
   return select_n(which, *cases), 0
 
 def _select_jvp(primals, tangents):

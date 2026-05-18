@@ -10820,6 +10820,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       dw = jax.jit(jax.grad(f))(w, x)
       self.assertEqual(dw.sharding, NamedSharding(mesh, P(None, None)))
 
+  @jtu.with_explicit_mesh((1,), 'x')
+  def test_vmap_select_const_broadcast(self, mesh):
+    arr = jnp.ones((1,), out_sharding=jax.P('x'))
+
+    @jax.vmap
+    @jax.grad
+    def f(x):
+      return jnp.maximum(0.0, x)
+
+    f(arr)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
