@@ -50,7 +50,13 @@ def deserialize_and_load(serialized,
                          out_tree,
                          backend: str | xc.Client | None = None,
                          execution_devices: Sequence[xc.Device] | None = None):
-  """Constructs a jax.stages.Compiled from a serialized executable."""
+  """Constructs a jax.stages.Compiled from a serialized executable.
+
+  It is not safe to call this API with untrusted inputs. Do not do this.
+  Calling this API means you are loading an executable. If you feed untrusted
+  data to this API, you are loading and running a untrusted executable.
+  It is not safe to pass untrusted data here and likely never will be.
+  """
 
   if backend is None or isinstance(backend, str):
     backend = jax.devices(backend)[0].client
