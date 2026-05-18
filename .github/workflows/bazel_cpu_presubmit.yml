@@ -92,3 +92,7 @@ jobs:
       build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
       clone_main_xla: 0
+
+  validate-gcloud:
+    uses: ./.github/workflows/test_gcloud_windows.yml
+    name: "Validate GCloud Refactor"
