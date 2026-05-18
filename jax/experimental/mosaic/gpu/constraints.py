@@ -394,10 +394,21 @@ def reduce_expression(
 
 
 @dataclasses.dataclass(frozen=True)
+class AlwaysTrue:
+  def holds(self) -> bool | None:
+    return True
+
+
+@dataclasses.dataclass(frozen=True)
 class Equals:
   """States that `lhs` and `rhs` are equal."""
   lhs: Expression
   rhs: Expression
+
+  def canonicalize(self) -> Constraint:
+    if self.lhs == self.rhs:
+      return AlwaysTrue()
+    return self
 
   def holds(self) -> bool | None:
     if self.lhs == self.rhs:
@@ -466,6 +477,8 @@ class Relayout:
   strict: bool = False
 
   def canonicalize(self) -> Constraint:
+    if self.source == self.target:
+      return AlwaysTrue()
     match self:
       # The only valid strict tiled and strided relayout is the identity.
       case Relayout(
@@ -892,6 +905,7 @@ Constraint = (
     | Divides
     | IsSupportedBroadcast
     | MinorDimDivisibleBy
+    | AlwaysTrue
 )
 
 
@@ -908,7 +922,7 @@ def reduce_constraint(
       rhs_red = reduce_expression(rhs, assignments)
       if isinstance(rhs_red, Unsatisfiable):
         return Unsatisfiable()
-      return Equals(lhs_red, rhs_red)
+      return Equals(lhs_red, rhs_red).canonicalize()
     case Relayout(source=source, target=target) as relayout:
       source_red = reduce_expression(source, assignments)
       target_red = reduce_expression(target, assignments)
@@ -954,6 +968,8 @@ def reduce_constraint(
       ):
         return Unsatisfiable()
       return IsSupportedBroadcast(src_red, dst_red, dims)
+    case AlwaysTrue():
+      return constraint
     case _ as never:
       assert_never(never)
 
@@ -1016,6 +1032,8 @@ class ConstraintSystem:
         case IsSupportedBroadcast(src=src, dst=dst):
           extract_variables(src)
           extract_variables(dst)
+        case AlwaysTrue():
+          ...
         case _ as never:
           assert_never(never)
     return free_variables

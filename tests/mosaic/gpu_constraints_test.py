@@ -140,6 +140,19 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
     self.assertLen(cs.reduce(system).constraints, 2)
 
+  def test_reduce_constraint_system_drops_always_true_constraints(self):
+    v0, v1 = V(0), V(1)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.AlwaysTrue(),
+            Eq(v0, v1),
+        ],
+    )
+    self.assertEqual(
+        cs.reduce(system),
+        cs.ConstraintSystem(constraints=[Eq(v0, v1)]),
+    )
+
   def test_reduce_constraint_system_of_simplified_system_is_noop(self):
     v0, v1 = V(0), V(1)
     system = cs.ConstraintSystem(constraints=[Eq(v0, v1)])
@@ -363,6 +376,20 @@ class ConstraintSystemTest(parameterized.TestCase):
     layout = RL(mgpu.WGSplatFragLayout((128, 128)))
     relayout = cs.Relayout(layout, V(0), 32, strict=True)
     self.assertEqual(cs.reduce_constraint(relayout, {}), relayout)
+
+  def test_reduce_relayout_same_source_and_target_returns_always_true(self):
+    v0 = V(0)
+    relayout = cs.Relayout(v0, v0, 32)
+    self.assertEqual(
+        cs.reduce_constraint(relayout, assignments={}), cs.AlwaysTrue()
+    )
+
+  def test_reduce_equals_same_lhs_and_rhs_returns_always_true(self):
+    v0 = V(0)
+    equals = Eq(v0, v0)
+    self.assertEqual(
+        cs.reduce_constraint(equals, assignments={}), cs.AlwaysTrue()
+    )
 
   def test_relayout_of_non_splat_to_splat_is_unsatisfiable_shortcut(
       self,
