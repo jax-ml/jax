@@ -45,6 +45,7 @@ from jax._src import typing
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.fuser import fuser_utils
 from jax._src.state import indexing
@@ -1064,6 +1065,7 @@ register_binop_rule(lax.add_p)
 register_binop_rule(lax.sub_p)
 register_binop_rule(lax.div_p)
 register_binop_rule(lax.max_p)
+register_binop_rule(lax.min_p)
 register_binop_rule(lax.lt_p)
 register_binop_rule(lax.le_p)
 register_binop_rule(lax.eq_p)
@@ -1446,6 +1448,10 @@ def _swap_eval_rule(ctx: KernelEvalContext, ref, val, *idx, tree):
 def _get_pull_rule(
     ctx: PullRuleContext, block_transform: BlockIndexTransform, *, tree
 ):
+  if block_transform.block_shape is None:
+    return [block_transform] + [no_block_index_transform] * (
+        len(ctx.avals_in) - 1
+    )
   ref_aval = ctx.avals_in[0]
   assert hasattr(ref_aval, 'shape')
   indexers_avals = tree_util.tree_unflatten(tree, ctx.avals_in[1:])
@@ -1530,7 +1536,10 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
       case _:
         raise NotImplementedError('get not supported yet')
 
-  if ref_block_spec is pallas_core.no_block_spec:
+  if (
+      ref_block_spec is pallas_core.no_block_spec
+      or ref_block_spec.block_shape is None
+  ):
     # Short-circuit if the ref is not blocked.
     return state_primitives.get_p.bind(ref, *idx, tree=tree)
   block_idx_iter = iter(ctx.get_out_block_indices()[0])
@@ -2022,6 +2031,25 @@ def _random_wrap_pull_rule(
 ):
   del ctx, block_transform, impl
   return [BlockIndexTransform(block_shape=None)]
+
+
+@register_eval_rule(prng.random_fold_in_p)
+def _random_fold_in_eval_rule(eval_ctx: KernelEvalContext, key, msg):
+  del eval_ctx
+  return prng.random_fold_in(key, msg)
+
+
+@register_pull_block_spec_rule(prng.random_fold_in_p)
+def _random_fold_in_pull_rule(
+    ctx: PullRuleContext,
+    block_transform: BlockIndexTransform,
+    **_,
+):
+  del ctx, block_transform
+  key_block_transform = BlockIndexTransform(
+      block_shape=None, memory_space=pallas_core.MemorySpace.KEY
+  )
+  return [key_block_transform, no_block_index_transform]
 
 
 @register_eval_rule(lax.iota_p)
@@ -2658,6 +2686,7 @@ register_binop_push_rule(lax.add_p)
 register_binop_push_rule(lax.sub_p)
 register_binop_push_rule(lax.div_p)
 register_binop_push_rule(lax.max_p)
+register_binop_push_rule(lax.min_p)
 register_binop_push_rule(lax.lt_p)
 register_binop_push_rule(lax.eq_p)
 register_binop_push_rule(lax.gt_p)
@@ -2796,6 +2825,7 @@ register_eltwise_rule(lax.square_p)
 register_eltwise_rule(lax.log_p)
 register_eltwise_rule(lax.integer_pow_p)
 register_eltwise_rule(lax.logistic_p)
+register_eltwise_rule(pallas_primitives.multiple_of_p)
 
 
 @register_push_block_spec_rule(lax.reshape_p)

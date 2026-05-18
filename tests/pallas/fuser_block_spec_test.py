@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import itertools
 
 from absl.testing import absltest
@@ -20,6 +21,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 from jax._src.pallas.fuser import custom_fusion_lib
 from jax.experimental import pallas as pl
@@ -102,7 +104,11 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         x_block,
     )
 
-  @parameterized.parameters([jnp.exp, jnp.tanh])
+  @parameterized.parameters([
+      jnp.exp,
+      jnp.tanh,
+      functools.partial(pallas_primitives.multiple_of, values=(32,)),
+  ])
   def test_elementwise(self, fn):
 
     def f(x):
@@ -220,7 +226,17 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     )
 
   @parameterized.product(
-      fn=[lax.mul, lax.add, lax.sub, lax.div, lax.max, lax.lt, lax.eq, lax.gt],
+      fn=[
+          lax.mul,
+          lax.add,
+          lax.sub,
+          lax.div,
+          lax.max,
+          lax.min,
+          lax.lt,
+          lax.eq,
+          lax.gt,
+      ],
   )
   def test_binop(self, fn):
     in_type = (
@@ -1087,6 +1103,46 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     _, y = pl.run_state(outer)((value, y))
     np.testing.assert_array_equal(y, value[3, :256, 512:1024])
 
+  def test_get_key_ref(self):
+    """Tests get_p on a key ref (block_shape=None, MemorySpace.KEY).
+
+    This exercises the _get_pull_rule early return when block_shape is None,
+    and the _get_eval_rule short-circuit when block_shape is None.
+    """
+    key = jax.random.key(0, impl='threefry2x32')
+
+    @jax.jit
+    def outer(y_ref):
+      key_ref = jax.new_ref(key, memory_space=pl.MemorySpace.KEY)
+
+      def f():
+        k = key_ref.get()
+        return jax.random.uniform(k, (512, 512), dtype=jnp.float32)
+
+      block_spec = pl.BlockSpec((512, 256), lambda i: (0, i))
+      kernel_fn, (), _ = block_spec_lib.pull_block_spec(
+          f,
+          block_spec,
+          grid_len=1,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )()
+      for i in range(2):
+        y_ref[:, i * 256 : (i + 1) * 256] = kernel_fn((i,), ())
+
+    @jax.jit
+    def gen(idx):
+      k = key
+      for i in idx:
+        k = jax.random.fold_in(k, i)
+      return jax.random.uniform(k, (512, 256), dtype=jnp.float32)
+
+    y_ref = jax.new_ref(jnp.zeros((512, 512), dtype=jnp.float32))
+    outer(y_ref)
+    for i in range(2):
+      block = y_ref[:, i * 256 : (i + 1) * 256]
+      expected_block = gen((0, i))
+      np.testing.assert_array_equal(block, expected_block)
+
   def test_random_noise(self):
     key = jax.random.key(0, impl='threefry2x32')
 
@@ -1122,6 +1178,52 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     for i in range(4):
       for j in range(2):
         out = kernel_fn((i, j), scalar_prefetch_values, (), key)
+        out_ref = gen((i, j))
+        np.testing.assert_array_equal(out, out_ref)
+
+  def test_random_fold_in(self):
+    key = jax.random.key(0, impl='threefry2x32')
+    msg = jnp.array(42, dtype=jnp.int32)
+
+    def f(msg):
+      folded_key = jax.random.fold_in(key, msg)
+      return jax.random.uniform(folded_key, (512, 512), dtype=jnp.float32)
+
+    in_type = jax.ShapeDtypeStruct((), jnp.int32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type
+    )
+
+    block_spec = pl.BlockSpec((128, 256), lambda i, j: (i, j))
+    kernel_fn, (value_block_specs, in_block_spec), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid_len=2,
+            scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+        )(new_values, in_type)
+    )
+
+    self.assertLen(value_block_specs, 1)
+    self.assertEqual(value_block_specs[0].memory_space, pl.MemorySpace.KEY)
+    self.assertIsNone(value_block_specs[0].block_shape)
+    self.assertEqual(in_block_spec, pl.no_block_spec)
+
+    @jax.jit
+    def gen(idx):
+      k = jax.random.fold_in(key, msg)
+
+      # When `uniform` gets split into blocks, it produces this loop of
+      # `fold_in`s.
+      for i in idx:
+        k = jax.random.fold_in(k, i)
+      return jax.random.uniform(k, (128, 256), dtype=jnp.float32)
+
+    for i in range(4):
+      for j in range(2):
+        out = kernel_fn(
+            (i, j), scalar_prefetch_values, tuple(v for v in new_values), msg
+        )
         out_ref = gen((i, j))
         np.testing.assert_array_equal(out, out_ref)
 
