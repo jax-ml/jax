@@ -53,9 +53,12 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   fi
 
   # Create a temporary file to pass any user defined JAXCI_ / JAX_ / JAXLIB_
-  # variables to the container.
+  # variables to the container. Exclude host-specific path variables so they
+  # are recalculated inside the container using its own filesystem layout.
   JAXCI_TEMP_ENVFILE_DIR=$(mktemp)
-  env | grep -e "JAXCI_" -e "JAX_" -e "JAXLIB_" > "$JAXCI_TEMP_ENVFILE_DIR"
+  env | grep -e "JAXCI_" -e "JAX_" -e "JAXLIB_" \
+      | grep -v "^JAXCI_JAX_GIT_DIR=\|^JAXCI_OUTPUT_DIR=" \
+      > "$JAXCI_TEMP_ENVFILE_DIR"
 
   # On Windows, convert MSYS Linux-like paths to Windows paths.
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
