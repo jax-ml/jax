@@ -1623,6 +1623,7 @@ jax_multiplatform_test(
         # Times out.
         "noasan",
         "notsan",
+        "nomsan",
     ],
     deps = [
         "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
