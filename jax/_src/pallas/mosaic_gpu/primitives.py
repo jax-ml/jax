@@ -3292,11 +3292,7 @@ def _populate_custom_primitive_op_block(
           fn_inputs.append(arg)
           continue
 
-        _, transforms = (
-            mgpu.dialect_lowering.swizzle_and_transforms_from_transforms_attr(
-                ir.ArrayAttr(next(in_transforms_it))
-            )
-        )
+        transforms = ir.ArrayAttr(next(in_transforms_it))
         # The block arguments in the Mosaic GPU dialect are logical refs that
         # wrap the transfromed refs. Since the mgpu_fn works at the lowered
         # "lane" level, we need to transform (lower) the inputs before passing

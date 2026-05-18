@@ -253,8 +253,7 @@ def unwrap_transformed_memref(
     ref: ir.Value[ir.MemRefType], expected_transforms: ir.ArrayAttr
 ) -> ir.Value:
   """Uwraps a memref from an unrealized cast and verifies its transforms."""
-  _, transforms = swizzle_and_transforms_from_transforms_attr(expected_transforms)
-  transformed_type = transform_type(ref.type, transforms)
+  transformed_type = transform_type(ref.type, expected_transforms)
   conversion_cast, [result] = _undo_conversion_cast(ref, [transformed_type])
 
   # Check that the actual transforms match the expected ones.
@@ -1742,8 +1741,7 @@ def _mgpu_slice_smem_op_lowering_rule(
     return [_slice_smem(ref_ty, offset, ctx.smem_requested_bytes)]
 
   [out_transforms] = inference_utils.out_transforms(op)
-  _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
-  transformed_ref_ty = transform_type(ref_ty, transforms)
+  transformed_ref_ty = transform_type(ref_ty, out_transforms)
   transformed_ref = _slice_smem(transformed_ref_ty, offset, ctx.smem_requested_bytes)
   return [wrap_transformed_memref(transformed_ref, op.result.type, out_transforms)]
 
@@ -2115,8 +2113,7 @@ def _memref_expand_shape_op_lowering_rule(
   in_transformed_ty = ir.MemRefType(unwrapped_in_ref.type)
 
   out_transforms = inference_utils.out_transforms(op)[0]
-  _, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
-  out_transformed_ty = transform_type(ir.MemRefType(op.result.type), transforms)
+  out_transformed_ty = transform_type(op.result.type, out_transforms)
 
   reassociation = cast(list[ir.ArrayAttr], list(op.reassociation))
   num_tiling_dims = len(in_transformed_ty.shape) - len(op.src.type.shape)
