@@ -34,6 +34,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.linalg.helmert` for constructing Helmert matrices
     ({jax-issue}`#10144`).
   * Added {func}`jax.scipy.stats.laplace.ppf` ({jax-issue}`#13291`).
+  * Added `logcdf`, `sf`, `logsf`, and `isf` to {mod}`jax.scipy.stats.laplace`
+    to round out the distribution's API surface.
   * Moved RNG APIs from "implementations" to dtypes ({jax-issue}`#27854`):
     * Added `jax.random.key_dtype` to get the dtype corresponding to a PRNG
       implementation name.
