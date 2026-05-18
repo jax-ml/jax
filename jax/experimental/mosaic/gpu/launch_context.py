@@ -312,9 +312,6 @@ class TransposeTransform(MemRefTransform):
         (*range(leading_rank), *(d + leading_rank for d in self.permutation))
     )
 
-  def to_attr(self) -> ir.Attribute:
-    return mgpu_dialect.TransposeTransformAttr.get(self.permutation)
-
 @dataclasses.dataclass(frozen=True)
 class CollapseLeadingIndicesTransform(MemRefTransform):
   """Collapses leading indices into one."""

@@ -50,31 +50,6 @@ MlirTypeID mlirMosaicGpuTileTransformAttrGetTypeID() {
 }
 
 //===----------------------------------------------------------------------===//
-// TransposeTransformAttr
-//===----------------------------------------------------------------------===//
-
-bool mlirMosaicGpuIsATransposeTransformAttr(MlirAttribute attr) {
-  return mlir::isa<mosaic_gpu::TransposeTransformAttr>(unwrap(attr));
-}
-
-MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(
-    MlirContext ctx, MlirAttribute permutation) {
-  auto permutation_attr =
-      mlir::cast<mlir::DenseI32ArrayAttr>(unwrap(permutation));
-  return wrap(
-      mosaic_gpu::TransposeTransformAttr::get(unwrap(ctx), permutation_attr));
-}
-MlirAttribute mlirMosaicGpuTransposeTransformAttrGetPermutation(
-    MlirAttribute attr) {
-  return wrap(mlir::cast<mosaic_gpu::TransposeTransformAttr>(unwrap(attr))
-                  .getPermutation());
-}
-
-MlirTypeID mlirMosaicGpuTransposeTransformAttrGetTypeID() {
-  return wrap(mosaic_gpu::TransposeTransformAttr::getTypeID());
-}
-
-//===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
 bool mlirMosaicGpuIsASwizzleTransformAttr(MlirAttribute attr) {

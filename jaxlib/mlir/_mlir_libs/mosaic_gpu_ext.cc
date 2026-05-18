@@ -95,25 +95,6 @@ DEFINE_CONCRETE_ATTR(TileTransformAttr, mlirMosaicGpuIsATileTransformAttr,
   });
 }
 
-DEFINE_CONCRETE_ATTR(TransposeTransformAttr,
-                     mlirMosaicGpuIsATransposeTransformAttr,
-                     mlirMosaicGpuTransposeTransformAttrGetTypeID,
-                     PyAttribute) {
-  cls.def_static(
-      "get",
-      [](const std::vector<int32_t>& permutation, DefaultingPyMlirContext ctx) {
-        MlirAttribute permutation_attr = mlirDenseI32ArrayGet(
-            ctx.resolve().get(), permutation.size(), permutation.data());
-        MlirAttribute transform_attr = mlirMosaicGpuTransposeTransformAttrGet(
-            ctx.resolve().get(), permutation_attr);
-        return PyTransposeTransformAttr(ctx.resolve().getRef(), transform_attr);
-      },
-      nb::arg("permutation"), nb::arg("ctx") = nb::none());
-  cls.def_prop_ro("permutation", [](PyTransposeTransformAttr& self) {
-    return mlirMosaicGpuTransposeTransformAttrGetPermutation(self.get());
-  });
-}
-
 DEFINE_CONCRETE_ATTR(SwizzleTransformAttr, mlirMosaicGpuIsASwizzleTransformAttr,
                      mlirMosaicGpuSwizzleTransformAttrGetTypeID, PyAttribute) {
   cls.def_static(
@@ -273,7 +254,6 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   PyBarrierType::bind(m);
   PyTileTransformAttr::bind(m);
-  PyTransposeTransformAttr::bind(m);
   PySwizzleTransformAttr::bind(m);
   PyWGSplatFragLayoutAttr::bind(m);
   PyWGStridedFragLayoutAttr::bind(m);

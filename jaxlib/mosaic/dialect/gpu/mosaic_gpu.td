@@ -285,12 +285,6 @@ def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
   let assemblyFormat = "`<` $tiling `>`";
 }
 
-def TransposeTransformAttr : MosaicGPU_Attr<"TransposeTransform", "transpose"> {
-  let parameters = (ins "::mlir::DenseI32ArrayAttr":$permutation);
-  let summary = "Specifies a transpose transform of a memref in SMEM.";
-  let assemblyFormat = "`<` $permutation `>`";
-}
-
 def SwizzleTransformAttr : MosaicGPU_Attr<"SwizzleTransform", "swizzle"> {
   let parameters = (ins "SwizzlingModeAttr":$swizzle);
 

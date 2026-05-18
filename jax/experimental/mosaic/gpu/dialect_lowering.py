@@ -952,12 +952,6 @@ def swizzle_and_transforms_from_transforms_attr(
       tiling = mgpu.TileTransformAttr(transform).tiling
       tiling_transform = lc.TileTransform(tuple(tiling))
       gmem_transforms.append(tiling_transform)
-    elif isinstance(transform, mgpu.TransposeTransformAttr):
-      permutation = mgpu.TransposeTransformAttr(transform).permutation
-      transpose_transform = lc.TransposeTransform(
-          tuple(permutation)
-      )
-      gmem_transforms.append(transpose_transform)
     else:
       raise ValueError("Unknown transform: {transform}")
 

@@ -5830,21 +5830,6 @@ class Tile:
 
 
 @dataclasses.dataclass(frozen=True)
-class Transpose:
-  """Defines a Transpose transform in a TestCaseInput.
-
-  Note that we cannot simply alias mgpu_dialect.TransposeTransformAttr.get,
-  because we do not have an MLIR context at the point we define the
-  TestCaseInput.
-  """
-
-  permutation: tuple[int, ...]
-
-  def attr(self):
-    return mgpu_dialect.TransposeTransformAttr.get(self.permutation)
-
-
-@dataclasses.dataclass(frozen=True)
 class Swizzle:
   """Defines a Swizzle transform in a TestCaseInput.
 
@@ -5860,7 +5845,7 @@ class Swizzle:
 
 
 def set_in_transforms(
-    op: ir.OpView, transforms: Sequence[Sequence[Tile | Transpose | Swizzle]],
+    op: ir.OpView, transforms: Sequence[Sequence[Tile | Swizzle]],
 ) -> None:
   """Annotates an op with in_transforms."""
   if not transforms:
@@ -6009,7 +5994,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       shape_sliced: tuple[int, ...] = ()
       slice_indices: tuple[int, ...] = ()
       slice_lengths: tuple[int, ...] = ()
-      transforms: tuple[Tile | Transpose | Swizzle, ...] = ()
+      transforms: tuple[Tile | Swizzle, ...] = ()
 
       def __post_init__(self):
         if not self.shape_sliced:
@@ -6044,33 +6029,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
               transforms=[Swizzle(swizzle)],
           ),
           TestCaseInput(
-              shape=[2, 3, 64, n],
-              transforms=[Transpose([0, 1, 2, 3]), Swizzle(swizzle)],
-          ),
-          TestCaseInput(
-              shape=[2, 3, 64, n],
-              transforms=[
-                  Transpose([1, 0, 2, 3]),
-                  Transpose([1, 0, 2, 3]),
-                  Swizzle(swizzle),
-              ],
-          ),
-          TestCaseInput(
-              shape=[2, 3, 64, n],
-              transforms=[Transpose([1, 0, 2, 3]), Swizzle(swizzle)],
-          ),
-          TestCaseInput(
               shape=[256, n],
               shape_sliced=[128, n],
               transforms=[Tile([64, n]), Swizzle(swizzle)],
-          ),
-          TestCaseInput(
-              shape=[2 * 64, 3 * n],
-              transforms=[
-                  Tile([64, n]),
-                  Transpose([1, 0, 2, 3]),
-                  Swizzle(swizzle),
-              ],
           ),
       ])
     return result
