@@ -139,7 +139,7 @@ class CompilerParams:
   allow_collective_id_without_custom_barrier: bool = False
   shape_invariant_numerics: bool = True
   use_tc_tiling_on_sc: bool | None = None
-  needs_layout_passes: bool = False
+  needs_layout_passes: bool = True
   fuse_transposed_lhs_in_matmul: bool = False
 
   def __init__(
@@ -159,7 +159,7 @@ class CompilerParams:
       allow_collective_id_without_custom_barrier: bool = False,
       shape_invariant_numerics: bool = True,
       use_tc_tiling_on_sc: bool | None = None,
-      needs_layout_passes: bool | None = None,
+      needs_layout_passes: bool = True,
       fuse_transposed_lhs_in_matmul: bool = False,
   ):
     object.__setattr__(
