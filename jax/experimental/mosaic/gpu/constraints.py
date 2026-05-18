@@ -92,17 +92,17 @@ class TMEMLayout(Constant):
 
 
 @dataclasses.dataclass(frozen=True)
-class SMEMTiling(Constant):
-  """Wraps a known SMEM Tile Transform.
+class SMEMTransforms(Constant):
+  """Wraps known SMEM transforms.
 
   If an SMEM reference may, in principle, have transforms but should not be
-  tiled, then `value` is `None`.
+  tiled, then `tiling` is `None`.
   """
 
-  value: lc.TileTransform | None
+  tiling: lc.TileTransform | None
 
   def __str__(self):
-    return f"C({self.value})"
+    return f"C({self.tiling})"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -249,9 +249,9 @@ def reduce_transpose_expression(
   match reduced_expr:
     case Unsatisfiable():
       return Unsatisfiable()
-    case SMEMTiling(value=tile_transform):
+    case SMEMTransforms(tiling=tile_transform):
       if tile_transform is None:
-        return SMEMTiling(None)
+        return SMEMTransforms(None)
       tiling = tile_transform.tiling
       permutation = transpose.permutation
       tiling_offset = len(permutation) - len(tiling)
@@ -263,7 +263,7 @@ def reduce_transpose_expression(
       if any(dim < tiling_offset for dim in permutation[-len(tiling) :]):
         return Unsatisfiable()
       new_tiling = tuple(tiling[dim - tiling_offset] for dim in permutation[-len(tiling):])
-      return SMEMTiling(lc.TileTransform(new_tiling))
+      return SMEMTransforms(lc.TileTransform(new_tiling))
     case _:
       return Transpose(expression=reduced_expr, permutation=transpose.permutation)
 
@@ -313,9 +313,9 @@ def reduce_collapse_shape_expression(
   match reduced_expr:
     case Unsatisfiable():
       return Unsatisfiable()
-    case SMEMTiling(value=tile_transform):
+    case SMEMTransforms(tiling=tile_transform):
       if tile_transform is None:
-        return SMEMTiling(None)
+        return SMEMTransforms(None)
       tiling = tile_transform.tiling
       rev_tiling_to_process = list(tiling)[::-1]
       rev_shape_to_process = expr.source_shape[-len(tiling):][::-1]
@@ -364,7 +364,7 @@ def reduce_collapse_shape_expression(
       assert not rev_tiling_to_process
       assert not rev_shape_to_process
       new_tiling = tuple(rev_new_tiling[::-1])
-      return SMEMTiling(lc.TileTransform(tuple(new_tiling)))
+      return SMEMTransforms(lc.TileTransform(tuple(new_tiling)))
     case Constant():
       raise NotImplementedError(
           "CollapseShape is only implemented for variables in SMEM")
@@ -692,9 +692,9 @@ class IsTransferableSmemRegisters(IsTransferable):
 
   def holds(self) -> bool | None:
     match self.source, self.target:
-      case SMEMTiling(value=src), RegisterLayout(value=dst):
+      case SMEMTransforms(tiling=src), RegisterLayout(value=dst):
         return self._is_supported_smem_transfer(src, dst)
-      case RegisterLayout(value=src), SMEMTiling(value=dst):
+      case RegisterLayout(value=src), SMEMTransforms(tiling=dst):
         return self._is_supported_smem_transfer(dst, src)
       case Constant(), Constant():
         raise ValueError(
@@ -753,10 +753,10 @@ class Divides:
 
   def holds(self) -> bool | None:
     match self.expr:
-      case SMEMTiling(value=None):
+      case SMEMTransforms(tiling=None):
         # If there is no tiling, then this holds trivially.
         return True
-      case SMEMTiling(value=lc.TileTransform(tiling=t)):
+      case SMEMTransforms(tiling=lc.TileTransform(tiling=t)):
         tiling = t
       case RegisterLayout(
           value=fa.WGStridedFragLayout() | fa.WGSplatFragLayout()
@@ -789,16 +789,16 @@ class MinorDimDivisibleBy:
 
   If the last dimension is untiled, then `true` is returned.
 
-  If `expr` is not `SMEMTiling` but any other constant `ValueError` is raised.
+  If `expr` is not `SMEMTransforms` but any other constant `ValueError` is raised.
   """
   expr: Expression
   divisor: int
 
   def holds(self) -> bool | None:
     match self.expr:
-      case SMEMTiling(value=None):
+      case SMEMTransforms(tiling=None):
         return True
-      case SMEMTiling(value=lc.TileTransform(tiling=t)):
+      case SMEMTransforms(tiling=lc.TileTransform(tiling=t)):
         tiling = t
       case Constant() as c:
         raise ValueError(f"Unexpected value {c} in MinorDimDivisibleBy constraint")
@@ -832,9 +832,9 @@ class IsValidMmaTiling:
 
   def holds(self) -> bool | None:
     match self.expr:
-      case SMEMTiling(value=None):
+      case SMEMTransforms(tiling=None):
         return False
-      case SMEMTiling(value=lc.TileTransform(tiling=t)):
+      case SMEMTransforms(tiling=lc.TileTransform(tiling=t)):
         swizzles = [16, 32, 64, 128] if self.allow_unswizzled else [32, 64, 128]
         valid_tilings = {(8, s * 8 // self.bitwidth) for s in swizzles}
         return t in valid_tilings
@@ -1275,7 +1275,7 @@ def is_valid_assignment(var: Variable, layout: Constant) -> bool:
     case TMEMLayout(value=tmem_layout):
       assert var.memory_space == MemorySpace.TMEM
       return _is_valid_tmem_layout_assignment(var.shape, tmem_layout)
-    case SMEMTiling(value=tiling):
+    case SMEMTransforms(tiling=tiling):
       assert var.memory_space == MemorySpace.SMEM
       if tiling is None:
         return True

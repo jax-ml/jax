@@ -2161,7 +2161,7 @@ def _check_collapse_shape(
   reassociation = tuple(len(ir.ArrayAttr(idx)) for idx in op.reassociation)
 
   collapsed_tiling = cs.reduce_expression(
-      cs.CollapseShape(cs.SMEMTiling(t_in), tuple(src_ty.shape),
+      cs.CollapseShape(cs.SMEMTransforms(t_in), tuple(src_ty.shape),
                        reassociation),
       {},
   )
@@ -2169,8 +2169,8 @@ def _check_collapse_shape(
   if isinstance(collapsed_tiling, cs.Unsatisfiable):
     raise ValueError(f"Input tiling {t_in.tiling} is not compatible with {op}")
 
-  assert isinstance(collapsed_tiling, cs.SMEMTiling)
-  expected_t_out = collapsed_tiling.value
+  assert isinstance(collapsed_tiling, cs.SMEMTransforms)
+  expected_t_out = collapsed_tiling.tiling
   assert expected_t_out is not None
   if expected_t_out != t_out:
     raise ValueError(

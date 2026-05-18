@@ -215,11 +215,11 @@ def _default_tmem_layout_for_variable(
 
 def _register_layouts_for_optimized_transfer_to_smem(
     shaped_type: ir.ShapedType,
-    smem_layout: cs.SMEMTiling,
+    smem_layout: cs.SMEMTransforms,
     arch: tuple[int, int],
 ) -> Iterator[fa.FragmentedLayout]:
   """Yields register layout candidates for optimized transfers to SMEM."""
-  if smem_layout.value is None:
+  if smem_layout.tiling is None:
     reg_layout = fa.WGStridedFragLayout.from_shaped_type(shaped_type)
     if reg_layout is not None:
       yield reg_layout
@@ -346,10 +346,10 @@ def _extract_layout_candidates_from_smem_registers_transfer(
         if tiling in yielded:
           continue
         yielded.add(tiling)
-        yield variable, cs.SMEMTiling(lc.TileTransform(tiling))
+        yield variable, cs.SMEMTransforms(lc.TileTransform(tiling))
     return
 
-  assert isinstance(constant, cs.SMEMTiling)
+  assert isinstance(constant, cs.SMEMTransforms)
   assert variable.memory_space == cs.MemorySpace.REG
   for layout in _register_layouts_for_optimized_transfer_to_smem(
       variable.key.value.type, constant, arch
@@ -380,7 +380,7 @@ def _extract_layout_candidates_from_mma_tiling(
     tiling = (swizzle_elems, 8) if is_transposed else (8, swizzle_elems)
     if any(s % t for s, t in zip(tiled_dimensions, tiling)):
       continue
-    yield v, cs.SMEMTiling(lc.TileTransform(tiling))
+    yield v, cs.SMEMTransforms(lc.TileTransform(tiling))
 
 
 def _divides_per_var(
@@ -493,7 +493,7 @@ def conjure_assignment(
         if layout is not None:
           yield variable, cs.RegisterLayout(layout)
       case cs.MemorySpace.SMEM:
-        yield variable, cs.SMEMTiling(None)
+        yield variable, cs.SMEMTransforms(None)
       case cs.MemorySpace.TMEM:
         layout = _default_tmem_layout_for_variable(variable)
         if layout is not None:
@@ -1436,7 +1436,7 @@ def _custom_primitive_constraint_system(
       transforms = next(in_transforms)
       assert isinstance(transforms, ir.ArrayAttr)
       ref_ty = cast(ir.MemRefType, value_site.value.type)
-      tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
+      tiling = _extract_smem_transforms_from_custom_transform_attrs(ref_ty, transforms)
       assignments[v] = tiling
 
   out_layouts = iter(op.out_layouts)
@@ -1494,7 +1494,7 @@ def _tmem_alloc_constraint_system(
   in_smem = ValueSite(op, VariableType.OPERAND, 0)
   in_smem_var = cs.Variable(in_smem)
   assignments: dict[cs.Variable, cs.Constant] = {
-      in_smem_var: cs.SMEMTiling(None)
+      in_smem_var: cs.SMEMTransforms(None)
   }
   operands_for_variable = {result_var: [result], in_smem_var: [in_smem]}
   return cs.ConstraintSystem(assignments=assignments), operands_for_variable
@@ -1703,7 +1703,7 @@ def _async_store_sparse_metadata_smem_to_tmem_constraint_system(
               destination_variable: cs.TMEMLayout(
                   tcgen05.sparse_meta_layout()
               ),
-              source_variable: cs.SMEMTiling(None),
+              source_variable: cs.SMEMTransforms(None),
           },
       ),
       {source_variable: [source], destination_variable: [destination]},
@@ -1720,7 +1720,7 @@ def _async_store_scales_smem_to_tmem_constraint_system(
   destination_variable = ctx.producer_ref(destination)
 
   assignments: dict[cs.Variable, cs.Constant] = {
-      source_variable: cs.SMEMTiling(None)
+      source_variable: cs.SMEMTransforms(None)
   }
   k_tiles = destination.shape[1] // 4
   if source.shape == (1, k_tiles, 64, 16):
@@ -1989,7 +1989,7 @@ def _memref_load_store_op_constraint_system(
   ref_op_index = 0 if isinstance(op, memref.LoadOp) else 1
   ref = ValueSite(op, VariableType.OPERAND, ref_op_index)
   var = cs.Variable(ref)
-  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTiling(None)}
+  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTransforms(None)}
   return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
 
 
@@ -2001,14 +2001,14 @@ def _cluster_launch_control_ops_constraint_system(
 ) -> ConstraintSystemDerivationRuleResult:
   ref = ValueSite(op, VariableType.OPERAND, 0)
   var = ctx.producer_ref(ref)
-  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTiling(None)}
+  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTransforms(None)}
   return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
 
 
-def _extract_smem_tiling_from_custom_transform_attrs(
+def _extract_smem_transforms_from_custom_transform_attrs(
     ref_type: ir.MemRefType,
     transform_attrs: ir.ArrayAttr,
-) -> cs.SMEMTiling:
+) -> cs.SMEMTransforms:
   transforms = [layouts_lib.from_transform_attr(x) for x in transform_attrs]
   match transforms:
     case []:
@@ -2031,7 +2031,7 @@ def _extract_smem_tiling_from_custom_transform_attrs(
           f"from the computed swizle {computed_swizzle} for type {ref_type}."
       )
 
-  return cs.SMEMTiling(tile_transform)
+  return cs.SMEMTransforms(tile_transform)
 
 
 @_add_constraint_system_derivation_rule(mgpu.WithTransformsOp)
@@ -2042,11 +2042,11 @@ def _with_transforms_constraint_system(
   source = ValueSite(op, VariableType.OPERAND, 0)
   dest = ValueSite(op, VariableType.RESULT, 0)
   var = ctx.producer_ref(source)
-  tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
-  if tiling.value is not None:
+  tiling = _extract_smem_transforms_from_custom_transform_attrs(op.ref.type, op.transforms)
+  if tiling.tiling is not None:
     if not cs.is_valid_assignment(var, tiling):
       raise ValueError(
-          f"Cannot apply tiling {tiling.value} to memref with shape {source.shape}."
+          f"Cannot apply tiling {tiling.tiling} to memref with shape {source.shape}."
       )
   assignments: dict[cs.Variable, cs.Constant] = {var: tiling}
   return cs.ConstraintSystem(assignments=assignments), {var: [source, dest]}
@@ -2288,10 +2288,10 @@ def assign_layouts(solution: dict[ValueSite, cs.Constant]) -> None:
         if isinstance(tl.layout, cs.TMEMLayout)
     ]
     in_transforms = [
-        tl for tl in in_tls if isinstance(tl.layout, cs.SMEMTiling)
+        tl for tl in in_tls if isinstance(tl.layout, cs.SMEMTransforms)
     ]
     out_transforms = [
-        tl for tl in out_tls if isinstance(tl.layout, cs.SMEMTiling)
+        tl for tl in out_tls if isinstance(tl.layout, cs.SMEMTransforms)
     ]
 
     if inference_utils.should_have_in_layout(op):
@@ -2312,11 +2312,11 @@ def assign_layouts(solution: dict[ValueSite, cs.Constant]) -> None:
     ) -> list[ir.ArrayAttr]:
       all_attrs: list[ir.ArrayAttr] = []
       for tl in transforms:
-        assert isinstance(tl.layout, cs.SMEMTiling)
+        assert isinstance(tl.layout, cs.SMEMTransforms)
         attrs = []
-        if tl.layout.value is not None:
-          attrs.append(layouts_lib.to_transform_attr(tl.layout.value))
-          swizzle = _compute_swizzle(tl.type, tl.layout.value)
+        if tl.layout.tiling is not None:
+          attrs.append(layouts_lib.to_transform_attr(tl.layout.tiling))
+          swizzle = _compute_swizzle(tl.type, tl.layout.tiling)
           attrs.append(layouts_lib.to_transform_attr(swizzle))
         all_attrs.append(ir.ArrayAttr.get(attrs))
       return all_attrs

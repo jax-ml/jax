@@ -1425,7 +1425,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     [(_, tiling)] = list(layout_inference.conjure_assignment(
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
     ))
-    self.assertEqual(tiling, cs.SMEMTiling(None))
+    self.assertEqual(tiling, cs.SMEMTransforms(None))
 
   def test_conjure_smem_tiling_for_arbitrary_tiled_layout_transfer(self):
     shape = (128, 128)
@@ -1452,9 +1452,9 @@ class LayoutInferenceTest(parameterized.TestCase):
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
     ))
     # Empty tiling is always a possible assignment.
-    self.assertIn((var, cs.SMEMTiling(None)), assignments)
+    self.assertIn((var, cs.SMEMTransforms(None)), assignments)
     # Check that there is at least one non-empty tiling.
-    self.assertTrue(any(tiling.value is not None for _, tiling in assignments))
+    self.assertTrue(any(tiling.tiling is not None for _, tiling in assignments))
 
   @parameterized.parameters([False, True])
   def test_conjure_smem_assignment_from_is_transferable(self, transposed):
@@ -1482,14 +1482,14 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # Yield only empty tiling with no constraints.
     with self.subTest("no_constraints_yield_empty_tiling"):
-      self.assertEqual(conjure([]), [(var, cs.SMEMTiling(None))])
+      self.assertEqual(conjure([]), [(var, cs.SMEMTransforms(None))])
 
     # Yield empty if not a tiled layout.
     with self.subTest("not_tiled_layout_yield_empty_tiling"):
       layout = cs.RegisterLayout(fa.WGSplatFragLayout(shape))
       constraints = [transfer_constraint(layout)]
       conjured = conjure(constraints)
-      self.assertEqual(conjured, [(var, cs.SMEMTiling(None))])
+      self.assertEqual(conjured, [(var, cs.SMEMTransforms(None))])
 
     wgmma_layout = cs.RegisterLayout(fa.WGMMA_LAYOUT)
 
@@ -1502,9 +1502,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       else:
         expected_tilings = [(8, 32), (8, 16), (8, 8)]
       expected_assignments = [
-          (var, cs.SMEMTiling(lc.TileTransform(t))) for t in expected_tilings
+          (var, cs.SMEMTransforms(lc.TileTransform(t))) for t in expected_tilings
       ]
-      expected_assignments.append((var, cs.SMEMTiling(None)))
+      expected_assignments.append((var, cs.SMEMTransforms(None)))
       self.assertEqual(conjured, expected_assignments)
 
     # Yield also valid tilings with Divides constraints.
@@ -1519,9 +1519,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       else:
         expected_tilings = [(8, 16), (8, 8)]
       expected_assignments = [
-          (var, cs.SMEMTiling(lc.TileTransform(t))) for t in expected_tilings
+          (var, cs.SMEMTransforms(lc.TileTransform(t))) for t in expected_tilings
       ]
-      expected_assignments.append((var, cs.SMEMTiling(None)))
+      expected_assignments.append((var, cs.SMEMTransforms(None)))
       self.assertEqual(conjured, expected_assignments)
 
   def test_conjure_tries_high_priority_assignments_first(self):
