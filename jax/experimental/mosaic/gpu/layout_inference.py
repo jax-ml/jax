@@ -280,9 +280,9 @@ def _extract_layout_candidates_from_tmem_registers_transfer(
     constraint: cs.IsTransferableTmemRegisters,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   match constraint.source, constraint.target:
-    case cs.Variable() as src, cs.Constant() as tgt:
+    case cs.Variable() as src, tgt if isinstance(tgt, cs.Constant):
       variable, constant = src, tgt
-    case cs.Constant() as src, cs.Variable() as tgt:
+    case src, cs.Variable() as tgt if isinstance(src, cs.Constant):
       variable, constant = tgt, src
     case _:
       return
@@ -321,9 +321,9 @@ def _extract_layout_candidates_from_smem_registers_transfer(
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   src, tgt = constraint.source, constraint.target
   match src, tgt:
-    case cs.Variable(), cs.Constant():
+    case cs.Variable(), cst if isinstance(cst, cs.Constant):
       variable, constant = src, tgt
-    case cs.Constant(), cs.Variable():
+    case cst, cs.Variable() if isinstance(cst, cs.Constant):
       variable, constant = tgt, src
     case _:
       return
