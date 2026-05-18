@@ -317,6 +317,102 @@ def _get_mask_info_for_shard(
 
   return data_next, mask_next
 
+def _check_smem_limit(
+    heads_per_shard: int,
+    q_blocks_per_shard: int,
+    kv_blocks_count: int,
+    q_block_size: int,
+    kv_block_size: int,
+    has_mask_function: bool,
+    is_dkv: bool,
+  ):
+  """Check that mask scheduling metadata fits in SMEM.
+
+    The Splash Attention kernel prefetches scheduling metadata into SMEM
+    before execution. The metadata layout depends on the mask type:
+
+    For NumpyMask, three arrays are stored: block_mask (int8, marks each
+    block pair as skip/full/partial), data_next (index to the next data
+    block), and mask_next (index to the next mask block). These have shape
+    [heads, q_blocks, kv_blocks], so their combined size scales as
+    heads * blocks² * dtype_size.
+
+    For CausalMask, only data_next is needed, with shape
+    [1, q_blocks, kv_blocks]. The SMEM usage scales as blocks² * dtype_size(data_next),
+    independent of head count.
+
+    In both cases, smaller block sizes produce more blocks, increasing
+    metadata quadratically. If the metadata exceeds SMEM capacity, a
+    ValueError is raised with a suggested minimum block size (rounded to
+    an even multiple of the default block size to ensure clean divisibility
+    with power-of-2 sequence lengths). The suggestion is conservative:
+    increasing block size reduces block counts, which both shrinks the
+    metadata and may enable more aggressive downcasting of index values.
+
+    Args:
+        heads_per_shard: Number of attention heads on this shard.
+        q_blocks_per_shard: Number of query blocks on this shard.
+        kv_blocks_count: Total number of key-value blocks.
+        q_block_size: Number of tokens per query block.
+        kv_block_size: Number of tokens per key-value block.
+        has_mask_function: If True, the mask is computed inside the kernel
+            via a mask_function (e.g. CausalMask), so only data_next is
+            stored in SMEM. If False, assumes NumpyMask with all three
+            metadata arrays scaled by heads_per_shard.
+        is_dkv: If True, uses q_blocks_per_shard as the max value for
+            data_next downcasting (dKV backward pass iterates over Q
+            blocks), otherwise uses kv_blocks_count (forward pass
+            iterates over KV blocks).
+
+    Raises:
+        ValueError: If the estimated SMEM usage exceeds TPU capacity,
+            with a suggested minimum block size (rounded to an even
+            multiple of the default block size to ensure clean divisibility
+            with power-of-2 sequence lengths) that would fit.
+  """
+
+  tpu_info = get_tpu_info()
+  smem_limit = tpu_info.smem_capacity_bytes
+
+  def _downcast_dtype_size(max_val):
+    if max_val <= np.iinfo(np.int8).max:
+      return np.dtype(np.int8).itemsize
+    elif max_val <= np.iinfo(np.int16).max:
+      return np.dtype(np.int16).itemsize
+    return np.dtype(np.int32).itemsize
+
+  data_next_max = q_blocks_per_shard if is_dkv else kv_blocks_count
+
+  if has_mask_function:
+    elements = q_blocks_per_shard * kv_blocks_count
+    required_smem_bytes = (
+        elements * _downcast_dtype_size(data_next_max)   # data_next
+      )
+  else:
+    elements = heads_per_shard * q_blocks_per_shard * kv_blocks_count
+    required_smem_bytes = (
+          elements * 1                                       # block_mask: always int8
+          + elements * _downcast_dtype_size(data_next_max)   # data_next
+          + elements * _downcast_dtype_size(elements)        # mask_next
+      )
+
+  if required_smem_bytes > smem_limit:
+    # When block size increases, element counts drop. It also enables aggressive
+    # downcasting (smaller dtypes), so actual SMEM usage drops faster than the linear estimate.
+    # Future work may explore rectangular block sizes as current symmetric block
+    # size will always be safe, just potentially larger than strictly necessary.
+    default_block_size = 128
+    block_size = math.sqrt(
+            (required_smem_bytes * q_block_size * kv_block_size) / smem_limit
+        )
+    scaling_factor = math.ceil(block_size / default_block_size)
+    scaling_factor = scaling_factor if scaling_factor % 2 == 0 else scaling_factor + 1
+    min_block_size = scaling_factor * default_block_size
+    raise ValueError(
+            f"Splash attention mask metadata requires {required_smem_bytes / (1024*1024):.2f} MiB "
+            f"but SMEM limit is {smem_limit / (1024*1024):.2f} MiB. "
+            f"Rebuild mask and attention with block_sizes={min_block_size}."
+        )
 
 def _process_dynamic_mask(
     mask: jax.Array,
@@ -595,47 +691,10 @@ def _process_mask(
            and isinstance(m.array, Tracer)
             for m in mask.masks)
 
-  def _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count,
-                          q_block_size, kv_block_size, is_dkv):
-    """Check that the size of the mask metadata fits in SMEM."""
-
-    tpu_info = get_tpu_info()
-    smem_limit = tpu_info.smem_capacity_bytes
-
-    def _downcast_dtype_size(max_val):
-      if max_val <= np.iinfo(np.int8).max:
-        return np.dtype(np.int8).itemsize
-      elif max_val <= np.iinfo(np.int16).max:
-        return np.dtype(np.int16).itemsize
-      return np.dtype(np.int32).itemsize
-
-    elements = heads_per_shard * q_blocks_per_shard * kv_blocks_count
-    data_next_max = q_blocks_per_shard if is_dkv else kv_blocks_count
-    required_smem_bytes = (
-        elements * 1                                       # block_mask: always int8
-        + elements * _downcast_dtype_size(data_next_max)   # data_next
-        + elements * _downcast_dtype_size(elements)        # mask_next
-    )
-
-    if required_smem_bytes > smem_limit:
-      # When block size increases, element counts drop. It also enables aggressive
-      # downcasting (smaller dtypes), so actual SMEM usage drops faster than the linear estimate.
-      # Future work may explore rectangular block sizes as current symmetric block
-      # size will always be safe, just potentially larger than strictly necessary.
-      default_block_size = 128
-      block_size = math.sqrt(
-            (required_smem_bytes * q_block_size * kv_block_size) / smem_limit
-        )
-      min_block_size = math.ceil(block_size / default_block_size) * default_block_size
-      raise ValueError(
-            f"Splash attention mask metadata requires {required_smem_bytes / (1024*1024):.2f} MiB "
-            f"but SMEM limit is {smem_limit / (1024*1024):.2f} MiB. "
-            f"Rebuild mask and attention with block_sizes=({min_block_size}, {min_block_size})."
-        )
-
   if _is_numpy_mask_with_traced_arrays(mask):
+    _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count,
+                    q_block_size, kv_block_size, has_mask_function=False,is_dkv=is_dkv)
     jax_mask = jnp.stack([m.array for m in mask.masks if isinstance(m, mask_lib.NumpyMask)])
-    _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count, q_block_size, kv_block_size, is_dkv)
     return _process_dynamic_mask(
           jax_mask,
           block_shape,
@@ -740,6 +799,8 @@ def _process_mask(
     ):
       q_sequence = unique_mask.q_sequence
       mask_function = unique_mask.mask_function
+      _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count,
+                      q_block_size, kv_block_size, has_mask_function=True,is_dkv=is_dkv)
 
   # Identify the partial mask blocks and the value of the block mask for each
   # block.
