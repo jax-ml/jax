@@ -25,6 +25,7 @@ def repo():
         patch_file = [
             # Add any patch files here.
             # "//third_party/xla:temporary.patch
+	    "//third_party/xla:revert_xla_pr.patch",
         ],
     )
 

@@ -1,0 +1,751 @@
+From c679e6a40b4aacab50dd4db9f022fa57c8348988 Mon Sep 17 00:00:00 2001
+From: Kanglan Tang <kanglan@google.com>
+Date: Mon, 18 May 2026 19:02:21 +0000
+Subject: [PATCH] Revert "PR #42396: [xla:gpu] Use DynamicSliceAnnotator
+ configs in dynamic memcpy rewriter"
+
+This reverts commit 0ff523a4e6728caa4a6b221008c3979be9e6db4c.
+---
+ xla/backends/gpu/transforms/BUILD             |  19 +-
+ .../gpu/transforms/dynamic_slice_analysis.cc  |  22 +-
+ .../dynamic_slice_annotator_test.cc           | 117 -------
+ .../fusion_dynamic_memcpy_rewriter.cc         | 319 +++++++++++++-----
+ .../fusion_dynamic_memcpy_rewriter_test.cc    |  32 +-
+ xla/service/gpu/BUILD                         |   1 -
+ xla/service/gpu/gpu_compiler.cc               |  16 +-
+ 7 files changed, 276 insertions(+), 250 deletions(-)
+
+diff --git a/xla/backends/gpu/transforms/BUILD b/xla/backends/gpu/transforms/BUILD
+index f9e9e5eaff..a01ecf5a79 100644
+--- a/xla/backends/gpu/transforms/BUILD
++++ b/xla/backends/gpu/transforms/BUILD
+@@ -266,18 +266,29 @@ cc_library(
+     srcs = ["fusion_dynamic_memcpy_rewriter.cc"],
+     hdrs = ["fusion_dynamic_memcpy_rewriter.h"],
+     deps = [
+-        "//xla:shape_util",
++        "//xla:literal",
++        "//xla:literal_util",
++        "//xla:status_macros",
+         "//xla:xla_data_proto_cc",
+         "//xla/backends/gpu/codegen:copy",
++        "//xla/backends/gpu/runtime:dynamic_memcpy_thunk",
++        "//xla/hlo/evaluator:hlo_evaluator",
+         "//xla/hlo/ir:hlo",
+         "//xla/hlo/pass:hlo_pass",
+         "//xla/service/gpu:backend_configs_cc",
+         "//xla/service/gpu:ir_emission_utils",
+-        "//xla/tsl/platform:status_macros",
++        "//xla/tsl/platform:errors",
++        "//xla/tsl/platform:statusor",
++        "@com_google_absl//absl/container:flat_hash_map",
+         "@com_google_absl//absl/container:flat_hash_set",
++        "@com_google_absl//absl/container:inlined_vector",
++        "@com_google_absl//absl/container:node_hash_map",
+         "@com_google_absl//absl/log",
++        "@com_google_absl//absl/log:check",
++        "@com_google_absl//absl/status",
+         "@com_google_absl//absl/status:statusor",
+-        "@com_google_absl//absl/strings:string_view",
++        "@com_google_absl//absl/strings",
++        "@com_google_absl//absl/types:span",
+     ],
+ )
+ 
+@@ -290,7 +301,7 @@ xla_cc_test(
+         "//xla/hlo/testlib:hlo_hardware_independent_test_base",
+         "//xla/service/gpu:backend_configs_cc",
+         "//xla/service/gpu:ir_emission_utils",
+-        "//xla/tsl/platform:status_matchers",
++        "//xla/tsl/platform:statusor",
+         "@com_google_absl//absl/status:status_matchers",
+         "@com_google_absl//absl/status:statusor",
+         "@com_google_googletest//:gtest_main",
+diff --git a/xla/backends/gpu/transforms/dynamic_slice_analysis.cc b/xla/backends/gpu/transforms/dynamic_slice_analysis.cc
+index 1bfba2b307..a4a18cc554 100644
+--- a/xla/backends/gpu/transforms/dynamic_slice_analysis.cc
++++ b/xla/backends/gpu/transforms/dynamic_slice_analysis.cc
+@@ -301,23 +301,11 @@ absl::StatusOr<std::optional<DynamicSliceDescriptor>> AnalyzeDynamicSlice(
+     auto functional_dependency =
+         ResolveFunctionalDependencyOnInductionVariable(operand);
+     if (functional_dependency) {
+-      // Use the induction variable from the while body by default. If the
+-      // DUS is inside a called computation (async/fusion/call), find the
+-      // local parameter that corresponds to the induction variable so that
+-      // HloEvaluator can substitute it without crossing computation
+-      // boundaries.
+-      const HloInstruction* local_ivar = functional_dependency->induction_var;
+-      const HloComputation* instr_comp = instr->parent();
+-      auto it = functional_dependency->required_parameters.find(instr_comp);
+-      if (it != functional_dependency->required_parameters.end()) {
+-        auto param_it = absl::c_find(it->second, true);
+-        if (param_it != it->second.end()) {
+-          local_ivar =
+-              instr_comp->parameter_instruction(param_it - it->second.begin());
+-        }
+-      }
+-
+-      resolved_offsets.push_back({functional_dependency->loop, local_ivar,
++      // ResolveFunctionalDependencyOnInductionVariable guarantees exactly one
++      // while loop in the chain (returns nullopt otherwise), so loop_index is
++      // 0.
++      resolved_offsets.push_back({functional_dependency->loop,
++                                  functional_dependency->induction_var,
+                                   /*is_staggered=*/false, /*staggered_init=*/0,
+                                   /*loop_index=*/0});
+       continue;
+diff --git a/xla/backends/gpu/transforms/dynamic_slice_annotator_test.cc b/xla/backends/gpu/transforms/dynamic_slice_annotator_test.cc
+index 79f92a0769..2557f3a2c3 100644
+--- a/xla/backends/gpu/transforms/dynamic_slice_annotator_test.cc
++++ b/xla/backends/gpu/transforms/dynamic_slice_annotator_test.cc
+@@ -156,122 +156,5 @@ TEST_F(DynamicSliceAnnotatorTest, AnnotatesConstantOffsetOutsideWhileLoop) {
+   EXPECT_EQ(config->byte_stride(), 0);
+ }
+ 
+-TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInAsyncComputation) {
+-  constexpr absl::string_view kHlo = R"(
+-    async_computation {
+-      p0 = f32[4]{0} parameter(0)
+-      p1 = f32[1]{0} parameter(1)
+-      p2 = s32[] parameter(2)
+-      ROOT dus = f32[4]{0} dynamic-update-slice(p0, p1, p2)
+-    }
+-
+-    body {
+-      p0 = (s32[], f32[4]{0}) parameter(0)
+-      ivar = s32[] get-tuple-element(p0), index=0
+-      buf = f32[4]{0} get-tuple-element(p0), index=1
+-      val = f32[] constant(1)
+-      reshape = f32[1]{0} reshape(val)
+-      async-start = ((f32[4]{0}, f32[1]{0}, s32[]), f32[4]{0}, u32[])
+-          async-start(buf, reshape, ivar), calls=async_computation
+-      updated = f32[4]{0} async-done(async-start), calls=async_computation
+-      c1 = s32[] constant(1)
+-      next_ivar = s32[] add(ivar, c1)
+-      ROOT result = (s32[], f32[4]{0}) tuple(next_ivar, updated)
+-    }
+-
+-    condition {
+-      p0 = (s32[], f32[4]{0}) parameter(0)
+-      ivar = s32[] get-tuple-element(p0), index=0
+-      c4 = s32[] constant(4)
+-      ROOT cmp = pred[] compare(ivar, c4), direction=LT
+-    }
+-
+-    ENTRY main {
+-      buf = f32[4]{0} parameter(0)
+-      c0 = s32[] constant(0)
+-      tuple = (s32[], f32[4]{0}) tuple(c0, buf)
+-      ROOT while = (s32[], f32[4]{0}) while(tuple),
+-          condition=condition, body=body,
+-          backend_config={"known_trip_count":{"n":"4"},
+-                          "known_init_step":{"init":"0","step":"1"},
+-                          "known_induction_variable":{"tuple_index":"0"}}
+-    })";
+-
+-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+-                       ParseAndReturnVerifiedModule(kHlo));
+-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
+-              absl_testing::IsOkAndHolds(true));
+-
+-  auto* dus = module->GetComputationWithName("async_computation")
+-                  ->GetInstructionWithName("dus");
+-  auto config = GetDynamicSliceConfig(dus);
+-  ASSERT_TRUE(config.has_value());
+-  EXPECT_EQ(config->loop_index(), 0);
+-  EXPECT_EQ(config->byte_offset(), 0);
+-  EXPECT_EQ(config->byte_stride(), 4);
+-}
+-
+-TEST_F(DynamicSliceAnnotatorTest, AnnotatesDusInNestedCalls) {
+-  constexpr absl::string_view kHlo = R"(
+-    inner_computation {
+-      p0 = f32[4]{0} parameter(0)
+-      p1 = f32[1]{0} parameter(1)
+-      p2 = s32[] parameter(2)
+-      ROOT dus = f32[4]{0} dynamic-update-slice(p0, p1, p2)
+-    }
+-
+-    async_computation {
+-      p0 = f32[4]{0} parameter(0)
+-      p1 = f32[1]{0} parameter(1)
+-      p2 = s32[] parameter(2)
+-      ROOT call = f32[4]{0} call(p0, p1, p2), to_apply=inner_computation
+-    }
+-
+-    body {
+-      p0 = (s32[], f32[4]{0}) parameter(0)
+-      ivar = s32[] get-tuple-element(p0), index=0
+-      buf = f32[4]{0} get-tuple-element(p0), index=1
+-      val = f32[] constant(1)
+-      reshape = f32[1]{0} reshape(val)
+-      async-start = ((f32[4]{0}, f32[1]{0}, s32[]), f32[4]{0}, u32[])
+-          async-start(buf, reshape, ivar), calls=async_computation
+-      updated = f32[4]{0} async-done(async-start), calls=async_computation
+-      c1 = s32[] constant(1)
+-      next_ivar = s32[] add(ivar, c1)
+-      ROOT result = (s32[], f32[4]{0}) tuple(next_ivar, updated)
+-    }
+-
+-    condition {
+-      p0 = (s32[], f32[4]{0}) parameter(0)
+-      ivar = s32[] get-tuple-element(p0), index=0
+-      c4 = s32[] constant(4)
+-      ROOT cmp = pred[] compare(ivar, c4), direction=LT
+-    }
+-
+-    ENTRY main {
+-      buf = f32[4]{0} parameter(0)
+-      c0 = s32[] constant(0)
+-      tuple = (s32[], f32[4]{0}) tuple(c0, buf)
+-      ROOT while = (s32[], f32[4]{0}) while(tuple),
+-          condition=condition, body=body,
+-          backend_config={"known_trip_count":{"n":"4"},
+-                          "known_init_step":{"init":"0","step":"1"},
+-                          "known_induction_variable":{"tuple_index":"0"}}
+-    })";
+-
+-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+-                       ParseAndReturnVerifiedModule(kHlo));
+-  EXPECT_THAT(DynamicSliceAnnotator().Run(module.get()),
+-              absl_testing::IsOkAndHolds(true));
+-
+-  auto* dus = module->GetComputationWithName("inner_computation")
+-                  ->GetInstructionWithName("dus");
+-  auto config = GetDynamicSliceConfig(dus);
+-  ASSERT_TRUE(config.has_value());
+-  EXPECT_EQ(config->loop_index(), 0);
+-  EXPECT_EQ(config->byte_offset(), 0);
+-  EXPECT_EQ(config->byte_stride(), 4);
+-}
+-
+ }  // namespace
+ }  // namespace xla::gpu
+diff --git a/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.cc b/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.cc
+index ed33901caf..7eba54f980 100644
+--- a/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.cc
++++ b/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter.cc
+@@ -18,64 +18,251 @@ limitations under the License.
+ #include <algorithm>
+ #include <cstdint>
+ #include <optional>
++#include <utility>
+ 
++#include "absl/container/flat_hash_map.h"
+ #include "absl/container/flat_hash_set.h"
++#include "absl/container/inlined_vector.h"
++#include "absl/container/node_hash_map.h"
++#include "absl/log/check.h"
+ #include "absl/log/log.h"
++#include "absl/status/status.h"
+ #include "absl/status/statusor.h"
+ #include "absl/strings/string_view.h"
+-#include "xla/tsl/platform/status_macros.h"
++#include "absl/types/span.h"
+ #include "xla/backends/gpu/codegen/copy.h"
++#include "xla/backends/gpu/runtime/dynamic_memcpy_thunk.h"
++#include "xla/hlo/evaluator/hlo_evaluator.h"
+ #include "xla/hlo/ir/hlo_casting_utils.h"
+ #include "xla/hlo/ir/hlo_computation.h"
+ #include "xla/hlo/ir/hlo_instruction.h"
+ #include "xla/hlo/ir/hlo_instructions.h"
+ #include "xla/hlo/ir/hlo_module.h"
+-#include "xla/hlo/ir/hlo_opcode.h"
++#include "xla/literal.h"
++#include "xla/literal_util.h"
+ #include "xla/service/gpu/backend_configs.pb.h"
+ #include "xla/service/gpu/ir_emission_utils.h"
+-#include "xla/shape_util.h"
++#include "xla/status_macros.h"
++#include "xla/tsl/platform/errors.h"
++#include "xla/tsl/platform/statusor.h"
+ #include "xla/xla_data.pb.h"
+ 
+-namespace xla::gpu {
++namespace xla {
++namespace gpu {
+ namespace {
+ 
+-const HloInstruction* SkipOptionalBitcast(const HloInstruction* instr) {
+-  while (instr->opcode() == HloOpcode::kBitcast) {
+-    instr = instr->operand(0);
++class DynamicOffsetEvaluator {
++ public:
++  // Evaluates the clamped array index for the given offset.
++  absl::StatusOr<int64_t> EvaluateArrayIndexForOffset(
++      const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset,
++      const WhileLoopBackendConfig& loop_config, int64_t iteration) {
++    TF_ASSIGN_OR_RETURN(auto call_stack, ComputeCallStack(offset));
++
++    // Walk up the call stack and compute the required parameter's values at
++    // each step, using them as the substitutions for the next call. By
++    // definition, the first call can only depend on the induction variable.
++    TF_ASSIGN_OR_RETURN(
++        auto substitutions,
++        GetInductionVariableSubstitutions(offset, loop_config, iteration));
++    HloEvaluator evaluator(/*max_loop_iterations=*/0);
++    for (auto it = call_stack.rbegin(), e = call_stack.rend(); it != e; ++it) {
++      const HloInstruction* caller = *it;
++      VLOG(3) << "Evaluating required operands of caller " << caller->name()
++              << ".";
++      if (VLOG_IS_ON(4)) {
++        VLOG(4) << "Current substitutions:";
++        for (auto [instr, value] : substitutions) {
++          VLOG(4) << "  " << instr->name() << " -> " << value->ToString();
++        }
++      }
++      absl::flat_hash_map<const HloInstruction*, const LiteralBase*>
++          next_substitutions;
++      for (auto [parameter, operand] :
++           GetRequiredParametersAndOperands(offset, caller)) {
++        // Only compute the value if we didn't already need it for a different
++        // offset.
++        if (!known_values_.contains(operand)) {
++          TF_ASSIGN_OR_RETURN(
++              known_values_[operand],
++              evaluator.Evaluate(operand, {}, true, substitutions));
++        }
++        next_substitutions[parameter] = &known_values_[operand];
++      }
++
++      std::swap(substitutions, next_substitutions);
++    }
++
++    // We now have the parameter values for the innermost call, so we can
++    // compute the offset.
++    TF_ASSIGN_OR_RETURN(
++        auto array_index_literal,
++        evaluator.Evaluate(offset.offset, {}, true, substitutions));
++
++    std::optional<int64_t> array_index =
++        LiteralUtil::LiteralAsScalarInt64(array_index_literal);
++    if (!array_index) {
++      return absl::InternalError("Failed to evaluate offset");
++    }
++
++    int64_t clamped_index =
++        std::max<int64_t>(0, std::min(*array_index, offset.dimension_size - 1));
++    VLOG(3) << "Computed dynamic array index " << clamped_index << ".";
++
++    return clamped_index;
+   }
+-  return instr;
+-}
+ 
+-std::optional<DynamicSliceConfig> GetDynamicSliceConfig(
+-    const HloInstruction* instr) {
+-  auto config = instr->backend_config<GpuBackendConfig>();
+-  if (!config.ok() || !config->has_dynamic_slice_config()) {
+-    return std::nullopt;
++ private:
++  // Computes the call stack between `offset`'s while loop and the derived
++  // value. Typically, there will be up to three items in the stack: 1) a
++  // fusion, 2) optionally an async-start, 3) optionally a command buffer. The
++  // while loop instruction is not included.
++  static absl::StatusOr<absl::InlinedVector<HloInstruction*, 4>>
++  ComputeCallStack(
++      const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset) {
++    VLOG(3) << "Computing call stack for " << offset.offset->name() << ".";
++    const HloComputation* current_computation = offset.offset->parent();
++    const HloComputation* while_body = offset.induction_variable->parent();
++
++    absl::InlinedVector<HloInstruction*, 4> call_stack;
++    while (current_computation && current_computation != while_body) {
++      VLOG(3) << "Current computation: " << current_computation->name() << ".";
++      auto callers = current_computation->caller_instructions();
++
++      // If there isn't a single caller, the thunk was not constructed
++      // correctly.
++      TF_RET_CHECK(callers.size() == 1);
++
++      call_stack.push_back(callers.front());
++      current_computation = callers.front()->parent();
++    }
++
++    // If we didn't arrive at the while body, the thunk was not constructed
++    // correctly.
++    TF_RET_CHECK(current_computation == while_body);
++    return call_stack;
+   }
+-  return config->dynamic_slice_config();
+-}
+ 
+-const HloInstruction* FindEnclosingWhileLoop(const HloInstruction* instr) {
+-  const HloComputation* computation = instr->parent();
+-  while (computation != nullptr) {
+-    auto callers = computation->caller_instructions(HloOpcode::kWhile);
+-    if (!callers.empty()) {
+-      return callers.front();
++  // Returns the pairs of {computation parameter, computation caller operand}
++  // that are required in the given computation to compute the given offset.
++  static absl::InlinedVector<
++      std::pair<const HloInstruction*, const HloInstruction*>, 1>
++  GetRequiredParametersAndOperands(
++      const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset,
++      const HloInstruction* caller) {
++    absl::InlinedVector<std::pair<const HloInstruction*, const HloInstruction*>,
++                        1>
++        result;
++    const HloComputation* callee = caller->called_computations().front();
++    if (auto maybe_required = offset.required_parameters.find(callee);
++        maybe_required != offset.required_parameters.end()) {
++      const auto& required_parameters = maybe_required->second;
++      for (int i = 0; i < required_parameters.size(); ++i) {
++        if (required_parameters[i]) {
++          result.push_back(
++              {callee->parameter_instruction(i), caller->operand(i)});
++        }
++      }
+     }
+-    auto all_callers = computation->caller_instructions();
+-    if (all_callers.empty()) {
+-      break;
++    return result;
++  }
++
++  absl::StatusOr<absl::flat_hash_map<const HloInstruction*, const LiteralBase*>>
++  GetInductionVariableSubstitutions(
++      const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset& offset,
++      const WhileLoopBackendConfig& loop_config, int64_t iteration) {
++    // Set the value of the induction variable, if it's not known yet.
++    if (!known_values_.contains(offset.induction_variable)) {
++      int64_t induction_variable =
++          loop_config.known_init_step().init() +
++          iteration * loop_config.known_init_step().step();
++
++      Literal induction_variable_literal(offset.induction_variable->shape());
++      TF_RETURN_IF_ERROR(
++          induction_variable_literal.SetIntegralAsS64({}, induction_variable));
++      known_values_[offset.induction_variable] =
++          std::move(induction_variable_literal);
+     }
+-    computation = all_callers.front()->parent();
++
++    return {{{offset.induction_variable,
++              &known_values_.at(offset.induction_variable)}}};
+   }
+-  return nullptr;
++
++  absl::node_hash_map<const HloInstruction*, Literal> known_values_;
++};
++
++absl::StatusOr<int64_t> EvaluateDynamicOffsets(
++    absl::Span<const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset>
++        offsets,
++    const WhileLoopBackendConfig& loop_config, int64_t iteration) {
++  int64_t offset_sum = 0;
++  DynamicOffsetEvaluator evaluator;
++  for (const auto& offset : offsets) {
++    TF_ASSIGN_OR_RETURN(
++        int64_t clamped_index,
++        evaluator.EvaluateArrayIndexForOffset(offset, loop_config, iteration));
++    offset_sum += clamped_index * offset.byte_stride;
++  }
++  return offset_sum;
+ }
+ 
+-int64_t GetSliceByteSize(const HloInstruction* ds_or_dus) {
+-  if (ds_or_dus->opcode() == HloOpcode::kDynamicSlice) {
+-    return ShapeUtil::ByteSizeOf(ds_or_dus->shape());
++absl::StatusOr<WhileLoopBackendConfig> GetLoopConfig(
++    const DynamicMemcpyThunk::MemcpyDescriptor& descriptor) {
++  const HloInstruction* loop = nullptr;
++  for (const auto& offsets :
++       {descriptor.src_dynamic_offsets, descriptor.dst_dynamic_offsets}) {
++    for (const auto& offset : offsets) {
++      if (loop == nullptr) {
++        loop = offset.while_loop;
++      } else if (loop != offset.while_loop) {
++        // The while loop must be the same in all dynamic offsets. This should
++        // always be the case.
++        return absl::InternalError(
++            "Loops in dynamic memcpy descriptor are not consistent.");
++      }
++    }
+   }
+-  return ShapeUtil::ByteSizeOf(ds_or_dus->operand(1)->shape());
++
++  if (!loop) {
++    return absl::InternalError("Did not find a loop.");
++  }
++
++  TF_ASSIGN_OR_RETURN(auto config,
++                      loop->backend_config<WhileLoopBackendConfig>());
++  if (!config.has_known_init_step() || !config.has_known_trip_count()) {
++    return absl::InternalError(
++        "Loop is not a for loop with a static trip count.");
++  }
++  return config;
++}
++
++absl::Status ComputeOffsetsForLoop(
++    absl::Span<const DynamicMemcpyThunk::MemcpyDescriptor::DynamicOffset>
++        dynamic_offsets,
++    int64_t static_offset, const WhileLoopBackendConfig& loop_config,
++    tsl::protobuf::RepeatedField<int64_t>* output_offsets) {
++  for (int64_t i = 0; i < loop_config.known_trip_count().n(); ++i) {
++    TF_ASSIGN_OR_RETURN(
++        auto dynamic_offset,
++        EvaluateDynamicOffsets(dynamic_offsets, loop_config, i));
++    output_offsets->Add(static_offset + dynamic_offset);
++  }
++  return absl::OkStatus();
++}
++
++absl::Status SetLoopMemcpyConfig(
++    const DynamicMemcpyThunk::MemcpyDescriptor& descriptor,
++    DynamicMemcpyConfig* config) {
++  TF_ASSIGN_OR_RETURN(auto loop_config, GetLoopConfig(descriptor));
++
++  config->set_depends_on_loop(true);
++  TF_RETURN_IF_ERROR(ComputeOffsetsForLoop(
++      descriptor.src_dynamic_offsets, descriptor.src_byte_static_offset,
++      loop_config, config->mutable_src_offset_bytes()));
++  TF_RETURN_IF_ERROR(ComputeOffsetsForLoop(
++      descriptor.dst_dynamic_offsets, descriptor.dst_byte_static_offset,
++      loop_config, config->mutable_dst_offset_bytes()));
++  return absl::OkStatus();
+ }
+ 
+ }  // namespace
+@@ -91,74 +278,38 @@ absl::StatusOr<bool> FusionDynamicMemcpyRewriter::RunImpl(
+     }
+ 
+     HloFusionInstruction* fusion =
+-        Cast<HloFusionInstruction>(computation->FusionInstruction());
+-    if (!DynamicMemcpyFusion::IsCandidateFusion(*fusion)) {
+-      continue;
+-    }
+-
+-    const HloInstruction* root =
+-        SkipOptionalBitcast(fusion->fused_expression_root());
+-
+-    std::optional<DynamicSliceConfig> ds_config = GetDynamicSliceConfig(root);
+-    if (!ds_config.has_value()) {
++        ::xla::Cast<HloFusionInstruction>(computation->FusionInstruction());
++    auto descriptor =
++        DynamicMemcpyFusion::GetMemcpyDescriptorForFusion(*fusion);
++    if (!descriptor) {
+       continue;
+     }
+ 
+-    ASSIGN_OR_RETURN(auto backend_config,
+-                     fusion->backend_config<GpuBackendConfig>());
++    TF_ASSIGN_OR_RETURN(auto backend_config,
++                        fusion->backend_config<GpuBackendConfig>());
+     auto* fusion_config = backend_config.mutable_fusion_backend_config();
+     fusion_config->set_kind(kDynamicMemcpyFusionKind);
+     auto* memcpy_config = fusion_config->mutable_dynamic_memcpy_config();
+ 
+-    bool is_src = root->opcode() == HloOpcode::kDynamicSlice;
+-    int64_t buffer_size = ShapeUtil::ByteSizeOf(root->operand(0)->shape());
+-    int64_t max_offset = buffer_size - GetSliceByteSize(root);
+-
+-    if (ds_config->byte_stride() == 0) {
+-      int64_t offset =
+-          std::clamp(ds_config->byte_offset(), int64_t{0}, max_offset);
+-      if (is_src) {
+-        memcpy_config->add_src_offset_bytes(offset);
+-        memcpy_config->add_dst_offset_bytes(0);
+-      } else {
+-        memcpy_config->add_src_offset_bytes(0);
+-        memcpy_config->add_dst_offset_bytes(offset);
+-      }
++    if (descriptor->src_dynamic_offsets.size() +
++            descriptor->dst_dynamic_offsets.size() ==
++        0) {
++      memcpy_config->add_src_offset_bytes(descriptor->src_byte_static_offset);
++      memcpy_config->add_dst_offset_bytes(descriptor->dst_byte_static_offset);
+     } else {
+-      const HloInstruction* while_loop = FindEnclosingWhileLoop(fusion);
+-      if (while_loop == nullptr) {
+-        LOG(INFO) << "Cannot find enclosing while loop for " << fusion->name();
++      auto status = SetLoopMemcpyConfig(*descriptor, memcpy_config);
++      if (!status.ok()) {
++        LOG(INFO) << "Failed to produce memcpy configuration: " << status;
+         continue;
+       }
+-
+-      auto loop_config = while_loop->backend_config<WhileLoopBackendConfig>();
+-      if (!loop_config.ok() || !loop_config->has_known_trip_count()) {
+-        LOG(INFO) << "While loop has unknown trip count for " << fusion->name();
+-        continue;
+-      }
+-
+-      int64_t trip_count = loop_config->known_trip_count().n();
+-      memcpy_config->set_depends_on_loop(true);
+-
+-      for (int64_t i = 0; i < trip_count; ++i) {
+-        int64_t offset =
+-            std::clamp(ds_config->byte_offset() + i * ds_config->byte_stride(),
+-                       int64_t{0}, max_offset);
+-        if (is_src) {
+-          memcpy_config->add_src_offset_bytes(offset);
+-          memcpy_config->add_dst_offset_bytes(0);
+-        } else {
+-          memcpy_config->add_src_offset_bytes(0);
+-          memcpy_config->add_dst_offset_bytes(offset);
+-        }
+-      }
+     }
+ 
+-    RETURN_IF_ERROR(fusion->set_backend_config(backend_config));
++    TF_RETURN_IF_ERROR(fusion->set_backend_config(backend_config));
+     has_changed = true;
+   }
+ 
+   return has_changed;
+ }
+ 
+-}  // namespace xla::gpu
++}  // namespace gpu
++}  // namespace xla
+diff --git a/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter_test.cc b/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter_test.cc
+index af5cf31e7a..b0a67fe0c5 100644
+--- a/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter_test.cc
++++ b/xla/backends/gpu/transforms/fusion_dynamic_memcpy_rewriter_test.cc
+@@ -27,9 +27,10 @@ limitations under the License.
+ #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+ #include "xla/service/gpu/backend_configs.pb.h"
+ #include "xla/service/gpu/ir_emission_utils.h"
+-#include "xla/tsl/platform/status_matchers.h"
++#include "xla/tsl/platform/statusor.h"
+ 
+-namespace xla::gpu {
++namespace xla {
++namespace gpu {
+ namespace {
+ 
+ using ::testing::ElementsAre;
+@@ -52,13 +53,14 @@ std::optional<DynamicMemcpyConfig> GetMemcpyConfig(
+ }
+ 
+ constexpr char kSliceMemcpyModule[] = R"(
++    // This fusion is technically not a dynamic memcpy. Tests for that are in
++    // the unit tests for DynamicMemcpyFusion::GetMemcpyDescriptorForFusion,
++    // in copy_test.cc. Here, we just test that the logic triggers as expected.
+     dynamic_slice {
+       p0 = s32[4] parameter(0)
+       c1 = s32[] constant(1)
+ 
+-      ROOT slice = s32[1] dynamic-slice(p0, c1), dynamic_slice_sizes={1},
+-          backend_config={"dynamic_slice_config":
+-              {"byte_offset":"4","byte_stride":"0"}}
++      ROOT slice = s32[1] dynamic-slice(p0, c1), dynamic_slice_sizes={1}
+     }
+ 
+     ENTRY main {
+@@ -67,8 +69,8 @@ constexpr char kSliceMemcpyModule[] = R"(
+     })";
+ 
+ TEST_F(FusionDynamicMemcpyRewriterTest, AnnotatesMemcpyFusion) {
+-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+-                       ParseAndReturnVerifiedModule(kSliceMemcpyModule));
++  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
++                          ParseAndReturnVerifiedModule(kSliceMemcpyModule));
+   EXPECT_THAT(FusionDynamicMemcpyRewriter().Run(module.get()),
+               absl_testing::IsOkAndHolds(true));
+ 
+@@ -95,8 +97,8 @@ constexpr char kSliceCallModule[] = R"(
+     })";
+ 
+ TEST_F(FusionDynamicMemcpyRewriterTest, DoesNotAnnotateCall) {
+-  ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
+-                       ParseAndReturnVerifiedModule(kSliceCallModule));
++  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
++                          ParseAndReturnVerifiedModule(kSliceCallModule));
+   EXPECT_THAT(FusionDynamicMemcpyRewriter().Run(module.get()),
+               absl_testing::IsOkAndHolds(false))
+       << module->ToString();
+@@ -112,9 +114,7 @@ constexpr char kLoopUpdateSliceMemcpyModule[] = R"(
+       p2 = s32[] parameter(2)
+       c1 = s32[] constant(1)
+ 
+-      ROOT update-slice = s32[4,8,8] dynamic-update-slice(p0, p1, p2, c1, c1),
+-          backend_config={"dynamic_slice_config":
+-              {"byte_offset":"32","byte_stride":"256","loop_index":"0"}}
++      ROOT update-slice = s32[4,8,8] dynamic-update-slice(p0, p1, p2, c1, c1)
+     }
+ 
+     body {
+@@ -151,7 +151,7 @@ constexpr char kLoopUpdateSliceMemcpyModule[] = R"(
+ 
+ TEST_F(FusionDynamicMemcpyRewriterTest,
+        AnnotatesDusMemcpyFusionWithIterations) {
+-  ASSERT_OK_AND_ASSIGN(
++  TF_ASSERT_OK_AND_ASSIGN(
+       std::unique_ptr<HloModule> module,
+       ParseAndReturnVerifiedModule(kLoopUpdateSliceMemcpyModule));
+   EXPECT_THAT(FusionDynamicMemcpyRewriter().Run(module.get()),
+@@ -164,8 +164,10 @@ TEST_F(FusionDynamicMemcpyRewriterTest,
+   EXPECT_TRUE(config->depends_on_loop());
+   EXPECT_THAT(config->src_offset_bytes(), ElementsAre(0, 0, 0, 0, 0, 0));
+   EXPECT_THAT(config->dst_offset_bytes(),
+-              ElementsAre(32, 32 + 256, 32 + 256 * 2, 32 + 256 * 3, 992, 992));
++              ElementsAre(32, 32 + 256 * 1, 32 + 256 * 2, 32 + 256 * 3,
++                          32 + 256 * 3, 32 + 256 * 3));
+ }
+ 
+ }  // namespace
+-}  // namespace xla::gpu
++}  // namespace gpu
++}  // namespace xla
+diff --git a/xla/service/gpu/BUILD b/xla/service/gpu/BUILD
+index 36d2e7ebaf..035fa100d7 100644
+--- a/xla/service/gpu/BUILD
++++ b/xla/service/gpu/BUILD
+@@ -1715,7 +1715,6 @@ cc_library(
+         "//xla/backends/gpu/transforms:dot_operand_converter",
+         "//xla/backends/gpu/transforms:dot_strength_reduction",
+         "//xla/backends/gpu/transforms:double_buffer_loop_unrolling",
+-        "//xla/backends/gpu/transforms:dynamic_slice_annotator",
+         "//xla/backends/gpu/transforms:dynamic_slice_fusion_rewriter",
+         "//xla/backends/gpu/transforms:estimate_cub_scan_scratch_size",
+         "//xla/backends/gpu/transforms:estimate_cub_sort_scratch_size",
+diff --git a/xla/service/gpu/gpu_compiler.cc b/xla/service/gpu/gpu_compiler.cc
+index a0065f8214..e3ccbf65dc 100644
+--- a/xla/service/gpu/gpu_compiler.cc
++++ b/xla/service/gpu/gpu_compiler.cc
+@@ -105,7 +105,6 @@ limitations under the License.
+ #include "xla/backends/gpu/transforms/dot_operand_converter.h"
+ #include "xla/backends/gpu/transforms/dot_strength_reduction.h"
+ #include "xla/backends/gpu/transforms/double_buffer_loop_unrolling.h"
+-#include "xla/backends/gpu/transforms/dynamic_slice_annotator.h"
+ #include "xla/backends/gpu/transforms/dynamic_slice_fusion_rewriter.h"
+ #include "xla/backends/gpu/transforms/estimate_cub_scan_scratch_size.h"
+ #include "xla/backends/gpu/transforms/estimate_cub_sort_scratch_size.h"
+@@ -1473,14 +1472,8 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
+                                          se::Platform::Id platform_id,
+                                          CompilationStats* compilation_stats) {
+   const DebugOptions& opts = hlo_module->config().debug_options();
+-
+-  // Always annotate dynamic slice operation with statically know offsets. We
+-  // rely on these annotations when running fusion dispatch pipeline to optimize
+-  // DS/DUS fusions that can be replaced by a more efficient copy operation.
+-  HloPassPipeline pipeline("dynamic-slice", compilation_stats);
+-  pipeline.AddPass<DynamicSliceAnnotator>();
+-
+   if (opts.xla_gpu_enable_dynamic_slice_fusion()) {
++    HloPassPipeline pipeline("dynamic-slice", compilation_stats);
+     pipeline.AddPass<GpuReduceScatterCombiner>(
+         kDefaultReduceScatterCombineThreshold,
+         opts.xla_gpu_reduce_scatter_combine_threshold_bytes(),
+@@ -1498,12 +1491,11 @@ absl::Status RunDynamicSliceFusionPasses(HloModule* hlo_module,
+           });
+       return hero_op.has_value();
+     });
++    RETURN_IF_ERROR(
++        pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
++            .status());
+   }
+ 
+-  RETURN_IF_ERROR(
+-      pipeline.Run(hlo_module, {HloInstruction::kMainExecutionThread})
+-          .status());
+-
+   return absl::OkStatus();
+ }
+ 
+-- 
+2.54.0.631.ge1b05301d1-goog
+
