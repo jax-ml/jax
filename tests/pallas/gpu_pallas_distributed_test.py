@@ -74,7 +74,7 @@ else:
   pl.pallas_call = do_not_call_me_directly
 
 
-def is_nvshmem_used():
+def is_nvshmem_used() -> bool:
   return (
       "XLA_FLAGS" in os.environ
         and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"])
@@ -99,7 +99,7 @@ def get_reduction_impl(reduction):
 
 
 _TestCaseBase = (jt_multiprocess.MultiProcessTest
-                 if is_nvshmem_used() is None
+                 if is_nvshmem_used()
                  else parameterized.TestCase)
 
 
