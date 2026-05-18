@@ -453,9 +453,8 @@ def _vector_load_op_lowering_rule(
   if transforms_attr is None:
     raise ValueError(f"Unsupported memory space: {orig_ref_ty.memory_space}")
 
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-      transforms_attr
-  )
+  swizzle = swizzle_from_transforms_attr(transforms_attr)
+  transforms = memref_transforms_from_transforms_attr(transforms_attr)
   has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
   if has_transforms:
     [tiling_transform] = transforms
@@ -544,9 +543,8 @@ def _vector_store_op_lowering_rule(
     )
   elif ref_type.memory_space == utils.smem():
     transforms_attr = inference_utils.in_transforms(op)[0]
-    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        transforms_attr
-    )
+    swizzle = swizzle_from_transforms_attr(transforms_attr)
+    transforms = memref_transforms_from_transforms_attr(transforms_attr)
     has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
     if has_transforms:
       unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
@@ -591,11 +589,9 @@ if hasattr(mgpu, "AsyncStoreSmemOp"):
 
     ref = op.destination
     transforms_attr = inference_utils.in_transforms(op)[0]
-    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-        transforms_attr
-    )
+    swizzle = swizzle_from_transforms_attr(transforms_attr)
     unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
-    [tiling_transform] = transforms
+    tiling_transform, = memref_transforms_from_transforms_attr(transforms_attr)
     assert isinstance(tiling_transform, lc.TileTransform)
 
     dialect_barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
@@ -921,40 +917,27 @@ def _mgpu_broadcast_in_dim_op_lowering_rule(
   return [fragmented_array_to_ir(out, out_ty)]
 
 
-def swizzle_and_transforms_from_transforms_attr(
-    transforms: ir.ArrayAttr,
-) -> tuple[mgpu.SwizzlingMode, tuple[lc.MemRefTransform, ...]]:
-  """Returns the swizzle and MemrefTransforms for the given transforms.
-
-  Args:
-    transforms: a list of transform attributes.
-
-  Returns:
-    A tuple containing the swizzle mode and MemRefTransforms corresponding to
-    the parameter transforms. If `transforms` is empty, or does not contain
-    any swizzling transform, the swizzle mode is assumed to be kNoSwizzle.
-  Raises:
-    ValueError: if a swizzling transform is followed by any transform.
-  """
+def swizzle_from_transforms_attr(attr: ir.ArrayAttr) -> mgpu.SwizzlingMode:
   swizzle = None
-  gmem_transforms: list[lc.MemRefTransform] = []
-
-  for transform in transforms:
-    if swizzle is not None:
-      raise ValueError(f"{transforms} contain more transforms after swizzle.")
+  for transform in attr:
     if isinstance(transform, mgpu.SwizzleTransformAttr):
-      # TODO(dasenov): Swizzling can change if the ref is sliced in certain
-      # ways. We might want to enforce some restrictions here.
-      # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
+      if swizzle is not None:
+        raise ValueError("Found multiple SwizzleTransformAttr")
       swizzle = mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(transform).swizzle)
-    elif isinstance(transform, mgpu.TileTransformAttr):
-      tiling = mgpu.TileTransformAttr(transform).tiling
-      tiling_transform = lc.TileTransform(tuple(tiling))
-      gmem_transforms.append(tiling_transform)
-    else:
-      raise ValueError("Unknown transform: {transform}")
+  return swizzle or mgpu.SwizzlingMode.kNoSwizzle
 
-  return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
+
+def memref_transforms_from_transforms_attr(
+    attr: ir.ArrayAttr,
+) -> tuple[lc.MemRefTransform, ...]:
+  gmem_transforms: list[lc.MemRefTransform] = []
+  for transform in attr:
+    if isinstance(transform, mgpu.TileTransformAttr):
+      tile_transform = lc.TileTransform(tuple(transform.tiling))
+      gmem_transforms.append(tile_transform)
+    elif not isinstance(transform, mgpu.SwizzleTransformAttr):
+      raise NotImplementedError(f"Unsupported transform: {transform}")
+  return tuple(gmem_transforms)
 
 
 def tile_offset(
@@ -1046,7 +1029,7 @@ def transform_type(
     transforms: tuple[lc.MemRefTransform, ...] | ir.ArrayAttr,
 ) -> ir.MemRefType:
   if isinstance(transforms, ir.ArrayAttr):
-    _, transforms = swizzle_and_transforms_from_transforms_attr(transforms)
+    transforms = memref_transforms_from_transforms_attr(transforms)
   if not (utils.is_smem_ref(ref_ty) or utils.is_cluster_smem_ref(ref_ty)):
     raise ValueError(f"Only workgroup memory is supported but got {ref_ty}.")
   if utils.is_cluster_smem_ref(ref_ty):
@@ -1130,9 +1113,8 @@ def _mgpu_async_load_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
 
   [transforms_attr] = inference_utils.in_transforms(load_op)
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-      transforms_attr
-  )
+  swizzle = swizzle_from_transforms_attr(transforms_attr)
+  transforms = memref_transforms_from_transforms_attr(transforms_attr)
 
   unwrapped_dst = unwrap_transformed_memref(
       load_op.destination, transforms_attr
@@ -1219,9 +1201,8 @@ def _mgpu_async_store_op_lowering_rule(
   assert ctx.launch_context is not None
 
   [transforms_attr] = inference_utils.in_transforms(store_op)
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
-      transforms_attr
-  )
+  swizzle = swizzle_from_transforms_attr(transforms_attr)
+  transforms = memref_transforms_from_transforms_attr(transforms_attr)
   unwrapped_source = unwrap_transformed_memref(store_op.source, transforms_attr)
   assert isinstance(unwrapped_source.type, ir.MemRefType)
   if utils.is_memref_transposed(unwrapped_source.type):
@@ -1311,9 +1292,7 @@ def _async_store_smem_to_tmem_lowering_rule(
 ) -> Sequence[ir.Value]:
   ctx.check_collective(op)
   [transforms_attr] = inference_utils.in_transforms(op)
-  swizzle, _ = swizzle_and_transforms_from_transforms_attr(
-      transforms_attr
-  )
+  swizzle = swizzle_from_transforms_attr(transforms_attr)
   smem_ref = unwrap_transformed_memref(op.source, transforms_attr)
   smem_ref_ty = op.source.type
   assert isinstance(smem_ref_ty, ir.MemRefType)
@@ -1621,7 +1600,7 @@ def _mgpu_wgmma_op_lowering_rule(
     unwrapped_a_ref = unwrap_transformed_memref(wgmma_op.a, a_transforms)
     unwrapped_b_ref = unwrap_transformed_memref(wgmma_op.b, b_transforms)
 
-  b_swizzle, _ = swizzle_and_transforms_from_transforms_attr(b_transforms)
+  b_swizzle = swizzle_from_transforms_attr(b_transforms)
 
   if isinstance(wgmma_op.a.type, ir.VectorType):
     expected_a_layout = (
@@ -1633,7 +1612,7 @@ def _mgpu_wgmma_op_lowering_rule(
     a_operand = _fragmented_array_from_ir(wgmma_op.a, in_layouts[1], is_signed)
   else:
     assert a_transforms is not None
-    a_swizzle, _ = swizzle_and_transforms_from_transforms_attr(a_transforms)
+    a_swizzle = swizzle_from_transforms_attr(a_transforms)
     if a_swizzle != b_swizzle:
       raise ValueError(
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
@@ -1868,8 +1847,7 @@ def _memref_subview_op_lowering_rule(
         "SubViewOp transforms for the input and output refs must be identical."
     )
 
-  unwrapped_source_ref = unwrap_transformed_memref(op.source, in_transforms)
-  swizzle, transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
+  swizzle = swizzle_from_transforms_attr(out_transforms)
   if swizzle != mgpu.SwizzlingMode.kNoSwizzle:
     swizzle_elems = swizzle * 8 // utils.bitwidth(src_ty.element_type)
     source_strides, _ = src_ty.get_strides_and_offset()
@@ -1902,6 +1880,8 @@ def _memref_subview_op_lowering_rule(
             f"subview {offset=} is not a multiple of {swizzle_elems=}."
         )
 
+  unwrapped_source_ref = unwrap_transformed_memref(op.source, in_transforms)
+  transforms = memref_transforms_from_transforms_attr(out_transforms)
   match transforms:
     case ():
       new_subview_op = memref.SubViewOp(
@@ -1914,7 +1894,7 @@ def _memref_subview_op_lowering_rule(
           static_sizes=op.static_sizes,
           static_strides=op.static_strides,
       )
-    case (tile_transform, ) if isinstance(tile_transform, lc.TileTransform):
+    case (lc.TileTransform() as tile_transform, ):
       in_transformed_ty = ir.MemRefType(unwrapped_source_ref.type)
       tiling = tile_transform.tiling
       if any(
@@ -2028,11 +2008,13 @@ def _memref_transpose_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   del ctx
 
-  in_transforms = inference_utils.in_transforms(op)[0]
-  unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms)
-  in_swizzle, in_transforms = swizzle_and_transforms_from_transforms_attr(in_transforms)
-  out_transforms = inference_utils.out_transforms(op)[0]
-  out_swizzle, out_transforms = swizzle_and_transforms_from_transforms_attr(out_transforms)
+  in_transforms_attr = inference_utils.in_transforms(op)[0]
+  unwrapped_in_ref = unwrap_transformed_memref(op.in_, in_transforms_attr)
+  in_swizzle = swizzle_from_transforms_attr(in_transforms_attr)
+  in_transforms = memref_transforms_from_transforms_attr(in_transforms_attr)
+  out_transforms_attr = inference_utils.out_transforms(op)[0]
+  out_swizzle = swizzle_from_transforms_attr(out_transforms_attr)
+  out_transforms = memref_transforms_from_transforms_attr(out_transforms_attr)
 
   if in_swizzle != out_swizzle:
     raise ValueError(
@@ -2207,10 +2189,10 @@ def _memref_collapse_shape_op_lowering_rule(
   [in_transforms_attr] = inference_utils.in_transforms(op)
   [out_transforms_attr] = inference_utils.out_transforms(op)
 
-  in_swizzle, in_transforms = swizzle_and_transforms_from_transforms_attr(
-      in_transforms_attr)
-  out_swizzle, out_transforms = swizzle_and_transforms_from_transforms_attr(
-      out_transforms_attr)
+  in_swizzle = swizzle_from_transforms_attr(in_transforms_attr)
+  in_transforms = memref_transforms_from_transforms_attr(in_transforms_attr)
+  out_swizzle = swizzle_from_transforms_attr(out_transforms_attr)
+  out_transforms = memref_transforms_from_transforms_attr(out_transforms_attr)
 
   if in_swizzle != out_swizzle:
     raise ValueError(
@@ -2351,18 +2333,6 @@ def _tmem_dealloc_op_lowering_rule(
   return []
 
 
-def _swizzle(attrs: Iterable[ir.Attribute]) -> mgpu.SwizzlingMode:
-  """Returns the swizzle transform from the given attributes."""
-  swizzle = None
-  for attr in attrs:
-    if isinstance(attr, mgpu.SwizzleTransformAttr):
-      if swizzle is not None:
-        raise ValueError("Multiple swizzle transforms are not supported.")
-      # TODO(slebedev): Should SwizzleTransformAttr.swizzle be an enum?
-      swizzle = mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(attr).swizzle)
-  return swizzle if swizzle is not None else mgpu.SwizzlingMode.kNoSwizzle
-
-
 def _tmem_ref_from_ir(
     ref: ir.Value, expected_layout: ir.Attribute
 ) -> tcgen05.TMEMRef:
@@ -2437,17 +2407,14 @@ def _tcgen05_mma_op_lowering_rule(
 
   if utils.is_smem_ref(op.a):
     a_transforms, b_transforms = inference_utils.in_transforms(op)
-    assert isinstance(a_transforms, ir.ArrayAttr)
-    assert isinstance(b_transforms, ir.ArrayAttr)
-    a_swizzle = _swizzle(a_transforms)
-    b_swizzle = _swizzle(b_transforms)
+    a_swizzle = swizzle_from_transforms_attr(a_transforms)
+    b_swizzle = swizzle_from_transforms_attr(b_transforms)
     a_ref = unwrap_transformed_memref(op.a, a_transforms)
     b_ref = unwrap_transformed_memref(op.b, b_transforms)
   else:
     a_ref = _tmem_ref_from_ir(op.a, tmem_layout(op.a))
     [b_transforms] = inference_utils.in_transforms(op)
-    assert isinstance(b_transforms, ir.ArrayAttr)
-    b_swizzle = _swizzle(b_transforms)
+    b_swizzle = swizzle_from_transforms_attr(b_transforms)
     a_swizzle = b_swizzle
     b_ref = unwrap_transformed_memref(op.b, b_transforms)
 
