@@ -1182,7 +1182,7 @@ struct HoistReinterpretCastOutOfWarpMap
   mlir::LogicalResult matchAndRewrite(
       WarpMapOp op, mlir::PatternRewriter& rewriter) const override {
     bool modified = false;
-    mlir::Block& body = op->getRegion(0).getBlocks().front();
+    mlir::Block& body = op.getRegion().front();
     for (auto [i, operand, body_operand] :
         llvm::enumerate(op->getOperands(), body.getArguments())) {
       Type user_type = nullptr;
@@ -1199,24 +1199,16 @@ struct HoistReinterpretCastOutOfWarpMap
                 }
                 return false;
               })) {
-        auto rc_op = llvm::cast<ReinterpretCastOp>(*body_operand.user_begin());
-        mlir::IRMapping mapping;
-        mapping.map(rc_op.getOperand(), operand);
+        auto new_cast = ReinterpretCastOp::create(rewriter, op.getLoc(),
+                                                  user_type, operand);
         rewriter.modifyOpInPlace(op, [&]() {
-            op->setOperand(i, rewriter.clone(*rc_op, mapping)->getResult(0));
-            body_operand.setType(user_type);
-          });
-        // Copy the users of the body operand to a vector because we need to
-        // iterate over them twice to avoid invalidating the iterator: once to
-        // replace them with the body operand and once to erase them.
-        std::vector<mlir::Operation*> users_to_erase(
-          body_operand.user_begin(), body_operand.user_end());
-        for (auto user : body_operand.getUsers()) {
-          rewriter.replaceAllUsesWith(llvm::cast<ReinterpretCastOp>(user),
-                                      body_operand);
-        }
-        for (auto user : users_to_erase) {
-          rewriter.eraseOp(user);
+          op->setOperand(i, new_cast);
+          body_operand.setType(user_type);
+        });
+        // Copy the users of the body operand to a vector to avoid invalidating
+        // the iterator while erasing them.
+        for (auto user : llvm::to_vector(body_operand.getUsers())) {
+          rewriter.replaceOp(user, body_operand);
         }
         modified = true;
       }
