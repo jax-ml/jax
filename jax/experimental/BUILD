@@ -381,6 +381,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_fuser",
     srcs = ["pallas/fuser.py"],
+    # Prevent build_cleaner from removing dependencies on this library.
+    # This library is needed for running pallas on TPU, but the usage isn't
+    # via regular Python imports and thus not understood by build_cleaner.
+    tags = ["keep_dep"],
     type_checking = "pyrefly",
     visibility = [
         ":pallas_fuser_users",
@@ -410,6 +414,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
+    # Prevent build_cleaner from removing dependencies on this library.
+    # This library is needed for running pallas on TPU, but the usage isn't
+    # via regular Python imports and thus not understood by build_cleaner.
+    tags = ["keep_dep"],
     type_checking = "pyrefly",
     visibility = [
         ":pallas_gpu_users",
@@ -425,6 +433,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_experimental_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
+    # Prevent build_cleaner from removing dependencies on this library.
+    # This library is needed for running pallas on TPU, but the usage isn't
+    # via regular Python imports and thus not understood by build_cleaner.
+    tags = ["keep_dep"],
     type_checking = "pyrefly",
     visibility = [
         ":mosaic_gpu_users",
@@ -463,6 +475,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_tpu",
     srcs = ["pallas/tpu.py"],
+    # Prevent build_cleaner from removing dependencies on this library.
+    # This library is needed for running pallas on TPU, but the usage isn't
+    # via regular Python imports and thus not understood by build_cleaner.
+    tags = ["keep_dep"],
     type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
@@ -485,6 +501,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_tpu_sc",
     srcs = ["pallas/tpu_sc.py"],
+    # Prevent build_cleaner from removing dependencies on this library.
+    # This library is needed for running pallas on TPU, but the usage isn't
+    # via regular Python imports and thus not understood by build_cleaner.
+    tags = ["keep_dep"],
     type_checking = "pyrefly",
     visibility = [
         ":pallas_sc_users",
@@ -499,6 +519,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_tpu_ops",
     srcs = glob(["pallas/ops/tpu/**/*.py"]),
+    # Prevent build_cleaner from removing dependencies on this library.
+    # This library is needed for running pallas on TPU, but the usage isn't
+    # via regular Python imports and thus not understood by build_cleaner.
+    tags = ["keep_dep"],
     type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
