@@ -106,6 +106,8 @@ from jax.experimental.mosaic.gpu.fragmented_array import Tiling as Tiling
 from jax.experimental.mosaic.gpu.launch_context import CopyPartition as CopyPartition
 from jax.experimental.mosaic.gpu.launch_context import OOBFillMode as OOBFillMode
 
+BlockSpec.__module__ = "jax.experimental.pallas.mosaic_gpu"
+
 
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.MemorySpace.GMEM`.
 GMEM = MemorySpace.GMEM

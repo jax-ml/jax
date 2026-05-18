@@ -76,6 +76,8 @@ from jax._src.state.indexing import dslice as dslice
 from jax._src.state.indexing import Slice as Slice
 from jax._src.state.primitives import broadcast_to as broadcast_to
 
+BlockSpec.__module__ = "jax.experimental.pallas"
+
 
 ANY = MemorySpace.ANY
 HOST = MemorySpace.HOST

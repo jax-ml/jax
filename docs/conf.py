@@ -41,7 +41,23 @@ from typing import ForwardRef
 def _do_not_evaluate_in_jax(
     self, globalns, *args, _evaluate=ForwardRef._evaluate, **kwargs,
 ):
-  if globalns.get('__name__', '').startswith('jax'):
+  localns = kwargs.get('localns', args[0] if args else None)
+  if localns is not None and self.__forward_arg__ in localns:
+    return localns[self.__forward_arg__]
+
+  # Robustly find module name from either globalns or localns
+  module_name = None
+  if globalns and '__name__' in globalns:
+    module_name = globalns['__name__']
+  elif localns and '__name__' in localns:
+    module_name = localns['__name__']
+
+  if module_name and module_name.startswith('jax'):
+    if self.__forward_arg__ == 'BlockSpec':
+      if 'mosaic_gpu' in module_name:
+        return 'jax.experimental.pallas.mosaic_gpu.BlockSpec'
+      else:
+        return 'jax.experimental.pallas.BlockSpec'
     return self
   return _evaluate(self, globalns, *args, **kwargs)
 
