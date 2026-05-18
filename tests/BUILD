@@ -2264,15 +2264,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "scaled_dot_test",
     srcs = ["scaled_dot_test.py"],
-    # This test runs OOM on a part of B200; we overwrite the config to run on the full machine.
-    config_tags_overrides = {
-        "gpu_b200_full": {
-            "manual": False,
-            "notap": False,
-            "disabled": False,
-        },
-    },
-    disable_configs = ["gpu_b200"],
     shard_count = 5,
     deps = py_deps([
         "absl/testing",
