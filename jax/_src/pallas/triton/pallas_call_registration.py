@@ -190,12 +190,13 @@ def pallas_call_lowering(
       * (len(ctx.avals_in) + len(ctx.avals_out)),
   )
   if jaxlib_extension_version >= 444:
+    result_types, _ = mlir.ir_tree_registry.flatten([
+        mlir.aval_to_ir_type(ctx.module_context, aval)
+        for aval in ctx.avals_out
+    ])
     return mlir.custom_call(
         call_target_name="triton_kernel_call_ffi",
-        result_types=mlir.flatten_ir_types([
-            mlir.aval_to_ir_type(ctx.module_context, aval)
-            for aval in ctx.avals_out
-        ]),
+        result_types=result_types,
         operands=in_nodes,
         backend_config=dict(
             name=ir.StringAttr.get(name),
@@ -212,11 +213,12 @@ def pallas_call_lowering(
         operand_output_aliases=dict(input_output_aliases),
     ).results
   else:
+    result_types, _ = mlir.ir_tree_registry.flatten(
+        [mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out]
+    )
     return mlir.custom_call(
         call_target_name="triton_kernel_call",
-        result_types=mlir.flatten_ir_types(
-            [mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out]
-        ),
+        result_types=result_types,
         operands=in_nodes,
         backend_config=zlib.compress(
             kernel_call.to_proto(

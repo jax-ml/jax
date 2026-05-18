@@ -17,7 +17,6 @@ from collections.abc import Callable, Hashable, Sequence, Set
 import enum
 from functools import partial
 import inspect
-import itertools as it
 from math import prod
 import operator as op
 from typing import Any, TypeVar, Union, cast, overload
@@ -975,10 +974,10 @@ def _shard_map_lowering_shardy(
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   num_const_args = len(const_args)
-  const_arg_values = mlir.flatten_ir_values(
+  const_arg_values, _ = mlir.ir_tree_registry.flatten([
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals
-  )
+  ])
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
   const_args_shardings = tuple(
@@ -1000,20 +999,24 @@ def _shard_map_lowering_shardy(
   out_shardings = sharding_impls.SdyArrayList(out_shardings).build(
       ctx.module_context.sharding_attr_cache)
 
-  output_types = ([hlo.TokenType.get()] * num_tokens +
-                  mlir.flatten_ir_types(map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_out)))
+  flat_output_types, _ = mlir.ir_tree_registry.flatten(
+      map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_out))
+  output_types = ([hlo.TokenType.get()] * num_tokens + flat_output_types)
 
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *in_nodes)
+  flat_args, _ = mlir.ir_tree_registry.flatten(args)
   manual_computation_op = sdy.ManualComputationOp(
-      output_types, mlir.flatten_ir_values(args), in_shardings, out_shardings,
+      output_types, flat_args, in_shardings, out_shardings,
       sdy.ManualAxesAttr.get([ir.StringAttr.get(i) for i in manual_axes]))
 
   dim_var_types = [
     mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtypes.default_int_dtype()))
   ] * num_dim_vars
   token_types = [hlo.TokenType.get()] * num_tokens
-  const_arg_types = mlir.flatten_ir_types(map(partial(mlir._aval_to_ir_types, ctx.module_context), const_avals))
-  in_types = mlir.flatten_ir_types(map(partial(mlir._aval_to_ir_types, ctx.module_context), in_avals_))
+  const_arg_types, _ = mlir.ir_tree_registry.flatten(
+      map(partial(mlir._aval_to_ir_types, ctx.module_context), const_avals))
+  in_types, _ = mlir.ir_tree_registry.flatten(
+      map(partial(mlir._aval_to_ir_types, ctx.module_context), in_avals_))
   block = ir.Block.create_at_start(
       manual_computation_op.body,
       (*dim_var_types, *token_types, *const_arg_types, *in_types))
@@ -1032,11 +1035,10 @@ def _shard_map_lowering_shardy(
             for c, aval, ca in zip(const_args, const_avals, const_arg_values)
         },
         outer_traceback=_jax.Traceback())
-    sdy.return_(
-        mlir.flatten_ir_values(
-            it.chain((v for _, v in tokens_out.items()), out_nodes_)
-        )
+    flat_return_vals, _ = mlir.ir_tree_registry.flatten(
+        [*(v for _, v in tokens_out.items()), *out_nodes_]
     )
+    sdy.return_(flat_return_vals)
     num_tokens = len(tokens_out.effects())
     tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(
         effects, manual_computation_op.results[:num_tokens]))))

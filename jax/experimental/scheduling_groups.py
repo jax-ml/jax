@@ -77,18 +77,20 @@ def _xla_metadata_call_lowering(ctx, *args, jaxpr, **meta):
       ctx.avals_out, ctx.tokens_in)
 
   symbol_name = func_op.name.value
-  flat_output_types = mlir.flatten_ir_types(output_types)
+  flat_output_types, treedef = mlir.ir_tree_registry.flatten(output_types)
   tokens = [ctx.tokens_in.get(eff) for eff in effects]
-  hoisted_const_values = mlir.flatten_ir_values(
+  hoisted_const_values, _ = mlir.ir_tree_registry.flatten([
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
-      for c, aval in const_args_and_avals)
+      for c, aval in const_args_and_avals
+  ])
   args = (*ctx.dim_var_values, *tokens, *hoisted_const_values, *args)
+  flat_args, _ = mlir.ir_tree_registry.flatten(args)
   call = func_dialect.CallOp(
       flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name),
-      mlir.flatten_ir_values(args))
+      flat_args)
   call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(
       {k: attr_get(v) for k, v in meta.items()})
-  out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
+  out_nodes = treedef.unflatten(call.results)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)

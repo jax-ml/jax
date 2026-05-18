@@ -1959,9 +1959,10 @@ def _composite_lowering(
     if v is not None:
       composite_attrs[k] = mlir.ir_attribute(v)
   symbol_name = func_op.name.value
+  flat_args, _ = mlir.ir_tree_registry.flatten(const_arg_values + args)
   return hlo.CompositeOp(
       func_op.type.results,
-      mlir.flatten_ir_values(const_arg_values + args),
+      flat_args,
       name=ir.StringAttr.get(name),
       decomposition=ir.FlatSymbolRefAttr.get(symbol_name),
       composite_attributes=ir.DictAttr.get(composite_attrs),
@@ -8224,9 +8225,12 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
-  op = hlo.ReduceOp(mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out)),
+  flat_out_types, _ = mlir.ir_tree_registry.flatten(
+      map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out))
+  op = hlo.ReduceOp(flat_out_types,
                     operands, init_values, mlir.dense_int_array(dimensions))
-  ir_types = mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), init_value_avals))
+  ir_types, _ = mlir.ir_tree_registry.flatten(
+      map(partial(mlir.aval_to_ir_types, ctx.module_context), init_value_avals))
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
     name_stack = source_info_util.new_name_stack()
@@ -8239,7 +8243,8 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
                                       dim_var_values=ctx.dim_var_values,
                                       const_lowering=ctx.const_lowering,
                                       outer_traceback=ctx.traceback)
-    hlo.return_(mlir.flatten_ir_values(out_nodes))
+    flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
+    hlo.return_(flat_out_nodes)
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]
 
@@ -8691,8 +8696,11 @@ batching.primitive_batchers[sort_p] = _sort_batch_rule
 
 def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
-  sort = hlo.SortOp(mlir.flatten_ir_types(map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out)),
-                    mlir.flatten_ir_values(operands),
+  flat_out_types, _ = mlir.ir_tree_registry.flatten(
+      map(partial(mlir.aval_to_ir_types, ctx.module_context), ctx.avals_out))
+  flat_operands, _ = mlir.ir_tree_registry.flatten(operands)
+  sort = hlo.SortOp(flat_out_types,
+                    flat_operands,
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
   scalar_s = lambda a: a.sharding.update(spec=P())
@@ -8709,7 +8717,8 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                           avals_out=[core.ShapedArray((), np.bool_)])
 
     out = lower_comparator(sub_ctx, *comparator.arguments, num_keys=num_keys)
-    hlo.return_(mlir.flatten_ir_values(out))
+    flat_out, _ = mlir.ir_tree_registry.flatten(out)
+    hlo.return_(flat_out)
   return [mlir.lower_with_sharding_in_types(ctx, op, aval)
           for op, aval in zip(sort.results, ctx.avals_out)]
 
@@ -8799,12 +8808,13 @@ def _top_k_lower(ctx, operand, k, axis):
   else:
     k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
     out_values_aval, out_indices_aval, = ctx.avals_out
+    flat_result_types, _ = mlir.ir_tree_registry.flatten([
+        mlir.aval_to_ir_types(ctx.module_context, out_values_aval),
+        mlir.aval_to_ir_types(ctx.module_context, out_indices_aval)
+    ])
     results = mlir.custom_call(
         "stablehlo.dynamic_top_k",
-        result_types=mlir.flatten_ir_types([
-            mlir.aval_to_ir_types(ctx.module_context, out_values_aval),
-            mlir.aval_to_ir_types(ctx.module_context, out_indices_aval)
-        ]),
+        result_types=flat_result_types,
         operands=[operand, k_value],
     ).results
 
@@ -8996,13 +9006,14 @@ def _rng_bit_generator_lowering(
   if any(not core.is_constant_shape(a.shape) for a in ctx.avals_out):
     output_shape = mlir.shape_tensor(ctx.module_context,
       mlir.eval_dynamic_shape(ctx, out_vals_aval.shape))
+    flat_operands, _ = mlir.ir_tree_registry.flatten([key, output_shape])
     out_key, out_vals = mlir.custom_call(
         "stablehlo.dynamic_rng_bit_generator",
         result_types=[
             key.type,
             mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray(shape, rbg_dtype))
         ],
-        operands=mlir.flatten_ir_values([key, output_shape]),
+        operands=flat_operands,
         extra_attributes=dict(rng_algorithm=algorithm_attr),
     ).results
   else:
@@ -9604,9 +9615,10 @@ def _optimization_barrier_abstract_eval(*args):
 
 def _optimization_barrier_lowering_rule(ctx, *args):
   barrier_types = map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_in)
-  flat_args = mlir.flatten_ir_values(args)
+  flat_args, _ = mlir.ir_tree_registry.flatten(args)
   barrier_op = hlo.OptimizationBarrierOp(flat_args)
-  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
+  _, treedef = mlir.ir_tree_registry.flatten(barrier_types)
+  return treedef.unflatten(barrier_op.results)
 
 
 optimization_barrier_p = core.Primitive('optimization_barrier')

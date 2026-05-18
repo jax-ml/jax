@@ -2076,10 +2076,10 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   tokens = [ctx.tokens_in.get(eff) for eff in body_effects]
   token_types = [mlir.token_type() for _ in tokens]
   loop_carry_types = [*token_types, *loop_carry_types]
-  flat_loop_carry_types = mlir.flatten_ir_types(loop_carry_types)
+  flat_loop_carry_types, loop_carry_treedef = mlir.ir_tree_registry.flatten(loop_carry_types)
   args = [*tokens, *args]
 
-  flat_args = mlir.flatten_ir_values(args)
+  flat_args, _ = mlir.ir_tree_registry.flatten(args)
   while_op = hlo.WhileOp(flat_loop_carry_types, flat_args)
 
   # Loop condition
@@ -2089,7 +2089,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
-    cond_args = mlir.unflatten_ir_values_like_types(flat_cond_args, loop_carry_types)
+    cond_args = loop_carry_treedef.unflatten(flat_cond_args)
     cond_args = cond_args[num_tokens:]  # Remove tokens from cond args
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
     cond_consts = mlir.ir_consts(
@@ -2125,7 +2125,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           pred_ctx,
           pred,
           axes=tuple(range(len(pred_aval.shape))))
-    hlo.return_(mlir.flatten_ir_values([pred]))
+    flat_pred, _ = mlir.ir_tree_registry.flatten([pred])
+    hlo.return_(flat_pred)
 
   # Loop body
   body_block = while_op.regions[1].blocks.append(*flat_loop_carry_types)
@@ -2133,7 +2134,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     flat_body_args = [
         body_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
-    body_args = mlir.unflatten_ir_values_like_types(flat_body_args, loop_carry_types)
+    body_args = loop_carry_treedef.unflatten(flat_body_args)
     # Tokens are at the front of the args list to the while loop
     token_args, body_args = util.split_list(body_args, [num_tokens])
     tokens_in = mlir.TokenSet(dict(zip(body_effects, token_args)))
@@ -2160,11 +2161,10 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
-    hlo.return_([*mlir.flatten_ir_values(out_tokens),
-                 *mlir.flatten_ir_values(x), *mlir.flatten_ir_values(y),
-                 *mlir.flatten_ir_values(new_z)])  # pyrefly: ignore[bad-argument-type]
+    flat_out, _ = mlir.ir_tree_registry.flatten([out_tokens, x, y, new_z])
+    hlo.return_(flat_out)
 
-  outputs = mlir.unflatten_ir_values_like_types(while_op.results, loop_carry_types)
+  outputs = loop_carry_treedef.unflatten(while_op.results)
   tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])
   z = [mlir.lower_with_sharding_in_types(ctx, op, aval)
        for op, aval in zip(z, ctx.avals_out)]
@@ -2410,7 +2410,8 @@ def _pred_bcast_select_hlo(ctx,
     pred_aval: core.ShapedArray, pred: ir.Value, x: mlir.IrValues,
     y: mlir.IrValues, x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
   if x_y_aval is core.abstract_token:
-    return [hlo.after_all(mlir.flatten_ir_values([x, y]))]
+    flat_x_y, _ = mlir.ir_tree_registry.flatten([x, y])
+    return [hlo.after_all(flat_x_y)]
   else:
     assert isinstance(x, ir.Value), x
     assert isinstance(y, ir.Value), y

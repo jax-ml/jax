@@ -38,7 +38,7 @@ from jax._src.interpreters.mlir import (
   dtype_to_ir_type as dtype_to_ir_type,
   flatten_ir_types as flatten_ir_types,
   flatten_ir_values as flatten_ir_values,
-  unflatten_ir_values_like_types as unflatten_ir_values_like_types,
+  ir_tree_registry as ir_tree_registry,
   i32_attr as i32_attr,
   i64_attr as i64_attr,
   ir as ir,
@@ -58,6 +58,7 @@ from jax._src.interpreters.mlir import (
   register_lowering as register_lowering,
   shape_tensor as shape_tensor,
   token_type as token_type,
+  unflatten_ir_values_like_types as unflatten_ir_values_like_types,
 )
 
 from jax._src.mesh import Mesh as Mesh

@@ -250,7 +250,9 @@ def build_ffi_lowering_function(
             f"of at least 4; got api_version={kwargs['api_version']}.")
       kwargs["backend_config"] = backend_config
     if "result_types" not in kwargs:
-      kwargs["result_types"] = mlir.flatten_ir_types([mlir._aval_to_ir_types(ctx.module_context, a) for a in ctx.avals_out])
+      flat_res_types, _ = mlir.ir_tree_registry.flatten(
+          [mlir._aval_to_ir_types(ctx.module_context, a) for a in ctx.avals_out])
+      kwargs["result_types"] = flat_res_types
     if not skip_ffi_layout_processing:
       if operand_layouts is None:
         kwargs["operand_layouts"] = map(

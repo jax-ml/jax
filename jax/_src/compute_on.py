@@ -138,12 +138,13 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
       ctx.avals_out, ctx.tokens_in)
 
   symbol_name = func_op.name.value
-  flat_output_types = mlir.flatten_ir_types(output_types)
+  flat_output_types, treedef = mlir.ir_tree_registry.flatten(output_types)
   tokens = [ctx.tokens_in.get(eff) for eff in effects]
   args = (*ctx.dim_var_values, *tokens, *const_arg_values, *args)
+  flat_args, _ = mlir.ir_tree_registry.flatten(args)
   call = func_dialect.CallOp(
       flat_output_types, ir.FlatSymbolRefAttr.get(symbol_name),
-      mlir.flatten_ir_values(args))
+      flat_args)
 
   if compute_type.startswith("gpu_stream:"):
     dict_attr = {
@@ -159,7 +160,7 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
 
   call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
 
-  out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
+  out_nodes = treedef.unflatten(call.results)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)

@@ -282,11 +282,12 @@ def _mosaic_gpu_lowering_rule(
           ",".join(map(str, multimem_args))
       )
 
+  result_types, _ = mlir.ir_tree_registry.flatten([
+      mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out
+  ])
   return mlir.custom_call(
       call_target_name="mosaic_gpu_v2",
-      result_types=mlir.flatten_ir_types(
-          mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out
-      ),
+      result_types=result_types,
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],

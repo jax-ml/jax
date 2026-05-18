@@ -1156,10 +1156,11 @@ def _create_linear_abstract_eval(*, ty, memory_space):
 
 def _lower_create_linear(ctx):
   out_aval, = ctx.avals_out
+  flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
       "CreateBuffer",
       operands=[],
-      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(ctx.module_context, out_aval)),
+      result_types=flat_res_types,
   ).results
 mlir.register_lowering(create_linear_p, _lower_create_linear)
 
@@ -1191,10 +1192,12 @@ def _lower_pin(ctx, x_op, *, to):
   else:
     config = {}
   out_aval, = ctx.avals_out
+  flat_ops, _ = mlir.ir_tree_registry.flatten([x_op])
+  flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
       "Pin",
-      operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(ctx.module_context, out_aval)),
+      operands=flat_ops,
+      result_types=flat_res_types,
       **config,
   ).results
 mlir.register_lowering(pin_p, _lower_pin)
@@ -1211,10 +1214,12 @@ def _unpin_abstract_eval(aval):
 
 def _lower_unpin(ctx, x_op):
   out_aval, = ctx.avals_out
+  flat_ops, _ = mlir.ir_tree_registry.flatten([x_op])
+  flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
       "Unpin",
-      operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(ctx.module_context, out_aval)),
+      operands=flat_ops,
+      result_types=flat_res_types,
   ).results
 mlir.register_lowering(unpin_p, _lower_unpin)
 

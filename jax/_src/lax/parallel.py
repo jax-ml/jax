@@ -1024,7 +1024,8 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
       reducer_ctx = ctx.replace(primitive=None,
                                 avals_in=[scalar_aval] * 2, avals_out=[scalar_aval])
       out_nodes = lower_reducer(reducer_ctx, *reducer_block.arguments)
-      hlo.return_(mlir.flatten_ir_values(out_nodes))
+      flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
+      hlo.return_(flat_out_nodes)
     return op.result
   return [all_reduce(aval_in, arg)]
 
@@ -2077,7 +2078,8 @@ def _reduce_scatter_lowering(
                               avals_in=[scalar_aval] * 2,
                               avals_out=[scalar_aval])
     out_nodes = lower_reducer(reducer_ctx, *reducer_block.arguments)
-    hlo.return_(mlir.flatten_ir_values(out_nodes))
+    flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
+    hlo.return_(flat_out_nodes)
 
   if tiled:
     return op.results

@@ -1020,7 +1020,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   output_token_types = [mlir.token_type() for _ in ordered_effects]
   output_types = [
       *output_token_types, *map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_out)]
-  flat_output_types = mlir.flatten_ir_types(output_types)
+  flat_output_types, treedef = mlir.ir_tree_registry.flatten(output_types)
 
   # CaseOp takes a single argument 'index' and the corresponding blocks
   # have no arguments; the computation within the block uses implicit
@@ -1040,10 +1040,10 @@ def _cond_lowering(ctx, index, *args, branches, **params):
           outer_traceback=ctx.traceback)
       out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
       out_vals = [*out_tokens, *out_vals]
-      hlo.return_(mlir.flatten_ir_values(out_vals))
+      flat_out_vals, _ = mlir.ir_tree_registry.flatten(out_vals)
+      hlo.return_(flat_out_vals)
 
-  tokens_and_outputs = mlir.unflatten_ir_values_like_types(
-    case_op.results, output_types)
+  tokens_and_outputs = treedef.unflatten(case_op.results)
   tokens, outputs = util.split_list(tokens_and_outputs, [num_tokens])
   outputs = [mlir.lower_with_sharding_in_types(ctx, o, aval)
              for o, aval in zip(outputs, ctx.avals_out)]

@@ -2347,7 +2347,8 @@ def _gather_lower(ctx, operand, indices, *,
     # return hlo.DynamicGatherOp(
     #     operand, indices, mlir.shape_tensor(slice_sizes),
     #     dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
-    results = mlir.flatten_ir_types(mlir.aval_to_ir_types(ctx.module_context, aval_out))
+    flat_results, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, aval_out))
+    results = flat_results
     operands = [operand, indices, slice_sizes]
     attributes: dict[str, ir.Attribute] = {
         "dimension_numbers": dnums,
@@ -3322,7 +3323,8 @@ def _scatter_lower(ctx: mlir.LoweringRuleContext, operand, indices, updates, *,
         update_consts, update.arguments[0], update.arguments[1],
         dim_var_values=ctx.dim_var_values, const_lowering=ctx.const_lowering,
         outer_traceback=ctx.traceback)
-    hlo.return_(mlir.flatten_ir_values(out_nodes))
+    flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
+    hlo.return_(flat_out_nodes)
   return [mlir.lower_with_sharding_in_types(ctx, r, aval)
           for r, aval in safe_zip(op.results, ctx.avals_out)]
 

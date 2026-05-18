@@ -1064,11 +1064,12 @@ def _wrap_main_func(
             multiple_results=True)(ctx, *new_main_op_array_args)
       else:
         dim_values = ()
+      flat_dim_values, _ = mlir.ir_tree_registry.flatten(dim_values)
       # The arguments to pass to the call to orig_main
       orig_main_args: list[ir.Value] = []
       # The platform index and the dimension variables
       for arg, arg_type in zip(
-          list(new_main_op.arguments[0:nr_platform_index_args]) + mlir.flatten_ir_values(dim_values),
+          list(new_main_op.arguments[0:nr_platform_index_args]) + flat_dim_values,
           platform_input_types + dim_var_input_types):
         if arg.type != arg_type:
           orig_main_args.append(hlo.convert(arg_type, arg))

@@ -860,10 +860,10 @@ def _remat_lowering(
   if differentiated and any(prevent_cse):
     _, barrier_avals = partition_list(prevent_cse, ctx.avals_in)
     other_args, barrier_args = partition_list(prevent_cse, args)
-    barrier_op = hlo.OptimizationBarrierOp(
-        mlir.flatten_ir_values(barrier_args))
-    barrier_results = mlir.unflatten_ir_values_like_types(
-        barrier_op.results, map(partial(mlir._aval_to_ir_types, ctx.module_context), barrier_avals))
+    flat_barrier_args, _ = mlir.ir_tree_registry.flatten(barrier_args)
+    barrier_op = hlo.OptimizationBarrierOp(flat_barrier_args)
+    _, barrier_treedef = mlir.ir_tree_registry.flatten([mlir._aval_to_ir_types(ctx.module_context, a) for a in barrier_avals])
+    barrier_results = barrier_treedef.unflatten(barrier_op.results)
     args = merge_lists(prevent_cse, other_args, barrier_results)
   outs, tokens_out = mlir.jaxpr_subcomp(
       ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),

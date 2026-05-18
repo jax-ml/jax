@@ -1370,7 +1370,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   effects = list(effects_lib.ordered_effects.filter_in(jaxpr.effects))
   output_types = [mlir.aval_to_ir_types(ctx.module_context, a) for a in ctx.avals_out]
   output_types = [mlir.token_type()] * len(effects) + output_types
-  flat_output_types = mlir.flatten_ir_types(output_types)
+  flat_output_types, treedef = mlir.ir_tree_registry.flatten(output_types)
 
   const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
@@ -1385,19 +1385,20 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
       out_shardings, in_layouts, out_layouts, api_name='jit')
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
-  hoisted_const_values = mlir.flatten_ir_values(
+  hoisted_const_values, _ = mlir.ir_tree_registry.flatten([
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
       for c, aval in const_args_and_avals
-  )
+  ])
   args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
+  flat_args, _ = mlir.ir_tree_registry.flatten(args)
   with mlir.source_info_to_location(
       ctx.module_context, None,
       ctx.name_stack.extend(util.wrap_name('jit', name)), ctx.traceback):
     call = func_dialect.CallOp(
         flat_output_types, ir.FlatSymbolRefAttr.get(func.name.value),
-        mlir.flatten_ir_values(args))
+        flat_args)
   mlir.wrap_compute_type_in_place(ctx, call)  # pyrefly: ignore[bad-argument-type]
-  out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
+  out_nodes = treedef.unflatten(call.results)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
