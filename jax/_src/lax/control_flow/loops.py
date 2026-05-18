@@ -19,7 +19,6 @@ from functools import partial
 import inspect
 import itertools as it
 import operator
-import os
 from typing import Any, TypeVar
 import weakref
 
@@ -2989,11 +2988,8 @@ def _cumred_chlo_lowering(ctx, x, *, axis, reverse, reducer, identity):
 
 
 def _is_supported_cumred(inp, axis, reverse):
-  if os.environ.get('JAX_ENABLE_CHLO_SCAN') != '1':
-    return False
-
   return (
-      jaxlib_extension_version >= 449
+      jaxlib_extension_version >= 454
       and not reverse
       and isinstance(inp, ShapedArray)
       and core.is_constant_shape(inp.shape)
