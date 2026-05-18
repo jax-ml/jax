@@ -23,7 +23,7 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import test_util as jtu
 from jax._src.random import philox2x32 as philox2x32_internal
-from jax._src.random import prng as prng_internal
+from jax._src.random import threefry2x32 as threefry2x32_internal
 import numpy as np
 
 jax.config.parse_flags_with_absl()
@@ -65,7 +65,7 @@ class RandomImplTest(jtu.JaxTestCase):
   )
   def test_threefry2x32_kat_vectors(self, key, counter, expected):
     """Test threefry2x32 primitive against Known Answer Test vectors."""
-    actual = prng_internal.threefry2x32_p.bind(
+    actual = threefry2x32_internal.threefry2x32_p.bind(
         np.uint32(key[0]),
         np.uint32(key[1]),
         np.uint32(counter[0]),

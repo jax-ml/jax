@@ -38,6 +38,7 @@ from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
@@ -4971,11 +4972,11 @@ def _check_lowering_rule(
   return []
 
 
-@register_lowering_rule(prng.threefry2x32_p)
+@register_lowering_rule(threefry2x32.threefry2x32_p)
 def _threefry2x32_lowering(ctx: LoweringRuleContext, k1, k2, m1, m2):
   def _lower_fun(k1, k2, m1, m2):
     with jax.named_scope("threefry2x32"):
-      res = prng._threefry2x32_lowering(k1, k2, m1, m2, use_rolled_loops=False)
+      res = threefry2x32._threefry2x32_lowering(k1, k2, m1, m2, use_rolled_loops=False)
     return res
 
   threefry_lowering = lower_fun(_lower_fun)

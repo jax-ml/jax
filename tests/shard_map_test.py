@@ -36,6 +36,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import core
 from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax._src.shard_map import shard_map
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
@@ -3213,7 +3214,7 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
 
     np_inp = np.arange(math.prod(shape), dtype=np.uint32).reshape(shape)
-    key = prng.random_seed(np_inp, impl=prng.threefry_prng_impl)
+    key = prng.random_seed(np_inp, impl=threefry2x32.threefry_prng_impl)
     key = jax.device_put(key, NamedSharding(mesh, P()))
 
     @jax.jit

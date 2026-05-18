@@ -20,6 +20,7 @@ from jax import random as jax_api_random
 from jax._src import blocked_sampler
 from jax._src import dtypes
 from jax._src.random import prng as jax_prng
+from jax._src.random import threefry2x32
 from jax._src import typing
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import primitives as tpu_primitives
@@ -75,7 +76,7 @@ def _fold_in(key: jax_prng.PRNGKeyArray, data: typing.Array):
   key0, key1 = unwrap_pallas_seed(key)
   # Perform a cheap mixing of data into the key.
   key1 = key1 + data
-  [key0, key1] = jax_prng.apply_round([key0, key1], 13)
+  [key0, key1] = threefry2x32.apply_round([key0, key1], 13)
   return wrap_pallas_seed(key0, key1, impl="pallas_tpu")
 
 def _split(key: typing.Array, shape: Shape):

@@ -234,6 +234,8 @@ from jax._src.random.prng import (
   random_fold_in_p as random_fold_in_p,
   random_seed_p as random_seed_p,
   random_split_p as random_split_p,
+)
+from jax._src.random.threefry2x32 import (
   threefry2x32_p as threefry2x32_p,
 )
 

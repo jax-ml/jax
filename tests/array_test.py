@@ -35,7 +35,7 @@ from jax._src.sharding_impls import (
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
-from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax._src.lib import jaxlib_extension_version
 
 
@@ -1554,7 +1554,7 @@ class RngShardingTest(jtu.JaxTestCase):
   def test_random_bits_is_pure_map_1d(self, num_devices):
     @jax.jit
     def f(x):
-      bits = prng.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
+      bits = threefry2x32.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
                                        32, x.shape)
       return bits + x
 
@@ -1588,7 +1588,7 @@ class RngShardingTest(jtu.JaxTestCase):
   def test_random_bits_is_pure_map_2d(self, mesh_shape, pspec):
     @jax.jit
     def f(x):
-      bits = prng.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
+      bits = threefry2x32.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
                                        32, x.shape)
       return bits + x
 

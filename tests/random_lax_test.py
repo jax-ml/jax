@@ -36,6 +36,7 @@ from jax._src import test_util as jtu
 from jax import vmap
 
 from jax._src.random import prng as prng_internal
+from jax._src.random import threefry2x32 as threefry2x32_internal
 
 config.parse_flags_with_absl()
 
@@ -1535,10 +1536,10 @@ def get_energy_distance(samples_1, samples_2):
   ).mean(0)
 
 
-threefry_seed = prng_internal.threefry_seed
-threefry_split = prng_internal.threefry_split
-threefry_random_bits = prng_internal.threefry_random_bits
-threefry_fold_in = prng_internal.threefry_fold_in
+threefry_seed = threefry2x32_internal.threefry_seed
+threefry_split = threefry2x32_internal.threefry_split
+threefry_random_bits = threefry2x32_internal.threefry_random_bits
+threefry_fold_in = threefry2x32_internal.threefry_fold_in
 
 def _double_threefry_seed(seed):
   int_t = seed.dtype.type if hasattr(seed, 'dtype') else type(seed)

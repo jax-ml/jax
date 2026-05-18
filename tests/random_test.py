@@ -42,6 +42,7 @@ from jax import vmap
 
 from jax._src import random as jax_random
 from jax._src.random import prng as prng_internal
+from jax._src.random import threefry2x32 as threefry2x32_internal
 
 config.parse_flags_with_absl()
 
@@ -212,24 +213,24 @@ class PrngTest(jtu.JaxTestCase):
       return tuple(hex(x.copy()).rstrip("L") for x in result)
 
     expected = ("0x6b200159", "0x99ba4efe")
-    result = prng_internal.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
+    result = threefry2x32_internal.threefry_2x32(np.uint32([0, 0]), np.uint32([0, 0]))
 
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0x1cb996fc", "0xbb002be7")
     u32_max = np.iinfo(np.uint32).max
-    result = prng_internal.threefry_2x32(np.uint32([u32_max, u32_max]), np.uint32([u32_max, u32_max]))
+    result = threefry2x32_internal.threefry_2x32(np.uint32([u32_max, u32_max]), np.uint32([u32_max, u32_max]))
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0xc4923a9c", "0x483df7a0")
-    result = prng_internal.threefry_2x32(
+    result = threefry2x32_internal.threefry_2x32(
         np.uint32([0x13198a2e, 0x03707344]),
         np.uint32([0x243f6a88, 0x85a308d3]))
     self.assertEqual(expected, result_to_hex(result))
 
   def testThreefry2x32Large(self):
     n = 10000000
-    result = prng_internal.threefry_2x32(
+    result = threefry2x32_internal.threefry_2x32(
       (np.uint32(0x13198a2e), np.uint32(0x03707344)),
       jnp.concatenate([
         jnp.full((n,), 0x243f6a88, jnp.uint32),
@@ -241,7 +242,7 @@ class PrngTest(jtu.JaxTestCase):
   def testThreefry2x32Empty(self):
     # Regression test for an op-by-op crash for empty arrays in CUDA mode.
     with jax.disable_jit():
-      result = prng_internal.threefry_2x32(
+      result = threefry2x32_internal.threefry_2x32(
         (np.uint32(0x13198a2e), np.uint32(0x03707344)),
         jnp.ones((10, 0,), jnp.uint32))
     np.testing.assert_equal(result, np.zeros((10, 0,), dtype=np.uint32))
@@ -251,7 +252,7 @@ class PrngTest(jtu.JaxTestCase):
     def fail(*args, **kwargs): assert False
     apply_primitive, dispatch.apply_primitive = dispatch.apply_primitive, fail
     try:
-      _ = prng_internal.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
+      _ = threefry2x32_internal.threefry_2x32(np.zeros(2, np.uint32), np.arange(10, dtype=np.uint32))
     finally:
       dispatch.apply_primitive = apply_primitive
 
@@ -838,7 +839,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   # -- prng primitives
 
   def test_random_wrap_vmap(self):
-    f = partial(prng_internal.random_wrap, impl=prng_internal.threefry_prng_impl)
+    f = partial(prng_internal.random_wrap, impl=threefry2x32_internal.threefry_prng_impl)
     base_arr = jnp.arange(6, dtype=jnp.uint32).reshape(3, 2)
     keys = jax.vmap(f, in_axes=0)(base_arr)
     self.assertIsInstance(keys, prng_internal.PRNGKeyArray)
@@ -1280,10 +1281,10 @@ class KeyArrayTest(jtu.JaxTestCase):
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 
-threefry_seed = prng_internal.threefry_seed
-threefry_split = prng_internal.threefry_split
-threefry_random_bits = prng_internal.threefry_random_bits
-threefry_fold_in = prng_internal.threefry_fold_in
+threefry_seed = threefry2x32_internal.threefry_seed
+threefry_split = threefry2x32_internal.threefry_split
+threefry_random_bits = threefry2x32_internal.threefry_random_bits
+threefry_fold_in = threefry2x32_internal.threefry_fold_in
 
 def _double_threefry_seed(seed):
   int_t = seed.dtype.type if hasattr(seed, 'dtype') else type(seed)

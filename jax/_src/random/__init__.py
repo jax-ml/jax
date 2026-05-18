@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from jax._src.random import philox2x32 as philox2x32
+from jax._src.random import rbg as rbg
 from jax._src.random.core import (
     PRNGKey as PRNGKey,
     ball as ball,

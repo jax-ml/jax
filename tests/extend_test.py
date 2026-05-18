@@ -23,6 +23,8 @@ from jax._src import api
 from jax._src import core
 from jax._src import linear_util
 from jax._src.random import prng
+from jax._src.random import threefry2x32
+from jax._src.random import rbg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
@@ -36,11 +38,11 @@ class ExtendTest(jtu.JaxTestCase):
   def test_symbols(self):
     # Assume these are tested in random_test.py, only check equivalence
     self.assertIs(jex.random.seed_with_impl, prng.seed_with_impl)
-    self.assertIs(jex.random.threefry2x32_p, prng.threefry2x32_p)
-    self.assertIs(jex.random.threefry_2x32, prng.threefry_2x32)
-    self.assertIs(jex.random.threefry_prng_impl, prng.threefry_prng_impl)
-    self.assertIs(jex.random.rbg_prng_impl, prng.rbg_prng_impl)
-    self.assertIs(jex.random.unsafe_rbg_prng_impl, prng.unsafe_rbg_prng_impl)
+    self.assertIs(jex.random.threefry2x32_p, threefry2x32.threefry2x32_p)
+    self.assertIs(jex.random.threefry_2x32, threefry2x32.threefry_2x32)
+    self.assertIs(jex.random.threefry_prng_impl, threefry2x32.threefry_prng_impl)
+    self.assertIs(jex.random.rbg_prng_impl, rbg.rbg_prng_impl)
+    self.assertIs(jex.random.unsafe_rbg_prng_impl, rbg.unsafe_rbg_prng_impl)
 
     # Assume these are tested elsewhere, only check equivalence
     self.assertIs(jex.backend.backends, xla_bridge.backends)

@@ -30,6 +30,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax._src import xla_bridge
 from jax._src.mesh import get_abstract_mesh
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
@@ -1584,7 +1585,7 @@ def _gamma_impl(key, a, *, log_space, use_vmap=False):
   keys = keys.flatten()
   alphas = a.flatten()
 
-  if use_vmap and _key_impl(key) is prng.threefry_prng_impl:
+  if use_vmap and _key_impl(key) is threefry2x32.threefry_prng_impl:
     samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
   else:
     samples = lax_control_flow.map(
@@ -1874,7 +1875,7 @@ def poisson(key: ArrayLike,
   # remove this check
   keys_dtype = typing.cast(prng.KeyTy, key.dtype)
   key_impl = keys_dtype._impl
-  if key_impl is not prng.threefry_prng_impl:
+  if key_impl is not threefry2x32.threefry_prng_impl:
     raise NotImplementedError(
         '`poisson` is only implemented for the threefry2x32 RNG, '
         f'not {key_impl}')
