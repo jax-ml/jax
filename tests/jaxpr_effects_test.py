@@ -383,7 +383,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_lowering_that_sets_wrong_tokens_should_cause_error(self):
 
     def bad_effect_lowering(ctx, *, effect):
-      ctx.set_tokens_out(mlir.TokenSet(bar=ctx.tokens_in.get(foo_effect)))
+      ctx.set_tokens_out(mlir.TokenSet({"bar": ctx.tokens_in.get(foo_effect)}))
       return []
     mlir.register_lowering(effect_p, bad_effect_lowering)
 
@@ -1120,6 +1120,99 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       self.assertEmpty(jaxpr.effects)
     else:
       self.assertIn(InputEffect(0), jaxpr.effects)
+
+
+class TokenSetTest(jtu.JaxTestCase):
+
+  def test_init_and_len(self):
+    ts_empty = mlir.TokenSet()
+    self.assertLen(ts_empty, 0)
+
+    ts_empty_dict = mlir.TokenSet({})
+    self.assertLen(ts_empty_dict, 0)
+
+    effects = [OrderedEffect("eff1"), OrderedEffect("eff2")]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+    self.assertLen(ts, 2)
+
+  def test_get(self):
+    eff1 = OrderedEffect("eff1")
+    eff2 = OrderedEffect("eff2")
+    ts = mlir.TokenSet({eff1: "token1", eff2: "token2"})
+    self.assertEqual(ts.get(eff1), "token1")
+    self.assertEqual(ts.get(eff2), "token2")
+    with self.assertRaises(KeyError):
+      ts.get(OrderedEffect("eff3"))
+
+  def test_items(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+    items = ts.items()
+    self.assertLen(items, 5)
+    for i, (eff, token) in enumerate(items):
+      self.assertEqual(eff, effects[i])
+      self.assertEqual(token, f"token{i}")
+
+  def test_effects(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+    self.assertSetEqual(ts.effects(), set(effects))
+
+  def test_subset(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+
+    subset_effects = [effects[1], effects[3]]
+    sub_ts = ts.subset(subset_effects)
+    self.assertEqual(sub_ts.items(), (
+        (effects[1], "token1"),
+        (effects[3], "token3")
+    ))
+
+  def test_update_tokens(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+
+    # Empty update should return self
+    ts_no_change = ts.update_tokens(mlir.TokenSet())
+    self.assertIs(ts_no_change, ts)
+
+    # Update one token
+    ts_updated = ts.update_tokens(mlir.TokenSet({effects[2]: "token2_new"}))
+    self.assertEqual(ts_updated.items(), (
+        (effects[0], "token0"),
+        (effects[1], "token1"),
+        (effects[2], "token2_new"),
+        (effects[3], "token3"),
+        (effects[4], "token4")
+    ))
+
+    # Update multiple tokens
+    ts_updated_multi = ts.update_tokens(mlir.TokenSet({
+        effects[4]: "token4_new",
+        effects[1]: "token1_new"
+    }))
+    self.assertEqual(ts_updated_multi.items(), (
+        (effects[0], "token0"),
+        (effects[1], "token1_new"),
+        (effects[2], "token2"),
+        (effects[3], "token3"),
+        (effects[4], "token4_new")
+    ))
+
+  def test_create(self):
+    effects = [OrderedEffect("eff1"), OrderedEffect("eff2")]
+    with mlir.make_ir_context() as ctx, mlir.ir.Location.unknown(ctx):
+      module = mlir.ir.Module.create()
+      with mlir.ir.InsertionPoint(module.body):
+        ts = mlir.TokenSet.create(effects)
+        self.assertEqual(ts.items(), (
+            (effects[0], ts.get(effects[0])),
+            (effects[1], ts.get(effects[1]))
+        ))
+        for _, token in ts.items():
+          self.assertIsInstance(token, mlir.ir.Value)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

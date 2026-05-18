@@ -708,7 +708,8 @@ def emit_tf_embedded_graph_custom_call(
   results = list(custom_call.results)
   if ordered:
     token = results.pop(0)
-    ctx.set_tokens_out(mlir.TokenSet({call_tf_ordered_effect: token}))
+    ctx.set_tokens_out(ctx.tokens_in.update_tokens(
+        mlir.TokenSet({call_tf_ordered_effect: token})))
 
   return results
 

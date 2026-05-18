@@ -1047,7 +1047,7 @@ def _cond_lowering(ctx, index, *args, branches, **params):
   tokens, outputs = util.split_list(tokens_and_outputs, [num_tokens])
   outputs = [mlir.lower_with_sharding_in_types(ctx, o, aval)
              for o, aval in zip(outputs, ctx.avals_out)]
-  ctx.set_tokens_out(mlir.TokenSet(zip(ordered_effects, tokens)))
+  ctx.set_tokens_out(mlir.TokenSet(dict(zip(ordered_effects, tokens))))
   return outputs
 
 mlir.register_lowering(cond_p, _cond_lowering)

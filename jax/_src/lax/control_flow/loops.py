@@ -2136,7 +2136,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     body_args = mlir.unflatten_ir_values_like_types(flat_body_args, loop_carry_types)
     # Tokens are at the front of the args list to the while loop
     token_args, body_args = util.split_list(body_args, [num_tokens])
-    tokens_in = mlir.TokenSet(zip(body_effects, token_args))
+    tokens_in = mlir.TokenSet(dict(zip(body_effects, token_args)))
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
     body_name_stack = name_stack.extend('body')
     body_consts = mlir.ir_consts(
@@ -2169,7 +2169,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   z = [mlir.lower_with_sharding_in_types(ctx, op, aval)
        for op, aval in zip(z, ctx.avals_out)]
   if tokens:
-    ctx.set_tokens_out(mlir.TokenSet(zip(body_effects, tokens)))
+    ctx.set_tokens_out(mlir.TokenSet(dict(zip(body_effects, tokens))))
   return z
 
 def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,

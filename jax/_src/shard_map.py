@@ -952,7 +952,8 @@ def _shard_map_lowering_shardy(
       _get_spmdaxis_ctx_mesh(mesh), manual_axes)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
 
-  tokens = [ctx.tokens_in.get(eff) for eff in ctx.tokens_in.effects()]
+  effects = list(mlir.effects_lib.ordered_effects.filter_in(jaxpr.effects))
+  tokens = [ctx.tokens_in.get(eff) for eff in effects]
   num_tokens = len(tokens)
   manual_axes = order_wrt_mesh(mesh, shardy_manual_axes)
   if prod([mesh.shape[a] for a in manual_axes]) == 1:
@@ -960,7 +961,7 @@ def _shard_map_lowering_shardy(
     with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
       out_nodes, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr, ctx.name_stack,
-          mlir.TokenSet(zip(ctx.tokens_in.effects(), tokens)),
+          mlir.TokenSet(dict(zip(effects, tokens))),
           (), *in_nodes,
           dim_var_values=ctx.dim_var_values,
           const_lowering=ctx.const_lowering,
@@ -1023,7 +1024,7 @@ def _shard_map_lowering_shardy(
         block.arguments, [num_dim_vars, num_tokens, num_const_args])
     out_nodes_, tokens_out = mlir.jaxpr_subcomp(
         sub_ctx, jaxpr, ctx.name_stack,
-        mlir.TokenSet(zip(ctx.tokens_in.effects(), token_arg_values)),
+        mlir.TokenSet(dict(zip(effects, token_arg_values))),
         (), *in_args,
         dim_var_values=dim_var_values,
         const_lowering={
@@ -1037,8 +1038,8 @@ def _shard_map_lowering_shardy(
         )
     )
     num_tokens = len(tokens_out.effects())
-    tokens_out = tokens_out.update_tokens(mlir.TokenSet(zip(
-        ctx.tokens_in.effects(), manual_computation_op.results[:num_tokens])))
+    tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(
+        effects, manual_computation_op.results[:num_tokens]))))
     ctx.set_tokens_out(tokens_out)
 
   return manual_computation_op.results[num_tokens:]

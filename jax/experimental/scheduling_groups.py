@@ -90,7 +90,7 @@ def _xla_metadata_call_lowering(ctx, *args, jaxpr, **meta):
       {k: attr_get(v) for k, v in meta.items()})
   out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
-  tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
+  tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
   ctx.set_tokens_out(tokens_out)
   return out_nodes
 mlir.register_lowering(xla_metadata_call_p, _xla_metadata_call_lowering)
