@@ -339,6 +339,7 @@ autodoc_typehints_description_target = "all"
 autodoc_type_aliases = {
     'ArrayLike': 'jax.typing.ArrayLike',
     'DTypeLike': 'jax.typing.DTypeLike',
+    'BlockSpec': 'jax.experimental.pallas.BlockSpec',
 }
 
 # Remove auto-generated API docs from sidebars. They take too long to build.
