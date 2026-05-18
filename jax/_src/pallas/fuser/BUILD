@@ -128,12 +128,14 @@ pytype_strict_library(
     ],
     type_checking = "pyrefly",
     deps = [
+        ":fuser_utils",
         ":fusible",
         ":fusible_dtype",
         ":fusion",
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:lax",
         "//jax/_src:partial_eval",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
@@ -185,6 +187,7 @@ pytype_strict_library(
     deps = [
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:lax",
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
     ] + py_deps("numpy"),

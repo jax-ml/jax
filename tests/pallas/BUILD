@@ -1433,6 +1433,29 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_fusible_matmul_with_stateful_fusions_test",
+    srcs = ["tpu_fusible_matmul_with_stateful_fusions_test.py"],
+    disable_configs = [
+        "tpu_v3",
+    ],
+    enable_backends = ["tpu"],
+    # shard_count = 4,
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax/experimental:pallas_fuser",
+        "//jax/experimental:pallas_tpu",
+        "//jax/experimental:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_sparsecore_pallas_test",
     srcs = ["tpu_sparsecore_pallas_test.py"],
     backend_variant_args = {

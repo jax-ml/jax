@@ -61,6 +61,7 @@ def discharge_state(
     consts: Sequence[Any],
     *,
     should_discharge: bool | Sequence[bool] = True,
+    lower: bool = True,
 ) -> tuple[core.Jaxpr, Sequence[Any]]:
   """Converts a stateful jaxpr into a pure one.
 
@@ -72,6 +73,7 @@ def discharge_state(
     consts: Constants for the jaxpr.
     should_discharge: Whether to discharge each ``Ref`` input. If a single bool,
       applies to all inputs.
+    lower: Whether to lower hijax to lojax while discharging.
 
   Returns:
     A tuple of ``(new_jaxpr, new_consts)`` where ``new_jaxpr`` is a jaxpr with
@@ -86,23 +88,27 @@ def discharge_state(
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
                                     should_discharge, consts),
                             debug_info=jaxpr.debug_info.with_unknown_names())
-  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals, lower=True)
+  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(
+      eval_jaxpr, in_avals, lower=lower)
   return new_jaxpr, new_consts
 
 # TODO(mattjj): migrate callers to discharge_state2 for caching
 def discharge_state2(jaxpr: core.ClosedJaxpr,
                      should_discharge: bool | Sequence[bool] = True,
+                     *,
+                     lower: bool = True,
                      ) -> core.ClosedJaxpr:
   if isinstance(should_discharge, bool):
     should_discharge = (should_discharge,) * len(jaxpr.in_avals)
-  return _discharge_state2(jaxpr, tuple(should_discharge))
+  return _discharge_state2(jaxpr, tuple(should_discharge), lower=lower)
 
 @weakref_lru_cache
 def _discharge_state2(jaxpr: core.ClosedJaxpr,
                       should_discharge: tuple[bool, ...],
+                      lower: bool,
                       ) -> core.ClosedJaxpr:
-  jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts,
-                                   should_discharge=should_discharge)
+  jaxpr_, consts = discharge_state(
+      jaxpr.jaxpr, jaxpr.consts, should_discharge=should_discharge, lower=lower)
   return core.ClosedJaxpr(jaxpr_, consts)
 
 @dataclasses.dataclass
