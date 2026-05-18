@@ -43,7 +43,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 454  # Fix reduce window rewriter to work with scalar parameters.
+_version = 453  # control deps custom call support
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
