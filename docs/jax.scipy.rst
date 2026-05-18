@@ -59,6 +59,7 @@ jax.scipy.linalg
    cholesky
    circulant
    companion
+   convolution_matrix
    det
    dft
    eigh

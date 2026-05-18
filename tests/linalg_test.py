@@ -132,6 +132,19 @@ def osp_linalg_fiedler(a: np.ndarray) -> np.ndarray:
   return np.vectorize(
       scipy.linalg.fiedler, signature="(n)->(n,n)", otypes=(a.dtype,))(a)
 
+def osp_linalg_convolution_matrix(a: np.ndarray, n: int,
+                                  mode: str = 'full') -> np.ndarray:
+  """Batched scipy convolution_matrix for testing."""
+  if scipy_version >= (1, 15):
+    return scipy.linalg.convolution_matrix(a, n, mode=mode)
+  a = np.atleast_1d(a)
+  if a.ndim == 1:
+    return scipy.linalg.convolution_matrix(a, n, mode=mode)
+  flat = a.reshape(-1, a.shape[-1])
+  out = np.stack([scipy.linalg.convolution_matrix(row, n, mode=mode)
+                  for row in flat])
+  return out.reshape(*a.shape[:-1], *out.shape[-2:])
+
 def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """Batched scipy hankel for testing."""
   if scipy_version >= (1, 19):
@@ -2391,6 +2404,40 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_linalg_fiedler, jsp.linalg.fiedler, args_maker,
                             check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.fiedler, args_maker)
+
+  @jtu.sample_product(
+     m=[1, 2, 3, 5],
+     n=[1, 2, 3, 5, 7],
+     mode=['full', 'valid', 'same'],
+     batch=[(), (2,), (1, 3)],
+     # Integer dtypes are skipped because the underlying Toeplitz lowers via
+     # an integer convolution that CuDNN only supports for s8 inputs with f32
+     # bias on GPU.
+     dtype=float_types + complex_types,
+  )
+  def testConvolutionMatrix(self, m, n, mode, batch, dtype):
+    rng = jtu.rand_default(self.rng())
+    shape = (*batch, m)
+    args_maker = lambda: [rng(shape, dtype)]
+    osp_fun = partial(osp_linalg_convolution_matrix, n=n, mode=mode)
+    jsp_fun = partial(jsp.linalg.convolution_matrix, n=n, mode=mode)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testConvolutionMatrixInvalidArgs(self):
+    a = jnp.array([1., 2., 3.])
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.convolution_matrix(a, 0)
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.convolution_matrix(a, -1)
+    with self.assertRaisesRegex(ValueError, "mode must be one of"):
+      jsp.linalg.convolution_matrix(a, 3, mode='bad')
+    with self.assertRaisesRegex(ValueError, r"len\(a\) must be at least 1"):
+      jsp.linalg.convolution_matrix(jnp.zeros((0,)), 3)
+    with self.assertRaisesRegex(ValueError, r"len\(a\) must be at least 1"):
+      jsp.linalg.convolution_matrix(jnp.zeros((2, 0)), 3)
+    with self.assertRaisesRegex(ValueError, "must be at least 1-dimensional"):
+      jsp.linalg.convolution_matrix(jnp.array(5.0), 3)
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
