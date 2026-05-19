@@ -16,14 +16,16 @@ from __future__ import annotations
 
 from collections import Counter
 import glob
+import json
 import logging
 import math
 import os
 import platform
+import re
+import tempfile
 import unittest
 from unittest import mock
 from unittest import SkipTest
-import tempfile
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -62,6 +64,29 @@ def msg_exists_in_logs(msg: str, records: list[logging.LogRecord],
                        level: int | None = None) -> bool:
   return any(msg in record.getMessage() for record in records
              if level is None or level == record.levelno)
+
+
+# Returns a tuple of (cleaned HLO string, list of backend configs).
+# Unfortunately, the order of the fields can be different, so we need to match them separately.
+def extract_and_normalize_backend_configs(hlo: str) -> tuple[str, list]:
+  configs = []
+
+  def replace_config(match):
+    config_str = match.group(1)
+    try:
+      config = json.loads(config_str)
+      configs.append(config)
+    except json.JSONDecodeError:
+      configs.append(config_str)
+    return f", backend_config=<placeholder_{len(configs)-1}>"
+
+  clean_hlo = re.sub(
+      r", backend_config=(\{.*\}|'[^']*'|\"[^\"]*\")$",
+      replace_config,
+      hlo,
+      flags=re.MULTILINE,
+  )
+  return clean_hlo, configs
 
 
 class InMemoryCache(CacheInterface):
@@ -503,52 +528,66 @@ class CompilationCacheTest(CompilationCacheTestCase):
       self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
 
   def test_persistent_cache_miss_logging_with_explain(self):
-    with (config.explain_cache_misses(True),
-          config.compilation_cache_dir("jax-cache")):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      with (
+          config.explain_cache_misses(True),
+          config.compilation_cache_dir(tmp_dir),
+      ):
+        # omitting writing to cache because compilation is too fast
+        pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+        with config.persistent_cache_min_compile_time_secs(1e5):
+          with self.assertLogs(level="DEBUG") as log:
+            jit(
+                lambda x: x
+                + jax.pure_callback(
+                    pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x
+                )
+            )(1)
+          msg1 = "Not writing persistent cache entry"
+          msg2 = "because it uses host callbacks"
+          self.assertTrue(
+              msg_exists_in_logs(msg1, log.records, logging.WARNING)
+          )
+          self.assertTrue(
+              msg_exists_in_logs(msg2, log.records, logging.WARNING)
+          )
 
-      # omitting writing to cache because compilation is too fast
-      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
-      with config.persistent_cache_min_compile_time_secs(1e5):
+        # omitting writing to cache because host callback is present
+        pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
         with self.assertLogs(level="DEBUG") as log:
-          jit(lambda x: x +
-              jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
-              )(1)
+          jit(
+              lambda x: x
+              + jax.pure_callback(
+                  pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x
+              )
+          )(1)
         msg1 = "Not writing persistent cache entry"
         msg2 = "because it uses host callbacks"
         self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
         self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
 
-      # omitting writing to cache because host callback is present
-      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
-      with self.assertLogs(level="DEBUG") as log:
-        jit(lambda x: x +
-            jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
-            )(1)
-      msg1 = "Not writing persistent cache entry"
-      msg2 = "because it uses host callbacks"
-      self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
-      self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+        # omitting writing to cache because binary is too small
+        with config.persistent_cache_min_entry_size_bytes(int(1e9)):
+          with self.assertLogs(level="DEBUG") as log:
+            jit(lambda x: x + 2)(1)
+        msg1 = "Not writing persistent cache entry"
+        msg2 = "is less than threshold"
+        self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+        self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
 
-      # omitting writing to cache because binary is too small
-      with config.persistent_cache_min_entry_size_bytes(int(1e9)):
-        with self.assertLogs(level="DEBUG") as log:
-          jit(lambda x: x + 2)(1)
-      msg1 = "Not writing persistent cache entry"
-      msg2 = "is less than threshold"
-      self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
-      self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
-
-      # successful cache write
-      with config.persistent_cache_min_entry_size_bytes(1):
-        with self.assertLogs(level="DEBUG") as log:
-          jit(lambda x: x ** 2)(1)
-      msg = "to persistent compilation cache with key"
-      self.assertTrue(msg_exists_in_logs(msg, log.records, logging.WARNING))
+        # successful cache write
+        with config.persistent_cache_min_entry_size_bytes(1):
+          with self.assertLogs(level="DEBUG") as log:
+            jit(lambda x: x**2)(1)
+          msg = "to persistent compilation cache with key"
+          self.assertTrue(msg_exists_in_logs(msg, log.records, logging.WARNING))
 
   def test_persistent_cache_miss_logging_with_no_explain(self):
     # test that cache failure messages do not get logged in WARNING
-    with (config.explain_cache_misses(False),
-          config.compilation_cache_dir("jax-cache")):
+    with (
+        config.explain_cache_misses(False),
+        config.compilation_cache_dir("jax-cache"),
+    ):
       # omitting writing to cache because compilation is too fast
       with config.persistent_cache_min_compile_time_secs(1e3):
         with self.assertLogs(level="DEBUG") as log:
@@ -560,9 +599,10 @@ class CompilationCacheTest(CompilationCacheTestCase):
       # omitting writing to cache because host callback is present
       pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
       with self.assertLogs(level="DEBUG") as log:
-        jit(lambda x: x +
-            jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
-            )(1)
+        jit(
+            lambda x: x
+            + jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+        )(1)
       msg1 = "Not writing persistent cache entry"
       msg2 = "because it uses host callbacks"
       self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
@@ -580,7 +620,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
       # successful cache write
       with config.persistent_cache_min_entry_size_bytes(1):
         with self.assertLogs(level="DEBUG") as log:
-          jit(lambda x: x ** 2)(1)
+          jit(lambda x: x**2)(1)
       msg = "to persistent compilation cache with key"
       self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
 
@@ -672,7 +712,14 @@ class CompilationCacheTest(CompilationCacheTestCase):
       self.assertEqual(len(dump1_files), 1)
       self.assertEqual(len(dump2_files), 1)
       with (open(dump1_files[0]) as file1, open(dump2_files[0]) as file2):
-        self.assertEqual(file1.read(), file2.read())
+        hlo1_clean, configs1 = extract_and_normalize_backend_configs(
+            file1.read()
+        )
+        hlo2_clean, configs2 = extract_and_normalize_backend_configs(
+            file2.read()
+        )
+        self.assertEqual(hlo1_clean, hlo2_clean)
+        self.assertEqual(configs1, configs2)
       dump2_pbs = glob.glob(os.path.join(dump_dir2, "*after_optimizations.hlo.pb"))
       self.assertEqual(len(dump2_pbs), 1)
 
