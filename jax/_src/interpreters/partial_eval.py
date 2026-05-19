@@ -479,7 +479,7 @@ def _trace_to_subjaxpr_nounits_no_lu_2(f: Callable, trace: JaxprTrace,
     ans = f(*in_args)
   assert isinstance(ans, FlatTree), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
-  assert all(isinstance(x, core.Tracer) or core.valid_jaxtype(x) for x in ans), (
+  assert all(isinstance(x, Tracer) or core.valid_jaxtype(x) for x in ans), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
   if isinstance(instantiate, bool):
     instantiate = [instantiate] * len(ans)
@@ -1504,7 +1504,7 @@ def move_binders_to_back(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
   return move_binders_to_front(closed_jaxpr, map(op.not_, to_move))
 
 
-class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
+class DynamicJaxprTracer(Tracer['DynamicJaxprTrace']):
   __slots__ = ['val', 'mutable_qdd', 'parent', '_debug_info']
 
   _trace: DynamicJaxprTrace
@@ -1518,30 +1518,31 @@ class DynamicJaxprTracer(core.Tracer['DynamicJaxprTrace']):
     if isinstance(aval, core.AvalQDD):
       assert aval.qdd is not None
       aval_val, qdd = aval.aval, aval.qdd
+      mutable_qdd = core.MutableQuasiDynamicData(qdd)
     else:
-      assert not aval.has_qdd
-      qdd = None
       aval_val = aval
-    super().__init__(trace, aval_val)
+      mutable_qdd = None
+    Tracer.__init__(self, trace, aval_val)  # slightly faster than super()
     self._line_info = line_info
     self._debug_info = self._trace.frame.debug_info  # for UnexpectedTracerError
     self.val = val
-    self.mutable_qdd = core.MutableQuasiDynamicData(qdd)
+    self.mutable_qdd = mutable_qdd
     self.parent = parent
 
   def _short_repr(self):
     return f"JitTracer({self.aval})"
 
   def cur_qdd(self):
-    return self.mutable_qdd.cur_val
+    return self.mutable_qdd.cur_val if self.mutable_qdd is not None else None
 
   @property
   def aval_mutable_qdd(self):
     aval = self.aval
-    if aval.has_qdd:
-      return core.AvalMutableQDD(aval, self.mutable_qdd)
-    else:
+    if self.mutable_qdd is None:
       return aval
+    else:
+      assert aval.has_qdd
+      return core.AvalMutableQDD(aval, self.mutable_qdd)
 
   def full_lower(self):
     atom = self.val
@@ -1650,6 +1651,10 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
 
 
 class JaxprStackFrame:
+  __slots__ = (
+      'gensym', 'constid_to_tracer', 'constvar_to_val', 'tracing_eqns',
+      'invars', 'effects', 'debug_info', 'is_high', 'mutable_qdds', 'auto_dce')
+
   gensym: Callable[[AbstractValue], Var]
   constid_to_tracer: WeakValueDictionary[ConstId, DynamicJaxprTracer]
   constvar_to_val: dict[Var, Any]
@@ -1853,7 +1858,8 @@ class DynamicJaxprTrace(core.Trace):
     var = self.frame.newvar(aval)
     tracer = DynamicJaxprTracer(self, aval, var, source_info)
     self.frame.invars.append(var)
-    self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
+    if tracer.mutable_qdd is not None:
+      self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
     return tracer
 
   def make_eqn(self, in_tracers, out_avals, primitive, params,
@@ -1900,6 +1906,7 @@ class DynamicJaxprTrace(core.Trace):
       tracer = DynamicJaxprTracer(self, aval, var, source_info)
       self.frame.constid_to_tracer[id_c] = tracer
       if isinstance(aval, core.AvalQDD):
+        assert tracer.mutable_qdd is not None
         self.frame.mutable_qdds.append((var, tracer.mutable_qdd))
       self.frame.constvar_to_val[var] = c
       finalize(tracer, self.finalize_const, var, id_c)
@@ -1917,7 +1924,8 @@ class DynamicJaxprTrace(core.Trace):
 
   def cur_qdd(self, x):
     source_info = source_info_util.current()
-    return self.to_jaxpr_tracer(x, source_info=source_info).mutable_qdd.cur_val
+    tracer = self.to_jaxpr_tracer(x, source_info=source_info)
+    return tracer.mutable_qdd.cur_val if tracer.mutable_qdd is not None else None
 
   def stage_value(self, val):
     if config.eager_constant_folding.value and not isinstance(val, Tracer):
