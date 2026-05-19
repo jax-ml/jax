@@ -343,11 +343,12 @@ def _check_smem_limit(
 
     In both cases, smaller block sizes produce more blocks, increasing
     metadata quadratically. If the metadata exceeds SMEM capacity, a
-    ValueError is raised with a suggested minimum block size (rounded to
-    an even multiple of the default block size to ensure clean divisibility
-    with power-of-2 sequence lengths). The suggestion is conservative:
-    increasing block size reduces block counts, which both shrinks the
-    metadata and may enable more aggressive downcasting of index values.
+    ValueError is raised with a suggested minimum block size (The suggestion 
+    uses geometric scaling (powers of 2) relative to the default block 
+    size to ensure clean divisibility with powers of 2 sequence lengths). 
+    The suggestion is conservative: increasing block size reduces block counts, 
+    which both shrinks the metadata and may enable more aggressive downcasting 
+    of index values.
 
     Args:
         heads_per_shard: Number of attention heads on this shard.
@@ -365,10 +366,10 @@ def _check_smem_limit(
             iterates over KV blocks).
 
     Raises:
-        ValueError: If the estimated SMEM usage exceeds TPU capacity,
-            with a suggested minimum block size (rounded to an even
-            multiple of the default block size to ensure clean divisibility
-            with power-of-2 sequence lengths) that would fit.
+        ValueError: If the estimated SMEM usage exceeds TPU capacity, 
+        provide a suggested minimum block size that would fit. The suggestion 
+        uses geometric scaling (powers of 2) relative to the default block 
+        size to ensure clean divisibility with powers of 2 sequence lengths.
   """
 
   tpu_info = get_tpu_info()
@@ -405,9 +406,8 @@ def _check_smem_limit(
     block_size = math.sqrt(
             (required_smem_bytes * q_block_size * kv_block_size) / smem_limit
         )
-    scaling_factor = math.ceil(block_size / default_block_size)
-    scaling_factor = scaling_factor if scaling_factor % 2 == 0 else scaling_factor + 1
-    min_block_size = scaling_factor * default_block_size
+    scaling_factor = math.ceil(math.log2(block_size / default_block_size))
+    min_block_size = default_block_size * (2 ** scaling_factor)
     raise ValueError(
             f"Splash attention mask metadata requires {required_smem_bytes / (1024*1024):.2f} MiB "
             f"but SMEM limit is {smem_limit / (1024*1024):.2f} MiB. "
