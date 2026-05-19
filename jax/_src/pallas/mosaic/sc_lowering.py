@@ -986,18 +986,17 @@ def _dma_wait_lowering_rule(
           "Core index must be None when waiting on a local DMA."
       )
 
-
   # If not ``None``, we lower to an indirect DMA instead of a regular DMA.
   if indirect_offsets is None:
-    def _dma_wait(sem, src_ref, dst_ref):
+    def _dma_wait(src_ref, dst_ref, sem):
       tpu.wait_dma2(
         sem, src_ref, dst_ref, device_id=device_id, core_id=core_id
       )
       return []
     return tc_lowering.lower_with_transformed_refs(
         _dma_wait,
-        [sem, src_ref, dst_ref],
-        [sem_aval, src_aval, dst_aval],
+        [src_ref, dst_ref, sem],
+        [src_aval, dst_aval, sem_aval],
     )
 
   if device_id is not None:
