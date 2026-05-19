@@ -31,6 +31,7 @@ py_library_providing_imports_info(
         "mosaic_gpu.py",
         "triton.py",
     ],
+    lazy_imports = True,
     lib_rule = pytype_strict_library,
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("lib"),

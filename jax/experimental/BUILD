@@ -364,6 +364,7 @@ pytype_strict_library(
             "pallas/triton.py",
         ],
     ),
+    lazy_imports = True,
     type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
