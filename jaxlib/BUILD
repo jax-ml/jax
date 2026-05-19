@@ -116,6 +116,7 @@ pytype_library(
         "xla_client.py",
         ":version",
     ],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":_jax",
@@ -1515,6 +1516,7 @@ cc_library(
 pytype_strict_library(
     name = "xla_client",
     srcs = ["xla_client.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     visibility = [":xla_python"],
     deps = py_deps([
