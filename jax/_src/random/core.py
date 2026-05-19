@@ -21,6 +21,7 @@ from operator import index
 import typing
 from typing import Union
 import warnings
+from contextlib import nullcontext
 
 import numpy as np
 
@@ -1378,7 +1379,10 @@ def dirichlet(key: ArrayLike,
       ``alpha.shape[:-1]``. The default (None) produces a result shape equal to
       ``alpha.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``alpha`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1394,14 +1398,20 @@ def dirichlet(key: ArrayLike,
     ``alpha.shape``.
   """
   key, _ = _check_prng_key("dirichlet", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `dirichlet` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  alpha = jnp.asarray(alpha)
+  shape = _check_broadcast_shapes("dirichlet", shape, np.empty(alpha.shape[:-1]))
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "dirichlet", shape)
+  with cxt:
+    _check_all_safe_to_cast("dirichlet", dtype, alpha)
   return maybe_auto_axes(_dirichlet, out_sharding,
                          shape=shape, dtype=dtype)(key, alpha)
 
@@ -1412,11 +1422,6 @@ def _dirichlet(key, alpha, shape, dtype) -> Array:
   if not np.ndim(alpha) >= 1:
     msg = "dirichlet requires alpha.ndim >= 1, got alpha.ndim == {}"
     raise ValueError(msg.format(np.ndim(alpha)))
-
-  if shape is None:
-    shape = np.shape(alpha)[:-1]
-  else:
-    _check_shape("dirichlet", shape, np.shape(alpha)[:-1])
 
   alpha = lax.convert_element_type(alpha, dtype)
 
