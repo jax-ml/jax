@@ -1673,8 +1673,8 @@ def gamma(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("gamma", shape, a)
+  _check_all_safe_to_cast("gamma", dtype, a)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gamma", shape)
   return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype)(key, a)
 
