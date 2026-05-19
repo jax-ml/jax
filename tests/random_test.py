@@ -202,6 +202,7 @@ class PrngTest(jtu.JaxTestCase):
     # rather than copying manually here?
     self.assertIn('threefry2x32', prng_internal.prngs)
     self.assertIn('philox2x32', prng_internal.prngs)
+    self.assertIn('philox4x32', prng_internal.prngs)
     self.assertIn('rbg', prng_internal.prngs)
     self.assertIn('unsafe_rbg', prng_internal.prngs)
 

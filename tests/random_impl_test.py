@@ -23,6 +23,7 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import test_util as jtu
 from jax._src.random import philox2x32 as philox2x32_internal
+from jax._src.random import philox4x32 as philox4x32_internal
 from jax._src.random import threefry2x32 as threefry2x32_internal
 import numpy as np
 
@@ -39,6 +40,7 @@ class _PRNGConfig(NamedTuple):
 _PRNG_IMPLS = [
     _PRNGConfig('threefry2x32', 'key<fry>', (2,), np.uint32),
     _PRNGConfig('philox2x32', 'key<phx2>', (1,), np.uint32),
+    _PRNGConfig('philox4x32', 'key<phx4>', (2,), np.uint32),
 ]
 
 
@@ -100,6 +102,39 @@ class RandomImplTest(jtu.JaxTestCase):
     c0_u32 = np.uint32(counter[0])
     c1_u32 = np.uint32(counter[1])
     actual = philox2x32_internal.philox2x32_p.bind(k_u32, c0_u32, c1_u32)
+    self.assertArraysEqual(
+        np.asarray(actual, dtype=np.uint32),
+        np.asarray(expected, dtype=np.uint32),
+    )
+
+  @parameterized.parameters(
+      # KAT vectors from random123/tests/kat_vectors (10 rounds).
+      dict(
+          key=[0x00000000, 0x00000000],
+          counter=[0x00000000, 0x00000000, 0x00000000, 0x00000000],
+          expected=[0x6627E8D5, 0xE169C58D, 0xBC57AC4C, 0x9B00DBD8],
+      ),
+      dict(
+          key=[0xFFFFFFFF, 0xFFFFFFFF],
+          counter=[0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF],
+          expected=[0x408F276D, 0x41C83B0E, 0xA20BC7C6, 0x6D5451FD],
+      ),
+      dict(
+          key=[0xA4093822, 0x299F31D0],
+          counter=[0x243F6A88, 0x85A308D3, 0x13198A2E, 0x03707344],
+          expected=[0xD16CFE09, 0x94FDCCEB, 0x5001E420, 0x24126EA1],
+      ),
+  )
+  def test_philox4x32_kat_vectors(self, key, counter, expected):
+    """Test philox4x32 primitive against Known Answer Test vectors."""
+    actual = philox4x32_internal.philox4x32_p.bind(
+        np.uint32(key[0]),
+        np.uint32(key[1]),
+        np.uint32(counter[0]),
+        np.uint32(counter[1]),
+        np.uint32(counter[2]),
+        np.uint32(counter[3]),
+    )
     self.assertArraysEqual(
         np.asarray(actual, dtype=np.uint32),
         np.asarray(expected, dtype=np.uint32),

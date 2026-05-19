@@ -1664,6 +1664,7 @@ pytype_strict_library(
         "random/__init__.py",
         "random/core.py",
         "random/philox2x32.py",
+        "random/philox4x32.py",
         "random/prng.py",
         "random/rbg.py",
         "random/threefry2x32.py",
