@@ -2233,19 +2233,14 @@ def pareto(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `pareto` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("pareto", shape, b)
+  _check_all_safe_to_cast("pareto", dtype, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "pareto", shape)
   return maybe_auto_axes(_pareto, out_sharding,
                          shape=shape, dtype=dtype)(key, b)
 
 @jit(static_argnums=(2, 3))
 def _pareto(key, b, shape, dtype) -> Array:
-  if shape is None:
-    shape = np.shape(b)
-  else:
-    _check_shape("pareto", shape)
-
   b = lax.convert_element_type(b, dtype)
   e = exponential(key, shape, dtype)
   return lax.exp(e / b)
