@@ -352,6 +352,12 @@ jax.profiler.stop_trace()
 5.  `tpu_perf_counters`: Controls the collection of performance counters.
     Defaults to `True`.
 
+```{note}
+For a complete list of advanced profiling flags, including power monitoring
+and periodic counter sampling, see the [Advanced Profiler Options](https://github.com/openxla/xprof/blob/master/docs/advanced_profiler_options.md)
+in the OpenXLA XProf repository.
+```
+
 ##### GPU options
 
 The following options are available for GPU profiling:
