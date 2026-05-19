@@ -2360,6 +2360,7 @@ def chisquare(key: ArrayLike,
     raise ValueError("dtype argument to `chisquare` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("chisquare", shape, df)
+  _check_all_safe_to_cast("chisquare", dtype, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
   return _chisquare(key, df, shape, dtype, out_sharding)
 
