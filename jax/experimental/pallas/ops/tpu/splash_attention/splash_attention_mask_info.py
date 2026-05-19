@@ -343,11 +343,11 @@ def _check_smem_limit(
 
     In both cases, smaller block sizes produce more blocks, increasing
     metadata quadratically. If the metadata exceeds SMEM capacity, a
-    ValueError is raised with a suggested minimum block size (The suggestion 
-    uses geometric scaling (powers of 2) relative to the default block 
-    size to ensure clean divisibility with powers of 2 sequence lengths). 
-    The suggestion is conservative: increasing block size reduces block counts, 
-    which both shrinks the metadata and may enable more aggressive downcasting 
+    ValueError is raised with a suggested minimum block size (The suggestion
+    uses geometric scaling (powers of 2) relative to the default block
+    size to ensure clean divisibility with powers of 2 sequence lengths).
+    The suggestion is conservative: increasing block size reduces block counts,
+    which both shrinks the metadata and may enable more aggressive downcasting
     of index values.
 
     Args:
@@ -366,9 +366,9 @@ def _check_smem_limit(
             iterates over KV blocks).
 
     Raises:
-        ValueError: If the estimated SMEM usage exceeds TPU capacity, 
-        provide a suggested minimum block size that would fit. The suggestion 
-        uses geometric scaling (powers of 2) relative to the default block 
+        ValueError: If the estimated SMEM usage exceeds TPU capacity,
+        provide a suggested minimum block size that would fit. The suggestion
+        uses geometric scaling (powers of 2) relative to the default block
         size to ensure clean divisibility with powers of 2 sequence lengths.
   """
 
