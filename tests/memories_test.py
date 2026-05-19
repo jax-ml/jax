@@ -2017,6 +2017,136 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
           ).as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
+  @jtu.with_explicit_mesh((8,), "x")
+  def test_fsdp_ag_no_offload(self, mesh):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P("x", None))
+    arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
+
+    @compute_on2(
+        compute_type="device", out_memory_spaces=jax.memory.Space.Device
+    )
+    def ag(arr):
+      return jax.lax.all_gather(arr, "x", tiled=True)
+
+    @jax.jit
+    @jax.shard_map(
+        in_specs=(P("x", None), P("x", None)), out_specs=P("x", None)
+    )
+    def f(x, y):
+      y = ag(y)
+      return x @ y
+
+    f(arr1, arr2)  # doesn't crash
+
+    if jtu.is_device_tpu_at_least(7):
+      compiled_text = f.lower(arr1, arr2).compile().as_text()
+    else:
+      compiled_text = (
+          f.lower(arr1, arr2)
+          .compile({
+              "xla_tpu_enable_sparse_core_collective_offload_all_gather": "true"
+          })
+          .as_text()
+      )
+    self.assertNotIn('async_execution_thread="sparsecore"', compiled_text)
+
+  @jtu.with_explicit_mesh((8,), "x")
+  def test_sparsecore_fsdp_ag_offload_core_id_1(self, mesh):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest(
+          "Queuing is not enabled, which is a prerequisite for immutable"
+          " core id."
+      )
+
+    arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P("x", None))
+    arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
+
+    @compute_on2(
+        compute_type="tpu_sparsecore",
+        out_memory_spaces=jax.memory.Space.Device,
+        compiler_options={
+            "sparse_core_config": {
+                "core_ids": [1],
+                "core_id_mutability": "False",
+            }
+        },
+    )
+    def ag(arr):
+      return jax.lax.all_gather(arr, "x", tiled=True)
+
+    @jax.jit
+    @jax.shard_map(
+        in_specs=(P("x", None), P("x", None)), out_specs=P("x", None)
+    )
+    def f(x, y):
+      y = ag(y)
+      return x @ y
+
+    f(arr1, arr2)  # doesn't crash
+
+    compiled_text = f.lower(arr1, arr2).compile().as_text()
+    self.assertIn('"core_ids":["1"]', compiled_text)
+
+  @jtu.with_explicit_mesh((8,), "x")
+  def test_sparsecore_fsdp_two_ags(self, mesh):
+    if not (
+        jax.devices()[0].device_kind == "TPU v5"
+        or jtu.is_device_tpu_at_least(6)
+    ):
+      self.skipTest("Does not have a sparsecore present")
+
+    arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P("x", None))
+    arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
+    arr3 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
+
+    @compute_on2(
+        compute_type="tpu_sparsecore", out_memory_spaces=jax.memory.Space.Device
+    )
+    def ag(arr):
+      return jax.lax.all_gather(arr, "x", tiled=True)
+
+    @compute_on2(
+        compute_type="device", out_memory_spaces=jax.memory.Space.Device
+    )
+    def ag2(arr):
+      return jax.lax.all_gather(arr, "x", tiled=True)
+
+    @jax.jit
+    @jax.shard_map(
+        in_specs=(P("x", None), P("x", None), P("x", None)),
+        out_specs=P("x", None),
+    )
+    def f(x, y, z):
+      y = ag(y)
+      z = ag2(z)
+      return x @ y + x @ z
+
+    f(arr1, arr2, arr3)  # doesn't crash
+
+    if jtu.is_device_tpu_at_least(7):
+      compiled_text = f.lower(arr1, arr2, arr3).compile().as_text()
+    else:
+      compiled_text = (
+          f.lower(arr1, arr2, arr3)
+          .compile({
+              "xla_tpu_enable_sparse_core_collective_offload_all_gather": (
+                  "true"
+              ),
+              "xla_tpu_enable_async_collective_fusion": "false",
+          })
+          .as_text()
+      )
+    self.assertRegex(compiled_text, r"all-gather.*all-gather.*dense")
+    self.assertRegex(
+        compiled_text, r"call-start.*async_execution_thread=\"sparsecore\""
+    )
+
   def test_sparsecore_rs_offload(self):
     if not (jax.devices()[0].device_kind == "TPU v5"
             or jtu.is_device_tpu_at_least(6)):
@@ -2076,6 +2206,72 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
           {'xla_tpu_enable_sparse_core_collective_offload_all_reduce': 'true'}
           ).as_text()
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
+
+  def test_sparsecore_two_rss(self):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest("Requires device with SC support and queuing enabled.")
+
+    mesh = jtu.create_mesh((8,), "x")
+    arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
+    arr2 = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
+
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
+    def sparsecore_psum_scatter(x):
+      return jax.lax.psum_scatter(x, "x", tiled=True)
+
+    @compute_on2(compute_type="device",
+                 out_memory_spaces=jax.memory.Space.Device)
+    def tensorcore_psum_scatter(x):
+      return jax.lax.psum_scatter(x, "x", tiled=True)
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=(P("x"), P("x")), out_specs=P("x"))
+    def f(x, y):
+      w = sparsecore_psum_scatter(x)
+      z = tensorcore_psum_scatter(y)
+      return w * 2 + z
+
+    out = f(arr, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P("x")))
+
+    compiled_text = f.lower(arr, arr2).compile().as_text()
+    self.assertRegex(compiled_text, r"reduce_scatter.*reduce-scatter.*dense")
+    self.assertRegex(
+        compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
+
+  def test_sparsecore_two_ars(self):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest("Requires device with SC support and queuing enabled.")
+
+    mesh = jtu.create_mesh((8,), "x")
+    arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
+    arr2 = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
+
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
+    def sparsecore_psum(x):
+      return jax.lax.psum(x, "x")
+
+    @compute_on2(compute_type="device",
+                 out_memory_spaces=jax.memory.Space.Device)
+    def tensorcore_psum(x):
+      return jax.lax.psum(x, "x")
+
+    @jax.jit
+    @jax.shard_map(mesh=mesh, in_specs=(P("x"), P("x")), out_specs=P())
+    def f(x, y):
+      w = sparsecore_psum(x)
+      z = tensorcore_psum(y)
+      return w * 2 + z
+
+    out = f(arr, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+    compiled_text = f.lower(arr, arr2).compile().as_text()
+    # self.assertRegex(compiled_text, r"all-reduce.*all-reduce.*dense")
+    self.assertRegex(
+        compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
 
 
 class StreamAnnotationTest(jtu.JaxTestCase):
