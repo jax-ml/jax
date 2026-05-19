@@ -28,13 +28,14 @@ jtu.request_cpu_devices(8)
 
 class ControlDepsTest(jtu.JaxTestCase):
   def setUp(self):
-    if jaxlib_extension_version < 453:
-      self.skipTest('Requires jaxlib_extension_version >= 453')
+    if jaxlib_extension_version < 456:
+      self.skipTest('Requires jaxlib_extension_version >= 456')
 
   def create_explicit_mesh(self, axes, names):
     axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
     return jtu.create_mesh(axes, names, iota_order=False, axis_types=axis_types)
 
+  @jtu.run_on_devices("cpu")
   def test_math(self):
     def f_math(x, y, z):
       a = jnp.sin(x @ x)
@@ -46,7 +47,9 @@ class ControlDepsTest(jtu.JaxTestCase):
     x = jnp.ones((67, 67))
     hlo = jax.jit(f_math).lower(x, x, x).as_text(dialect="hlo")
     self.assertIn('custom_call_target="control_dep"', hlo)
+    jax.jit(f_math)(x, x, x)
 
+  @jtu.run_on_devices("cpu")
   def test_fsdp(self):
     k = 5
     n = jax.device_count()
@@ -94,7 +97,9 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
       hlo = jax.jit(f_fsdp).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
+      jax.jit(f_fsdp)(x, ws)
 
+  @jtu.run_on_devices("cpu")
   def test_scan_fsdp(self):
     k = 10
     n = jax.device_count()
@@ -126,7 +131,9 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = jnp.ones((k, N, N), out_sharding=jax.P(None, "i", None))
       hlo = jax.jit(f_scan_fsdp).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
+      jax.jit(f_scan_fsdp)(x, ws)
 
+  @jtu.run_on_devices("cpu")
   def test_pipeline(self):
     k = 10
     n = jax.device_count()
@@ -165,6 +172,7 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
       hlo = jax.jit(f_pipeline).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
+      jax.jit(f_pipeline)(x, ws)
 
 
 if __name__ == "__main__":
