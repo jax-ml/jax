@@ -257,6 +257,7 @@ pytype_strict_library(
         "interpreters/pxla.py",
         "pjit.py",
     ],
+    lazy_imports = True,
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("api"),
     deps = [
@@ -417,6 +418,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "cloud_tpu_init",
     srcs = ["cloud_tpu_init.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":config",
@@ -468,6 +470,7 @@ py_library_providing_imports_info(
     ) + [
         "ad_checkpoint.py",
     ],
+    lazy_imports = True,
     visibility = ["//jax:internal"] + jax_visibility("lax"),
     deps = [
         ":abstract_arrays",
@@ -517,6 +520,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "config",
     srcs = ["config.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":deprecations",
@@ -528,6 +532,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "logging_config",
     srcs = ["logging_config.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = ["//jax/_src/lib"],
 )
@@ -559,6 +564,7 @@ pytype_strict_library(
         "errors.py",
         "linear_util.py",
     ],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":config",
@@ -746,6 +752,7 @@ pytype_strict_library(
     srcs = [
         "dtypes.py",
     ],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":config",
@@ -791,6 +798,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "error_check",
     srcs = ["error_check.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":core",
@@ -812,6 +820,7 @@ pytype_strict_library(
     srcs = glob([
         "export/**/*.py",
     ]),
+    lazy_imports = True,
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("export"),
     deps = [
@@ -933,6 +942,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "jaxpr_util",
     srcs = ["jaxpr_util.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":config",
@@ -948,6 +958,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "mesh",
     srcs = ["mesh.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":config",
@@ -998,6 +1009,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "mlir",
     srcs = ["interpreters/mlir.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = [
         ":ad_util",
@@ -1078,6 +1090,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "partial_eval",
     srcs = ["interpreters/partial_eval.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("partial_eval"),
     deps = [
@@ -1125,6 +1138,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "path",
     srcs = ["path.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     deps = py_deps("epath"),
 )
@@ -1291,6 +1305,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "stages",
     srcs = ["stages.py"],
+    lazy_imports = True,
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("stages"),
     deps = [
@@ -1437,6 +1452,7 @@ py_library_providing_imports_info(
         "numpy/**/*.py",
         "ops/**/*.py",
     ]),
+    lazy_imports = True,
     deps = [
         ":api",
         ":api_util",
@@ -1613,6 +1629,7 @@ pytype_strict_library(
         "distributed.py",
         "xla_bridge.py",
     ],
+    lazy_imports = True,
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("xla_bridge"),
     deps = [
