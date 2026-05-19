@@ -201,6 +201,7 @@ class PrngTest(jtu.JaxTestCase):
     # jax_default_prng_impl config enum state definition directly,
     # rather than copying manually here?
     self.assertIn('threefry2x32', prng_internal.prngs)
+    self.assertIn('threefry4x32', prng_internal.prngs)
     self.assertIn('philox2x32', prng_internal.prngs)
     self.assertIn('philox4x32', prng_internal.prngs)
     self.assertIn('rbg', prng_internal.prngs)

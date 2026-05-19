@@ -1668,6 +1668,7 @@ pytype_strict_library(
         "random/prng.py",
         "random/rbg.py",
         "random/threefry2x32.py",
+        "random/threefry4x32.py",
     ],
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("random"),

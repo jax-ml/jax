@@ -15,6 +15,8 @@
 from jax._src.random import philox2x32 as philox2x32
 from jax._src.random import philox4x32 as philox4x32
 from jax._src.random import rbg as rbg
+from jax._src.random import threefry2x32 as threefry2x32
+from jax._src.random import threefry4x32 as threefry4x32
 from jax._src.random.core import (
     PRNGKey as PRNGKey,
     ball as ball,
