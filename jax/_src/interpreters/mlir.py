@@ -765,7 +765,7 @@ class ModuleContext:
 
   # Cached primitive lowerings.
   lowering_cache: dict[LoweringCacheKey, LoweringCacheValue]
-  cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
+  cached_primitive_lowerings: dict[Any, Any]
   sharding_attr_cache: dict[SdyArray, sdy.TensorShardingAttr]
   aval_to_ir_types_cache: dict[core.AbstractValue, IrTypes]
 
@@ -789,7 +789,7 @@ class ModuleContext:
       ip: ir.InsertionPoint | None = None,
       symbol_table: ir.SymbolTable | None = None,
       lowering_cache: None | dict[LoweringCacheKey, Any] = None,
-      cached_primitive_lowerings: None | dict[Any, func_dialect.FuncOp] = None,
+      cached_primitive_lowerings: None | dict[Any, Any] = None,
       traceback_caches: None | TracebackCaches = None,
       shape_poly_state = None,
       all_default_mem_kind: bool = True,
@@ -2237,7 +2237,8 @@ def _emit_cached_call(
       outs = jax_mlir_ext.inlined_func_call(cache_entry.func.operation, flat_args)
     else:
       outs = jax_mlir_ext.inlined_func_call(
-          cache_entry.func, flat_args, ir.InsertionPoint.current.block)  # pyrefly: ignore[bad-argument-type]
+          # pyrefly: ignore[bad-argument-type]
+          cache_entry.func, flat_args, ir.InsertionPoint.current.block)
   else:
     outs = func_dialect.CallOp(
         cache_entry.flat_output_types,

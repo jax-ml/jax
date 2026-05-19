@@ -1323,13 +1323,60 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
-def _pjit_cached_lower_jaxpr_to_fun(
+@dataclass(frozen=True)
+class PjitLoweringResult:
+  func: func_dialect.FuncOp
+  flat_output_types: list[ir.Type]
+  output_treedef: PyTreeDef
+  const_args_and_avals: Sequence[tuple[ArrayLike, core.AbstractValue]]
+  effects: Sequence[core.Effect]
+  symbol_ref: ir.FlatSymbolRefAttr
+  wrapped_name: str
+
+
+def _pjit_lower_jaxpr_to_fun(
     ctx: mlir.LoweringRuleContext, name: str, jaxpr: core.ClosedJaxpr,
-    num_const_args: int, in_avals, effects, in_shardings, out_shardings,
-    in_layouts, out_layouts, api_name):
-  assert len(in_avals) == num_const_args + len(jaxpr.in_avals)
-  assert len(in_avals) == len(in_shardings)
-  assert len(in_avals) == len(in_layouts)
+    in_shardings, out_shardings,
+    in_layouts, out_layouts) -> PjitLoweringResult:
+  effects = tuple(effects_lib.ordered_effects.filter_in(jaxpr.effects))
+  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args, const_arg_avals = util.unzip2(const_args_and_avals)
+  in_avals = (*const_arg_avals, *jaxpr.in_avals)
+  ca_shardings = const_args_shardings(const_args)
+  in_shardings_expanded = ca_shardings + in_shardings
+  ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
+  in_layouts_expanded = ca_layouts + in_layouts
+
+  assert len(in_avals) == len(const_args) + len(jaxpr.in_avals)
+  assert len(in_avals) == len(in_shardings_expanded)
+  assert len(in_avals) == len(in_layouts_expanded)
+  mod_ctx = ctx.module_context
+  arg_shardings = [None if isinstance(i, UnspecifiedValue) else i
+                   for i in in_shardings_expanded]
+  result_shardings = [None if isinstance(o, UnspecifiedValue) else o
+                      for o in out_shardings]
+  # TODO(b/228598865): non-top-level functions cannot have shardings set
+  # directly on the inputs or outputs because they are lost during MLIR->HLO
+  # conversion. using_sharding_annotation=False means we add an identity
+  # operation instead.
+  func = mlir.lower_jaxpr_to_fun(
+      mod_ctx, name, jaxpr, effects,
+      num_const_args=len(const_args), in_avals=in_avals,
+      arg_shardings=arg_shardings, result_shardings=result_shardings,
+      use_sharding_annotations=False,
+      arg_layouts=in_layouts_expanded, result_layouts=out_layouts)
+  output_types = [mlir.aval_to_ir_types(mod_ctx, a) for a in ctx.avals_out]
+  output_types = [mlir.token_type()] * len(effects) + output_types
+  flat_output_types, output_treedef = mlir.ir_tree_registry.flatten(output_types)
+  symbol_ref = ir.FlatSymbolRefAttr.get(func.name.value)
+  wrapped_name = util.wrap_name('jit', name)
+  return PjitLoweringResult(func, flat_output_types, output_treedef, const_args_and_avals, effects, symbol_ref, wrapped_name)
+
+
+def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
+                   jaxpr: core.ClosedJaxpr, in_shardings,
+                   out_shardings, in_layouts, out_layouts, donated_invars,
+                   ctx_mesh, keep_unused, inline, compiler_options_kvs):
   mod_ctx = ctx.module_context
   axis_ctx = ctx.module_context.axis_context
   num_devices = None
@@ -1337,71 +1384,40 @@ def _pjit_cached_lower_jaxpr_to_fun(
     num_devices = axis_ctx.num_devices
   elif isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     num_devices = axis_ctx.mesh.size
-  key = (jit_p, name, jaxpr, effects, num_devices,
-         pxla.SemanticallyEqualShardings(in_shardings, in_avals),
+  key = (jit_p, name, jaxpr, num_devices,
+         pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         in_layouts, out_layouts, api_name)
+         in_layouts, out_layouts)
 
-  func = mod_ctx.cached_primitive_lowerings.get(key, None)
-  if func is None:
-    arg_shardings = [None if isinstance(i, UnspecifiedValue) else i
-                     for i in in_shardings]
-    result_shardings = [None if isinstance(o, UnspecifiedValue) else o
-                        for o in out_shardings]
-    # TODO(b/228598865): non-top-level functions cannot have shardings set
-    # directly on the inputs or outputs because they are lost during MLIR->HLO
-    # conversion. using_sharding_annotation=False means we add an identity
-    # operation instead.
-    func = mlir.lower_jaxpr_to_fun(
-        mod_ctx, name, jaxpr, effects,
-        num_const_args=num_const_args, in_avals=in_avals,
-        arg_shardings=arg_shardings, result_shardings=result_shardings,
-        use_sharding_annotations=False,
-        arg_layouts=in_layouts, result_layouts=out_layouts)
+  result = mod_ctx.cached_primitive_lowerings.get(key, None)
+  if result is None:
+    result = _pjit_lower_jaxpr_to_fun(
+        ctx, name, jaxpr, in_shardings, out_shardings,
+        in_layouts, out_layouts)
+    mod_ctx.cached_primitive_lowerings[key] = result
 
-    mod_ctx.cached_primitive_lowerings[key] = func
-  return func
-
-
-def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
-                   jaxpr: core.ClosedJaxpr, in_shardings,
-                   out_shardings, in_layouts, out_layouts, donated_invars,
-                   ctx_mesh, keep_unused, inline, compiler_options_kvs):
-  effects = list(effects_lib.ordered_effects.filter_in(jaxpr.effects))
-  output_types = [mlir.aval_to_ir_types(ctx.module_context, a) for a in ctx.avals_out]
-  output_types = [mlir.token_type()] * len(effects) + output_types
-  flat_output_types, treedef = mlir.ir_tree_registry.flatten(output_types)
-
-  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
-  const_args, const_arg_avals = util.unzip2(const_args_and_avals)
-  in_avals = (*const_arg_avals, *jaxpr.in_avals)
-  ca_shardings = const_args_shardings(const_args)
-  in_shardings = ca_shardings + in_shardings
-  ca_layouts = const_args_layouts(const_args, const_arg_avals, ca_shardings)
-  in_layouts = ca_layouts + in_layouts
-
-  func = _pjit_cached_lower_jaxpr_to_fun(
-      ctx, name, jaxpr, len(const_args), in_avals, tuple(effects), in_shardings,
-      out_shardings, in_layouts, out_layouts, api_name='jit')
-
-  tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
+  effects = result.effects
   hoisted_const_values, _ = mlir.ir_tree_registry.flatten([
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
-      for c, aval in const_args_and_avals
+      for c, aval in result.const_args_and_avals
   ])
-  args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
+  if effects:
+    tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
+    args = (*ctx.dim_var_values, *tokens_in, *hoisted_const_values, *args)
+  else:
+    args = (*ctx.dim_var_values, *hoisted_const_values, *args)
   flat_args, _ = mlir.ir_tree_registry.flatten(args)
   with mlir.source_info_to_location(
       ctx.module_context, None,
-      ctx.name_stack.extend(util.wrap_name('jit', name)), ctx.traceback):
+      ctx.name_stack.extend(result.wrapped_name), ctx.traceback):
     call = func_dialect.CallOp(
-        flat_output_types, ir.FlatSymbolRefAttr.get(func.name.value),
-        flat_args)
+        result.flat_output_types, result.symbol_ref, flat_args)
   mlir.wrap_compute_type_in_place(ctx, call)  # pyrefly: ignore[bad-argument-type]
-  out_nodes = treedef.unflatten(call.results)
-  tokens, out_nodes = split_list(out_nodes, [len(effects)])
-  tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
-  ctx.set_tokens_out(tokens_out)
+  out_nodes = result.output_treedef.unflatten(call.results)
+  if effects:
+    tokens, out_nodes = split_list(out_nodes, [len(effects)])
+    tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))
+    ctx.set_tokens_out(tokens_out)
   return out_nodes
 
 # TODO(phawkins): this is marked uncacheable because it has its own cache and
