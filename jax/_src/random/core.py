@@ -2822,18 +2822,14 @@ def rayleigh(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `rayleigh` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("rayleigh", shape, scale)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rayleigh", shape)
+  _check_all_safe_to_cast("rayleigh", dtype, scale)
   return maybe_auto_axes(_rayleigh, out_sharding,
                          shape=shape, dtype=dtype)(key, scale)
 
 @jit(static_argnums=(2, 3))
 def _rayleigh(key, scale, shape, dtype) -> Array:
-  if shape is None:
-    shape = np.shape(scale)
-  else:
-    _check_shape("rayleigh", shape, np.shape(scale))
   u = uniform(key, shape, dtype)
   scale = scale.astype(dtype)
   scale = jnp.broadcast_to(scale, shape)
