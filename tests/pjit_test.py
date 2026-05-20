@@ -10831,6 +10831,12 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     f(arr)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_rbg_impl_none_out_sharding(self, mesh):
+    key = jax.random.key(0, dtype='rbg')
+    out = jax.random.uniform(key, shape=(8,))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
