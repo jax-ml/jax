@@ -133,9 +133,14 @@ def _return_prng_keys(was_wrapped, key):
     return prng.random_unwrap(key) if was_wrapped else key
 
 
-def _random_bits(key: Array, bit_width: int, shape: Shape) -> Array:
+def _random_bits(
+    key: Array,
+    bit_width: int,
+    shape: Shape,
+    out_sharding: NamedSharding | P | None = None
+) -> Array:
   assert dtypes.issubdtype(key.dtype, dtypes.prng_key)
-  return prng.random_bits(key, bit_width=bit_width, shape=shape)
+  return prng.random_bits(key, bit_width=bit_width, shape=shape, out_sharding=out_sharding)
 
 
 # TODO(frostig,vanderplas): remove from public API altogether, or at
@@ -454,8 +459,7 @@ def bits(key: ArrayLike,
   shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "bits", shape)
   bit_width = dtype.itemsize * 8
-  return maybe_auto_axes(_random_bits, out_sharding,
-                         bit_width=bit_width, shape=shape)(key)
+  return _random_bits(key, bit_width=bit_width, shape=shape, out_sharding=out_sharding)
 
 
 def canonicalize_sharding_for_samplers(out_sharding, name, shape):
@@ -530,7 +534,7 @@ def _uniform(key, minval, maxval, shape, dtype) -> Array:
   rng_bits = nbits
   if nmant < 8:
     rng_bits = 8
-  bits = _random_bits(key, rng_bits, shape)
+  bits = _random_bits(key, bit_width=rng_bits, shape=shape)
   uint_dtype = UINT_DTYPES[nbits]
   if rng_bits != nbits:
     bits = lax.convert_element_type(bits, uint_dtype)
@@ -711,7 +715,7 @@ def _randint(key, minval, maxval, shape, dtype) -> Array:
   # We generate double the number of random bits required by the dtype so as to
   # reduce that bias.
   k1, k2 = _split(key)
-  rbits = lambda key: _random_bits(key, nbits, shape)
+  rbits = lambda key: _random_bits(key, bit_width=nbits, shape=shape)
   higher_bits, lower_bits = rbits(k1), rbits(k2)
 
   unsigned_dtype = UINT_DTYPES[nbits]
@@ -815,7 +819,7 @@ def _shuffle(key, x, axis) -> Array:
 
   for _ in range(num_rounds):
     key, subkey = _split(key)
-    sort_keys = _random_bits(subkey, 32, x.shape)
+    sort_keys = _random_bits(subkey, bit_width=32, shape=x.shape)
     _, x = lax.sort_key_val(sort_keys, x, axis)
 
   return x
@@ -1973,7 +1977,7 @@ def _gumbel(key, shape, dtype, mode) -> Array:
   info = dtypes.finfo(dtype)
   if dtype == np.float32 and mode == "highest":
     finfo = dtypes.finfo(dtype)
-    bits = _random_bits(key, finfo.bits, shape=(2,) + shape)
+    bits = _random_bits(key, bit_width=finfo.bits, shape=(2, *shape))
     neg = lax.bitwise_not(bits)
     lo_bits = neg[1]
     # 1 - bits in u64 fixed point.

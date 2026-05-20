@@ -5035,7 +5035,8 @@ def random_seed_lowering(ctx: LoweringRuleContext, seeds, *, impl):
 
 
 @register_lowering_rule(prng.random_bits_p)
-def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape):
+def random_bits_lowering(ctx: LoweringRuleContext, keys, *, bit_width, shape, out_sharding):
+  del out_sharding
   assert bit_width == 32, "Only 32-bit PRNG supported."
   aval, = ctx.avals_in
   assert isinstance(aval.dtype, prng.KeyTy)
