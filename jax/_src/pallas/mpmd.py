@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 import contextlib
+import dataclasses
 import functools
 import itertools as it
 from typing import Any, Generator, TypeVar, cast
@@ -64,9 +65,9 @@ def mpmd_map_tracing_context(
   mesh: pallas_core.Mesh,
   other_meshes: tuple[pallas_core.Mesh, ...],
 ) -> Generator[None, None, None]:
-  del mesh  # Will be needed in follow up.
   super_mesh_shape = get_super_mesh_shape(other_meshes)
   with (
+      mesh.tracing_context(),
       jax_core.extend_axis_env_nd(super_mesh_shape.items()),
       config._check_vma(False),
   ):
@@ -507,10 +508,15 @@ def _mpmd_map_fallback_lowering(
   [mesh] = meshes
 
   if compiler_params is not None:
-    if hasattr(mesh, "dimension_semantics"):
-      compiler_params = compiler_params.replace(
-          dimension_semantics=mesh.dimension_semantics
-      )
+    # Use duck-typing to handle various CompilerParams (e.g. MosaicGPU).
+    replace_kwargs = {}
+    if hasattr(mesh, "dimension_semantics") and hasattr(
+        compiler_params, "dimension_semantics"
+    ):
+      replace_kwargs["dimension_semantics"] = mesh.dimension_semantics
+    if hasattr(compiler_params, "kernel_type"):
+      replace_kwargs["kernel_type"] = mesh.core_type
+    compiler_params = dataclasses.replace(compiler_params, **replace_kwargs)
 
   num_scratch = len(jaxpr.invars) - len(in_nodes) - len(out_avals)
   scratch_avals = (
