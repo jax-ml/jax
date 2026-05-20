@@ -945,10 +945,11 @@ def _shard_map_lowering_shardy(
     # Nested `ManualComputationOp`s must only refer to the new manual axes, not
     # all existing ones. Grab the newly-added manual axes.
     shardy_manual_axes = manual_axes - axis_ctx.manual_axes
+    new_manual_axes = manual_axes | axis_ctx.manual_axes
   else:
-    shardy_manual_axes = manual_axes
+    shardy_manual_axes = new_manual_axes = manual_axes
   new_axis_context = sharding_impls.SPMDAxisContext(
-      _get_spmdaxis_ctx_mesh(mesh), manual_axes)
+      _get_spmdaxis_ctx_mesh(mesh), new_manual_axes)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
 
   effects = list(mlir.effects_lib.ordered_effects.filter_in(jaxpr.effects))

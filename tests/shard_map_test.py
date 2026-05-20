@@ -5329,9 +5329,28 @@ class ShardMapTest(jtu.JaxTestCase):
       f = jax.jit(f)
     x = jax.device_put(jnp.zeros((2, 2)), jax.P('i', None))
     y = jax.device_put(jnp.zeros((2, 2)), jax.P())
-    with self.assertRaisesRegex(ValueError, 'requires varying manual axes to match'):
+    with self.assertRaisesRegex(
+        ValueError, 'requires varying manual axes to match'):
       with config.auto_pcast(False):
         f(x, y)
+
+  @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'),
+                          axis_types=(AxisType.Auto,) * 3)
+  def test_nested_shmap_innermost_no_axis_names(self, mesh):
+    arr = jnp.ones((4,))
+
+    def h(x):
+      return jax.shard_map(lambda y: y * 2, in_specs=P(), out_specs=P())(x)
+
+    def g(x):
+      return jax.shard_map(h, in_specs=P(), out_specs=P(), axis_names={"y"})(x)
+
+    @jax.jit
+    def f(x):
+      return jax.shard_map(g, in_specs=P(), out_specs=P(), axis_names={"x"})(x)
+
+    out = f(arr)
+    self.assertArraysEqual(out, arr * 2)
 
 
 class FunSpec(NamedTuple):
