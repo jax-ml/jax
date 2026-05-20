@@ -667,7 +667,6 @@ async def main():
       )
 
   if "rocm" in args.wheels:
-    wheel_build_command_base.append("--config=rocm_base")
     wheel_build_command_base.append("--config=rocm")
     if clang_local:
       wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
