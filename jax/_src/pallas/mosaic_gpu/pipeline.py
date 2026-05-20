@@ -196,6 +196,12 @@ def _in_smem(spec: pallas_core.BlockSpec) -> bool:
 def _downcast_spec(
     spec: gpu_core.BlockSpec | pallas_core.BlockSpec,
 ) -> gpu_core.BlockSpec:
+  # TODO(slebedev): Find a better place for this.
+  if spec.pipeline_mode is not None:
+    raise NotImplementedError(
+        "pl.BlockSpec with pipeline_mode= is not supported"
+    )
+
   if isinstance(spec, gpu_core.BlockSpec):
     return spec
 

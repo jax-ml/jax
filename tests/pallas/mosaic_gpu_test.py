@@ -38,15 +38,17 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import util
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.state import types as state_types
-from jax.experimental import pallas as _pl
+from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as _plgpu
 import jax.numpy as jnp
@@ -60,31 +62,23 @@ except ImportError:
 jax.config.parse_flags_with_absl()
 
 
-# We don't want the user to call pl.pallas_call or plgpu.kernel directly, so we
-# monkey patch the functions in `pl` and `plgpu`.
+# We don't want the user to call plgpu.kernel directly, so we monkey patch
+# it in `plgpu`.
 def do_not_call_me_directly(*args, **kwargs):
-  raise RuntimeError(
-      "Use self.{kernel,pallas_call} instead of {plgpu.kernel,pl.pallas_call}."
-  )
+  raise RuntimeError("Use self.kernel instead of plgpu.kernel.")
 
 if TYPE_CHECKING:
-  pl = _pl
   plgpu = _plgpu
 else:
-  # Clone the modules locally because the functions may be called from other
+  # Clone the module locally because the functions may be called from other
   # modules.
-  pl = types.ModuleType("_pl_local")
-  pl.__dict__.update(_pl.__dict__)
-
   plgpu = types.ModuleType("_plgpu_local")
   plgpu.__dict__.update(_plgpu.__dict__)
 
-  _pallas_call = _pl.pallas_call
   _kernel = _plgpu.kernel
-  del _pl, _plgpu
+  del _plgpu
 
   plgpu.kernel = do_not_call_me_directly
-  pl.pallas_call = do_not_call_me_directly
 
 
 def _fori_loop(force_while: bool, lb, ub, body, init):
@@ -159,9 +153,6 @@ class PallasTestMetaclass(parameterized.TestGeneratorMetaclass):
 
 
 class MonkeyPatchTest(jtu.JaxTestCase):
-  def test_calling_pallas_call_directly_raises(self):
-    with self.assertRaises(RuntimeError):
-      pl.pallas_call()
 
   def test_calling_kernel_directly_raises(self):
     with self.assertRaises(RuntimeError):
@@ -194,12 +185,118 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
     )
     return _kernel(*args, compiler_params=compiler_params, **kwargs)
 
-  def pallas_call(self, *args, **kwargs):
+  def pallas_call(
+      self,
+      kernel_fn=None,
+      *,
+      out_shape,
+      grid=(),
+      in_specs=(),
+      out_specs=(),
+      scratch_shapes=(),
+      compiler_params=plgpu.CompilerParams(),
+  ):
     compiler_params = dataclasses.replace(
-        kwargs.pop("compiler_params", plgpu.CompilerParams()),
+        compiler_params,
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
-    return _pallas_call(*args, compiler_params=compiler_params, **kwargs)
+    if isinstance(grid, int):
+      grid = (grid,)
+
+    dimension_semantics = compiler_params.dimension_semantics
+    if dimension_semantics is None:
+      dimension_semantics = ("parallel",) * len(grid)
+    which_parallel = [ds == "parallel" for ds in dimension_semantics]
+    sequential_grid, parallel_grid = util.partition_list(which_parallel, grid)
+
+    def _make_pipeline_spec(spec, array_shape):
+      block_shape = spec.block_shape or array_shape
+      if spec.index_map is None:
+        return dataclasses.replace(
+            spec,
+            block_shape=block_shape,
+            index_map=lambda *indices: (0,) * len(block_shape),
+        )
+      parallel_indices = [
+          lax.axis_index(f"d{i}") for i, _ in enumerate(parallel_grid)
+      ]
+      return dataclasses.replace(
+          spec,
+          block_shape=block_shape,
+          index_map=lambda *indices: spec.index_map(
+              *util.merge_lists(
+                  which_parallel,
+                  indices[: len(sequential_grid)],
+                  parallel_indices,
+              )
+          ),
+      )
+
+    def _normalize_specs(specs, default_count):
+      if not specs:
+        return [pl.BlockSpec()] * default_count
+      if not isinstance(specs, (list, tuple)):
+        return [specs]
+      return list(specs)
+
+    def decorator(fn):
+      @jax.jit
+      @functools.partial(
+          self.kernel,
+          out_shape=out_shape,
+          scratch_shapes=scratch_shapes,
+          compiler_params=dataclasses.replace(
+              compiler_params, dimension_semantics=None
+          ),
+          grid=parallel_grid,
+          grid_names=tuple(f"d{i}" for i, _ in enumerate(parallel_grid)),
+      )
+      def wrapper(*args_gmem):
+        gmem_refs, scratch_refs = util.split_list(
+            args_gmem, [len(args_gmem) - len(scratch_shapes)]
+        )
+
+        num_inputs = len(gmem_refs) - len(jax.tree.leaves(out_shape))
+        pipeline_in_specs = [
+            _make_pipeline_spec(s, gmem_refs[i].shape)
+            for i, s in enumerate(_normalize_specs(in_specs, num_inputs))
+        ]
+        pipeline_out_specs = [
+            _make_pipeline_spec(s, out_leaf.shape)
+            for s, out_leaf in zip(
+                _normalize_specs(out_specs, len(jax.tree.leaves(out_shape))),
+                jax.tree.leaves(out_shape),
+            )
+        ]
+
+        @functools.partial(
+            plgpu.emit_pipeline,
+            grid=sequential_grid,
+            in_specs=pipeline_in_specs,
+            out_specs=pipeline_out_specs,
+            max_concurrent_steps=compiler_params.max_concurrent_steps,
+        )
+        def pipeline(indices, *args):
+          grid_env = util.merge_lists(
+              which_parallel,
+              [*map(pallas_core.GridAxis, indices, sequential_grid)],
+              [
+                  pallas_core.GridAxis(
+                      lax.axis_index(f"d{i}"), lax.axis_size(f"d{i}")
+                  )
+                  for i, _ in enumerate(parallel_grid)
+              ],
+          )
+          with pallas_core.grid_env(grid_env):
+            fn(*args, *scratch_refs)
+
+        pipeline(*gmem_refs)
+
+      return wrapper
+
+    if kernel_fn is not None:
+      return decorator(kernel_fn)
+    return decorator
 
   @contextlib.contextmanager
   def capture_stdout(self):
@@ -801,26 +898,42 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
   def test_copy_smem_to_gmem_reduction(self, dtype):
-    @functools.partial(
-        self.pallas_call,
-        grid=(200,),
-        in_specs=[pl.BlockSpec((128,), lambda *i: i), pl.BlockSpec(memory_space=plgpu.GMEM)],
-        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-        out_shape=jax.ShapeDtypeStruct([128], dtype),
-        scratch_shapes=[plgpu.SMEM((128,), dtype)],
-        input_output_aliases={1:0}
-    )
-    def kernel(x_ref, o_ref_gmem, o_ref_gmem_alias, scratch_ref):
-      del o_ref_gmem_alias
-      scratch_ref[...] = x_ref[...]
-      plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(scratch_ref.at[...], o_ref_gmem.at[...], reduction_op="add")
-      plgpu.wait_smem_to_gmem(0)
-    x = jnp.ones(200 * 128).astype(dtype) # 200 blocks
-    output = jnp.zeros(128).astype(dtype)
-    output = kernel(x, output)
+
+    @jax.jit
+    def run(x):
+      x_ref = jax.new_ref(x, memory_space=plgpu.GMEM)
+      o_ref = jax.new_ref(jnp.zeros(128, dtype=dtype), memory_space=plgpu.GMEM)
+
+      # TODO(slebedev): Switch to ``self.kernel`` once it uses ``mpmd_map``.
+      @pl.core_map(
+          plgpu.Mesh(),
+          compiler_params=plgpu.CompilerParams(
+              lowering_semantics=self.LOWERING_SEMANTICS,
+          ),
+      )
+      def _():
+        def body(scratch_ref):
+          def pipeline_body(_, x_smem):
+            scratch_ref[...] = x_smem[...]
+            plgpu.commit_smem()
+            plgpu.copy_smem_to_gmem(
+                scratch_ref.at[...], o_ref.at[...], reduction_op="add"
+            )
+            plgpu.wait_smem_to_gmem(0)
+
+          plgpu.emit_pipeline(
+              pipeline_body,
+              in_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+              grid=(200,),
+          )(x_ref)
+
+        pl.run_scoped(body, plgpu.SMEM((128,), dtype))
+
+      return jax.freeze(o_ref)
+
+    x = jnp.ones(200 * 128).astype(dtype)
     output_val = x.reshape(-1, 128).sum(axis=0)
-    np.testing.assert_array_equal(output, output_val)
+    np.testing.assert_array_equal(run(x), output_val)
 
   @parameterized.product(
       case=[
@@ -1731,7 +1844,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x * 2)
 
-
   def test_swap_scalar_constant(self):
     @functools.partial(
         self.kernel,
@@ -2291,6 +2403,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     y = x.reshape(256 // 64, 64, 128 // 64, 64).sum(axis=(0, 2), dtype=jnp.uint16)
     np.testing.assert_array_equal(kernel(x), y)
 
+  # TODO(slebedev): Remove once we no longer support ``pl.pallas_call``.
   def test_input_output_aliases(self):
     # Note that we're writing to the input pointer, which should alias b_ptr.
     def kernel(a_ref, b_ref):
@@ -2298,11 +2411,14 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       a_ref[...] = jnp.ones_like(a_ref)
 
     a = np.zeros((64, 64), dtype=jnp.float32)
-    b = self.pallas_call(
+    b = pl.pallas_call(
         kernel,
         in_specs=[plgpu.BlockSpec(memory_space=plgpu.GMEM)],
         out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
         input_output_aliases={0: 0},
+        compiler_params=plgpu.CompilerParams(
+            lowering_semantics=self.LOWERING_SEMANTICS
+        ),
         out_shape=a,
     )(a)
     np.testing.assert_array_equal(b, np.ones_like(a))
@@ -3478,7 +3594,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(2 * 64 * 32, dtype=dtype).reshape(x_shape)
     init_data = jnp.ones(x_shape, dtype=dtype) * 10
     np.testing.assert_array_equal(kernel(x, init_data), 10 + x[::-1])
-
 
   def test_replicated_layout(self):
     shape = (32,)
@@ -6209,7 +6324,9 @@ class PipelineTest(PallasTest):
           grid=data_size // block_size,
       )(x, y)
 
-    with self.assertRaisesRegex(Exception, "Pipeline mode is not supported"):
+    with self.assertRaisesRegex(
+        NotImplementedError, "pipeline_mode= is not supported"
+    ):
       vadd(x, y)
 
   def test_manual(self):
@@ -6548,29 +6665,39 @@ class PipelineTest(PallasTest):
 
     def kernel(x_gmem, o_gmem):
       index_map = lambda i: (10 * i + 1, 0)
-      plgpu.emit_pipeline(
-          kernel_body,
+
+      @functools.partial(
+          plgpu.emit_pipeline,
           in_specs=[pl.BlockSpec((pl.Element(8), shape[1]), index_map)],
           out_specs=[pl.BlockSpec((pl.Element(8), shape[1]), index_map)],
           grid=(2,),
           max_concurrent_steps=2,
-      )(x_gmem, o_gmem)
+      )
+      def pipeline(_, x_smem, o_smem):
+        assert x_smem.shape == (8, shape[1])
+        assert o_smem.shape == (8, shape[1])
+        o_smem[...] = x_smem[...] + 1
 
-    def kernel_body(_, in_smem, o_smem):
-      assert in_smem.shape == (8, shape[1])
-      assert o_smem.shape == (8, shape[1])
-      o_smem[...] = in_smem[...] + 1
+      pipeline(x_gmem, o_gmem)
 
-    kernel_fn = self.pallas_call(
-        kernel,
-        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
-        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
-        input_output_aliases={0: 0},
-    )
     x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
+    compiler_params = plgpu.CompilerParams(
+        lowering_semantics=self.LOWERING_SEMANTICS,
+    )
+
+    @jax.jit
+    def run(x):
+      x_ref = jax.new_ref(x, memory_space=plgpu.GMEM)
+
+      # TODO(slebedev): Switch to ``self.kernel`` once it uses ``mpmd_map``.
+      @pl.core_map(plgpu.Mesh(), compiler_params=compiler_params)
+      def _():
+        kernel(x_ref, x_ref)
+
+      return jax.freeze(x_ref)
+
     active_rows = ((jnp.arange(shape[0]) - 1) % 10 < 8).astype(x.dtype)
-    np.testing.assert_array_equal(kernel_fn(x), x + active_rows[..., None])
+    np.testing.assert_array_equal(run(x), x + active_rows[..., None])
 
 
 class PipelineWGTest(
@@ -7732,12 +7859,14 @@ class SemaphoreTest(PallasTest):
     text = jax.jit(kernel).lower(x, x).as_text()
     self.assertIn(
         r"output_operand_aliases ="
-        r" [#stablehlo.output_operand_alias<output_tuple_indices = [1],"
-        r" operand_index = 2, operand_tuple_indices = []>]",
+        r" [#stablehlo.output_operand_alias<output_tuple_indices = [0],"
+        r" operand_index = 2, operand_tuple_indices = []>,"
+        r" #stablehlo.output_operand_alias<output_tuple_indices = [1],"
+        r" operand_index = 3, operand_tuple_indices = []>]",
         text,
     )
     self.assertIn(
-        r"(tensor<128xf32>, tensor<128xf32>, tensor<4xi32>) ->"
+        r"(tensor<128xf32>, tensor<128xf32>, tensor<128xf32>, tensor<4xi32>) ->"
         r" (tensor<128xf32>, tensor<4xi32>)",
         text,
     )
