@@ -30,6 +30,7 @@ from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
+from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -280,15 +281,16 @@ def _lower_to_custom_call(
   # This step is required for mapping logical types to physical types.
   # (e.g. PRNG key -> uint32[2])
   physical_avals = [jax_core.physical_aval(aval) for aval in ctx.avals_in]
-  ctx = ctx.replace(avals_in=physical_avals)
+  physical_out_avals = [jax_core.physical_aval(aval) for aval in ctx.avals_out]
+  ctx = ctx.replace(avals_in=physical_avals, avals_out=physical_out_avals)
 
   # Booleans are loaded into the kernel as integers.
   def _maybe_cast_inputs(*args):
     args = [_jax_value_to_mosaic_value(x) for x in args]
     return args
 
-  kernel_in_avals = [_jaxpr_kernel_aval_to_mosaic(x) for x in ctx.avals_in]
-  kernel_out_avals = [_jaxpr_kernel_aval_to_mosaic(x) for x in ctx.avals_out]
+  kernel_in_avals = [_jaxpr_kernel_aval_to_mosaic(x) for x in physical_avals]
+  kernel_out_avals = [_jaxpr_kernel_aval_to_mosaic(x) for x in physical_out_avals]
   cast_ctx = ctx.replace(avals_out=kernel_in_avals)
   in_nodes = mlir.lower_fun(_maybe_cast_inputs)(cast_ctx, *in_nodes)
 
@@ -568,6 +570,24 @@ def _rewrite_jaxpr_for_lowering(
   return new_jaxpr
 
 
+def _constrain_memory_spaces(
+    ref_avals: Sequence[state.AbstractRef],
+    avals: Sequence[jax_core.ShapedArray],
+) -> jax_core.AbstractValue:
+  new_avals = []
+  for ref_aval, aval in zip(ref_avals, avals, strict=True):
+    if (
+        isinstance(ref_aval, state.AbstractRef)
+        and ref_aval.memory_space is not None
+    ):
+      new_avals.append(
+          aval.update(memory_space=ref_aval.memory_space)
+      )
+    else:
+      new_avals.append(aval)
+  return new_avals
+
+
 def mpmd_map_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -582,10 +602,17 @@ def mpmd_map_tpu_lowering_rule(
     metadata,
     name,
     external_meshes,
-    num_scratch,
 ):
   del interpret  # Unused.
-
+  num_scratch = len(jaxprs[0].invars) - len(in_nodes) - len(ctx.avals_out)
+  num_outputs = len(ctx.avals_out)
+  kernel_avals = [v.aval for v in jaxprs[0].invars]
+  in_kernel_avals, out_kernel_avals, _ = util.split_list(
+      kernel_avals, [len(in_nodes), num_outputs]
+  )
+  ctx = ctx.replace(
+      avals_in=_constrain_memory_spaces(in_kernel_avals, ctx.avals_in),
+      avals_out=_constrain_memory_spaces(out_kernel_avals, ctx.avals_out))
   if debug:
     for idx, jaxpr in enumerate(jaxprs):
       print(

@@ -55,6 +55,7 @@ from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import mpmd
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -3974,14 +3975,13 @@ def _isolate_from_above(
   return new_op
 
 
-@register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Lane)
-@register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Warpgroup)
-def _core_map_lowering_rule(
+def _core_map_lowering_rule_common(
     ctx: LoweringRuleContext,
-    *args,
+    *,
     jaxpr,
     mesh,
-    **_,
+    args,
+    consts,
 ):
   if not isinstance(mesh, gpu_core.WarpMesh):
     raise NotImplementedError(f"Unsupported mesh: {mesh}")
@@ -4013,8 +4013,8 @@ def _core_map_lowering_rule(
         module_ctx,
         ctx.launch_ctx,
         jaxpr,
-        args=(),
-        consts=args,
+        args=args,
+        consts=consts,
     )
     if ctx.module_ctx.auto_barriers:
       # We need to ensure that any effects produced by one warp
@@ -4027,11 +4027,43 @@ def _core_map_lowering_rule(
           module_ctx,
           ctx.launch_ctx,
           jaxpr,
-          args=(),
-          consts=args,
+          args=args,
+          consts=consts,
       )
     _isolate_from_above(warp_map_op)
   return []
+
+
+@register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(pallas_core.core_map_p, mgpu.LoweringSemantics.Warpgroup)
+def _core_map_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxpr,
+    mesh,
+    **_,
+):
+  return _core_map_lowering_rule_common(
+      ctx, jaxpr=jaxpr, mesh=mesh, args=(), consts=args
+  )
+
+
+@register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Warpgroup)
+def _mpmd_map_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxprs,
+    meshes,
+    **_,
+):
+  if len(jaxprs) != 1 or len(meshes) != 1:
+    raise NotImplementedError(
+        "Only single mesh/jaxpr mpmd_map is supported on GPU"
+    )
+  return _core_map_lowering_rule_common(
+      ctx, jaxpr=jaxprs[0], mesh=meshes[0], args=args, consts=()
+  )
 
 
 def _bcast(

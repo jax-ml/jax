@@ -1514,6 +1514,7 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src/pallas",
         "//jax/experimental:pallas",
+        "//jax/experimental:pallas_fuser",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_sc",
     ] + py_deps([
