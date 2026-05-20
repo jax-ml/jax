@@ -5449,6 +5449,24 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(y_grad, x)
     self.assertLen(g.trace().jaxpr.eqns, 1)
 
+  def test_while_jvp_debug_info_crash(self):
+    def loop_fun(x, p):
+      cond = lambda val: val[0] < 3
+      body = lambda val: (val[0] + 1, val[1] * p)
+      _, res = jax.lax.while_loop(cond, body, (0, x))
+      return jax.lax.stop_gradient(res)
+
+    def inner_grad(p):
+      return jax.grad(lambda param: loop_fun(1.0, param))(p)
+
+    vmapped_inner_grad = jax.vmap(inner_grad)
+
+    def outer_fun(p_vector):
+      grads = vmapped_inner_grad(p_vector)
+      return jnp.sum(grads)
+
+    jax.grad(outer_fun)(jnp.array([2.0, 3.0]))  # don't crash
+
 
 class RematTest(jtu.JaxTestCase):
 

@@ -1847,14 +1847,10 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
       [num_carry], [len(init_dot)])
 
   newvar = core.gensym()
-  invars_aug = (
-      cond_jaxpr.jaxpr.invars + [newvar(core.typeof(x)) for x in init_dot])
+  invars_aug = cond_jaxpr.jaxpr.invars + [newvar(core.typeof(x)) for x in init_dot]
   cond_debug = cond_jaxpr.jaxpr.debug_info
-  augmented_debug = cond_debug and (
-      cond_debug._replace(
-          arg_names=cond_debug.arg_names + ("",) * len(init_dot)
-      )
-  )
+  augmented_debug = cond_debug and cond_debug.arg_names and cond_debug._replace(
+      arg_names=cond_debug.arg_names + ('',) * len(init_dot))
   cond_jaxpr_augmented = cond_jaxpr.jaxpr.replace(
       invars=invars_aug, debug_info=augmented_debug)
   cond_jaxpr_augmented = ClosedJaxpr(cond_jaxpr_augmented, cond_jaxpr.consts)
