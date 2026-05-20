@@ -3300,7 +3300,7 @@ def rad2deg(x: ArrayLike, /) -> Array:
     >>> jnp.rad2deg(x)
     Array([ 45.     ,  90.     , 120.00001], dtype=float32)
     >>> x * 180 / pi
-    Array([ 45.,  90., 120.], dtype=float32)
+    Array([ 45.     ,  90.     , 119.99999], dtype=float32)
   """
   x, = promote_args_inexact("rad2deg", x)
   return lax.mul(x, _lax_const(x, 180 / np.pi))
