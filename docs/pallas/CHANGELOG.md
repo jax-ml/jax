@@ -36,6 +36,17 @@ Remember to align the itemized text with the first line of an item within a list
 
   * `pl.debug_checks_enabled` is deprecated. Use `pl.enable_debug_checks.value`.
 
+### TPU
+
+* Removals
+
+  * Removed the `kernel_type` field from
+    {class}`jax.experimental.pallas.tpu.CompilerParams`. It was only used for
+    writing SparseCore kernels via {func}`jax.experimental.pallas.pallas_call`,
+    which is now unsupported. The recommended API for SparseCore kernels is
+    {func}`jax.experimental.pallas.kernel`.
+
+
 ### Mosaic GPU
 
 * New features
@@ -51,7 +62,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Changes
 
-  * Breaking change: refactored `pl.kernel` to use `out_type` instead of `out_shape` and `scratch_types` instead of `scratch_shapes`. Existing usages calling `pl.kernel` with these keyword arguments must be updated.
+  * Breaking change: refactored `pl.kernel` to use `out_type` instead of
+    `out_shape` and `scratch_types` instead of `scratch_shapes`. Existing
+    usages calling {func}`jax.experimental.pallas.kernel` with these keyword
+    arguments must be updated.
 
 ### TPU
 
