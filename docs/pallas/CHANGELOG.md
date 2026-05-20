@@ -51,8 +51,15 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
-  * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`
-    only supported in a warp context.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.barrier_test` function; a
+    non-blocking equivalent of
+    {func}`jax.experimental.pallas.mosaic_gpu.barrier_wait` only supported in
+    a warp context.
+  * Support using {func}`jax.experimental.pallas.multiple_of` to specify
+    divisibility requirements on dynamic indices.
+  * Support allocating multidimensional `plgpu.Barrier`s and
+    `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
+    parameter.
 
 * Changes
 

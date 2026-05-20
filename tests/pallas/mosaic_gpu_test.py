@@ -209,14 +209,20 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
     which_parallel = [ds == "parallel" for ds in dimension_semantics]
     sequential_grid, parallel_grid = util.partition_list(which_parallel, grid)
 
-    def _make_pipeline_spec(spec):
+    def _make_pipeline_spec(spec, array_shape):
+      block_shape = spec.block_shape or array_shape
       if spec.index_map is None:
-        return spec
+        return dataclasses.replace(
+            spec,
+            block_shape=block_shape,
+            index_map=lambda *indices: (0,) * len(block_shape),
+        )
       parallel_indices = [
           lax.axis_index(f"d{i}") for i, _ in enumerate(parallel_grid)
       ]
       return dataclasses.replace(
           spec,
+          block_shape=block_shape,
           index_map=lambda *indices: spec.index_map(
               *util.merge_lists(
                   which_parallel,
@@ -251,19 +257,23 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
         )
 
         num_inputs = len(gmem_refs) - len(jax.tree.leaves(out_shape))
-        num_outputs = len(jax.tree.leaves(out_shape))
+        pipeline_in_specs = [
+            _make_pipeline_spec(s, gmem_refs[i].shape)
+            for i, s in enumerate(_normalize_specs(in_specs, num_inputs))
+        ]
+        pipeline_out_specs = [
+            _make_pipeline_spec(s, out_leaf.shape)
+            for s, out_leaf in zip(
+                _normalize_specs(out_specs, len(jax.tree.leaves(out_shape))),
+                jax.tree.leaves(out_shape),
+            )
+        ]
 
         @functools.partial(
             plgpu.emit_pipeline,
             grid=sequential_grid,
-            in_specs=[
-                _make_pipeline_spec(s)
-                for s in _normalize_specs(in_specs, num_inputs)
-            ],
-            out_specs=[
-                _make_pipeline_spec(s)
-                for s in _normalize_specs(out_specs, num_outputs)
-            ],
+            in_specs=pipeline_in_specs,
+            out_specs=pipeline_out_specs,
             max_concurrent_steps=compiler_params.max_concurrent_steps,
         )
         def pipeline(indices, *args):
