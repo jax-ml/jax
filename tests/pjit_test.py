@@ -10837,6 +10837,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.random.uniform(key, shape=(8,))
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_vmap_grad_cet_dot(self, mesh):
+    x = jax.random.normal(jax.random.key(0), (4096, 8, 128),
+                          dtype=jnp.bfloat16, out_sharding=P("x"))
+    w = jax.random.normal(jax.random.key(1), (2, 128, 1), dtype=jnp.float32,
+                          out_sharding=P())
+
+    @jax.jit
+    def f(x, w):
+      x = x.astype(jnp.float32)
+      return jnp.sum(x @ w)
+
+    dx, dw = jax.vmap(jax.grad(f, argnums=(0, 1)), in_axes=(None, 0))(x, w)
+    self.assertEqual(dx.sharding, NamedSharding(mesh, P(None, 'x', None, None)))
+    self.assertEqual(dw.sharding, NamedSharding(mesh, P(None, None, None)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
