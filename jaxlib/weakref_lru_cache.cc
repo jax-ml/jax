@@ -779,6 +779,12 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
       } else {
         PushFront(entry.get());
       }
+      if (entry->completed.HasBeenNotified() && entry->has_result) {
+        PyObject* res = entry->result.inc_ref().ptr();
+        entry.reset();
+        cache_ptr.reset();
+        return res;
+      }
     }
   }
 
