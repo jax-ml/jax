@@ -273,8 +273,8 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
     which_dyn = [s is not None for s in in_specs_flat]
     static_args   = [x for x, dyn in zip(args_flat, which_dyn) if not dyn]
     dyn_args      = [x for x, dyn in zip(args_flat, which_dyn) if dyn]
-    in_specs_flat = tuple(s for s, dyn in zip(in_specs_flat,  which_dyn) if dyn)
-    dyn_argnums   = [i for i, dyn in enumerate(     which_dyn) if dyn]
+    in_specs_flat = tuple(s for s, dyn in zip(in_specs_flat, which_dyn) if dyn)
+    dyn_argnums   = [i for i, dyn in enumerate(which_dyn) if dyn]
     _check_specs_vs_args(f, mesh, in_tree, in_specs, dyn_argnums,
                          in_specs_flat, dyn_args)
 
@@ -328,9 +328,10 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
       return ans_ft.with_aux(out_specs_flat)
 
     try:
+      newly_manual_axes = axis_names - set(mesh.manual_axes)
       out_ft = shard_map_p.bind(
           *dyn_args, subfuns=(f_wrapped,), mesh=mesh, in_specs=in_specs_flat,
-          check_vma=check_vma, manual_axes=axis_names, debug_info=dbg)
+          check_vma=check_vma, manual_axes=newly_manual_axes, debug_info=dbg)
     except _SpecError as e:
       fails, out_tree = e.args
       msg = _spec_rank_error(SpecErrorType.out, f, out_tree, out_specs, fails)
@@ -738,16 +739,16 @@ shard_map_p = ShardMapPrimitive('shard_map')
 shard_map_p.is_high = lambda *_, jaxpr, **__: jaxpr.is_high
 
 def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
-  mesh, manual_axes, check_vma = params['mesh'], params['manual_axes'], params['check_vma']
-  inner_mesh = _as_manual_mesh(mesh, manual_axes)
+  mesh, newly_manual_axes, check_vma = params['mesh'], params['manual_axes'], params['check_vma']
+  inner_mesh = _as_manual_mesh(mesh, newly_manual_axes)
   in_specs  = tuple(lo_spec for hi_spec in in_specs  for lo_spec in hi_spec.to_lo())
   out_specs = tuple(lo_spec for hi_spec in out_specs for lo_spec in hi_spec.to_lo())
   lo_avals_ft = FlatTree.flatten(
       [[typeof(x) for x in typeof(hi_arg).lower_val(hi_arg)] for hi_arg in hi_args])
   lo_avals_ft = lo_avals_ft.map2(
-      lambda a, s: shard_aval(mesh, manual_axes, check_vma, s, a), in_specs)
+      lambda a, s: shard_aval(mesh, newly_manual_axes, check_vma, s, a), in_specs)
   lo_avals_ft = FlatTree.pack((lo_avals_ft, {}))
-  with (_extend_axis_env(mesh, manual_axes), use_abstract_mesh(inner_mesh),
+  with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     lo_jaxpr_, out_avals_ft = pe.lower_jaxpr(pe.close_jaxpr(jaxpr), lo_avals_ft)
     lo_jaxpr, consts = pe.separate_consts(lo_jaxpr_)
@@ -774,15 +775,15 @@ def _as_manual_mesh(mesh, manual_axes: frozenset) -> AbstractMesh:
   return mesh.abstract_mesh.update_axis_types(
       {n: AxisType.Manual for n in manual_axes})
 
-def _extend_axis_env(mesh, manual_axes):
+def _extend_axis_env(mesh, newly_manual_axes):
+  all_manual_axes = newly_manual_axes | set(mesh.manual_axes)
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
-                                  if k in manual_axes])
+                                  if k in all_manual_axes])
 
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: Callable,
-    args: Sequence[Any], *, mesh: Mesh,
-    in_specs, check_vma: bool, manual_axes: frozenset, debug_info
-  ) -> FlatTree:
+    args: Sequence[Any], *, mesh: Mesh, in_specs, check_vma: bool,
+    manual_axes: frozenset, debug_info) -> FlatTree:
   source_info = source_info_util.current()
 
   inner_mesh = _as_manual_mesh(mesh, manual_axes)
@@ -806,8 +807,10 @@ def _shard_map_staging(
     jaxpr, consts = pe.separate_consts(jaxpr)
   in_specs_staged = (*(_repspec(typeof(c)) for c in consts), *in_specs)
   if trace.requires_low:
-    in_specs_staged = tuple(lo_spec for hi_spec in in_specs_staged for lo_spec in hi_spec.to_lo())
-    out_specs       = tuple(lo_spec for hi_spec in out_specs       for lo_spec in hi_spec.to_lo())
+    in_specs_staged = tuple(lo_spec for hi_spec in in_specs_staged
+                            for lo_spec in hi_spec.to_lo())
+    out_specs = tuple(lo_spec for hi_spec in out_specs
+                      for lo_spec in hi_spec.to_lo())
   params = dict(mesh=mesh, in_specs=in_specs_staged,
                 out_specs=out_specs, jaxpr=jaxpr.jaxpr,
                 check_vma=check_vma, manual_axes=manual_axes)
@@ -971,28 +974,21 @@ def _get_spmdaxis_ctx_mesh(mesh):
 
 
 def _shard_map_lowering_shardy(
-    ctx: mlir.LoweringRuleContext, in_nodes,
-    jaxpr: core.Jaxpr, mesh, in_specs, out_specs, manual_axes, check_vma):
-  axis_ctx = ctx.module_context.axis_context
+    ctx: mlir.LoweringRuleContext, in_nodes, jaxpr: core.Jaxpr, mesh, in_specs,
+    out_specs, newly_manual_axes, check_vma):
   in_avals_ = [v.aval for v in jaxpr.invars]
-  if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
-    # Nested `ManualComputationOp`s must only refer to the new manual axes, not
-    # all existing ones. Grab the newly-added manual axes.
-    shardy_manual_axes = manual_axes - axis_ctx.manual_axes
-    new_manual_axes = manual_axes | axis_ctx.manual_axes
-  else:
-    shardy_manual_axes = new_manual_axes = manual_axes
   new_axis_context = sharding_impls.SPMDAxisContext(
-      _get_spmdaxis_ctx_mesh(mesh), new_manual_axes)
+      _get_spmdaxis_ctx_mesh(mesh), newly_manual_axes | set(mesh.manual_axes))
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
 
   effects = list(mlir.effects_lib.ordered_effects.filter_in(jaxpr.effects))
   tokens = [ctx.tokens_in.get(eff) for eff in effects]
   num_tokens = len(tokens)
-  manual_axes = order_wrt_mesh(mesh, shardy_manual_axes)
-  if prod([mesh.shape[a] for a in manual_axes]) == 1:
+  newly_manual_axes = order_wrt_mesh(mesh, newly_manual_axes)
+  if prod([mesh.shape[a] for a in newly_manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
-    with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
+    with (_extend_axis_env(mesh, set(newly_manual_axes)),
+          config._check_vma(check_vma)):
       out_nodes, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr, ctx.name_stack,
           mlir.TokenSet(dict(zip(effects, tokens))),
@@ -1004,7 +1000,7 @@ def _shard_map_lowering_shardy(
     return out_nodes
 
   in_shardings = tuple(
-      map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
+      map(partial(_shardy_shard_map_sharding, ctx, mesh, newly_manual_axes),
           in_specs, ctx.avals_in))
   const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
@@ -1016,7 +1012,7 @@ def _shard_map_lowering_shardy(
   # TODO(necula,yashkatariya): how to construct consts shardy shardings from
   #  consts that can be ndarray or jax.Array?
   const_args_shardings = tuple(
-      _shardy_shard_map_sharding(ctx, mesh, manual_axes, P(), core.typeof(c))
+      _shardy_shard_map_sharding(ctx, mesh, newly_manual_axes, P(), core.typeof(c))
       for c in const_args)
 
   num_dim_vars = len(ctx.dim_var_values)
@@ -1027,7 +1023,7 @@ def _shard_map_lowering_shardy(
       ctx.module_context.sharding_attr_cache)
 
   out_shardings = tuple(
-      map(partial(_shardy_shard_map_sharding, ctx, mesh, manual_axes),
+      map(partial(_shardy_shard_map_sharding, ctx, mesh, newly_manual_axes),
           out_specs, ctx.avals_out))
   out_shardings = (
       _get_token_sharding(ctx, mesh),) * num_tokens + out_shardings
@@ -1042,7 +1038,7 @@ def _shard_map_lowering_shardy(
   flat_args, _ = mlir.ir_tree_registry.flatten(args)
   manual_computation_op = sdy.ManualComputationOp(
       output_types, flat_args, in_shardings, out_shardings,
-      sdy.ManualAxesAttr.get([ir.StringAttr.get(i) for i in manual_axes]))
+      sdy.ManualAxesAttr.get([ir.StringAttr.get(i) for i in newly_manual_axes]))
 
   dim_var_types = [
     mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray((), dtypes.default_int_dtype()))
@@ -1056,7 +1052,7 @@ def _shard_map_lowering_shardy(
       manual_computation_op.body,
       (*dim_var_types, *token_types, *const_arg_types, *in_types))
 
-  with (ir.InsertionPoint(block), _extend_axis_env(mesh, manual_axes),
+  with (ir.InsertionPoint(block), _extend_axis_env(mesh, set(newly_manual_axes)),
         config._check_vma(check_vma)):
     dim_var_values, token_arg_values, const_arg_values, in_args = util.split_list(
         block.arguments, [num_dim_vars, num_tokens, num_const_args])
@@ -1094,7 +1090,7 @@ def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
   in_nodes_ = map(partial(_xla_shard, ctx, mesh, manual_axes), in_specs,
                   ctx.avals_in, in_avals_, in_nodes)
   new_axis_context = sharding_impls.SPMDAxisContext(
-      _get_spmdaxis_ctx_mesh(mesh), manual_axes)
+      _get_spmdaxis_ctx_mesh(mesh), manual_axes | set(mesh.manual_axes))
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
     out_nodes_, tokens_out = mlir.call_lowering(
