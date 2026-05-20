@@ -63,9 +63,9 @@ def _get_block_size(bd: pl.BlockDim | int | None) -> int:
       raise NotImplementedError(f"Unsupported block size type: {type(bd)}")
 
 
-def _get_block_shape(spec: pallas_core.BlockSpec):
+def _get_block_shape(spec: pallas_core.BlockSpec, ref_shape: tuple[int, ...]):
   if spec.block_shape is None:
-    raise ValueError("Block shape must be specified.")
+    return ref_shape
 
   block_shape = tuple(
       _get_block_size(bd)
@@ -98,7 +98,8 @@ class BufferedRef:
 
   def compute_gmem_slice(self, grid_indices) -> tuple[pl.Slice | jax.Array, ...]:
     index_map = self.spec.index_map
-    assert index_map is not None
+    if index_map is None:
+      return tuple(pl.Slice(0, s) for s in self.gmem_ref.shape)
     assert self.spec.block_shape is not None
     # We don't allow Python scalars here, because they are interpreted
     # differently depending on the x32/x64 mode.
@@ -286,7 +287,7 @@ def emit_pipeline(
     in_smem_refs, out_smem_refs = util.split_list(
         [
             gpu_core.SMEM(
-                (max_concurrent_steps, *_get_block_shape(spec)),
+                (max_concurrent_steps, *_get_block_shape(spec, ref.shape)),
                 ref.dtype,
                 transforms=tuple(
                     gpu_core.batch_transform(t, 1)
@@ -705,7 +706,7 @@ def emit_pipeline_warp_specialized(
       slots = max_concurrent_steps if has_seq_dim else 1
       smem_allocs.append(
           gpu_core.SMEM(
-              (slots, *_get_block_shape(spec)),
+              (slots, *_get_block_shape(spec, gmem_ref.shape)),
               gmem_ref.dtype,
               transforms=getattr(spec, "transforms", ()),
           )
