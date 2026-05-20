@@ -136,7 +136,7 @@ pytype_strict_library(
         "sc_lowering.py",
     ],
     type_checking = "pyrefly",
-    visibility = ["//jax/experimental:pallas_sc_users"],
+    visibility = ["//visibility:private"],
     deps = [
         ":core",
         ":lowering",
