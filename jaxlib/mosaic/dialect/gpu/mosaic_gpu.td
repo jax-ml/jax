@@ -1166,4 +1166,21 @@ def MosaicGPU_GetClusterRefOp : Op<MosaicGPU_Dialect, "get_cluster_ref", [Pure, 
   let results = (outs AnyMemRef:$result);
 }
 
+def MosaicGPU_AssumeMultipleOp : Op<MosaicGPU_Dialect, "assume_multiple", [Pure, SameOperandsAndResultType]> {
+  let summary = "Assumes that a value is a multiple of a given integer.";
+  let description = [{
+    This operation is a hint to the compiler that the input `value` is guaranteed
+    to be a multiple of `multiple`. This can be used to satisfy divisibility checks
+    in some compiler passes.
+
+    The result is the same as the input `value`.
+  }];
+  let arguments = (ins
+    AnyTypeOf<[Index, AnyInteger]>:$value,
+    ConfinedAttr<I32Attr, [IntPositive]>:$multiple
+  );
+  let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
+  let assemblyFormat = [{$value `,` $multiple attr-dict `:` type($result)}];
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

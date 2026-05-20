@@ -1299,6 +1299,27 @@ def _program_id_lowering_rule(ctx: LoweringRuleContext, axis):
     raise NotImplementedError("pl.program_id() is not supported in this context")
   return ctx.module_ctx.program_ids[axis]
 
+
+@register_lowering_rule(primitives.multiple_of_p, mgpu.LoweringSemantics.Lane)
+def _multiple_of_lane_lowering_rule(ctx: LoweringRuleContext, val, *, values):
+  del ctx, values
+  # Under Lane lowering semantics, we currently don't do anything with the
+  # annotation.
+  return val
+
+
+@register_lowering_rule(
+    primitives.multiple_of_p, mgpu.LoweringSemantics.Warpgroup
+)
+def _multiple_of_wg_lowering_rule(ctx: LoweringRuleContext, val, *, values):
+  [aval] = ctx.avals_in
+  if aval.shape:
+    raise NotImplementedError("multiple_of only supports scalar inputs.")
+  for multiple in values:
+    val = mgpu.dialect.assume_multiple(val, multiple)  # pyrefly: ignore[missing-attribute]
+  return val
+
+
 def _unravel_program_id(
     block_id: ir.Value,
     axis: int,

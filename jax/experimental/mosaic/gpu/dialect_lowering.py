@@ -305,6 +305,17 @@ def _initialize_barrier_op_lowering_rule(
   return []
 
 
+# TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.1
+if hasattr(mgpu, "AssumeMultipleOp"):
+
+  @_register_lowering(mgpu.AssumeMultipleOp)  # pyrefly: ignore[missing-attribute]
+  def _assume_multiple_op_lowering_rule(
+      _: LoweringContext,
+      op: mgpu.AssumeMultipleOp,  # pyrefly: ignore[missing-attribute]
+  ) -> Sequence[ir.Value]:
+    return [op.value]
+
+
 @_register_lowering(mgpu.OptimizationBarrierOp)
 def _optimization_barrier_op_lowering_rule(
     _: LoweringContext,

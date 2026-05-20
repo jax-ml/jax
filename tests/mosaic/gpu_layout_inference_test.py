@@ -2215,6 +2215,37 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
 
+  @parameterized.parameters(16, 7, None)
+  def test_infer_transforms_for_sliced_ref_with_assume_multiple(self, multiple):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (64, 64), ir.BF16Type.get(), memory_space=mgpu.utils.smem()
+      )
+      [ref, o0] = undefs(ref_ty, ir.IntegerType.get_signless(32))
+      transforms = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((8, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.with_transforms(ref, transforms)
+      if multiple is not None:
+        o0 = mgpu.dialect.assume_multiple(o0, multiple)
+
+      subview = memref.subview(
+          ref, offsets=[o0, 0], sizes=[8, 64], strides=[1, 1, 1]
+      ).owner
+
+    if multiple is None or multiple % 8:
+      with self.assertRaisesRegex(ValueError, "Failed to infer"):
+        mgpu.infer_layout(self.module)
+    else:
+      mgpu.infer_layout(self.module)
+      self.assertSequenceEqual(
+          inference_utils.in_transforms(subview), [transforms]
+      )
+      self.assertSequenceEqual(
+          inference_utils.out_transforms(subview), [transforms]
+      )
+
   @parameterized.parameters(*mtu.RegisterLayout)
   def test_infer_transforms_for_vector_load_op(self, layout):
     if layout == mtu.RegisterLayout.WG_SPLAT:

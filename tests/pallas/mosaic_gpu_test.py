@@ -334,6 +334,39 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertEqual(ref.inner_aval.dtype, jnp.float32)
     self.assertEqual(ref.memory_space, gpu_core.MemorySpace.GMEM)
 
+  def test_multiple_of(self):
+    # TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.1
+    if not hasattr(mgpu.dialect, "AssumeMultipleOp"):
+      self.skip_if_wg_semantics()
+    shape = (128, 64)
+    out_shape = (64, 64)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+        scratch_shapes=[
+            plgpu.SMEM(
+                out_shape,
+                jnp.float32,
+                transforms=self.default_transforms(dtype=jnp.float32),
+            ),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_gmem, index_gmem, o_gmem, smem_ref, barrier):
+      dyn_index = index_gmem[0]
+      dyn_index = pl.multiple_of(dyn_index, (7, 8))
+      gmem_slice = pl.ds(dyn_index, 64)
+      plgpu.copy_gmem_to_smem(x_gmem.at[gmem_slice, :], smem_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      o_gmem[...] = smem_ref[...]
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    index = jnp.array([0], dtype=jnp.int32)
+
+    res = kernel(x, index)
+    np.testing.assert_array_equal(res, x[:64])
+
   def test_jitted_function_containing_multiple_pallas_calls(self):
     # This test aims to ensure that execution works correctly inside CUDA
     # graphs. This is complementary to the test in
