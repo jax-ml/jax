@@ -160,7 +160,7 @@ def kernel(
     mesh: pl_core.Mesh | Sequence[pl_core.Mesh],
     scratch_types: pl_core.ScratchShapeTree = (),
     compiler_params: pl_core.CompilerParams | None = None,
-    interpret: bool = False,
+    interpret: Any = False,
     cost_estimate: pl_core.CostEstimate | None = None,
     debug: bool = False,
     name: str | None = None,

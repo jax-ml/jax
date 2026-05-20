@@ -263,15 +263,18 @@ def _lower_to_custom_call(
   # This step is required for mapping logical types to physical types.
   # (e.g. PRNG key -> uint32[2])
   physical_avals = [jax_core.physical_aval(aval) for aval in ctx.avals_in]
-  ctx = ctx.replace(avals_in=physical_avals)
+  physical_out_avals = [jax_core.physical_aval(aval) for aval in ctx.avals_out]
+  ctx = ctx.replace(avals_in=physical_avals, avals_out=physical_out_avals)
 
   # Booleans are loaded into the kernel as integers.
   def _maybe_cast_inputs(*args):
     args = [_jax_value_to_mosaic_value(x) for x in args]
     return args
 
-  kernel_in_avals = [_jaxpr_kernel_aval_to_mosaic(x) for x in ctx.avals_in]
-  kernel_out_avals = [_jaxpr_kernel_aval_to_mosaic(x) for x in ctx.avals_out]
+  kernel_in_avals = [_jaxpr_kernel_aval_to_mosaic(x) for x in physical_avals]
+  kernel_out_avals = [
+      _jaxpr_kernel_aval_to_mosaic(x) for x in physical_out_avals
+  ]
   cast_ctx = ctx.replace(avals_out=kernel_in_avals)
   in_nodes = mlir.lower_fun(_maybe_cast_inputs)(cast_ctx, *in_nodes)
 

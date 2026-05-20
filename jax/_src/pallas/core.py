@@ -1663,6 +1663,11 @@ class Mesh(Protocol):
   def supported_memory_spaces(self) -> Sequence[Any]:
     """Return the memory spaces supported by the mesh."""
 
+  @contextlib.contextmanager
+  def tracing_context(self) -> Generator[None, None, None]:
+    raise NotImplementedError()
+    yield
+
 
 _core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}
 
