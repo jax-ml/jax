@@ -75,6 +75,10 @@ if dtypes.float4_e2m1fn is not None:
 float_dtypes += fp4_dtypes
 custom_float_dtypes += fp4_dtypes
 
+fp6_dtypes = [np.dtype(dtypes.float6_e2m3fn), np.dtype(dtypes.float6_e3m2fn)]
+float_dtypes += fp6_dtypes
+custom_float_dtypes += fp6_dtypes
+
 x64_dtypes = [np.dtype('int64'), np.dtype('uint64'), np.dtype('float64'),
               np.dtype('complex128')]
 
@@ -280,7 +284,7 @@ class DtypesTest(jtu.JaxTestCase):
         dtypes.promote_types,
     )
 
-    small_fp_dtypes = set(fp8_dtypes + fp4_dtypes)
+    small_fp_dtypes = set(fp8_dtypes + fp6_dtypes + fp4_dtypes)
     implicit_int_dtypes = set(signed_dtypes + unsigned_dtypes) - set(intn_dtypes)
 
     for t1 in all_dtypes:
@@ -538,6 +542,7 @@ class DtypesTest(jtu.JaxTestCase):
       (jnp.int16, 16),
       (jnp.int32, 32),
       *[(fp4_dtype, 4) for fp4_dtype in fp4_dtypes],
+      *[(fp6_dtype, 6) for fp6_dtype in fp6_dtypes],
       *[(fp8_dtype, 8) for fp8_dtype in fp8_dtypes],
       (jnp.float16, 16),
       (jnp.float32, 32),
@@ -1108,6 +1113,8 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
+    if dtype in fp6_dtypes:
+      self.skipTest('XLA support for float6 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
@@ -1172,6 +1179,8 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testBinaryNonPromotion(self, dtype, weak_type, promotion):
     if dtype in fp8_dtypes:
       self.skipTest("XLA support for float8 is incomplete.")
+    if dtype in fp6_dtypes:
+      self.skipTest('XLA support for float6 is incomplete.')
     if dtype in fp4_dtypes:
       self.skipTest("XLA support for float4 is incomplete.")
     if dtype in intn_dtypes:
@@ -1205,6 +1214,8 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.skipTest('XLA support for int4 is incomplete.')
       if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
+    if dtype in fp6_dtypes:
+      self.skipTest('XLA support for float6 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):

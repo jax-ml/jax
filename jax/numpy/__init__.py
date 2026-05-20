@@ -214,6 +214,8 @@ from jax._src.numpy.scalar_types import (
     float16 as float16,
     float32 as float32,
     float4_e2m1fn as float4_e2m1fn,
+    float6_e2m3fn as float6_e2m3fn,
+    float6_e3m2fn as float6_e3m2fn,
     float64 as float64,
     float8_e3m4 as float8_e3m4,
     float8_e4m3 as float8_e4m3,

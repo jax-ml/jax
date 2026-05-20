@@ -110,6 +110,13 @@ _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
 
+# fp6 support
+float6_e2m3fn: type[np.generic] = ml_dtypes.float6_e2m3fn
+float6_e3m2fn: type[np.generic] = ml_dtypes.float6_e3m2fn
+
+_float6_e2m3fn_dtype: np.dtype = np.dtype(float6_e2m3fn)
+_float6_e3m2fn_dtype: np.dtype = np.dtype(float6_e3m2fn)
+
 # fp4 support
 float4_e2m1fn: type[np.generic] = ml_dtypes.float4_e2m1fn
 
@@ -128,6 +135,8 @@ _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 _custom_float_scalar_types = [
     float4_e2m1fn,
+    float6_e2m3fn,
+    float6_e3m2fn,
     float8_e3m4,
     float8_e4m3,
     float8_e8m0fnu,
@@ -140,6 +149,8 @@ _custom_float_scalar_types = [
 ]
 _custom_float_dtypes = [
     _float4_e2m1fn_dtype,
+    _float6_e2m3fn_dtype,
+    _float6_e3m2fn_dtype,
     _float8_e3m4_dtype,
     _float8_e4m3_dtype,
     _float8_e8m0fnu_dtype,
@@ -159,6 +170,11 @@ _float8_dtypes = [
     _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
     _float8_e5m2fnuz_dtype,
+]
+
+_float6_dtypes: list[np.dtype] = [
+    _float6_e2m3fn_dtype,
+    _float6_e3m2fn_dtype,
 ]
 
 _float4_dtypes: list[np.dtype] = [
@@ -831,6 +847,12 @@ def _least_upper_bound(jax_numpy_dtype_promotion: config.NumpyDtypePromotion,
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
         "promotion path. To avoid unintended promotion, 8-bit floats do not support "
+        "implicit promotion. If you'd like your inputs to be promoted to another type, "
+        "you can do so explicitly using e.g. x.astype('float32')")
+    elif any(n in _float6_dtypes for n in nodes):
+      msg = (
+        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
+        "promotion path. To avoid unintended promotion, 6-bit floats do not support "
         "implicit promotion. If you'd like your inputs to be promoted to another type, "
         "you can do so explicitly using e.g. x.astype('float32')")
     elif any(n in _float4_dtypes for n in nodes):

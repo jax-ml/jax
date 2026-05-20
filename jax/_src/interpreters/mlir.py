@@ -157,6 +157,8 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float8_e4m3): ir.Float8E4M3Type.get,
   np.dtype(dtypes.float8_e8m0fnu): ir.Float8E8M0FNUType.get,
   np.dtype(dtypes.float4_e2m1fn): ir.Float4E2M1FNType.get,
+  np.dtype(dtypes.float6_e2m3fn): ir.Float6E2M3FNType.get,
+  np.dtype(dtypes.float6_e3m2fn): ir.Float6E3M2FNType.get,
 }
 
 if dtypes.int1 is not None:
