@@ -730,7 +730,7 @@ class custom_vjp(Generic[ReturnValue]):
       fwd_ = lu.wrap_init(fwd, debug_info=debug_fwd)
       bwd = lu.wrap_init(self.bwd, debug_info=debug_bwd)
     args_flat, in_tree = tree_flatten(dyn_args)
-    in_avals = [core.typeof(x) for x in args_flat]
+    in_avals = tuple(core.typeof(x) for x in args_flat)
     if config.mutable_array_checks.value:
       f_ = _check_primal_refs(f_, self.nondiff_argnums, f_.debug_info)
     flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
