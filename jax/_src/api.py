@@ -22,6 +22,9 @@ arrays.
 """
 from __future__ import annotations
 
+import gc
+import sys
+import os
 import atexit
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
@@ -2611,24 +2614,48 @@ def copy_to_host_async(x):
   return x
 
 
-def clear_backends():
+def clear_backends(_crash=False):
   """
   Clear all backend clients so that new backend clients can be created later.
   """
+  clients = []
+  if config.debug_leaked_clients_on_clear_backends.value:
+    try:
+      if xb.backends_are_initialized():
+        clients = [weakref.ref(c) for c in xb._backends.values()]
+    except Exception:
+      pass
+
+  effects_barrier()
   xb._clear_backends()
   util.clear_all_caches()
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
   xc._xla.PjitFunctionCache.clear_all()
 
+  if clients:
+    # GC a couple times because there are false cycles that seem to be due
+    # to captured stack traces in exceptions raised during testing.
+    # TODO(parkers): Figure out how to make this a single gc.collect() call.
+    for _ in range(4):
+      gc.collect()
+    for r in clients:
+      if r() is not None:
+        if _crash:
+          print("A jax.Client was leaked", file=sys.stderr)
+          os._exit(-1)
+        else:
+          raise RuntimeError("A jax.Client was leaked")
+
 @atexit.register
 def clean_up():
   if xb._default_backend is not None:
-    clear_backends()
+    clear_backends(_crash=True)
   clear_caches()
 
   # Shut down distributed system if it exists. Otherwise, this is a no-op.
   distributed.shutdown()
+
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.

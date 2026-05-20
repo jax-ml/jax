@@ -511,12 +511,18 @@ class ArrayImpl(basearray.Array):
       return self._fully_replicated_shard()  # pyrefly: ignore[missing-attribute]
     return self._arrays[index]
 
-  @functools.cached_property
+  @property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
+    val = self.__dict__.get("addressable_shards", None)
+    if val is not None:
+      return val
     out = []
     for a in self._arrays:
       out.append(Shard(_get_device(a), self.sharding, self.shape, a))
+    if len(out) != 1:
+      # when len(out) == 1, out is just [Shard(self)] and it makes a cycle.
+      self.__dict__["addressable_shards"] = out
     return out
 
   @property

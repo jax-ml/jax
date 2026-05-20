@@ -28,6 +28,7 @@ from jax._src import util
 from jax._src.traceback_util import api_boundary
 from jax.experimental.colocated_python import func
 from jax.experimental.colocated_python import obj_backend
+from jax._src.util import register_cache
 
 
 class _InstanceRegistry:
@@ -36,6 +37,7 @@ class _InstanceRegistry:
   def __init__(self) -> None:
     self._lock = threading.Lock()
     self._storage: dict[int, set[jax.Device]] = {}
+    register_cache(self, "colocated_python_instance_registry")
 
   def new_instance(self) -> int:
     """Returns a new unique identifier for an instance on the controller."""
@@ -54,6 +56,10 @@ class _InstanceRegistry:
     """Removes the instance and returns the set of devices on which it is live."""
     with self._lock:
       return self._storage.pop(uid)
+
+  def cache_clear(self):
+    with self._lock:
+      self._storage = {}
 
 
 SINGLETON_INSTANCE_REGISTRY = _InstanceRegistry()

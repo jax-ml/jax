@@ -1203,6 +1203,11 @@ captured_constants_report_frames = int_state(
     )
 )
 
+debug_leaked_clients_on_clear_backends = bool_state(
+    name='jax_debug_leaked_clients_on_clear_backends',
+    default=False,
+    help=('Check that clear_backends actually clears the backends.'))
+
 debug_nans = bool_state(
     name='jax_debug_nans',
     default=False,
