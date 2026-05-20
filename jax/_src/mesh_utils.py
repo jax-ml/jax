@@ -846,6 +846,13 @@ def create_device_mesh(
         allow_split_physical_axes=allow_split_physical_axes,
     )
     return device_mesh
+  elif last_device.platform == 'gpu':
+    # The default jax.devices() order is not guaranteed to be performant, as it is
+    # based on process order rather than the topology-aware global numbering scheme
+    # assigned by XLA. If the device list is single-slice, this does not matter on
+    # modern systems, but the sort avoids a sharp edge if a multi-slice device list
+    # is passed.
+    return np.asarray(sorted(devices, key=lambda d: d.id)).reshape(new_mesh_shape)
   else:
     device_mesh = np.asarray(devices).reshape(new_mesh_shape)
     return device_mesh

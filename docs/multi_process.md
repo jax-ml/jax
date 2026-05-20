@@ -389,7 +389,7 @@ and running computations. The remaining Python code examples in this tutorial
 are meant to be run on all processes simultaneously, after running
 {func}`jax.distributed.initialize`.
 
-## Meshes, shardings, and computations can span processes and hosts
+## Meshes can span processes and hosts
 
 Programming multiple processes from JAX usually looks just like programming a
 single process, just with more devices! The main exceptions to this are around
@@ -400,11 +400,7 @@ loading fundamentals, i.e. how to create JAX Arrays from non-JAX sources, later
 in this doc.
 
 Recall a {class}`jax.sharding.Mesh` pairs an array of {class}`jax.Device`s with
-a sequence of names, with one name per array axis. By creating a `Mesh` using
-devices from multiple processes, then using that mesh in a
-{class}`jax.sharding.Sharding`, we can construct {class}`jax.Array`s sharded
-over devices from multiple processes.
-
+a sequence of names, with one name per array axis.
 Here's an example that directly constructs a `Mesh` using {func}`jax.devices()`
 to get devices from all processes:
 
@@ -421,7 +417,51 @@ because it's simpler but also because it can choose more performant device
 orderings automatically, but we're spelling it out here. By default it includes
 all devices across processes, just like {func}`jax.devices()`.
 
-Once we have a mesh, we can shard arrays over it. There are a few ways to
+### Meshes can have non-uniform communication bandwidth
+
+When we scale out to larger GPU and TPU systems, the available communication bandwidth
+between devices in the mesh will no longer be uniform, and it is important to construct
+the mesh appropriately to ensure that the fastest, highest-bandwidth interconnects are
+used for the most communication-intensive operations.
+
+JAX APIs use a TPU-derived nomenclature, with the fast interconnect between nearby chips
+denoted ICI (inter chip interconnect), a collection of chips that are connected by ICI
+called a slice, and the slower interconnect used to communicate between slices called
+DCN (data-center network).
+All of these concepts apply equally to running on GPU, but the usual terminology on GPU is a little different:
+
+| JAX/TPU | NVIDIA GPU                                 |
+| ------- | ------------------------------------------ |
+| ICI     | NVLink                                     |
+| DCN     | InfiniBand (IB), Ethernet, EFA, TCPXO, ... |
+| Slice   | NVLink domain (e.g. 18 hosts with 4 GPUs each in a GB200-NVL72 rack-scale system, 1 host with 8 GPUs in an HGX B200 NVL8 system, ...) |
+
+JAX will automatically detect which devices belong to which slices  during
+{func}`jax.distributed.initialize` and assign `slice_index` values to the
+devices accordingly.
+
+If you are using devices within a single slice (NVLink domain), it is sufficient to use
+{func}`jax.make_mesh`.
+
+If you are using a larger mesh of devices that spans multiple slices, use
+{func}`jax.experimental.mesh_utils.create_hybrid_device_mesh`. For example:
+```
+Mesh(create_hybrid_device_mesh((1, devices_per_slice), (num_slices, 1)), axis_names=("dcn", "ici"))
+```
+will produce a mesh that maps the `dcn` axis to DCN interconnect and the `ici` axis to
+ICI interconnect.
+```{warning}
+On popular GPU systems such as NVIDIA DGX H100 (A3 instances on GCP, P5 on AWS, ...),
+each node is a single NVLink domain, so even a two-node job is a multi-slice device mesh.
+```
+
+Simply reshaping `jax.devices()` to the desired shape will not reliably give good performance,
+use the helper functions described above.
+
+## Arrays and computations can be distributed across hosts
+
+Once we have a multi-process mesh, we can shard arrays over it by using it in a
+{class}`jax.sharding.Sharding`. There are a few ways to
 efficiently build process-spanning arrays, detailed in the last section, but for
 now we'll stick to `jax.device_put` for simplicity:
 
