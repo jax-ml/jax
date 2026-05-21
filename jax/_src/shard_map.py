@@ -1092,7 +1092,7 @@ def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
   in_nodes_ = map(partial(_xla_shard, ctx, mesh, newly_manual_axes), in_specs,
                   ctx.avals_in, in_avals_, in_nodes)
   new_axis_context = sharding_impls.SPMDAxisContext(
-      _get_spmdaxis_ctx_mesh(mesh), newly_manual_axes | set(mesh.newly_manual_axes))
+      _get_spmdaxis_ctx_mesh(mesh), newly_manual_axes | set(mesh.manual_axes))
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with _extend_axis_env(mesh, newly_manual_axes), config._check_vma(check_vma):
     out_nodes_, tokens_out = mlir.call_lowering(
