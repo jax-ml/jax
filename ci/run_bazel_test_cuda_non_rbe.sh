@@ -96,7 +96,7 @@ common_bazel_test_args=(
   "--config=$TEST_CONFIG"
   "--repo_env=HERMETIC_PYTHON_VERSION=$JAXCI_HERMETIC_PYTHON_VERSION"
   "--@rules_python//python/config_settings:py_freethreaded=$FREETHREADED_FLAG_VALUE"
-  "--repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2"
+  "--repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1"
   "--//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB"
   "--//jax:build_jax=$JAXCI_BUILD_JAX"
   "--test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform"
