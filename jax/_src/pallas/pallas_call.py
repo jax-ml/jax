@@ -17,10 +17,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence, Set
 import contextlib
-import enum
 from functools import partial
 import math
-import types
 from typing import Any, cast
 
 from jax._src import ad_util
@@ -844,7 +842,6 @@ def _trace_kernel_to_jaxpr(
   return jaxpr, tuple(consts)
 
 
-
 def _unsupported_lowering_error(platform: str) -> Exception:
   return ValueError(
       f"Cannot lower pallas_call on platform: {platform}. To use Pallas on GPU,"
@@ -859,16 +856,34 @@ def _pallas_call_lowering(
   if params['jaxpr'].constvars:
     raise ValueError('Cannot lower a pallas_call with constants.')
   if interpret:
-    if isinstance(interpret, InterpretParams):
-      impl = partial(mosaic_tpu_interpret.interpret_pallas_call,  # pyrefly: ignore[missing-attribute]
-                     interpret_params=interpret,
-                     **params)
-    elif isinstance(interpret, InterpretGPUParams):
-      impl = partial(mosaic_gpu_interpret.interpret_pallas_call,  # pyrefly: ignore[missing-attribute]
-                     interpret_params=interpret,
-                     **params)
+    impl = partial(hlo_interpreter.pallas_call_hlo_interpret, **params)
+
+    try:
+      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
+      from jax._src.pallas.mosaic.interpret import params as tpu_params
+    except ImportError:
+      pass
     else:
-      impl = partial(hlo_interpreter.pallas_call_hlo_interpret, **params)
+      if isinstance(interpret, tpu_params.InterpretParams):
+        impl = partial(
+            mosaic_tpu_interpret.interpret_pallas_call,
+            interpret_params=interpret,
+            **params,
+        )
+
+    try:
+      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret
+      from jax._src.pallas.mosaic_gpu.interpret import params as gpu_params
+    except ImportError:
+      pass
+    else:
+      if isinstance(interpret, gpu_params.InterpretGPUParams):
+        impl = partial(
+            mosaic_gpu_interpret.interpret_pallas_call,
+            interpret_params=interpret,
+            **params,
+        )
+
     return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
 
   def cpu_lowering(
@@ -889,8 +904,11 @@ def _pallas_call_lowering(
       if rule is not None:
         return rule(ctx, *in_nodes, **params)
 
-    if mosaic_tpu_backend is None:
-      raise _unsupported_lowering_error("tpu")
+    try:
+      from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
+    except ImportError:
+      raise _unsupported_lowering_error("tpu") from None
+
     return mosaic_tpu_backend.pallas_call_tpu_lowering_rule(
         ctx, *in_nodes, **params
     )
@@ -909,16 +927,32 @@ def _pallas_call_lowering(
         return rule(ctx, *in_nodes, compiler_params=compiler_params, **params)
 
     backend: Any = None
-    if mosaic_gpu_backend is not None:
+
+    try:
       from jax._src.pallas.mosaic_gpu import core as mgpu_core
+      from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend
+    except ImportError:
+      pass
+    else:
       if (
           isinstance(compiler_params, mgpu_core.CompilerParams)
           or (compiler_params is None and
               config.jax_pallas_use_mosaic_gpu.value)
       ):
         backend = mosaic_gpu_backend
-    if triton_backend is not None:
+
+      if is_rocm and backend is mosaic_gpu_backend:
+        raise ValueError(
+            "Mosaic GPU does not yet support AMD ROCm devices. "
+            "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
+        )
+
+    try:
       from jax._src.pallas.triton import core as triton_core
+      from jax._src.pallas.triton import pallas_call_registration as triton_backend
+    except ImportError:
+      pass
+    else:
       if (
           isinstance(compiler_params, triton_core.CompilerParams)
           or (compiler_params is None and
@@ -928,12 +962,6 @@ def _pallas_call_lowering(
 
     if backend is None:
       raise _unsupported_lowering_error("gpu")
-
-    if is_rocm and backend is mosaic_gpu_backend:
-      raise ValueError(
-          "Mosaic GPU does not yet support AMD ROCm devices. "
-          "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
-      )
 
     return backend.pallas_call_lowering(
         ctx, *in_nodes, compiler_params=compiler_params, **params
@@ -1340,39 +1368,3 @@ def _pallas_call(
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
   return wrapped
-
-
-# We import the TPU backend at the top level because it defines flags. Note that
-# we can only do that at the bottom of this file, because it also depends on
-# this module already being initialized.
-
-try:
-  from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
-except ImportError:
-  mosaic_tpu_backend = None
-
-
-try:
-  from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend
-except ImportError:
-  mosaic_gpu_backend = None
-
-
-try:
-  from jax._src.pallas.triton import pallas_call_registration as triton_backend
-except ImportError:
-  triton_backend = None
-
-try:
-  from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
-  from jax._src.pallas.mosaic.interpret.params import InterpretParams
-except ImportError:
-  mosaic_tpu_interpret = None
-  InterpretParams = types.new_class("_NoInstances", (enum.Enum,))
-
-try:
-  from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret
-  from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
-except ImportError:
-  mosaic_gpu_interpret = None
-  InterpretGPUParams = types.new_class("_NoInstances", (enum.Enum,))
