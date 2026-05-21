@@ -466,7 +466,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
               num_subcores=16,
               num_lanes=16,
               vmem_capacity_bytes=512 * 1024,  # 512 KiB per vector subcore
-              dma_granule_size_bytes=64,
+              dma_granule_size_bytes=32,
           ),
       )
     case _:
