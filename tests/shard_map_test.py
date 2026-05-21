@@ -1449,6 +1449,30 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.jit(jax.grad(f2))(x1)  # doesn't crash
     jax.grad(f2)(x1)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_shmap_bwd_rep_to_unreduced_check_vma_true(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+    rep_arr = jax.device_put(np.arange(8.), P())
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def f(x):
+      return x * x
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+
+    out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P())
+    def g(x):
+      return x * x
+
+    expected_out_g = jax.jit(jax.grad(lambda x: g(x).sum()))(rep_arr)
+    self.assertArraysEqual(jax.reshard(out_g, P()), expected_out_g)
+
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   @jtu.thread_unsafe_test()
   def test_debug_print_jit_partial_auto(self):
