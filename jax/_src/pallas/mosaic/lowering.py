@@ -624,6 +624,9 @@ _uncacheable_primitives: set[jax_core.Primitive] = {
     lax.cond_p,
     primitives.run_scoped_p,
     primitives.jaxpr_call_p,
+    primitives.semaphore_signal_p,
+    tpu_primitives.dma_start_p,
+    tpu_primitives.dma_wait_p,
 }
 
 
