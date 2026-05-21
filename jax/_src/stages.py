@@ -380,6 +380,15 @@ def _traced_args_info(self):
   return make_args_info(self._in_tree, arg_avals, don8_rgn)
 
 def _traced_out_info(self):
+  """A PyTree of ShapeDtypeStruct matching the output structure.
+
+  The leaves of the PyTree are :class:`jax.ShapeDtypeStruct` objects that
+  contain the shape, dtype each output of the traced function.
+  If `out_shardings` is specified on `jax.jit`, then the output
+  :class:`jax.ShapeDtypeStruct` has its sharding and layout field populated.
+  The sharding is also populated if all mesh axes are
+  `Explicit` (without specifying out_shardings on `jax.jit`).
+  """
   out_shardings = [None if isinstance(s, UnspecifiedValue) else s
                    for s in self._params['out_shardings']]
   out_layouts = [None if isinstance(l, AutoLayoutSingleton) else l
@@ -567,6 +576,16 @@ class Lowered(Stage):
 
   @property
   def out_info(self):  # PyTree of OutInfo
+    """A PyTree of ShapeDtypeStruct matching the output structure.
+
+    The leaves of the PyTree are :class:`jax.ShapeDtypeStruct` objects that
+    contain the shape, dtype information for each output of the lowered function.
+
+    If `out_shardings` is specified on `jax.jit`, then the output
+    :class:`jax.ShapeDtypeStruct` has its sharding and layout field populated.
+    The sharding is also populated if all mesh axes are
+    `Explicit` (without specifying out_shardings on `jax.jit`).
+    """
     out_avals = self._lowering.compile_args["global_out_avals"]
     out_shardings = self._lowering.compile_args["out_shardings"]
     out_layouts = self._lowering.compile_args["out_layouts"]
@@ -736,6 +755,12 @@ class Compiled(Stage):
 
   @property
   def out_info(self):  # PyTree of jax.ShapeDtypeStruct
+    """A PyTree of ShapeDtypeStruct matching the output structure.
+
+    The leaves of the PyTree are :class:`jax.ShapeDtypeStruct` objects that
+    contain the shape, dtype, sharding, and layout information for each output
+    of the compiled function.
+    """
     out_avals = self._executable.out_avals  # pyrefly: ignore[missing-attribute]
     out_formats_flat = self._output_formats_flat
     return self.out_tree.unflatten(
