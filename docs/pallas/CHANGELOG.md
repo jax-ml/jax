@@ -20,6 +20,33 @@ Remember to align the itemized text with the first line of an item within a list
     possible integers) any scratch buffers allocated by Pallas in Mosaic TPU
     lowering for debugging.
 
+* Deprecations
+
+  * `pl.debug_checks_enabled` is deprecated. Use `pl.enable_debug_checks.value`.
+
+### TPU
+
+* Changes
+
+  * {class}`jax.experimental.pallas.tpu.CompilerParams` now defaults
+    ``needs_layout_passes`` to True. The layout passes are still a work in
+    progress. Please file a bug if you encounter a compilation error with
+    them enabled.
+  * {class}`jax.experimental.pallas.tpu.CompilerParams` now defaults
+    ``use_tc_tiling_on_sc`` to True for SparseCore kernels.
+
+### Mosaic GPU
+
+* New features
+
+  * Support using {func}`jax.experimental.pallas.multiple_of` to specify
+    divisibility requirements on dynamic indices.
+  * Support allocating multidimensional `plgpu.Barrier`s and
+    `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
+    parameter.
+
+## Released with JAX 0.10.1
+
 * Changes
 
   * Added {func}`jax.experimental.pallas.align_to`, a utility that rounds a
@@ -31,10 +58,6 @@ Remember to align the itemized text with the first line of an item within a list
     runtime checks.
   * {func}`jax.experimental.pallas.kernel` now always aliases Refs that are
     passed in or closed-over.
-
-* Deprecations
-
-  * `pl.debug_checks_enabled` is deprecated. Use `pl.enable_debug_checks.value`.
 
 ### TPU
 
@@ -55,12 +78,6 @@ Remember to align the itemized text with the first line of an item within a list
     non-blocking equivalent of
     {func}`jax.experimental.pallas.mosaic_gpu.barrier_wait` only supported in
     a warp context.
-  * Support using {func}`jax.experimental.pallas.multiple_of` to specify
-    divisibility requirements on dynamic indices.
-  * Support allocating multidimensional `plgpu.Barrier`s and
-    `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
-    parameter.
-
 * Changes
 
   * Breaking change: removed `plgpu.TransposeTransform`.
