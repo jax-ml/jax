@@ -108,7 +108,7 @@ class CompilerParams:
     allow_collective_id_without_custom_barrier: Allow the use of collective_id
       without a custom barrier.
     use_tc_tiling_on_sc: Use TensorCore tiling for SparseCore. This flag is only
-      used for ``SC_*_SUBCORE`` kernels and it implicitly defaults to True.
+      used for ``SC_*_SUBCORE`` kernels.
     needs_layout_passes: Whether to use vector layout inference passes. This
       flag is temporary and will eventually be removed.
     fuse_transposed_lhs_in_matmul: Hint to compilers to attempt to fuse
