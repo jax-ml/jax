@@ -1290,7 +1290,7 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
       return y
     with self.assertRaisesRegex(
         ValueError,
-        'Must return a pl.ds from the index_map for a BoundedSlice dimension.'
+        'Must return a ds from the index_map for a BoundedSlice dimension.'
     ):
       f.trace(jax.ShapeDtypeStruct(shape, jnp.int32))
 

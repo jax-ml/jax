@@ -13,11 +13,11 @@
 # limitations under the License.
 
 """Module for emitting custom TPU pipelines within a Pallas call."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 import contextlib
-from contextlib import contextmanager
 import dataclasses
 import enum
 import functools
@@ -31,15 +31,32 @@ from jax import tree_util
 from jax._src import state
 from jax._src import util as jax_util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import helpers
 from jax._src.pallas import primitives
+from jax._src.pallas import utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import tpu_info
-from jax.experimental import pallas as pl
+from jax._src.state import indexing
 import jax.numpy as jnp
 
 
+cdiv = utils.cdiv
+contextmanager = contextlib.contextmanager
+align_to = utils.align_to
+program_id = primitives.program_id
+num_programs = primitives.num_programs
+multiple_of = primitives.multiple_of
+when = helpers.when
+Squeezed = pallas_core.Squeezed
+Indirect = pallas_core.Indirect
+Element = pallas_core.Element
+BoundedSlice = pallas_core.BoundedSlice
+Blocked = pallas_core.Blocked
+BlockDim = pallas_core.BlockDim
+Slice = indexing.Slice
+ds = indexing.ds
 SMEM = tpu_core.MemorySpace.SMEM
 VMEM = tpu_core.MemorySpace.VMEM
 HBM = tpu_core.MemorySpace.HBM
@@ -67,18 +84,18 @@ def _create_blocked_slice(
 ):
   block_start = block_size * block_index
   if (dim_rem := dim_size % block_size) == 0:
-    return pl.ds(block_start, block_size)
+    return ds(block_start, block_size)
   if tiling is None:
     raise ValueError("If tiling is None, block_size must divide dim_size.")
   if block_size % tiling != 0:
     raise ValueError(f"Block size must divide tiling: {block_size=}, {tiling=}")
-  num_blocks = pl.cdiv(dim_size, block_size)
+  num_blocks = cdiv(dim_size, block_size)
   is_last = block_index == num_blocks - 1
   rounded_size = jnp.where(
-      is_last, pl.align_to(dim_rem % block_size, tiling), block_size
+      is_last, align_to(dim_rem % block_size, tiling), block_size
   )
-  rounded_size = pl.multiple_of(rounded_size, tiling)
-  return pl.ds(block_index * block_size, rounded_size)
+  rounded_size = multiple_of(rounded_size, tiling)
+  return ds(block_index * block_size, rounded_size)
 
 
 def _create_bounded_slice(slice_start: jax.Array | int,
@@ -92,41 +109,41 @@ def _create_bounded_slice(slice_start: jax.Array | int,
   # that the slice_start is already aligned to the tiling.
 
   if tiling is None:
-    return pl.ds(slice_start, slice_size)
+    return ds(slice_start, slice_size)
 
   # If we are out of bound, we need to round the slice size down to the nearest
   # multiple of the tiling.
   is_oob = slice_start + slice_size > dim_size
   remaining = dim_size - slice_start
-  rounded_size = jnp.where(is_oob, pl.align_to(remaining, tiling), slice_size)
-  rounded_size = pl.multiple_of(rounded_size, tiling)
-  return pl.ds(slice_start, rounded_size)
+  rounded_size = jnp.where(is_oob, align_to(remaining, tiling), slice_size)
+  rounded_size = multiple_of(rounded_size, tiling)
+  return ds(slice_start, rounded_size)
 
 
 def _make_block_slice(
-    block_index: jax.Array, block_size: pl.BlockDim | int | None, size: int,
+    block_index: jax.Array, block_size: BlockDim | int | None, size: int,
     tiling: int | None
-) -> pl.Slice | slice | int | jax.Array:
+) -> Slice | slice | int | jax.Array:
   # Computes a slice given a block index and block size. In the default case,
   # we return slice(block_index * block_size, (block_index + 1) * block_size).
   # However, if the total size of the ref does not divide block size and we are
   # selecting the last block, we need to pick the lowest tiling size multiple
   # that contains the block.
   match block_size:
-    case pl.Blocked():
+    case Blocked():
       return _create_blocked_slice(block_index, block_size.block_size, size, tiling)
     case int():
       return _create_blocked_slice(block_index, block_size, size, tiling)
-    case pl.Element():
+    case Element():
       block_start = block_index
       block_size = block_size.block_size
       return _create_bounded_slice(
           block_start, block_size, block_size, size, tiling
       )
-    case pl.BoundedSlice(block_size):
-      if not isinstance(block_index, pl.Slice):
+    case BoundedSlice(block_size):
+      if not isinstance(block_index, Slice):
         raise ValueError(
-            "Must return a pl.ds from the index_map for a BoundedSlice"
+            "Must return a ds from the index_map for a BoundedSlice"
             " dimension."
         )
       slice_start = block_index.start
@@ -134,7 +151,7 @@ def _make_block_slice(
       return _create_bounded_slice(
           slice_start, slice_size, block_size, size, tiling
       )
-    case None | pl.Squeezed() | pl.Indirect():
+    case None | Squeezed() | Indirect():
       return block_index
     case _:
       raise ValueError(f"Unsupported block dimension type: {block_size}")
@@ -163,7 +180,7 @@ def _spec_has_trivial_windowing(spec, grid, full_shape):
       return False
     if isinstance(
         bs,
-        (pl.BoundedSlice, pl.Indirect, pl.Squeezed, pl.Element),
+        (BoundedSlice, Indirect, Squeezed, Element),
     ):
       return False
     if pallas_core.get_block_size(bs) != fs:
@@ -216,19 +233,19 @@ class BufferType(enum.Enum):
     ]
 
 
-def _get_block_shape(spec: pl.BlockSpec) -> tuple[int, ...]:
+def _get_block_shape(spec: pallas_core.BlockSpec) -> tuple[int, ...]:
   """Get the block shape for a given block spec."""
   def _get_dim_size(bd):
     match bd:
       case int():
         return bd
-      case None | pl.Squeezed():
+      case None | Squeezed():
         return None
       case (
-          pl.Blocked(block_size)
-          | pl.Element(block_size)
-          | pl.BoundedSlice(block_size)
-          | pl.Indirect(block_size)
+          Blocked(block_size)
+          | Element(block_size)
+          | BoundedSlice(block_size)
+          | Indirect(block_size)
       ):
         return block_size
       case _:
@@ -243,7 +260,7 @@ class BufferedRefBase:
   """Abstract interface for BufferedRefs."""
 
   @property
-  def spec(self) -> pl.BlockSpec:
+  def spec(self) -> pallas_core.BlockSpec:
     raise NotImplementedError()
 
   @property
@@ -304,7 +321,7 @@ class BufferedRefBase:
     raise NotImplementedError()
 
   @property
-  def block_shape(self) -> Sequence[pl.BlockDim | int | None] | None:
+  def block_shape(self) -> Sequence[BlockDim | int | None] | None:
     return self.spec.block_shape
 
   @property
@@ -312,7 +329,7 @@ class BufferedRefBase:
     """Whether any block dimension uses indirect indexing."""
     if self.block_shape is None:
       return False
-    return any(isinstance(bd, pl.Indirect) for bd in self.block_shape)
+    return any(isinstance(bd, Indirect) for bd in self.block_shape)
 
   @property
   def has_allocated_buffer(self) -> bool:
@@ -389,9 +406,9 @@ class BufferedRefBase:
 
   def _to_window_slice(self, dma_slice):
     return tuple(
-        pl.ds(0, s.size)
+        ds(0, s.size)
         for s, bd in zip(dma_slice, self.block_shape)  # pyrefly: ignore[bad-argument-type]
-        if not (bd is None or isinstance(bd, pl.Squeezed))
+        if not (bd is None or isinstance(bd, Squeezed))
     )
 
   def bind_existing_ref(self, window_ref, indices):
@@ -402,7 +419,7 @@ class BufferedRefBase:
   def unbind_refs(self):
     return self
 
-  def with_spec(self, spec: pl.BlockSpec) -> BufferedRefBase:
+  def with_spec(self, spec: pallas_core.BlockSpec) -> BufferedRefBase:
     """Returns a new BufferedRefBase with the given block spec."""
     raise NotImplementedError()
 
@@ -441,7 +458,7 @@ class BufferedRef(BufferedRefBase):
     has_allocated_buffer: Whether the reference has an allocated buffer
       due to being in a different memory space than the source ref.
   """
-  _spec: pl.BlockSpec = dataclasses.field(metadata=dict(static=True))
+  _spec: pallas_core.BlockSpec = dataclasses.field(metadata=dict(static=True))
   _buffer_type: BufferType = dataclasses.field(metadata=dict(static=True))
   _buffer_count: int = dataclasses.field(metadata=dict(static=True))
   _grid_rank: int | None = dataclasses.field(metadata=dict(static=True))
@@ -500,7 +517,7 @@ class BufferedRef(BufferedRefBase):
   @classmethod
   def create(
       cls,
-      spec: pl.BlockSpec,
+      spec: pallas_core.BlockSpec,
       dtype_or_type,
       buffer_type,
       buffer_count,
@@ -621,7 +638,7 @@ class BufferedRef(BufferedRefBase):
         spec, dtype_or_type, BufferType.INPUT_OUTPUT, buffer_count, **kwargs
     )
 
-  def with_spec(self, spec: pl.BlockSpec) -> BufferedRef:
+  def with_spec(self, spec: pallas_core.BlockSpec) -> BufferedRef:
     """Returns a new BufferedRef with the given block spec."""
     return dataclasses.replace(self, _spec=spec)
 
@@ -741,21 +758,21 @@ class BufferedRef(BufferedRefBase):
     indexer = []
     for bd, idx in zip(self.block_shape, indices, strict=True):
       match bd:
-        case None | pl.Squeezed():
+        case None | Squeezed():
           # Dimension is squeezed out so we don't do anything.
           indexer.append(idx)
-        case pl.Element():
+        case Element():
           raise ValueError(
               "Element block dimensions are not supported."
           )
-        case pl.BoundedSlice():
+        case BoundedSlice():
           raise ValueError(
               "BoundedSlice block dimensions are not supported."
           )
-        case pl.Blocked(block_size):
-          indexer.append(pl.ds(idx * block_size, block_size))
+        case Blocked(block_size):
+          indexer.append(ds(idx * block_size, block_size))
         case int():
-          indexer.append(pl.ds(idx * bd, bd))
+          indexer.append(ds(idx * bd, bd))
         case _:
           raise ValueError(f"Unsupported block dimension type: {type(bd)}")
     return tuple(indexer)
@@ -819,10 +836,10 @@ class BufferedRef(BufferedRefBase):
     # 1D ``window_ref`` stores all slots contiguously.
     n = self.window_ref.shape[0] // self.buffer_count
     if window_slice is None:
-      return self.window_ref.at[pl.ds(slot * n, n)]
+      return self.window_ref.at[ds(slot * n, n)]
     assert len(window_slice) == 1
     return self.window_ref.at[
-        pl.ds(slot * n + window_slice[0].start, window_slice[0].size)
+        ds(slot * n + window_slice[0].start, window_slice[0].size)
     ]
 
   def copy_in(self, src_ref, grid_indices):
@@ -950,7 +967,7 @@ def fetch_with_lookahead(buffered_ref, src_ref,
     will_change = _tuples_differ(block_indices, next_block_indices)
     pred = will_change
     bref = buffered_ref.with_slot_index(copy_in_slot=cumulative_copy_in)
-    @pl.when(pred)
+    @when(pred)
     def _start():
       bref.copy_in(src_ref, next_indices_offset)
     next_copy_in = cumulative_copy_in + as_uint32(pred)
@@ -1194,7 +1211,7 @@ class Scheduler:
       if buffered_ref.use_lookahead:
         if step == 0:
           # We always fetch the first block.
-          @pl.when(self.first_step)
+          @when(self.first_step)
           def _start():
             buffered_ref.copy_in(src_ref,
               self.add_offset(buffered_ref.next_fetch_indices))
@@ -1219,7 +1236,7 @@ class Scheduler:
           prev_block_indices = buffered_ref.compute_index(*prev_grid_indices)
           block_changed = _tuples_differ(block_indices, prev_block_indices)
           predicate = self.first_step & block_changed
-        @pl.when(predicate)
+        @when(predicate)
         def _start():
           buffered_ref.copy_in(src_ref, fetch_indices)
         buffered_ref = buffered_ref.advance_copy_in_slot(predicate)
@@ -1230,7 +1247,7 @@ class Scheduler:
       return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
 
-    @pl.when(pred)
+    @when(pred)
     @self._named_scope("ep_wait_in")
     def _wait():
       if buffered_ref.is_input:
@@ -1255,7 +1272,7 @@ class Scheduler:
           buffered_ref, src_ref, self.grid, self.grid_offsets, predicate=True
       )
     else:
-      @pl.when(pred)
+      @when(pred)
       @self._named_scope("ep_copy_in")
       def _send():
         if buffered_ref.is_input and buffered_ref.is_buffered:
@@ -1269,7 +1286,7 @@ class Scheduler:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = self.has_changed(buffered_ref) & ~self.first_step
-    @pl.when(pred)
+    @when(pred)
     @self._named_scope("ep_wait_out")
     def _wait():
       if buffered_ref.is_output:
@@ -1287,7 +1304,7 @@ class Scheduler:
       return buffered_ref
     pred = self.will_change_current(buffered_ref) | self.last_step
 
-    @pl.when(pred)
+    @when(pred)
     @self._named_scope("ep_copy_out")
     def _copy_out():
       if buffered_ref.is_output:
@@ -1300,7 +1317,7 @@ class Scheduler:
       return
     pred = self.last_step
 
-    @pl.when(pred)
+    @when(pred)
     @self._named_scope("ep_finalize")
     def _end():
       if buffered_ref.is_output:
@@ -1320,7 +1337,7 @@ class Scheduler:
 # Main pipeline methods
 
 
-def _normalize_specs(specs: Any) -> tuple[pl.BlockSpec, ...]:
+def _normalize_specs(specs: Any) -> tuple[pallas_core.BlockSpec, ...]:
   if not isinstance(specs, (list, tuple)):
     specs = (specs,)
   if isinstance(specs, list):
@@ -1412,8 +1429,8 @@ def _partition_grid(
     # We aren't partitioning the grid
     return grid, (0,) * len(grid)
   if isinstance(core_axis, int):
-    num_cores = pl.num_programs(core_axis)
-    core_id = pl.program_id(core_axis)
+    num_cores = num_programs(core_axis)
+    core_id = program_id(core_axis)
   else:
     num_cores = jax.lax.axis_size(core_axis)
     core_id = jax.lax.axis_index(core_axis)
@@ -1503,7 +1520,7 @@ def _partition_grid(
   num_iters = jnp.where(core_id < rem, base_num_iters + 1, base_num_iters)
   new_grid = jax_util.tuple_update(grid, partition_dimension, num_iters)
   # Ordinarily, we would compute the offset as:
-  #   grid_offset = pl.program_id(core_axis) * num_iters
+  #   grid_offset = program_id(core_axis) * num_iters
   # However, since we have some cores that don't have an extra iteration, we
   # need to adjust the offset by `rem`.
   grid_offset = jnp.where(
@@ -1721,7 +1738,7 @@ def emit_pipeline(
         brefs = map_brefs(scheduler.unalias_local_refs, brefs)
         return brefs, _next_index(indices, grid)
     else:
-      @pl.when(num_steps > 0)
+      @when(num_steps > 0)
       def _():
         # pipeline prologue
         initial_indices = (0,) * len(grid)

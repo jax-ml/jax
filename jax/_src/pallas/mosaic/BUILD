@@ -201,13 +201,14 @@ py_library(
     strict_deps = False,
     deps = [
         ":core",
+        ":helpers",
         ":primitives",
         ":tpu_info",
         "//jax",
         "//jax/_src:api_util",
+        "//jax/_src:lax",
         "//jax/_src:util",
         "//jax/_src/pallas",
-        "//jax/experimental:pallas",
         "//jax/extend:backend",
     ] + py_deps("numpy"),
 )
