@@ -52,14 +52,14 @@ def as_torch_kernel(fn):
   Example::
 
       @functools.partial(
-          pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+          plgpu.kernel, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
       )
-      def add_kernel(x_ref, y_ref, o_ref):
-        o_ref[...] = x_ref[...] + y_ref[...]
+      def kernel(x_gmem_ref, y_gmem_ref, o_gmem_ref):
+        ...
 
       x = torch.arange(128, dtype=torch.int32, device="cuda")
       y = x * x
-      out = plgpu.as_torch_kernel(add_kernel)(x, y)
+      out = plgpu.as_torch_kernel(kernel)(x, y)
   """
   @functools.wraps(fn)
   def wrapper(*args):
