@@ -1412,7 +1412,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
       ctx.name_stack.extend(result.wrapped_name), ctx.traceback):
     call = func_dialect.CallOp(
         result.flat_output_types, result.symbol_ref, flat_args)
-  mlir.wrap_compute_type_in_place(ctx, call)  # pyrefly: ignore[bad-argument-type]
+  mlir.wrap_compute_type_in_place(ctx, call.operation)
   out_nodes = result.output_treedef.unflatten(call.results)
   if effects:
     tokens, out_nodes = split_list(out_nodes, [len(effects)])

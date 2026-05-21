@@ -2408,6 +2408,8 @@ def _platforms_for_eqn(ctx: LoweringRuleContext) -> tuple[str, ...]:
                ctx.platforms or ctx.module_context.platforms)
 
 def _get_owner(v):
+  if isinstance(v, ir.Operation):
+    return v
   if isinstance(v, ir.BlockArgument):
     return v.owner
   owner = v.owner
@@ -2496,9 +2498,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
     flat_output, _ = ir_tree_registry.flatten(output)
     for o in flat_output:
       if not isinstance(o, ir.BlockArgument):
-        owner = _get_owner(o)
-        wrap_compute_type_in_place(ctx, owner)
-        wrap_xla_metadata_in_place(ctx, owner)
+        wrap_compute_type_in_place(ctx, o)
+        wrap_xla_metadata_in_place(ctx, o)
     return flat_output
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
@@ -2541,9 +2542,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
                         f"{description}, got output {output}") from e
       for o in out_nodes:
         if not isinstance(o, ir.BlockArgument):
-          owner = _get_owner(o)
-          wrap_compute_type_in_place(ctx, owner)
-          wrap_xla_metadata_in_place(ctx, owner)
+          wrap_compute_type_in_place(ctx, o)
+          wrap_xla_metadata_in_place(ctx, o)
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
         out_nodes = [inner_ctx.tokens_out.get(eff)
@@ -2735,9 +2735,10 @@ def _update_frontend_attributes(op, attrs):
 
 
 # TODO(yashkatariya): Delete this after legacy compute_on is deleted.
-def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
+def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Value | ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is None or ctx.jaxpr_eqn_ctx.compute_type is None:
     return
+  op = _get_owner(op)
 
   if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
     _, stream = ctx.jaxpr_eqn_ctx.compute_type.split(":", 1)
@@ -2754,17 +2755,19 @@ def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> No
   _update_frontend_attributes(op, dict_attr)
 
 
-def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
+def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Value | ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is None:
     return
   if not ctx.jaxpr_eqn_ctx.xla_metadata:
+    return
+  op = _get_owner(op)
+  if not isinstance(op, ir.Operation):
     return
   ctx_attributes = {}
   for k, v in ctx.jaxpr_eqn_ctx.xla_metadata.items():
     v_str = str(v).lower() if isinstance(v, bool) else str(v)
     ctx_attributes[k] = ir.StringAttr.get(v_str)
-  if isinstance(op, ir.Operation):
-    _update_frontend_attributes(op, ctx_attributes)
+  _update_frontend_attributes(op, ctx_attributes)
 
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
@@ -2795,7 +2798,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
       out = hlo.broadcast_in_dim(
           result_type, op,
           dense_int_array(broadcast_dimensions))
-    wrap_compute_type_in_place(ctx, _get_owner(out))
+    wrap_compute_type_in_place(ctx, out)
     return out
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
