@@ -108,9 +108,14 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
       // NOTE(dsuo): FFI arguments and return buffers are sized assuming
       // minimum 1-byte element sizes, even if the data itself is packed. We
       // assume that 2-bit and 4-bit types are packed.
-      size_t size_bytes = arg->element_count() * bits_per_element / 8;
-      buffer = xla::UnpackIntN(bits_per_element, static_cast<const char*>(data),
-                               size_bytes);
+      size_t size_bytes =
+          xla::CeilOfRatio<size_t>(arg->element_count() * bits_per_element, 8);
+      auto* new_buffer = new char[arg->element_count()];
+      xla::UnpackIntN(
+          bits_per_element,
+          absl::MakeConstSpan(static_cast<const char*>(data), size_bytes),
+          absl::MakeSpan(new_buffer, arg->element_count()));
+      buffer.reset(new_buffer);
       data = buffer.get();
     }
     // We pass in data using default numpy layout i.e., std::nullopt.
@@ -197,10 +202,16 @@ ffi::Error XlaFfiPythonCpuCallback(xla::FfiLoadedHostCallbacks* callbacks,
       // NOTE(dsuo): FFI arguments and return buffers are sized assuming
       // minimum 1-byte element sizes, even if the data itself is packed. We
       // assume that 2-bit and 4-bit types are packed.
-      buffer = xla::PackIntN(bits_per_element, static_cast<const char*>(data),
-                             size_bytes);
+      const int64_t packed_size =
+          xla::CeilOfRatio<size_t>(size_bytes * bits_per_element, 8);
+      auto* new_buffer = new char[packed_size];
+      xla::PackIntN(
+          bits_per_element,
+          absl::MakeConstSpan(static_cast<const char*>(data), size_bytes),
+          absl::MakeSpan(new_buffer, packed_size));
+      buffer.reset(new_buffer);
       data = buffer.get();
-      size_bytes = (size_bytes * bits_per_element) / 8;
+      size_bytes = packed_size;
     }
 
     // Copy data to output buffer if haven't already or modified the data to

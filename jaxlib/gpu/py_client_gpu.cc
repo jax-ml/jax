@@ -148,12 +148,16 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
       // NOTE(dsuo): FFI arguments and return buffers are sized assuming
       // minimum 1-byte element sizes, even if the data itself is packed. We
       // assume that 2-bit and 4-bit types are packed.
-      auto size_bytes = arg->element_count() * bits_per_element / 8;
-      auto buffer = xla::UnpackIntN(
-          bits_per_element, static_cast<const char*>(host_input_buffers[i]),
-          size_bytes);
+      size_t size_bytes =
+          xla::CeilOfRatio<size_t>(arg->element_count() * bits_per_element, 8);
+      auto* buffer = new char[arg->element_count()];
+      xla::UnpackIntN(
+          bits_per_element,
+          absl::MakeConstSpan(static_cast<const char*>(host_input_buffers[i]),
+                              size_bytes),
+          absl::MakeSpan(buffer, arg->element_count()));
       delete[] static_cast<char*>(host_input_buffers[i]);
-      host_input_buffers[i] = buffer.release();
+      host_input_buffers[i] = buffer;
     }
     nb::capsule base(host_input_buffers[i], [](void* ptr) noexcept {
       delete[] static_cast<char*>(ptr);
@@ -237,10 +241,16 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
       // NOTE(dsuo): FFI arguments and return buffers are sized assuming
       // minimum 1-byte element sizes, even if the data itself is packed. We
       // assume that 2-bit and 4-bit types are packed.
-      buffer = xla::PackIntN(bits_per_element, static_cast<const char*>(data),
-                             size_bytes);
+      size_t packed_size =
+          xla::CeilOfRatio<size_t>(size_bytes * bits_per_element, 8);
+      auto* new_buffer = new char[packed_size];
+      xla::PackIntN(
+          bits_per_element,
+          absl::MakeConstSpan(static_cast<const char*>(data), size_bytes),
+          absl::MakeSpan(new_buffer, packed_size));
+      buffer.reset(new_buffer);
       data = buffer.get();
-      size_bytes = (size_bytes * bits_per_element) / 8;
+      size_bytes = packed_size;
     }
 
     auto gpu_res = gpuMemcpyAsync(ret->untyped_data(), data, size_bytes,
