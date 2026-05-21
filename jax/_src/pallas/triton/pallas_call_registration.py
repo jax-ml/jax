@@ -128,7 +128,7 @@ def pallas_call_lowering(
     serialized_metadata = json.dumps(dict(metadata))
 
   # TODO(b/394629193): Remove this once the minimum jaxlib version is >0.10.1.
-  if jaxlib_version <= (0, 10, 1):
+  if jaxlib_version <= (0, 10, 2):
     out_types = [
       ir.RankedTensorType.get(bm.array_aval.shape,
                               mlir.dtype_to_ir_type(bm.array_aval.dtype))
