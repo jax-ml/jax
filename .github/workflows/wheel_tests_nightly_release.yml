@@ -181,7 +181,9 @@ jobs:
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
           python: ["3.12", "3.13", "3.14"]
           rocm: [
-            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", manylinux-image: ""},
+            {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        manylinux-image: ""},
+            {label: "TheRock 7.13",   wheel-version: "7", release-version: "therock-7.13.0",  manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-7.13.0:latest"},
+            {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"},
           ]
           exclude:
             - artifact: "jax-rocm-pjrt"
@@ -214,7 +216,9 @@ jobs:
           runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
           python: ["3.12", "3.13", "3.14"]
           rocm: [
-            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
+            {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        tag: "rocm720"},
+            {label: "TheRock 7.13",   wheel-version: "7", release-version: "therock-7.13.0",  tag: "therock-7.13.0"},
+            {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", tag: "therock-latest"},
           ]
     name: "Pytest ROCm (${{ matrix.rocm.label }})"
     with:
@@ -241,7 +245,9 @@ jobs:
           runner: ["linux-x86-64-1gpu-amd"]
           python: ["3.12", "3.13", "3.14"]
           rocm: [
-            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
+            {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        tag: "rocm720"},
+            {label: "TheRock 7.13",   wheel-version: "7", release-version: "therock-7.13.0",  tag: "therock-7.13.0"},
+            {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]
     name: "Bazel ROCm (${{ matrix.rocm.label }})"
