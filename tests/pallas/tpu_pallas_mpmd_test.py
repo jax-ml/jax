@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for Pallas MPMD kernels."""
+
 import dataclasses
 import functools
 import re
@@ -22,11 +23,13 @@ import jax
 from jax._src import core as jax_core
 from jax._src import hijax
 from jax._src import test_util as jtu
+import jax.ad_checkpoint
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 import numpy as np
+
 
 jax.config.parse_flags_with_absl()
 
@@ -565,6 +568,33 @@ class MpmdTest(PallasSCTest):
     x = jnp.arange(self.sc_info.num_lanes, dtype=jnp.int32)
     out = jax.vmap(run_kernel)(x[jnp.newaxis])
     np.testing.assert_array_equal(out, x[jnp.newaxis] + 1)
+
+  def test_remat_with_checkpoint(self):
+    mesh = pltpu.create_tensorcore_mesh("tc", num_cores=1)
+
+    kernel_impl = pl.kernel(
+        pltpu.sync_copy,
+        mesh=mesh,
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+
+    # NOTE: ``mpmd_map`` does not yet have a general purpose jvp rule, so we
+    # need to use ``custom_vjp`` to define one.
+    @jax.custom_vjp
+    def kernel(x):
+      return kernel_impl(x)
+
+    kernel.defvjp(lambda x: (kernel_impl(x), ()), lambda res, g: (g,))
+
+    def f(x):
+      def block(x):
+        y = jax.ad_checkpoint.checkpoint_name(x * 2.0, name="y")
+        return kernel(y)
+      policy = jax.checkpoint_policies.save_only_these_names("y")
+      return jax.remat(block, policy=policy)(x).sum()
+
+    x = jnp.ones((8, 128), dtype=jnp.float32)
+    np.testing.assert_array_equal(jax.grad(f)(x), jnp.full_like(x, 2.0))
 
   @parameterized.product(
       use_tc_tiling=(False, True), full_core_spec=(True, False),
