@@ -1642,13 +1642,13 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                          out_primal_avals), residuals, maybe_accums)
 
 def check_accum(aval, acc):
-  if aval != acc.aval:
+  if not core.typecompat(acc.aval, aval):
     raise ValueError(f"Accumulator aval mismatch: expected {aval}, got {acc.aval}")
   return acc
 
 def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
               maybe_accums, out_ct):
-  cts_flat, out_tree_ = tree_flatten(out_ct)
+  cts_flat, out_tree_ = tree_flatten(out_ct, is_leaf=lambda x: isinstance(x, ad.Zero))
   if out_tree != out_tree_:
     _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
@@ -1708,7 +1708,7 @@ structure of the differentiated function {jaxpr.debug_info.func_src_info}.
 But the tree structures differ:
 """
   msg += '\n'.join(f"  * out{keystr(path)} was a {thing1} in the original "
-                   f" output, but a {thing2} here, so {explanation}."
+                   f"output, but a {thing2} here, so {explanation}."
                    for path, thing1, thing2, explanation
                    in equality_errors_pytreedef(out_tree, ct_tree))
   raise ValueError(msg)
@@ -1717,6 +1717,7 @@ But the tree structures differ:
 def _vjp_check_ct_avals(cts, primal_avals):
   # TODO(mattjj): improve this error  by flattening with keys in the first place
   for ct, aval in zip(cts, primal_avals):
+    if isinstance(ct, ad.Zero): continue
     ct_aval = typeof(ct)
     ct_aval_expected = aval.to_ct_aval()
     if (not core.typecompat(ct_aval, ct_aval_expected) and

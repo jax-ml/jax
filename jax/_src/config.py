@@ -1264,6 +1264,15 @@ scan3 = bool_state(
 )
 
 
+remat3 = bool_state(
+    name='jax_remat3',
+    default=False,
+    upgrade=True,
+    help='If True, embrace the future of remat.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 custom_vjp3 = bool_state(
     name='jax_custom_vjp3',
     default=False,

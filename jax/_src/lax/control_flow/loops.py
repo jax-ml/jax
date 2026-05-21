@@ -53,6 +53,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
+from jax._src.interpreters import remat
 from jax._src.lax import lax
 from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.lax import slicing
@@ -1454,6 +1455,15 @@ def _scan_state_partial_discharge_rule(
   assert next(refvals_iter, None) is None
   return refvals_out, [*carry, *ys]
 
+def _scan_remat(policy, *args, jaxpr, **params):
+  jaxpr_fwd, jaxpr_rem_, num_res = remat.remat_jaxpr(jaxpr, policy)
+  all_out = scan_p.bind(*args, jaxpr=jaxpr_fwd, **params)
+  primals_out, res = split_list(all_out, [len(jaxpr.outvars)])
+  jaxpr_rem = pe.move_binders_to_back(jaxpr_rem_, [True] * num_res)
+  def rem(*args):
+    return scan_p.bind(*args, *res, jaxpr=jaxpr_rem, **params)
+  return primals_out, rem
+
 scan_p = core.Primitive("scan")
 scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
 scan_p.multiple_results = True
@@ -1471,6 +1481,7 @@ core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_partial_discharge_rule(scan_p)(_scan_state_partial_discharge_rule)
+remat.rules[scan_p] = _scan_remat
 
 def _scan_is_high(*_, jaxpr, **__) -> bool:
   return jaxpr.jaxpr.is_high

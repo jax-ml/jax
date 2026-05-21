@@ -41,10 +41,12 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import remat
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
 from jax._src.typing import ArrayLike
-from jax._src.util import safe_map, safe_zip, split_list, partition_list, unzip2
+from jax._src.util import (safe_map, safe_zip, split_list, partition_list,
+                           unzip2, split_list_checked)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import numpy as np
@@ -924,6 +926,25 @@ def _cond_typecheck(bind_time, *in_atoms, branches, **params):
       f'called with operands of type {_avals_short(op_avals)}')
   return jaxpr0.out_avals, joined_effects
 
+def _cond_remat(policy, *args, branches, **params):
+  branches_fwd, branches_rem, branch_res_avals = [], [], []
+  for jaxpr in branches:
+    jaxpr_fwd, jaxpr_rem, num_res = remat.remat_jaxpr(jaxpr, policy)
+    branches_fwd.append(jaxpr_fwd)
+    branches_rem.append(jaxpr_rem)
+    _, res_avals = split_list_checked(jaxpr_fwd.out_avals, [len(jaxpr.out_avals), num_res])
+    branch_res_avals.append(res_avals)
+  merged_avals, branch_res_avals = _merge_branch_residuals(branch_res_avals)
+  branches_fwd = _join_cond_outputs(
+      branches_fwd, merged_avals, branch_res_avals, len(jaxpr.out_avals))
+  branches_rem = _join_cond_pe_staged_jaxpr_inputs(
+      branches_rem, merged_avals, branch_res_avals)
+  all_out = cond_p.bind(*args, branches=branches_fwd, **params)
+  primals_out, res = split_list(all_out, [len(jaxpr.out_avals)])
+  def rem(idx, *args):
+    return cond_p.bind(idx, *res, *args, branches=branches_rem, **params)
+  return primals_out, rem
+
 
 BranchesPlatforms = tuple[tuple[str, ...] | None, ...]
 # cond_p takes an optional branches_platforms param of type `BranchesPlatforms`
@@ -947,6 +968,7 @@ batching.fancy_primitive_batchers[cond_p] = _cond_batching_rule
 core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
+remat.rules[cond_p] = _cond_remat
 
 def _cond_is_high(*_, branches, **__) -> bool:
   return any(j.jaxpr.is_high for j in branches)
