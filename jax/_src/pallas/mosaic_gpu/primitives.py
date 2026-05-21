@@ -5036,9 +5036,8 @@ def _semaphore_signal_multicast_lowering(
       else:
         mgpu_utils.warpgroup_barrier()
 
-    predicate = None
-    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-      predicate = ctx.module_ctx.single_lane_predicate
+    assert ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane
+    predicate = ctx.module_ctx.single_lane_predicate
 
     mgpu_utils.SemaphoreRef.signal_multimem(
         mgpu_utils.memref_ptr(multi_ref), val, predicate=predicate
