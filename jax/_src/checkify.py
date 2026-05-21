@@ -962,7 +962,7 @@ def shard_map_error_check(
   new_in_specs = (*([P()] * num_error_vals), *in_specs)
   new_vals_in = [*err_vals, *vals_in]
   in_avals = list(map(core.typeof, new_vals_in))
-  manual_axes = kwargs.get('manual_axes')
+  manual_axes = kwargs.get('newly_manual_axes')
   check_vma = kwargs.get('check_vma')
   for i, v in enumerate(in_avals):
     if not (sharder := core.shard_aval_handlers.get(type(v))):
