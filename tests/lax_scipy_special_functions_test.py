@@ -350,6 +350,18 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       result_jit = lsp_special.expi(x)
     self.assertAllClose(result_jit, result_nojit)
 
+  def testDigammaBoundaryValues(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37763
+    # digamma has a simple pole at x = 0, so digamma(+0) should be -inf and
+    # digamma(-0) should be +inf to match scipy.special.digamma, not NaN.
+    dtype = dtypes.default_float_dtype()
+    x_samples = np.array([0.0, -0.0, 1.0, 0.5, -1.0], dtype=dtype)
+    args_maker = lambda: (x_samples,)
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(lsp_special.digamma, osp_special.digamma,
+                            args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.digamma, args_maker, rtol=rtol)
+
   def testGammaIncBoundaryValues(self):
     dtype = dtypes.default_float_dtype()
     nan = float('nan')
