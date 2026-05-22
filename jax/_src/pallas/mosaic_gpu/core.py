@@ -26,6 +26,7 @@ import math
 from typing import Any, ClassVar, Literal, Union
 
 import jax
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_batching
 from jax._src import dtypes
@@ -37,9 +38,9 @@ from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
-from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
@@ -284,38 +285,47 @@ def kernel(
   if unwrap_out := not isinstance(out_shape, (tuple, list)):
     out_shape = (out_shape,)
 
+  mesh = Mesh(
+      grid=grid,
+      grid_names=grid_names,
+      cluster=cluster,
+      cluster_names=cluster_names,
+      num_threads=num_threads,
+      thread_name=thread_name,
+      **mesh_kwargs,
+  )
+
+  # TODO(slebedev): Use mesh-specific batching rules in ``mpmd_map`` instead.
   @custom_batching.custom_vmap
   def wrapper(*operands):
-    def stateful(operand_and_out_refs):
-      operand_refs, out_refs = operand_and_out_refs
-      mesh = Mesh(
-          grid=grid,
-          grid_names=grid_names,
-          cluster=cluster,
-          cluster_names=cluster_names,
-          num_threads=num_threads,
-          thread_name=thread_name,
-          **mesh_kwargs)
-      _thread_name = mesh.thread_name if mesh.thread_name is not None else ()
-      def cmap_body():
-        pallas_primitives.run_scoped(
-            functools.partial(body, *operand_refs, *out_refs),
-            *(scratch_shapes if isinstance(scratch_shapes, Sequence) else ()),
-            collective_axes=_thread_name,
-            **(scratch_shapes if isinstance(scratch_shapes, Mapping) else {}),
-        )
-      name = (
-          getattr(body, "__name__", "anonymous")
-          if mesh.kernel_name is None
-          else mesh.kernel_name
+    thread_name = mesh.thread_name if mesh.thread_name is not None else ()
+
+    def kernel_body(*refs):
+      # NOTE: We cannot use the ``scratch_types=`` argument of ``pl.kernel``
+      # for these, because some scratch types return ``TransformedRef``s in
+      # ``get_ref_aval``, which is not yet supported by ``mpmd_map``.
+      pallas_primitives.run_scoped(
+          functools.partial(body, *refs),
+          *scratch_shapes if isinstance(scratch_shapes, Sequence) else (),
+          collective_axes=thread_name,
+          **scratch_shapes if isinstance(scratch_shapes, Mapping) else {},
       )
-      pallas_core.core_map(
-          mesh, compiler_params=compiler_params, interpret=interpret, name=name
-      )(cmap_body)
-    _, outs = state_discharge.run_state(stateful)((
-        operands,
-        jax.tree.map(lambda s: jax.lax.empty(s.shape, s.dtype), out_shape),
-    ))
+
+    name = (
+        getattr(body, "__name__", "anonymous")
+        if mesh.kernel_name is None
+        else mesh.kernel_name
+    )
+    # TODO(slebedev): This is only here for backward compatibility. Remove.
+    with config._check_vma(False):
+      outs = pallas_helpers.kernel(
+          kernel_body,
+          out_type=out_shape,
+          mesh=mesh,
+          compiler_params=compiler_params,
+          interpret=interpret,
+          name=name,
+      )(*operands)
     return outs[0] if unwrap_out else outs
 
   @wrapper.def_vmap
@@ -1481,6 +1491,15 @@ class Mesh:
   def check_is_compatible_with(self, other_mesh):
     raise NotImplementedError()
 
+  @property
+  def core_type(self) -> str:
+    return "gpu"
+
+  @property
+  def supported_memory_spaces(self) -> Sequence[MemorySpace]:
+    return [*MemorySpace]
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class WarpMesh:
   """Represents a mesh over individual warps within a warpgroup.
@@ -1506,6 +1525,18 @@ class WarpMesh:
   def discharges_effect(self, effect: jax_core.Effect) -> Literal[False]:
     del effect
     return False
+
+  def check_is_compatible_with(self, other_mesh):
+    raise NotImplementedError()
+
+  @property
+  def core_type(self) -> str:
+    return "gpu"
+
+  @property
+  def supported_memory_spaces(self) -> Sequence[MemorySpace]:
+    return [GMEM, SMEM, TMEM]
+
 
 def _gpu_mesh_discharge_rule(
     in_avals,

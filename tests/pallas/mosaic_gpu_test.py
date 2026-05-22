@@ -25,7 +25,7 @@ import sys
 import tempfile
 import traceback
 import types
-from typing import ClassVar, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING
 from unittest import mock
 
 from absl.testing import absltest
@@ -270,17 +270,22 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
           grid_env = util.merge_lists(
               which_parallel,
               [*map(pallas_core.GridAxis, indices, sequential_grid)],
-              [
-                  pallas_core.GridAxis(
-                      lax.axis_index(f"d{i}"), lax.axis_size(f"d{i}")
-                  )
-                  for i, _ in enumerate(parallel_grid)
-              ],
+              parallel_grid_env,
           )
           with pallas_core.grid_env(grid_env):
             fn(*args, *scratch_refs)
 
-        pipeline(*gmem_refs)
+        parallel_grid_env = [
+            pallas_core.GridAxis(
+                lax.axis_index(f"d{i}"), lax.axis_size(f"d{i}")
+            )
+            for i, _ in enumerate(parallel_grid)
+        ]
+        grid_env: list[Any] = util.merge_lists(
+            which_parallel, [None] * len(sequential_grid), parallel_grid_env
+        )
+        with pallas_core.grid_env(grid_env):
+          pipeline(*gmem_refs)
 
       return wrapper
 
@@ -1259,7 +1264,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           "testcase_name": "2d_extract_dyn",
           "shape": (64, 64),
           "indexers": lambda in_dev: (
-              pl.program_id(0) + 4 if in_dev else jnp.array(4),
+              lax.axis_index("x") + 4 if in_dev else jnp.array(4),
               slice(0, 64),
           ),
       },
@@ -1274,7 +1279,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
             plgpu.Barrier(),
         ],
         grid=(1,),
-        grid_names=("_",),
+        grid_names=("x",),
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       scratch_ref_sliced = scratch_ref
@@ -6336,7 +6341,7 @@ class PipelineTest(PallasTest):
       )
 
     def scoped_kernel(x_gmem, o_gmem, x_smem, o_smem, barrier):
-      gmem_slice = pl.ds(pl.program_id(0) * 32, 32)
+      gmem_slice = pl.ds(lax.axis_index("x") * 32, 32)
 
       def body(step, _):
         slot = step % max_concurrent_steps
@@ -6525,7 +6530,7 @@ class PipelineTest(PallasTest):
     num_steps2 = 5
 
     def kernel(x_gmem, o_gmem):
-      pid = pl.program_id(0)
+      pid = lax.axis_index("x")
       plgpu.emit_pipeline(
           kernel_body,
           in_specs=[pl.BlockSpec((32, 16), lambda i: (pid, i))],
@@ -6543,7 +6548,7 @@ class PipelineTest(PallasTest):
         kernel,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
         grid=(num_steps1,),
-        grid_names=("_", ),
+        grid_names=("x",),
     )
     y = x + 1.0
     np.testing.assert_array_equal(kernel_fn(x), y)
@@ -7852,16 +7857,14 @@ class SemaphoreTest(PallasTest):
     )
     text = jax.jit(kernel).lower(x, x).as_text()
     self.assertIn(
-        r"output_operand_aliases ="
-        r" [#stablehlo.output_operand_alias<output_tuple_indices = [0],"
-        r" operand_index = 2, operand_tuple_indices = []>,"
-        r" #stablehlo.output_operand_alias<output_tuple_indices = [1],"
-        r" operand_index = 3, operand_tuple_indices = []>]",
+        "output_operand_aliases ="
+        " [#stablehlo.output_operand_alias<output_tuple_indices = [1],"
+        " operand_index = 2, operand_tuple_indices = []>]",
         text,
     )
     self.assertIn(
-        r"(tensor<128xf32>, tensor<128xf32>, tensor<128xf32>, tensor<4xi32>) ->"
-        r" (tensor<128xf32>, tensor<4xi32>)",
+        "(tensor<128xf32>, tensor<128xf32>, tensor<4xi32>) ->"
+        " (tensor<128xf32>, tensor<4xi32>)",
         text,
     )
 
@@ -7881,10 +7884,7 @@ class SemaphoreTest(PallasTest):
     text = jax.jit(kernel).lower().as_text()
     np.testing.assert_array_equal(kernel(), jnp.ones((128,), jnp.float32))
     # The semaphore array is scaled up by the grid size.
-    self.assertIn(
-        r"(tensor<128xf32>, tensor<2xi32>) -> (tensor<128xf32>, tensor<2xi32>)",
-        text,
-    )
+    self.assertIn("(tensor<2xi32>) -> (tensor<128xf32>, tensor<2xi32>)", text)
 
   def test_with_profiler(self):
     # Dealing with profiler and semaphores together is tricky because they both
@@ -7905,8 +7905,7 @@ class SemaphoreTest(PallasTest):
       text = jax.jit(kernel).lower().as_text()
       np.testing.assert_array_equal(kernel(), jnp.ones((128,), jnp.float32))
     self.assertIn(
-        r"(tensor<128xf32>, tensor<2xi32>) ->"
-        r" (tensor<128xf32>, tensor<2xi32>, tensor<256xui32>)",
+        "(tensor<2xi32>) -> (tensor<128xf32>, tensor<2xi32>, tensor<256xui32>)",
         text,
     )
 

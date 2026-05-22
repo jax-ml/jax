@@ -45,6 +45,13 @@ Remember to align the itemized text with the first line of an item within a list
     `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
     parameter.
 
+* Changes
+
+  * Breaking change: {func}`jax.experimental.pallas.program_id` and
+    {func}`jax.experimental.pallas.num_programs` no longer work inside
+    kernels defined via {func}`jax.experimental.pallas.mosaic_gpu.kernel`.
+    Use {func}`jax.lax.axis_index` and {func}`jax.lax.axis_size` instead.
+
 * Removals
 
   * Deleted `plgpu.unswizzle_ref` and `plgpu.untile_ref`.
