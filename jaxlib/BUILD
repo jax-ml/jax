@@ -63,6 +63,7 @@ pytype_strict_library(
         ":cpu_feature_guard",
         ":jax",
         ":jaxlib_files",
+        ":py_pjrt_host_callback",
         ":utils",
         ":weakref_lru_cache",
         ":xla_client",
@@ -165,6 +166,7 @@ pywrap_library(
         ":_pathways",
         ":_pretty_printer",
         ":_sdy_mpmd",
+        ":py_pjrt_host_callback",
         ":utils",
         ":weakref_lru_cache",
         "//jaxlib/mlir/_mlir_libs:_chlo",
@@ -751,6 +753,24 @@ nanobind_pywrap_extension(
         "@xla//xla/python/ifrt_proxy/client:registry",
         "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+nanobind_pywrap_extension(
+    name = "py_pjrt_host_callback",
+    srcs = ["py_pjrt_host_callback.cc"],
+    deps = [
+        ":py_client",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla:literal",
+        "@xla//xla/pjrt:pjrt_executable",
+        "@xla//xla/python:types",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/python/pjrt_ifrt",
+        "@xla//xla/tsl/concurrency:ref_count",
     ],
 )
 
