@@ -13,6 +13,10 @@ load("@xla//:workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()
 
+load("@bazel_features//:deps.bzl", "bazel_features_deps")
+
+bazel_features_deps()
+
 # Initialize Hermetic toolchains
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
