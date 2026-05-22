@@ -125,7 +125,7 @@ class DebugCheckTest(jtu.JaxTestCase):
   def test_trigger_bounds_checker(self, oob):
     size = plsc.get_sparse_core_info().num_lanes
     x = jnp.arange(size, dtype=jnp.int32)
-    indices = jnp.arange(size, dtype=jnp.int32) + jnp.astype(oob, jnp.int32)
+    indices = jnp.arange(size, dtype=jnp.int32) + jnp.astype(oob * 128, jnp.int32)
 
     @pl.kernel(
         out_type=x,
