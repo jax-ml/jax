@@ -391,9 +391,7 @@ def pallas_call_tpu_lowering_rule(
   if axis_context is not None:
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       jax_mesh = axis_context.mesh
-  mlir_ctx = mlir.JaxIrContext()
-  mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
-  mlir_ctx.load_all_available_dialects()
+  mlir_ctx = ctx.module_context.context
   tpu.register_dialect(mlir_ctx)
 
   with mlir_ctx, ir.Location.unknown(mlir_ctx):
@@ -578,9 +576,7 @@ def mpmd_map_tpu_lowering_rule(
   if axis_context is not None:
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       jax_mesh = axis_context.mesh
-  mlir_ctx = mlir.JaxIrContext()
-  mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
-  mlir_ctx.load_all_available_dialects()
+  mlir_ctx = ctx.module_context.context
   tpu.register_dialect(mlir_ctx)
 
   some_jaxpr = jaxprs[0]
