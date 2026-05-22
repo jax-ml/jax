@@ -95,7 +95,8 @@ def transposed_ragged_dot(
 
       # This slice is potentially out of bounds, but we never access the
       # out of bound part in emit_pipeline.
-      gmem_slice = pl.ds(group_block_starts_gmem[g_i], k)
+      group_block_start = pl.multiple_of(group_block_starts_gmem[g_i], block_k)
+      gmem_slice = pl.ds(group_block_start, k)
 
       def acc_scope(acc_ref):
         def block_matmul(block_idx, lhs_smem, rhs_smem):
@@ -189,11 +190,15 @@ def transposed_ragged_dot(
 
   # There are 132 SMs on a H100 SXM GPU.
   num_sms = jax.devices()[0].core_count
+  compiler_params = plgpu.CompilerParams(
+      lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+  )
   kernel = plgpu.kernel(
       body,
       out_shape=jax.ShapeDtypeStruct((g, m, n), lhs.dtype),
       grid=(num_sms,),
       grid_names=("sm",),
+      compiler_params=compiler_params,
   )
   return kernel(
       group_sizes,
