@@ -5664,8 +5664,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.lax.full_like(arr, 0)
     # The sharding is single device because the sharding of input `arr`` to
     # full_like is not concrete.
-    self.assertEqual(out.sharding, make_single_device_sharding(
-        jax.devices()[0]))
+    self.assertEqual(out.sharding, make_single_device_sharding(jax.devices()[0]))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_slice(self, mesh):
@@ -10870,6 +10869,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     rep_arr = jax.device_put(np.arange(8, dtype=np.float32), P())
     ex_out_g = jax.jit(jax.grad(lambda x: f(x).sum()))(rep_arr)
     self.assertArraysEqual(reshard(out_g, P()), ex_out_g)
+
+  def test_sds_closed_over_to_zeros_like_propagates_sharding_jit(self):
+    mesh = jtu.create_mesh((2,), ('x',), axis_types=(AxisType.Explicit,))
+    am = mesh.abstract_mesh
+
+    with jax.sharding.use_abstract_mesh(am):
+      val = jax.ShapeDtypeStruct((32,), dtype=jnp.float32,
+                                 sharding=NamedSharding(am, P('x')))
+
+      @jax.jit
+      def f():
+        return jnp.zeros_like(val)
+
+      out = f.trace().out_info
+      self.assertEqual(out.sharding, NamedSharding(am, P('x')))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

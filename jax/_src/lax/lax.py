@@ -3808,7 +3808,8 @@ def full_like(x: ArrayLike | DuckTypedArray,
         and not isinstance(x, core.Tracer)
         and hasattr(x, 'sharding')
         and x.sharding is not None
-        and (x.sharding._is_concrete or not get_concrete_mesh().empty)
+        and (x.sharding._is_concrete or not get_concrete_mesh().empty or
+             (isinstance(x.sharding, NamedSharding) and x.sharding.mesh.are_all_axes_explicit))
         and getattr(x, '_committed', True)
         and not weak_type
         and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # pyrefly: ignore[no-matching-overload]
