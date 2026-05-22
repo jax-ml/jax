@@ -45,6 +45,10 @@ Remember to align the itemized text with the first line of an item within a list
     `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
     parameter.
 
+* Removals
+
+  * Deleted `plgpu.unswizzle_ref` and `plgpu.untile_ref`.
+
 ## Released with JAX 0.10.1
 
 * Changes

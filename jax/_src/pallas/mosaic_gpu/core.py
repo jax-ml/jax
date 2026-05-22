@@ -1041,11 +1041,6 @@ def transpose_ref(
     raise ValueError("Can't transpose a TMEM reference.")
   return ref.transpose(permutation)
 
-def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
-  return transform_ref(ref, UntilingTransform(tiling))
-
-def unswizzle_ref(ref, swizzle: int) -> pallas_core.TransformedRef:
-  return transform_ref(ref, UnswizzleRef(swizzle))
 
 
 @tree_util.register_dataclass
