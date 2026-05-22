@@ -305,7 +305,7 @@ def _initialize_barrier_op_lowering_rule(
   return []
 
 
-# TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.1
+# TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.2
 if hasattr(mgpu, "AssumeMultipleOp"):
 
   @_register_lowering(mgpu.AssumeMultipleOp)  # pyrefly: ignore[missing-attribute]
@@ -342,32 +342,30 @@ def _optimization_barrier_op_lowering_rule(
   ]
 
 
-# TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
-if hasattr(mgpu, "GetClusterRefOp"):
-  @_register_lowering(mgpu.GetClusterRefOp)
-  def _get_cluster_ref_op_lowering_rule(
-      _: LoweringContext, op: mgpu.GetClusterRefOp,
-  ) -> Sequence[ir.Value]:
-    index = ir.IndexType.get()
-    specified_idxs = [
-        (d, dim) for d, dim in zip((op.x, op.y, op.z), gpu.Dimension)
-        if d is not None
-    ]
-    if len(specified_idxs) != 1:
-      raise ValueError(
-          "Exactly one cluster dimension must be specified, got"
-          f" {len(specified_idxs)}"
-      )
-    [(idx, dim)] = specified_idxs
-    [in_transforms] = inference_utils.in_transforms(op)
-    result = utils.get_cluster_ref(
-        unwrap_transformed_memref(op.source, in_transforms),
-        dim,
-        arith.index_cast(index, idx),
-        generic=False,
+@_register_lowering(mgpu.GetClusterRefOp)
+def _get_cluster_ref_op_lowering_rule(
+    _: LoweringContext, op: mgpu.GetClusterRefOp,
+) -> Sequence[ir.Value]:
+  index = ir.IndexType.get()
+  specified_idxs = [
+      (d, dim) for d, dim in zip((op.x, op.y, op.z), gpu.Dimension)
+      if d is not None
+  ]
+  if len(specified_idxs) != 1:
+    raise ValueError(
+        "Exactly one cluster dimension must be specified, got"
+        f" {len(specified_idxs)}"
     )
-    [out_transforms] = inference_utils.out_transforms(op)
-    return [wrap_transformed_memref(result, op.result.type, out_transforms)]
+  [(idx, dim)] = specified_idxs
+  [in_transforms] = inference_utils.in_transforms(op)
+  result = utils.get_cluster_ref(
+      unwrap_transformed_memref(op.source, in_transforms),
+      dim,
+      arith.index_cast(index, idx),
+      generic=False,
+  )
+  [out_transforms] = inference_utils.out_transforms(op)
+  return [wrap_transformed_memref(result, op.result.type, out_transforms)]
 
 
 @_register_lowering(arith.ConstantOp)
@@ -584,62 +582,60 @@ def _vector_store_op_lowering_rule(
   return []
 
 
-# TODO(apaszke): Remove once the minimal jaxlib version is 0.10.1
-if hasattr(mgpu, "AsyncStoreSmemOp"):
-  @_register_lowering(mgpu.AsyncStoreSmemOp)
-  def _async_store_smem_op_lowering_rule(
-      ctx: LoweringContext, op: mgpu.AsyncStoreSmemOp
-  ) -> Sequence[ir.Value]:
-    index = ir.IndexType.get()
+@_register_lowering(mgpu.AsyncStoreSmemOp)
+def _async_store_smem_op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.AsyncStoreSmemOp
+) -> Sequence[ir.Value]:
+  index = ir.IndexType.get()
 
-    [to_store_layout] = inference_utils.in_layouts(op)
-    value = _fragmented_array_from_ir(op.valueToStore, to_store_layout)
-    layout = layouts_lib.from_layout_attr(to_store_layout)
-    if not isinstance(layout, fa.TiledLayout):
-      raise NotImplementedError(f"Expected TiledLayout, got {type(layout)}")
+  [to_store_layout] = inference_utils.in_layouts(op)
+  value = _fragmented_array_from_ir(op.valueToStore, to_store_layout)
+  layout = layouts_lib.from_layout_attr(to_store_layout)
+  if not isinstance(layout, fa.TiledLayout):
+    raise NotImplementedError(f"Expected TiledLayout, got {type(layout)}")
 
-    ref = op.destination
-    transforms_attr = inference_utils.in_transforms(op)[0]
-    swizzle = swizzle_from_transforms_attr(transforms_attr)
-    unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
-    tiling_transform, = memref_transforms_from_transforms_attr(transforms_attr)
-    assert isinstance(tiling_transform, lc.TileTransform)
+  ref = op.destination
+  transforms_attr = inference_utils.in_transforms(op)[0]
+  swizzle = swizzle_from_transforms_attr(transforms_attr)
+  unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
+  tiling_transform, = memref_transforms_from_transforms_attr(transforms_attr)
+  assert isinstance(tiling_transform, lc.TileTransform)
 
-    dialect_barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
-    barrier_ref = dialect_barrier.barrier_ref
+  dialect_barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
+  barrier_ref = dialect_barrier.barrier_ref
 
-    cluster_dim = gpu.Dimension(op.cluster_dim.value)  # pyrefly: ignore[missing-attribute]
-    cluster_idx = arith.index_cast(index, op.cluster_idx)
-    cluster_barrier_ref = barrier_ref.remap_to_cluster(cluster_dim, cluster_idx)
+  cluster_dim = gpu.Dimension(op.cluster_dim.value)  # pyrefly: ignore[missing-attribute]
+  cluster_idx = arith.index_cast(index, op.cluster_idx)
+  cluster_barrier_ref = barrier_ref.remap_to_cluster(cluster_dim, cluster_idx)
 
-    total_bits = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
-    if total_bits % (8 * utils.WARPGROUP_SIZE):
-      raise NotImplementedError(
-          f"Transfer of {total_bits} bits is not divisible by "
-          f"{8 * utils.WARPGROUP_SIZE}"
-      )
-    cluster_barrier_ref.arrive_expect_tx(total_bits // 8 // utils.WARPGROUP_SIZE)
+  total_bits = math.prod(value.shape) * utils.bitwidth(value.mlir_dtype)
+  if total_bits % (8 * utils.WARPGROUP_SIZE):
+    raise NotImplementedError(
+        f"Transfer of {total_bits} bits is not divisible by "
+        f"{8 * utils.WARPGROUP_SIZE}"
+    )
+  cluster_barrier_ref.arrive_expect_tx(total_bits // 8 // utils.WARPGROUP_SIZE)
 
-    atomic = None
-    if op.atomic_type is not None:
-      atomic = str(mgpu.AtomicOpType(op.atomic_type.value))  # pyrefly: ignore[missing-attribute]
+  atomic = None
+  if op.atomic_type is not None:
+    atomic = str(mgpu.AtomicOpType(op.atomic_type.value))  # pyrefly: ignore[missing-attribute]
 
-    def store_tiled_async(optimized: bool):
-      value.store_tiled_async(
-          unwrapped_ref,
-          barrier_ref,
-          cluster_dim=cluster_dim,
-          cluster_idx=cluster_idx,
-          swizzle=swizzle.value if swizzle != mgpu.SwizzlingMode.kNoSwizzle else None,
-          optimized=optimized,
-          tiling_rank=len(tiling_transform.tiling),
-          atomic=atomic,  # pyrefly: ignore[bad-argument-type]
-      )
+  def store_tiled_async(optimized: bool):
+    value.store_tiled_async(
+        unwrapped_ref,
+        barrier_ref,
+        cluster_dim=cluster_dim,
+        cluster_idx=cluster_idx,
+        swizzle=swizzle.value if swizzle != mgpu.SwizzlingMode.kNoSwizzle else None,
+        optimized=optimized,
+        tiling_rank=len(tiling_transform.tiling),
+        atomic=atomic,  # pyrefly: ignore[bad-argument-type]
+    )
 
-    optimized = op.optimized.value if op.optimized is not None else None
-    # TODO(bchetioui): Clean this up.
-    _retry_on_failure(store_tiled_async, optimized)
-    return []
+  optimized = op.optimized.value if op.optimized is not None else None
+  # TODO(bchetioui): Clean this up.
+  _retry_on_failure(store_tiled_async, optimized)
+  return []
 
 
 @_register_lowering(mgpu.DebugPrintOp)
@@ -1245,11 +1241,9 @@ def _mgpu_async_store_op_lowering_rule(
     reduction_op = None
 
   peer_id: ir.Value | lc.GlobalBroadcast | None = None
-  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.1
-  if hasattr(store_op, "is_global_broadcast") and store_op.is_global_broadcast.value:
+  if store_op.is_global_broadcast.value:
     peer_id = lc.GLOBAL_BROADCAST
-  # TODO(olechwierowicz): Remove hasattr after min jaxlib is 0.10.1
-  elif hasattr(store_op, "gmem_peer_id") and store_op.gmem_peer_id is not None:
+  elif store_op.gmem_peer_id is not None:
     peer_id = store_op.gmem_peer_id
 
   # TODO(dasenov): Add support for the remaining op properties.

@@ -833,22 +833,20 @@ def _vector_store_constraint_system(
   return system, value_sites_for_variable
 
 
-# TODO(apaszke): Remove once the minimal jaxlib version is 0.10.1
-if hasattr(mgpu, "AsyncStoreSmemOp"):
-  @_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemOp)
-  def _async_store_smem_constraint_system(
-      ctx: DerivationContext,
-      op: mgpu.AsyncStoreSmemOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    system, value_sites_for_variable = _vector_store_constraint_system(ctx, op)
-    var = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
-    extra_constraints = cs.ConstraintSystem(
-        constraints=[
-            cs.NotOfType(var, fa.WGStridedFragLayout),
-            cs.NotOfType(var, fa.WGSplatFragLayout),
-        ]
-    )
-    return system & extra_constraints, value_sites_for_variable
+@_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemOp)
+def _async_store_smem_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncStoreSmemOp,
+) -> ConstraintSystemDerivationRuleResult:
+  system, value_sites_for_variable = _vector_store_constraint_system(ctx, op)
+  var = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
+  extra_constraints = cs.ConstraintSystem(
+      constraints=[
+          cs.NotOfType(var, fa.WGStridedFragLayout),
+          cs.NotOfType(var, fa.WGSplatFragLayout),
+      ]
+  )
+  return system & extra_constraints, value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(mgpu.DebugPrintOp)
@@ -1800,18 +1798,15 @@ def _slice_smem_constraint_system(
   return cs.ConstraintSystem(), {result_variable: [result]}
 
 
-# TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
-if hasattr(mgpu, "GetClusterRefOp"):
-
-  @_add_constraint_system_derivation_rule(mgpu.GetClusterRefOp)
-  def _get_cluster_ref_constraint_system(
-      ctx: DerivationContext,
-      op: mgpu.GetClusterRefOp,
-  ) -> ConstraintSystemDerivationRuleResult:
-    source = ValueSite(op, VariableType.OPERAND, 0)
-    var_source_dest = ctx.producer_ref(source)
-    dest = ValueSite(op, VariableType.RESULT, 0)
-    return cs.ConstraintSystem(), {var_source_dest: [source, dest]}
+@_add_constraint_system_derivation_rule(mgpu.GetClusterRefOp)
+def _get_cluster_ref_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.GetClusterRefOp,
+) -> ConstraintSystemDerivationRuleResult:
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  var_source_dest = ctx.producer_ref(source)
+  dest = ValueSite(op, VariableType.RESULT, 0)
+  return cs.ConstraintSystem(), {var_source_dest: [source, dest]}
 
 
 @_add_constraint_system_derivation_rule(memref.SubViewOp)

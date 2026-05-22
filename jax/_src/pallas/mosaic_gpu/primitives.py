@@ -293,16 +293,6 @@ def _copy_smem_to_gmem_lowering(
   else:
     reduction_op_attr = None
 
-  # TODO(olechwierowicz): Remove this once min jaxlib version is 0.10.1
-  if hasattr(mgpu.dialect.AsyncStoreOp, "gmem_peer_id") and hasattr(
-      mgpu.dialect.AsyncStoreOp, "is_global_broadcast"
-  ):
-    kwargs = {
-        "gmem_peer_id": peer_id,
-        "is_global_broadcast": is_global_broadcast,
-    }
-  else:
-    kwargs = {}
   mgpu.dialect.async_store(
       src,
       dst,
@@ -311,7 +301,8 @@ def _copy_smem_to_gmem_lowering(
       predicate=predicate,
       commit_group=commit_group,
       reduction_op=reduction_op_attr,
-      **kwargs  # pyrefly: ignore[bad-argument-type]
+      gmem_peer_id=peer_id,
+      is_global_broadcast=is_global_broadcast,
   )
   return ()
 

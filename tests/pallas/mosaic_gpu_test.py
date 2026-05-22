@@ -335,7 +335,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertEqual(ref.memory_space, gpu_core.MemorySpace.GMEM)
 
   def test_multiple_of(self):
-    # TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.1
+    # TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.2
     if not hasattr(mgpu.dialect, "AssumeMultipleOp"):
       self.skip_if_wg_semantics()
     shape = (128, 64)
@@ -3506,9 +3506,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters("x", "y")
   def test_cluster_ref_read(self, axis_name):
-    # TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
-    if not hasattr(mgpu.dialect, "GetClusterRefOp"):
-      self.skip_if_wg_semantics()
 
     def kernel(src_ref, dst_ref, scratch_ref, copy_barrier, cluster_barrier):
       my_idx = lax.axis_index(axis_name)
@@ -3544,9 +3541,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(y, expected)
 
   def test_cluster_ref_write(self):
-    # TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
-    if not hasattr(mgpu.dialect, "AsyncStoreSmemOp"):
-      self.skip_if_wg_semantics()
     dtype = jnp.float32
     logical_shape = (64, 32)
     x_shape = (2, 64, 32)
@@ -3575,9 +3569,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x), np.flip(x, axis=0))
 
   def test_cluster_ref_write_atomic(self):
-    # TODO(apaszke): Remove once minimum supported jaxlib is 0.10.1
-    if not hasattr(mgpu.dialect, "AsyncStoreSmemOp"):
-      self.skip_if_wg_semantics()
     dtype = jnp.int32
     logical_shape = (64, 32)
     x_shape = (2, 64, 32)
