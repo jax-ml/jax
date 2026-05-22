@@ -2248,7 +2248,7 @@ def _pareto(key, b, shape, dtype) -> Array:
 
 def t(key: ArrayLike,
       df: RealArray,
-      shape: Shape = (),
+      shape: Shape | None = None,
       dtype: DTypeLikeFloat | None = None,
       *,
       out_sharding: NamedSharding | P | None = None) -> Array:
@@ -2289,8 +2289,9 @@ def t(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `t` must be a float "
                      f"dtype, got {dtype}")
-  shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("t", shape, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "t", shape)
+  _check_all_safe_to_cast("t", dtype, df)
   return maybe_auto_axes(_t, out_sharding,
                          shape=shape, dtype=dtype)(key, df)
 
