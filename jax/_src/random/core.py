@@ -2426,6 +2426,7 @@ def f(key: ArrayLike,
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("f", shape, dfnum, dfden)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "f", shape)
+  _check_all_safe_to_cast("f", dtype, dfnum, dfden)
   return _f(key, dfnum, dfden, shape, dtype, out_sharding)
 
 @jit(static_argnums=(3, 4, 5))
