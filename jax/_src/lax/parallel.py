@@ -156,8 +156,9 @@ def _psum(x, axis_name, *, axis_index_groups, is_async):
   leaves = [lax.convert_element_type(l, np.int32)
             if dtypes.dtype(l) == np.bool_ else l for l in leaves]
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  # handle the constant case specially
-  if all(not isinstance(leaf, core.Tracer) for leaf in leaves):
+  # handle the constant case, non-ragged axis_index_groups case specially
+  if (all(not isinstance(leaf, core.Tracer) for leaf in leaves) and
+      _axis_groups_are_even(axis_index_groups)):
     named_axes, pos_axes = axes_partition = [], []
     for axis in axis_name:
       axes_partition[isinstance(axis, int)].append(axis)
@@ -225,7 +226,9 @@ def pmean(x, axis_name, *, axis_index_groups=None):
   """
   x = psum(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
   n = _axis_size(axis_name, axis_index_groups)
-  return tree_util.tree_map(lambda v: v / n, x)
+  return tree_util.tree_map(
+      lambda v: v / lax.convert_element_type(n, v.dtype), x
+  )
 
 def pmax(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce max on ``x`` over the pmapped axis ``axis_name``.
@@ -314,6 +317,26 @@ def _validate_reduce_axis_index_groups(axis_index_groups):
   axis_space = range(sum(len(group) for group in axis_index_groups))
   if {i for g in axis_index_groups for i in g} != set(axis_space):
     raise ValueError("axis_index_groups must cover all indices exactly once")
+
+def _axis_groups_are_even(axis_index_groups):
+  if axis_index_groups is None:
+    return True
+  axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
+  len_0 = len(axis_index_groups[0])
+  return all(len(g) == len_0 for g in axis_index_groups)
+
+def _validate_even_axis_index_groups(axis_index_groups, collective_name):
+  if axis_index_groups is None:
+    return
+  axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
+  len_0 = len(axis_index_groups[0])
+  for idx, g in enumerate(axis_index_groups):
+    if len(g) != len_0:
+      raise ValueError(
+          f"axis_index_groups must all be the same size for {collective_name}, "
+          f"but got groups with different sizes: group 0 has size {len_0}, "
+          f"group {idx} has size {len(g)}"
+      )
 
 def _canonicalize_axis_index_groups(axis_index_groups):
   if axis_index_groups is None:
@@ -562,6 +585,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
     Otherwise array with shape similar to the input shape, except with split_axis
     divided by axis size and concat_axis multiplied by axis size.
   """
+  _validate_even_axis_index_groups(axis_index_groups, 'all_to_all')
   return _all_to_all_is_async(x, axis_name, split_axis, concat_axis,
                               axis_index_groups=axis_index_groups, tiled=tiled,
                               is_async=False)
@@ -1741,6 +1765,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False,
    [[12 13 14 15]
     [ 4  5  6  7]]]
   """
+  _validate_even_axis_index_groups(axis_index_groups, 'all_gather')
   return _all_gather_is_async(x, axis_name, axis_index_groups=axis_index_groups,
                               axis=axis, tiled=tiled, to=to, is_async=False)
 
@@ -2258,6 +2283,7 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
    [12 14]
    [16 18]]
   """
+  _validate_even_axis_index_groups(axis_index_groups, 'psum_scatter')
   return _psum_scatter_is_async(x, axis_name,
                                 scatter_dimension=scatter_dimension,
                                 axis_index_groups=axis_index_groups,

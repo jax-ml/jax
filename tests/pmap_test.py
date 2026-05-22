@@ -510,6 +510,24 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertAllClose(
           actual, expected[i // 2 * scatter_len:(i // 2 + 1) * scatter_len])
 
+  def testPsumScatterUnevenReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas < 3:
+      raise SkipTest("Test requires at least 3 devices.")
+    axis_index_groups = [[0], np.arange(1, replicas)]
+    f = lambda x: lax.psum_scatter(x, 'i', axis_index_groups=axis_index_groups)
+    expected_err = (
+        "axis_index_groups must all be the same size for psum_scatter, "
+        "but got groups with different sizes: group 0 has size 1, "
+        f"group 1 has size {replicas - 1}"
+    )
+    with self.assertRaisesRegex(ValueError, expected_err):
+      pmap(f, 'i')(
+          np.arange(replicas * 4 * replicas, dtype=np.float32).reshape(
+              (replicas, 4 * replicas)
+          )
+      )
+
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
@@ -785,27 +803,44 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("tpu")
-  def testPsumUnevenReplicaGroups(self):
+  @parameterized.named_parameters(
+      ('_psum', lax.psum, np.sum),
+      ('_pmean', lax.pmean, np.mean),
+      ('_pmax', lax.pmax, np.max),
+      ('_pmin', lax.pmin, np.min),
+  )
+  def testReductionUnevenReplicaGroups(self, op, ref_fn):
     replicas = jax.device_count()
     if replicas <= 2:
       raise SkipTest("Test expected devices greater than 2.")
-    axis_index_groups = [[0,1], np.arange(2,replicas)]
-    f = lambda x: x - lax.psum(x, 'i', axis_index_groups=axis_index_groups)
+    axis_index_groups = [[0], np.arange(1, replicas)]
+    f = lambda x: jax.tree.map(
+        lambda a, b: a - b,
+        x,
+        op(x, 'i', axis_index_groups=axis_index_groups),
+    )
     f = pmap(f, 'i')
 
     shape = (replicas, 4)
-    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    def sum_helper(a):
-      return np.broadcast_to(a.sum(0, keepdims=True),
-                              (len(a), x.shape[1]))
-    expected_psum_1 = sum_helper(x[0:2])
-    expected_psum_2 = sum_helper(x[2:])
-    expected_psum = np.concatenate([expected_psum_1, expected_psum_2], 0)
-    expected = x - expected_psum
+    x_array = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    x = {'a': x_array, 'b': x_array * 2.0}
 
-    ans = f(x)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    expected = jax.tree.map(
+        lambda leaf: leaf - np.stack([
+            ref_fn(leaf[g], axis=0) for g in axis_index_groups for _ in g
+        ]),
+        x
+    )
+
+    if jtu.test_device_matches(["tpu"]):
+      with self.assertRaisesRegex(
+          ValueError,
+          "axis_index_groups must all be the same size for TPU lowering",
+      ):
+        f(x)
+    else:
+      ans = f(x)
+      self.assertAllClose(ans, expected, check_dtypes=False)
 
   def testPsumReplicaGroups(self):
     replicas = jax.device_count()
@@ -876,6 +911,20 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected[1::2] = x[1::2]
 
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testAllGatherUnevenReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas <= 2:
+      raise SkipTest("Test expected devices greater than 2.")
+    axis_index_groups = [[0], np.arange(1, replicas)]
+    f = lambda x: lax.all_gather(x, 'i', axis_index_groups=axis_index_groups)
+    expected_err = (
+        "axis_index_groups must all be the same size for all_gather, "
+        "but got groups with different sizes: group 0 has size 1, "
+        f"group 1 has size {replicas - 1}"
+    )
+    with self.assertRaisesRegex(ValueError, expected_err):
+      pmap(f, 'i')(np.arange(replicas, dtype=np.float32))
 
   @parameterized.named_parameters(it.chain.from_iterable([
       (name, prim, False, False),
@@ -1269,6 +1318,24 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.tile(w, reps=device_count).reshape(shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testPswapaxesUnevenReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas <= 2:
+      raise SkipTest("Test expected devices greater than 2.")
+    axis_index_groups = [[0], np.arange(1, replicas)]
+    f = lambda x: lax.pswapaxes(x, 'i', 1, axis_index_groups=axis_index_groups)
+    expected_err = (
+        "axis_index_groups must all be the same size for all_to_all, "
+        "but got groups with different sizes: group 0 has size 1, "
+        f"group 1 has size {replicas - 1}"
+    )
+    with self.assertRaisesRegex(ValueError, expected_err):
+      pmap(f, 'i')(
+          np.arange(replicas * 3 * replicas * 5, dtype=np.float32).reshape(
+              (replicas, 3, replicas, 5)
+          )
+      )
+
   def testAllToAllReplicaGroups(self):
     # If num_devices = 4, these would be the inputs/outputs:
     # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
@@ -1319,6 +1386,24 @@ class PythonPmapTest(jtu.JaxTestCase):
         expected.reshape((2, device_count // 2, device_count // 2)),
         1, 2).reshape(shape)
     self.assertAllClose(fn(x, w), expected, check_dtypes=False)
+
+  def testAllToAllUnevenReplicaGroups(self):
+    replicas = jax.device_count()
+    if replicas <= 2:
+      raise SkipTest("Test expected devices greater than 2.")
+    axis_index_groups = [[0], np.arange(1, replicas)]
+    f = lambda x: lax.all_to_all(
+        x, 'i', 0, 0, axis_index_groups=axis_index_groups
+    )
+    expected_err = (
+        "axis_index_groups must all be the same size for all_to_all, "
+        "but got groups with different sizes: group 0 has size 1, "
+        f"group 1 has size {replicas - 1}"
+    )
+    with self.assertRaisesRegex(ValueError, expected_err):
+      pmap(f, 'i')(
+          np.arange(replicas * 4, dtype=np.float32).reshape((replicas, 4))
+      )
 
   def testArrayBlockUntilReady(self):
     x = np.arange(jax.device_count())
