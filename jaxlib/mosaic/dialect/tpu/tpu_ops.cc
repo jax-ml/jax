@@ -2141,15 +2141,11 @@ LogicalResult PackMaskOp::verify() {
 namespace {
 LogicalResult verifyElementwisePacking(Operation* op, Type unpacked_ty,
                                        Type packed_ty) {
-  if (unpacked_ty.isF32() && !packed_ty.isBF16()) {
+  if (!(unpacked_ty.isF32() && packed_ty.isBF16()) &&
+      !(unpacked_ty.isSignlessInteger() && packed_ty.isSignlessInteger())) {
     return op->emitOpError(
-        "Only packing/unpacking between f32 and bf16 is supported for floats");
-  }
-  if (unpacked_ty.isSignlessInteger(32) && !packed_ty.isSignlessInteger(16) &&
-      !packed_ty.isSignlessInteger(8) && !packed_ty.isSignlessInteger(4)) {
-    return op->emitOpError(
-        "Only packing/unpacking between i32 and i16/i8/i4 is supported for "
-        "integers");
+        "Only packing/unpacking f32 <-> bf16 and integer <-> integer is "
+        "supported");
   }
   return success();
 }
@@ -2169,13 +2165,12 @@ LogicalResult PackElementwiseOp::verify() {
 
   auto src_elem_ty = src_vty.getElementType();
   auto tgt_elem_ty = getTargetType();
-  if (!(src_elem_ty.isF32() && tgt_elem_ty.isBF16()) &&
-      !(src_elem_ty.isSignlessInteger() && tgt_elem_ty.isSignlessInteger())) {
-    return emitOpError(
-        "Only packing f32 -> bf16 and integer -> integer is supported");
+  if (failed(verifyElementwisePacking(*this, /*unpacked_ty=*/src_elem_ty,
+                                      /*packed_ty=*/tgt_elem_ty))) {
+    return failure();
   }
   const int packing_factor =
-      getElementTypeBitwidth(src_vty) / getTypeBitwidth(getTargetType());
+      getElementTypeBitwidth(src_vty) / getTypeBitwidth(tgt_elem_ty);
   if (packing_factor != getSources().size()) {
     return emitOpError("The number of sources must match the packing factor (")
            << packing_factor << "), got " << getSources().size();
@@ -2184,7 +2179,9 @@ LogicalResult PackElementwiseOp::verify() {
 }
 
 LogicalResult UnpackElementwiseOp::verify() {
-  if (failed(verifyElementwisePacking(*this, getType(), getSourceType()))) {
+  if (failed(verifyElementwisePacking(
+          *this, /*unpacked_ty=*/getType().getElementType(),
+          /*packed_ty=*/getSourceType()))) {
     return failure();
   }
   const int packing_factor =

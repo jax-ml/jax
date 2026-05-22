@@ -887,9 +887,13 @@ class OpsTest(ptu.PallasTPUTest):
           (jnp.int32, jnp.int16),
           (jnp.int32, jnp.int8),
           (jnp.int32, jnp.int4),
+          (jnp.int16, jnp.int8),
+          (jnp.int16, jnp.int4),
+          (jnp.int8, jnp.int4),
+          (jnp.int4, jnp.int2),
       ],
-      index=[0, 1, 3],
-      shape=[(8, 128), (2, 15, 300)],
+      index=[0, 1, 2, 3],
+      shape=[(8, 128), (2, 15, 300), (512, 256)],
   )
   def test_unpack_elementwise(self, config, index, shape):
     unpacked_dtype, packed_dtype = config
@@ -897,9 +901,21 @@ class OpsTest(ptu.PallasTPUTest):
         version=5
     ):
       self.skipTest("Requires TPU v5+")
+    if dtypes.itemsize_bits(
+        unpacked_dtype
+    ) != 32 and not jtu.is_cloud_tpu_at_least(2026, 5, 27):
+      self.skipTest("Requires newer libtpu")
+    if packed_dtype == jnp.int2:
+      if not jtu.is_device_tpu_at_least(version=5):
+        self.skipTest("Requires TPU v5+")
+      if (shape[-2] % (8 * 16)) or (shape[-1] % 128):
+        raise self.skipTest(
+            "int2 is only supported for shapes with vreg alignment"
+        )
 
-    bitwidth = dtypes.itemsize_bits(packed_dtype)
-    packing_factor = 32 // bitwidth
+    unpacked_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
+    packed_bitwidth = dtypes.itemsize_bits(packed_dtype)
+    packing_factor = unpacked_bitwidth // packed_bitwidth
 
     if index >= packing_factor:
       self.skipTest(

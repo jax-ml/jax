@@ -821,13 +821,24 @@ def TPU_UnpackElementwiseOp : TPU_Op<"unpack_elementwise", [Pure, ElementwiseMap
     The `index` selects which packed value to extract from each word of `source`.
     An `index` of 0 corresponds to the lowest bits. The extracted values are
     cast to the output element type.
+
+    NOTE: The op follows the *interleaved format* during unpacking.
+    See `TPU_UnpackSubelementsOp` for more details.
+
+    For example, if `source_type` is i4, result type is i8, and `source` is
+    packed i8 with x'y'z'w'm'n'i'j' in a word, where each character represents 4
+    bits:
+
+    When `index=0`, the result is a packed i8 with s_y'y's_w'w's_n'n's_j'j';
+    When `index=1`, the result is a packed i8 with s_x'x's_z'z's_m'm's_i'i'.
+    With `s_x` indicating the MSB of `x`, and so on.
   }];
   let arguments = (ins
-    VectorOfNonZeroRankOf<[I32]>:$source,
+    VectorOfNonZeroRankOf<[AnyInteger]>:$source,
     TypeAttr:$source_type,
     I32Attr:$index
   );
-  let results = (outs VectorOfNonZeroRankOf<[F32, I32]>:$output);
+  let results = (outs VectorOfNonZeroRankOf<[F32, AnyInteger]>:$output);
   let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
   let hasVerifier = 1;
 }
