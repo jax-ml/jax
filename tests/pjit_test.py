@@ -1139,6 +1139,36 @@ class PJitTest(jtu.BufferDonationTestCase):
         """).strip(),
     )
 
+  def test_pretty_print_large_inner_jaxpr_inline(self):
+    def test_fun_jit(x):
+      @pjit
+      def inner_jit_small(y):
+        return y + 1
+
+      @pjit
+      def inner_jit_large(y):
+        for _ in range(11):
+          y = y + 1
+        return y
+
+      return inner_jit_large(inner_jit_small(x))
+
+    x = jnp.zeros((2,), dtype=jnp.int32)
+    printed_jit = jax.make_jaxpr(test_fun_jit)(x).pretty_print(use_color=False)
+    top = "let inner_jit_large = { lambda ; a:i32[2]. let"
+    bottom = textwrap.dedent("""\
+          in (l,) } in
+        { lambda ; m:i32[2]. let
+            n:i32[2] = jit[
+              name=inner_jit_small
+              jaxpr={ lambda ; m:i32[2]. let n:i32[2] = add m 1:i32[] in (n,) }
+            ] m
+            o:i32[2] = jit[name=inner_jit_large jaxpr=inner_jit_large] n
+          in (o,) }""")
+
+    pattern = "^" + re.escape(top) + r"[\s\S]*?" + re.escape(bottom) + "$"
+    self.assertRegex(printed_jit, pattern)
+
   def test_pretty_print_nested_shared_jaxprs(self):
     @pjit
     def inner_fn(x):

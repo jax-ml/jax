@@ -3928,6 +3928,8 @@ def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
     while s:
       jaxpr = s.popleft()
       jaxpr_counts[jaxpr] += 1
+      if jaxpr is not jaxpr_to_print and len(jaxpr.eqns) > 10:
+        jaxpr_counts[jaxpr] += 1
       for eqn in jaxpr.eqns:
         # TODO(slebedev): Come up with a more elaborate heuristic for name=.
         name = eqn.params.get("name")
