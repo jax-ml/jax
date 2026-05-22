@@ -44,7 +44,7 @@ from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
     tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
-    register_dataclass)
+    register_dataclass, FlatTree)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -60,9 +60,8 @@ from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray, typeof
 from jax._src.api_util import (
-  flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
-  flatten_axes, _ensure_index, apply_flat_fun_nokwargs,
-  check_callable, debug_info)
+  flatten_fun_nokwargs,
+  flatten_axes, _ensure_index, check_callable, debug_info, argnums_partial2)
 from jax._src.lib import jax_jit
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
@@ -534,26 +533,16 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
       raise TypeError(f"differentiating with respect to {argnums=} requires at least "
                       f"{max_argnum + 1} positional arguments to be passed by the caller, "
                       f"but got only {len(args)} positional arguments.")
-    dbg = debug_info('value_and_grad', fun, args, kwargs)
-
-    f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
-    f_partial, dyn_args = argnums_partial(f, argnums, args,
-                                          require_static_args_hashable=False)
+    f_partial, dyn_args = argnums_partial2(fun, argnums, args, kwargs)
     for leaf in tree_leaves(dyn_args):
       _check_input_dtype_grad(holomorphic, allow_int, leaf)
-    if has_aux:
-      ans, vjp_py, aux = _vjp(f_partial, *dyn_args, has_aux=True)
-    else:
-      ans, vjp_py = _vjp(f_partial, *dyn_args)
-      aux = None
+    ans, vjp_py, *maybe_aux = vjp(f_partial, *dyn_args, has_aux=has_aux)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
     g = vjp_py(lax_internal._one_vjp(ans))
     g = g[0] if isinstance(argnums, int) else g
-    if not has_aux:
-      return ans, g
-    else:
-      return (ans, aux), g
+    ans_aux = (ans, *maybe_aux) if has_aux else ans
+    return ans_aux, g
 
   return value_and_grad_f
 
@@ -673,11 +662,8 @@ def fwd_and_bwd(
   argnums = _ensure_index(argnums)
 
   def fwd(*args, **kwargs):
-    dbg = debug_info('fwd_and_bwd', fun, args, kwargs)
-    f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
-    f_partial, dyn_args = argnums_partial(
-        f, argnums, args, require_static_args_hashable=False)
-    return _vjp(f_partial, *dyn_args, has_aux=has_aux)
+    f_partial, dyn_args = argnums_partial2(fun, argnums, args, {})
+    return vjp(f_partial, *dyn_args, has_aux=has_aux)
   def bwd(f_vjp, outgrad):
     g = f_vjp(outgrad)
     g = g[0] if isinstance(argnums, int) else g
@@ -731,13 +717,7 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
-    f = lu.wrap_init(
-        fun, kwargs,
-        debug_info=debug_info(
-            "jacfwd", fun, args, kwargs,
-            static_argnums=(argnums,) if isinstance(argnums, int) else argnums))
-    f_partial, dyn_args = argnums_partial(f, argnums, args,
-                                          require_static_args_hashable=False)
+    f_partial, dyn_args = argnums_partial2(fun, argnums, args, kwargs)
     tree_map(partial(_check_input_dtype_jacfwd, holomorphic), dyn_args)
     pushfwd: Callable = partial(_jvp, f_partial, dyn_args, has_aux=has_aux)
     if has_aux:
@@ -825,29 +805,16 @@ def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
-    f = lu.wrap_init(
-        fun, kwargs,
-        debug_info=debug_info(
-            "jacrev", fun, args, kwargs,
-            static_argnums=(argnums,) if isinstance(argnums, int) else argnums))
-    f_partial, dyn_args = argnums_partial(f, argnums, args,
-                                          require_static_args_hashable=False)
+    f_partial, dyn_args = argnums_partial2(fun, argnums, args, kwargs)
     tree_map(partial(_check_input_dtype_jacrev, holomorphic, allow_int), dyn_args)
-    if has_aux:
-      y, pullback, aux = _vjp(f_partial, *dyn_args, has_aux=True)
-    else:
-      y, pullback = _vjp(f_partial, *dyn_args)
-      aux = None
+    y, pullback, *maybe_aux = vjp(f_partial, *dyn_args, has_aux=has_aux)
     tree_map(partial(_check_output_dtype_jacrev, holomorphic), y)
     jac = vmap(pullback)(_std_basis(y))
     jac = jac[0] if isinstance(argnums, int) else jac
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
     jac_tree = tree_map(partial(_jacrev_unravel, y), example_args, jac)
     jac_tree = tree_transpose(tree_structure(example_args), tree_structure(y), jac_tree)
-    if not has_aux:
-      return jac_tree
-    else:
-      return jac_tree, aux
+    return (jac_tree, *maybe_aux) if has_aux else jac_tree
 
   return jacfun
 
@@ -1420,18 +1387,16 @@ def jvp(
       not isinstance(tangents, (tuple, list))):
     raise TypeError("primal and tangent arguments to jax.jvp must be tuples or lists; "
                     f"found {type(primals).__name__} and {type(tangents).__name__}.")
-  return _jvp(lu.wrap_init(fun, debug_info=debug_info("jvp", fun, primals, {})),
-              primals, tangents, has_aux=has_aux)
+  return _jvp(fun, primals, tangents, has_aux=has_aux)
 
-def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
-  """Variant of jvp() that takes an lu.WrappedFun."""
-  ps_flat, tree_def = tree_flatten(primals)
-  ts_flat, tree_def_2 = tree_flatten(tangents)
-  if tree_def != tree_def_2:
+def _jvp(fun: Callable, primals, tangents, has_aux=False):
+  ps_ft = FlatTree.flatten(primals)
+  ts_ft = FlatTree.flatten(tangents)
+  if ps_ft.tree != ts_ft.tree:
     raise TypeError("primal and tangent arguments to jax.jvp must have the same tree "
-                    f"structure; primals have tree structure {tree_def} whereas tangents have "
-                    f"tree structure {tree_def_2}.")
-  for p, t in zip(ps_flat, ts_flat):
+                    f"structure; primals have tree structure {ps_ft.tree} whereas tangents have "
+                    f"tree structure {ts_ft.tree}.")
+  for p, t in zip(ps_ft, ts_ft):
     if not isinstance(core.typeof(p), ShapedArray): continue
     if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
       raise TypeError("primal and tangent arguments to jax.jvp do not match; "
@@ -1444,20 +1409,8 @@ def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
       raise ValueError("jvp called with different primal and tangent shapes;"
                        f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
 
-  if not has_aux:
-    flat_fun, out_tree = flatten_fun_nokwargs(fun, tree_def)
-    out_primals, out_tangents = ad.jvp(flat_fun).call_wrapped(ps_flat, ts_flat)
-    out_tree = out_tree()
-    return (tree_unflatten(out_tree, out_primals),
-            tree_unflatten(out_tree, out_tangents))
-  else:
-    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, tree_def)
-    jvp_fun, aux = ad.jvp(flat_fun, has_aux=True)
-    out_primals, out_tangents = jvp_fun.call_wrapped(ps_flat, ts_flat)
-    out_tree, aux_tree = out_aux_trees()
-    return (tree_unflatten(out_tree, out_primals),
-            tree_unflatten(out_tree, out_tangents),
-            tree_unflatten(aux_tree, aux()))
+  out_primals, out_tangents, *aux = ad.jvp(fun, ps_ft, ts_ft, has_aux=has_aux)
+  return out_primals.unflatten(), out_tangents.unflatten(), *aux
 
 @overload
 def linearize(fun: Callable, *primals, has_aux: Literal[False] = False
@@ -1538,67 +1491,53 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   -6.676704
   """
   check_callable(fun)
-  f = lu.wrap_init(fun, debug_info=debug_info("linearize", fun, primals, {}))
-  primals_flat, in_tree = tree_flatten(primals)
-  if has_aux:
-    jaxtree_fun, out_tree = flatten_fun_nokwargs2(f, in_tree)
-  else:
-    jaxtree_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-  out_primals, out_known, jaxpr, consts, *maybe_aux = ad.linearize(
-      jaxtree_fun, primals_flat, has_aux=has_aux)
-  if has_aux:
-    out_tree, aux_tree = out_tree()
-  else:
-    out_tree, aux_tree = out_tree(), None
-  out_primal_py = tree_unflatten(out_tree, out_primals)
-  in_avals = list(map(core.typeof, primals_flat))
-  out_avals = list(map(core.typeof, out_primals))
-  lifted_jvp = Partial(partial(_lift_linearized, jaxpr, in_avals, out_avals,
-                               (in_tree, out_tree), out_known), consts)
-  if has_aux:
-    [aux] = maybe_aux
-    assert aux_tree is not None
-    return out_primal_py, lifted_jvp, tree_unflatten(aux_tree, aux)
-  else:
-    [] = maybe_aux
-    return out_primal_py, lifted_jvp
+  primals_ft = FlatTree.flatten(primals)
+  out_primals_ft, out_known, jaxpr, consts, *maybe_aux = ad.linearize(
+      fun, primals_ft, has_aux=has_aux)
+  in_avals = primals_ft.map(core.typeof)
+  out_avals = out_primals_ft.map(core.typeof)
+  lifted_jvp = Partial(
+      partial(_lift_linearized, jaxpr, in_avals, out_avals, out_known), consts)
+  return out_primals_ft.unflatten(), lifted_jvp, *maybe_aux
 
-def _lift_linearized(jaxpr, in_avals, out_avals, io_tree, out_known, consts, *py_args):
-  def fun(*tangents):
-    tangent_avals = list(map(core.typeof, tangents))
-    for primal_aval, tangent_aval in zip(in_avals, tangent_avals):
-      expected_tangent_aval  = primal_aval.to_tangent_aval()
-      if not core.typecompat(expected_tangent_aval, tangent_aval):
-        extra_msg = ''
-        if (isinstance(primal_aval, core.ShapedArray) and
-            isinstance(tangent_aval, core.ShapedArray) and
-            primal_aval.mat != tangent_aval.mat):
-          # TODO(yashkatariya): Tweak error.
-          pvary_applications = []
-          if left := tangent_aval.mat.varying - primal_aval.mat.varying:
-            pvary_applications.append(
-                f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
-                " the primal value passed to `jax.linearize`")
-          if left := primal_aval.mat.varying - tangent_aval.mat.varying:
-            pvary_applications.append(
-                f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
-                " the tangent value passed to the callable `f_jvp` returned by"
-                " `jax.linearize`")
-          extra_msg = " \nThis might be fixed by:\n" + "\n".join(
-              f"  * {d};" for d in pvary_applications)
-        raise ValueError(
-            "linearized function called on tangent values inconsistent with "
-            "the original primal values:\n"
-            f"Got tangent aval {tangent_aval} for primal aval {primal_aval} "
-            f"but expected {expected_tangent_aval}.{extra_msg}")
-    tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
-    tangents_out_ = iter(tangents_out)
-    full_out = [a2tz(aval).instantiate() if known else next(tangents_out_)
-                for aval, known in zip(out_avals, out_known)]
-    assert next(tangents_out_, None) is None
-    return full_out
 
-  return apply_flat_fun_nokwargs(fun, io_tree, py_args)
+def _lift_linearized(jaxpr, in_avals, out_avals, out_known, consts, *tangents):
+  tangents_ft = FlatTree.flatten(tangents)
+  if tangents_ft.tree != in_avals.tree:
+    raise TypeError(f"expected {in_avals.tree}, got {tangents_ft.tree}")
+
+  tangent_avals = tangents_ft.map(core.typeof)
+  for primal_aval, tangent_aval in zip(in_avals, tangent_avals):
+    expected_tangent_aval  = primal_aval.to_tangent_aval()
+    if not core.typecompat(expected_tangent_aval, tangent_aval):
+      extra_msg = ''
+      if (isinstance(primal_aval, core.ShapedArray) and
+          isinstance(tangent_aval, core.ShapedArray) and
+          primal_aval.mat != tangent_aval.mat):
+        # TODO(yashkatariya): Tweak error.
+        pvary_applications = []
+        if left := tangent_aval.mat.varying - primal_aval.mat.varying:
+          pvary_applications.append(
+              f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
+              " the primal value passed to `jax.linearize`")
+        if left := primal_aval.mat.varying - tangent_aval.mat.varying:
+          pvary_applications.append(
+              f"applying `jax.lax.pcast(..., {tuple(left)}, to='varying')` to"
+              " the tangent value passed to the callable `f_jvp` returned by"
+              " `jax.linearize`")
+        extra_msg = " \nThis might be fixed by:\n" + "\n".join(
+            f"  * {d};" for d in pvary_applications)
+      raise ValueError(
+          "linearized function called on tangent values inconsistent with "
+          "the original primal values:\n"
+          f"Got tangent aval {tangent_aval} for primal aval {primal_aval} "
+          f"but expected {expected_tangent_aval}.{extra_msg}")
+  tangents_out = eval_jaxpr(jaxpr, consts, *tangents_ft)
+  tangents_out_ = iter(tangents_out)
+  full_out = [a2tz(aval).instantiate() if known else next(tangents_out_)
+              for aval, known in zip(out_avals, out_known)]
+  assert next(tangents_out_, None) is None
+  return out_avals.update(full_out).unflatten()
 
 # TODO(mattjj): see similar function in custom_derivatives.py
 def _temporary_dtype_exception(a, a_) -> bool:
@@ -1666,45 +1605,23 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  wrapped_fun = lu.wrap_init(
-      fun, debug_info=debug_info("vjp", fun, primals, {}))
-  return _vjp(wrapped_fun, *primals, has_aux=has_aux)
-
-def _vjp(fun, *primals, has_aux=False):
   canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
-  primals = tree_map(canon, primals)
-  primals_flat, in_tree = tree_flatten(primals)
-  for arg in primals_flat:
-    dispatch.check_arg(arg)
-  if not has_aux:
-    flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primals_flat, out_known, jaxpr, residuals = ad.linearize(
-        flat_fun, primals_flat, is_vjp=True)
-    out_tree = out_tree()
-    aux = aux_tree = None
-  else:
-    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primals_flat, out_known, jaxpr, residuals, aux = ad.linearize(
-        flat_fun, primals_flat, has_aux=True, is_vjp=True)
-    out_tree, aux_tree = out_aux_trees()
-    del out_aux_trees
-  id_map = {id(x): i for i, x in enumerate(primals_flat)}
+  primals_ft = FlatTree.flatten(primals).map(canon)
+  primals_ft.map(dispatch.check_arg)
+  out_primals_ft, out_known, jaxpr, residuals, *maybe_aux = ad.linearize(
+      fun, primals_ft, is_vjp=True, has_aux=has_aux)
+
+  id_map = {id(x): i for i, x in enumerate(primals_ft)}
   used, opaque_residuals = set(), []
   spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)
           for r in residuals]
   args_res = tuptree_map(lambda x: x if id(x) in used else NotNeeded(),
-                         in_tree, primals_flat)
-  out_primal_avals = [typeof(x) for x in out_primals_flat]
+                         primals_ft.tree, list(primals_ft))
+  out_primal_avals = list(out_primals_ft.map(typeof))
   f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
-              in_tree, out_tree, list(args_res), opaque_residuals)
-  out_primals = tree_unflatten(out_tree, out_primals_flat)
-  if not has_aux:
-    return out_primals, f_vjp
-  else:
-    assert aux is not None
-    assert aux_tree is not None
-    return out_primals, f_vjp, tree_unflatten(aux_tree, aux)
+              primals_ft.tree, out_primals_ft.tree, list(args_res), opaque_residuals)
+  return out_primals_ft.unflatten(), f_vjp, *maybe_aux
 
 def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                    args_res, opaque_res, *maybe_ct_refs):
