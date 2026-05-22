@@ -493,8 +493,14 @@ class Traced(Stage):
           lo._params['name'], fails, lo._meta_tys_flat, 'jit',
           lo.jaxpr.debug_info.safe_arg_names(len(lo.jaxpr.in_avals)))
       raise ValueError(msg) from None
-    return Lowered(lowering, lo.args_info, lo.out_tree,
-                   in_types=lo._in_types, out_types=lo._out_types)
+    return Lowered(
+        lowering,
+        lo.args_info,
+        lo.out_tree,
+        in_types=lo._in_types,
+        out_types=lo._out_types,
+        consts=lo._consts,
+    )
 
 
 def lojax_pytree(hi_avals, tree):
@@ -532,8 +538,15 @@ class Lowered(Stage):
   querying properties of lowered computations across JAX's various
   lowering paths (:func:`~jax.jit`, :func:`~jax.pmap`, etc.).
   """
-  __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs",
-               "_in_types", "_out_types"]
+  __slots__ = [
+      "_lowering",
+      "args_info",
+      "out_tree",
+      "_no_kwargs",
+      "_in_types",
+      "_out_types",
+      "_consts",
+  ]
 
   _lowering: Lowering
   args_info: Any  # PyTree of ArgInfo, not including the const_args
@@ -541,10 +554,18 @@ class Lowered(Stage):
   _no_kwargs: bool
   _in_types: list[tuple[core.AbstractValue, core.QuasiDynamicData]] | None
   _out_types: list[core.AbstractValue] | None
+  _consts: list[Any]
 
-  def __init__(self, lowering: Lowering, args_info,
-               out_tree: tree_util.PyTreeDef, no_kwargs: bool = False,
-               in_types=None, out_types=None):
+  def __init__(
+      self,
+      lowering: Lowering,
+      args_info,
+      out_tree: tree_util.PyTreeDef,
+      no_kwargs: bool = False,
+      in_types=None,
+      out_types=None,
+      consts=None,
+  ):
 
     self._lowering = lowering
     self.args_info = args_info
@@ -552,6 +573,7 @@ class Lowered(Stage):
     self._no_kwargs = no_kwargs
     self._in_types = in_types
     self._out_types = out_types
+    self._consts = consts or []
 
   @property
   def in_avals(self):
@@ -584,9 +606,16 @@ class Lowered(Stage):
     """Compile, returning a corresponding ``Compiled`` instance."""
     kw: dict[str, Any] = {"compiler_options": compiler_options,
                           "device_assignment": device_assignment}
-    return Compiled(self._lowering.compile(**kw), self._lowering.const_args,
-                    self.args_info, self.out_tree, self._no_kwargs,
-                    self._in_types, self._out_types)
+    const_args = list(self._lowering.const_args) + list(self._consts)
+    return Compiled(
+        self._lowering.compile(**kw),
+        const_args,
+        self.args_info,
+        self.out_tree,
+        self._no_kwargs,
+        self._in_types,
+        self._out_types,
+    )
 
   def as_text(self, dialect: str | None = None, *,
               debug_info: bool = False) -> str:
