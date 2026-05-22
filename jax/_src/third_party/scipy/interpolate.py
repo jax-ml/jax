@@ -56,6 +56,14 @@ class RegularGridInterpolator:
     >>> query_points = jnp.array([[1.5, 4.5], [2.2, 5.8]])
     >>> interpolate(query_points)
     Array([30., 64.], dtype=float32)
+
+  Note:
+    Unlike :class:`scipy.interpolate.RegularGridInterpolator`, JAX requires each
+    axis in ``points`` to be strictly increasing. SciPy accepts any monotonic
+    axis (increasing or decreasing), but a decreasing axis is not supported
+    here and will silently produce incorrect results. Reorder the grid (and the
+    corresponding axis of ``values``) so each axis is strictly increasing
+    before constructing the interpolator.
   """
   # Based on SciPy's implementation which in turn is originally based on an
   # implementation by Johannes Buchner
