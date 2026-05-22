@@ -132,7 +132,8 @@ jobs:
           !cancelled()
           && (
                github.event_name == 'workflow_dispatch'
-               || needs.changed_files.outputs.any_changed == 'true'
+               || (github.event.pull_request.head.repo.full_name == github.repository
+                   && needs.changed_files.outputs.any_changed == 'true')
           )
       }}
     runs-on: linux-x86-a4-224-b200-1gpu
