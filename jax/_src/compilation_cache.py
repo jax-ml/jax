@@ -208,7 +208,7 @@ class VerificationCache(CacheInterface):
         # differ for fresh compilations.
         # Strip HMAC tag (if present) before decompressing for comparison.
         decompressed_on_disk = decompress_executable(_verify_entry(on_disk))
-        decompressed_new = decompress_executable(value)
+        decompressed_new = decompress_executable(_verify_entry(value))
         executable_on_disk, _ = extract_executable_and_time(decompressed_on_disk)
         executable_new, _ = extract_executable_and_time(decompressed_new)
         if executable_on_disk != executable_new:
