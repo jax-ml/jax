@@ -20,7 +20,6 @@ from types import SimpleNamespace
 from jax._src import api
 from jax._src import core
 from jax._src import tree_util
-from jax._src import xla_bridge
 from jax._src.lax import lax
 from jax._src.lax.control_flow import loops
 from jax._src.numpy import array_creation
@@ -437,9 +436,12 @@ def compose_vmap(fn, times: int):
   return fn
 
 
-def _backend_supports_triton() -> bool:
-  ds = list(xla_bridge.devices())
-  if not ds or ds[0].platform != "gpu":
+def _backend_supports_triton(ctx) -> bool:
+  backend = ctx.module_context.get_backend(optional=True)
+  if backend is None or backend.platform != "gpu":
+    return False
+  ds = list(backend.devices())
+  if not ds:
     return False
   return tuple(int(x) for x in ds[0].compute_capability.split(".")) >= (8, 0)
 
