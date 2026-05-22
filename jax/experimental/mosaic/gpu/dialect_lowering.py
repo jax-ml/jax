@@ -1410,6 +1410,11 @@ for _op, _unary_impl, _is_signed in [
     (mlir_math.RoundOp, fa.FragmentedArray.round, None),
     (mlir_math.RoundEvenOp, fa.FragmentedArray.round_even, None),
     (mlir_math.ErfOp, fa.FragmentedArray.erf, None),
+    (
+        mlir_math.CountLeadingZerosOp,
+        lambda x: x._pointwise(mlir_math.ctlz, restrict_bitwidth=False),
+        None,
+    ),
 ]:
   _lowerings[_op.OPERATION_NAME] = functools.partial(
       _unary_op_lowering_rule, impl=_unary_impl, is_signed=_is_signed

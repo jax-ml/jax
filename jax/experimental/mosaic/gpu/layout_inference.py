@@ -739,6 +739,7 @@ for _op in [
     mlir_math.RoundOp,
     mlir_math.RoundEvenOp,
     mlir_math.CopySignOp,
+    mlir_math.CountLeadingZerosOp,
 ]:
   _add_constraint_system_derivation_rule(_op)(_pointwise_op_constraint_system)
 

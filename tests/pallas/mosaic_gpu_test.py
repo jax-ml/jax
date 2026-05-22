@@ -408,12 +408,13 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           jax.nn.gelu,
           lax.abs,
           lax.round,
+          lax.clz,
           lambda x: lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN),
       ],
       approx_math=[True, False],
   )
   def test_unary_op(self, op, approx_math):
-    dtype = jnp.int32 if op is lax.bitwise_not else jnp.float32
+    dtype = jnp.int32 if op in (lax.bitwise_not, lax.clz) else jnp.float32
 
     @functools.partial(
         self.pallas_call,
@@ -3451,6 +3452,22 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         jax.lax.bitcast_convert_type(result, jnp.uint8)
     )
     np.testing.assert_array_equal(result_uint8, 254 - x_uint8)
+
+  @jtu.thread_unsafe_test()
+  @jtu.skip_under_pytest("Test fails under pytest in CI")
+  def test_clz_ptx(self):
+    shape = (128,)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.clz(x_ref[...])
+
+    x = jnp.arange(128, dtype=jnp.int32)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      jax.block_until_ready(kernel(x))
+    self.assertRegex(ptx(), r"clz\.b32\b")
 
   def test_collective_arrival_count(self):
     def kernel(dst, collective_barrier):

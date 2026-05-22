@@ -2721,6 +2721,16 @@ def _square_lowering_rule(ctx: LoweringRuleContext, x):
   raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
 
 
+@register_lowering_rule(lax.clz_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(lax.clz_p, mgpu.LoweringSemantics.Warpgroup)
+def _clz_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype)._pointwise(math_dialect.ctlz, restrict_bitwidth=False)
+  x = _ensure_ir_value(x, x_aval.dtype)
+  return math_dialect.ctlz(x)
+
+
 @register_lowering_rule(lax.rsqrt_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.rsqrt_p, mgpu.LoweringSemantics.Warpgroup)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
