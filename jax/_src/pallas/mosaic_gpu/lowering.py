@@ -445,8 +445,8 @@ class ModuleContext:
   axis_names: _AxisNames
   program_ids: Sequence[ir.Value] | None
   approx_math: bool
-  single_wg_lane_predicate: ir.Value | None
-  single_warp_lane_predicate: ir.Value | None
+  single_wg_lane_predicate: ir.Value
+  single_warp_lane_predicate: ir.Value
   smem_requested_bytes: int
   smem_used_bytes: int
   tmem_requested_cols: int
@@ -469,7 +469,7 @@ class ModuleContext:
   outer_traceback: xc.Traceback | None = None
 
   @property
-  def single_lane_predicate(self) -> ir.Value | None:
+  def single_lane_predicate(self) -> ir.Value:
     """Returns a predicate that is True for a single lane within the current
     thread semantics.
     """
@@ -982,14 +982,10 @@ def lower_jaxpr_to_module(
       tmem_cols = 0
       tmem_base = None
 
-    if lowering_semantics == mgpu.LoweringSemantics.Lane:
-      single_wg_lane_predicate = mgpu.single_thread_predicate(
-          scope=mgpu.ThreadSubset.WARPGROUP)
-      single_warp_lane_predicate = mgpu.single_thread_predicate(
-          scope=mgpu.ThreadSubset.WARP)
-    else:  # Warpgroup semantics do not have a single lane predicate.
-      single_wg_lane_predicate = None
-      single_warp_lane_predicate = None
+    single_wg_lane_predicate = mgpu.single_thread_predicate(
+        scope=mgpu.ThreadSubset.WARPGROUP)
+    single_warp_lane_predicate = mgpu.single_thread_predicate(
+        scope=mgpu.ThreadSubset.WARP)
 
     module_ctx = ModuleContext(
         mlir.sanitize_name(debug_info.func_name),
@@ -4330,6 +4326,7 @@ def _wrap_in_custom_primitive_if_wg(
       finally:
         ctx.module_ctx.lowering_semantics = mgpu.LoweringSemantics.Warpgroup
       mgpu.dialect.ReturnOp(operands_=[])
+    _isolate_from_above(custom_op)
   else:
     yield list(operands)
 
