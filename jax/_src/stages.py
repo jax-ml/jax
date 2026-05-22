@@ -30,29 +30,30 @@ executable protocols described above.
 """
 from __future__ import annotations
 
-import dataclasses
-import enum
 from collections.abc import Sequence
+import dataclasses
 from dataclasses import dataclass
+import enum
 import itertools as it
 from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 
-from jax._src import core
 from jax._src import config
+from jax._src import core
 from jax._src import sharding as sharding_lib
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src.typing import ArrayLike
-from jax._src.interpreters import mlir
-from jax._src.layout import Format, Layout, AutoLayoutSingleton
-from jax._src.sharding_impls import UnspecifiedValue
-from jax._src.lib.mlir import ir
-from jax._src.lib import _jax
-from jax._src.lib import xla_client as xc
-from jax._src.tree_util import tree_unflatten, FlatTree
 from jax._src.core import typeof
+from jax._src.interpreters import mlir
+from jax._src.layout import AutoLayoutSingleton, Format, Layout
+from jax._src.lib import _jax
+from jax._src.lib import hlo
+from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir import ir
+from jax._src.sharding_impls import UnspecifiedValue
+from jax._src.tree_util import FlatTree, tree_unflatten
+from jax._src.typing import ArrayLike
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -258,7 +259,7 @@ class Lowering:
       return mlir.module_to_string(self.stablehlo(),
                                    enable_debug_info=debug_info)
     elif dialect == "hlo":
-      print_opts = xc._xla.HloPrintOptions.short_parsable()
+      print_opts = hlo.HloPrintOptions.short_parsable()
       print_opts.print_metadata = debug_info
       return self.hlo().as_hlo_module().to_string(print_opts)
     else:

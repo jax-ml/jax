@@ -248,6 +248,10 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
 }
 
 NB_MODULE(_sdy_mpmd, m) {
+  nb::module_::import_(
+      "jaxlib._hlo");
+  nb::module_::import_("jax.jaxlib._jax");
+
   nb::enum_<PartitioningPhase>(m, "PartitioningPhase", nb::is_flag())
       .value("NONE", PartitioningPhase::kNone)
       .value("IMPORT", PartitioningPhase::kImport)
@@ -494,20 +498,16 @@ NB_MODULE(_sdy_mpmd, m) {
   mpmd_executable.def("setup_fastpath", &PyMpmdLoadedExecutable::SetupFastpath);
   mpmd_executable.def(
       "input_shardings",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterShardings),
-      nb::sig("def input_shardings(self) -> list[OpSharding]"));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterShardings));
   mpmd_executable.def(
       "output_shardings",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputShardings),
-      nb::sig("def output_shardings(self) -> list[OpSharding]"));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputShardings));
   mpmd_executable.def(
       "input_layouts",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterLayouts),
-      nb::sig("def input_layouts(self) -> list[PjRtLayout]"));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetParameterLayouts));
   mpmd_executable.def(
       "output_layouts",
-      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputLayouts),
-      nb::sig("def output_layouts(self) -> list[PjRtLayout]"));
+      xla::ValueOrThrowWrapper(&PyMpmdLoadedExecutable::GetOutputLayouts));
   mpmd_executable.def(
       "get_compiled_memory_stats",
       [](PyMpmdLoadedExecutable& exec)

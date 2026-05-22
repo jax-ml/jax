@@ -17,12 +17,13 @@
 
 from __future__ import annotations
 
-import importlib
 import gc
+import importlib
 import os
 import pathlib
 import re
 from types import ModuleType
+from typing import TYPE_CHECKING
 
 
 try:
@@ -100,7 +101,6 @@ import jaxlib.utils as utils  # noqa: F401
 import jaxlib._jax as _jax  # noqa: F401
 
 
-
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401
 from jaxlib._jax import guard_lib as guard_lib  # noqa: F401
 from jaxlib._jax import jax_jit as jax_jit  # noqa: F401
@@ -116,6 +116,11 @@ import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
 
 import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
+
+if jaxlib_extension_version >= 457 or TYPE_CHECKING:
+  from jaxlib import _hlo as hlo  # noqa: F401
+else:
+  hlo = _jax
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882

@@ -293,6 +293,9 @@ NB_MODULE(_jax, m) {
 
   tsl::ImportNumpy();
 
+  auto hlo_module = nb::module_::import_(
+      "jaxlib._hlo");
+
   // Exceptions
   register_runtime_error_bindings(m);
   nb::register_exception_translator(translate_xla_runtime_error);

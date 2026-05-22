@@ -94,6 +94,7 @@ pytype_strict_library(
         "//jaxlib/mosaic/python:gpu_dialect",
         "//jaxlib/mosaic/python:tpu_dialect",
         "//jaxlib/triton",
+        "@xla//xla/python:_hlo",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
     ],
@@ -123,6 +124,7 @@ pytype_library(
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:stablehlo_dialect",
+        "@xla//xla/python:_hlo",
     ] + py_deps(["numpy"]),
 )
 
@@ -181,6 +183,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_stablehlo",
         "//jaxlib/mlir/_mlir_libs:_tpu_ext",
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
+        "@xla//xla/python:_hlo",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
     ],
@@ -368,9 +371,10 @@ nanobind_pywrap_extension(
     additional_stubgen_deps = [
         "//third_party/py/numpy",
         "//jaxlib/mlir:ir",
+        "@xla//xla/python:_hlo",
     ],
     postprocess_stubgen = "//jaxlib:backport_stubs",
-    pytype_deps = py_deps(["numpy"]),
+    pytype_deps = py_deps(["numpy"]) + ["@xla//xla/python:_hlo"],
     stub_replacement_patterns = {
         "jax.jaxlib._jax.Array$": "Array: Any",
         "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
@@ -1351,13 +1355,18 @@ nanobind_pywrap_extension(
     name = "_sdy_mpmd",
     srcs = ["sdy_mpmd.cc"],
     additional_stubgen_deps = [
+        "//third_party/py/numpy",
         "//jaxlib/mlir:ir",
+        "@xla//xla/python:_hlo",
+        ":_jax",
     ],
     pytype_deps = [
+        ":_jax",
         "//jaxlib/mlir:ir",
+        "//third_party/py/numpy",
+        "@xla//xla/python:_hlo",
     ],
     stub_replacement_patterns = {
-        "_sdy_mpmd.__prefix__": "from jax.jaxlib._jax import OpSharding, PjRtLayout",
         # TODO(slebedev): Remove all of these once we no longer need to support pytype.
         "PartitioningPhase._boundary_": "_boundary_: enum.FlagBoundary = ...",
         "_sdy_mpmd\\.(NONE|IMPORT|OPTIMIZE|PARTITION|ALL)": "\\1: PartitioningPhase = ...",
@@ -1520,7 +1529,10 @@ pytype_strict_library(
     deps = py_deps([
         "numpy",
         "ml_dtypes",
-    ]) + [":_jax"],
+    ]) + [
+        ":_jax",
+        "@xla//xla/python:_hlo",
+    ],
 )
 
 py_test(
@@ -1621,6 +1633,7 @@ py_test(
     deps = [
         ":_jax",
         ":test_exceptions",
+        "@xla//xla/python:_hlo",
     ] + py_deps([
         "absl/testing",
         "numpy",
