@@ -35,6 +35,11 @@ test_suite(
     tags = ["mosaic_gpu_test"],
 )
 
+test_suite(
+    name = "sparsecore_tests",
+    tags = ["sparsecore_test"],
+)
+
 jax_multiplatform_test(
     name = "pallas_lowering_determinism_test",
     srcs = ["pallas_lowering_determinism_test.py"],
@@ -1504,19 +1509,15 @@ jax_multiplatform_test(
             ],
         ),
     },
-    config_tags_overrides = {
-        # TODO(slebedev): Flip to False once we have more v5p capacity.
-        "tpu_v5p": {"ondemand": True},
-    },
     enable_backends = [],
     enable_configs = [
-        "tpu_v4",
         "tpu_v5p",
         "tpu_v6e",
         "tpu_7x",
         "cpu",
     ],
     shard_count = 10,
+    tags = ["sparsecore_test"],
     deps = [
         "//jax/_src:hypothesis_test_util",
         "//jax/_src:mesh",
@@ -1549,6 +1550,7 @@ jax_multiplatform_test(
         "tpu_v6e",
         "tpu_7x",
     ],
+    tags = ["sparsecore_test"],
     deps = [
         "//jax/_src/pallas",
         "//jax/experimental:pallas",
@@ -1571,10 +1573,6 @@ jax_multiplatform_test(
             ],
         ),
     },
-    config_tags_overrides = {
-        # TODO(slebedev): Flip to False once we have more v6e capacity.
-        "tpu_v6e": {"ondemand": True},
-    },
     enable_backends = [],
     enable_configs = [
         "tpu_v5p",
@@ -1583,6 +1581,7 @@ jax_multiplatform_test(
         "cpu",  # Just to make sure we at least check the shard_count in presubmit.
     ],
     shard_count = 4,
+    tags = ["sparsecore_test"],
     deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",
@@ -1614,6 +1613,7 @@ jax_multiplatform_test(
         "tpu_v6e_x8",
         "tpu_7x_x4",
     ],
+    tags = ["sparsecore_test"],
     deps = [
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
