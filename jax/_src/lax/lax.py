@@ -8532,11 +8532,15 @@ def _reduce_precision_shape_rule(operand, *, exponent_bits, mantissa_bits):
 def _reduce_precision_sharding_rule(operand, *, exponent_bits, mantissa_bits):
   return operand.sharding
 
+def _reduce_precision_ur_rule(operand, *, exponent_bits, mantissa_bits):
+  return core.getu(operand), core.getr(operand)
+
 reduce_precision_p = standard_primitive(
     _reduce_precision_shape_rule,
     partial(unop_dtype_rule, _identity, _float, 'reduce_precision'),
     name='reduce_precision', sharding_rule=_reduce_precision_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'reduce_precision'))
+    vma_rule=partial(core.standard_vma_rule, 'reduce_precision'),
+    ur_rule=_reduce_precision_ur_rule)
 ad.deflinear(reduce_precision_p, lambda t, **kwargs: [reduce_precision_p.bind(t, **kwargs)])
 batching.defvectorized(reduce_precision_p)
 
