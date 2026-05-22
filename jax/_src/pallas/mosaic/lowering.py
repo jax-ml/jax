@@ -206,8 +206,6 @@ class LoweringContext:
   forward_compatible: bool
   backend: xla_client.Client | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
-  module: ir.Module
-  symbol_table: ir.SymbolTable
   lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp]
   needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
@@ -262,8 +260,6 @@ class PipelinedLoweringContext(LoweringContext):
       backend: Any | None,
       dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
       fuse_transposed_lhs_in_matmul: bool,
-      module: ir.Module,
-      symbol_table: ir.SymbolTable,
       lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp],
   ):
     arg_block_shapes = [
@@ -285,8 +281,6 @@ class PipelinedLoweringContext(LoweringContext):
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
-        module=module,
-        symbol_table=symbol_table,
         lowering_cache=lowering_cache,
     )
 
@@ -303,8 +297,6 @@ class UnpipelinedLoweringContext(LoweringContext):
       core_type: tpu_core.CoreType,
       forward_compatible: bool,
       backend: Any | None,
-      module: ir.Module,
-      symbol_table: ir.SymbolTable,
       lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp],
       needs_layout_passes: bool = False,
       mesh_indices: Sequence[ir.Value] = (),
@@ -333,8 +325,6 @@ class UnpipelinedLoweringContext(LoweringContext):
         dynamic_shape_replacement_fn=lambda x: x,
         needs_layout_passes=needs_layout_passes,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
-        module=module,
-        symbol_table=symbol_table,
         lowering_cache=lowering_cache,
     )
 
@@ -379,20 +369,14 @@ def _emit_pallas_lowering_rule_as_fun(
     invals: Sequence[ir.Value],
     **params,
 ) -> func.FuncOp:
-  """Emits the contents of a Pallas lowering rule as a private function."""
-  assert ctx.module is not None
-  sym_tab = ctx.symbol_table
+  """Emits the contents of a Pallas lowering rule as a detached function."""
 
   input_types = [val.type for val in invals]
   output_types = map(rule_context.aval_to_ir_type, rule_context.avals_out)
 
   ftype = ir.FunctionType.get(input_types, output_types)
   func_name = f"_pallas_{primitive.name}"
-  func_op = func.FuncOp(func_name, ftype)
-  func_op.attributes["sym_visibility"] = ir.StringAttr.get("private")
-
-  ctx.module.body.append(func_op)
-  sym_tab.insert(func_op)
+  func_op = func.FuncOp(func_name, ftype, ip=False)
 
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
@@ -1079,8 +1063,6 @@ def lower_jaxpr_into_pipelined_module(
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
-        module=module,
-        symbol_table=sym_tab,
         lowering_cache=cache,
     )
 
@@ -1136,8 +1118,6 @@ def lower_jaxpr_into_pipelined_module(
           forward_compatible=lowering_context.is_forward_compat(),
           dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
           backend=backend,
-          module=module,
-          symbol_table=sym_tab,
           lowering_cache=cache,
       )
       assert mlir_func.verify(), mlir_func
@@ -1415,8 +1395,6 @@ def lower_jaxpr_into_unpipelined_module(
         needs_layout_passes=needs_layout_passes,
         mesh_indices=mesh_indices,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
-        module=module,
-        symbol_table=sym_tab,
         lowering_cache=cache,
     )
 
@@ -1493,8 +1471,6 @@ def lower_jaxpr_to_transform_func(
     forward_compatible: bool,
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
-    module: ir.Module,
-    symbol_table: ir.SymbolTable,
     lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp],
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
@@ -1525,8 +1501,6 @@ def lower_jaxpr_to_transform_func(
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-        module=module,
-        symbol_table=symbol_table,
         lowering_cache=lowering_cache,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
@@ -1666,7 +1640,6 @@ def _compute_name_stack_updates(
 def jaxpr_subcomp(
     ctx: LoweringContext, jaxpr: jax_core.Jaxpr, *args: ir.Value
 ) -> list[ir.Value]:
-  assert ctx.module is not None
   assert not jaxpr.constvars
   env = {}
   block_shape_env = {}

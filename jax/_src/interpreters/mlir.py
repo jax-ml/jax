@@ -1406,11 +1406,6 @@ def lower_jaxpr_to_module(
                      dump_module_message(ctx.module, "verification")) from e
 
   with ctx.context:
-    # Cached lowering rule evaluation leaves dead functions. Remove them.
-    pipeline = passmanager.PassManager.parse(
-        'builtin.module(symbol-dce)')
-    pipeline.run(ctx.module.operation)
-
     if config.use_shardy_partitioner.value:
       pipeline = passmanager.PassManager.parse(
           'builtin.module(sdy-lift-inlined-meshes)')
@@ -2161,8 +2156,11 @@ def jaxpr_subcomp(
             dim_var_values=dim_var_values,
             axis_size_env=axis_size_env,
             const_lowering=const_lowering)
-        out_nodes, _inline = _uncached_lowering(
-            eqn.primitive, eqn.ctx, eqn.effects, rule_ctx, *in_nodes,
+        platform_rules, default_rule, _ = _get_lowering_rules(
+            ctx, eqn.primitive, eqn.ctx)
+        out_nodes = _uncached_lowering(
+            eqn.primitive, eqn.ctx, eqn.effects, platform_rules, default_rule,
+            rule_ctx, *in_nodes,
             **eqn.params)
         tokens_out = rule_ctx.tokens_out
 
@@ -2179,7 +2177,7 @@ class CachedLoweringRule(Protocol):
       ctx: LoweringRuleContext,
       *args: ir.Value | Sequence[ir.Value],
       **kwargs: Any,
-  ) -> tuple[Sequence[ir.Value | Sequence[ir.Value]], bool]:
+  ) -> Sequence[ir.Value | Sequence[ir.Value]]:
       ...
 
 
@@ -2199,13 +2197,16 @@ def _cached_lowering_miss(
   opted out of inlining."""
   ordered_effects = (tuple(effects_lib.ordered_effects.filter_in(eqn.effects))
                      if eqn.effects else ())
+  platform_rules, default_rule, inline = _get_lowering_rules(
+      ctx, eqn.primitive, eqn.ctx)
   with (source_info_util.user_context(eqn.source_info.traceback),
         eqn.ctx.manager):
     avals_out = map(lambda v: v.aval, eqn.outvars)
     cache_entry = _emit_lowering_rule_as_fun(
-        partial(_uncached_lowering, eqn.primitive, eqn.ctx, eqn.effects),
+        partial(_uncached_lowering, eqn.primitive, eqn.ctx, eqn.effects,
+                platform_rules, default_rule),
         ctx, eqn.ctx, eqn.primitive, ordered_effects, avals_in, avals_out,
-        **params,
+        inline, **params,
     )
     ctx.lowering_cache[cache_key] = cache_entry
     return cache_entry
@@ -2256,6 +2257,36 @@ def _emit_cached_call(
   return out_nodes, tokens_in.update_tokens(TokenSet(dict(zip(ordered_effects, token_outs))))
 
 
+def _get_lowering_rules(
+    ctx: ModuleContext, primitive: core.Primitive,
+    eqn_ctx: core.JaxprEqnContext | None
+) -> tuple[dict[str, LoweringRule], LoweringRule | None, bool]:
+  override_rule = _get_override_lowering_rule(ctx, primitive)
+  # See lower_per_platform for meaning of `platform_rules` and `default_rule`
+  platform_rules: dict[str, LoweringRule] = {}
+  default_rule: LoweringRule | None = None
+  inline = True  # Should calls to this lowering rule be inlined?
+
+  if override_rule is not None:
+    default_rule = override_rule
+    assert not isinstance(default_rule, LoweringRuleEntry)
+  else:
+    # First the platform-specific rules
+    for p in _platforms_for_eqn_ctx(eqn_ctx) or ctx.platforms:
+      if primitive in _platform_specific_lowerings[p]:
+        r = _platform_specific_lowerings[p][primitive]
+        platform_rules[p] = r.rule
+        inline = inline and r.inline
+    # Now the default rule
+    if primitive in _lowerings:
+      r = _lowerings[primitive]
+      default_rule = r.rule
+      assert not isinstance(default_rule, LoweringRuleEntry)
+      inline = inline and r.inline
+
+  return platform_rules, default_rule, inline
+
+
 def _emit_lowering_rule_as_fun(
     lowering_rule: CachedLoweringRule,
     ctx: ModuleContext,
@@ -2264,6 +2295,7 @@ def _emit_lowering_rule_as_fun(
     ordered_effects: Sequence[core.Effect],
     avals_in: Sequence[core.AbstractValue],
     avals_out: Sequence[core.AbstractValue],
+    inline: bool,
     **params,
 ) -> LoweringCacheValue:
   """Emits the contents of a lowering rule as a private function."""
@@ -2284,10 +2316,12 @@ def _emit_lowering_rule_as_fun(
   flat_input_types, input_treedef = ir_tree_registry.flatten(input_types)
   flat_output_types, output_treedef = ir_tree_registry.flatten(output_types)
   ftype = ir.FunctionType.get(flat_input_types, flat_output_types)
-  func_op = func_dialect.FuncOp(primitive.name, ftype,
-                                ip=ctx.ip)
-  func_op.attributes["sym_visibility"] = ir.StringAttr.get("private")
-  ctx.symbol_table.insert(func_op).value
+  if inline:
+    func_op = func_dialect.FuncOp(primitive.name, ftype, ip=False)
+  else:
+    func_op = func_dialect.FuncOp(primitive.name, ftype, ip=ctx.ip)
+    func_op.attributes["sym_visibility"] = ir.StringAttr.get("private")
+    ctx.symbol_table.insert(func_op).value
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
     unflattened_args = input_treedef.unflatten(entry_block.arguments)
@@ -2311,7 +2345,7 @@ def _emit_lowering_rule_as_fun(
     with source_info_to_location(
       ctx, primitive, source_info_util.new_name_stack(), None
     ):
-      outs, inline = lowering_rule(sub_ctx, *unflattened_args, **params)
+      outs = lowering_rule(sub_ctx, *unflattened_args, **params)
     if sub_ctx.tokens_out:
       outs = [
           *(sub_ctx.tokens_out.get(eff) for eff in ordered_effects),
@@ -2337,31 +2371,12 @@ def _uncached_lowering(
     primitive: core.Primitive,
     eqn_ctx: core.JaxprEqnContext,
     effects: effects_lib.Effects,
+    platform_rules: dict[str, LoweringRule],
+    default_rule: LoweringRule | None,
     ctx: LoweringRuleContext,
     *args,
     **params,
 ):
-  inline = True  # Should calls to this lowering rule be inlined?
-  override_rule = _get_override_lowering_rule(ctx.module_context, primitive)
-  platform_rules: dict[str, LoweringRule] = {}
-  default_rule: LoweringRule | None = None
-  # See mlir.lower_per_platform for meaning of `platform_rules` and `default_rule`
-  if override_rule is not None:
-    default_rule = override_rule
-    assert not isinstance(default_rule, LoweringRuleEntry)
-  else:
-    # First the platform-specific rules
-    for p in _platforms_for_eqn_ctx(eqn_ctx) or ctx.module_context.platforms:
-      if primitive in _platform_specific_lowerings[p]:
-        r = _platform_specific_lowerings[p][primitive]
-        platform_rules[p] = r.rule
-        inline = inline and r.inline
-    # Now the default rule
-    if primitive in _lowerings:
-      r = _lowerings[primitive]
-      default_rule = r.rule
-      assert not isinstance(default_rule, LoweringRuleEntry)
-      inline = inline and r.inline
 
   assert not isinstance(default_rule, LoweringRuleEntry)
   assert not any(isinstance(r, LoweringRuleEntry) for r in platform_rules.values())
@@ -2388,7 +2403,7 @@ def _uncached_lowering(
           f" tokens. Expected: {tuple(ctx.tokens_in.effects())} vs. Actual:"
           f" {tuple(tokens_out.effects())}"
       )
-  return rets, inline
+  return rets
 
 
 def _platforms_for_eqn_ctx(eqn_ctx: core.JaxprEqnContext | None
