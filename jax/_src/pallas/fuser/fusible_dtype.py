@@ -550,7 +550,7 @@ def _unpack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args):
 
 
 def _fusible_physicalize_rule(
-    _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func
+    _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func, **params
 ):
   consts, _ = util.split_list(consts_and_args, [num_consts])
   new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
@@ -561,6 +561,7 @@ def _fusible_physicalize_rule(
       in_tree=in_tree,
       out_tree=out_tree,
       func=func,
+      **params,
   )
 
 
