@@ -500,7 +500,7 @@ def _process_dynamic_mask(
           kv_block_size,
       )
       .swapaxes(-2, -3)
-      .astype(np.bool_)
+      .astype(jnp.int8)
   )
 
   # The block mask is 2 for all blocks with all entries set to True and 1 for

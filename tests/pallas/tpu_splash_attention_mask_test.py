@@ -2334,7 +2334,7 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
             [[1, 1, 1, 1], [1, 1, 1, 1]],
             [[1, 1, 1, 0], [1, 1, 1, 1]],
         ],
-        dtype=np.bool_,
+        dtype=np.int8,
     )
 
     _expected_mask_next = np.array(
