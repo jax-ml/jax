@@ -7795,10 +7795,11 @@ def _reshape_transpose_rule(ct, operand, *, new_sizes, dimensions, sharding):
   if dimensions is None:
     return [reshape(ct, op_ct_aval.shape, out_sharding=op_ct_aval.sharding)]
   else:
-    ct_s = op_ct_aval.sharding.update(spec=op_ct_aval.sharding.spec.update(
-        partitions=tuple(map(lambda s: s if s is None else str(s),
-                             np.take(op_ct_aval.sharding.spec, dimensions)))))
-    out = reshape(ct, np.take(op_ct_aval.shape, dimensions), out_sharding=ct_s)
+    new_sizes = tuple(op_ct_aval.shape[d] for d in dimensions)
+    new_partitions = tuple(op_ct_aval.sharding.spec[d] for d in dimensions)
+    ct_s = op_ct_aval.sharding.update(
+        spec=op_ct_aval.sharding.spec.update(partitions=new_partitions))
+    out = reshape(ct, new_sizes, out_sharding=ct_s)
     return [transpose(out, np.argsort(dimensions))]
 
 def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
