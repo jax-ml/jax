@@ -1051,7 +1051,7 @@ def lower_jaxpr_into_pipelined_module(
         grid_indices, maybe_include_mapped_dims=False
     )
 
-  cache = lowering_context.module_context.pallas_lowering_cache
+  cache = {}
   sym_tab = ir.SymbolTable(module.operation)
 
   def ctx_factory(jaxpr_indices):
@@ -1066,16 +1066,15 @@ def lower_jaxpr_into_pipelined_module(
         lowering_cache=cache,
     )
 
-  with ir.InsertionPoint(module.body):
-    func_op = _lower_jaxpr_to_func_common(
-        jaxpr,
-        name=name,
-        arg_types=arg_types,
-        num_grid=num_grid,
-        get_jaxpr_indices=get_jaxpr_indices,
-        ctx_factory=ctx_factory,
-        dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
-    )
+  func_op = _lower_jaxpr_to_func_common(
+      jaxpr,
+      name=name,
+      arg_types=arg_types,
+      num_grid=num_grid,
+      get_jaxpr_indices=get_jaxpr_indices,
+      ctx_factory=ctx_factory,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+  )
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{kernel_type}>"
   )
@@ -1110,18 +1109,17 @@ def lower_jaxpr_into_pipelined_module(
         window_params.append(ir.DictAttr.get())
         continue
 
-      with ir.InsertionPoint(module.body):
-        mlir_func = lower_jaxpr_to_transform_func(
-            bm.index_map_jaxpr.jaxpr,
-            bm.block_aval,
-            name=func_name,
-            mosaic_grid_mapping=mosaic_grid_mapping,
-            kernel_type=kernel_type,
-            forward_compatible=lowering_context.is_forward_compat(),
-            dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-            backend=backend,
-            lowering_cache=cache,
-        )
+      mlir_func = lower_jaxpr_to_transform_func(
+          bm.index_map_jaxpr.jaxpr,
+          bm.block_aval,
+          name=func_name,
+          mosaic_grid_mapping=mosaic_grid_mapping,
+          kernel_type=kernel_type,
+          forward_compatible=lowering_context.is_forward_compat(),
+          dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+          backend=backend,
+          lowering_cache=cache,
+      )
       assert mlir_func.verify(), mlir_func
       block_shape = list(pallas_core._get_block_shape(bm.block_shape))
 
@@ -1376,7 +1374,7 @@ def lower_jaxpr_into_unpipelined_module(
         f" version string:\n{platform_version}"
     )
   sym_tab = ir.SymbolTable(module.operation)
-  cache = lowering_context.module_context.pallas_lowering_cache
+  cache = {}
   mesh_shape, dimension_semantics = _get_mesh_shape_and_semantics(pallas_mesh)
   num_grid = len(mesh_shape)
   mesh_index_types = [jax_core.ShapedArray((), jnp.int32)] * len(mesh_shape)
@@ -1400,17 +1398,16 @@ def lower_jaxpr_into_unpipelined_module(
         lowering_cache=cache,
     )
 
-  with ir.InsertionPoint(module.body):
-    func_op = _lower_jaxpr_to_func_common(
-        jaxpr,
-        name=name,
-        arg_types=arg_mlir_types,
-        num_grid=num_grid,
-        get_jaxpr_indices=lambda idx: idx,
-        ctx_factory=ctx_factory,
-        dynamic_shape_replacement_enabled=False,
-        core_type=pallas_mesh.core_type,
-    )
+  func_op = _lower_jaxpr_to_func_common(
+      jaxpr,
+      name=name,
+      arg_types=arg_mlir_types,
+      num_grid=num_grid,
+      get_jaxpr_indices=lambda idx: idx,
+      ctx_factory=ctx_factory,
+      dynamic_shape_replacement_enabled=False,
+      core_type=pallas_mesh.core_type,
+  )
 
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{pallas_mesh.core_type}>"

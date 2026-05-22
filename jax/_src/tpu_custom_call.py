@@ -464,7 +464,7 @@ def _lower_mosaic_module_to_asm(
   # We'll mutate the module, so clone it
   ctx = module.context
   with ctx, module.operation.location as _:
-    module_op = module.operation.clone(ip=False)
+    module_op = module.operation.clone()
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
     target_version = (
