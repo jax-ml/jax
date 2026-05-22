@@ -691,6 +691,41 @@ class SparseGradTest(sptu.SparseTestCase):
       self.assertAllClose(jax.grad(f, argnums=1, has_aux=has_aux)(X, y),
                           sparse.grad(f, argnums=1, has_aux=has_aux)(Xsp, y))
 
+  def test_bcoo_dot_general_vmap_matvec_grad(self):
+    A_dense = jnp.array(
+        [[4.0, -1.0, 0.0, 0.0],
+         [-1.0, 4.0, -1.0, 0.0],
+         [0.0, -1.0, 4.0, -1.0],
+         [0.0, 0.0, -1.0, 4.0]],
+        dtype=jnp.float32)
+    A_bcoo = sparse.BCOO.fromdense(A_dense)
+    B = jnp.array(
+        [[1.0, 0.0, 2.0],
+         [0.0, 1.0, 1.0],
+         [1.0, 1.0, 0.0],
+         [0.0, 2.0, 1.0]],
+        dtype=jnp.float32)
+
+    def sparse_objective(data):
+      A = sparse.BCOO(
+          (data, A_bcoo.indices),
+          shape=A_bcoo.shape,
+          indices_sorted=A_bcoo.indices_sorted,
+          unique_indices=A_bcoo.unique_indices)
+      X = jax.vmap(lambda b: A @ b, in_axes=1, out_axes=1)(B)
+      return jnp.sum(X ** 2)
+
+    def dense_objective(A):
+      X = jax.vmap(lambda b: A @ b, in_axes=1, out_axes=1)(B)
+      return jnp.sum(X ** 2)
+
+    grad_bcoo_data = jax.grad(sparse_objective)(A_bcoo.data)
+    grad_dense = jax.grad(dense_objective)(A_dense)
+
+    self.assertEqual(grad_bcoo_data.shape, A_bcoo.data.shape)
+    self.assertAllClose(
+        grad_bcoo_data, sparse_bcoo._bcoo_extract(A_bcoo.indices, grad_dense))
+
   @jtu.sample_product(
     has_aux=[True, False],
     transform=['jacrev', 'jacfwd', 'jacobian']
