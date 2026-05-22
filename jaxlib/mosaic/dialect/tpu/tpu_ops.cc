@@ -2482,6 +2482,16 @@ LogicalResult StochasticConvertElementwiseOp::verify() {
   return success();
 }
 
+LogicalResult ConvertEXMYToFP8Op::verify() {
+  auto out_vty = cast<VectorType>(getOutput().getType());
+  auto out_elem_ty = out_vty.getElementType();
+  if (!llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(out_elem_ty)) {
+    return emitOpError(
+        "Only Float8E4M3FN and Float8E5M2 are supported as output types.");
+  }
+  return success();
+}
+
 LogicalResult FetchAndAddSyncOp::verify() {
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
   CoreType target_core = getRefCoreType(getBase()).value_or(issuing_core);

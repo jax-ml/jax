@@ -42,6 +42,7 @@ from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as em
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
+from jax._src.pallas.mosaic.primitives import convert_exmy_to_fp8 as convert_exmy_to_fp8
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
 from jax._src.pallas.mosaic.primitives import load as load
 from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy

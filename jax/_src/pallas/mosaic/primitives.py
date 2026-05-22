@@ -1023,6 +1023,54 @@ def _unpack_elementwise_abstract_eval(
   return jax_core.ShapedArray(x.shape, unpacked_dtype)
 
 
+convert_exmy_to_fp8_p = jax_core.Primitive("convert_exmy_to_fp8")
+
+
+def convert_exmy_to_fp8(
+    x: jax.Array,
+    target_dtype: DTypeLike,
+    cvtdesc: int,
+) -> jax.Array:
+  """Converts an 8-bit EXMY-encoded array to a standard float8 type.
+
+  This primitive converts an 8-bit EXMY-encoded array ``x`` to a standard float8
+  type (``float8_e4m3fn`` or ``float8_e5m2``) with the conversion descriptor
+  ``cvtdesc``.
+
+  Args:
+    x: An 8-bit array containing EXMY-encoded data.
+    target_dtype: The target float8 dtype (``jnp.float8_e4m3fn`` or
+      ``jnp.float8_e5m2``).
+    cvtdesc: A 32-bit integer conversion descriptor mapped directly to the LLO
+      VcvtEXMY instruction.
+
+  Returns:
+    An array of ``target_dtype`` with the converted values.
+  """
+  target_dtype = jnp.dtype(target_dtype)
+  return convert_exmy_to_fp8_p.bind(
+      x,
+      target_dtype=target_dtype,
+      cvtdesc=int(cvtdesc),
+  )
+
+
+@convert_exmy_to_fp8_p.def_abstract_eval
+def _convert_exmy_to_fp8_abstract_eval(x, *, target_dtype, cvtdesc):
+  del cvtdesc
+  if dtypes.itemsize_bits(x.dtype) != 8:
+    raise ValueError(
+        "convert_exmy_to_fp8 input must be 8-bit, got "
+        f"{x.dtype} ({dtypes.itemsize_bits(x.dtype)} bits)"
+    )
+  if target_dtype not in [jnp.float8_e4m3fn, jnp.float8_e5m2]:
+    raise ValueError(
+        "convert_exmy_to_fp8 target_dtype must be float8_e4m3fn or"
+        f" float8_e5m2, got {target_dtype}"
+    )
+  return jax_core.ShapedArray(x.shape, target_dtype)
+
+
 def with_memory_space_constraint(
     x: jax.Array, memory_space: Any
 ) -> jax.Array:

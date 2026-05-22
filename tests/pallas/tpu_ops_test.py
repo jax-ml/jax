@@ -332,7 +332,6 @@ class OpsTest(ptu.PallasTPUTest):
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
 
-
     shape = (128, 128)
 
     @functools.partial(
@@ -496,7 +495,6 @@ class OpsTest(ptu.PallasTPUTest):
     if msk_dtype == jnp.int16:
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
-
 
     shape = (1024,)
 
@@ -814,6 +812,68 @@ class OpsTest(ptu.PallasTPUTest):
     )
     self.assertTrue(jnp.all(is_correct))
 
+  @parameterized.product(
+      source_dtype=[jnp.int8, jnp.uint8, jnp.int4],
+      target_dtype=[jnp.float8_e4m3fn, jnp.float8_e5m2],
+  )
+  def test_convert_exmy_to_fp8(self, source_dtype, target_dtype):
+    if self.INTERPRET:
+      self.skipTest(
+          "Interpreter mode not implemented yet for convert_exmy_to_fp8"
+      )
+    if not jtu.is_device_tpu_at_least(version=7):
+      self.skipTest("Requires TPU v7+ for EXMY conversions")
+
+    shape = (8, 128)
+    match source_dtype:
+      case jnp.int8:
+        x = jax.random.randint(
+            jax.random.key(42),
+            shape,
+            minval=-128,
+            maxval=128,
+            dtype=jnp.int8,
+        )
+        expected = x.astype(target_dtype)
+        cvtdesc = 312
+      case jnp.uint8:
+        x = jax.random.randint(
+            jax.random.key(42),
+            shape,
+            minval=0,
+            maxval=256,
+            dtype=jnp.uint8,
+        )
+        expected = x.astype(target_dtype)
+        cvtdesc = 56
+      case jnp.int4:
+        x = jax.random.randint(
+            jax.random.key(42),
+            shape,
+            minval=-8,
+            maxval=7,
+            dtype=jnp.int8,
+        )
+        expected = x.astype(target_dtype)
+        x = x & 0xF
+        cvtdesc = 280
+      case _:
+        raise ValueError(f"Unsupported source dtype: {source_dtype}")
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = pltpu.convert_exmy_to_fp8(
+          x_ref[...],
+          target_dtype,
+          cvtdesc=cvtdesc,
+      )
+
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(x.shape, target_dtype),
+    )(x)
+
+    self.assertAllClose(result, expected)
+
   def _pack_unpack_elementwise_test_data(
       self, shape, unpacked_dtype, packed_dtype):
     """Generates data for test_pack_elementwise and test_unpack_elementwise."""
@@ -1115,7 +1175,6 @@ class OpsTest(ptu.PallasTPUTest):
     )
 
   def test_fuse_transposed_lhs_in_matmul(self):
-
 
     lhs_shape = (512, 128)
     rhs_shape = (512, 256)

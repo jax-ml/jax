@@ -4389,6 +4389,20 @@ def _unpack_elementwise_lowering_rule(
       out_type, x, source_type=_dtype_to_ir_type(packed_dtype), index=index)
 
 
+@register_lowering_rule(tpu_primitives.convert_exmy_to_fp8_p)
+def _convert_exmy_to_fp8_lowering_rule(
+    ctx: LoweringRuleContext, x, *, target_dtype, cvtdesc
+):
+  del target_dtype
+  out_aval = ctx.avals_out[0]
+  out_type = ctx.aval_to_ir_type(out_aval)
+  return tpu.convert_exmy_to_fp8(
+      out_type,
+      x,
+      cvtdesc=cvtdesc,
+  )
+
+
 @register_lowering_rule(tpu_primitives.bitcast_p)
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty

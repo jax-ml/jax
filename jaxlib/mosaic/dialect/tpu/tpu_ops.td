@@ -1113,6 +1113,24 @@ def TPU_StochasticConvertElementwiseOp : TPU_Op<"stochastic_convert_elementwise"
   let hasVerifier = 1;
 }
 
+def TPU_ConvertEXMYToFP8Op : TPU_Op<"convert_exmy_to_fp8", [Pure, ElementwiseMappable, SameOperandsAndResultShape]> {
+  let description = [{
+    Converts data from an EXMY encoding to a standard float8 type.
+
+    The input is an 8-bit vector containing EXMY-encoded data. The `cvtdesc`
+    attribute is the 32-bit conversion descriptor passed directly to the
+    hardware conversion instruction. The output is a standard float8
+    type (Float8E4M3FN or Float8E5M2).
+  }];
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I8, TPU_Float8EXMYType]>:$input,
+    I32Attr:$cvtdesc
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
   let arguments = (ins Variadic<AnyVectorOfAnyRank>:$input);
   let results = (outs AnyVectorOfAnyRank:$output);
