@@ -51,7 +51,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
-from jax._src.lib import jax_mlir_ext, jaxlib_extension_version
+from jax._src.lib import jax_mlir_ext
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -343,6 +343,14 @@ class ShapedAbstractValue(Protocol):
   dtype: jnp.dtype
   weak_type: bool
 
+  @property
+  def ndim(self) -> int:
+    ...
+
+  @property
+  def size(self) -> int:
+    ...
+
   def update(self, **kwargs: Any) -> Self:
     raise NotImplementedError
 
@@ -559,44 +567,27 @@ def aval_to_ir_type(
   raise NotImplementedError(aval)
 
 
-if jaxlib_extension_version >= 442:
-  def ir_constant(x: Any, mlir_type: ir.Type | None = None) -> ir.Value:
-    if mlir_type is None:
-      dtype = getattr(x, "dtype", None)
-      if dtype is None:
-        if isinstance(x, int):
-          mlir_type = ir.IntegerType.get_signless(32)
-        elif isinstance(x, float):
-          mlir_type = ir.F32Type.get()
-        else:
-          raise ValueError(f"Cannot determine dtype for {x}")
-      else:
-        mlir_type = _dtype_to_ir_type(dtype)
-    if isinstance(x, (bool, int, float)):
-      return jax_mlir_ext.arith_constant(x, mlir_type)
-    if jnp.issubdtype(x.dtype, np.integer):
-      return jax_mlir_ext.arith_constant(int(x), mlir_type)
-    elif jnp.issubdtype(x.dtype, jnp.floating):
-      return jax_mlir_ext.arith_constant(float(x), mlir_type)
-    elif x.dtype == jnp.bool_:
-      return jax_mlir_ext.arith_constant(bool(x), mlir_type)
-    raise NotImplementedError(x.dtype)
-else:
-  def ir_constant(x: Any, mlir_type: ir.Type | None = None) -> ir.Value:
-    if not hasattr(x, "dtype"):
+def ir_constant(x: Any, mlir_type: ir.Type | None = None) -> ir.Value:
+  if mlir_type is None:
+    dtype = getattr(x, "dtype", None)
+    if dtype is None:
       if isinstance(x, int):
-        x = np.array(x, np.int32)
+        mlir_type = ir.IntegerType.get_signless(32)
       elif isinstance(x, float):
-        x = np.array(x, np.float32)
-    if not mlir_type:
-      mlir_type = _dtype_to_ir_type(x.dtype)
-    if isinstance(x, int) or jnp.issubdtype(x.dtype, np.integer):
-      return arith.constant(mlir_type, ir.IntegerAttr.get(mlir_type, int(x)))
-    elif isinstance(x, float) or jnp.issubdtype(x.dtype, jnp.floating):
-      return arith.constant(mlir_type, ir.FloatAttr.get(mlir_type, float(x)))
-    elif x.dtype == jnp.bool_:
-      return arith.constant(mlir_type, ir.BoolAttr.get(bool(x)))
-    raise NotImplementedError(x.dtype)
+        mlir_type = ir.F32Type.get()
+      else:
+        raise ValueError(f"Cannot determine dtype for {x}")
+    else:
+      mlir_type = _dtype_to_ir_type(dtype)
+  if isinstance(x, (bool, int, float)):
+    return jax_mlir_ext.arith_constant(x, mlir_type)
+  if jnp.issubdtype(x.dtype, np.integer):
+    return jax_mlir_ext.arith_constant(int(x), mlir_type)
+  elif jnp.issubdtype(x.dtype, jnp.floating):
+    return jax_mlir_ext.arith_constant(float(x), mlir_type)
+  elif x.dtype == jnp.bool_:
+    return jax_mlir_ext.arith_constant(bool(x), mlir_type)
+  raise NotImplementedError(x.dtype)
 
 
 lowering_rules: dict[tpu_core.CoreType, dict[jax_core.Primitive, Callable]]
@@ -1761,14 +1752,8 @@ def jaxpr_subcomp(
               pass
 
         if cache_entry is not None:
-          if jaxlib_extension_version >= 443 or TYPE_CHECKING:
-            outs = jax_mlir_ext.inlined_func_call(
-              cache_entry.operation, invals)
-          else:
-            outs = jax_mlir_ext.inlined_func_call(
-                cache_entry.operation, invals,
-                ir.InsertionPoint.current.block
-            )
+          outs = jax_mlir_ext.inlined_func_call(
+            cache_entry.operation, invals)
 
           ans = outs if eqn.primitive.multiple_results else outs[0]
         else:
@@ -2823,31 +2808,20 @@ def _dot_general_lowering_rule(
   out_tile = arith.constant(
       out_type, ir.DenseElementsAttr.get_splat(out_type, val)
   )
-  if jaxlib_extension_version < 447 or TYPE_CHECKING:
-    return tpu.matmul(  # pyrefly: ignore[missing-argument]
-        out_type,
-        x,
-        y,
-        out_tile,
-        *[],  # To silence the linter warning for older jaxlib versions.
-        dimension_numbers=tpu_dot_dims,
-        precision=precision_attr,
-    )
-  else:
-    # Contracting second minor is to transpose the lhs. Only try fusing if it's
-    # an implicit transpose.
-    implicit_transpose = (ctx.avals_in[0].ndim - 2) in lhs_dims
-    return tpu.matmul(
-        out_type,
-        x,
-        y,
-        out_tile,
-        dimension_numbers=tpu_dot_dims,
-        precision=precision_attr,
-        transpose_lhs_hint=not ctx.forward_compatible
-        and ctx.lowering_context.fuse_transposed_lhs_in_matmul
-        and implicit_transpose,
-    )
+  # Contracting second minor is to transpose the lhs. Only try fusing if it's
+  # an implicit transpose.
+  implicit_transpose = (ctx.avals_in[0].ndim - 2) in lhs_dims
+  return tpu.matmul(
+      out_type,
+      x,
+      y,
+      out_tile,
+      dimension_numbers=tpu_dot_dims,
+      precision=precision_attr,
+      transpose_lhs_hint=not ctx.forward_compatible
+      and ctx.lowering_context.fuse_transposed_lhs_in_matmul
+      and implicit_transpose,
+  )
 
 
 def _convert_helper(x: Array, *, to_dtype: jnp.dtype) -> Array:

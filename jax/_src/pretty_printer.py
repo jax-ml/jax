@@ -30,11 +30,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from functools import partial
 import sys
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from jax._src import config
 from jax._src.lib import _pretty_printer as _pretty_printer
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import use_cpp_class, use_cpp_method
 
 
@@ -65,8 +64,7 @@ CAN_USE_COLOR = _can_use_color()
 Color = _pretty_printer.Color
 Intensity = _pretty_printer.Intensity
 
-if jaxlib_extension_version >= 450 or TYPE_CHECKING:
-  OutputFormat = _pretty_printer.OutputFormat
+OutputFormat = _pretty_printer.OutputFormat
 
 
 @use_cpp_class(_pretty_printer.Doc)
@@ -117,32 +115,16 @@ class Doc:
     if use_color is None:
       use_color = CAN_USE_COLOR and _PPRINT_USE_COLOR.value
 
-    if jaxlib_extension_version >= 450:
-      if output_format is None:
-        output_format = OutputFormat.TEXT
-      return self._format(
-          width,
-          use_color=use_color,
-          output_format=output_format,
-          separable_lines=separable_lines,
-          annotation_prefix=annotation_prefix,
-          source_map=source_map,
-      )
-    else:
-      if output_format is not None:
-        raise ValueError(
-            "HTML output format requires jaxlib 0.10.1 or newer"
-        )
-      if separable_lines:
-        raise ValueError(
-            "separable_lines requires jaxlib 0.10.1 or newer"
-        )
-      return self._format(
-          width,
-          use_color=use_color,
-          annotation_prefix=annotation_prefix,
-          source_map=source_map,
-      )
+    if output_format is None:
+      output_format = OutputFormat.TEXT
+    return self._format(
+        width,
+        use_color=use_color,
+        output_format=output_format,
+        separable_lines=separable_lines,
+        annotation_prefix=annotation_prefix,
+        source_map=source_map,
+    )
 
 
 def nil() -> Doc:
@@ -166,10 +148,7 @@ def text(
     href: Optional HTML href for this text. When formatted as HTML,
       wraps the text in an <a href="..."> tag.
   """
-  if jaxlib_extension_version >= 451:
-    return _pretty_printer.text(text, annotation, anchor, href)  # pyrefly: ignore[bad-return]
-  else:
-    return _pretty_printer.text(text, annotation)  # pyrefly: ignore[bad-return]
+  return _pretty_printer.text(text, annotation, anchor, href)  # pyrefly: ignore[bad-return]
 
 
 def concat(children: Sequence[Doc]) -> Doc:

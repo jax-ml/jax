@@ -36,7 +36,6 @@ from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
 from jax import version as jax_version_module
 from jax._src.lib import version as version_lib
-from jax._src.lib import jaxlib_extension_version as jaxlib_extension_version
 
 ProfileData = _profile_data.ProfileData
 ProfileEvent = _profile_data.ProfileEvent
@@ -116,13 +115,7 @@ def register_subprocess(pid: int, port: int) -> Callable[[], None]:
     RuntimeError: If the subprocess fails to be registered (e.g. already
     registered, unable to connect, etc.).
   """
-  if jaxlib_extension_version >= 448:
-    return _profiler.register_subprocess(pid, port)
-  else:
-    raise RuntimeError(
-        "jaxlib version is too old, please upgrade to version 448 or later "
-        "to use register_subprocess."
-    )
+  return _profiler.register_subprocess(pid, port)
 
 
 class _ProfileState:

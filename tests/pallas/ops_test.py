@@ -964,10 +964,7 @@ class OpsTest(PallasBaseTest):
       if dtype in (jnp.int16, jnp.uint16):
         if jtu.get_tpu_version() < 4:
           self.skipTest("requires TPU v4+")
-        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
-            2026, 4, 6
-        ):
-          self.skipTest("requires newer libTPU")
+
 
     @functools.partial(
         self.pallas_call,
@@ -1164,21 +1161,9 @@ class OpsTest(PallasBaseTest):
       if dtype == "int16":
         if fn in (jnp.sign, jnp.abs) and not jtu.is_device_tpu_at_least(4):
           self.skipTest("requires TPU v4+")
-        if fn == jnp.abs and not jtu.is_cloud_tpu_at_least(2026, 5, 10):
-          self.skipTest("requires newer libTPU")
-      if (
-          fn in (jnp.ceil, jnp.floor, jnp.sqrt, lax.rsqrt)
-          and dtype == "bfloat16"
-          and not jtu.is_device_tpu_at_least(6)
-          and not jtu.is_cloud_tpu_at_least(2026, 4, 27)
-      ):
-        self.skipTest("requires newer libTPU")
-      if (
-          fn == jnp.log1p
-          and dtype == "bfloat16"
-          and not jtu.is_cloud_tpu_at_least(2026, 5, 12)
-      ):
-        self.skipTest("requires newer libTPU")
+
+
+
       # TODO(b/370578663): implement these lowerings on TPU
       if fn in (
           jnp.acos, jnp.acosh, jnp.asin, jnp.asinh, jnp.atan, jnp.atanh,
@@ -1852,10 +1837,7 @@ class OpsTest(PallasBaseTest):
       if dtype == "int16":
         if jtu.get_tpu_version() < 4:
           self.skipTest("requires TPUv4+")
-        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
-            2026, 4, 6
-        ):
-          self.skipTest("requires TPUv6+")
+
 
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), dtype),
@@ -2387,8 +2369,7 @@ class OpsTest(PallasBaseTest):
   def test_reduce_only_dim(self):
     self.skip_if_mosaic_gpu()
 
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 29):
-      self.skipTest("Requires a newer libtpu")
+
 
     m = 32
     x = random.normal(random.key(0), (m,), dtype=jnp.float32)
@@ -2444,10 +2425,7 @@ class OpsTest(PallasBaseTest):
       if dtype == "bfloat16":
         if jtu.get_tpu_version() < 4:
           self.skipTest("require 16-bit iota")
-        if jtu.get_tpu_version() < 6 and not jtu.is_cloud_tpu_at_least(
-            2026, 4, 6
-        ):
-          self.skipTest("require newer libtpu")
+
       if jtu.get_tpu_version() < 5 and axis == 1:
         self.skipTest("sublane gather not supported on old TPUs")
 
@@ -2581,8 +2559,7 @@ class OpsTest(PallasBaseTest):
   def test_bitcast_convert_type_scalar(self):
     self.skip_if_mosaic_gpu()
 
-    if not jtu.is_cloud_tpu_at_least(2026, 3, 29):
-      self.skipTest("Requires a newer libtpu")
+
 
     x = jnp.int32(42)
     out_dtype = jnp.float32

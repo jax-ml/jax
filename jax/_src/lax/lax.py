@@ -56,7 +56,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
-from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
@@ -1703,7 +1702,7 @@ def _convert_element_type(
     aval = core.ShapedArray(arr.shape, arr.dtype, weak_type=weak_type)
     operand = literals.TypedNdArray(arr, aval=aval)
 
-  if isinstance(operand, (bool, int, float, builtins.complex, np.generic)) and jaxlib_extension_version >= 445:
+  if isinstance(operand, (bool, int, float, builtins.complex, np.generic)):
     if sharding is None:
       if old_dtype == new_dtype and old_weak_type == weak_type:
         return stage(operand)  # pyrefly: ignore[bad-argument-type]

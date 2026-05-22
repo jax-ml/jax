@@ -45,7 +45,6 @@ from jax._src.xla_metadata import set_xla_metadata
 from jax._src.random import prng
 from jax._src.random import threefry2x32
 from jax._src.random import rbg
-from jax._src.lib import jaxlib_extension_version
 from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
                           AbstractDevice)
 from jax.experimental import multihost_utils
@@ -1117,7 +1116,6 @@ class PJitTest(jtu.BufferDonationTestCase):
         """).strip(),
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 452, "Requires jaxlib 0.10.1")
   def test_pretty_print_html(self):
     f = pjit(lambda x: x**2)
     g = pjit(lambda x: f(x) + f(x))

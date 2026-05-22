@@ -25,7 +25,6 @@ from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import triton
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
@@ -189,47 +188,28 @@ def pallas_call_lowering(
       [triton_kernel_call_lib.create_array_parameter(0, 16)]
       * (len(ctx.avals_in) + len(ctx.avals_out)),
   )
-  if jaxlib_extension_version >= 444:
-    result_types, _ = mlir.ir_tree_registry.flatten([
-        mlir.aval_to_ir_type(ctx.module_context, aval)
-        for aval in ctx.avals_out
-    ])
-    return mlir.custom_call(
-        call_target_name="triton_kernel_call_ffi",
-        result_types=result_types,
-        operands=in_nodes,
-        backend_config=dict(
-            name=ir.StringAttr.get(name),
-            opaque=ir.StringAttr.get(
-                zlib.compress(
-                    kernel_call.to_proto(
-                        name, (serialized_metadata or "").encode()
-                    )
-                )
-            ),
-        ),
-        operand_layouts=avals_to_layouts(ctx.avals_in),
-        result_layouts=avals_to_layouts(ctx.avals_out),
-        operand_output_aliases=dict(input_output_aliases),
-    ).results
-  else:
-    result_types, _ = mlir.ir_tree_registry.flatten(
-        [mlir.aval_to_ir_type(ctx.module_context, aval) for aval in ctx.avals_out]
-    )
-    return mlir.custom_call(
-        call_target_name="triton_kernel_call",
-        result_types=result_types,
-        operands=in_nodes,
-        backend_config=zlib.compress(
-            kernel_call.to_proto(
-                debug_info.func_name,
-                (serialized_metadata or "").encode(),
-            )
-        ),
-        operand_layouts=avals_to_layouts(ctx.avals_in),
-        result_layouts=avals_to_layouts(ctx.avals_out),
-        operand_output_aliases=dict(input_output_aliases),
-    ).results
+  result_types, _ = mlir.ir_tree_registry.flatten([
+      mlir.aval_to_ir_type(ctx.module_context, aval)
+      for aval in ctx.avals_out
+  ])
+  return mlir.custom_call(
+      call_target_name="triton_kernel_call_ffi",
+      result_types=result_types,
+      operands=in_nodes,
+      backend_config=dict(
+          name=ir.StringAttr.get(name),
+          opaque=ir.StringAttr.get(
+              zlib.compress(
+                  kernel_call.to_proto(
+                      name, (serialized_metadata or "").encode()
+                  )
+              )
+          ),
+      ),
+      operand_layouts=avals_to_layouts(ctx.avals_in),
+      result_layouts=avals_to_layouts(ctx.avals_out),
+      operand_output_aliases=dict(input_output_aliases),
+  ).results
 
 
 pallas_core.register_lowering_rule(triton_core.CompilerParams, pallas_call_lowering, "gpu")

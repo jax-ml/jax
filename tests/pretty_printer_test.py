@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
 from absl.testing import absltest
 from jax._src import pretty_printer as pp
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 
 
 class PrettyPrinterTest(jtu.JaxTestCase):
@@ -99,7 +97,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
     self.assertEqual(pp.nest(2, pp.group(xbybz)).format(width=0), "x\n  y\n  z")
     self.assertEqual(pp.nest(2, pp.group(bxbx)).format(width=0), "\n  x\n  x")
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testHtmlFormat(self):
     doc = pp.concat([
         pp.keyword(pp.text("let")),
@@ -132,7 +130,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         "a&lt;br&gt;b",
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 451, "Requires jaxlib >= 450")
+
   def testHtmlLinks(self):
     doc = pp.concat([
         pp.text("def", anchor="var_x"),
@@ -144,7 +142,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         '<a id="var_x">def</a> <a href="#var_x">use</a>',
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testHtmlSourceMapWithColors(self):
     doc = pp.color(
         pp.source_map(pp.text("a"), "source1")
@@ -191,7 +189,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         "\x1b[34;1mlet\x1b[39;22m \x1b[35mx:f32\x1b[39m",
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testAnsiColorWithAnnotationsLinear(self):
     doc = pp.color(
         pp.text("a", annotation="annot1") + pp.text("b", annotation="annot2"),
@@ -203,7 +201,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         " annot2\x1b[22m",
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testAnsiColorWithAnnotationsSeparable(self):
     doc = pp.color(
         pp.text("a", annotation="annot1") + pp.text("b", annotation="annot2"),
@@ -215,7 +213,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         " annot2\x1b[22m",
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testAnsiColorMultilineLinear(self):
     doc = pp.color(
         pp.text("a", annotation="annot1")
@@ -229,7 +227,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         " annot2\x1b[22m",
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testAnsiColorMultilineSeparable(self):
     doc = pp.color(
         pp.text("a", annotation="annot1")
@@ -243,7 +241,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         " annot2\x1b[22m",
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testSeparableLinesHtml(self):
     doc = pp.type_annotation(pp.text("a") + pp.brk() + pp.text("b"))
 
@@ -264,7 +262,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         '<span class="ansi-fg-35">a</span>\n<span class="ansi-fg-35">b</span>',
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testSeparableLinesAnsi(self):
     doc = pp.type_annotation(pp.text("a") + pp.brk() + pp.text("b"))
 
@@ -285,7 +283,7 @@ class PrettyPrinterTest(jtu.JaxTestCase):
         "\x1b[35ma\x1b[39m\n\x1b[35mb\x1b[39m",
     )
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
+
   def testHtmlFormatWithAnnotations(self):
     doc = pp.color(
         pp.text("a", annotation="annot1")

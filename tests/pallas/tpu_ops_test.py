@@ -331,10 +331,7 @@ class OpsTest(ptu.PallasTPUTest):
     if dtype == jnp.int16:
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
-      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
-          2026, 4, 6
-      ):
-        self.skipTest("requires newer libTPU")
+
 
     shape = (128, 128)
 
@@ -499,10 +496,7 @@ class OpsTest(ptu.PallasTPUTest):
     if msk_dtype == jnp.int16:
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
-      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
-          2026, 4, 6
-      ):
-        self.skipTest("requires newer libTPU")
+
 
     shape = (1024,)
 
@@ -1121,8 +1115,7 @@ class OpsTest(ptu.PallasTPUTest):
     )
 
   def test_fuse_transposed_lhs_in_matmul(self):
-    if not jtu.is_cloud_tpu_at_least(year=2026, month=5, day=5):
-      self.skipTest("Requires newer libtpu")
+
 
     lhs_shape = (512, 128)
     rhs_shape = (512, 256)

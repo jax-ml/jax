@@ -30,7 +30,7 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
-from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.lib import _jax
 from jax._src.interpreters import mlir
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function
@@ -99,14 +99,9 @@ class CompatTensoflowTest(bctu.CompatTestBase):
     for op in tf_graph.get_operations():
       if op.type == "XlaCallModule":
         serialized_module = op.get_attr("module")
-        if jaxlib_extension_version >= 437:
-          with mlir.make_ir_context():
-            module_str = mlir.module_to_string(
-                _jax.mlir.deserialize_portable_artifact(serialized_module)
-            )
-        else:
-          module_str = _jax.mlir.deserialize_portable_artifact(
-              serialized_module
+        with mlir.make_ir_context():
+          module_str = mlir.module_to_string(
+              _jax.mlir.deserialize_portable_artifact(serialized_module)
           )
         module_version = op.get_attr("version")
         break

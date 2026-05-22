@@ -36,7 +36,6 @@ from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax._src.random import threefry2x32
-from jax._src.lib import jaxlib_extension_version
 
 
 jax.config.parse_flags_with_absl()
@@ -1037,8 +1036,6 @@ class ShardingTest(jtu.JaxTestCase):
     repr(out.sharding)  # doesn't crash
 
   def test_pspec_tuple(self):
-    if jaxlib_extension_version < 446:
-      self.skipTest('Requires jaxlib_extension_version >= 446')
     pspec = P('x', 'y', 'z')
     self.assertEqual(pspec.index('z'), 2)
     out1 = P(None, 'x', 'y', 'z')
@@ -1456,9 +1453,6 @@ class ShardingTest(jtu.JaxTestCase):
       P('x', None, 'y', unreduced={'z', 'y'})
 
   def test_named_sharding_unreduced_error(self):
-    if jaxlib_extension_version < 446:
-      self.skipTest('Requires jaxlib_extension_version >= 446')
-
     mesh = jtu.create_mesh((1, 1, 1), ('x', 'y', 'z'))
 
     with self.assertRaisesRegex(
@@ -1532,8 +1526,6 @@ class ShardingTest(jtu.JaxTestCase):
       jax.P((('a', 'b'), 'c'))
 
   def test_pspec_subclass_error(self):
-    if jaxlib_extension_version < 446:
-      self.skipTest('Requires jaxlib_extension_version >= 446')
     with self.assertRaisesRegex(TypeError, "Subclassing `jax.P` is prohibited"):
       class MyP(jax.P):
         pass

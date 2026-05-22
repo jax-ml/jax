@@ -17,7 +17,6 @@ import gzip
 import json
 import os
 import re
-import unittest
 
 from absl.testing import absltest
 
@@ -27,7 +26,6 @@ from jax import lax
 from jax._src import config
 from jax._src import jaxpr_util
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 
 
@@ -164,7 +162,6 @@ class JaxprStatsTest(jtu.JaxTestCase):
     # (should be > 1 due to the condition and branch eqns)
     self.assertEqual(jaxpr_util.count_eqns(jaxpr_nested), 5)
 
-  @unittest.skipIf(jaxlib_extension_version < 450, "Requires jaxlib >= 450")
   def test_jaxpr_to_html(self):
     def f(x):
       return x + 2

@@ -49,7 +49,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayoutSingleton, Layout
 from jax._src.lib import _jax
 from jax._src.lib import jax_mlir_ext
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import pytree
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -2239,12 +2238,7 @@ def _emit_cached_call(
   flat_args, _ = ir_tree_registry.flatten(
       dim_var_values + tokens_in_args + const_arg_values + args)
   if cache_entry.inline:
-    if jaxlib_extension_version >= 443:
-      outs = jax_mlir_ext.inlined_func_call(cache_entry.func.operation, flat_args)
-    else:
-      outs = jax_mlir_ext.inlined_func_call(
-          # pyrefly: ignore[bad-argument-type]
-          cache_entry.func, flat_args, ir.InsertionPoint.current.block)
+    outs = jax_mlir_ext.inlined_func_call(cache_entry.func.operation, flat_args)
   else:
     outs = func_dialect.CallOp(
         cache_entry.flat_output_types,
