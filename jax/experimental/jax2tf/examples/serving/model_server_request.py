@@ -106,7 +106,7 @@ def main(_):
     raise ValueError(f"The count_images ({_COUNT_IMAGES.value}) must be a "
                      "multiple of "
                      f"serving_batch_size ({_SERVING_BATCH_SIZE.value})")
-  test_ds = mnist_lib.load_mnist(tfds.Split.TEST,
+  test_ds = mnist_lib.load_mnist(tfds.Split("test"),
                                  batch_size=_SERVING_BATCH_SIZE.value)
   images_and_labels = tfds.as_numpy(test_ds.take(
       _COUNT_IMAGES.value // _SERVING_BATCH_SIZE.value))

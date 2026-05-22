@@ -84,9 +84,9 @@ _TEST_SAVEDMODEL = flags.DEFINE_boolean(
 def train_and_save():
   logging.info("Loading the MNIST TensorFlow dataset")
   train_ds = mnist_lib.load_mnist(
-      tfds.Split.TRAIN, batch_size=mnist_lib.train_batch_size)
+      tfds.Split("train"), batch_size=mnist_lib.train_batch_size)
   test_ds = mnist_lib.load_mnist(
-      tfds.Split.TEST, batch_size=mnist_lib.test_batch_size)
+      tfds.Split("test"), batch_size=mnist_lib.test_batch_size)
 
   if SHOW_IMAGES.value:
     mnist_lib.plot_images(train_ds, 1, 5, "Training images", inference_fn=None)
