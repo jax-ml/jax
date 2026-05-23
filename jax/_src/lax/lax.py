@@ -7942,18 +7942,30 @@ def _select_sharding_rule(which, *cases):
   non_empty_s = [c.sharding for c in cases if not c.sharding.mesh.empty]
   if not non_empty_s:
     return core.get_cur_mesh_sharding()
-  if any(s != non_empty_s[0] for s in non_empty_s[1:]):
+  first_s = non_empty_s[0]
+  if any(s != first_s for s in non_empty_s[1:]):
     msg = "select cases must have the same shardings, got [{}]."
     raise core.ShardingTypeError(
         msg.format(", ".join([str(c.sharding) for c in cases])))
+  # We only check mesh and partitions here (not unreduced/reduced) because
+  # select_transpose_rule passes in the primal which to select with cotangent
+  # cases. The gradient of which is None anyways.
+  eq_p = lambda x, y: x.mesh == y.mesh and x.spec.partitions == y.spec.partitions
   if (which.shape and not which.sharding.mesh.empty and
-      which.sharding != non_empty_s[0]):
+      not eq_p(which.sharding, first_s)):
     raise core.ShardingTypeError(
         'select `which` must be scalar or have the same sharding as cases, got'
         f' `which` sharding {which.sharding} but case sharding'
         f' {cases[0].sharding}.')
-  return non_empty_s[0]
+  return first_s
 
+def _select_ur_rule(which, *cases):
+  non_empty_cs = [c for c in cases if not c.sharding.mesh.empty]
+  if not non_empty_cs:
+    return frozenset(), frozenset()
+  # which and all cases have the same sharding check is already done in select
+  # sharding rule.
+  return core.getu(non_empty_cs[0]), core.getr(non_empty_cs[0])
 
 def _select_dtype_rule(which, *cases):
   check_same_dtypes("select", *cases)
@@ -7968,20 +7980,20 @@ def _select_dtype_rule(which, *cases):
 def _select_weak_type_rule(which, *cases):
   return all(c.weak_type for c in cases)
 
-def _select_transpose_rule(t, which, *cases):
+def _select_transpose_rule(ct, which, *cases):
   assert not ad.is_undefined_primal(which)
-  if type(t) is ad_util.Zero:
-    return [None] + [ad_util.Zero(c.aval) if ad.is_undefined_primal(c) else None
-                     for c in cases]
+  if type(ct) is ad_util.Zero:
+    return [None] + [ad_util.Zero(c.aval.to_ct_aval())
+                     if ad.is_undefined_primal(c) else None for c in cases]
   else:
-    zeros = full_like(t, 0)
+    zeros = full_like(ct, 0)
     if dtypes.dtype(which) == np.dtype(np.bool_):
-      ct0 = select(which, zeros, t) if ad.is_undefined_primal(cases[0]) else None
-      ct1 = select(which, t, zeros) if ad.is_undefined_primal(cases[1]) else None
+      ct0 = select(which, zeros, ct) if ad.is_undefined_primal(cases[0]) else None
+      ct1 = select(which, ct, zeros) if ad.is_undefined_primal(cases[1]) else None
       return (None, ct0, ct1)
     else:
       return [None] + [
-          select(eq(which, _const(which, i)), t, zeros)
+          select(eq(which, _const(which, i)), ct, zeros)
           if ad.is_undefined_primal(case) else None for i, case in enumerate(cases)
       ]
 
@@ -8106,7 +8118,8 @@ def _select_hlo_lowering(ctx, which, *cases):
 select_n_p = standard_primitive(
     _select_shape_rule, _select_dtype_rule, 'select_n',
     weak_type_rule=_select_weak_type_rule, sharding_rule=_select_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'select_n'))
+    vma_rule=partial(core.standard_vma_rule, 'select_n'),
+    ur_rule=_select_ur_rule)
 ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
 batching.fancy_primitive_batchers[select_n_p] = _select_batch_rule

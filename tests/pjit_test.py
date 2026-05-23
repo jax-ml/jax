@@ -10923,6 +10923,60 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     self.assertArraysEqual(out, np.arange(8))
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_select_reduced(self, mesh):
+    np_inp = np.arange(16.).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, P(reduced={'x'}))
+    arr2 = jax.device_put(np_inp, P(reduced={'x'}))
+
+    @jax.jit
+    def f(pred, on_true, on_false):
+      y = lax.select(pred, on_true, on_false)
+      return y
+
+    out = f(arr1 == arr2, arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None, reduced={'x'})))
+    self.assertArraysEqual(out, arr1)
+
+    g2, g3 = jax.jit(jax.grad(lambda x, y, z: f(x, y, z).sum(), argnums=(1, 2))
+                     )(arr1 == arr2, arr1, arr2)
+    self.assertEqual(g2.sharding, NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(g3.sharding, NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
+    rep_arr1 = jax.device_put(np_inp, P())
+    rep_arr2 = jax.device_put(np_inp, P())
+    exg2, exg3 = jax.jit(jax.grad(lambda x, y, z: f(x, y, z).sum(), argnums=(1, 2))
+                         )(rep_arr1 == rep_arr2, rep_arr1, rep_arr2)
+    self.assertArraysEqual(reshard(g2, P()), exg2)
+    self.assertArraysEqual(reshard(g3, P()), exg3)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_select_unreduced(self, mesh):
+    np_inp = jnp.arange(16.).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, P(unreduced={'x'}))
+    arr2 = jax.device_put(np_inp, P(unreduced={'x'}))
+
+    @jax.jit
+    def f(pred, on_true, on_false):
+      y = lax.select(pred, on_true, on_false)
+      return y
+
+    out = f(True, arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertArraysEqual(reshard(out, P()), reshard(arr1, P()))
+
+    g2, g3 = jax.jit(jax.grad(lambda x, y, z: f(x, y, z).sum(), argnums=(1, 2))
+                     )(True, arr1, arr2)
+    self.assertEqual(g2.sharding, NamedSharding(mesh, P(None, None, reduced={'x'})))
+    self.assertEqual(g3.sharding, NamedSharding(mesh, P(None, None, reduced={'x'})))
+
+    rep_arr1 = jax.device_put(np_inp, P())
+    rep_arr2 = jax.device_put(np_inp, P())
+    exg2, exg3 = jax.jit(jax.grad(lambda x, y, z: f(x, y, z).sum(),
+                                  argnums=(1, 2)))(True, rep_arr1, rep_arr2)
+    self.assertArraysEqual(g2, exg2)
+    self.assertArraysEqual(g3, exg3)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

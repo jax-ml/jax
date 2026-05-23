@@ -122,6 +122,10 @@ class P:
   def __init_subclass__(cls, *args, **kwargs):
     raise TypeError("Subclassing `jax.P` is prohibited.")
 
+  @property
+  def partitions(self):
+    return self._partitions
+
   def __repr__(self):
     pr = repr(self._partitions)[1:-1]
     if not self.unreduced and not self.reduced:
