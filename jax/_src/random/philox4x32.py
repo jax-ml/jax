@@ -54,61 +54,6 @@ _PHILOX_W32_1 = np.uint32(0xBB67AE85)
 
 _DEFAULT_ROUNDS = 10
 
-
-# -- Helper functions --
-
-
-# TODO(jakevdp) some platforms have single-instruction 32x32->64bit integer
-# multiply. We should use that here – either via a new primitive, or perhaps
-# an out_dtype argument on mul.
-def _mulhilo32(a, b):
-  """Compute full 64-bit product of two uint32 values, return (lo, hi).
-
-  Uses only 32-bit operations (half-width multiply), following the
-  _mulhilo_c99_tpl pattern from Random123. This avoids requiring
-  jax_enable_x64=True.
-
-  Args:
-    a: uint32 array
-    b: uint32 array
-
-  Returns:
-    Tuple of (low, high) 64-bit result split into two uint32 arrays.
-  """
-  whalf = np.uint32(16)
-  lomask = np.uint32(0xFFFF)
-
-  # Split inputs into 16-bit halves.
-  ahi = lax.shift_right_logical(a, whalf)
-  alo = a & lomask
-  bhi = lax.shift_right_logical(b, whalf)
-  blo = b & lomask
-
-  # Low 32 bits of the product (modular uint32 multiply gives this directly).
-  lo = a * b
-
-  # Cross products (each fits in uint32 since both operands are ≤ 0xFFFF).
-  ahbl = ahi * blo
-  albh = alo * bhi
-
-  # Sum of the lower halves of the cross products.
-  ahbl_albh = (ahbl & lomask) + (albh & lomask)
-
-  # High 32 bits: ahi*bhi plus upper halves of cross products plus carries.
-  hi = (
-      ahi * bhi
-      + lax.shift_right_logical(ahbl, whalf)
-      + lax.shift_right_logical(albh, whalf)
-      + lax.shift_right_logical(ahbl_albh, whalf)
-  )
-  # Carry from the addition of lo's upper half with ahbl_albh's lower half.
-  lo_upper = lax.shift_right_logical(lo, whalf)
-  carry = lax.convert_element_type(lo_upper < (ahbl_albh & lomask), np.uint32)
-  hi = hi + carry
-
-  return lo, hi
-
-
 # -- Core Philox 4x32 hash --
 
 
@@ -136,8 +81,8 @@ def _philox4x32_lowering(k0, k1, x0, x1, x2, x3):
     #   lo0, hi0 = mulhilo(M0, x0)
     #   lo1, hi1 = mulhilo(M1, x2)
     #   out = [hi1 ^ x1 ^ k0, lo1, hi0 ^ x3 ^ k1, lo0]
-    lo0, hi0 = _mulhilo32(_PHILOX_M4x32_0, x0)
-    lo1, hi1 = _mulhilo32(_PHILOX_M4x32_1, x2)
+    lo0, hi0 = lax.mul(_PHILOX_M4x32_0, x0), lax.mulhi(_PHILOX_M4x32_0, x0)
+    lo1, hi1 = lax.mul(_PHILOX_M4x32_1, x2), lax.mulhi(_PHILOX_M4x32_1, x2)
 
     x0_new = hi1 ^ x1 ^ k0
     x1_new = lo1
