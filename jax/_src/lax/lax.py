@@ -9629,23 +9629,25 @@ def optimization_barrier(operand, /):
   return tree_util.tree_unflatten(treedef, out)
 
 
-def _optimization_barrier_abstract_eval(*args):
-  core.standard_vma_rule('optimization_barrier', *args)
-  return args
-
-def _optimization_barrier_lowering_rule(ctx, *args):
-  barrier_types = map(partial(mlir._aval_to_ir_types, ctx.module_context), ctx.avals_in)
-  flat_args, _ = mlir.ir_tree_registry.flatten(args)
-  barrier_op = hlo.OptimizationBarrierOp(flat_args)
-  _, treedef = mlir.ir_tree_registry.flatten(barrier_types)
-  return treedef.unflatten(barrier_op.results)
-
-
 optimization_barrier_p = core.Primitive('optimization_barrier')
 optimization_barrier_p.multiple_results = True
 optimization_barrier_p.def_impl(
     partial(dispatch.apply_primitive, optimization_barrier_p))
+
+def _optimization_barrier_abstract_eval(*args):
+  core.standard_vma_rule('optimization_barrier', *args)
+  return args
 optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
+
+def _optimization_barrier_lowering_rule(ctx, *args):
+  barrier_types = map(partial(mlir._aval_to_ir_types, ctx.module_context),
+                      ctx.avals_in)
+  flat_args, _ = mlir.ir_tree_registry.flatten(args)
+  barrier_op = hlo.OptimizationBarrierOp(flat_args)
+  _, treedef = mlir.ir_tree_registry.flatten(barrier_types)
+  out = [mlir.lower_with_sharding_in_types(ctx, op, aval)
+         for op, aval in zip(barrier_op.results, ctx.avals_out)]
+  return treedef.unflatten(out)
 mlir.register_lowering(optimization_barrier_p,
                        _optimization_barrier_lowering_rule)
 

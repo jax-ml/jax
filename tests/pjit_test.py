@@ -10951,6 +10951,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(reshard(g3, P()), exg3)
 
   @jtu.with_explicit_mesh((2,), ('x',))
+  def test_remat_reduced_transpose(self, mesh):
+    arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
+
+    @jax.remat
+    def f(x):
+      return x
+
+    g1 = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(g1.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    rep_arr = jax.device_put(np.arange(8.), P())
+    ex_g1 = jax.jit(jax.grad(lambda x: f(x).sum()))(rep_arr)
+    self.assertArraysEqual(reshard(g1, P()), ex_g1)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
   def test_select_unreduced(self, mesh):
     np_inp = jnp.arange(16.).reshape(8, 2)
     arr1 = jax.device_put(np_inp, P(unreduced={'x'}))
