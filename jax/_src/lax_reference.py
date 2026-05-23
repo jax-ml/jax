@@ -109,6 +109,30 @@ def mul(x, y, /, *, out_dtype=None):
     y = np.astype(y, out_dtype)
   return np.multiply(x, y)
 
+
+def mulhi(x, y):
+  x = np.asarray(x)
+  y = np.asarray(y)
+  dtype = x.dtype
+  if not np.issubdtype(dtype, np.integer):
+    raise TypeError(f'mulhi requires integer inputs, got {dtype}')
+  if dtype != y.dtype:
+    raise TypeError(
+        f'mulhi operands must have the same dtype, got {dtype} and {y.dtype}'
+    )
+  info = np.iinfo(dtype)
+  bits = info.bits
+  is_signed = np.issubdtype(dtype, np.signedinteger)
+  # For 64-bit inputs, use Python object dtype for arbitrary precision.
+  if bits == 64:
+    widen_dtype = np.dtype(object)
+  else:
+    widen_bits = bits * 2
+    widen_dtype = np.dtype(f'{"i" if is_signed else "u"}{widen_bits // 8}')
+  prod = x.astype(widen_dtype) * y.astype(widen_dtype)
+  return (prod >> bits).astype(dtype)
+
+
 def div(lhs, rhs):
   if dtypes.issubdtype(dtypes.result_type(lhs), np.integer):
     quotient = np.floor_divide(lhs, rhs)
