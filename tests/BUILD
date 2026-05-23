@@ -1732,8 +1732,6 @@ jax_multiplatform_test(
         "//jax/_src:cache_key",
         "//jax/_src:compiler",
         "//jax/_src:custom_partitioning",
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_tpu",
     ] + py_deps("absl/testing"),
 )
 
