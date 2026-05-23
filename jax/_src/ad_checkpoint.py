@@ -772,7 +772,8 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
                      in_lin: Sequence[bool],
                      out_zeros: Sequence[bool]):
   in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
-              [a for a, zero in zip(jaxpr.out_avals, out_zeros) if not zero])
+              [a.to_ct_aval() for a, zero in zip(jaxpr.out_avals, out_zeros)
+               if not zero])
   cell = lambda: None
 
   def transposed(*args_flat):
@@ -788,7 +789,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
 
     # Transpose the linear jaxpr (which only has linear inputs).
     out_cts_iter = iter(out_cts_flat)
-    out_cts = [ad_util.Zero(aval) if zero else next(out_cts_iter)
+    out_cts = [ad_util.Zero(aval.to_ct_aval()) if zero else next(out_cts_iter)
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
     dummy_args = [ad.UndefinedPrimal(aval) for aval in lin_jaxpr.in_avals[len(consts):]]
