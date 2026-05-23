@@ -5110,6 +5110,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @unittest.skipIf(numpy_version < (2, 2, 0), "test covers NumPy 2.2+ behavior.")
+  @jtu.sample_product(
+      shape=[(1, 3), (3, 1)],
+      rowvar=[True, False],
+  )
+  @jax.default_matmul_precision("float32")
+  def testCorrCoefTransposeBehavior(self, shape, rowvar):
+    # Regression test for https://github.com/jax-ml/jax/issues/29571. The
+    # NumPy 2.2 update to jnp.cov (see
+    # https://github.com/numpy/numpy/pull/27661) flows through to corrcoef
+    # for single-row design matrices with rowvar=False, so the output shape
+    # and NaN propagation should now match NumPy.
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.float32)]
+
+    @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+    @jtu.ignore_warning(category=RuntimeWarning, message="Degrees of freedom.*")
+    @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero.*")
+    def np_fun(x):
+      return np.corrcoef(x, rowvar=rowvar)
+
+    jnp_fun = partial(jnp.corrcoef, rowvar=rowvar)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testCorrCoefDtype(self):
     x = jnp.arange(5)
     result_bf16 = jnp.corrcoef(x, x, dtype='bfloat16')
