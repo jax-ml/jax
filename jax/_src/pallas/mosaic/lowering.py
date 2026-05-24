@@ -166,9 +166,6 @@ class LoweringDynamicShapeEnv:
     self.dim_expr_to_placeholder: dict[shape_poly._DimExpr, Any] = {}
     self.placeholder_to_dim_expr: dict[Any, shape_poly._DimExpr] = {}
 
-  def snapshot(self) -> frozenset[tuple[shape_poly._DimExpr, Any]]:
-    return frozenset(self.dim_expr_to_placeholder.items())
-
   def to_placeholder(self, dim_expr: Any) -> ir.Value:
     if jax_core.is_constant_dim(dim_expr):
       # avoid ints, these are not dynamic
@@ -210,7 +207,6 @@ class LoweringContext:
   backend: xla_client.Client | None
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
   lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp]
-  dynamic_shape_env: LoweringDynamicShapeEnv | None = None
   needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
 
@@ -265,7 +261,6 @@ class PipelinedLoweringContext(LoweringContext):
       dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
       fuse_transposed_lhs_in_matmul: bool,
       lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp],
-      dynamic_shape_env: LoweringDynamicShapeEnv | None = None,
   ):
     arg_block_shapes = [
         *mgm.scalar_prefetch_block_shapes,
@@ -287,7 +282,6 @@ class PipelinedLoweringContext(LoweringContext):
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=lowering_cache,
-        dynamic_shape_env=dynamic_shape_env,
     )
 
 
@@ -369,7 +363,6 @@ class PallasLoweringCacheKey:
   avals_out: tuple[ShapedAbstractValue, ...]
   params: tuple[tuple[str, Hashable], ...]
   block_shapes: tuple[tuple[int | pallas_core.Squeezed, ...] | None, ...]
-  dynamic_shape_env: frozenset[tuple[shape_poly._DimExpr, Any]] | None = None
 
 
 class UncacheablePrimitiveError(Exception):
@@ -1049,7 +1042,7 @@ def lower_jaxpr_into_pipelined_module(
         grid_indices, maybe_include_mapped_dims=False
     )
 
-  cache = lowering_context.module_context.pallas_lowering_cache
+  cache = {}
   sym_tab = ir.SymbolTable(module.operation)
 
   def ctx_factory(jaxpr_indices):
@@ -1062,19 +1055,17 @@ def lower_jaxpr_into_pipelined_module(
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=cache,
-        dynamic_shape_env=_mosaic_lowering_dynamic_shape_env,
     )
 
-  with ir.InsertionPoint(module.body):
-    func_op = _lower_jaxpr_to_func_common(
-        jaxpr,
-        name=name,
-        arg_types=arg_types,
-        num_grid=num_grid,
-        get_jaxpr_indices=get_jaxpr_indices,
-        ctx_factory=ctx_factory,
-        dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
-    )
+  func_op = _lower_jaxpr_to_func_common(
+      jaxpr,
+      name=name,
+      arg_types=arg_types,
+      num_grid=num_grid,
+      get_jaxpr_indices=get_jaxpr_indices,
+      ctx_factory=ctx_factory,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
+  )
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{kernel_type}>"
   )
@@ -1109,19 +1100,17 @@ def lower_jaxpr_into_pipelined_module(
         window_params.append(ir.DictAttr.get())
         continue
 
-      with ir.InsertionPoint(module.body):
-        mlir_func = lower_jaxpr_to_transform_func(
-            bm.index_map_jaxpr.jaxpr,
-            bm.block_aval,
-            name=func_name,
-            mosaic_grid_mapping=mosaic_grid_mapping,
-            kernel_type=kernel_type,
-            forward_compatible=lowering_context.is_forward_compat(),
-            dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-            backend=backend,
-            lowering_cache=cache,
-            dynamic_shape_env=_mosaic_lowering_dynamic_shape_env,
-        )
+      mlir_func = lower_jaxpr_to_transform_func(
+          bm.index_map_jaxpr.jaxpr,
+          bm.block_aval,
+          name=func_name,
+          mosaic_grid_mapping=mosaic_grid_mapping,
+          kernel_type=kernel_type,
+          forward_compatible=lowering_context.is_forward_compat(),
+          dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+          backend=backend,
+          lowering_cache=cache,
+      )
       assert mlir_func.verify(), mlir_func
       block_shape = list(pallas_core._get_block_shape(bm.block_shape))
 
@@ -1376,7 +1365,7 @@ def lower_jaxpr_into_unpipelined_module(
         f" version string:\n{platform_version}"
     )
   sym_tab = ir.SymbolTable(module.operation)
-  cache = lowering_context.module_context.pallas_lowering_cache
+  cache = {}
   mesh_shape, dimension_semantics = _get_mesh_shape_and_semantics(pallas_mesh)
   num_grid = len(mesh_shape)
   mesh_index_types = [jax_core.ShapedArray((), jnp.int32)] * len(mesh_shape)
@@ -1400,17 +1389,16 @@ def lower_jaxpr_into_unpipelined_module(
         lowering_cache=cache,
     )
 
-  with ir.InsertionPoint(module.body):
-    func_op = _lower_jaxpr_to_func_common(
-        jaxpr,
-        name=name,
-        arg_types=arg_mlir_types,
-        num_grid=num_grid,
-        get_jaxpr_indices=lambda idx: idx,
-        ctx_factory=ctx_factory,
-        dynamic_shape_replacement_enabled=False,
-        core_type=pallas_mesh.core_type,
-    )
+  func_op = _lower_jaxpr_to_func_common(
+      jaxpr,
+      name=name,
+      arg_types=arg_mlir_types,
+      num_grid=num_grid,
+      get_jaxpr_indices=lambda idx: idx,
+      ctx_factory=ctx_factory,
+      dynamic_shape_replacement_enabled=False,
+      core_type=pallas_mesh.core_type,
+  )
 
   func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
       f"#tpu.core_type<{pallas_mesh.core_type}>"
@@ -1475,7 +1463,6 @@ def lower_jaxpr_to_transform_func(
     backend: Any | None,
     dynamic_shape_replacement_fn: DynamicShapeReplacementFn,
     lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp],
-    dynamic_shape_env: LoweringDynamicShapeEnv | None = None,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   arg_types = [
@@ -1506,7 +1493,6 @@ def lower_jaxpr_to_transform_func(
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         lowering_cache=lowering_cache,
-        dynamic_shape_env=dynamic_shape_env,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -1720,11 +1706,6 @@ def jaxpr_subcomp(
               avals_out=avals_out,
               params=tuple(sorted(eqn.params.items())),
               block_shapes=block_shapes,
-              dynamic_shape_env=(
-                  ctx.dynamic_shape_env.snapshot()
-                  if ctx.dynamic_shape_env is not None
-                  else None
-              ),
           )
           cache_entry = ctx.lowering_cache.get(cache_key, None)
 
@@ -1742,11 +1723,6 @@ def jaxpr_subcomp(
                   lowering_rules[ctx.kernel_type][eqn.primitive],
                   rule_context, invals, **eqn.params
               )
-              if ctx.dynamic_shape_env is not None:
-                cache_key = dataclasses.replace(
-                    cache_key,
-                    dynamic_shape_env=ctx.dynamic_shape_env.snapshot(),
-                )
               ctx.lowering_cache[cache_key] = cache_entry
             except UncacheablePrimitiveError:
               pass

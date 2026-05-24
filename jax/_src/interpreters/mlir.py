@@ -769,7 +769,6 @@ class ModuleContext:
   cached_primitive_lowerings: dict[Any, Any]
   sharding_attr_cache: dict[SdyArray, sdy.TensorShardingAttr]
   aval_to_ir_types_cache: dict[core.AbstractValue, IrTypes]
-  pallas_lowering_cache: dict[Any, Any]
 
   # Cached traceback information.
   traceback_caches: TracebackCaches
@@ -796,8 +795,7 @@ class ModuleContext:
       shape_poly_state = None,
       all_default_mem_kind: bool = True,
       sharding_attr_cache: None | dict[SdyArray, sdy.TensorShardingAttr] = None,
-      aval_to_ir_types_cache: None | dict[core.AbstractValue, IrTypes] = None,
-      pallas_lowering_cache: None | dict[Any, Any] = None):
+      aval_to_ir_types_cache: None | dict[core.AbstractValue, IrTypes] = None):
 
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -821,7 +819,6 @@ class ModuleContext:
     self.lowering_parameters = lowering_parameters
     self.sharding_attr_cache = ({} if sharding_attr_cache is None else sharding_attr_cache)
     self.aval_to_ir_types_cache = ({} if aval_to_ir_types_cache is None else aval_to_ir_types_cache)
-    self.pallas_lowering_cache = ({} if pallas_lowering_cache is None else pallas_lowering_cache)
 
   def get_backend(self, optional: bool = False) -> xc.Client | None:
     if len(self.platforms) > 1:
