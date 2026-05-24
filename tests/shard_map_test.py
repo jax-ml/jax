@@ -5377,7 +5377,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, arr * 2)
 
   @jtu.with_explicit_mesh((2,), 'x')
-  def test_shmap_check_vma_false_reduced_no_psum_on_bwd(self, mesh):
+  def test_check_vma_false_reduced_fwd_no_psum_on_bwd(self, mesh):
     arr = jax.device_put(np.arange(8, dtype=np.float32), P(reduced={'x'}))
 
     @jax.jit
@@ -5388,7 +5388,27 @@ class ShardMapTest(jtu.JaxTestCase):
     jf = jax.jit(jax.grad(lambda x: f(x).sum()))
     jaxpr = jf.trace(arr).jaxpr
     self.assertNotIn('psum', str(jaxpr))
-    jf(arr)  # doesn't crash
+    out_g = jf(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_check_vma_false_unreduced_fwd_psum_on_bwd(self, mesh):
+    arr = jax.device_put(jnp.arange(8, dtype=np.float32), P(unreduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(in_specs=P(unreduced={'x'}), out_specs=P('x'), check_vma=False)
+    def f(x):
+      return jax.lax.psum_scatter(x, 'x', tiled=True)
+
+    jf = jax.jit(jax.grad(lambda x: f(x).sum()))
+    jaxpr = jf.trace(arr).jaxpr
+    # This behaves similar to invarying where shmap adds an extra psum so that
+    # numerics are correct. But we can also decide to leave it to the user and
+    # not insert a psum. But for now, let's test the current behavior and we can
+    # change the test later if we decide to not insert psums for reduced.
+    self.assertIn('psum', str(jaxpr))
+    out_g = jf(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
 
 
 class FunSpec(NamedTuple):
