@@ -19,6 +19,9 @@ Remember to align the itemized text with the first line of an item within a list
     `jax_pallas_poison_buffers`) to poison (initialize with NaNs or lowest
     possible integers) any scratch buffers allocated by Pallas in Mosaic TPU
     lowering for debugging.
+  * {func}`jax.experimental.pallas.kernel` and ``mpmd_map`` now accept
+    ``input_output_aliases``, with the same semantics as the existing
+    parameter on {func}`jax.experimental.pallas.pallas_call`.
 
 * Deprecations
 

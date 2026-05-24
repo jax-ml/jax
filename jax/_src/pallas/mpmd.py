@@ -605,6 +605,7 @@ def mpmd_map(
     /,
     out_types: tree_util.PyTree = (),
     *,
+    input_output_aliases: Mapping[int, int] = {},
     scratch_types: pallas_core.ScratchShapeTree = (),
     compiler_params: Any | None = None,
     interpret: bool | Any = False,
@@ -619,7 +620,7 @@ def mpmd_map(
   return _mpmd_map(
       meshes_and_fns,
       out_types,
-      input_output_aliases={},
+      input_output_aliases=input_output_aliases,
       scratch_types=scratch_types,
       compiler_params=compiler_params,
       interpret=interpret,

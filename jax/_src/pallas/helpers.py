@@ -13,7 +13,7 @@
 # limitations under the License.
 """Pallas helper functions."""
 
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 import functools
 from typing import Any, TypeVar, cast, overload
 
@@ -158,6 +158,7 @@ def kernel(
     out_type: object | None = (),
     *,
     mesh: pl_core.Mesh | Sequence[pl_core.Mesh],
+    input_output_aliases: Mapping[int, int] = {},
     scratch_types: pl_core.ScratchShapeTree = (),
     compiler_params: pl_core.CompilerParams | None = None,
     interpret: Any = False,
@@ -220,6 +221,9 @@ def kernel(
       ``jax.ShapeDtypeStruct`` or JAX types.
     mesh: The mesh to run the kernel on. Must be a sequence of meshes if
       ``body`` is a sequence of callables.
+    input_output_aliases: a dictionary mapping the index of some inputs to
+      the index of the output that aliases them. These indices are in the
+      flattened inputs and outputs.
     scratch_types: The shapes of the scratch arrays.
     compiler_params: The compiler parameters to pass to the backend.
     interpret: Whether to run the function in interpret mode.
@@ -241,6 +245,7 @@ def kernel(
   make_kernel = functools.partial(
       mpmd.mpmd_map,
       out_types=out_type,
+      input_output_aliases=input_output_aliases,
       scratch_types=scratch_types,
       compiler_params=compiler_params,
       interpret=(

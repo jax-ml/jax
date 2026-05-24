@@ -425,6 +425,23 @@ class MpmdTest(PallasSCTest):
     np.testing.assert_array_equal(out, x)
     np.testing.assert_array_equal(mutated_x, x.at[0, :num_lanes].add(1))
 
+  @parameterized.parameters([TC, SCV])
+  def test_input_output_aliases(self, core_type):
+    mesh = from_core_type(core_type)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    def fn(x_ref, o_ref):
+      del o_ref
+      x_ref[...] = x_ref[...] + 1
+
+    out = pl.kernel(
+        body=fn,
+        mesh=mesh,
+        out_type=jax.typeof(x),
+        input_output_aliases={0: 0},
+    )(x)
+    np.testing.assert_array_equal(out, x + 1)
+
   @parameterized.parameters([TC, SCS, SCV])
   def test_passing_in_refs_read_only(self, core_type):
     mesh = from_core_type(core_type)
