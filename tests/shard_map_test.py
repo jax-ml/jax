@@ -5376,6 +5376,20 @@ class ShardMapTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertArraysEqual(out, arr * 2)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_shmap_check_vma_false_reduced_no_psum_on_bwd(self, mesh):
+    arr = jax.device_put(np.arange(8, dtype=np.float32), P(reduced={'x'}))
+
+    @jax.jit
+    @jax.shard_map(in_specs=P(reduced={'x'}), out_specs=P('x'), check_vma=False)
+    def f(x):
+      return core.reduced_vary_cast(x, 'x')
+
+    jf = jax.jit(jax.grad(lambda x: f(x).sum()))
+    jaxpr = jf.trace(arr).jaxpr
+    self.assertNotIn('psum', str(jaxpr))
+    jf(arr)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
