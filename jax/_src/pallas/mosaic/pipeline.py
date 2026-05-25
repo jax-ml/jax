@@ -1014,7 +1014,7 @@ def _filter_indices(
     indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
 ) -> tuple[int | jax.Array, ...]:
   return tuple(
-      0 if isinstance(g, int) and g == 1 else i
+      jnp.int32(0) if isinstance(g, int) and g == 1 else i
       for i, g in zip(indices, grid, strict=True)
   )
 
@@ -1045,7 +1045,7 @@ def _next_index(
       carry = False
     else:
       carry = inc == g
-    out.append(jax.lax.select(carry, 0, inc))
+    out.append(jax.lax.select(carry, jnp.int32(0), inc))
   if allow_overflow:
     return tuple(reversed(out))
   else:
@@ -1060,7 +1060,7 @@ def _prev_index(
   for i, g in reversed(list(zip(indices, grid, strict=True))):
     dec = jax.lax.select(borrow, i - 1, i)
     borrow = dec == -1
-    out.append(jax.lax.select(borrow, g - 1, dec))
+    out.append(jax.lax.select(borrow, jnp.int32(g - 1), dec))
   return _filter_indices(tuple(reversed(out)), grid)
 
 
@@ -1427,7 +1427,7 @@ def _partition_grid(
 ) -> tuple[tuple[int | jax.Array, ...], tuple[int | jax.Array, ...]]:
   if core_axis is None:
     # We aren't partitioning the grid
-    return grid, (0,) * len(grid)
+    return grid, (jnp.int32(0),) * len(grid)
   if isinstance(core_axis, int):
     num_cores = num_programs(core_axis)
     core_id = program_id(core_axis)
@@ -1441,7 +1441,7 @@ def _partition_grid(
     )
   if num_cores == 1:
     # We aren't partitioning the grid
-    return grid, (0,) * len(grid)
+    return grid, (jnp.int32(0),) * len(grid)
 
   # If dimension_semantics aren't provided, we assume it is all arbitrary.
   if dimension_semantics is None:
@@ -1476,7 +1476,7 @@ def _partition_grid(
         grid, first_divisible_dimension, partitioned_dim_size
     )
     offsets = jax_util.tuple_update(
-        (0,) * len(grid),
+        (jnp.int32(0),) * len(grid),
         first_divisible_dimension,
         partitioned_dim_offset,
     )
@@ -1529,7 +1529,7 @@ def _partition_grid(
       core_id * base_num_iters + rem,
   )
   offsets = jax_util.tuple_update(
-      (0,) * len(grid),
+      (jnp.int32(0),) * len(grid),
       partition_dimension,
       grid_offset,
   )
@@ -1704,13 +1704,13 @@ def emit_pipeline(
 
     if no_pipelining:
       # Debugging mode where all copies are synchronous.
-      initial_indices = (0,) * len(grid)
+      initial_indices = (jnp.int32(0),) * len(grid)
       brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
 
       @functools.partial(
           jax.lax.fori_loop,
-          0,
-          num_steps,
+          jnp.int32(0),
+          jnp.int32(num_steps),
           init_val=(brefs, initial_indices),
       )
       def _loop_body(step, carry):
@@ -1741,7 +1741,7 @@ def emit_pipeline(
       @when(num_steps > 0)
       def _():
         # pipeline prologue
-        initial_indices = (0,) * len(grid)
+        initial_indices = (jnp.int32(0),) * len(grid)
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
@@ -1760,7 +1760,8 @@ def emit_pipeline(
 
         # pipeline loop
         brefs, next_indices = lax.fori_loop(
-            0, num_steps, loop_body, (brefs, initial_indices)
+            jnp.int32(0), jnp.int32(num_steps),
+            loop_body, (brefs, initial_indices)
         )
 
         # pipeline epilogue

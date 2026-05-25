@@ -2522,6 +2522,36 @@ class PipelineTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x + 1)
 
+  def test_basic_x64(self):
+    self.skip_if_tc_tiling()
+    self.enter_context(jax.enable_x64(True))
+    num_steps = 16
+    x = jnp.arange(num_steps * self.num_lanes, dtype=jnp.int32).reshape(-1, 8)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+    )
+    def kernel(x_hbm_ref, o_hbm_ref):
+
+      @functools.partial(
+          pltpu.emit_pipeline,
+          grid=(num_steps,),
+          in_specs=pl.BlockSpec(
+              (pl.Squeezed(), self.num_lanes), lambda i: (i, 0)
+          ),
+          out_specs=pl.BlockSpec(
+              (pl.Squeezed(), self.num_lanes), lambda i: (i, 0)
+          ),
+      )
+      def pipeline(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + 1
+
+      pipeline(x_hbm_ref, o_hbm_ref)
+
+    np.testing.assert_array_equal(kernel(x), x + 1)
+
   def test_gather_with_emit(self):
     self.skip_if_tc_tiling()
     sc_mesh = sc_core.VectorSubcoreMesh(
