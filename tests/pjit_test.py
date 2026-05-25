@@ -4819,7 +4819,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x * 3
 
     with jax.sharding.use_abstract_mesh(am):
-      f.trace(np.arange(8)).lower()  # doesn't crash
+      f.trace(np.arange(8)).lower(lowering_platforms=("cpu",))  # doesn't crash
 
 
 class ShardingInTypesTest(jtu.JaxTestCase):
