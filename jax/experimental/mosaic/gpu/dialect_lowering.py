@@ -1462,6 +1462,9 @@ for _op, _binary_impl, _is_signed in [
     (arith.MinimumFOp, fa.FragmentedArray.min, None),
     (mlir_math.Atan2Op, fa.FragmentedArray.atan2, None),
     (mlir_math.CopySignOp, fa.FragmentedArray.copysign, None),
+    (arith.ShLIOp, operator.lshift, False),
+    (arith.ShRUIOp, operator.rshift, False),
+    (arith.ShRSIOp, operator.rshift, True),
 ]:
   _lowerings[_op.OPERATION_NAME] = functools.partial(
       _binary_op_lowering_rule, impl=_binary_impl, is_signed=_is_signed

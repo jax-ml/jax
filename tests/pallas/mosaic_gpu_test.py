@@ -451,10 +451,16 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           lax.div,
           jnp.minimum,
           jnp.maximum,
+          lax.shift_left,
+          lax.shift_right_logical,
+          lax.shift_right_arithmetic,
       ],
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
   )
   def test_binary_op(self, op, dtype):
+    if op in (lax.shift_left, lax.shift_right_logical, lax.shift_right_arithmetic) and jnp.issubdtype(dtype, jnp.floating):
+      self.skipTest("shift ops do not support floating point types")
+
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], dtype)
     )
