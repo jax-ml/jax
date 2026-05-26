@@ -312,6 +312,10 @@ class BufferedRefBase:
     """
     return False
 
+  @property
+  def prefetched_count(self) -> int:
+    return 0
+
   def initialize_slots(self):
     """Initializes slots to 0."""
     raise NotImplementedError()
@@ -479,7 +483,7 @@ class BufferedRef(BufferedRefBase):
   wait_in_slot: int | jax.Array | None
   copy_out_slot: int | jax.Array | None
   wait_out_slot: int | jax.Array | None
-  next_fetch: Sequence[jax.Array] | None
+  next_fetch: Sequence[jax.Array | int] | None
   sem_recvs: SemaphoreTuple | None
   sem_sends: SemaphoreTuple | None
   tiling: Tiling | None = dataclasses.field(metadata=dict(static=True))
@@ -488,6 +492,9 @@ class BufferedRef(BufferedRefBase):
   )
   has_allocated_buffer: bool = dataclasses.field(
       default=False, metadata=dict(static=True)
+  )
+  prefetched_count: int = dataclasses.field(
+      default=0, metadata=dict(static=True)
   )
 
   def __post_init__(self):
@@ -656,9 +663,32 @@ class BufferedRef(BufferedRefBase):
 
   def with_next_fetch(
       self,
-      next_fetch: Sequence[jax.Array] | None = None,
+      next_fetch: Sequence[jax.Array | int] | None = None,
   ):
     return dataclasses.replace(self, next_fetch=next_fetch)
+
+  def with_prefetched_ref(self, prefetched_ref, prefetched_count):
+    """Returns a copy with the given ref bound as a prefetched window.
+
+    Args:
+      ref: A VMEM ref containing pre-populated data for the first
+        `prefetched_count` pipeline slots.
+      prefetched_count: Number of slots already populated. Must be less than
+        buffer_count for non-trivial windowing (at least one slot must remain
+        free for the pipeline to fetch into during the first iteration).
+
+    Returns:
+      Updated BufferedRef
+    """
+    if not self.is_trivial_windowing and prefetched_count >= self.buffer_count:
+      raise ValueError(
+          "prefetched_count must be less than buffer_count for non-trivial"
+          f" windowing, but got prefetched_count={prefetched_count} and"
+          f" buffer_count={self.buffer_count}"
+      )
+    return dataclasses.replace(
+        self, window_ref=prefetched_ref, prefetched_count=prefetched_count
+    )
 
   def with_slot_index(
       self,
@@ -923,6 +953,11 @@ class BufferedRef(BufferedRefBase):
           dst_ref.at[dst_slice],  # only dst shape is important
           self.sem_sends.at[wait_slot],
       ).wait()
+
+  def advance_next_fetch(self, grid):
+    if self.next_fetch is None:
+      raise ValueError("next_fetch is None")
+    return self.with_next_fetch(_next_index(tuple(self.next_fetch), grid))
 
 
 def fetch_with_lookahead(buffered_ref, src_ref,
@@ -1220,6 +1255,11 @@ class Scheduler:
       if (step + 1) >= buffered_ref.buffer_count:
         return buffered_ref
 
+      if step < buffered_ref.prefetched_count:
+        if buffered_ref.use_lookahead and step > 0:
+          buffered_ref = buffered_ref.advance_next_fetch(self.grid)
+        return buffered_ref.advance_copy_in_slot()
+
       if buffered_ref.use_lookahead:
         if step == 0:
           # We always fetch the first block.
@@ -1258,6 +1298,7 @@ class Scheduler:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
+    pred = pred & (~(self.step < buffered_ref.prefetched_count))
 
     @when(pred)
     @self._named_scope("ep_wait_in")
@@ -1765,7 +1806,11 @@ def _emit_pipeline(
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
-          if bref.is_trivial_windowing and bref.window_ref is not None:
+          if (
+              bref.is_trivial_windowing
+              and bref.window_ref is not None
+              and bref.prefetched_count < 1
+          ):
             sync_copy(ref, bref, initial_indices)
 
         map_inputs(_sync_copy_in, brefs, refs)
