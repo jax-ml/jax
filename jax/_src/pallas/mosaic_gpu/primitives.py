@@ -221,15 +221,6 @@ def _copy_smem_to_gmem_lowering(
   else:
     predicate = None
 
-  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    if predicate is not None:
-      assert ctx.module_ctx.single_lane_predicate is not None
-      predicate = arith_dialect.andi(
-          predicate, ctx.module_ctx.single_lane_predicate
-      )
-    else:
-      predicate = ctx.module_ctx.single_lane_predicate
-
   flat_src_transforms, flat_dst_transforms = util.split_list(
       flat_args,
       [src_transforms_treedef.num_leaves],
@@ -260,15 +251,35 @@ def _copy_smem_to_gmem_lowering(
       **_extract_gmem_copy_params(ctx, dst_transforms, dst_transform_avals, supports_multicast=True),
       **_extract_smem_copy_params(src_aval, src_transforms),
   }
+  is_scatter = False
+  if gmem_slice := copy_params.get("gmem_slice", ()):
+    first_idx = gmem_slice[0]
+    if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
+      is_scatter = True
+
+  if is_scatter:
+    if predicate is not None:
+      raise NotImplementedError("Gather/scatter TMA does not support predicates yet.")
+    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+      raise ValueError("Gather/scatter operations are not supported in a warp context.")
+
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    if not is_scatter:
+      lane_pred = ctx.module_ctx.single_lane_predicate
+      assert lane_pred is not None  # Satisfy pytype
+      if predicate is not None:
+        predicate = arith_dialect.andi(predicate, lane_pred)
+      else:
+        predicate = lane_pred
+
     ctx.launch_ctx.async_copy(
         src_ref=src,
         dst_ref=dst,
-        predicate=predicate,
         arrive=commit_group,
         reduction_op=reduction_op,
         oob_mode=OOBFillMode.UNDEFINED,
         **copy_params,
+        **(dict(predicate=predicate) if predicate is not None else {}),  # pyrefly: ignore[bad-argument-type]
     )
     return ()
 

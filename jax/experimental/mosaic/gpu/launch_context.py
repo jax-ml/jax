@@ -1484,6 +1484,10 @@ class LaunchContext:
     transfer_bytes = c(transfer_bytes_val, i32)
 
     if gather_indices is not None:
+      # Note: Scatters and gathers are handled symmetrically
+      # here. Every mention of "gather" in variable names and the
+      # reasoning below can also be replaced by "scatter" when SMEM is
+      # the source.
       import builtins
       zips = functools.partial(builtins.zip, strict=True)
       # The gather TMA instruction is limited to 2D GMEM references. That means
@@ -1495,10 +1499,6 @@ class LaunchContext:
       # The minor transformed dim should be a contiguous transfer dim.
       # The second minor should be a gather dim of size divisible by 4.
       # The rest can be anything, and we will unroll the transfers over them.
-      if smem_ref is src_ref:
-        raise NotImplementedError("Scatter unsupported for the TMA implementation")
-      assert barrier is not None
-      barrier_ptr = barrier.get_ptr()
       if squeezed_dims:
         raise NotImplementedError("Gather/scatter unsupported when using integer indexing")
       if reduction_op is not None:
@@ -1516,10 +1516,11 @@ class LaunchContext:
             f" {single_tma_bits // 8} bytes, but need a multiple of 128 bytes"
         )
 
-      if arrive:
+      if smem_ref is not src_ref and arrive:
+        assert barrier is not None
         arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
         utils.nvvm_mbarrier_arrive_expect_tx(
-            barrier_ptr,
+            barrier.get_ptr(),
             transfer_bytes,
             predicate=arrive_predicate,
         )
@@ -1615,13 +1616,25 @@ class LaunchContext:
               if not g
           )
           col_offset = arith.addi(col_base_offset, arith.constant(i32, col_slice_offset))
-          llvm.inline_asm(
-              ir.Type.parse("!llvm.void"),
-              [predicate, smem_ptr, tma_desc, barrier_ptr, col_offset, *gather_rows],
-              "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
-              "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
-              has_side_effects=True,
-          )
+          if smem_ref is src_ref:
+            llvm.inline_asm(
+                ir.Type.parse("!llvm.void"),
+                [predicate, tma_desc, smem_ptr, col_offset, *gather_rows],
+                "@$0 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group [$1, {$3, $4, $5, $6, $7}], [$2];",
+                "b,l,r" + ",r" * (ROWS_PER_INSTR + 1),
+                has_side_effects=True,
+            )
+          else:
+            assert barrier is not None
+            llvm.inline_asm(
+                ir.Type.parse("!llvm.void"),
+                [predicate, smem_ptr, tma_desc, barrier.get_ptr(), col_offset, *gather_rows],
+                "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
+                "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
+                has_side_effects=True,
+            )
+      if smem_ref is src_ref and arrive:
+        nvvm.cp_async_bulk_commit_group()
       return
 
     assert gather_indices is None  # Only tiled TMA handled below.
