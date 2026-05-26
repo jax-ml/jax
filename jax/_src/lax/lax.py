@@ -1987,14 +1987,12 @@ def _composite_lowering(
     if v is not None:
       composite_attrs[k] = mlir.ir_attribute(v)
   symbol_name = func_op.name.value
+  from jax.extend.mlir.dialects import func as func_dialect
   flat_args, _ = mlir.ir_tree_registry.flatten(const_arg_values + args)
-  return hlo.CompositeOp(
+  return func_dialect.CallOp(
       func_op.type.results,
+      ir.FlatSymbolRefAttr.get(symbol_name),
       flat_args,
-      name=ir.StringAttr.get(name),
-      decomposition=ir.FlatSymbolRefAttr.get(symbol_name),
-      composite_attributes=ir.DictAttr.get(composite_attrs),
-      version=mlir.i32_attr(version),
   ).results
 
 
