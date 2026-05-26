@@ -3801,6 +3801,15 @@ class APITest(jtu.JaxTestCase):
         UnexpectedTracerError, "Encountered an unexpected tracer"):
       api.jit(lambda x: self._saved_tracer)(0.)
 
+  def test_tree_map_rest_prefix_err(self):
+    x = {"a": 1, "b": 2, "c": [1, 2], "d": 4}
+    y = {"a": 1, "b": 2, "c": None, "d": {"d1": 4.1, "d2": 4.2}}
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      jax.tree.map(lambda x, y: (x, y), x, y, is_leaf=lambda x: x is None)
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      jax.tree_util.tree_map_with_path(lambda path, x, y: (x, y), x, y,
+                                      is_leaf=lambda x: x is None)
+
   def test_escaped_tracers_cant_lift_sublevels(self):
     api.jit(self.helper_save_tracer)(0.)
     with self.assertRaisesRegex(

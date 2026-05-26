@@ -390,7 +390,11 @@ def tree_map(f: Callable[..., Any],
              is_leaf: Callable[[Any], bool] | None = None) -> Any:
   """Alias of :func:`jax.tree.map`."""
   leaves, treedef = tree_flatten(tree, is_leaf)
-  all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
+  try:
+    all_leaves = [leaves] + [treedef.flatten_up_to(r2 := r) for r in rest]
+  except Exception as e:
+    err = next(_prefix_error((), tree, r2, is_leaf), None)  # type: ignore
+    raise (err('tree_map tree') if err is not None else e) from None
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
 
 
@@ -756,7 +760,8 @@ def equality_errors_pytreedef(
     tree2: PyTreeDef) -> Iterable[tuple[KeyPath, str, str, str]]:
   """Like `equality_errors` but invoked on PyTreeDef."""
   # TODO(mattjj): make equality_errors not print type name, avoid metaclass
-  leaf = type("LeafMeta", (type,), dict(__repr__=lambda _: "pytree leaf"))("Leaf", (), {})()
+  leaf = type("LeafMeta", (type,), dict(__repr__=lambda _: "pytree leaf")
+              )("Leaf", (), {})()
   return equality_errors(tree_unflatten(tree1, [leaf] * tree1.num_leaves),
                          tree_unflatten(tree2, [leaf] * tree2.num_leaves))
 
@@ -1254,7 +1259,11 @@ def tree_map_with_path(
       tree, is_leaf, is_leaf_takes_path
   )
   keypath_leaves = list(zip(*keypath_leaves))
-  all_keypath_leaves = keypath_leaves + [treedef.flatten_up_to(r) for r in rest]
+  try:
+    all_keypath_leaves = keypath_leaves + [treedef.flatten_up_to(r2 := r) for r in rest]
+  except Exception as e:
+    err = next(_prefix_error((), tree, r2, is_leaf), None)  # type: ignore
+    raise (err('tree_map_with_path tree') if err is not None else e) from None
   return treedef.unflatten(f(*xs) for xs in zip(*all_keypath_leaves))
 
 
