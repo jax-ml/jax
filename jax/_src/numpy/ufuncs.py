@@ -2328,6 +2328,10 @@ def absolute(x: ArrayLike, /) -> Array:
     with the same shape as ``x``. For complex valued input, :math:`a + ib`,
     the absolute value is :math:`\sqrt{a^2+b^2}`.
 
+  Note:
+    For complex inputs containing ``NaN`` in the real or imaginary part,
+    ``abs`` will always return ``NaN``.
+
   Examples:
     >>> x1 = jnp.array([5, -2, 0, 12])
     >>> jnp.absolute(x1)
