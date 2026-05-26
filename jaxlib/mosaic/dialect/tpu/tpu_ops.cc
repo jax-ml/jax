@@ -828,7 +828,7 @@ LogicalResult VectorStoreOp::verify() {
   return verifyStoreOp(*this);
 }
 
-void VectorStoreOp::build(OpBuilder &builder, OperationState &state,
+void VectorStoreOp::build(OpBuilder& builder, OperationState& state,
                           Value valueToStore, Value base, ValueRange indices,
                           Value mask, bool add) {
   build(builder, state, valueToStore, base, indices,
@@ -873,7 +873,7 @@ LogicalResult VectorLoadOp::verify() {
   return verifyLoadOp(*this);
 }
 
-void VectorLoadOp::build(OpBuilder &builder, OperationState &state,
+void VectorLoadOp::build(OpBuilder& builder, OperationState& state,
                          Type result_type, Value base, ValueRange indices,
                          Value mask) {
   build(builder, state, result_type, base, indices,
@@ -1539,21 +1539,20 @@ LogicalResult EnqueueIndirectDMAOp::verifyGather(
   // their ranks must match.
   // Offsets shape : [o] or [1, o]
   // Operand sample shape : [z] or [1, z]
-  if (offsets_rank > 2 ||
-      (offsets_rank == 2 && offsets_shape[0] != 1)) {
+  if (offsets_rank > 2 || (offsets_rank == 2 && offsets_shape[0] != 1)) {
     return emitOpError("Offsets shape must be 1D or (1, N), got (")
            << absl::StrJoin(offsets_shape, ", ") << ")";
   }
   if (operand_sample_rank > 2 ||
       (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
     return emitOpError("Source (gather operand) sample shape must be ")
-           << "1D or (1, N), got ("
-           << absl::StrJoin(operand_sample_dims, ", ") << ")";
+           << "1D or (1, N), got (" << absl::StrJoin(operand_sample_dims, ", ")
+           << ")";
   }
   if (operand_sample_rank != offsets_rank) {
     return emitOpError("Source (gather operand) sample rank must match ")
-           << "offsets rank, got " << operand_sample_rank
-           << " vs " << offsets_rank;
+           << "offsets rank, got " << operand_sample_rank << " vs "
+           << offsets_rank;
   }
 
   const std::string result_shape_str =
@@ -1628,21 +1627,20 @@ LogicalResult EnqueueIndirectDMAOp::verifyScatter(
   // their ranks must match.
   // Offsets shape : [o] or [1, o]
   // Operand sample shape : [z] or [1, z]
-  if (offsets_rank > 2 ||
-      (offsets_rank == 2 && offsets_shape[0] != 1)) {
+  if (offsets_rank > 2 || (offsets_rank == 2 && offsets_shape[0] != 1)) {
     return emitOpError("Offsets shape must be 1D or (1, N), got (")
            << absl::StrJoin(offsets_shape, ", ") << ")";
   }
   if (operand_sample_rank > 2 ||
       (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
     return emitOpError("Target (scatter operand) sample shape must be ")
-           << "1D or (1, N), got ("
-           << absl::StrJoin(operand_sample_dims, ", ") << ")";
+           << "1D or (1, N), got (" << absl::StrJoin(operand_sample_dims, ", ")
+           << ")";
   }
   if (operand_sample_rank != offsets_rank) {
     return emitOpError("Target (scatter operand) sample rank must match ")
-           << "offsets rank, got " << operand_sample_rank
-           << " vs " << offsets_rank;
+           << "offsets rank, got " << operand_sample_rank << " vs "
+           << offsets_rank;
   }
 
   const std::string updates_shape_str =
