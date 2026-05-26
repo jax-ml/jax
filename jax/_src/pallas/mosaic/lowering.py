@@ -363,6 +363,7 @@ class PallasLoweringCacheKey:
   avals_out: tuple[ShapedAbstractValue, ...]
   params: tuple[tuple[str, Hashable], ...]
   block_shapes: tuple[tuple[int | pallas_core.Squeezed, ...] | None, ...]
+  grid_arity: int
 
 
 class UncacheablePrimitiveError(Exception):
@@ -379,7 +380,16 @@ def _emit_pallas_lowering_rule_as_fun(
 ) -> func.FuncOp:
   """Emits the contents of a Pallas lowering rule as a detached function."""
 
-  input_types = [val.type for val in invals]
+  input_types = []
+  user_grid_indices = (
+      ctx.user_grid_indices
+      if primitive in _primitives_needing_grid
+      else None
+  )
+  if user_grid_indices is not None:
+    input_types.extend(val.type for val in user_grid_indices)
+  input_types.extend(val.type for val in invals)
+
   output_types = map(rule_context.aval_to_ir_type, rule_context.avals_out)
 
   ftype = ir.FunctionType.get(input_types, output_types)
@@ -388,16 +398,23 @@ def _emit_pallas_lowering_rule_as_fun(
 
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
-    # Remove the user_grid_indices, which are not in scope, so any attempt to
-    # access them gives a meaningful error.
-    # TODO(phawkins): consider plumbing these in as arguments.
-    sub_ctx = rule_context.replace(
-        lowering_context=ctx.replace(
-            user_grid_indices=None,
-        )
-    )
+    if user_grid_indices is not None:
+      grid_arity = len(user_grid_indices)
+      rule_args = entry_block.arguments[grid_arity:]
+      sub_ctx = rule_context.replace(
+          lowering_context=ctx.replace(
+              user_grid_indices=entry_block.arguments[:grid_arity],
+          )
+      )
+    else:
+      sub_ctx = rule_context.replace(
+          lowering_context=ctx.replace(
+              user_grid_indices=None,
+          )
+      )
+      rule_args = entry_block.arguments
 
-    outs = rule(sub_ctx, *entry_block.arguments, **params)
+    outs = rule(sub_ctx, *rule_args, **params)
 
     flat_outs = list(outs) if primitive.multiple_results else [outs]
     flat_outs = [_ensure_mlir_value(x, aval)
@@ -587,21 +604,23 @@ lowering_rules: dict[tpu_core.CoreType, dict[jax_core.Primitive, Callable]]
 lowering_rules = {kernel_type: {} for kernel_type in tpu_core.CoreType}
 skip_mlir_conversions = set()
 
-# TODO(phawkins): currently we are excluding program_id_p and higher-order
-# primitives. This is because program_id_p and anything that can contain it
-# access values directly from the context. We should instead plumb these as
-# cached function args.
+# TODO(phawkins): currently we are excluding higher-order primitives because
+# we have not yet taught them to propagate the implicit grid arguments.
 _uncacheable_primitives: set[jax_core.Primitive] = {
-    primitives.program_id_p,
-    lax.axis_index_p,
     lax.while_p,
     lax.scan_p,
     lax.cond_p,
     primitives.run_scoped_p,
     primitives.jaxpr_call_p,
+}
+
+# Primitives that need access to the user grid during their lowering.
+_primitives_needing_grid: set[jax_core.Primitive] = {
     primitives.semaphore_signal_p,
     tpu_primitives.dma_start_p,
     tpu_primitives.dma_wait_p,
+    primitives.program_id_p,
+    lax.axis_index_p,
 }
 
 
@@ -1699,6 +1718,11 @@ def jaxpr_subcomp(
         can_cache = (eqn.primitive not in _uncacheable_primitives and
                      all(isinstance(x, ir.Value) for x in invals))
         if can_cache:
+          grid_arity = (
+              len(ctx.user_grid_indices)
+              if (eqn.primitive in _primitives_needing_grid and ctx.user_grid_indices is not None)
+              else 0
+          )
           cache_key = PallasLoweringCacheKey(
               primitive=eqn.primitive,
               kernel_type=ctx.kernel_type,
@@ -1706,6 +1730,7 @@ def jaxpr_subcomp(
               avals_out=avals_out,
               params=tuple(sorted(eqn.params.items())),
               block_shapes=block_shapes,
+              grid_arity=grid_arity,
           )
           cache_entry = ctx.lowering_cache.get(cache_key, None)
 
@@ -1728,8 +1753,12 @@ def jaxpr_subcomp(
               pass
 
         if cache_entry is not None:
+          call_args = []
+          if eqn.primitive in _primitives_needing_grid and ctx.user_grid_indices is not None:
+            call_args.extend(ctx.user_grid_indices)
+          call_args.extend(invals)
           outs = jax_mlir_ext.inlined_func_call(
-            cache_entry.operation, invals)
+            cache_entry.operation, call_args)
 
           ans = outs if eqn.primitive.multiple_results else outs[0]
         else:
