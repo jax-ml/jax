@@ -102,7 +102,7 @@ TEST_ARTIFACTS_DIR="test-artifacts"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
-    --config=rocm_clang_hermetic_local_sysroot \
+    --config=rocm_clang_hermetic \
     --config=rocm_rbe_dynamic \
     $OVERRIDE_XLA_REPO \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
