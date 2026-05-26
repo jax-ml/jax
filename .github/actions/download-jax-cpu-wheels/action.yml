@@ -49,14 +49,13 @@ runs:
         # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
         # `*-cp<py_version>-cp<py_version>t-*`.
         echo "python_major_minor=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_OUTPUT
-    - name: Download wheels from GCS (non-Windows runs)
+    - name: Download wheels from GCS
       shell: bash
-      id: download-wheel-artifacts-nw
+      id: download-wheel-artifacts
       # Set continue-on-error to true to prevent actions from failing the workflow if this step
       # fails. Instead, we verify the outcome in the step below so that we can print a more
       # informative error message.
       continue-on-error: true
-      if: ${{ !contains(inputs.runner, 'windows-x86') }}
       run: |
         mkdir -p $(pwd)/dist
         gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
@@ -82,34 +81,9 @@ runs:
         INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS: ${{ inputs.skip-download-jaxlib-from-gcs }}
         INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
         INPUTS_PYTHON: ${{ inputs.python }}
-    - name: Download wheels from GCS (Windows runs)
-      shell: cmd  # zizmor: ignore[misfeature]
-      id: download-wheel-artifacts-w
-      # Set continue-on-error to true to prevent actions from failing the workflow if this step
-      # fails. Instead, we verify the outcome in step below so that we can print a more
-      # informative error message.
-      continue-on-error: true
-      if: ${{ contains(inputs.runner, 'windows-x86') }}
-      run: |
-        mkdir dist
-        @REM Use `call` so that we can run sequential gcloud storage commands on Windows
-        @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
-        call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%"/jax*py3*none*any.whl dist/
-
-        if "%INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS%"=="1" (
-          echo "JAX only release. Only downloading the jax wheel from the release bucket."
-        ) else (
-          call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
-        )
-      env:
-        OS: ${{ steps.set-vars.outputs.os }}
-        ARCH: ${{ steps.set-vars.outputs.arch }}
-        PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}
-        INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
-        INPUTS_SKIP_DOWNLOAD_JAXLIB_FROM_GCS: ${{ inputs.skip-download-jaxlib-from-gcs }}
     - name: Skip the test run if the wheel artifacts were not downloaded successfully
       shell: bash
-      if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
+      if: steps.download-wheel-artifacts.outcome == 'failure'
       run: |
         echo "Failed to download wheel artifacts from GCS. Please check if the wheels were"
         echo "built successfully by the artifact build jobs and are available in the GCS bucket."

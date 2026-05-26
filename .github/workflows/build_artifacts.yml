@@ -162,18 +162,10 @@ jobs:
         run: ./ci/build_artifacts.sh "${INPUTS_ARTIFACT}"
         env:
           INPUTS_ARTIFACT: ${{ inputs.artifact }}
-      - name: Upload artifacts to a GCS bucket (non-Windows runs)
-        if: >-
-          ${{ inputs.upload_artifacts_to_gcs && !contains(inputs.runner, 'windows-x86') }}
-        run:  gcloud storage cp -r "$(pwd)/dist/*.whl" "${INPUTS_GCS_UPLOAD_URI}"/
-        env:
-          INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
-      # Set shell to cmd to avoid path errors when using gcloud commands on Windows
-      - name: Upload artifacts to a GCS bucket (Windows runs)
-        if: >-
-          ${{ inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
-        shell: cmd  # zizmor: ignore[misfeature] allow the workflow to use cmd shell
-        run:  gcloud storage cp -r "dist/*.whl" "%INPUTS_GCS_UPLOAD_URI%"/
+      - name: Upload artifacts to a GCS bucket
+        if: ${{ inputs.upload_artifacts_to_gcs }}
+        shell: bash
+        run:  gcloud storage cp -r "dist/*.whl" "${INPUTS_GCS_UPLOAD_URI}"/
         env:
           INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
       - name: Store the GCS upload URI as an output
