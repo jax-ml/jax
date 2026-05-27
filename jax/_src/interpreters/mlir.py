@@ -3151,14 +3151,29 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
   else:
     result_shapes = [eval_dynamic_shape_as_tensor(ctx, out_shape)]
 
-  op = custom_call('LayoutConstraint', result_types=[result_type], operands=[x],
-                   api_version=1,
-                   result_shapes=result_shapes,
-                   # Set operand layouts to anything. XLA will ignore it.
-                   operand_layouts=[list(range(aval_in.ndim))],  # pyrefly: ignore[missing-attribute]
-                   # TODO(yashkatariya): Figure out how to pass tiling to the
-                   # custom call.
-                   result_layouts=[layout.major_to_minor[::-1]])
+  extra_attributes: dict[str, ir.Attribute] = {}
+  if layout.tiling is not None:
+    tiling_str = ";".join(",".join(map(str, tile)) for tile in layout.tiling)
+    frontend_attrs: dict[str, ir.Attribute] = {
+        "tiling": ir.StringAttr.get(tiling_str)
+    }
+    extra_attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+        frontend_attrs
+    )
+
+  op = custom_call(
+      "LayoutConstraint",
+      result_types=[result_type],
+      operands=[x],
+      api_version=1,
+      result_shapes=result_shapes,
+      # Set operand layouts to anything. XLA will ignore it.
+      operand_layouts=[list(range(aval_in.ndim))],  # pyrefly: ignore[missing-attribute]
+      # TODO(yashkatariya): Figure out how to pass tiling to the
+      # custom call.
+      result_layouts=[layout.major_to_minor[::-1]],
+      extra_attributes=extra_attributes,
+  )
   return op.result
 
 
