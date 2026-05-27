@@ -375,7 +375,7 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
       # vmap batching rules slice consumed keys for debug callbacks.
       if (eqn.primitive == lax.slice_p
           and is_key(eqn.invars[0])
-          and np.all(consumed.get(eqn.invars[0], False))):
+          and np.all(is_consumed(eqn.invars[0]))):
         signature = KeyReuseSignature(Forward(0, 0))
       if eqn.primitive == assert_consumed_value_p:
         # This is a special case that goes beyond normal key reuse logic.
