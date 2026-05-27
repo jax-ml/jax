@@ -1421,7 +1421,9 @@ class PallasCallDMATest(ptu.PallasTPUTest):
                          sem).wait()
       pl.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
 
-    with self.assertRaisesRegex(ValueError, 'Cannot signal'):
+    with self.assertRaisesRegex(
+        ValueError, 'Cannot use a non-\\(\\)-shaped destination semaphore'
+    ):
       x = jnp.arange(8 * 128.).reshape((8, 128))
       self.pallas_call(
           kernel,
@@ -1623,6 +1625,51 @@ class PallasCallDMATest(ptu.PallasTPUTest):
           in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
           out_specs=pl.BlockSpec(memory_space=pl.ANY),
           out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      )(x)
+
+
+  def test_dma_start_with_mismatched_dtype_raises(self):
+    def kernel(x_hbm_ref, _):
+      def body(x_ref, sem):
+        pltpu.async_copy(x_hbm_ref, x_ref, sem).wait()
+
+      pl.run_scoped(
+          body,
+          pltpu.VMEM((8, 128), jnp.int32),
+          pltpu.SemaphoreType.DMA,
+      )
+
+    with self.assertRaisesRegex(
+        ValueError, 'DMA source and destination must have the same dtype'
+    ):
+      x = jnp.arange(8 * 128).reshape((8, 128)).astype(jnp.float32)
+      self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+      )(x)
+
+  def test_dma_start_with_mismatched_shape_raises(self):
+    def kernel(x_hbm_ref, _):
+      def body(x_ref, sem):
+        pltpu.async_copy(x_hbm_ref, x_ref, sem).wait()
+
+      pl.run_scoped(
+          body,
+          pltpu.VMEM((8, 64), jnp.int32),
+          pltpu.SemaphoreType.DMA,
+      )
+
+    with self.assertRaisesRegex(
+        ValueError, 'DMA source and destination must have the same shape'
+    ):
+      x = jnp.arange(8 * 128).reshape((8, 128)).astype(jnp.int32)
+      self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          out_shape=jax.ShapeDtypeStruct((8, 64), jnp.float32),
       )(x)
 
   def test_unrolled_dma_with_regular_semaphore_raises(self):
@@ -2193,6 +2240,25 @@ class PallasCallTest(ptu.PallasTPUTest):
     self.assertEqual(ref.inner_aval.shape, (2, 3))
     self.assertEqual(ref.inner_aval.dtype, jnp.float32)
     self.assertEqual(ref.memory_space, pltpu.VMEM)
+
+  def test_dynamic_indexing_with_dynamic_size_slice(self):
+    @pl.kernel(
+      mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+      out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+      scratch_types=[pltpu.SMEM((1,), jnp.int32)]
+    )
+    def kernel(operand_ref, k_ref, out_ref, k_smem):
+      pltpu.sync_copy(k_ref, k_smem)
+      size = pl.multiple_of(k_smem[0], 128)
+      dynamically_sized_slice = pl.ds(size)
+      pltpu.sync_copy(
+          operand_ref.at[dynamically_sized_slice],
+          out_ref.at[dynamically_sized_slice]
+      )
+
+    operand = jnp.arange(128 * 2, dtype=jnp.float32)
+    k = jnp.array((128,), dtype=jnp.int32)
+    np.testing.assert_allclose(kernel(operand, k), operand[:128])
 
   @parameterized.parameters([
       dict(shape=shape, dty=dty)
@@ -3853,7 +3919,7 @@ class PallasCallTPUBooleanTest(ptu.PallasTPUTest):
       copy.start()
       copy.wait()
     input_arr = jnp.ones((8, 128), dtype=jnp.bool_)
-    output_shape = jax.ShapeDtypeStruct((8, 128), jnp.bool_)
+    output_shape = jax.ShapeDtypeStruct((8, 128 // num_devices), jnp.bool_)
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
       in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
@@ -3891,27 +3957,27 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
 
   @parameterized.parameters(
       (
-          lambda i: (i, pl.ds(0, 8), pl.ds(0, 128)), 0, False,
+          lambda i: (i, pl.ds(0, 8), pl.ds(0, 128)), (8, 128), 0, False,
           'dma_start(p0) c[d,:,:] -> e[...] f',
       ),
       (
-          lambda i: (0, pl.ds(i, 8), pl.ds(0, 128)), 0, False,
+          lambda i: (0, pl.ds(i, 8), pl.ds(0, 128)), (8, 128), 0, False,
           'dma_start(p0) c[0,d:d+8,:] -> e[...] f',
       ),
       (
-          lambda i: (i, pl.ds(2, 4), pl.ds(0, 100)), 0, False,
+          lambda i: (i, pl.ds(2, 4), pl.ds(0, 100)), (4, 100), 0, False,
           'dma_start(p0) c[d,2:6,:100] -> e[...] f',
       ),
       (
-          lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)), 1, False,
+          lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)), (6, 100), 1, False,
           'dma_start(p1) c[d,2:,4:104] -> e[...] f',
       ),
       (
-          lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)), 0, True,
+          lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)), (6, 100), 0, True,
           'dma_start(p0, add) c[d,2:,4:104] -> e[...] f',
       ),
   )
-  def test_dma_custom_pretty_print(self, indexer, priority, add, expected):
+  def test_dma_custom_pretty_print(self, indexer, vmem_shape, priority, add, expected):
     def body(x_hbm_ref, i):
       def inner(x_ref, sem):
         pltpu.async_copy(x_hbm_ref.at[indexer(i)], x_ref, sem,
@@ -3919,7 +3985,7 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
                          add=add).wait()
 
       pl.run_scoped(
-          inner, pltpu.VMEM((8, 128), jnp.float32), pltpu.SemaphoreType.DMA
+          inner, pltpu.VMEM(vmem_shape, jnp.int32), pltpu.SemaphoreType.DMA
       )
       return []
 
