@@ -33,7 +33,7 @@ from jax._src.api import jit, jvp, vmap
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy import einsum as jnp_einsum
 from jax._src.numpy import vectorize as jnp_vectorize
-from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
+from jax._src.numpy.util import promote_args_complex, promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
@@ -622,6 +622,52 @@ def erfinv(x: ArrayLike) -> Array:
   return lax.erf_inv(x)
 
 
+# Weideman (1994) N=32 rational approximation constants for the Faddeeva function.
+# Descending-degree polynomial coefficients for jnp.polyval: polyval(c, Z) = sum_n c[n]*Z^(N-n).
+# Algorithm: w(z) = 2*polyval(c, Z)/(L-iz)^2 + 1/(sqrt(pi)*(L-iz))
+# where Z = (L+iz)/(L-iz), valid for Im(z) >= 0.
+_WOFZ_L = 4.7568284600108841
+_WOFZ_C = np.array([
+    -1.3034426067909105e-12, 3.7411838373738471e-12, 8.030427700497756e-12, -2.1543593557490879e-11,
+    -5.5442449963237932e-11, 1.165824698850374e-10, 4.1537441121999766e-10, -5.2310202114920615e-10,
+    -3.2080151339721323e-09, 8.1248864216535907e-10, 2.3797556530014025e-08, 2.2930438438915445e-08,
+    -1.4813078929137642e-07, -4.1840763750512053e-07, 4.2558331397138446e-07, 4.4015317312832251e-06,
+    6.8210319443575151e-06, -2.1409619201999998e-05, -0.00013075449254579421, -0.00024532980270038237,
+    0.00039259136070109705, 0.0045195411053493093, 0.019006155784845501, 0.057304403529837282,
+    0.14060716226893755, 0.29544451071508743, 0.54601397206393376, 0.9019254893648001,
+    1.3455441692345449, 1.8256696296324815, 2.2635372999002676, 2.5722534081245696,
+])
+
+
+def _wofz_upper(z: Array) -> Array:
+  re = lax.real(z)
+  L = lax.complex(_lax_const(re, _WOFZ_L), _lax_const(re, 0.))
+  iz = lax.complex(lax.neg(lax.imag(z)), re)
+  denom = L - iz
+  Z = (L + iz) / denom
+  p = jnp.polyval(jnp.asarray(_WOFZ_C, dtype=Z.dtype), Z)
+  one_over_sqrtpi = lax.complex(_lax_const(re, 1. / np.sqrt(np.pi)), _lax_const(re, 0.))
+  return 2 * p / (denom * denom) + one_over_sqrtpi / denom
+
+
+@custom_derivatives.custom_jvp
+def _wofz(z: Array) -> Array:
+  sign = lax.ge(lax.imag(z), _lax_const(lax.real(z), 0.))
+  z_upper = lax.select(sign, z, lax.neg(z))
+  w_upper = _wofz_upper(z_upper)
+  correction = 2 * lax.exp(lax.neg(z * z)) - w_upper
+  return lax.select(sign, w_upper, correction)
+
+_wofz.defjvps(
+    lambda g, ans, z: g * (
+        lax.neg(2 * z * ans) + lax.complex(
+            _lax_const(lax.real(z), 0.),
+            _lax_const(lax.real(z), 2. / np.sqrt(np.pi)),
+        )
+    )
+)
+
+
 def erfcx(x: ArrayLike) -> Array:
   r"""Scaled complementary error function.
 
@@ -635,7 +681,7 @@ def erfcx(x: ArrayLike) -> Array:
   formula which overflows.
 
   Args:
-    x: arraylike, real-valued.
+    x: arraylike, real or complex.
 
   Returns:
     array containing values of the scaled complementary error function.
@@ -643,10 +689,12 @@ def erfcx(x: ArrayLike) -> Array:
   See also:
     - :func:`jax.scipy.special.erfc`
     - :func:`jax.scipy.special.erf`
+    - :func:`jax.scipy.special.wofz`
   """
   x, = promote_args_inexact("erfcx", x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
-    raise ValueError("erfcx does not support complex-valued inputs.")
+    iz = lax.complex(lax.neg(lax.imag(x)), lax.real(x))
+    return _wofz(iz)
   return _erfcx(x)
 
 
@@ -972,6 +1020,28 @@ _BERNOULLI_COEFS = np.array([
     759790291646040068357842010112000000 / 1723168255201,
     -134196726836183700385281186201600000000 / 7709321041217,
 ])
+
+
+def wofz(z: ArrayLike) -> Array:
+  r"""Faddeeva function.
+
+  JAX implementation of :obj:`scipy.special.wofz`.
+
+  .. math::
+
+     \mathrm{wofz}(z) = e^{-z^2} \mathrm{erfc}(-iz)
+
+  Args:
+    z: arraylike, real or complex.
+
+  Returns:
+    array of complex values of the Faddeeva function.
+
+  See also:
+    - :func:`jax.scipy.special.erfcx`
+  """
+  z, = promote_args_complex("wofz", z)
+  return _wofz(z)
 
 
 @custom_derivatives.custom_jvp
