@@ -414,11 +414,11 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(major_dim=[2, 3, 4])
   def test_get_index(self, major_dim):
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 4):
+      self.skipTest("Needs a newer libTPU")
+
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(
-            shape=(self.num_lanes,), dtype=jnp.int32
-        ),
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        out_shape=jax.ShapeDtypeStruct(shape=(self.num_lanes,), dtype=jnp.int32)
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = lax.fori_loop(
