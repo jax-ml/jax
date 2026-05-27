@@ -534,6 +534,12 @@ class _IndexMapFunc:
       out_indices = (out_indices,)
     return out_indices
 
+  def __repr__(self):
+    return f"_IndexMapFunc({self.index_map!r})"
+
+  def __str__(self):
+    return f"_IndexMapFunc({self.index_map!s})"
+
 
 @dataclasses.dataclass
 class BlockSpec:
