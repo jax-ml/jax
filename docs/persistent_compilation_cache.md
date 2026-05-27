@@ -13,6 +13,10 @@ Note: if the compilation cache is not on a local filesystem,
 pip install etils
 ```
 
+**CAUTION**: the compilation cache is considered trusted. Do not share a compilation cache with users you do not trust. For example, if you put the
+compilation cache in a directory to which others may write, those users can trigger your JAX process to run arbitrary code. Sharing
+a compilation cache is equivalent to allowing anyone who can write to the cache directory to run code on your machine.
+
 ## Usage
 
 ### Quick start
