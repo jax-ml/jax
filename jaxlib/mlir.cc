@@ -148,7 +148,7 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(std::string_view mlir_module) {
 
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
     std::string_view mlir_module, std::string_view target,
-    bool use_mixed_serialization) {
+    std::string_view sdy_version, bool use_mixed_serialization) {
   mlir::MLIRContext context;
   context.loadDialect<mlir::mpmd::MpmdDialect>();
   if (VLOG_IS_ON(3)) context.disableMultithreading();
@@ -156,22 +156,43 @@ absl::StatusOr<nb::bytes> PySerializePortableArtifact(
                       xla::ParseMlirModuleString(mlir_module, context));
 
   // Serialize portable artifact
+#if JAX_IFRT_VERSION_NUMBER >= 54
   TF_ASSIGN_OR_RETURN(
       std::string bytecode,
-      xla::SerializeUsingVersionedStablehlo(*module, target, /*inplace=*/true,
-                                            /*allow_mixed_serialization*/
-                                            use_mixed_serialization));
+      xla::SerializeUsingVersionedStablehlo(
+          *module, target, sdy_version,
+          /*inplace=*/true,
+          /*allow_mixed_serialization=*/use_mixed_serialization));
+#else
+  TF_ASSIGN_OR_RETURN(
+      std::string bytecode,
+      xla::SerializeUsingVersionedStablehlo(
+          *module, target,
+          /*inplace=*/true,
+          /*allow_mixed_serialization=*/use_mixed_serialization));
+#endif
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
-    PyModule& module, std::string_view target, bool use_mixed_serialization) {
+    PyModule& module, std::string_view target, std::string_view sdy_version,
+    bool use_mixed_serialization) {
   mlir::ModuleOp module_op = unwrap(module.get());
-  TF_ASSIGN_OR_RETURN(std::string bytecode,
-                      xla::SerializeUsingVersionedStablehlo(
-                          module_op, target, /*inplace=*/false,
-                          /*allow_mixed_serialization*/
-                          use_mixed_serialization));
+#if JAX_IFRT_VERSION_NUMBER >= 54
+  TF_ASSIGN_OR_RETURN(
+      std::string bytecode,
+      xla::SerializeUsingVersionedStablehlo(
+          module_op, target, sdy_version,
+          /*inplace=*/false,
+          /*allow_mixed_serialization=*/use_mixed_serialization));
+#else
+  TF_ASSIGN_OR_RETURN(
+      std::string bytecode,
+      xla::SerializeUsingVersionedStablehlo(
+          module_op, target,
+          /*inplace=*/false,
+          /*allow_mixed_serialization=*/use_mixed_serialization));
+#endif
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
@@ -250,21 +271,28 @@ void BuildMlirSubmodule(nb::module_& m) {
       "serialize_portable_artifact",
       [](nb::any mlir_module, std::string_view target,
          bool use_mixed_serialization) {
+#if JAX_IFRT_VERSION_NUMBER >= 54
+        // TODO(hyeontaek): Take a Sdy version as an argument to
+        // `serialize_portable_artifact()`.
+        const std::string sdy_version = xla::GetDefaultSdyVersion();
+#else
+        const std::string sdy_version = "unused";
+#endif
         if (nb::isinstance<PyModule>(mlir_module)) {
           PyModule& module = nb::cast<PyModule&>(mlir_module);
           return xla::ValueOrThrow(PySerializePortableArtifact(
-              module, target, use_mixed_serialization));
+              module, target, sdy_version, use_mixed_serialization));
         }
         if (nb::bytes bytecode;
             nb::try_cast<nb::bytes>(mlir_module, bytecode)) {
           return xla::ValueOrThrow(PySerializePortableArtifact(
               std::string_view(bytecode.c_str(), bytecode.size()), target,
-              use_mixed_serialization));
+              sdy_version, use_mixed_serialization));
         }
         if (std::string str_module;
             nb::try_cast<std::string>(mlir_module, str_module)) {
           return xla::ValueOrThrow(PySerializePortableArtifact(
-              str_module, target, use_mixed_serialization));
+              str_module, target, sdy_version, use_mixed_serialization));
         }
         throw nb::type_error("mlir_module must be bytes, str, or MlirModule");
       },
