@@ -2069,7 +2069,7 @@ def _vector_value_sites_and_assignments_for_async_ops(
     if isinstance(idx.type, ir.VectorType):
       value_site = ValueSite(op, VariableType.OPERAND, base_operand_index + i)
       value_site_var = cs.Variable(value_site)
-      layout = cs.RegisterLayout(value=fa.TMA_GATHER_INDICES_LAYOUT)
+      layout = cs.RegisterLayout(value=fa.TMA_INDICES_LAYOUT)
       values_sites[value_site_var] = [value_site]
       assignments[value_site_var] = layout
   return values_sites, assignments

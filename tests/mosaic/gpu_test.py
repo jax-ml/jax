@@ -3602,7 +3602,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     def kernel(ctx, src, idx, dst, smem):
       tmp, barrier = smem
       idxs = mgpu.FragmentedArray.load_untiled(
-          idx, layout=fa.TMA_GATHER_INDICES_LAYOUT, optimized=False, is_signed=False
+          idx, layout=fa.TMA_INDICES_LAYOUT, optimized=False, is_signed=False
       )
       ctx.async_copy(
           src_ref=src,
@@ -3645,7 +3645,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     def kernel(ctx, src, idx, dst, smem):
       tmp, barrier = smem
       idxs = mgpu.FragmentedArray.load_untiled(
-          idx, layout=fa.TMA_GATHER_INDICES_LAYOUT, optimized=False, is_signed=False
+          idx, layout=fa.TMA_INDICES_LAYOUT, optimized=False, is_signed=False
       )
       ctx.async_copy(
           src_ref=src,
@@ -3706,7 +3706,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       tmp, barrier = smem
       idxs = mgpu.FragmentedArray.load_untiled(
           idx,
-          layout=fa.TMA_GATHER_INDICES_LAYOUT,
+          layout=fa.TMA_INDICES_LAYOUT,
           optimized=False,
           is_signed=False,
       )

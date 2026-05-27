@@ -32,7 +32,7 @@ class RegisterLayout(enum.Enum):
   TCGEN05_M64_COLLECTIVE = enum.auto()
   TCGEN05_TMEM_NATIVE = enum.auto()
   SMEM_GMEM_COPY = enum.auto()
-  TMA_GATHER_INDICES = enum.auto()
+  TMA_INDICES = enum.auto()
 
   def to_mgpu(
       self, shape: tuple[int, int], dtype: jax.typing.DTypeLike | ir.Type
@@ -63,8 +63,8 @@ class RegisterLayout(enum.Enum):
         return fa.tiled_copy_smem_gmem_layout(
             row_tiles, col_tiles, swizzle, bitwidth
         )
-      case RegisterLayout.TMA_GATHER_INDICES:
-        return fa.TMA_GATHER_INDICES_LAYOUT
+      case RegisterLayout.TMA_INDICES:
+        return fa.TMA_INDICES_LAYOUT
 
   def to_layout_attr(
       self, shape: tuple[int, int], dtype: jax.typing.DTypeLike | ir.Type

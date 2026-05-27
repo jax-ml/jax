@@ -1103,7 +1103,7 @@ def _gmem_slice_and_predicate(
       gmem_slice.append(v)
     elif isinstance(idx.type, ir.VectorType):
       layout = inference_utils.in_layouts(op)[0]
-      assert layouts_lib.from_layout_attr(layout) == fa.TMA_GATHER_INDICES_LAYOUT
+      assert layouts_lib.from_layout_attr(layout) == fa.TMA_INDICES_LAYOUT
       idx_fa = _fragmented_array_from_ir(idx, layout)
       gmem_slice.append(idx_fa)
       predicate = dict()

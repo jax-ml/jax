@@ -3229,7 +3229,7 @@ class LayoutInferenceTest(parameterized.TestCase):
             collective=ir.ArrayAttr.get([]),
         )
 
-      layout = mgpu.TMA_GATHER_INDICES_LAYOUT
+      layout = mgpu.TMA_INDICES_LAYOUT
       mgpu.infer_layout(self.module)
       self.checkInLayouts(op, [layout])
 

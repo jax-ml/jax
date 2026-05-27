@@ -1505,7 +1505,7 @@ class LaunchContext:
         raise ValueError("Gather/scatter TMA can't perform reductions")
       if not isinstance(predicate, _DefaultPredicate):
         raise ValueError("Gather/scatter TMA can't use a predicate")
-      if gather_indices.layout != fa.TMA_GATHER_INDICES_LAYOUT:
+      if gather_indices.layout != fa.TMA_INDICES_LAYOUT:
         raise ValueError(f"Unsupported gather indices layout: {gather_indices.layout}")
       ROWS_PER_INSTR = 4
       # Make sure we'll always be accessing SMEM with sufficient alignment.
@@ -1539,7 +1539,7 @@ class LaunchContext:
       )
 
       # Indices are split over 4 warps, and replicated within each warp.
-      assert fa.TMA_GATHER_INDICES_LAYOUT.vector_length == ROWS_PER_INSTR
+      assert fa.TMA_INDICES_LAYOUT.vector_length == ROWS_PER_INSTR
       # Index 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 ...
       # Warp  <--- 0 ---> <--- 1 ---> <--- 2 ---> <--- 3 ---> <--- 0 --
       warp_idx = arith.remui(

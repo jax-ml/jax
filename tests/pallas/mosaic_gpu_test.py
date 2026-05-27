@@ -1503,7 +1503,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         scratch_shapes=[plgpu.Barrier()],
     )
     def kernel(x_ref_gmem, idx_ref, o_ref, barrier_ref):
-      idxs = plgpu.load(idx_ref, (), layout=plgpu.Layout.TMA_GATHER_INDICES)
+      idxs = plgpu.load(idx_ref, (), layout=plgpu.Layout.TMA_INDICES)
       plgpu.copy_gmem_to_smem(x_ref_gmem.at[idxs, 64:], o_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
 
@@ -1521,7 +1521,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     # Make sure we can infer the layout in WG
     indices_layout = tokens_layout = None
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
-      indices_layout = plgpu.Layout.TMA_GATHER_INDICES
+      indices_layout = plgpu.Layout.TMA_INDICES
       tokens_layout = plgpu.Layout.WGMMA
     dtype = jnp.int32
     shape = (64, 128)

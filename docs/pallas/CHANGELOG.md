@@ -19,6 +19,8 @@ Remember to align the itemized text with the first line of an item within a list
     `jax_pallas_poison_buffers`) to poison (initialize with NaNs or lowest
     possible integers) any scratch buffers allocated by Pallas in Mosaic TPU
     lowering for debugging.
+  * Support TMA scatter.
+  * Rename `TMA_GATHER_INDICES_LAYOUT` to `TMA_INDICES_LAYOUT`.
 
 * Deprecations
 

@@ -1678,7 +1678,7 @@ class Layout(SomeLayout, enum.Enum):
   TCGEN05_M64_COLLECTIVE_NATIVE = enum.auto()
 
   SMEM_GMEM_COPY = enum.auto()
-  TMA_GATHER_INDICES = enum.auto()
+  TMA_INDICES = enum.auto()
 
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
@@ -1739,8 +1739,8 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.fragmented_array.tiled_copy_smem_gmem_layout(
             row_tiles, col_tiles, swizzle, bitwidth
         )
-      case Layout.TMA_GATHER_INDICES:
-        return mgpu.TMA_GATHER_INDICES_LAYOUT
+      case Layout.TMA_INDICES:
+        return mgpu.TMA_INDICES_LAYOUT
 
 
 class TMEMLayout(enum.Enum):

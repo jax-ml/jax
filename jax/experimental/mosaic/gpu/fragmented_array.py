@@ -942,7 +942,7 @@ TMEM_NATIVE_LAYOUT = tmem_native_layout(2)
 # A layout for the row indices used by TMA gather4/scatter4 instructions.
 # Index 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 ...
 # Warp  <--- 0 ---> <--- 1 ---> <--- 2 ---> <--- 3 ---> <--- 0 --
-TMA_GATHER_INDICES_LAYOUT = TiledLayout(
+TMA_INDICES_LAYOUT = TiledLayout(
     Tiling(((16,), (4,))),
     warp_dims=(-2,),
     lane_dims=(Replicated(32),),
