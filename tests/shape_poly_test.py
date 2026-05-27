@@ -48,6 +48,7 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import utils as lax_utils
 from jax._src.state import discharge
 from jax._src.state import primitives as ref_primitives
+from jax._src.lib import jaxlib_extension_version
 
 import numpy as np
 
@@ -2986,6 +2987,97 @@ _POLY_SHAPE_TEST_HARNESSES = [
           ((2, 3, 4, 5), "b1, b2, m, n", ["m <= n", "m <= 32", "n <= 32"]),
       ]
     ],
+    ([ # Ragged dot
+      # Mode 1: Ragged non-contracting.
+      # lhs=[m,k], rhs=[g,k,n], group_sizes=[g] -> [m,n]
+      PolyHarness("ragged_dot", "mode_1_non_contracting",
+                  lambda lhs, rhs, group_sizes: jax.lax.ragged_dot_general(
+                      lhs, rhs, group_sizes,
+                      ragged_dot_dimension_numbers=jax.lax.RaggedDotDimensionNumbers(
+                          dot_dimension_numbers=(([1], [1]), ([], [])),
+                          lhs_ragged_dimensions=[0],
+                          rhs_group_dimensions=[0],
+                      )),
+                  arg_descriptors=[RandArg((11, 5), jnp.float32),
+                                   RandArg((3, 5, 7), jnp.float32),
+                                   np.array([4, 4, 3], dtype=np.int32)],
+                  polymorphic_shapes=["m, k", "_, k, n", "_"]),
+      # Mode 1: Ragged non-contracting with overriding output precision.
+      PolyHarness("ragged_dot", "mode_1_non_contracting_f16_f32",
+                  lambda lhs, rhs, group_sizes: jax.lax.ragged_dot_general(
+                      lhs, rhs, group_sizes,
+                      ragged_dot_dimension_numbers=jax.lax.RaggedDotDimensionNumbers(
+                          dot_dimension_numbers=(([1], [1]), ([], [])),
+                          lhs_ragged_dimensions=[0],
+                          rhs_group_dimensions=[0],
+                      ),
+                      preferred_element_type=jnp.float32),
+                  arg_descriptors=[RandArg((11, 5), jnp.float16),
+                                   RandArg((3, 5, 7), jnp.float16),
+                                   np.array([4, 4, 3], dtype=np.int32)],
+                  polymorphic_shapes=["m, k", "_, k, n", "_"]),
+      # Mode 1: with dynamic group_sizes, expect error.
+      PolyHarness("ragged_dot", "mode_1_non_contracting_dynamic_group_error",
+                  lambda lhs, rhs, group_sizes: jax.lax.ragged_dot_general(
+                      lhs, rhs, group_sizes,
+                      ragged_dot_dimension_numbers=jax.lax.RaggedDotDimensionNumbers(
+                          dot_dimension_numbers=(([1], [1]), ([], [])),
+                          lhs_ragged_dimensions=[0],
+                          rhs_group_dimensions=[0],
+                      )),
+                  arg_descriptors=[RandArg((11, 5), jnp.float32),
+                                   RandArg((3, 5, 7), jnp.float32),
+                                   np.array([4, 4, 3], dtype=np.int32)],
+                  polymorphic_shapes=["m, k", "g, k, n", "g"],
+                  expect_error=(TypeError,
+                                "ragged_dot_general requires the group "
+                                "count .* to be static")),
+      # Mode 2: Ragged contracting.
+      # lhs=[m,k], rhs=[k,n], group_sizes=[g] -> [g,m,n]
+      PolyHarness("ragged_dot", "mode_2_contracting",
+                  lambda lhs, rhs, group_sizes: jax.lax.ragged_dot_general(
+                      lhs, rhs, group_sizes,
+                      ragged_dot_dimension_numbers=jax.lax.RaggedDotDimensionNumbers(
+                          dot_dimension_numbers=(([1], [0]), ([], [])),
+                          lhs_ragged_dimensions=[1],
+                          rhs_group_dimensions=[],
+                      )),
+                  arg_descriptors=[RandArg((11, 5), jnp.float32),
+                                   RandArg((5, 7), jnp.float32),
+                                   np.array([2, 3], dtype=np.int32)],
+                  # The group_sizes dimension is not polymorphic.
+                  polymorphic_shapes=["m, k", "k, n", "_"]),
+      # Mode 2: with dynamic group_sizes, expect error.
+      PolyHarness("ragged_dot", "mode_2_contracting_dynamic_group_error",
+                  lambda lhs, rhs, group_sizes: jax.lax.ragged_dot_general(
+                      lhs, rhs, group_sizes,
+                      ragged_dot_dimension_numbers=jax.lax.RaggedDotDimensionNumbers(
+                          dot_dimension_numbers=(([1], [0]), ([], [])),
+                          lhs_ragged_dimensions=[1],
+                          rhs_group_dimensions=[],
+                      )),
+                  arg_descriptors=[RandArg((11, 5), jnp.float32),
+                                   RandArg((5, 7), jnp.float32),
+                                   np.array([2, 3], dtype=np.int32)],
+                  polymorphic_shapes=["m, k", "k, n", "g"],
+                  expect_error=(TypeError,
+                                "ragged_dot_general requires the group "
+                                "count .* to be static")),
+      # Mode 3: Ragged batch, like a dot_general.
+      # lhs=[b,m,k], rhs=[b,k,n], group_sizes=[g] -> [b,m,n]
+      PolyHarness("ragged_dot", "mode_3_batch",
+                  lambda lhs, rhs, group_sizes: jax.lax.ragged_dot_general(
+                      lhs, rhs, group_sizes,
+                      ragged_dot_dimension_numbers=jax.lax.RaggedDotDimensionNumbers(
+                          dot_dimension_numbers=(([2], [1]), ([0], [0])),
+                          lhs_ragged_dimensions=[0],
+                          rhs_group_dimensions=[],
+                      )),
+                  arg_descriptors=[RandArg((5, 11, 6), jnp.float32),
+                                   RandArg((5, 6, 7), jnp.float32),
+                                   np.array([2, 3], dtype=np.int32)],
+                  polymorphic_shapes=["b, m, k", "b, k, n", "g"]),
+    ] if jaxlib_extension_version >= 459 else []),
     [
       # The random primitive tests, with threefry (both partitionable and
       # non-partitionable), and unsafe_rbg.

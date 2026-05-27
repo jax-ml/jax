@@ -6296,6 +6296,14 @@ def _ragged_dot_general_shape_rule(
           f'{expected_gs_shape}, got {group_sizes.shape}.'
       )
   num_groups = group_sizes.shape[-1]
+  if (mode in (RaggedDotMode.RAGGED_CONTRACTING,
+               RaggedDotMode.RAGGED_NONCONTRACTING)
+      and core.is_symbolic_dim(num_groups)):
+    raise TypeError(
+        'ragged_dot_general requires the group count (last dimension of '
+        'group_sizes) to be static in Mode 1 (non-contracting) and Mode 2 '
+        '(contracting).'
+    )
 
   # Validate properties of the rhs group dimension(s).
   rhs_group_dims = ragged_dot_dimension_numbers.rhs_group_dimensions
@@ -6724,6 +6732,11 @@ def _ragged_dot_general_lower(
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
 
+  if jaxlib_extension_version < 459:
+    if any(not core.is_constant_shape(aval.shape) for aval in ctx.avals_in):
+      raise NotImplementedError(
+          'ragged_dot is not supported with dynamic shapes in this version '
+          'of jaxlib. Please update jaxlib to a newer version.')
   if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
     return mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,
