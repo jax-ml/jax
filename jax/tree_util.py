@@ -41,6 +41,7 @@ for examples.
 from jax._src.tree_util import (
     DictKey as DictKey,
     FlattenedIndexKey as FlattenedIndexKey,
+    FlatTree as FlatTree,
     GetAttrKey as GetAttrKey,
     KeyEntry as KeyEntry,
     KeyPath as KeyPath,

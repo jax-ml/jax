@@ -25,7 +25,6 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -41,6 +40,7 @@ from jax._src.pallas.mosaic import sc_lowering
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
+from jax._src.tree_util import FlatTree
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
 
@@ -911,9 +911,10 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
     ]
     debug_info = api_util.debug_info("parallel_loop", body, flat_avals, {})
     check_no_transformed_refs_args(lambda: debug_info, flat_carries)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(wrapped, debug_info=debug_info), flat_avals
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        wrapped, FlatTree.flatten_args(*flat_avals), debug_info
     )
+    jaxpr = closed_jaxpr.jaxpr
     carry_tree.unflatten(jaxpr.outvars)  # Verify same structure.
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
         jaxpr.effects
@@ -923,7 +924,7 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
           f"Effects not supported in parallel_loop: {disallowed_effects}"
       )
     flat_args, tree = jax.tree.flatten(
-        (lower, upper, step, consts, flat_carries)
+        (lower, upper, step, closed_jaxpr.consts, flat_carries)
     )
     flat_result = parallel_loop_p.bind(
         *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr

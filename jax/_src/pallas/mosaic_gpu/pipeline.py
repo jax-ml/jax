@@ -28,13 +28,13 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import core
-from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
+from jax._src.tree_util import FlatTree
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 
@@ -157,14 +157,13 @@ def _uses_arguments(
   if not num_args:
     return ()
 
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(
-          index_map,
-          debug_info=api_util.debug_info("pallas index_map",
-                                         index_map,
-                                         (0,) * num_args, {})),
-      (core.ShapedArray((), jnp.int32),) * num_args
+  dbg = api_util.debug_info("pallas index_map", index_map, (0,) * num_args, {})
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      index_map,
+      FlatTree.flatten_args(*(core.ShapedArray((), jnp.int32),) * num_args),
+      dbg,
   )
+  jaxpr = closed_jaxpr.jaxpr
   _, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars))
   return used_inputs
 

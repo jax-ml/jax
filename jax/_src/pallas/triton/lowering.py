@@ -465,12 +465,15 @@ def lower_fun(
   fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
 
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    wrapped_fun = lu.wrap_init(
-        fn, params,
-        debug_info=api_util.debug_info("pallas triton lower_fun", fun,
-                                       args, params))
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
-    jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
+    dbg = api_util.debug_info("pallas triton lower_fun", fun, args, params)
+
+    def fn_with_params(*args):
+      return fn(*args, **params)
+
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        fn_with_params, tree_util.FlatTree.flatten_args(*ctx.avals_in), dbg
+    )
+    jaxpr = jax_core.ClosedJaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts)
     out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
 
