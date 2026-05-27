@@ -706,6 +706,17 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
     self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def testFloatDivmodZeroDivisor(self, dtype):
+    # https://github.com/jax-ml/jax/issues/37752
+    vals = [1, -1, 100, -100]
+    args_maker = lambda: (np.array(vals, dtype=dtype), np.zeros_like(vals, dtype=dtype))
+    with np.errstate(divide='ignore'):
+      self._CheckAgainstNumpy(np.floor_divide, jnp.floor_divide, args_maker)
+      self._CompileAndCheck(jnp.floor_divide, args_maker)
+      self._CheckAgainstNumpy(np.divmod, jnp.divmod, args_maker)
+      self._CompileAndCheck(jnp.divmod, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
