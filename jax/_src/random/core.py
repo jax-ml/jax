@@ -2980,10 +2980,10 @@ def _geometric(key, p, shape, dtype) -> Array:
   check_arraylike("geometric", p)
   p, = promote_dtypes_inexact(p)
   u = uniform(key, shape, p.dtype)
-  log_u = lax.log(u)
+  log_one_minus_u = lax.log1p(-u)
   log_one_minus_p = lax.log1p(-p)
   log_one_minus_p = jnp.broadcast_to(log_one_minus_p, shape)
-  g = lax.floor(lax.div(log_u, log_one_minus_p)) + 1
+  g = lax.floor(lax.div(log_one_minus_u, log_one_minus_p)) + 1
   return g.astype(dtype)
 
 

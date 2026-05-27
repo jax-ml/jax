@@ -1382,6 +1382,22 @@ class DistributionsTest(RandomTestBase):
       self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05,
                           check_dtypes=False)
 
+  def testGeometricNoDtypeMax(self):
+    # Regression test: geometric should never return dtype max.
+    # Previously, log(0) = -inf could produce floor(-inf / log(1-p)) + 1 = dtype_max.
+    # Using log1p(-u) avoids log(0) entirely.
+    from unittest import mock
+    key = self.make_key(0)
+    for dtype in [np.int16, np.int32, np.int64]:
+      with mock.patch('jax._src.random.core.uniform',
+                      lambda key, shape, dtype: jnp.zeros(shape, dtype)):
+        samples = random.geometric(key, 0.5, shape=(10,), dtype=dtype)
+      max_val = np.iinfo(dtype).max
+      self.assertFalse(np.any(samples == max_val),
+                       f"geometric returned dtype max ({max_val}) for dtype={dtype}")
+      self.assertTrue(np.all(samples == 1),
+                      f"geometric with u=0 should return 1, got {samples}")
+
   @jtu.sample_product(
       left = [0.2, 0.5, 1., 2.],
       mode = [3., 5., 8., 9.],
