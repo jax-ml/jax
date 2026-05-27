@@ -92,3 +92,39 @@ jobs:
       build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}
       clone_main_xla: 0
+
+  temporary-test-upload:
+    uses: ./.github/workflows/build_artifacts.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ["linux-x86-n4-16", "windows-x86-n2-16"]
+    name: "Temporary Upload Test on ${{ matrix.runner }}"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: "jax"
+      upload_artifacts_to_gcs: true
+      gcs_upload_uri: "gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}"
+
+  temporary-test-download:
+    runs-on: ${{ matrix.runner }}
+    needs: temporary-test-upload
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ["linux-x86-n4-16", "windows-x86-n2-16"]
+    name: "Temporary Download Test on ${{ matrix.runner }}"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set dummy env keys for downloading action
+        shell: bash
+        run: echo "JAXCI_HERMETIC_PYTHON_VERSION=3.11" >> $GITHUB_ENV
+      - name: Execute Download Action
+        uses: ./.github/actions/download-jax-cpu-wheels
+        with:
+          runner: ${{ matrix.runner }}
+          python: "3.11"
+          skip-download-jaxlib-from-gcs: '1'
+          gcs_download_uri: "gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}"
