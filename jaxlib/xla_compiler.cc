@@ -376,10 +376,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
                    [](DebugOptions* self, std::string value) {
                      self->set_xla_gpu_kernel_cache_file(value);
                    })
-      .def_prop_rw(
-          "xla_gpu_enable_llvm_module_compilation_parallelism",
-          &DebugOptions::xla_gpu_enable_llvm_module_compilation_parallelism,
-          &DebugOptions::set_xla_gpu_enable_llvm_module_compilation_parallelism)
       .def_prop_rw("xla_gpu_per_fusion_autotune_cache_dir",
                    &DebugOptions::xla_gpu_per_fusion_autotune_cache_dir,
                    [](DebugOptions* self, std::string value) {
