@@ -2716,10 +2716,12 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
 @overload
 def where(condition: ArrayLike, /, *, size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-          ) -> tuple[Array, ...]: ...
+          ) -> tuple[Array, ...]:
+  ...
 
 @overload
-def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, /) -> Array: ...
+def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, /) -> Array:
+  ...
 
 @export
 def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
@@ -2870,10 +2872,20 @@ def select(
   idx = argmax(conditions.astype(bool), axis=0)
   return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
+def is_replicated_or_unreduced(sharding: NamedSharding) -> bool:
+  if sharding.spec.partitions:
+    return False
+  if sharding.spec.reduced:
+    return False
+  if (sharding.spec.unreduced and
+      sharding.spec.unreduced != set(sharding.mesh.axis_names)):
+    return False
+  return True
 
 @export
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
-             minlength: int = 0, *, length: int | None = None
+             minlength: int = 0, *, length: int | None = None,
+             out_sharding: NamedSharding | P | None = None,
              ) -> Array:
   """Count the number of occurrences of each value in an integer array.
 
@@ -2898,6 +2910,9 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     minlength: the minimum length of the output counts array.
     length: the length of the output counts array. Must be specified statically for
       ``bincount`` to be used with :func:`jax.jit` and other JAX transformations.
+    out_sharding: (optional) :class:`~jax.NamedSharding` or :class:`~jax.P` to
+      which the created array will be committed. Use `out_sharding` argument,
+      if using explicit sharding (https://docs.jax.dev/en/latest/parallel.html).
 
   Returns:
     An array of counts or summed weights reflecting the number of occurrences of values
@@ -2941,28 +2956,41 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     raise TypeError(f"x argument to bincount must have an integer type; got {x.dtype}")
   if np.ndim(x) != 1:
     raise ValueError("only 1-dimensional input supported.")
-  minlength = core.concrete_or_error(operator.index, minlength,
+  minlength = core.concrete_or_error(
+      operator.index, minlength,
       "The error occurred because of argument 'minlength' of jnp.bincount.")
   if length is None:
-    x_arr = core.concrete_or_error(asarray, x,
-      "The error occurred because of argument 'x' of jnp.bincount. "
-      "To avoid this error, pass a static `length` argument.")
+    x_arr = core.concrete_or_error(
+        asarray, x,
+        "The error occurred because of argument 'x' of jnp.bincount. "
+        "To avoid this error, pass a static `length` argument.")
     length = max(minlength, x_arr.size and int(max(0, x_arr.max())) + 1)
   else:
-    length = core.concrete_dim_or_error(length,
+    length = core.concrete_dim_or_error(
+        length,
         "The error occurred because of argument 'length' of jnp.bincount.")
   if weights is None:
     weights = np.array(1, dtype=dtypes.int_)
-  elif np.shape(x) != np.shape(weights):
-    raise ValueError("shape of weights must match shape of x.")
-  return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights, mode='drop')
+  elif (np.shape(x) != np.shape(weights) or
+        core.typeof(x).sharding != core.typeof(weights).sharding):
+    raise ValueError("type of weights must match type of x.")
+  out_sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
+  if out_sharding is not None and not is_replicated_or_unreduced(out_sharding):
+    raise core.ShardingTypeError(
+        "out_sharding passed to `jnp.bincount` can only be fully replicated"
+        " or fully unreduced along all mesh axes")
+  return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(
+      weights, mode='drop', out_sharding=out_sharding)
+
 
 @overload
-def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
+def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]:
+  ...
 
 @overload
 def broadcast_shapes(*shapes: Sequence[int | core.Tracer]
-                     ) -> tuple[int | core.Tracer, ...]: ...
+                     ) -> tuple[int | core.Tracer, ...]:
+  ...
 
 @export
 def broadcast_shapes(*shapes):
@@ -4541,7 +4569,6 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
   else:
     arrays_out = [asarray(arr, dtype=dtype) for arr in arrays]
   return lax.concatenate(arrays_out, axis)
-
 
 
 @export
@@ -6158,13 +6185,19 @@ def ix_(*args: ArrayLike) -> tuple[Array, ...]:
 
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
-            sparse: Literal[False] = False) -> Array: ...
+            sparse: Literal[False] = False) -> Array:
+  ...
+
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
-            *, sparse: Literal[True]) -> tuple[Array, ...]: ...
+            *, sparse: Literal[True]) -> tuple[Array, ...]:
+  ...
+
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
-            sparse: bool = False) -> Array | tuple[Array, ...]: ...
+            sparse: bool = False) -> Array | tuple[Array, ...]:
+  ...
+
 @export
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]:

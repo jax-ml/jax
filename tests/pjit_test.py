@@ -10992,6 +10992,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(g2, exg2)
     self.assertArraysEqual(g3, exg3)
 
+  @jtu.with_explicit_mesh((2,), ("x",))
+  def test_bincount(self, mesh):
+    a = jnp.ones((4,), dtype=jnp.int32, out_sharding=jax.P("x"))
+
+    @jax.jit(static_argnums=1)
+    def f(x, out_s):
+      return jnp.bincount(x, length=2, out_sharding=out_s)
+
+    out = f(a, P())
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+    self.assertArraysEqual(out, np.array([0, 4]))
+
+    out = f(a, P(unreduced={'x'}))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    for s in out.addressable_shards:
+      self.assertArraysEqual(s.data, np.array([0, 2]))
+    self.assertArraysEqual(reshard(out, P()), np.array([0, 4]))
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError, "only be fully replicated or fully unreduced"):
+      f(a, P('x'))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
