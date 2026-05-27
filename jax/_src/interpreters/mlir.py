@@ -2504,12 +2504,12 @@ def lower_per_platform(ctx: LoweringRuleContext,
   assert kept_rules
   # If there is a single rule left just apply the rule, without conditionals.
   if len(kept_rules) == 1:
-    output = type_cast(
-        Sequence[IrValues], kept_rules[0](ctx, *rule_args, **rule_kwargs)
-    )
+    rule, = kept_rules
+    output = type_cast(Sequence[IrValues], rule(ctx, *rule_args, **rule_kwargs))
     flat_output, _ = ir_tree_registry.flatten(output)
-    for o in flat_output:
+    for o, a in zip(flat_output, ctx.avals_out):
       if not isinstance(o, ir.BlockArgument):
+        check_unreduced_constraint(o, a)
         wrap_compute_type_in_place(ctx, o)
         wrap_xla_metadata_in_place(ctx, o)
     return flat_output
@@ -2538,10 +2538,9 @@ def lower_per_platform(ctx: LoweringRuleContext,
                       index=rule_idx_op.result,
                       num_branches=len(kept_rules))
   for i, rule in enumerate(kept_rules):
-    platforms_for_this_rule = [p
-                               for p, rule_idx in platform_to_kept_rules_idx.items()
-                               if rule_idx == i]
-    inner_ctx = ctx.replace(platforms=platforms_for_this_rule)
+    platforms_for_rule = [p for p, rule_idx in platform_to_kept_rules_idx.items()
+                          if rule_idx == i]
+    inner_ctx = ctx.replace(platforms=platforms_for_rule)
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       output = type_cast(
@@ -2552,8 +2551,9 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
-      for o in out_nodes:
+      for o, a in zip(out_nodes, ctx.avals_out):
         if not isinstance(o, ir.BlockArgument):
+          check_unreduced_constraint(o, a)
           wrap_compute_type_in_place(ctx, o)
           wrap_xla_metadata_in_place(ctx, o)
       if inner_ctx.tokens_out is not None:
@@ -2747,7 +2747,8 @@ def _update_frontend_attributes(op, attrs):
 
 
 # TODO(yashkatariya): Delete this after legacy compute_on is deleted.
-def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Value | ir.Operation) -> None:
+def wrap_compute_type_in_place(ctx: LoweringRuleContext,
+                               op: ir.Value | ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is None or ctx.jaxpr_eqn_ctx.compute_type is None:
     return
   op = _get_owner(op)
@@ -2763,11 +2764,11 @@ def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Value | ir.Opera
         "_xla_compute_type": ir.StringAttr.get(
             map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))
     }
-
   _update_frontend_attributes(op, dict_attr)
 
 
-def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Value | ir.Operation) -> None:
+def wrap_xla_metadata_in_place(ctx: LoweringRuleContext,
+                               op: ir.Value | ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is None:
     return
   if not ctx.jaxpr_eqn_ctx.xla_metadata:
@@ -2780,6 +2781,25 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Value | ir.Opera
     v_str = str(v).lower() if isinstance(v, bool) else str(v)
     ctx_attributes[k] = ir.StringAttr.get(v_str)
   _update_frontend_attributes(op, ctx_attributes)
+
+
+def check_unreduced_constraint(op: ir.Value | ir.Operation, aval) -> None:
+  if not isinstance(aval, core.ShapedArray):
+    return
+  if not aval.sharding.spec.unreduced:
+    return
+  if isinstance(op, ir.Value):
+    op = op.owner.operation if isinstance(op.owner, ir.OpView) else op.owner  # type: ignore
+  assert isinstance(op, ir.Operation)
+  if op.name in ("func.call", "sdy.manual_computation", "mpmd.named_computation"):
+    return
+  assert op.name == "sdy.sharding_constraint", (
+      f"Expected last op to be sdy.sharding_constraint, but got: {op.name} and "
+      f"output type={aval.str_short(True)}")
+  sharding = sdy.TensorShardingAttr(op.attributes["sharding"])
+  assert sharding.unreduced_axes, (
+      "Expected sdy.sharding_constraint to have unreduced_axes populated, "
+      f"but got: {sharding} and output type={aval.str_short(True)}")
 
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,

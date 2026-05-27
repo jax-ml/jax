@@ -4809,7 +4809,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "of rank 2"):
       jax.ShapeDtypeStruct((128, 128), jnp.float32, sharding=P(None, 'x', None))
 
-  def test_yash(self):
+  def test_abstract_mesh_top_level(self):
     mesh = jtu.create_mesh((1,), ('x',), axis_types=(AxisType.Explicit,))
     am = mesh.abstract_mesh
 
