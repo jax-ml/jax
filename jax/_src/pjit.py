@@ -2299,8 +2299,20 @@ def _reshard_jvp_rule(primals, tangents, *, dst_sharding, concrete_mesh):
     tangent_out = reshard_p.bind(t, dst_sharding=dst_sharding,
                                  concrete_mesh=concrete_mesh)
     return primal_out, tangent_out
-
 ad.primitive_jvps[reshard_p] = _reshard_jvp_rule
+
+def _reshard_linearize(is_vjp, nzs, x, *, dst_sharding, concrete_mesh):
+  (nz,) = nzs
+  primal_out = reshard_p.bind(x, dst_sharding=dst_sharding,
+                              concrete_mesh=concrete_mesh)
+
+  def linearized(residuals, tangent):
+    assert not residuals
+    return (reshard_p.bind(tangent, dst_sharding=dst_sharding,
+                           concrete_mesh=concrete_mesh)
+            if nz else ad.p2tz(tangent))
+  return primal_out, nz, (), linearized
+ad.primitive_linearizations[reshard_p] = _reshard_linearize
 
 def _reshard_transpose_fancy(ct, x, *, dst_sharding, concrete_mesh):
   assert isinstance(x, ad.GradAccum)
