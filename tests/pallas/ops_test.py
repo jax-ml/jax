@@ -1939,17 +1939,37 @@ class OpsTest(PallasBaseTest):
 
     np.testing.assert_allclose(f(x, y), kernel(x, y))
 
-  @parameterized.parameters(
-      ((32,), jnp.int32, 0),
-      ((8, 4), jnp.int32, 0),
-      ((8, 16), jnp.float32, 1),
-      ((8, 16, 2), jnp.int8, 1),
+  @parameterized.product(
+      shape_and_dimension=[
+          ((32,), 0),
+          ((8, 4), 0),
+          ((8, 4), 1),
+          ((8, 16, 2), 0),
+          ((8, 16, 2), 1),
+          ((8, 16, 2), 2),
+      ],
+      dtype=[jnp.float32, jnp.int32, jnp.int16, jnp.int8],
   )
-  def test_iota(self, shape, dtype, dimension):
+  def test_iota(self, shape_and_dimension, dtype):
     self.skip_if_mosaic_gpu()
 
-    if jtu.test_device_matches(["tpu"]) and dtype != jnp.int32:
-      self.skipTest("Only 32-bit integer iota supported")
+    shape, dimension = shape_and_dimension
+    if jtu.test_device_matches(["tpu"]):
+      if dtype == jnp.float32:
+        self.skipTest("only int iota is supported on TPU")
+      if (
+          dtype == jnp.int8
+          and len(shape) == 1
+          and not jtu.is_device_tpu_at_least(5)
+      ):
+        self.skipTest("Requires TPUv5+")
+      if (
+          dtype == jnp.int16
+          # Sublane iota not supported on TPU < 4
+          and (len(shape) == 1 or dimension == len(shape) - 2)
+          and not jtu.is_device_tpu_at_least(4)
+      ):
+        self.skipTest("Requires TPUv4+")
 
     f = lambda: jax.lax.broadcasted_iota(dtype, shape, dimension)
 
