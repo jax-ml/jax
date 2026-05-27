@@ -79,10 +79,39 @@ def _check_broadcast_shapes(name: str, shape: tuple | Shape | None, *args: Array
   return shape
 
 
-def _check_all_safe_to_cast(name: str, dtype: DTypeLike, *args):
-  for arg in args:
-    if not dtypes.safe_to_cast(arg, dtype):
-      raise dtypes.TypePromotionError(f"In arguments to {name}, cannot safely cast argument of type {jnp.asarray(arg).dtype} to {dtype}")
+def _get_sampler_return_type(target_dtype, default_concrete_type, *args):
+  """Compute the least upper bound of argument types, with optional target dtype check.
+
+  Args:
+    target_dtype: if not None, check that the upper bound can be promoted to
+      this dtype and return it.
+    default_concrete_type: the concrete type to use if the upper bound is
+      abstract (e.g. a Python scalar type like ``float``).
+    *args: values whose types are used to compute the least upper bound.
+
+  Returns:
+    The target dtype if provided, otherwise the (possibly concretized) upper
+    bound dtype.
+
+  Raises:
+    dtypes.TypePromotionError: if target_dtype is provided and the upper bound
+      cannot be safely promoted to it.
+  """
+  upper_bound, weak_type = dtypes.lattice_result_type(*args)
+  if weak_type:
+    if target_dtype is None:
+      upper_bound = np.dtype(default_concrete_type)
+    else:
+      upper_bound = None
+  if target_dtype is not None:
+    target_dtype = dtypes.check_and_canonicalize_user_dtype(target_dtype)
+    if upper_bound and not dtypes.safe_to_cast(upper_bound, target_dtype):
+      raise dtypes.TypePromotionError(
+          f"Cannot safely promote argument types to the specified dtype "
+          f"{target_dtype}. The least upper bound of the argument types is "
+          f"{upper_bound}.")
+    return target_dtype
+  return upper_bound
 
 
 def _isnan(x: ArrayLike) -> Array:
@@ -1262,12 +1291,10 @@ def beta(key: ArrayLike,
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   key, _ = _check_prng_key("beta", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, a, b)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `beta` must be a float "
                      f"dtype, got {dtype}")
-  _check_all_safe_to_cast("beta", dtype, a, b)
   shape = _check_broadcast_shapes("beta", shape, a, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "beta", shape)
 
@@ -2228,13 +2255,11 @@ def pareto(key: ArrayLike,
     ``shape`` is not None, or else by ``b.shape``.
   """
   key, _ = _check_prng_key("pareto", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, b)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `pareto` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("pareto", shape, b)
-  _check_all_safe_to_cast("pareto", dtype, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "pareto", shape)
   return maybe_auto_axes(_pareto, out_sharding,
                          shape=shape, dtype=dtype)(key, b)
@@ -2284,14 +2309,12 @@ def t(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("t", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, df)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `t` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("t", shape, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "t", shape)
-  _check_all_safe_to_cast("t", dtype, df)
   return maybe_auto_axes(_t, out_sharding,
                          shape=shape, dtype=dtype)(key, df)
 
@@ -2350,13 +2373,11 @@ def chisquare(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("chisquare", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, df)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `chisquare` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("chisquare", shape, df)
-  _check_all_safe_to_cast("chisquare", dtype, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
   return _chisquare(key, df, shape, dtype, out_sharding)
 
@@ -2415,14 +2436,12 @@ def f(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("f", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, dfnum, dfden)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `f` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("f", shape, dfnum, dfden)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "f", shape)
-  _check_all_safe_to_cast("f", dtype, dfnum, dfden)
   return _f(key, dfnum, dfden, shape, dtype, out_sharding)
 
 @jit(static_argnums=(3, 4, 5))
@@ -2847,14 +2866,12 @@ def rayleigh(key: ArrayLike,
     ``shape`` is not None, or else by ``scale.shape``.
   """
   key, _ = _check_prng_key("rayleigh", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, scale)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `rayleigh` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("rayleigh", shape, scale)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rayleigh", shape)
-  _check_all_safe_to_cast("rayleigh", dtype, scale)
   return maybe_auto_axes(_rayleigh, out_sharding,
                          shape=shape, dtype=dtype)(key, scale)
 
@@ -2909,14 +2926,12 @@ def wald(key: ArrayLike,
     ``shape`` is not None, or else by ``mean.shape``.
   """
   key, _ = _check_prng_key("wald", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(
-      float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, mean)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `wald` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("wald", shape, mean)
   out_sharding = canonicalize_sharding(out_sharding, "wald")
-  _check_all_safe_to_cast("wald", dtype, mean)
   return maybe_auto_axes(_wald, out_sharding, shape=shape, dtype=dtype)(key, mean)
 
 @jit(static_argnums=(2, 3))
@@ -3087,13 +3102,12 @@ def lognormal(key: ArrayLike,
     A random array with the specified dtype and with shape given by ``shape``.
   """
   key, _ = _check_prng_key("lognormal", key)
-  dtype = dtypes.check_and_canonicalize_user_dtype(float if dtype is None else dtype)
+  dtype = _get_sampler_return_type(dtype, float, sigma)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `lognormal` must be a float or complex dtype, "
                     f"got {dtype}")
   shape = _check_broadcast_shapes("lognormal", shape, sigma)
   out_sharding = canonicalize_sharding(out_sharding, "lognormal")
-  _check_all_safe_to_cast("lognormal", dtype, sigma)
   return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
 
 @jit(static_argnums=(2, 3), inline=True)
