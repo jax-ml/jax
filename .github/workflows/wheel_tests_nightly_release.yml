@@ -420,6 +420,7 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
         env:
+          CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
           INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
           INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
       - name: Verify JAX CPU packages can be installed

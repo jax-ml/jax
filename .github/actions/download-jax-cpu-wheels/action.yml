@@ -75,6 +75,7 @@ runs:
           fi
         fi
       env:
+        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
         OS: ${{ steps.set-vars.outputs.os }}
         ARCH: ${{ steps.set-vars.outputs.arch }}
         PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}
@@ -102,6 +103,7 @@ runs:
           call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
         )
       env:
+        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
         OS: ${{ steps.set-vars.outputs.os }}
         ARCH: ${{ steps.set-vars.outputs.arch }}
         PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}

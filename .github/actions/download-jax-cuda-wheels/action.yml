@@ -87,6 +87,7 @@ runs:
           fi
         fi
       env:
+        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
         OS: ${{ steps.set-vars.outputs.os }}
         ARCH: ${{ steps.set-vars.outputs.arch }}
         PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}
