@@ -528,6 +528,19 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
       self.check_key_reuse(f_bad, jnp.arange(4))
 
+  def test_vmap_debug_callback_with_consumed_key(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37795
+    # debug.breakpoint() inside vmap should not raise spurious KeyReuseError
+    # when the function consumes PRNG keys.
+    def f(key):
+      a, b = jax.random.split(key)
+      jax.debug.callback(lambda _: None, key)
+      return jax.random.normal(a) + jax.random.normal(b)
+
+    keys = jax.random.split(jax.random.key(0), 3)
+    # Should not raise KeyReuseError
+    self.check_key_reuse(lambda k: jax.vmap(f)(k), keys)
+
   def test_while_simple(self):
     def f(seed):
       key = jax.random.key(seed)

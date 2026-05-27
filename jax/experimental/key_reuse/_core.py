@@ -370,6 +370,13 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     with source_info_util.user_context(traceback, name_stack=name_stack):
       signature = key_reuse_signature_from_eqn(eqn)
+      # If slicing a key that is already fully consumed, just forward
+      # rather than trying to re-consume. This handles the case where
+      # vmap batching rules slice consumed keys for debug callbacks.
+      if (eqn.primitive == lax.slice_p
+          and is_key(eqn.invars[0])
+          and np.all(consumed.get(eqn.invars[0], False))):
+        signature = KeyReuseSignature(Forward(0, 0))
       if eqn.primitive == assert_consumed_value_p:
         # This is a special case that goes beyond normal key reuse logic.
         _check_consumed_value(eqn, is_consumed(eqn.invars[0]))
