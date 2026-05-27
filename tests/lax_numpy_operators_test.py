@@ -690,7 +690,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_func, jnp.spacing, args_maker, check_dtypes=True, tol=0)
     self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
 
-  @jtu.sample_product(dtype = float_dtypes)
+  @jtu.sample_product(dtype=float_dtypes)
   @jtu.skip_on_devices("tpu")
   def testSpacingSubnormals(self, dtype):
     zero = np.array(0, dtype=dtype)
@@ -705,6 +705,24 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     args_maker = lambda: [x]
     self._CheckAgainstNumpy(np.spacing, jnp.spacing, args_maker, check_dtypes=True, tol=0)
     self._CompileAndCheck(jnp.spacing, args_maker, tol=0)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value*")
+  def test_float_divmod_zero(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/37752
+    args_maker = lambda: [np.arange(-2, 3, dtype=dtype), np.zeros(5, dtype=dtype)]
+    self._CheckAgainstNumpy(np.divmod, jnp.divmod, args_maker)
+    self._CompileAndCheck(jnp.divmod, args_maker)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero*")
+  @jtu.ignore_warning(category=RuntimeWarning, message="invalid value*")
+  def test_float_floor_divide_zero(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/37752
+    args_maker = lambda: [np.arange(-2, 3, dtype=dtype), np.zeros(5, dtype=dtype)]
+    self._CheckAgainstNumpy(np.floor_divide, jnp.floor_divide, args_maker)
+    self._CompileAndCheck(jnp.floor_divide, args_maker)
 
 
 if __name__ == "__main__":
