@@ -198,9 +198,9 @@ def kernel(
         out_type=...
     )
 
-  JAX ``Ref``s can be closed over by the kernel body or passed in as arguments.
-  Any such ``Ref`` will be treated as if it is read-from and written-to and
-  will be aliased in and out of the kernel.
+  JAX ``Ref`` objects can be closed over by the kernel body or passed in as
+  arguments. Any such ``Ref`` will be treated as if it is read-from and
+  written-to and will be aliased in and out of the kernel.
 
   .. code-block:: python
 
