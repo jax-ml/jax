@@ -2969,11 +2969,18 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     length = core.concrete_dim_or_error(
         length,
         "The error occurred because of argument 'length' of jnp.bincount.")
+
   if weights is None:
     weights = np.array(1, dtype=dtypes.int_)
-  elif (np.shape(x) != np.shape(weights) or
-        core.typeof(x).sharding != core.typeof(weights).sharding):
-    raise ValueError("type of weights must match type of x.")
+  else:
+    xts = core.typeof(x).sharding
+    wts = core.typeof(weights).sharding
+    if (np.shape(x) != np.shape(weights) or
+        (not xts.mesh.empty and not wts.mesh.empty and xts != wts)):
+      raise ValueError(
+          "type of weights must match type of x. Got"
+          f" typeof(x)={core.typeof(x).str_short(True, True)} and"
+          f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
   out_sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
   if out_sharding is not None and not is_replicated_or_unreduced(out_sharding):
     raise core.ShardingTypeError(
