@@ -139,9 +139,17 @@ class P:
             {'unreduced': self.unreduced, 'reduced': self.reduced})
 
   def __getitem__(self, i):
+    if self.reduced or self.unreduced:
+      raise ValueError(
+          "Using pspec[...] is dangerous when PartitionSpec has non-empty"
+          " unreduced/reduced set. Please use spec.partitions[...]")
     return self._partitions[i]
 
   def __iter__(self):
+    if self.reduced or self.unreduced:
+      raise ValueError(
+          "Using *pspec is dangerous when PartitionSpec has non-empty"
+          " unreduced/reduced set. Please use *spec.partitions")
     return iter(self._partitions)
 
   def __len__(self):
@@ -149,8 +157,9 @@ class P:
 
   def __add__(self, other):
     if isinstance(other, P):
-      return P(*self, *other, unreduced={*self.unreduced, *other.unreduced},
-              reduced={*self.reduced, *other.reduced})
+      return P(*self.partitions, *other.partitions,
+               unreduced={*self.unreduced, *other.unreduced},
+               reduced={*self.reduced, *other.reduced})
     elif isinstance(other, tuple):
       if self.unreduced:
         raise TypeError(

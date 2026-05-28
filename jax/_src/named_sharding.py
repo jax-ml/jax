@@ -268,7 +268,7 @@ def get_replicated_axes(spec, mesh):
 
 def flatten_spec(spec):
   out = []
-  for s in spec:
+  for s in (spec.partitions if isinstance(spec, PartitionSpec) else spec):
     if isinstance(s, tuple):
       out.extend(s)
     else:
@@ -279,7 +279,7 @@ def get_array_mapping(axis_resources):
   if isinstance(axis_resources, UnspecifiedValue):
     return axis_resources
   d = collections.OrderedDict()
-  for i, axes in enumerate(axis_resources):
+  for i, axes in enumerate(axis_resources.partitions):
     if axes is None or axes is PartitionSpec.UNCONSTRAINED:
       continue
     axes = axes if isinstance(axes, tuple) else (axes,)
@@ -365,7 +365,7 @@ class SdyArray:
 
 def remove_size_one_mesh_axis(spec, mesh) -> PartitionSpec:
   new_spec: list[Any] = []
-  for s in spec:
+  for s in spec.partitions:
     if s is None or s is PartitionSpec.UNCONSTRAINED:
       new_spec.append(s)
     elif isinstance(s, tuple):
@@ -465,7 +465,7 @@ def named_sharding_to_xla_hlo_sharding(
 def named_sharding_to_sdy_sharding(self, num_dimensions: int,
                                    modify_wrt_axis_types: bool) -> SdyArray:
   dim_shardings = [SdyDim(axes=(), is_open=False)] * num_dimensions
-  for i, dim_spec in enumerate(self.spec):
+  for i, dim_spec in enumerate(self.spec.partitions):
     if dim_spec is PartitionSpec.UNCONSTRAINED:
       dim_shardings[i] = SdyDim(axes=(), is_open=True)
     elif dim_spec is None:
@@ -528,7 +528,7 @@ def _check_unique_resources(pspec: PartitionSpec, arg_name: str, mesh=None
                             ) -> None:
   resource_counts: dict[MeshAxisName, int] = {}
   duplicate = False
-  for d in pspec:
+  for d in pspec.partitions:
     if d is PartitionSpec.UNCONSTRAINED or d is None:
       continue
     d = d if isinstance(d, tuple) else (d,)
@@ -547,7 +547,7 @@ def _check_unique_resources(pspec: PartitionSpec, arg_name: str, mesh=None
         mesh=mesh, pspec=pspec)
 
 def _check_mesh_resource_axis(mesh, pspec):
-  for p in pspec:
+  for p in pspec.partitions:
     if p is PartitionSpec.UNCONSTRAINED or p is None:
       continue
     p = p if isinstance(p, tuple) else (p,)
@@ -557,7 +557,7 @@ def _check_mesh_resource_axis(mesh, pspec):
             f"Resource axis: {r} of {pspec} "
             f"is not found in mesh: {tuple(mesh.shape.keys())}.")
   if (AxisType.Auto not in mesh.axis_types and
-      PartitionSpec.UNCONSTRAINED in pspec):
+      PartitionSpec.UNCONSTRAINED in pspec.partitions):
     raise ValueError(
         f'{pspec} cannot contain'
         ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'

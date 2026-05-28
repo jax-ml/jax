@@ -4252,7 +4252,7 @@ def broadcasting_sharding_rule(name, *avals, **kwargs):
     msg = '{}: arrays must have same number of dimensions, got {}.'
     raise TypeError(msg.format(name, ', '.join(map(str, map(tuple, shapes)))))
 
-  specs = [a.sharding.spec for a in avals if a.shape]
+  specs = [a.sharding.spec.partitions for a in avals if a.shape]
 
   result_specs = [None] * len(shapes[0])
   for i, (ss, ds) in enumerate(zip(zip(*specs), zip(*shapes))):
@@ -5694,11 +5694,13 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
     return out_sharding
 
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
-  rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
+  lhs_contracting_spec = tuple(lhs.sharding.spec.partitions[i]
+                               for i in lhs_contracting)
+  rhs_contracting_spec = tuple(rhs.sharding.spec.partitions[i]
+                               for i in rhs_contracting)
 
-  lhs_batch_spec = tuple(lhs.sharding.spec[i] for i in lhs_batch)
-  rhs_batch_spec = tuple(rhs.sharding.spec[i] for i in rhs_batch)
+  lhs_batch_spec = tuple(lhs.sharding.spec.partitions[i] for i in lhs_batch)
+  rhs_batch_spec = tuple(rhs.sharding.spec.partitions[i] for i in rhs_batch)
   msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
         f"to have the consistent sharding, got {lhs_batch_spec} and "
         f"{rhs_batch_spec}.")
@@ -5723,14 +5725,14 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
   return _dot_general_sharding_computation(
       lhs.sharding.spec, rhs.sharding.spec, dimension_numbers, mesh)
 
-def _dot_general_sharding_computation(lhs_spec, rhs_spec,
-                                      dimension_numbers, mesh):
+def _dot_general_sharding_computation(
+    lhs_spec, rhs_spec, dimension_numbers, mesh):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-  batch_spec = tuple(lhs_spec[i] for i in lhs_batch)
+  batch_spec = tuple(lhs_spec.partitions[i] for i in lhs_batch)
   lhs_contract_or_batch = tuple(sorted(tuple(lhs_contracting) + tuple(lhs_batch)))
-  lhs_tensored_spec = tuple_delete(lhs_spec, lhs_contract_or_batch)
+  lhs_tensored_spec = tuple_delete(lhs_spec.partitions, lhs_contract_or_batch)
   rhs_contract_or_batch = tuple(sorted(tuple(rhs_contracting) + tuple(rhs_batch)))
-  rhs_tensored_spec = tuple_delete(rhs_spec, rhs_contract_or_batch)
+  rhs_tensored_spec = tuple_delete(rhs_spec.partitions, rhs_contract_or_batch)
   return NamedSharding(mesh, P(*(batch_spec + lhs_tensored_spec + rhs_tensored_spec)))
 
 
@@ -5741,8 +5743,10 @@ def _dot_general_unreduced_rule(lhs, rhs, dimension_numbers, out_sharding):
         f' {rhs=}')
   if out_sharding is not None and out_sharding.spec.unreduced:  # Explicit mode
     (lhs_contracting, rhs_contracting), _ = dimension_numbers
-    lhs_contracting_spec = tuple(lhs.sharding.spec[i] for i in lhs_contracting)
-    rhs_contracting_spec = tuple(rhs.sharding.spec[i] for i in rhs_contracting)
+    lhs_contracting_spec = tuple(lhs.sharding.spec.partitions[i]
+                                 for i in lhs_contracting)
+    rhs_contracting_spec = tuple(rhs.sharding.spec.partitions[i]
+                                 for i in rhs_contracting)
     if lhs_contracting_spec != rhs_contracting_spec:
       raise core.ShardingTypeError(
           'lhs and rhs contracting dims should be sharded identically when'
@@ -5832,7 +5836,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
   out_axes = np.argsort(unsorted_axes)
   xs = x.aval.to_ct_aval().sharding
-  inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
+  inverse_spec = tuple(xs.spec.partitions[o] for o in unsorted_axes)
   ds = xs.update(spec=xs.spec.update(partitions=inverse_spec))
   if ds.mesh.empty:
     ds = core.get_cur_mesh_sharding(P(*[None] * x.aval.ndim))
@@ -6844,7 +6848,7 @@ def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
   if sharding is not None:
     return sharding
   bds = set(broadcast_dimensions)
-  orig_spec = iter(operand.sharding.spec)
+  orig_spec = iter(operand.sharding.spec.partitions)
   new_spec = [next(orig_spec) if i in bds else None for i in range(len(shape))]
   assert next(orig_spec, None) is None
   mesh = (get_abstract_mesh() if operand.sharding.mesh.empty else
@@ -6867,12 +6871,14 @@ def _broadcast_in_dim_transpose_rule(ct, operand,
   if not isinstance(operand, ad.UndefinedPrimal):
     return [None]  # transpose wrt literal
   ct_s = ct_aval.sharding
-  unit_dims = [i for i, (sh, spec) in enumerate(zip(ct_aval.shape, ct_s.spec))
-               if core.definitely_equal(sh, 1) and spec is None]
+  unit_dims = [
+      i for i, (sh, spec) in enumerate(zip(ct_aval.shape, ct_s.spec.partitions))
+      if core.definitely_equal(sh, 1) and spec is None
+  ]
   bdims = tuple_delete(broadcast_dimensions, unit_dims)
   axes = tuple_delete(tuple(range(len(shape))), bdims)
   ct_s = ct_s.update(spec=ct_s.spec.update(
-      partitions=tuple_delete(ct_s.spec, unit_dims)))
+      partitions=tuple_delete(ct_s.spec.partitions, unit_dims)))
   return [expand_dims(reduce_sum(ct, axes, out_sharding=ct_s), unit_dims)]
 
 def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
@@ -7253,7 +7259,7 @@ def _stack_sharding_rule(*operands, axis):
         f"All operands should have the same sharding. Got shardings {ss}")
 
   s = non_empty_s[0]
-  new_spec = list(s.spec)
+  new_spec = list(s.spec.partitions)
   new_spec.insert(axis, None)
   return s.update(spec=s.spec.update(partitions=tuple(new_spec)))
 
@@ -7599,7 +7605,7 @@ def _squeeze_shape_rule(operand, *, dimensions):
 
 def _squeeze_sharding_rule(operand, *, dimensions):
   dims_set = set(dimensions)
-  new_spec = tuple(s for i, s in enumerate(operand.sharding.spec)
+  new_spec = tuple(s for i, s in enumerate(operand.sharding.spec.partitions)
                    if i not in dims_set)
   return operand.sharding.update(
       spec=operand.sharding.spec.update(partitions=new_spec))
@@ -7738,7 +7744,7 @@ def raise_reshape_error(operand, new_sizes) -> Never:
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if sharding is not None:
     return sharding
-  if all(s is None for s in operand.sharding.spec):
+  if all(s is None for s in operand.sharding.spec.partitions):
     return operand.sharding
   non_1s_op_shape = [s for s in operand.shape if s != 1]
   non_1s_new_shape = [s for s in new_sizes if s != 1]
@@ -7797,7 +7803,7 @@ def split_partitions(mesh, tup_sp, out, operand, new_sizes):
 def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
-  for out, sp in zip(out_split, operand.sharding.spec):
+  for out, sp in zip(out_split, operand.sharding.spec.partitions):
     if isinstance(out, list):
       if sp is None:
         new_spec.extend([None] * len(out))
@@ -7994,7 +8000,7 @@ def _transpose_shape_rule(operand, *, permutation):
 
 def _transpose_sharding_rule(operand, *, permutation):
   o_spec = operand.sharding.spec
-  new_spec = [o_spec[old_idx] for old_idx in permutation]
+  new_spec = [o_spec.partitions[old_idx] for old_idx in permutation]
   return operand.sharding.update(spec=o_spec.update(partitions=new_spec))
 
 def _transpose_ur_rule(operand, *, permutation):
@@ -8395,7 +8401,7 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
     assert isinstance(out_sharding, NamedSharding)
     return out_sharding
   axes = frozenset(axes)
-  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec)
+  new_spec = P(*tuple(s for i, s in enumerate(operand.sharding.spec.partitions)
                       if i not in axes))
   return operand.sharding.update(spec=new_spec)
 
@@ -8403,8 +8409,8 @@ def _reduce_sum_unreduced_rule(operand, axes, out_sharding):
   if out_sharding is not None and out_sharding.spec.unreduced:  # explicit mode
     axes = frozenset(axes)
     used_spec = frozenset(
-        s for i, spec in enumerate(operand.sharding.spec) if i in axes
-        for s in (spec if isinstance(spec, tuple) else (spec,))
+        s for i, spec in enumerate(operand.sharding.spec.partitions)
+        if i in axes for s in (spec if isinstance(spec, tuple) else (spec,))
     ) | operand.sharding.spec.unreduced
     if not all(u in used_spec for u in out_sharding.spec.unreduced):
       raise core.ShardingTypeError(

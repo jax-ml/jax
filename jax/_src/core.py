@@ -2187,7 +2187,7 @@ def _make_lengths_same(sharding, ndim):
 def modify_spec_for_auto_manual(spec, mesh) -> P:
   new_spec: list[Any] = []
   # PartitionSpec can only mention mesh axes that are Explicit.
-  for s in spec:
+  for s in spec.partitions:
     if s is None:
       new_spec.append(s)
     elif isinstance(s, tuple):
@@ -2203,7 +2203,7 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
 
 
 def _maybe_modify_sharding(sharding, ndim):
-  if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
+  if len(sharding.spec) == 0 or all(s is None for s in sharding.spec.partitions):
     out = sharding
   elif sharding.mesh.are_all_axes_explicit:
     out = sharding
@@ -2218,7 +2218,7 @@ def _maybe_modify_sharding(sharding, ndim):
 
 def _check_divisibility(sharding, shape):
   mesh = sharding.mesh
-  for dim, (spec, sh) in enumerate(zip(sharding.spec, shape)):
+  for dim, (spec, sh) in enumerate(zip(sharding.spec.partitions, shape)):
     if spec is None:
       continue
     spec = spec if isinstance(spec, tuple) else (spec,)
@@ -2511,7 +2511,7 @@ class ShapedArray(AbstractValue):
 
 def _get_shape_sharding_str(shape, spec):
   out = []
-  for s1, s2 in zip(shape, spec):
+  for s1, s2 in zip(shape, spec.partitions):
     if s2 is None:
       out.append(f"{s1}")
     elif isinstance(s2, tuple):
@@ -3324,7 +3324,7 @@ def _map_shaped_array(
     return aval
   aval_s = aval.sharding
   sharding = aval_s.update(
-      spec=aval_s.spec.update(partitions=tuple_delete(aval_s.spec, axis)))
+      spec=aval_s.spec.update(partitions=tuple_delete(aval_s.spec.partitions, axis)))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      weak_type=aval.weak_type, sharding=sharding,
                      manual_axis_type=aval.mat, memory_space=aval.memory_space)
@@ -3337,7 +3337,7 @@ def _unmap_shaped_array(
   elif type(axis) is int:
     aval_s = aval.sharding
     sharding = aval_s.update(spec=aval_s.spec.update(partitions=tuple_insert(
-        aval_s.spec, axis, explicit_mesh_axis)))
+        aval_s.spec.partitions, axis, explicit_mesh_axis)))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding,
                        manual_axis_type=aval.mat,

@@ -500,7 +500,7 @@ def _infer_scan_length(
                            if not hasattr(x, 'shape')))) from err
 
   xs_shaped_avals = lax_utils.ensure_shaped(*xs_avals)
-  if not all(a.sharding.spec[0] is None for a in xs_shaped_avals):
+  if not all(a.sharding.spec.partitions[0] is None for a in xs_shaped_avals):
     raise ValueError('0th dimension of all xs should be replicated. Got '
                      f'{", ".join(str(a.sharding.spec) for a in xs_shaped_avals)}')
 
@@ -716,7 +716,7 @@ def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
   sharding = aval.sharding.update(spec=aval.sharding.spec.update(
-      partitions=(*length_spec, *aval.sharding.spec)))
+      partitions=(*length_spec, *aval.sharding.spec.partitions)))
   # TODO(yashkatariya): Replace `lax.empty2` with `lax.empty` once
   # AllocateBuffer issues are fixed. Also delete `empty2` after this usage is
   # removed. Basically uncomment the following 2 lines.

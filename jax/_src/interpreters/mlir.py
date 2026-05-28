@@ -1179,7 +1179,8 @@ def _get_mem_kind(s: JSharding | None) -> str | None:
 
 
 def contains_unconstrained(s):
-  return isinstance(s, NamedSharding) and PartitionSpec.UNCONSTRAINED in s.spec
+  return (isinstance(s, NamedSharding) and
+          PartitionSpec.UNCONSTRAINED in s.spec.partitions)
 
 def all_unconstrained(s, aval):
   if isinstance(s, NamedSharding):
@@ -1187,7 +1188,7 @@ def all_unconstrained(s, aval):
       return False
     if aval.ndim != len(s.spec):
       return False
-    return all(p is PartitionSpec.UNCONSTRAINED for p in s.spec)
+    return all(p is PartitionSpec.UNCONSTRAINED for p in s.spec.partitions)
   return False
 
 

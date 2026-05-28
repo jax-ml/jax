@@ -415,7 +415,7 @@ def _shmap_checks(mesh, axis_names, in_specs, out_specs, _smap):
 def _manual_spec(manual_axes, spec: P, mesh) -> P:
   out: list[str | tuple[str | None, ...] | None] = []
   s: str | None | tuple[str, ...]
-  for s in spec:
+  for s in spec.partitions:
     if s is None:
       out.append(s)
     elif isinstance(s, tuple):
@@ -477,7 +477,7 @@ def _check_specs(error_type: SpecErrorType, specs: Any, manual_axes) -> None:
       return True  # TODO(mattjj,yashkatariya): add user validation method
     if not isinstance(p, PartitionSpec):
       return False
-    for names in p:
+    for names in p.partitions:
       names = (names,) if not isinstance(names, tuple) else names
       for name in names:
         if name is not None and name not in manual_axes:
@@ -837,7 +837,7 @@ pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
 
 def _spec_to_names(spec: PartitionSpec):
   return {i: names if isinstance(names, tuple) else (names,)
-          for i, names in enumerate(spec) if names is not None}
+          for i, names in enumerate(spec.partitions) if names is not None}
 
 def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
                         spec, aval: core.ShapedArray) -> core.ShapedArray:
@@ -882,12 +882,12 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
   names = _spec_to_names(spec)
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
-  names_spec = spec._normalized_spec_for_aval(aval.ndim)
+  names_spec = spec._normalized_spec_for_aval(aval.ndim).partitions
   if aval.ndim == 0:
     out_spec = P(unreduced=spec.unreduced, reduced=spec.reduced)
   else:
     out_spec = []
-    for name_s, aval_s in zip(names_spec, aval.sharding.spec):
+    for name_s, aval_s in zip(names_spec, aval.sharding.spec.partitions):
       if name_s and not aval_s:
         out_spec.append(name_s)
       elif aval_s and not name_s:
@@ -1181,7 +1181,7 @@ def get_mesh_from_args(args_flat, mesh):
   return mesh
 
 def _spec_to_vma(spec):
-  return frozenset(p for s in spec if s is not None
+  return frozenset(p for s in spec.partitions if s is not None
                    for p in (s if isinstance(s, tuple) else (s,)))
 
 def _mat_to_spec(mesh, mat):
@@ -2078,7 +2078,7 @@ def _top_level_ag(x, aval, out_sh_, multi_dim):
     # Maybe this can just be 1 AG where we gather in a new dim and then do
     # AG(new_dim) -> reshape -> transpose -> reshape but it might be expensive.
     count = 0
-    for axis, (i, o) in enumerate(zip(in_spec, out_spec)):
+    for axis, (i, o) in enumerate(zip(in_spec.partitions, out_spec.partitions)):
       if i == o:
         continue
       if not multi_dim and count > 0:

@@ -324,7 +324,7 @@ def prepare_axis_resources(axis_resources, arg_name,
         raise ValueError(f'One of {what} got an empty NamedSharding: {entry} '
                          'which is not allowed.')
       if (not allow_unconstrained_dims and isinstance(entry, NamedSharding) and
-          PartitionSpec.UNCONSTRAINED in entry.spec):
+          PartitionSpec.UNCONSTRAINED in entry.spec.partitions):
         raise ValueError(
             f'Unconstrained dims are not allowed when passed to {arg_name}:'
             f' {entry}')
@@ -333,7 +333,8 @@ def prepare_axis_resources(axis_resources, arg_name,
       if not isinstance(entry, PartitionSpec):
         raise TypeError(f"{what} are expected to be "
                         f"PartitionSpec instances or None, but got {entry}")
-      if not allow_unconstrained_dims and PartitionSpec.UNCONSTRAINED in entry:
+      if (not allow_unconstrained_dims and
+          PartitionSpec.UNCONSTRAINED in entry.partitions):
         raise ValueError(
             f'Unconstrained dims are not allowed when passed to {arg_name}:'
             f' {entry}')
