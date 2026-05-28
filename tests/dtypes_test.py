@@ -521,7 +521,7 @@ class DtypesTest(jtu.JaxTestCase):
       if config.enable_x64.value:
         self.skipTest("x64 is enabled; ERROR path is not triggered")
       with self.assertRaisesRegex(ValueError,
-                                  r"would be truncated to dtype float32"):
+                                  rf"would be truncated to dtype {canonical.name}"):
         dtypes.dtype(x64_dtype)
 
   def testDefaultDtypes(self):
