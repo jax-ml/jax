@@ -1095,11 +1095,16 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInTmemLayouts(op, [in_layout])
     self.checkOutLayouts(op, [out_layout])
 
-  def test_infer_async_load_chooses_out_layouts_compatible_with_tmem_layout(self):
-    f32 = ir.F32Type.get()
+  @parameterized.parameters(
+      (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
+      (tcgen05.scales_layout(), tcgen05.scales_layout().as_tiled_layout()),
+  )
+  def test_infer_async_load_chooses_out_layouts_compatible_with_tmem_layout(
+      self, in_layout, out_layout
+  ):
+    f8 = ir.Float8E4M3FNType.get()
     shape = (128, 128)
-    ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
-    in_layout = tcgen05.tmem_default_layout(packing=1)
+    ref_type = ir.MemRefType.get(shape, f8, memory_space=mgpu.utils.tmem())
     in_layout = layouts.to_layout_attr(in_layout)
 
     with ir.InsertionPoint(self.module.body):
@@ -1109,7 +1114,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
     self.checkInTmemLayouts(op, [in_layout])
-    out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
+    out_layout = layouts.to_layout_attr(out_layout)
     self.checkOutLayouts(op, [out_layout])
 
   @parameterized.parameters(
