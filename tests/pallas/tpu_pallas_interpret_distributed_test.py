@@ -1114,6 +1114,116 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     run(jnp.array([[0, 1], [1, 2], [3, 2], [3, 0]], jnp.int32)).block_until_ready()
     self.assertTrue(mosaic_interpret.races.races_found)
 
+  def test_that_barrier_does_not_hang_after_exception(self):
+    num_devices = jax.device_count()
+    if num_devices < 2:
+      self.skipTest('requires at least 2 devices')
+
+    partition = P(None, 'x')
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+
+    def kernel(x_ref, o_ref):
+      my_id = lax.axis_index('x')
+
+      # Trigger an exception on device 0 (out-of-bounds read).
+      @pl.when(my_id == 0)
+      def _():
+        o_ref[0, 0] = x_ref[100, 0]
+
+      barrier_sem = pltpu.get_barrier_semaphore()
+      left_neighbor = lax.rem(my_id + num_devices - 1, jnp.int32(num_devices))
+      right_neighbor = lax.rem(my_id + 1, jnp.int32(num_devices))
+      pl.semaphore_signal(barrier_sem, device_id={'x': left_neighbor})
+      pl.semaphore_signal(barrier_sem, device_id={'x': right_neighbor})
+      pl.semaphore_wait(barrier_sem, 2)
+
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+        num_scalar_prefetch=0,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        scratch_shapes=[],
+    )
+
+    pallas_call = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        grid_spec=grid_spec,
+        compiler_params=pltpu.CompilerParams(collective_id=42),
+        interpret=pltpu.InterpretParams(),
+    )
+
+    run = shard_map.shard_map(
+        pallas_call,
+        mesh=mesh,
+        in_specs=partition,
+        out_specs=partition,
+        check_vma=False,
+    )
+
+    input_arr = jnp.ones((8, 128 * num_devices), dtype=jnp.float32)
+    input_arr = jax.device_put(
+        input_arr, jax.sharding.NamedSharding(mesh, partition)
+    )
+
+    # TODO(jburnim): Check for 'o_ref[0, 0] = x_ref[100, 0]' and
+    # 'Out-of-bounds read' in the error message once we can reliably propagate
+    # the original exception.  (Currently, whether the final exception contains
+    # the original cause depends on the the thread order.)
+    with self.assertRaises(jax.errors.JaxRuntimeError):
+      run(input_arr).block_until_ready()
+
+  def test_that_exception_does_not_cause_dma_to_wait_forever(self):
+    num_devices = jax.device_count()
+    if num_devices < 2:
+      self.skipTest('requires at least 2 devices')
+
+    partition = P(None, 'x')
+    mesh = jtu.create_mesh((num_devices,), ('x',))
+
+    @pl.kernel(
+        mesh=pltpu.create_tensorcore_mesh('core', num_cores=2),
+        out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+        scratch_types=[pltpu.VMEM((8, 128), jnp.float32),
+                       pltpu.SemaphoreType.DMA(2)],
+        interpret=pltpu.InterpretParams())
+    def kernel(x_ref, o_ref, vmem_ref, dma_sems):
+      my_id = lax.axis_index('x')
+      left_neighbor = lax.rem(my_id + num_devices - 1, jnp.int32(num_devices))
+      core_id = lax.axis_index('core')
+
+      # Trigger an exception on device 1, core 0.
+      @pl.when((my_id == 1) & (core_id == 0))
+      def _():
+        vmem_ref[0, 0] = vmem_ref[100, 0]
+
+      pltpu.async_remote_copy(
+          x_ref.at[pl.ds(core_id, 8)],
+          o_ref.at[pl.ds(core_id, 8)],
+          dma_sems.at[0],
+          dma_sems.at[1],
+          device_id=(left_neighbor,),
+          device_id_type=pl.DeviceIdType.MESH,
+      ).wait()
+
+    run = shard_map.shard_map(
+        kernel,
+        mesh=mesh,
+        in_specs=partition,
+        out_specs=partition,
+        check_vma=False,
+    )
+
+    input_arr = jnp.ones((16, 128 * num_devices), dtype=jnp.float32)
+    input_arr = jax.device_put(
+        input_arr, jax.sharding.NamedSharding(mesh, partition)
+    )
+
+    # TODO(jburnim): Check for 'vmem_ref[0, 0] = vmem_ref[100, 0]' and
+    # 'Out-of-bounds read' in the error message once we can reliably propagate
+    # the original exception out of a thread_map.
+    with self.assertRaises(jax.errors.JaxRuntimeError):
+      run(input_arr).block_until_ready()
+
   @parameterized.parameters(1, 2, 4)
   def test_shard_map_of_core_map(self, num_cores):
     num_devices = jax.device_count()

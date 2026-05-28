@@ -15,13 +15,14 @@
 from __future__ import annotations
 
 import collections
+from collections.abc import Callable
 from collections.abc import Sequence
 import dataclasses
 import gc
 import logging
 import threading
+import traceback
 from typing import Any, Literal
-from collections.abc import Callable
 
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 import jax._src.pallas.mosaic.interpret.params as params
@@ -139,51 +140,7 @@ class Semaphore:
       logging_info: interpret_utils.LoggingInfo | None = None,
   ):
     global_core_id = int(global_core_id)
-
-    # TODO(jburnim):
-    #  - If the count is larger than value, raise an error?
-    #  - If the count is equal to value, but there DMAs waiting to signal us,
-    #    raise an error?
-
-    # Simple implementation for semaphores that have no tasks that can signal
-    # them.
-    clock = None
-    if not has_tasks:
-      with self.cv:
-        while self.count_by_core[global_core_id] < value:
-          if self.enable_logging and logging_info is not None:
-            self._log(
-                logging_info.format(
-                    f"semaphore={self.id} waiting,"
-                    f" {int(self.count_by_core[global_core_id])}(count_on_core)"
-                    f" < {value}(value).\n"
-                    f"count_by_core={self.count_by_core.tolist()}.",
-                    line_prefix="`wait`",
-                )
-            )
-          self.cv.wait()
-        self.count_by_core[global_core_id] -= value
-
-        if self.enable_logging and logging_info is not None:
-          self._log(
-              logging_info.format(
-                  f"semaphore={self.id} finished waiting for {value=}, "
-                  f"count_on_core={int(self.count_by_core[global_core_id])}.\n"
-                  f"count_by_core={self.count_by_core.tolist()}.",
-                  line_prefix="`wait`",
-              )
-          )
-
-        if self.detect_races:
-          assert self.clocks[global_core_id] is not None
-          clock = vc.copy_vector_clock(self.clocks[global_core_id])
-      if self.detect_races:
-        with self.shared_memory.lock:
-          assert clock is not None
-          vc.update_vector_clock(
-              self.shared_memory.clocks[global_core_id], clock
-          )
-      return
+    self.shared_memory.check_failed()
 
     # TODO(nrink): Update the comment below to generalize from DMAs and DMA
     # semaphores. We now have the concept of 'tasks' that can signal a
@@ -203,23 +160,15 @@ class Semaphore:
       clock = None
       done = False
       with self.cv:
+        # TODO(jburnim):
+        #  - If the count is larger than value, raise an error?
+        #  - If the count is equal to value, but there DMAs waiting to signal
+        #    us, raise an error?
         if self.count_by_core[global_core_id] >= value:
           self.count_by_core[global_core_id] -= value
-          if self.detect_races:
-            assert self.clocks[global_core_id] is not None
-            clock = vc.copy_vector_clock(self.clocks[global_core_id])
-          else:
-            done = True
-      if clock is not None:
-        with self.shared_memory.lock:
-          vc.update_vector_clock(
-              self.shared_memory.clocks[global_core_id], clock
-          )
-        done = True
-
-      if done:
-        if self.enable_logging and logging_info is not None:
-          self._log(
+          done = True
+          if self.enable_logging and logging_info is not None:
+            self._log(
               logging_info.format(
                   f"semaphore={self.id} finished waiting for {value=}, "
                   f"count_on_core={int(self.count_by_core[global_core_id])}.\n"
@@ -227,16 +176,26 @@ class Semaphore:
                   line_prefix="`wait`",
               )
           )
-        return
+          if self.detect_races:
+            assert self.clocks[global_core_id] is not None
+            clock = vc.copy_vector_clock(self.clocks[global_core_id])
+      if clock is not None:
+        with self.shared_memory.lock:
+          vc.update_vector_clock(
+              self.shared_memory.clocks[global_core_id], clock
+          )
 
+      if done:
+        return
+      self.shared_memory.check_failed()
+
+      task = None
       with self.shared_memory.lock:
         task_queue = self.shared_memory.tasks_by_sem[(self.id, global_core_id)]
         if len(task_queue) > 0:
           task = task_queue.pop()
-        else:
-          continue
-
-      task()
+      if task is not None:
+        task()
 
 
 # A `SemaphoreTask` is called when a semaphore is waiting to be signalled on a
@@ -452,6 +411,10 @@ class SharedMemory:
       default_factory=dict
   )
 
+  _failure: Exception | None = None
+  _failed_device: int | None = None
+  _failed_core: int | None = None
+
   @property
   def num_cores(self) -> int:
     return self.num_devices * self.num_cores_per_device
@@ -482,6 +445,55 @@ class SharedMemory:
     # expected to be held whenever this method is called.
     for msg in message.split("\n"):
       logger.info(msg)
+
+  def set_failed(
+      self,
+      exception: Exception,
+      device_id: int | None = None,
+      local_core_id: int | None = None,
+      top_level: bool = True,
+  ):
+    with self.lock:
+      if self._failure is None:
+        self._failure = exception
+        self._failed_device = device_id
+        self._failed_core = local_core_id
+
+    self.barrier.abort()
+
+    # If we are interpreting a kernel over N devices, we must wait N times
+    # on the clean-up barrier.  As the computation on this device has failed
+    # and will soon raise an exception, this device will not reach its final
+    # call to `_clean_up_shared_memory` (which waits on the clean-up barrier).
+    # So, we wait on the barrier here.
+    #
+    # Unless we are running inside a thread_map (i.e., top_level=False) -- in
+    # which case we are one of the num_cores_per_device computations running for
+    # one of the N devices.  In this case, do not wait on the barrier here.
+    # The thread_map will detect that one or more of its threads failed and,
+    # once all of its threads have completed (successfully or with an error),
+    # it will call `set_failed` with `top_level=True`.
+    if top_level:
+      self.clean_up_barrier.wait()
+
+  def check_failed(self):
+    with self.lock:
+      if self._failure is not None:
+        # __cause__ information is lost when an exception from a callback goes
+        # through XLA and back to Python, so we stuff the information into the
+        # exception message.
+        #
+        # TODO(jburnim): The top-level exception (that the user sees) will not
+        # always contain the original exception info/message.  It currently
+        # depends on which raise (the raise here or the raise in the thread
+        # that calls `set_failed`) happens first. (And maybe some other details
+        # in XLA.)  We should figure out how to reliably propagate the
+        # original exception.
+        failure_str = "".join(traceback.format_exception(self._failure))
+        raise RuntimeError(
+            f"Computation failed on device {self._failed_device}, core"
+            f" {self._failed_core} with exception:\n\n{failure_str}"
+        ) from None
 
   def append_semaphore_task(
       self,
@@ -580,11 +592,12 @@ class SharedMemory:
     """Returns tuples (semaphore, global_core_id) for all semaphores with a nonzero count for the core with `global_core_id`."""
     result = []
     with self.lock:
-      for _, sem in self.sem.items() | self.fixed_id_sem.items():
-        with sem.cv:
-          for gci in self.get_global_core_ids(device_id):
-            if sem.count_by_core[gci] != 0:
-              result.append((sem, gci))
+      sems = self.sem.items() | self.fixed_id_sem.items()
+    for _, sem in sems:
+      with sem.cv:
+        for gci in self.get_global_core_ids(device_id):
+          if sem.count_by_core[gci] != 0:
+            result.append((sem, gci))
     return result
 
   def get_next_buffer_id(self, device_id: int, local_core_id: int) -> int:

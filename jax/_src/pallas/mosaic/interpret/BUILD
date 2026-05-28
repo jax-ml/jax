@@ -110,7 +110,7 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:callback",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

@@ -60,6 +60,54 @@ Token = np.ndarray
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+TOP_LEVEL_TOKEN_VALUE = 42
+
+
+def fail(e: Exception, device_id: int | None):
+  shared_memory = _get_shared_memory()
+  shared_memory.set_failed(e, device_id=device_id, top_level=True)
+
+
+def fail_on_exception(func):
+  @functools.wraps(func)
+  def wrapper(*args, **kwargs):
+    shared_memory = _get_shared_memory()
+
+    try:
+      # TODO(jburnim): Pass `shared_memory` to `func`, so it does not have to
+      # call `_get_shared_memory` again?
+      shared_memory.check_failed()
+      return func(*args, **kwargs)
+    except Exception as e:
+      # NOTE: If args is long enough, for the decorated function:
+      #   - `token` is always args[0]
+      #   - `device_id` is always args[1]
+      #   - `local_core_id` is always args[2]
+      token = int(args[0])
+      device_id = None
+      local_core_id = None
+      if len(args) > 1:
+        try:
+          device_id = int(args[1])
+        except:
+          pass
+      if len(args) > 2:
+        try:
+          local_core_id = int(args[2])
+        except:
+          pass
+      shared_memory.set_failed(
+          e, device_id=device_id, local_core_id=local_core_id,
+          # NOTE: To avoid having to pass around a separate value to track
+          # whether or not this callback is running at the "top level" (vs.
+          # inside of a thread_map), we set the token to a specific value for
+          # the top-level interpret_pallas_call/_interpret_jaxpr calls vs.
+          # those inside thread_map.
+          top_level=(token == TOP_LEVEL_TOKEN_VALUE))
+      raise
+
+  return wrapper
+
 
 @contextlib.contextmanager
 def force_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
@@ -170,6 +218,7 @@ def _initialize_shared_memory(
   return token
 
 
+@fail_on_exception
 def _update_clocks_for_device_barrier(token, device_id):
   """Synchronizes the vector clocks for the cores on the given device."""
   shared_memory = _get_shared_memory()
@@ -183,6 +232,7 @@ def _update_clocks_for_global_barrier():
   shared_memory.update_clocks(0, shared_memory.num_cores)
 
 
+@fail_on_exception
 def _barrier(token, device_id):
   del device_id
   shared_memory = _get_shared_memory()
@@ -191,13 +241,19 @@ def _barrier(token, device_id):
   return token
 
 
+@fail_on_exception
 def _clean_up_shared_memory(token, device_id):
   del device_id
   shared_memory = _get_shared_memory()
+  # NOTE: We rely on the fact that `clean_up_barrier.wait()` will not raise.
+  # Otherwise, we could end up waiting on the barrier once here, and then again
+  # in the fail_on_exception wrapper -- so the barrier could complete without
+  # all devices having reached it.
   shared_memory.clean_up_barrier.wait()
   return token
 
 
+@fail_on_exception
 def _check_for_revisiting(
     token, device_id, local_core_id, loop_idx, output_blocks
 ):
@@ -242,6 +298,7 @@ def _check_for_revisiting(
   return token
 
 
+@fail_on_exception
 def _validate(token, device_id):
   device_id = int(device_id)
 
@@ -295,6 +352,7 @@ def _get_with_padding(
   return result
 
 
+@fail_on_exception
 def _allocate_buffer(
     token: Array,
     device_id: Array,
@@ -391,6 +449,7 @@ def _local_core_id_or_zero_if_hbm(local_core_id: int, memory_space: str) -> int:
   return local_core_id
 
 
+@fail_on_exception
 def _deallocate_buffer(
     token, device_id, local_core_id, memory_space, buffer_id, source_info=None
 ):
@@ -414,6 +473,7 @@ def _deallocate_buffer(
   return token
 
 
+@fail_on_exception
 def _allocate_semaphores(
     token: Array, device_id: Array, local_core_id: Array | None, shape: Array
 ):
@@ -514,6 +574,7 @@ def _to_int(x: int | Array | None) -> int | None:
   return int(x)
 
 
+@fail_on_exception
 def get(
     token,
     device_id,
@@ -645,6 +706,7 @@ def get(
   return token, ret
 
 
+@fail_on_exception
 def store(
     token,
     device_id,
@@ -738,6 +800,7 @@ def store(
   return token
 
 
+@fail_on_exception
 def swap(
     token,
     device_id,
@@ -883,7 +946,7 @@ class DMA:
       if self.detect_races:
         vc.inc_vector_clock(self.clock, self.virtual_device_id)
 
-      _, self.data = get(
+      _, self.data = get.__wrapped__(
           None,
           self.src_device_id,
           self.src_local_core_id,
@@ -930,7 +993,7 @@ class DMA:
       if self.detect_races:
         vc.inc_vector_clock(self.clock, self.virtual_device_id)
 
-      store(
+      store.__wrapped__(
           None,
           self.dst_device_id,
           self.dst_local_core_id,
@@ -960,14 +1023,14 @@ class DMA:
       self.state = DmaState.COMPLETED
 
   def execute_read_and_write(self):
-    """Executes this DMA, bot the reading and writing parts.
+    """Executes this DMA, both the reading and writing parts.
 
     Note that the caller must not hold the lock on the shared memory.
     """
     self.execute_read()
     self.execute_write()
 
-
+@fail_on_exception
 def dma_start(
     token,
     device_id,
@@ -1061,6 +1124,7 @@ def dma_start(
   return token
 
 
+@fail_on_exception
 def dma_wait(token, device_id, local_core_id, sem_id, size, source_info=None):
   shared_memory = _get_shared_memory()
 
@@ -1087,6 +1151,7 @@ def dma_wait(token, device_id, local_core_id, sem_id, size, source_info=None):
   return token
 
 
+@fail_on_exception
 def semaphore_signal(
     token,
     device_id,
@@ -1130,6 +1195,7 @@ def semaphore_signal(
   return token
 
 
+@fail_on_exception
 def semaphore_wait(
     token, device_id, local_core_id, sem_id, value, source_info=None
 ):
@@ -1827,6 +1893,13 @@ def interpret_pallas_call(
   del debug, cost_estimate, out_avals, name
   del metadata  # TODO(sharadmv): Add metadata to HLO.
 
+  if compiler_params is None:
+    mosaic_params = mosaic_core.CompilerParams()
+  else:
+    assert isinstance(compiler_params, mosaic_core.CompilerParams)
+    mosaic_params = compiler_params
+  del compiler_params
+
   if isinstance(mesh, mosaic_core.TensorCoreMesh):
     # As a convenience for users, if we are interpreting a pl.core_map over a
     # TensorCoreMesh, we automatically set the number of cores per device so
@@ -1835,13 +1908,9 @@ def interpret_pallas_call(
     interpret_params = dataclasses.replace(
         interpret_params, num_cores_or_threads=mesh.devices.shape[0]
     )
-
-  if compiler_params is None:
-    mosaic_params = mosaic_core.CompilerParams()
-  else:
-    assert isinstance(compiler_params, mosaic_core.CompilerParams)
-    mosaic_params = compiler_params
-  del compiler_params
+    # When we're called from mpmp_map, dimension_semantics may not be set.
+    if mesh.devices.shape[0] > 1:
+      mosaic_params = mosaic_params.replace(dimension_semantics=('parallel',))
 
   args = [remove_memory_space_p.bind(a) for a in args]
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
@@ -1866,7 +1935,7 @@ def interpret_pallas_call(
       tuple(axis_indices.values()), axis_sizes, axis_indices
   )
 
-  token = jnp.array(42, dtype=jnp.int32)
+  token = jnp.array(TOP_LEVEL_TOKEN_VALUE, dtype=jnp.int32)
 
   # We pass our `token` through an ordered IO callback at the start and end of
   # the interpreted kernel, to ensure that execution of this interpreted kernel
@@ -2400,9 +2469,15 @@ def interpret_pallas_call(
       _update_clocks_for_device_barrier, TOKEN_SHAPE_DTYPE, token, device_id
   )
 
-  token = thread_map(
-      _execute_grid_for_core, interpret_params.num_cores_per_device, token
-  )
+  if interpret_params.num_cores_per_device == 1:
+    token = _execute_grid_for_core(jnp.int32(0), token)
+  else:
+    token = thread_map(
+        _execute_grid_for_core,
+        interpret_params.num_cores_per_device,
+        token,
+        device_id=device_id,
+        on_exception=fail)
 
   # TODO(jburnim): Should we only create happens-before here from the other
   # # cores to core 0?
