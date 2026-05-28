@@ -1226,21 +1226,9 @@ class TMEMRef:
       ).T.reshape(regs_shape)
     elif layout == self.layout.as_tiled_layout() and packing * bitwidth == 32:
       assert len(layout.base_tile_shape) == 2
-      # We could allow replicated dims in the input, but we'd need to divide the
-      # split factor computed below by the replication factor of the input.
-      assert not any(isinstance(d, fa.Replicated) for d in layout.warp_dims)
-      assert not any(isinstance(d, fa.Replicated) for d in layout.lane_dims)
-      warp_split_factor = math.prod(
-          d.times if isinstance(d, fa.Replicated) else 1
-          for d in layout.remove_dimension(1).warp_dims
-      )
-      lane_split_factor = math.prod(
-          d.times if isinstance(d, fa.Replicated) else 1
-          for d in layout.remove_dimension(1).lane_dims
-      )
-      split_factor = warp_split_factor * lane_split_factor
+      cols = math.prod(regs_shape) * packing
       registers = _load_32xcols_native(
-          self.address, self.shape[1] // split_factor, self.dtype, packing, packing
+          self.address, cols, self.dtype, packing, packing
       ).reshape(regs_shape)
     # TODO(apaszke): Support the case where we have a long vector length in the
     # FA more generally, not just for 2x32b.

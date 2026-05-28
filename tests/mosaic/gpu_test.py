@@ -1490,6 +1490,32 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )(x)
     np.testing.assert_array_equal(x, y)
 
+  @parameterized.parameters(
+      ((128, 32), tcgen05.scales_layout()),
+      ((256, 32), tcgen05.b_scales_m64_collective_layout()),
+  )
+  def test_load_store_tmem_scales_layout(self, shape, tmem_layout):
+    reg_layout = tmem_layout.as_tiled_layout()
+    def kernel(ctx, input, output, tmem):
+      del ctx
+      reg = fa.FragmentedArray.load_untiled(
+          input, layout=reg_layout, optimized=False
+      )
+      tmem.store(reg)
+      tcgen05.commit_tmem()
+      tmem.load(reg_layout).store_untiled(output, optimized=False)
+
+    x = self.prng.uniform(-1, 1, shape).astype(jnp.float8_e5m2)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        x,
+        mgpu.TMEM(x.shape, x.dtype, layout=tmem_layout),
+    )(x)
+    np.testing.assert_array_equal(x, y)
+
   def test_mixed_tmem_allocations_raise(self):
     def body(ctx, out, scratch):
       del ctx, out, scratch
