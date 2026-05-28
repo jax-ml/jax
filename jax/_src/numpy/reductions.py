@@ -2062,11 +2062,16 @@ def _cumulative_reduction(
     if dtypes.issubdtype(result_type, np.bool_):
       result_type = _promote_integer_dtype(result_type)
 
-  if a_type != np.bool_ and dtype == np.bool_:
-    a = lax.asarray(a).astype(np.bool_)
+  if not dtypes.issubdtype(a_type, np.bool_) and dtype is not None and dtypes.issubdtype(
+      dtypes.check_and_canonicalize_user_dtype(dtype, name), np.bool_):
+    a = lax.convert_element_type(a, np.bool_)
 
   a = lax.convert_element_type(a, result_type)
   result = reduction(a, axis)
+
+  # We downcast to boolean because we accumulate in integer types
+  if dtype is not None and dtypes.issubdtype(dtype, np.bool_):
+    result = lax.convert_element_type(result, np.bool_)
   return result
 
 
