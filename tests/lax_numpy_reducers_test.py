@@ -998,6 +998,20 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     np.testing.assert_array_equal(np.array([[True], [True], [False]]), out)
 
   @jtu.sample_product(
+      dtype = [bool, np.float32, np.int8, np.int32],
+      out_dtype = [None, bool, np.float32, np.int8, np.int32],
+  )
+  def test_cumsum_boolean(self, dtype, out_dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/37991
+    args_maker = lambda: [np.array([-1, 0, 1], dtype=dtype)]
+    def np_op(x):
+      expected_dtype = out_dtype or (dtype if dtype != bool else int)
+      return np.cumsum(x, dtype=out_dtype).astype(expected_dtype)
+    jnp_op = partial(jnp.cumsum, dtype=out_dtype)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=True)
+    self._CompileAndCheck(jnp_op, args_maker, check_dtypes=True)
+
+  @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in all_shapes
       for axis in list(

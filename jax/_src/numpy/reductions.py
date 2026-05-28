@@ -2051,27 +2051,29 @@ def _cumulative_reduction(
   if fill_nan:
     a = _where(lax._isnan(a), lax._const(a, fill_value), a)
 
-  a_type: DType = a.dtype
+  computation_type: DType
   result_type: DType
   if dtype is None:
-    result_type = a_type
-    if promote_integers or dtypes.issubdtype(result_type, np.bool_):
-      result_type = _promote_integer_dtype(result_type)
+    if promote_integers or a.dtype == np.bool_:
+      result_type = _promote_integer_dtype(a.dtype)
+    else:
+      result_type = a.dtype
+    computation_type = result_type
+  elif dtype == np.dtype('bool'):
+    # Explicit boolean output requires special handling
+    # - lax only supports numerical accumulation, so we can't work in bool directly.
+    # - we cannot use the original values of a, otherwise e.g. [-1, 1] may cancel.
+    result_type = np.dtype(dtype)
+    if a.dtype != result_type:
+      a = (a != 0)
+    computation_type = _promote_integer_dtype(result_type)
   else:
     result_type = dtypes.check_and_canonicalize_user_dtype(dtype, name)
-    if dtypes.issubdtype(result_type, np.bool_):
-      result_type = _promote_integer_dtype(result_type)
+    computation_type = result_type
 
-  if a_type != np.bool_ and dtype == np.bool_:
-    a = lax.asarray(a).astype(np.bool_)
-
-  a = lax.convert_element_type(a, result_type)
+  a = lax.convert_element_type(a, computation_type)
   result = reduction(a, axis)
-
-  # We downcast to boolean because we accumulate in integer types
-  if dtype is not None and dtypes.issubdtype(dtype, np.bool_):
-    result = lax.convert_element_type(result, np.bool_)
-  return result
+  return lax.convert_element_type(result, result_type)
 
 
 @export
