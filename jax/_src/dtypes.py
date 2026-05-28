@@ -969,9 +969,9 @@ def _maybe_canonicalize_explicit_dtype(dtype: DType, fun_name: str) -> DType:
     return dtype
   fun_name = f" requested in {fun_name}" if fun_name else ""
   if allow == config.ExplicitX64Mode.ERROR:
-    msg = ("Explicitly requested dtype {}{} is not available. To enable more "
-           "dtypes, set the jax_enable_x64 or allow_explicit_x64_dtypes "
-           "configuration options."
+    msg = ("Explicitly requested dtype {}{} is not available, and would be "
+           "truncated to dtype {}. To enable more dtypes, set the "
+           "jax_enable_x64 or allow_explicit_x64_dtypes configuration options. "
           "See https://github.com/jax-ml/jax#current-gotchas for more.")
     msg = msg.format(dtype, fun_name, canonical_dtype.name)
     raise ValueError(msg)
