@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+import contextlib
 import dataclasses
 import enum
 import functools
@@ -138,6 +139,8 @@ class CompilerParams:
       raise ValueError(
           "Either both profile_space and profile_dir must be set, or neither."
       )
+
+  replace = dataclasses.replace
 
 
 class MemorySpace(enum.Enum):
@@ -1428,7 +1431,7 @@ class AbstractTMEMRef(state.AbstractRef):
 _WARPGROUP_AXIS_NAME = object()
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class Mesh:
+class Mesh(pallas_core.Mesh):
   grid: Sequence[int] = ()
   grid_names: Sequence[str] = ()
   cluster: Sequence[int] = ()
@@ -1499,9 +1502,17 @@ class Mesh:
   def supported_memory_spaces(self) -> Sequence[MemorySpace]:
     return [*MemorySpace]
 
+  @contextlib.contextmanager
+  def tracing_context(self):
+    # This is needed to support program_id inside of plgpu kernels.
+    with pallas_core.tracing_grid_env(
+        tuple(self.shape.values()), mapped_dims=()
+    ):
+      yield
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class WarpMesh:
+class WarpMesh(pallas_core.Mesh):
   """Represents a mesh over individual warps within a warpgroup.
 
   When used in conjunction with `core_map`, the warp ID will be visible
