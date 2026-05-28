@@ -64,6 +64,10 @@ class SvdTest(jtu.JaxTestCase):
   )
   def testSvdWithRectangularInput(self, m, n, log_cond, full_matrices):
     """Tests SVD with rectangular input."""
+    # The test casts input to complex (`a.astype(complex) * (1 + 1j)`), so on
+    # ROCm every sampled variant hits hipBLASLt's complex GEMM path.
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     with jax.default_matmul_precision('float32'):
       a = np.random.uniform(
           low=0.3, high=0.9, size=(m, n)).astype(_SVD_TEST_DTYPE)
@@ -173,6 +177,10 @@ class SvdTest(jtu.JaxTestCase):
   )
   def testSingularValues(self, m, n, log_cond, full_matrices):
     """Tests singular values."""
+    # The test casts input to complex (`a = a + 1j * a`), so on ROCm every
+    # sampled variant hits hipBLASLt's complex GEMM path.
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     with jax.default_matmul_precision('float32'):
       a = np.random.uniform(
           low=0.3, high=0.9, size=(m, n)).astype(_SVD_TEST_DTYPE)
@@ -215,6 +223,8 @@ class SvdTest(jtu.JaxTestCase):
   )
   def testSvdAllZero(self, m, n, full_matrices, compute_uv, dtype):
     """Tests SVD on matrix of all zeros, +/-infinity or NaN."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     osp_fun = functools.partial(
         osp_linalg.svd, full_matrices=full_matrices, compute_uv=compute_uv
     )
@@ -236,6 +246,8 @@ class SvdTest(jtu.JaxTestCase):
       self, m, n, fill_value, full_matrices, compute_uv, dtype
   ):
     """Tests SVD on matrix of all zeros, +/-infinity or NaN."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     lax_fun = functools.partial(
         svd.svd, full_matrices=full_matrices, compute_uv=compute_uv
     )

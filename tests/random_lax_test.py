@@ -913,6 +913,9 @@ class DistributionsTest(RandomTestBase):
   )
   @jax.default_matmul_precision("float32")
   def testOrthogonal(self, n, shape, dtype, m):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c"
+        and n >= 2 and (m is None or m >= 2)):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     if m is None:
       m = n
 

@@ -529,6 +529,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and any(np.dtype(d).kind == "c" for d in (lhs_dtype, rhs_dtype))
+        and len(lhs_shape) >= 2 and len(rhs_shape) >= 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     tol = {np.float16: 1e-2, np.float32: 2e-5, np.float64: 1e-14,
@@ -580,6 +583,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testMatmul(self, name, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and any(np.dtype(d).kind == "c" for d in (lhs_dtype, rhs_dtype)):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     def np_fun(x, y):
       dtype = jnp.promote_types(lhs_dtype, rhs_dtype)
@@ -644,6 +649,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jax.default_matmul_precision("float32")
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testMatvec(self, lhs_batch, rhs_batch, mat_size, vec_size, dtype):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     lhs_shape = (*lhs_batch, mat_size, vec_size)
     rhs_shape = (*rhs_batch, vec_size)
@@ -669,6 +676,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jax.default_matmul_precision("float32")
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testVecmat(self, lhs_batch, rhs_batch, mat_size, vec_size, dtype):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c" and mat_size == 1:
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     lhs_shape = (*lhs_batch, vec_size)
     rhs_shape = (*rhs_batch, vec_size, mat_size)
@@ -746,6 +755,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testInner(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and any(np.dtype(d).kind == "c" for d in (lhs_dtype, rhs_dtype))
+        and len(lhs_shape) >= 2 and len(rhs_shape) >= 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     def np_fun(lhs, rhs):

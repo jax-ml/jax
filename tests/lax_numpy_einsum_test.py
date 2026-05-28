@@ -254,6 +254,20 @@ class EinsumTest(jtu.JaxTestCase):
       ]
       for dtype in [jnp.float32, jnp.int32, jnp.complex64, jnp.bool_])
   def test_from_dask(self, einstr, dtype):
+    # Only a subset of einstrings dispatch through hipBLASLt's complex GEMM
+    # path on ROCm; simple contractions go through different kernels.
+    _ROCM_HIPBLASLT_FAILING_EINSTRS = (
+        "aab,bc->ac",
+        "aab,bcc->ac",
+        "ab...,bc...->ac...",
+        "abcdef,bcdfg->abcdeg",
+        "defab,fedbc->defac",
+        "ea,fb,abcd,gc,hd->efgh",
+        "fff,fae,bef,def->abd",
+    )
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c"
+        and einstr in _ROCM_HIPBLASLT_FAILING_EINSTRS):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     r = jtu.rand_default(self.rng())
     if '->' in einstr:
       input_str, result_names = einstr.split('->')

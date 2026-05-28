@@ -36,6 +36,8 @@ class LaxScipySpectralDacTest(jtu.JaxTestCase):
     termination_size=[1, 19],
   )
   def test_spectral_dac_eigh(self, linear_size, dtype, termination_size):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and jnp.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     if not jtu.test_device_matches(["tpu"]) and termination_size != 1:
       raise unittest.SkipTest(
           "Termination sizes greater than 1 only work on TPU")

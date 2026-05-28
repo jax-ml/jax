@@ -70,6 +70,11 @@ class PrimitiveTest(jtu.JaxTestCase):
                "operator to work around missing XLA support for pair-reductions")
   )
   def test_prim(self, harness: test_harnesses.Harness):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2)
+        and "dot_general_different_dtypes" in harness.fullname
+        and "rhs_complex" in harness.fullname
+        and "enable_xla_False" in harness.fullname):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     if "eigh_" in harness.fullname:
       self.skipTest("Eigenvalues are sorted and it is not correct to compare "
                     "decompositions for equality.")

@@ -134,6 +134,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   def test_cg_as_solve(self, shape, dtype):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
 
     rng = jtu.rand_default(self.rng())
     a = rng(shape, dtype)
@@ -370,6 +372,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jtu.skip_on_devices("cuda")
   def test_gmres_on_identity_system(self, shape, dtype, preconditioner,
                                     solve_method):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c"
+        and tuple(shape) == (7, 7)):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     A = jnp.eye(shape[1], dtype=dtype)
 
     solution = jnp.ones(shape[1], dtype=dtype)
@@ -394,6 +399,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jtu.skip_on_devices("cuda")
   def test_gmres_on_random_system(self, shape, dtype, preconditioner,
                                   solve_method):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c"
+        and tuple(shape) == (2, 2)):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     A = rng(shape, dtype)
 

@@ -2295,6 +2295,8 @@ class APITest(jtu.JaxTestCase):
 
   @jax.default_matmul_precision("float32")
   def test_hessian_holomorphic(self):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     R = self.rng().randn
     A = R(4, 4)
     x = R(4).astype('complex64') * (1 + 2j)

@@ -436,6 +436,8 @@ class BCOOTest(sptu.SparseTestCase):
   def test_bcoo_dot_general(
       self, dtype: np.dtype, props: sptu.BatchedDotGeneralProperties
   ):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
     args_maker = lambda: [sprng(props.lhs_shape, dtype),
@@ -480,6 +482,9 @@ class BCOOTest(sptu.SparseTestCase):
   def test_bcoo_dot_general_cusparse(
       self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting
   ):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c"
+        and len(lhs_shape) >= 2 and len(rhs_shape) >= 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_small(self.rng())
     rng_sparse = sptu.rand_sparse(self.rng())
     def args_maker():
@@ -532,6 +537,8 @@ class BCOOTest(sptu.SparseTestCase):
       lhs_contracting,
       rhs_contracting,
   ):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_small(self.rng())
     rng_sparse = sptu.rand_sparse(self.rng())
     def args_maker():
@@ -660,6 +667,8 @@ class BCOOTest(sptu.SparseTestCase):
   def test_bcoo_rdot_general(
       self, dtype: np.dtype, props: sptu.BatchedDotGeneralProperties
   ):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
     args_maker = lambda: [rng(props.rhs_shape, dtype),
@@ -712,6 +721,8 @@ class BCOOTest(sptu.SparseTestCase):
   def test_bcoo_dot_general_partial_batch(
       self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense
   ):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_small(self.rng())
     rng_sparse = sptu.rand_sparse(self.rng())
 
@@ -785,6 +796,9 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general_sampled_fast_cases(
       self, xshape, yshape, lhs_contract, rhs_contract, n_batch, dtype):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c"
+        and len(xshape) >= 2 and len(yshape) >= 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch)
     dimension_numbers = ((lhs_contract, rhs_contract), ([], []))
@@ -1462,6 +1476,9 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
   def test_bcsr_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(lhs_dtype).kind == "c"
+        and len(rhs_shape) >= 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     # Note: currently, batch dimensions in matmul must correspond to batch
     # dimensions in the sparse representation.
     n_batch_lhs = max(0, len(lhs_shape) - 2)
@@ -1497,6 +1514,9 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(lhs_dtype).kind == "c"
+        and np.dtype(rhs_dtype).kind == "c" and len(rhs_shape) >= 2):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     if (jtu.test_device_matches(["cuda"]) and
         _is_required_cuda_version_satisfied(12000)):
       raise unittest.SkipTest("Triggers a bug in cuda-12 b/287344632")
@@ -1873,6 +1893,9 @@ class BCSRTest(sptu.SparseTestCase):
   def test_bcsr_dot_general(
       self, dtype: np.dtype, props: sptu.BatchedDotGeneralProperties
   ):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c"
+        and len(props.dimension_numbers[0][0]) > 0):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcsr(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
     args_maker = lambda: [sprng(props.lhs_shape, dtype),

@@ -389,6 +389,24 @@ def supported_dtypes() -> set[DTypeLike]:
 def is_device_rocm() -> bool:
   return 'rocm' in xla_bridge.get_backend().platform_version
 
+def rocm_version() -> tuple[int, int, int] | None:
+  """Returns the ROCm runtime version as a (major, minor, patch) tuple.
+
+  Returns ``None`` when the current backend is not ROCm. The version is
+  parsed from the PJRT C API ``platform_version`` string, e.g.
+  ``'PJRT C API\\nrocm 70200'`` -> ``(7, 2, 0)``.
+  """
+  if not is_device_rocm():
+    return None
+  m = re.search(r'rocm\s+(\d+)',
+                xla_bridge.get_backend().platform_version)
+  if m is None:
+    return None
+  v = int(m.group(1))
+  # PJRT encodes the ROCm runtime version as MMmmpp (M=major, m=minor,
+  # p=patch), each field two decimal digits.
+  return (v // 10000, (v // 100) % 100, v % 100)
+
 def is_device_cuda() -> bool:
   return 'cuda' in xla_bridge.get_backend().platform_version
 

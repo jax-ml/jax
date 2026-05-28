@@ -3748,6 +3748,10 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
       #one_containing="",
   )
   def test_harness(self, harness: PolyHarness):
+    if (jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2)
+        and "vmap_dot_general_different_dtypes" in harness.fullname
+        and "rhs_complex" in harness.fullname):
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     # We do not expect the associative scan error on TPUs
     if harness.expect_error == expect_error_associative_scan and jtu.test_device_matches(["tpu"]):
       harness.expect_error = None

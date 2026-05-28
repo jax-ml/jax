@@ -81,6 +81,8 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithUpperTriangularInputAllOnes(self, shape, dtype):
     """Tests qdwh with upper triangular input of all ones."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     m, n = shape
     a = jnp.triu(jnp.ones((m, n))).astype(dtype)
     self._testQdwh(a)
@@ -91,6 +93,8 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithDynamicShape(self, shape, dtype):
     """Tests qdwh with dynamic shapes."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_uniform(self.rng())
     a = rng((10, 10), dtype)
     self._testQdwh(a, dynamic_shape=shape)
@@ -102,6 +106,8 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithRandomMatrix(self, shape, log_cond, dtype):
     """Tests qdwh with upper triangular input of all ones."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     # ROCm: Triton GEMM autotuner cannot compile this specific case.
     # TODO(gulsumgudukbay): Unskip once fixed. Issue #34711.
     if (jtu.is_device_rocm()
@@ -129,6 +135,8 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhJitCompatibility(self, m, n, padding, dtype):
     """Tests JIT compilation of QDWH with and without dynamic shape."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_uniform(self.rng())
     a = rng((m, n), dtype)
     def lsp_linalg_fn(a):
@@ -152,6 +160,8 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhOnRankDeficientInput(self, m, n, r, log_cond, dtype):
     """Tests qdwh on rank-deficient input."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     eps = jnp.finfo(dtype).eps
     a = np.triu(np.ones((m, n))).astype(dtype)
 
@@ -191,6 +201,8 @@ class QdwhTest(jtu.JaxTestCase):
   )
   def testQdwhWithTinyElement(self, m, n, r, c, dtype):
     """Tests qdwh on matrix with zeros and close-to-zero entries."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     a = jnp.zeros((m, n), dtype=dtype)
     one = dtype(1.0)
     tiny_elem = dtype(jnp.finfo(a.dtype).tiny)

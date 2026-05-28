@@ -268,6 +268,8 @@ class EighTest(jtu.JaxTestCase):
       lower=[True, False],
   )
   def testEighGrad(self, shape, dtype, lower):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c" and shape[0] > 1:
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     if platform.system() == "Windows":
       self.skipTest("Skip on Windows due to tolerance issues.")
     rng = jtu.rand_default(self.rng())

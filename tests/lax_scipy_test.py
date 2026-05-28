@@ -441,6 +441,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
       side, nonzero_condition_number, dtype, seed):
     """ Tests jax.scipy.linalg.polar."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     if not jtu.test_device_matches(["cpu"]):
       if jnp.dtype(dtype).name in ("bfloat16", "float16"):
         raise unittest.SkipTest("Skip half precision off CPU.")

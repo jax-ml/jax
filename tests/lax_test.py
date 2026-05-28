@@ -819,6 +819,8 @@ class LaxTest(jtu.JaxTestCase):
   def testConvGeneralDilatedLocal(self, dtype, precision, n, padding, lhs_spec,
                                   rhs_spec, out_spec):
     """Make sure LCN with tiled CNN kernel matches CNN."""
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     lhs_spec_default = 'NCHWDX'[:n + 2]
     rhs_spec_default = 'OIHWDX'[:n + 2]
 
@@ -1423,6 +1425,8 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testDotGeneralContractAndBatch(self, lhs_shape, rhs_shape, dtype,
                                      dimension_numbers):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_small(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 
@@ -1448,6 +1452,8 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testDotGeneralAgainstNumpy(self, lhs_shape, rhs_shape, dtype,
                                  dimension_numbers):
+    if jtu.rocm_version() and jtu.rocm_version()[:2] == (7, 2) and np.dtype(dtype).kind == "c":
+      self.skipTest("hipblasLT doesn't support complex numbers in ROCm 7.2.x")
     rng = jtu.rand_small(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
     op = lambda x, y: lax.dot_general(x, y, dimension_numbers)
