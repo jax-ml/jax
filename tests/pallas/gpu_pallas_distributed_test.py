@@ -193,11 +193,6 @@ class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    # TODO(b/512396897): Re-enable once the bug is fixed.
-    if is_multiprocess() and not is_nvshmem_used():
-      self.skipTest("DMA without multimem currently not supported in"
-                    " multiprocess mode since XLA can't mark buffers as"
-                    " collective right now in this case.")
     super().setUp()
 
   def test_remote_dma_basic(self):

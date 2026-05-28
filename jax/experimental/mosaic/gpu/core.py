@@ -717,6 +717,7 @@ def _launch(
         device_collective_metadata=device_collective_metadata,
         num_peers=num_peers,
         num_params=num_params,
+        num_processes=jax.process_count(),
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
