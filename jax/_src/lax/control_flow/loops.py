@@ -1129,7 +1129,7 @@ def _transpose_scan_jaxpr_fancy(
     ires, mut_consts_bar, ct_immut_consts, ct_carry, mut_xs_bar, ct_ys, eres = \
         tree_unflatten(trans_tree, args)
     immut_consts_dot = [ad.ValAccum(core.typeof(x), x) for x in ct_immut_consts]
-    carry_dot = [ad.ValAccum(core.typeof(x)) for x in ct_carry]
+    carry_dot = [ad.ValAccum(core.typeof(x).to_ct_aval()) for x in ct_carry]
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
     primals = (ires + mut_consts_bar + immut_consts_dot + carry_dot + mut_xs_bar
                + immut_xs_dot + eres)
