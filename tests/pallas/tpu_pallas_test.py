@@ -3980,6 +3980,54 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.roll(x, shift, axis))
 
   @parameterized.product(
+      shape=((5, 8, 64), (15, 4, 128), (8, 3, 256)),
+      shift=(2, 3),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
+  )
+  def test_roll_with_static_major_dim_shift(
+      self, shape: tuple[int, int, int], shift: int, dtype: jnp.dtype
+  ):
+    if dtype != jnp.float32 and not jtu.is_cloud_tpu_at_least(2026, 6, 3):
+      self.skipTest('Needs a newer libtpu')
+    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU v4+.')
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=0)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x)
+    np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
+
+  @parameterized.product(
+      shape=((20, 200), (8, 64), (8, 128), (16, 256)),
+      shift=(2, 3),
+      dtype=(jnp.bfloat16, jnp.int8),
+  )
+  def test_roll_with_static_lane_shift_packed_types(
+      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
+  ):
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 3):
+      self.skipTest('Needs a newer libtpu')
+    if dtype == jnp.int8 and not jtu.is_device_tpu_at_least(6):
+      self.skipTest('Requires TPU v6+.')
+    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU v4+.')
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=1)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x)
+    np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
+
+  @parameterized.product(
       shape_and_axis=(((128, 64), 1), ((63, 256), 0)),
   )
   def test_roll_partial_with_dynamic_shift(
@@ -4313,7 +4361,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     ):
       self.skipTest('Operation not supported on this TPU version.')
 
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(y_ref.shape)
 
@@ -4354,7 +4401,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         or (k % 128 != 0 and not jtu.is_device_tpu_at_least(5))
     ):
       self.skipTest('Operation not supported on this TPU version.')
-
 
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(y_ref.shape)
@@ -4647,7 +4693,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     if k % 128 != 0 and unsupported_dtype:
       self.skipTest('Operation not supported on this TPU version.')
 
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0], x_ref.shape[1] * x_ref.shape[2] * x_ref.shape[3]
@@ -4688,7 +4733,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
 
     if k % 128 != 0 and unsupported_dtype:
       self.skipTest('Operation not supported on this TPU version.')
-
 
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
