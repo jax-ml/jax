@@ -11014,6 +11014,62 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         core.ShardingTypeError, "only be fully replicated or fully unreduced"):
       f(a, P('x'))
 
+  @jtu.with_explicit_mesh((4,), ("x",))
+  def test_segment_sum(self, mesh):
+    a = jax.device_put(jnp.arange(8, dtype=jnp.int32), P("x"))
+    b = jax.device_put(jnp.array([0, 0, 1, 1, 1, 2, 2, 3]), P("x"))
+
+    @jax.jit(static_argnums=2)
+    def f(x, y, out_s):
+      return jax.ops.segment_sum(x, y, num_segments=4, out_sharding=out_s)
+
+    out = f(a, b, P())
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+    self.assertArraysEqual(out, np.array([1, 9, 11, 7]), check_dtypes=False)
+
+    out = f(a, b, P(unreduced={'x'}))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+    expected_shards = [np.array([1, 0, 0, 0]),
+                       np.array([0, 5, 0, 0]),
+                       np.array([0, 4, 5, 0]),
+                       np.array([0, 0, 6, 7])]
+    for s, ex_data in zip(out.addressable_shards, expected_shards):
+      self.assertArraysEqual(s.data, ex_data, check_dtypes=False)
+    self.assertArraysEqual(reshard(out, P()), np.array([1, 9, 11, 7]),
+                           check_dtypes=False)
+
+  @jtu.with_explicit_mesh((4,), ("x",))
+  def test_segment_max(self, mesh):
+    a = jax.device_put(jnp.arange(8, dtype=jnp.int32), P("x"))
+    b = jax.device_put(jnp.array([0, 0, 1, 1, 1, 2, 2, 3]), P("x"))
+
+    @jax.jit(static_argnums=2)
+    def f(x, y, out_s):
+      return jax.ops.segment_max(x, y, num_segments=4, out_sharding=out_s)
+
+    out = f(a, b, P())
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+    self.assertArraysEqual(out, np.array([1, 4, 6, 7]), check_dtypes=False)
+
+    with self.assertRaises(NotImplementedError):
+      f(a, b, P(unreduced={'x'}))
+
+  @jtu.with_explicit_mesh((4,), ("x",))
+  def test_segment_prod(self, mesh):
+    a = jax.device_put(jnp.arange(8, dtype=jnp.int32), P("x"))
+    b = jax.device_put(jnp.array([0, 0, 1, 1, 1, 2, 2, 3]), P("x"))
+
+    @jax.jit(static_argnums=2)
+    def f(x, y, out_s):
+      return jax.ops.segment_prod(x, y, num_segments=4, out_sharding=out_s)
+
+    out = f(a, b, P())
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+    self.assertArraysEqual(out, np.array([0, 24, 30, 7]), check_dtypes=False)
+
+    with self.assertRaises(NotImplementedError):
+      f(a, b, P(unreduced={'x'}))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
