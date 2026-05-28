@@ -766,11 +766,12 @@ class _DimExpr:
       return power.__rpow__(self)
     if power != int(power):
       raise ValueError(f"Symbolic dimension cannot be raised to non-integer powers: '{self}' ** '{power}'")
-    if power >= 0:
-      return functools.reduce(op.mul, [self] * power, 1)
-    # We don't support negative powers, because JAX does not allow negative
-    # powers for integers
-    raise ValueError(f"Symbolic dimension cannot be raised to negative powers: '{self}' ** '{power}'")
+    power = int(power)
+    if power < 0:
+      raise ValueError(f"Symbolic dimension cannot be raised to negative powers: '{self}' ** '{power}'")
+    if power > 64:
+      raise ValueError(f"Symbolic dimension exponent too large: {power}")
+    return functools.reduce(op.mul, [self] * power, 1)
 
   def __rpow__(self, other, modulo=None):
     if modulo is not None:
@@ -1654,6 +1655,8 @@ class _Parser:
         tok = self.next_tok()
         self.expect_token(tok, [tokenize.NUMBER])
         power, tok = self.integer(tok)
+        if power < 0 or power > 64:
+          raise self.parse_err(tok, f"exponent must be in [0, 64], got {power}")
         f = f ** power
 
       acc = acc * f if acc is not None else f
