@@ -603,10 +603,10 @@ nvidia-cuda-cccl-cu12==12.9.27 \
     --hash=sha256:72106f95a9bb3be18472806b4f663ebf0f9248a86d14b4ae3305725b855d9d92 \
     --hash=sha256:d7898b38aa68beaa234d48f0868273702342a196d6e2e9d0ef058dca2390ebea
     # via nvidia-nvshmem-cu12
-nvidia-cuda-crt==13.2.78 ; sys_platform == "linux" \
-    --hash=sha256:2c8615ee30ed466cb6298ecb8ffe9e6ea8b252ca833206152d155750bf831608 \
-    --hash=sha256:3f5f1d7bf8a89e98f19f45a2f18bb5df99a806433bfb6f0bc487d9e8f4b3677b \
-    --hash=sha256:6a5ac267680aecbec0405884c81b12db48f9baadfa67a62f230ab2f47f6ccaf1
+nvidia-cuda-crt==13.3.33 ; sys_platform == "linux" \
+    --hash=sha256:01ff37600c7b880a14cab4ade763b4c10c0ff92f25cc9dca30f0881ce52693c4 \
+    --hash=sha256:7e89c6dbb807a47ee0628907488b158e57c36fa31af3756a8f826a9ec482715f \
+    --hash=sha256:c8c257393f9c9146a85d3644f352be8154843d760031f756e673222c768a4930
     # via
     #   -r build/nvidia-requirements.txt
     #   nvidia-cuda-nvcc
