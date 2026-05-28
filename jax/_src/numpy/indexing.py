@@ -323,6 +323,8 @@ class NDIndexer:
           expanded.append(ParsedIndex(index=slice(None), typ=IndexType.SLICE, consumed_axes=(axis,)))
       else:
         expanded.append(idx)
+    if config.numpy_strict_indexing.value and consumed != len(self.shape):
+      raise ValueError(f"Found only {consumed} indices for array of size {len(self.shape)}")
     for axis in range(consumed, len(self.shape)):
       expanded.append(ParsedIndex(index=slice(None), typ=IndexType.SLICE, consumed_axes=(axis,)))
     return NDIndexer(shape=self.shape, indices=expanded)

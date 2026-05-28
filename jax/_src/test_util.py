@@ -1228,6 +1228,7 @@ class JaxTestCase(parameterized.TestCase):
     'jax_enable_checks': True,
     'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',
+    'jax_numpy_strict_indexing': True,
     'jax_traceback_filtering': 'off',
     'jax_legacy_prng_key': 'error',
   }

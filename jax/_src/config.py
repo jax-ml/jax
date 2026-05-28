@@ -1728,6 +1728,15 @@ numpy_rank_promotion = enum_state(
     include_in_jit_key=True,
     include_in_trace_context=True)
 
+numpy_strict_indexing = bool_state(
+    name='jax_numpy_strict_indexing',
+    default=False,
+    help=('If set to True, require NumPy indexing expressions to explicitly '
+          'specify indices for all axes of arrays.'),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 auto_pcast = bool_state(
     name='jax_auto_pcast',
     default=True,  # TODO(yashkatariya): False
