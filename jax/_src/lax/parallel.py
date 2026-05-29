@@ -323,12 +323,12 @@ def _canonicalize_axis_index_groups(axis_index_groups):
 def pbroadcast(x, axis_name, source):
   """Perform a collective broadcast and replicate from ``source``.
 
-  This is equivalent to
-  ```
-  def pbroadcast(x, axis_name, source):
-    masked = jnp.where(axis_index(axis_name) == source, x, zeros_like(x))
-    return psum(masked, axis_name)
-  ```
+  This is equivalent to::
+
+    def pbroadcast(x, axis_name, source):
+      masked = jnp.where(axis_index(axis_name) == source, x, zeros_like(x))
+      return psum(masked, axis_name)
+
   but implemented in a hardware optimized way.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to

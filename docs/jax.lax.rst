@@ -237,6 +237,7 @@ Parallel operators
     axis_size
     psend
     precv
+    pbroadcast
 
 Sharding-related operators
 --------------------------
