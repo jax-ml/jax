@@ -22,6 +22,7 @@ from jax._src.scipy.special import (
   betainc as betainc,
   betaln as betaln,
   comb as comb,
+  dawsn as dawsn,
   digamma as digamma,
   entr as entr,
   erf as erf,
