@@ -1625,7 +1625,7 @@ def lower_fun(
         ),
         in_tree,
     )
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals, lower=True)
     if consts:
       raise NotImplementedError("lower_fun should not capture constvars")
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)

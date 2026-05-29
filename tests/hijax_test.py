@@ -33,6 +33,8 @@ from jax._src import dtypes
 from jax._src import state
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
+from jax._src.custom_derivatives import custom_jvp_call_p
+from jax._src.custom_derivatives import custom_vjp_call_p
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src import test_util as jtu
@@ -2179,6 +2181,121 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     jax.lax.scan(body, None, None, length=5)
     self.assertAllClose(box.get(), 8.0, check_dtypes=False)
 
+  def test_grad_custom_vjp_optimize_remat_with_hijax(self):
+
+    @jax.custom_vjp
+    def f(x):
+      return square(x)
+
+    def f_fwd(x):
+      y = square(x)
+      return y, x  # (primal_out, residuals)
+
+    def f_bwd(res, g):
+      x = res
+      return (g * 2.0 * x,)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+    x = jnp.float32(3.0)
+    result = jax.jit(jax.grad(f))(x)
+    self.assertAllClose(result, jnp.float32(6.0))
+
+  def test_custom_vjp_inlined_when_lower(self):
+
+    @jax.custom_vjp
+    def foo(x):
+      return square(x)
+    def foo_fwd(x):
+      return foo(x), x
+    def foo_bwd(res, g):
+      return (g * 2.0 * res,)
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    has_custom_vjp = any(
+        eqn.primitive is custom_vjp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_vjp,
+        "custom_vjp_call_p should be inlined when lower=True")
+
+  def test_custom_jvp_inlined_when_lower(self):
+
+    @jax.custom_jvp
+    def foo(x):
+      return square(x)
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      return square(x), t * 2.0 * x
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    has_custom_jvp = any(
+        eqn.primitive is custom_jvp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_jvp,
+        "custom_jvp_call_p should be inlined when lower=True")
+
+  def test_custom_vjp_with_hiprimitive_is_high(self):
+    @jax.custom_vjp
+    def foo(x):
+      return square(x)
+    def foo_fwd(x):
+      y = foo(x)
+      return y, x
+    def foo_bwd(res, g):
+      return (g * 2.0 * res,)
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    jaxpr = jax.make_jaxpr(foo)(jnp.float32(2.0))
+    # The call_jaxpr should contain hi-primitives (square)
+    self.assertTrue(jaxpr.jaxpr.is_high)
+
+  def test_custom_vjp_with_hiprimitive_lowered(self):
+
+    @jax.custom_vjp
+    def foo(x):
+      return square(x)
+    def foo_fwd(x):
+      y = foo(x)
+      return y, x
+    def foo_bwd(res, g):
+      return (g * 2.0 * res,)
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    # custom_vjp_call_p should be inlined (no custom_vjp_call eqns remain)
+    has_custom_vjp = any(
+        eqn.primitive is custom_vjp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_vjp,
+        "custom_vjp_call_p with hi-primitives should be inlined when "
+        "lower=True")
+    # The hi-primitive (square) should also be lowered
+    self.assertFalse(jaxpr.is_high,
+        "Lowered jaxpr should not contain hi-primitives")
+
+  def test_custom_jvp_with_hiprimitive_lowered(self):
+
+    @jax.custom_jvp
+    def foo(x):
+      return square(x)
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      return square(x), t * 2.0 * x
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    has_custom_jvp = any(
+        eqn.primitive is custom_jvp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_jvp,
+        "custom_jvp_call_p with hi-primitives should be inlined when "
+        "lower=True")
+    self.assertFalse(jaxpr.is_high,
+        "Lowered jaxpr should not contain hi-primitives")
 
 class LogTest(jtu.JaxTestCase):
 

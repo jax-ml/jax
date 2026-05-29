@@ -2024,6 +2024,10 @@ class DynamicJaxprTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
                               jvp: lu.WrappedFun, tracers, /, *,
                               symbolic_zeros: bool):
+    if self.requires_low:
+      with core.set_current_trace(self):
+        return fun.call_wrapped(*tracers)
+
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       avals = tuple(core.typeof(x) for x in tracers)
       return prim.bind_with_trace(
@@ -2064,6 +2068,10 @@ class DynamicJaxprTrace(core.Trace):
                               fwd: lu.WrappedFun, bwd: lu.WrappedFun, tracers, /, *,
                               out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
                               symbolic_zeros: bool):
+    if self.requires_low:
+      with core.set_current_trace(self):
+        return fun.call_wrapped(*tracers)
+
     if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       avals = tuple(core.typeof(x) for x in tracers)
       return prim.bind_with_trace(
