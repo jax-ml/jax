@@ -63,10 +63,10 @@ class XlaMetadataTest(jtu.JaxTestCase):
       with set_xla_metadata(a="b"):
         return a + b
 
-    f_jaxpr = jax.make_jaxpr(f)(1, 2)
-    eqns = f_jaxpr.eqns
-    for eq in eqns[1:]:
-      self.assertDictEqual(eq.ctx.attributes, {"a": "b"})
+    jaxpr = f.trace(1, 2).jaxpr
+    self.assertNotEmpty(jaxpr.eqns)
+    for eq in jaxpr.eqns:
+      self.assertDictEqual(eq.ctx.xla_metadata, {"a": "b"})
 
     f_lowered_text = f.lower(1.0, 2.0).as_text()
     self.assertIn('mhlo.frontend_attributes = {a = "b"}', f_lowered_text)
@@ -95,10 +95,10 @@ class XlaMetadataTest(jtu.JaxTestCase):
     def f(a, b):
       return a + b
 
-    f_jaxpr = jax.make_jaxpr(f)(1, 2)
-    eqns = f_jaxpr.eqns
-    for eq in eqns[1:]:
-      self.assertDictEqual(eq.ctx.attributes, {"a": "b"})
+    jaxpr = f.trace(1, 2).jaxpr
+    self.assertNotEmpty(jaxpr.eqns)
+    for eq in jaxpr.eqns:
+      self.assertDictEqual(eq.ctx.xla_metadata, {"a": "b"})
 
     f_lowered_text = f.lower(1.0, 2.0).as_text()
     self.assertIn('mhlo.frontend_attributes = {a = "b"}', f_lowered_text)
@@ -309,10 +309,10 @@ class XlaMetadataTest(jtu.JaxTestCase):
       with set_xla_metadata(a="b"):
         return jax.grad(lambda x: x**3 + y**2 + jnp.sin(x))(x)
 
-    f_jaxpr = jax.make_jaxpr(f)(1.0, 2.0)
-    eqns = f_jaxpr.eqns
-    for eq in eqns[1:]:
-      self.assertDictEqual(eq.ctx.attributes, {"a": "b"})
+    jaxpr = f.trace(1.0, 2.0).jaxpr
+    self.assertNotEmpty(jaxpr.eqns)
+    for eq in jaxpr.eqns:
+      self.assertDictEqual(eq.ctx.xla_metadata, {"a": "b"})
 
     self.assertIn(
         'mhlo.frontend_attributes = {a = "b"}', f.lower(1.0, 2.).as_text()
@@ -342,9 +342,9 @@ class XlaMetadataTest(jtu.JaxTestCase):
     with set_xla_metadata(a="d"):
       f_vmap = jax.vmap(f, in_axes=({"a": None, "b": 0}, None))
       f_jaxpr = jax.make_jaxpr(f_vmap)(dct, 1.0)
-      eqns = f_jaxpr.eqns
-      for eq in eqns[1:]:
-        self.assertDictEqual(eq.ctx.attributes, {"a": "d"})
+      self.assertNotEmpty(f_jaxpr.eqns)
+      for eq in f_jaxpr.eqns:
+        self.assertDictEqual(eq.ctx.xla_metadata, {"a": "d"})
     @jax.jit
     def f2(x, y):
       with set_xla_metadata(a="b"):
