@@ -989,7 +989,14 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("serialized"), nb::arg("executable_devices"),
           nb::arg("compile_options").none() = nb::none(),
-          nb::arg("host_callbacks") = std::vector<nb::capsule>())
+          nb::arg("host_callbacks") = std::vector<nb::capsule>(),
+          "Deserializes an executable.\n\n"
+          ".. warning::\n"
+          "   It is not safe to call this API with untrusted inputs. Do not\n"
+          "   do this. Calling this API loads a serialized executable. Even\n"
+          "   loading such an executable may run arbitrary code on your machine.\n"
+          "   It is not safe to pass untrusted data here and likely never\n"
+          "   will be.")
       .def(
           "deserialize_executable",
           [](nb_class_ptr<PyClient> client, nb::bytes serialized,
@@ -1005,7 +1012,14 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("serialized"), nb::arg("executable_devices"),
           nb::arg("compile_options").none() = nb::none(),
-          nb::arg("host_callbacks") = std::vector<nb::callable>())
+          nb::arg("host_callbacks") = std::vector<nb::callable>(),
+          "Deserializes an executable.\n\n"
+          ".. warning::\n"
+          "   It is not safe to call this API with untrusted inputs. Do not\n"
+          "   do this. Calling this API loads a serialized executable. Even\n"
+          "   loading such an executable may run arbitrary code on your machine.\n"
+          "   It is not safe to pass untrusted data here and likely never\n"
+          "   will be.")
       // The following overload is for users of deprecated APIs who call
       // `deserialize_executable` but do not have visibility to `DeviceList`.
       .def(
@@ -1022,7 +1036,14 @@ PyType_Slot PyClient::slots_[] = {
                 std::vector<nb::capsule>()));
           },
           nb::arg("serialized"), nb::arg("executable_devices"),
-          nb::arg("compile_options").none() = nb::none())
+          nb::arg("compile_options").none() = nb::none(),
+          "Deserializes an executable.\n\n"
+          ".. warning::\n"
+          "   It is not safe to call this API with untrusted inputs. Do not\n"
+          "   do this. Calling this API loads a serialized executable. Even\n"
+          "   loading such an executable may run arbitrary code on your machine.\n"
+          "   It is not safe to pass untrusted data here and likely never\n"
+          "   will be.")
       .def("heap_profile", xla::ValueOrThrowWrapper(&PyClient::HeapProfile))
       // TODO(zhangqiaorjc): Experimental.
       .def("defragment",
