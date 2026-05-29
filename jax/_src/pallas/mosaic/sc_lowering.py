@@ -14,7 +14,6 @@
 """Lowering for Pallas TPU SparseCore."""
 
 from collections.abc import Sequence
-import dataclasses
 import functools
 from typing import Any, NoReturn, cast
 
@@ -707,67 +706,6 @@ def _has_indirect_offsets(
       for indexer, indexer_aval in zip(transforms, transforms_aval)
       if isinstance(indexer, indexing.NDIndexer)
   )
-
-
-@register_lowering_rule(pallas_primitives.jaxpr_call_p)
-def _jaxpr_call_lowering_rule(
-    ctx: LoweringRuleContext,
-    *flat_args,
-    jaxpr: jax_core.Jaxpr,
-    ref_treedefs,
-    program_ids_treedef,
-):
-  args = []
-  flat_ref_avals, _ = util.split_list(
-      ctx.avals_in, [sum(treedef.num_leaves for treedef in ref_treedefs)]
-  )
-  flat_ref_avals = util.split_list(
-      flat_ref_avals,
-      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
-  )
-  flat_refs, flat_program_ids = util.split_list(
-      flat_args, [sum(treedef.num_leaves for treedef in ref_treedefs)]
-  )
-  flat_refs = util.split_list(
-      flat_refs,
-      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
-  )
-  flat_block_shapes, _ = util.split_list(
-      ctx.block_shapes, [sum(treedef.num_leaves for treedef in ref_treedefs)]
-  )
-  flat_block_shapes = util.split_list(
-      flat_block_shapes,
-      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
-  )
-  ref_block_shapes = []
-  for treedef, flat_ref, flat_ref_aval, flat_block_shape in zip(
-      ref_treedefs, flat_refs, flat_ref_avals, flat_block_shapes
-  ):
-    ref = treedef.unflatten(flat_ref)
-    ref_aval = treedef.unflatten(flat_ref_aval)
-    block_shape = treedef.unflatten(flat_block_shape)
-    if isinstance(ref, tuple):
-      # We ignore other transforms here, because they are already embedded
-      # in the jaxpr.
-      ref, transforms = ref
-      ref_aval, _ = ref_aval
-      block_shape, _ = block_shape
-      assert isinstance(ref_aval, state.AbstractRef)
-      ref, block_shape = _transform_ref(ref, ref_aval, block_shape, transforms)
-    ref_block_shapes.append(block_shape)
-    args.append(ref)
-  user_grid_indices = ctx.lowering_context.user_grid_indices
-  assert user_grid_indices is not None
-  program_ids = program_ids_treedef.unflatten(flat_program_ids)
-  for axis, pid in enumerate(program_ids):
-    if pid is None:
-      program_ids[axis] = user_grid_indices[axis]
-  new_lowering_ctx = dataclasses.replace(
-      ctx.lowering_context,
-      block_shapes=tuple(ref_block_shapes),
-      user_grid_indices=program_ids,
-  )
-  return tc_lowering.jaxpr_subcomp(new_lowering_ctx, jaxpr, *args)
 
 
 @register_lowering_rule(jax_core.empty_ref_p)
