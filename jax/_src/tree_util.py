@@ -1386,13 +1386,13 @@ class FlatTree:
   # `FlatTree` constructor is private. Use `FlatTree.flatten` instead
   def __init__(self, vals, treedef: PyTreeDef, statics,
                registry=tracing_registry):
-    self.registry = registry
-    assert isinstance(treedef, pytree.PyTreeDef)
     if not isinstance(vals, tuple):
       vals = tuple(vals)
     self.vals = tuple(vals)
+    assert isinstance(treedef, pytree.PyTreeDef)
     self.tree = treedef
     self.statics = statics  # tree-prefix tuple-dict-tree of bools
+    self.registry = registry
 
   def __eq__(self, other):
     return (isinstance(other, FlatTree) and self.vals == other.vals
@@ -1401,6 +1401,9 @@ class FlatTree:
 
   def __hash__(self):
     return hash((self.vals, self.tree))
+
+  def __repr__(self):
+    return f"FlatTree({self.vals})"
 
   def map(self, f: Callable) -> FlatTree:
     return self.update(f(x) for x in self.vals)
