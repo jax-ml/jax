@@ -270,6 +270,16 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def testXlog1pyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlog1py(0., -1.), 0., check_dtypes=False)
 
+  def testXlogyPropagatesNaNInY(self):
+    # https://github.com/jax-ml/jax/issues/37751
+    # scipy.special.xlogy(0, nan) returns nan; ensure JAX matches.
+    self.assertAllClose(lsp_special.xlogy(0., np.nan), np.nan)
+
+  def testXlog1pyPropagatesNaNInY(self):
+    # https://github.com/jax-ml/jax/issues/37751
+    # scipy.special.xlog1py(0, nan) returns nan; ensure JAX matches.
+    self.assertAllClose(lsp_special.xlog1py(0., np.nan), np.nan)
+
   def testGradOfXlog1pyAtZero(self):
     # https://github.com/jax-ml/jax/issues/15598
     x0, y0 = 0.0, 3.0
