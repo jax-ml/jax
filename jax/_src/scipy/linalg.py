@@ -35,6 +35,7 @@ from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex, promote_args_inexact)
+from jax._src.scipy.special import comb
 from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
@@ -2730,6 +2731,86 @@ def fiedler(a: ArrayLike) -> Array:
   return jnp.abs(arr[..., None] - arr[..., None, :])
 
 
+def fiedler_companion(a: ArrayLike) -> Array:
+  r"""Construct a Fiedler companion matrix.
+
+  JAX implementation of :func:`scipy.linalg.fiedler_companion`.
+
+  Given polynomial coefficients :math:`a = [a_0, a_1, \ldots, a_{n}]` with
+  :math:`a_0 \neq 0`, this constructs a pentadiagonal matrix whose
+  eigenvalues coincide with the roots of the polynomial. The result is
+  similar to :func:`companion` but with a sparser, banded structure.
+
+  Args:
+    a: array of shape ``(..., N)`` specifying the polynomial coefficients in
+      descending order. The last axis must have nonzero length. For ``N == 1``
+      an empty ``(0, 0)`` matrix is returned along that slice.
+
+  Raises:
+    ValueError: if the last axis of ``a`` has length zero.
+
+  Returns:
+    A Fiedler companion matrix of shape ``(..., N - 1, N - 1)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.fiedler_companion`, this function does not
+    check at runtime that ``a[..., 0]`` is non-zero; if the leading
+    coefficient is zero, the result will contain ``inf`` or ``nan`` entries.
+
+  Examples:
+    >>> a = jnp.array([1., -16., 86., -176., 105.])
+    >>> jax.scipy.linalg.fiedler_companion(a)
+    Array([[ 16., -86.,   1.,   0.],
+           [  1.,   0.,   0.,   0.],
+           [  0., 176.,   0., -105.],
+           [  0.,   1.,   0.,   0.]], dtype=float32)
+  """
+  a, = promote_args_inexact("fiedler_companion", a)
+  a = jnp.atleast_1d(a)
+  if a.shape[-1] == 0:
+    raise ValueError(
+        "fiedler_companion requires the last axis of 'a' to have nonzero "
+        f"length, but got an array of shape {a.shape}.")
+  return _fiedler_companion(a)
+
+@partial(jnp_vectorize.vectorize, signature="(n)->(m,m)")
+def _fiedler_companion(a: Array) -> Array:
+  n = a.shape[0] - 1
+  if n == 0:
+    return jnp.empty_like(a, shape=(0, 0))
+  a = a / a[0]
+  if n == 1:
+    return -a[1:].reshape(1, 1)
+  # Build the matrix with full-grid masked assignments so static shapes are
+  # preserved under jit and vectorize. The pentadiagonal layout is:
+  #   c[0, 0]               = -a[1]            (first column top)
+  #   c[1, 0]               = 1                (first column second row)
+  #   c[i,   i+1]           = -a[i+2]          (super-diag, even i, i+1 < n)
+  #   c[i,   i+2]           = 1                (second super, even i, i+2 < n)
+  #   c[i,   i-1]           = -a[i+1]          (sub-diag, even i >= 2, < n)
+  #   c[i,   i-2]           = 1                (second sub, odd i >= 3, < n)
+  i = jnp.arange(n)[:, None]
+  j = jnp.arange(n)[None, :]
+  # Clip indices so out-of-range lookups are safe; masks below select valid
+  # cells.
+  super_val = -a[jnp.minimum(i + 2, n)]
+  sub_val = -a[jnp.minimum(i + 1, n)]
+  i_even = (i % 2 == 0)
+  i_odd = (i % 2 == 1)
+  one = jnp.array(1, dtype=a.dtype)
+  zero = jnp.array(0, dtype=a.dtype)
+  conditions = [
+      (i == 0) & (j == 0),
+      (i == 1) & (j == 0),
+      (j == i + 1) & i_even,
+      (j == i + 2) & i_even,
+      (j == i - 1) & i_even & (i >= 2),
+      (j == i - 2) & i_odd & (i >= 3),
+  ]
+  choices = [-a[1], one, super_val, one, sub_val, one]
+  return jnp.select(conditions, choices, default=zero)
+
+
 @jit(static_argnames=("n", "mode"))
 def convolution_matrix(a: ArrayLike, n: int, mode: str = 'full') -> Array:
   r"""Construct a convolution matrix.
@@ -2831,6 +2912,60 @@ def hilbert(n: int) -> Array:
   a = lax.broadcasted_iota(float, (n, 1), 0)
   return 1/(a + a.T + 1)
 
+
+@jit(static_argnames=("n",))
+def invhilbert(n: int) -> Array:
+  r"""Compute the inverse of the Hilbert matrix of order n.
+
+  JAX implementation of :func:`scipy.linalg.invhilbert`.
+
+  The entries are given by a closed-form expression in terms of binomial
+  coefficients:
+
+  .. math::
+
+     H^{-1}_{ij} = (-1)^{i + j} (i + j + 1)
+                   \binom{n + i}{n - j - 1}
+                   \binom{n + j}{n - i - 1}
+                   \binom{i + j}{i}^2
+
+  for :math:`0 \le i, j < n`.
+
+  Args:
+    n: the size of the matrix to create.
+
+  Returns:
+    The inverse of the Hilbert matrix of shape ``(n, n)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.invhilbert`, this function does not support
+    ``exact=True``. The result is computed in floating point using
+    :func:`~jax.scipy.special.comb`; for large ``n`` the entries quickly
+    exceed the dynamic range of finite-precision floats.
+
+  See Also:
+    :func:`jax.scipy.linalg.hilbert`
+
+  Examples:
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   print(jax.scipy.linalg.invhilbert(2))
+    ...   print(jax.scipy.linalg.invhilbert(3))
+    [[ 4. -6.]
+     [-6. 12.]]
+    [[   9.  -36.   30.]
+     [ -36.  192. -180.]
+     [  30. -180.  180.]]
+  """
+  a = jnp.arange(n, dtype=dtypes.default_float_dtype())
+  i = a[:, None]
+  j = a[None, :]
+  s = i + j
+  return ((-1.0) ** s * (s + 1.0)
+          * comb(n + i, n - j - 1)
+          * comb(n + j, n - i - 1)
+          * comb(s, i) ** 2)
+
+
 @jit(static_argnames=("n", "kind",))
 def pascal(n: int, kind: str | None = None) -> Array:
   r"""Create a Pascal matrix approximation of order n.
@@ -2891,6 +3026,71 @@ def _binom(n, k):
   b = lax.lgamma(n - k + 1.0)
   c = lax.lgamma(k + 1.0)
   return lax.exp(a - b - c)
+
+
+@jit(static_argnames=("n", "kind",))
+def invpascal(n: int, kind: str | None = None) -> Array:
+  r"""Compute the inverse of the Pascal matrix of order n.
+
+  JAX implementation of :func:`scipy.linalg.invpascal`.
+
+  The inverses of the lower and upper Pascal matrices have a simple closed
+  form,
+
+  .. math::
+
+     L^{-1}_{ij} = (-1)^{i - j} \binom{i}{j}, \qquad U^{-1} = (L^{-1})^T,
+
+  and the symmetric inverse satisfies :math:`P_S^{-1} = U^{-1} L^{-1}`.
+
+  Args:
+    n: the size of the matrix to create.
+    kind: (optional) must be one of ``lower``, ``upper``, or ``symmetric``
+      (default).
+
+  Returns:
+    The inverse of the Pascal matrix of shape ``(n, n)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.invpascal`, this function does not support
+    ``exact=True``. The entries are computed in floating point through
+    :func:`~jax.scipy.special.gammaln`-based binomial coefficients.
+
+  See Also:
+    :func:`jax.scipy.linalg.pascal`
+
+  Examples:
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   print(jax.scipy.linalg.invpascal(4, kind="lower"))
+    ...   print(jax.scipy.linalg.invpascal(5))
+    [[ 1. -0.  0. -0.]
+     [-1.  1. -0.  0.]
+     [ 1. -2.  1. -0.]
+     [-1.  3. -3.  1.]]
+    [[  5. -10.  10.  -5.   1.]
+     [-10.  30. -35.  19.  -4.]
+     [ 10. -35.  46. -27.   6.]
+     [ -5.  19. -27.  17.  -4.]
+     [  1.  -4.   6.  -4.   1.]]
+  """
+  if kind is None:
+    kind = "symmetric"
+
+  valid_kind = ["symmetric", "lower", "upper"]
+  if kind not in valid_kind:
+    raise ValueError(f"Expected kind to be one of: {valid_kind}; got {kind}")
+
+  a = jnp.arange(n, dtype=dtypes.default_float_dtype())
+  i = a[:, None]
+  j = a[None, :]
+  # Lower-triangular inverse: (-1)^(i-j) * binom(i, j).
+  L_inv = ((-1.0) ** (i - j)) * _binom(i, j)
+
+  if kind == "lower":
+    return L_inv
+  if kind == "upper":
+    return L_inv.T
+  return jnp.dot(L_inv.T, L_inv)
 
 
 @jit(static_argnames=("n", "full"))
