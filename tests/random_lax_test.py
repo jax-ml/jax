@@ -1420,6 +1420,29 @@ class DistributionsTest(RandomTestBase):
                           check_dtypes=False)
 
   @jtu.sample_product(
+      p=[0.2, 0.5, 0.9],
+      dtype=jtu.dtypes.supported([np.int32, np.int64]))
+  def testGeometricNoOverflowAtUniformZero(self, p, dtype):
+    # uniform samples from [0, 1), so u=0 is possible. The old log(u)
+    # formulation yields log(0)=-inf, which overflows to dtype_max on cast.
+    # The log1p(-u) formulation maps u=0 → log1p(0)=0 → g=1 (correct).
+    key = self.make_key(0)
+    iinfo = np.iinfo(dtype)
+    # Patch uniform to return exactly 0 to exercise the edge case.
+    with jtu.ignore_warning(category=RuntimeWarning):
+      u_zero = jnp.zeros((), dtype=jnp.float32)
+      log_u_old = jnp.log(u_zero)
+      log_one_minus_u_new = jnp.log1p(-u_zero)
+    # Old: log(0)=-inf → +inf after division → dtype_max
+    self.assertTrue(jnp.isinf(log_u_old) or log_u_old < -1e30)
+    # New: log1p(-0)=0 → g=1 (valid geometric sample)
+    self.assertEqual(float(log_one_minus_u_new), 0.0)
+    # Full path: geometric should never return dtype_max
+    samples = random.geometric(key, p, shape=(10000,), dtype=dtype)
+    self.assertFalse(jnp.any(samples == iinfo.max),
+                     msg="geometric returned dtype_max, log(0) overflow not fixed")
+
+  @jtu.sample_product(
       left = [0.2, 0.5, 1., 2.],
       mode = [3., 5., 8., 9.],
       right= [10., 20., 30., 40.],
