@@ -2727,33 +2727,24 @@ def _triangular_solve_transpose_rule(
                                    unit_diagonal=unit_diagonal)
   return [None, cotangent_b]
 
-def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
-                                   lower, transpose_a, conjugate_a,
-                                   unit_diagonal):
+def _triangular_solve_batching_rule(axis_data, batched_args, batch_dims, *,
+                                    left_side, lower, transpose_a, conjugate_a,
+                                    unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
+  if bx is batching.not_mapped and by is batching.not_mapped:
+    out = triangular_solve(x, y, left_side=left_side, lower=lower,
+                           transpose_a=transpose_a, conjugate_a=conjugate_a,
+                           unit_diagonal=unit_diagonal)
+    return out, None
   if bx is batching.not_mapped:
-    if left_side:
-      y = batching.moveaxis(y, by, -1)
-      y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
-      bdim_out = y.ndim - 1
-    else:
-      y = batching.moveaxis(y, by, -2)
-      y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
-      bdim_out = y.ndim - 2
-    out_flat = triangular_solve(
-        x, y_flat, left_side=left_side, lower=lower,
-        transpose_a=transpose_a, conjugate_a=conjugate_a,
-        unit_diagonal=unit_diagonal)
-    return out_flat.reshape(y.shape), bdim_out
+    x = batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
   else:
-    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
-                if i is not None)
-    x = batching.bdim_at_front(x, bx, size)
-    y = batching.bdim_at_front(y, by, size)
-    return triangular_solve(x, y, left_side=left_side, lower=lower,
-                            transpose_a=transpose_a, conjugate_a=conjugate_a,
-                            unit_diagonal=unit_diagonal), 0
+    x = batching.bdim_at_front(x, bx, axis_data.size, axis_data.explicit_mesh_axis)
+  y = batching.bdim_at_front(y, by, axis_data.size, axis_data.explicit_mesh_axis)
+  return triangular_solve(x, y, left_side=left_side, lower=lower,
+                          transpose_a=transpose_a, conjugate_a=conjugate_a,
+                          unit_diagonal=unit_diagonal), 0
 
 def _triangular_solve_lowering(
     ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
@@ -2814,7 +2805,7 @@ ad.defjvp2(triangular_solve_p,
            _triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
 ad.primitive_transposes[triangular_solve_p] = _triangular_solve_transpose_rule
-batching.primitive_batchers[triangular_solve_p] = _triangular_solve_batching_rule
+batching.fancy_primitive_batchers[triangular_solve_p] = _triangular_solve_batching_rule
 mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform="cpu")

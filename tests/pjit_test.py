@@ -11101,6 +11101,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     jax.jit(jax.grad(lambda *x: f(*x).k.sum(), argnums=(1, 2, 3))
             )(jnp.array(True), kv_obj, k, v)  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_triangular_solve_vmap(self, mesh):
+    cz = jax.random.normal(jax.random.key(0), (32, 32))
+    x = jax.random.normal(jax.random.key(1), (1024, 32), out_sharding=P("x"))
+    jax.vmap(jnp.linalg.solve, in_axes=(None, 0))(cz, x)  # doesn't crash
+    jax.jit(jax.vmap(jnp.linalg.solve, in_axes=(None, 0)))(cz, x)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
