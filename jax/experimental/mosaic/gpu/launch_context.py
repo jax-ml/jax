@@ -76,7 +76,7 @@ DEVICE_ID_ATTR = "mosaic_gpu.device_id_load"
 # Attribute used to mark that a kernel requires multicast support
 USES_MULTIMEM_ATTR = "mosaic_gpu.multimem_used"
 # Module attribute used to identify which kernel arguments are used with
-# multimem.
+# multimem or used accross several processes.
 MULTIMEM_ARGS_ATTR = "mosaic_gpu.multimem_args"
 
 
@@ -700,6 +700,7 @@ class LaunchContext:
   device_collective_metadata: ir.Value | None = None
   num_peers: int = 0
   num_params: int = 0
+  num_processes: int = 1
   tma_descriptors: dict[
       tuple[ir.Value, tuple[int, ...], int | None, tuple[MemRefTransform, ...], Any, int],
       ir.Value,
@@ -2063,6 +2064,14 @@ class LaunchContext:
         raise ValueError(f"peer index must be an i32, got {peer.type}")
       return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
     else:
+      # All multi-process parameters should be allocated in collective memory.
+      if self.num_processes > 1:
+        parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
+
+        self.module.operation.attributes[MULTIMEM_ARGS_ATTR] = (
+            ir.DenseIntElementsAttr.get(parameter_uses_multimem)
+        )
+
       # Collective metadata contains pointers of kernel arguments for each peer
       # device. The pointer has the following format:
       # [
@@ -2121,13 +2130,18 @@ class LaunchContext:
       return utils.MultimemRef(utils.ptr_as_memref(mc_ptr, result_type))
 
     parameter_id = self._find_kernel_argument_index(ref)
+    # In multiprocess mode, all parameters should be allocated within collective
+    # memory.
     module_attributes = self.module.operation.attributes
-    if MULTIMEM_ARGS_ATTR in module_attributes:
-      parameter_uses_multimem = np.array(module_attributes[MULTIMEM_ARGS_ATTR])
+    if self.num_processes > 1:
+      parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
     else:
-      parameter_uses_multimem = np.zeros(self.num_params, dtype=np.int64)
+      if MULTIMEM_ARGS_ATTR in module_attributes:
+        parameter_uses_multimem = np.array(module_attributes[MULTIMEM_ARGS_ATTR])
+      else:
+        parameter_uses_multimem = np.zeros(self.num_params, dtype=np.bool)
+      parameter_uses_multimem[parameter_id] = True
 
-    parameter_uses_multimem[parameter_id] = 1
     module_attributes[MULTIMEM_ARGS_ATTR] = ir.DenseIntElementsAttr.get(
         parameter_uses_multimem
     )

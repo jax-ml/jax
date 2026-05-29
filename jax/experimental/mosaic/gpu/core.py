@@ -280,10 +280,13 @@ def _mosaic_gpu_lowering_rule(
 
     if launch_context.MULTIMEM_ARGS_ATTR in module.operation.attributes:
       multimem_args = np.array(
-          module.operation.attributes[launch_context.MULTIMEM_ARGS_ATTR]
+          ir.DenseIntElementsAttr(
+              module.operation.attributes[launch_context.MULTIMEM_ARGS_ATTR]
+          ),
+          dtype=bool,
       )
       backend_config["multimem_parameters"] = ir.StringAttr.get(
-          ",".join(map(str, multimem_args))
+          ",".join(map(str, map(int, multimem_args)))
       )
 
   result_types, _ = mlir.ir_tree_registry.flatten([
@@ -717,6 +720,7 @@ def _launch(
         device_collective_metadata=device_collective_metadata,
         num_peers=num_peers,
         num_params=num_params,
+        num_processes=jax.process_count(),
     )
     with ctx.named_region("Init"):
       tmem_allocs: list[_TMEMAlloc | _TMEMDialectAlloc] = []
