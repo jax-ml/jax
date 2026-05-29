@@ -67,6 +67,7 @@ jax.scipy.linalg
    expm
    expm_frechet
    fiedler
+   fiedler_companion
    funm
    hadamard
    helmert
@@ -74,6 +75,8 @@ jax.scipy.linalg
    hankel
    hilbert
    inv
+   invhilbert
+   invpascal
    leslie
    lu
    lu_factor

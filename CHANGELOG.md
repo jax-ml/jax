@@ -16,6 +16,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added {func}`jax.scipy.linalg.invhilbert` for the closed-form inverse
+    of the Hilbert matrix ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.invpascal` for the inverse of the Pascal
+    matrix ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.fiedler_companion` for constructing the
+    pentadiagonal Fiedler companion matrix of a polynomial
+    ({jax-issue}`#10144`).
+
 ## JAX 0.10.1 (May 20, 2026)
 
 * New features
