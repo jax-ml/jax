@@ -1499,181 +1499,6 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
-LogicalResult EnqueueIndirectDMAOp::verifyGather(
-    MemRefType operand_ty, ArrayRef<int64_t> offsets_shape,
-    MemRefType result_ty) {
-  // Expected shapes:
-  //   Slice shape   : [s0, ..., sm]
-  //
-  //   1D offsets:
-  //     Operand shape : [z, s0, ..., sm]
-  //     Offsets shape : [o]
-  //     Result shape  : [o, s0, ..., sm]
-  //
-  //   2D offsets:
-  //     Operand shape : [1, z, s0, ..., sm]
-  //     Offsets shape : [1, o]
-  //     Result shape  : [1, o, s0, ..., sm]
-
-  // We've already thrown an error if the target is not VMEM. so this is just a
-  // sanity check.
-  CHECK(HasMemorySpace(result_ty, MemorySpace::kVmem));
-  uint64_t offsets_rank = offsets_shape.size();
-  uint64_t slice_rank = result_ty.getRank() - offsets_rank;
-  if (operand_ty.getRank() <= slice_rank) {
-    return emitOpError("Source (gather operand) rank must be > slice rank, ")
-           << "got source rank: " << operand_ty.getRank()
-           << ", slice rank: " << slice_rank;
-  }
-  uint64_t operand_sample_rank = operand_ty.getRank() - slice_rank;
-  ArrayRef<int64_t> result_offset_dims =
-      result_ty.getShape().take_front(offsets_rank);
-  ArrayRef<int64_t> result_slice_dims =
-      result_ty.getShape().take_back(slice_rank);
-  ArrayRef<int64_t> operand_slice_dims =
-      operand_ty.getShape().take_back(slice_rank);
-  ArrayRef<int64_t> operand_sample_dims =
-      operand_ty.getShape().take_front(operand_sample_rank);
-
-  // We require offsets shape and operand sample shape to be 1D or (1, N), and
-  // their ranks must match.
-  // Offsets shape : [o] or [1, o]
-  // Operand sample shape : [z] or [1, z]
-  if (offsets_rank > 2 || (offsets_rank == 2 && offsets_shape[0] != 1)) {
-    return emitOpError("Offsets shape must be 1D or (1, N), got (")
-           << absl::StrJoin(offsets_shape, ", ") << ")";
-  }
-  if (operand_sample_rank > 2 ||
-      (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
-    return emitOpError("Source (gather operand) sample shape must be ")
-           << "1D or (1, N), got (" << absl::StrJoin(operand_sample_dims, ", ")
-           << ")";
-  }
-  if (operand_sample_rank != offsets_rank) {
-    return emitOpError("Source (gather operand) sample rank must match ")
-           << "offsets rank, got " << operand_sample_rank << " vs "
-           << offsets_rank;
-  }
-
-  const std::string result_shape_str =
-      absl::StrJoin(result_ty.getShape(), ", ");
-
-  // Make sure that there is one output slice per offset.
-  // Offsets shape : [o] or [1, o]
-  // Result shape  : [o'0, .., o'p, s0, .., sm]
-  // [o] or [1, o] == [o'0, .., o'p]
-  if (!absl::c_equal(offsets_shape, result_offset_dims)) {
-    return emitOpError("Offsets shape (")
-           << absl::StrJoin(offsets_shape, ", ")
-           << ") must match the majormost dimensions of the target (gather "
-              "result) shape ("
-           << result_shape_str << ")";
-  }
-
-  // At each offset, we are copying an ND slice of data. Make sure that the
-  // slice shape is the same in the operand and the output for the gather.
-  // Operand shape : [z, s0, .., sm] or [1, z, s0, .., sm]
-  // Result shape :  [o, s'0, .., s'm] or [1, o, s'0, .., s'm]
-  // [s0, .., sm] == [s'0, .., s'm]
-  if (!absl::c_equal(operand_slice_dims, result_slice_dims)) {
-    const std::string plural = slice_rank == 1 ? "" : "s";
-    return emitOpError(absl::StrFormat(
-        "%d minormost dimension%s of the source (gather operand) shape (%s) "
-        "must match the minormost dimension%s of the target (gather result) "
-        "shape (%s)",
-        slice_rank, plural, absl::StrJoin(operand_ty.getShape(), ", "), plural,
-        result_shape_str));
-  }
-  return success();
-}
-
-LogicalResult EnqueueIndirectDMAOp::verifyScatter(
-    MemRefType updates_ty, ArrayRef<int64_t> offsets_shape,
-    MemRefType operand_ty) {
-  // Expected shapes:
-  //   Slice shape   : [s0, ..., sm]
-  //
-  //   1D offsets:
-  //     Operand shape : [z, s0, ..., sm]
-  //     Offsets shape : [o]
-  //     Updates shape : [o, s0, ..., sm]
-  //
-  //   2D offsets:
-  //     Operand shape : [1, z, s0, ..., sm]
-  //     Offsets shape : [1, o]
-  //     Updates shape : [1, o, s0, ..., sm]
-
-  // We've already thrown an error if the source is not VMEM. so this is just a
-  // sanity check.
-  CHECK(HasMemorySpace(updates_ty, MemorySpace::kVmem));
-  uint64_t offsets_rank = offsets_shape.size();
-  uint64_t slice_rank = updates_ty.getRank() - offsets_rank;
-  if (operand_ty.getRank() <= slice_rank) {
-    return emitOpError("Target (scatter operand) rank must be > slice rank, ")
-           << "got target rank: " << operand_ty.getRank()
-           << ", slice rank: " << slice_rank;
-  }
-  uint64_t operand_sample_rank = operand_ty.getRank() - slice_rank;
-  ArrayRef<int64_t> updates_offset_dims =
-      updates_ty.getShape().take_front(offsets_rank);
-  ArrayRef<int64_t> updates_slice_dims =
-      updates_ty.getShape().take_back(slice_rank);
-  ArrayRef<int64_t> operand_slice_dims =
-      operand_ty.getShape().take_back(slice_rank);
-  ArrayRef<int64_t> operand_sample_dims =
-      operand_ty.getShape().take_front(operand_sample_rank);
-
-  // We require offsets shape and operand sample shape to be 1D or (1, N), and
-  // their ranks must match.
-  // Offsets shape : [o] or [1, o]
-  // Operand sample shape : [z] or [1, z]
-  if (offsets_rank > 2 || (offsets_rank == 2 && offsets_shape[0] != 1)) {
-    return emitOpError("Offsets shape must be 1D or (1, N), got (")
-           << absl::StrJoin(offsets_shape, ", ") << ")";
-  }
-  if (operand_sample_rank > 2 ||
-      (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
-    return emitOpError("Target (scatter operand) sample shape must be ")
-           << "1D or (1, N), got (" << absl::StrJoin(operand_sample_dims, ", ")
-           << ")";
-  }
-  if (operand_sample_rank != offsets_rank) {
-    return emitOpError("Target (scatter operand) sample rank must match ")
-           << "offsets rank, got " << operand_sample_rank << " vs "
-           << offsets_rank;
-  }
-
-  const std::string updates_shape_str =
-      absl::StrJoin(updates_ty.getShape(), ", ");
-
-  // Make sure that there is one slice of updates per offset.
-  // Offsets shape : [o] or [1, o]
-  // Updates shape : [o'0, .., o'p, s0, .., sm]
-  // [o] or [1, o] == [o'0, .., o'p]
-  if (!absl::c_equal(offsets_shape, updates_offset_dims)) {
-    return emitOpError("Offsets shape (")
-           << absl::StrJoin(offsets_shape, ", ")
-           << ") must match the majormost dimensions of the source "
-              "(scatter updates) shape ("
-           << updates_shape_str << ")";
-  }
-
-  // At each offset, we are copying an ND slice of data. Make sure that the
-  // slice shape is the same in the updates and the operand for the scatter.
-  // Updates shape : [o, s0, .., sm] or [1, o, s0, .., sm]
-  // Operand shape : [z, s'0, .., s'm] or [1, z, s'0, .., s'm]
-  // [s0, .., sm] == [s'0, .., s'm]
-  if (!absl::c_equal(operand_slice_dims, updates_slice_dims)) {
-    const std::string plural = slice_rank == 1 ? "" : "s";
-    return emitOpError(absl::StrFormat(
-        "%d minormost dimension%s of the source (scatter updates) shape (%s) "
-        "must match the minormost dimension%s of the target (scatter operand) "
-        "shape (%s)",
-        slice_rank, plural, updates_shape_str, plural,
-        absl::StrJoin(operand_ty.getShape(), ", ")));
-  }
-  return success();
-}
 
 namespace {
 bool hasHbmOrTcVmemOrVmemSharedMemorySpace(MemRefType ty) {
@@ -1741,13 +1566,13 @@ LogicalResult EnqueueIndirectDMAOp::verify() {
   }
 
   if (is_gather) {
-    return verifyGather(/*operand_ty=*/source_ty,
+    return verifyGather(getOperation(), /*operand_shape=*/source_ty.getShape(),
                         /*offsets_shape=*/offsets_shape,
-                        /*result_ty=*/target_ty);
+                        /*results_memory_space=*/target_ty.getShape());
   }
-  return verifyScatter(/*updates_ty=*/source_ty,
+  return verifyScatter(getOperation(), /*updates_ty=*/source_ty.getShape(),
                        /*offsets_shape=*/offsets_shape,
-                       /*operand_ty=*/target_ty);
+                       /*operand_ty=*/target_ty.getShape());
 }
 
 void WaitDMA2Op::build(OpBuilder& builder, OperationState& state,

@@ -1491,14 +1491,7 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     attr-dict
   }];
   let hasVerifier = 1;
-  let extraClassDeclaration = extraBaseClassDeclaration # [{
-    LogicalResult verifyGather(MemRefType operand_ty,
-                               ArrayRef<int64_t> offsets_shape,
-                               MemRefType result_ty);
-    LogicalResult verifyScatter(MemRefType updates_ty,
-                                ArrayRef<int64_t> offsets_shape,
-                                MemRefType operand_ty);
-  }];
+  let extraClassDeclaration = extraBaseClassDeclaration;
 }
 
 // tpu.wait_dma2 waits for a DMA to complete.

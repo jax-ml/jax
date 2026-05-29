@@ -30,6 +30,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/tpu/stringify_util.h"
@@ -111,6 +112,14 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,
 /// Returns true if `op` is a transfer from shared to local memory.
 FailureOr<bool> isGather(Operation& op, MemRefType source_ty,
                          MemRefType target_ty);
+
+LogicalResult verifyGather(Operation* op, ArrayRef<int64_t> operand_shape,
+                           ArrayRef<int64_t> offsets_shape,
+                           ArrayRef<int64_t> result_shape);
+
+LogicalResult verifyScatter(Operation* op, ArrayRef<int64_t> updates_shape,
+                            ArrayRef<int64_t> offsets_shape,
+                            ArrayRef<int64_t> operand_shape);
 
 #define GEN_PASS_REGISTRATION
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
