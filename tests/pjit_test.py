@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections import OrderedDict, namedtuple
+import dataclasses
 import itertools
 import re
 from functools import partial, wraps
@@ -11069,6 +11070,36 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     with self.assertRaises(NotImplementedError):
       f(a, b, P(unreduced={'x'}))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_cond_fori_reduced_fwd(self, mesh):
+    k = jax.device_put(np.arange(8.0), P('x'))
+    v = jax.device_put(np.arange(8.0), P('x'))
+
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass
+    class KV:
+      k: jax.Array
+      v: jax.Array
+
+    kv_obj = KV(jax.reshard(k, P(reduced={'x'})),
+                jax.reshard(v, P(reduced={'x'})))
+
+    @jax.jit
+    def f(p1, kv_obj, k, v):
+      def body(_, kv_store):
+        return jax.lax.cond(
+            p1,
+            lambda: KV(
+                jax.reshard(k, P(reduced={'x'})),
+                jax.reshard(v, P(reduced={'x'})),
+            ),
+            lambda: kv_store,
+        )
+      return jax.lax.fori_loop(0, 10, body, kv_obj)
+
+    jax.jit(jax.grad(lambda *x: f(*x).k.sum(), argnums=(1, 2, 3))
+            )(jnp.array(True), kv_obj, k, v)  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

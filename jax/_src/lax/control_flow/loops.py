@@ -1087,7 +1087,8 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
 
   # initialize values to be used to accumulate pure constant gradients
   immut_const_avals = jaxpr.in_avals[num_ires+len(mut_consts_bar):num_consts]
-  ct_immut_consts = _map(ad_util.zeros_like_aval, immut_const_avals)
+  ct_immut_consts = _map(lambda a: ad_util.zeros_like_aval(a.to_ct_aval()),
+                         immut_const_avals)
 
   # prepare transpose inputs, unboxing RefAccums while noting which are linear
   trans_in, trans_tree = tree_flatten([ires, mut_consts_bar, ct_immut_consts,
@@ -1096,13 +1097,16 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
   trans_in = [x.inst().ref if l else x for l, x in zip(lin_refs, trans_in)]
 
   # prepare transposed jaxpr
-  accum_typeof = (lambda x: x.aval if isinstance(x, ad.GradAccum)
-                  else core.aval_qdd_from_current_val(typeof(x), x))
+  accum_typeof = lambda x: (x.aval if isinstance(x, ad.GradAccum)
+                            else core.aval_qdd_from_current_val(typeof(x), x))
   trans_avals, ext_avals = split_list(_map(accum_typeof, trans_in), [num_consts+num_carry])
   trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, accum_typeof(x)) for x in immut_xs_dot)
+  carry_dot_avals = tuple(accum_typeof(x) for x in carry_dot)
+  immut_consts_avals = tuple(accum_typeof(c) for c in immut_consts_dot)
   jaxpr_trans = _transpose_scan_jaxpr_fancy(
-      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
+      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals,
+      carry_dot_avals, immut_consts_avals)
 
   # run it
   outs = scan_p.bind(
@@ -1114,22 +1118,23 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
     if isinstance(a, ad.GradAccum): a.accum(x)
 
 # transpose_scan_jaxpr converts the jaxpr signature:
-#  Before: [(ires,  T d_mut     T d_pure), T c,  (CT a_mut, T a, eres)] -> [T c,  T b]
+#  Before: [(ires,  T d_mut     T d_pure), T c,  ( T a_mut, T a, eres)] -> [T c,  T b]
 #           ---------- consts -----------        --------- ext -------
 #
 #  After: [(ires, CT d_mut), (CT d_pure,  CT c), (CT a_mut, CT b, eres)] -> [(CT d_pure, CT c), CT a]
 #           --- consts ----  ----- carry ------  --------- ext --------
 @weakref_lru_cache
 def _transpose_scan_jaxpr_fancy(
-    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals
-) -> core.ClosedJaxpr:
+    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals, carry_dot_avals,
+    immut_consts_avals) -> core.ClosedJaxpr:
   def transposed(*args):
     args = [ad.RefAccum(typeof(x).inner_aval, x) if l else x
             for l, x in zip(lin_refs, args)]
     ires, mut_consts_bar, ct_immut_consts, ct_carry, mut_xs_bar, ct_ys, eres = \
         tree_unflatten(trans_tree, args)
-    immut_consts_dot = [ad.ValAccum(core.typeof(x), x) for x in ct_immut_consts]
-    carry_dot = [ad.ValAccum(core.typeof(x)) for x in ct_carry]
+    immut_consts_dot = [ad.ValAccum(aval, val)
+                        for aval, val in zip(immut_consts_avals, ct_immut_consts)]
+    carry_dot = [ad.ValAccum(a) for a in carry_dot_avals]
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
     primals = (ires + mut_consts_bar + immut_consts_dot + carry_dot + mut_xs_bar
                + immut_xs_dot + eres)
