@@ -1491,10 +1491,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(x, y)
 
   @parameterized.parameters(
-      ((128, 32), tcgen05.scales_layout()),
-      ((256, 32), tcgen05.b_scales_m64_collective_layout()),
+      tcgen05.scales_layout(),
+      tcgen05.b_scales_m64_collective_layout(),
   )
-  def test_load_store_tmem_scales_layout(self, shape, tmem_layout):
+  def test_load_store_tmem_scales_layout(self, tmem_layout):
+    shape = (tmem_layout.base_tile_shape[0], 32)
     reg_layout = tmem_layout.as_tiled_layout()
     def kernel(ctx, input, output, tmem):
       del ctx
