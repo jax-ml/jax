@@ -186,7 +186,7 @@ def _psum(x, axis_name, *, axis_index_groups, is_async):
 
 
 def _maybe_skip_one_sized_axes(axes):
-  if config.remove_size_one_mesh_axis_from_type.value:
+  if core.current_jaxpr_eqn_ctx().remove_size_one_mesh_axis:
     cur_mesh = get_abstract_mesh()
     return tuple(i for i in axes
                  if (size := cur_mesh.shape.get(i)) is None or size != 1)

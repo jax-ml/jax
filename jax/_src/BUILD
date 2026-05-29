@@ -526,6 +526,17 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "jaxpr_eqn_context",
+    srcs = ["jaxpr_eqn_context.py"],
+    type_checking = "pyrefly",
+    deps = [
+        ":config",
+        ":util",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
     name = "logging_config",
     srcs = ["logging_config.py"],
     type_checking = "pyrefly",
@@ -565,6 +576,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":frozen_dict",
+        ":jaxpr_eqn_context",
         ":layout",
         ":mesh",
         ":named_sharding",
@@ -951,6 +963,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":config",
+        ":jaxpr_eqn_context",
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
@@ -1087,6 +1100,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":jaxpr_eqn_context",
         ":profiler",
         ":source_info_util",
         ":state_types",

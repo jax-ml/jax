@@ -68,9 +68,10 @@ def _custom_evaluate_jaxpr(
         source_info_util.current_name_stack() + eqn.source_info.name_stack
     )
     traceback = eqn.source_info.traceback
-    with source_info_util.user_context(
-        traceback, name_stack=name_stack
-    ), eqn.ctx.manager:
+    with (
+        source_info_util.user_context(traceback, name_stack=name_stack),
+        core.JaxprEqnContextManager(eqn.ctx)
+    ):
       ans = eqn.primitive.bind(
           *util.safe_map(read, eqn.invars), **bind_params
       )

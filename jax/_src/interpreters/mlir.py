@@ -2147,7 +2147,7 @@ def jaxpr_subcomp(
       # If we cannot cache the lowering, lower inline.
       loc = source_info_to_location(ctx, eqn.primitive, eqn_name_stack, traceback)
       with (source_info_util.user_context(eqn.source_info.traceback), loc,
-            eqn.ctx.manager):
+            core.JaxprEqnContextManager(eqn.ctx)):
         axis_size_env = None
         rule_ctx = LoweringRuleContext(
             module_context=ctx, primitive=eqn.primitive,
@@ -2203,7 +2203,7 @@ def _cached_lowering_miss(
   platform_rules, default_rule, inline = _get_lowering_rules(
       ctx, eqn.primitive, eqn.ctx)
   with (source_info_util.user_context(eqn.source_info.traceback),
-        eqn.ctx.manager):
+        core.JaxprEqnContextManager(eqn.ctx)):
     avals_out = map(lambda v: v.aval, eqn.outvars)
     cache_entry = _emit_lowering_rule_as_fun(
         partial(_uncached_lowering, eqn.primitive, eqn.ctx, eqn.effects,

@@ -968,26 +968,8 @@ mesh_context_manager = config_ext.Config(
     include_in_jit_key=True,
     include_in_trace_context=True,
 )
-abstract_mesh_context_manager = config_ext.Config(
-    'abstract_mesh_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
 device_context = config_ext.Config(
     'device_context', None, include_in_jit_key=True
-)
-compute_on_context_manager = config_ext.Config(
-    'compute_on_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
-)
-xla_metadata_context_manager = config_ext.Config(
-    'xla_metadata_context_manager',
-    None,
-    include_in_jit_key=True,
-    include_in_trace_context=True,
 )
 pallas_tpu_interpret_mode_context_manager = config_ext.Config(
     'pallas_tpu_interpret_mode_context_manager',
@@ -1309,18 +1291,6 @@ default_prng_impl = enum_state(
     help=('Select the default PRNG implementation, used when one is not '
           'explicitly provided at seeding time.'))
 
-threefry_partitionable = bool_state(
-    name='jax_threefry_partitionable',
-    default=True,
-    upgrade=True,
-    help=('Enables internal threefry PRNG implementation changes that '
-          'render it automatically partitionable in some cases. Without this '
-          'flag, using the standard jax.random pseudo-random number generation '
-          'may result in extraneous communication and/or redundant distributed '
-          'computation. With this flag, the communication overheads disappear '
-          'in some cases.'),
-    include_in_jit_key=True,
-    include_in_trace_context=True)
 
 threefry_gpu_kernel_lowering = bool_state(
     name='jax_threefry_gpu_kernel_lowering',
@@ -1356,17 +1326,6 @@ embedded_constants_max_bytes = int_state(
           'embedded in the lowered HLO. Constants larger than this '
           'are hoisted as additional arguments to the executable. '
           'See https://docs.jax.dev/en/latest/internals/constants.html.'),
-    include_in_jit_key=True,
-    include_in_trace_context=True)
-
-# This config is temporary and should go away since this is a user problem.
-# If they don't want 1 sized mesh axis names to show up in sharding and vma
-# bits on ShapedArray, then their mesh (which they pass to set_mesh) should not
-# contain those axes at all.
-remove_size_one_mesh_axis_from_type = bool_state(
-    name='jax_remove_size_one_mesh_axis_from_type',
-    default=False,
-    help="Removes mesh axes of size 1 from ShapedArray.sharding and vma",
     include_in_jit_key=True,
     include_in_trace_context=True)
 

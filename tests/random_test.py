@@ -258,7 +258,7 @@ class PrngTest(jtu.JaxTestCase):
     finally:
       dispatch.apply_primitive = apply_primitive
 
-  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
+  @skipIf(jax.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testRngRandomBits(self, make_key):
     # Test specific outputs to ensure consistent random values between JAX versions.
@@ -331,7 +331,7 @@ class PrngTest(jtu.JaxTestCase):
         self.assertEqual(bits64.shape, (3,))
         self.assertEqual(bits64.dtype, expected_dtype)
 
-  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
+  @skipIf(jax.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testRngRandomBitsViewProperty(self, make_key):
     # TODO: add 64-bit if it ever supports this property.
@@ -348,7 +348,7 @@ class PrngTest(jtu.JaxTestCase):
     assert np.all(rand_bits_32 == rand_bits_32[0])
 
   @jtu.sample_product(case=_RANDOM_VALUES_CASES, make_key=KEY_CTORS)
-  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
+  @skipIf(jax.threefry_partitionable.value, 'changed random bit values')
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testRandomDistributionValues(self, case, make_key):
     """
@@ -378,7 +378,7 @@ class PrngTest(jtu.JaxTestCase):
         actual = func(key, **case.params, shape=case.shape)
       self.assertAllClose(actual, case.expected, atol=case.atol, rtol=case.rtol)
 
-  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
+  @skipIf(jax.threefry_partitionable.value, 'changed random bit values')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testPRNGValues(self, make_key):
     # Test to ensure consistent random values between JAX versions
@@ -440,7 +440,7 @@ class PrngTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, msg):
       random.bits(make_key(0), (3, 4), np.dtype('float16'))
 
-  @skipIf(not config.threefry_partitionable.value, 'enable after upgrade')
+  @skipIf(not jax.threefry_partitionable.value, 'enable after upgrade')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_threefry_split_fold_in_symmetry(self, make_key):
     with jax.default_prng_impl('threefry2x32'):
@@ -453,7 +453,7 @@ class PrngTest(jtu.JaxTestCase):
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
 
-  @skipIf(not config.threefry_partitionable.value, 'enable after upgrade')
+  @skipIf(not jax.threefry_partitionable.value, 'enable after upgrade')
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_threefry_split_vmapped_fold_in_symmetry(self, make_key):
     # See https://github.com/jax-ml/jax/issues/7708
@@ -468,7 +468,7 @@ class PrngTest(jtu.JaxTestCase):
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
 
-  @skipIf(config.threefry_partitionable.value, 'changed random bit values')
+  @skipIf(jax.threefry_partitionable.value, 'changed random bit values')
   def test_loggamma_nan_corner_case(self):
     # regression test for https://github.com/jax-ml/jax/issues/17922
     # This particular key previously led to NaN output.

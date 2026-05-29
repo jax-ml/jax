@@ -991,7 +991,7 @@ class set_mesh:
 
   Note: ``jax.set_mesh`` can only be used outside of ``jax.jit``.
   """
-  __slots__ = ["prev_abstract_mesh", "prev_mesh"]
+  __slots__ = ["prev_eqn_ctx", "prev_mesh"]
 
   def __init__(self, mesh: Mesh | None):
     if mesh is not None and not isinstance(mesh, Mesh):
@@ -1007,15 +1007,15 @@ class set_mesh:
 
     abs_mesh = empty_abstract_mesh if mesh is None else mesh.abstract_mesh
     conc_mesh = empty_concrete_mesh if mesh is None else mesh
-    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
-        abs_mesh)
+    self.prev_eqn_ctx = core.jaxpr_eqn_ctx.swap_local(
+        core.current_jaxpr_eqn_ctx().replace(cur_abstract_mesh=abs_mesh))
     self.prev_mesh = config.device_context.swap_local(conc_mesh)
 
   def __enter__(self):
     pass
 
   def __exit__(self, exc_type, exc_value, traceback):
-    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    core.jaxpr_eqn_ctx.set_local(self.prev_eqn_ctx)
     config.device_context.set_local(self.prev_mesh)
 
 

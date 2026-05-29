@@ -1705,7 +1705,7 @@ def jaxpr_subcomp(
         ctx, eqn.primitive, eqn_name_stack, eqn.source_info.traceback
     )
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
-          eqn.ctx.manager):
+          jax_core.JaxprEqnContextManager(eqn.ctx)):
       if eqn.primitive in lowering_rules[ctx.kernel_type]:
         if (eqn.primitive, ctx.kernel_type) not in skip_mlir_conversions:
           invals = [

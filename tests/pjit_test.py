@@ -7116,7 +7116,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       (('data', 'model', 'stage'), ('data', 'model')),
       (('data', 'stage'), 'data')
   )
-  @config.remove_size_one_mesh_axis_from_type(True)
+  @jax.remove_size_one_mesh_axis_from_type(True)
   @jtu.with_explicit_mesh((2, 2, 1), ('data', 'model', 'stage'))
   def test_spmd_axis_name_explicit_mode_assert_remove_one_size(
       self, in_spec, out_spec, mesh):
@@ -7573,8 +7573,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out_mesh = jax.sharding.get_mesh()
       self.assertEqual(out_mesh, mesh)
     finally:
-      config.abstract_mesh_context_manager.set_local(
-          mesh_lib.empty_abstract_mesh)
+      core.jaxpr_eqn_ctx.set_local(core.current_jaxpr_eqn_ctx().replace(
+          cur_abstract_mesh=mesh_lib.empty_abstract_mesh))
       config.device_context.set_local(None)
 
   @jtu.with_explicit_mesh((2,), ('x',))
@@ -8985,7 +8985,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ('2', P(('x', 'y')), P('x', None)),
       ('3', P('y'), P(None, None)),
   )
-  @config.remove_size_one_mesh_axis_from_type(True)
+  @jax.remove_size_one_mesh_axis_from_type(True)
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_remove_size_one_mesh_axis(self, arr_spec, type_spec, mesh):
     arr = jax.device_put(np.arange(16).reshape(8, 2), arr_spec)
@@ -10450,7 +10450,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y):
-      with config.remove_size_one_mesh_axis_from_type(True):
+      with jax.remove_size_one_mesh_axis_from_type(True):
         return x + y
 
     jaxpr = f.trace(arr1, arr2).jaxpr
@@ -10470,7 +10470,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for s in out.addressable_shards:
       self.assertArraysEqual(s.data, np.arange(8.))
 
-  @config.remove_size_one_mesh_axis_from_type(True)
+  @jax.remove_size_one_mesh_axis_from_type(True)
   @jtu.with_explicit_mesh((1, 1), ('x', 'y'))
   def test_top_level_ag_no_one_size_mesh_axis(self, mesh):
     arr = jax.device_put(np.arange(8).reshape(4, 2), P('x', 'y'))

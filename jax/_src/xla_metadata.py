@@ -15,7 +15,6 @@
 from functools import partial, wraps
 from typing import Any
 
-from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import tree_util
@@ -71,15 +70,14 @@ class XlaMetadataContextManager:
     if not self.updates:
       return
 
-    self.prev = config.xla_metadata_context_manager.get_local()
-    config.xla_metadata_context_manager.set_local(
-        xla_metadata_lib.update_metadata(self.prev, self.updates)
-    )
+    cur = core.current_jaxpr_eqn_ctx()
+    new_meta = xla_metadata_lib.update_metadata(cur.xla_metadata, self.updates)
+    self.prev = core.jaxpr_eqn_ctx.swap_local(cur.replace(xla_metadata=new_meta))
 
   def __exit__(self, exc_type, exc_value, traceback):
     if not self.updates:
       return
-    config.xla_metadata_context_manager.set_local(self.prev)
+    core.jaxpr_eqn_ctx.set_local(self.prev)
 
   def __call__(self, f):
     return _XlaMetadataWrapper(f, self)

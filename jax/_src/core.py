@@ -38,6 +38,13 @@ import numpy as np
 
 from jax._src import dtypes
 from jax._src import config
+from jax._src.jaxpr_eqn_context import (
+    JaxprEqnContext as JaxprEqnContext,
+    jaxpr_eqn_ctx as jaxpr_eqn_ctx,
+    current_jaxpr_eqn_ctx as current_jaxpr_eqn_ctx,
+    JaxprEqnContextManager as JaxprEqnContextManager,
+    remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
+)
 from jax._src import effects
 from jax._src.frozen_dict import FrozenDict
 from jax._src import mesh as mesh_lib
@@ -63,7 +70,6 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
-from jax._src import xla_metadata_lib
 
 traceback_util.register_exclusion(__file__)
 
@@ -326,74 +332,7 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
     return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
-# This context manager is fairly hot, because it is frequently called for every
-# jaxpr equation.
-# This context manager is implemented as a class with explicit __enter__ and
-# __exit__ methods since a @contextlib.contextmanager is significantly slower.
-# We also in effect fuse four other context managers into one, mostly to
-# save allocations.
-class JaxprEqnContextManager:
-  __slots__ = ['context', 'prevs', 'prev_xla_metadata']
 
-  def __init__(self, context):
-    self.context = context
-
-  def __enter__(self):
-    if self.context.xla_metadata:
-      self.prev_xla_metadata = config.xla_metadata_context_manager.get_local()
-      updated = xla_metadata_lib.update_metadata(
-          self.prev_xla_metadata, self.context.xla_metadata)
-      config.xla_metadata_context_manager.set_local(updated)
-    self.prevs = [(c, c.swap_local(v)) for c, v in self.context.configs]
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    if self.context.xla_metadata:
-      config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
-    for c, prev in self.prevs:
-      c.set_local(prev)
-
-class JaxprEqnContext:
-
-  __slots__ = ['compute_type', 'threefry_partitionable', 'cur_abstract_mesh',
-               'remove_size_one_mesh_axis', 'xla_metadata', 'configs']
-
-  compute_type: str | None
-  threefry_partitionable: bool
-  xla_metadata: dict[str, Any] | None
-  cur_abstract_mesh: mesh_lib.AbstractMesh
-  remove_size_one_mesh_axis: bool
-
-  def __init__(self):
-    self.compute_type = config.compute_on_context_manager.value
-    self.threefry_partitionable = config.threefry_partitionable.value
-    self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
-    self.remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.value
-    # Don't put xla_metadata in configs cause it does extra stuff for __enter__
-    self.xla_metadata = xla_metadata_lib.current_xla_metadata()
-    self.configs = [(config.compute_on_context_manager, self.compute_type),
-                    (config.threefry_partitionable, self.threefry_partitionable),
-                    (config.abstract_mesh_context_manager, self.cur_abstract_mesh),
-                    (config.remove_size_one_mesh_axis_from_type, self.remove_size_one_mesh_axis)]
-
-  @property
-  def manager(self):
-    return JaxprEqnContextManager(self)
-
-  def __repr__(self):
-    s = [f"{c.name}={v}" for c, v in self.configs]
-    s = ', '.join(s)
-    return f"JaxprEqnContext({s}, xla_metadata={self.xla_metadata})"
-
-  def __hash__(self):
-    configs_val = tuple(v for _, v in self.configs)
-    return hash((configs_val,
-                 (None if self.xla_metadata is None else
-                  tuple(sorted(self.xla_metadata.items())))))
-
-  def __eq__(self, other):
-    self_val = tuple(v for _, v in self.configs)
-    other_val = tuple(v for _, v in other.configs)
-    return self_val == other_val and self.xla_metadata == other.xla_metadata
 
 
 class JaxprEqn:
@@ -453,7 +392,7 @@ class JaxprEqn:
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
-  ctx = ctx or JaxprEqnContext()
+  ctx = ctx or current_jaxpr_eqn_ctx()
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
@@ -720,7 +659,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
     with (source_info_util.user_context(traceback, name_stack=name_stack),
-          eqn.ctx.manager):
+          JaxprEqnContextManager(eqn.ctx)):
       ans = eqn.primitive.bind(*map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       foreach(write, eqn.outvars, ans)
@@ -1801,7 +1740,7 @@ def mem_space_to_kind(mem_space: MemorySpace) -> str:
 
 
 @cache(max_size=4096,
-       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
+       trace_context_in_key=lambda: current_jaxpr_eqn_ctx().remove_size_one_mesh_axis)
 def update_aval_with_sharding(aval, sharding, mat=None):
   if isinstance(sharding, NamedSharding):
     s = NamedSharding(sharding.mesh.abstract_mesh,
@@ -2210,7 +2149,7 @@ def _maybe_modify_sharding(sharding, ndim):
   else:
     out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
-  if config.remove_size_one_mesh_axis_from_type.value:
+  if current_jaxpr_eqn_ctx().remove_size_one_mesh_axis:
     out = out.update(spec=remove_size_one_mesh_axis(out.spec, out.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
@@ -2231,7 +2170,7 @@ def _check_divisibility(sharding, shape):
           f" Got shape: {shape} and sharding {sharding}")
 
 @cache(max_size=4096,
-       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
+       trace_context_in_key=lambda: current_jaxpr_eqn_ctx().remove_size_one_mesh_axis)
 def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 
@@ -2259,7 +2198,7 @@ def get_sharding(sharding, shape):
 
 
 @cache(max_size=4096,
-       trace_context_in_key=lambda: config.remove_size_one_mesh_axis_from_type.value)
+       trace_context_in_key=lambda: current_jaxpr_eqn_ctx().remove_size_one_mesh_axis)
 def get_mat(mat, mesh):
   if mesh.empty:
     assert mat.empty, mat
@@ -2275,7 +2214,7 @@ def get_mat(mat, mesh):
           "Axes mentioned in `manual_axis_type` field of ShapedArray should be"
           f" of type `Manual`. Got manual_axis_type={mat} with axis: {i} of"
           f" type {mesh._name_to_type[i]}")
-  if config.remove_size_one_mesh_axis_from_type.value:
+  if remove_size_one_mesh_axis_from_type.value:
     varying = frozenset(i for i in mat.varying
                         if in_axis_env(i) or mesh.shape[i] != 1)
     unreduced = frozenset(u for u in mat.unreduced if mesh.shape[u] != 1)
@@ -2588,7 +2527,7 @@ def pvary(x, axis_name):
   del axes
   # TODO(yashkatariya): Remove this handling and remove_size_one_mesh_axis_from_type
   # generally from JAX.
-  if config.remove_size_one_mesh_axis_from_type.value and not cur_mesh.empty:
+  if current_jaxpr_eqn_ctx().remove_size_one_mesh_axis and not cur_mesh.empty:
     new_axes = tuple(i for i in new_axes if cur_mesh.shape[i] != 1)
     if not new_axes:
       return x
@@ -3618,7 +3557,7 @@ def _check_jaxpr(
                   else x.aval for x in in_atoms]  # use in_atoms for dyn shapes
 
       # Compute the type of the primitive application.
-      with eqn.ctx.manager:
+      with JaxprEqnContextManager(eqn.ctx):
         if prim in custom_typechecks:
           out_type, eqn_effects = custom_typechecks[prim](
             ctx_factory, *in_atoms, **eqn.params)

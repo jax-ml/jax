@@ -21,7 +21,7 @@ from jax._src import typing
 import numpy as np
 
 from jax._src import api
-from jax._src import config
+from jax._src import core
 from jax._src import numpy as jnp
 from jax._src.lax import lax
 from jax._src.lax import slicing as lax_slicing
@@ -42,7 +42,7 @@ def _rbg_seed(seed: typing.Array) -> typing.Array:
   return jnp.concatenate([halfkey, halfkey])
 
 def _rbg_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
-  if config.threefry_partitionable.value:
+  if core.current_jaxpr_eqn_ctx().threefry_partitionable:
     _threefry_split = threefry2x32._threefry_split_foldlike
   else:
     _threefry_split = threefry2x32._threefry_split_original

@@ -238,10 +238,10 @@ def physicalize_interp(
         source_info_util.current_name_stack() + eqn.source_info.name_stack
     )
     with (
-        source_info_util.user_context(
-            eqn.source_info.traceback, name_stack=name_stack
-        ),
-        eqn.ctx.manager,
+      source_info_util.user_context(
+          eqn.source_info.traceback, name_stack=name_stack
+      ),
+      core.JaxprEqnContextManager(eqn.ctx),
     ):
       # need to check types and then invoke the correct rule.
       ctx = Context(

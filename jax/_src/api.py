@@ -1201,7 +1201,7 @@ def vmap(fun: F,
     explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
     _check_ema_unmapped_args(explicit_mesh_axis, args_flat, in_axes_flat)
     if spmd_axis_name is not None and explicit_mesh_axis is not None:
-      if config.remove_size_one_mesh_axis_from_type.value:
+      if core.current_jaxpr_eqn_ctx().remove_size_one_mesh_axis:
         mesh = get_abstract_mesh()
         spmd_axis_name = tuple(i for i in spmd_axis_name if mesh.shape[i] != 1)
       if spmd_axis_name == explicit_mesh_axis:

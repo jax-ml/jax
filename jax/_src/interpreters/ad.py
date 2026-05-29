@@ -412,7 +412,7 @@ def backward_pass3(
       lin_eqns.append(eqn)
     else:
       params = eqn.primitive.get_bind_params(eqn.params)
-      with eqn.ctx.manager, _name_stack_ctx(eqn.source_info):
+      with core.JaxprEqnContextManager(eqn.ctx), _name_stack_ctx(eqn.source_info):
         ans = eqn.primitive.bind(*map(read, eqn.invars), **params)
       ans = ans if eqn.primitive.multiple_results else [ans]
       foreach(env.setdefault, eqn.outvars, ans)
@@ -424,7 +424,7 @@ def backward_pass3(
       acc.accum(ct)  # jaxpr.outvars can have Literals, env can have inst zeros
   with ctx:
     for eqn in lin_eqns[::-1]:
-      with eqn.ctx.manager, _name_stack_ctx(eqn.source_info):
+      with core.JaxprEqnContextManager(eqn.ctx), _name_stack_ctx(eqn.source_info):
         if eqn.primitive is core.empty_ref_p:
           env.pop(eqn.outvars[0]).freeze()
         elif eqn.primitive.ref_primitive:
