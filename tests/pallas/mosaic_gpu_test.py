@@ -4396,11 +4396,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
 
   def test_collapsing_several_non_unit_tiled_dimensions_raises(self):
-    # TODO(bchetioui): in warpgroup semantics, we are not attempting to commute
-    # transforms before lowering, so fail with a different error. We should
-    # try to bubble up all the transforms as well, just in order to fail with
-    # a nice readable error.
-    self.skip_if_wg_semantics()
     def kernel(out, smem):
       out[...] = smem.reshape(128, 128)[...]
 
