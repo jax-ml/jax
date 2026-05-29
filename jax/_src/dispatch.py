@@ -720,7 +720,7 @@ ad.primitive_jvps[device_put_p] = partial(ad.linear_jvp, device_put_p)
 ad.primitive_transposes[device_put_p] = _device_put_transpose
 
 def _device_put_batcher(batched_args, batch_dims, **params):
-  mapped_batch_dims = [bd for bd in batch_dims if bd is not batching.not_mapped]
+  mapped_batch_dims = [bd for bd in batch_dims if bd is not None]
   assert not mapped_batch_dims or all(
       mapped_batch_dims[0] == bd for bd in mapped_batch_dims[1:]
   ), batch_dims

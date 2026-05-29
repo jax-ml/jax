@@ -105,7 +105,7 @@ def _fusible_trivial_batching_rule(axis_data, args, dims, **kwargs):
     raise NotImplementedError('fusible does not support non-trivial batching')
 
   unbatched_args = tuple(
-      a if (d is batching.not_mapped or d is None) else a[d]
+      a if (d is None or d is None) else a[d]
       for a, d in zip(args, dims, strict=True)
   )
   out_unbatched = fusible_p.bind(*unbatched_args, **kwargs)

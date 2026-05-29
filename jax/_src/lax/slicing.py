@@ -1586,7 +1586,7 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
   # since it should have easier rules (especially compared to gather).
   operand, *start_indices_and_dyn = batched_args
   operand_bd, *start_idx_and_dyn_bds = batch_dims
-  ndims = operand.ndim - (0 if operand_bd is batching.not_mapped else 1)
+  ndims = operand.ndim - (0 if operand_bd is None else 1)
   dims = tuple(range(ndims))
   start_indices, dyn_slice_sizes = util.split_list(start_indices_and_dyn, [ndims])
   start_idx_bds, dyn_slice_size_bds = util.split_list(start_idx_and_dyn_bds, [ndims])
@@ -1730,7 +1730,7 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
   # scatter always.
   operand, update, *start_idx = batched_args
   operand_bd, update_bd, *start_idx_bd = batch_dims
-  update_shape = (np.shape(update) if update_bd is batching.not_mapped
+  update_shape = (np.shape(update) if update_bd is None
                   else tuple(np.delete(np.shape(update), update_bd)))
   dims = tuple(range(len(update_shape)))
   dnums = ScatterDimensionNumbers(

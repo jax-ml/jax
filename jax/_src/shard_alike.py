@@ -70,10 +70,10 @@ def _shard_alike_batcher(batched_args, batch_dims):
   xd, yd = batch_dims
   if xd == yd:
     return shard_alike(x, y), (xd, yd)
-  elif xd is batching.not_mapped:
+  elif xd is None:
     x = batching.broadcast(x, y.shape[yd], yd, None)
     return shard_alike(x, y), (yd, yd)
-  elif yd is batching.not_mapped:
+  elif yd is None:
     y = batching.broadcast(y, x.shape[xd], xd, None)
     return shard_alike(x, y), (xd, xd)
   else:

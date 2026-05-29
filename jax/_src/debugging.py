@@ -117,7 +117,7 @@ def debug_batching_rule(args, dims, *, primitive, **params):
                    if i is not None)
   # TODO(sharadmv): implement in terms of rolled loop unstead of unrolled.
   def get_arg_at_dim(i, dim, arg):
-    if dim is batching.not_mapped:
+    if dim is None:
       # Broadcast unmapped argument
       return arg
     return lax.index_in_dim(arg, i, axis=dim, keepdims=False)

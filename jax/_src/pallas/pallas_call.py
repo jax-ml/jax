@@ -355,7 +355,7 @@ def _batch_block_mapping(
     if not isinstance(unflat_indices, tuple):
       unflat_indices = (unflat_indices,)
     unflat_indices = list(unflat_indices)
-    if dim is not batching.not_mapped:
+    if dim is not None:
       unflat_indices.insert(dim, new_idx)
     return tuple(unflat_indices)
   idx_avals = [pallas_core.index_map_grid_aval, *block_mapping.index_map_jaxpr.in_avals]
@@ -370,7 +370,7 @@ def _batch_block_mapping(
         idx_avals)
   new_index_map_out_tree = out_tree_thunk()
   shape = block_mapping.block_shape
-  if dim is batching.not_mapped:
+  if dim is None:
     new_block_shape = shape
     new_array_aval = block_mapping.array_aval
   else:
@@ -412,7 +412,7 @@ def _broadcast_input_output_aliases(
   for input_index, _ in input_output_aliases:
     dim = dims_[input_index]
     dims_[input_index] = 0
-    if dim is batching.not_mapped:
+    if dim is None:
       args_[input_index] = batching.broadcast(
           args_[input_index], axis_size, 0, None)
     elif dim != 0:
@@ -456,7 +456,7 @@ def _batch_with_explicit_loop(
   (axis_size,) = {
       arg.shape[dim]
       for arg, dim in zip(args, dims)
-      if dim is not batching.not_mapped
+      if dim is not None
   }
 
   args, dims = _broadcast_input_output_aliases(
@@ -481,7 +481,7 @@ def _batch_with_explicit_loop(
     for arg, dim in zip(args, dims):
       # If the argument is mapped, extract a slice of size 1 in the mapped
       # dimension at the current index.
-      if dim is batching.not_mapped:
+      if dim is None:
         batch_args.append(arg)
       else:
         batch_args.append(
@@ -565,7 +565,7 @@ def _pallas_call_batching_rule(
 
   def _maybe_squeeze_out_bdim(x: jax_typing.Array, bdim: int | batching.NotMapped
                               ) -> jax_typing.Array:
-    return x if bdim is batching.not_mapped else jnp.squeeze(x, axis=bdim)
+    return x if bdim is None else jnp.squeeze(x, axis=bdim)
 
   # this is the _global_ axis size if axis_data.explicit_mesh_axis is not None
   # we want to convert it to the local axis size
@@ -614,13 +614,13 @@ def _pallas_call_batching_rule(
       dims, [grid_mapping.num_dynamic_grid_bounds]
   )
   if all(
-      bdim is batching.not_mapped or arg.shape[bdim] == 1
+      bdim is None or arg.shape[bdim] == 1
       for arg, bdim in zip(dynamic_grid_args, dynamic_grid_dims)
   ):
     dynamic_grid_args = safe_map(
         _maybe_squeeze_out_bdim, dynamic_grid_args, dynamic_grid_dims
     )
-  elif any(bdim is not batching.not_mapped for bdim in dynamic_grid_dims):
+  elif any(bdim is not None for bdim in dynamic_grid_dims):
     # TODO(amagni, sharadmv): Explore possibility of batching dynamic grid
     # bounds.
     if ema:
@@ -651,11 +651,11 @@ def _pallas_call_batching_rule(
     # vmapping over 1-sized dimensions, we can just get rid of the dimensions
     # and pretend we were never vmapped over them at all.
     if all(
-        bdim is batching.not_mapped or arg.shape[bdim] == 1
+        bdim is None or arg.shape[bdim] == 1
         for arg, bdim in zip(scalar_args, scalar_bdims)
     ):
       scalar_args = safe_map(_maybe_squeeze_out_bdim, scalar_args, scalar_bdims)
-      scalar_bdims = [batching.not_mapped] * len(scalar_args)
+      scalar_bdims = [None] * len(scalar_args)
       args = (*scalar_args, *args)
       dims = (*scalar_bdims, *bdims)
     else:

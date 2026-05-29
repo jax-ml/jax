@@ -1149,7 +1149,7 @@ def _transpose_scan_jaxpr_fancy(
 def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
                         num_consts, num_carry, unroll):
   num_ys = len(jaxpr.out_avals) - num_carry
-  orig_batched = [d is not batching.not_mapped for d in dims]
+  orig_batched = [d is not None for d in dims]
   const_batched, init_batched, xs_batched = split_list(orig_batched, [num_consts, num_carry])
 
   # Fixpoint computation of which carry are batched: either
@@ -1173,22 +1173,22 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
 
   consts, init, xs = split_list(args, [num_consts, num_carry])
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])
-  new_consts = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
+  new_consts = [batching.moveaxis(x, d, 0) if d is not None and d != 0
                 else x for x, d in zip(consts, consts_bdims)]
   new_init = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
               if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]
-  new_xs = [batching.moveaxis(x, d, 1) if d is not batching.not_mapped and d != 1
+  new_xs = [batching.moveaxis(x, d, 1) if d is not None and d != 1
             else x for x, d in zip(xs, xs_bdims)]
   new_args = new_consts + new_init + new_xs
 
   outs = scan_p.bind(
       *new_args, reverse=reverse, length=length, jaxpr=jaxpr_batched,
       num_consts=num_consts, num_carry=num_carry, unroll=unroll)
-  carry_bdims = [0 if b else batching.not_mapped for b in carry_batched]
-  ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
+  carry_bdims = [0 if b else None for b in carry_batched]
+  ys_bdims = [1 if b else None for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
 def _scan_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn
@@ -1747,7 +1747,7 @@ def _while_loop_batching_rule(axis_data, args, dims, cond_nconsts, cond_jaxpr,
   if any(_OrderedIOEffect in fn.effects for fn in [body_jaxpr, cond_jaxpr]):
     raise Exception("Ordered IO effects not supported in vmap.")
 
-  orig_batched = [d is not batching.not_mapped for d in dims]
+  orig_batched = [d is not None for d in dims]
   cconst_bat, bconst_bat, init_bat = split_list(orig_batched, [cond_nconsts, body_nconsts])
   cconsts, bconsts, init = split_list(args, [cond_nconsts, body_nconsts])
   cconst_dims, bconst_dims, init_dims = split_list(dims, [cond_nconsts, body_nconsts])
@@ -1804,13 +1804,13 @@ def _while_loop_batching_rule(axis_data, args, dims, cond_nconsts, cond_jaxpr,
   # into place.
   new_init = []
   for x, old_axis, new_axis in zip(init, init_dims, carry_dims):
-    if old_axis is batching.not_mapped and new_axis is not batching.not_mapped:
+    if old_axis is None and new_axis is not None:
       new_init.append(batching.broadcast(x, axis_data.size, new_axis,
                                          axis_data.explicit_mesh_axis))
-    elif old_axis is batching.not_mapped and new_axis is batching.not_mapped:
+    elif old_axis is None and new_axis is None:
       new_init.append(x)
     else:
-      assert new_axis is not batching.not_mapped
+      assert new_axis is not None
       new_init.append(batching.moveaxis(x, old_axis, new_axis))
 
   outs = while_p.bind(*(cconsts + bconsts + new_init),
@@ -2726,7 +2726,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype,
                                      algorithm, out_sharding):
   keys, = batched_args
   bd, = batch_dims
-  if bd is batching.not_mapped:
+  if bd is None:
     return lax.rng_bit_generator_p.bind(
         keys, shape=shape, dtype=dtype, algorithm=algorithm,
         out_sharding=out_sharding), (None, None)

@@ -1751,7 +1751,7 @@ class RBGPRNGTest(CommonRandomTest):
     self.assertEqual(out.shape, keys.shape)
 
   @jax.debug_key_reuse(False)
-  def test_vmap_split_not_mapped_key(self):
+  def test_vmap_split_unmapped_key(self):
     key = self.make_key(73)
     single_split_key = random.split(key)
     vmapped_keys = vmap(lambda _: random.split(key))(jnp.zeros(3,))

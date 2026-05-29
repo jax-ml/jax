@@ -475,8 +475,8 @@ def io_callback_batching_rule(
   from jax._src.lax.control_flow.loops import map as lax_map  # pyrefly: ignore[missing-import]
   if ordered:
     raise ValueError("Cannot `vmap` ordered IO callback.")
-  is_batched = [d is not batching.not_mapped for d in dims]
-  new_args = [arg if dim is batching.not_mapped else
+  is_batched = [d is not None for d in dims]
+  new_args = [arg if dim is None else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   unbatched_args, batched_args = util.partition_list(is_batched, new_args)
   def _batch_fun(batched_args):

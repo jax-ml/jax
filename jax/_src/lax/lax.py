@@ -8271,7 +8271,7 @@ def _reduce_batch_rule(batched_args, batch_dims, *, computation, jaxpr,
   num_operands = len(batched_args) // 2
   operands, init_values = split_list(batched_args, [num_operands])
   operand_bdims, init_value_bdims = split_list(batch_dims, [num_operands])
-  if all(init_value_bdim is batching.not_mapped
+  if all(init_value_bdim is None
          for init_value_bdim in init_value_bdims):
     size = next(x.shape[ax] for x, ax in zip(batched_args, batch_dims)
                 if ax is not None)

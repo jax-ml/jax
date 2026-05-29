@@ -766,7 +766,7 @@ def _batch_indexer(
           new_indices.append(idx)
           continue
         dim = dim.start
-        if dim is batching.not_mapped:
+        if dim is None:
           # Broadcasting the slice is free (the start index stays the same)
           new_indices.append(idx)
         else:
@@ -778,7 +778,7 @@ def _batch_indexer(
         if not shapeof(idx):
           new_indices.append(idx)
         else:
-          if dim is batching.not_mapped:
+          if dim is None:
             bcast_dims = tuple(range(1, np.ndim(idx) + 1))
             idx = lax.broadcast_in_dim(idx, new_integer_indexer_shape,
                                        bcast_dims)
@@ -786,7 +786,7 @@ def _batch_indexer(
             idx = batching.moveaxis(idx, dim, 0)
           new_indices.append(idx)
     else:
-      if ref_dim is not batching.not_mapped:
+      if ref_dim is not None:
         if not isinstance(idx, indexing.Slice):
           if shapeof(idx):
             bcast_dims = tuple(range(1, core.typeof(idx).ndim + 1))
@@ -815,7 +815,7 @@ def shapeof(x):
 
 def _get_vmap(batched_args, batched_dims, *, tree):
   axis_size, = {x.shape[d] for x, d in zip(batched_args, batched_dims)
-                if d is not batching.not_mapped}
+                if d is not None}
   ref, *flat_idxs = batched_args
   ref_dim, *flat_idx_dims = batched_dims
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
@@ -823,7 +823,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
     return get_p.bind(ref, *flat_idxs, tree=tree), ref_dim
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
-  idx_is_batched = any(i_dim is not batching.not_mapped
+  idx_is_batched = any(i_dim is not None
                        for i_dim in flat_idx_dims)
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
@@ -865,7 +865,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
     out = lax.transpose(out, transpose_order)
     out_bdim = 0
   else:
-    if ref_dim is not batching.not_mapped:
+    if ref_dim is not None:
       if will_add_int_batcher:
         if not int_indexers_contiguous:
           # In this case the indexer is always moved to the front.
@@ -891,9 +891,9 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
-  ref_is_batched = ref_dim is not batching.not_mapped
-  val_is_batched = val_dim is not batching.not_mapped
-  idx_is_batched = any(i_dim is not batching.not_mapped
+  ref_is_batched = ref_dim is not None
+  val_is_batched = val_dim is not None
+  idx_is_batched = any(i_dim is not None
                        for i_dim in flat_idx_dims)
 
   if not ref_is_batched:
@@ -982,9 +982,9 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
-  ref_is_batched = ref_dim is not batching.not_mapped
-  val_is_batched = val_dim is not batching.not_mapped
-  idx_is_batched = any(i_dim is not batching.not_mapped
+  ref_is_batched = ref_dim is not None
+  val_is_batched = val_dim is not None
+  idx_is_batched = any(i_dim is not None
                        for i_dim in flat_idx_dims)
 
   if not ref_is_batched:

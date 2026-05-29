@@ -421,7 +421,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
 
 
 def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
-  orig_bat = [d is not batching.not_mapped for d in dims]
+  orig_bat = [d is not None for d in dims]
 
   params, b = _split_linear_solve_args(args, const_lengths)
   params_dims, b_dims = _split_linear_solve_args(dims, const_lengths)
@@ -479,7 +479,7 @@ def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
   # Move batched axes to the front
   new_params = [
       batching.moveaxis(x, d, 0)
-      if d is not batching.not_mapped and d != 0 else x
+      if d is not None and d != 0 else x
       for x, d in zip(_flatten(params), _flatten(params_dims))
   ]
   # Broadcast out b if necessary
@@ -494,7 +494,7 @@ def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
       *(new_params + new_b),
       const_lengths=const_lengths,
       jaxprs=batched_jaxprs)
-  out_dims = [0 if batched else batching.not_mapped for batched in solve_x_bat]
+  out_dims = [0 if batched else None for batched in solve_x_bat]
   return outs, out_dims
 
 

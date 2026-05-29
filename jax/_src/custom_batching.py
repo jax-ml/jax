@@ -30,7 +30,6 @@ from jax._src import util
 from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.interpreters.batching import not_mapped
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
@@ -218,7 +217,7 @@ def check_vmap_rule_trees(rule, original_out_tree, out_tree, out_batched_tree):
 
 # Like batching.bdim_at_front, but doesn't broadcast if not mapped
 def maybe_bdim_at_front(x, bdim):
-  if bdim is not_mapped:
+  if bdim is None:
     return x
   else:
     return util.moveaxis(x, bdim, 0)
@@ -246,7 +245,7 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
   del call
   axis_size, = {x.shape[d] for x, d in zip(args_flat, dims) if d is not None}
   args_flat = map(maybe_bdim_at_front, args_flat, dims)
-  flat_in_batched = [d is not not_mapped for d in dims]
+  flat_in_batched = [d is not None for d in dims]
 
   args = tree_unflatten(in_tree, args_flat)
   in_batched = tree_unflatten(in_tree, flat_in_batched)
@@ -254,7 +253,7 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
   flat_outs, tree1 = tree_flatten(out)
   flat_out_batched, tree2 = tree_flatten(out_batched)
   check_vmap_rule_trees(rule, out_tree, tree1, tree2)
-  flat_out_dims = [0 if b else not_mapped for b in flat_out_batched]
+  flat_out_dims = [0 if b else None for b in flat_out_batched]
   return flat_outs, flat_out_dims
 
 
@@ -315,9 +314,9 @@ def custom_vmap_jvp(primals, tangents, *,
     flat_out_ps, flat_out_ts = flat_out_ps_ts[:n], flat_out_ps_ts[n:]
     flat_out_axes_p, flat_out_axes_t = flat_out_axes[:n], flat_out_axes[n:]
     flat_out_ps = map(maybe_bdim_at_front, flat_out_ps, flat_out_axes_p)
-    flat_out_extra_batched_ps = [d is not not_mapped for d in flat_out_axes_p]
+    flat_out_extra_batched_ps = [d is not None for d in flat_out_axes_p]
     flat_out_ts = map(maybe_bdim_at_front, flat_out_ts, flat_out_axes_t)
-    flat_out_extra_batched_ts = [d is not not_mapped for d in flat_out_axes_t]
+    flat_out_extra_batched_ts = [d is not None for d in flat_out_axes_t]
 
     out_ps, out_ts = tree_unflatten(
         out_tree2(), [*flat_out_ps, *flat_out_ts])

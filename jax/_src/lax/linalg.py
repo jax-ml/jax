@@ -2732,12 +2732,12 @@ def _triangular_solve_batching_rule(axis_data, batched_args, batch_dims, *,
                                     unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
-  if bx is batching.not_mapped and by is batching.not_mapped:
+  if bx is None and by is None:
     out = triangular_solve(x, y, left_side=left_side, lower=lower,
                            transpose_a=transpose_a, conjugate_a=conjugate_a,
                            unit_diagonal=unit_diagonal)
     return out, None
-  if bx is batching.not_mapped:
+  if bx is None:
     x = batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
   else:
     x = batching.bdim_at_front(x, bx, axis_data.size, axis_data.explicit_mesh_axis)
@@ -2945,9 +2945,9 @@ def _tridiagonal_solve_batching_rule(
     batched_args, batch_dims, *, perturb_singular):
   dl, d, du, b = batched_args
   bdl, bd, bdu, bb = batch_dims
-  if (bdl is batching.not_mapped and
-      bd is batching.not_mapped and
-      bdu is batching.not_mapped):
+  if (bdl is None and
+      bd is None and
+      bdu is None):
 
     b = batching.moveaxis(b, bb, -2)
     b_flat = b.reshape(b.shape[:-3]  + (b.shape[-3], b.shape[-2] * b.shape[-1]))

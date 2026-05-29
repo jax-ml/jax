@@ -690,8 +690,8 @@ def ffi_batching_rule(
   from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
   axis_size, = {a.shape[d] for a, d in zip(args, dims)
-                if d is not batching.not_mapped}
-  new_args = [arg if dim is batching.not_mapped else
+                if d is not None}
+  new_args = [arg if dim is None else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   batched_result_avals = tuple(
       core.unmapped_aval(axis_size, 0, aval) for aval in result_avals)
@@ -711,7 +711,7 @@ def ffi_batching_rule(
     # when using `vectorized=True`.
     if kwargs.get("input_layouts") is not None:
       kwargs["input_layouts"] = tuple(
-          layout if d is batching.not_mapped else
+          layout if d is None else
           (None if layout is None else tuple(n + 1 for n in layout) + (0,))
           for layout, d in zip(kwargs["input_layouts"], dims))
     outvals = prim.bind(
@@ -723,7 +723,7 @@ def ffi_batching_rule(
   elif vmap_method == "expand_dims" or vmap_method == "broadcast_all":
     size = axis_size if vmap_method == "broadcast_all" else 1
     bcast_args = [
-        lax.broadcast(x, (size,)) if d is batching.not_mapped else x
+        lax.broadcast(x, (size,)) if d is None else x
         for x, d in zip(new_args, dims)]
     if kwargs.get("input_layouts") is not None:
       kwargs["input_layouts"] = tuple(
@@ -736,7 +736,7 @@ def ffi_batching_rule(
       **kwargs,
     )
   elif vmap_method == "sequential" or vmap_method == "sequential_unrolled":
-    is_batched = [d is not batching.not_mapped for d in dims]
+    is_batched = [d is not None for d in dims]
     unbatched_args, batched_args = util.partition_list(is_batched, new_args)
     def _batch_fun(batched_args):
       merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)

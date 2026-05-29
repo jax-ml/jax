@@ -463,13 +463,13 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
     raise NotImplementedError(
         "IO effect not supported in vmap-of-cond.")
 
-  if "branches_platforms" in params and (index_dim is not batching.not_mapped):
+  if "branches_platforms" in params and (index_dim is not None):
     # If we end up with a mapped index for a platform_dependent cond, we can
     # replace the index with a fresh call to platform_index. See #29329.
     index = platform_index_p.bind(platforms=params["branches_platforms"])
-    index_dim = batching.not_mapped
+    index_dim = None
 
-  if index_dim is not batching.not_mapped:
+  if index_dim is not None:
     # Convert to a lax.select. While we could get away with not broadcasting
     # some operands yet, because all outputs must be broadcast together anyway
     # for the select we broadcast the input operands for simplicity and leave
@@ -498,7 +498,7 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
     out = [_bcast_select_n(index, *outs) for outs in zip(*branch_outs)]
     return out, [0 if b else None for b in out_batched]
   else:
-    ops_bat = [d is not batching.not_mapped for d in op_dims]
+    ops_bat = [d is not None for d in op_dims]
     ops = [batching.moveaxis(x, d, 0) if b else x
            for b, x, d in zip(ops_bat, ops, op_dims)]
 
@@ -510,7 +510,7 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
         batching.batch_jaxpr(jaxpr, axis_data, ops_bat, out_bat)[0]
         for jaxpr in branches)
 
-    out_dims = [0 if b else batching.not_mapped for b in out_bat]
+    out_dims = [0 if b else None for b in out_bat]
     out = cond_p.bind(index, *ops, branches=branches_batched,
                       **params)
     return out, out_dims

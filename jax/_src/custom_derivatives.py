@@ -39,7 +39,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters.batching import not_mapped
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
@@ -1743,15 +1742,15 @@ def _remat_opt_vmap(
     fwd_jaxpr: core.ClosedJaxpr,
     fun_jaxpr_thunk: Callable[[], tuple[core.Jaxpr, Sequence[Any]]],
 ):
-  args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
+  args = [batching.moveaxis(x, d, 0) if d is not None and d != 0
           else x for x, d in zip(args, in_dims)]
-  in_batched = [d is not not_mapped for d in in_dims]
+  in_batched = [d is not None for d in in_dims]
   batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
       fwd_jaxpr, axis_data, in_batched, False)
   extra_consts = batched_fwd_jaxpr.consts
   batched_fwd_jaxpr = pe.close_jaxpr(
       pe.convert_constvars_jaxpr(batched_fwd_jaxpr.jaxpr))
-  out_dims = [0 if b else not_mapped for b in out_batched]
+  out_dims = [0 if b else None for b in out_batched]
 
   _, prim_batched = split_list(in_batched, [num_consts])
 

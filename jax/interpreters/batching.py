@@ -23,7 +23,6 @@ from jax._src.interpreters.batching import (
   defreducer as defreducer,
   defvectorized as defvectorized,
   fancy_primitive_batchers as fancy_primitive_batchers,
-  not_mapped as not_mapped,
   primitive_batchers as primitive_batchers,
   register_vmappable as register_vmappable,
   unregister_vmappable as unregister_vmappable,

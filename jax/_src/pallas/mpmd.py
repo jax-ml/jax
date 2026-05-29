@@ -297,7 +297,7 @@ def _mpmd_map_batching_rule(
     input_output_aliases,
     **params,
 ):
-  if all(d is batching.not_mapped for d in dims):
+  if all(d is None for d in dims):
     out = mpmd_map_p.bind(
         *args,
         jaxprs=jaxprs,
@@ -312,7 +312,7 @@ def _mpmd_map_batching_rule(
     for var, dim in zip(jaxpr.invars[: len(args)], dims):
       if (
           not isinstance(var.aval, state.AbstractRef)
-          and dim is not batching.not_mapped
+          and dim is not None
       ):
         raise ValueError(
             "Closed-over scalar constants cannot be batched. Pass them as"
@@ -327,7 +327,7 @@ def _mpmd_map_batching_rule(
 
   squeezed_args = []
   for arg, dim in zip(args, dims):
-    if dim is batching.not_mapped:
+    if dim is None:
       squeezed_args.append(arg)
     elif isinstance(arg_aval := jax_core.typeof(arg), state.AbstractRef):
       # This is a bit of a hack. We rely on the fact that JAX does not have
@@ -355,7 +355,7 @@ def _mpmd_map_batching_rule(
   )
 
   for arg, squeezed_arg, dim in zip(args, squeezed_args, dims):
-    if dim is batching.not_mapped:
+    if dim is None:
       continue
     if isinstance(jax_core.typeof(arg), state.AbstractRef):
       arg[...] = jnp.expand_dims(jax_core.freeze(squeezed_arg), dim)
