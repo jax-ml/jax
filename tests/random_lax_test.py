@@ -1428,7 +1428,7 @@ class DistributionsTest(RandomTestBase):
     # The log1p(-u) formulation maps u=0 → log1p(0)=0 → g=1 (correct).
     key = self.make_key(0)
     iinfo = np.iinfo(dtype)
-    # Patch uniform to return exactly 0 to exercise the edge case.
+    # Check the mathematical components of the fix.
     with jtu.ignore_warning(category=RuntimeWarning):
       u_zero = jnp.zeros((), dtype=jnp.float32)
       log_u_old = jnp.log(u_zero)
@@ -1437,10 +1437,17 @@ class DistributionsTest(RandomTestBase):
     self.assertTrue(jnp.isinf(log_u_old) or log_u_old < -1e30)
     # New: log1p(-0)=0 → g=1 (valid geometric sample)
     self.assertEqual(float(log_one_minus_u_new), 0.0)
-    # Full path: geometric should never return dtype_max
-    samples = random.geometric(key, p, shape=(10000,), dtype=dtype)
+    # Full path: patch uniform to return exactly 0 to deterministically
+    # exercise the edge case on the complete geometric code path.
+    from unittest.mock import patch
+    with jax.disable_jit():
+      with patch('jax._src.random.core.uniform',
+                 lambda key, shape, dtype, *args, **kwargs: jnp.zeros(shape, dtype)):
+        samples = random.geometric(key, p, shape=(10000,), dtype=dtype)
     self.assertFalse(jnp.any(samples == iinfo.max),
                      msg="geometric returned dtype_max, log(0) overflow not fixed")
+    self.assertTrue(jnp.all(samples == 1),
+                    msg="geometric with u=0 should always return 1")
 
   @jtu.sample_product(
       left = [0.2, 0.5, 1., 2.],
