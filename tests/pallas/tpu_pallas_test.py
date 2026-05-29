@@ -2385,6 +2385,31 @@ class PallasCallTest(ptu.PallasTPUTest):
         compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
+  def test_jitted_kernel_with_program_id(self):
+    @jax.jit
+    def body(x_ref, o_ref):
+      i = pl.program_id(0).astype(x_ref.dtype)
+      o_ref[...] = x_ref[...] + i
+
+    x = jnp.arange(2048, dtype=jnp.float32)
+
+    def run(x):
+      return self.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          in_specs=[pl.BlockSpec((1024,), lambda i: i)],
+          out_specs=pl.BlockSpec((1024,), lambda i: i),
+          grid=(2,),
+      )(x)
+
+    res = run(x)
+    expected = x + jnp.concatenate([
+        jnp.zeros(1024, dtype=x.dtype),
+        jnp.ones(1024, dtype=x.dtype),
+    ])
+    np.testing.assert_allclose(res, expected)
+
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):

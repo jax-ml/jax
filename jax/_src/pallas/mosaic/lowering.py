@@ -623,6 +623,9 @@ _uncacheable_primitives: set[jax_core.Primitive] = {
     lax.cond_p,
     primitives.run_scoped_p,
     primitives.jaxpr_call_p,
+    pjit.jit_p,
+    custom_derivatives.custom_jvp_call_p,
+    custom_derivatives.custom_vjp_call_p,
 }
 
 # Primitives that need access to the user grid during their lowering.
