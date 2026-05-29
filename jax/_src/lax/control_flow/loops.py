@@ -19,7 +19,6 @@ from functools import partial
 import inspect
 import itertools as it
 import operator
-import os
 from typing import Any, TypeVar
 import weakref
 
@@ -63,6 +62,7 @@ from jax._src.lax.control_flow.common import (
     _avals_short,
     _make_closed_jaxpr, _prune_zeros, _typecheck_param)
 from jax._src.lax.other import logaddexp
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -2928,11 +2928,9 @@ def _cumred_chlo_lowering(ctx, x, *, axis, reverse, reducer, identity):
 
 
 def _is_supported_cumred(inp, axis, reverse):
-  if os.environ.get('JAX_ENABLE_CHLO_SCAN') != '1':
-    return False
-
   return (
-      not reverse
+      jaxlib_extension_version >= 460
+      and not reverse
       and isinstance(inp, ShapedArray)
       and core.is_constant_shape(inp.shape)
       and inp.shape[axis] > 0
