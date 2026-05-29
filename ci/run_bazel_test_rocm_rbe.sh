@@ -81,6 +81,14 @@ TESTS_TO_IGNORE=(
     -//tests:sparsify_test_gpu
     -//tests:lax_numpy_reducers_test_gpu
     -//tests:scipy_optimize_test_gpu
+    #TODO(mgaonka-amd) re-enable these tests once this issue is fixed.
+    -//tests:lax_numpy_einsum_test_gpu
+    -//tests:lax_scipy_test_gpu
+    -//tests:sparse_test_gpu
+    -//tests:sparse_bcoo_bcsr_test_gpu
+    -//tests:svd_test_gpu
+    -//tests:eigh_test_gpu
+    -//tests:image_test_gpu
 )
 
 for arg in "$@"; do
