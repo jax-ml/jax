@@ -170,6 +170,7 @@ jax.scipy.special
    betainc
    betaln
    comb
+   dawsn
    digamma
    entr
    erf

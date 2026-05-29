@@ -78,6 +78,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         test_name="loggamma_complex"
     ),
     op_record(
+        "dawsn", 1, float_dtypes, jtu.rand_default, True
+    ),
+    op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
@@ -277,6 +280,12 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     primals, tangents = jax.jvp(lsp_special.wofz, (z,), (np.ones_like(z),))
     expected_tangents = -2 * z * primals + jnp.array(2j / np.sqrt(np.pi), dtype=z.dtype)
     self.assertAllClose(tangents, expected_tangents, rtol=1e-4)
+
+  def testDawsnLargeX(self):
+    # Verify correctness in the large-x rational regime (region 2: [3.25, 6.25)
+    # and region 3: [6.25, inf)) and at the odd-symmetry boundaries.
+    x = np.array([-10., -6.25, -3.25, 0., 3.25, 6.25, 10., 100.], dtype=float)
+    self.assertAllClose(lsp_special.dawsn(x), osp_special.dawsn(x))
 
   @jtu.sample_product(
       n=[0, 1, 2, 3, 10, 50]

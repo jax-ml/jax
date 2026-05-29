@@ -735,6 +735,161 @@ def _erfcx_impl(x: Array, nterms: int) -> Array:
   return lax.select(large, asymp, direct)
 
 
+# Rational approximation coefficients for dawsn (Cody, Paciorek, Thacher 1970).
+# Region 1: [0, 3.25)  —  y = ax * P(ax^2) / Q(ax^2)
+_DAWSN_AN = np.array([
+    1.13681498971755972054e-11,
+    8.49262267667473811108e-10,
+    1.94434204175553054283e-8,
+    9.53151741254484363489e-7,
+    3.07828309874913200438e-6,
+    3.52513368520288738649e-4,
+    -8.50149846724410912031e-4,
+    4.22618223005546594270e-2,
+    -9.17480371773452345351e-2,
+    9.99999999999999994612e-1,
+])
+_DAWSN_AD = np.array([
+    2.40372073066762605484e-11,
+    1.48864681368493396752e-9,
+    5.21265281010541664570e-8,
+    1.27258478273186970203e-6,
+    2.32490249820789513991e-5,
+    3.25524741826057911661e-4,
+    3.48805814657162590916e-3,
+    2.79448531198828973716e-2,
+    1.58874241960120565368e-1,
+    5.74918629489320327824e-1,
+    1.00000000000000000539e0,
+])
+# Region 2: [3.25, 6.25)  —  y = 0.5/ax * (1 + (1/ax^2)*P(1/ax^2)/Q(1/ax^2))
+_DAWSN_BN = np.array([
+    5.08955156417900903354e-1,
+    -2.44754418142697847934e-1,
+    9.41512335303534411857e-2,
+    -2.18711255142039025206e-2,
+    3.66207612329569181322e-3,
+    -4.23209114460388756528e-4,
+    3.59641304793896631888e-5,
+    -2.14640351719968974225e-6,
+    9.10010780076391431042e-8,
+    -2.40274520828250956942e-9,
+    3.59233385440928410398e-11,
+])
+_DAWSN_BD = np.array([
+    1.00000000000000000000e0,
+    -6.31839869873368190192e-1,
+    2.36706788228248691528e-1,
+    -5.31806367003223277662e-2,
+    8.48041718586295374409e-3,
+    -9.47996768486665330168e-4,
+    7.81025592944552338085e-5,
+    -4.55875153252442634831e-6,
+    1.89100358111421846170e-7,
+    -4.91324691331920606875e-9,
+    7.18466403235734541950e-11,
+])
+# Region 3: [6.25, inf)  —  y = 0.5/ax * (1 + (1/ax^2)*P(1/ax^2)/Q(1/ax^2))
+_DAWSN_CN = np.array([
+    -5.90592860534773254987e-1,
+    6.29235242724368800674e-1,
+    -1.72858975380388136411e-1,
+    1.64837047825189632310e-2,
+    -4.86827613020462700845e-4,
+])
+_DAWSN_CD = np.array([
+    1.00000000000000000000e0,
+    -2.69820057197544900361e0,
+    1.73270799045947845857e0,
+    -3.93708582281939493482e-1,
+    3.44278924041233391079e-2,
+    -9.73655226040941223894e-4,
+])
+
+
+def dawsn(x: ArrayLike) -> Array:
+  r"""Dawson's integral.
+
+  JAX implementation of :obj:`scipy.special.dawsn`.
+
+  .. math::
+
+     \mathrm{dawsn}(x) = e^{-x^2} \int_0^x e^{t^2} \, dt
+
+  Args:
+    x: arraylike, real-valued.
+
+  Returns:
+    array containing values of Dawson's integral.
+
+  See also:
+    - :func:`jax.scipy.special.erfcx`
+  """
+  x, = promote_args_inexact("dawsn", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    raise ValueError("dawsn does not support complex-valued inputs.")
+  return _dawsn(x)
+
+
+@custom_derivatives.custom_jvp
+def _dawsn(x: Array) -> Array:
+  if x.dtype in [np.float32, np.float64]:
+    return _dawsn_impl(x)
+  else:  # float16, bfloat16 — upcast to float32
+    return _dawsn_impl(x.astype(np.float32)).astype(x.dtype)
+
+_dawsn.defjvps(
+    lambda g, ans, x: g * (_lax_const(x, 1.) - _lax_const(x, 2.) * x * ans))
+
+
+def _dawsn_impl(x: Array) -> Array:
+  # Rational approximations from Cody, Paciorek, Thacher (1970).
+  # All approximations work on |x|; odd symmetry restores the sign.
+  sign = jnp.sign(x)
+  # sign(0) == 0, but dawsn(0) == 0 so the product is correct.
+  ax = lax.abs(x)
+
+  AN = np.array(_DAWSN_AN, dtype=x.dtype)
+  AD = np.array(_DAWSN_AD, dtype=x.dtype)
+  BN = np.array(_DAWSN_BN, dtype=x.dtype)
+  BD = np.array(_DAWSN_BD, dtype=x.dtype)
+  CN = np.array(_DAWSN_CN, dtype=x.dtype)
+  CD = np.array(_DAWSN_CD, dtype=x.dtype)
+
+  ax2 = lax.square(ax)
+  t = _lax_const(x, 1.) / ax2
+
+  # Compute each region using safe dummy inputs to avoid NaN in unused branches.
+  # (Without safe inputs, polyval at extreme ax values overflows to inf, and
+  # inf/inf = NaN which lax.select does not suppress on all backends.)
+  # Region 1
+  safe_ax_r1 = lax.select(ax < _lax_const(x, 3.25), ax, lax.full_like(ax, 1.))
+  safe_ax2_r1 = lax.square(safe_ax_r1)
+  val_r1 = safe_ax_r1 * jnp.polyval(AN, safe_ax2_r1) / jnp.polyval(AD, safe_ax2_r1)
+
+  # Region 2
+  safe_t_r2 = lax.select(
+      (ax >= _lax_const(x, 3.25)) & (ax < _lax_const(x, 6.25)),
+      t, lax.full_like(t, 1.))
+  safe_ax_r2 = lax.select(
+      (ax >= _lax_const(x, 3.25)) & (ax < _lax_const(x, 6.25)),
+      ax, lax.full_like(ax, 1.))
+  val_r2 = (_lax_const(x, 0.5) / safe_ax_r2) * (
+      _lax_const(x, 1.)
+      + safe_t_r2 * jnp.polyval(BN, safe_t_r2) / jnp.polyval(BD, safe_t_r2))
+
+  # Region 3
+  safe_t_r3 = lax.select(ax >= _lax_const(x, 6.25), t, lax.full_like(t, 1.))
+  safe_ax_r3 = lax.select(ax >= _lax_const(x, 6.25), ax, lax.full_like(ax, 1.))
+  val_r3 = (_lax_const(x, 0.5) / safe_ax_r3) * (
+      _lax_const(x, 1.)
+      + safe_t_r3 * jnp.polyval(CN, safe_t_r3) / jnp.polyval(CD, safe_t_r3))
+
+  result = lax.select(ax < _lax_const(x, 3.25), val_r1,
+                      lax.select(ax < _lax_const(x, 6.25), val_r2, val_r3))
+  return sign * result
+
+
 @custom_derivatives.custom_jvp
 def logit(x: ArrayLike) -> Array:
   r"""The logit function
