@@ -33,7 +33,7 @@ common:rocm_clang_hermetic --strategy=CppLink=local
 common:rocm_clang_hermetic_local_sysroot --config=rocm_clang_hermetic
 common:rocm_clang_hermetic_local_sysroot --@rules_ml_toolchain//cc/sysroots:use_local_sysroot=True
 
-build:rocm_release_wheel --config=rocm_clang_hermetic_local_sysroot
+build:rocm_release_wheel --config=rocm_clang_hermetic
 build:rocm_release_wheel --@local_config_rocm//rocm:rocm_path_type=link_only
 
 test:rocm --test_timeout=920,2400,7200,9600
