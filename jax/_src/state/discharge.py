@@ -56,6 +56,15 @@ PyTreeDef = tree_util.PyTreeDef
 ## Discharging state
 
 
+def _discharged_aval(aval: core.AbstractValue, discharge: bool) -> core.AbstractValue:
+  if not (isinstance(aval, AbstractRef) and discharge):
+    return aval
+  inner = aval.inner_aval
+  if isinstance(inner, core.ShapedArray) and aval.memory_space is not None:
+    return inner.update(memory_space=aval.memory_space)
+  return inner
+
+
 def discharge_state(
     jaxpr: core.Jaxpr,
     consts: Sequence[Any],
@@ -82,9 +91,8 @@ def discharge_state(
   """
   if isinstance(should_discharge, bool):
     should_discharge = [should_discharge] * len(jaxpr.invars)
-  in_avals = [v.aval.inner_aval
-              if isinstance(v.aval, AbstractRef) and d
-              else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
+  in_avals = [_discharged_aval(v.aval, d)
+              for v, d in zip(jaxpr.invars, should_discharge)]
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
                                     should_discharge, consts),
                             debug_info=jaxpr.debug_info.with_unknown_names())
