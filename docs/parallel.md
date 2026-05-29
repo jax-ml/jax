@@ -341,9 +341,9 @@ We can do the same type querying under a `jit`:
 @jax.jit
 def add_arrays(x, y):
   ans = x + y
-  print(f"{jax.typeof(arg0)=!s}")
-  print(f"{jax.typeof(arg1)=!s}")
-  print(f"{jax.typeof(result)=!s}")
+  print(f"jax.typeof(arg0)={jax.typeof(x)!s}")
+  print(f"jax.typeof(arg1)={jax.typeof(y)!s}")
+  print(f"jax.typeof(result)={jax.typeof(ans)!s}")
   return ans
 
 add_arrays(arg0, arg1)
