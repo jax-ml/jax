@@ -45,7 +45,6 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib import xla_client as xc
 from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
@@ -1185,9 +1184,6 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   if not isinstance(axis_ctx, SPMDAxisContext):
     raise NotImplementedError("psend currently only supports manual sharding")
 
-  sharding = xc.OpSharding()
-  sharding.type = xc.OpSharding.Type.MANUAL
-  mlir.set_sharding(ctx.module_context, send_op, sharding)
   return send_op.results
 
 
@@ -1228,10 +1224,6 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
   axis_ctx = ctx.module_context.axis_context
   if not isinstance(axis_ctx, SPMDAxisContext):
     raise NotImplementedError("precv currently only supports manual sharding")
-
-  sharding = xc.OpSharding()
-  sharding.type = xc.OpSharding.Type.MANUAL
-  mlir.set_sharding(ctx.module_context, recv_op, sharding)
 
   # recv_op should return an array of [RankedTensorType, StableHlo.token]; we
   # only need the tensor.
