@@ -1611,6 +1611,16 @@ class DistributionsTest(RandomTestBase):
     counts = jnp.bincount(data, length=n_bins).astype(float)
     self._CheckKolmogorovSmirnovCDF(counts, scipy.stats.poisson(n_samples / n_bins).cdf)
 
+  def test_geometric_avoids_infs(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38007
+    key = random.key(0)
+    # Sample at bfloat16 so that there are only 2^7 distinct values,
+    # and sample 2^8 points so we are likely to cover the whole space.
+    p = jnp.bfloat16(0.1)
+    vals = random.geometric(key, p, shape=(256,))
+    self.assertFalse(np.any(vals == jnp.iinfo(vals.dtype).max),
+                     "geometric sampler produced an infinity.")
+
 
 def get_energy_distance(samples_1, samples_2):
   """
