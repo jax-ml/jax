@@ -799,9 +799,10 @@ def xlogy(x: ArrayLike, y: ArrayLike) -> Array:
     :func:`jax.scipy.special.xlog1py`
   """
   # Note: xlogy(0, 0) should return 0 according to the function documentation.
+  # NaN in y is propagated even when x == 0, to match scipy.special.xlogy.
   x, y = promote_args_inexact("xlogy", x, y)
   x_ok = x != 0.
-  return jnp.where(x_ok, lax.mul(x, lax.log(y)), jnp.zeros_like(x))
+  return jnp.where(x_ok | jnp.isnan(y), lax.mul(x, lax.log(y)), jnp.zeros_like(x))
 
 def _xlogy_jvp(primals, tangents):
   (x, y) = primals
@@ -831,9 +832,10 @@ def xlog1py(x: ArrayLike, y: ArrayLike) -> Array:
     :func:`jax.scipy.special.xlogy`
   """
   # Note: xlog1py(0, -1) should return 0 according to the function documentation.
+  # NaN in y is propagated even when x == 0, to match scipy.special.xlog1py.
   x, y = promote_args_inexact("xlog1py", x, y)
   x_ok = x != 0.
-  return jnp.where(x_ok, lax.mul(x, lax.log1p(y)), jnp.zeros_like(x))
+  return jnp.where(x_ok | jnp.isnan(y), lax.mul(x, lax.log1p(y)), jnp.zeros_like(x))
 
 def _xlog1py_jvp(primals, tangents):
   (x, y) = primals
