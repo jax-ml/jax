@@ -85,7 +85,7 @@ def make_jitted_mask_splash_attention_fn_and_args():
     attn_fn = splash.make_splash_mqa_single_device(mask, block_sizes=block_sizes)
     return attn_fn(q, k, v)
 
-  mask_array = mask_lib.make_random_mask((q_seq_len, kv_seq_len), sparsity=0.5, seed=0)
+  mask_array = jax.random.bernoulli(key, p=0.5, shape=(q_seq_len, kv_seq_len))
 
   return fn, (q, k, v, mask_array)
 

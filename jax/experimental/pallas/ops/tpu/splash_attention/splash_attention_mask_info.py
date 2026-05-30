@@ -318,58 +318,54 @@ def _get_mask_info_for_shard(
   return data_next, mask_next
 
 def _check_smem_limit(
-    heads_per_shard: int,
-    q_blocks_per_shard: int,
+    leading_dim: int,
+    q_blocks_count: int,
     kv_blocks_count: int,
     q_block_size: int,
     kv_block_size: int,
-    has_mask_function: bool,
+    has_mask_next: bool,
     is_dkv: bool,
+    max_mask_next: int | None = None,
+    max_data_next: int | None = None,
   ):
   """Check that mask scheduling metadata fits in SMEM.
 
     The Splash Attention kernel prefetches scheduling metadata into SMEM
-    before execution. The metadata layout depends on the mask type:
+    before execution. The metadata layout depends on the mask type.
 
-    For NumpyMask, three arrays are stored: block_mask (int8, marks each
-    block pair as skip/full/partial), data_next (index to the next data
-    block), and mask_next (index to the next mask block). These have shape
-    [heads, q_blocks, kv_blocks], so their combined size scales as
-    heads * blocks² * dtype_size.
-
-    For CausalMask, only data_next is needed, with shape
-    [1, q_blocks, kv_blocks]. The SMEM usage scales as blocks² * dtype_size(data_next),
-    independent of head count.
-
-    In both cases, smaller block sizes produce more blocks, increasing
-    metadata quadratically. If the metadata exceeds SMEM capacity, a
-    ValueError is raised with a suggested minimum block size (The suggestion
-    uses geometric scaling (powers of 2) relative to the default block
-    size to ensure clean divisibility with powers of 2 sequence lengths).
-    The suggestion is conservative: increasing block size reduces block counts,
-    which both shrinks the metadata and may enable more aggressive downcasting
-    of index values.
+    Smaller block sizes produce more blocks, increasing metadata
+    quadratically. If the metadata exceeds SMEM capacity, a ValueError is
+    raised with a suggested minimum block size. The suggestion uses
+    geometric scaling (powers of 2) relative to the default block size to
+    ensure clean divisibility with powers-of-2 sequence lengths, and is
+    conservative: increasing block size reduces block counts, which both
+    shrinks the metadata and may enable more aggressive downcasting of
+    index values.
 
     Args:
-        heads_per_shard: Number of attention heads on this shard.
-        q_blocks_per_shard: Number of query blocks on this shard.
-        kv_blocks_count: Total number of key-value blocks.
+        leading_dim: Leading dimension of the metadata arrays (per-shard
+            where applicable).
+        q_blocks_count: Number of query blocks in the metadata (per-shard
+            where applicable).
+        kv_blocks_count: Number of key-value blocks in the metadata.
         q_block_size: Number of tokens per query block.
         kv_block_size: Number of tokens per key-value block.
-        has_mask_function: If True, the mask is computed inside the kernel
-            via a mask_function (e.g. CausalMask), so only data_next is
-            stored in SMEM. If False, assumes NumpyMask with all three
-            metadata arrays scaled by heads_per_shard.
-        is_dkv: If True, uses q_blocks_per_shard as the max value for
-            data_next downcasting (dKV backward pass iterates over Q
-            blocks), otherwise uses kv_blocks_count (forward pass
-            iterates over KV blocks).
+        has_mask_next: If True, a mask_next array is materialized in SMEM
+            (NumpyMask / dynamic mask case; all three metadata arrays are
+            present and scaled by leading_dim). If False, the mask is
+            computed in-kernel via a mask_function (e.g. CausalMask), so
+            mask_next is omitted from the estimate.
+        is_dkv: If True, uses q_blocks_count as the max value for data_next
+            downcasting (dKV backward pass iterates over Q blocks);
+            otherwise uses kv_blocks_count (forward pass iterates over KV
+            blocks).
+        max_mask_next: Optional Maximum value for mask_next. Used to
+            compute a tighter mask_next estimate when has_mask_next is True.
+        max_data_next: Optional Maximum value for data_next.
 
     Raises:
-        ValueError: If the estimated SMEM usage exceeds TPU capacity,
-        provide a suggested minimum block size that would fit. The suggestion
-        uses geometric scaling (powers of 2) relative to the default block
-        size to ensure clean divisibility with powers of 2 sequence lengths.
+        ValueError: If the estimated SMEM usage exceeds TPU capacity. The
+            message includes a suggested minimum block size that would fit.
   """
 
   tpu_info = get_tpu_info()
@@ -382,20 +378,17 @@ def _check_smem_limit(
       return np.dtype(np.int16).itemsize
     return np.dtype(np.int32).itemsize
 
-  data_next_max = q_blocks_per_shard if is_dkv else kv_blocks_count
+  data_next_max = max_data_next
+  if data_next_max is None:
+    data_next_max = q_blocks_count if is_dkv else kv_blocks_count
+  elements = leading_dim * q_blocks_count * kv_blocks_count
+  required_smem_bytes = (
+          elements * _downcast_dtype_size(data_next_max) # data_next
+        + elements * 1                                   # block_mask: always int8
+  )
 
-  if has_mask_function:
-    elements = q_blocks_per_shard * kv_blocks_count
-    required_smem_bytes = (
-        elements * _downcast_dtype_size(data_next_max)   # data_next
-      )
-  else:
-    elements = heads_per_shard * q_blocks_per_shard * kv_blocks_count
-    required_smem_bytes = (
-          elements * 1                                       # block_mask: always int8
-          + elements * _downcast_dtype_size(data_next_max)   # data_next
-          + elements * _downcast_dtype_size(elements)        # mask_next
-      )
+  if has_mask_next and max_mask_next is not None:
+    required_smem_bytes += elements * _downcast_dtype_size(max_mask_next) # mask_next
 
   if required_smem_bytes > smem_limit:
     # When block size increases, element counts drop. It also enables aggressive
@@ -692,8 +685,15 @@ def _process_mask(
             for m in mask.masks)
 
   if _is_numpy_mask_with_traced_arrays(mask):
-    _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count,
-                    q_block_size, kv_block_size, has_mask_function=False,is_dkv=is_dkv)
+    _check_smem_limit(leading_dim=head_count,
+                      q_blocks_count=q_blocks_per_shard,
+                      kv_blocks_count=kv_blocks_count,
+                      q_block_size=q_block_size,
+                      kv_block_size=kv_block_size,
+                      has_mask_next=True,
+                      is_dkv=is_dkv,
+                      max_mask_next=heads_per_shard * q_blocks_per_shard * kv_blocks_count,
+                      max_data_next=None)
     jax_mask = jnp.stack([m.array for m in mask.masks if isinstance(m, mask_lib.NumpyMask)])
     return _process_dynamic_mask(
           jax_mask,
@@ -799,9 +799,17 @@ def _process_mask(
     ):
       q_sequence = unique_mask.q_sequence
       mask_function = unique_mask.mask_function
-      _check_smem_limit(heads_per_shard, q_blocks_per_shard, kv_blocks_count,
-                      q_block_size, kv_block_size, has_mask_function=True,is_dkv=is_dkv)
-
+      _check_smem_limit(
+            leading_dim=block_mask_shape[0],
+            q_blocks_count=q_blocks_per_shard,
+            kv_blocks_count=kv_blocks_count,
+            q_block_size=q_block_size,
+            kv_block_size=kv_block_size,
+            has_mask_next=False,
+            is_dkv=is_dkv,
+            max_mask_next=None,
+            max_data_next=None,
+                )
   # Identify the partial mask blocks and the value of the block mask for each
   # block.
   # The partial mask blocks are "global", meaning it is a collection of such
@@ -956,11 +964,27 @@ def _process_mask(
     if has_mask_next:
       mask_next = np.concatenate(mask_next_per_head_list, axis=head_axis)
 
-  # Shrink the width of the mask info when possible.
-  if (
+  shrink_width_conditional = (
       shrink_grid
       and block_mask.shape[0] == head_shards
       and len(unique_masks) == 1
+      )
+  if not shrink_width_conditional:
+    smem_mask_next = has_mask_next and mask_function is None
+    _check_smem_limit(
+        leading_dim=block_mask.shape[0],
+        q_blocks_count=block_mask.shape[1],
+        kv_blocks_count=kv_blocks_count,
+        q_block_size=q_block_size,
+        kv_block_size=kv_block_size,
+        has_mask_next=smem_mask_next,
+        is_dkv=is_dkv,
+        max_mask_next= np.max(mask_next) if smem_mask_next and mask_next is not None else None,
+        max_data_next= np.max(data_next) if data_next.size > 0 else None
+    )
+  # Shrink the width of the mask info when possible.
+  if (
+      shrink_width_conditional
   ):
     rows_per_q_shard = block_mask.shape[1] // q_seq_shards
     block_mask_shards = []
@@ -1009,6 +1033,18 @@ def _process_mask(
       block_mask = block_mask_shards[0]
       data_next = data_next_shards[0]
       mask_next = mask_next_shards[0]
+      smem_mask_next = has_mask_next and mask_function is None
+      _check_smem_limit(
+          leading_dim=block_mask.shape[0],
+          q_blocks_count=q_blocks_count,
+          kv_blocks_count=kv_blocks_count,
+          q_block_size=q_block_size,
+          kv_block_size=kv_block_size,
+          has_mask_next=smem_mask_next,
+          is_dkv=is_dkv,
+          max_mask_next=np.max(mask_next) if smem_mask_next and mask_next is not None else None,
+          max_data_next=np.max(data_next) if data_next.size > 0 else None
+      )
     else:
       # Since shrinking happens independently for each shard along Q we might
       # end up with uneven mask info shards. Insert padding where necessary to
@@ -1060,7 +1096,18 @@ def _process_mask(
       block_mask = np.concatenate(padded_block_mask_shards, axis=1)
       data_next = np.concatenate(padded_data_next_shards, axis=1)
       mask_next = np.concatenate(padded_mask_next_shards, axis=1)
-
+      smem_mask_next = has_mask_next and mask_function is None
+      _check_smem_limit(
+          leading_dim=block_mask.shape[0],
+          q_blocks_count=block_mask.shape[1],
+          kv_blocks_count=block_mask.shape[2],
+          q_block_size=q_block_size,
+          kv_block_size=kv_block_size,
+          has_mask_next=smem_mask_next,
+          is_dkv=is_dkv,
+          max_mask_next=np.max(mask_next) if smem_mask_next and mask_next is not None else None,
+          max_data_next=np.max(data_next) if data_next.size > 0 else None
+      )
   if downcast_smem_data:
     data_next = _downcast_to_small_type(data_next)
     block_mask = _downcast_to_small_type(block_mask)

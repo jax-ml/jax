@@ -2396,9 +2396,9 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     v = jax.random.normal(jax.random.key(seed + 2), (batch_size, num_heads, kv_len, head_dim))
 
     mask_factories = {
-        'causal': lambda: np.tril(np.ones((q_len, kv_len), dtype=np.bool_)),
-        'random': lambda: mask_lib.make_random_mask((q_len, kv_len), 0.5, seed=seed),
-        'full': lambda: np.ones((q_len, kv_len), dtype=np.bool_),
+        'causal': lambda: jnp.tril(jnp.ones((q_len, kv_len), dtype=jnp.bool_)),
+        'random': lambda: jax.random.bernoulli(jax.random.key(seed), p=0.5, shape=(q_len, kv_len)),
+        'full': lambda: jnp.ones((q_len, kv_len), dtype=jnp.bool_),
     }
     dense_mask = mask_factories[mask_type]()
 
