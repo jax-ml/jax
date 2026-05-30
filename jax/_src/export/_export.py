@@ -1548,13 +1548,11 @@ def _call_exported_abstract_eval(
   out_avals = tuple(make_aval(out_aval_idx)
                     for out_aval_idx in range(len(exported.out_avals)))
   return out_avals, set(exported.ordered_effects + exported.unordered_effects)
-
-
 call_exported_p.def_effectful_abstract_eval(_call_exported_abstract_eval)
+
 
 def _call_exported_impl(*args, exported: Exported):
   return dispatch.apply_primitive(call_exported_p, *args, exported=exported)
-
 call_exported_p.def_impl(_call_exported_impl)
 
 
@@ -1632,24 +1630,30 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     )
 
   # Apply in_shardings
+  in_avals = [core.physical_aval(a)
+              if dtypes.issubdtype(a.dtype, dtypes.extended) else a  # type: ignore
+              for a in ctx.avals_in]
+  exported_in_avals = [core.physical_aval(a)
+                       if dtypes.issubdtype(a.dtype, dtypes.extended) else a
+                       for a in exported.in_avals]
   if exported._has_named_shardings:
     args = tuple(
         wrap_with_sharding(
             ctx, x, x_aval,
             _get_named_sharding(exported._has_named_shardings,
-                                named_sharding, None, x_aval, None),
+                                named_sharding, None, x_aval, None),  # type: ignore
             use_shardy=True)
         for x, named_sharding, x_aval in zip(
-          args, exported._in_named_shardings, exported.in_avals))
+          args, exported._in_named_shardings, exported_in_avals))
   elif mesh:
     # A mesh only exists if Shardy is enabled, or we saved named shardings.
     args = tuple(
         wrap_with_sharding(
             ctx, x, x_aval,
-            _get_named_sharding(False, None, hlo_sharding, x_aval, mesh),
+            _get_named_sharding(False, None, hlo_sharding, x_aval, mesh),  # type: ignore
             use_shardy=True)
         for x, hlo_sharding, x_aval in zip(
-          args, exported.in_shardings_hlo, exported.in_avals))
+          args, exported.in_shardings_hlo, exported_in_avals))
   else:
     # Since there is no mesh - either due to shardy being disabled or the loaded
     # function being lowered for GSPMD (so no shardy mesh) - need to create a
@@ -1657,7 +1661,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     args = tuple(
         wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
         for x, x_aval, x_sharding in zip(
-          args, ctx.avals_in, exported.in_shardings_hlo))
+          args, in_avals, exported.in_shardings_hlo))
 
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1728,7 +1732,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     submodule_args.append(token_in)
   kept_args = [
       convert_shape(a, a_aval, exported_in_aval)
-      for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, ctx.avals_in, exported.in_avals))
+      for i, (a, a_aval, exported_in_aval) in enumerate(zip(args, in_avals, exported_in_avals))
       if i in exported.module_kept_var_idx]
   submodule_args = submodule_args + kept_args
 
@@ -1739,37 +1743,41 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     tokens_out = {eff: (call.results[effect_idx],)
                   for effect_idx, eff in enumerate(ordered_effects)}
     ctx.set_tokens_out(mlir.TokenSet(tokens_out))
+
+  out_avals = [core.physical_aval(a)
+               if dtypes.issubdtype(a.dtype, dtypes.extended) else a
+               for a in ctx.avals_out]
   # The ctx.avals_out already contain the abstract values refined by
   # _call_exported_abstract_eval.
   results = tuple(
       convert_shape(out, out_aval, refined_out_aval)
-      for out, out_aval, refined_out_aval in zip(call.results[len(ordered_effects):],
-                                                 exported.out_avals, ctx.avals_out))
+      for out, out_aval, refined_out_aval in zip(
+          call.results[len(ordered_effects):], exported.out_avals, out_avals))
   # Apply out_shardings
   if exported._has_named_shardings:
     results = tuple(
         wrap_with_sharding(
             ctx, x, x_aval,
-            _get_named_sharding(True, x_sharding, None, x_aval, None),
+            _get_named_sharding(True, x_sharding, None, x_aval, None),  # type: ignore
             use_shardy=True)
-        for x, x_aval, x_sharding in \
-          zip(results, ctx.avals_out, exported._out_named_shardings))
+        for x, x_aval, x_sharding in zip(
+            results, out_avals, exported._out_named_shardings))
   elif mesh:
     results = tuple(
         wrap_with_sharding(
             ctx, x, x_aval,
-            _get_named_sharding(False, None, x_sharding, x_aval, mesh),
+            _get_named_sharding(False, None, x_sharding, x_aval, mesh),  # type: ignore
             use_shardy=True)
-        for x, x_aval, x_sharding in \
-          zip(results, ctx.avals_out, exported.out_shardings_hlo))
+        for x, x_aval, x_sharding in zip(
+            results, out_avals, exported.out_shardings_hlo))
   else:
     # Since there is no mesh - either due to shardy being disabled or the loaded
     # function being lowered for GSPMD (so no shardy mesh) - need to create a
     # GSPMD sharding from the HLO sharding (can't use shardy lowering).
     results = tuple(
         wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
-        for x, x_aval, x_sharding in \
-          zip(results, ctx.avals_out, exported.out_shardings_hlo))
+        for x, x_aval, x_sharding in zip(
+            results, out_avals, exported.out_shardings_hlo))
   return results
 
 mlir.register_lowering(call_exported_p, _call_exported_lowering)
