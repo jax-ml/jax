@@ -403,6 +403,18 @@ class JaxprInterpreter:
     )
     return carry + out
 
+  def _interpret_while_p(self, eqn, get_invals: Callable[[], Sequence[Any]]):
+    cond_consts, body_consts, init_val = split_list(
+        get_invals(),
+        [eqn.params["cond_nconsts"], eqn.params["body_nconsts"]],
+    )
+    return lax.while_loop(
+        lambda args: self.interpret(
+            eqn.params["cond_jaxpr"].jaxpr, *cond_consts, *args)[0],
+        lambda args: self.interpret(
+            eqn.params["body_jaxpr"].jaxpr, *body_consts, *args),
+        init_val)
+
   def _interpret_barrier_primitive(
       self,
       eqn,
@@ -474,19 +486,31 @@ class JaxprInterpreter:
     assert eqn.primitive is gpu_primitives.copy_gmem_to_smem_p
     invals = get_invals()
 
-    # `invals[2]` corresponds to the barrier this primitive operates on.
-    barrier_allocation_key_as_array = _get_barrier_allocation_key_from_inval(
-        invals[2], eqn.params["barrier_transforms_treedef"], invals[3:]
+    (
+        (src, dst, barrier),
+        src_transforms_flat, dst_transforms_flat, barrier_transforms_flat,
+    ) = split_list(
+        invals,
+        [
+            3,
+            eqn.params["src_transforms_treedef"].num_leaves,
+            eqn.params["dst_transforms_treedef"].num_leaves,
+        ],
     )
+    barrier_allocation_key_as_array = _get_barrier_allocation_key_from_inval(
+        barrier, eqn.params["barrier_transforms_treedef"],
+        barrier_transforms_flat)
 
     gpu_callbacks.call_execute_device_local_memory_transfer(
         device_id=jnp.int32(self.device_info.device_id),
         grid_point_coords=self.grid_point_coords,
         thread_id=self.thread_id,
-        src_allocation_key_as_array=invals[0],
-        src_transforms=(),
-        dst_allocation_key_as_array=invals[1],
-        dst_transforms=(),
+        src_allocation_key_as_array=src,
+        src_transforms=jax.tree.unflatten(
+            eqn.params["src_transforms_treedef"], src_transforms_flat),
+        dst_allocation_key_as_array=dst,
+        dst_transforms=jax.tree.unflatten(
+            eqn.params["dst_transforms_treedef"], dst_transforms_flat),
         barrier_allocation_key_as_array=barrier_allocation_key_as_array,
         source_info=eqn.source_info,
     )
@@ -535,6 +559,8 @@ class JaxprInterpreter:
             out = self._interpret_cond_p(eqn, deferred_invals)
           case lax.scan_p:
             out = self._interpret_scan_p(eqn, deferred_invals)
+          case lax.while_p:
+            out = self._interpret_while_p(eqn, deferred_invals)
           case gpu_primitives.barrier_wait_p:
             out = self._interpret_barrier_wait_p(eqn, deferred_invals)
           case gpu_primitives.barrier_arrive_p:
