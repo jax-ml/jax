@@ -799,16 +799,11 @@ def linalg_sharding_rule(
   if any(b != batch_spec for b in batch_specs[1:]):
     raise core.ShardingTypeError(
         f"All inputs to {name} must have the same batch sharding, but got "
-        f"{batch_specs}."
-    )
+        f"{batch_specs}.")
   sharding = avals[0].sharding
   if multiple_results:
-    return [
-        sharding.update(spec=
-            P(*(tuple(batch_spec) + (None,) * (len(s) - len(batch_spec))))
-        )
-        for s in output_shapes
-    ]
+    def p(s): return P(*batch_spec, *((None,) * (len(s) - len(batch_spec))))
+    return [sharding.update(spec=p(s)) for s in output_shapes]
   else:
     ndim = len(output_shapes) - len(batch_spec)
     return sharding.update(spec=P(*(tuple(batch_spec) + (None,) * ndim)))
@@ -823,18 +818,16 @@ def linalg_vma_rule(multiple_results, shape_rule, name, *avals, **kwargs):
 
 def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
                      multiple_results=False, supports_batching=True,
-                     require_same=True):
+                     require_same=True, sharding_rule=None):
   dtype_rule = partial(
       lax.naryop_dtype_rule, result_dtype, accepted_dtypes, name,
       require_same=require_same)
   shape_rule = partial(
       linalg_shape_rule, multiple_results, supports_batching, ranks,
       result_shape, name)
-  if supports_batching:
+  if sharding_rule is None and supports_batching:
     sharding_rule = partial(
         linalg_sharding_rule, multiple_results, shape_rule, ranks, name)
-  else:
-    sharding_rule = None
   vma_rule = partial(linalg_vma_rule, multiple_results, shape_rule, name)
   prim = core.Primitive(name)
   prim.multiple_results = multiple_results
@@ -2727,9 +2720,9 @@ def _triangular_solve_transpose_rule(
                                    unit_diagonal=unit_diagonal)
   return [None, cotangent_b]
 
-def _triangular_solve_batching_rule(axis_data, batched_args, batch_dims, *,
-                                    left_side, lower, transpose_a, conjugate_a,
-                                    unit_diagonal):
+def _triangular_solve_batching_rule(
+    axis_data, batched_args, batch_dims, *, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
   if bx is None and by is None:
@@ -2738,13 +2731,25 @@ def _triangular_solve_batching_rule(axis_data, batched_args, batch_dims, *,
                            unit_diagonal=unit_diagonal)
     return out, None
   if bx is None:
-    x = batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+    if left_side:
+      y = batching.moveaxis(y, by, -1)
+      y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
+      bdim_out = y.ndim - 1
+    else:
+      y = batching.moveaxis(y, by, -2)
+      y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
+      bdim_out = y.ndim - 2
+    out_flat = triangular_solve(
+        x, y_flat, left_side=left_side, lower=lower,
+        transpose_a=transpose_a, conjugate_a=conjugate_a,
+        unit_diagonal=unit_diagonal)
+    return out_flat.reshape(y.shape), bdim_out
   else:
     x = batching.bdim_at_front(x, bx, axis_data.size, axis_data.explicit_mesh_axis)
-  y = batching.bdim_at_front(y, by, axis_data.size, axis_data.explicit_mesh_axis)
-  return triangular_solve(x, y, left_side=left_side, lower=lower,
-                          transpose_a=transpose_a, conjugate_a=conjugate_a,
-                          unit_diagonal=unit_diagonal), 0
+    y = batching.bdim_at_front(y, by, axis_data.size, axis_data.explicit_mesh_axis)
+    return triangular_solve(x, y, left_side=left_side, lower=lower,
+                            transpose_a=transpose_a, conjugate_a=conjugate_a,
+                            unit_diagonal=unit_diagonal), 0
 
 def _triangular_solve_lowering(
     ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
@@ -2798,9 +2803,31 @@ def _triangular_solve_cpu_lower(
                                  ir.BoolAttr.get(unit_diagonal),
                                  hlo.TransposeAttr.get(transpose))]
 
+def _tri_solve_sharding(a, b, *, left_side, lower, transpose_a, conjugate_a,
+                        unit_diagonal):
+  del lower, conjugate_a, unit_diagonal
+  batch_spec,  a_spec = a.sharding.spec[:-2], a.sharding.spec[-2:]
+  batch_spec_, b_spec = b.sharding.spec[:-2], b.sharding.spec[-2:]
+  if batch_spec != batch_spec_:
+    raise core.ShardingTypeError(
+        "All inputs to triangular_solve must have the same batch sharding, "
+        f"but got {batch_spec} and {batch_spec_}.")
+  if a_spec[left_side ^ transpose_a] is not None:
+    raise core.ShardingTypeError(
+        "triangular solve input `a` must be unsharded on the contracting axis, "
+        f"but got {a.sharding.spec} with {left_side=} and {transpose_a=}.")
+  if b_spec[not left_side] is not None:
+    raise core.ShardingTypeError(
+        "triangular solve input `b` must be unsharded on the contracting axis, "
+        f"but got {b.sharding.spec} with {left_side=} and {transpose_a=}.")
+  out_spec = ([a_spec[transpose_a], b_spec[1]] if left_side else
+              [b_spec[0], a_spec[not transpose_a]])
+  return a.sharding.update(spec=P(*batch_spec, *out_spec))
+
 triangular_solve_p = linalg_primitive(
     _triangular_solve_dtype_rule, (_float | _complex, _float | _complex),
-    (2, 2), _triangular_solve_shape_rule, "triangular_solve")
+    (2, 2), _triangular_solve_shape_rule, "triangular_solve",
+    sharding_rule=_tri_solve_sharding)
 ad.defjvp2(triangular_solve_p,
            _triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
