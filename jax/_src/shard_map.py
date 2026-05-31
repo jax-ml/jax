@@ -287,7 +287,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
         if not isinstance(s, P): continue
         arg_aval = typeof(a)
         s = s._normalized_spec_for_aval(arg_aval.ndim)
-        if config.remove_size_one_mesh_axis_from_type.value:
+        if core.current_jaxpr_eqn_ctx().remove_size_one_mesh_axis:
           s = core.remove_size_one_mesh_axis(s, mesh)
         if arg_aval.sharding.spec != s:
           raise ValueError(
@@ -2073,7 +2073,7 @@ def _top_level_ag(x, aval, out_sh_, multi_dim):
 
   in_spec = aval.sharding.spec
   out_spec = out_sh.spec._normalized_spec_for_aval(len(in_spec))
-  if config.remove_size_one_mesh_axis_from_type.value:
+  if core.current_jaxpr_eqn_ctx().remove_size_one_mesh_axis:
     out_spec = core.remove_size_one_mesh_axis(out_spec, out_sh.mesh)
 
   def f_shmap(x):

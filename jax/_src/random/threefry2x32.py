@@ -279,7 +279,7 @@ def threefry_split(key: typing.Array, shape: prng.Shape) -> typing.Array:
 
 @api.jit(static_argnums=(1,))
 def _threefry_split(key, shape) -> typing.Array:
-  if config.threefry_partitionable.value:
+  if core.current_jaxpr_eqn_ctx().threefry_partitionable:
     return _threefry_split_foldlike(key, shape)
   else:
     return _threefry_split_original(key, shape)
@@ -314,7 +314,7 @@ def threefry_random_bits(key: typing.Array, bit_width, shape):
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
 
-  if config.threefry_partitionable.value:
+  if core.current_jaxpr_eqn_ctx().threefry_partitionable:
     return _threefry_random_bits_partitionable(key, bit_width, shape)
   else:
     return _threefry_random_bits_original(key, bit_width, shape)

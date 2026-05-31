@@ -210,8 +210,10 @@ def _eval_jaxpr_discharge_state(
   for eqn in jaxpr.eqns:
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback
-    with source_info_util.user_context(
-        traceback, name_stack=name_stack), eqn.ctx.manager:
+    with (
+        source_info_util.user_context(traceback, name_stack=name_stack),
+        core.JaxprEqnContextManager(eqn.ctx)
+    ):
       should_discharge = [id(v.aval) in refs_to_discharge for v in eqn.invars]
       if eqn.primitive is core.ref_p:
         [invar], [outvar] = eqn.invars, eqn.outvars

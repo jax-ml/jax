@@ -67,16 +67,19 @@ from jax._src.config import (
   allow_f16_reductions as allow_f16_reductions,
   jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
   legacy_prng_key as legacy_prng_key,
-  threefry_partitionable as threefry_partitionable,
   array_garbage_collection_guard as array_garbage_collection_guard,
   transfer_guard as transfer_guard,
   transfer_guard_host_to_device as transfer_guard_host_to_device,
   transfer_guard_device_to_device as transfer_guard_device_to_device,
   transfer_guard_device_to_host as transfer_guard_device_to_host,
   make_user_context as make_user_context,
-  remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
   thread_guard as thread_guard,
   auto_pcast as auto_pcast,
+)
+
+from jax._src.jaxpr_eqn_context import (
+  threefry_partitionable as threefry_partitionable,
+  remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
 )
 
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval

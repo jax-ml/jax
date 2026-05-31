@@ -4368,7 +4368,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np.arange(4) * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y')))
 
-  @config.remove_size_one_mesh_axis_from_type(True)
+  @jax.remove_size_one_mesh_axis_from_type(True)
   @jtu.with_explicit_mesh((1,), 'x')
   def test_pvary_no_op_one_sized_mesh_axis(self, mesh):
     @jax.jit
@@ -4653,7 +4653,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.shard_map(f, out_specs=P(), check_vma=False)()  # doesn't crash
     jax.jit(jax.shard_map(f, out_specs=P(), check_vma=False))()  # doesn't crash
 
-  @config.remove_size_one_mesh_axis_from_type(True)
+  @jax.remove_size_one_mesh_axis_from_type(True)
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_remove_one_sized_mesh_axis_from_vma(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)

@@ -890,7 +890,7 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   def test_cuda_threefry2x32(self):
-    with config.threefry_partitionable(False):
+    with jax.threefry_partitionable(False):
       def func(x):
         return jax.random.uniform(x, (2, 4), dtype=np.float32)
 
@@ -898,7 +898,7 @@ class CompatTest(bctu.CompatTestBase):
       self.run_one_test(func, data)
 
   def test_rocm_threefry2x32(self):
-    with config.threefry_partitionable(False):
+    with jax.threefry_partitionable(False):
       def func(x):
         return jax.random.uniform(x, (2, 4), dtype=np.float32)
       data = self.load_testdata(rocm_threefry2x32.data_2026_02_05)

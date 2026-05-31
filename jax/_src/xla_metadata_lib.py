@@ -14,43 +14,14 @@
 
 from typing import Any
 
-from jax._src import config
-from jax._src.lib import xla_client
-
-config_ext = xla_client._xla.config
-
-
-class XlaMetadata:
-  __slots__ = ['val', 'hash']
-
-  val: dict[str, Any]
-
-  def __init__(self, val):
-    self.val = val
-    self.hash = hash(tuple(sorted(self.val.items())))
-
-  def __hash__(self):
-    return self.hash
-
-  def __eq__(self, other):
-    return other is not None and self.val == other.val
-
 
 def filter_nones(d: dict) -> dict:
   return {k: v for k, v in d.items() if v is not None}
 
 
-def update_metadata(a, b: dict[str, Any]):
+def update_metadata(a: dict[str, Any] | None, b: dict[str, Any]):
   if not b:
     return a
-  if a is None or a is config_ext.unset:
-    val = {}
-  else:
-    val = a.val.copy()
+  val = {} if a is None else a.copy()
   val.update(b)
-  return XlaMetadata(filter_nones(val))
-
-
-def current_xla_metadata() -> dict[str, Any] | None:
-  metadata = config.xla_metadata_context_manager.value
-  return None if metadata is None else metadata.val
+  return filter_nones(val)

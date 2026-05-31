@@ -29,6 +29,7 @@ import warnings
 import numpy as np
 
 from jax._src import config as jax_config
+from jax._src import jaxpr_eqn_context
 from jax._src import xla_bridge as xb
 from jax._src.util import (safe_zip, cache, tuple_delete, weak_value_interner,
                            immutable)
@@ -588,23 +589,26 @@ class use_abstract_mesh:
     self.mesh = mesh
 
   def __enter__(self):
-    self.prev = jax_config.abstract_mesh_context_manager.swap_local(self.mesh)
-    if (self.prev is not config_ext.unset and
-        not self.prev.empty and not self.mesh.empty and
-        self.prev.size != self.mesh.size):
-      jax_config.abstract_mesh_context_manager.set_local(self.prev)
+    cur = jaxpr_eqn_context.jaxpr_eqn_ctx.value
+    assert cur is not None
+    self.prev = jaxpr_eqn_context.jaxpr_eqn_ctx.swap_local(cur.replace(cur_abstract_mesh=self.mesh))
+    prev_mesh = cur.cur_abstract_mesh
+    if (prev_mesh is not None and prev_mesh is not config_ext.unset and
+        not prev_mesh.empty and not self.mesh.empty and
+        prev_mesh.size != self.mesh.size):
+      jaxpr_eqn_context.jaxpr_eqn_ctx.set_local(self.prev)
       raise ValueError(
           "use_abstract_mesh cannot change the size of the mesh. Got new mesh:"
           f" {self.mesh} with size={self.mesh.size} and prev mesh:"
-          f" {self.prev} with size={self.prev.size}")
+          f" {prev_mesh} with size={prev_mesh.size}")
 
   def __exit__(self, exc_type, exc_value, traceback):
-    jax_config.abstract_mesh_context_manager.set_local(self.prev)
+    jaxpr_eqn_context.jaxpr_eqn_ctx.set_local(self.prev)
 
 
 def get_abstract_mesh() -> AbstractMesh:
-  val = jax_config.abstract_mesh_context_manager.value
-  return empty_abstract_mesh if val is None else val
+  cur_mesh = jaxpr_eqn_context.jaxpr_eqn_ctx.value
+  return empty_abstract_mesh if cur_mesh is None or cur_mesh.cur_abstract_mesh is None else cur_mesh.cur_abstract_mesh
 
 def get_concrete_mesh() -> Mesh:
   val = jax_config.device_context.value

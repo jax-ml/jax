@@ -18,7 +18,6 @@ from functools import partial
 from collections.abc import Sequence
 import json
 
-from jax._src import config
 from jax._src.lib import xla_client
 from jax._src import dispatch
 from jax._src import core
@@ -42,11 +41,12 @@ def extend_compute_type(c_type: str | None):
     yield
     return
 
-  prev = config.compute_on_context_manager.swap_local(c_type)
+  prev = core.jaxpr_eqn_ctx.swap_local(
+      core.current_jaxpr_eqn_ctx().replace(compute_type=c_type))
   try:
     yield c_type
   finally:
-    config.compute_on_context_manager.set_local(prev)
+    core.jaxpr_eqn_ctx.set_local(prev)
 
 
 @contextmanager

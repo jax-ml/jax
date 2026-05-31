@@ -39,7 +39,12 @@ from jax._src import tree_util
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, AbstractValue,
     ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
-    get_referent, JaxprEqnContext, typeof)
+    get_referent, typeof)
+from jax._src.jaxpr_eqn_context import (
+    JaxprEqnContext,
+    JaxprEqnContextManager,
+    current_jaxpr_eqn_ctx,
+)
 from jax._src.lib import _jax
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
@@ -609,7 +614,7 @@ def new_eqn_recipe(trace: JaxprTrace,
     assert ("donated_invars" not in params or
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [t.aval for t in out_tracers]
-  ctx = ctx or JaxprEqnContext()
+  ctx = ctx or current_jaxpr_eqn_ctx()
   return JaxprEqnRecipe(next(trace.counter), tuple(in_tracers), map(ref, out_tracers),
                         out_avals, primitive, params, effects, source_info,
                         ctx)
@@ -1867,7 +1872,7 @@ class DynamicJaxprTrace(core.Trace):
   def make_eqn(self, in_tracers, out_avals, primitive, params,
                effects, source_info=None, ctx = None):
     source_info = source_info or source_info_util.new_source_info()
-    ctx = ctx or JaxprEqnContext()
+    ctx = ctx or current_jaxpr_eqn_ctx()
     outvars = map(self.frame.newvar, out_avals)
     if config.enable_checks.value:
       assert all(isinstance(x, DynamicJaxprTracer) for x in in_tracers)
@@ -2546,7 +2551,7 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
           invals = map(partial(read, eqn.source_info), eqn.invars)
           name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
           with (source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack),
-                eqn.ctx.manager):
+                JaxprEqnContextManager(eqn.ctx)):
             outs = eqn.primitive.to_lojax(*invals, **eqn.params)
           if eqn.primitive.multiple_results:
             foreach(env.setdefault, eqn.outvars, outs)
