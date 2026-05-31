@@ -22,15 +22,15 @@ import numpy as np
 from functools import partial, reduce as _reduce
 
 from jax._src import core
-from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
+from jax._src.lax.lax import (abs, add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
-                              convert_element_type, div, eq, exp, full_like, ge,
-                              gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
-                              reduce, select, sign, sqrt, square,
-                              standard_naryop, standard_unop, sub,
+                              convert_element_type, cos, div, eq, exp,
+                              full_like, ge, gt, le, log, log1p, lt, mul, ne,
+                              neg, pow, reciprocal, reduce, select, sign, sin,
+                              sqrt, square, standard_naryop, standard_unop, sub,
                               _const, _dtype,
                               _float, _nary_lower_hlo, _ones, _isnan)
-from jax._src.lax.control_flow.loops import while_loop
+from jax._src.lax.control_flow.loops import fori_loop, while_loop
 
 from jax._src import dtypes
 from jax._src.interpreters import ad
@@ -70,10 +70,87 @@ def digamma(x: ArrayLike) -> Array:
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)
 
+def _polygamma_trig_correction(m, x):
+  r"""Compute the trig correction term for the polygamma reflection formula.
+
+  The digamma reflection formula ``ψ(1-x) - ψ(x) = π cot(πx)`` can be
+  differentiated ``m`` times to give (for integer ``m >= 0``):
+
+  .. math::
+
+    (-1)^m \psi^{(m)}(1-x) - \psi^{(m)}(x) = \pi \frac{d^m}{dx^m} \cot(\pi x)
+    \;\equiv\; g_m(x)
+
+  Rearranging: ``ψ^(m)(x) = (-1)^m ψ^(m)(1-x) - g_m(x)``.
+
+  For ``x < 0``, ``1-x > 0`` so ``chlo.polygamma(m, 1-x)`` is correct.
+  This function computes the closed-form trig term ``g_m(x)`` for ``m = 0, 1, 2``,
+  which covers the most common use-cases (digamma ``m=0``, trigamma ``m=1``,
+  and digamma's second gradient ``m=2``).
+
+  For ``m >= 3`` the reflection formula is also valid but the trig term is not
+  returned here; callers fall back to the recurrence in that case.
+  """
+  pi = _const(x, np.pi)
+  pix = mul(pi, x)
+  s = sin(pix)   # sin(πx)
+  c = cos(pix)   # cos(πx)
+  # g_1(x) = -π²/sin²(πx)
+  g1 = neg(div(mul(pi, pi), mul(s, s)))
+  # g_2(x) = 2π³ cos(πx)/sin³(πx)
+  g2 = mul(_const(x, 2.0), div(mul(mul(pi, pi), mul(pi, c)),
+                                mul(s, mul(s, s))))
+  return g1, g2
+
+
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
-  r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
+  r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`.
+
+
+  For negative non-integer ``x``, XLA's ``chlo.polygamma`` (Euler-Maclaurin
+  zeta expansion) produces incorrect results (see jax-ml/jax#37635).  This
+  implementation corrects negative inputs using the reflection formula derived
+  by differentiating the digamma reflection identity ``m`` times:
+
+  .. math::
+
+      \psi^{(m)}(x) = (-1)^m\,\psi^{(m)}(1-x) - g_m(x), \quad x \notin \mathbb{Z}
+
+  where ``g_m(x) = π · d^m/dx^m [cot(πx)]`` is a closed-form trig expression.
+  Since ``1 - x > 0`` for ``x < 0``, ``chlo.polygamma`` evaluates correctly on
+  the reflected argument.  Positive inputs are unchanged.
+  """
   m, x = core.auto_insert_reshard(m, x)
-  return polygamma_p.bind(m, x)
+  # Broadcast m and x to the common result shape so that all element-wise
+  # operations (select, eq, lt) have compatible shapes.  mul with a full_like
+  # tensor triggers NumPy-style broadcasting in XLA without adding extra data.
+  m_bc = mul(m, full_like(x, 1.0))   # shape: broadcast_shapes(m.shape, x.shape)
+  x_bc = mul(x, full_like(m, 1.0))   # same broadcast shape
+
+  is_negative = lt(x_bc, _const(x_bc, 0.0))
+  # Reflected argument: 1 - x > 0 for x < 0, so chlo.polygamma is correct.
+  x_reflected = sub(_const(x_bc, 1.0), x_bc)
+  pi = _const(x_bc, np.pi)
+  # (-1)^m = cos(π m) for integer m — avoids pow(-1, float_exponent).
+  cos_pi_m = cos(mul(pi, m_bc))
+
+  # ψ^(m)(x) = (-1)^m ψ^(m)(1-x) - g_m(x)
+  psi_reflected = polygamma_p.bind(m_bc,
+                                   select(is_negative, x_reflected,
+                                          full_like(x_bc, 1.5)))
+  g1, g2 = _polygamma_trig_correction(m_bc, x_bc)
+
+  # Select the appropriate trig correction term based on m.
+  is_m0 = eq(m_bc, _const(m_bc, 0.0))
+  is_m1 = eq(m_bc, _const(m_bc, 1.0))
+  # g_0 = π cot(πx) = π cos(πx)/sin(πx) — for the m=0 (digamma) case.
+  pix = mul(pi, x_bc)
+  g0 = mul(pi, div(cos(pix), sin(pix)))
+  gm = select(is_m0, g0, select(is_m1, g1, g2))
+
+  result_reflected = sub(mul(cos_pi_m, psi_reflected), gm)
+  result_direct = polygamma_p.bind(m, x)
+  return select(is_negative, result_reflected, result_direct)
 
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
