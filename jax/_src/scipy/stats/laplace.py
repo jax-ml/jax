@@ -138,9 +138,8 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   """
   q, loc, scale = promote_args_inexact("laplace.ppf", q, loc, scale)
   half = _lax_const(q, 0.5)
-  one = _lax_const(q, 1)
   two = _lax_const(q, 2)
   centered = lax.sub(q, half)
   # ppf(q) = loc - scale * sign(q - 1/2) * log(1 - 2|q - 1/2|)
-  arg = lax.sub(one, lax.mul(two, lax.abs(centered)))
-  return lax.sub(loc, lax.mul(scale, lax.mul(lax.sign(centered), lax.log(arg))))
+  log_term = lax.log1p(lax.neg(lax.mul(two, lax.abs(centered))))
+  return lax.sub(loc, lax.mul(scale, lax.mul(lax.sign(centered), log_term)))
