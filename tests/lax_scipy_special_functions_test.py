@@ -15,6 +15,7 @@
 import collections
 import functools
 import itertools
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -27,6 +28,7 @@ import jax
 import jax.numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.lib import version as jaxlib_version
 from jax.scipy import special as lsp_special
 
 jax.config.parse_flags_with_absl()
@@ -516,6 +518,17 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
+
+  @jtu.sample_product(dtype=jtu.dtypes.floating)
+  @jax.numpy_dtype_promotion("standard")
+  @unittest.skipIf(jaxlib_version < (0, 10, 2), "requires chlo.polygamma update.")
+  def testPolygammaNegativeHalfIntegers(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/11481.
+    a = np.array([-16.5, -19.5, -22.5], dtype=dtype)[:, None]
+    n = np.array([1, 2, 3], dtype=int)[None, :]
+    actual = lsp_special.polygamma(n, a)
+    expected = osp_special.polygamma(n, a).astype(dtype)
+    self.assertAllClose(actual, expected, atol=1e-3, rtol=1e-3)
 
 
 if __name__ == "__main__":
