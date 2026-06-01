@@ -184,6 +184,10 @@ _threefry2x32_lowering_rule = mlir.lower_fun(
     partial(_threefry2x32_lowering, use_rolled_loops=False),
     multiple_results=True)
 
+_threefry2x32_cpu_lowering_rule = mlir.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=True),
+    multiple_results=True)
+
 
 def _threefry2x32_gpu_lowering_rule(ctx, k1, k2, x1, x2, *, target_name_prefix):
   if not config.threefry_gpu_kernel_lowering.value:  # back to default lowering
@@ -214,6 +218,8 @@ threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
 mlir.register_lowering(
     threefry2x32_p, _threefry2x32_lowering_rule, inline=False)
+mlir.register_lowering(
+    threefry2x32_p, _threefry2x32_cpu_lowering_rule, platform='cpu')
 mlir.register_lowering(
     threefry2x32_p,
     partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='cu'),
