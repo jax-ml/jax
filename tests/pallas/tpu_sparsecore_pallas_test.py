@@ -1909,9 +1909,6 @@ class VectorSubcoreTest(PallasSCTest):
 
     shape = (self.sc_info.num_subcores, 64, 32)
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(*shape)
-    # TODO(b/478819791): Fix and enable on v7x
-    if jtu.is_device_tpu(7, "x"):
-      self.skipTest("Mysteriously fails in MLIR verifier (no error message) on v7x")
 
     @self.kernel(
         out_type=x[:, : self.num_lanes],
