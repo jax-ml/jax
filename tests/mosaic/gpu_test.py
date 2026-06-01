@@ -3711,10 +3711,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       transpose_tiles=(False, True),
   )
   def test_tma_scatter_tiled(self, swizzle, dtype, transpose_tiles):
-    if not jtu.is_cuda_compute_capability_at_least("10.0"):
-      self.skipTest(
-          "TMA scatter requires CUDA compute capability 10.0 or higher"
-      )
+    self.skip_unless_tcgen05()  # .tile::scatter4 is not supported on sm_120, for example
     swizzle_elems = 8 * swizzle // bitwidth(dtype_to_ir_type(dtype))
     # Using `swizzle_elems` for `swizzle == 16` produces too short transfers
     # that result in misaligned SMEM addresses.
