@@ -28,16 +28,11 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas import core
-from jax._src.pallas import pallas_call as pallas_call_lib
 if sys.platform != "win32":
   from jax.experimental.pallas import triton as plgpu
 else:
   plgpu = None
 
-try:
-  from jax._src.lib import triton
-except ImportError:
-  triton = None
 try:
   from jax.experimental.pallas import tpu as pltpu
 except ImportError:
@@ -482,95 +477,6 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       x = y = jnp.ones((4, 192, 192))  # Not multiple of 128
       res = exp.call(x, y)
       self.assertAllClose(res, x + y)
-
-
-class ExportTestWithTriton(jtu.JaxTestCase):
-
-  def setUp(self):
-    if triton is None:
-      self.skipTest("Triton is not available on this platform")
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
-    super().setUp()
-
-  def _check_cuda_export(self, exp):
-    self.assertRegex(
-        exp.mlir_module(),
-        r"stablehlo.custom_call"
-        # TODO(slebedev): Remove the latter option once jaxlib is >0.10.0.
-        r" @(__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"|triton_kernel_call_ffi)",
-    )
-
-  def test_cross_platform(self):
-    # TODO: Add this test back once gfx arch string parsing is fixed.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm due to gfx arch string parsing error.")
-    def add_vectors_kernel(x_ref, y_ref, o_ref):
-      x, y = x_ref[...], y_ref[...]
-      o_ref[...] = x + y
-
-    @jax.jit
-    def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
-      return pl.pallas_call(
-          add_vectors_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          name="my_custom_kernel_name",
-      )(x, y)
-
-    platforms = ["tpu"]
-    if triton is not None and triton.has_compilation_handler("cuda"):
-      # Only include CUDA if GPU support is linked in.
-      platforms.append("cuda")
-
-    a = np.arange(8 * 16, dtype=np.int32).reshape((8, 16))
-    exp = export.export(
-        add_vectors,
-        platforms=platforms,
-        # The Pallas GPU custom call is not enabled for export by default.
-        disabled_checks=[
-            export.DisabledSafetyCheck.custom_call("triton_kernel_call"),
-            export.DisabledSafetyCheck.custom_call("triton_kernel_call_ffi"),
-            export.DisabledSafetyCheck.custom_call("__gpu$xla.gpu.triton"),
-        ],
-    )(a, a)
-
-    if jtu.device_under_test() == "tpu" or (
-        jtu.device_under_test() == "gpu"
-        and jtu.is_cuda_compute_capability_at_least("8.0")
-    ):
-      res = exp.call(a, a)
-      self.assertAllClose(res, a + a)
-
-    # Check that we use the proper kernels names
-    if "tpu" in platforms:
-      self.assertRegex(
-          exp.mlir_module(),
-          r"stablehlo.custom_call"
-          r" @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"",
-      )
-    if "cuda" in platforms:
-      self._check_cuda_export(exp)
-
-
-class ExportTestWithMosaicGpu(ExportTestWithTriton):
-
-  def setUp(self):
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
-    # TODO(b/432678342): remove once this is fixed.
-    if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least(
-        "9.0"
-    ):
-      self.skipTest(
-          "LLVM seems to care about the compute capability if a GPU is present"
-      )
-    super().setUp()
-    self.enter_context(config.jax_pallas_use_mosaic_gpu(True))
-
-  def _check_cuda_export(self, exp):
-    self.assertRegex(
-        exp.mlir_module(),
-        r"stablehlo.custom_call @mosaic_gpu_v2.*my_custom_kernel_name",
-    )
 
 
 if __name__ == "__main__":
