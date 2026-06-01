@@ -17,6 +17,11 @@
 
 from jax._src.scipy.stats.laplace import (
   cdf as cdf,
+  isf as isf,
+  logcdf as logcdf,
   logpdf as logpdf,
+  logsf as logsf,
   pdf as pdf,
+  ppf as ppf,
+  sf as sf,
 )

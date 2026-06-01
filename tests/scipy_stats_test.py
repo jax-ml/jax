@@ -769,6 +769,86 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
+  def testLaplacePpf(self, shapes, dtypes):
+    rng = jtu.rand_uniform(self.rng(), low=0.01, high=0.99)
+    scipy_fun = osp_stats.laplace.ppf
+    lax_fun = lsp_stats.laplace.ppf
+
+    def args_maker():
+      q, loc, scale = map(rng, shapes, dtypes)
+      scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
+      return [q, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testLaplaceLogCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.laplace.logcdf
+    lax_fun = lsp_stats.laplace.logcdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testLaplaceSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.laplace.sf
+    lax_fun = lsp_stats.laplace.sf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testLaplaceLogSf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.laplace.logsf
+    lax_fun = lsp_stats.laplace.logsf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testLaplaceIsf(self, shapes, dtypes):
+    rng = jtu.rand_uniform(self.rng(), low=0.01, high=0.99)
+    scipy_fun = osp_stats.laplace.isf
+    lax_fun = lsp_stats.laplace.isf
+
+    def args_maker():
+      q, loc, scale = map(rng, shapes, dtypes)
+      scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
+      return [q, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
   def testLogisticCdf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
     scipy_fun = osp_stats.logistic.cdf
