@@ -169,7 +169,7 @@ shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
 def _shard_np_array(xs, shardings, layouts, copy_semantics):
   results = []
-  for x, sharding, layout in safe_zip(xs, shardings, layouts):
+  for x, sharding, layout, cs in safe_zip(xs, shardings, layouts, copy_semantics):
     devices = sharding._addressable_device_assignment
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
@@ -177,12 +177,17 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))
     else:
+      # Honor an explicit copy request (e.g. device_put(..., may_alias=False)).
+      # Without this the writeable numpy buffer is aliased zero-copy and later
+      # mutations to it leak into the supposedly-immutable array (#37830).
+      force_copy = cs == xc.ArrayCopySemantics.ALWAYS_COPY
       if sharding.is_fully_replicated:
         shards = [x] * len(devices)
       else:
         indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
         shards = [x[i] for i in indices]
-      results.append(batched_device_put(aval, sharding, shards, devices))
+      results.append(batched_device_put(aval, sharding, shards, devices,
+                                        force_copy=force_copy))
   return results
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_np_array
@@ -214,7 +219,8 @@ shard_arg_handlers[core.Ref] = _shard_mutable_array
 def batched_device_put(aval: core.ShapedArray,
                        sharding: JSharding, xs: Sequence[Any],
                        devices: Sequence[xc.Device], committed: bool = True,
-                       enable_x64: bool | None = None):
+                       enable_x64: bool | None = None, *,
+                       force_copy: bool = False):
   util.test_event("batched_device_put_start")
   try:
     bufs = [x for x, d in safe_zip(xs, devices)
@@ -224,7 +230,7 @@ def batched_device_put(aval: core.ShapedArray,
       return array.ArrayImpl(
           aval, sharding, bufs, committed=committed, _skip_checks=True)
     return xc.batched_device_put(aval, sharding, xs, list(devices), committed,
-                                 enable_x64=enable_x64)
+                                 force_copy, enable_x64=enable_x64)
   finally:
     util.test_event("batched_device_put_end")
 
