@@ -1681,13 +1681,18 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(math.prod(in_shape), dtype=dtype).reshape(in_shape)
     np.testing.assert_array_equal(kernel(x), x.reshape(out_shape))
 
-  @parameterized.product(dtype=[jnp.int32, jnp.float32])
-  def test_cumsum(self, dtype):
-    x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
+  @parameterized.product(size=[8, 16, 128], dtype=[jnp.int32, jnp.float32])
+  def test_cumsum(self, size, dtype):
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 9) and size != self.num_lanes:
+      self.skipTest("Needs a newer libtpu")
+
+    x = jnp.arange(size, dtype=dtype)
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=jtu.is_cloud_tpu_at_least(2026, 6, 9)
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.cumsum(x_ref[...])
@@ -1700,7 +1705,9 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(self.sc_info.num_lanes, dtype=dtype)
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=jtu.is_cloud_tpu_at_least(2026, 6, 9)
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.full(o_ref.shape, op(x_ref[...]))
@@ -1743,7 +1750,9 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=jtu.is_cloud_tpu_at_least(2026, 6, 9)
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.cumsum(x_ref[...], mask=(x_ref[...] % 2) == 1)
@@ -1757,7 +1766,9 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         out_shape=x,
-        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=jtu.is_cloud_tpu_at_least(2026, 6, 9)
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = plsc.cummax(x_ref[...], mask=(x_ref[...] % 2) == 1)
