@@ -1499,34 +1499,17 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
-
-namespace {
-bool hasHbmOrTcVmemOrVmemSharedMemorySpace(MemRefType ty) {
-  return HasMemorySpace(ty, MemorySpace::kHbm) ||
-         HasMemorySpace(ty, MemorySpace::kVmem, CoreType::kTc) ||
-         HasMemorySpace(ty, MemorySpace::kVmemShared);
-}
-}  // namespace
-
-FailureOr<bool> isGather(Operation& op, MemRefType source_ty,
-                         MemRefType target_ty) {
-  if (hasHbmOrTcVmemOrVmemSharedMemorySpace(source_ty) &&
-      HasMemorySpace(target_ty, MemorySpace::kVmem)) {
-    return true;
-  }
-  if (HasMemorySpace(source_ty, MemorySpace::kVmem) &&
-      hasHbmOrTcVmemOrVmemSharedMemorySpace(target_ty)) {
-    return false;
-  }
-  return op.emitOpError(
-      "The transfer must be between HBM and VMEM, or between VMEM_SHARED and "
-      "VMEM");
-}
-
 FailureOr<bool> EnqueueIndirectDMAOp::isGather() {
-  const MemRefType source_ty = getMemRefType(getSource());
-  const MemRefType target_ty = getMemRefType(getTarget());
-  return mlir::tpu::isGather(*getOperation(), source_ty, target_ty);
+  const auto source_ms = dyn_cast_if_present<MemorySpaceAttr>(
+      getMemRefType(getSource()).getMemorySpace());
+  const auto target_ms = dyn_cast_if_present<MemorySpaceAttr>(
+      getMemRefType(getTarget()).getMemorySpace());
+  if (source_ms == nullptr || target_ms == nullptr) {
+    return emitOpError("Source and target memory spaces must be provided");
+  }
+  return mlir::tpu::isGather(*getOperation(), source_ms.getValue(),
+                             source_ms.getCoreType(), target_ms.getValue(),
+                             target_ms.getCoreType());
 }
 
 LogicalResult EnqueueIndirectDMAOp::verify() {
@@ -1618,9 +1601,16 @@ LogicalResult WaitDMAOp::verify() {
 }
 
 FailureOr<bool> WaitIndirectDMAOp::isGather() {
-  const MemRefType source_ty = getMemRefType(getSrc());
-  const MemRefType target_ty = getMemRefType(getDst());
-  return mlir::tpu::isGather(*getOperation(), source_ty, target_ty);
+  const auto source_ms = dyn_cast_if_present<MemorySpaceAttr>(
+      getMemRefType(getSrc()).getMemorySpace());
+  const auto target_ms = dyn_cast_if_present<MemorySpaceAttr>(
+      getMemRefType(getDst()).getMemorySpace());
+  if (source_ms == nullptr || target_ms == nullptr) {
+    return emitOpError("Source and target memory spaces must be provided");
+  }
+  return mlir::tpu::isGather(*getOperation(), source_ms.getValue(),
+                             source_ms.getCoreType(), target_ms.getValue(),
+                             target_ms.getCoreType());
 }
 
 LogicalResult WaitIndirectDMAOp::verify() {

@@ -1039,9 +1039,10 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, IndirectDmaWithoutLocalMem) {
       /*offset_filter=*/nullptr,
       /*add=*/false);
 
-  ASSERT_THAT(VerifyOp(dma),
-              StatusIs(_, HasSubstr("The transfer must be between HBM and "
-                                    "VMEM, or between VMEM_SHARED and VMEM")));
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("The transfer must be between HBM and VMEM, "
+                            "VMEM_SHARED and VMEM, or TC VMEM and VMEM")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, IndirectDmaOffsetsNotInVmem) {
@@ -1333,9 +1334,10 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
       /*src=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
       /*dst=*/AllocaI32({64, 256, 128}, MemorySpace::kHbm));
 
-  ASSERT_THAT(VerifyOp(wait),
-              StatusIs(_, HasSubstr("The transfer must be between HBM and "
-                                    "VMEM, or between VMEM_SHARED and VMEM")));
+  ASSERT_THAT(
+      VerifyOp(wait),
+      StatusIs(_, HasSubstr("The transfer must be between HBM and VMEM, "
+                            "VMEM_SHARED and VMEM, or TC VMEM and VMEM")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
