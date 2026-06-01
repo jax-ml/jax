@@ -27,6 +27,7 @@ import traceback
 import types
 from typing import Any, ClassVar, TYPE_CHECKING
 from unittest import mock
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -2452,22 +2453,32 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   # TODO(slebedev): Remove once we no longer support ``pl.pallas_call``.
   def test_input_output_aliases(self):
-    # Note that we're writing to the input pointer, which should alias b_ptr.
-    def kernel(a_ref, b_ref):
-      del b_ref
-      a_ref[...] = jnp.ones_like(a_ref)
-
     a = np.zeros((64, 64), dtype=jnp.float32)
-    b = pl.pallas_call(
-        kernel,
+
+    # Note that we're writing to the input pointer, which should alias b_ptr.
+    @functools.partial(
+        pl.pallas_call,
         in_specs=[plgpu.BlockSpec(memory_space=plgpu.GMEM)],
         out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
         input_output_aliases={0: 0},
         compiler_params=plgpu.CompilerParams(
             lowering_semantics=self.LOWERING_SEMANTICS
         ),
-        out_shape=a,
-    )(a)
+        out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+    )
+    def kernel(a_ref, b_ref):
+      del b_ref
+      a_ref[...] = jnp.ones_like(a_ref)
+
+    with warnings.catch_warnings():
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message=(
+              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
+          ),
+      )
+      b = kernel(a)
     np.testing.assert_array_equal(b, np.ones_like(a))
 
   def test_slicing(self):

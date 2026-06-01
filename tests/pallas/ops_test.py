@@ -21,6 +21,7 @@ import subprocess
 import sys
 import unittest
 from typing import Any
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -331,6 +332,19 @@ class PallasBaseTest(ptu.PallasTest):
 
 @jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class OpsTest(PallasBaseTest):
+
+  def setUp(self):
+    if jtu.test_device_matches(["gpu"]) and use_mosaic_gpu:
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message=(
+              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
+          ),
+      )
+
+    super().setUp()
 
   @parameterized.named_parameters(
       (fn.__name__, fn, dtype) for fn, dtype in [

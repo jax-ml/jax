@@ -26,6 +26,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
@@ -941,11 +942,21 @@ def _pallas_call_lowering(
       ):
         backend = mosaic_gpu_backend
 
-      if is_rocm and backend is mosaic_gpu_backend:
-        raise ValueError(
-            "Mosaic GPU does not yet support AMD ROCm devices. "
-            "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
-        )
+      if backend is mosaic_gpu_backend:
+        if is_rocm:
+          raise ValueError(
+              "Mosaic GPU does not yet support AMD ROCm devices. "
+              "Use ``compiler_params=pltriton.CompilerParams()`` for ROCm."
+          )
+
+        if ctx.primitive is pallas_call_p:
+          deprecations.warn(
+              "jax-pallas-call-mgpu",
+              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated."
+              " Support for that will be removed in a future JAX version."
+              " Please migrate to ``plgpu.kernel``.",
+              stacklevel=2,
+          )
 
     try:
       from jax._src.pallas.triton import core as triton_core

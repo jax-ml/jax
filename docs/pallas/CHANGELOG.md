@@ -58,6 +58,13 @@ Remember to align the itemized text with the first line of an item within a list
 
   * Deleted `plgpu.unswizzle_ref` and `plgpu.untile_ref`.
 
+* Deprecations
+
+  * Using {func}`jax.experimental.pallas.pallas_call` for Mosaic GPU kernels
+    is deprecated. Please migrate to
+    {func}`jax.experimental.pallas.mosaic_gpu.kernel` and
+    {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline`.
+
 ## Released with JAX 0.10.1
 
 * Changes
@@ -91,6 +98,7 @@ Remember to align the itemized text with the first line of an item within a list
     non-blocking equivalent of
     {func}`jax.experimental.pallas.mosaic_gpu.barrier_wait` only supported in
     a warp context.
+
 * Changes
 
   * Breaking change: removed `plgpu.TransposeTransform`.
