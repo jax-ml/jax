@@ -130,3 +130,12 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = ["//jax/_src/lib"],
 )
+
+pytype_strict_library(
+    name = "ad",
+    srcs = ["ad.py"],
+    deps = [
+        "//jax",
+        "//jax:ad_util",
+    ],
+)
