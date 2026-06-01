@@ -52,10 +52,8 @@ def dot(a: ArrayLike, b: ArrayLike, *,
     stacked rather than broadcast.
 
   Args:
-    a: first input array, of shape ``(..., N)``.
-    b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
-      In the multi-dimensional case, leading dimensions must be broadcast-compatible
-      with the leading dimensions of ``a``.
+    a: first input array, of shape ``(*a_batch, N)``.
+    b: second input array. Must have shape ``(N,)`` or ``(*b_batch, N, M)``.
     precision: either ``None`` (default), which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
@@ -65,8 +63,10 @@ def dot(a: ArrayLike, b: ArrayLike, *,
       accumulate results to and return a result with that datatype.
 
   Returns:
-    array containing the dot product of the inputs, with batch dimensions of
-    ``a`` and ``b`` stacked rather than broadcast.
+    An array containing the dot product of the inputs.  Unlike :func:`matmul`,
+    the batch dimensions of ``a`` and ``b`` are stacked rather than broadcast;
+    that is, the output shape will be ``(*a_batch,)`` if ``b`` is one-dimensional,
+    or ``(*a_batch, *b_batch, M)`` if ``b`` has more than one dimension.
 
   See also:
     - :func:`jax.numpy.matmul`: broadcasted batched matmul.
