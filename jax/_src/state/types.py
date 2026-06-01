@@ -266,6 +266,76 @@ class SelectTransform(MultiRefTransform):
     return attrs[0]
 
 
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class ConcatTransform(MultiRefTransform):
+  axis: int = dataclasses.field(metadata=dict(static=True))
+
+  def transform_types(self, xs):
+    def _type(ref):
+      match ref:
+        case AbstractRef():
+          return ref
+        case core.ShapedArray():
+          raise NotImplementedError
+        case _:
+          raise TypeError(f"Cannot concat {ref}")
+
+    assert isinstance(xs, Sequence), f"Concat expected sequence, got {xs}"
+    types = tuple(_type(ref) for ref in xs)
+    # Validate that all refs have the same dtype / memory_space and compatible
+    # shapes (must agree on every dimension except the concat axis).
+    first = types[0]
+    axis = self.axis
+    if axis < 0:
+      axis += first.inner_aval.ndim
+    if axis < 0 or axis >= first.inner_aval.ndim:
+      raise ValueError(
+          f"Concat axis {self.axis} out of range for rank"
+          f" {first.inner_aval.ndim}"
+      )
+    for i, t in enumerate(types[1:], 1):
+      if t.dtype != first.dtype:
+        raise TypeError(
+            f"Cannot concat refs with different dtypes: {first.dtype} vs"
+            f" {t.dtype} (ref {i})"
+        )
+      if t.inner_aval.ndim != first.inner_aval.ndim:
+        raise TypeError(
+            f"Cannot concat refs with different ranks: {first.inner_aval.ndim}"
+            f" vs {t.inner_aval.ndim} (ref {i})"
+        )
+      for d in range(first.inner_aval.ndim):
+        if d != axis and t.shape[d] != first.shape[d]:
+          raise TypeError(
+              f"Cannot concat refs with different shapes on non-concat axis"
+              f" {d}: {first.shape} vs {t.shape} (ref {i})"
+          )
+
+    # Build the concatenated shape.
+    concat_dim = sum(t.shape[axis] for t in types)
+    new_shape = list(first.shape)
+    new_shape[axis] = concat_dim
+    new_inner = first.inner_aval.update(shape=tuple(new_shape))
+    return first.update(inner_aval=new_inner)
+
+  def undo(self, x: core.AbstractValue) -> Transform:
+    raise NotImplementedError(type(self))
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{concat({self.axis=})}}")
+
+  def getattr(self, name: str, xs: Sequence[core.AbstractValue]) -> Any:
+    attrs = [getattr(x, name) for x in xs]
+    if name == "shape":
+      # shape differs on the concat axis; return the concatenated shape.
+      return self.transform_types(xs).shape
+    if any(attrs[0] != attr for attr in attrs[1:]):
+      raise TypeError(f"Cannot resolve attribute {name} from: {attrs}")
+    return attrs[0]
+
+
 @dataclasses.dataclass
 class RefIndexer:
   """An object temporarily generated when doing ``ref.at``."""

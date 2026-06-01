@@ -43,6 +43,7 @@ from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Squeezed as Squeezed
 from jax._src.pallas.core import squeezed as squeezed
 from jax._src.pallas.cost_estimate import estimate_cost as estimate_cost
+from jax._src.pallas.helpers import concat_ref as concat_ref
 from jax._src.pallas.helpers import empty as empty
 from jax._src.pallas.helpers import empty_like as empty_like
 from jax._src.pallas.helpers import empty_ref_like as empty_ref_like

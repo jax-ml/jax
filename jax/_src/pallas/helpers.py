@@ -343,3 +343,31 @@ def select_ref(idx: jax_typing.Array, *refs) -> state_types.TransformedRef:
       ref=refs,
       transforms=(state_types.SelectTransform(idx),),
   )
+
+
+def concat_ref(*refs, axis: int = 0) -> state_types.TransformedRef:
+  """Concatenates multiple refs into a single virtual ref along an axis.
+
+  The resulting ref behaves as if the underlying refs were concatenated
+  along ``axis``.  This is currently only supported for DMA operations
+  and at the top level of a ref.
+
+  Example::
+
+    # ref1, ref2 are of shape (8, 128); dst_ref is of shape (16, 128)
+    src_ref = pl.concat_ref(ref1, ref2, axis=0)   # shape (16, 128)
+    pltpu.async_copy(src_ref, dst_ref, sem).wait()
+
+  Args:
+    *refs: Two or more refs to concatenate.
+    axis: The axis along which to concatenate.
+
+  Returns:
+    A TransformedRef that represents the concatenation.
+  """
+  if len(refs) <= 1:
+    raise ValueError("At least two refs are required for pl.concat_ref.")
+  return state_types.TransformedRef(
+      ref=refs,
+      transforms=(state_types.ConcatTransform(axis),),
+  )

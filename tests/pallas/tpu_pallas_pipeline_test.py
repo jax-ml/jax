@@ -494,6 +494,33 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(out, x[0])
 
+  def test_concat_ref(self):
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def kernel(x1_hbm_ref, x2_hbm_ref, o_hbm_ref):
+      x_ref = pl.concat_ref(x1_hbm_ref, x2_hbm_ref, axis=0)
+      pltpu.emit_pipeline(
+          pipeline_body,
+          grid=(2,),
+          in_specs=pl.BlockSpec((4, 128), lambda i: (i, 0)),
+          out_specs=pl.BlockSpec((4, 128), lambda i: (i, 0)),
+      )(x_ref, o_hbm_ref)
+
+    x1 = jnp.arange(4 * 128, dtype=jnp.float32).reshape(4, 128)
+    x2 = jnp.arange(4 * 128, 8 * 128, dtype=jnp.float32).reshape(4, 128)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pl.ANY),
+            pl.BlockSpec(memory_space=pl.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+    )(x1, x2)
+    expected = jnp.concatenate([x1, x2], axis=0)
+    np.testing.assert_array_equal(out, expected)
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPipelinePoisonTest(jtu.JaxTestCase):

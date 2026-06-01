@@ -2027,6 +2027,181 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     y = kernel(*xs)
     np.testing.assert_array_equal(y[:, :128], x[:, :128])
 
+  def test_concat_ref(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * 2,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+    )
+    def kernel(r1, r2, dst_ref):
+      def body(sem):
+        src = pl.concat_ref(r1, r2, axis=0)
+        pltpu.async_copy(src, dst_ref, sem).wait()
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x1 = jnp.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+    x2 = jnp.arange(8 * 128, 16 * 128, dtype=jnp.float32).reshape(8, 128)
+    y = kernel(x1, x2)
+    expected = jnp.concatenate([x1, x2], axis=0)
+    np.testing.assert_array_equal(y, expected)
+
+  def test_concat_ref_dst(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * 2,
+        out_shape=[jax.ShapeDtypeStruct((8, 128), jnp.float32)] * 2,
+    )
+    def kernel(src_ref, dst1, dst2):
+      def body(sem):
+        dst = pl.concat_ref(dst1, dst2, axis=0)
+        pltpu.async_copy(src_ref, dst, sem).wait()
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x = jnp.arange(16 * 128, dtype=jnp.float32).reshape(16, 128)
+    y1, y2 = kernel(x)
+    np.testing.assert_array_equal(y1, x[:8])
+    np.testing.assert_array_equal(y2, x[8:])
+
+  def test_concat_ref_dst_axis1(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+        out_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * 2,
+        out_shape=[jax.ShapeDtypeStruct((8, 128), jnp.float32)] * 2,
+    )
+    def kernel(src_ref, dst1, dst2):
+      def body(sem):
+        dst = pl.concat_ref(dst1, dst2, axis=1)
+        pltpu.async_copy(src_ref, dst, sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x = jnp.arange(8 * 256, dtype=jnp.float32).reshape(8, 256)
+    y1, y2 = kernel(x)
+    np.testing.assert_array_equal(y1, x[:, :128])
+    np.testing.assert_array_equal(y2, x[:, 128:])
+
+  def test_concat_ref_with_indexing(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * 2,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),
+    )
+    def kernel(r1, r2, r3):
+      def body(sem):
+        src = pl.concat_ref(r1, r2, axis=0).at[4:12]
+        pltpu.async_copy(src, r3.at[0], sem).wait()
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x1 = jnp.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+    x2 = jnp.arange(8 * 128, 16 * 128, dtype=jnp.float32).reshape(8, 128)
+    y = kernel(x1, x2)
+    expected_slice = jnp.concatenate([x1[4:8], x2[0:4]], axis=0)
+    np.testing.assert_array_equal(y[0], expected_slice)
+
+  def test_concat_nested_indexing(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * 2,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(r1, r2, dst_ref):
+      def body(sem):
+        src = pl.concat_ref(r1.at[2:8], r2, axis=0).at[4:12]
+        pltpu.async_copy(src, dst_ref, sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x1 = jnp.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+    x2 = jnp.arange(8 * 128, 16 * 128, dtype=jnp.float32).reshape(8, 128)
+    y = kernel(x1, x2)
+    expected = jnp.concatenate([x1[6:8], x2[0:6]], axis=0)
+    np.testing.assert_array_equal(y, expected)
+
+  def test_concat_ref_with_dynamic_indexing(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(idx_ref, r1, r2, dst_ref):
+      def body(sem):
+        src = pl.concat_ref(r1, r2, axis=0).at[pl.ds(idx_ref[...], 8)]
+        pltpu.async_copy(src, dst_ref, sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x1 = jnp.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+    x2 = jnp.arange(8 * 128, 16 * 128, dtype=jnp.float32).reshape(8, 128)
+    full = jnp.concatenate([x1, x2], axis=0)
+    for idx_val in [0, 4, 8]:
+      idx = jnp.array(idx_val, jnp.int32)
+      y = kernel(idx, x1, x2)
+      np.testing.assert_array_equal(y, full[idx_val : idx_val + 8])
+
+  def test_concat_ref_four_refs_dynamic(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+            pl.BlockSpec(memory_space=pltpu.HBM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(idx_ref, r1, r2, r3, r4, dst_ref):
+      def body(sem):
+        src = pl.concat_ref(r1, r2, r3, r4, axis=0).at[
+            pl.ds(idx_ref[...], 8)
+        ]
+        pltpu.async_copy(src, dst_ref, sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
+
+    x1 = jnp.arange(0 * 128, 8 * 128, dtype=jnp.float32).reshape(8, 128)
+    x2 = jnp.arange(8 * 128, 16 * 128, dtype=jnp.float32).reshape(8, 128)
+    x3 = jnp.arange(16 * 128, 24 * 128, dtype=jnp.float32).reshape(8, 128)
+    x4 = jnp.arange(24 * 128, 32 * 128, dtype=jnp.float32).reshape(8, 128)
+    full = jnp.concatenate([x1, x2, x3, x4], axis=0)
+    for idx_val in [0, 4, 8, 12, 16, 24]:
+      idx = jnp.array(idx_val, jnp.int32)
+      y = kernel(idx, x1, x2, x3, x4)
+      np.testing.assert_array_equal(y, full[idx_val : idx_val + 8])
+
+  def test_concat_nested_select_sem(self):
+    @partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)] * 2,
+        out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(r1, r2, dst_ref):
+      def body(sem1, sem2):
+        src = pl.concat_ref(r1.at[2:8], r2, axis=0).at[4:12]
+        sem = pl.select_ref(0, sem1, sem2)
+        pltpu.async_copy(src, dst_ref, sem).wait()
+
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA)
+
+    x1 = jnp.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+    x2 = jnp.arange(8 * 128, 16 * 128, dtype=jnp.float32).reshape(8, 128)
+    y = kernel(x1, x2)
+    expected = jnp.concatenate([x1[6:8], x2[0:6]], axis=0)
+    np.testing.assert_array_equal(y, expected)
+
+
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
 
