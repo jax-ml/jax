@@ -64,6 +64,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betainc", 3, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
+        "boxcox", 2, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
+        "boxcox1p", 2, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=-0.5, high=5.0), True
+    ),
+    op_record(
         "gamma", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
