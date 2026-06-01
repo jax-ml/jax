@@ -367,8 +367,6 @@ class VectorSubcoreTest(PallasSCTest):
   )
   @jtu.thread_unsafe_test(condition=not htu.hypothesis_is_thread_safe())
   @hp.given(hps.data())
-  # TODO(b/478865387): Remove the skip once the bug is fixed.
-  @absltest.skip("Needs vector unrolling pass")
   def test_slicing(self, dtype, data):
     self.skip_if_tc_tiling()
 
@@ -1437,8 +1435,6 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_allclose(o, 4 * np.ones_like(o))
 
   @parameterized.product(sizes=[[1, 1], [2, 2], [1, 1, 1, 1]])
-  # TODO(b/478865387): Remove the skip once the bug is fixed.
-  @absltest.skip("Needs vector unrolling pass")
   def test_split_concatenate(self, sizes):
     shape = (sum(sizes), self.num_lanes)
     x = jnp.arange(math.prod(shape)).reshape(-1, self.num_lanes)
