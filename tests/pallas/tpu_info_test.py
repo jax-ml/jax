@@ -150,6 +150,7 @@ class TpuInfoStaticTest(jtu.JaxTestCase):
             | pltpu.ChipVersion.TPU_V3
             | pltpu.ChipVersion.TPU_7
             | pltpu.ChipVersion.TPU_7X
+            | pltpu.ChipVersion.TPU_8I
         ):
           # Dual core, no megacore
           info = pltpu.get_tpu_info_for_chip(version, 1)

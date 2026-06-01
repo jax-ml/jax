@@ -57,6 +57,8 @@ class ChipVersion(ChipVersionBase, enum.Enum):
   +---------+-------------------------------+-----------+------------------+
   | 7x      | 2                             | No        | No               |
   +---------+-------------------------------+-----------+------------------+
+  | 8i      | 2                             | No        | No               |
+  +---------+-------------------------------+-----------+------------------+
   """
 
   TPU_V2 = "v2"
@@ -68,6 +70,7 @@ class ChipVersion(ChipVersionBase, enum.Enum):
   TPU_V6E = "v6e"
   TPU_7 = "7"
   TPU_7X = "7x"
+  TPU_8I = "8i"
 
   def __str__(self) -> str:
     return self.value
@@ -82,6 +85,7 @@ class ChipVersion(ChipVersionBase, enum.Enum):
           | ChipVersion.TPU_V5P
           | ChipVersion.TPU_7
           | ChipVersion.TPU_7X
+          | ChipVersion.TPU_8I
       ):
         return 2
       case ChipVersion.TPU_V4I | ChipVersion.TPU_V5E | ChipVersion.TPU_V6E:
@@ -124,6 +128,8 @@ def chip_version_from_device_kind(device_kind: str) -> ChipVersion | None:
       return ChipVersion.TPU_7
     case "TPU7x":
       return ChipVersion.TPU_7X
+    case "TPU8i":
+      return ChipVersion.TPU_8I
     case _:
       return None
 
@@ -234,7 +240,7 @@ class TpuInfo:
             or (lhs_dtype in (U8, S8) and rhs_dtype in (U8, S8))
             or (lhs_dtype in (U4, S4) and rhs_dtype in (U4, S4))
         )
-      case 7:
+      case 7 | 8:
         return (lhs_dtype in (F32, BF16) and rhs_dtype in (F32, BF16)) or (
             lhs_dtype in (F32, BF16, F8E5M2, F8E4M3FN)
             and rhs_dtype in (F8E5M2, F8E4M3FN)
@@ -469,6 +475,27 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
               dma_granule_size_bytes=32,
           ),
       )
+    case ChipVersion.TPU_8I:
+      return TpuInfo(
+          chip_version=chip_version,
+          generation=8,
+          num_cores=num_cores,
+          num_lanes=128,
+          num_sublanes=8,
+          mxu_column_size=256,
+          num_mxus=2,
+          num_accumulators=128,
+          vmem_capacity_bytes=192 * 1024 * 1024,  # 192 MiB per core
+          cmem_capacity_bytes=0,
+          smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
+          hbm_capacity_bytes=309_000_000_000 // tensor_cores_per_chip,
+          mem_bw_bytes_per_second=int(8.60e12 // tensor_cores_per_chip),
+          bf16_ops_per_second=int(1.101e15 // tensor_cores_per_chip),
+          int8_ops_per_second=0,  # Not Available
+          fp8_ops_per_second=int(8.808e15 // tensor_cores_per_chip),
+          int4_ops_per_second=0,  # Not Available
+          sparse_core=None,  # TODO(aryarahul, sharadmv): It's complicated...
+      )
     case _:
       raise ValueError(f"Unsupported TPU chip version: {chip_version}")
 
@@ -515,6 +542,7 @@ def get_tpu_info_for_chip(
           ChipVersion.TPU_V3,
           ChipVersion.TPU_7,
           ChipVersion.TPU_7X,
+          ChipVersion.TPU_8I,
       }
   ) and num_tensor_cores_per_logical_device != 1:
     raise ValueError(
