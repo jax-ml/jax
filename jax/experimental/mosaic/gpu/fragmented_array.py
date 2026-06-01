@@ -612,6 +612,17 @@ class TiledLayout:
         _check_canonical=False,
     )
 
+  @property
+  def replication_factor(self) -> int:
+    replication_factor = 1
+    for dim in self.warp_dims:
+      if isinstance(dim, Replicated):
+        replication_factor *= dim.times
+    for dim in self.lane_dims:
+      if isinstance(dim, Replicated):
+        replication_factor *= dim.times
+    return replication_factor
+
 
 def _tiled_wgmma_layout(shape: tuple[int, ...]):
   """Returns the tiled layout relevant for WGMMA operations.
