@@ -724,6 +724,14 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.floor_divide, jnp.floor_divide, args_maker)
     self._CompileAndCheck(jnp.floor_divide, args_maker)
 
+  @jtu.sample_product(dtype=float_dtypes)
+  def test_heaviside_nan(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/38105
+    x = np.array([np.nan, -np.inf, -1, 0, 1, np.inf], dtype=dtype)
+    args_maker = lambda: [x[:, None], x[None, :]]
+    self._CheckAgainstNumpy(np.heaviside, jnp.heaviside, args_maker)
+    self._CompileAndCheck(jnp.heaviside, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
