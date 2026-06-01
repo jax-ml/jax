@@ -276,6 +276,17 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "xla_transform_test",
+    srcs = ["xla_transform_test.py"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax/extend:xla",
+        "//jaxlib:_xla",
+        "@xla//xla/python:_hlo",
+    ] + py_deps("absl/testing"),
+)
+
+jax_multiplatform_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
     enable_configs = [

@@ -60,6 +60,7 @@ pytype_strict_library(
         ":_pathways",
         ":_pretty_printer",
         ":_sdy_mpmd",
+        ":_xla",
         ":cpu_feature_guard",
         ":jax",
         ":jaxlib_files",
@@ -165,6 +166,7 @@ pywrap_library(
         ":_pathways",
         ":_pretty_printer",
         ":_sdy_mpmd",
+        ":_xla",
         ":utils",
         ":weakref_lru_cache",
         "//jaxlib/mlir/_mlir_libs:_chlo",
@@ -488,6 +490,34 @@ nanobind_pywrap_extension(
 py_binary(
     name = "backport_stubs",
     srcs = ["backport_stubs.py"],
+)
+
+nanobind_pywrap_extension(
+    name = "_xla",
+    srcs = ["xla.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    pytype_srcs = ["_xla.pyi"],
+    deps = [
+        ":nb_class_ptr",
+        ":py_client",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@nanobind",
+        "@xla//xla/hlo/ir:hlo",
+        "@xla//xla/pjrt:pjrt_api",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
+        "@xla//xla/pjrt/c:pjrt_c_api_xla_transform_extension_hdrs",
+        "@xla//xla/pjrt/c_api_client:pjrt_c_api_client",
+        "@xla//xla/python:version",
+        "@xla//xla/service:hlo_proto_cc",
+        "@xla//xla/service:xla_transform",
+        "@xla//xla/tsl/lib/strings:proto_serialization",
+    ],
 )
 
 cc_library(

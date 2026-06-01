@@ -1721,3 +1721,13 @@ pytype_strict_library(
         ":typing",
     ] + py_deps("numpy"),
 )
+
+pytype_strict_library(
+    name = "xla_transform",
+    srcs = ["xla_transform.py"],
+    type_checking = "pyrefly",
+    deps = [
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ],
+)

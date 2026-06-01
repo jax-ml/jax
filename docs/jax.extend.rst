@@ -18,3 +18,4 @@ Modules
   jax.extend.mlir
   jax.extend.pallas
   jax.extend.random
+  jax.extend.xla
