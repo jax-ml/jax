@@ -11108,6 +11108,43 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     jax.vmap(jnp.linalg.solve, in_axes=(None, 0))(cz, x)  # doesn't crash
     jax.jit(jax.vmap(jnp.linalg.solve, in_axes=(None, 0)))(cz, x)  # doesn't crash
 
+  @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
+  def test_jnp_matmul_out_sharding_3d(self, mesh):
+    x = jax.reshard(jnp.ones((1, 1, 4)), P('x', None, 'y'))
+    y = jax.reshard(jnp.ones((1, 4, 2)), P('x', 'y', None))
+
+    def f(a, b):
+      return jnp.matmul(a, b, out_sharding=P('x'))
+
+    z = f(x, y)
+    self.assertEqual(z.sharding, NamedSharding(mesh, P('x', None, None)))
+
+    z2 = jax.jit(f)(x, y)
+    self.assertEqual(z2.sharding, NamedSharding(mesh, P('x', None, None)))
+
+  @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
+  def test_jnp_matmul_out_sharding_unreduced(self, mesh):
+    np1 = np.ones((1, 1, 4))
+    np2 = np.ones((1, 4, 2))
+    x = jax.reshard(np1, P('x', None, 'y'))
+    y = jax.reshard(np2, P('x', 'y', None))
+
+    @jax.jit
+    def f(a, b):
+      return jnp.matmul(a, b, out_sharding=P('x', unreduced={'y'}))
+
+    z = f(x, y)
+    self.assertEqual(z.sharding,
+                     NamedSharding(mesh, P('x', None, None, unreduced={'y'})))
+    self.assertArraysEqual(reshard(z, P('x')), np1 @ np2)
+
+    jaxpr = f.trace(x, y).jaxpr
+    for eqn in jaxpr.eqns:
+      if eqn.primitive.name == 'dot_general':
+        self.assertEqual(eqn.outvars[0].aval.sharding.spec,
+                         P('x', None, None, unreduced={'y'}))
+    self.assertNotIn('all-reduce(', f.lower(x, y).compile().as_text())
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
