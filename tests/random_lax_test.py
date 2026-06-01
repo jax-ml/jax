@@ -247,6 +247,7 @@ _OUT_SHARDING_CASES = [
     ('triangular', lambda key, n, s: random.triangular(key, left=0., mode=0.5, right=1., shape=(n,), out_sharding=s)),
     ('uniform', lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
     ('gamma', lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('vonmises', lambda key, n, s: random.vonmises(key, kappa=1.0, shape=(n,), out_sharding=s)),
     ('wald', lambda key, n, s: random.wald(key, mean=1.0, shape=(n,), out_sharding=s)),
 ]
 
@@ -290,6 +291,7 @@ _DTYPE_CASES = [
     ('triangular', float, lambda key, dtype: random.triangular(key, np.float16(0.), np.float16(0.5), np.float16(1.), shape=(10,), dtype=dtype)),
     ('truncated_normal', float, lambda key, dtype: random.truncated_normal(key, lower=np.float16(-2.), upper=np.float16(2.), shape=(10,), dtype=dtype)),
     ('uniform', float, lambda key, dtype: random.uniform(key, shape=(10,), minval=np.float16(0.), maxval=np.float16(1.), dtype=dtype)),
+    ('vonmises', float, lambda key, dtype: random.vonmises(key, np.float16(1.0), shape=(10,), dtype=dtype)),
     ('wald', float, lambda key, dtype: random.wald(key, np.float16(1.0), shape=(10,), dtype=dtype)),
     ('weibull_min', float, lambda key, dtype: random.weibull_min(key, np.float16(1.0), np.float16(1.0), shape=(10,), dtype=dtype)),
 ]
@@ -340,6 +342,7 @@ _SHAPE_CASES = [
     ('triangular', lambda key, shape: random.triangular(key, jnp.zeros(shape), jnp.full(shape, 0.5), jnp.ones(shape), shape=shape)),
     ('truncated_normal', lambda key, shape: random.truncated_normal(key, lower=jnp.full(shape, -2.), upper=jnp.full(shape, 2.), shape=shape)),
     ('uniform', lambda key, shape: random.uniform(key, shape=shape, minval=jnp.zeros(shape), maxval=jnp.ones(shape))),
+    ('vonmises', lambda key, shape: random.vonmises(key, jnp.ones(shape), shape=shape)),
     ('wald', lambda key, shape: random.wald(key, jnp.ones(shape), shape=shape)),
     ('weibull_min', lambda key, shape: random.weibull_min(key, jnp.ones(shape), jnp.ones(shape), shape=shape)),
 ]
@@ -1388,6 +1391,20 @@ class DistributionsTest(RandomTestBase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.rayleigh(scale=scale).cdf)
+
+  @jtu.sample_product(
+      kappa = [1e-6, 1e-4, 1e-2, 1e0, 1e2, 1e4, 1e6],
+      dtype = jtu.dtypes.floating)
+  def testVonMises(self, kappa, dtype):
+    key = lambda: self.make_key(0)
+    rand = lambda key: random.vonmises(key, kappa, shape=(10000,), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.vonmises(kappa).cdf)
 
   @jtu.sample_product(
       mean= [0.2, 1., 2., 10. ,100.],
