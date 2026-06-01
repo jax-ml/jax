@@ -2870,11 +2870,11 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
   return ray
 
 def vonmises(key: ArrayLike,
-              kappa: RealArray = np.float32(1),
-              shape: Shape | None = None,
-              dtype: DTypeLikeFloat | None = None,
-              *,
-              out_sharding: NamedSharding | P | None = None) -> Array:
+             kappa: RealArray = 1.0,
+             shape: Shape | None = None,
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding: NamedSharding | P | None = None) -> Array:
   r""" Sample 0-mean von Mises random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -2909,7 +2909,7 @@ def vonmises(key: ArrayLike,
   dtype = dtypes.check_and_canonicalize_user_dtype(float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `vonmises` must be a float or complex dtype, "
-                    f"got {dtype}")
+                     f"got {dtype}")
   shape = _check_broadcast_shapes("vonmises", shape, kappa)
   out_sharding = canonicalize_sharding(out_sharding, "vonmises")
   _check_all_safe_to_cast("vonmises", dtype, kappa)
@@ -2932,83 +2932,87 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
   return jnp.reshape(samples, shape)
 
 
-def _vonmises_one(key: Array, kappa: ArrayLike, dtype: DTypeLikeFloat):
-    """Sample from von Mises distribution with mean angle 0 and concentration kappa
+def _vonmises_one(key: Array, kappa: Array, dtype: DTypeLikeFloat):
+  """Sample from von Mises distribution with mean angle 0 and concentration kappa
 
-    Jax transcription of Numpy's implementation of von Mises sampling, which uses Best and Fisher's algorithm
-    """
+  Jax transcription of Numpy's implementation of von Mises sampling, which uses Best and Fisher's algorithm
+  """
 
-    with np.errstate(over="ignore"):
-      kappa_large = jnp.array(1e5).astype(dtype)
-      kappa_small = jnp.array(1e-5).astype(dtype)
-      kappa_mid_small = jnp.array(1e-3).astype(dtype)
+  with np.errstate(over="ignore"):
+    kappa_large = jnp.array(1e5).astype(dtype)
+    kappa_small = jnp.array(1e-5).astype(dtype)
+    kappa_mid_small = jnp.array(1e-3).astype(dtype)
 
-    def small_kappa_uniform(key: Array, kappa: ArrayLike):
-        """For small kappa, the distribution is approximately uniform on [-pi, pi]"""
-        return uniform(
-            key, shape=np.shape(kappa), dtype=dtype, minval=-np.pi, maxval=np.pi
-        )
-
-    def large_kappa_normal(key: Array, kappa: ArrayLike):
-        """For large kappa, the distribution is approximately normal with mean 0 and variance 1/kappa"""
-        safe_kappa = jnp.where(kappa < kappa_large, 1.0, kappa)
-        return jnp.clip(
-            normal(key, shape=np.shape(kappa), dtype=dtype) / jnp.sqrt(safe_kappa),
-            -np.pi,
-            np.pi,
-        )
-
-    def mid_kappa_sample(key: Array, kappa: ArrayLike):
-
-        safe_kappa = jnp.where(kappa < kappa_small, 1.0, kappa)
-
-        def s_val_from_kappa(kappa: ArrayLike):
-            safe_kappa = jnp.where(kappa < kappa_mid_small, 1.0, kappa)
-            r_val = 1 + jnp.sqrt(1 + 4 * safe_kappa * safe_kappa)
-            rho_val = (r_val - jnp.sqrt(2 * r_val)) / (2 * safe_kappa)
-            return (1 + rho_val * rho_val) / (2 * rho_val)
-        # Use second order Taylor expansion for small kappa
-        s_val = lax_control_flow.cond(
-            safe_kappa < kappa_mid_small, lambda kappa: 1.0 / kappa + kappa, s_val_from_kappa, safe_kappa
-        )
-
-        def get_yw_vals(state):
-            key, kappa, s_val, _, _, _ = state
-            new_key, zkey, vkey = _split(key, 3)
-            z_val = jnp.cos(
-                np.pi * uniform(zkey, shape=np.shape(kappa), dtype=dtype)
-            )
-            w_val = (1 + s_val * z_val) / (s_val + z_val)
-            y_val = kappa * (s_val - w_val)
-            v_val = uniform(vkey, shape=np.shape(kappa), dtype=dtype)
-            return (new_key, kappa, s_val, y_val, v_val, w_val)
-
-        def yw_cond(state):
-            _, _, _, y_val, v_val, _ = state
-            cond1 = y_val * (2.0 - y_val) - v_val >= 0
-            cond2 = jnp.log(y_val / v_val) + 1 - y_val >= 0
-            return ~(cond1 | cond2)
-
-        _, _, _, _, _, w_final = lax_control_flow.while_loop(
-            yw_cond,
-            get_yw_vals,
-            # Set so yw_cond returns True for the first iteration if kappa in range
-            # jit traces all branches regardless of kappa
-            (key, safe_kappa, s_val, jnp.array(0.0), -2.0 * ((safe_kappa < kappa_small) | (safe_kappa > kappa_large) | (s_val == jnp.inf)).astype(dtype) + 1.0, jnp.array(0.0)),
-        )
-
-        uniform_sign = 2.0 * binomial(key, jnp.ones_like(kappa), 0.5, dtype=dtype) - 1.0
-        return uniform_sign * jnp.arccos(w_final)
-
-    return lax_control_flow.cond(
-        kappa < kappa_small,
-        small_kappa_uniform,
-        lambda key, kappa: lax_control_flow.cond(
-            kappa > kappa_large, large_kappa_normal, mid_kappa_sample, key, kappa
-        ),
-        key,
-        kappa,
+  def small_kappa_uniform(key: Array, kappa: Array):
+    """For small kappa, the distribution is approximately uniform on [-pi, pi]"""
+    return uniform(
+      key, shape=np.shape(kappa), dtype=dtype, minval=-np.pi, maxval=np.pi
     )
+
+  def large_kappa_normal(key: Array, kappa: Array):
+    """For large kappa, the distribution is approximately normal with mean 0 and variance 1/kappa"""
+    safe_kappa = jnp.where(kappa < kappa_large, 1.0, kappa)
+    return jnp.clip(
+      normal(key, shape=np.shape(kappa), dtype=dtype) / jnp.sqrt(safe_kappa),
+      -np.pi,
+      np.pi,
+    )
+
+  def mid_kappa_sample(key: Array, kappa: Array):
+
+    safe_kappa = jnp.where(kappa < kappa_small, 1.0, kappa)
+
+    def s_val_from_kappa(kappa: Array):
+      safe_kappa = jnp.where(kappa < kappa_mid_small, 1.0, kappa)
+      r_val = 1 + jnp.sqrt(1 + 4 * safe_kappa * safe_kappa)
+      rho_val = (r_val - jnp.sqrt(2 * r_val)) / (2 * safe_kappa)
+      return (1 + rho_val * rho_val) / (2 * rho_val)
+    # Use second order Taylor expansion for small kappa
+    s_val = lax_control_flow.cond(
+      safe_kappa < kappa_mid_small, lambda kappa: 1.0 / kappa + kappa, s_val_from_kappa, safe_kappa
+    )
+
+    def get_yw_vals(state):
+      key, kappa, s_val, *_ = state
+      new_key, zkey, vkey = _split(key, 3)
+      z_val = jnp.cos(
+        np.pi * uniform(zkey, shape=np.shape(kappa), dtype=dtype)
+      )
+      w_val = (1 + s_val * z_val) / (s_val + z_val)
+      y_val = kappa * (s_val - w_val)
+      v_val = uniform(vkey, shape=np.shape(kappa), dtype=dtype)
+      return (new_key, kappa, s_val, y_val, v_val, w_val)
+
+    def yw_cond(state):
+      *_, y_val, v_val, _ = state
+      cond1 = y_val * (2.0 - y_val) - v_val >= 0
+      cond2 = jnp.log(y_val / v_val) + 1 - y_val >= 0
+      return ~(cond1 | cond2)
+
+    *_, w_final = lax_control_flow.while_loop(
+      yw_cond,
+      get_yw_vals,
+      # Set so yw_cond returns True for the first iteration if kappa in range
+      # jit traces all branches regardless of kappa
+      (key,
+       safe_kappa,
+       s_val,
+       jnp.array(0.0), -2.0 * ((safe_kappa < kappa_small) | (safe_kappa > kappa_large) | (s_val == jnp.inf)).astype(dtype) + 1.0,
+       jnp.array(0.0)),
+    )
+
+    uniform_sign = 2.0 * binomial(key, jnp.ones_like(kappa), 0.5, dtype=dtype) - 1.0
+    return uniform_sign * jnp.arccos(w_final)
+
+  return lax_control_flow.cond(
+    kappa < kappa_small,
+    small_kappa_uniform,
+    lambda key, kappa: lax_control_flow.cond(
+      kappa > kappa_large, large_kappa_normal, mid_kappa_sample, key, kappa
+    ),
+    key,
+    kappa,
+  )
 
 def wald(key: ArrayLike,
          mean: RealArray,
