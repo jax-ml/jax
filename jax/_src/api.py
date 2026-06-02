@@ -1284,9 +1284,10 @@ def _mapped_axis_size(fn, tree, vals, dims, name, axis_size=None):
         f"*args={args} and **kwargs={kwargs}"
     )
 
-  def _get_axis_size(name: str, x, shape: tuple[core.AxisSize, ...], axis: int
-                     ) -> core.AxisSize | None:
+  def _get_axis_size(name: str, x, axis: int) -> core.AxisSize | None:
+    shape: tuple[core.AxisSize, ...] = ()
     try:
+      shape = np.shape(x)
       return shape[axis]
     except (IndexError, TypeError) as e:
       if not core.valid_jaxtype(x) or not isinstance(axis, int):
@@ -1299,7 +1300,7 @@ def _mapped_axis_size(fn, tree, vals, dims, name, axis_size=None):
           f"but is only {len(shape)} (its shape is {shape})") from e
 
   all_mapped_sizes = [
-    None if d is None else _get_axis_size(name, x, np.shape(x), d)
+    None if d is None else _get_axis_size(name, x, d)
     for x, d in zip(vals, dims)
   ]
   all_sizes = [s for s in all_mapped_sizes if s is not None]
