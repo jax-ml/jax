@@ -711,7 +711,7 @@ def _effect_free_abstract_eval(abstract_eval):
     return abstract_eval(*args, **kwargs), no_effects
   return abstract_eval_
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class GenericEffect(Effect):
   prim: Primitive
 effects.lowerable_effects.add_type(GenericEffect)
@@ -1957,7 +1957,7 @@ class MutableQuasiDynamicData:
 class QuasiDynamicData:
   pass
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AvalQDD:
   is_high = True
   aval: AbstractValue
@@ -1984,7 +1984,7 @@ class AvalQDD:
   def to_tangent_aval(self):
     return AvalQDD(self.aval.to_tangent_aval(), self.qdd and self.qdd.to_tangent_qdd())  # pyrefly: ignore[missing-attribute]
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AvalMutableQDD:
   aval: AbstractValue
   mutable_qdd: MutableQuasiDynamicData
@@ -2716,7 +2716,7 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
         'workaround pass the check_vma=False argument to `jax.shard_map`')
   return vma
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class bint(dtypes.ExtendedDType):
   bound: int
 
@@ -3397,7 +3397,7 @@ class _TempAxisName:
     return type(other) is _TempAxisName and self.id < other.id
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NamedAxisEffect(effects.Effect):
   """A side-effect introducing a new named axis into the current scope."""
   name: AxisName
@@ -3548,7 +3548,7 @@ def check_jaxpr(jaxpr: Jaxpr):
     check_key_reuse_jaxpr(jaxpr)
 
 # A place to track the quasi-dynamic data associated with a variable during typechecking
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MutableTypecheckVal:
   aval : AbstractValue
   mutable_qdd : MutableQuasiDynamicData

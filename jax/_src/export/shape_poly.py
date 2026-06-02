@@ -83,7 +83,7 @@ class Comparator(Enum):
   EQ = 1
   GEQ = 2
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _SymbolicConstraint:
   # Either e1 == e2 if cmp == Comparator.EQ else e1 >= e2
   cmp: Comparator
@@ -1767,7 +1767,7 @@ class ShapeEvaluator:
     return res
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ShapeConstraint:
 
   comp: Comparator
@@ -1899,7 +1899,7 @@ class ShapeConstraints:
           is_ok, *error_message_inputs,
           error_message=error_message)
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class _DimEquation:
   # Encodes that `aval_dim_expr`, which is a symbolic expressions containing
   # unknown dimension variables from the abstract values, is the specification

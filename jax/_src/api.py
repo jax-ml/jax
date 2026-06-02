@@ -1737,7 +1737,7 @@ def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
   return tree_unflatten(in_tree, arg_cts)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class RSpec:
   idx: int
   primal: bool
@@ -1805,30 +1805,30 @@ def _vjp_check_ct_avals(cts, primal_avals):
 
 
 @register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class NotNeeded:
   pass
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class GradValue:
   pass
 
 @register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class GradRef:
   pass
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class DontWant:
   pass
 
 @register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class DidntWant:
   pass
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True, weakref_slot=True)
 class VJP:
   fun: Callable
   in_tree: PyTreeDef

@@ -389,7 +389,7 @@ def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.Conc
 
 
 # Mark the effectful instances of call_tf
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class CallTfEffect(effects.Effect):
   __str__ = lambda _: "CallTfEffect"
 

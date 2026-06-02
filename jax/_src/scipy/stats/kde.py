@@ -32,7 +32,7 @@ from jax._src.typing import Array
 BwMethod = None | str | Array | Callable[[Any], Array]
 
 @register_pytree_node_class
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True, init=False, slots=True)
 class gaussian_kde:
   """Gaussian Kernel Density Estimator
 

@@ -40,7 +40,7 @@ from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 
 block_scaled_dot_name = "__op$block_scaled_dot"
 
-@dataclass
+@dataclass(slots=True)
 class BlockScaleConfig:
   mode: str
   block_size: int

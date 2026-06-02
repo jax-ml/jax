@@ -22,7 +22,7 @@ from typing import Any
 import weakref
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class _ConsumableRef:
   """Stores a strong ref initially, but switches to a weak ref once consumed.
 
@@ -42,6 +42,7 @@ class _ConsumableRef:
 
   def __init__(self, obj: Any) -> None:
     self.strong_ref = obj
+    self.weak_ref = None
 
   def __call__(self, *args, **kwargs):
     with self._mutex:
@@ -66,7 +67,7 @@ class _ConsumableRef:
         return type(self), (None,)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _ObjectState:
   is_being_initialized: bool
   exc: Exception | None = None

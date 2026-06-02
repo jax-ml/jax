@@ -250,7 +250,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
 BackendFactory = Callable[[], Union[xla_client.Client, None]]
 TopologyFactory = Callable[..., Union[xla_client.DeviceTopology, None]]
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class BackendRegistration:
   factory: BackendFactory
 

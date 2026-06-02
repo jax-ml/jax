@@ -312,7 +312,7 @@ class Lowering:
 
 # -- Public-facing API, plus helpers
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ArgInfo:
   _aval: core.AbstractValue
   donated: bool
@@ -969,7 +969,7 @@ class SourceInfo(NamedTuple):
   eqn_name: str
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class DeviceAssignmentMismatch:
   da: Sequence[xc.Device] | int
   m_type: MismatchType

@@ -262,7 +262,7 @@ def raise_if_error() -> None:
     raise exc.with_traceback(traceback)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _ErrorClass:
   """A class to store error information for AOT compilation.
 

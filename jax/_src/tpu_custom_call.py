@@ -151,7 +151,7 @@ class Tiling(enum.Enum):
   SPARSE_CORE = "TILING_SPARSE_CORE"
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class CustomCallBackendConfig:
   """Represents an unserialized backend config for custom calls."""
   lowered_module_asm: bytes

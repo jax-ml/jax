@@ -81,7 +81,7 @@ def _maybe_concretize(x: Any):
 indexer_transform_type_registry: set[type] = set()
 
 @tree_util.register_pytree_node_class
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class NDIndexer(state_types.Transform):
   indices: tuple[DimIndexer, ...]
   shape: tuple[int, ...]

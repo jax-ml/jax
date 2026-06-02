@@ -1594,7 +1594,7 @@ def filter_statics_from_treedef(registry, treedef, statics):
     assert False, "unreachable"
 
 @register_static
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Static:
   val: Any
 

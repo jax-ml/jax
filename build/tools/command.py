@@ -35,7 +35,7 @@ class CommandBuilder:
   def get_command_as_list(self) -> list[str]:
     return self.command
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class CommandResult:
   """
   Represents the result of executing a subprocess command.

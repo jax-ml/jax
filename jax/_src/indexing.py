@@ -22,7 +22,7 @@ from jax._src.typing import Array
 
 
 @tree_util.register_pytree_node_class
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class Slice:
   """A slice with a start index and a size.
 

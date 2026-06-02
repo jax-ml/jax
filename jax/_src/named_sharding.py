@@ -287,7 +287,7 @@ def get_array_mapping(axis_resources):
       d[axis] = i
   return d
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SdyDim:
   axes: tuple[str, ...]
   is_open: bool
@@ -318,7 +318,7 @@ def _get_axes(axes, mesh_shape):
   return tuple(n for n, _ in mesh_shape if n in axes)
 
 
-@dataclasses.dataclass(kw_only=True, frozen=True)
+@dataclasses.dataclass(kw_only=True, frozen=True, slots=True)
 class SdyArray:
   mesh_shape: tuple[tuple[str, int], ...] | None
   dim_shardings: tuple[SdyDim, ...]

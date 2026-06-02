@@ -108,7 +108,7 @@ class PartialVal(tuple):
     else:
       return self[0]
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EffectHandle:
   parents : list[Tracer]
   recipe : JaxprEqnRecipe
@@ -1782,7 +1782,7 @@ def _verify_params_are_hashable(
 # TracingEqns which point to DynamicJaxprTracers and unreachable constants can
 # be freed.
 
-@dataclass
+@dataclass(slots=True, weakref_slot=True)
 class TracingEqn:
   in_tracers: list[DynamicJaxprTracer]
   outvars: list[Var]

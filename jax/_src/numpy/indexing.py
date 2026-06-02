@@ -177,7 +177,7 @@ def _parse_indices(
 
 
 @register_pytree_node_class
-@dataclasses.dataclass(frozen=True, kw_only=True)
+@dataclasses.dataclass(frozen=True, kw_only=True, slots=True)
 class NDIndexer:
   """Object that implements NumPy-style indexing operations on top of JAX.
 

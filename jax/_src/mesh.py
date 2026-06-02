@@ -435,7 +435,7 @@ class _ThreadResourcesLocalState(threading.local):
 thread_resources = _ThreadResourcesLocalState()
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class AbstractDevice:
   device_kind: str
   num_cores: int | None

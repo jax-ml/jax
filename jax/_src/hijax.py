@@ -211,7 +211,7 @@ def box_set(box, val):
 
 ## Box implementation
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BoxTypeState(QDD):
   leaf_avals: tuple[core.AbstractValue, ...]
   treedef: PyTreeDef
@@ -900,7 +900,7 @@ def _set_up_nondiff(f, argnums_, argnames) -> frozenset[int]:
   return frozenset(argnums)
 
 @register_static
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Static:
   val: Any
 

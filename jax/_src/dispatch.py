@@ -391,7 +391,7 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
         "DCN-based cross host device transfers.")
   return different_process_inds
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _DeferredShardArg:
   """Deferred call to `pxla.shard_args`.
 
@@ -410,7 +410,7 @@ class _DeferredShardArg:
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _DeferredCrossHostTransferArg:
   """Deferred call to `xc.batched_copy_array_to_devices_with_sharding` for
   cross-host data transfers.

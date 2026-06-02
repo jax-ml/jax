@@ -97,7 +97,7 @@ class Transform(NamedTuple):
       stack.append(f'{self.name}()')
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class NameStack:
   stack: tuple[Scope | Transform, ...] = ()
 

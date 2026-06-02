@@ -818,7 +818,7 @@ def _qdd_cache_update(fun, in_type, i, consts, aval_qdds):
                   if aval_qdd.has_qdd])
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class IgnoreKey:
   val: Any
   def __hash__(self):
@@ -1087,7 +1087,7 @@ def _resolve_and_lower(
 _pgle_profiler_dict = weakref.WeakKeyDictionary()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MetaTy:
   aval: Any
   sharding: Any
@@ -1325,7 +1325,7 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PjitLoweringResult:
   func: func_dialect.FuncOp
   flat_output_types: list[ir.Type]
@@ -2352,7 +2352,7 @@ core.pp_eqn_rules[reshard_p] = _pp_reshard
 
 # -------------------- Auto and Explicit mode -------------------------
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class MeshInfo:
   prev: AbstractMesh
   new: AbstractMesh

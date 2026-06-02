@@ -187,7 +187,7 @@ class BatchTracer(Tracer['BatchTrace']):
     else:
       return self
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class AxisData:
   name : Any
   size : Any

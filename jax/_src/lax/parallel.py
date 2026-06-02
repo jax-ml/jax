@@ -1153,7 +1153,7 @@ mlir.register_lowering(ppermute_p, _ppermute_lowering)
 batching.fancy_primitive_batchers[ppermute_p] = _ppermute_batcher
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SingleSideCollectiveEffect(core.Effect):
   __str__ = lambda _: "one-sided communication"
   def __hash__(self):

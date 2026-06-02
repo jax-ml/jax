@@ -616,7 +616,7 @@ def _unwrap_kwargs_hashable(kwargs: Sequence[tuple[str, Any]]) -> dict[str, Any]
   return unwrapped_kwargs
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class FfiEffect(effects.Effect):
   def __str__(self):
     return "FFI"

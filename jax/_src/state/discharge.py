@@ -111,7 +111,7 @@ def _discharge_state2(jaxpr: core.ClosedJaxpr,
       jaxpr.jaxpr, jaxpr.consts, should_discharge=should_discharge, lower=lower)
   return core.ClosedJaxpr(jaxpr_, consts)
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class Environment:
   env: dict[core.Var, Any]
 

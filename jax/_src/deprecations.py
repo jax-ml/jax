@@ -83,7 +83,7 @@ def is_accelerated_attribute(module: ModuleType, name: str) -> bool:
 # The intent is that non-accelerated deprecations will warn, and accelerated
 # deprecations will error.
 
-@dataclass
+@dataclass(slots=True)
 class DeprecationState:
   accelerated: bool = False
 

@@ -46,7 +46,7 @@ def _canonicalize_size(size: int | Sequence[int] | None, *args: ArrayLike) -> tu
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class StatefulPRNG:
   """Stateful JAX random generator.
 

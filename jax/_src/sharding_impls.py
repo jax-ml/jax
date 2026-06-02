@@ -85,7 +85,7 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SdyArrayList:
   shardings: tuple[SdyArray, ...]
 
@@ -346,7 +346,7 @@ def prepare_axis_resources(axis_resources, arg_name,
 
 # Axis environments
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SPMDAxisContext:
   """A hardware axis context for parallel computations that use the GSPMD partitioner.
 
@@ -358,7 +358,7 @@ class SPMDAxisContext:
   manual_axes: frozenset[MeshAxisName] = frozenset()
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ShardingContext:
   """A hardware axis context for parallel computations that use the sharding
   interface.

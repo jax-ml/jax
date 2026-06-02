@@ -100,7 +100,7 @@ class JaxException(Exception):
 
 
 @functools.total_ordering
-@dataclasses.dataclass(eq=True, frozen=True)
+@dataclasses.dataclass(eq=True, frozen=True, slots=True)
 class ErrorEffect(effects.Effect):
   error_type: type[JaxException]
   shape_dtypes: tuple[api.ShapeDtypeStruct, ...]
@@ -212,7 +212,7 @@ class BatchedError(JaxException):
 # Error Value
 
 @jtu.register_pytree_node_class
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Error:
   _pred: dict[ErrorEffect, Bool]
   _code: dict[ErrorEffect, Int]

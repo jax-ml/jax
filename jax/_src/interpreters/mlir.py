@@ -676,7 +676,7 @@ class ShapePolyLoweringState:
     self.uses_dim_vars = (len(dim_vars) > 0)
     self.dim_vars = dim_vars
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class LoweringParameters:
   # A mapping between primitives and user-defined LoweringRules.
   # When lowering a primitive, give priority to the rule in this map over
@@ -713,7 +713,7 @@ def _code_to_filename(code: types.CodeType) -> str | None:
   pattern = config.hlo_source_file_canonicalization_regex.value
   return re.sub(pattern, '', code.co_filename) if pattern else code.co_filename
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class TracebackCaches:
   traceback_to_location_cache: Any  # jax_mlir_ext.TracebackToLocationCache
   canonical_name_cache: dict[str, str]
@@ -771,7 +771,7 @@ class LoweringCacheValue:
   const_arg_avals: Sequence[core.AbstractValue]
   inline: bool  # Inline calls to this lowered function?
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class ModuleContext:
   """Module-wide context information for MLIR lowering."""
   context: ir.Context
@@ -895,7 +895,7 @@ class ModuleContext:
   def replace(self, **kw): return dataclasses.replace(self, **kw)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class LoweringRuleContext:
   """Per-rule context information for MLIR lowering."""
   module_context: ModuleContext
@@ -951,7 +951,7 @@ class LoweringRuleContext:
 LoweringRule = Callable[..., Sequence[ir.Value | Sequence[ir.Value]]]
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class LoweringRuleEntry:
   rule: LoweringRule
   inline: bool

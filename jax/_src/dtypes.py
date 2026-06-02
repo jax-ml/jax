@@ -1169,7 +1169,7 @@ def safe_to_cast(input_dtype_or_value: Any,
 
 class primal_tangent_dtype_scalar(extended): ...
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class PrimalTangentDType(ExtendedDType):
   primal_dtype: Any
   tangent_dtype: Any

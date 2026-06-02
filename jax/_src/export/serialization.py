@@ -75,7 +75,7 @@ SerT = TypeVar("SerT")
 _SERIALIZATION_VERSION = 11
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class _SerializedUniques:
   # Map unique objects to their index in the serialized data.
   unique_avals: list[core.AbstractValue]

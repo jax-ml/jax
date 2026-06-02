@@ -112,7 +112,7 @@ class MultiRefTransform(Transform):
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class BitcastTransform(Transform):
   dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
 
@@ -162,7 +162,7 @@ def _canonicalize_reshape(
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ReshapeTransform(Transform):
   shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
@@ -201,7 +201,7 @@ def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class TransposeTransform(Transform):
   permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
@@ -232,7 +232,7 @@ class TransposeTransform(Transform):
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SelectTransform(MultiRefTransform):
   idx: Array | int = dataclasses.field(metadata=dict(static=False))
 
@@ -266,7 +266,7 @@ class SelectTransform(MultiRefTransform):
     return attrs[0]
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class RefIndexer:
   """An object temporarily generated when doing ``ref.at``."""
   ref_or_view: Any
@@ -697,7 +697,7 @@ ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # pyrefly: ign
 
 # === pinned, chained LinearVals ===
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class AbstractLinVal(core.AbstractValue):
   inner_aval: core.AbstractValue
   memory_space: Any = None

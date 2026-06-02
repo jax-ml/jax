@@ -54,7 +54,7 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True, weakref_slot=True)
 class _FlatCallback:
   """A Python function callable with flat arguments and results.
 

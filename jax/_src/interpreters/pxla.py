@@ -1635,7 +1635,7 @@ def maybe_concretize_mesh(sharding, da: xc.DeviceList):
   return sharding
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class UnloadedMeshExecutable:
   xla_executable: Any
   device_list: xc.DeviceList

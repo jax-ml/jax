@@ -815,7 +815,7 @@ def _check_for_returned_refs(f, out, kind, args, after_idx):
                          f"array reference of type {a.str_short()}{loc} "
                          "that was not an argument.")
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class CustomVJPPrimal:
   """Primal to a ``custom_vjp``'s forward rule when ``symbolic_zeros`` is set"""
   value: Any
