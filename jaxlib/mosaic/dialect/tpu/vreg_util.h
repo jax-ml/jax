@@ -34,8 +34,8 @@ namespace mlir::tpu {
 // Returns the native vreg or vmask type for the given element type and target
 // shape. The layout bitwidth is used for i1 (vmask) elements.
 VectorType getNativeVregOrVmaskType(Type elem_ty, int8_t layout_bitwidth,
-                                    std::array<int64_t, 2> target_shape);
-VectorType getNativeVregType(Type elem_ty, std::array<int64_t, 2> target_shape);
+                                    ArrayRef<int64_t> target_shape);
+VectorType getNativeVregType(Type elem_ty, ArrayRef<int64_t> target_shape);
 
 // Returns a zero constant of the same type as `vty`.
 TypedValue<VectorType> getZerosVector(ImplicitLocOpBuilder& builder,
@@ -120,7 +120,7 @@ FailureOr<TypedValue<VectorType>> selectWithBounds(
 // subelement_idx must be between 0 and packing.
 FailureOr<TypedValue<VectorType>> broadcastSubelements(
     ImplicitLocOpBuilder& builder, TypedValue<VectorType> vec,
-    int subelement_idx, std::array<int64_t, 2> target_shape);
+    int subelement_idx, ArrayRef<int64_t> target_shape);
 
 }  // namespace mlir::tpu
 

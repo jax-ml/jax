@@ -40,20 +40,20 @@ namespace mlir::tpu {
 
 namespace {
 
-VectorType getNativeVregOrVmaskTypeImpl(
-    Type elem_ty, const int8_t bitwidth,
-    const std::array<int64_t, 2> target_shape) {
+VectorType getNativeVregOrVmaskTypeImpl(Type elem_ty, const int8_t bitwidth,
+                                        ArrayRef<int64_t> target_shape) {
   if (bitwidth == 32) {
     return VectorType::get(target_shape, elem_ty);
   }
-  return VectorType::get({target_shape[0], target_shape[1], 32 / bitwidth},
-                         elem_ty);
+  SmallVector<int64_t> shape(target_shape);
+  shape.push_back(32 / bitwidth);
+  return VectorType::get(shape, elem_ty);
 }
 
 }  // namespace
 
 VectorType getNativeVregOrVmaskType(Type elem_ty, const int8_t layout_bitwidth,
-                                    const std::array<int64_t, 2> target_shape) {
+                                    ArrayRef<int64_t> target_shape) {
   int8_t bitwidth = getTypeBitwidth(elem_ty);
   if (bitwidth == 1) {
     bitwidth = layout_bitwidth;
@@ -63,8 +63,7 @@ VectorType getNativeVregOrVmaskType(Type elem_ty, const int8_t layout_bitwidth,
   return getNativeVregOrVmaskTypeImpl(elem_ty, bitwidth, target_shape);
 }
 
-VectorType getNativeVregType(Type elem_ty,
-                             const std::array<int64_t, 2> target_shape) {
+VectorType getNativeVregType(Type elem_ty, ArrayRef<int64_t> target_shape) {
   return getNativeVregOrVmaskTypeImpl(elem_ty, getTypeBitwidth(elem_ty),
                                       target_shape);
 }
@@ -261,7 +260,7 @@ FailureOr<TypedValue<VectorType>> selectWithBounds(
 
 FailureOr<TypedValue<VectorType>> broadcastSubelements(
     ImplicitLocOpBuilder& builder, TypedValue<VectorType> vec,
-    int subelement_idx, std::array<int64_t, 2> target_shape) {
+    int subelement_idx, ArrayRef<int64_t> target_shape) {
   int bitwidth = getElementTypeBitwidth(vec.getType());
   int packing = 32 / bitwidth;
   if (subelement_idx < 0 || subelement_idx >= packing) {
