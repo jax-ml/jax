@@ -726,14 +726,41 @@ class TracebackCaches:
     self.canonical_name_cache = {}
 
 
-@dataclasses.dataclass(frozen=True)
+@util.immutable
 class LoweringCacheKey:
+  __slots__ = ("primitive", "eqn_ctx", "avals_in", "effects", "params",
+               "platforms", "__weakref__")
+
   primitive: core.Primitive
   eqn_ctx: core.JaxprEqnContext
   avals_in: tuple[core.AbstractValue, ...]
   effects: effects_lib.Effects
   params: tuple[tuple[str, Any], ...]
   platforms: tuple[str, ...]
+
+  @staticmethod
+  @util.weak_value_interner
+  def _create(primitive, eqn_ctx, avals_in, effects, params, platforms):
+    obj = object.__new__(LoweringCacheKey)
+    object.__setattr__(obj, "primitive", primitive)
+    object.__setattr__(obj, "eqn_ctx", eqn_ctx)
+    object.__setattr__(obj, "avals_in", avals_in)
+    object.__setattr__(obj, "effects", effects)
+    object.__setattr__(obj, "params", params)
+    object.__setattr__(obj, "platforms", platforms)
+    return obj
+
+  def __new__(cls, primitive, eqn_ctx, avals_in, effects, params, platforms):
+    return cls._create(primitive, eqn_ctx, avals_in, effects, params, platforms)
+
+  def __repr__(self) -> str:
+    return (
+        f"LoweringCacheKey(primitive={self.primitive}, "
+        f"eqn_ctx={self.eqn_ctx}, avals_in={self.avals_in}, "
+        f"effects={self.effects}, params={self.params}, "
+        f"platforms={self.platforms})"
+    )
+
 
 @dataclasses.dataclass(frozen=True)
 class LoweringCacheValue:
