@@ -14,8 +14,10 @@
 
 import functools
 import os
+import re
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import hypothesis as hp
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
@@ -111,6 +113,49 @@ class SingleShardTest(jtu.JaxTestCase):
 
   def test_z_absl_std3(self):
     self.assertEqual(shard_index, 2 % total_shards)
+
+
+# Avoid differing_executors if we run on unsharded environment.
+_helper_fail_suppressed_checks = [hp.HealthCheck.too_slow]
+if hasattr(hp.HealthCheck, "differing_executors"):
+  _helper_fail_suppressed_checks.append(hp.HealthCheck.differing_executors)
+
+
+# Verify that shrinking to minimal example still works when sharding.
+class HypothesisShrinkTest(htu.HypothesisShardedTestCase):
+
+  @hp.given(x=hp.strategies.integers(min_value=0, max_value=10000))
+  @hp.settings(
+      max_examples=100,
+      suppress_health_check=_helper_fail_suppressed_checks,
+      database=None,
+  )
+  def helper_fail(self, x):
+    self.assertLess(x, 10)
+
+  @classmethod
+  def setUpClass(cls):
+    super().setUpClass()
+    # Manually apply the sharding wrapper to helper_fail
+    handle = cls.helper_fail.hypothesis
+    handle.inner_test = htu._shard_aware_hypothesis_inner_test(
+        handle.inner_test
+    )
+
+  # Run 2 instances of the test so that it runs on both shards and can verify
+  # that hypothesis shrinking finds the right value (10) on both.
+  @parameterized.parameters(0, 1)
+  def test_meta_shrink(self, unused_id):
+    try:
+      self.helper_fail()
+    except AssertionError as e:
+      notes = getattr(e, "__notes__", [])
+      self.assertTrue(
+          any(re.search(r"\bx=10\b", note) for note in notes),
+          f"Exact match for 'x=10' not found in exception notes: {notes}",
+      )
+      return
+    self.fail("helper_fail did not raise AssertionError")
 
 
 if __name__ == "__main__":

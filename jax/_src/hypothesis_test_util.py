@@ -20,6 +20,7 @@ import os
 import unittest
 
 import hypothesis as hp
+from hypothesis import errors as hp_errors
 from hypothesis.internal import detection
 from hypothesis.internal import reflection
 from hypothesis.strategies._internal import core as hps_internal_core
@@ -54,6 +55,12 @@ def _shard_aware_hypothesis_inner_test(inner_test):
     if _TEST_TOTAL_SHARDS == 1:
       return inner_test(*args, **kwargs)
 
+    # If we have already encountered a failure in this test case execution,
+    # assume we are in shrinking/explain phase, which won't work with sharding.
+    self = kwargs["self"] if "self" in kwargs else args[0]
+    if getattr(self, "_hypothesis_failed", False):
+      return inner_test(*args, **kwargs)
+
     mod = hypothesis_inner_test_shard(
         inner_test, args, kwargs, _TEST_TOTAL_SHARDS
     )
@@ -62,7 +69,14 @@ def _shard_aware_hypothesis_inner_test(inner_test):
       # will skip the *entire* test, not just the current example.
       return None
     else:
-      return inner_test(*args, **kwargs)
+      try:
+        return inner_test(*args, **kwargs)
+      # Skipped tests aren't failures and don't trigger shrinking phase.
+      except (hp_errors.UnsatisfiedAssumption, unittest.SkipTest):
+        raise
+      except Exception:
+        self._hypothesis_failed = True
+        raise
 
   return shard_aware_inner_test_fn
 
