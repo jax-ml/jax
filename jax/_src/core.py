@@ -633,8 +633,6 @@ class Primitive:
   ref_primitive: bool = False
   # set for primitives that can skip canonicalization of values
   skip_canonicalization: bool = False
-  # hook for converting a hijax primitive to a lojax primitive
-  to_lojax: Callable[..., Any] | None = None
   # set for primitives that allocate references
   ref_allocating: bool = False
 
@@ -702,7 +700,15 @@ class Primitive:
   def get_bind_params(self, params):
     return params
 
+  def to_lojax(self, *args, **params):
+    raise NotImplementedError(
+        f"Primitive '{self.name}' has is_high=True but no to_lojax "
+        f"lowering rule.")
+
   def is_high(self, *avals, **params) -> bool:
+    for v in params.values():
+      if isinstance(v, (Jaxpr, ClosedJaxpr)) and v.is_high:
+        return True
     return False
 
 

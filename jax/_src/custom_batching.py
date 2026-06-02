@@ -351,6 +351,7 @@ batching.primitive_batchers[custom_vmap_p] = custom_vmap_batching
 ad.primitive_jvps[custom_vmap_p] = custom_vmap_jvp
 mlir.register_lowering(custom_vmap_p, mlir.lower_fun(
     custom_vmap_impl, multiple_results=True))
+custom_vmap_p.to_lojax = custom_vmap_impl
 
 
 # -- custom vmap applications
