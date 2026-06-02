@@ -161,11 +161,6 @@ def is_single_process_multi_device_topology():
           and jax.device_count() == jax.local_device_count())
 
 
-def supports_cross_device_collectives():
-  return ((is_nvshmem_available() and jax.local_device_count() == 1)
-          or is_single_process_multi_device_topology())
-
-
 mosaic_gpu_p = jax_core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
 

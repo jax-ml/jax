@@ -44,8 +44,6 @@ class TestCase(parameterized.TestCase):
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
-    if not mgpu.supports_cross_device_collectives():
-      self.skipTest("NVSHMEM library unavailable.")
     if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
       self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     if jax.process_count() == 1:

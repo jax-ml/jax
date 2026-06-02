@@ -28,7 +28,6 @@ from .core import (
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
     as_torch_gpu_kernel as as_torch_gpu_kernel,
-    supports_cross_device_collectives as supports_cross_device_collectives,
 )
 
 from .launch_context import (
