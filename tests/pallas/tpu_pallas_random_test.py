@@ -242,6 +242,28 @@ class PRNGTest(jtu.JaxTestCase):
     y = f(key)
     self.assertGreaterEqual(jnp.max(y), jnp.min(y))
 
+  def test_output_physical_key(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("DMA not supported on TPU <= v3")
+
+    key = pltpu.to_pallas_key(jax_random.key(0, impl="threefry2x32"))
+
+    def body(x_ref, o_ref):
+      pltpu.sync_copy(x_ref, o_ref)
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct((), jax.typeof(x).dtype),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM)
+      )(x)
+
+    y = f(key)
+    np.testing.assert_array_equal(
+        jax.random.key_data(key), jax.random.key_data(y)
+    )
 
 class BlockInvarianceTest(jtu.JaxTestCase):
 
