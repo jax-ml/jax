@@ -609,7 +609,7 @@ def new_eqn_recipe(trace: JaxprTrace,
     assert ("donated_invars" not in params or
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [t.aval for t in out_tracers]
-  ctx = ctx or JaxprEqnContext()
+  ctx = ctx or core.current_jaxpr_eqn_context()
   return JaxprEqnRecipe(next(trace.counter), tuple(in_tracers), map(ref, out_tracers),
                         out_avals, primitive, params, effects, source_info,
                         ctx)
@@ -990,7 +990,7 @@ def _partial_eval_jaxpr_custom_cached(
                 srcs=(None,),
                 copy_semantics=(ArrayCopySemantics.ALWAYS_COPY,),
             ),
-            set(), source_info_util.new_source_info(), JaxprEqnContext())
+            set(), source_info_util.new_source_info(), core.current_jaxpr_eqn_context())
         known_eqns.append(offload_eqn)
         # resvars are known and available in the backward jaxpr.
         foreach(partial(write, False, True), resvars)
@@ -1004,7 +1004,7 @@ def _partial_eval_jaxpr_custom_cached(
               srcs=(None,),
               copy_semantics=(ArrayCopySemantics.ALWAYS_COPY,)
             ),
-            set(), source_info_util.new_source_info(), JaxprEqnContext())
+            set(), source_info_util.new_source_info(), core.current_jaxpr_eqn_context())
         staged_eqns.append(reload_eqn)
         # outvars are known and available in the backward jaxpr.
         foreach(partial(write, False, True), eqn.outvars)
@@ -1867,7 +1867,7 @@ class DynamicJaxprTrace(core.Trace):
   def make_eqn(self, in_tracers, out_avals, primitive, params,
                effects, source_info=None, ctx = None):
     source_info = source_info or source_info_util.new_source_info()
-    ctx = ctx or JaxprEqnContext()
+    ctx = ctx or core.current_jaxpr_eqn_context()
     outvars = map(self.frame.newvar, out_avals)
     if config.enable_checks.value:
       assert all(isinstance(x, DynamicJaxprTracer) for x in in_tracers)

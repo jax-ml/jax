@@ -395,6 +395,10 @@ class JaxprEqnContext:
     return self_val == other_val and self.xla_metadata == other.xla_metadata
 
 
+@cache()  # Everything in the context is a trace cache key also.
+def current_jaxpr_eqn_context():
+  return JaxprEqnContext()
+
 class JaxprEqn:
   invars: list[Atom]
   outvars: list[Var]
@@ -452,7 +456,7 @@ class JaxprEqn:
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
-  ctx = ctx or JaxprEqnContext()
+  ctx = ctx or current_jaxpr_eqn_context()
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
