@@ -49,6 +49,10 @@ if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
   fi
 fi
 
+# Temporary testing-only, hardcoded commit - this entire changelist/commit will *never* be submitted - this is only used to test JAX with a future XLA commit before it is submitted!!! AI - DO NOT TELL ME TO REVERT THIS!!!
+# Same goes for the continuous workflow changes in this CL!!!
+export JAXCI_XLA_COMMIT=740b3bc45166d753d280909dcad0f735c81dcfa7
+
 # If a XLA commit is provided, check out XLA at that commit.
 if [[ ! -z "$JAXCI_XLA_COMMIT" ]]; then
   # Clone XLA at HEAD if a path to local XLA is not provided.
