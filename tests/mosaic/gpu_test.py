@@ -3683,8 +3683,12 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       shape=((64, None),),
       dtype=(jnp.int32, jnp.int16),
       idx_dtype=(jnp.int32, jnp.int8),
+      idx_layout=(
+          fa.TMA_INDICES_LAYOUT,
+          fa.TMA_INDICES_4_LAYOUT,
+      )
   )
-  def test_tma_gather_basic(self, swizzle, shape, dtype, idx_dtype):
+  def test_tma_gather_basic(self, swizzle, shape, dtype, idx_dtype, idx_layout):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("TMA gather requires CUDA compute capability 10.0 or higher")
     i1 = ir.IntegerType.get_signless(1)
@@ -3694,7 +3698,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     def kernel(ctx, src, idx, dst, smem):
       tmp, barrier = smem
       idxs = mgpu.FragmentedArray.load_untiled(
-          idx, layout=fa.TMA_INDICES_LAYOUT, optimized=False, is_signed=False
+          idx, layout=idx_layout, optimized=False, is_signed=False
       )
       ctx.async_copy(
           src_ref=src,
@@ -3706,8 +3710,9 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       barrier.wait_parity(c(0, i1))
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    idx = jax.random.permutation(jax.random.key(1234), 48).astype(idx_dtype)
-    out_type = jax.ShapeDtypeStruct((len(idx), col_slice), dtype)
+    num_items = 12 if idx_layout == fa.TMA_INDICES_4_LAYOUT else 48
+    idx = jax.random.permutation(jax.random.key(1234), 48).astype(idx_dtype)[:num_items]
+    out_type = jax.ShapeDtypeStruct((num_items, col_slice), dtype)
     smem = (out_type, mgpu.TMABarrier())
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, idx), out_type, smem,
@@ -3719,8 +3724,12 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       shape=((64, None),),
       dtype=(jnp.int32, jnp.int16),
       transpose_tiles=(False, True),
+      idx_layout=(
+          fa.TMA_INDICES_LAYOUT,
+          fa.TMA_INDICES_4_LAYOUT,
+      )
   )
-  def test_tma_gather_tiled(self, swizzle, shape, dtype, transpose_tiles):
+  def test_tma_gather_tiled(self, swizzle, shape, dtype, transpose_tiles, idx_layout):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("TMA gather requires CUDA compute capability 10.0 or higher")
     i1 = ir.IntegerType.get_signless(1)
@@ -3737,7 +3746,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     def kernel(ctx, src, idx, dst, smem):
       tmp, barrier = smem
       idxs = mgpu.FragmentedArray.load_untiled(
-          idx, layout=fa.TMA_INDICES_LAYOUT, optimized=False, is_signed=False
+          idx, layout=idx_layout, optimized=False, is_signed=False
       )
       ctx.async_copy(
           src_ref=src,
@@ -3756,9 +3765,11 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       )
       ctx.await_async_copy(0)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    idx = jax.random.permutation(jax.random.key(1234), 48).astype(jnp.int32)
-    out_type = jax.ShapeDtypeStruct((len(idx), 2 * col_slice), dtype)
-    smem_shape = tile_shape((len(idx), 2 * col_slice), tiling)
+    num_items = 12 if idx_layout == fa.TMA_INDICES_4_LAYOUT else 48
+    padded_num_items = (num_items + tiling[0] - 1) // tiling[0] * tiling[0]
+    idx = jax.random.permutation(jax.random.key(1234), padded_num_items).astype(jnp.int32)
+    out_type = jax.ShapeDtypeStruct((padded_num_items, 2 * col_slice), dtype)
+    smem_shape = tile_shape((padded_num_items, 2 * col_slice), tiling)
     if transpose_tiles:
       smem_shape = (smem_shape[1], smem_shape[0], *smem_shape[2:])
     smem = (
@@ -3768,21 +3779,28 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, idx), out_type, smem,
     )(x, idx)
-    np.testing.assert_array_equal(y, x[idx, slice(col_slice, 3 * col_slice)])
+    np.testing.assert_array_equal(y[:num_items], x[idx[:num_items], slice(col_slice, 3 * col_slice)])
 
   @parameterized.product(
       swizzle=(16, 32, 64, 128),
       dtype=(jnp.int32, jnp.int16),
       transpose_tiles=(False, True),
+      idx_layout=(
+          fa.TMA_INDICES_LAYOUT,
+          fa.TMA_INDICES_4_LAYOUT,
+      )
   )
-  def test_tma_scatter_tiled(self, swizzle, dtype, transpose_tiles):
+  def test_tma_scatter_tiled(self, swizzle, dtype, transpose_tiles, idx_layout):
     self.skip_unless_tcgen05()  # .tile::scatter4 is not supported on sm_120, for example
     swizzle_elems = 8 * swizzle // bitwidth(dtype_to_ir_type(dtype))
     # Using `swizzle_elems` for `swizzle == 16` produces too short transfers
     # that result in misaligned SMEM addresses.
     n_cols = swizzle_elems if swizzle != 16 else 128
-    shape = (64, n_cols)
+    num_items = 12 if idx_layout == fa.TMA_INDICES_4_LAYOUT else 64
+    shape = (num_items, n_cols)
     tiling = (8, swizzle_elems) if swizzle != 16 else (8, 2 * swizzle_elems)
+    padded_num_items = (num_items + tiling[0] - 1) // tiling[0] * tiling[0]
+    shape = (padded_num_items, n_cols)
     if transpose_tiles:
       transforms = (
           mgpu.TileTransform(tiling),
@@ -3795,7 +3813,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       tmp, barrier = smem
       idxs = mgpu.FragmentedArray.load_untiled(
           idx,
-          layout=fa.TMA_INDICES_LAYOUT,
+          layout=idx_layout,
           optimized=False,
           is_signed=False,
       )
@@ -3818,7 +3836,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
 
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     idx = jax.random.permutation(jax.random.key(1234), 128)
-    idx = idx[: shape[0]].astype(jnp.int32)
+    idx = idx[:padded_num_items].astype(jnp.int32)
     out_shape = (128, 2 * n_cols)
     out_type = jax.ShapeDtypeStruct(out_shape, dtype)
     smem_shape = tile_shape(shape, tiling)
@@ -3828,7 +3846,7 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, idx), out_type, smem
     )(x, idx)
-    np.testing.assert_array_equal(y[idx, slice(n_cols, 2 * n_cols)], x)
+    np.testing.assert_array_equal(y[idx[:num_items], slice(n_cols, 2 * n_cols)], x[:num_items])
 
   def test_tma_with_1d_tiling(self):
     swizzle = 128

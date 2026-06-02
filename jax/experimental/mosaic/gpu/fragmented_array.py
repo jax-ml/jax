@@ -954,6 +954,13 @@ TMA_INDICES_LAYOUT = TiledLayout(
     vector_dim=-1,
 )
 
+# A replicated layout for TMA indices where every thread holds the same indices.
+TMA_INDICES_4_LAYOUT = TiledLayout(
+    Tiling(((4,),)),
+    warp_dims=(Replicated(4),),
+    lane_dims=(Replicated(32),),
+    vector_dim=-1,
+)
 
 def can_relayout_wgmma_4x_to_wgmma_2x(bitwidth: int) -> bool:
   return bitwidth == 4

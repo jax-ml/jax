@@ -1506,7 +1506,7 @@ class LaunchContext:
         raise ValueError("Gather/scatter TMA can't perform reductions")
       if not isinstance(predicate, _DefaultPredicate):
         raise ValueError("Gather/scatter TMA can't use a predicate")
-      if gather_indices.layout != fa.TMA_INDICES_LAYOUT:
+      if gather_indices.layout not in (fa.TMA_INDICES_LAYOUT, fa.TMA_INDICES_4_LAYOUT):
         raise ValueError(f"Unsupported gather indices layout: {gather_indices.layout}")
       ROWS_PER_INSTR = 4
       # Make sure we'll always be accessing SMEM with sufficient alignment.
@@ -1539,15 +1539,26 @@ class LaunchContext:
           gmem_ref, (), gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
       )
 
-      # Indices are split over 4 warps, and replicated within each warp.
-      assert fa.TMA_INDICES_LAYOUT.vector_length == ROWS_PER_INSTR
-      # Index 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 ...
-      # Warp  <--- 0 ---> <--- 1 ---> <--- 2 ---> <--- 3 ---> <--- 0 --
-      warp_idx = arith.remui(
-          utils.warp_idx(sync=True),
-          arith.constant(i32, utils.WARPS_IN_WARPGROUP),
-      )
-      gather_linear_idx_warp = arith.muli(warp_idx, c(ROWS_PER_INSTR, i32))
+      assert gather_indices.layout.vector_length == ROWS_PER_INSTR
+      # TMA instructions are uniform, so we can't use multiple lanes.
+      if gather_indices.layout == fa.TMA_INDICES_4_LAYOUT:
+        gather_linear_idx_warp = arith.constant(i32, 0)
+        predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+        indexing_stride = 1
+        # Note: If we have several tiles here, we could still issue copies from
+        # each warp to increase parallelism, though it's primarily useful for
+        # saving SMEM when loading a small number of long rows.
+      else:
+        # Indices are split over 4 warps, and replicated within each warp.
+        # Index 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 ...
+        # Warp  <--- 0 ---> <--- 1 ---> <--- 2 ---> <--- 3 ---> <--- 0 --
+        warp_idx = arith.remui(
+            utils.warp_idx(sync=True),
+            arith.constant(i32, utils.WARPS_IN_WARPGROUP),
+        )
+        gather_linear_idx_warp = arith.muli(warp_idx, c(ROWS_PER_INSTR, i32))
+        predicate = utils.single_thread_predicate(utils.ThreadSubset.WARP)
+        indexing_stride = utils.WARPS_IN_WARPGROUP
 
       # Since the TMA instruction is limited to 2D gathers, we flatten all
       # non-gather dims into the column index.
@@ -1572,8 +1583,6 @@ class LaunchContext:
           arith.constant(index, 0),
       )
       col_base_offset = arith.index_cast(i32, col_base_offset)
-      # TMA instructions are uniform, so we can't use multiple lanes.
-      predicate = utils.single_thread_predicate(utils.ThreadSubset.WARP)
       # We need to unroll over all non-gather dimensions other than the last one
       non_gather_slice_shape = tuple(
           1 if g else d for d, g in zips(slice_shape[:-1], is_gather_dim[:-1])
@@ -1583,7 +1592,7 @@ class LaunchContext:
         if utils.bitwidth(gather_indices.mlir_dtype) != 32:
           reg = arith.extui(ir.VectorType.get((4,), i32), reg)
         # Compute which rows within the 2D slice we'll be gathering.
-        gather_linear_idx_reg = i * ROWS_PER_INSTR * utils.WARPS_IN_WARPGROUP
+        gather_linear_idx_reg = i * ROWS_PER_INSTR * indexing_stride
         gather_linear_idx = arith.addi(
             gather_linear_idx_warp, arith.constant(i32, gather_linear_idx_reg)
         )

@@ -71,6 +71,7 @@ from .fragmented_array import (
     WGMMA_LAYOUT_UPCAST_4X as WGMMA_LAYOUT_UPCAST_4X,
     TMEM_NATIVE_LAYOUT as TMEM_NATIVE_LAYOUT,
     TMA_INDICES_LAYOUT as TMA_INDICES_LAYOUT,
+    TMA_INDICES_4_LAYOUT as TMA_INDICES_4_LAYOUT,
     tmem_native_layout as tmem_native_layout,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
