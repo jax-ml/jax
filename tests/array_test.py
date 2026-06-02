@@ -31,7 +31,8 @@ from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map, IndivisibleError
 from jax._src.sharding_impls import (
-    NamedSharding, GSPMDSharding, make_single_device_sharding)
+    NamedSharding, GSPMDSharding, make_single_device_sharding,
+    SingleDeviceSharding)
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
@@ -894,6 +895,42 @@ class JaxArrayTest(jtu.JaxTestCase):
     msg = "Implicit conversion of an array to a dtype is deprecated"
     with self.assertDeprecationWarnsOrRaises("jax-array-numpy-dtype", msg, error_class=TypeError):
       np.dtype(x)
+
+  def test_sds_like(self):
+    x = jnp.array(1.)
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertTrue(out.weak_type)
+    self.assertEqual(out.shape, ())
+    self.assertIsNone(out.sharding)  # uncommitted input
+
+    x = np.array(1.)
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertFalse(out.weak_type)
+    self.assertEqual(out.shape, ())
+
+    x = jnp.arange(8)
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertIsNone(out.sharding)  # uncommitted input
+
+    x = jax.device_put(jnp.arange(8), SingleDeviceSharding(jax.devices()[0]))
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
+
+    mesh = jtu.create_mesh((2,), 'x')
+    x = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(a):
+      sds = jax.ShapeDtypeStruct.like(a)
+      self.assertEqual(sds.sharding.spec, P('x'))
+      return jnp.ones(sds.shape, sds.dtype, out_sharding=sds.sharding)
+
+    mesh = jtu.create_mesh((2,), 'x', axis_types=(AxisType.Explicit,))
+    x = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))
+    with jax.set_mesh(mesh):
+      f(x)
 
 
 class ShardingTest(jtu.JaxTestCase):

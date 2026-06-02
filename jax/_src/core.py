@@ -1832,7 +1832,7 @@ def update_aval_with_sharding(aval, sharding, mat=None):
     return aval.update(
         sharding=s, manual_axis_type=(aval.mat if mat is None else mat),
         memory_space=mem_kind_to_space(sharding.memory_kind))
-  return (aval if mat is None else aval.update(manual_axis_type=mat))
+  return aval if mat is None else aval.update(manual_axis_type=mat)
 
 
 # We have two flavors of abstractification APIs here which each used to have
@@ -2842,10 +2842,8 @@ def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   # If no memory space is specified, use the memory space of the initial value
   # but we make sure to reset it to Device because the Ref owns the memory space
-  if (
-      memory_space is None
-      and isinstance(init_aval, ShapedArray)
-  ):
+  if (memory_space is None
+      and isinstance(init_aval, ShapedArray)):
     if init_aval.memory_space is not MemorySpace.Device:
       memory_space = init_aval.memory_space
     init_aval = init_aval.update(memory_space=MemorySpace.Device)
@@ -2871,11 +2869,11 @@ empty_ref_p.ref_primitive = True
 empty_ref_p.is_effectful = lambda _: True
 empty_ref_p.ref_allocating = True
 empty_ref_p.is_high = lambda *, ty, memory_space: ty.is_high
+
 def _empty_ref_to_lojax(*, ty, memory_space):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   hival_of_refs = ty.raise_val(
-      *map(empty_ref, ty.lo_ty(), [memory_space] * len(ty.lo_ty()))
-  )
+      *map(empty_ref, ty.lo_ty(), [memory_space] * len(ty.lo_ty())))
   return Ref(AbstractRef(ty), hival_of_refs)
 empty_ref_p.to_lojax = _empty_ref_to_lojax
 
@@ -3498,7 +3496,8 @@ def aval_mismatch_extra(a1: AbstractValue, a2: AbstractValue) -> str:
   return ''
 
 @set_module("jax.errors")
-class JaxprTypeError(TypeError): pass
+class JaxprTypeError(TypeError):
+  pass
 
 custom_typechecks: dict[Primitive, Callable] = {}
 
@@ -3826,8 +3825,7 @@ class ShapeDtypeStruct:
           "`manual_axis_type` argument passed to ShapeDtypeStruct should be of"
           " type `jax.sharding.ManualAxisType`. Got type"
           f" {type(manual_axis_type)}")
-    object.__setattr__(self, 'manual_axis_type',
-                       None if manual_axis_type is None else manual_axis_type)
+    object.__setattr__(self, 'manual_axis_type', manual_axis_type)
     object.__setattr__(self, 'is_ref', is_ref)
 
   def __setattr__(self, name, value):
@@ -3843,6 +3841,25 @@ class ShapeDtypeStruct:
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
+
+  @classmethod
+  def like(cls, x) -> ShapeDtypeStruct:
+    from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+    from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
+    aval = shaped_abstractify(x)
+    if isinstance(aval, AbstractRef):
+      raise NotImplementedError(
+          "Ref/AbstractRef support is not implemented. Please file an issue at"
+          " https://github.com/jax-ml/jax/issues")
+    aval_s = None if aval.sharding.mesh.empty else aval.sharding
+    if getattr(x, '_committed', True):
+      sharding = (x.format if isinstance(x, ArrayImpl) else
+                  getattr(x, 'sharding', aval_s))
+    else:
+      sharding = None
+    mat = None if aval.mat.empty else aval.mat
+    return cls(aval.shape, aval.dtype, sharding=sharding,
+               weak_type=aval.weak_type, manual_axis_type=mat, is_ref=False)
 
   @property
   def sharding(self):
@@ -3893,7 +3910,6 @@ class ShapeDtypeStruct:
   def __hash__(self):
     return hash((self.shape, self.dtype, self.sharding, self._dll,
                  self.weak_type, self.manual_axis_type, self.is_ref))
-
 
   def update(self, **kwargs):
     if 'sharding' in kwargs:
