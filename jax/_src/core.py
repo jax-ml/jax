@@ -60,7 +60,6 @@ from jax._src.named_sharding import (NamedSharding, remove_size_one_mesh_axis,
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayoutSingleton
 from jax._src.lib import _jax
-from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
 from jax._src import xla_metadata_lib
@@ -70,7 +69,7 @@ traceback_util.register_exclusion(__file__)
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
-config_ext = xla_client._xla.config
+config_ext = _jax.config
 
 PyTree = Any
 

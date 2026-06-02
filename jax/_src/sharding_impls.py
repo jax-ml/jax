@@ -34,6 +34,7 @@ from jax._src import mesh_utils
 from jax._src.mesh import (
     Mesh, AbstractMesh, AxisType, empty_abstract_mesh, empty_concrete_mesh,
     get_abstract_mesh, get_concrete_mesh)
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
@@ -49,7 +50,7 @@ from jax._src.util import use_cpp_class, use_cpp_method
 import numpy as np
 
 
-config_ext = xc._xla.config
+config_ext = _jax.config
 
 Shape = tuple[int, ...]
 Device = xc.Device

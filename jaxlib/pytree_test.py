@@ -18,9 +18,9 @@ import gc
 import warnings
 
 from absl.testing import absltest, parameterized
-from jax.jaxlib import xla_client
+from jax.jaxlib import _jax
 
-pytree = xla_client._xla.pytree
+pytree = _jax.pytree
 
 
 ExampleType = collections.namedtuple("ExampleType", "field0 field1")

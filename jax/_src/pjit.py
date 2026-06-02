@@ -59,6 +59,7 @@ from jax._src.interpreters import pxla
 from jax._src.interpreters import remat
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
@@ -221,14 +222,14 @@ def _get_fastpath_data(
 # also has a cpp dispatch path and that would double the number of entries in
 # the global shared cache.
 # This cache is only used for jit's with only fun. For example: jax.jit(f)
-_cpp_pjit_cache_fun_only = xc._xla.PjitFunctionCache(capacity=8192)
+_cpp_pjit_cache_fun_only = _jax.PjitFunctionCache(capacity=8192)
 
 # This cache is used for jit where extra arguments are defined other than the
 # fun. For example: jax.jit(f, donate_argnums=...) OR
 # jax.jit(f, out_shardings=...), etc. We don't use the same cache because the
 # capacity might get full very fast because of all the jitted function in JAX
 # which might evict train_step for example.
-_cpp_pjit_cache_explicit_attributes = xc._xla.PjitFunctionCache(capacity=8192)
+_cpp_pjit_cache_explicit_attributes = _jax.PjitFunctionCache(capacity=8192)
 
 
 def _get_cpp_global_cache(contains_explicit_attributes: bool):
@@ -271,7 +272,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       out_layouts_treedef=jit_info.out_layouts_treedef,
       out_layouts_leaves=jit_info.out_layouts_leaves,
       compiler_options_kvs=jit_info.compiler_options_kvs)
-  cpp_pjit_f = xc._xla.pjit(
+  cpp_pjit_f = _jax.pjit(
       fun_name(fun), fun, cache_miss, jit_info.static_argnums,
       jit_info.static_argnames, cache_key, tree_util.dispatch_registry,
       pxla.cc_shard_arg,
@@ -1223,7 +1224,7 @@ def _pjit_call_impl(*args, jaxpr: core.ClosedJaxpr,
       out_shardings_treedef=None, out_shardings_leaves=out_shardings,
       in_layouts_treedef=None, in_layouts_leaves=in_layouts,
       out_layouts_treedef=None, out_layouts_leaves=out_layouts)
-  return xc._xla.pjit(
+  return _jax.pjit(
       name, f, call_impl_cache_miss, [], [], cache_key,
       tree_util.dispatch_registry, pxla.cc_shard_arg,
       _get_cpp_global_cache(cache_key.contains_explicit_attributes))(*args)

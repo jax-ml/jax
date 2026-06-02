@@ -251,7 +251,7 @@ def global_aval_to_result_handler(
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
-PxlaResultHandler = Callable[..., xc._xla.ResultHandler]
+PxlaResultHandler = Callable[..., _jax.ResultHandler]
 global_result_handlers: dict[type[core.AbstractValue], PxlaResultHandler] = {}
 
 
@@ -1957,7 +1957,7 @@ class MeshExecutable(stages.Executable):
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
-    return xc._xla.pjit(
+    return _jax.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [],
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 

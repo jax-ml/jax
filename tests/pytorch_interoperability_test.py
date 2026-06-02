@@ -20,7 +20,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import xla_client
+from jax._src.lib import _jax
 import jax.dlpack
 import jax.numpy as jnp
 
@@ -63,7 +63,7 @@ class DLPackTest(jtu.JaxTestCase):
     regex_str = (r'UNIMPLEMENTED: Only DLPack tensors with trivial \(compact\) '
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
-      xla_client._xla.dlpack_managed_tensor_to_buffer(
+      _jax.dlpack_managed_tensor_to_buffer(
           y, client.devices()[0], None)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)

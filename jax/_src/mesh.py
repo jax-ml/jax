@@ -32,10 +32,11 @@ from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
 from jax._src.util import (safe_zip, cache, tuple_delete, weak_value_interner,
                            immutable)
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 
 zip, unsafe_zip = safe_zip, zip
-config_ext = xc._xla.config
+config_ext = _jax.config
 
 MeshAxisName = Any
 ResourceAxisName = Hashable

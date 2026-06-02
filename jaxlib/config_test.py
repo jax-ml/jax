@@ -17,9 +17,10 @@ import threading
 
 from absl.testing import absltest
 
+from jax.jaxlib import _jax
 from jax.jaxlib import xla_client
 
-config = xla_client._xla.config
+config = _jax.config
 
 
 class ConfigTest(absltest.TestCase):

@@ -130,7 +130,7 @@ else:
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
 def _xla_gc_callback(*args):
-  xla_client._xla.collect_garbage()
+  _jax.collect_garbage()
 gc.callbacks.append(_xla_gc_callback)
 
 cuda_versions: ModuleType | None

@@ -26,7 +26,7 @@ from jax import lax
 from jax._src import config
 from jax._src import jaxpr_util
 from jax._src import test_util as jtu
-from jax._src.lib import xla_client
+from jax._src.lib import _jax
 
 
 config.parse_flags_with_absl()
@@ -106,7 +106,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       return jnp.sin(s) + jnp.cos(y)
     profile_gz = jaxpr_util.pprof_equation_profile(make_jaxpr(f)(1., 1.).jaxpr)
     profile_proto = gzip.decompress(profile_gz)
-    json_str = xla_client._xla.pprof_profile_to_json(profile_proto)
+    json_str = _jax.pprof_profile_to_json(profile_proto)
     profile = json.loads(json_str)
     self.assertSetEqual(
         {"sampleType", "sample", "stringTable", "location", "function"},

@@ -64,6 +64,7 @@ from jax._src.api_util import (
   flatten_axes, _ensure_index, apply_flat_fun_nokwargs,
   check_callable, debug_info)
 from jax._src.lib import jax_jit
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding import Sharding
 from jax._src.mesh import get_concrete_mesh, get_abstract_mesh, Mesh
@@ -80,7 +81,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 
-config_ext = xc._xla.config
+config_ext = _jax.config
 
 
 traceback_util.register_exclusion(__file__)
@@ -2454,7 +2455,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
-  if type(fun) is xc._xla.PjitFunction:
+  if type(fun) is _jax.PjitFunction:
     return fun.trace(*args, **kwargs).out_info  # pyrefly: ignore[missing-attribute]
   try: hash(fun)
   except TypeError: fun = partial(fun)
@@ -2631,7 +2632,7 @@ def clear_backends(_crash=False):
   util.clear_all_caches()
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
-  xc._xla.PjitFunctionCache.clear_all()
+  _jax.PjitFunctionCache.clear_all()
 
   if clients:
     # GC a couple times because there are false cycles that seem to be due
@@ -2676,4 +2677,4 @@ def clear_caches():
   # Clear all C++ compiled executable caches for pjit
   pjit._cpp_pjit_cache_fun_only.clear()
   pjit._cpp_pjit_cache_explicit_attributes.clear()
-  xc._xla.PjitFunctionCache.clear_all()
+  _jax.PjitFunctionCache.clear_all()

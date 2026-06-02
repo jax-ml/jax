@@ -44,6 +44,7 @@ from jax._src.interpreters import partial_eval
 from jax._src.interpreters import pxla
 from jax._src.api_util import InternalFloatingPointError
 from jax._src.layout import Layout, Format
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
@@ -61,9 +62,7 @@ BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
 traceback_util.register_exclusion(__file__)
 
-xe = xc._xla
-
-Backend = xe.Client
+Backend = _jax.Client
 Device = xc.Device
 ArrayCopySemantics = xc.ArrayCopySemantics
 

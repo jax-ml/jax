@@ -1569,6 +1569,7 @@ py_test(
     name = "pytree_test",
     srcs = ["pytree_test.py"],
     deps = [
+        ":_jax",
         ":xla_client",
     ] + py_deps([
         "absl/flags",
@@ -1581,6 +1582,7 @@ py_test(
     name = "config_test",
     srcs = ["config_test.py"],
     deps = [
+        ":_jax",
         ":xla_client",
     ] + py_deps([
         "absl/flags",

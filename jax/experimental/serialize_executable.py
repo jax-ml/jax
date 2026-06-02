@@ -19,6 +19,7 @@ import pickle
 import io
 
 import jax
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from collections.abc import Sequence
 
@@ -92,7 +93,7 @@ class _JaxPjrtPickler(pickle.Pickler):
   def persistent_id(self, obj):
     if isinstance(obj, xc.LoadedExecutable):
       return ('exec', obj.client.serialize_executable(obj))
-    if isinstance(obj, xc._xla.Executable):
+    if isinstance(obj, _jax.Executable):
       return ('exec', obj.serialize())
     if isinstance(obj, self.device_types):
       return ('device', obj.id)

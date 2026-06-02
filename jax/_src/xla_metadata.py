@@ -21,10 +21,10 @@ from jax._src import dispatch
 from jax._src import tree_util
 from jax._src import xla_metadata_lib
 from jax._src.interpreters import ad, batching, mlir
-from jax._src.lib import xla_client
+from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 
-config_ext = xla_client._xla.config
+config_ext = _jax.config
 
 
 class _XlaMetadataWrapper:

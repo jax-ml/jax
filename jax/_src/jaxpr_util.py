@@ -34,6 +34,7 @@ from jax._src import path
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
+from jax._src.lib import _jax
 from jax._src.lib import xla_client
 
 
@@ -226,7 +227,7 @@ def _pprof_profile(
     "sample_type": sample_type,
     "sample": samples,
   })
-  return gzip.compress(xla_client._xla.json_to_pprof_profile(json_profile))
+  return gzip.compress(_jax.json_to_pprof_profile(json_profile))
 
 
 def pprof_equation_profile(jaxpr: core.Jaxpr, *,

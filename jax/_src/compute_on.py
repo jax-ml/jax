@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import json
 
 from jax._src import config
-from jax._src.lib import xla_client
+from jax._src.lib import _jax
 from jax._src import dispatch
 from jax._src import core
 from jax._src import linear_util as lu
@@ -31,7 +31,7 @@ from jax._src.api_util import debug_info, flatten_fun_nokwargs, flatten_axes
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir import ir
 
-config_ext = xla_client._xla.config
+config_ext = _jax.config
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 

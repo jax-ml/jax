@@ -22,6 +22,6 @@ from jax._src.dispatch import (
   apply_primitive as apply_primitive,
 )
 
-from jax._src.lib import xla_client as _xc
-Backend = _xc._xla.Client
-del _xc
+from jax._src.lib import _jax
+Backend = _jax.Client
+del _jax
