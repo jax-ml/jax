@@ -3846,11 +3846,15 @@ class ShapeDtypeStruct:
   def like(cls, x) -> ShapeDtypeStruct:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     from jax._src.array import ArrayImpl  # pyrefly: ignore[missing-import]
+    from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
     aval = shaped_abstractify(x)
     if isinstance(aval, AbstractRef):
       raise NotImplementedError(
           "Ref/AbstractRef support is not implemented. Please file an issue at"
           " https://github.com/jax-ml/jax/issues")
+    if isinstance(aval, HiType):
+      raise NotImplementedError(
+          "Passing a HiVal to `ShapeDtypeStruct.like` is not implemented.")
     aval_s = None if aval.sharding.mesh.empty else aval.sharding
     if getattr(x, '_committed', True):
       sharding = (x.format if isinstance(x, ArrayImpl) else
