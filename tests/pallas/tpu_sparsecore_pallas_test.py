@@ -370,9 +370,8 @@ class VectorSubcoreTest(PallasSCTest):
   def test_slicing(self, dtype, data):
     self.skip_if_tc_tiling()
 
-    if dtype == "float16":
-      # TODO(b/433704850): Remove this once the bug is fixed.
-      self.skipTest("Crashes in the backend")
+    if dtype == "float16" and not jtu.is_cloud_tpu_at_least(2026, 6, 7):
+      self.skipTest("Needs a newer libtpu")
 
     out_shape = data.draw(
         hps.sampled_from(sc_core.supported_shapes(dtype)), label="out_shape"
