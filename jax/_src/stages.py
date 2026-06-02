@@ -52,6 +52,7 @@ from jax._src.lib import hlo
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.sharding_impls import UnspecifiedValue
+from jax._src.mesh import AbstractMesh
 from jax._src.tree_util import FlatTree, tree_unflatten
 from jax._src.typing import ArrayLike
 
@@ -479,11 +480,15 @@ class Traced(Stage):
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
             _private_parameters: mlir.LoweringParameters | None = None):
     """Lower to compiler input, returning a ``Lowered`` instance."""
+    from jax._src.pjit import _resolve_and_lower  # pyrefly: ignore[missing-import]
     lo = self.lojax
     if _private_parameters is None:
       _private_parameters = mlir.LoweringParameters()
     try:
-      from jax._src.pjit import _resolve_and_lower  # pyrefly: ignore[missing-import]
+      ctx_mesh = lo._params['ctx_mesh']
+      if (lowering_platforms is None and isinstance(ctx_mesh, AbstractMesh)
+          and (abd := ctx_mesh.abstract_device) is not None):
+        lowering_platforms = (abd.platform,)
       lowering = _resolve_and_lower(
           lo._meta_tys_flat, **lo._params, lowering_platforms=lowering_platforms,
           lowering_parameters=_private_parameters, pgle_profiler=None)

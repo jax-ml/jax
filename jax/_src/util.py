@@ -390,7 +390,6 @@ def immutable(cls):
     raise AttributeError(f"cannot delete field {name!r}")
   cls.__setattr__ = __setattr__
   cls.__delattr__ = __delattr__
-
   return cls
 
 

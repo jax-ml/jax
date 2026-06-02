@@ -1299,6 +1299,7 @@ pytype_strict_library(
         ":config",
         ":core",
         ":layout",
+        ":mesh",
         ":mlir",
         ":sharding",
         ":sharding_impls",

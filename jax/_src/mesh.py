@@ -579,6 +579,31 @@ empty_abstract_mesh = AbstractMesh((), ())
 empty_concrete_mesh = Mesh(np.empty((), dtype=object), ())
 
 class use_abstract_mesh:
+  """Sets a abstract mesh in a thread-local context.
+
+  ``jax.sharding.use_abstract_mesh`` can be used as a context manager.
+
+  For example::
+
+    abstract_device = jax.sharding.AbstractDevice(
+        device_kind='TPU v6 lite', num_cores=1, platform='tpu')
+    abstract_mesh = jax.sharding.AbstractMesh((2,), ('x',), (AxisType.Explicit,),
+                                               abstract_device=abstract_device)
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      # Note: `f` will be traced and lowered for TPU platform.
+      f.trace(inp).lower()
+      # Note: `f` will be traced for TPU and lowered for CPU.
+      f.trace(inp).lower(lowering_platforms=('cpu',))
+
+  Note: In the example above, setting the abstract mesh at the top level only
+        takes effect if all mesh axes are Explicit. This is temporary until we
+        fix the underlying issues.
+  """
   __slots__ = ['mesh', 'prev']
 
   def __init__(self, mesh: AbstractMesh):
