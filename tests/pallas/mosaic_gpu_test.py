@@ -2405,6 +2405,24 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
 
+  def test_cond_constant_output(self):
+    # This is a regression test for a type error during lowering, due to
+    # returning a FragmentedArray on one side and a scalar on the other.
+    def kernel(x_ref, o_ref):
+      scale = _array_splat(1.0, ())
+      scale_one = jnp.float32(1.0)
+
+      o_ref[...] = jax.lax.cond(
+          x_ref[...] < 1.0,
+          lambda: scale_one,
+          lambda: scale,
+      )
+
+    f = self.kernel(
+        kernel, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
+    )
+    self.assertArraysEqual(f(jnp.float32(0)), jnp.float32(1.0))
+
   def test_cond_get_arch(self):
     shape = (64, 256)
 

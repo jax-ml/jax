@@ -3893,14 +3893,13 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
     raise NotImplementedError("platform_dependent cond")
   index_aval, *_arg_avals = ctx.avals_in
 
+  _is_acc = lambda x: isinstance(x, mgpu.WGMMAAccumulator)
+  _ensure = _ensure_ir_value
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    _ensure = lambda v, aval: v if _is_acc(v) else _ensure_fa(v, aval.dtype)
+
   def _yielded_values(outs, avals):
-    ret: list[Any] = []
-    for out, aval in zip(outs, avals):
-      if isinstance(out, (mgpu.WGMMAAccumulator, mgpu.FragmentedArray)):
-        ret.append(out)
-      else:
-        ret.append(_ensure_ir_value(out, aval.dtype))
-    return ret
+    return [*map(_ensure, outs, avals)]
 
   # We need to know the result types ahead of time to construct the switch
   # operation. Below we lower the first branch in a throw-away module to
