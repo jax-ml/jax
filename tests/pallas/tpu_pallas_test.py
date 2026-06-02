@@ -2410,7 +2410,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     np.testing.assert_allclose(res, expected)
 
 
-
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):
 
@@ -4028,15 +4027,23 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
 
   @parameterized.product(
-      shape=((20, 200), (8, 64), (8, 128), (16, 256)),
-      shift=(2, 3),
-      dtype=(jnp.bfloat16, jnp.int8),
+      shape=((2, 128), (8, 128), (16, 256), (64, 256), (8, 64), (20, 200)),
+      shift=(2, 3, 129),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8),
+      stride=(0, 1, 2),
   )
-  def test_roll_with_static_lane_shift_packed_types(
-      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
-  ):
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 3):
+  def test_roll_with_static_lane_shift(self, shape, shift, dtype, stride):
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 8):
       self.skipTest('Needs a newer libtpu')
+    if stride > 0:
+      if (
+          not jtu.is_device_tpu_at_least(5)
+          or shape[1] % 128 != 0
+          or (stride * shape[0] >= 128)
+      ):
+        self.skipTest(
+            'Requires TPU v5+ and lane-aligned shape and not too large stride.'
+        )
     if dtype == jnp.int8 and not jtu.is_device_tpu_at_least(6):
       self.skipTest('Requires TPU v6+.')
     if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
@@ -4045,12 +4052,24 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
 
     def kernel(x_ref, out_ref):
-      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=1)
+      out_ref[...] = pltpu.roll(
+          x_ref[...],
+          shift=shift,
+          axis=1,
+          stride=stride,
+          stride_axis=0,
+      )
 
     out = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
     )(x)
-    np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
+    split_x = np.split(x, x.shape[0], axis=0)
+    rolled_splits = [
+        np.roll(split_x[i], shift + i * stride, axis=1)
+        for i in range(len(split_x))
+    ]
+    expected = np.concatenate(rolled_splits, axis=0)
+    np.testing.assert_array_equal(out, expected)
 
   @parameterized.product(
       shape_and_axis=(((128, 64), 1), ((63, 256), 0)),
