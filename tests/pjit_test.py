@@ -14,6 +14,7 @@
 
 from collections import OrderedDict, namedtuple
 import dataclasses
+import gc
 import itertools
 import re
 from functools import partial, wraps
@@ -69,6 +70,8 @@ from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.util import curry, unzip2
+from jax._src import tree_util
+from jax._src.interpreters import pxla
 
 config.parse_flags_with_absl()
 
@@ -11880,6 +11883,114 @@ class UtilTest(jtu.JaxTestCase):
 
       # Compiling with a device assignment should succeed.
       lowered.compile(device_assignment=tuple(mesh.devices.flat))
+
+  def test_pjit_function_cache_gc_during_lookup(self):
+    # Regression test for a UAF in PjitFunctionCache::Lookup. Before the fix,
+    # Key::operator== ran global_cache_key.__eq__ unconditionally during
+    # unordered_map bucket probing. If __eq__ triggered a cycle collection
+    # that collected a PjitFunction in the same cache, the weakref callback
+    # erased from functions_ mid-traversal, corrupting the bucket. The fix
+    # short-circuits on function.ptr() mismatch before calling __eq__, so the
+    # different-function case below never reaches Python; this test exercises
+    # that short-circuit by forcing a gc.collect() inside __eq__ with a prior
+    # pjit function reachable only via a cycle. (gc.collect() bypasses the
+    # separate PyGC_Disable guard, which targets *automatic* GC from
+    # allocation in __eq__ when function.ptr() does match.)
+
+    class KeyWithGcInEq:
+      def __hash__(self):
+        # Constant Python hash. The map hash also mixes function.ptr(), so
+        # bucket collision across fresh f's is still probabilistic; post-fix
+        # the ptr short-circuit makes __eq__ unreachable here regardless of
+        # bucket layout.
+        return 0
+
+      def __eq__(self, other):
+        gc.collect()
+        return self is other
+
+    cache = xc._xla.PjitFunctionCache(capacity=64)
+
+    def make_one():
+      def f(x):
+        return x
+      pj = xc._xla.pjit(
+          'f', f, lambda *a, **kw: (f(*a, **kw), None, False),
+          [], [], KeyWithGcInEq(), tree_util.dispatch_registry,
+          pxla.cc_shard_arg, cache)
+      # Leave pj reachable only via a cycle so it needs the cycle collector.
+      cyc = [pj]
+      cyc.append(cyc)
+      return None
+
+    for _ in range(32):
+      make_one()
+    gc.collect()
+    # Reaching here without a SIGSEGV / heap corruption is the pass condition.
+
+  def test_pjit_function_cache_auto_gc_during_lookup(self):
+    # Companion to the previous test, exercising automatic cycle-GC fired
+    # by allocation inside global_cache_key.__eq__ (rather than an explicit
+    # gc.collect()); this is the case the PyGC_Disable guard in Lookup
+    # targets. Key::operator== only reaches __eq__ when
+    # function.ptr() matches, so this test re-jits one shared `shared_f` with
+    # many distinct keys to force __eq__ calls, while also seeding the cache
+    # with throwaway functions left in reference cycles so that auto-GC fired
+    # from inside __eq__ can collect one and run its weakref-erase callback
+    # mid-emplace. Bucket co-residency of a throwaway entry with the shared-f
+    # probe chain is probabilistic (absl hash of function.ptr()), so the loop
+    # runs enough iterations to make it overwhelmingly likely.
+
+    class AllocatingKey:
+      def __init__(self, n):
+        self._n = n
+
+      def __hash__(self):
+        # Constant Python hash. shared_f entries share one bucket (same
+        # function.ptr() + same Python hash); throwaways join only via
+        # absl-hash collision on function.ptr().
+        return 0
+
+      def __eq__(self, other):
+        # Allocate gc-tracked containers; with threshold=(1,1,1) this trips
+        # automatic collection on the spot.
+        [[i] for i in range(64)]
+        return isinstance(other, AllocatingKey) and self._n == other._n
+
+    cache = xc._xla.PjitFunctionCache(capacity=4096)
+
+    def shared_f(x):
+      return x
+
+    def seed_throwaway():
+      def g(x):
+        return x
+      pj = xc._xla.pjit(
+          'g', g, lambda *a, **kw: (g(*a, **kw), None, False),
+          [], [], AllocatingKey(-1), tree_util.dispatch_registry,
+          pxla.cc_shard_arg, cache)
+      cyc = [pj]
+      cyc.append(cyc)  # only reachable via cycle; auto-GC can collect g
+
+    held = []
+    old_thresh = gc.get_threshold()
+    gc.set_threshold(1, 1, 1)
+    try:
+      for i in range(256):
+        seed_throwaway()
+        # Same shared_f, distinct key: Lookup probes prior shared_f entries,
+        # hunk-1 ptr-check passes, __eq__ runs and allocates. With auto-GC
+        # suppressed by the PyGC_Disable guard this cannot collect a
+        # throwaway's g mid-emplace; without the guard it can.
+        held.append(xc._xla.pjit(
+            'shared_f', shared_f,
+            lambda *a, **kw: (shared_f(*a, **kw), None, False),
+            [], [], AllocatingKey(i), tree_util.dispatch_registry,
+            pxla.cc_shard_arg, cache))
+    finally:
+      gc.set_threshold(*old_thresh)
+    del held
+    gc.collect()
 
 
 if __name__ == '__main__':
