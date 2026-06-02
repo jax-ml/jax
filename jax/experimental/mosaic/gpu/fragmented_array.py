@@ -530,23 +530,17 @@ class TiledLayout:
       dim_offsets = [o - 1 for o in dim_offsets]  # We inserted an extra dim.
     else:
       new_vector_dim = self.vector_dim + dim_offsets[self.vector_dim]
-    def replace_tiled_dim(d: int | Replicated, size: int):
+    def replace_tiled_dim(d: int | Replicated):
       if isinstance(d, Replicated):
         return d
       elif removed_dim[d]:
-        return Replicated(size)
+        return Replicated(tiled_shape[d])
       else:
         return d + dim_offsets[d]
     return TiledLayout(
         new_tiling,
-        tuple(
-            d if isinstance(d, Replicated) else replace_tiled_dim(d, tiled_shape[d])
-            for d in self.warp_dims
-        ),
-        tuple(
-            d if isinstance(d, Replicated) else replace_tiled_dim(d, tiled_shape[d])
-            for d in self.lane_dims
-        ),
+        tuple(replace_tiled_dim(d) for d in self.warp_dims),
+        tuple(replace_tiled_dim(d) for d in self.lane_dims),
         new_vector_dim,
         _check_canonical=False,
     ).canonicalize()
