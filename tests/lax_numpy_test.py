@@ -5076,9 +5076,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     machine = platform.machine()
     is_arm = machine.startswith(('aarch', 'arm'))
-    # TODO(bchetioui): re-enable when b/516720270 is fixed
+    # TODO(bchetioui): re-enable when b/518927213 is fixed
     if is_arm and op == 'tanh' and dtype == np.float16:
-      self.skipTest('b/516720270: miscompile on ARM')
+      self.skipTest('b/518927213: miscompile on ARM')
 
     for x in (np.nan, -np.inf, -100., -2., -1., 0., 1., 2., 100., np.inf,
               jnp.finfo(dtype).max, np.sqrt(jnp.finfo(dtype).max),
