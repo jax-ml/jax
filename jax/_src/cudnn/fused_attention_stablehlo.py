@@ -563,6 +563,25 @@ def _dot_product_attention_bwd_impl(
       sliding_window_length=sliding_window_length)
   return grads
 
+def _attention_out_aval(in_aval, shape=None, dtype=None):
+  # Build an output abstract value that propagates the varying manual axes
+  # (vma) of `in_aval`. Without this, outputs produced inside a `shard_map`
+  # (e.g. the gradients from the backward primitive) lose the manual sharding
+  # axes carried by their inputs, which makes the custom_vjp backward rule
+  # produce cotangents whose type does not match the primal inputs.
+  # See https://github.com/jax-ml/jax/issues/36008
+  # `shape`/`dtype` default to those of `in_aval` (e.g. gradient outputs match
+  # their corresponding input); the forward outputs override them.
+  shape = in_aval.shape if shape is None else shape
+  dtype = in_aval.dtype if dtype is None else dtype
+  if in_aval.mat.empty:
+    # Preserve the previous behavior (replicated/empty sharding) outside of
+    # manual (shard_map) contexts.
+    return core.ShapedArray(shape, dtype)
+  return core.ShapedArray(
+      shape, dtype, sharding=NamedSharding(in_aval.sharding.mesh, PartitionSpec()),
+      manual_axis_type=core.ManualAxisType(varying=in_aval.mat.varying))
+
 def _dot_product_attention_fwd_abstract(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     page_table_k, page_table_v, *, scale, seed, dropout_rate, variadic_args,
@@ -581,12 +600,12 @@ def _dot_product_attention_fwd_abstract(
 
   if is_training:
     return (
-      core.ShapedArray(output_shape, query.dtype),  # output
-      core.ShapedArray(softmax_stat_shape, np.float32),  # softmax_stat
+      _attention_out_aval(query, output_shape),  # output
+      _attention_out_aval(query, softmax_stat_shape, np.float32),  # softmax_stat
     )
   else:
     return (
-      core.ShapedArray(output_shape, query.dtype),  # output
+      _attention_out_aval(query, output_shape),  # output
     )
 
 def _dot_product_attention_bwd_abstract(
@@ -597,30 +616,16 @@ def _dot_product_attention_bwd_abstract(
   if has_dbias:
     # cuDNN supports bias for this case
     return (
-      core.ShapedArray(
-          query.shape, query.dtype
-      ),  # grad query
-      core.ShapedArray(
-          key.shape, key.dtype
-      ),  # grad key
-      core.ShapedArray(
-          value.shape, value.dtype
-      ),  # grad value
-      core.ShapedArray(
-          bias.shape, bias.dtype
-      ),  # grad bias
+      _attention_out_aval(query),  # grad query
+      _attention_out_aval(key),  # grad key
+      _attention_out_aval(value),  # grad value
+      _attention_out_aval(bias),  # grad bias
     )
   else:
     return (
-      core.ShapedArray(
-          query.shape, query.dtype
-      ),  # grad query
-      core.ShapedArray(
-          key.shape, key.dtype
-      ),  # grad key
-      core.ShapedArray(
-          value.shape, value.dtype
-      ),  # grad value
+      _attention_out_aval(query),  # grad query
+      _attention_out_aval(key),  # grad key
+      _attention_out_aval(value),  # grad value
     )
 
 def _dot_product_attention_fwd_cuda_lowering(
@@ -1370,14 +1375,14 @@ def _dot_product_attention_fp8_fwd_abstract(
   # output, amax_s, amax_o[, softmax_stat]
   if is_training:
     return (
-      core.ShapedArray(output_shape, query.dtype),
+      _attention_out_aval(query, output_shape),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray((1,1,1,1), np.float32),
-      core.ShapedArray(softmax_stat_shape, np.float32),
+      _attention_out_aval(query, softmax_stat_shape, np.float32),
     )
   else:
     return (
-      core.ShapedArray(output_shape, query.dtype),
+      _attention_out_aval(query, output_shape),
       core.ShapedArray((1,1,1,1), np.float32),
       core.ShapedArray((1,1,1,1), np.float32),
     )
@@ -1389,9 +1394,9 @@ def _dot_product_attention_fp8_bwd_abstract(
     scale, use_causal_mask, layout):
   amax_shape = (1,1,1,1)
   return (
-    core.ShapedArray(query.shape, query.dtype),
-    core.ShapedArray(key.shape, key.dtype),
-    core.ShapedArray(value.shape, value.dtype),
+    _attention_out_aval(query),
+    _attention_out_aval(key),
+    _attention_out_aval(value),
     core.ShapedArray(amax_shape, np.float32),
     core.ShapedArray(amax_shape, np.float32),
     core.ShapedArray(amax_shape, np.float32),
