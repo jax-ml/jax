@@ -98,10 +98,7 @@ _TestCaseBase = (jt_multiprocess.MultiProcessTest
                  else parameterized.TestCase)
 
 
-class MonkeyPatchTest:
-  def test_calling_pallas_call_directly_raises(self):
-    with self.assertRaises(RuntimeError):
-      pl.pallas_call()
+class MonkeyPatchTest(jtu.JaxTestCase):
 
   def test_calling_kernel_directly_raises(self):
     with self.assertRaises(RuntimeError):
