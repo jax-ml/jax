@@ -18,7 +18,16 @@ common:rocm_clang_local --noincompatible_enable_cc_toolchain_resolution
 common:rocm_clang_local --@rules_ml_toolchain//common:enable_hermetic_cc=False
 common:rocm_clang_local --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
 common:rocm_clang_local --crosstool_top=@local_config_rocm//crosstool:toolchain
-common:rocm_clang_local --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang" 
+common:rocm_clang_local --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
+# Use compiler-rt builtins instead of libgcc_s.so.1 for compiler support routines.
+# The ROCm clang is built with -DCLANG_DEFAULT_RTLIB=compiler-rt; this aligns the
+# local clang with that default so that symbols such as __extendhfsf2 are resolved
+# statically from libclang_rt.builtins.a rather than as runtime dependencies on
+# libgcc_s.so.1. (-rtlib is Clang-only, so it lives here rather than in :rocm.)
+common:rocm_clang_local --copt=-rtlib=compiler-rt
+common:rocm_clang_local --host_copt=-rtlib=compiler-rt
+common:rocm_clang_local --linkopt=-rtlib=compiler-rt
+common:rocm_clang_local --host_linkopt=-rtlib=compiler-rt
 
 # ROCm with hermetic toolchain from rules_ml_toolchain
 common:rocm_clang_hermetic --config=rocm
@@ -27,6 +36,15 @@ common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_cuda=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_sycl=False
 common:rocm_clang_hermetic --@rules_ml_toolchain//common:enable_hermetic_cc=True
 common:rocm_clang_hermetic --strategy=CppLink=local
+# Use compiler-rt builtins instead of libgcc_s.so.1 for compiler support routines.
+# The ROCm clang is built with -DCLANG_DEFAULT_RTLIB=compiler-rt; this aligns the
+# hermetic clang with that default so that symbols such as __extendhfsf2 are resolved
+# statically from libclang_rt.builtins.a rather than as runtime dependencies on
+# libgcc_s.so.1. (-rtlib is Clang-only, so it lives here rather than in :rocm.)
+common:rocm_clang_hermetic --copt=-rtlib=compiler-rt
+common:rocm_clang_hermetic --host_copt=-rtlib=compiler-rt
+common:rocm_clang_hermetic --linkopt=-rtlib=compiler-rt
+common:rocm_clang_hermetic --host_linkopt=-rtlib=compiler-rt
 
 # ROCm with hermetic clang but local (system) sysroot
 # Use this when ROCm libraries are built against system libstdc++ to avoid ABI mismatches
