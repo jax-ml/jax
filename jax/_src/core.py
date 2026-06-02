@@ -55,8 +55,8 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            foreach, weakref_cache_key_types, set_module,
                            weak_value_interner, immutable)
 import jax._src.pretty_printer as pp
-from jax._src.named_sharding import (NamedSharding, remove_size_one_mesh_axis,
-                                     get_replicated_axes)
+from jax._src.named_sharding import NamedSharding, get_replicated_axes
+from jax._src import named_sharding as ns
 from jax._src.sharding import Sharding
 from jax._src.layout import Format, AutoLayoutSingleton
 from jax._src.lib import _jax
@@ -332,7 +332,9 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
 # We also in effect fuse four other context managers into one, mostly to
 # save allocations.
 class JaxprEqnContextManager:
-  __slots__ = ['context', 'prevs', 'prev_xla_metadata']
+  __slots__ = ['context', 'prev_compute_type', 'prev_threefry_partitionable',
+               'prev_xla_metadata', 'prev_abstract_mesh',
+               'prev_remove_size_one_mesh_axis']
 
   def __init__(self, context):
     self.context = context
@@ -343,18 +345,30 @@ class JaxprEqnContextManager:
       updated = xla_metadata_lib.update_metadata(
           self.prev_xla_metadata, self.context.xla_metadata)
       config.xla_metadata_context_manager.set_local(updated)
-    self.prevs = [(c, c.swap_local(v)) for c, v in self.context.configs]
+    self.prev_threefry_partitionable = config.threefry_partitionable.swap_local(
+        self.context.threefry_partitionable)
+    self.prev_compute_type = config.compute_on_context_manager.swap_local(
+        self.context.compute_type)
+    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
+        self.context.cur_abstract_mesh)
+    self.prev_remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.swap_local(
+        self.context.remove_size_one_mesh_axis)
 
   def __exit__(self, exc_type, exc_value, traceback):
     if self.context.xla_metadata:
       config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
-    for c, prev in self.prevs:
-      c.set_local(prev)
+    config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
+    config.compute_on_context_manager.set_local(self.prev_compute_type)
+    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+    config.remove_size_one_mesh_axis_from_type.set_local(self.prev_remove_size_one_mesh_axis)
 
+
+@immutable
 class JaxprEqnContext:
 
   __slots__ = ['compute_type', 'threefry_partitionable', 'cur_abstract_mesh',
-               'remove_size_one_mesh_axis', 'xla_metadata', 'configs']
+               'remove_size_one_mesh_axis', 'xla_metadata', 'configs',
+               '__weakref__']
 
   compute_type: str | None
   threefry_partitionable: bool
@@ -362,37 +376,43 @@ class JaxprEqnContext:
   cur_abstract_mesh: mesh_lib.AbstractMesh
   remove_size_one_mesh_axis: bool
 
-  def __init__(self):
-    self.compute_type = config.compute_on_context_manager.value
-    self.threefry_partitionable = config.threefry_partitionable.value
-    self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
-    self.remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.value
-    # Don't put xla_metadata in configs cause it does extra stuff for __enter__
-    self.xla_metadata = xla_metadata_lib.current_xla_metadata()
-    self.configs = [(config.compute_on_context_manager, self.compute_type),
-                    (config.threefry_partitionable, self.threefry_partitionable),
-                    (config.abstract_mesh_context_manager, self.cur_abstract_mesh),
-                    (config.remove_size_one_mesh_axis_from_type, self.remove_size_one_mesh_axis)]
+  @staticmethod
+  @weak_value_interner
+  def _create(compute_type, threefry_partitionable, cur_abstract_mesh,
+              remove_size_one_mesh_axis, xla_metadata):
+    obj = object.__new__(JaxprEqnContext)
+    object.__setattr__(obj, 'compute_type', compute_type)
+    object.__setattr__(obj, 'threefry_partitionable', threefry_partitionable)
+    object.__setattr__(obj, 'cur_abstract_mesh', cur_abstract_mesh)
+    object.__setattr__(obj, 'remove_size_one_mesh_axis', remove_size_one_mesh_axis)
+    object.__setattr__(obj, 'xla_metadata',
+                       None if xla_metadata is None else dict(xla_metadata))
+    return obj
+
+  def __new__(cls):
+    compute_type = config.compute_on_context_manager.value
+    threefry_partitionable = config.threefry_partitionable.value
+    cur_abstract_mesh = mesh_lib.get_abstract_mesh()
+    remove_size_one_mesh_axis = config.remove_size_one_mesh_axis_from_type.value
+    xla_metadata = xla_metadata_lib.current_xla_metadata()
+    xla_metadata = (None if xla_metadata is None else
+                    tuple(sorted(xla_metadata.items())))
+    return JaxprEqnContext._create(
+        compute_type, threefry_partitionable, cur_abstract_mesh,
+        remove_size_one_mesh_axis, xla_metadata)
+
+  # No __eq__ or __hash__: interned classes use object identity.
 
   @property
   def manager(self):
     return JaxprEqnContextManager(self)
 
   def __repr__(self):
-    s = [f"{c.name}={v}" for c, v in self.configs]
-    s = ', '.join(s)
-    return f"JaxprEqnContext({s}, xla_metadata={self.xla_metadata})"
-
-  def __hash__(self):
-    configs_val = tuple(v for _, v in self.configs)
-    return hash((configs_val,
-                 (None if self.xla_metadata is None else
-                  tuple(sorted(self.xla_metadata.items())))))
-
-  def __eq__(self, other):
-    self_val = tuple(v for _, v in self.configs)
-    other_val = tuple(v for _, v in other.configs)
-    return self_val == other_val and self.xla_metadata == other.xla_metadata
+    return (f"JaxprEqnContext(compute_type={self.compute_type}, "
+            f"threefry_partitionable={self.threefry_partitionable}, "
+            f"cur_abstract_mesh={self.cur_abstract_mesh}, "
+            f"remove_size_one_mesh_axis={self.remove_size_one_mesh_axis}, "
+            f"xla_metadata={self.xla_metadata})")
 
 
 @cache()  # Everything in the context is a trace cache key also.
@@ -2214,7 +2234,7 @@ def _maybe_modify_sharding(sharding, ndim):
     out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
   if config.remove_size_one_mesh_axis_from_type.value:
-    out = out.update(spec=remove_size_one_mesh_axis(out.spec, out.mesh))
+    out = out.update(spec=ns.remove_size_one_mesh_axis(out.spec, out.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
   return out

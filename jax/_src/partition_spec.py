@@ -15,7 +15,7 @@
 from __future__ import annotations
 from typing import Any
 
-from jax._src.util import (weak_value_interner, immutable)
+from jax._src.util import weak_value_interner, immutable
 from jax._src.lib import _jax
 
 AxisName = Any

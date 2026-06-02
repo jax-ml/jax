@@ -63,6 +63,7 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding
+from jax._src.named_sharding import remove_size_one_mesh_axis
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     make_single_device_sharding, UNSPECIFIED, UnspecifiedValue,
@@ -2011,7 +2012,7 @@ def assert_shardings_equal(x_aval, user_sharding: NamedSharding):
   x_spec = x_aval.sharding.spec
   user_spec = user_sharding.spec._normalized_spec_for_aval(x_aval.ndim)
   if config.remove_size_one_mesh_axis_from_type.value:
-    user_spec = core.remove_size_one_mesh_axis(user_spec, user_sharding.mesh)
+    user_spec = remove_size_one_mesh_axis(user_spec, user_sharding.mesh)
   for x, s in zip(x_spec, user_spec):
     if s is PartitionSpec.UNCONSTRAINED:
       continue
