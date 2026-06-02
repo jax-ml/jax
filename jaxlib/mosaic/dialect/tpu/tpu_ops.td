@@ -712,7 +712,7 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 }
 
 // unsigned_integers applies to the result type (for the source type the sign
-// doesn't matter: integer-to-integer conversions truncate the high bits, 
+// doesn't matter: integer-to-integer conversions truncate the high bits,
 // floats are always signed).
 // Float to integer packing rounds to nearest even.
 // WARNING: pack(pack(a, b), pack(c, d)) == pack(a, b, c, d) only holds for
@@ -1368,15 +1368,20 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
     MemRefOf<[TPU_SemaphoreType]>:$semaphore,
     I32:$amount,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id
+    Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id
   );
 let assemblyFormat = [{
-    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? attr-dict `:` type($semaphore)
+    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? (`subcore_id` $subcore_id^)? attr-dict `:` type($semaphore)
   }];
   let hasVerifier = 1;
   let extraClassDeclaration = [{
     mlir::tpu::CoreType getTargetCoreType();
   }];
+  let builders = [
+    // A backward-compatible builder that sets `subcore_id` to nullptr.
+    OpBuilder<(ins "Value":$semaphore, "Value":$amount, "Value":$device_id, "Value":$core_id)>,
+  ];
 }
 
 def TPU_BarrierOp : TPU_Op<"barrier"> {
@@ -1407,6 +1412,8 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // device_id         : The id of the device to copy to for remote DMAs.
 // core_id           : The id of the core to copy to for remote and cross-core
 //                     DMAs.
+// subcore_id        : The id of the subcore to copy to for remote and cross-core
+//                     DMAs, if applicable.
 // priority          : The priority of the DMA.
 // strict_ordering   : True if the DMA requires strict ordering. If false, the
 //                     ordering is either strict or relaxed depending on the
@@ -1419,6 +1426,7 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id,
     // Smaller number means higher priority. 0 is the highest and the default.
     DefaultValuedAttr<I32Attr, "0">:$priority,
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
@@ -1430,12 +1438,17 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     (`target_semaphore` `(` $target_semaphore^ `:` type($target_semaphore) `)`)?
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
+    (`subcore_id` `(` $subcore_id^ `)`)?
     attr-dict
   }];
   let hasVerifier = 1;
   let extraClassDeclaration = [{
     mlir::tpu::CoreType getTargetCoreType();
   }];
+  let builders = [
+    // A backward-compatible builder that sets `subcore_id` to nullptr.
+    OpBuilder<(ins "Value":$source, "Value":$source_semaphore, "Value":$target, "Value":$target_semaphore, "Value":$device_id, "Value":$core_id, CArg<"uint32_t", "0">:$priority, CArg<"bool", "false">:$strict_ordering)>,
+  ];
 }
 
 // A base class for all ops that need to differentiate between gather and
@@ -1531,6 +1544,7 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma", [AttrSizedOperandSegments]> {
     Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id,
     DefaultValuedAttr<I32Attr, "0">:$priority,
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering,
     BoolAttr:$wait_target
@@ -1542,6 +1556,7 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma", [AttrSizedOperandSegments]> {
     (`target_semaphore` `(` $target_semaphore^ `:` type($target_semaphore) `)`)?
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
+    (`subcore_id` `(` $subcore_id^ `)`)?
     attr-dict
   }];
   let hasVerifier = 1;
