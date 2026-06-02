@@ -166,16 +166,15 @@ class PjitFunctionCache {
     size_t cached_hash;
 
     bool operator==(const Key& other) const {
-      bool global_cache_eq;
+      if (function.ptr() != other.function.ptr()) return false;
       try {
-        global_cache_eq = global_cache_key.equal(other.global_cache_key);
+        return global_cache_key.equal(other.global_cache_key);
       } catch (const nanobind::python_error& e) {
         throw std::invalid_argument(
-            absl::StrCat("Equality of  global cache key lead to an exception. "
+            absl::StrCat("Equality of global cache key led to an exception. "
                          "The error was:\n",
                          e.what(), "\n"));
       }
-      return function.ptr() == other.function.ptr() && global_cache_eq;
     }
 
     struct Hash {
@@ -245,6 +244,13 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
   absl::Cleanup unlock = [&self]() ABSL_UNLOCK_FUNCTION(self->mu_) {
     self->mu_.unlock();
   };
+  // Key::operator== calls Python __eq__, which allocates. Auto-GC firing there
+  // can collect a pjit function whose weakref callback below erases from
+  // functions_ while we are traversing it. Suppress auto-GC for the body.
+  int gc_was_enabled = PyGC_Disable();
+  absl::Cleanup gc_restore = [gc_was_enabled]() {
+    if (gc_was_enabled) PyGC_Enable();
+  };
   Key key;
   key.function = function;
   key.global_cache_key = global_cache_key;
@@ -257,6 +263,12 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
   auto callback =
       nb::cpp_function([self, key{std::move(key)}](nb::handle weakref) {
         nb::ft_object_guard lock(self);
+        // find(key) below also calls Python __eq__; guard against nested
+        // auto-GC erasing from functions_ during this traversal too.
+        int gc_was_enabled = PyGC_Disable();
+        absl::Cleanup gc_restore = [gc_was_enabled]() {
+          if (gc_was_enabled) PyGC_Enable();
+        };
         auto it = self->functions_.find(key);
         if (it == self->functions_.end()) {
           return;
