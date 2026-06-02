@@ -750,12 +750,23 @@ class HijaxTest(jtu.JaxTestCase):
 
   def test_tuple_vmap(self):
     tup = make_tup(jnp.arange(3.), jnp.arange(3.))
-    jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+    out = jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)),
+                   out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+    self.assertAllClose(out.elts, tup.elts)
 
   def test_tuple_vmap_infer(self):
     tup = make_tup(jnp.arange(3.), jnp.arange(3.))
     jax.vmap(lambda _: make_tup(jnp.ones(3), jnp.ones(3)),
              in_axes=TupSpec((0, 0)), out_axes=batching.infer, axis_size=3)(tup)
+
+  def test_tuple_nested_vmap(self):
+    tup = make_tup(jnp.arange(12.).reshape((3, 4)), jnp.arange(12.).reshape((3, 4)))
+    map1 = jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)),
+                    axis_size=3)
+    map2 = jax.vmap(map1, in_axes=TupSpec((1, 1)), out_axes=TupSpec((1, 1)),
+                    axis_size=4)
+    out = map2(tup)
+    self.assertAllClose(out.elts, tup.elts)
 
   # def test_tuple_vmap_match(self):
   #   tup = make_tup(jnp.arange(3.), jnp.arange(3.))
