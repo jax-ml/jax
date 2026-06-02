@@ -2457,21 +2457,18 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
 
   def test_export_typed_prng_key(self):
-    mesh = jtu.create_mesh((1,), 'x')
+    mesh = jtu.create_mesh((1,), "x")
     s = NamedSharding(mesh, P())
 
     @jax.jit(in_shardings=s, out_shardings=s)
-    def make_key(seed):
-      return jax.random.key(seed)
+    def split_key(key):
+      return jax.random.split(key, 2)
 
-    abstract_seed = jax.ShapeDtypeStruct((), jnp.int32)
-    exported = jax.export.export(make_key)(abstract_seed)
-
-    @jax.jit(in_shardings=s, out_shardings=s)
-    def f(seed):
-      return exported.call(seed)
-
-    f.lower(abstract_seed)  # doesn't crash
+    key = jax.random.key(42)
+    exp = get_exported(split_key)(key)
+    out = exp.call(key)
+    self.assertAllClose(jax.random.key_data(split_key(key)),
+                        jax.random.key_data(out))
 
 
 if __name__ == "__main__":
