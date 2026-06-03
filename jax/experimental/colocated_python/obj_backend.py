@@ -36,18 +36,19 @@ class _ConsumableRef:
   will create an expired _ConsumableRef.
   """
 
-  strong_ref: Any | None = None
-  weak_ref: weakref.ref | None = None
-  # This must be reentrant because `__call__` may be called from
-  # `MethodCallerAtBackend.__del__`, which can be triggerred by garbage
-  # collection while we are already holding a lock on the same mutex. If this
-  # were a regular mutex, garbage collection can get blocked indefinitely when
-  # free threading is enabled.
-  _mutex = threading.RLock()
+  strong_ref: Any
+  weak_ref: weakref.ref | None
+  _mutex: threading.RLock
 
   def __init__(self, obj: Any) -> None:
     self.strong_ref = obj
     self.weak_ref = None
+    # This must be reentrant because `__call__` may be called from
+    # `MethodCallerAtBackend.__del__`, which can be triggerred by garbage
+    # collection while we are already holding a lock on the same mutex. If this
+    # were a non-reentrant mutex, garbage collection can get blocked
+    # indefinitely when free threading is enabled.
+    self._mutex = threading.RLock()
 
   def __call__(self, *args, **kwargs):
     with self._mutex:
