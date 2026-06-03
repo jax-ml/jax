@@ -1517,7 +1517,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )(x)
     np.testing.assert_array_equal(x, y)
 
-  def test_load_store_tmem_sparse_meta_layout(self):
+  def test_store_tmem_sparse_meta_layout_raises(self):
     shape = (128, 64)
     tmem_layout = tcgen05.sparse_meta_layout()
     reg_layout = tmem_layout.as_tiled_layout()
@@ -1527,19 +1527,43 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
           input, layout=reg_layout, optimized=False, is_signed=False
       )
       tmem.store(reg)
+      # Still calling load on the output, to prevent potential jaxpr DCE.
       tcgen05.commit_tmem()
       tmem.load(reg_layout, is_signed=False).store_untiled(output, optimized=False)
 
-    x = self.prng.integers(0, 4, shape).astype(jnp.uint2)
-    y = mgpu.as_gpu_kernel(
-        kernel,
-        (1, 1, 1),
-        (128, 1, 1),
-        x,
-        x,
-        mgpu.TMEM(x.shape, x.dtype, layout=tmem_layout),
-    )(x)
-    np.testing.assert_array_equal(x, y)
+    x = jnp.ones(shape, jnp.uint2)
+    with self.assertRaisesRegex(
+      NotImplementedError, "Sparse meta layout stores unsupported."
+    ):
+      mgpu.as_gpu_kernel(
+          kernel,
+          (1, 1, 1),
+          (128, 1, 1),
+          x,
+          x,
+          mgpu.TMEM(x.shape, x.dtype, layout=tmem_layout),
+      )(x)
+
+  def test_load_tmem_sparse_meta_layout_raises(self):
+    shape = (128, 64)
+    tmem_layout = tcgen05.sparse_meta_layout()
+    reg_layout = tmem_layout.as_tiled_layout()
+    def kernel(ctx, input, output, tmem):
+      del ctx
+      tmem.load(reg_layout, is_signed=False).store_untiled(output, optimized=False)
+
+    x = jnp.ones(shape, jnp.uint2)
+    with self.assertRaisesRegex(
+      NotImplementedError, "Sparse meta layout loads unsupported."
+    ):
+      mgpu.as_gpu_kernel(
+          kernel,
+          (1, 1, 1),
+          (128, 1, 1),
+          x,
+          x,
+          mgpu.TMEM(x.shape, x.dtype, layout=tmem_layout),
+      )(x)
 
   @parameterized.parameters(
       (jnp.float32, tcgen05.LAYOUT, tcgen05.tmem_default_layout(1)),

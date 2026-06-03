@@ -1224,6 +1224,14 @@ class TMEMRef:
     bitwidth = utils.bitwidth(self.dtype)
     has_default_layout = self.layout == tmem_default_layout(packing=packing)
     regs_shape = layout.registers_shape(self.shape)
+    # TODO(olechwierowicz): `sparse_meta_layout()` does not really describe the
+    # actual TMEM layout of the result of `async_copy_sparse_smem_to_tmem`.
+    # As a result storing through SMEM -> Reg -> TMEM is not equivalent to
+    # SMEM -> TMEM. We raise in this case to prevent inconsistent behaviour.
+    # This restriction can be lifted if `TiledLayout` supports multiple
+    # vector dims.
+    if self.layout == sparse_meta_layout():
+      raise NotImplementedError("Sparse meta layout loads unsupported.")
     if regs_shape[0] != 1:  # We'll need to issue multiple loads below.
       raise NotImplementedError("Loading multiple row tiles")
     if layout == LAYOUT and self.layout == tmem_default_layout(packing=packing):
@@ -1284,6 +1292,14 @@ class TMEMRef:
       )
     if not isinstance(value.layout, fa.TiledLayout):
       raise TypeError(f"Stored array has layout {value.layout}, but TMEM stores expect a TiledLayout")
+    # TODO(olechwierowicz): `sparse_meta_layout()` does not really describe the
+    # actual TMEM layout of the result of `async_copy_sparse_smem_to_tmem`.
+    # As a result storing through SMEM -> Reg -> TMEM is not equivalent to
+    # SMEM -> TMEM. We raise in this case to prevent inconsistent behaviour.
+    # This restriction can be lifted if `TiledLayout` supports multiple
+    # vector dims.
+    if self.layout == sparse_meta_layout():
+      raise NotImplementedError("Sparse meta layout stores unsupported.")
     packing = self.packing
     has_default_layout = self.layout == tmem_default_layout(packing=packing)
     bitwidth = utils.bitwidth(self.dtype)
