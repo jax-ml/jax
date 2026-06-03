@@ -110,9 +110,6 @@ class MpmdAsyncTest(jtu.JaxTestCase):
               pltpu.SemaphoreType.DMA(()) @ tc_mesh,
           ),
           scratch_types=[pltpu.SemaphoreType.DMA(())],
-          compiler_params=pltpu.CompilerParams(
-              use_tc_tiling_on_sc=True,
-          ),
           name=f"sc_copy_start_{x.shape[0]}",
       )(scalar_subcore_fn)(x_ref)
       out_ref = jax.new_ref(out)
@@ -735,7 +732,6 @@ class MpmdTest(PallasSCTest):
           body=[vector_subcore_fn, scalar_subcore_fn],
           mesh=[v_mesh, s_mesh],
           out_type=(jax.typeof(x1), jax.typeof(x2)),
-          compiler_params=pltpu.CompilerParams(use_tc_tiling_on_sc=True),
           scratch_types=[
               # SCS -> TEC
               pltpu.SemaphoreType.REGULAR(()) @ v_mesh,

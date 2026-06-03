@@ -284,7 +284,6 @@ class DistributedMpmdTest(parameterized.TestCase):
               barrier_tec_sem=pltpu.SemaphoreType.REGULAR(()) @ tec_mesh,
           ),
           compiler_params=pltpu.CompilerParams(
-              use_tc_tiling_on_sc=True,
               # TODO(ivyzheng): Remove this when the layout pass flag is gone.
               needs_layout_passes=False,
           ),
