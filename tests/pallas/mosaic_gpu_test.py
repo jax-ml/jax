@@ -459,7 +459,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       dtype=[jnp.float32, jnp.int32, jnp.uint32],
   )
   def test_binary_op(self, op, dtype):
-    if op in (lax.shift_left, lax.shift_right_logical, lax.shift_right_arithmetic) and jnp.issubdtype(dtype, jnp.floating):
+    is_int_op = op in (lax.shift_left, lax.shift_right_logical, lax.shift_right_arithmetic)
+    if is_int_op and jnp.issubdtype(dtype, jnp.floating):
       self.skipTest("shift ops do not support floating point types")
 
     @functools.partial(
@@ -469,8 +470,14 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       o_ref[...] = op(x_ref[...], y_ref[...])
 
     key0, key1 = jax.random.split(jax.random.key(0), 2)
-    x = (jax.random.uniform(key0, [256]) * 42).astype(dtype)
-    y = (jax.random.uniform(key1, [256]) * 42).astype(dtype)
+    if is_int_op:
+      info = jnp.iinfo(dtype)
+      x = jnp.linspace(info.min, info.max, 256, dtype=dtype)
+      y = jnp.linspace(0, (jax.dtypes.itemsize_bits(dtype)) - 1, 256, dtype=dtype)
+    else:
+      x = (jax.random.uniform(key0, [256]) * 42 - 21).astype(dtype)
+      y = (jax.random.uniform(key1, [256]) * 42 - 21).astype(dtype)
+
     np.testing.assert_array_equal(kernel(x, y), op(x, y))
 
   def test_lax_div_int_rounding(self):

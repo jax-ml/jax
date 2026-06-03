@@ -4753,9 +4753,22 @@ class FragmentedArrayTest(TestCase):
   )
   def test_bitwise(self, op, dtype, m=64, n=8):
     is_shift = op in {operator.lshift, operator.rshift}
+    if is_shift and (bitwidth := jax.dtypes.itemsize_bits(dtype)) <= 8 and bitwidth != 1:
+      self.skipTest("Shift ops are unsupported on 8-bit types.")
+    is_8bit = (bitwidth := jax.dtypes.itemsize_bits(dtype)) <= 8 and bitwidth != 1
+
+    # Shift operations are unsupported on 8-bit types. For non-shift bitwise
+    # ops on 8-bit types, we use XOR instead of shift to construct the RHS.
+    if is_shift:
+      rhs_fn = lambda x: x & 0xf
+    elif is_8bit:
+      rhs_fn = lambda x: x ^ 0x5a
+    else:
+      rhs_fn = lambda x: x << 2
+
     def kernel(ctx, dst, _):
       iota = iota_tensor(m, n, dtype)
-      rhs = iota & 0xf if is_shift else iota << 2
+      rhs = rhs_fn(iota)
       op(iota, rhs).store_untiled(dst, optimized=False)
 
     out_shape = jax.ShapeDtypeStruct((m, n), dtype)
@@ -4763,7 +4776,7 @@ class FragmentedArrayTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
     iota = np.arange(m * n, dtype=dtype).reshape(m, n)
-    rhs = iota & 0xf if is_shift else iota << 2
+    rhs = rhs_fn(iota)
     np.testing.assert_array_equal(result, op(iota, rhs))
 
   @parameterized.product(

@@ -2627,9 +2627,18 @@ for semantics in [gpu_core.LANExWG_SEMANTICS, gpu_core.LANExWARP_SEMANTICS]:
     lax.ne_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x != y),
     lax.max_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x.max(y)),
     lax.min_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x.min(y)),
-    lax.shift_left_p: partial(_binary_op_lowering_rule, impl=operator.lshift),
-    lax.shift_right_logical_p: partial(_binary_op_lowering_rule, impl=lambda x, y: x._pointwise(arith_dialect.shrui, y)),
-    lax.shift_right_arithmetic_p: partial(_binary_op_lowering_rule, impl=operator.rshift),
+    lax.shift_left_p: partial(
+        _binary_op_lowering_rule,
+        impl=lambda x, y: x._pointwise(arith_dialect.shli, y),
+    ),
+    lax.shift_right_logical_p: partial(
+        _binary_op_lowering_rule,
+        impl=lambda x, y: x._pointwise(arith_dialect.shrui, y),
+    ),
+    lax.shift_right_arithmetic_p: partial(
+        _binary_op_lowering_rule,
+        impl=lambda x, y: x._pointwise(arith_dialect.shrsi, y),
+    ),
   })
 
 def _binary_op_lowering_rule_wg(
