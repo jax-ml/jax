@@ -26,9 +26,11 @@
 # Environment variables:
 #     JAX_ACCELERATOR_COUNT = Number of accelerators (GPUs/TPUs) available.
 #     JAX_TESTS_PER_ACCELERATOR = Number of accelerators (GPUs/TPUs) available.
+#     JAX_TPU_XDIST_VISIBILITY_MODE = "chips" or "devices" for TPU assignment.
 
 JAX_ACCELERATOR_COUNT=${JAX_ACCELERATOR_COUNT:-4}
 JAX_TESTS_PER_ACCELERATOR=${JAX_TESTS_PER_ACCELERATOR:-8}
+JAX_TPU_XDIST_VISIBILITY_MODE=${JAX_TPU_XDIST_VISIBILITY_MODE:-chips}
 
 export TF_PER_DEVICE_MEMORY_LIMIT_MB=${TF_PER_DEVICE_MEMORY_LIMIT_MB:-2048}
 
@@ -73,10 +75,28 @@ for j in `seq 0 $((JAX_TESTS_PER_ACCELERATOR-1))`; do
       (
         # This export only works within the brackets, so it is isolated to one
         # single command.
-        export TPU_VISIBLE_CHIPS=$i
+        case "$JAX_TPU_XDIST_VISIBILITY_MODE" in
+          devices)
+            unset TPU_VISIBLE_CHIPS
+            export TPU_VISIBLE_DEVICES=$i
+            export TPU_CHIPS_PER_PROCESS_BOUNDS=1,1,1,1
+            export TPU_PROCESS_BOUNDS=1,1,1,1
+            ;;
+          chips)
+            unset TPU_VISIBLE_DEVICES
+            unset TPU_CHIPS_PER_PROCESS_BOUNDS
+            unset TPU_PROCESS_BOUNDS
+            export TPU_VISIBLE_CHIPS=$i
+            ;;
+          *)
+            echo "Unknown JAX_TPU_XDIST_VISIBILITY_MODE: $JAX_TPU_XDIST_VISIBILITY_MODE"
+            exit 1
+            ;;
+        esac
         export CUDA_VISIBLE_DEVICES=$i
         export ROCR_VISIBLE_DEVICES=$i
-        echo "Running test $TEST_BINARY $* on accelerator $i"
+        echo "Running test $TEST_BINARY $* on accelerator $i lock_slot=${i}_${j} visibility_mode=${JAX_TPU_XDIST_VISIBILITY_MODE} JAX_TEST_NUM_THREADS=${JAX_TEST_NUM_THREADS:-unset}"
+        echo "TPU assignment: TPU_VISIBLE_DEVICES=${TPU_VISIBLE_DEVICES:-unset} TPU_VISIBLE_CHIPS=${TPU_VISIBLE_CHIPS:-unset} TPU_CHIPS_PER_PROCESS_BOUNDS=${TPU_CHIPS_PER_PROCESS_BOUNDS:-unset} TPU_PROCESS_BOUNDS=${TPU_PROCESS_BOUNDS:-unset}"
         "$TEST_BINARY" $@
       )
       return_code=$?

@@ -30,6 +30,10 @@ on:
         description: "Which TPU type is used for testing?"
         type: string
         default: "v5e-8"
+      tpu-parallelism-mode:
+        description: "How to split single-accelerator TPU test workers: chip or core."
+        type: string
+        default: "chip"
       python:
         description: "Which Python version should be used for testing?"
         type: string
@@ -105,6 +109,7 @@ jobs:
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_RUN_FULL_TPU_TEST_SUITE: "${{ inputs.run-full-tpu-test-suite }}"
       JAXCI_TPU_CORES: "${{ inputs.cores }}"
+      JAXCI_TPU_PARALLELISM_MODE: "${{ inputs.tpu-parallelism-mode }}"
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
