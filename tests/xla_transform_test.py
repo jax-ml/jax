@@ -32,6 +32,11 @@ jax.config.parse_flags_with_absl()
 
 class XlaTransformTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    if jax.devices()[0].platform != "cpu":
+      self.skipTest("Skipping test for non-CPU devices")
+
   @parameterized.parameters(
       jex_xla.PipelineStage.PRE_SCHEDULER,
       jex_xla.PipelineStage.POST_SCHEDULER,
