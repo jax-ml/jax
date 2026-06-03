@@ -965,6 +965,46 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(dk_ref, dk, rtol=2e-1, atol=2e-1)
     self.assertArraysAllClose(dv_ref, dv, rtol=2e-1, atol=2e-1)
 
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_shard_map_grad_regression_36008(self):
+    """Regression test for https://github.com/jax-ml/jax/issues/36008.
+
+    Taking the gradient of a cuDNN attention inside a `shard_map` with manual
+    (dp, tp) axes must preserve the varying manual axes (vma) of the inputs in
+    the backward pass. Without propagating vma in the backward primitive's
+    abstract eval, the custom_vjp backward rule produces cotangents whose
+    manual-axis type does not match the primal inputs, raising a ValueError.
+    """
+    if len(jax.local_devices()) < 4:
+      self.skipTest("Requires at least 4 devices.")
+
+    devices = np.array(jax.local_devices()[:4]).reshape(2, 2)
+    mesh = Mesh(devices, axis_names=("dp", "tp"))
+    qkv_spec = PartitionSpec("dp", None, "tp", None)
+
+    @partial(
+        jax.shard_map,
+        mesh=mesh,
+        in_specs=qkv_spec,
+        out_specs=qkv_spec,
+    )
+    def attn_fn(qkv):
+      q, k, v = jnp.split(qkv, 3, axis=-1)
+      return dot_product_attention(
+          q, k, v, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0)
+
+    def loss_fn(qkv):
+      return attn_fn(qkv).sum()
+
+    # (batch=4, seq=128, num_heads=4, 3*head_dim=192) -> head_dim=64.
+    qkv = jax.random.normal(
+        jax.random.key(0), (4, 128, 4, 192), dtype=jnp.bfloat16)
+    qkv = jax.device_put(qkv, NamedSharding(mesh, qkv_spec))
+
+    # Should not raise a custom_vjp varying-manual-axes mismatch error.
+    grads = jax.grad(loss_fn)(qkv)
+    self.assertEqual(grads.shape, qkv.shape)
+
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class DotProductAttentionF8Test(jtu.JaxTestCase):
