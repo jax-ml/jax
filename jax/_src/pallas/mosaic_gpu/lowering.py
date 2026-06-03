@@ -55,6 +55,7 @@ from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import mpmd
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -325,6 +326,19 @@ def _core_map_resource_estimator(
 ) -> Resources:
   del args, params  # Unused.
   return _estimate_resources(ctx, jaxpr)
+
+
+@_register_resource_estimator(mpmd.mpmd_map_p)
+def _mpmd_map_resource_estimator(
+    ctx: ResourceEstimatorContext, *args, jaxprs: tuple[jax_core.Jaxpr, ...],
+    **params
+) -> Resources:
+  del args, params  # Unused.
+  if len(jaxprs) > 1:
+    raise NotImplementedError(
+        "MPMD map with multiple jaxprs not supported for resource estimation."
+    )
+  return _estimate_resources(ctx, jaxprs[0])
 
 
 @_register_resource_estimator(discharge.run_state_p)
@@ -4147,6 +4161,72 @@ def _core_map_lowering_rule(
           jaxpr,
           args=(),
           consts=args,
+      )
+    _isolate_from_above(warp_map_op)
+  return []
+
+
+@register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(mpmd.mpmd_map_p, mgpu.LoweringSemantics.Warpgroup)
+def _mpmd_map_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxprs,
+    meshes,
+    **_,
+):
+  if len(jaxprs) > 1:
+    raise NotImplementedError(
+        "MPMD map with multiple jaxprs not implemented."
+    )
+  mesh = meshes[0]
+  jaxpr = jaxprs[0]
+  if not isinstance(mesh, gpu_core.WarpMesh):
+    raise NotImplementedError(f"Unsupported mesh: {mesh}")
+  # A mpmd_map over a WarpMesh represents a fork/join over individual
+  # warps in a warpgroup.
+  if (ctx.module_ctx.warp_axis_name or
+      ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp):
+    raise LoweringError(
+        "Cannot nest mpmd_maps. Already under mpmd_map with warp_axis_name "
+        f"{ctx.module_ctx.warp_axis_name}.")
+  module_ctx = dataclasses.replace(
+      ctx.module_ctx,
+      warp_axis_name=mesh.axis_name,
+      primitive_semantics=gpu_core.PrimitiveSemantics.Warp,
+  )
+  for aval_in in ctx.avals_in:
+    if isinstance(aval_in, jax_core.ShapedArray) and aval_in.shape:
+      raise LoweringError(
+        "Can only close over scalars and Refs when using mpmd_map with "
+        f"WarpMesh. Found array of shape {aval_in}."
+      )
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    # We allow the warps to schedule async copies without synchronizing with
+    # other warps, so we need to add a barrier here to make sure all reads and
+    # writes have completed.
+    if ctx.module_ctx.auto_barriers:
+      mgpu.warpgroup_barrier()
+    _ = lower_jaxpr_to_mosaic_gpu(
+        module_ctx,
+        ctx.launch_ctx,
+        jaxpr,
+        args=args,
+        consts=(),
+    )
+    if ctx.module_ctx.auto_barriers:
+      # We need to ensure that any effects produced by one warp
+      # (e.g. async copies) are observable by all other warps.
+      mgpu.warpgroup_barrier()
+  else:
+    warp_map_op = mgpu.dialect.WarpMapOp(operands=[])
+    with ir.InsertionPoint(warp_map_op.body):
+      _ = lower_jaxpr_to_mosaic_gpu(
+          module_ctx,
+          ctx.launch_ctx,
+          jaxpr,
+          args=args,
+          consts=(),
       )
     _isolate_from_above(warp_map_op)
   return []

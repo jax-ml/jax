@@ -1548,6 +1548,10 @@ class WarpMesh(pallas_core.Mesh):
   def supported_memory_spaces(self) -> Sequence[MemorySpace]:
     return [GMEM, SMEM, TMEM]
 
+  @contextlib.contextmanager
+  def tracing_context(self):
+    yield
+
 
 def _gpu_mesh_discharge_rule(
     in_avals,
