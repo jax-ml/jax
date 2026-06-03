@@ -4895,10 +4895,8 @@ def _add_transpose(t, x, y):
   # some places (e.g. in custom_jvp) it may not always hold. For example, see
   # api_test.py's CustomJVPTest.test_jaxpr_zeros.
   # assert ad.is_undefined_primal(x) and ad.is_undefined_primal(y)
-  x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x)
-  x_aval = x_aval.to_ct_aval()
-  y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y)
-  y_aval = y_aval.to_ct_aval()
+  x_aval = x.aval if ad.is_undefined_primal(x) else core.typeof(x).to_ct_aval()
+  y_aval = y.aval if ad.is_undefined_primal(y) else core.typeof(y).to_ct_aval()
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(x_aval), ad_util.Zero(y_aval)]
   else:
@@ -5004,11 +5002,13 @@ mul_p = standard_naryop([_num, _num], 'mul', ur_rule=_mul_ur_rule)
 ad.defjvp(mul_p,
           lambda xdot, x, y, **kwargs: mul(xdot, y, **kwargs),
           lambda ydot, x, y, **kwargs: mul(x, ydot, **kwargs))
-
-ad.defbilinear(
-    mul_p,
-    lambda ct, x, y, *, out_dtype: _unbroadcast(x.aval.to_ct_aval(), mul(ct, y, out_dtype=None if out_dtype is None else x.aval.dtype)),
-    lambda ct, x, y, *, out_dtype: _unbroadcast(y.aval.to_ct_aval(), mul(x, ct, out_dtype=None if out_dtype is None else y.aval.dtype)))
+def _mul_transpose_left(ct, x, y, *, out_dtype):
+  g = mul(ct, y, out_dtype=None if out_dtype is None else x.aval.dtype)
+  return _unbroadcast(x.aval, g)
+def _mul_transpose_right(ct, x, y, *, out_dtype):
+  g = mul(x, ct, out_dtype=None if out_dtype is None else y.aval.dtype)
+  return _unbroadcast(y.aval, g)
+ad.defbilinear(mul_p, _mul_transpose_left, _mul_transpose_right)
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 core.pp_eqn_rules[mul_p] = _binary_with_out_dtype_pp_rule
 
@@ -5249,15 +5249,14 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
   assert ad.is_undefined_primal(operand)
   old_dtype = operand.aval.dtype
   old_weak_type = dtypes.is_weakly_typed(operand)
-  operand_ct_aval = operand.aval.to_ct_aval()
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(operand_ct_aval)]
+    return [ad_util.Zero(operand.aval)]
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
     out = convert_element_type_p.bind(
         ct, new_dtype=old_dtype, weak_type=old_weak_type,
-        sharding=operand_ct_aval.sharding)
+        sharding=operand.aval.sharding)
     return [out]
 
 def _convert_element_type_jvp_rule(tangent, primal_result, operand, *,
@@ -5835,7 +5834,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
   out_axes = np.argsort(unsorted_axes)
-  xs = x.aval.to_ct_aval().sharding
+  xs = x.aval.sharding
   inverse_spec = tuple(xs.spec.partitions[o] for o in unsorted_axes)
   ds = xs.update(spec=xs.spec.update(partitions=inverse_spec))
   if ds.mesh.empty:
@@ -6865,14 +6864,13 @@ def _broadcast_in_dim_typecheck_rule(
 
 def _broadcast_in_dim_transpose_rule(ct, operand,
                                      shape, broadcast_dimensions, sharding):
-  ct_aval = operand.aval.to_ct_aval()
-  if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(ct_aval)]
   if not isinstance(operand, ad.UndefinedPrimal):
     return [None]  # transpose wrt literal
-  ct_s = ct_aval.sharding
+  if type(ct) is ad_util.Zero:
+    return [ad_util.Zero(operand.aval)]
+  ct_s = operand.aval.sharding
   unit_dims = [
-      i for i, (sh, spec) in enumerate(zip(ct_aval.shape, ct_s.spec.partitions))
+      i for i, (sh, spec) in enumerate(zip(operand.aval.shape, ct_s.spec.partitions))
       if core.definitely_equal(sh, 1) and spec is None
   ]
   bdims = tuple_delete(broadcast_dimensions, unit_dims)
@@ -7182,8 +7180,8 @@ def _concatenate_transpose_rule(ct, *operands, dimension):
   operand_shapes = [o.aval.shape if ad.is_undefined_primal(o) else o.shape
                     for o in operands]
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(o.aval.to_ct_aval())
-            if ad.is_undefined_primal(o) else None for o in operands]
+    return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
+            for o in operands]
   else:
     return split(ct, tuple(shape[dimension] for shape in operand_shapes),
                  axis=dimension)
@@ -7265,8 +7263,8 @@ def _stack_sharding_rule(*operands, axis):
 
 def _stack_transpose_rule(ct, *operands, axis):
   if type(ct) is ad_util.Zero:
-    return [ad_util.Zero(o.aval.to_ct_aval()) if ad.is_undefined_primal(o)
-            else None for o in operands]
+    return [ad_util.Zero(o.aval) if ad.is_undefined_primal(o) else None
+            for o in operands]
   return unstack_p.bind(ct, axis=axis)
 
 def _stack_lower(ctx, *xs, axis):
@@ -7360,7 +7358,7 @@ def _unstack_ur_rule(operand, *, axis):
 
 def _unstack_transpose_rule(cotangents, operand, *, axis):
   if all(type(ct) is ad_util.Zero for ct in cotangents):
-    return [ad_util.Zero(operand.aval.to_ct_aval())]
+    return [ad_util.Zero(operand.aval)]
   cotangents = [ct.instantiate() if type(ct) is ad_util.Zero else ct
                 for ct in cotangents]
   return [stack_p.bind(*cotangents, axis=axis)]
@@ -7444,7 +7442,7 @@ def _split_weak_type_rule(operand, *, sizes, axis):
 def _split_transpose_rule(cotangents, operand, *, sizes, axis):
   assert ad.is_undefined_primal(operand)
   if all(type(t) is ad_util.Zero for t in cotangents):
-    return [ad_util.Zero(operand.aval.to_ct_aval())]
+    return [ad_util.Zero(operand.aval)]
   cotangents = [ct.instantiate() if type(ct) is ad_util.Zero else ct
                 for ct in cotangents]
   return [concatenate(cotangents, dimension=axis)]
@@ -7897,14 +7895,13 @@ def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
 
 def _reshape_transpose_rule(ct, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
-  op_ct_aval = operand.aval.to_ct_aval()
   if dimensions is None:
-    return [reshape(ct, op_ct_aval.shape, out_sharding=op_ct_aval.sharding)]
+    return [reshape(ct, operand.aval.shape, out_sharding=operand.aval.sharding)]
   else:
-    new_sizes = tuple(op_ct_aval.shape[d] for d in dimensions)
-    new_partitions = tuple(op_ct_aval.sharding.spec[d] for d in dimensions)
-    ct_s = op_ct_aval.sharding.update(
-        spec=op_ct_aval.sharding.spec.update(partitions=new_partitions))
+    new_sizes = tuple(operand.aval.shape[d] for d in dimensions)
+    new_partitions = tuple(operand.aval.sharding.spec[d] for d in dimensions)
+    ct_s = operand.aval.sharding.update(
+        spec=operand.aval.sharding.spec.update(partitions=new_partitions))
     out = reshape(ct, new_sizes, out_sharding=ct_s)
     return [transpose(out, np.argsort(dimensions))]
 
@@ -8090,8 +8087,8 @@ def _select_weak_type_rule(which, *cases):
 def _select_transpose_rule(ct, which, *cases):
   assert not ad.is_undefined_primal(which)
   if type(ct) is ad_util.Zero:
-    return [None] + [ad_util.Zero(c.aval.to_ct_aval())
-                     if ad.is_undefined_primal(c) else None for c in cases]
+    return [None] + [ad_util.Zero(c.aval) if ad.is_undefined_primal(c) else None
+                     for c in cases]
   else:
     zeros = full_like(ct, 0)
     if dtypes.dtype(which) == np.dtype(np.bool_):
@@ -8384,7 +8381,7 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes, out_sharding):
   broadcast_dimensions = tuple(np.delete(np.arange(len(input_shape)), axes))
   result = broadcast_in_dim(
       cotangent, input_shape, broadcast_dimensions,
-      out_sharding=operand.aval.to_ct_aval().sharding)
+      out_sharding=operand.aval.sharding)
   assert result.shape == input_shape
   return [result]
 

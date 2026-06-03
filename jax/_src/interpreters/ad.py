@@ -393,22 +393,21 @@ def backward_pass3(
 
   lin_eqns = []
   for eqn in jaxpr.eqns:
-    # TODO(mattjj): shorten the lifetime of the reference accumulators, as it
-    # is longer than necessary.
+    # TODO(mattjj): shorten the lifetime of the reference accumulators
     if eqn.primitive.ref_primitive:
       v, = eqn.outvars
       lin_eqns.append(eqn)
       if eqn.primitive is core.ref_p or eqn.primitive is core.empty_ref_p:
-        env[v] = RefAccum(v.aval.inner_aval)  # pyrefly: ignore[missing-attribute]
+        env[v] = RefAccum(v.aval.inner_aval.to_ct_aval())  # type: ignore
       elif eqn.primitive is core.freeze_p:
-        env[v] = ValAccum(v.aval)
+        env[v] = ValAccum(v.aval.to_ct_aval())
       elif eqn.primitive is core.accum_grad_in_ref_p:
-        env[v] = RefAccum(v.aval)
+        env[v] = RefAccum(v.aval.to_ct_aval())
       else:
         assert False
     elif any(isinstance(read(x), GradAccum) for x in eqn.invars):
       for v in eqn.outvars:
-        env[v] = ValAccum(v.aval)
+        env[v] = ValAccum(v.aval.to_ct_aval())
       lin_eqns.append(eqn)
     else:
       params = eqn.primitive.get_bind_params(eqn.params)
@@ -460,7 +459,7 @@ def _name_stack_ctx(src_info):
   return source_info_util.user_context(src_info.traceback, name_stack=stack)
 
 class GradAccum:
-  aval: core.AbstractValue
+  aval: core.AbstractValue  # cotangent aval
 
   def accum(self, x) -> None:
     assert False
@@ -502,7 +501,7 @@ class ValAccum(GradAccum):
 
   def __init__(self, aval, val=None):
     self.aval = aval
-    self.val = Zero(aval.to_ct_aval()) if val is None else val
+    self.val = Zero(aval) if val is None else val
     ct_check(self, self.val)
 
   def __repr__(self):
@@ -516,16 +515,14 @@ class ValAccum(GradAccum):
   def freeze(self):
     return self.val
 
-def ct_check(primal, ct):
+def ct_check(accum, ct):
   if config.disable_bwd_checks.value:
     return
   ct_aval = ct.aval if type(ct) is Zero else typeof(ct)
-  ct_aval_expected = primal.aval.to_ct_aval()
-  if not core.typematch(ct_aval, ct_aval_expected, no_dtype_check=True):
-    # TODO(yashkatariya, mattjj): Add primitive name here for better error?
-    raise ValueError(
-        f"Expected cotangent type {ct_aval_expected.str_short()} for primal "
-        f"type {primal.aval.str_short()}, but got {ct_aval.str_short()}")
+  if not core.typematch(ct_aval, accum.aval, no_dtype_check=True):
+    raise ValueError(f"Expected cotangent type {accum.aval.str_short()} but "
+                     f"got {ct_aval.str_short()}")
+
 
 class NullAccum(GradAccum):
   aval: core.AbstractValue

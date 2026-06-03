@@ -930,7 +930,7 @@ def _filter_forwarded_inputs(outs, ins):
 @lu.transformation2
 def _flatten_bwd(f: Callable,
                  in_tree: PyTreeDef,
-                 in_avals: Sequence[core.AbstractValue],
+                 in_avals: Sequence[core.AbstractValue],  # primal avals
                  out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
                  *args):
   out_tree, res_tree, _ = out_trees()

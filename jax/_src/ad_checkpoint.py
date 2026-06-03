@@ -792,7 +792,8 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     out_cts = [ad_util.Zero(aval.to_ct_aval()) if zero else next(out_cts_iter)
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
-    dummy_args = [ad.UndefinedPrimal(aval) for aval in lin_jaxpr.in_avals[len(consts):]]
+    dummy_args = [ad.UndefinedPrimal(aval.to_ct_aval())
+                  for aval in lin_jaxpr.in_avals[len(consts):]]
     in_cts = ad.backward_pass(lin_jaxpr.jaxpr, False, lin_jaxpr.consts,
                               [*consts, *dummy_args], out_cts)
     in_cts = in_cts[len(consts):]
