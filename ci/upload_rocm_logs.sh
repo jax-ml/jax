@@ -21,7 +21,7 @@
 #   - _SUCCESS: written last to indicate the upload set is complete
 #
 # S3 layout (deterministic + unique per run/attempt):
-#   <org>/<repo>/<branch>/<nightly|continuous>/<DATE>_<run_id>_<attempt>/<combo>/
+#   <org>/<repo>/<branch>/<nightly|continuous>/<version>/<DATE>_<run_id>_<attempt>/<combo>/
 set -euo pipefail
 
 : "${S3_BUCKET_NAME:?}"
@@ -57,8 +57,8 @@ GPU_PART="${GPU_COUNT:+gpu_${GPU_COUNT}}"
 GPU_PART="${GPU_PART:-${INPUT_RUNNER}}"
 
 RUN_KEY="${DATE}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-COMBO="py$(norm "${INPUT_PYTHON}")-rocm$(norm "${INPUT_ROCM_VERSION}")-${GPU_PART}"
-PREFIX="${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${IS_NIGHTLY}/${RUN_KEY}/${COMBO}"
+COMBO="py$(norm "${INPUT_PYTHON}")-${GPU_PART}"
+PREFIX="${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${IS_NIGHTLY}/${INPUT_ROCM_VERSION}/${RUN_KEY}/${COMBO}"
 
 DEST="s3://${S3_BUCKET_NAME}/${TEST_LOGS_ROOT}/${PREFIX}"
 
