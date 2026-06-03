@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -1048,6 +1049,20 @@ PyType_Slot PyClient::slots_[] = {
       // TODO(zhangqiaorjc): Experimental.
       .def("defragment",
            [](PyClient& self) { xla::ThrowIfError(self.Defragment()); })
+      .def(
+          "dma_map",
+          [](PyClient& self, std::uintptr_t address, size_t size) {
+            xla::ThrowIfError(self.pjrt_client()->DmaMap(
+                reinterpret_cast<void*>(address), size));
+          },
+          nb::arg("address"), nb::arg("size"))
+      .def(
+          "dma_unmap",
+          [](PyClient& self, std::uintptr_t address) {
+            xla::ThrowIfError(
+                self.pjrt_client()->DmaUnmap(reinterpret_cast<void*>(address)));
+          },
+          nb::arg("address"))
       .def("make_python_callback_from_host_send_and_recv",
            xla::ValueOrThrowWrapper(
                &PyClient::MakePythonCallbackUsingHostSendAndRecv),
