@@ -26,7 +26,7 @@ concurrency:
 permissions: {}
 jobs:
   run-tests:
-    if: github.event.repository.fork == false
+    if: github.event.repository.fork == false && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm')
     uses: ./.github/workflows/bazel_rocm.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:

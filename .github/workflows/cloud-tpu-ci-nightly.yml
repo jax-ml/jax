@@ -28,6 +28,7 @@ env:
 
 jobs:
   cloud-tpu-test:
+    if: github.repository_owner == 'jax-ml'
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:

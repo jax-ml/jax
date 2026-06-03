@@ -48,6 +48,7 @@ env:
 
 jobs:
   run-pytest-cpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -75,6 +76,7 @@ jobs:
       max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
 
   run-bazel-test-cpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -96,6 +98,7 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-cuda:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -147,6 +150,7 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-cuda:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -271,6 +275,7 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-tpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -335,6 +340,7 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-tpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -409,7 +415,7 @@ jobs:
       clone_main_xla: 0
 
   verify-release-wheels-install:
-    if: ${{ startsWith(github.ref_name, 'release/')}}
+    if: ${{ startsWith(github.ref_name, 'release/') && github.repository_owner == 'jax-ml' }}
     defaults:
       run:
         # Set the shell to bash as GitHub actions runs with /bin/sh by default

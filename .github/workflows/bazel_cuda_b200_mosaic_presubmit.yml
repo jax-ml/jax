@@ -63,7 +63,7 @@ jobs:
   # at all if no matching files were touched.
   # This would lead to Copybara waiting for the status indefinitely.
   changed_files:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.repository_owner == 'jax-ml' && github.event_name == 'pull_request' }}
     runs-on: linux-x86-n4-16
     container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     steps:
@@ -130,6 +130,7 @@ jobs:
     if: >-
       ${{
           !cancelled()
+          && github.repository_owner == 'jax-ml'
           && (
                github.event_name == 'workflow_dispatch'
                || needs.changed_files.outputs.any_changed == 'true'

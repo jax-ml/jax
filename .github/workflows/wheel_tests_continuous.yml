@@ -44,6 +44,7 @@ concurrency:
 
 jobs:
   build-jax-artifact:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     name: "Build jax artifact"
     with:
@@ -55,6 +56,7 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-jaxlib-artifact:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -76,6 +78,7 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-cuda-artifacts:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -96,10 +99,7 @@ jobs:
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-cpu:
-    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
-    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
-    # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
     needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
@@ -118,10 +118,7 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-pytest-cuda:
-    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
-    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
-    # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
@@ -162,6 +159,7 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-cpu-py-import:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -179,10 +177,7 @@ jobs:
       clone_main_xla: 1
 
   run-bazel-test-cuda:
-    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
-    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
-    # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
@@ -211,10 +206,7 @@ jobs:
       clone_main_xla: 1
 
   run-bazel-test-cuda-py-import:
-    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
-    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
-    # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -239,10 +231,7 @@ jobs:
       clone_main_xla: 1
 
   run-pytest-tpu:
-    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
-    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
-    # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
     needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
@@ -267,10 +256,7 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-tpu:
-    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
-    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
-    # still want to run the tests for other platforms.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/bazel_test_tpu.yml
     needs: [build-jaxlib-artifact]
     strategy:
@@ -297,6 +283,7 @@ jobs:
       clone_main_xla: 1
 
   build-rocm-artifacts:
+    if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
     uses: ./.github/workflows/build_rocm_artifacts.yml
     permissions:
       id-token: write
@@ -331,7 +318,7 @@ jobs:
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-rocm:
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/pytest_rocm.yml
     permissions:
@@ -358,7 +345,7 @@ jobs:
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/bazel_rocm.yml
     permissions:

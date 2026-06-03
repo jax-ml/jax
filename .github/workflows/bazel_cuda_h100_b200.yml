@@ -83,7 +83,8 @@ jobs:
   run_tests:
     if: >-
       ${{
-          github.event.repository.fork == false
+          github.repository_owner == 'jax-ml'
+          && github.event.repository.fork == false
           && (github.event_name == 'schedule'
               || (github.event_name == 'workflow_dispatch'
                   && (github.event.inputs.jobs_to_run == 'all'
@@ -136,8 +137,9 @@ jobs:
   run_multiaccelerator_tests:
     if: >-
       ${{
-          github.event.repository.fork == false &&
-          (
+          github.repository_owner == 'jax-ml'
+          && github.event.repository.fork == false
+          && (
               github.event_name == 'schedule'
               || (github.event_name == 'workflow_dispatch'
                   && (github.event.inputs.jobs_to_run == 'all'
