@@ -484,7 +484,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           num_sublanes=8,
           mxu_column_size=256,
           num_mxus=2,
-          num_accumulators=128,
+          num_accumulators=256,
           vmem_capacity_bytes=192 * 1024 * 1024,  # 192 MiB per core
           cmem_capacity_bytes=0,
           smem_capacity_bytes=1024 * 1024,  # 1 MiB per core
