@@ -211,12 +211,18 @@ class FusedAttentionTest(PallasBaseTest):
              causal, use_segment_ids)
 
       if key in {
+        (1, 128, 2, 64,  (("block_q", 64), ("block_k", 128), ("block_q_dkv", 64),
+                          ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 64)),
+         True, False),  # bwd0
         (1, 384, 1, 128, (("block_q", 64), ("block_k", 64), ("block_q_dkv", 64),
                           ("block_kv_dkv", 64), ("block_q_dq", 64), ("block_kv_dq", 64)),
          True,  False),  # bwd1
         (2, 384, 1, 32,  (("block_q", 64), ("block_k", 128), ("block_q_dkv", 64),
                           ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 64)),
          False, False),  # bwd2
+        (2, 128, 1, 32,  (("block_q", 64), ("block_k", 64), ("block_q_dkv", 64),
+                          ("block_kv_dkv", 64), ("block_q_dq", 64), ("block_kv_dq", 64)),
+         True, True),  # bwd6
         (1, 384, 1, 72,  (("block_q", 128), ("block_k", 128), ("block_q_dkv", 32),
                           ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 128)),
          False, True),   # bwd7
