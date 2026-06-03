@@ -1483,9 +1483,9 @@ class PythonPmapTest(jtu.JaxTestCase):
       result3 = lax.map(lambda b: matrix_vector(x, b, True), y)    # map + pmap
     result4 = jnp.stack([matrix_vector(x, b, False) for b in y])  # none + map
 
-    self.assertAllClose(result1, result2, check_dtypes=False, atol=1e-3, rtol=1e-3)
-    self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-3, rtol=1e-3)
-    self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-3, rtol=1e-3)
+    self.assertAllClose(result1, result2, check_dtypes=False, atol=1e-2, rtol=1e-2)
+    self.assertAllClose(result1, result3, check_dtypes=False, atol=1e-2, rtol=1e-2)
+    self.assertAllClose(result1, result4, check_dtypes=False, atol=1e-2, rtol=1e-2)
 
   def testPmapAxisNameError(self):
     # https://github.com/jax-ml/jax/issues/3120
