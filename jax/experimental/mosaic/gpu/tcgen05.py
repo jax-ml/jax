@@ -1128,10 +1128,7 @@ class TMEMRef:
     return self.layout.vector_length
 
   def __post_init__(self):
-    packed_bitwidth = utils.bitwidth(self.dtype) * self.packing
-    if not packed_bitwidth <= 32:
-      raise ValueError("Expected packed packed bitwidth to be <= 32, but got: "
-                       f"{packed_bitwidth=}")
+    self.layout.check_type(self.shape, utils.bitwidth(self.dtype))
 
   @classmethod
   def from_alloc(
@@ -1162,8 +1159,6 @@ class TMEMRef:
             "collective argument must be provided when TMEM layout is inferred"
         )
       layout = _infer_tmem_layout(shape, collective, packing=1)
-    else:
-      layout.check_type(shape, utils.bitwidth(dtype))
     # TODO: Do we have to do this??
     # warp_idx = utils.warp_idx(sync=False)
     # tmem_addr = arith.ori(tmem_addr, arith.shli(warp_idx, utils.c(21, i32)))
@@ -1173,7 +1168,6 @@ class TMEMRef:
     i32 = ir.IntegerType.get_signless(32)
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
     slice_shape = cast(tuple[int, int], tuple(slice_shape))
-    self.layout.check_type(slice_shape, utils.bitwidth(self.dtype))
     if any(is_squeezed):
       raise ValueError("TMEM can only be sliced, not indexed")
     if base_idx == [0] * len(base_idx) and slice_shape == self.shape:
