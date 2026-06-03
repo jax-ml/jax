@@ -1776,7 +1776,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertIn(f"x.sum() = {x.sum() + 1}", output())
 
   def test_print_array(self):
-    in_shape = [2, 1, 64, 64]
+    # The default printf buffer on some smaller GPUs (e.g. Thor) only has space for
+    # 4096 threads to printf (short) messages. Keep this shape below that.
+    in_shape = [2, 1, 64, 32]
 
     @functools.partial(
         self.pallas_call,
@@ -1790,7 +1792,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
-    self.assertIn("x: [1, 0, 43, 23]: 6871\n", output())
+    self.assertIn("x: [1, 0, 43, 23]: 3447\n", output())
 
   def test_print_layout(self):
     shape = (128,)
