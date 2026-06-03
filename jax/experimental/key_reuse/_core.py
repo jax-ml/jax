@@ -76,10 +76,12 @@ class _SourceSinkBase:
     assert isinstance(idx, int)
     if isinstance(mask, np.ndarray):
       assert mask.dtype == np.dtype('bool')
-      if np.all(mask):
-        mask = True
-      elif not np.any(mask):
+      if not np.any(mask):
+        # An empty mask (e.g. from vmap over a zero-sized axis) is a no-op:
+        # np.all() is vacuously True for empty arrays, so this must come first.
         mask = False
+      elif np.all(mask):
+        mask = True
       elif mask.flags.writeable:
           mask = np.array(mask, copy=True)
           mask.flags.writeable = False
