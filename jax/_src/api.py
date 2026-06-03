@@ -2399,8 +2399,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
 
     def eval_shape(fun, *args, **kwargs):
       out = fun(*args, **kwargs)
-      shape_dtype_struct = lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype)
-      return jax.tree_util.tree_map(shape_dtype_struct, out)
+      return jax.tree_util.tree_map(jax.ShapeDtypeStruct.like, out)
 
   But instead of applying ``fun`` directly, which might be expensive, it uses
   JAX's abstract interpretation machinery to evaluate the shapes without doing

@@ -596,7 +596,7 @@ def entry_computation(
   # Start pipeline.
   dummy_slice_fwd = jax.lax.precv(
       jax.lax.create_token(),
-      jax.ShapeDtypeStruct(dummy_data.shape, dummy_data.dtype),
+      jax.ShapeDtypeStruct.like(dummy_data),
       axis_name="x",
       perm=[(0, 1), (1, 2), (2, 3)],
   )

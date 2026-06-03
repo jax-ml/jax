@@ -37,7 +37,7 @@ for name, target in _rms_norm.registrations().items():
 def rms_norm(x, eps=1e-5):
   # In this case, the output of our FFI function is just a single array with the
   # same shape and dtype as the input.
-  out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
+  out_type = jax.ShapeDtypeStruct.like(x)
 
   # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
   # the attribute `eps`. Our FFI function expects this to have the C++ `float`
@@ -56,7 +56,7 @@ def rms_norm_fwd(x, eps=1e-5):
   y, res = jax.ffi.ffi_call(
     "rms_norm_fwd",
     (
-      jax.ShapeDtypeStruct(x.shape, x.dtype),
+      jax.ShapeDtypeStruct.like(x),
       jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
     ),
     vmap_method="broadcast_all",
@@ -72,7 +72,7 @@ def rms_norm_bwd(eps, res, ct):
   return (
     jax.ffi.ffi_call(
       "rms_norm_bwd",
-      jax.ShapeDtypeStruct(ct.shape, ct.dtype),
+      jax.ShapeDtypeStruct.like(ct),
       vmap_method="broadcast_all",
     )(res, x, ct),
   )

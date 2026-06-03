@@ -24,6 +24,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.scipy.linalg.fiedler_companion` for constructing the
     pentadiagonal Fiedler companion matrix of a polynomial
     ({jax-issue}`#10144`).
+  * Added {func}`jax.ShapeDtypeStruct.like` -- a shortcut for constructing a
+    {class}`jax.ShapeDtypeStruct` from an object with `shape` and `dtype`
+    attributes.
 
 ## JAX 0.10.1 (May 20, 2026)
 

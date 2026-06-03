@@ -1060,8 +1060,7 @@ class GridMapping:
   def in_shapes(self) -> Iterable[jax_core.ShapeDtypeStruct]:
     """The shapes of ``*index``, ``*inputs``."""
     index_shapes = (
-        # pyrefly: ignore[missing-attribute]
-        jax_core.ShapeDtypeStruct(ia.shape, ia.dtype)
+        jax_core.ShapeDtypeStruct.like(ia)
         for ia in self.index_map_avals[len(self.grid) :]
     )
     inputs_shapes = (

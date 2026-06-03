@@ -302,7 +302,7 @@ class DebugPrintTest(PallasSCTest):
     def kernel(x):
       return mpmd.mpmd_map(
           [(v_mesh, vector_subcore_fn), (s_mesh, scalar_subcore_fn)],
-          out_types=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_types=jax.ShapeDtypeStruct.like(x),
       )(x)
 
     compiled_kernel = jax.jit(
@@ -1263,7 +1263,7 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(32, dtype=jnp.int32)
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def kernel(x_ref, o_ref):
       num_lanes = self.num_lanes
@@ -1276,7 +1276,7 @@ class VectorSubcoreTest(PallasSCTest):
     x = jnp.arange(self.num_lanes, dtype=jnp.int32)
 
     @self.vector_subcore_kernel(
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = lax.broadcast(x_ref[0], o_ref.shape)
@@ -1291,7 +1291,7 @@ class VectorSubcoreTest(PallasSCTest):
 
     @self.vector_subcore_kernel(
         in_specs=(pl.BlockSpec(memory_space=pltpu.HBM),),
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = lax.broadcast(x_ref[0], o_ref.shape)
@@ -2903,7 +2903,7 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
     def run_mpmd(x):
       return mpmd.mpmd_map(
           [(self.mock_sc_scalar_subcore_mesh(), lambda *_: None)],
-          out_types=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_types=jax.ShapeDtypeStruct.like(x),
       )(x)
 
     x = jnp.ones((8,), dtype=jnp.bfloat16)

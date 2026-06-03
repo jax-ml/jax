@@ -1153,7 +1153,7 @@ class RooflineTest(jtu.JaxTestCase):
   )
   def test_callback_with_output_roofline(self, callback_fn):
     def _example_callback_function(x):
-      result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+      result_shape = jax.ShapeDtypeStruct.like(x)
       return callback_fn(example_function, result_shape, x)
 
     x = jnp.zeros((3, 8), dtype=jnp.float32)

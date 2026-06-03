@@ -337,7 +337,7 @@ def jax_vector_add(a, b):
   b_3d = b_pad.reshape(1, BLOCK, padded // BLOCK)
   call = cjax.cutlass_call(
       launch_vector_add,
-      output_shape_dtype=jax.ShapeDtypeStruct(a_3d.shape, a_3d.dtype),
+      output_shape_dtype=jax.ShapeDtypeStruct.like(a_3d),
       use_static_tensors=True,
   )
   c_3d = call(a_3d, b_3d)
@@ -450,7 +450,7 @@ def jax_saxpy(x, y, alpha=2.0):
   y_3d = y_pad.reshape(1, BLOCK, padded // BLOCK)
   call = cjax.cutlass_call(
       launch_saxpy,
-      output_shape_dtype=jax.ShapeDtypeStruct(x_3d.shape, x_3d.dtype),
+      output_shape_dtype=jax.ShapeDtypeStruct.like(x_3d),
       use_static_tensors=True,
       alpha=alpha,
   )
@@ -544,7 +544,7 @@ The JAX wrapper is simpler than vector add because we skip the 3-D reshape. The 
 x_flat = x.reshape(-1)         # flatten to 1-D
 call = cjax.cutlass_call(
     launch_relu,
-    output_shape_dtype=jax.ShapeDtypeStruct(x_flat.shape, x_flat.dtype),
+    output_shape_dtype=jax.ShapeDtypeStruct.like(x_flat),
     N=N,                        # scalar kwarg → bounds check inside kernel
 )
 out_flat = call(x_flat)
@@ -561,7 +561,7 @@ def jax_relu(x):
   x_flat = x.reshape(-1)
   call = cjax.cutlass_call(
       launch_relu,
-      output_shape_dtype=jax.ShapeDtypeStruct(x_flat.shape, x_flat.dtype),
+      output_shape_dtype=jax.ShapeDtypeStruct.like(x_flat),
       N=N,
   )
   out_flat = call(x_flat)
@@ -645,7 +645,7 @@ Note that `width` is marked as a static argument in the JAX wrapper via `static_
 ```python
 call = cjax.cutlass_call(
     launch_fused_bias_relu,
-    output_shape_dtype=jax.ShapeDtypeStruct(x_flat.shape, x_flat.dtype),
+    output_shape_dtype=jax.ShapeDtypeStruct.like(x_flat),
     N=N, width=width,
 )
 out_flat = call(x_flat, bias)   # two input tensors: x and bias
@@ -665,7 +665,7 @@ def jax_fused_bias_relu(x, bias, width):
   x_flat = x.reshape(-1)
   call = cjax.cutlass_call(
       launch_fused_bias_relu,
-      output_shape_dtype=jax.ShapeDtypeStruct(x_flat.shape, x_flat.dtype),
+      output_shape_dtype=jax.ShapeDtypeStruct.like(x_flat),
       N=N,
       width=width,
   )

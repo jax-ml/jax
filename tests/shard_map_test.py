@@ -372,7 +372,7 @@ class ShardMapTest(jtu.JaxTestCase):
         shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
     )
     def fwd(a):
-      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      return_dtype_and_shape = jax.ShapeDtypeStruct.like(a)
       fwd_token = jax.lax.psend(a, 'x', [(0, 1)])
       data = jax.lax.precv(
           fwd_token, return_dtype_and_shape, 'x', [(0, 1)])
@@ -418,7 +418,7 @@ class ShardMapTest(jtu.JaxTestCase):
         jax.shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
     )
     def fwd(a):
-      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      return_dtype_and_shape = jax.ShapeDtypeStruct.like(a)
 
       # We define the "forward edge" to be the device-to-device communication
       # originating from device 0 in increasing indices.
@@ -482,7 +482,7 @@ class ShardMapTest(jtu.JaxTestCase):
         out_specs=P('x', None),
     )
     def fwd(a):
-      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      return_dtype_and_shape = jax.ShapeDtypeStruct.like(a)
       fwd_token = jax.lax.psend(
           a,
           axis_name='x',
@@ -521,7 +521,7 @@ class ShardMapTest(jtu.JaxTestCase):
         out_specs=P('x', None),
     )
     def fwd(a):
-      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      return_dtype_and_shape = jax.ShapeDtypeStruct.like(a)
       data = jax.lax.precv(
           jax.lax.create_token(),
           out_shape=return_dtype_and_shape,
@@ -552,7 +552,7 @@ class ShardMapTest(jtu.JaxTestCase):
         out_specs=P('x', None),
     )
     def fwd(a):
-      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      return_dtype_and_shape = jax.ShapeDtypeStruct.like(a)
       fwd_token = jax.lax.psend(
           a,
           axis_name='x',
@@ -591,7 +591,7 @@ class ShardMapTest(jtu.JaxTestCase):
         out_specs=P('x', None),
     )
     def fwd(a):
-      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      return_dtype_and_shape = jax.ShapeDtypeStruct.like(a)
       fwd_token = jax.lax.psend(
           a,
           axis_name='x',
@@ -625,7 +625,7 @@ class ShardMapTest(jtu.JaxTestCase):
         jax.shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
     )
     def fwd(a):
-      return_dtype_and_shape = jax.ShapeDtypeStruct(a.shape, a.dtype)
+      return_dtype_and_shape = jax.ShapeDtypeStruct.like(a)
       dummy_data = jax.lax.precv(
           jax.lax.create_token(),
           out_shape=return_dtype_and_shape,
@@ -1427,7 +1427,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     @jax.shard_map(in_specs=P('x'), out_specs=(P('x'), P('x')))
     def per_shard(x_shard):
-      spec = jax.ShapeDtypeStruct(x_shard.shape, x_shard.dtype)
+      spec = jax.ShapeDtypeStruct.like(x_shard)
       return jax.pure_callback(host_kernel, (spec, spec), x_shard)
 
     x = jax.device_put(np.arange(32, dtype=np.float32).reshape(16, 2), P('x'))

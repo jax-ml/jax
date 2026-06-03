@@ -116,7 +116,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
               (x.shape[1] + 1) // block_shape[1])
       return pl.pallas_call(
           copy_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
           out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
           grid=grid,
@@ -158,7 +158,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
         o_ref[...] = x_ref[...]
       return pl.pallas_call(
           copy_one,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           interpret=eager and jtu.test_device_matches(["cpu"]))(x)
     shape1 = (128, 256)
     x1 = jnp.arange(math.prod(shape1), dtype=np.int32).reshape(shape1)
@@ -181,7 +181,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       block_shape = (x.shape[0] // grid[0], x.shape[1] // grid[1])
       return pl.pallas_call(
           copy_one,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
           out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
           grid=grid,
@@ -419,7 +419,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
       return pl.pallas_call(
           add_vectors_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid_spec=pltpu.PrefetchScalarGridSpec(
               grid=(1,),
               in_specs=[
@@ -453,7 +453,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       block_spec = pl.BlockSpec((block_size, block_size), lambda i, j: (i, j))
       return pl.pallas_call(
           add_vectors_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid=grid,
           in_specs=[block_spec, block_spec],
           out_specs=block_spec,

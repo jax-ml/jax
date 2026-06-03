@@ -2489,7 +2489,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         compiler_params=plgpu.CompilerParams(
             lowering_semantics=self.LOWERING_SEMANTICS
         ),
-        out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(a),
     )
     def kernel(a_ref, b_ref):
       del b_ref
@@ -6436,7 +6436,7 @@ class PipelineTest(PallasTest):
     def vadd(x, y):
       return self.pallas_call(
           body,
-          out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           in_specs=in_specs,
           out_specs=out_specs,
           grid=data_size // block_size,
@@ -6506,7 +6506,7 @@ class PipelineTest(PallasTest):
     x = jnp.arange(32 * 4 * 64).reshape(32 * 4, 64).astype(jnp.float32)
     kernel_fn = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         grid=(4, 1),
         grid_names=("x", "y"),
     )
@@ -6549,7 +6549,7 @@ class PipelineTest(PallasTest):
     x = x.reshape(-1, num_steps * 64).astype(jnp.float32)
     kernel_fn = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
@@ -6580,7 +6580,7 @@ class PipelineTest(PallasTest):
     x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
     kernel_fn = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
@@ -6603,7 +6603,7 @@ class PipelineTest(PallasTest):
     x = x.reshape(-1, num_steps * 16).astype(jnp.float32)
     kernel_fn = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     y = jnp.empty_like(x)
     for i in range(num_steps):
@@ -6665,7 +6665,7 @@ class PipelineTest(PallasTest):
     x = x.reshape(-1, num_steps2 * 16).astype(jnp.float32)
     kernel_fn = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         grid=(num_steps1,),
         grid_names=("x",),
     )
@@ -6723,7 +6723,7 @@ class PipelineTest(PallasTest):
     x = x.reshape(-1, num_steps1 * 16, num_steps2 * 8).astype(jnp.float32)
     kernel_fn = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
@@ -7193,7 +7193,7 @@ class WarpSpecializedPipelineTest(PallasTest):
     x = x.reshape(-1, num_steps * 64).astype(jnp.float32)
     kernel_fn = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         num_threads=2,
         thread_name="wg",
     )

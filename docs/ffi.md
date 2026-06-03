@@ -258,7 +258,7 @@ def rms_norm(x, eps=1e-5):
     # In this case, the output of our FFI function is just a single array with
     # the same shape and dtype as the input. We discuss a case with a more
     # interesting output type below.
-    jax.ShapeDtypeStruct(x.shape, x.dtype),
+    jax.ShapeDtypeStruct.like(x),
 
     # The `vmap_method` parameter controls this function's behavior under `vmap`
     # as discussed below.
@@ -335,7 +335,7 @@ Using `vmap_method="sequential"`, `vmap`ping a `ffi_call` will fall back on a {f
 def rms_norm_sequential(x, eps=1e-5):
   return jax.ffi.ffi_call(
     "rms_norm",
-    jax.ShapeDtypeStruct(x.shape, x.dtype),
+    jax.ShapeDtypeStruct.like(x),
     vmap_method="sequential",
   )(x, eps=np.float32(eps))
 
@@ -377,7 +377,7 @@ def rms_norm_fwd(x, eps=1e-5):
   y, res = jax.ffi.ffi_call(
     "rms_norm_fwd",
     (
-      jax.ShapeDtypeStruct(x.shape, x.dtype),
+      jax.ShapeDtypeStruct.like(x),
       jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
     ),
     vmap_method="broadcast_all",
@@ -393,7 +393,7 @@ def rms_norm_bwd(eps, res, ct):
   return (
     jax.ffi.ffi_call(
       "rms_norm_bwd",
-      jax.ShapeDtypeStruct(ct.shape, ct.dtype),
+      jax.ShapeDtypeStruct.like(ct),
       vmap_method="broadcast_all",
     )(res, x, ct),
   )
@@ -466,7 +466,7 @@ To support running our `rms_norm` function on both GPU and CPU, we can combine o
 ```{code-cell} ipython3
 def rms_norm_cross_platform(x, eps=1e-5):
   assert x.dtype == jnp.float32
-  out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
+  out_type = jax.ShapeDtypeStruct.like(x)
 
   def impl(target_name):
     return lambda x: jax.ffi.ffi_call(

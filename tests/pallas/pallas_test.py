@@ -100,7 +100,7 @@ class PallasTest(ptu.PallasTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def add_one(x_ref, o_ref):
       o_ref[...] = x_ref[...] + 1.0
@@ -116,7 +116,7 @@ class PallasTest(ptu.PallasTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=[pl.BlockSpec((128,), lambda i: (i,))],
         out_specs=pl.BlockSpec((128,), lambda i: (i,)),
         grid=(num_steps,),
@@ -132,7 +132,7 @@ class PallasTest(ptu.PallasTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
         out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
         grid=(num_steps,),
@@ -172,7 +172,7 @@ class PallasTest(ptu.PallasTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.logical_or(x_ref[...], True)
@@ -306,7 +306,7 @@ class PallasTritonTest(PallasTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def kernel(x_ref, i_ref, o_ref):
       o_ref[...] = x_ref[i_ref[...]]
@@ -625,7 +625,7 @@ class PallasCallTest(ptu.PallasTest):
     with test_context:
       res = self.pallas_call(
           copy_kernel,
-          jax.ShapeDtypeStruct(x.shape, x.dtype),
+          jax.ShapeDtypeStruct.like(x),
           grid=grid,
           in_specs=[pl.BlockSpec(block_shape, lambda *indices: indices)],
           out_specs=pl.BlockSpec(block_shape, lambda *indices: indices),
@@ -1386,7 +1386,7 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
       )(x)
     o = f(x)
     np.testing.assert_array_equal(o, expected)
-    compiled = f.lower(jax.ShapeDtypeStruct(x.shape, x.dtype)).compile()
+    compiled = f.lower(jax.ShapeDtypeStruct.like(x)).compile()
     mem_analysis = compiled.memory_analysis()
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
@@ -1399,7 +1399,7 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
     def kernel(x_ref, y_ref):
       y_ref[0] = x_ref[0] + 1.0
 
-    shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+    shape = jax.ShapeDtypeStruct.like(x)
     scalar_smem_spec = pl.BlockSpec(
         block_shape=(1,), index_map=lambda *_: (0,), memory_space=pltpu.SMEM
     )
@@ -1430,8 +1430,8 @@ class PallasCallInputOutputAliasingTest(ptu.PallasTest):
       scalar_out_ref[0] = scalar_in_ref[0] + 1.0
       vector_out_ref[:] = vector_in_ref[:] + 1.0
 
-    scalar_shape = jax.ShapeDtypeStruct(x_scalar.shape, x_scalar.dtype)
-    vector_shape = jax.ShapeDtypeStruct(x_vector.shape, x_vector.dtype)
+    scalar_shape = jax.ShapeDtypeStruct.like(x_scalar)
+    vector_shape = jax.ShapeDtypeStruct.like(x_vector)
     scalar_spec = pl.BlockSpec(
         block_shape=(1,), index_map=lambda *_: (0,), memory_space=pltpu.SMEM
     )
@@ -2552,7 +2552,7 @@ class PallasCheckifyTest(ptu.PallasTest):
       checkify.check(True, "first check passed")
       checkify.check(False, "second check failed")
     input_ = jnp.arange(4, dtype=jnp.int32)
-    out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
+    out_shape = jax.ShapeDtypeStruct.like(input_)
     with config.jax_pallas_enable_debug_checks(True):
       pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
       pallas_call(input_)  # This should log "second check failed"
@@ -2565,7 +2565,7 @@ class PallasCheckifyTest(ptu.PallasTest):
       y_ref[...] = x_ref[...]
       pl.debug_check(False, "failed check")  # This check always fails.
     input_ = jnp.arange(4, dtype=jnp.int32)
-    out_shape = jax.ShapeDtypeStruct(input_.shape, input_.dtype)
+    out_shape = jax.ShapeDtypeStruct.like(input_)
     with config.jax_pallas_enable_debug_checks(False):
       pallas_call = pl.pallas_call(kernel, out_shape=out_shape)
       result = pallas_call(input_)

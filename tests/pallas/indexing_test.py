@@ -317,8 +317,8 @@ class IndexerOpsTest(PallasBaseTest):
         jitted_permute,
         grid=grid,
         out_shape=[
-            jax.ShapeDtypeStruct(x.shape, x.dtype),
-            jax.ShapeDtypeStruct(x.shape, y.dtype),
+            jax.ShapeDtypeStruct.like(x),
+            jax.ShapeDtypeStruct.like(x),
         ],
         in_specs=[
             pl.BlockSpec(x.shape, lambda i: (0, 0)),
@@ -795,7 +795,7 @@ class AdvancedIndexerOpsTest(PallasBaseTest):
 
     y_ = self.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(y.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(y),
     )(x, a, b, c, d)
 
     np.testing.assert_array_equal(y_, y)

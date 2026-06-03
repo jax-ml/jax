@@ -2316,9 +2316,9 @@ class JaxExportTest(jtu.JaxTestCase):
     res_native = f_jax(lhs, rhs, group_sizes)
 
     exp_f = get_exported(jax.jit(f_jax))(
-        jax.ShapeDtypeStruct(lhs.shape, dtype=lhs.dtype),
-        jax.ShapeDtypeStruct(rhs.shape, dtype=rhs.dtype),
-        jax.ShapeDtypeStruct(group_sizes.shape, dtype=group_sizes.dtype),
+        jax.ShapeDtypeStruct.like(lhs),
+        jax.ShapeDtypeStruct.like(rhs),
+        jax.ShapeDtypeStruct.like(group_sizes),
     )
     res_exported = exp_f.call(lhs, rhs, group_sizes)
     self.assertAllClose(res_native, res_exported)

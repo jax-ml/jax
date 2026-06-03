@@ -1100,7 +1100,7 @@ class MpmdPhysicalizeTest(jtu.JaxTestCase):
       out = pl.kernel(
           body=subkernel,
           mesh=mesh,
-          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_type=jax.ShapeDtypeStruct.like(x),
           scratch_types=(
               pltpu.VMEM(x.shape, x.dtype),
               pltpu.VMEM(x.shape, x.dtype),

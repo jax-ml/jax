@@ -1903,7 +1903,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         return (i, j)
 
       return pl.pallas_call(my_kernel,
-                            out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+                            out_shape=jax.ShapeDtypeStruct.like(x),
                             in_specs=(pl.BlockSpec((128, 8), my_index_map),
                                       pl.BlockSpec((128, 8), my_index_map)),
                             out_specs=pl.BlockSpec((128, 8), my_index_map),
@@ -1933,7 +1933,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       y_ref[...] = jnp.log(x_ref[...])
 
     def my_f(input):
-      out_shape = jax.ShapeDtypeStruct(input.shape, input.dtype)
+      out_shape = jax.ShapeDtypeStruct.like(input)
       pallas_call = pl.pallas_call(kernel,
                                    out_shape=out_shape,
                                    name="my_custom_kernel_name")

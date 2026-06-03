@@ -996,7 +996,7 @@ class OpsTest(ptu.PallasTPUTest):
 
     @functools.partial(
       self.pallas_call,
-      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def kernel(x_ref, out_ref):
       out_ref[...] = jax.scipy.special.erf(x_ref[...])

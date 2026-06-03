@@ -74,7 +74,7 @@ def approx_tanh(x: jax.Array) -> jax.Array:
       args=[x],
       constraints=f"={constraint},{constraint}",
       pack=1,
-      result_shape_dtypes=[jax.ShapeDtypeStruct(x.shape, x.dtype)],
+      result_shape_dtypes=[jax.ShapeDtypeStruct.like(x)],
   )
   return result
 

@@ -1493,7 +1493,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     exp = export.export(jax.jit(f_jax))(
         jax.ShapeDtypeStruct(export.symbolic_shape("b"), x.dtype),
-        y=jax.ShapeDtypeStruct(y.shape, y.dtype))
+        y=jax.ShapeDtypeStruct.like(y))
     self.assertAllClose(f_jax(x, y=y), exp.call(x, y=y))
 
   def test_arg_avals_errors(self):

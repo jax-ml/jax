@@ -1540,7 +1540,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
   def test_eval_shape(self):
     key = random.key(1701)
-    shapedtype = jax.ShapeDtypeStruct(key.shape, key.dtype)
+    shapedtype = jax.ShapeDtypeStruct.like(key)
     out = jax.eval_shape(lambda x: x, shapedtype)
     self.assertEqual(out, shapedtype)
 

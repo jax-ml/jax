@@ -81,7 +81,7 @@ def add_matrices(x: jax.Array, y: jax.Array) -> jax.Array:
   # pallas_call will first allocate scratch buffers for `x` and `y` in SRAM.
   # It will then copy `x` and `y` from HBM into SRAM.
   z = pl.pallas_call(
-      add_matrices_kernel, out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
+      add_matrices_kernel, out_shape=jax.ShapeDtypeStruct.like(x)
   )(x, y)
   # pallas_call will also copy the output from SRAM back into HBM.
   return z

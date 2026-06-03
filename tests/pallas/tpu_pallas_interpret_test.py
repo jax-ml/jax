@@ -576,7 +576,7 @@ class InterpretTest(jtu.JaxTestCase):
     def f(s1, s2, x):
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid_spec=pltpu.PrefetchScalarGridSpec(
               num_scalar_prefetch=2,
               grid=(iters,),
@@ -612,7 +612,7 @@ class InterpretTest(jtu.JaxTestCase):
     x = jnp.zeros((4 * 8, 4 * 128))
     y = pl.pallas_call(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         grid=(4, 4),
         in_specs=[
             pl.BlockSpec(block_shape=(8, 128), index_map=lambda i, j: (i, j)),
@@ -659,7 +659,7 @@ class InterpretTest(jtu.JaxTestCase):
     x = jnp.zeros((8, 128), jnp.float32)
     y = pl.pallas_call(
         kernel_without_race,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
@@ -674,7 +674,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     pl.pallas_call(
         kernel_with_race,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],
         scratch_shapes=[
             pltpu.VMEM(x.shape, x.dtype),
@@ -1176,7 +1176,7 @@ class InterpretTest(jtu.JaxTestCase):
       return pl.pallas_call(
           kernel,
           grid=(2,),
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           scratch_shapes=[
               pltpu.VMEM(x.shape, x.dtype),
@@ -1221,7 +1221,7 @@ class InterpretTest(jtu.JaxTestCase):
     y = pl.pallas_call(
         kernel,
         grid=(2,),
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         out_specs=pl.BlockSpec(
             (8, 128),
             lambda i: (i, 0),
@@ -1526,7 +1526,7 @@ class InterpretTest(jtu.JaxTestCase):
     def kernel_call(kernel, x, *, in_memory_space, out_memory_space):
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid=(1,),
           in_specs=[pl.BlockSpec(memory_space=in_memory_space)],
           out_specs=pl.BlockSpec(memory_space=out_memory_space),
@@ -1631,7 +1631,7 @@ class InterpretTest(jtu.JaxTestCase):
     def kernel_call(x):
       return pl.pallas_call(
           _kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid=(1,),
           out_specs=pl.BlockSpec(memory_space=hbm_memory_space),
           in_specs=[pl.BlockSpec(memory_space=hbm_memory_space)],

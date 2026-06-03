@@ -105,7 +105,7 @@ def f_host(x):
   return np.sin(x).astype(x.dtype)
 
 def f(x):
-  result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+  result_shape = jax.ShapeDtypeStruct.like(x)
   return jax.pure_callback(f_host, result_shape, x, vmap_method='sequential')
 
 x = jnp.arange(5.0)

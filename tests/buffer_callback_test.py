@@ -61,7 +61,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
     shape = (3, 4)
     data = rng(shape, dtype)
     fun = buffer_callback.buffer_callback(
-        callback, jax.ShapeDtypeStruct(data.shape, data.dtype)
+        callback, jax.ShapeDtypeStruct.like(data)
     )
     self.assertArraysEqual(fun(data), data)
 
@@ -85,7 +85,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
     shape = (3, 4)
     data = rng(shape, dtype)
     fun = buffer_callback.buffer_callback(
-        callback, jax.ShapeDtypeStruct(data.shape, data.dtype)
+        callback, jax.ShapeDtypeStruct.like(data)
     )
 
     # We can't actually test the output because numpy doesn't support writable
@@ -119,7 +119,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
     shape = (3, 4)
     data = rng(shape, dtype)
     fun = buffer_callback.buffer_callback(
-        callback, jax.ShapeDtypeStruct(data.shape, data.dtype),
+        callback, jax.ShapeDtypeStruct.like(data),
         command_buffer_compatible=command_buffer_compatible,
     )
 
@@ -165,7 +165,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
     shape = (3, 4)
     data = rng(shape, jnp.float32)
     fun = buffer_callback.buffer_callback(
-        callback, jax.ShapeDtypeStruct(data.shape, data.dtype),
+        callback, jax.ShapeDtypeStruct.like(data),
         input_output_aliases={0: 0},
     )
     jax.block_until_ready(fun(data))
@@ -178,7 +178,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
     @jax.jit
     def f(x, y):
       z = x * y
-      output_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+      output_shape = jax.ShapeDtypeStruct.like(x)
       buffer_call = buffer_callback.buffer_callback(
           no_op, output_shape, command_buffer_compatible=True)
       return buffer_call((z,))

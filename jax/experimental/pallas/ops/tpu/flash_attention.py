@@ -1433,8 +1433,8 @@ def _flash_attention_bwd_dq(
   ]
 
   out_shapes = [
-      jax.ShapeDtypeStruct(q.shape, q.dtype),
-      jax.ShapeDtypeStruct(ab.shape, ab.dtype) if ab is not None else None,
+      jax.ShapeDtypeStruct.like(q),
+      jax.ShapeDtypeStruct.like(ab) if ab is not None else None,
   ]
   dq_spec = pl.BlockSpec((1, 1, block_q_major, head_dim), qo_index_map)
   out_specs = [

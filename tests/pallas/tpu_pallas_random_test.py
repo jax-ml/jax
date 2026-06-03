@@ -162,8 +162,7 @@ class PRNGTest(jtu.JaxTestCase):
     rbg_key = jax_random.key(0, impl="rbg")
     key = pltpu.to_pallas_key(rbg_key)
     expected_key_data = jax.random.key_data(key)
-    o_shape = jax.ShapeDtypeStruct(expected_key_data.shape,
-                                   expected_key_data.dtype)
+    o_shape = jax.ShapeDtypeStruct.like(expected_key_data)
     result = pl.pallas_call(
         body,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],

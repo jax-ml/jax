@@ -46,7 +46,7 @@ class SideEffectsTest(jtu.JaxTestCase):
     def f(x):
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           compiler_params=pltpu.CompilerParams(
               has_side_effects=side_effect_type
           ),
@@ -64,7 +64,7 @@ class SideEffectsTest(jtu.JaxTestCase):
     def f(x):
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           compiler_params=pltpu.CompilerParams(has_side_effects="invalid"),
       )(x)
 
@@ -80,7 +80,7 @@ class SideEffectsTest(jtu.JaxTestCase):
       def f(x):
         pl.pallas_call(
             kernel,
-            out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+            out_shape=jax.ShapeDtypeStruct.like(x),
             compiler_params=pltpu.CompilerParams(
                 has_side_effects=side_effect_type
             ),

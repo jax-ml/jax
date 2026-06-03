@@ -1607,7 +1607,7 @@ def _splash_attention_bwd_dq(
 
   out_shapes = [
       jax.ShapeDtypeStruct((bq, head_dim_qk), jnp.float32),
-      jax.ShapeDtypeStruct(q.shape, q.dtype),
+      jax.ShapeDtypeStruct.like(q),
   ]
   out_specs = [
       pl.BlockSpec((bq, head_dim_qk), lambda *_: (0, 0)),
@@ -2162,8 +2162,8 @@ def _splash_attention_bwd_dkv(
       jax.ShapeDtypeStruct((bkv, head_dim_qk), jnp.float32),
       jax.ShapeDtypeStruct((bkv, head_dim_v), jnp.float32),
       dq_shape,
-      jax.ShapeDtypeStruct(k.shape, k.dtype),
-      jax.ShapeDtypeStruct(v.shape, v.dtype),
+      jax.ShapeDtypeStruct.like(k),
+      jax.ShapeDtypeStruct.like(v),
   ]
   out_specs = [
       dq_scratch_spec,

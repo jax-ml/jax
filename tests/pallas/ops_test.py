@@ -1559,7 +1559,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(expected),
     )
     def kernel(x_ref, y_ref, out_ref):
       out_ref[...] = jax.lax.dot_general(
@@ -1596,7 +1596,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(expected),
     )
     def kernel(x_ref, y_ref, out_ref):
       out_ref[...] = jax.lax.dot_general(
@@ -1698,7 +1698,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(expected),
     )
     def kernel(x_ref, y_ref, out_ref):
       if x_perm:
@@ -1759,7 +1759,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(expected),
     )
     def kernel(lhs_ref, rhs_ref, out_ref):
       out_ref[...] = jax.lax.dot_general(
@@ -2692,7 +2692,7 @@ class OpsTest(PallasBaseTest):
 
     ref = jnp.pad(x, padding, mode=pad_type)
 
-    out_shape = jax.ShapeDtypeStruct(ref.shape, x.dtype)
+    out_shape = jax.ShapeDtypeStruct.like(ref)
     try:
       out = self.pallas_call(
           kernel,
@@ -2798,7 +2798,7 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(expected.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(expected),
     )
     def kernel(x_ref, out_ref):
       out_ref[...] = jnp.transpose(x_ref[...], axes=transpose_axes)

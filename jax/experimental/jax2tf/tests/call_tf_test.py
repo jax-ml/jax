@@ -1292,8 +1292,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
       return jax2tf.call_tf(tf.math.sin,
-          output_shape_dtype=(jax.ShapeDtypeStruct(x.shape, x.dtype),
-                              jax.ShapeDtypeStruct(x.shape, x.dtype)))(x)
+          output_shape_dtype=(jax.ShapeDtypeStruct.like(x),
+                              jax.ShapeDtypeStruct.like(x)))(x)
 
     fun_tf_rt = _maybe_tf_jit(with_jit,
         jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))

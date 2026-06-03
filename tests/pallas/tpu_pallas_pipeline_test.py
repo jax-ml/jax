@@ -574,7 +574,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
       )(x_hbm_ref, o_hbm_ref)
     fn = pl.pallas_call(
         copy_kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
         ],
@@ -625,7 +625,7 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
       )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
     fn = pl.pallas_call(
         matmul_kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pl.ANY),
@@ -920,7 +920,7 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
     @jax.jit
     def func(x, i):
       x_ref = jax.new_ref(x)
-      y_ref = jax.empty_ref(jax.ShapeDtypeStruct(x.shape, x.dtype))
+      y_ref = jax.empty_ref(jax.ShapeDtypeStruct.like(x))
       mesh = pltpu.create_tensorcore_mesh('core')
 
       @pl.core_map(mesh)
@@ -1100,7 +1100,7 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
     @jax.jit
     def func(x):
       x_ref = jax.new_ref(x)
-      y_ref = jax.empty_ref(jax.ShapeDtypeStruct(x.shape, x.dtype))
+      y_ref = jax.empty_ref(jax.ShapeDtypeStruct.like(x))
       mesh = pltpu.create_tensorcore_mesh('core')
 
       @pl.core_map(mesh)

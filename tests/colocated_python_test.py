@@ -121,7 +121,7 @@ class ColocatedPythonTest(jtu.JaxTestCase):
   )
   def test_prng_key_shaped_dtype_struct_serialization(self, impl_name: str):
     key = jax.random.key(0, impl=impl_name)
-    sds = jax.ShapeDtypeStruct(key.shape, key.dtype)
+    sds = jax.ShapeDtypeStruct.like(key)
     serialized = serialization._serialize(sds)
     deserialized = serialization._deserialize(serialized)
     self.assertTrue(

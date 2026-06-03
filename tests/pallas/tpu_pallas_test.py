@@ -118,7 +118,7 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
     def vadd(x, y):
       return self.pallas_call(
         body,
-        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=in_specs,
         out_specs=out_specs,
         grid=data_size // block_size,
@@ -126,8 +126,8 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
 
     compiled = (
         vadd.lower(
-            jax.ShapeDtypeStruct(x.shape, x.dtype),
-            jax.ShapeDtypeStruct(y.shape, y.dtype),
+            jax.ShapeDtypeStruct.like(x),
+            jax.ShapeDtypeStruct.like(y),
         )
         .compile()
         .as_text()
@@ -194,7 +194,7 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
 
     out = self.pallas_call(
         body,
-        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=1,
             in_specs=[
@@ -242,7 +242,7 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
 
     out = self.pallas_call(
         body,
-        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=1,
         ),
@@ -258,7 +258,7 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
 
     out = self.pallas_call(
         body,
-        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=1,
         ),
@@ -375,7 +375,7 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
     def f(x):
       return self.pallas_call(
           body,
-          out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid_spec=pltpu.PrefetchScalarGridSpec(
               num_scalar_prefetch=1,
               in_specs=[
@@ -455,7 +455,7 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
     out, _ = self.pallas_call(
         body,
         out_shape=[
-            jax.ShapeDtypeStruct(x.shape, jnp.float32),
+            jax.ShapeDtypeStruct.like(x),
             jax.ShapeDtypeStruct((8, 128), jnp.float32),
         ],
         grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -555,7 +555,7 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
     def kernel(s, x):
       return self.pallas_call(
           body,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid_spec=pltpu.PrefetchScalarGridSpec(
               num_scalar_prefetch=1,
               in_specs=[
@@ -602,7 +602,7 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
       )(jnp.array([1, 2, 3]), x)
     o = f(x)
     np.testing.assert_array_equal(o, expected)
-    compiled = f.lower(jax.ShapeDtypeStruct(x.shape, x.dtype)).compile()
+    compiled = f.lower(jax.ShapeDtypeStruct.like(x)).compile()
     mem_analysis = compiled.memory_analysis()
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
@@ -1340,7 +1340,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
           in_specs=[pl.BlockSpec(memory_space=pl.ANY),
                     pl.BlockSpec(memory_space=pltpu.HBM)],
           out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
-          out_shape=jax.ShapeDtypeStruct(y_init.shape, y_init.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(y_init),
           input_output_aliases={1: 0},
       )(x, y_init)
       # Transpose tests jnp op on result of pallas_call, verifying we don't leak
@@ -1919,7 +1919,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
 
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
         scratch_shapes=[pltpu.SemaphoreType.DMA],
         out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
@@ -2396,7 +2396,7 @@ class PallasCallTest(ptu.PallasTPUTest):
     def run(x):
       return self.pallas_call(
           body,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           in_specs=[pl.BlockSpec((1024,), lambda i: i)],
           out_specs=pl.BlockSpec((1024,), lambda i: i),
           grid=(2,),

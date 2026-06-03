@@ -193,7 +193,7 @@ class FailedCheckError(JaxException):
     vals = jtu.tree_leaves((self.args, self.kwargs))
     return ErrorEffect(
         FailedCheckError,
-        tuple(api.ShapeDtypeStruct(x.shape, x.dtype) for x in vals))
+        tuple(api.ShapeDtypeStruct.like(x) for x in vals))
 
 @dataclasses.dataclass
 class BatchedError(JaxException):

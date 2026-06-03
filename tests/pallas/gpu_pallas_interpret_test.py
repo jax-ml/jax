@@ -688,7 +688,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct(a.shape, a.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(a),
         grid=(num_blocks_w, num_blocks_x, num_blocks_y),
         grid_names=('w', 'x', 'y'),
         num_threads=num_threads,
@@ -893,7 +893,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
         scratch_shapes=dict(
             barrier=plgpu.Barrier(), smem=plgpu.SMEM(x.shape, x.dtype)
@@ -926,7 +926,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
         scratch_shapes=dict(
             barrier=plgpu.Barrier(),
@@ -963,7 +963,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
         scratch_shapes=dict(
             per_thread_barrier=plgpu.Barrier(num_barriers=2),
@@ -997,7 +997,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(
             detect_races=True,
             num_tma_threads_per_device=num_tma_threads_per_device,
@@ -1034,7 +1034,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
         scratch_shapes=dict(
             barrier=plgpu.Barrier(num_arrivals=2),
