@@ -8082,7 +8082,7 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_grad_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth = 11
+    expected_depth = 10
     init_depth = self.cur_depth()
 
     def foo(x):
@@ -8105,7 +8105,7 @@ class TracebackTest(jtu.JaxTestCase):
   def test_custom_vjp_traceback(self):
     # TODO(dougalm): improve this
     expected_depth_f = 7 if config.custom_vjp3.value else 9
-    expected_depth_f_fwd = 18
+    expected_depth_f_fwd = 17
     expected_depth_f_rev = 12
     init_depth = self.cur_depth()
     @jax.custom_vjp

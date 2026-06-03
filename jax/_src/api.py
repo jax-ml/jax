@@ -1545,7 +1545,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   else:
     jaxtree_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
   out_primals, out_known, jaxpr, consts, *maybe_aux = ad.linearize(
-      jaxtree_fun, *primals_flat, has_aux=has_aux)
+      jaxtree_fun, primals_flat, has_aux=has_aux)
   if has_aux:
     out_tree, aux_tree = out_tree()
   else:
@@ -1679,13 +1679,13 @@ def _vjp(fun, *primals, has_aux=False):
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
     out_primals_flat, out_known, jaxpr, residuals = ad.linearize(
-        flat_fun, *primals_flat, is_vjp=True)
+        flat_fun, primals_flat, is_vjp=True)
     out_tree = out_tree()
     aux = aux_tree = None
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
     out_primals_flat, out_known, jaxpr, residuals, aux = ad.linearize(
-        flat_fun, *primals_flat, has_aux=True, is_vjp=True)
+        flat_fun, primals_flat, has_aux=True, is_vjp=True)
     out_tree, aux_tree = out_aux_trees()
     del out_aux_trees
   id_map = {id(x): i for i, x in enumerate(primals_flat)}

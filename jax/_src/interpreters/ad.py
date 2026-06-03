@@ -34,7 +34,7 @@ from jax._src.ad_util import (
     add_jaxvals, replace_internal_symbolic_zeros,
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero,
     add_jaxvals_p, p2tz, p2cz)  # noqa: F401
-from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
+from jax._src.api_util import flatten_fun_nokwargs, debug_info
 from jax._src.core import (Trace, Tracer, typeof, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
 from jax._src.state.types import AbstractRef
@@ -282,7 +282,7 @@ def _dce_consts(jaxpr, consts):
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
   return jaxpr, [c for c, used in zip(consts, used_consts) if used]
 
-def direct_linearize(traceable, primals, *, has_aux, is_vjp):
+def linearize(traceable, primals, has_aux=False, is_vjp=False):
   dbg = traceable.debug_info.with_unknown_names()
   tag = core.TraceTag()
   with core.take_current_trace() as parent_trace:
@@ -323,36 +323,6 @@ def direct_linearize(traceable, primals, *, has_aux, is_vjp):
     return out_primals, out_zeros, jaxpr, consts, aux
   else:
     return out_primals, out_zeros, jaxpr, consts
-
-def linearize(traceable: lu.WrappedFun, *primals, has_aux=False, is_vjp=False):
-  if config.use_direct_linearize.value:
-    return direct_linearize(traceable, primals, has_aux=has_aux, is_vjp=is_vjp)
-  if has_aux:
-    jvpfun, aux = jvp(traceable, has_aux=True)
-  else:
-    jvpfun = jvp(traceable)
-    aux = None
-
-  in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-              + tuple(pe.PartialVal.unknown(typeof(p).to_tangent_aval())
-                      for p in primals))
-  _, in_tree = tree_flatten(((primals, primals), {}))
-  jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(jvpfun_flat, in_pvals)
-  out_primals_pvals, out_tangents_pvals = tree_unflatten(out_tree(), out_pvals)
-  if any(not out_primal_pval.is_known() for out_primal_pval in out_primals_pvals):
-    raise ValueError(
-        "Linearization failed to produce known values for all output primals. "
-        "This is typically caused by attempting to differentiate a function "
-        "using an operation that does not support reverse-mode autodiff.")
-  out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
-  out_tangents_zeros = [pval.is_known() for pval in out_tangents_pvals]
-  if not has_aux:
-    assert aux is None
-    return out_primals_consts, out_tangents_zeros, jaxpr, consts
-  else:
-    assert aux is not None
-    return out_primals_consts, out_tangents_zeros, jaxpr, consts, aux()
 
 
 class UndefinedPrimal:
