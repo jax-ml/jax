@@ -18,7 +18,7 @@
 
 # Get a list of all the wheels in the output directory. Only look for wheels
 # that need to be verified for manylinux compliance.
-WHEELS=$(find "$JAXCI_OUTPUT_DIR/" -type f \( -name "*jaxlib*whl" -o -name "*jax*cuda*pjrt*whl" -o -name "*jax*cuda*plugin*whl" -o -name "*jax*rocm*pjrt*whl" -o -name "*jax*rocm*plugin*whl" \))
+WHEELS=$(find "$JAXCI_OUTPUT_DIR/" -type f \( -name "*jaxlib*whl" -o -name "*jax*cuda*pjrt*whl" -o -name "*jax*cuda*plugin*whl" -o -name "*jax*rocm*pjrt*whl" -o -name "*jax*rocm*plugin*whl" -o -name "*jax*oneapi*pjrt*whl" -o -name "*jax*oneapi*plugin*whl" \))
 
 if [[ -z "$WHEELS" ]]; then
   echo "ERROR: No wheels found under $JAXCI_OUTPUT_DIR"
