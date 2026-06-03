@@ -120,6 +120,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
       xb.local_devices(backend="foo")
 
+  @jtu.restore_env("PJRT_NAMES_AND_LIBRARY_PATHS")
   def test_register_plugin(self):
     with self.assertLogs(level="WARNING") as log_output:
       with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
@@ -161,6 +162,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
       options["ml_framework_version"] = version.__version__
     mock_make.assert_called_once_with("name1", options, None)
 
+  @jtu.restore_env("PJRT_NAMES_AND_LIBRARY_PATHS")
   def test_register_plugin_with_config(self):
     test_json_file_path = os.path.join(
         os.path.dirname(__file__), "testdata/example_pjrt_plugin_config.json"

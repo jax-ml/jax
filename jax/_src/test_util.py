@@ -1220,6 +1220,47 @@ def assert_global_configs_unchanged():
         f"{starting_cache}, now it is {ending_cache}"
     )
 
+@contextmanager
+def assert_env_variables_unchanged():
+  starting_env = dict(os.environ)
+  yield
+  ending_env = dict(os.environ)
+
+  if starting_env != ending_env:
+    differing = {k: (starting_env.get(k, NotPresent()), ending_env.get(k, NotPresent()))
+                  for k in (starting_env.keys() | ending_env.keys())
+                  if (k not in starting_env or k not in ending_env
+                      or starting_env[k] != ending_env[k])}
+    raise AssertionError(f"Test changed environment variables values. Differing values are: {differing}")
+
+
+@contextmanager
+def restore_env(*names: str):
+  """Context manager to restore particular environment variables.
+
+  This is useful to decorate tests which set environment variables.
+
+  Example:
+
+    >>> import os
+    >>> @restore_env("SOME_VARIABLE")
+    ... def test_which_changes_variable():
+    ...   os.environ["SOME_VARIABLE"] = "temporary value"
+    ...
+    >>> starting_value = os.environ.get("SOME_VARIABLE")
+    >>> test_which_changes_variable()
+    >>> assert os.environ.get("SOME_VARIABLE") == starting_value
+  """
+  starting_env = {name: os.environ.get(name, None) for name in names}
+  try:
+    yield
+  finally:
+    for name, val in starting_env.items():
+      if val is None:
+        os.environ.pop(name, None)
+      else:
+        os.environ[name] = val
+
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
@@ -1236,6 +1277,7 @@ class JaxTestCase(parameterized.TestCase):
     super().setUp()
     self._configure_subprocess_env()
     self.enterContext(assert_global_configs_unchanged())
+    self.enterContext(assert_env_variables_unchanged())
 
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
