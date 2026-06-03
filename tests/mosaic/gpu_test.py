@@ -1426,32 +1426,32 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     super().setUp(artificial_shared_memory_limit=None)
 
   @parameterized.product(
-      jax_dtype_packing=[(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2), (jnp.float8_e5m2, 4)],
-      reg_tmem_layout_m=[
-          (lambda _c, _p: tcgen05.LAYOUT, lambda _, p: tcgen05.tmem_default_layout(p), 128),
-          (lambda _c, _p: fa.WGMMA_LAYOUT, tcgen05.tmem_half_lane_layout, 64),
+      dtype_packing=[(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2), (jnp.float8_e5m2, 4)],
+      reg_tmem_layout=[
+          (lambda _c, _p: tcgen05.LAYOUT, lambda _, p: tcgen05.tmem_default_layout(p)),
+          (lambda _c, _p: fa.WGMMA_LAYOUT, tcgen05.tmem_half_lane_layout),
           (
               lambda c, _p: tcgen05.fa_m64_collective_layout(c),
               tcgen05.tmem_m64_collective_layout,
-              64,
           ),
           (
               lambda c, p: tcgen05.tmem_m64_collective_layout(c, p).as_tiled_layout(),
               tcgen05.tmem_m64_collective_layout,
-              64,
           ),
       ],
   )
-  def test_load_store_tmem(self, jax_dtype_packing, reg_tmem_layout_m):
-    jax_dtype, packing = jax_dtype_packing
-    reg_layout_f, tmem_layout_f, m = reg_tmem_layout_m
+  def test_load_store_tmem(self, dtype_packing, reg_tmem_layout):
+    dtype, packing = dtype_packing
+    reg_layout_f, tmem_layout_f = reg_tmem_layout
     n = 160
     reg_layout = reg_layout_f(n, packing)
-    if tmem_layout_f is tcgen05.tmem_m64_collective_layout:
-      if jax_dtype == jnp.float16 and packing == 1:
-        self.skipTest("Not implemented yet")
-    is_native_transfer = tmem_layout_f(n, packing).as_tiled_layout() == reg_layout
-    if not is_native_transfer and jax_dtype == jnp.float8_e5m2:
+    tmem_layout = tmem_layout_f(n, packing)
+    m = tmem_layout.base_tile_shape[0]
+    is_native_transfer = tmem_layout.as_tiled_layout() == reg_layout
+    packed = jnp.finfo(dtype).bits * packing == 32
+    if is_native_transfer and not packed:
+      self.skipTest("Not implemented yet")
+    if not is_native_transfer and dtype == jnp.float8_e5m2:
       self.skipTest("Not implemented yet")
 
     def kernel(ctx, input, output, tmem):
@@ -1460,10 +1460,10 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       tcgen05.commit_tmem()
       tmem.load(reg_layout).store_untiled(output, optimized=False)
 
-    x = self.prng.uniform(-1, 1, (m, n)).astype(jax_dtype)
+    x = self.prng.uniform(-1, 1, (m, n)).astype(dtype)
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, x,
-        mgpu.TMEM(x.shape, jax_dtype, layout=tmem_layout_f(n, packing)),
+        mgpu.TMEM(x.shape, dtype, layout=tmem_layout),
     )(x)
     np.testing.assert_array_equal(x, y)
 
