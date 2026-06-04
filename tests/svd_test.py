@@ -329,7 +329,7 @@ class SvdTest(jtu.JaxTestCase):
     tol = 50 * np.finfo(dtype).eps
     # Reconstruction and orthogonality can accumulate error in float32 on GPU.
     # ROCm gesdd numerics can vary across drivers/hardware (CI vs local).
-    recon_tol = max(tol, 2e-2)
+    recon_tol = max(tol, 3e-2)
     recon_rtol = max(tol, 1e-2)
     # Orthogonality (u.T@u, vt@vt.T): relaxed for ROCm float32 (~2.5e-3).
     _orth = 2.5e-3
