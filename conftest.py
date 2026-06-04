@@ -79,9 +79,17 @@ def pytest_collection() -> None:
     if not xdist_worker_name.startswith("gw"):
       return
     xdist_worker_number = int(xdist_worker_name[len("gw") :])
-    os.environ["ROCR_VISIBLE_DEVICES"] = str(
-        xdist_worker_number % num_rocm_devices
+    allocated = os.environ.get("ROCR_VISIBLE_DEVICES")
+    allocated_tokens = (
+        [t.strip() for t in allocated.split(",") if t.strip()]
+        if allocated
+        else []
     )
+    if allocated_tokens:
+      selected = allocated_tokens[xdist_worker_number % len(allocated_tokens)]
+    else:
+      selected = str(xdist_worker_number % num_rocm_devices)
+    os.environ["ROCR_VISIBLE_DEVICES"] = selected
     # ROCR_VISIBLE_DEVICES filters HSA to a single physical device, which
     # becomes HIP index 0. The container env-file may preset
     # HIP_VISIBLE_DEVICES to all GPUs; override to "0" so HIP doesn't try to
