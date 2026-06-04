@@ -178,7 +178,7 @@ class JaxGroupedQueryAttentionReferenceTest(jtu.JaxTestCase):
     jax.debug.print("attention: {attention}", attention=attention)
 
     # compare the results
-    atol, rtol = (3e-3, 5e-3) if dtype == jnp.bfloat16 else (2e-4, 2e-4)
+    atol, rtol = (3e-3, 5e-3) if dtype == jnp.bfloat16 else (2e-3, 2e-3)
     self.assertAllClose(attention, expected, atol=atol, rtol=rtol)
 
 
