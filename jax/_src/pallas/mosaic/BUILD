@@ -14,7 +14,7 @@
 
 # Package for Mosaic-specific Pallas extensions
 
-load("//jaxlib:jax.bzl", "py_deps", "py_library", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "py_deps", "pytype_library", "pytype_strict_library")
 
 package(
     default_applicable_licenses = [],
@@ -23,12 +23,13 @@ package(
     ],
 )
 
-py_library(
+pytype_strict_library(
     name = "core",
     srcs = [
         "__init__.py",
         "core.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         "//jax",
         "//jax/_src:core",
@@ -41,9 +42,10 @@ py_library(
     ] + py_deps("numpy"),
 )
 
-py_library(
+pytype_strict_library(
     name = "error_handling",
     srcs = ["error_handling.py"],
+    type_checking = "pyrefly",
     deps = [
         "//jax/_src:compiler",
         "//jax/_src:traceback_util",
@@ -51,10 +53,10 @@ py_library(
     ],
 )
 
-py_library(
+pytype_library(
     name = "primitives",
     srcs = ["primitives.py"],
-    strict_deps = False,
+    type_checking = "pyrefly",
     deps = [
         ":core",
         "//jax",
@@ -69,12 +71,13 @@ py_library(
     ],
 )
 
-py_library(
+pytype_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
-    strict_deps = False,
+    type_checking = "pyrefly",
     deps = [
         ":core",
+        ":helpers",
         ":lowering",
         ":sc_lowering",
         "//jax",
@@ -195,10 +198,10 @@ pytype_strict_library(
     ],
 )
 
-py_library(
+pytype_library(
     name = "pipeline",
     srcs = ["pipeline.py"],
-    strict_deps = False,
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":helpers",
@@ -213,10 +216,10 @@ py_library(
     ] + py_deps("numpy"),
 )
 
-py_library(
+pytype_library(
     name = "random",
     srcs = ["random.py"],
-    strict_deps = False,
+    type_checking = "pyrefly",
     deps = [
         ":primitives",
         "//jax",
@@ -225,9 +228,10 @@ py_library(
     ] + py_deps("numpy"),
 )
 
-py_library(
+pytype_strict_library(
     name = "helpers",
     srcs = ["helpers.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":primitives",

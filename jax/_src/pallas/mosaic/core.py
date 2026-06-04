@@ -459,7 +459,7 @@ def pass_scalars_as_refs(
     if copy_to_smem:
       smem, args = util.split_list(args, [len(smem_alloc)])
       assert len(smem) == len(scalar_const_refs)
-      from jax._src.pallas.mosaic.helpers import sync_copy
+      from jax._src.pallas.mosaic.helpers import sync_copy  # pyrefly: ignore[missing-import]
 
       sync_copy(scalar_const_refs, smem)
     else:
