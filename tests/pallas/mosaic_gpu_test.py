@@ -5800,6 +5800,31 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
+  def test_async_copy_sparse_metadata_smem_to_tmem_warp_semantics(self):
+    m, k = 128, 64
+    dtype = jnp.uint2
+    layout = plgpu.TMEMLayout.SPARSE_METADATA_LAYOUT
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((1, 1, m, k), dtype),
+        scratch_shapes=[
+            plgpu.SMEM((m // 128, k // 64, 128, 64), dtype),
+            plgpu.TMEM((m, k), dtype, layout=layout),
+        ],
+    )
+    def kernel(src_gmem, out_gmem, smem, tmem):
+      smem[...] = plgpu.load(src_gmem, (), layout=layout, optimized=False)
+      @plgpu.warp_map
+      def _(warp_id):
+        @pl.when(warp_id == 0)
+        def _():
+          plgpu.async_copy_sparse_metadata_to_tmem(smem, tmem)
+      plgpu.copy_smem_to_gmem(smem, out_gmem)
+
+    # For simplicity reasons, we only check that we can lower correctly.
+    x = jnp.ones((1, 1, m, k), dtype)
+    jax.block_until_ready(kernel(x))
+
   @parameterized.product(
       m=[256],
       n=[128, 192],
