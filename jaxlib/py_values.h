@@ -19,6 +19,7 @@ limitations under the License.
 #define JAXLIB_PY_VALUES_H_
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -28,6 +29,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/config.h"
+#include "jaxlib/nb_class_ptr.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
@@ -154,12 +157,29 @@ struct DevicePutInfo {
   static std::unordered_map<std::string, int64_t> GetInfo();
 };
 
+// Canonicalizes a Python value. "Canonicalize" means to resolve any ambiguities
+// in the JAX type of a Python value, e.g., to pick a particular aval for a
+// Python int.
+nanobind::object CanonicalizeValue(nanobind::handle x);
+
+// Registers a canonicalization handler for a given Python type.
+void RegisterCanonicalizeValueHandler(
+    PyObject* type, std::function<nanobind::object(nanobind::handle)> handler);
+
+void InitCanonicalizeValueHandlers();
+
+// Sets the exception raised when unknown value is passed to CanonicalizeValue.
+void SetInvalidInputException(nanobind::object exc);
+
 // Tells the C++ code about the Python types TypedInt, TypedFloat,
 // TypedComplex, and TypedNdArray.
 void SetTypedIntType(nanobind::object t);
 void SetTypedFloatType(nanobind::object t);
 void SetTypedComplexType(nanobind::object t);
 void SetTypedNdArrayType(nanobind::object t);
+
+bool GetEnableX64();
+void SetEnableX64State(nb_class_ptr<Config> config);
 
 }  // namespace jax
 

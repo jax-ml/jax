@@ -43,7 +43,6 @@ limitations under the License.
 namespace jax {
 
 bool GetDisableJit();
-bool GetEnableX64();
 std::optional<nanobind::callable> GetPostHook();
 
 // An ArgumentSignature describes the static arguments to a function call, and

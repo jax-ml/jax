@@ -29,7 +29,6 @@ from jax import typeof
 
 from jax._src import config
 from jax._src import core
-from jax._src import dtypes
 from jax._src import state
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -571,8 +570,7 @@ class HijaxTest(jtu.JaxTestCase):
         return MyArray(jnp.zeros((), 'float32'))
       def vspace_add(self, x, y):
         return add(x, y)
-    core.pytype_aval_mappings[MyArray] = lambda _: MyTy()
-    dtypes.canonicalize_value_handlers[MyArray] = lambda x: x
+    register_hitype(MyArray, lambda _: MyTy())
 
     class ToMy(HiPrimitive):
       def is_high(self, _): return True
@@ -1774,7 +1772,6 @@ class BoxTest(jtu.JaxTestCase):
 
     self.assertAllClose(f(1.0), 2.0)
 
-
   # TODO error-checking tests from attrs_test.py
 
   ###
@@ -1875,7 +1872,7 @@ class BoxTest(jtu.JaxTestCase):
 
       def __eq__(self, other): return isinstance(other, MyTy)
 
-    core.pytype_aval_mappings[MyArray] = lambda _: MyTy()
+    register_hitype(MyArray, lambda _: MyTy())
 
     box = Box([MyArray(jnp.float32(1)),
                MyArray(jnp.float32(2))])

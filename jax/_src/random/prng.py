@@ -492,7 +492,7 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-dtypes.canonicalize_value_handlers[PRNGKeyArray] = lambda x: x
+dtypes.register_canonicalize_value_handler(PRNGKeyArray, None)
 
 
 def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts,

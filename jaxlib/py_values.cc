@@ -24,6 +24,7 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -33,6 +34,7 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
@@ -48,8 +50,11 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/complex.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/config.h"
+#include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/python_ref_manager.h"
+#include "jaxlib/weak_key_weak_value_cache.h"
 #include "jaxlib/sharding.h"
 #include "jaxlib/to_ifrt_sharding.h"
 #include "xla/primitive_util.h"
@@ -82,11 +87,50 @@ namespace jax {
 
 namespace {
 
+nb_class_ptr<Config>& enable_x64_state = *new nb_class_ptr<Config>();
+
 // The TypedInt, TypedFloat, TypedComplex, and TypedNdArray types.
 nb::object& typed_int_type = *new nb::object();
 nb::object& typed_float_type = *new nb::object();
 nb::object& typed_complex_type = *new nb::object();
 nb::object& typed_ndarray_type = *new nb::object();
+nb::object& invalid_input_exception = *new nb::object();
+
+struct StaticValues {
+  xla::nb_dtype int32;
+  xla::nb_dtype int64;
+  xla::nb_dtype uint32;
+  xla::nb_dtype float32;
+  xla::nb_dtype float64;
+  xla::nb_dtype complex64;
+  xla::nb_dtype complex128;
+  nb::object numpy_generic;
+};
+
+const StaticValues& GetStatic() {
+  static xla::SafeStatic<StaticValues> dtypes_init;
+  return dtypes_init.Get([] {
+    auto d = std::make_unique<StaticValues>();
+    nb::module_ numpy = nb::module_::import_("numpy");
+    d->int32 = xla::nb_dtype::from_args(numpy.attr("int32"));
+    d->int64 = xla::nb_dtype::from_args(numpy.attr("int64"));
+    d->uint32 = xla::nb_dtype::from_args(numpy.attr("uint32"));
+    d->float32 = xla::nb_dtype::from_args(numpy.attr("float32"));
+    d->float64 = xla::nb_dtype::from_args(numpy.attr("float64"));
+    d->complex64 = xla::nb_dtype::from_args(numpy.attr("complex64"));
+    d->complex128 = xla::nb_dtype::from_args(numpy.attr("complex128"));
+    d->numpy_generic = nb::object(numpy.attr("generic"));
+    return d;
+  });
+}
+
+using CanonicalizeValueHandler = std::function<nb::object(nb::handle)>;
+
+static nb::ft_mutex canonicalize_value_handlers_mutex;
+
+static absl::NoDestructor<
+    absl::flat_hash_map<PyObject*, CanonicalizeValueHandler>>
+    canonicalize_value_handlers;
 
 // For xla::S64/U64/F64/C128 types, returns the largest 32-bit equivalent.
 xla::PrimitiveType Squash64BitType(xla::PrimitiveType type) {
@@ -828,10 +872,16 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
 
   auto res = handlers.find(arg.type().ptr());
   if (res == handlers.end()) {
-    for (auto base_class : arg.type().attr("__mro__")) {
-      res = handlers.find(base_class.ptr());
-      if (res != handlers.end()) {
-        return res->second(arg, client, to_device, to_memory_kind, options);
+    PyTypeObject* type = reinterpret_cast<PyTypeObject*>(arg.type().ptr());
+    PyObject* mro = type->tp_mro;
+    if (mro != nullptr) {
+      Py_ssize_t n = PyTuple_GET_SIZE(mro);
+      for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* base = PyTuple_GET_ITEM(mro, i);
+        res = handlers.find(base);
+        if (res != handlers.end()) {
+          return res->second(arg, client, to_device, to_memory_kind, options);
+        }
       }
     }
     return xla::InvalidArgument(
@@ -844,12 +894,155 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
   return res->second(arg, client, to_device, to_memory_kind, options);
 }
 
+nb::object IdentityHandler(nb::handle x) {
+  return nb::borrow<nb::object>(x.ptr());
+}
+
+xla::nb_dtype CanonicalizeDtype(xla::nb_dtype dtype) {
+  if (GetEnableX64()) {
+    return dtype;
+  }
+  char kind = dtype.kind();
+  ssize_t itemsize = dtype.itemsize();
+  if (kind == 'i' && itemsize == 8) {
+    return GetStatic().int32;
+  } else if (kind == 'u' && itemsize == 8) {
+    return GetStatic().uint32;
+  } else if (kind == 'f' && itemsize == 8) {
+    return GetStatic().float32;
+  } else if (kind == 'c' && itemsize == 16) {
+    return GetStatic().complex64;
+  }
+  return dtype;
+}
+
+nb::object CanonicalizeInt(nb::handle x) {
+  if (GetEnableX64()) {
+    int64_t val;
+    if (!nb::try_cast<int64_t>(x, val)) {
+      throw nb::value_error(
+          absl::StrCat("Python int ", nb::cast<std::string>(nb::str(x)),
+                       " too large to convert to int64")
+              .c_str());
+    }
+    return typed_int_type(x, GetStatic().int64);
+  } else {
+    int32_t val;
+    if (!nb::try_cast<int32_t>(x, val)) {
+      throw nb::value_error(
+          absl::StrCat("Python int ", nb::cast<std::string>(nb::str(x)),
+                       " too large to convert to int32")
+              .c_str());
+    }
+    return typed_int_type(x, GetStatic().int32);
+  }
+}
+
+nb::object CanonicalizeFloat(nb::handle x) {
+  const StaticValues& dtypes = GetStatic();
+  return typed_float_type(x, GetEnableX64() ? dtypes.float64 : dtypes.float32);
+}
+
+nb::object CanonicalizeComplex(nb::handle x) {
+  const StaticValues& dtypes = GetStatic();
+  return typed_complex_type(
+      x, GetEnableX64() ? dtypes.complex128 : dtypes.complex64);
+}
+
+nb::object CanonicalizeNumpyArray(nb::handle x) {
+  auto array = nb::borrow<xla::nb_numpy_ndarray>(x);
+  xla::nb_dtype raw_dtype = array.dtype();
+  xla::nb_dtype canonical_dtype = CanonicalizeDtype(raw_dtype);
+  if (raw_dtype.ptr() == canonical_dtype.ptr()) {
+    return typed_ndarray_type(x);
+  }
+  Py_INCREF(canonical_dtype.ptr());
+  PyObject* casted = PyArray_CastToType(
+      reinterpret_cast<PyArrayObject*>(x.ptr()),
+      reinterpret_cast<PyArray_Descr*>(canonical_dtype.ptr()),
+      /*fortran=*/0);
+  if (!casted) {
+    throw nb::python_error();
+  }
+  auto coerced = nb::steal<xla::nb_numpy_ndarray>(casted);
+  return typed_ndarray_type(coerced);
+}
+
+nb::object CanonicalizeNumpyScalar(nb::handle x) {
+  PyArray_Descr* descr = PyArray_DescrFromObject(x.ptr(), nullptr);
+  if (!descr) {
+    throw nb::python_error();
+  }
+  xla::nb_dtype raw_dtype =
+      nb::steal<xla::nb_dtype>(reinterpret_cast<PyObject*>(descr));
+  xla::nb_dtype canonical_dtype = CanonicalizeDtype(raw_dtype);
+  if (raw_dtype.ptr() == canonical_dtype.ptr()) {
+    return typed_ndarray_type(x);
+  }
+  Py_INCREF(canonical_dtype.ptr());
+  PyObject* coerced_val = PyArray_FromScalar(
+      x.ptr(), reinterpret_cast<PyArray_Descr*>(canonical_dtype.ptr()));
+  if (!coerced_val) {
+    throw nb::python_error();
+  }
+  auto coerced = nb::steal<xla::nb_numpy_ndarray>(coerced_val);
+  return typed_ndarray_type(coerced);
+}
+
+
 }  // namespace
 
-void SetTypedIntType(nb::object t) { typed_int_type = t; }
-void SetTypedFloatType(nb::object t) { typed_float_type = t; }
-void SetTypedComplexType(nb::object t) { typed_complex_type = t; }
-void SetTypedNdArrayType(nb::object t) { typed_ndarray_type = t; }
+bool GetEnableX64() {
+  if (!enable_x64_state.ptr()) {
+    throw std::runtime_error("enable_x64_state is not set");
+  }
+  bool out = nb::cast<bool>(enable_x64_state->Get());
+  return out;
+}
+
+void SetEnableX64State(nb_class_ptr<Config> config) {
+  enable_x64_state = config;
+}
+
+void SetTypedIntType(nb::object t) {
+  typed_int_type = t;
+  RegisterCanonicalizeValueHandler(reinterpret_cast<PyObject*>(&PyLong_Type),
+                                   CanonicalizeInt);
+  RegisterCanonicalizeValueHandler(t.ptr(), IdentityHandler);
+}
+
+void SetTypedFloatType(nb::object t) {
+  typed_float_type = t;
+  RegisterCanonicalizeValueHandler(reinterpret_cast<PyObject*>(&PyFloat_Type),
+                                   CanonicalizeFloat);
+  RegisterCanonicalizeValueHandler(t.ptr(), IdentityHandler);
+}
+
+void SetTypedComplexType(nb::object t) {
+  typed_complex_type = t;
+  RegisterCanonicalizeValueHandler(reinterpret_cast<PyObject*>(&PyComplex_Type),
+                                   CanonicalizeComplex);
+  RegisterCanonicalizeValueHandler(t.ptr(), IdentityHandler);
+}
+
+void SetTypedNdArrayType(nb::object t) {
+  typed_ndarray_type = t;
+  auto cache = WeakKeyWeakValueCache::Create(CanonicalizeNumpyArray);
+  RegisterCanonicalizeValueHandler(
+      reinterpret_cast<PyObject*>(&PyArray_Type),
+      [cache](nb::handle x) -> nb::object {
+        return cache->Call(cache.ptr(), x);
+      });
+  RegisterCanonicalizeValueHandler(t.ptr(), IdentityHandler);
+  RegisterCanonicalizeValueHandler(GetStatic().numpy_generic.ptr(),
+                                   CanonicalizeNumpyScalar);
+}
+
+void InitCanonicalizeValueHandlers() {
+  RegisterCanonicalizeValueHandler(PyArray::type().ptr(), IdentityHandler);
+  RegisterCanonicalizeValueHandler(reinterpret_cast<PyObject*>(&PyBool_Type),
+                                   IdentityHandler);
+}
 
 std::string PyArgSignature::DebugString() const {
   std::string result = "";
@@ -1067,10 +1260,16 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
   auto res = handlers.find(arg.type().ptr());
   if (res == handlers.end()) {
     // We attempt to look at the MRO classes
-    for (auto base_class : arg.type().attr("__mro__")) {
-      res = handlers.find(base_class.ptr());
-      if (res != handlers.end()) {
-        return res->second(arg, jax_enable_x64);
+    PyTypeObject* type = reinterpret_cast<PyTypeObject*>(arg.type().ptr());
+    PyObject* mro = type->tp_mro;
+    if (mro != nullptr) {
+      Py_ssize_t n = PyTuple_GET_SIZE(mro);
+      for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* base = PyTuple_GET_ITEM(mro, i);
+        res = handlers.find(base);
+        if (res != handlers.end()) {
+          return res->second(arg, jax_enable_x64);
+        }
       }
     }
     return xla::InvalidArgument(
@@ -1207,6 +1406,68 @@ absl::StatusOr<DevicePutResult> DevicePutWithSharding(
   }
   const bool weak_type = shards.empty() ? false : shards.front().weak_type;
   return DevicePutResult(std::move(ifrt_array), weak_type);
+}
+
+void RegisterCanonicalizeValueHandler(
+    PyObject* type, std::function<nb::object(nb::handle)> handler) {
+  nb::ft_lock_guard lock(canonicalize_value_handlers_mutex);
+  auto& handlers = *canonicalize_value_handlers;
+  handlers[type] = std::move(handler);
+}
+
+void SetInvalidInputException(nb::object exc) { invalid_input_exception = exc; }
+
+nb::object CanonicalizeValue(nb::handle x) {
+  CanonicalizeValueHandler handler;
+  PyObject* typ = reinterpret_cast<PyObject*>(x.type().ptr());
+  {
+    nb::ft_lock_guard lock(canonicalize_value_handlers_mutex);
+    auto& handlers = *canonicalize_value_handlers;
+
+    // 1. Direct lookup
+    auto it = handlers.find(typ);
+    if (it != handlers.end()) {
+      handler = it->second;
+    } else {
+      // 2. MRO walk
+      PyTypeObject* type = reinterpret_cast<PyTypeObject*>(typ);
+      PyObject* mro = type->tp_mro;
+      if (mro != nullptr) {
+        Py_ssize_t n = PyTuple_GET_SIZE(mro);
+        for (Py_ssize_t i = 0; i < n; ++i) {
+          PyObject* base = PyTuple_GET_ITEM(mro, i);
+          it = handlers.find(base);
+          if (it != handlers.end()) {
+            handler = it->second;
+            handlers[typ] = handler;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (handler) {
+    return handler(x);
+  }
+
+  // 3. Check __jax_array__
+  if (nb::hasattr(x, "__jax_array__")) {
+    throw nb::value_error(
+        "Triggering __jax_array__() during abstractification is no longer"
+        " supported. To avoid this error, either explicitly convert your object"
+        " using jax.numpy.array(), or register your object as a pytree.");
+  }
+
+  // 4. Error
+  if (invalid_input_exception.ptr() == nullptr) {
+    throw std::runtime_error("invalid_input_exception not initialized");
+  }
+  std::string msg = absl::StrCat(
+      "Argument '", nb::cast<std::string>(nb::str(x)), "' of type ",
+      nb::cast<std::string>(nb::str(x.type())), " is not a valid JAX type.");
+  PyErr_SetString(invalid_input_exception.ptr(), msg.c_str());
+  throw nb::python_error();
 }
 
 std::unordered_map<std::string, int64_t> DevicePutInfo::GetInfo() {

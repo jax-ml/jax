@@ -2269,10 +2269,6 @@ def diff_types(dbg, new_leaves, old_leaves) -> tuple[int, int, str] | None:
   if diffs: return 3, len(diffs), msg
 
 
-def _canonicalize_dtype(x):
-  if isinstance(x, (int, float, bool, complex, np.generic, np.ndarray)):
-    return dtypes.canonicalize_value(x)
-  return x
 
 def _lower_debug_info(hi_jaxpr, out_mut):
   debug_info = hi_jaxpr.debug_info
@@ -2344,7 +2340,7 @@ def trace_to_jaxpr(
       del ans_pytree, args, kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
-    ans = ans.map(_canonicalize_dtype)
+    ans = ans.map(dtypes.canonicalize_value)
     out_avals = ans.map(typeof)
     if requires_low:
       flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
@@ -2385,7 +2381,7 @@ def trace_to_jaxpr_dynamic(
     with core.set_current_trace(trace):
       ans = fun.call_wrapped(*in_tracers)
     _check_returned_jaxtypes(fun.debug_info, ans)
-    ans = map(_canonicalize_dtype, ans)
+    ans = map(dtypes.canonicalize_value, ans)
     out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
     _check_no_returned_refs(fun.debug_info, out_tracers)
     jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info,
@@ -2566,7 +2562,7 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
     fu = FlatTree.flatten(())
     out_mut = [v.aval.read_loval_out(v.final_qdd, env[v]).map(tracer)
               if v.aval.has_qdd else fu for v in hi_jaxpr.invars]
-    out_tracers = [_canonicalize_dtype(read(src, x)) for x in hi_jaxpr.outvars]
+    out_tracers = [dtypes.canonicalize_value(read(src, x)) for x in hi_jaxpr.outvars]
     out_tracers = [v.aval.lower_val2(hi_val).map(tracer)
                   for v, hi_val in zip(hi_jaxpr.outvars, out_tracers)]
     out_tracers = FlatTree.pack((tuple(out_mut), tuple(out_tracers)))

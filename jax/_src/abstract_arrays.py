@@ -14,13 +14,15 @@
 
 from __future__ import annotations
 
-import threading
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import literals
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import weakref_lru_cache
 
 from jax._src import traceback_util
@@ -124,47 +126,44 @@ for t in literals.typed_scalar_types:
 core.literalable_scalar_types.update(literals.typed_scalar_types)
 core.literalable_types.update(literals.typed_scalar_types)
 
-_ndarray_dtype_cache = {}
-_ndarray_dtype_cache_lock = threading.Lock()
-
-
-@weakref_lru_cache.weak_key_weak_value_cache
-def _canonicalize_ndarray_dtype(x):
-  dtype = dtypes.canonicalize_dtype(x.dtype)
-  return literals.TypedNdArray(np.asarray(x, dtype))
-
-dtypes.canonicalize_value_handlers[np.ndarray] = _canonicalize_ndarray_dtype
-
-
 def _canonicalize_masked_array_dtype(x):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
 
-def _canonicalize_numpy_scalar(x):
-  dtype = dtypes.canonicalize_dtype(x.dtype)
-  return literals.TypedNdArray(np.asarray(x, dtype))
+dtypes.register_canonicalize_value_handler(
+    np.ma.MaskedArray, _canonicalize_masked_array_dtype
+)
 
-dtypes.canonicalize_value_handlers.update(
-    (t, _canonicalize_numpy_scalar) for t in numpy_scalar_types)
+if jaxlib_extension_version < 464 and not TYPE_CHECKING:
+  @weakref_lru_cache.weak_key_weak_value_cache
+  def _canonicalize_ndarray_dtype(x):
+    dtype = dtypes.canonicalize_dtype(x.dtype)
+    return literals.TypedNdArray(np.asarray(x, dtype))
 
+  dtypes.canonicalize_value_handlers[np.ndarray] = _canonicalize_ndarray_dtype
 
-dtypes.canonicalize_value_handlers[literals.TypedNdArray] = lambda x: x
+  def _canonicalize_numpy_scalar(x):
+    dtype = dtypes.canonicalize_dtype(x.dtype)
+    return literals.TypedNdArray(np.asarray(x, dtype))
 
-dtypes.canonicalize_value_handlers[np.ma.MaskedArray] = _canonicalize_masked_array_dtype
+  dtypes.canonicalize_value_handlers.update(
+      (t, _canonicalize_numpy_scalar) for t in numpy_scalar_types)
 
-def _canonicalize_python_scalar(literal_type, typ):
-  def canonicalize_scalar(x):
-    return literal_type(x, dtypes.scalar_type_to_dtype(typ, x))
-  return canonicalize_scalar
+  dtypes.canonicalize_value_handlers[literals.TypedNdArray] = lambda x: x
 
-dtypes.canonicalize_value_handlers[bool] = lambda x: x
-dtypes.canonicalize_value_handlers[int] = _canonicalize_python_scalar(
-    literals.TypedInt, int)
-dtypes.canonicalize_value_handlers[float] = _canonicalize_python_scalar(
-    literals.TypedFloat, float)
-dtypes.canonicalize_value_handlers[complex] = _canonicalize_python_scalar(
-    literals.TypedComplex, complex)
+  def _canonicalize_python_scalar(literal_type, typ):
+    def canonicalize_scalar(x):
+      return literal_type(x, dtypes.scalar_type_to_dtype(typ, x))
+    return canonicalize_scalar
 
-dtypes.canonicalize_value_handlers[literals.TypedInt] = lambda x: x
-dtypes.canonicalize_value_handlers[literals.TypedFloat] = lambda x: x
-dtypes.canonicalize_value_handlers[literals.TypedComplex] = lambda x: x
+  dtypes.canonicalize_value_handlers[bool] = lambda x: x
+  dtypes.canonicalize_value_handlers[int] = _canonicalize_python_scalar(
+      literals.TypedInt, int)
+  dtypes.canonicalize_value_handlers[float] = _canonicalize_python_scalar(
+      literals.TypedFloat, float)
+  dtypes.canonicalize_value_handlers[complex] = _canonicalize_python_scalar(
+      literals.TypedComplex, complex)
+
+  dtypes.canonicalize_value_handlers[literals.TypedInt] = lambda x: x
+  dtypes.canonicalize_value_handlers[literals.TypedFloat] = lambda x: x
+  dtypes.canonicalize_value_handlers[literals.TypedComplex] = lambda x: x

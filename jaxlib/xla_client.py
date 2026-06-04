@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 463  # [Pallas/Mosaic GPU] Replace CUDA_ROOT env with MOSAIC_GPU_CUDA_ROOT.
+_version = 464  # Add C++ canonicalize_value.
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

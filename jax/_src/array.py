@@ -1093,7 +1093,7 @@ def make_array_from_single_device_arrays(
           f" arrays as input, but got types {set(map(type, arrays))}")
     raise
 
-dtypes.canonicalize_value_handlers[ArrayImpl] = lambda x: x
+dtypes.register_canonicalize_value_handler(ArrayImpl, None)
 
 def _get_aval_array(self):
   return core.update_aval_with_sharding(self.aval, self.sharding)

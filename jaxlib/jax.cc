@@ -598,6 +598,7 @@ NB_MODULE(_jax, m) {
         });
 
   TF_CHECK_OK(PyArray::Register(m));
+  InitCanonicalizeValueHandlers();
   PyDeviceList::Register(m);
   RegisterSharding(m);
   RegisterPartitionSpec(m);
@@ -1065,6 +1066,25 @@ NB_MODULE(_jax, m) {
   m.def("set_typed_float_type", &SetTypedFloatType);
   m.def("set_typed_complex_type", &SetTypedComplexType);
   m.def("set_typed_ndarray_type", &SetTypedNdArrayType);
+  m.def("set_invalid_input_exception", &SetInvalidInputException);
+  m.def(
+      "register_canonicalize_value_handler",
+      [](nb::object type, nb::object handler) {
+        if (handler.is_none()) {
+          RegisterCanonicalizeValueHandler(
+              type.ptr(),
+              [](nb::handle x) { return nb::borrow<nb::object>(x.ptr()); });
+        } else {
+          RegisterCanonicalizeValueHandler(
+              type.ptr(),
+              [handler](nb::handle x) { return handler(x); });
+        }
+      },
+      "Registers a handler for canonicalizing a value of a specific type. "
+      "If handler is None, registers an identity handler.",
+      nb::arg("type"), nb::arg("handler").none());
+  m.def("canonicalize_value", &CanonicalizeValue,
+        nb::sig("def canonicalize_value(arg: Any, /) -> Any"));
 }  // NOLINT(readability/fn_size)
 
 }  // namespace jax

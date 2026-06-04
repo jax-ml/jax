@@ -291,11 +291,28 @@ nanobind_pywrap_extension(
     ],
 )
 
+cc_library(
+    name = "weak_key_weak_value_cache",
+    srcs = ["weak_key_weak_value_cache.cc"],
+    hdrs = ["weak_key_weak_value_cache.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":nb_class_ptr",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+    ],
+)
+
 nanobind_pywrap_extension(
     name = "weakref_lru_cache",
     srcs = [
-        "weak_key_weak_value_cache.cc",
-        "weak_key_weak_value_cache.h",
         "weak_value_interner.cc",
         "weak_value_interner.h",
         "weakref_lru_cache.cc",
@@ -306,6 +323,7 @@ nanobind_pywrap_extension(
         ":nb_class_ptr",
         ":pytree",
         ":reentrant_hash_map",
+        ":weak_key_weak_value_cache",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
@@ -1026,6 +1044,7 @@ cc_library(
     deps = [
         ":cached_py_object",
         ":call_location",
+        ":config",
         ":guard_lib",
         ":hash_util",
         ":nb_class_ptr",
@@ -1036,9 +1055,11 @@ cc_library(
         ":python_ref_manager",
         ":traceback",
         ":util",
+        ":weak_key_weak_value_cache",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",

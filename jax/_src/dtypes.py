@@ -22,22 +22,22 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable
 import dataclasses
 import functools
 import types
-from typing import cast, overload, Any, Literal, Union
-from collections.abc import Callable
+from typing import Any, Literal, Union, cast, overload, TYPE_CHECKING
 import warnings
 
 import ml_dtypes
 import numpy as np
 
 from jax._src import config
-
-from jax._src.typing import Array, DType, DTypeLike
-from jax._src.util import set_module, StrictABC
-
 from jax._src import traceback_util
+from jax._src.lib import _jax
+from jax._src.typing import Array, DType, DTypeLike
+from jax._src.util import StrictABC, set_module
+from jax._src.lib import jaxlib_extension_version
 traceback_util.register_exclusion(__file__)
 
 try:
@@ -388,28 +388,50 @@ def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType 
 class InvalidInputException(Exception):
   pass
 
-canonicalize_value_handlers: dict[Any, Callable] = {}
+if jaxlib_extension_version >= 464 or TYPE_CHECKING:
+  _jax.set_invalid_input_exception(InvalidInputException)
 
+  register_canonicalize_value_handler = _jax.register_canonicalize_value_handler
+  canonicalize_value = _jax.canonicalize_value
 
-# TODO(mattjj): try to remove this canonicalize_dtype stuff
-def canonicalize_value(x):
-  typ = type(x)
-  handler = canonicalize_value_handlers.get(typ)
-  if handler:
-    return handler(x)
-  for typ in typ.__mro__:
+  # Backward compatibility shim.
+  class _CanonicalizeValueHandlersDict:
+
+    def __getitem__(self, key):
+      return lambda x: canonicalize_value(np.asarray(x))
+
+    def __setitem__(self, key, value):
+      register_canonicalize_value_handler(key, value)
+
+  canonicalize_value_handlers = _CanonicalizeValueHandlersDict()
+
+else:
+  canonicalize_value_handlers: dict[Any, Callable] = {}
+
+  def register_canonicalize_value_handler(type_, handler):
+    if handler is None:
+      handler = lambda x: x
+    canonicalize_value_handlers[type_] = handler
+
+  def canonicalize_value(x):
+    typ = type(x)
     handler = canonicalize_value_handlers.get(typ)
     if handler:
       return handler(x)
-  if getattr(x, '__jax_array__', None) is not None:
-    raise ValueError(
-        'Triggering __jax_array__() during abstractification is no longer'
-        ' supported. To avoid this error, either explicitly convert your object'
-        ' using jax.numpy.array(), or register your object as a pytree.'
+    for typ in typ.__mro__:
+      handler = canonicalize_value_handlers.get(typ)
+      if handler:
+        return handler(x)
+    if getattr(x, '__jax_array__', None) is not None:
+      raise ValueError(
+          'Triggering __jax_array__() during abstractification is no longer'
+          ' supported. To avoid this error, either explicitly convert your'
+          ' object using jax.numpy.array(), or register your object as a'
+          ' pytree.'
+      )
+    raise InvalidInputException(
+        f"Argument '{x}' of type {type(x)} is not a valid JAX type."
     )
-  raise InvalidInputException(
-      f"Argument '{x}' of type {type(x)} is not a valid JAX type."
-  )
 
 
 # The list of all known Python scalar types.

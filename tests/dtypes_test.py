@@ -167,6 +167,11 @@ class DtypesTest(jtu.JaxTestCase):
         ).dtype,
     )
 
+  def test_canonicalize_value_float0(self):
+    float0_array = np.zeros((2, 3), dtype=dtypes.float0)
+    canonicalized = dtypes.canonicalize_value(float0_array)
+    self.assertEqual(dtypes.float0, canonicalized.dtype)
+
   @parameterized.named_parameters(
     {"testcase_name": f"_type={type_.__name__}", "type_": type_}
     for type_ in python_scalar_types)

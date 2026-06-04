@@ -1219,6 +1219,7 @@ aval_property = namedtuple("aval_property", ["fget"])
 aval_method = namedtuple("aval_method", ["fun"])
 
 pytype_aval_mappings[Tracer] = lambda x: x.aval
+dtypes.register_canonicalize_value_handler(Tracer, None)
 
 def check_eval_args(args):
   for arg in args:
@@ -2126,15 +2127,10 @@ def _typeof_with_argument_info(primitive, i, val):
       f" {primitive} at position {i}.\n"
     ) from e
 
-def canonicalize_value_dtype(val):
-  if isinstance(val, (int, float, bool, complex, np.generic, np.ndarray)):
-    return dtypes.canonicalize_value(val)
-  return val
-
 # TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
 # passed to primitives are always have avals, etc i.e. they are canonical.
 def canonicalize_value(primitive, val, aval):
-  val = canonicalize_value_dtype(val)
+  val = dtypes.canonicalize_value(val)
   if primitive.skip_canonicalization:
     return val
   if not isinstance(aval, ShapedArray):
@@ -2798,7 +2794,7 @@ class ArrayRefImpl:
     self._buf = buf
 
 pytype_aval_mappings[Ref] = lambda x: x._aval
-dtypes.canonicalize_value_handlers[Ref] = lambda x: x
+dtypes.register_canonicalize_value_handler(Ref, None)
 
 
 class InternalMutableArrayEffect(effects.Effect):
@@ -2984,7 +2980,7 @@ class Token:
   def block_until_ready(self):
     self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
-dtypes.canonicalize_value_handlers[Token] = lambda x: x
+dtypes.register_canonicalize_value_handler(Token, None)
 
 
 class Future:
@@ -3948,6 +3944,7 @@ def _sds_aval_mapping(x):
     return AbstractRef(aval)
   return aval
 pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
+dtypes.register_canonicalize_value_handler(ShapeDtypeStruct, None)
 
 
 # ------------------- Jaxpr printed representation -------------------

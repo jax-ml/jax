@@ -158,7 +158,10 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
     else:
       for arg, name, aval in zip(args_flat, arg_names, p.in_avals):
         try:
-          dtypes.canonicalize_value(arg)
+          val = dtypes.canonicalize_value(arg)
+          if type(val) not in pxla.shard_arg_handlers:
+            raise dtypes.InvalidInputException(
+                f"Argument '{name}' of type {type(arg)} is not a valid JAX type.")
         except dtypes.InvalidInputException as _:
           # Reraise as TypeError with the new message.
           raise TypeError(

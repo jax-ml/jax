@@ -186,7 +186,7 @@ class MutableHiType(core.AbstractValue):
 
 def register_hitype(val_cls, typeof_fn) -> None:
   core.pytype_aval_mappings[val_cls] = typeof_fn
-  dtypes.canonicalize_value_handlers[val_cls] = lambda x: x
+  dtypes.register_canonicalize_value_handler(val_cls, None)
 
 def hijax_method(f):
   return core.aval_method(f)

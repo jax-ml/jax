@@ -77,9 +77,7 @@ namespace nb = nanobind;
 namespace {
 
 nb_class_ptr<Config>& disable_jit_state = *new nb_class_ptr<Config>();
-nb_class_ptr<Config>& enable_x64_state = *new nb_class_ptr<Config>();
 nb_class_ptr<Config>& post_hook_state = *new nb_class_ptr<Config>();
-
 
 }  // namespace
 
@@ -90,15 +88,6 @@ bool GetDisableJit() {
   }
   return nb::cast<bool>(disable_jit_state->Get());
 }
-
-bool GetEnableX64() {
-  if (!enable_x64_state.ptr()) {
-    throw std::runtime_error("enable_x64_state is not set");
-  }
-  bool out = nb::cast<bool>(enable_x64_state->Get());
-  return out;
-}
-
 std::optional<nb::callable> GetPostHook() {
   if (!post_hook_state.ptr()) {
     throw std::runtime_error("post_hook_state is not set");
@@ -406,7 +395,7 @@ void BuildJaxjitSubmodule(nb::module_& m) {
       nb::sig("def set_disable_jit_state(config: _Config) -> None"));
   jitlib.def(
       "set_enable_x64_state",
-      [](nb_class_ptr<Config> config) { enable_x64_state = config; },
+      [](nb_class_ptr<Config> config) { SetEnableX64State(config); },
       nb::sig("def set_enable_x64_state(config: _Config) -> None"));
   jitlib.def(
       "set_post_hook_state",

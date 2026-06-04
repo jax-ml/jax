@@ -119,7 +119,11 @@ def shard_args(
   # indices to put each array back to its original position.
   results: list[typing.Array | None] = [None] * len(args)
   for t, (indices, a, s, l, xcs) in batches.items():
-    outs = shard_arg_handlers[t](a, s, l, xcs)
+    handler = shard_arg_handlers.get(t)
+    if handler is None:
+      raise dtypes.InvalidInputException(
+          f"Argument of type {t} is not a valid JAX type.")
+    outs = handler(a, s, l, xcs)
     for i, out in safe_zip(indices, outs):
       results[i] = out
   assert all(result is not None for result in results)
