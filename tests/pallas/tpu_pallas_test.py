@@ -1407,7 +1407,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
               pl.BlockSpec(memory_space=pl.ANY),
           ],
           out_specs=pl.BlockSpec(memory_space=pl.HOST),
-          out_shape=pltpu.HOST(shape=(8, 128), dtype=jnp.float32),
+          out_shape=pl.HOST(shape=(8, 128), dtype=jnp.float32),
       )(x)
 
     y = f(x)

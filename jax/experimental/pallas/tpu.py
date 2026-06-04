@@ -72,6 +72,7 @@ from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
 from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
+from jax._src.pallas import core as _pl_core
 from jax._src.pallas.core import semaphore as _deprecated_semaphore
 from jax._src.pallas.primitives import DeviceIdType as _DeprecatedDeviceIdType
 from jax._src.pallas.mosaic.primitives import repeat as _deprecated_repeat
@@ -89,11 +90,15 @@ SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
 VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
-HOST = MemorySpace.HOST
 SEMAPHORE = MemorySpace.SEMAPHORE
 
 
 _deprecations = {
+    # Added June 4, 2026
+    "HOST": (
+        "pltpu.HOST is deprecated, use pl.HOST instead.",
+        _pl_core.MemorySpace.HOST,
+    ),
     # Added Mar 24, 2026
     "semaphore": ("pltpu.semaphore is deprecated, use pl.semaphore instead.", _deprecated_semaphore),
     "DeviceIdType": (
@@ -132,6 +137,7 @@ if typing.TYPE_CHECKING:
   semaphore_wait = _deprecated_semaphore_wait
   repeat = _deprecated_repeat
   KernelType = CoreType
+  HOST = _pl_core.MemorySpace.HOST
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

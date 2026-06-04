@@ -94,7 +94,7 @@ TPUMemorySpace = (
 )
 VMEM = tpu_core.MemorySpace.VMEM
 SMEM = tpu_core.MemorySpace.SMEM
-HOST = tpu_core.MemorySpace.HOST
+HOST = pallas_core.MemorySpace.HOST
 SEMAPHORE = tpu_core.MemorySpace.SEMAPHORE
 ANY = pallas_core.MemorySpace.ANY
 # Booleans are stored as the following type in memrefs.
@@ -493,6 +493,8 @@ def _memory_space_to_mosaic_attribute(
   match tpu_memory_space:
     case pallas_core.MemorySpace.ANY:
       return ir.Attribute.parse("#tpu.memory_space<any>")
+    case pallas_core.MemorySpace.HOST:
+      return ir.Attribute.parse("#tpu.memory_space<host>")
     case tpu_core.MemorySpace() as ms:
       return ir.Attribute.parse(f"#tpu.memory_space<{ms}>")
     case pallas_core.CoreMemorySpace() as cms:

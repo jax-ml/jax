@@ -122,7 +122,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
       (pl.ANY, None),
-      (pltpu.HOST, 5),
+      (pl.HOST, 5),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
     out_shape_ctor = memory_space
@@ -140,7 +140,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
           out_specs=pl.BlockSpec(memory_space=memory_space),
       )(x)
 
-    if memory_space == pltpu.HOST:
+    if memory_space == pl.HOST:
       if jax.device_count() > 1:
         self.skipTest('Test only works with a single device.')
       out_sharding = jax.sharding.NamedSharding(

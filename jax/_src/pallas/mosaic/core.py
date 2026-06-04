@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import util
@@ -219,7 +220,17 @@ class MemorySpace(enum.Enum):
   CMEM = "cmem"
   SEMAPHORE = "semaphore_mem"
   HBM = "hbm"
-  HOST = "host"
+
+  def __getattr__(self, name):
+    if name == "HOST":
+      # Deprecated on June 4, 2026.
+      deprecations.warn(
+          "pltpu-memory-space-host",
+          "pltpu.MemorySpace.HOST is deprecated. Use pl.HOST instead.",
+          stacklevel=2,
+      )
+      return pallas_core.MemorySpace.HOST
+    super().__getattr__(name)  # pyrefly: ignore[missing-attribute]
 
   def __str__(self) -> str:
     return self.value
@@ -608,10 +619,8 @@ def memory_space_to_tpu_memory_space(
           return MemorySpace.SMEM
         case _:
           raise ValueError(f"Unsupported core type: {core_type}")
-    case pallas_core.MemorySpace.ANY:
-      return pallas_core.MemorySpace.ANY
-    case pallas_core.MemorySpace.HOST:
-      return MemorySpace.HOST
+    case pallas_core.MemorySpace.ANY | pallas_core.MemorySpace.HOST:
+      return memory_space
     case (
         pallas_core.MemorySpace.ERROR
         | pallas_core.MemorySpace.INDEX

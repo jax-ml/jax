@@ -53,7 +53,11 @@ def _get_memory_space_from_aval(
     raise ValueError("Memory spaces not defined for non-ShapedArrays")
   if not isinstance(
       ms := getattr(out_aval, "memory_space", None),
-      (tpu_core.MemorySpace, pallas_core.CoreMemorySpace),
+      (
+          tpu_core.MemorySpace,
+          pallas_core.MemorySpace,
+          pallas_core.CoreMemorySpace,
+      ),
   ):
     return None  # If we are passed a non-TPU memory space, ignore it.
   # If we are passed an aval with an explicit memory space tag, we use it
@@ -73,7 +77,7 @@ def _get_memory_space_from_aval(
           return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
         case _:
           raise ValueError(f"Invalid kernel type for semaphore: {kernel_type}")
-    case tpu_core.MemorySpace.HOST:
+    case pallas_core.MemorySpace.HOST:
       return tpu_custom_call.MemorySpace.HOST
     case pallas_core.CoreMemorySpace(tpu_core.MemorySpace.VMEM, mesh):
       match mesh.core_type:
