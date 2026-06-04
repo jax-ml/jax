@@ -3346,7 +3346,7 @@ def unmapped_leading_aval(size, aval) -> AbstractValue:
 
 def _map_shaped_array(
     size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:
-  assert axis is None or aval.shape[axis] == size
+  assert axis is None or aval.shape[axis] == size, (axis, aval.shape, size)
   if axis is None:
     return aval
   aval_s = aval.sharding

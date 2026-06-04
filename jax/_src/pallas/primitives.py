@@ -35,6 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src import state
 from jax._src import tree_util
 from jax._src import typing as jax_typing
@@ -667,6 +668,8 @@ def _run_scoped_to_lojax(*args, jaxpr, **params):
   return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
 run_scoped_p.to_lojax = _run_scoped_to_lojax
 
+@functools.partial(traceback_util.api_boundary,
+                   repro_api_name="pallas.run_scoped")
 def run_scoped(
     f: Callable[..., Any],
     *types: Any,
@@ -964,6 +967,7 @@ semaphore_signal_p = jax_core.Primitive('semaphore_signal')
 semaphore_signal_p.multiple_results = True
 
 
+@functools.partial(traceback_util.api_boundary, repro_api_name="pallas.semaphore_signal")
 def semaphore_signal(
     sem_or_view,
     inc: int | jax_typing.Array = 1,
@@ -1117,6 +1121,7 @@ semaphore_wait_p = jax_core.Primitive('semaphore_wait')
 semaphore_wait_p.multiple_results = True
 
 
+@functools.partial(traceback_util.api_boundary, repro_api_name="pallas.semaphore_wait")
 def semaphore_wait(
     sem_or_view, value: int | jax_typing.Array = 1, *, decrement: bool = True
 ):

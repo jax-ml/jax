@@ -22,11 +22,12 @@ import importlib.util
 import logging
 import string
 import sys
-from typing import Any, Union, overload
+from typing import Any, Union, overload, TYPE_CHECKING
 
 import numpy as np
 
 from jax._src import api
+from jax._src import traceback_util
 from jax._src import callback as cb
 from jax._src import config
 from jax._src import core
@@ -524,6 +525,9 @@ def debug_callback(
     )
   return _debug_callback
 
+if not TYPE_CHECKING:
+  debug_callback = traceback_util.api_boundary(debug_callback, repro_api_name="jax.debug.callback")
+
 
 class _DebugPrintFormatChecker(string.Formatter):
 
@@ -682,6 +686,9 @@ def debug_print(
         f" {args=} {kwargs=}"
     )
   return _debug_print
+
+if not TYPE_CHECKING:
+  debug_print = traceback_util.api_boundary(debug_print, repro_api_name="jax.debug.print")
 
 
 debug_log = partial(debug_print, _use_logging=True)

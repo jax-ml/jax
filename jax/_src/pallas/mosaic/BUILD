@@ -191,6 +191,7 @@ pytype_strict_library(
         "//jax/_src:partial_eval",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+        "//jax/_src:traceback_util",
         "//jax/experimental:mosaic",
     ],
 )
@@ -233,6 +234,7 @@ py_library(
         ":primitives",
         "//jax",
         "//jax/_src/pallas",
+        "//jax/_src:traceback_util",
     ],
 )
 

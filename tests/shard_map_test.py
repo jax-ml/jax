@@ -194,18 +194,18 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh, a, _ = create_inputs(P('x', 'y'), P(None, None))
     assert a.addressable_data(0).shape == (4, 4)
 
-    def add_one(x, static_shape):
-      return x + jnp.ones(static_shape, dtype=x.dtype)
+    def add_one(x, _):
+      return x + jnp.ones((4, 4), dtype=x.dtype)
 
-    @jax.jit(static_argnums=(1,))
-    def fun(a, static_shape):
+    @jax.jit
+    def fun(a):
       return shard_map(
           add_one,
           mesh=mesh,
           in_specs=(P('x', 'y'), None),
-          out_specs=P('x', 'y'))(a, static_shape)
+          out_specs=P('x', 'y'))(a, 4.)
 
-    self.assertAllClose(a + 1, fun(a, a.addressable_data(0).shape))
+    self.assertAllClose(a + 1, fun(a))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_matmul_unreduced(self, mesh):

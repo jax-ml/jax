@@ -32,7 +32,27 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src.lib import jaxlib_extension_version
 
-config_ext = _jax.config
+if True:
+  # Remove when we are past jaxlib_extension_version >= 455:
+  # This is a workaround for the fact that we cannot query the composition
+  # of the trace_context tuple. TODO: add that feature, and retire this.
+  # We assume that the trace key is based on the order in which we
+  # construct the Config object.
+  orig_config_ext = _jax.config
+  class MockConfigModule:
+    _trace_context_elements: list["State"] = []
+    class Config(orig_config_ext.Config):
+      def __init__(self, *args, **kwargs):
+        if kwargs.get("include_in_trace_context", False):
+          MockConfigModule._trace_context_elements.append(self)  # type: ignore
+        super().__init__(*args, **kwargs)
+
+    def __getattr__(self, name):
+      return getattr(orig_config_ext, name)
+
+  config_ext = MockConfigModule()
+else:
+  config_ext = _jax.config
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +263,7 @@ no_default = NoDefault()
 
 config_states = {}
 
-class State(config_ext.Config[_T]):
+class State(config_ext.Config[_T]):  # type: ignore -- not necessary before?
 
   __slots__ = (
       '_name', '_update_thread_local_hook', '_update_global_hook',
@@ -2229,6 +2249,28 @@ jax_dump_ir_modes = string_flag(
     help="Comma-delimited modes in which to dump IR. Can be 'stablehlo' (the "
          "default), 'jaxpr', 'jaxpr_html', or 'eqn_count_pprof' for "
          "jaxpr equation count pprof profile.")
+
+test_repros_path = os.path.abspath(os.path.dirname(__file__) + '/../../../repros')
+
+repro_dir = string_flag(
+    name='jax_repro_dir',
+    default=(
+        test_repros_path
+        if os.path.isdir(test_repros_path)
+        else os.getenv('JAX_REPRO_DIR', '')),
+    help=(
+        'Turn on saving of repros. EXPERIMENTAL, expect changes and/or removal.'
+    ),
+)
+
+repro_flags = string_flag(
+    name='jax_repro_flags',
+    default=os.getenv('JAX_REPRO_FLAGS', ''),
+    help=(
+        'Comma-separated flags for repros. '
+        'EXPERIMENTAL, expect changes and/or removal.'
+    ),
+)
 
 jax_ragged_dot_use_ragged_dot_instruction = bool_state(
     name='jax_ragged_dot_use_ragged_dot_instruction',

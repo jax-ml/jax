@@ -40,6 +40,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state import discharge as state_discharge
+from jax._src import traceback_util
 from jax._src.typing import Array
 
 _T = TypeVar("_T")
@@ -599,6 +600,7 @@ def _mpmd_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
       raise ValueError(f"Unsupported platform: {platform}")
 
 
+@functools.partial(traceback_util.api_boundary, repro_api_name="pallas.mpmd_map")
 def mpmd_map(
     meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[..., None]]],
     /,

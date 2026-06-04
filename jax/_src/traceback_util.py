@@ -227,7 +227,7 @@ def api_boundary(
         del mode, tb
   if repro and (repro_api_name or repro_user_func):
     reraise_with_filtered_traceback = repro.boundary(
-        reraise_with_filtered_traceback, api_name=repro_api_name,
+        reraise_with_filtered_traceback, repro_api_name=repro_api_name,
         is_user=repro_user_func)
   return cast(C, reraise_with_filtered_traceback)
 
