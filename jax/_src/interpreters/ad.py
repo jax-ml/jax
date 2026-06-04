@@ -17,7 +17,6 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import contextlib
 import functools
-import itertools as it
 from functools import partial
 import operator as op
 from typing import Any
@@ -25,8 +24,9 @@ from typing import Any
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (tree_flatten, tree_unflatten,
-                                register_pytree_node, PyTreeDef)
+from jax._src.tree_util import (
+    tree_flatten, tree_unflatten, register_pytree_node, PyTreeDef,
+    FlatTree as ft)
 from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util
@@ -58,13 +58,36 @@ def _update_annotation(
   tan_types = [aval.to_tangent_aval() for nz, aval in zip(nonzeros, orig_type) if nz]
   return lu.annotate(f, (*orig_type, *tan_types))
 
-def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
-    transform_stack=True) -> Any:
-  if not has_aux:
-    return jvpfun(jvp_subtrace(fun), instantiate, transform_stack)
-  else:
-    fun, aux = jvp_subtrace_aux(fun)
-    return jvpfun(fun, instantiate, transform_stack), aux
+def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
+        transform_stack=True) -> Any:
+  ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
+         else contextlib.nullcontext())
+  with core.take_current_trace() as parent_trace:
+    tag = core.TraceTag()
+    trace = JVPTrace(parent_trace, tag)
+    tangents = tangents.map(lambda t:
+        p2tz(t) if not isinstance(t, Zero)
+        and isinstance(typeof(t), core.ShapedArray)
+        and dtype(t) == float0 else t)
+    in_tracers = primals.map2(lambda x, t: maybe_jvp_tracer(trace, x, t), tangents)
+    with core.set_current_trace(trace), ctx:
+      ans = fun(*in_tracers.unflatten())
+    if has_aux:
+      ans, aux = ans
+      auxs = ft.flatten(aux).map(partial(_strip_tracer, JVPTracer, tag)),
+    else:
+      auxs = ()
+
+    ans_ft = ft.flatten(ans).map(trace.to_primal_tangent_pair)
+    out_primals = ans_ft.map(lambda pt: pt[0])
+    out_tangents = ans_ft.map(lambda pt: pt[1])
+
+    if type(instantiate) is bool:
+      instantiate = [instantiate] * len(out_tangents)
+    out_tangents = out_tangents.map2(
+        lambda t, inst: instantiate_zeros(t) if inst else t, instantiate)
+  auxs = tuple(aux.unflatten() for aux in auxs)
+  return out_primals, out_tangents, *auxs
 
 @lu.transformation2
 def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
@@ -182,18 +205,6 @@ def jvp_subtrace(f: Callable, tag: core.TraceTag, primals, tangents):
     out = unzip2(map(trace.to_primal_tangent_pair, ans))
   return out
 
-@lu.transformation_with_aux2
-def jvp_subtrace_aux(f, store, tag, primals, tangents):
-  with core.take_current_trace() as parent_trace:
-    trace = JVPTrace(parent_trace, tag)
-    with core.set_current_trace(trace):
-      ans, aux = f(*(map(partial(maybe_jvp_tracer, trace), primals, tangents)))
-    out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
-    aux_primals = [x.primal if isinstance(x, JVPTracer) and x._trace.tag is tag
-                   else x for x in aux]
-  store.store(aux_primals)
-  return out_primals, out_tangents
-
 def linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
     nonzeros: Sequence[bool],
@@ -282,35 +293,48 @@ def _dce_consts(jaxpr, consts):
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
   return jaxpr, [c for c, used in zip(consts, used_consts) if used]
 
-def linearize(traceable, primals, has_aux=False, is_vjp=False):
-  dbg = traceable.debug_info.with_unknown_names()
+def _strip_tracer(tracer_type, tag, x):
+   if isinstance(x, tracer_type) and x._trace.tag is tag:
+     return x.primal
+   else:
+     return x
+
+def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
+  dbg = debug_info("linearize", traceable, primals_ft, {})
   tag = core.TraceTag()
   with core.take_current_trace() as parent_trace:
     source_info = source_info_util.current()
     tangent_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
-    tangents = [tangent_trace.new_arg(typeof(p).to_tangent_aval(), source_info) for p in primals]
-    tangents = [p2tz(t) if not isinstance(t, Zero)
-                and isinstance(typeof(t), core.ShapedArray)
-                and dtype(t) == float0 else t for t in tangents]
     tangent_trace.tag = tag
     lin_trace = LinearizeTrace(parent_trace, tangent_trace, is_vjp)
-    tracers = [LinearizeTracer(lin_trace, p, t) for p, t in zip(primals, tangents)]
-    tracers = [t.full_lower() for t in tracers]
+    def make_tracer(_lin_trace, p):
+      t = tangent_trace.new_arg(typeof(p).to_tangent_aval(), source_info)
+      if (not isinstance(t, Zero)
+          and isinstance(typeof(t), core.ShapedArray)
+          and dtype(t) == float0):
+        t = p2tz(t)
+      return LinearizeTracer(_lin_trace, p, t).full_lower()
+    tracers = primals_ft.map(partial(make_tracer, lin_trace))
+
     with (core.set_current_trace(lin_trace),
           source_info_util.transform_name_stack('jvp')):
+      ans = traceable(*tracers.unflatten())
       if has_aux:
-        ans, aux = traceable.call_wrapped(*tracers)
-        aux = [x.primal if type(x) is LinearizeTracer and x._trace.tag is tag
-               else x for x in aux]
+        if not isinstance(ans, (list, tuple)) or len(ans) != 2:
+          raise TypeError("expected function with aux output to return a two-element "
+                          f"tuple, but got type {type(ans)} with value {ans!r}")
+        ans, aux = ans
+        auxs = ft.flatten(aux).map(partial(_strip_tracer, LinearizeTracer, tag)),
       else:
-        ans = traceable.call_wrapped(*tracers)
-        aux = None
-      out_primals, out_tangents = unzip2(map(lin_trace.to_primal_tangent_pair, ans))
+        auxs = ()
+      out_primals, out_tangents = ft.flatten(ans).map(
+          lin_trace.to_primal_tangent_pair).unzip2()
       del lin_trace, ans, tracers
   out_nzs = [type(t) is not Zero for t in out_tangents]
   out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
   out_nz_tangents = map(partial(tangent_trace.to_jaxpr_tracer,
                                 source_info=source_info), out_nz_tangents)
+  dbg = dbg.with_unknown_names()
   jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)
   tangent_trace.invalidate()
   config.enable_checks.value and core.check_jaxpr(jaxpr)
@@ -319,11 +343,8 @@ def linearize(traceable, primals, has_aux=False, is_vjp=False):
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
   consts = [c for c, used in zip(consts, used_consts) if used]
   out_zeros = map(op.not_, out_nzs)
-  if has_aux:
-    return out_primals, out_zeros, jaxpr, consts, aux
-  else:
-    return out_primals, out_zeros, jaxpr, consts
-
+  auxs = tuple(aux.unflatten() for aux in auxs)
+  return out_primals, out_zeros, jaxpr, consts, *auxs
 
 class UndefinedPrimal:
   __slots__ = ['aval']
@@ -1224,33 +1245,34 @@ def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
     instantiate = (instantiate,) * len(jaxpr.out_avals)
   return _jvp_jaxpr(jaxpr, tuple(nonzeros), tuple(instantiate))
 
+
 @weakref_lru_cache
 def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
                nonzeros: Sequence[bool], instantiate: Sequence[bool]):
   assert len(jaxpr.in_avals) == len(nonzeros)
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
-                   debug_info=jaxpr.jaxpr.debug_info.with_unknown_names())
-  f_jvp, out_nonzeros = f_jvp_traceable(
-      jvp(f, instantiate=instantiate, transform_stack=False), nonzeros)
-  tangent_avals = [aval.to_tangent_aval()
-                   for aval, nz in zip(jaxpr.in_aval_qdds, nonzeros) if nz]
-  avals_in = list(it.chain(jaxpr.in_aval_qdds, tangent_avals))
-  jaxpr_out, avals_out, literals_out = pe.trace_to_jaxpr_dynamic(
-      f_jvp, avals_in)
-  return core.ClosedJaxpr(jaxpr_out, literals_out), out_nonzeros()
+  primal_avals_in = ft.flatten_list(jaxpr.in_aval_qdds)
+  tangent_avals_in = primal_avals_in.map(lambda aval: aval.to_tangent_aval())
+  nz_tangent_avals_in = tangent_avals_in.map2(
+      lambda aval, nz: aval if nz else Zero(aval), nonzeros).filter_with_mask(nonzeros)
+  avals_in = ft.pack_args(primal_avals_in, nz_tangent_avals_in)
+  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
+  def f_jvp_traceable(primals, nonzero_tangents):
+    tangents = nonzero_tangents.unfilter()
+    primals_out, tangents_out = jvp(core.jaxpr_as_fun(jaxpr), primals, tangents,
+                                    instantiate=instantiate,
+                                    transform_stack=False)
+    primals_out = ft.flatten_list(primals_out)
+    tangents_out = ft.flatten_list(tangents_out).filter(lambda t: type(t) is not Zero)
+    return ft.pack((primals_out, tangents_out))
 
-@lu.transformation_with_aux2
-def f_jvp_traceable(f, store, nonzeros, *primals_and_nztangents):
-  num_primals = len(nonzeros)
-  primals = list(primals_and_nztangents[:num_primals])
-  nonzero_tangents = iter(primals_and_nztangents[num_primals:])
-  tangents = [next(nonzero_tangents) if nz else p2tz(p)
-              for p, nz in zip(primals, nonzeros)]
-  primals_out, tangents_out = f(primals, tangents)
-  out_nonzeros = [type(t) is not Zero for t in tangents_out]
-  nonzero_tangents_out = [t for t in tangents_out if type(t) is not Zero]
-  store.store(out_nonzeros)
-  return list(primals_out) + nonzero_tangents_out
+  jaxpr, out_avals = pe.trace_to_jaxpr(f_jvp_traceable, avals_in, dbg,
+                                       fun_takes_flat_tree_arg=True,
+                                       fun_returns_flat_tree=True)
+
+  _, nz_tangent_avals_out = out_avals.unpack()
+  tangent_avals_out = nz_tangent_avals_out.unfilter()
+  out_nonzeros = [type(t) is not Zero for t in tangent_avals_out]
+  return jaxpr, out_nonzeros
 
 def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_out, tangents_out):
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
