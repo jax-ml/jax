@@ -254,7 +254,12 @@ class IndexerTest(jtu.JaxTestCase):
     self.assertTupleEqual(indexer.get_indexer_shape(), (2, 5, 4))
 
   @hp.given(hps.data())
-  @hp.settings(suppress_health_check=[hp.HealthCheck.too_slow])  # ASAN is slow
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.too_slow,
+      ]
+  )  # ASAN is slow
   def test_ndindexer(self, data):
     shape = data.draw(hnp.array_shapes())
     indices = data.draw(nd_indices_strategy(shape))

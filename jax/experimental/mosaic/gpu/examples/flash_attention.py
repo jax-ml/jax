@@ -588,12 +588,16 @@ def benchmark_and_verify(
       q_reshaped = q.reshape(
           batch_size, num_kv_heads, num_q_heads // num_kv_heads, q_seq_len,
           head_dim)
-      logits = jnp.einsum("bxhqc,bxkc->bxhqk", q_reshaped, k)
+      logits = jnp.einsum(
+          "bxhqc,bxkc->bxhqk", q_reshaped, k, precision="high"
+      )
       m = logits.max(axis=-1)
       unnormalized = jnp.exp(logits - m[..., None])
       l = unnormalized.sum(axis=-1)
       weights = unnormalized / l[..., None]
-      return jnp.einsum("bxhqk,bxkc->bxhqc", weights, v).reshape(*q.shape)
+      return jnp.einsum(
+          "bxhqk,bxkc->bxhqc", weights, v, precision="high"
+      ).reshape(*q.shape)
     expected = ref(q, k, v)
     np.testing.assert_allclose(out, expected, atol=2e-3, rtol=2e-3)
     return runtime
