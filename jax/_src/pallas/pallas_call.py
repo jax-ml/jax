@@ -860,8 +860,8 @@ def _pallas_call_lowering(
     impl = partial(hlo_interpreter.pallas_call_hlo_interpret, **params)
 
     try:
-      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret
-      from jax._src.pallas.mosaic.interpret import params as tpu_params
+      from jax._src.pallas.mosaic.interpret import interpret_pallas_call as mosaic_tpu_interpret  # pyrefly: ignore[missing-import]
+      from jax._src.pallas.mosaic.interpret import params as tpu_params  # pyrefly: ignore[missing-import]
     except ImportError:
       pass
     else:
@@ -873,8 +873,8 @@ def _pallas_call_lowering(
         )
 
     try:
-      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret
-      from jax._src.pallas.mosaic_gpu.interpret import params as gpu_params
+      from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_gpu_interpret  # pyrefly: ignore[missing-import]
+      from jax._src.pallas.mosaic_gpu.interpret import params as gpu_params  # pyrefly: ignore[missing-import]
     except ImportError:
       pass
     else:
@@ -906,7 +906,7 @@ def _pallas_call_lowering(
         return rule(ctx, *in_nodes, **params)
 
     try:
-      from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
+      from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend  # pyrefly: ignore[missing-import]
     except ImportError:
       raise _unsupported_lowering_error("tpu") from None
 
@@ -930,8 +930,8 @@ def _pallas_call_lowering(
     backend: Any = None
 
     try:
-      from jax._src.pallas.mosaic_gpu import core as mgpu_core
-      from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend
+      from jax._src.pallas.mosaic_gpu import core as mgpu_core  # pyrefly: ignore[missing-import]
+      from jax._src.pallas.mosaic_gpu import pallas_call_registration as mosaic_gpu_backend  # pyrefly: ignore[missing-import]
     except ImportError:
       pass
     else:
@@ -959,8 +959,8 @@ def _pallas_call_lowering(
           )
 
     try:
-      from jax._src.pallas.triton import core as triton_core
-      from jax._src.pallas.triton import pallas_call_registration as triton_backend
+      from jax._src.pallas.triton import core as triton_core  # pyrefly: ignore[missing-import]
+      from jax._src.pallas.triton import pallas_call_registration as triton_backend  # pyrefly: ignore[missing-import]
     except ImportError:
       pass
     else:

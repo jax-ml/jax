@@ -17,7 +17,6 @@
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
-    "py_library",
     "pytype_strict_library",
 )
 
@@ -28,9 +27,10 @@ package(
     ],
 )
 
-py_library(
+pytype_strict_library(
     name = "mosaic_gpu",
     srcs = ["__init__.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":pallas_call_registration",

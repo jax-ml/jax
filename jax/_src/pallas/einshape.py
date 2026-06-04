@@ -73,10 +73,12 @@ from jax._src import hijax
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
-from jax._src.pallas.mosaic import lowering as tpu_lowering
-from jax._src.pallas.mosaic import tpu_info
 import jax.numpy as jnp
 import numpy as np
+
+# TODO(slebedev): fix circular imports in the following:
+from jax._src.pallas.mosaic import lowering as tpu_lowering  # pyrefly: ignore[missing-import]
+from jax._src.pallas.mosaic import tpu_info  # pyrefly: ignore[missing-import]
 
 
 @dataclasses.dataclass(frozen=True)

@@ -16,7 +16,7 @@ import sys
 
 from jax._src import config
 from jax._src import test_util as jtu
-from jax.experimental import pallas as pl
+from jax._src.pallas import pallas_call as pl_lib
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -42,7 +42,7 @@ class PallasTest(jtu.JaxTestCase):
     super().setUp()
 
   def pallas_call(self, *args, **kwargs):
-    return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
+    return pl_lib.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
 
 class PallasTPUTest(PallasTest):

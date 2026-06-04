@@ -458,7 +458,7 @@ def _mpmd_map_tpu_lowering(
     external_meshes,
 ):
   try:
-    from jax._src.pallas.mosaic import pallas_call_registration
+    from jax._src.pallas.mosaic import pallas_call_registration  # pyrefly: ignore[missing-import]
   except ImportError:
     raise pallas_call._unsupported_lowering_error("tpu")
   num_scratch = len(jaxprs[0].invars) - len(in_nodes) - len(ctx.avals_out)
@@ -830,7 +830,7 @@ def _mpmd_map(
       # the caller context during tracing).
       # TODO(rdyro): Also check inputs and outputs for core type.
       for scratch_type in flat_scratch_types:
-        from jax._src.pallas.mosaic import core as tpu_core
+        from jax._src.pallas.mosaic import core as tpu_core  # pyrefly: ignore[missing-import]
 
         if not isinstance(
             scratch_type.memory_space, pallas_core.CoreMemorySpace

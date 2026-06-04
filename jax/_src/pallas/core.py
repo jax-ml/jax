@@ -51,12 +51,12 @@ from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 
 try:
-  import jax._src.pallas.mosaic.interpret.params as mosaic_tpu_interpret
+  import jax._src.pallas.mosaic.interpret.params as mosaic_tpu_interpret  # pyrefly: ignore[missing-import]
 except ImportError:
   mosaic_tpu_interpret = None
 
 try:
-  import jax._src.pallas.mosaic_gpu.interpret.params as mosaic_gpu_interpret
+  import jax._src.pallas.mosaic_gpu.interpret.params as mosaic_gpu_interpret  # pyrefly: ignore[missing-import]
 except ImportError:
   mosaic_gpu_interpret = None
 
