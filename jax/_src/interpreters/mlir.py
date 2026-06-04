@@ -3088,7 +3088,8 @@ def _wrap_with_spmd_op(name: str,
                        has_side_effect: bool = False,
                        allow_shardy_lowering: bool = False):
   if config.use_shardy_partitioner.value and allow_shardy_lowering:
-    return dialects.sdy.sharding_constraint(x, sharding.build(ctx.module_context.sharding_attr_cache))  # pyrefly: ignore[missing-attribute]
+    return dialects.sdy.sharding_constraint(
+        x, sharding.build(ctx.module_context.sharding_attr_cache))  # type: ignore
 
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
@@ -3098,7 +3099,7 @@ def _wrap_with_spmd_op(name: str,
   else:
     backend_config = ""
   (result_type,) = aval_to_ir_types(ctx.module_context, aval_out)
-  out_shape = core.physical_aval(aval_out).shape  # pyrefly: ignore[missing-attribute]
+  out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
   else:
