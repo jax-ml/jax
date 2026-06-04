@@ -2959,8 +2959,8 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
     )
 
     def body_fn(state):
-      key, accepted, w_out = state
-      new_key, zkey, vkey = _split(key, 3)
+      iter_idx, key, accepted, w_out = state
+      new_key, zkey, vkey = _split(fold_in(key, iter_idx), 3)
       z_val = jnp.cos(
         np.pi * uniform(zkey, shape=np.shape(kappa), dtype=dtype)
       )
@@ -2973,7 +2973,7 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
       accept = cond1 | cond2
       w_out = lax.select(accept, w_val, w_out)
       accepted |= accept
-      return (new_key, accepted, w_out)
+      return (iter_idx+1, new_key, accepted, w_out)
 
     def cond_fn(state):
       accepted = state[-2]
@@ -2984,7 +2984,7 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
       body_fn,
       # Set so cond_fn returns True for the first iteration if kappa in range
       # jit traces all branches regardless of kappa
-      (key,
+      (0, key,
        (safe_kappa < kappa_small) | (safe_kappa > kappa_large),
        jnp.zeros_like(kappa)),
     )
