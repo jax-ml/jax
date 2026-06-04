@@ -878,7 +878,8 @@ def emit_python_callback(
       # output. Otherwise, the single shardy annotation required of all ops
       # (even those without any results) can annotate the token.
       sharding = SdyArrayList((
-          SdyArray(mesh_shape=(), dim_shardings=(), logical_device_ids=()),
+          SdyArray(mesh_shape=(), dim_shardings=(),
+                   logical_device_ids=sharding.shardings[0].logical_device_ids),
           *sharding.shardings))
     ctx = dataclasses.replace(
         ctx,

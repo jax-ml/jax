@@ -1324,6 +1324,27 @@ class IOCallbackTest(jtu.JaxTestCase):
     else:
       self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
+  def test_ordered_io_callback_maximal_token(self):
+    devices = jax.devices()
+    mesh = Mesh(np.array(devices), ["x"])
+
+    def cb(x):
+      return x + 1.0
+
+    @functools.partial(
+        jax.jit,
+        in_shardings=jax.NamedSharding(mesh, jax.P("x")),
+        out_shardings=jax.NamedSharding(mesh, jax.P()),
+    )
+    def f(x):
+      return io_callback(
+          cb, jax.ShapeDtypeStruct(x.shape, x.dtype), x, ordered=True)
+
+    with mesh:
+      x = jnp.arange(mesh.size, dtype=jnp.float32)
+      res = f(x)
+      self.assertAllClose(res, x + 1.0)
+
   @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
                       category=DeprecationWarning)
   def test_sequence_pjit_io_callback_ordered(self):
