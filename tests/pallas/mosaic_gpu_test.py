@@ -5833,6 +5833,39 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     expected = x @ y
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
+  def test_tmem_alloc_within_warp_map(self):
+    m, k = 128, 128
+    out_shape = (m, k // 2)
+    in_shape = (m, k)
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.uint16),
+        scratch_shapes=[
+            plgpu.SMEM(
+                in_shape,
+                jnp.uint8,
+                transforms=self.default_transforms(dtype=jnp.uint8, swizzle=64),
+            ),
+            plgpu.RefUnion(
+                plgpu.TMEM(in_shape, jnp.uint8, packed=True),
+                plgpu.TMEM(out_shape, jnp.uint16, packed=True),
+            ),
+        ],
+    )
+    def kernel(_, out_gmem, smem, tmem_alias):
+      tmem, tmem_b = tmem_alias
+      @plgpu.warp_map
+      def _(warp_id):
+        @pl.when(warp_id == 0)
+        def _():
+          plgpu.async_copy_smem_to_tmem(smem, tmem)
+      # using out_gmem to prevent potential DCE on jaxprs
+      out_gmem[...] = plgpu.async_load_tmem(tmem_b, layout=plgpu.Layout.TCGEN05)
+
+    # For simplicity reasons, we only check that we can lower correctly.
+    x = jnp.ones(in_shape, jnp.uint8)
+    jax.block_until_ready(kernel(x))
+
   def test_async_copy_sparse_metadata_smem_to_tmem_warp_semantics(self):
     m, k = 128, 64
     dtype = jnp.uint2

@@ -1327,7 +1327,7 @@ def _tmem_layout_cast_lowering_rule(
   return [op.ref]
 
 
-@_register_lowering(mgpu.SliceTmemOp)
+@_register_lowering(mgpu.SliceTmemOp, support_warp_semantics=True)
 def _slice_tmem_lowering_rule(
     ctx: LoweringContext, op: mgpu.SliceTmemOp
 ) -> Sequence[ir.Value]:
