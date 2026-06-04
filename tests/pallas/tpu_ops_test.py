@@ -1011,7 +1011,7 @@ class OpsTest(ptu.PallasTPUTest):
     rhs = jnp.zeros((k, 128), dtype=dtype)
 
     def kernel(lhs_ref, rhs_ref, o_ref):
-      o_ref[...] = pl.dot(lhs_ref[...], rhs_ref[...])
+      o_ref[...] = lhs_ref[...] @ rhs_ref[...]
 
     out_shape = jax.ShapeDtypeStruct((8 * packing, 128), dtype)
     with self.assertRaisesRegex(

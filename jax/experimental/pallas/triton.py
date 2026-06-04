@@ -14,6 +14,7 @@
 
 """Triton-specific Pallas APIs."""
 
+from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.triton.core import CompilerParams as CompilerParams
 from jax._src.pallas.triton.primitives import approx_tanh as approx_tanh
 from jax._src.pallas.triton.primitives import atomic_add as atomic_add

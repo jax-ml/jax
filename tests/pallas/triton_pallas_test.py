@@ -511,7 +511,7 @@ class TritonPallasTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((32, 64), jnp.int32),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+      o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
     x = jnp.ones((32, 128), dtype=jnp.uint8)
     y = jnp.ones((128, 64), dtype=jnp.uint8)
@@ -529,7 +529,7 @@ class TritonPallasTest(PallasBaseTest):
         compiler_params=plgpu.CompilerParams(num_warps=1),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+      o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
     x = jnp.ones((m, k), dtype=dtype)
     y = jnp.ones((k, n), dtype=dtype)
@@ -548,7 +548,7 @@ class TritonPallasTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((m, n), dtype), compiler_params=plgpu.CompilerParams(num_warps=1),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+      o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
     x = jnp.arange(m * k).reshape(m, k).astype(dtype)
     y = jnp.arange(k * n).reshape(k, n).astype(dtype)
@@ -575,7 +575,7 @@ class TritonPallasTest(PallasBaseTest):
             compiler_params=plgpu.CompilerParams(num_warps=1),
         )
         def dot_kernel(x_ref, y_ref, o_ref):
-          o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+          o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
         x = jnp.arange(m * k).reshape(m, k).astype(dtype)
         y = jnp.arange(k * n).reshape(k, n).astype(dtype)
@@ -625,7 +625,7 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
           lax.broadcast_in_dim(idx_n, (bk, bn), (1,)),
       )
       x_block, y_block = x_ref[x_idx], y_ref[y_idx]
-      out = pl.dot(x_block, y_block)
+      out = plgpu.dot(x_block, y_block)
       return acc + out
 
     acc = lax.fori_loop(0, k // bk, body, acc).astype(o_ref.dtype)

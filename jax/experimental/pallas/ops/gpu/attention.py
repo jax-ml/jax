@@ -121,7 +121,7 @@ def mha_forward_kernel(
     curr_k_slice = pl.dslice(start_k * block_k, block_k)
 
     k = plgpu.load(k_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
-    qk = pl.dot(q, k.T)   # [block_q, block_k]
+    qk = plgpu.dot(q, k.T)   # [block_q, block_k]
 
     # Scale logits to convert from base-2 to the natural log domain.
     # This is based on the identity: e^x = 2^(x * log2(e)).
@@ -163,7 +163,7 @@ def mha_forward_kernel(
     l_next = l_prev_corr + l_curr
     o_prev_corr = correction[:, None] * o_prev
     v = plgpu.load(v_ref.at[curr_k_slice, :], mask=head_mask)
-    o_curr = pl.dot(s_curr.astype(v.dtype), v)
+    o_curr = plgpu.dot(s_curr.astype(v.dtype), v)
 
     o_next = o_prev_corr + o_curr
     return o_next, m_next, l_next
@@ -413,7 +413,7 @@ def mha_backward_kernel(
     curr_q_slice = pl.dslice(start_q * block_q_dkv, block_q_dkv)
 
     q = plgpu.load(q_ref.at[curr_q_slice, :], mask=head_mask, other=0.0)
-    qk = pl.dot(q, k.T)
+    qk = plgpu.dot(q, k.T)
     qk_scale = math.log2(math.e)
     if sm_scale != 1.:
       qk_scale *= sm_scale
@@ -442,13 +442,13 @@ def mha_backward_kernel(
     )
 
     p = jnp.exp2(qk - lse[:, None])
-    dv = dv + pl.dot(p.astype(do.dtype).T, do)
+    dv = dv + plgpu.dot(p.astype(do.dtype).T, do)
     dp = jnp.zeros((block_q_dkv, block_kv_dkv), dtype=jnp.float32) - di[:, None]
-    dp = dp + pl.dot(do, v.T)
+    dp = dp + plgpu.dot(do, v.T)
     ds = p * dp
     if sm_scale != 1.0:
       ds = ds * sm_scale
-    dk = dk + pl.dot(ds.astype(q_ref.dtype).T, q)
+    dk = dk + plgpu.dot(ds.astype(q_ref.dtype).T, q)
 
     return dv, dk
 
@@ -485,7 +485,7 @@ def mha_backward_kernel(
     k = plgpu.load(k_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
     v = plgpu.load(v_ref.at[curr_k_slice, :], mask=head_mask, other=0.0)
 
-    qk = pl.dot(q, k.T)
+    qk = plgpu.dot(q, k.T)
     qk_scale = math.log2(math.e)
     if sm_scale != 1.:
       qk_scale *= sm_scale
@@ -509,12 +509,12 @@ def mha_backward_kernel(
 
     p = jnp.exp2(qk - lse[:, None])
     dp = jnp.zeros((block_q_dq, block_kv_dq), dtype=jnp.float32) - di[:, None]
-    dp = dp + pl.dot(do, v.T)
+    dp = dp + plgpu.dot(do, v.T)
     ds = p * dp
     if sm_scale != 1.0:
       ds = ds * sm_scale
 
-    dq = dq + pl.dot(ds.astype(k.dtype), k).astype(dq.dtype)
+    dq = dq + plgpu.dot(ds.astype(k.dtype), k).astype(dq.dtype)
 
     return dq
 

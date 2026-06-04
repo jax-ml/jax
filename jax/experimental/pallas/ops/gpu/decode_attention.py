@@ -56,7 +56,7 @@ def attn_forward_kernel(
       # if a.shape[0] == 1:
       #   # Use matrix vector product
       #   return (a.T * b).sum(axis=0, keepdims=True)
-      return pl.dot(a, b)
+      return plgpu.dot(a, b)
 
     mask_indices = jnp.arange(block_k)
 

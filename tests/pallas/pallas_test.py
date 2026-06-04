@@ -65,8 +65,7 @@ intx = dtypes.default_int_dtype()
 floatx = dtypes.default_float_dtype()
 
 
-@jax.jit(static_argnames=["bm", "bn", "bk",
-                                             "interpret", "debug"])
+@jax.jit(static_argnames=["bm", "bn", "bk", "interpret", "debug"])
 def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   m, n, k = x.shape[0], y.shape[1], x.shape[1]
   @functools.partial(
@@ -86,7 +85,9 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
     def body(i, acc):
       x_block = x_ref[:, pl.ds(i * bk, bk)]
       y_block = y_ref[pl.ds(i * bk, bk), :]
-      return acc + pl.dot(x_block, y_block)
+      return acc + jnp.dot(
+          x_block, y_block, preferred_element_type=jnp.float32
+      )
     acc = lax.fori_loop(0, k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc
   return matmul_kernel(x, y)
@@ -778,7 +779,12 @@ class PallasCallTest(ptu.PallasTest):
         out_shape=jax.ShapeDtypeStruct((32, 64), jnp.float32),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()], precision=precision)
+      o_ref[()] = jnp.dot(
+          x_ref[()],
+          y_ref[()],
+          precision=precision,
+          preferred_element_type=o_ref.dtype,
+      )
 
     key0, key1 = random.split(random.key(0))
     x = random.normal(key0, (32, 16), dtype=dtype)
@@ -817,7 +823,9 @@ class PallasCallTest(ptu.PallasTest):
         out_shape=jax.ShapeDtypeStruct((32, 64), jnp.int32),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+      o_ref[()] = jnp.dot(
+          x_ref[()], y_ref[()], preferred_element_type=o_ref.dtype
+      )
 
     key0, key1 = random.split(random.key(0))
     kwargs = dict(minval=jnp.iinfo(dtype).min, maxval=jnp.iinfo(dtype).max + 1,
@@ -896,8 +904,8 @@ class PallasCallTest(ptu.PallasTest):
         out_shape=expected,
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = pl.dot(
-          x_ref[...], y_ref[...], trans_b=transpose
+      o_ref[...] = jnp.einsum(
+          "mk,nk->mn" if transpose else "mk,kn->mn", x_ref[...], y_ref[...]
       ).astype(o_ref.dtype)
 
     self.assertAllClose(dot_kernel(x, y), expected)

@@ -2254,7 +2254,12 @@ class OpsTest(PallasBaseTest):
     def dot(x_ref, y_ref, o_ref):
       x = x_ref[:, :]
       y = y_ref[:, :]
-      o_ref[:, :] = pl.dot(x, y, trans_x, trans_y).astype(o_ref.dtype)
+      lhs_pattern = "km" if trans_x else "mk"
+      rhs_pattern = "nk" if trans_y else "kn"
+      o_ref[:, :] = jnp.einsum(
+          f"{lhs_pattern},{rhs_pattern}->mn", x, y,
+          preferred_element_type=jnp.float32,
+      ).astype(o_ref.dtype)
 
     k1, k2 = random.split(random.key(0))
     x = random.normal(k1, lhs_shape, dtype=dtype)
@@ -2293,7 +2298,11 @@ class OpsTest(PallasBaseTest):
     def dot(x_ref, y_ref, o_ref):
       x = x_ref[:, :]
       y = y_ref[:, :]
-      o_ref[:, :] = pl.dot(x, y, trans_x, trans_y).astype(o_ref.dtype)
+      lhs_pattern = "km" if trans_x else "mk"
+      rhs_pattern = "nk" if trans_y else "kn"
+      o_ref[:, :] = jnp.einsum(
+          f"{lhs_pattern},{rhs_pattern}->mn", x, y
+      ).astype(o_ref.dtype)
 
     # random.randint does not support int4, so create as int8.
     x = random.randint(

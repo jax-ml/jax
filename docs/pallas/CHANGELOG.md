@@ -25,6 +25,10 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
 
   * `pl.debug_checks_enabled` is deprecated. Use `pl.enable_debug_checks.value`.
+  * `pl.dot` was moved into {mod}`jax.experimental.pallas.triton`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+    You can use {func}`jax.numpy.dot`, {func}`jax.numpy.einsum` or the `@`
+    operator instead in a TPU or MGPU kernel.
 
 ### TPU
 

@@ -71,7 +71,7 @@ def paged_attention_kernel(
         # dynamic lhs quantized dot is not currently implemented
         # so we cast rhs to the lhs dtype
         k = k.astype(q.dtype)
-      uncapped_logits = pl.dot(q, k.T)  # [block_h, block_k]
+      uncapped_logits = plgpu.dot(q, k.T)  # [block_h, block_k]
       if k_scales_pages_ref is not None:
         # k_scales_pages_ref are one per head
         # they're laid out across the output dimension, so scale output
@@ -111,7 +111,7 @@ def paged_attention_kernel(
         # dynamic lhs quantized dot is not currently implemented
         # so we cast rhs to the lhs dtype
         v = v.astype(s_curr.dtype)
-      o_curr = pl.dot(s_curr.astype(v.dtype), v)
+      o_curr = plgpu.dot(s_curr.astype(v.dtype), v)
 
       o_next = o_prev_corr + o_curr
       return o_next, m_next, l_next
