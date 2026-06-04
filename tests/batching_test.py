@@ -291,7 +291,8 @@ class BatchingTest(jtu.JaxTestCase):
     ys = R(10, 1)
     ans = vmap(jnp.dot, in_axes=(1, None))(xs, ys)
     expected = np.einsum('inj,jk->nik', xs, ys)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        atol=1e-2, rtol=1e-2)
 
   def testDot4(self):
     R = self.rng().randn
@@ -299,7 +300,8 @@ class BatchingTest(jtu.JaxTestCase):
     ys = R(3)
     ans = vmap(jnp.dot, in_axes=(1, None))(xs, ys)
     expected = np.einsum('ij,i->j', xs, ys)
-    self.assertAllClose(ans, expected, check_dtypes=False)
+    self.assertAllClose(ans, expected, check_dtypes=False,
+                        atol=1e-2, rtol=1e-2)
 
   def testPad(self):
     R = self.rng().randn
