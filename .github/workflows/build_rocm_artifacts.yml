@@ -164,7 +164,7 @@ jobs:
           JAXCI_WHEEL_VERSION_SUFFIX: ${{ inputs.wheel-version-suffix }}
       - name: Configure AWS Credentials
         if: ${{ inputs.upload_artifacts_to_s3 }}
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@99214aa6889fcddfa57764031d71add364327e59 # ratchet:aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
           aws-region: us-east-1
