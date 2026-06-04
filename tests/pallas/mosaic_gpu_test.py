@@ -4956,6 +4956,39 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         jax.random.key(0), shape=(128, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(kernel(x), (x + 1)[:, 0:128])
 
+  def test_tmem_batch_dimension_indexing(self):
+    b, m, n = 2, 128, 128
+    # TODO(b/514542868): Support nD TMEM shapes.
+    shape = (m, b * n)  # (b, m, n) encoded as a 2D shape
+    dtype = jnp.float8_e5m2
+    tmem_layout = plgpu.TMEMLayout.SCALES_LAYOUT
+    reg_layout = plgpu.Layout.TILED(  # tmem_layout.as_tiled_layout()
+        plgpu.Tiling(((128, 4), (32, 1))),
+        warp_dims=(plgpu.Replicated(4),),
+        lane_dims=(-2,),
+        vector_dim=-3,
+    )
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_shapes=[
+            plgpu.TMEM(shape, dtype, layout=tmem_layout),
+        ],
+    )
+    def kernel(src_ref, idx_ref, dst_ref, tmem_ref):
+      idx = idx_ref[...]
+      src = plgpu.load(src_ref, (), layout=reg_layout, optimized=False)
+      plgpu.async_store_tmem(tmem_ref, src)
+      plgpu.commit_tmem()
+      tmem_slice = tmem_ref.at[:, pl.ds(idx * n, n)]
+      dst_ref[...] = plgpu.async_load_tmem(tmem_slice, layout=reg_layout)
+
+    idx = 1
+    src = jax.random.uniform(jax.random.key(42), shape, dtype, -1, 1)
+    dst = src[:, idx * n : (idx + 1) * n]
+    np.testing.assert_array_equal(kernel(src, idx), dst)
+
   @parameterized.product(
       m=[64, 128],
       n=[64, 128, 256],
