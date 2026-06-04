@@ -2911,7 +2911,7 @@ def _convert_element_type_lowering_rule(
   old_dtype = in_aval.dtype
   out_type = ctx.aval_to_ir_type(out_aval)
 
-  if old_dtype == new_dtype:
+  if old_dtype == new_dtype or x.type == out_type:
     return x
 
   if new_dtype.itemsize == 8:

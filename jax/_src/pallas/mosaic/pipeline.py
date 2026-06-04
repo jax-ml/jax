@@ -39,6 +39,7 @@ from jax._src.pallas.mosaic import helpers as tpu_helpers
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import indexing
+import numpy as np
 import jax.numpy as jnp
 
 
@@ -692,7 +693,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_copy_in_slot(self):
     """Index in multiple buffer corresponding to the current slot."""
-    return lax.rem(self.cumulative_copy_in, jnp.uint32(self.buffer_count))
+    return lax.rem(self.cumulative_copy_in, np.uint32(self.buffer_count))
 
   @property
   def cumulative_copy_out(self):
@@ -703,7 +704,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_copy_out_slot(self):
     """Index in multiple buffer corresponding to the current copy slot."""
-    return lax.rem(self.cumulative_copy_out, jnp.uint32(self.buffer_count))
+    return lax.rem(self.cumulative_copy_out, np.uint32(self.buffer_count))
 
   @property
   def cumulative_wait_in(self):
@@ -714,7 +715,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_wait_in_slot(self):
     """Index in multiple buffer corresponding to the current wait slot."""
-    return lax.rem(self.cumulative_wait_in, jnp.uint32(self.buffer_count))
+    return lax.rem(self.cumulative_wait_in, np.uint32(self.buffer_count))
 
   @property
   def cumulative_wait_out(self):
@@ -725,7 +726,7 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_wait_out_slot(self):
     """Index in multiple buffer corresponding to the current wait slot."""
-    return lax.rem(self.cumulative_wait_out, jnp.uint32(self.buffer_count))
+    return lax.rem(self.cumulative_wait_out, np.uint32(self.buffer_count))
 
   @property
   def next_fetch_indices(self):
@@ -780,12 +781,12 @@ class BufferedRef(BufferedRefBase):
   def initialize_slots(self) -> BufferedRef:
     return dataclasses.replace(
         self,
-        copy_in_slot=jnp.uint32(0) if self.buffer_type.is_input else None,
-        wait_in_slot=jnp.uint32(0) if self.buffer_type.is_input else None,
-        copy_out_slot=jnp.uint32(0) if self.buffer_type.is_output else None,
-        wait_out_slot=jnp.uint32(0) if self.buffer_type.is_output else None,
+        copy_in_slot=np.uint32(0) if self.buffer_type.is_input else None,
+        wait_in_slot=np.uint32(0) if self.buffer_type.is_input else None,
+        copy_out_slot=np.uint32(0) if self.buffer_type.is_output else None,
+        wait_out_slot=np.uint32(0) if self.buffer_type.is_output else None,
         next_fetch=(
-            tuple(jnp.int32(0) for _ in range(self._grid_rank))
+            tuple(np.int32(0) for _ in range(self._grid_rank))
             if self._grid_rank is not None
             else None
         ),
@@ -1011,18 +1012,20 @@ def map_outputs(f, *args):
 
 
 def _filter_indices(
-    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
-) -> tuple[int | jax.Array, ...]:
+    indices: tuple[int | np.int32 | jax.Array, ...],
+    grid: tuple[int | np.int32 | jax.Array, ...]
+) -> tuple[int | np.int32 | jax.Array, ...]:
   return tuple(
-      0 if isinstance(g, int) and g == 1 else i
+      np.int32(0) if isinstance(g, int) and g == 1 else i
       for i, g in zip(indices, grid, strict=True)
   )
 
 
 def _next_index(
-    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...],
+    indices: tuple[int | np.int32 | jax.Array, ...],
+    grid: tuple[int | np.int32 | jax.Array, ...],
     allow_overflow: bool = False,
-) -> tuple[int | jax.Array, ...]:
+) -> tuple[int | np.int32 | jax.Array, ...]:
   """Increments the grid indices by one.
 
   Args:
@@ -1044,8 +1047,8 @@ def _next_index(
     if allow_overflow and (position == len(grid) - 1):
       carry = False
     else:
-      carry = inc == g
-    out.append(jax.lax.select(carry, 0, inc))
+      carry = inc == (np.int32(g) if isinstance(g, int) else g)
+    out.append(jax.lax.select(carry, np.int32(0), inc))
   if allow_overflow:
     return tuple(reversed(out))
   else:
@@ -1053,14 +1056,14 @@ def _next_index(
 
 
 def _prev_index(
-    indices: tuple[int | jax.Array, ...], grid: tuple[int | jax.Array, ...]
-) -> tuple[int | jax.Array, ...]:
+    indices: tuple[int | np.int32 | jax.Array, ...], grid: tuple[int | np.int32 | jax.Array, ...]
+) -> tuple[int | np.int32 | jax.Array, ...]:
   out = []
   borrow: bool | jax.Array = True
   for i, g in reversed(list(zip(indices, grid, strict=True))):
     dec = jax.lax.select(borrow, i - 1, i)
     borrow = dec == -1
-    out.append(jax.lax.select(borrow, g - 1, dec))
+    out.append(jax.lax.select(borrow, np.int32(g - 1) if isinstance(g, int) else (g - 1), dec))
   return _filter_indices(tuple(reversed(out)), grid)
 
 
@@ -1070,9 +1073,9 @@ class Scheduler:
   def __init__(
       self,
       step: jax.Array,
-      indices: tuple[int | jax.Array, ...],
-      grid: tuple[int | jax.Array, ...],
-      grid_offsets: tuple[int | jax.Array, ...],
+      indices: tuple[int | np.int32 | jax.Array, ...],
+      grid: tuple[int | np.int32 | jax.Array, ...],
+      grid_offsets: tuple[int | np.int32 | jax.Array, ...],
       num_stages: int,
       trace_scopes=True,
       _explicit_indices: bool = False,
@@ -1099,8 +1102,12 @@ class Scheduler:
     self.num_steps = math.prod(grid)
 
     # First and last inner step conditionals.
-    self.first_step = step == 0
-    self.last_step = step == self.num_steps - 1
+    self.first_step = step == np.int32(0)
+    self.last_step = step == (
+        np.int32(self.num_steps - 1)
+        if isinstance(self.num_steps, int)
+        else (self.num_steps - 1)
+    )
 
     # Derived grid indices for present, previous, and next steps.
     self.indices = tuple(
@@ -1151,7 +1158,9 @@ class Scheduler:
     # lookahead this will depend on whether the lookahead reached the end.
     if not buffered_ref.is_buffered:
       return jnp.bool(False)
-    return self.step >= (self.num_steps - buffered_ref.buffer_count + 1)
+    ub = self.num_steps - buffered_ref.buffer_count + 1
+    ub_32 = np.int32(ub) if isinstance(ub, int) else ub
+    return self.step >= ub_32
 
   def has_changed(self, buffered_ref):
     if not buffered_ref.is_buffered or buffered_ref.is_trivial_windowing:
@@ -1421,13 +1430,13 @@ def _make_pipeline_allocations(
 
 
 def _partition_grid(
-    grid: tuple[int | jax.Array, ...],
+    grid: tuple[np.int32 | jax.Array, ...],
     core_axis: tuple[int | str, ...] | int | str | None,
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None,
-) -> tuple[tuple[int | jax.Array, ...], tuple[int | jax.Array, ...]]:
+) -> tuple[tuple[np.int32 | jax.Array, ...], tuple[np.int32 | jax.Array, ...]]:
   if core_axis is None:
     # We aren't partitioning the grid
-    return grid, (0,) * len(grid)
+    return grid, (np.int32(0),) * len(grid)
   if isinstance(core_axis, int):
     num_cores = num_programs(core_axis)
     core_id = program_id(core_axis)
@@ -1441,7 +1450,7 @@ def _partition_grid(
     )
   if num_cores == 1:
     # We aren't partitioning the grid
-    return grid, (0,) * len(grid)
+    return grid, (np.int32(0),) * len(grid)
 
   # If dimension_semantics aren't provided, we assume it is all arbitrary.
   if dimension_semantics is None:
@@ -1476,7 +1485,7 @@ def _partition_grid(
         grid, first_divisible_dimension, partitioned_dim_size
     )
     offsets = jax_util.tuple_update(
-        (0,) * len(grid),
+        (np.int32(0),) * len(grid),
         first_divisible_dimension,
         partitioned_dim_offset,
     )
@@ -1529,7 +1538,7 @@ def _partition_grid(
       core_id * base_num_iters + rem,
   )
   offsets = jax_util.tuple_update(
-      (0,) * len(grid),
+      (np.int32(0),) * len(grid),
       partition_dimension,
       grid_offset,
   )
@@ -1611,7 +1620,11 @@ def emit_pipeline(
   if not (core_axis is None or core_axis_name is None):
     raise ValueError("core_axis and core_axis_name cannot both be provided.")
   core_axis_ = core_axis_name if core_axis is None else core_axis
-  grid, grid_offsets = _partition_grid(grid, core_axis_, dimension_semantics)
+  grid, grid_offsets = _partition_grid(grid, core_axis_, dimension_semantics)  # type: ignore
+  grid = tuple(np.int32(g) if isinstance(g, int) else g for g in grid)  # type: ignore
+  grid_offsets = tuple(
+      np.int32(g) if isinstance(g, int) else g for g in grid_offsets
+  )
 
   num_steps = math.prod(grid)
   in_specs = _normalize_specs(in_specs)
@@ -1704,13 +1717,15 @@ def emit_pipeline(
 
     if no_pipelining:
       # Debugging mode where all copies are synchronous.
-      initial_indices = (0,) * len(grid)
+      lower_bnd = np.int32(0)
+      upper_bnd = np.int32(num_steps) if isinstance(num_steps, int) else num_steps
+      initial_indices = (np.int32(0),) * len(grid)
       brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
 
       @functools.partial(
           jax.lax.fori_loop,
-          0,
-          num_steps,
+          lower_bnd,
+          upper_bnd,
           init_val=(brefs, initial_indices),
       )
       def _loop_body(step, carry):
@@ -1741,7 +1756,9 @@ def emit_pipeline(
       @when(num_steps > 0)
       def _():
         # pipeline prologue
-        initial_indices = (0,) * len(grid)
+        lower_bnd = np.int32(0)
+        upper_bnd = np.int32(num_steps) if isinstance(num_steps, int) else num_steps
+        initial_indices = (np.int32(0),) * len(grid)
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
@@ -1760,7 +1777,8 @@ def emit_pipeline(
 
         # pipeline loop
         brefs, next_indices = lax.fori_loop(
-            0, num_steps, loop_body, (brefs, initial_indices)
+            lower_bnd, upper_bnd,
+            loop_body, (brefs, initial_indices)
         )
 
         # pipeline epilogue
