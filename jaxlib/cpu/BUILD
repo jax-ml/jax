@@ -17,6 +17,7 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(
     "//jaxlib:jax.bzl",
+    "jax_visibility",
     "nanobind_extension",
 )
 
@@ -36,6 +37,9 @@ cc_library(
     # compatible with libtpu
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("jaxlib/cpu/lapack_kernels"),
     deps = [
         "//jaxlib:ffi_helpers",
         "//jaxlib:tridiagonal_solve_perturbed",

@@ -1000,6 +1000,7 @@ pytype_strict_library(
     name = "mlir",
     srcs = ["interpreters/mlir.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("mlir"),
     deps = [
         ":ad_util",
         ":api_util",
@@ -1572,7 +1573,7 @@ pytype_strict_library(
     name = "tpu_custom_call",
     srcs = ["tpu_custom_call.py"],
     type_checking = "pyrefly",
-    visibility = ["//jax:internal"],
+    visibility = ["//jax:internal"] + jax_visibility("tpu_custom_call"),
     deps = [
         ":api",
         ":batching",
