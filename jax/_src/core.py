@@ -482,12 +482,9 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
     assert all(isinstance(v,  Var)           for v in outvars)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info, ctx)
 
-_var_counter = it.count()
-
 class Var:
-  __slots__ = ["count", "aval", "initial_qdd", "final_qdd"]
+  __slots__ = ["aval", "initial_qdd", "final_qdd"]
 
-  count: int
   aval: AbstractValue
   # these are only useful for jaxpr binders but rather than create a separate
   # type for those, breaking existing interpreters, we add fields here.
@@ -496,7 +493,6 @@ class Var:
 
   def __init__(self, aval: AbstractValue, initial_qdd=None, final_qdd=None):
     assert isinstance(aval, AbstractValue), aval
-    self.count = next(_var_counter)
     self.aval = aval
     self.initial_qdd = initial_qdd
     self.final_qdd = final_qdd
