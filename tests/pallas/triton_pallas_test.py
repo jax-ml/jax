@@ -472,7 +472,8 @@ class TritonPallasTest(PallasBaseTest):
     out = matmul(x, y, bm=bm, bn=bn, bk=bk, gm=gm,
                  interpret=self.INTERPRET)
     expected = jnp.matmul(
-            x, y, preferred_element_type=jnp.float32).astype(dtype)
+        x, y, preferred_element_type=jnp.float32, precision="highest"
+    ).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   @parameterized.named_parameters(*(
@@ -547,9 +548,9 @@ class TritonPallasTest(PallasBaseTest):
 
     jitted = jax.jit(softmax)
     with jax.sharding.use_abstract_mesh(abstract_mesh):
-        abstract_arr = jax.ShapeDtypeStruct((batch_size, size), jnp.float32)
-        traced = jitted.trace(abstract_arr)
-        lowered = traced.lower()
+      abstract_arr = jax.ShapeDtypeStruct((batch_size, size), jnp.float32)
+      traced = jitted.trace(abstract_arr)
+      lowered = traced.lower()
 
     compiled = lowered.compile(device_assignment=tuple(jax.devices()))
     key = jax.random.key(0)

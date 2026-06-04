@@ -389,7 +389,12 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   tiling = plgpu.TilingTransform((8, 64))
   swizzle = plgpu.SwizzleTransform(128)
 
-  delta = jnp.einsum('bqhd,bqhd->bhq', out.astype(jnp.float32), do.astype(jnp.float32))
+  delta = jnp.einsum(
+      "bqhd,bqhd->bhq",
+      out.astype(jnp.float32),
+      do.astype(jnp.float32),
+      precision="high",
+  )
   del out  # Not needed anymore.
 
   def kernel_dq(q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dq_ref,
@@ -819,7 +824,7 @@ def attention_reference(q, k, v, causal=False, save_residuals=False):
   q_reshaped = q.reshape(
       batch_size, q_seq_len, num_kv_heads, num_q_heads // num_kv_heads, head_dim
   )
-  logits = jnp.einsum("bqHhc,bkHc->bqHhk", q_reshaped, k)
+  logits = jnp.einsum("bqHhc,bkHc->bqHhk", q_reshaped, k, precision="high")
 
   if causal:
     mask = jnp.arange(q_seq_len)[:, None] >= jnp.arange(kv_seq_len)[None, :]
@@ -830,7 +835,9 @@ def attention_reference(q, k, v, causal=False, save_residuals=False):
   unnormalized = jnp.exp(logits - m)
   l = unnormalized.sum(axis=-1, keepdims=True)
   weights = unnormalized / l
-  out = jnp.einsum("bqHhk,bkHc->bqHhc", weights, v).reshape(*q.shape)
+  out = jnp.einsum(
+      "bqHhk,bkHc->bqHhc", weights, v, precision="high"
+  ).reshape(*q.shape)
 
   if save_residuals:
     log2e = math.log2(math.e)

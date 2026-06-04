@@ -688,7 +688,8 @@ class PallasCallTest(ptu.PallasTest):
     out = matmul_block_spec(x, y, bm=bm, bn=bn, bk=bk,
                             interpret=self.INTERPRET)
     expected = jnp.matmul(
-            x, y, preferred_element_type=jnp.float32).astype(dtype)
+        x, y, preferred_element_type=jnp.float32, precision="high"
+    ).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   def test_unused_ref(self):

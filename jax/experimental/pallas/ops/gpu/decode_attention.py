@@ -393,7 +393,9 @@ def mqa_reference(
   k = k.astype(jnp.float32)
   bs = q.shape[0]
   sm_scale = sm_scale if sm_scale is not None else (1 / math.sqrt(q.shape[-1]))
-  logits = jnp.einsum("bnd,bsd->bns", q, k).astype(jnp.float32)
+  logits = jnp.einsum("bnd,bsd->bns", q, k, precision="high").astype(
+      jnp.float32
+  )
   if sm_scale is not None and sm_scale != 1.0:
     logits = logits * sm_scale
   if start_idx is not None or kv_seq_len is not None:
@@ -410,7 +412,9 @@ def mqa_reference(
   l = s.sum(axis=-1)
   if normalize_output:
     s = s / l[..., None]
-  o = jnp.einsum("bns,bsd->bnd", s, v).astype(original_dtype)
+  o = jnp.einsum("bns,bsd->bnd", s, v, precision="high").astype(
+      original_dtype
+  )
 
   if return_residuals:
     return o, (l, m)
@@ -473,9 +477,9 @@ def gqa_reference(
   v_transposed = jnp.swapaxes(
       v, 1, 2
   )  # [batch_size, num_kv_heads, k_seq_len, head_dim]
-  logits = jnp.einsum("bkgd,bksd->bkgs", q_reshaped, k_transposed).astype(
-      jnp.float32
-  )
+  logits = jnp.einsum(
+      "bkgd,bksd->bkgs", q_reshaped, k_transposed, precision="high"
+  ).astype(jnp.float32)
   if sm_scale is not None and sm_scale != 1.0:
     logits = logits * sm_scale
   if start_idx is not None or kv_seq_len is not None:
@@ -492,7 +496,9 @@ def gqa_reference(
   l = s.sum(axis=-1)
   if normalize_output:
     s = s / l[..., None]
-  o = jnp.einsum("bkgs,bksd->bkgd", s, v_transposed).astype(original_dtype)
+  o = jnp.einsum(
+      "bkgs,bksd->bkgd", s, v_transposed, precision="high"
+  ).astype(original_dtype)
   o = o.reshape(bs, num_q_heads, head_dim)
 
   if return_residuals:

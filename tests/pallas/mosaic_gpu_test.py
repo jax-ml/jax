@@ -4031,7 +4031,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       b = prng.uniform(-1, 1, (n, k)).astype(dtype)
 
     res = kernel(a, b)
-    ref = jnp.dot(a.astype(acc_dtype), b.T.astype(acc_dtype))
+    ref = jnp.dot(
+        a.astype(acc_dtype), b.T.astype(acc_dtype), precision="high"
+    )
     if is_integer:
       np.testing.assert_array_equal(res, ref)
     else:
@@ -4671,7 +4673,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b)
     np.testing.assert_allclose(
         res,
-        (a.T if lhs_transpose else a) @ (b.T if rhs_transpose else b),
+        jnp.matmul((a.T if lhs_transpose else a), (b.T if rhs_transpose else b), precision="high"),
         rtol=1e-3,
     )
 
@@ -4741,7 +4743,9 @@ class PallasCallSm90ATest(PallasSm90ATest):
         grid=(1, 1),
     )(a, b)
     np.testing.assert_allclose(
-        res, a @ (b.T if rhs_transpose else b), rtol=1e-3
+        res,
+        jnp.matmul(a, b.T if rhs_transpose else b, precision="high"),
+        rtol=1e-3,
     )
 
   @parameterized.parameters(jnp.int8, jnp.uint8)
@@ -4831,7 +4835,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         grid=(1, 1),
     )(a, b)
     np.testing.assert_array_equal(
-        res, a.astype(jnp.float32) @ b.T.astype(jnp.float32)
+        res, jnp.matmul(a.astype(jnp.float32), b.T.astype(jnp.float32), precision="high")
     )
 
   def test_wgmma_sliced_acc_flip(self):
@@ -4861,7 +4865,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
       y = y[..., ::-1, :]
       return y.reshape(x.shape)
 
-    np.testing.assert_allclose(res, a @ flip_halves(b), rtol=1e-3)
+    np.testing.assert_allclose(res, jnp.matmul(a, flip_halves(b), precision="high"), rtol=1e-3)
 
   def test_wgmma_registers(self):
     def kernel(a_ref, b_ref, o_ref):
@@ -4883,7 +4887,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
     )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+    np.testing.assert_allclose(res, jnp.matmul(a, b, precision="high"), rtol=1e-3)
 
   @parameterized.parameters(jnp.int8, jnp.float8_e4m3fn, jnp.float8_e5m2)
   def test_wgmma_registers_8bit(self, input_dtype):
@@ -4919,7 +4923,10 @@ class PallasCallSm90ATest(PallasSm90ATest):
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), out_dtype),
     )(a, b)
-    ref = a.astype(out_dtype) @ b.T.astype(out_dtype)
+    if input_dtype == jnp.int8:
+      ref = a.astype(out_dtype) @ b.T.astype(out_dtype)
+    else:
+      ref = jnp.matmul(a.astype(out_dtype), b.T.astype(out_dtype), precision="high")
     if input_dtype == jnp.int8:
       np.testing.assert_array_equal(res, ref)
     else:
@@ -4946,7 +4953,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float16),
     )(a, b, i)
-    np.testing.assert_allclose(res, i + a @ b, rtol=2e-3)
+    np.testing.assert_allclose(res, i + jnp.matmul(a, b, precision="high"), rtol=2e-3)
 
   def test_run_state_discharge_regression_test(self):
     # This regression test voluntarily allocates an outer accumulator and a
@@ -4984,7 +4991,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         scratch_types=[plgpu.Barrier()],
         out_type=jax.ShapeDtypeStruct((64, 192), jnp.float32),
     )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=2e-3)
+    np.testing.assert_allclose(res, jnp.matmul(a, b, precision="high"), rtol=2e-3)
 
 
   def test_wgmma_registers_init_with_update(self):
@@ -5009,7 +5016,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float16),
     )(a, b, i)
-    np.testing.assert_allclose(res, i * 2 + a @ b, rtol=2e-3)
+    np.testing.assert_allclose(res, i * 2 + jnp.matmul(a, b, precision="high"), rtol=2e-3)
 
   def test_wgmma_sliced_ref(self):
     def kernel(a_ref, b_ref, o_ref):
@@ -5032,7 +5039,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
     )(a, b)
-    np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
+    np.testing.assert_allclose(res, jnp.matmul(a[0], b[0], precision="high"), rtol=1e-3)
 
   def test_collapsing_several_non_unit_tiled_dimensions_raises(self):
     def kernel(out, smem):
@@ -5078,7 +5085,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         ],
         out_type=jax.ShapeDtypeStruct((64, 128), jnp.float32),
     )(a, b)
-    np.testing.assert_allclose(res, a @ b.reshape(128, 128), rtol=1e-3)
+    np.testing.assert_allclose(res, jnp.matmul(a, b.reshape(128, 128), precision="high"), rtol=1e-3)
 
   def test_wgmma_sliced_acc_read(self):
     def kernel(a_ref, b_ref, o_ref):
@@ -5102,7 +5109,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
         grid=(1, 1),
     )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+    np.testing.assert_allclose(res, jnp.matmul(a, b, precision="high"), rtol=1e-3)
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_wgmma_accumulator_load_with_custom_wait(self):
@@ -5139,7 +5146,11 @@ class PallasCallSm90ATest(PallasSm90ATest):
     self.assertEqual(int(wgmma_waits[1]), 0)
 
     self.assertArraysEqual(out0, out1)
-    self.assertAllClose(out0, jnp.dot(a, b, preferred_element_type=jnp.float32), rtol=1e-3)
+    self.assertAllClose(
+        out0,
+        jnp.dot(a, b, preferred_element_type=jnp.float32, precision="high"),
+        rtol=1e-3,
+    )
 
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
@@ -5203,7 +5214,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )
 
     out_ref = (
-        jnp.broadcast_to(jnp.expand_dims(a, axis=expand_dim), (m, k)) @ b
+        jnp.matmul(jnp.broadcast_to(jnp.expand_dims(a, axis=expand_dim), (m, k)), b, precision="high")
     )
     np.testing.assert_allclose(f(a, b), out_ref, rtol=1e-3)
 
@@ -5785,7 +5796,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       x = jnp.transpose(x, (1, 0))
     if transpose_rhs:
       y = jnp.transpose(y, (1, 0))
-    expected = x @ y
+    expected = jnp.matmul(x, y, precision="high")
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   def test_matmul_alignment(self):
@@ -5817,7 +5828,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(jax.random.key(0), shape=lhs_shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=dtype)
     result = f(x, y)
-    expected = x @ y
+    expected = jnp.matmul(x, y, precision="high")
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   @parameterized.product(
@@ -5952,7 +5963,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     )
     x = jax.random.uniform(jax.random.key(0), shape=(m, k), dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=(k, n), dtype=dtype)
-    np.testing.assert_allclose(f(x, y), x @ y, rtol=1e-3)
+    np.testing.assert_allclose(f(x, y), jnp.matmul(x, y, precision="high"), rtol=1e-3)
 
   @parameterized.product(
       m=[256],
@@ -6267,7 +6278,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
     np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
     x_logical = x_logical.reshape(m, k)
-    ref = x_logical.astype(jnp.float32) @ y.T.astype(jnp.float32)
+    ref = jnp.matmul(x_logical.astype(jnp.float32), y.T.astype(jnp.float32), precision="high")
     np.testing.assert_allclose(z, ref, atol=7e-5, rtol=5e-6)
 
   @parameterized.product(
@@ -6367,7 +6378,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     y32 = y.astype(np.float32)
     a_logical_scales = jnp.repeat(x_scale, block_size, axis=1).astype(jnp.float32)
     b_logical_scales = jnp.repeat(y_scale, block_size, axis=1).astype(jnp.float32)
-    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    ref = jnp.matmul((x32 * a_logical_scales), (y32 * b_logical_scales).T, precision="high")
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.parameters(
@@ -6409,7 +6420,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
     result = f(x, y)
-    np.testing.assert_allclose(result, x @ y, rtol=1e-3)
+    np.testing.assert_allclose(result, jnp.matmul(x, y, precision="high"), rtol=1e-3)
 
   def test_async_copy_smem_to_tmem_warp_semantics(self):
     shape, dtype = (128, 64), jnp.int32
@@ -6531,7 +6542,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
     result = f(x, y)
-    expected = x @ y
+    expected = jnp.matmul(x, y, precision="high")
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   def test_tmem_alloc_within_warp_map(self):
@@ -6697,7 +6708,10 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
     np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
     x_logical = x_logical.reshape(m, k)
-    ref = x_logical.astype(acc_type) @ y.T.astype(acc_type)
+    if jnp.issubdtype(ab_type, jnp.floating):
+      ref = jnp.matmul(x_logical.astype(acc_type), y.T.astype(acc_type), precision="high")
+    else:
+      ref = x_logical.astype(acc_type) @ y.T.astype(acc_type)
     atol = rtol = 0
     if jnp.issubdtype(ab_type, jnp.floating):
       atol = 7e-5
@@ -6794,7 +6808,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(jax.random.key(0), shape=full_lhs_shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=full_rhs_shape, dtype=dtype)
     result = f(x, y)
-    expected = x @ y
+    expected = jnp.matmul(x, y, precision="high")
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   @parameterized.parameters(
@@ -6861,8 +6875,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
     result_128, result_64 = f(x.T, y)
-    np.testing.assert_allclose(result_128, x @ y, rtol=1e-3)
-    np.testing.assert_allclose(result_64, x[:, :64] @ y[:64, :], rtol=1e-3)
+    np.testing.assert_allclose(result_128, jnp.matmul(x, y, precision="high"), rtol=1e-3)
+    np.testing.assert_allclose(result_64, jnp.matmul(x[:, :64], y[:64, :], precision="high"), rtol=1e-3)
 
   @parameterized.parameters(
       (128, jnp.float16)
@@ -6935,8 +6949,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
     result_128, result_64 = f(x, y)
-    np.testing.assert_allclose(result_128, x @ y, rtol=1e-3)
-    np.testing.assert_allclose(result_64, x[:, :64] @ y[:64, :], rtol=1e-3)
+    np.testing.assert_allclose(result_128, jnp.matmul(x, y, precision="high"), rtol=1e-3)
+    np.testing.assert_allclose(result_64, jnp.matmul(x[:, :64], y[:64, :], precision="high"), rtol=1e-3)
 
   @parameterized.parameters(
       dict(barrier_index=(0,), num_barriers=2),
@@ -6983,7 +6997,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jax.random.uniform(jax.random.key(0), shape=shape, dtype=dtype)
     y = jax.random.uniform(jax.random.key(1), shape=shape, dtype=dtype)
     result = f(x, y)
-    expected = x @ y
+    expected = jnp.matmul(x, y, precision="high")
     np.testing.assert_allclose(result, expected, rtol=1e-3)
 
   @parameterized.product(
@@ -7726,7 +7740,7 @@ class PipelineSm90ATest(PallasSm90ATest):
         scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
         grid=(grid_m, grid_n),
     )(a, b)
-    np.testing.assert_array_equal(res, a @ b)
+    np.testing.assert_array_equal(res, jnp.matmul(a, b, precision="high"))
 
 
 class PipelineSm90AWGTest(
@@ -8603,7 +8617,7 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     key1, key2 = jax.random.split(jax.random.key(42), 2)
     a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
     b = jax.random.uniform(key2, shape=(k, n), dtype=dtype)
-    np.testing.assert_array_equal(kernel(a, b), a @ b)
+    np.testing.assert_array_equal(kernel(a, b), jnp.matmul(a, b, precision="high"))
 
 
 class CoreMapWGTest(
@@ -9088,7 +9102,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
           ],
       )(l_ref, r_ref, o_ref)
 
-    np.testing.assert_allclose(kernel(x, x), x @ x, rtol=2e-3)
+    np.testing.assert_allclose(kernel(x, x), jnp.matmul(x, x, precision="high"), rtol=2e-3)
 
   # TODO(apaszke): Clusters and multicast
 
