@@ -253,10 +253,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::arith::registerArithExpandOpsPass();
     mlir::LLVM::registerDIScopeForLLVMFuncOpPass();
   });
-  const char* cuda_root = mosaic::gpu::GetCUDARoot();
-  if (!cuda_root) {
-    return mlir::failure();
-  }
+
   std::vector<std::string> libraries_to_link{
       ::xla::gpu::nvptx::LibDevicePath(mosaic::gpu::kDefaultCudaDataDir)};
   if (!nvshmem_path.empty()) {

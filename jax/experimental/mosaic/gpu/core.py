@@ -59,9 +59,13 @@ from . import profiler
 from . import tcgen05
 from . import utils
 
-# MLIR can't find libdevice unless we point it to the CUDA path
+# Point Mosaic GPU tools (like nvdisasm) to the CUDA path
 cuda_root = lib.cuda_path or "/usr/local/cuda"
-os.environ["CUDA_ROOT"] = cuda_root
+# TODO(bchetioui): remove once minimum jaxlib version is 0.10.2
+if lib.jaxlib_extension_version < 463:
+  os.environ["CUDA_ROOT"] = cuda_root
+else:
+  os.environ["MOSAIC_GPU_CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 BAZEL_TEST = os.environ.get("BAZEL_TEST", "0")
 
