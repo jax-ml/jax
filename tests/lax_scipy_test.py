@@ -526,7 +526,9 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def test_vq(self, n_obs, n_codes, n_feats, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((n_obs, *n_feats), dtype), rng((n_codes, *n_feats), dtype)]
-    self._CheckAgainstNumpy(osp_cluster.vq.vq, lsp_cluster.vq.vq, args_maker, check_dtypes=False)
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="use `scipy.cluster.vq.vq` instead"):
+      self._CheckAgainstNumpy(osp_cluster.vq.vq, lsp_cluster.vq.vq, args_maker, check_dtypes=False)
     self._CompileAndCheck(lsp_cluster.vq.vq, args_maker)
 
   @jtu.sample_product(
