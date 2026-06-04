@@ -762,6 +762,10 @@ jax_multiplatform_test(
         "tpu_pallas_interpret_distributed_test.py",
     ],
     enable_backends = ["cpu"],
+    tags = [
+        "noasan",  # Times out.
+        "notsan",  # Times out.
+    ],
     deps = [
         "//jax/experimental:pallas",
         "//jax/experimental:pallas_tpu",

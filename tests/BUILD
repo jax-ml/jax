@@ -1026,6 +1026,7 @@ jax_multiplatform_test(
     shard_count = 10,
     tags = [
         "noasan",  # Times out under asan.
+        "notsan",  # Times out under tsan.
     ],
     deps = py_deps([
         "absl/testing",
