@@ -673,6 +673,16 @@ class KeyReuseEagerTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(KeyReuseError, self.traced_bits_msg):
       f()
 
+  def test_vmap_zero_sized_axis(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37859: vmap over
+    # a zero-sized key axis must not raise a spurious KeyReuseError.
+    def f(key):
+      a, b = jax.random.split(key)
+      return jax.random.bits(a) + jax.random.bits(b)
+    keys = jax.random.split(jax.random.key(0), 0)
+    self.assertEqual(keys.shape, (0,))
+    jax.vmap(f)(keys)  # does not raise
+
 
 class KeyReuseImplementationTest(jtu.JaxTestCase):
 
