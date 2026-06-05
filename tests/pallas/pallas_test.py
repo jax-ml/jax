@@ -905,7 +905,10 @@ class PallasCallTest(ptu.PallasTest):
     )
     def dot_kernel(x_ref, y_ref, o_ref):
       o_ref[...] = jnp.einsum(
-          "mk,nk->mn" if transpose else "mk,kn->mn", x_ref[...], y_ref[...]
+          "mk,nk->mn" if transpose else "mk,kn->mn",
+          x_ref[...],
+          y_ref[...],
+          preferred_element_type=jnp.float32,
       ).astype(o_ref.dtype)
 
     self.assertAllClose(dot_kernel(x, y), expected)
