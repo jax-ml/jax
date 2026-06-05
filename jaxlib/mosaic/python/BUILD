@@ -15,7 +15,7 @@
 # Mosaic Python bindings
 
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
-load("//jaxlib:jax.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_library", "pytype_strict_library")
 
 package(
     default_applicable_licenses = [],
@@ -91,11 +91,12 @@ py_library(
     ],
 )
 
-py_library(
+pytype_strict_library(
     name = "layout_defs",
     srcs = [
         "layout_defs.py",
     ],
+    type_checking = "pyrefly",
     visibility = [
         "//visibility:public",
     ],
