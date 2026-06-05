@@ -21,6 +21,7 @@ from operator import index
 import typing
 from typing import Union
 import warnings
+from contextlib import nullcontext
 
 import numpy as np
 
@@ -1247,7 +1248,10 @@ def beta(key: ArrayLike,
       shape. Must be broadcast-compatible with ``a`` and ``b``. The default
       (None) produces a result shape by broadcasting ``a`` and ``b``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``a`` and ``b`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1262,15 +1266,19 @@ def beta(key: ArrayLike,
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   key, _ = _check_prng_key("beta", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `beta` must be a float "
                      f"dtype, got {dtype}")
-  _check_all_safe_to_cast("beta", dtype, a, b)
   shape = _check_broadcast_shapes("beta", shape, a, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "beta", shape)
-
+  with cxt:
+    _check_all_safe_to_cast("beta", dtype, a, b)
   return maybe_auto_axes(_beta, out_sharding,
                          shape=shape, dtype=dtype)(key, a, b)
 
@@ -2213,7 +2221,10 @@ def pareto(key: ArrayLike,
       shape. Must be broadcast-compatible with ``b``. The default (None)
       produces a result shape equal to ``b.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``b`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2228,14 +2239,19 @@ def pareto(key: ArrayLike,
     ``shape`` is not None, or else by ``b.shape``.
   """
   key, _ = _check_prng_key("pareto", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `pareto` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("pareto", shape, b)
-  _check_all_safe_to_cast("pareto", dtype, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "pareto", shape)
+  with cxt:
+    _check_all_safe_to_cast("pareto", dtype, b)
   return maybe_auto_axes(_pareto, out_sharding,
                          shape=shape, dtype=dtype)(key, b)
 
@@ -2269,7 +2285,10 @@ def t(key: ArrayLike,
       shape. Must be broadcast-compatible with ``df``. The default (None)
       produces a result shape equal to ``df.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``df`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2284,6 +2303,10 @@ def t(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("t", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -2291,7 +2314,8 @@ def t(key: ArrayLike,
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("t", shape, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "t", shape)
-  _check_all_safe_to_cast("t", dtype, df)
+  with cxt:
+    _check_all_safe_to_cast("t", dtype, df)
   return maybe_auto_axes(_t, out_sharding,
                          shape=shape, dtype=dtype)(key, df)
 
@@ -2335,7 +2359,10 @@ def chisquare(key: ArrayLike,
       shape. Must be broadcast-compatible with ``df``. The default (None)
       produces a result shape equal to ``df.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``df`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: optional, Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2350,14 +2377,19 @@ def chisquare(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("chisquare", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError("dtype argument to `chisquare` must be a float "
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("chisquare", shape, df)
-  _check_all_safe_to_cast("chisquare", dtype, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
+  with cxt:
+    _check_all_safe_to_cast("chisquare", dtype, df)
   return _chisquare(key, df, shape, dtype, out_sharding)
 
 @jit(static_argnums=(2, 3, 4))
@@ -2400,7 +2432,10 @@ def f(key: ArrayLike,
       The default (None) produces a result shape equal to ``dfnum.shape``,
       and ``dfden.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``dfnum`` and ``dfden`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: optional, specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2415,6 +2450,10 @@ def f(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("f", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -2422,7 +2461,8 @@ def f(key: ArrayLike,
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("f", shape, dfnum, dfden)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "f", shape)
-  _check_all_safe_to_cast("f", dtype, dfnum, dfden)
+  with cxt:
+    _check_all_safe_to_cast("f", dtype, dfnum, dfden)
   return _f(key, dfnum, dfden, shape, dtype, out_sharding)
 
 @jit(static_argnums=(3, 4, 5))
@@ -2832,7 +2872,10 @@ def rayleigh(key: ArrayLike,
       shape. Must be broadcast-compatible with ``scale``. The default (None)
       produces a result shape equal to ``scale.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``scale`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2847,6 +2890,10 @@ def rayleigh(key: ArrayLike,
     ``shape`` is not None, or else by ``scale.shape``.
   """
   key, _ = _check_prng_key("rayleigh", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -2854,7 +2901,8 @@ def rayleigh(key: ArrayLike,
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("rayleigh", shape, scale)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "rayleigh", shape)
-  _check_all_safe_to_cast("rayleigh", dtype, scale)
+  with cxt:
+    _check_all_safe_to_cast("rayleigh", dtype, scale)
   return maybe_auto_axes(_rayleigh, out_sharding,
                          shape=shape, dtype=dtype)(key, scale)
 
@@ -2894,7 +2942,10 @@ def wald(key: ArrayLike,
       shape. Must be broadcast-compatible with ``mean``. The default
       (None) produces a result shape equal to ``np.shape(mean)``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``mean`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: optional, specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2909,6 +2960,10 @@ def wald(key: ArrayLike,
     ``shape`` is not None, or else by ``mean.shape``.
   """
   key, _ = _check_prng_key("wald", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -2916,7 +2971,8 @@ def wald(key: ArrayLike,
                      f"dtype, got {dtype}")
   shape = _check_broadcast_shapes("wald", shape, mean)
   out_sharding = canonicalize_sharding(out_sharding, "wald")
-  _check_all_safe_to_cast("wald", dtype, mean)
+  with cxt:
+    _check_all_safe_to_cast("wald", dtype, mean)
   return maybe_auto_axes(_wald, out_sharding, shape=shape, dtype=dtype)(key, mean)
 
 @jit(static_argnums=(2, 3))
@@ -3090,7 +3146,10 @@ def lognormal(key: ArrayLike,
     shape: optional, a tuple of nonnegative integers specifying the result
       shape. The default (None) produces a result shape equal to ``()``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``sigma`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     out_sharding: optional, specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -3104,13 +3163,18 @@ def lognormal(key: ArrayLike,
     A random array with the specified dtype and with shape given by ``shape``.
   """
   key, _ = _check_prng_key("lognormal", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   dtype = dtypes.check_and_canonicalize_user_dtype(float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `lognormal` must be a float or complex dtype, "
                     f"got {dtype}")
   shape = _check_broadcast_shapes("lognormal", shape, sigma)
   out_sharding = canonicalize_sharding(out_sharding, "lognormal")
-  _check_all_safe_to_cast("lognormal", dtype, sigma)
+  with cxt:
+    _check_all_safe_to_cast("lognormal", dtype, sigma)
   return maybe_auto_axes(_lognormal, out_sharding, shape=shape, dtype=dtype)(key, sigma)
 
 @jit(static_argnums=(2, 3), inline=True)
