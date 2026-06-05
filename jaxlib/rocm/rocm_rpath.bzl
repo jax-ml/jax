@@ -65,7 +65,6 @@ def _rocm_wheel_rpaths():
     where TheRock is in the container's system Python). The legacy `/opt/rocm`
     fallback is appended by the caller so it stays last.
     """
-
     # `_rocm_sdk_core/lib` holds the non-arch runtime libs; `_rocm_sdk_libraries
     # [...]/lib` holds the math libs + per-arch kernel data. site_libs covers the
     # multi-arch + per-family packages; core_libs is the cross-Python/absolute
