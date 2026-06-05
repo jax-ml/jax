@@ -392,6 +392,9 @@ def is_device_rocm() -> bool:
 def is_device_cuda() -> bool:
   return 'cuda' in xla_bridge.get_backend().platform_version
 
+def is_device_oneapi() -> bool:
+  return 'oneapi' in xla_bridge.get_backend().platform_version
+
 def is_cloud_tpu() -> bool:
   return running_in_cloud_tpu_vm
 
@@ -570,6 +573,8 @@ def _get_device_tags():
     return {device_under_test(), "rocm"}
   elif is_device_cuda():
     return {device_under_test(), "cuda"}
+  elif is_device_oneapi():
+    return {device_under_test(), "oneapi"}
   else:
     return {device_under_test()}
 

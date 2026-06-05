@@ -120,10 +120,12 @@ class PrimitiveTest(jtu.JaxTestCase):
         if d.platform not in unimplemented_platforms
     ]
     logging.info("Using devices %s", [str(d) for d in devices])
-    # lowering_platforms uses "cuda" or "rocm" instead of "gpu"
+    # lowering_platforms uses "cuda" or "rocm" or "oneapi" instead of "gpu"
     gpu_platform = "cuda"
     if jtu.is_device_rocm():
       gpu_platform = "rocm"
+    if jtu.is_device_oneapi():
+      gpu_platform = "oneapi"
     lowering_platforms: list[str] = [
         p if p != "gpu" else gpu_platform
         for p in ("cpu", "gpu", "tpu")

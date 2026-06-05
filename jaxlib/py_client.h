@@ -105,7 +105,8 @@ class PyClient {
     // we haven't yet updated JAX clients that expect "gpu". Migrate users and
     // remove this code.
     if (ifrt_client_->platform_name() == "cuda" ||
-        ifrt_client_->platform_name() == "rocm") {
+        ifrt_client_->platform_name() == "rocm" ||
+        ifrt_client_->platform_name() == "oneapi") {
       return "gpu";
     } else {
       return ifrt_client_->platform_name();
