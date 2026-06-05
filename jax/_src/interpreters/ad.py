@@ -315,7 +315,7 @@ def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
         t = p2tz(t)
       return LinearizeTracer(_lin_trace, p, t).full_lower()
     tracers = primals_ft.map(partial(make_tracer, lin_trace))
-
+    tangent_trace.set_in_ft(tracers)
     with (core.set_current_trace(lin_trace),
           source_info_util.transform_name_stack('jvp')):
       ans = traceable(*tracers.unflatten())
@@ -331,9 +331,9 @@ def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
           lin_trace.to_primal_tangent_pair).unzip2()
       del lin_trace, ans, tracers
   out_nzs = [type(t) is not Zero for t in out_tangents]
-  out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
-  out_nz_tangents = map(partial(tangent_trace.to_jaxpr_tracer,
-                                source_info=source_info), out_nz_tangents)
+  out_nz_tangents = out_tangents.filter_with_mask(out_nzs)
+  out_nz_tangents = out_nz_tangents.map(partial(tangent_trace.to_jaxpr_tracer,
+      source_info=source_info))
   dbg = dbg.with_unknown_names()
   jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)
   tangent_trace.invalidate()

@@ -73,8 +73,10 @@ def _pad_constvars(jaxpr: core.ClosedJaxpr, num_consts: int,
                    right: tuple[core.AbstractValue, ...]) -> core.ClosedJaxpr:
   def make_var(aq):
     return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
-  invars = [*map(make_var, left), *jaxpr.invars[:num_consts],
-            *map(make_var, right), *jaxpr.invars[num_consts:]]
+  # TODO(dougalm): add structure to cond args
+  invars = FlatTree.flatten_list([
+      *map(make_var, left), *jaxpr.invars[:num_consts],
+      *map(make_var, right), *jaxpr.invars[num_consts:]])
   effs = pe._renumber_effects(invars, jaxpr.invars, jaxpr.effects)
   jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, effects=effs))
   config.enable_checks.value and core.check_jaxpr(jaxpr.jaxpr)
@@ -87,9 +89,12 @@ def _dedup_consts(jaxpr, num_consts, const_ids):
                   for constid, v in zip(const_ids, jaxpr.invars[:num_consts])}
   eqns = [e.replace(invars=[canonicalize.get(x, x) if isinstance(x, core.Var)
                             else x for x in e.invars]) for e in jaxpr.eqns]
-  outvars = [canonicalize.get(x, x) if isinstance(x, core.Var) else x
-             for x in jaxpr.outvars]
-  invars = [*list(newvars.values()), *jaxpr.invars[num_consts:]]
+  # TODO(dougalm): use structure
+  outvars = FlatTree.flatten_list(
+      [canonicalize.get(x, x) if isinstance(x, core.Var) else x
+       for x in jaxpr.outvars])
+  invars = FlatTree.flatten_list(
+      [*list(newvars.values()), *jaxpr.invars[num_consts:]])
   effs = pe._renumber_effects(invars,
       [*map(canonicalize.get, jaxpr.invars[:num_consts]), *jaxpr.invars[num_consts:]],
       jaxpr.effects)

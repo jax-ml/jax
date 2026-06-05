@@ -47,7 +47,7 @@ from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
 from jax._src import linear_util as lu
-from jax._src.tree_util import tree_map, FlatTree
+from jax._src.tree_util import tree_map, FlatTree as ft, FlatTree
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache, HashableWrapper,
@@ -99,8 +99,8 @@ class Jaxpr:
                '_effects', '_debug_info', '_is_high']
 
   _constvars: list[Var]
-  _invars: list[Var]
-  _outvars: list[Atom]
+  _invars: FlatTree[Var]
+  _outvars: FlatTree[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
   _debug_info: DebugInfo
@@ -152,8 +152,8 @@ class Jaxpr:
   def out_avals(self):
     return [v.aval for v in self.outvars]
 
-  def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
-               outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
+  def __init__(self, constvars: Sequence[Var], invars: FlatTree[Var],
+               outvars: FlatTree[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
                # We want all calls to pass a DebugInfo object, but for backwards
                # compatibility we have to allow calls when the debug_info
@@ -173,9 +173,11 @@ class Jaxpr:
         union of the effects for each equation.
       debug_info: debugging information.
     """
+    assert isinstance(invars, FlatTree)
+    assert isinstance(outvars, FlatTree)
     self._constvars = list(constvars)
-    self._invars = list(invars)
-    self._outvars = list(outvars)
+    self._invars = invars
+    self._outvars = outvars
     self._eqns = list(eqns)
     self._effects = effects
     # TODO(https://github.com/jax-ml/jax/issues/26480)
@@ -269,12 +271,12 @@ class ClosedJaxpr:
 
   @property
   def in_avals(self):
-    return [v.aval for v in self.invars]
+    return self.invars.map(lambda v: v.aval)
 
   @property
   def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
-            for v in self.invars]
+    return self.invars.map(lambda v:
+        v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd))
 
   @property
   def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
@@ -1791,7 +1793,7 @@ class AbstractValue:
     return self.raise_val(*lo_vals_ft.unflatten())  # pyrefly: ignore[missing-attribute]
 
   def lower_val2(self, hi_val):
-    return FlatTree.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
+    return ft.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
 
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]

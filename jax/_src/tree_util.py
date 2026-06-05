@@ -1566,7 +1566,7 @@ class FlatTree:
     return self.vals.__iter__()
 
   def __getitem__(self, i):
-    assert False, "todo"
+    return self.vals[i]
 
   def filter(self, f):
     # a FlatTree version of list.filter. Unlike the latter, it keeps
@@ -1574,6 +1574,8 @@ class FlatTree:
     # be reinstantiated with `unfilter`.
     return self.filter_with_mask(map(f, self))
 
+  # TODO(dgoualm): make a version (or a flag) that throws away
+  # the rejected elements instead of saving them.
   def filter_with_mask(self, mask):
     xs = list(self)
     ft = self.map(lambda _: None)
