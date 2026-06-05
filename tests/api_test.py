@@ -63,6 +63,7 @@ from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.eval_jaxpr import eval_jaxpr_p
+from jax._src.lib import jaxlib_extension_version
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.sharding_impls import make_single_device_sharding
 import jax._src.util as jax_util
@@ -2918,6 +2919,18 @@ class APITest(jtu.JaxTestCase):
 
     self.assertEqual(out_shape.shape, (2, 4))
 
+  def test_eval_shape_nested_jit_sds(self):
+    @jit
+    def inner(x):
+      return x + 1
+
+    def outer():
+      sds = api.ShapeDtypeStruct((), jnp.float32)
+      return inner(sds)
+
+    out_shape = api.eval_shape(outer)
+    self.assertEqual(out_shape.shape, ())
+
   def test_eval_shape_tuple_unpacking(self):
     def fun(x, y):
       a, b = x
@@ -3355,6 +3368,8 @@ class APITest(jtu.JaxTestCase):
     check(lambda: jnp.arange(1.0).astype("int64"),
           lambda: jnp.arange(1.0).astype(int))
 
+  @unittest.skipIf(jaxlib_extension_version < 465,
+                   "wrong error for older jaxlib")
   def test_error_for_invalid_dtype(self):
     err_str = (
         "Error interpreting argument to .* as a JAX value. The problematic "
@@ -4953,7 +4968,6 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_tracing_config(self):
-    from jax._src.lib import jaxlib_extension_version  # type: ignore
     @jax.jit
     def f(x, y): return jnp.sin(x) + y
 

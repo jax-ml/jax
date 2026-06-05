@@ -642,12 +642,43 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    avals = tuple(_typeof_with_argument_info(self, i, a)
-                  for i, a in enumerate(args))
-    args = tuple(canonicalize_value(self, a, av) for a, av in zip(args, avals))
-    for arg in args:
-      if isinstance(arg, Tracer) and not arg._trace.is_valid():
-        raise escaped_tracer_error(arg)
+    canonical_args = []
+    avals = []
+    for i, arg in enumerate(args):
+      try:
+        c_arg = dtypes.canonicalize_value(arg)
+        aval = typeof(c_arg)
+      except TypeError as e:
+        raise TypeError(
+          f"Error interpreting argument to {self} as a JAX value."
+          f" The problematic value is of type {type(arg)} and was passed to"
+          f" {self} at position {i}.\n"
+        ) from e
+      if (not self.skip_canonicalization and isinstance(aval, ShapedArray)
+          and not aval.sharding.mesh.empty):
+        cur_mesh = mesh_lib.get_abstract_mesh()
+        if cur_mesh != aval.sharding.mesh:
+          # TODO(yashkatariya): Casting to Explicit is not yet allowed. Maybe we
+          # need cast_and_slice_p for it since shape might change?
+          # Atleast 1 mesh axis should be Manual and all other axes should be
+          # Manual or Auto to allow casting.
+          if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
+            if aval.sharding.mesh.are_all_axes_auto:
+              from jax._src.pjit import reshard  # pyrefly: ignore[missing-import]
+              c_arg = reshard(c_arg, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
+              aval = typeof(c_arg)
+            elif aval.sharding.mesh._any_axis_explicit:
+              raise NotImplementedError(
+                  "Closing over inputs to shard_map where the input is sharded "
+                  "on `Explicit` axes is not implemented. As a workaround, "
+                  "please pass those inputs as an argument to shard_map. Got "
+                  f"input with shape {aval.str_short(True, True)}")
+      if isinstance(c_arg, Tracer) and not c_arg._trace.is_valid():
+        raise escaped_tracer_error(c_arg)
+      canonical_args.append(c_arg)
+      avals.append(aval)
+
+    args = canonical_args
 
     # This is equivalent to "with take_current_trace()", but the bind() code
     # is called frequently and it's slightly faster to avoid using a context
@@ -2116,46 +2147,6 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 class ShardingTypeError(Exception):
   pass
-
-def _typeof_with_argument_info(primitive, i, val):
-  try:
-    return typeof(val)
-  except TypeError as e:
-    raise TypeError(
-      f"Error interpreting argument to {primitive} as a JAX value."
-      f" The problematic value is of type {type(val)} and was passed to"
-      f" {primitive} at position {i}.\n"
-    ) from e
-
-# TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
-# passed to primitives are always have avals, etc i.e. they are canonical.
-def canonicalize_value(primitive, val, aval):
-  val = dtypes.canonicalize_value(val)
-  if primitive.skip_canonicalization:
-    return val
-  if not isinstance(aval, ShapedArray):
-    return val
-  if aval.sharding.mesh.empty:
-    return val
-
-  cur_mesh = mesh_lib.get_abstract_mesh()
-  if cur_mesh == aval.sharding.mesh:
-    return val
-  # TODO(yashkatariya): Casting to Explicit is not yet allowed. Maybe we need
-  # cast_and_slice_p for it since shape might change?
-  # Atleast 1 mesh axis should be Manual and all other axes should be
-  # Manual or Auto to allow casting.
-  if cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual:
-    if aval.sharding.mesh.are_all_axes_auto:
-      from jax._src.pjit import reshard  # pyrefly: ignore[missing-import]
-      return reshard(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
-    elif aval.sharding.mesh._any_axis_explicit:
-      raise NotImplementedError(
-          "Closing over inputs to shard_map where the input is sharded on"
-          " `Explicit` axes is not implemented. As a workaround, please pass"
-          " those inputs as an argument to shard_map. Got input with shape"
-          f" {aval.str_short(True, True)}")
-  return val
 
 
 class MemorySpace(enum.Enum):
@@ -3945,7 +3936,6 @@ def _sds_aval_mapping(x):
   return aval
 pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 dtypes.register_canonicalize_value_handler(ShapeDtypeStruct, None)
-
 
 # ------------------- Jaxpr printed representation -------------------
 

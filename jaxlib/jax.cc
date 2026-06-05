@@ -1067,6 +1067,7 @@ NB_MODULE(_jax, m) {
   m.def("set_typed_complex_type", &SetTypedComplexType);
   m.def("set_typed_ndarray_type", &SetTypedNdArrayType);
   m.def("set_invalid_input_exception", &SetInvalidInputException);
+  m.def("set_valid_dtypes", &SetValidDtypes);
   m.def(
       "register_canonicalize_value_handler",
       [](nb::object type, nb::object handler) {
