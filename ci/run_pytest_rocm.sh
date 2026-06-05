@@ -36,6 +36,17 @@ echo "Installed packages:"
 
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
+# TheRock (pip) ROCm images are intentionally /opt/rocm-less, so ROCm CLI tools
+# (rocminfo, rocm-smi, ...) live in the SDK bin dir rather than on PATH. Put
+# them on PATH via rocm-sdk. apt-ROCm images lack rocm-sdk and already have
+# these tools on PATH, so the gate leaves them untouched.
+if command -v rocm-sdk >/dev/null 2>&1; then
+  sdk_bin="$(rocm-sdk path --bin)"
+  if [[ -n "$sdk_bin" ]]; then
+    export PATH="$sdk_bin:$PATH"
+  fi
+fi
+
 rocm-smi
 
 # ==============================================================================

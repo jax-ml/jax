@@ -139,6 +139,11 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "0"
+      # Required on gfx950 with ROCm 7.13 to avoid HIP "invalid device function"
+      # failures during multi-accelerator collectives. RCCL emits an explicit
+      # warning when this is unset; the env var must be in place before HIP
+      # initialization, which happens at JAX import time.
+      HSA_NO_SCRATCH_RECLAIM: "1"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
