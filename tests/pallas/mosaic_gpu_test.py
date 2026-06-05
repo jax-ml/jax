@@ -35,6 +35,7 @@ import jax
 from jax import export
 from jax import lax
 from jax import sharding
+from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -321,6 +322,46 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
     self.skip_unless_sm90a()
     # No artificially lowered limit for arch-specific tests
     super().setUp(artificial_shared_memory_limit=None)
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_griddepcontrol(self):
+    self.skip_if_wg_semantics()
+
+    @jax.jit
+    def f(x):
+      def kernel_body(x_ref, o_ref):
+        plgpu.griddepcontrol_wait()
+        o_ref[...] = x_ref[...] + 1.0
+        plgpu.griddepcontrol_launch_dependents()
+
+      return self.kernel(
+          kernel_body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+
+    x = jnp.arange(128).astype(jnp.float32)
+    util.clear_all_caches()
+    compilation_cache.reset_cache()
+
+    xla_flags = os.environ.get("XLA_FLAGS", "")
+    new_xla_flags = re.sub(r"--xla_gpu_kernel_cache_file=\S+", "", xla_flags)
+
+    # We set this to dump PTX so we can verify the instructions are there.
+    with jtu.set_env(
+        MOSAIC_GPU_DUMP_PTX="1",
+        XLA_FLAGS=new_xla_flags,
+        MOSAIC_GPU_DUMP_TO=None,
+    ):
+      with config.enable_compilation_cache(False):
+        # Capture stdout to verify PTX
+        with self.capture_stdout() as get_ptx:
+          out = f(x)
+
+    np.testing.assert_allclose(out, x + 1.0)
+
+    ptx_output = get_ptx()
+    self.assertIn("griddepcontrol.wait;", ptx_output)
+    self.assertIn("griddepcontrol.launch_dependents;", ptx_output)
 
 
 class PallasTCGen05Test(PallasTest, jtu.CudaArchSpecificTest):
