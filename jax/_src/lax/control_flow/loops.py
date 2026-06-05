@@ -1392,8 +1392,7 @@ def _scan_state_partial_discharge_rule(
     unroll, reverse, length):
   # jaxpr: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys]
   # jaxpr_: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys, *ref_outs]
-  discharged_jaxpr = state_discharge.discharge_state(
-      jaxpr, should_discharge=should_discharge)
+  discharged_jaxpr = state_discharge.discharge_state2(jaxpr, should_discharge)
 
   num_xs = len(args) - num_consts - num_carry
   is_ref = [isinstance(a, AbstractRef) and s for a, s in zip(jaxpr.in_avals, should_discharge)]
@@ -2237,30 +2236,30 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
     num_remaining_body_consts += num_remaining_cond_consts
 
   num_carry = len(in_avals) - body_nconsts - cond_nconsts
-  if body_jaxpr.consts:
+  body_jaxpr, body_jaxpr_consts = body_jaxpr.jaxpr, body_jaxpr.consts
+  if body_jaxpr_consts:
     raise NotImplementedError("Body jaxpr has consts. If you see this error, "
                               "please open an issue at "
                               "https://github.com/jax-ml/jax/issues")
-  if cond_jaxpr.consts:
+  cond_jaxpr, cond_jaxpr_consts = cond_jaxpr.jaxpr, cond_jaxpr.consts
+  if cond_jaxpr_consts:
     raise NotImplementedError("Cond jaxpr has consts. If you see this error, "
                               "please open an issue at "
                               "https://github.com/jax-ml/jax/issues")
-  discharged_cond_jaxpr = state_discharge.discharge_state(
-      cond_jaxpr, should_discharge=[*cond_consts_discharge, *carry_discharge]
-  )
-  if discharged_cond_jaxpr.consts:
-    raise NotImplementedError
+  (discharged_cond_jaxpr, discharged_cond_consts
+   ) = state_discharge.discharge_state(
+      cond_jaxpr, (),
+      should_discharge=[*cond_consts_discharge, *carry_discharge])
+  if discharged_cond_consts: raise NotImplementedError
   # body_jaxpr has the signature (*body_consts, *carry) -> carry.
   # Some of these body_consts are actually `Ref`s so when we discharge
   # them, they also turn into outputs, effectively turning those consts into
   # carries. However this doesn't fit the expected signature for the body_jaxpr.
   # Therefore we need to rewrite the jaxpr to shuffle around the `Ref`s so that
   # they are part of the carry.
-  discharged_body_jaxpr = state_discharge.discharge_state(
-      body_jaxpr, should_discharge=[*body_consts_discharge, *carry_discharge]
-  )
-  if discharged_body_jaxpr.consts:
-    raise NotImplementedError
+  discharged_body_jaxpr, discharged_consts = state_discharge.discharge_state(
+      body_jaxpr, (), should_discharge=[*body_consts_discharge, *carry_discharge])
+  if discharged_consts: raise NotImplementedError
 
   def new_body(*consts_refs_carry):
     consts, body_refs, cond_refs, carry = split_list(
@@ -2271,12 +2270,9 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
       # in the cond jaxpr are persisted via the carry.
       cond_consts, body_consts = split_list(consts, [num_remaining_cond_consts])
       cond_consts_and_refs = merge_lists(cond_is_ref, cond_consts, cond_refs)
-      cond_carry_refs = core.eval_jaxpr(
-          discharged_cond_jaxpr.jaxpr,
-          discharged_cond_jaxpr.consts,
-          *cond_consts_and_refs,
-          *carry,
-      )
+      cond_carry_refs = core.eval_jaxpr(discharged_cond_jaxpr, (),
+                                  *cond_consts_and_refs,
+                                  *carry)
       # Note: in order to handle the same Ref being updated in both the cond
       # and body, we would need to interleave the updated cond_carry_refs into
       # body_refs here.
@@ -2288,12 +2284,9 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
       cond_refs_out = cond_refs
 
     body_consts_and_refs = merge_lists(body_is_ref, body_consts, body_refs)
-    body_carry_refs = core.eval_jaxpr(
-        discharged_body_jaxpr.jaxpr,
-        discharged_body_jaxpr.consts,
-        *body_consts_and_refs,
-        *carry,
-    )
+    body_carry_refs = core.eval_jaxpr(discharged_body_jaxpr, (),
+                                 *body_consts_and_refs,
+                                 *carry)
     carry, body_refs_out = split_list(body_carry_refs, [num_carry])
     return [*body_refs_out, *cond_refs_out, *carry]
 
@@ -2316,11 +2309,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
     del body_refs
     cond_consts_and_refs = merge_lists(cond_is_ref, consts, cond_refs)
     results = core.eval_jaxpr(
-        discharged_cond_jaxpr.jaxpr,
-        discharged_cond_jaxpr.consts,
-        *cond_consts_and_refs,
-        *carry,
-    )
+        discharged_cond_jaxpr, (), *cond_consts_and_refs, *carry)
     predicate, refs_out = split_list(results, [1])
     assert len(refs_out) == len(cond_refs)
     return predicate

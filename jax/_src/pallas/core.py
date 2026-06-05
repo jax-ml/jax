@@ -162,6 +162,7 @@ def poison_buffers_enabled() -> bool:
   return config.jax_pallas_poison_buffers.value
 
 
+
 def debug_check(condition, message):
   """Check the condition if
   :func:`~jax.experimental.pallas.enable_debug_checks` is set, otherwise
@@ -798,7 +799,10 @@ class BlockMapping:
     return TransformedRef(self.transformed_block_aval, reverse_transforms)
 
   def compute_start_indices_interpret(self, loop_idx, *args):
-    jaxpr = state_discharge.discharge_state(self.index_map_jaxpr)
+    discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
+        self.index_map_jaxpr.jaxpr, self.index_map_jaxpr.consts
+    )
+    jaxpr = jax_core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
     block_indices_and_rest = jax_core.jaxpr_as_fun(jaxpr)(*loop_idx, *args)
     # Since we're passing in `Ref`s potentially, we need to split out their
     # updated values since we only care about the return values.

@@ -1056,10 +1056,9 @@ mlir.register_lowering(cond_p, _cond_lowering)
 def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *args,
                                branches, **params):
   assert not should_discharge[0], "Can't discharge the index."
-  discharged_branches = tuple(
-      discharge_state(branch, should_discharge=should_discharge[1:])
-      for branch in branches
-  )
+  discharged_branches, discharged_consts = unzip2(
+      discharge_state(branch.jaxpr, branch.consts, should_discharge=should_discharge[1:])
+      for branch in branches)
   # Don't thread the ref values through the cond if they never change.
   forwarded_outvars: list[int | None] | None = None
   for branch in discharged_branches:
@@ -1075,14 +1074,10 @@ def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *ar
           for i, j in zip(forwarded_outvars, branch_forwarding)]
   assert forwarded_outvars is not None
   all_outvars_fwd = [None] * len(out_avals) + forwarded_outvars
-  new_branches = tuple(
-      branch.replace(
-          jaxpr=branch.jaxpr.replace(
-              outvars=[v for v, fwd in zip(branch.outvars, all_outvars_fwd) if fwd is None]
-          )
-      )
-      for branch in discharged_branches
-  )
+  new_branches = tuple(core.ClosedJaxpr(
+          branch.replace(outvars=[v for v, fwd in zip(branch.outvars, all_outvars_fwd)
+                                  if fwd is None]), consts)
+      for branch, consts in zip(discharged_branches, discharged_consts))
   out_vals_no_fwd = cond_p.bind(index, *args, branches=new_branches,
                                 **params)
   out_vals, out_ref_vals_no_fwd = util.split_list(out_vals_no_fwd, [len(out_avals)])

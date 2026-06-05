@@ -748,11 +748,11 @@ def _run_scoped_discharge_rule(
   # discharge the requested refs we need to move them to the invar set.
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
-  discharged_closed_body = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr_noconst, ()),
+  discharged_body, new_consts = state_discharge.discharge_state(
+      jaxpr_noconst,
+      [],
       should_discharge=should_discharge + [False] * len(jaxpr.invars),
   )
-  discharged_body, new_consts = discharged_closed_body.jaxpr, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
@@ -791,11 +791,9 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
     )
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
-  discharged_closed_body = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr_noconst, ()), should_discharge=True)
-  discharged_body, new_consts = discharged_closed_body.jaxpr, discharged_closed_body.consts
-  if new_consts:
-    raise NotImplementedError(
+  discharged_body, new_consts = state_discharge.discharge_state(
+      jaxpr_noconst, [], should_discharge=True)
+  if new_consts:    raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
 
   def _lower_fun(*lower_fun_args):
@@ -1374,10 +1372,9 @@ def _jaxpr_call_discharge(
       [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
   )
   should_discharge = [*map(any, flat_should_discharge)]
-  discharged_closed_jaxpr = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr, ()), should_discharge=should_discharge
+  discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
+      jaxpr, (), should_discharge=should_discharge
   )
-  discharged_jaxpr, discharged_consts = discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts
   assert not discharged_consts
   outs = jaxpr_call_p.bind(
       *flat_args,

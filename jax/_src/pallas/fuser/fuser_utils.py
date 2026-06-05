@@ -168,7 +168,7 @@ def discharge_state(
     return jaxpr, [True] * len(jaxpr.constvars), {}
 
   jaxpr_no_consts = pe.convert_constvars_jaxpr(jaxpr)
-  closed_discharged_jaxpr = state_discharge.discharge_state(
+  closed_discharged_jaxpr = state_discharge.discharge_state2(
       core.ClosedJaxpr(jaxpr_no_consts, ()),
       should_discharge=should_discharge,
       lower=False,

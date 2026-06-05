@@ -170,9 +170,9 @@ def kernel_to_hlo_jaxpr(
     assert len(phys_jaxpr.invars) == len(jaxpr.invars)
     scratch_invars = phys_jaxpr.invars[grid_mapping.slice_scratch_ops]
     scratch_avals = [v.aval for v in scratch_invars]
-    discharged_closed_jaxpr = state_discharge.discharge_state(
-        jax_core.ClosedJaxpr(phys_jaxpr, phys_consts))
-  return discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts, scratch_avals
+    discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
+        phys_jaxpr, phys_consts)
+  return discharged_jaxpr, discharged_consts, scratch_avals
 
 
 def eval_jaxpr_recursive(
