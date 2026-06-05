@@ -210,6 +210,9 @@ class GSPMDSharding(jsharding.Sharding):
     self._hlo_sharding = (xc.HloSharding.from_proto(op_sharding)
                           if isinstance(op_sharding, xc.OpSharding) else
                           op_sharding)
+    # Convert HloShardingV3 to V2 as JAX expects tiled sharding for shardings
+    # returned by XLA.
+    self._hlo_sharding = xc.HloSharding.v3_to_v2_sharding(self._hlo_sharding)
     self._memory_kind = memory_kind
 
   def __reduce__(self):

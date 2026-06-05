@@ -263,6 +263,9 @@ GSPMDSharding::GSPMDSharding(nb_class_ptr<PyDeviceList> devices,
       hlo_sharding_(std::move(op_sharding)),
       memory_kind_(std::move(memory_kind)) {
   internal_device_list_ = devices_;
+  // Convert HloShardingV3 to V2 as JAX expects tiled sharding for shardings
+  // returned by XLA.
+  hlo_sharding_ = xla::HloSharding::V3ToV2Sharding(hlo_sharding_);
   // This checks in python if the memory kind is correct for the given
   // devices. Currently in python this check is optimized but we want to
   // move that check to C++ after which we can remove this call.
