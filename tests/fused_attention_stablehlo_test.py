@@ -28,6 +28,7 @@ from jax._src.cudnn.fused_attention_stablehlo import (
     check_cudnn_version,
     MaskType,
 )
+from typing import Callable, Tuple
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
@@ -97,11 +98,13 @@ def sdpa_train(query: Array,
                kv_seqlen: Array | None = None,
                q_offsets: Array | None = None,
                kv_offsets: Array | None = None,
+               score_mod_args: Tuple[Array, ...] = (),
                scale: float = 0.5,
                mask_type: MaskType = MaskType.NO_MASK,
                is_bnth: bool = False,
                dropout_rate: float = 0.1,
-               sliding_window_length: int | None = None) -> Array:
+               sliding_window_length: int | None = None,
+               score_mod: Callable[[Array], Array] | None = None) -> Array:
   if mask_type == MaskType.PADDING:
     if is_bnth:
       B, _, S, _ = query.shape
@@ -112,8 +115,10 @@ def sdpa_train(query: Array,
       partial(dot_product_attention, scale=scale, mask_type=mask_type,
               dropout_rate=dropout_rate,
               qkv_layout="BNTH" if is_bnth else "BTNH",
-              sliding_window_length=sliding_window_length),
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
+              sliding_window_length=sliding_window_length,
+              score_mod=score_mod),
+      query, key, value, bias, mask, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
+      None, score_mod_args)
   query_grad, key_grad, value_grad, bias_grad = sdpa_vjp(grad)[:4]
   if bias is not None:
     # has dbias
@@ -125,11 +130,13 @@ def sdpa_ref(query: Array,
       value: Array,
       bias: Array | None = None,
       mask: Array | None = None,
+      score_mod_args: Tuple[Array, ...] = (),
       scale: float = 0.5,
       mask_type: MaskType = MaskType.NO_MASK,
       is_bnth: bool = False,
       dropout_rate: float = 0.1,
-      sliding_window_length: int | None = None) -> Array:
+      sliding_window_length: int | None = None,
+      score_mod: Callable[[Array], Array] | None = None) -> Array:
 
   def get_causal_mask(logits):
     large_negative_number = get_large_negative_number(logits.dtype)
@@ -198,6 +205,8 @@ def sdpa_ref(query: Array,
     if bias.shape != logits.shape:
       bias = jnp.broadcast_to(bias, logits.shape)
     logits = logits + bias.astype(logits.dtype)
+  if score_mod is not None:
+    logits = score_mod(logits, *score_mod_args).astype(jnp.float32)
   probs = jax.nn.softmax(logits, axis=-1).astype(query.dtype)
   if dropout_rate > 0.:
     keep_prob = 1.0 - dropout_rate
@@ -225,13 +234,16 @@ def sdpa_train_ref(query: Array,
             mask_type: MaskType = MaskType.NO_MASK,
             is_bnth: bool = False,
             dropout_rate: float = 0.1,
-            sliding_window_length: int | None = None) -> Array:
+            sliding_window_length: int | None = None,
+            score_mod: Callable[[Array], Array] | None = None,
+            score_mod_args: Tuple[Array, ...] = ()) -> Array:
   out_ref, sdpa_vjp_ref = jax.vjp(
     partial(
       sdpa_ref, scale=scale, mask_type=mask_type, dropout_rate=dropout_rate,
-      sliding_window_length=sliding_window_length, is_bnth=is_bnth),
-    query, key, value, bias, mask)
-  query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref, _ = sdpa_vjp_ref(grad)
+      sliding_window_length=sliding_window_length, is_bnth=is_bnth,
+      score_mod=score_mod),
+    query, key, value, bias, mask, score_mod_args)
+  query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref = sdpa_vjp_ref(grad)[:4]
   if bias is not None:
     return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref)
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
@@ -269,8 +281,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     super().setUp()
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Requires at least Ampere arch")
-    if jtu.is_cuda_version_at_least(13, 0):
-      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
     self.enter_context(jtu.ignore_warning(
         category=DeprecationWarning, message='`with mesh:` context manager'))
 
@@ -754,6 +764,97 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
 
+  def test_sdpa_flex_attention(self):
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(
+        k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+
+    soft_cap_scalar = jax.random.normal(
+        k4, (4, 4, 1024, 1024), dtype=jnp.float32)
+
+    def soft_cap(attn_score, soft_cap_scalar):
+      return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
+
+    jitted_sdpa = jax.jit(
+      partial(
+        dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
+        dropout_rate=0, score_mod=soft_cap),
+    )
+
+    jitted_sdpa_ref = jax.jit(
+      partial(
+        sdpa_ref, scale=1.0, mask_type=MaskType.NO_MASK,
+        dropout_rate=0, score_mod=soft_cap),
+    )
+
+    out = jitted_sdpa(query, key, value, score_mod_args=(soft_cap_scalar,))
+    out_ref = jitted_sdpa_ref(query, key, value, score_mod_args=(soft_cap_scalar,))
+    self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_flex_attention_train(self):
+    if len(jax.local_devices()) < 4:
+      self.skipTest("Require at least 4 devices to run sharding tests.")
+    k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
+    batch_size, seq_len, num_heads, head_dim = 4, 1024, 4, 64
+    qkv_shape = (batch_size, seq_len, num_heads, head_dim)
+    query = jax.random.normal(k1, qkv_shape, dtype=jnp.bfloat16)
+    key = jax.random.normal(k2, qkv_shape, dtype=jnp.bfloat16)
+    value = jax.random.normal(k3, qkv_shape, dtype=jnp.bfloat16)
+    grad = jax.random.normal(k4, qkv_shape, dtype=jnp.bfloat16)
+    soft_cap_scalar = jax.random.normal(
+        k5, (batch_size, num_heads, seq_len, seq_len), dtype=jnp.float32)
+
+    def soft_cap(attn_score, soft_cap_scalar):
+      return soft_cap_scalar * jax.lax.tanh(attn_score / soft_cap_scalar)
+
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ("dp", "tp")) as mesh:
+      qkv_spec = PartitionSpec("dp", None, "tp", None)
+      score_mod_spec = PartitionSpec("dp", "tp", None, None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      score_mod_sharding = NamedSharding(mesh, score_mod_spec)
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+      grad = jax.device_put(grad, qkv_sharding)
+      soft_cap_scalar = jax.device_put(soft_cap_scalar, score_mod_sharding)
+
+      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding,
+                      (score_mod_sharding,))
+      out_shardings = (qkv_sharding,
+                       (qkv_sharding, qkv_sharding, qkv_sharding))
+
+      jitted_sdpa = jax.jit(
+        lambda q, k, v, g, sm_args: sdpa_train(
+          q, k, v, g, score_mod_args=sm_args, scale=1.0,
+          mask_type=MaskType.NO_MASK, dropout_rate=0, score_mod=soft_cap),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings,
+      )
+
+      jitted_sdpa_ref = jax.jit(
+        lambda q, k, v, g, sm_args: sdpa_train_ref(
+          q, k, v, g, score_mod_args=sm_args, scale=1.0,
+          mask_type=MaskType.NO_MASK, dropout_rate=0, score_mod=soft_cap),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings,
+      )
+
+      out, (query_grad, key_grad, value_grad) = \
+        jitted_sdpa(query, key, value, grad, (soft_cap_scalar,))
+      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
+        jitted_sdpa_ref(query, key, value, grad, (soft_cap_scalar,))
+      self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
+
   @jtu.run_on_devices("cuda")
   @jtu.ignore_warning(category=DeprecationWarning,
                       message='`with mesh:` context manager')
@@ -1022,8 +1123,6 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
       self.skipTest("Requires at least Hopper arch")
     if jtu.is_cuda_compute_capability_equal("12.0"):
       self.skipTest("cuDNN does not support FP8 with compute capability 12.0")
-    if jtu.is_cuda_version_at_least(13, 0):
-      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
   @jtu.sample_product(
       batch_size=[2, 4],
