@@ -2410,7 +2410,6 @@ class PallasCallTest(ptu.PallasTPUTest):
     np.testing.assert_allclose(res, expected)
 
 
-
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):
 
@@ -4028,18 +4027,16 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
 
   @parameterized.product(
-      shape=((20, 200), (8, 64), (8, 128), (16, 256)),
-      shift=(2, 3),
-      dtype=(jnp.bfloat16, jnp.int8),
+      shape=((8, 128), (16, 256), (64, 256), (8, 64), (20, 200)),
+      shift=(0, 2, 3, 129),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
   )
-  def test_roll_with_static_lane_shift_packed_types(
+  def test_roll_static_lane_shift_with_no_stride(
       self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 3):
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 11):
       self.skipTest('Needs a newer libtpu')
-    if dtype == jnp.int8 and not jtu.is_device_tpu_at_least(6):
-      self.skipTest('Requires TPU v6+.')
-    if dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4):
+    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
     x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
