@@ -1942,8 +1942,8 @@ def lower_jaxpr_to_fun(
   outer_traceback = (
       source_info_util.current().traceback if main_function else None
   )
-
-  with ir.InsertionPoint(entry_block):
+  func_loc = source_info_to_location(ctx, None, name_stack, outer_traceback)
+  with ir.InsertionPoint(entry_block), func_loc:
     flat_args = entry_block.arguments
     dim_var_values, _, const_arg_values, _ = util.split_list(
         flat_args, [num_dim_vars, num_tokens, num_const_args])
@@ -2179,7 +2179,7 @@ def jaxpr_subcomp(
         rule_ctx = LoweringRuleContext(
             module_context=ctx, primitive=eqn.primitive,
             name_stack=eqn_name_stack,
-            traceback=eqn.source_info.traceback,
+            traceback=traceback,
             avals_in=avals_in,
             avals_out=tuple(v.aval for v in eqn.outvars), tokens_in=tokens,
             tokens_out=None, jaxpr_eqn_ctx=eqn.ctx,
