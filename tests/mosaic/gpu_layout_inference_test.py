@@ -41,6 +41,7 @@ from jax.experimental.mosaic.gpu import layout_inference
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import test_util as mtu
+from jax.experimental.mosaic.gpu.mma import MMALayouts
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -1634,6 +1635,24 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(
         inference_utils.in_transforms(wgmma_op), in_transforms
     )
+
+  def test_infer_layouts_for_mma_op(self):
+    m, n, k = 64, 8, 16
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.F16Type.get()
+      acc_ty = ir.VectorType.get((m, n), ir.F32Type.get())
+      lhs_ty = ir.VectorType.get((m, k), elt_ty)
+      rhs_ty = ir.VectorType.get((k, n), elt_ty)
+      acc, lhs, rhs = undefs(acc_ty, lhs_ty, rhs_ty)
+      mma_op = mgpu.dialect.MMAOp(acc, lhs, rhs)
+
+    mgpu.infer_layout(self.module)
+
+    layouts_inst = MMALayouts(elt_ty)
+    self.checkInLayouts(
+        mma_op, [layouts_inst.acc, layouts_inst.lhs, layouts_inst.rhs]
+    )
+    self.checkOutLayouts(mma_op, [layouts_inst.acc])
 
   @parameterized.product(
       dtype=(jnp.int8, jnp.uint8),

@@ -3431,7 +3431,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         plgpu.Layout.WG_SPLAT,
         plgpu.Layout.WGMMA_TRANSPOSED,
         plgpu.Layout.TCGEN05_TRANSPOSED,
-        plgpu.Layout.TILED
+        plgpu.Layout.TILED,
+        plgpu.Layout.MMA_LHS,
+        plgpu.Layout.MMA_RHS,
+        plgpu.Layout.MMA_ACC,
     }:
       self.skipTest("Not the right layout for this test")
 
@@ -3786,6 +3789,42 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )(inp)
     np.testing.assert_array_equal(result, x + y)
+
+  @parameterized.parameters(
+      (jnp.float16, 64, 32),
+      (jnp.float16, 128, 32),
+      (jnp.bfloat16, 64, 32),
+      (jnp.bfloat16, 128, 64),
+  )
+  def test_mma(self, dtype, m, k):
+    if not hasattr(mgpu.dialect, "MMAOp"):
+      self.skip_if_wg_semantics()
+
+    n = 8
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
+    def kernel(a_ref, b_ref, o_ref):
+      acc = plgpu.layout_cast(
+          jnp.zeros((m, n), jnp.float32), plgpu.Layout.MMA_ACC(dtype)
+      )
+      a = plgpu.load(
+          a_ref, (), layout=plgpu.Layout.MMA_LHS(dtype), optimized=False
+      )
+      b = plgpu.load(
+          b_ref.T, (), layout=plgpu.Layout.MMA_RHS(dtype), optimized=False
+      )
+      o_ref[...] = plgpu.mma(acc, a, b)
+
+    key1, key2 = jax.random.split(jax.random.key(0), 2)
+    a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
+    b = jax.random.uniform(key2, shape=(n, k), dtype=dtype)
+
+    res = kernel(a, b)
+    ref = jnp.dot(a.astype(jnp.float32), b.T.astype(jnp.float32))
+    np.testing.assert_allclose(res, ref, atol=1e-2, rtol=1e-2)
 
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):

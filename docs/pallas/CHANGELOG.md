@@ -60,6 +60,8 @@ Remember to align the itemized text with the first line of an item within a list
   * Support allocating multidimensional `plgpu.Barrier`s and
     `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
     parameter.
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.mma`, a synchronous
+    warp-level matrix multiply-accumulate primitive.
 
 * Changes
 

@@ -78,6 +78,7 @@ from jax._src.pallas.mosaic_gpu.primitives import griddepcontrol_launch_dependen
 from jax._src.pallas.mosaic_gpu.primitives import griddepcontrol_wait as griddepcontrol_wait
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import load as load
+from jax._src.pallas.mosaic_gpu.primitives import mma as mma
 from jax._src.pallas.mosaic_gpu.primitives import multimem_load_reduce as multimem_load_reduce
 from jax._src.pallas.mosaic_gpu.primitives import multimem_store as multimem_store
 from jax._src.pallas.mosaic_gpu.primitives import print_layout as print_layout
