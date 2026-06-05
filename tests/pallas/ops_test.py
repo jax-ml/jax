@@ -2301,7 +2301,10 @@ class OpsTest(PallasBaseTest):
       lhs_pattern = "km" if trans_x else "mk"
       rhs_pattern = "nk" if trans_y else "kn"
       o_ref[:, :] = jnp.einsum(
-          f"{lhs_pattern},{rhs_pattern}->mn", x, y
+          f"{lhs_pattern},{rhs_pattern}->mn",
+          x,
+          y,
+          preferred_element_type=jnp.int32,
       ).astype(o_ref.dtype)
 
     # random.randint does not support int4, so create as int8.
