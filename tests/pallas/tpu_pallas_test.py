@@ -29,6 +29,7 @@ from absl.testing import parameterized
 import jax
 from jax import api_util
 from jax import lax
+from jax._src import core as jax_core
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
@@ -1085,8 +1086,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     in_avals = [aref1, aref2]
     stateful_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2), in_avals)
-    discharged_jaxpr, _ = state_discharge.discharge_state(
-        stateful_jaxpr, consts=(), should_discharge=[False, True])
+    discharged_jaxpr = state_discharge.discharge_state(
+        jax_core.ClosedJaxpr(stateful_jaxpr, ()), should_discharge=[False, True])
     self.assertLen(discharged_jaxpr.invars, 2)
     self.assertLen(discharged_jaxpr.outvars, 1)
     self.assertIsInstance(discharged_jaxpr.invars[0].aval, state.AbstractRef)

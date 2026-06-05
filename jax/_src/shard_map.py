@@ -2034,13 +2034,15 @@ def _shard_map_discharge(
   inner_mesh = _as_manual_mesh(mesh, newly_manual_axes)
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    discharged_jaxpr, discharged_consts = discharge.discharge_state(jaxpr, ())
-  if discharged_consts: raise NotImplementedError
-  del discharged_consts
+    discharged_jaxpr = discharge.discharge_state(core.ClosedJaxpr(jaxpr, ()))
+  if discharged_jaxpr.consts:
+    raise NotImplementedError
 
   ref_specs = [spec for spec, invar in zip(in_specs, jaxpr.invars)
                if isinstance(invar.aval, AbstractRef)]
-  params = dict(jaxpr=discharged_jaxpr, out_specs=(*out_specs, *ref_specs))
+  params = dict(
+      jaxpr=discharged_jaxpr.jaxpr, out_specs=(*out_specs, *ref_specs)
+  )
   params_ = shard_map_p.get_bind_params(params)
   f, = params_.pop('subfuns')
   debug_info = params_['debug_info']
