@@ -41,6 +41,12 @@ Remember to align the itemized text with the first line of an item within a list
   * {class}`jax.experimental.pallas.tpu.CompilerParams` now defaults
     ``use_tc_tiling_on_sc`` to True for SparseCore kernels.
 
+* Removals
+
+  * Removed the previously deprecated
+    {class}`jax.experimental.pallas.tpu.KernelType` and
+    {func}`jax.experimental.pallas.tpu.repeat`.
+
 * Deprecations
 
   * Deprecated `pltpu.HOST` and `pltpu.MemorySpace.HOST` in favor of `pl.HOST`.
