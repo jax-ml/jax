@@ -1188,14 +1188,6 @@ class TMEMRef:
     # end up with a non-contiguous slice of memory.
     if base_idx[0] != 0 or slice_shape[0] != TMEM_ROWS:
       raise NotImplementedError("TMEM cannot be sliced along rows")
-    if (
-        self.layout.replication_factor
-        != self.layout.remove_dimension(1).replication_factor
-    ):
-      raise NotImplementedError(
-          "Slicing along columns is not supported when columns are partitioned"
-          " across lanes or warps"
-      )
     col_idx = base_idx[1]
     if not isinstance(col_idx, ir.Value):
       col_idx = arith.constant(i32, col_idx)
