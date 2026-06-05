@@ -90,8 +90,12 @@ absl::StatusOr<nb::bytes> HloToStableHlo(const nb::bytes& hlo_module_proto) {
   mlir::MLIRContext context;
   if (VLOG_IS_ON(3)) context.disableMultithreading();
   xla::HloModuleProto proto;
-  proto.ParseFromString(
-      absl::string_view(hlo_module_proto.c_str(), hlo_module_proto.size()));
+  absl::string_view proto_view(hlo_module_proto.c_str(),
+                               hlo_module_proto.size());
+  if (!proto.ParseFromString(proto_view)) {
+    return absl::InvalidArgumentError(
+        "Failed to deserialize HloModuleProto");
+  }
   TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
                       ConvertHloToStablehlo(context, &proto));
   TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
