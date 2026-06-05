@@ -439,10 +439,10 @@ class ArrayImpl(basearray.Array):
 
     from jax._src.dlpack import DLDeviceType  # pyrefly: ignore[missing-import]
 
-    if self.platform() == "cpu":  # pyrefly: ignore[missing-attribute]
+    if self.platform() == "cpu":
       return DLDeviceType.kDLCPU, 0
 
-    elif self.platform() == "gpu":  # pyrefly: ignore[missing-attribute]
+    elif self.platform() == "gpu":
       platform_version = _get_device(self).client.platform_version
       if "cuda" in platform_version:
         dl_device_type = DLDeviceType.kDLCUDA
@@ -461,7 +461,7 @@ class ArrayImpl(basearray.Array):
     else:
       raise BufferError(
           "__dlpack__ device only supported for CPU and GPU, got platform: "
-          f"{self.platform()}"  # pyrefly: ignore[missing-attribute]
+          f"{self.platform()}"
       )
 
   def __reduce__(self):
