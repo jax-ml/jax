@@ -233,9 +233,11 @@ def segment_sum(data: ArrayLike,
 
   Args:
     data: an array with the values to be summed.
-    segment_ids: an array with integer dtype that indicates the segments of
-      `data` (along its leading axis) to be summed. Values can be repeated and
-      need not be sorted.
+    segment_ids: an array of non-negative integers that indicates the segments
+      of `data` (along its leading axis) to be summed. Values can be repeated
+      and need not be sorted. Negative ids are treated as out-of-bounds and
+      dropped rather than wrapped to count from the end, unlike
+      :attr:`jax.numpy.ndarray.at`.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -291,9 +293,11 @@ def segment_prod(data: ArrayLike,
 
   Args:
     data: an array with the values to be reduced.
-    segment_ids: an array with integer dtype that indicates the segments of
-      `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted.
+    segment_ids: an array of non-negative integers that indicates the segments
+      of `data` (along its leading axis) to be reduced. Values can be repeated
+      and need not be sorted. Negative ids are treated as out-of-bounds and
+      dropped rather than wrapped to count from the end, unlike
+      :attr:`jax.numpy.ndarray.at`.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -351,9 +355,11 @@ def segment_max(data: ArrayLike,
 
   Args:
     data: an array with the values to be reduced.
-    segment_ids: an array with integer dtype that indicates the segments of
-      `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted.
+    segment_ids: an array of non-negative integers that indicates the segments
+      of `data` (along its leading axis) to be reduced. Values can be repeated
+      and need not be sorted. Negative ids are treated as out-of-bounds and
+      dropped rather than wrapped to count from the end, unlike
+      :attr:`jax.numpy.ndarray.at`.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -410,9 +416,11 @@ def segment_min(data: ArrayLike,
 
   Args:
     data: an array with the values to be reduced.
-    segment_ids: an array with integer dtype that indicates the segments of
-      `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted.
+    segment_ids: an array of non-negative integers that indicates the segments
+      of `data` (along its leading axis) to be reduced. Values can be repeated
+      and need not be sorted. Negative ids are treated as out-of-bounds and
+      dropped rather than wrapped to count from the end, unlike
+      :attr:`jax.numpy.ndarray.at`.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
