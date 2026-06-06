@@ -170,7 +170,6 @@ void InitCanonicalizeValueHandlers();
 
 // Sets the exception raised when unknown value is passed to CanonicalizeValue.
 void SetInvalidInputException(nanobind::object exc);
-void SetValidDtypes(nanobind::object dtypes);
 
 // Tells the C++ code about the Python types TypedInt, TypedFloat,
 // TypedComplex, and TypedNdArray.

@@ -647,9 +647,6 @@ _jax_dtype_set = {
     *_complex_types,
 }
 
-if jaxlib_extension_version >= 465:
-  _jax.set_valid_dtypes(_jax_dtype_set)
-
 _jax_types = (_bool_types + _int_types + _float_types + _complex_types)
 
 _dtype_kinds: dict[str, set] = {
