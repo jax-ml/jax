@@ -45,7 +45,9 @@ pytype_strict_library(
     deps = [
         ":gpu_callbacks",
         ":jaxpr_interpret",
+        ":params",
         "//jax",
+        "//jax/_src:callback",
         "//jax/_src:core",
         "//jax/_src:typing",
         "//jax/_src:util",
@@ -53,7 +55,6 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic/interpret:thread_map",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic_gpu:core",
-        "//jax/_src/pallas/mosaic_gpu/interpret:params",
         "//jax/experimental:pallas_mosaic_gpu",
     ],
 )
