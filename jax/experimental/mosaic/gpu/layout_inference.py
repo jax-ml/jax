@@ -32,6 +32,7 @@ from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax.experimental.mosaic.gpu.mma import MMALayouts
 import numpy as np
 
 from . import constraints as cs
@@ -1160,6 +1161,56 @@ def _wgmma_constraint_system(
 
   value_sites_for_variable[a_var] = [a]
   return cs.ConstraintSystem(assignments, constraints), value_sites_for_variable
+
+
+@_add_constraint_system_derivation_rule(mgpu.MMAOp)
+def _mma_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.MMAOp,
+) -> ConstraintSystemDerivationRuleResult:
+  del ctx
+  element_type = op.a.type.element_type
+  layouts = MMALayouts(element_type)
+
+  assignments: dict[cs.Variable, cs.Constant] = {}
+  value_sites_for_variable: ValueSitesForVariable = {}
+
+  acc_out = ValueSite(op, VariableType.RESULT, 0)
+  acc_in = ValueSite(op, VariableType.OPERAND, 0)
+  acc_var = cs.Variable(acc_out)
+  acc_layout = cs.RegisterLayout(layouts.acc)
+  if not cs.is_valid_assignment(acc_var, acc_layout):
+    raise ValueError(
+        f"Cannot assign layout {acc_layout.value} to the accumulator of an mma"
+        " op: the layout is not compatible with the accumulator shape"
+        f" {acc_out.shape}."
+    )
+  assignments[acc_var] = acc_layout
+  value_sites_for_variable[acc_var] = [acc_in, acc_out]
+
+  a_site = ValueSite(op, VariableType.OPERAND, 1)
+  a_var = cs.Variable(a_site)
+  a_layout = cs.RegisterLayout(layouts.lhs)
+  if not cs.is_valid_assignment(a_var, a_layout):
+    raise ValueError(
+        f"Cannot assign layout {a_layout.value} to the 'a' operand of MMAOp: "
+        f"the layout is not compatible with the operand shape {a_site.shape}."
+    )
+  assignments[a_var] = a_layout
+  value_sites_for_variable[a_var] = [a_site]
+
+  b_site = ValueSite(op, VariableType.OPERAND, 2)
+  b_var = cs.Variable(b_site)
+  b_layout = cs.RegisterLayout(layouts.rhs)
+  if not cs.is_valid_assignment(b_var, b_layout):
+    raise ValueError(
+        f"Cannot assign layout {b_layout.value} to the 'b' operand of MMAOp: "
+        f"the layout is not compatible with the operand shape {b_site.shape}."
+    )
+  assignments[b_var] = b_layout
+  value_sites_for_variable[b_var] = [b_site]
+
+  return cs.ConstraintSystem(assignments, []), value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(vector.BroadcastOp)

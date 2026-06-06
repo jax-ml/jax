@@ -1698,6 +1698,10 @@ class Layout(SomeLayout, enum.Enum):
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
 
+  MMA_LHS = enum.auto()
+  MMA_RHS = enum.auto()
+  MMA_ACC = enum.auto()
+
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
@@ -1756,6 +1760,18 @@ class Layout(SomeLayout, enum.Enum):
         )
       case Layout.TMA_INDICES:
         return mgpu.TMA_INDICES_LAYOUT
+      case Layout.MMA_LHS:
+        (dtype,) = args
+        element_type = mgpu_utils.dtype_to_ir_type(dtype)
+        return mgpu.MMALayouts(element_type).lhs
+      case Layout.MMA_RHS:
+        (dtype,) = args
+        element_type = mgpu_utils.dtype_to_ir_type(dtype)
+        return mgpu.MMALayouts(element_type).rhs
+      case Layout.MMA_ACC:
+        (dtype,) = args
+        element_type = mgpu_utils.dtype_to_ir_type(dtype)
+        return mgpu.MMALayouts(element_type).acc
 
 
 class TMEMLayout(enum.Enum):

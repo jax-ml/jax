@@ -476,6 +476,87 @@ llvm::LogicalResult WGMMAOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult MMAOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  if (operands.empty()) {
+    return mlir::emitOptionalError(location, "expected non-empty operands");
+  }
+  inferredReturnTypes.assign({operands[0].getType()});
+  return mlir::success();
+}
+
+llvm::LogicalResult MMAOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  auto a_type = getA().getType();
+  auto b_type = getB().getType();
+  auto acc_type = getAccumulator().getType();
+
+  if (a_type.getElementType() != b_type.getElementType()) {
+    return error("The `a` and `b` inputs must have the same element type.");
+  }
+
+  auto a_shape = a_type.getShape();
+  auto b_shape = b_type.getShape();
+  auto acc_shape = acc_type.getShape();
+
+  int M = acc_shape[0];
+  if (M != a_shape[0]) {
+    return error(
+        "The accumulator's first dimension {0} must be equal to the first "
+        "dimension of `a`: {1}.",
+        M, a_shape[0]);
+  }
+  int N = acc_shape[1];
+  if (N != b_shape[0]) {
+    return error(
+        "The accumulator's second dimension {0} must be equal to the first "
+        "dimension of `b`: {1}.",
+        N, b_shape[0]);
+  }
+  int K = a_shape[1];
+  if (K != b_shape[1]) {
+    return error(
+        "`a`'s second dimension {0} must be equal to `b`'s second dimension: "
+        "{1}.",
+        K, b_shape[1]);
+  }
+
+  if (M % 16 != 0) {
+    return error("M must be a multiple of 16, but got {0}.", M);
+  }
+  if (N % 8 != 0) {
+    return error("N must be a multiple of 8, but got {0}.", N);
+  }
+  int element_bitwidth = a_type.getElementType().getIntOrFloatBitWidth();
+  int min_K = 256 / element_bitwidth;
+  if (K % min_K != 0) {
+    return error("K must be a multiple of {0} (256 / bitwidth), but got {1}.",
+                 min_K, K);
+  }
+
+  auto element_type = a_type.getElementType();
+  auto acc_element_type = acc_type.getElementType();
+  if (mlir::isa<mlir::IntegerType>(element_type)) {
+    if (!acc_element_type.isInteger(32)) {
+      return error("Only i32 accumulator supported for integer operands.");
+    }
+  } else if (mlir::isa<mlir::FloatType>(element_type)) {
+    if (!acc_element_type.isF32()) {
+      return error("Only f32 accumulator supported for floating operands.");
+    }
+  } else {
+    return error("Unsupported operand type.");
+  }
+
+  return llvm::success();
+}
+
 llvm::LogicalResult TcGen05MMAOp::verify() {
   auto error = [this](auto... params) {
     return emitOpError(llvm::formatv(params...));

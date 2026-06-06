@@ -543,6 +543,143 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
+  def test_mma_types_match(self):
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b = undefs(
+          ir.VectorType.get([64, 8], ir.F32Type.get()),
+          ir.VectorType.get([64, 16], ir.F16Type.get()),
+          ir.VectorType.get([8, 16], ir.BF16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The `a` and `b` inputs must have the same element type.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_acc_m_not_equal_to_a_m_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b = undefs(
+          ir.VectorType.get([32, 8], ir.F32Type.get()),
+          ir.VectorType.get([64, 16], ir.F16Type.get()),
+          ir.VectorType.get([8, 16], ir.F16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The accumulator's first dimension 32 must be equal to the first dimension of `a`: 64.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_acc_n_not_equal_to_b_n_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b = undefs(
+          ir.VectorType.get([64, 16], ir.F32Type.get()),
+          ir.VectorType.get([64, 16], ir.F16Type.get()),
+          ir.VectorType.get([8, 16], ir.F16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The accumulator's second dimension 16 must be equal to the first dimension of `b`: 8.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_a_k_dim_not_equal_to_b_k_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b = undefs(
+          ir.VectorType.get([64, 8], ir.F32Type.get()),
+          ir.VectorType.get([64, 16], ir.F16Type.get()),
+          ir.VectorType.get([8, 32], ir.F16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "`a`'s second dimension 16 must be equal to `b`'s second dimension: 32.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_m_dim_not_multiple_of_16(self):
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b = undefs(
+          ir.VectorType.get([15, 8], ir.F32Type.get()),
+          ir.VectorType.get([15, 16], ir.F16Type.get()),
+          ir.VectorType.get([8, 16], ir.F16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "M must be a multiple of 16, but got 15.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_n_dim_not_multiple_of_8(self):
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b = undefs(
+          ir.VectorType.get([64, 7], ir.F32Type.get()),
+          ir.VectorType.get([64, 16], ir.F16Type.get()),
+          ir.VectorType.get([7, 16], ir.F16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "N must be a multiple of 8, but got 7.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_k_dim_not_multiple_of_min_k(self):
+    with ir.InsertionPoint(self.module.body):
+      acc, a, b = undefs(
+          ir.VectorType.get([64, 8], ir.F32Type.get()),
+          ir.VectorType.get([64, 8], ir.F16Type.get()),
+          ir.VectorType.get([8, 8], ir.F16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"K must be a multiple of 16 \(256 / bitwidth\), but got 8\.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_int_operands_acc_not_i32(self):
+    with ir.InsertionPoint(self.module.body):
+      i8 = ir.IntegerType.get_signless(8)
+      acc, a, b = undefs(
+          ir.VectorType.get([64, 8], ir.F32Type.get()),
+          ir.VectorType.get([64, 32], i8),
+          ir.VectorType.get([8, 32], i8),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"Only i32 accumulator supported for integer operands\.",
+    ):
+      self.module.operation.verify()
+
+  def test_mma_float_operands_acc_not_f32(self):
+    with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
+      acc, a, b = undefs(
+          ir.VectorType.get([64, 8], i32),
+          ir.VectorType.get([64, 16], ir.F16Type.get()),
+          ir.VectorType.get([8, 16], ir.F16Type.get()),
+      )
+      mgpu.dialect.mma(acc, a, b)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"Only f32 accumulator supported for floating operands\.",
+    ):
+      self.module.operation.verify()
+
   def test_wgmma_types_match(self):
     with ir.InsertionPoint(self.module.body):
       acc, a, b = undefs(
