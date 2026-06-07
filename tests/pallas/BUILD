@@ -1544,11 +1544,13 @@ jax_multiplatform_test(
         [],
         google_value = [
             "--xla_tpu_enable_mlir_verifier=ALL",
-            "--xla_msa_enable=false",
-            "--xla_tpu_vmem_scavenging_mode=NONE",
             "--xla_mosaic_unsafe_allow_multicore_remote_dma=true",
         ],
     ),
+    backend_variant_args = {
+        "tpu_v6e": ["--xla_msa_enable=false"],
+        "tpu_7x": ["--xla_msa_enable=false"],
+    },
     enable_backends = [],
     enable_configs = [
         "tpu_v6e",
