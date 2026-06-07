@@ -14,7 +14,7 @@
 
 # Package for Mosaic-specific Pallas extensions
 
-load("//jaxlib:jax.bzl", "py_deps", "pytype_library", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "jax_visibility", "py_deps", "pytype_library", "pytype_strict_library")
 
 package(
     default_applicable_licenses = [],
@@ -99,6 +99,9 @@ pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("pallas/mosaic/lowering"),
     deps = [
         ":core",
         ":error_handling",

@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "jax_visibility",
     "py_deps",
     "pytype_library",
 )
@@ -40,6 +41,9 @@ pytype_library(
         "utils.py",
     ],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("pallas"),
     deps = [
         "//jax",
         "//jax/_src:ad",

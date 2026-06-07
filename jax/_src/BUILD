@@ -561,6 +561,9 @@ pytype_strict_library(
         "linear_util.py",
     ],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("core"),
     deps = [
         ":config",
         ":dtypes",
@@ -962,6 +965,9 @@ pytype_strict_library(
     name = "ad",
     srcs = ["interpreters/ad.py"],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("ad"),
     deps = [
         ":ad_util",
         ":api_util",
@@ -1441,6 +1447,9 @@ py_library_providing_imports_info(
         "numpy/**/*.py",
         "ops/**/*.py",
     ]),
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("numpy"),
     deps = [
         ":api",
         ":api_util",
