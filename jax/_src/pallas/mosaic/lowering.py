@@ -382,6 +382,26 @@ class UncacheablePrimitiveError(Exception):
   pass
 
 
+def _emit_detached_func(
+    name: str,
+    input_types: Sequence[ir.Type],
+    output_types: Sequence[ir.Type],
+    body_builder: Callable[[list[ir.Value]], Sequence[ir.Value]],
+) -> func.FuncOp:
+  """Helper to emit a detached FuncOp."""
+  ftype = ir.FunctionType.get(input_types, output_types)
+  func_op = func.FuncOp(name, ftype, ip=False)
+  entry_block = func_op.add_entry_block()
+  try:
+    with ir.InsertionPoint(entry_block):
+      outs = body_builder(list(entry_block.arguments))
+      func.return_(list(outs))
+  except Exception:
+    func_op.operation.erase()
+    raise
+  return func_op
+
+
 def _emit_pallas_lowering_rule_as_fun(
     ctx: LoweringContext,
     primitive: jax_core.Primitive,
@@ -404,18 +424,15 @@ def _emit_pallas_lowering_rule_as_fun(
 
   output_types = map(rule_context.aval_to_ir_type, rule_context.avals_out)
 
-  ftype = ir.FunctionType.get(input_types, output_types)
   func_name = f"_pallas_{primitive.name}"
-  func_op = func.FuncOp(func_name, ftype, ip=False)
 
-  entry_block = func_op.add_entry_block()
-  with ir.InsertionPoint(entry_block):
+  def body_builder(block_args: list[ir.Value]) -> list[ir.Value]:
     if user_grid_indices is not None:
       grid_arity = len(user_grid_indices)
-      rule_args = entry_block.arguments[grid_arity:]
+      rule_args = block_args[grid_arity:]
       sub_ctx = rule_context.replace(
           lowering_context=ctx.replace(
-              user_grid_indices=entry_block.arguments[:grid_arity],
+              user_grid_indices=block_args[:grid_arity],
           )
       )
     else:
@@ -424,7 +441,7 @@ def _emit_pallas_lowering_rule_as_fun(
               user_grid_indices=None,
           )
       )
-      rule_args = entry_block.arguments
+      rule_args = block_args
 
     outs = rule(sub_ctx, *rule_args, **params)
 
@@ -433,14 +450,12 @@ def _emit_pallas_lowering_rule_as_fun(
                  for x, aval in zip(flat_outs, rule_context.avals_out)]
 
     if any(not isinstance(x, ir.Value) for x in flat_outs):
-      func_op.operation.erase()
       # TODO(phawkins): this is probably from KeyScalarBundle primarily. Handle
       # this case and remove the exception.
       raise UncacheablePrimitiveError("Lowering rule returned non-ir.Value")
+    return flat_outs
 
-    func.return_(flat_outs)
-
-  return func_op
+  return _emit_detached_func(func_name, input_types, output_types, body_builder)
 
 
 @dataclasses.dataclass
@@ -3897,15 +3912,6 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
                              num_steps: int | ir.Value, consts, *args,
                              has_loop_index: bool,
                              unroll: int):
-  def _run_body(i, args):
-    lowering_context = ctx.lowering_context.replace(
-        block_shapes=ctx.block_shapes)
-    if has_loop_index:
-      args = jaxpr_subcomp(lowering_context, jaxpr, *consts, i, *args)
-    else:
-      args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
-    return args
-
   is_static_start = not isinstance(start, ir.Value)
   is_static_steps = not isinstance(num_steps, ir.Value)
 
@@ -3915,6 +3921,63 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
     else:
       raise ValueError(
         "Cannot fully unroll loop with dynamic number of steps (unroll=0)")
+
+  if unroll > 1:
+    const_types = [val.type for val in consts]
+    args_types = [val.type for val in args]
+
+    user_grid_indices = ctx.lowering_context.user_grid_indices
+    has_grid = user_grid_indices is not None
+    grid_arity = len(user_grid_indices) if has_grid else 0
+
+    func_arg_types = []
+    if has_grid:
+      func_arg_types.extend(val.type for val in user_grid_indices)
+    func_arg_types.extend(const_types)
+    if has_loop_index:
+      func_arg_types.append(_dtype_to_ir_type(jnp.int32))
+    func_arg_types.extend(args_types)
+
+    def body_builder(block_args: list[ir.Value]) -> list[ir.Value]:
+      if has_grid:
+        block_grid_indices = block_args[:grid_arity]
+        block_rest = block_args[grid_arity:]
+      else:
+        block_grid_indices = None
+        block_rest = block_args
+
+      lowering_context = ctx.lowering_context.replace(
+          block_shapes=ctx.block_shapes,
+          user_grid_indices=block_grid_indices,
+      )
+      return jaxpr_subcomp(lowering_context, jaxpr, *block_rest)
+
+    func_op = _emit_detached_func(
+        "_unrolled_loop_body",
+        func_arg_types,
+        args_types,
+        body_builder
+    )
+
+    def _run_body(i, args):
+      call_args = []
+      if has_grid:
+        call_args.extend(user_grid_indices)
+      call_args.extend(consts)
+      if has_loop_index:
+        call_args.append(i)
+      call_args.extend(args)
+      outs = jax_mlir_ext.inlined_func_call(func_op.operation, call_args)
+      return outs
+  else:
+    def _run_body(i, args):
+      lowering_context = ctx.lowering_context.replace(
+          block_shapes=ctx.block_shapes)
+      if has_loop_index:
+        args = jaxpr_subcomp(lowering_context, jaxpr, *consts, i, *args)
+      else:
+        args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
+      return args
 
   if is_static_start and is_static_steps and num_steps == unroll:
     # No need for an scf.For. We can just unroll completely

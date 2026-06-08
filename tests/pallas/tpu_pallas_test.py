@@ -3091,6 +3091,24 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
       debug_string = msg.getvalue()
     self.assertIn('scf.for', debug_string)
 
+  def test_fori_loop_unroll_with_program_id(self):
+    @functools.partial(self.pallas_call,
+                       out_shape=jax.ShapeDtypeStruct((256,), jnp.int32),
+                       grid=(2,),
+                       in_specs=(pl.BlockSpec((128,), lambda i: (i,)),),
+                       out_specs=pl.BlockSpec((128,), lambda i: (i,)))
+    def f(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      def body(i, _):
+        pid = pl.program_id(0)
+        y_ref[...] += pid + i
+      lax.fori_loop(0, 4, body, None, unroll=2)
+
+    x = jnp.zeros((256,), jnp.int32)
+    y = f(x)
+    np.testing.assert_array_equal(y[:128], np.full((128,), 6, dtype=np.int32))
+    np.testing.assert_array_equal(y[128:], np.full((128,), 10, dtype=np.int32))
+
 
 class PallasScalarIOpsTest(ptu.PallasTPUTest):
 
