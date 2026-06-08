@@ -80,7 +80,7 @@ def _get_grid_and_cluster_dims_and_num_threads(
 
 
 def _allocate_buffers_for_inputs(
-    token,
+    token: jax.Array,
     device_id: int,
     invars: Sequence[Any],
     inputs: Sequence[jax.Array],
@@ -257,8 +257,8 @@ def _get_outputs(
 
 
 def _load_and_store_between_allocation_keys(
-    token,
     *,
+    token: jax.Array,
     device_id: int,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -306,7 +306,7 @@ def _copy_from_gmem_buffers(
     if gpu_callbacks.is_gmem_memory_space(aval.memory_space):
       continue
     token = _load_and_store_between_allocation_keys(
-        token,
+        token=token,
         device_id=device_id,
         grid_point_coords=grid_point_coords,
         thread_id=thread_id,
@@ -334,7 +334,7 @@ def _copy_to_gmem_buffers(
     if gpu_callbacks.is_gmem_memory_space(aval.memory_space):
       continue
     token = _load_and_store_between_allocation_keys(
-        token,
+        token=token,
         device_id=device_id,
         grid_point_coords=grid_point_coords,
         thread_id=thread_id,
@@ -390,7 +390,7 @@ def interpret_pallas_call(
   )
 
   token = gpu_callbacks.call_initialize_shared_memory(
-      token,
+      token=token,
       num_gpus=jnp.int32(device_info.num_devices),
       num_threads_per_block=jnp.int32(num_threads),
       num_blocks_per_cluster=jnp.int32(num_blocks_per_cluster),
@@ -461,7 +461,7 @@ def interpret_pallas_call(
     # TODO(nrink): Support copying of slices/blocks only, based on the
     # `BlockSpec`s. (Currently only trivial `BlockSpec`s are supported.)
     token = _copy_from_gmem_buffers(
-        token,
+        token=token,
         device_id=device_info.device_id,
         grid_point_coords=grid_point_coords,
         thread_id=thread_id,
@@ -488,7 +488,7 @@ def interpret_pallas_call(
     # TODO(nrink): Support copying of slices/blocks only, based on the
     # `BlockSpec`s. (Currently only trivial `BlockSpec`s are supported.)
     token = _copy_to_gmem_buffers(
-        token,
+        token=token,
         device_id=device_info.device_id,
         grid_point_coords=grid_point_coords,
         thread_id=thread_id,

@@ -124,8 +124,8 @@ def ordering_barrier(token):
 
 
 def _initialize_shared_memory(
-    token,
     *,
+    token: jax.Array,
     num_gpus: jax.Array,
     num_threads_per_block: jax.Array,
     num_blocks_per_cluster: jax.Array,
@@ -172,8 +172,8 @@ def _initialize_shared_memory(
 
 
 def call_initialize_shared_memory(
-    token,
     *,
+    token: jax.Array,
     num_gpus: jax.Array,
     num_threads_per_block: jax.Array,
     num_blocks_per_cluster: jax.Array,
@@ -185,7 +185,7 @@ def call_initialize_shared_memory(
           interpret_params=interpret_params,
       ),
       TOKEN_SHAPE_DTYPE,
-      token,
+      token=token,
       num_gpus=num_gpus,
       num_threads_per_block=num_threads_per_block,
       num_blocks_per_cluster=num_blocks_per_cluster,
@@ -274,8 +274,8 @@ class HostAllocationRequest:
 
 
 def _make_allocation_request_array(
-    token,
     *,
+    token: jax.Array,
     memory_space_id: int,
     device_id: jax.Array,
     thread_id: jax.Array | None = None,
@@ -294,8 +294,8 @@ def _make_allocation_request_array(
 
 
 def call_make_allocation_request_array(
-    token,
     *,
+    token: jax.Array,
     memory_space_id: int,
     device_id: jax.Array,
     thread_id: jax.Array | None = None,
@@ -304,7 +304,7 @@ def call_make_allocation_request_array(
   return callback.io_callback(
       _make_allocation_request_array,
       (TOKEN_SHAPE_DTYPE, HostAllocationRequest.shape_and_dtype()),
-      token,
+      token=token,
       device_id=device_id,
       memory_space_id=memory_space_id,
       thread_id=thread_id,
@@ -329,7 +329,7 @@ class HostAllocationKey(HostAllocationRequest):
 
 
 def _allocate_buffer_for_all_threads(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array | None,
     allocation_request_as_array: jax.Array,
@@ -415,7 +415,7 @@ def _allocate_buffer_for_all_threads(
 
 
 def call_allocate_buffer_for_all_threads(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array | None,
     allocation_request_as_array: jax.Array,
@@ -436,7 +436,7 @@ def call_allocate_buffer_for_all_threads(
 
 
 def _allocate_buffer(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -490,7 +490,7 @@ def _allocate_buffer(
 
 
 def call_allocate_buffer(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -511,7 +511,7 @@ def call_allocate_buffer(
 
 
 def _deallocate_buffer(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -539,7 +539,7 @@ def _deallocate_buffer(
 
 
 def call_deallocate_buffer(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -628,7 +628,7 @@ def _validate_transforms(transforms):
 
 
 def _get(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array | None,
     thread_id: jax.Array,
@@ -735,8 +735,8 @@ def _get(
 
 
 def call_get(
-    token,
     *,
+    token: jax.Array,
     result_shape_and_dtype,
     device_id: jax.Array,
     grid_point_coords: jax.Array | None,
@@ -765,7 +765,7 @@ def call_get(
 
 
 def _swap(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -843,8 +843,8 @@ def _swap(
 
 
 def call_swap(
-    token,
     *,
+    token: jax.Array,
     result_shape_and_dtype,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
@@ -872,7 +872,7 @@ def call_swap(
 
 
 def _allocate_barriers(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -927,7 +927,7 @@ def _allocate_barriers(
 
 
 def call_allocate_barriers(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -955,7 +955,7 @@ def call_allocate_barriers(
 
 
 def _deallocate_barrier(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -991,7 +991,7 @@ def _deallocate_barrier(
 
 
 def call_deallocate_barrier(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -1010,7 +1010,7 @@ def call_deallocate_barrier(
 
 
 def _barrier_wait(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -1042,7 +1042,7 @@ def _barrier_wait(
 
 
 def call_barrier_wait(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -1061,7 +1061,7 @@ def call_barrier_wait(
 
 
 def _barrier_arrive(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -1092,7 +1092,7 @@ def _barrier_arrive(
 
 
 def call_barrier_arrive(
-    token,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -1190,7 +1190,7 @@ class DeviceLocalMemoryTransfer:
     # `_get` call already. (There should certainly not be any harm in doing so.)
 
     token, self.data = _get(
-        token,
+        token=token,
         device_id=jnp.int32(self.device_id),
         grid_point_coords=self.grid_point_coords,
         thread_id=jnp.int32(self.thread_id),
@@ -1208,7 +1208,7 @@ class DeviceLocalMemoryTransfer:
     # We write `self.data` to the destination allocation using `_swap`, where
     # the result (i.e. the old contents of the destination buffer) is ignored.
     token, _ = _swap(
-        token,
+        token=token,
         device_id=jnp.int32(self.device_id),
         grid_point_coords=self.grid_point_coords,
         thread_id=jnp.int32(self.thread_id),
@@ -1246,8 +1246,8 @@ class DeviceLocalMemoryTransfer:
 # GPU interpret mode, consider renaming this function to something along the
 # lines of `_enqueue_device_local_memory_transfer`.
 def _execute_device_local_memory_transfer(
-    token,
     *,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -1281,8 +1281,8 @@ def _execute_device_local_memory_transfer(
 # GPU interpret mode, consider renaming this function to something along the
 # lines of `call_enqueue_device_local_memory_transfer`.
 def call_execute_device_local_memory_transfer(
-    token,
     *,
+    token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
@@ -1298,7 +1298,7 @@ def call_execute_device_local_memory_transfer(
           _execute_device_local_memory_transfer, source_info=source_info
       ),
       TOKEN_SHAPE_DTYPE,
-      token,
+      token=token,
       device_id=device_id,
       grid_point_coords=grid_point_coords,
       thread_id=thread_id,
