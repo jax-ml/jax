@@ -82,10 +82,11 @@ def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
     out_primals = ans_ft.map(lambda pt: pt[0])
     out_tangents = ans_ft.map(lambda pt: pt[1])
 
-    if type(instantiate) is bool:
-      instantiate = [instantiate] * len(out_tangents)
-    out_tangents = out_tangents.map2(
-        lambda t, inst: instantiate_zeros(t) if inst else t, instantiate)
+  if type(instantiate) is bool:
+    instantiate = [instantiate] * len(out_tangents)
+  out_tangents = out_tangents.map2(
+      lambda t, inst: instantiate_zeros(t) if inst else t, instantiate
+  )
   auxs = tuple(aux.unflatten() for aux in auxs)
   return out_primals, out_tangents, *auxs
 
