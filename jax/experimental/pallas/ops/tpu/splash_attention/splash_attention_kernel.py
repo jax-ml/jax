@@ -21,6 +21,7 @@ import dataclasses
 import enum
 import functools
 import json
+import math
 from typing import Any, Literal, NamedTuple, Optional, Union, overload
 
 import jax
@@ -897,6 +898,54 @@ def _div(dividend: int, divisor: int):
   return lax.div(dividend, divisor)
 
 
+def _bytes(x: jax.Array | jax.ShapeDtypeStruct) -> int:
+  return math.prod(x.shape) * x.dtype.itemsize
+
+
+def _splash_fwd_cost_estimate(
+    q: jax.Array | jax.ShapeDtypeStruct,
+    k: jax.Array | jax.ShapeDtypeStruct,
+    v: jax.Array | jax.ShapeDtypeStruct,
+    segment_ids: SegmentIds | None,
+    sinks: jax.Array | jax.ShapeDtypeStruct | None,
+    *,
+    mask_value: float,
+    save_residuals: bool,
+    attn_logits_soft_cap: float | None,
+    is_mqa: bool,
+    kernel_inputs_specs,
+    kernel_outputs_specs,
+) -> pl.CostEstimate:
+  num_q_heads, q_seq_len, head_dim_qk = q.shape
+  kv_seq_len = k.shape[0 if is_mqa else 1]
+  head_dim_v = v.shape[-1]
+  mask = jax.ShapeDtypeStruct((q_seq_len, kv_seq_len), jnp.bool_)
+  q_head = jax.ShapeDtypeStruct((q_seq_len, head_dim_qk), q.dtype)
+  k_head = jax.ShapeDtypeStruct((kv_seq_len, head_dim_qk), k.dtype)
+  v_head = jax.ShapeDtypeStruct((kv_seq_len, head_dim_v), v.dtype)
+  sinks_spec = None if sinks is None else jax.ShapeDtypeStruct((), sinks.dtype)
+  body_cost = pl.estimate_cost(
+      attention_reference,
+      mask,
+      q_head,
+      k_head,
+      v_head,
+      segment_ids,
+      sinks_spec,
+      mask_value=mask_value,
+      save_residuals=save_residuals,
+      custom_type="flash",
+      attn_logits_soft_cap=attn_logits_soft_cap,
+  )
+  input_bytes = sum(_bytes(x) for x in jax.tree.leaves(kernel_inputs_specs))
+  output_bytes = sum(_bytes(x) for x in jax.tree.leaves(kernel_outputs_specs))
+  return pl.CostEstimate(
+      flops=num_q_heads * body_cost.flops,
+      transcendentals=num_q_heads * body_cost.transcendentals,
+      bytes_accessed=input_bytes + output_bytes,
+  )
+
+
 def _splash_attention_forward(
     fwd_mask_info: mask_info_lib.MaskInfo,
     q: jax.Array,
@@ -1139,6 +1188,19 @@ def _splash_attention_forward(
     grid_width = kv_seq_len // bkv
 
   grid = (num_q_heads, q_seq_len // bq, grid_width)
+  kernel_inputs = (
+      fwd_mask_info.data_next,
+      fwd_mask_info.block_mask,
+      fwd_mask_info.mask_next,
+      q if q_layout == QKVLayout.HEAD_DIM_MINOR else q.swapaxes(-1, -2),
+      k if k_layout == QKVLayout.HEAD_DIM_MINOR else k.swapaxes(-1, -2),
+      v if v_layout == QKVLayout.HEAD_DIM_MINOR else v.swapaxes(-1, -2),
+      q_segment_ids,
+      kv_segment_ids,
+      sinks,
+      fwd_mask_info.partial_mask_blocks,
+      q_sequence,
+  )
   with jax.named_scope(kernel_name):
     all_out = pl.pallas_call(
         partial(
@@ -1168,19 +1230,20 @@ def _splash_attention_forward(
         name=kernel_name,
         interpret=interpret,
         metadata=metadata,
-    )(
-        fwd_mask_info.data_next,
-        fwd_mask_info.block_mask,
-        fwd_mask_info.mask_next,
-        q if q_layout == QKVLayout.HEAD_DIM_MINOR else q.swapaxes(-1, -2),
-        k if k_layout == QKVLayout.HEAD_DIM_MINOR else k.swapaxes(-1, -2),
-        v if v_layout == QKVLayout.HEAD_DIM_MINOR else v.swapaxes(-1, -2),
-        q_segment_ids,
-        kv_segment_ids,
-        sinks,
-        fwd_mask_info.partial_mask_blocks,
-        q_sequence,
-    )
+        cost_estimate=_splash_fwd_cost_estimate(
+            q,
+            k,
+            v,
+            segment_ids,
+            sinks,
+            mask_value=mask_value,
+            save_residuals=save_residuals,
+            attn_logits_soft_cap=attn_logits_soft_cap,
+            is_mqa=is_mqa,
+            kernel_inputs_specs=kernel_inputs,
+            kernel_outputs_specs=out_shapes,
+        ),
+    )(*kernel_inputs)
 
   (
       _,
