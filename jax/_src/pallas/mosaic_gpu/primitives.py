@@ -1845,6 +1845,83 @@ def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
       *([state.ReadEffect(1)] if isinstance(lhs_ref, state.AbstractRef) else [])
   }
 
+
+def mma(acc: jax.Array, a: jax.Array, b: jax.Array) -> jax.Array:
+  """Computes ``acc + a @ b`` synchronously using warp-level MMA instructions.
+
+  If ``a`` has shape ``[M, K]``, ``b`` has shape ``[K, N]``, and ``acc`` has
+  shape ``[M, N]``, then the constraints are:
+
+  * ``M`` must be a multiple of 16.
+  * ``N`` must be a multiple of 8.
+  * ``K`` must be a multiple of ``256 // bitwidth``.
+
+  Args:
+    acc: The accumulator array. Must have
+      :data:`jax.experimental.pallas.mosaic_gpu.Layout.MMA_ACC` layout and be of
+      type ``jnp.int32`` if ``a`` and ``b`` are integer arrays, or
+      ``jnp.float32`` if ``a`` and ``b`` are floating point arrays.
+    a: The LHS array. Must have
+      :data:`jax.experimental.pallas.mosaic_gpu.Layout.MMA_LHS` layout.
+    b: The RHS array. Must have
+      :data:`jax.experimental.pallas.mosaic_gpu.Layout.MMA_RHS` layout.
+
+  Returns:
+    The updated accumulator array.
+  """
+  return mma_p.bind(acc, a, b)
+
+
+mma_p = jax_core.Primitive("mma")
+
+
+@mma_p.def_abstract_eval
+def _mma_abstract_eval(acc, a, b):
+  m, n = acc.shape
+  m2, k = a.shape
+  k2, n2 = b.shape
+  if m != m2 or n != n2 or k != k2:
+    raise ValueError(
+        f"Incompatible shapes for matrix multiplication: lhs={a.shape},"
+        f" rhs={b.shape}, acc={acc.shape}"
+    )
+  if a.dtype != b.dtype:
+    raise TypeError(f"Operand dtypes must match: {a.dtype} != {b.dtype}")
+  if jnp.issubdtype(a.dtype, jnp.integer):
+    if acc.dtype != jnp.int32:
+      raise NotImplementedError(
+          "Only int32 accumulator supported for integer operands. Got"
+          f" {acc.dtype}"
+      )
+  elif jnp.issubdtype(a.dtype, jnp.floating):
+    if acc.dtype != jnp.float32:
+      raise NotImplementedError(
+          "Only float32 accumulator supported for floating operands. Got"
+          f" {acc.dtype}"
+      )
+  else:
+    raise NotImplementedError(f"Unsupported operand type: {a.dtype}")
+  return acc
+
+
+@lowering.register_lowering_rule(mma_p, mgpu.LoweringSemantics.Lane)
+def _mma_lowering(ctx: lowering.LoweringRuleContext, acc, a, b):
+  acc_aval, a_aval, b_aval = ctx.avals_in
+  acc = lowering._ensure_fa(acc, acc_aval.dtype)
+  a = lowering._ensure_fa(a, a_aval.dtype)
+  b = lowering._ensure_fa(b, b_aval.dtype)
+  return mgpu.mma(acc, a, b)
+
+
+@lowering.register_lowering_rule(mma_p, mgpu.LoweringSemantics.Warpgroup)
+def _mma_warpgroup_lowering(ctx: lowering.LoweringRuleContext, acc, a, b):
+  acc_aval, a_aval, b_aval = ctx.avals_in
+  acc = lowering._ensure_ir_value(acc, acc_aval.dtype)
+  a = lowering._ensure_ir_value(a, a_aval.dtype)
+  b = lowering._ensure_ir_value(b, b_aval.dtype)
+  return mgpu.dialect.mma(acc, a, b)  # pyrefly: ignore[missing-attribute]
+
+
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
 wgmma_wait_p.multiple_results = True
 

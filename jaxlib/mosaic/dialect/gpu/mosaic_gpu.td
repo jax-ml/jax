@@ -763,6 +763,38 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma",
   let hasVerifier = 1;
 }
 
+def MosaicGPU_MMASupportedABType : AnyTypeOf<[F64, TF32, F16, BF16, F8E4M3FN, F8E5M2, I8],
+    "A type supported by the `a` and `b` operands of the synchronous `mma` instruction">;
+
+def MosaicGPU_MMASupportedAccumulatorType : AnyTypeOf<[F64, F32, F16, I32],
+    "A type supported by the accumulator of the synchronous `mma` instruction">;
+
+def MosaicGPU_MMAOp : Op<MosaicGPU_Dialect, "mma",
+    [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Multiply two matrices using synchronous warp-level matrix multiply operations.";
+  let description = [{
+    Computes `a @ b + accumulator` synchronously using warp-level MMA instructions.
+
+    All operands must be 2-dimensional vectors in registers.
+  }];
+  let arguments = (ins
+    VectorOfRankAndType<[2], [MosaicGPU_MMASupportedAccumulatorType]>:$accumulator,
+    VectorOfRankAndType<[2], [MosaicGPU_MMASupportedABType]>:$a,
+    VectorOfRankAndType<[2], [MosaicGPU_MMASupportedABType]>:$b
+  );
+  let results = (outs VectorOfRankAndType<[2], [MosaicGPU_MMASupportedAccumulatorType]>);
+
+  let assemblyFormat = [{
+    `accumulator` `(` $accumulator `:` type($accumulator) `)`
+    `a` `(` $a `:` type($a) `)`
+    `b` `(` $b `:` type($b) `)`
+    attr-dict
+    `->` type(results)
+  }];
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_TmemAttr : MosaicGPU_Attr<"Tmem", "tmem"> {
   let summary = "Tensor memory space.";
 }
