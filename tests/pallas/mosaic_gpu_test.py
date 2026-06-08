@@ -2981,8 +2981,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x, y = (jnp.arange(128).astype(jnp.float32) for _ in range(2))
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
-  @parameterized.parameters(1, 2, 3)
-  def test_nd_loop_with_carry(self, sm_steps):
+  @parameterized.product(
+      sm_steps=(1, 2, 3),
+      dynamic_sm_steps=(False, True),
+  )
+  def test_nd_loop_with_carry(self, sm_steps, dynamic_sm_steps):
     @functools.partial(
         self.kernel,
         out_shape=(
@@ -2992,12 +2995,15 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         grid=(132,),
         grid_names=("sm",),
     )
-    def kernel(o_ref, steps_ref):
+    def kernel(sm_steps_ref, o_ref, steps_ref):
+      sm_steps_val = sm_steps_ref[0] if dynamic_sm_steps else sm_steps
       def body(loop_info, carry):
         idx = loop_info.index
         assert len(idx) == 3
-        # We need to use `mode="clip"`, because the indices are not static.
-        flat_idx = jnp.ravel_multi_index(idx, (sm_steps, 4, 33), mode="clip")
+        flat_idx = 0
+        for i, d in zip(idx, (sm_steps_val, 4, 33)):
+          flat_idx = flat_idx * d + jnp.clip(i, 0, d - 1)
+        flat_idx = jnp.int32(flat_idx)
         sm_step = lax.div(
             flat_idx, lax.convert_element_type(lax.axis_size("sm"), jnp.int32)
         )
@@ -3007,10 +3013,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         return carry + 1
 
       steps_ref[lax.axis_index("sm")] = plgpu.nd_loop(
-          (sm_steps, 4, 33), collective_axes="sm", init_carry=0
+          (sm_steps_val, 4, 33), collective_axes="sm", init_carry=0
       )(body)
 
-    result, steps = kernel()
+    result, steps = kernel(jnp.array([sm_steps], dtype=jnp.int32))
     for sm_step in range(sm_steps):
       np.testing.assert_array_equal(steps, jnp.full((132,), sm_steps))
 
@@ -3025,8 +3031,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @parameterized.product(
       sm_steps=(1, 2, 3),
       tiling=(None, 1, 2, 4),
+      dynamic_sm_steps=(False, True),
   )
-  def test_nd_loop(self, sm_steps: int, tiling: int | None):
+  def test_nd_loop(
+      self, sm_steps: int, tiling: int | None, dynamic_sm_steps: bool
+  ):
     if tiling is not None:
       tiling = (sm_steps, tiling, 33)
     @functools.partial(
@@ -3035,13 +3044,15 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         grid=(132,),
         grid_names=("sm",),
     )
-    def kernel(o_ref):
-      @plgpu.nd_loop((sm_steps, 4, 33), tiling=tiling, collective_axes="sm")
+    def kernel(sm_steps_ref, o_ref):
+      sm_steps_val = sm_steps_ref[0] if dynamic_sm_steps else sm_steps
+
+      @plgpu.nd_loop((sm_steps_val, 4, 33), tiling=tiling, collective_axes="sm")
       def _(loop_info):
         idx = loop_info.index
         assert len(idx) == 3
         # We need to use `mode="clip"`, because the indices are not static.
-        grid = (sm_steps, 4, 33)
+        grid = (sm_steps_val, 4, 33)
         if tiling:
           # Reconstruct the tiled grid and index.
           tiled_grid = tuple(g // t for g, t in zip(grid, tiling))
@@ -3051,7 +3062,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
           subtile_idx = tuple(
               lax.rem(idx, jnp.int32(t)) for idx, t in zip(idx, tiling))
           idx = tile_idx + subtile_idx
-        flat_idx = jnp.ravel_multi_index(idx, grid, mode="clip")
+        flat_idx = 0
+        for i, d in zip(idx, grid):
+          flat_idx = flat_idx * d + jnp.clip(i, 0, d - 1)
         sm_step = lax.div(
             flat_idx, lax.convert_element_type(lax.axis_size("sm"), jnp.int32)
         )
@@ -3059,7 +3072,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
             flat_idx, o_ref.shape[-1:]
         )
 
-    result = kernel()
+    result = kernel(jnp.array([sm_steps], dtype=jnp.int32))
     for sm_step in range(sm_steps):
       np.testing.assert_array_equal(
           result[sm_step],
@@ -8391,8 +8404,9 @@ class HelpersTest(PallasTest):
       n=[4, 16],
       minor_dim=[0, 1],
       tile_width=[1, 2, 4],
+      dynamic_shape=(False, True),
   )
-  def test_planar_snake(self, m, n, minor_dim, tile_width):
+  def test_planar_snake(self, m, n, minor_dim, tile_width, dynamic_shape):
     reference = np.full((m, n), -1)
     counter = itertools.count()
     minor_size, major_size = (m, n) if minor_dim == 0 else (n, m)
@@ -8405,7 +8419,10 @@ class HelpersTest(PallasTest):
           reference[idx] = next(counter)
     results = np.full((m, n), -1)
     for lin in range(m * n):
-      results[plgpu.planar_snake(np.int32(lin), (m, n), minor_dim, tile_width)] = lin
+      shape = (jnp.int32(m), jnp.int32(n)) if dynamic_shape else (m, n)
+      results[
+          plgpu.planar_snake(np.int32(lin), shape, minor_dim, tile_width)
+      ] = lin
     np.testing.assert_array_equal(results, reference)
 
   def test_planar_snake_golden_with_partial_tile(self):

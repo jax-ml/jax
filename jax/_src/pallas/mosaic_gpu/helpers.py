@@ -17,7 +17,6 @@
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
-import math
 from typing import TypeVar, overload
 
 import jax
@@ -53,22 +52,22 @@ class NDLoopInfo:
 
 @overload
 def nd_loop(
-    grid: Sequence[int],
+    grid: Sequence[int | jax.Array],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
     tiling: Sequence[int] | None = None,
-    init_carry: None = None
+    init_carry: None = None,
 ) -> Callable[[Callable[[NDLoopInfo], None]], None]:
   ...
 
 
 @overload
 def nd_loop(
-    grid: Sequence[int],
+    grid: Sequence[int | jax.Array],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
     tiling: Sequence[int] | None = None,
-    init_carry: _T
+    init_carry: _T,
 ) -> Callable[[Callable[[NDLoopInfo, _T], _T]], _T]:
   ...
 
@@ -133,12 +132,17 @@ def nd_loop(grid, *, collective_axes, tiling=None, init_carry=None):
   if tiling:
     if len(grid) != len(tiling):
       raise ValueError(f"{tiling=} and {grid=} must have same length.")
-    if any(dim % tile != 0 for dim, tile in zip(grid, tiling, strict=True)):
-      raise ValueError(f"Tiling {tiling} does not divide grid {grid}.")
+    for dim, tile in zip(grid, tiling, strict=True):
+      if isinstance(dim, (int, np.integer)) and dim % tile != 0:
+        raise ValueError(f"Tiling {tiling} does not divide grid {grid}.")
     tile_grid = tuple(
         dim // tile for dim, tile in zip(grid, tiling, strict=True))
     grid = (*tile_grid, *tiling)
-  grid_size = math.prod(grid)
+
+  grid_size = 1
+  for dim in grid:
+    grid_size = grid_size * dim
+  grid_size = jnp.astype(grid_size, axis_index.dtype)
 
   def decorator(body):
     def wrapper(wave_step, carry):
@@ -173,7 +177,9 @@ def nd_loop(grid, *, collective_axes, tiling=None, init_carry=None):
       else:
         return body(loop_info, carry=carry)
 
-    upper = lax.div(grid_size, axis_size) + lax.convert_element_type(
+    upper = lax.div(
+        grid_size, jnp.astype(axis_size, axis_index.dtype)
+    ) + lax.convert_element_type(
         axis_index < grid_size % axis_size, axis_index.dtype
     )
     return lax.fori_loop(0, upper, wrapper, init_carry)
@@ -250,7 +256,10 @@ def find_swizzle(minor_dim_bits: int, what: str = ""):
 
 
 def planar_snake(
-    lin_idx: jax.Array, shape: tuple[int, int], minor_dim: int, tile_width: int
+    lin_idx: jax.Array,
+    shape: tuple[int | jax.Array, int | jax.Array],
+    minor_dim: int,
+    tile_width: int,
 ):
   """Converts a linear index into an index into shape, trying to optimize locality.
 
@@ -275,9 +284,10 @@ def planar_snake(
   and when moving from one tile to another, the indices increase along columns
   in one of them and decrease in the other.
   """
-  tile_width = np.int32(tile_width)  # pyrefly: ignore[bad-assignment]
-  major_size = np.int32(shape[1 - minor_dim])
-  minor_size = np.int32(shape[minor_dim])
+  tile_width = jnp.int32(tile_width)  # pyrefly: ignore[bad-assignment]
+  major_size = jnp.int32(shape[1 - minor_dim])
+  minor_size = jnp.int32(shape[minor_dim])
+
   minor_tile_idx = lax.div(lin_idx, tile_width * major_size)
 
   def tile_coordinates(lin_idx, width):
@@ -286,13 +296,13 @@ def planar_snake(
     major_within_tile = lax.rem(lax.div(lin_idx, width), major_size)
     minor = minor_tile_idx * tile_width + minor_within_tile
     major = lax.select(
-      lax.rem(minor_tile_idx, np.int32(2)) == 0,
-      major_within_tile,
-      major_size - 1 - major_within_tile,
+        lax.rem(minor_tile_idx, jnp.int32(2)) == 0,
+        major_within_tile,
+        major_size - 1 - major_within_tile,
     )
     return (minor, major) if minor_dim == 0 else (major, minor)
 
-  num_full_tiles = shape[minor_dim] // tile_width
+  num_full_tiles = minor_size // tile_width
   full_tiles_minor_size = num_full_tiles * tile_width
   num_full_tiles_elements = num_full_tiles * tile_width * major_size
   is_full_tile = lin_idx < num_full_tiles_elements
