@@ -222,7 +222,8 @@ def g_jit_decorated(x, n):
     i += 1
   return x + i
 
-print(g_jit_decorated(10, 20))
+g_jit_decorated_n_20 = partial(g_jit_decorated, n=20)
+print(g_jit_decorated_n_20(10))
 ```
 
 ## JIT and caching
