@@ -1213,6 +1213,40 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
 
 check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|.*\[({}, )*{}\]"")$")
 
+
+def _is_replicated_sdy(attr: ir.Attribute) -> bool:
+  if isinstance(attr, sdy.TensorShardingAttr):
+    return all(len(cast(sdy.DimensionShardingAttr, dim).axes) == 0
+               for dim in attr.dimension_shardings)
+  if isinstance(attr, sdy.TensorShardingPerValueAttr):
+    return all(_is_replicated_sdy(s) for s in attr.shardings)
+  return False
+
+
+def _has_non_replicated_sharding_sdy(op: ir.Operation) -> bool:
+  try:
+    sharding = op.attributes["sharding"]
+  except KeyError:
+    return False
+  return not _is_replicated_sdy(sharding)
+
+
+def _has_non_replicated_sharding_mhlo(op: ir.Operation) -> bool:
+  try:
+    sharding = op.attributes["mhlo.sharding"]
+  except KeyError:
+    return False
+  try:
+    sharding_value = ir.StringAttr(sharding).value
+  except UnicodeDecodeError:
+    # The mhlo.sharding attribute may be in pretty-printed format, or
+    # as an encoding of an HloSharding protobuf in some rare situations.
+    # We handle the latter by conservatively assuming it is non-replicated.
+    return True
+  else:
+    return not check_sharding_pattern.match(sharding_value)
+
+
 def _check_module(mod: ir.Module, *,
                   disabled_checks: Sequence[DisabledSafetyCheck],
                   shardy_enabled: bool) -> bool:
@@ -1235,39 +1269,29 @@ def _check_module(mod: ir.Module, *,
       for target in allowed_custom_call_targets}
   disallowed_custom_call_ops: list[str] = []
   module_uses_non_replicated_sharding = False
-  def check_sharding(op: ir.Operation, loc: ir.Location):
-    try:
-      sharding = (op.attributes["sharding"] if shardy_enabled else
-                  op.attributes["mhlo.sharding"])
-    except KeyError:
-      pass
-    else:
-      nonlocal module_uses_non_replicated_sharding
-      try:
-        sharding_value = (str(sharding) if shardy_enabled else
-                          ir.StringAttr(sharding).value)
-      except UnicodeDecodeError:
-        # The mhlo.sharding attribute may be in pretty-printed format, or
-        # as an encoding of an HloSharding protobuf in some rare situations.
-        # We handle the latter by conservatively assuming it is non-replicated.
-        module_uses_non_replicated_sharding = True
-      else:
-        if not re.match(check_sharding_pattern, sharding_value):
-          module_uses_non_replicated_sharding = True
+
+  has_non_replicated_sharding = (
+      _has_non_replicated_sharding_sdy if shardy_enabled else
+      _has_non_replicated_sharding_mhlo
+  )
 
   def check_op(op: ir.Operation):
+    nonlocal module_uses_non_replicated_sharding
     op_name = op.operation.name
     if op_name == "func.func":
-      check_sharding(op.operation, op.location)
+      if has_non_replicated_sharding(op.operation):
+        module_uses_non_replicated_sharding = True
 
     elif op_name == "stablehlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
       if (call_target_name_attr not in allowed_custom_call_targets_attrs):
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
-        check_sharding(op, op.location)
+        if has_non_replicated_sharding(op):
+          module_uses_non_replicated_sharding = True
     elif op_name == "sdy.sharding_constraint":
-      check_sharding(op, op.location)
+      if has_non_replicated_sharding(op):
+        module_uses_non_replicated_sharding = True
 
   def walk_operations(op: ir.Operation) -> None:
     check_op(op)
