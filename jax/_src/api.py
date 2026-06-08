@@ -1633,12 +1633,18 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
       raise Exception  # TODO accept isomorph tuple tree
   args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
-  maybe_accums = [x if isinstance(x, ad.GradAccum) else
-                  ad.RefAccum(v.aval, x) if _is_ref(x) else ad.NullAccum(v.aval)
-                  if isinstance(x, DontWant) else ad.ValAccum(v.aval)
+  maybe_accums = [check_accum(v.aval.to_ct_aval(), x) if isinstance(x, ad.GradAccum) else
+                  ad.RefAccum(v.aval.to_ct_aval(), x) if _is_ref(x) else
+                  ad.NullAccum(v.aval.to_ct_aval()) if isinstance(x, DontWant) else
+                  ad.ValAccum(v.aval.to_ct_aval())
                   for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
                          out_primal_avals), residuals, maybe_accums)
+
+def check_accum(aval, acc):
+  if aval != acc.aval:
+    raise ValueError(f"Accumulator aval mismatch: expected {aval}, got {acc.aval}")
+  return acc
 
 def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
               maybe_accums, out_ct):
@@ -1748,7 +1754,7 @@ class DidntWant:
 
 @dataclasses.dataclass(slots=True, weakref_slot=True)
 class VJP:
-  fun: Callable
+  fun: Callable  # partial(_vjp3_callable, ...)
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   args_res: list[Any]
@@ -1822,7 +1828,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
       lu.wrap_init(fun,
                    debug_info=debug_info("linear_transpose", fun, primals, {})),
       in_tree)
-  in_avals = map(shaped_abstractify, primals_flat)
+  in_avals = [shaped_abstractify(x) for x in primals_flat]
   in_dtypes = map(lambda a: a.dtype, in_avals)
 
   in_pvals = map(pe.PartialVal.unknown, in_avals)
@@ -1847,7 +1853,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
     if not all(map(core.typecheck, out_avals, out_cts)):
       raise TypeError("cotangent type does not match function output, "
                       f"expected {out_avals} but got {out_cts}")
-    dummies = [ad.UndefinedPrimal(a) for a in in_avals]
+    dummies = [ad.UndefinedPrimal(a.to_ct_aval()) for a in in_avals]
     in_cts = ad.backward_pass(jaxpr, True, const, dummies, out_cts)
     in_cts = map(ad.instantiate_zeros, in_cts)
     return tree_unflatten(in_tree, in_cts)

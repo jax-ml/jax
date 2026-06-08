@@ -689,7 +689,7 @@ def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
       cts, args, devices, srcs, copy_semantics)):
     if ad.is_undefined_primal(arg):
       if type(ct) is ad.Zero:
-        results[i] = ad.Zero(arg.aval.to_ct_aval())
+        results[i] = ad.Zero(arg.aval)
       else:
         dp_cts.append((i, ct, arg, device, src, cp))
 

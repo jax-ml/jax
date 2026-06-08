@@ -1095,11 +1095,8 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
   trans_avals, ext_avals = split_list(_map(accum_typeof, trans_in), [num_consts+num_carry])
   trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, accum_typeof(x)) for x in immut_xs_dot)
-  carry_dot_avals = tuple(accum_typeof(x) for x in carry_dot)
-  immut_consts_avals = tuple(accum_typeof(c) for c in immut_consts_dot)
   jaxpr_trans = _transpose_scan_jaxpr_fancy(
-      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals,
-      carry_dot_avals, immut_consts_avals)
+      jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
 
   # run it
   outs = scan_p.bind(
@@ -1118,16 +1115,14 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
 #           --- consts ----  ----- carry ------  --------- ext --------
 @weakref_lru_cache
 def _transpose_scan_jaxpr_fancy(
-    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals, carry_dot_avals,
-    immut_consts_avals) -> core.ClosedJaxpr:
+    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals) -> core.ClosedJaxpr:
   def transposed(*args):
     args = [ad.RefAccum(typeof(x).inner_aval, x) if l else x
             for l, x in zip(lin_refs, args)]
     ires, mut_consts_bar, ct_immut_consts, ct_carry, mut_xs_bar, ct_ys, eres = \
         tree_unflatten(trans_tree, args)
-    immut_consts_dot = [ad.ValAccum(aval, val)
-                        for aval, val in zip(immut_consts_avals, ct_immut_consts)]
-    carry_dot = [ad.ValAccum(a) for a in carry_dot_avals]
+    immut_consts_dot = [ad.ValAccum(core.typeof(x), x) for x in ct_immut_consts]
+    carry_dot = [ad.ValAccum(core.typeof(x)) for x in ct_carry]
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
     primals = (ires + mut_consts_bar + immut_consts_dot + carry_dot + mut_xs_bar
                + immut_xs_dot + eres)
