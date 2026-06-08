@@ -636,20 +636,25 @@ class JaxprInterpreter:
     assert eqn.primitive is gpu_primitives.copy_gmem_to_smem_p
     invals = get_invals()
 
-    (
-        (src, dst, barrier),
-        src_transforms_flat, dst_transforms_flat, barrier_transforms_flat,
-    ) = split_list(
-        invals,
-        [
-            3,
-            eqn.params["src_transforms_treedef"].num_leaves,
-            eqn.params["dst_transforms_treedef"].num_leaves,
-        ],
-    )
-    barrier_allocation_key_as_array = _get_barrier_allocation_key_from_inval(
-        barrier, eqn.params["barrier_transforms_treedef"],
-        barrier_transforms_flat)
+    if eqn.params["has_barrier"]:
+      (
+          (src, dst, barrier),
+          src_transforms_flat, dst_transforms_flat, barrier_transforms_flat,
+      ) = split_list(
+          invals,
+          [
+              3,
+              eqn.params["src_transforms_treedef"].num_leaves,
+              eqn.params["dst_transforms_treedef"].num_leaves,
+          ],
+      )
+      barrier_allocation_key_as_array = _get_barrier_allocation_key_from_inval(
+          barrier, eqn.params["barrier_transforms_treedef"],
+          barrier_transforms_flat)
+    else:
+      raise NotImplementedError(
+          "copy_gmem_to_smem_p with barrier=None is not supported"
+      )
 
     token = gpu_callbacks.call_execute_device_local_memory_transfer(
         token=token,

@@ -1163,6 +1163,48 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     # Each block gets the same data and writes it out.
     np.testing.assert_array_equal(y, jnp.stack([x, x], axis=0))
 
+  @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
+  def test_copy_gmem_to_smem_cp_async(self, indexer):
+    self.skip_if_wg_semantics()
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        scratch_shapes=[
+            plgpu.SMEM((256,), jnp.float32),
+        ],
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref):
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem.at[indexer], scratch_ref.at[indexer], None
+      )
+      plgpu.wait_cp_async(0)
+      o_ref[...] = scratch_ref[...] + 1
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
+
+  def test_copy_gmem_to_smem_cp_async_tiled(self):
+    self.skip_if_wg_semantics()
+
+    shape = (64, 64)
+    transforms = self.default_transforms(dtype=jnp.float32)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        scratch_shapes=[
+            plgpu.SMEM(shape, jnp.float32, transforms=transforms),
+        ],
+    )
+    def kernel(src_ref, dst_ref, smem_ref):
+      plgpu.copy_gmem_to_smem(src_ref, smem_ref, None)
+      plgpu.wait_cp_async(0)
+      plgpu.copy_smem_to_gmem(smem_ref, dst_ref)
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x)
+
   @parameterized.parameters(True, False)
   def test_kernel_scratch_kwargs(self, vmap):
     @functools.partial(

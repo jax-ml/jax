@@ -683,11 +683,13 @@ copy_gmem_to_smem_p.multiple_results = True
 
 
 @copy_gmem_to_smem_p.def_effectful_abstract_eval
-def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
-  del args, params  # Unused.
+def _copy_gmem_to_smem_abstract_eval(src, dst, *args, has_barrier, **params):
+  del params  # Unused.
   _check_ref(src, "src", gpu_core.GMEM)
   _check_ref(dst, "dst", gpu_core.SMEM)
-  _check_ref(barrier, "barrier", gpu_core.SMEM)
+  if has_barrier:
+    barrier, *_ = args
+    _check_ref(barrier, "barrier", gpu_core.SMEM)
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
@@ -717,16 +719,24 @@ def _copy_gmem_to_smem_pp_eqn(
   barrier_transforms = barrier_transforms_treedef.unflatten(
       flat_barrier_transforms
   )
-  return pp.concat([
-      pp.text("copy_gmem_to_smem"),
-      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
-      pp.text(" "),
-      state_primitives.pp_ref_transforms(context, src, src_transforms),
-      pp.text(" -> "),
-      state_primitives.pp_ref_transforms(context, dst, dst_transforms),
-      pp.text(" using "),
-      state_primitives.pp_ref_transforms(context, barrier, barrier_transforms),
-  ])
+  return pp.concat(
+      [
+          pp.text("copy_gmem_to_smem"),
+          jax_core.pp_kv_pairs(pp_params.items(), context, settings),
+          pp.text(" "),
+          state_primitives.pp_ref_transforms(context, src, src_transforms),
+          pp.text(" -> "),
+          state_primitives.pp_ref_transforms(context, dst, dst_transforms),
+      ]
+      + [
+          pp.text(" using "),
+          state_primitives.pp_ref_transforms(
+              context, barrier, barrier_transforms
+          ),
+      ]
+      if eqn.params["has_barrier"]
+      else []
+  )
 
 
 jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
@@ -747,15 +757,25 @@ def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
     dst,
-    barrier,
-    *flat_transforms,
+    *args,
     src_transforms_treedef,
     dst_transforms_treedef,
     barrier_transforms_treedef,
+    has_barrier,
     collective_axes,
     leader_tracked,
     oob_mode,
 ):
+  if has_barrier:
+    src_ref_aval, dst_ref_aval, barrier_ref_aval, *_ = ctx.avals_in
+    barrier, *flat_transforms = args
+    flat_transform_avals = ctx.avals_in[3:]
+  else:
+    src_ref_aval, dst_ref_aval, *_ = ctx.avals_in
+    barrier_ref_aval = barrier = None
+    flat_transforms = args
+    flat_transform_avals = ctx.avals_in[2:]
+
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
           flat_transforms,
@@ -767,7 +787,7 @@ def _copy_gmem_to_smem_lowering(
   )
   flat_src_transforms_avals, flat_dst_transforms_avals, _ = (
       util.split_list(
-          ctx.avals_in[3:],
+          flat_transform_avals,
           [
               src_transforms_treedef.num_leaves,
               dst_transforms_treedef.num_leaves,
@@ -777,9 +797,6 @@ def _copy_gmem_to_smem_lowering(
   src_transform_avals = src_transforms_treedef.unflatten(
       flat_src_transforms_avals
   )
-  src_ref_aval = ctx.avals_in[0]
-  dst_ref_aval = ctx.avals_in[1]
-  barrier_ref_aval = ctx.avals_in[2]
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   handle_transposes = (
@@ -787,7 +804,7 @@ def _copy_gmem_to_smem_lowering(
   )
   assert isinstance(src_ref_aval, state_types.AbstractRef)
   assert isinstance(dst_ref_aval, state_types.AbstractRef)
-  assert isinstance(barrier_ref_aval, state_types.AbstractRef)
+  assert barrier_ref_aval is None or isinstance(barrier_ref_aval, state_types.AbstractRef)
 
   dst_transform_avals = dst_transforms_treedef.unflatten(
       flat_dst_transforms_avals)
@@ -800,12 +817,13 @@ def _copy_gmem_to_smem_lowering(
       **_extract_smem_copy_params(dst_ref_aval, dst_transforms),
       **_extract_gmem_copy_params(ctx, src_transforms, src_transform_avals),
   }
-  base_index = _get_barrier_base_index(
-      barrier_ref_aval,
-      barrier_transforms_treedef.unflatten(flat_barrier_transforms),
-  )
-  if base_index is not None:
-    barrier = barrier[base_index]
+  if barrier is not None:
+    base_index = _get_barrier_base_index(
+        barrier_ref_aval,
+        barrier_transforms_treedef.unflatten(flat_barrier_transforms),
+    )
+    if base_index is not None:
+      barrier = barrier[base_index]
   collective = None
   if collective_axes is not None:
     collective = tuple(
@@ -843,6 +861,19 @@ def _copy_gmem_to_smem_lowering(
           f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
           f" {WARPGROUP_SIZE}"
       )
+    if barrier is None:
+      ctx.launch_ctx.async_copy(
+          src_ref=src,
+          dst_ref=dst,
+          barrier=None,
+          arrive=False,
+          collective=collective,
+          leader_tracked=leader_tracked,
+          implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          oob_mode=oob_mode,
+          **copy_params,
+      )
+      return ()
     if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
       # We arrive uniformly from each thread in the WG, so we need to divide the
       # number of bytes by the number of threads in the WG.
@@ -899,6 +930,7 @@ def _copy_gmem_to_smem_lowering(
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
     return ()
+
   i32 = ir.IntegerType.get_signless(32)
   if "gmem_slice" not in copy_params:
     slice_lengths = ir.MemRefType(src.type).shape
@@ -918,6 +950,9 @@ def _copy_gmem_to_smem_lowering(
       leader_tracked_attr = mgpu.dialect.CopyPartitionedAttr.get(axis)
     case _:
       leader_tracked_attr = None
+
+  if barrier is None:
+    raise NotImplementedError("Barrier is required for Warpgroup lowering")
 
   barrier_ref = barrier.as_barrier_memref()
 
@@ -947,10 +982,11 @@ def _copy_gmem_to_smem_lowering(
   )
   return ()
 
+
 def copy_gmem_to_smem(
     src: _Ref,
     dst: _Ref,
-    barrier: _Ref,
+    barrier: _Ref | None = None,
     *,
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
@@ -958,44 +994,58 @@ def copy_gmem_to_smem(
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
-  If collective_axes is specified, this performs a multicast copy where
-  all CUDA blocks that share the same index along the collective axis
-  receive a copy of the same block of data loaded from `dst` to `src`.
+  The copy mechanism depends on whether a ``barrier`` is provided:
 
-  If both ``collective_axes`` and ``leader_tracked`` are specified as
-  ``CopyPartition.PARTITIONED(axis)``, this will perform a partitioned
-  collective copy where each block in the cluster will receive a tile of
-  ``transfer_size // cluster_size`` data from the ``src`` Ref.
-  For example, if ``src`` has a shape of (256, 256) and a partitioned
-  copy is performed along axis 0 with cluster size 2, then the first block
-  will receive ``src[0:128, :]`` and the second will receive
-  ``src[128:256, :]``.
+  * If ``barrier`` is ``None`` uses thread-level ``cp.async`` instructions.
+    In this mode, ``collective_axes`` and ``leader_tracked`` must not be
+    specified. Use :func:`jax.experimental.pallas.mosaic_gpu.wait_cp_async`
+    to wait for the copy to complete.
+  * Otherwise, uses the Tensor Memory Accelerator (TMA).
+    Completion is tracked by the provided ``barrier``. TMA supports several
+    advanced copy modes depending on ``collective_axes`` and ``leader_tracked``:
 
-  If both ``collective_axes`` and ``leader_tracked`` are specified as
-  ``CopyPartition.REPLICATED``, this will perform a replicated copy where
-  all blocks load the same data but only the first block in the collective
-  tracks progress via barrier arrivals.
+    * **Standard TMA Copy:** When neither ``collective_axes`` nor
+      ``leader_tracked`` is specified, performs a standard DMA copy from ``src``
+      to ``dst`` for the current block.
+    * **Multicast Copy:** When ``collective_axes`` is specified and
+      ``leader_tracked`` is ``None``, performs a multicast copy where all CUDA
+      blocks sharing the same index along the collective axis receive the same
+      block of data loaded from ``src`` to ``dst``.
+    * **Partitioned Collective Copy:** When ``collective_axes`` is specified and
+      ``leader_tracked`` is ``CopyPartition.PARTITIONED(axis)``, performs a
+      partitioned collective copy. Each block in the cluster receives a tile of
+      ``transfer_size // cluster_size`` data from ``src``. For example, if
+      ``src`` has a shape of (256, 256) and a partitioned copy is performed
+      along axis 0 with a cluster size of 2, the first block receives
+      ``src[0:128, :]`` and the second receives ``src[128:256, :]``.
+    * **Replicated Collective Copy:** When ``collective_axes`` is specified and
+      ``leader_tracked`` is ``CopyPartition.REPLICATED``, performs a replicated
+      collective copy. All blocks load the same data, but only the first block
+      in the cluster tracks progress via barrier arrivals.
 
-
-  NOTE: Only the first block in the cluster will arrive on the barrier,
-  and an additional cluster barrier is necessary to ensure that all blocks in
-  the cluster have finished the copy.
+    Note: For leader-tracked copies (both partitioned and replicated), only the
+    first block in the cluster arrives on the barrier. An additional cluster
+    barrier is necessary to ensure all blocks in the cluster have finished
+    the copy.
 
   Args:
     src: The source Ref. Must be in GMEM.
     dst: The destination Ref. Must be in SMEM.
-    barrier: The barrier to use for tracking completion of the copy.
+    barrier: The barrier to use for tracking completion of the copy. If
+      ``None``, the copy uses ``CP_ASYNC`` instead of TMA.
     collective_axes: The collective axes to use for the copy.
     leader_tracked: If specified, only the leader block in the cluster will
-     observe the completion of the copy. If ``CopyPartition.PARTITIONED(axis)``,
-     performs a partitioned collective copy along the given axis. If
-     ``CopyPartition.REPLICATED``, all blocks load the same data.
-    oob_mode: The optional out-of-bounds fill mode. Can be ``OOBFillMode.UNDEFINED``,
-     ``OOBFillMode.PROMISE_IN_BOUNDS`` or ``OOBFillMode.ZEROS``.
+      observe completion of the copy. If ``CopyPartition.PARTITIONED(axis)``,
+      performs a partitioned collective copy along the given axis. If
+      ``CopyPartition.REPLICATED``, all blocks load the same data.
+    oob_mode: The optional out-of-bounds fill mode. Can be
+      ``OOBFillMode.UNDEFINED``, ``OOBFillMode.PROMISE_IN_BOUNDS``, or
+      ``OOBFillMode.ZEROS``.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_wait`
+    :func:`jax.experimental.pallas.mosaic_gpu.wait_cp_async`
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, None, "copy_gmem_to_smem"
@@ -1009,9 +1059,12 @@ def copy_gmem_to_smem(
   flat_dst_transforms, dst_transforms_treedef = tree_util.tree_flatten(
       dst_transforms
   )
-  barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
-      barrier, None, "copy_gmem_to_smem"
-  )
+  if barrier is not None:
+    barrier, barrier_transforms = state_primitives.get_ref_and_transforms(
+        barrier, None, "copy_gmem_to_smem"
+    )
+  else:
+    barrier_transforms = ()
   flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
       barrier_transforms
   )
@@ -1024,18 +1077,20 @@ def copy_gmem_to_smem(
   copy_gmem_to_smem_p.bind(
       src,
       dst,
-      barrier,
+      *() if barrier is None else (barrier,),
       *flat_src_transforms,
       *flat_dst_transforms,
       *flat_barrier_transforms,
       src_transforms_treedef=src_transforms_treedef,
       dst_transforms_treedef=dst_transforms_treedef,
       barrier_transforms_treedef=barrier_transforms_treedef,
+      has_barrier=barrier is not None,
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
       oob_mode=oob_mode,
   )
   return None
+
 
 async_prefetch_p = jax_core.Primitive("async_prefetch")
 async_prefetch_p.multiple_results = True
@@ -1459,6 +1514,40 @@ def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
       reading from SMEM. The writes to GMEM are not waited for.
   """
   wait_smem_to_gmem_p.bind(n, wait_read_only=wait_read_only)
+
+
+wait_cp_async_p = jax_core.Primitive("wait_cp_async")
+wait_cp_async_p.multiple_results = True
+
+
+@wait_cp_async_p.def_effectful_abstract_eval
+def _wait_cp_async_abstract_eval(n):
+  del n  # Unused.
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(wait_cp_async_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(wait_cp_async_p, *gpu_core.LANExWARP_SEMANTICS)
+@lowering.register_lowering_rule(
+    wait_cp_async_p, mgpu.LoweringSemantics.Warpgroup
+)
+@lowering.register_lowering_rule(wait_cp_async_p, *gpu_core.WGxWARP_SEMANTICS)
+def _wait_cp_async_lowering(ctx: lowering.LoweringRuleContext, n):
+  ctx.launch_ctx.await_cp_async_copy(allow_groups=n)
+  return ()
+
+
+def wait_cp_async(n: int) -> None:
+  """Waits until no more than the most recent ``n`` CP_ASYNC copies issued by
+  the calling thread are in flight.
+
+  Args:
+    n: The maximum number of copy groups in flight to wait for.
+
+  See also:
+    :func:`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`
+  """
+  wait_cp_async_p.bind(n)
 
 
 commit_group_p = jax_core.Primitive("commit_group")
