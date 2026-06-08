@@ -155,6 +155,7 @@ if TYPE_CHECKING:
   assert_type(mat, jax.Array)
   assert_type(vals, jax.Array)
   assert_type(mask, jax.Array)
+  assert_type(jax.jit(lambda x: x).clear_cache(), None)
 
   # Functions with non-trivial typing overloads:
   # jnp.linspace
