@@ -15,10 +15,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import contextlib
 import dataclasses
 from functools import partial
 import math
 import operator
+import threading
 from typing import Any, Protocol, TypeVar
 
 from jax._src import ad_util
@@ -56,12 +58,70 @@ PyTreeDef = tree_util.PyTreeDef
 ## Discharging state
 
 
+@dataclasses.dataclass
+class DischargeContext(threading.local):
+  strip_memory_space: bool = False
+
+
+DISCHARGE_CONTEXT = DischargeContext()
+
+
+@contextlib.contextmanager
+def discharge_config(*, strip_memory_space: bool):
+  prev = DISCHARGE_CONTEXT.strip_memory_space
+  DISCHARGE_CONTEXT.strip_memory_space = strip_memory_space
+  try:
+    yield
+  finally:
+    DISCHARGE_CONTEXT.strip_memory_space = prev
+
+
+def current_strip_memory_space() -> bool:
+  return DISCHARGE_CONTEXT.strip_memory_space
+
+
+def _discharged_aval(
+    aval: core.AbstractValue, discharge: bool, strip_memory_space: bool | None = None
+) -> core.AbstractValue:
+  if strip_memory_space is None:
+    strip_memory_space = current_strip_memory_space()
+
+  if isinstance(aval, AbstractRef):
+    if discharge:
+      inner = _discharged_aval(aval.inner_aval, discharge=False, strip_memory_space=strip_memory_space)
+      if (
+          isinstance(inner, core.ShapedArray)
+          and aval.memory_space is not None
+      ):
+        if strip_memory_space:
+          return inner.update(memory_space=core.MemorySpace.Device)
+        mem_space = (
+            core.MemorySpace.Device
+            if str(aval.memory_space) == "default"
+            else aval.memory_space
+        )
+        return inner.update(memory_space=mem_space)
+      return inner
+    else:
+      if strip_memory_space:
+        new_inner = _discharged_aval(aval.inner_aval, discharge=False, strip_memory_space=True)
+        return AbstractRef(new_inner, aval.memory_space)
+      return aval
+  else:
+    if strip_memory_space and isinstance(aval, core.ShapedArray) and getattr(aval, "memory_space", None) is not None:
+      return aval.update(memory_space=core.MemorySpace.Device)
+    return aval
+
+
 def discharge_state(
     closed_jaxpr: core.ClosedJaxpr,
     *,
     should_discharge: bool | Sequence[bool] = True,
     lower: bool = True,
+    strip_memory_space: bool | None = None,
 ) -> core.ClosedJaxpr:
+  if strip_memory_space is None:
+    strip_memory_space = current_strip_memory_space()
   """Converts a stateful jaxpr into a pure one.
 
   Discharging replaces ``Ref`` inputs with regular values, threads updates
@@ -72,6 +132,8 @@ def discharge_state(
     should_discharge: Whether to discharge each ``Ref`` input. If a single bool,
       applies to all inputs.
     lower: Whether to lower hijax to lojax while discharging.
+    strip_memory_space: Whether to strip the memory space from discharged ``Ref``
+      inputs.
 
   Returns:
     A pure jaxpr with no ``Read``/``Write``/``Accum`` effects. Discharged
@@ -80,25 +142,27 @@ def discharge_state(
   """
   if isinstance(should_discharge, bool):
     should_discharge = (should_discharge,) * len(closed_jaxpr.in_avals)
-  return _discharge_state(closed_jaxpr, tuple(should_discharge), lower)
+  return _discharge_state(closed_jaxpr, tuple(should_discharge), lower, strip_memory_space)
 
 @weakref_lru_cache
 def _discharge_state(
     closed_jaxpr: core.ClosedJaxpr,
     should_discharge: tuple[bool, ...],
     lower: bool,
+    strip_memory_space: bool,
  ) -> core.ClosedJaxpr:
-  in_avals = [
-      v.aval.inner_aval
-      if isinstance(v.aval, AbstractRef) and d
-      else v.aval for v, d in zip(closed_jaxpr.invars, should_discharge)]
-  eval_jaxpr = lu.wrap_init(
-      partial(_eval_jaxpr_discharge_state,
-              closed_jaxpr.jaxpr, should_discharge, closed_jaxpr.consts),
-      debug_info=closed_jaxpr.debug_info.with_unknown_names())
-  new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(
-      eval_jaxpr, in_avals, lower=lower)
-  return core.ClosedJaxpr(new_jaxpr, new_consts)
+  with discharge_config(strip_memory_space=strip_memory_space):
+    in_avals = [
+        _discharged_aval(v.aval, d, strip_memory_space)
+        for v, d in zip(closed_jaxpr.invars, should_discharge)
+    ]
+    eval_jaxpr = lu.wrap_init(
+        partial(_eval_jaxpr_discharge_state,
+                closed_jaxpr.jaxpr, should_discharge, closed_jaxpr.consts),
+        debug_info=closed_jaxpr.debug_info.with_unknown_names())
+    new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(
+        eval_jaxpr, in_avals, lower=lower)
+    return core.ClosedJaxpr(new_jaxpr, new_consts)
 
 @dataclasses.dataclass(slots=True)
 class Environment:
