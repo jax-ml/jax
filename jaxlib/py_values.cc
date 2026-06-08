@@ -36,6 +36,7 @@ limitations under the License.
 
 #include "absl/base/no_destructor.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/hash/hash.h"
@@ -54,9 +55,9 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/python_ref_manager.h"
-#include "jaxlib/weak_key_weak_value_cache.h"
 #include "jaxlib/sharding.h"
 #include "jaxlib/to_ifrt_sharding.h"
+#include "jaxlib/weak_key_weak_value_cache.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
@@ -95,6 +96,7 @@ nb::object& typed_float_type = *new nb::object();
 nb::object& typed_complex_type = *new nb::object();
 nb::object& typed_ndarray_type = *new nb::object();
 nb::object& invalid_input_exception = *new nb::object();
+nb::object& valid_dtypes = *new nb::object();
 
 struct StaticValues {
   xla::nb_dtype int32;
@@ -920,19 +922,19 @@ nb::object CanonicalizeInt(nb::handle x) {
   if (GetEnableX64()) {
     int64_t val;
     if (!nb::try_cast<int64_t>(x, val)) {
-      throw nb::value_error(
-          absl::StrCat("Python int ", nb::cast<std::string>(nb::str(x)),
-                       " too large to convert to int64")
-              .c_str());
+      throw std::overflow_error(absl::StrCat("Python int ",
+                                             nb::cast<std::string>(nb::str(x)),
+                                             " too large to convert to int64")
+                                    .c_str());
     }
     return typed_int_type(x, GetStatic().int64);
   } else {
     int32_t val;
     if (!nb::try_cast<int32_t>(x, val)) {
-      throw nb::value_error(
-          absl::StrCat("Python int ", nb::cast<std::string>(nb::str(x)),
-                       " too large to convert to int32")
-              .c_str());
+      throw std::overflow_error(absl::StrCat("Python int ",
+                                             nb::cast<std::string>(nb::str(x)),
+                                             " too large to convert to int32")
+                                    .c_str());
     }
     return typed_int_type(x, GetStatic().int32);
   }
@@ -949,9 +951,28 @@ nb::object CanonicalizeComplex(nb::handle x) {
       x, GetEnableX64() ? dtypes.complex128 : dtypes.complex64);
 }
 
+void CheckValidDtype(nb::handle dtype) {
+  if (valid_dtypes.ptr() == nullptr) {
+    throw std::runtime_error("valid_dtypes is not set");
+  }
+  int res = PySequence_Contains(valid_dtypes.ptr(), dtype.ptr());
+  if (res == -1) {
+    throw nb::python_error();
+  }
+  if (res == 0) {
+    std::string msg = absl::StrCat(
+        "Dtype ", nb::cast<std::string>(nb::str(dtype)),
+        " is not a valid JAX array type. Only arrays of numeric types are "
+        "supported by JAX.");
+    PyErr_SetString(PyExc_TypeError, msg.c_str());
+    throw nb::python_error();
+  }
+}
+
 nb::object CanonicalizeNumpyArray(nb::handle x) {
   auto array = nb::borrow<xla::nb_numpy_ndarray>(x);
   xla::nb_dtype raw_dtype = array.dtype();
+  CheckValidDtype(raw_dtype);
   xla::nb_dtype canonical_dtype = CanonicalizeDtype(raw_dtype);
   if (raw_dtype.ptr() == canonical_dtype.ptr()) {
     return typed_ndarray_type(x);
@@ -975,6 +996,7 @@ nb::object CanonicalizeNumpyScalar(nb::handle x) {
   }
   xla::nb_dtype raw_dtype =
       nb::steal<xla::nb_dtype>(reinterpret_cast<PyObject*>(descr));
+  CheckValidDtype(raw_dtype);
   xla::nb_dtype canonical_dtype = CanonicalizeDtype(raw_dtype);
   if (raw_dtype.ptr() == canonical_dtype.ptr()) {
     return typed_ndarray_type(x);
@@ -988,7 +1010,6 @@ nb::object CanonicalizeNumpyScalar(nb::handle x) {
   auto coerced = nb::steal<xla::nb_numpy_ndarray>(coerced_val);
   return typed_ndarray_type(coerced);
 }
-
 
 }  // namespace
 
@@ -1028,11 +1049,10 @@ void SetTypedComplexType(nb::object t) {
 void SetTypedNdArrayType(nb::object t) {
   typed_ndarray_type = t;
   auto cache = WeakKeyWeakValueCache::Create(CanonicalizeNumpyArray);
-  RegisterCanonicalizeValueHandler(
-      reinterpret_cast<PyObject*>(&PyArray_Type),
-      [cache](nb::handle x) -> nb::object {
-        return cache->Call(cache.ptr(), x);
-      });
+  RegisterCanonicalizeValueHandler(reinterpret_cast<PyObject*>(&PyArray_Type),
+                                   [cache](nb::handle x) -> nb::object {
+                                     return cache->Call(cache.ptr(), x);
+                                   });
   RegisterCanonicalizeValueHandler(t.ptr(), IdentityHandler);
   RegisterCanonicalizeValueHandler(GetStatic().numpy_generic.ptr(),
                                    CanonicalizeNumpyScalar);
@@ -1416,6 +1436,8 @@ void RegisterCanonicalizeValueHandler(
 }
 
 void SetInvalidInputException(nb::object exc) { invalid_input_exception = exc; }
+
+void SetValidDtypes(nb::object dtypes) { valid_dtypes = dtypes; }
 
 nb::object CanonicalizeValue(nb::handle x) {
   CanonicalizeValueHandler handler;

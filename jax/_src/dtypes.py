@@ -385,7 +385,7 @@ def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType 
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)
 
-class InvalidInputException(Exception):
+class InvalidInputException(TypeError):
   pass
 
 if jaxlib_extension_version >= 464 or TYPE_CHECKING:
@@ -646,6 +646,9 @@ _jax_dtype_set = {
     *_float_types,
     *_complex_types,
 }
+
+if jaxlib_extension_version >= 465:
+  _jax.set_valid_dtypes(_jax_dtype_set)
 
 _jax_types = (_bool_types + _int_types + _float_types + _complex_types)
 
