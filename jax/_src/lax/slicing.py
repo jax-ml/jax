@@ -1390,8 +1390,8 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
       raise core.ShardingTypeError(
           f"{name} on sharded dims where out dim ({out_sh}) is not divisible by"
           f" mesh axes ({_get_sub_spec_size(mesh, op_spec)}) with spec"
-          f" ({op_spec}) is not implemented."
-      )
+          f" ({op_spec}) is not implemented. Got input"
+          f" type={operand.str_short(True)} and output shape={out_shape}")
   # TODO(yashkatariya): Returning operand.sharding as is may or may not move
   # data. So think about how to avoid it which might include creating a new
   # mesh? For example:
