@@ -898,7 +898,7 @@ def _div(dividend: int, divisor: int):
   return lax.div(dividend, divisor)
 
 
-def _bytes(x: jax.Array | jax.ShapeDtypeStruct) -> int:
+def _bytes(x: jax.Array | jax.ShapeDtypeStruct | np.ndarray) -> int:
   return math.prod(x.shape) * x.dtype.itemsize
 
 
