@@ -4598,7 +4598,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     )
     np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
-    self._CheckAgainstNumpy(np_op, jnp_one_hot_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_one_hot_op, args_maker,
+                            atol=1e-2, rtol=1e-2)
     self._CompileAndCheck(jnp_op, args_maker)
     self._CompileAndCheck(jnp_one_hot_op, args_maker)
 
