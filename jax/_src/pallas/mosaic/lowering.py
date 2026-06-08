@@ -4515,7 +4515,7 @@ def _alloc_value(
     primitives.run_scoped_p, kernel_types=[*tpu_core.CoreType]
 )
 def _run_scoped_lowering_rule(
-    ctx: LoweringRuleContext, *consts, jaxpr, collective_axes
+    ctx: LoweringRuleContext, *consts, jaxpr, collective_axes, **_
 ):
   if collective_axes:
     raise NotImplementedError("run_scoped lowering does not support collective axes")

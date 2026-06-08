@@ -698,6 +698,8 @@ def run_scoped(
       t.ref if isinstance(t, state_types.TransformedRef) else t
       for t in ref_avals
   ]
+  # Note that only a subset of all transforms can be found here, and they are
+  # never expected to contain any arrays.
   ref_transforms = tuple(
       t.transforms if isinstance(t, state_types.TransformedRef) else ()
       for t in ref_avals
@@ -710,12 +712,15 @@ def run_scoped(
   # there.
   with config.mutable_array_checks(False):
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
-  out = run_scoped_p.bind(*consts, jaxpr=jaxpr, collective_axes=collective_axes)
+  out = run_scoped_p.bind(*consts,
+                          jaxpr=jaxpr,
+                          collective_axes=collective_axes,
+                          ref_transforms=ref_transforms)
   return tree_util.tree_unflatten(out_tree_thunk(), out)
 
 
 @run_scoped_p.def_effectful_abstract_eval
-def _run_scoped_abstract_eval(*args, jaxpr, collective_axes):
+def _run_scoped_abstract_eval(*args, jaxpr, collective_axes, **_):
   del args, collective_axes
   # jaxpr will have effects for its inputs (Refs that are allocated) and for
   # constvars (closed over Refs). The effects for the allocated Refs are local
@@ -737,7 +742,9 @@ def _run_scoped_discharge_rule(
     out_avals,
     *args_flat,
     jaxpr,
-    collective_axes):
+    collective_axes,
+    ref_transforms,
+    **_):
   del out_avals
   if collective_axes:
     raise NotImplementedError(
@@ -763,7 +770,8 @@ def _run_scoped_discharge_rule(
   # Run_scoped discharged the external variables but the scoped ones
   # are not discharged.
   out = run_scoped_p.bind(
-      *args_flat, jaxpr=discharged_body, collective_axes=collective_axes
+      *args_flat, jaxpr=discharged_body, collective_axes=collective_axes,
+      ref_transforms=ref_transforms,
   )
   # Order of outputs:
   # (1) return values, (2) closed refs, (3) scoped refs.
@@ -783,7 +791,7 @@ state_discharge.register_partial_discharge_rule(run_scoped_p)(
 
 
 @functools.partial(mlir.register_lowering, run_scoped_p)
-def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes):
+def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
   if collective_axes:
     raise ValueError(
         "run_scoped lowering outside of Pallas does not support"

@@ -652,8 +652,8 @@ def _get(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del device_id, grid_point_coords, thread_id, allocation_key_as_array
 
+  transforms = _remove_noop_transforms(transforms)
   _validate_transforms(transforms)
-  # TODO(nrink): Support tiling and swizzling transforms.
   transforms = jax.tree.map(int, transforms)
 
   if input_name is not None:
@@ -785,8 +785,8 @@ def _swap(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del device_id, thread_id, allocation_key_as_array
 
+  transforms = _remove_noop_transforms(transforms)
   _validate_transforms(transforms)
-  # TODO(nrink): Support tiling and swizzling transforms.
   transforms = jax.tree.map(int, transforms)
 
   if mask is not None:
@@ -1242,6 +1242,20 @@ class DeviceLocalMemoryTransfer:
     return token
 
 
+NOOP_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.UntilingTransform,
+)
+
+
+def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
+  # TODO(jburnim): Instead of just filtering out these transforms, should we
+  # check that every access of a buffer uses untiling and/or unswizzling
+  # transforms that match how the buffer was allocated?
+  return tuple(itertools.dropwhile(lambda t: isinstance(t, NOOP_TRANSFORMS),
+                                   transforms))
+
+
 # TODO(nrink): Once non-eager execution of memory transfers/DMAs is supported in
 # GPU interpret mode, consider renaming this function to something along the
 # lines of `_enqueue_device_local_memory_transfer`.
@@ -1260,6 +1274,8 @@ def _execute_device_local_memory_transfer(
 ):
   device_id_as_int = int(device_id)
   thread_id_as_int = int(thread_id)
+  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
   del device_id, thread_id
 
   transfer = DeviceLocalMemoryTransfer(

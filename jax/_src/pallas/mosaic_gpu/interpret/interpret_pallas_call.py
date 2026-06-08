@@ -28,6 +28,7 @@ from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import gpu_callbacks
 from jax._src.pallas.mosaic_gpu.interpret import jaxpr_interpret
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
+from jax._src.state import types as state_types
 from jax._src.typing import Array
 from jax._src.util import (safe_zip, split_list)
 from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -191,6 +192,7 @@ def _get_kernel_buffers(
     num_threads: int,
     grid_mapping: pallas_core.GridMapping,
     invars: Sequence[Any],
+    arg_transforms: tuple[tuple[state_types.Transform, ...], ...],
     input_buffer_keys: Sequence[jax.Array],
     output_buffer_keys: Sequence[jax.Array],
     interpret_params: InterpretGPUParams,
@@ -198,8 +200,10 @@ def _get_kernel_buffers(
   """Collects buffers to be passed to the kernel from `pallas_call` input/output buffers."""
   # TODO(nrink): This code is a simplified version to the corresponding TPU
   # interpreter code. Eventually, we should merge the two.
+  if not arg_transforms:
+    arg_transforms = ((),) * len(invars)
   kernel_buffer_keys = []
-  for i, var in enumerate(invars):
+  for i, (var, transforms) in enumerate(safe_zip(invars, arg_transforms)):
     output_idx = i - grid_mapping.num_inputs
     is_input = i < grid_mapping.num_inputs
     is_output = (output_idx >= 0) and (output_idx < grid_mapping.num_outputs)
@@ -223,6 +227,16 @@ def _get_kernel_buffers(
           memory_space_id=gpu_callbacks.get_memory_space_idx(aval.memory_space),
           initial_ref_count=num_threads,
       )
+      if transforms:
+        # The invar/aval's shape in the jaxpr may be the tiled shape, after
+        # tiling and/or swizzling transforms have been applied.  The
+        # elements of `transforms` -- to undo the swizzling and/or tiling --
+        # are applied any time the variable is used in the jaxpr.
+        #
+        # We want to allocate a buffer with the logical shape, instead of
+        # the tiled shape, so we undo the swizzing and/or tiling here to get
+        # the logical shape.
+        aval = jaxpr_interpret.apply_unswizzle_and_untile(transforms, aval)
       init_val = interpret_utils.get_uninitialized_array(
           aval.shape, aval.dtype, interpret_params.uninitialized_memory
       )
@@ -358,6 +372,7 @@ def interpret_pallas_call(
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: InterpretGPUParams,
     metadata: Mapping[str, str] | None,
+    kernel_arg_transforms: tuple[tuple[state_types.Transform, ...], ...] = (),
     **kwargs,
 ) -> Sequence[Array]:
   # TODO(nrink): A more fleshed out implementation of the GPU interpreter may
@@ -432,6 +447,7 @@ def interpret_pallas_call(
       num_threads,
       grid_mapping,
       jaxpr.invars,
+      kernel_arg_transforms,
       input_buffer_keys,
       [buffer.key for buffer in output_buffers],
       interpret_params,

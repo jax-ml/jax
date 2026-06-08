@@ -138,6 +138,17 @@ def _get_barrier_allocation_key_from_inval(
 _SENTINEL = jnp.inf
 
 
+def apply_unswizzle_and_untile(
+    transforms: tuple[state_types.Transform, ...],
+    aval: jax_core.AbstractValue,
+) -> jax_core.AbstractValue:
+  if not all(isinstance(t, (mosaic_gpu_core.UnswizzleRef,
+                            mosaic_gpu_core.UntilingTransform))
+             for t in transforms):
+    raise ValueError("Unsupported transforms:", transforms)
+  return state_types.TransformedRef(aval, transforms).type
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class JaxprInterpreter:
   """Interprets a jaxpr by replacing memory operations with (GPU) callbacks."""
@@ -247,12 +258,25 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is primitives.run_scoped_p
 
-    def _allocate_for_aval(token, aval, same_allocations_for_all_threads: bool):
+    def _allocate_for_aval(token,
+                           aval,
+                           transforms: tuple[state_types.Transform, ...],
+                           same_allocations_for_all_threads: bool):
       _raise_if_unsupported_memory_space(aval.memory_space)
       match aval:
         case state_types.AbstractRef(
             inner_aval=inner, memory_space=memory_space, kind=_
         ):
+          if transforms:
+            # The invar/aval's shape in the jaxpr may be the tiled shape, after
+            # tiling and/or swizzling transforms have been applied.  The
+            # elements of `transforms` -- to undo the swizzling and/or tiling --
+            # are applied any time the variable is used in the jaxpr.
+            #
+            # We want to allocate a buffer with the logical shape, instead of
+            # the tiled shape, so we undo the swizzing and/or tiling here to get
+            # the logical shape.
+            inner = apply_unswizzle_and_untile(transforms, inner)
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
@@ -343,6 +367,7 @@ class JaxprInterpreter:
 
     assert eqn.primitive is primitives.run_scoped_p
     collective_axes = eqn.params["collective_axes"]
+    ref_transforms = eqn.params["ref_transforms"]
     # Note that on GPU, `SMEM` buffers and barriers can only be allocated
     # collectively (i.e. corresponding to `same_allocations=True`). In the
     # interpreter we are a little more lenient and allow non-collective
@@ -374,8 +399,9 @@ class JaxprInterpreter:
     # sequence of `run_scoped`s.
     invars = eqn.params["jaxpr"].invars
     allocs = []
-    for v in invars:
-      token, alloc = _allocate_for_aval(token, v.aval, same_allocations)
+    for v, transforms in safe_zip(invars, ref_transforms):
+      token, alloc = _allocate_for_aval(
+          token, v.aval, transforms, same_allocations)
       allocs.append(alloc)
 
     token, out = self.interpret(
@@ -514,6 +540,9 @@ class JaxprInterpreter:
       return out
     else:
       bind_params = eqn.primitive.get_bind_params(eqn.params)
+      for v in bind_params.values():
+        if isinstance(v, jax_core.Jaxpr):
+          raise NotImplementedError(f"Higher-order primitive {eqn.primitive}")
       return eqn.primitive.bind(*get_invals(), **bind_params)
 
   def _interpret_copy_gmem_to_smem_p(

@@ -1375,6 +1375,11 @@ def _pallas_call(
           cost_estimate=cost_estimate,
           metadata=FrozenDict(metadata) if metadata is not None else None,
           name=name,
+          # If we're running under GPU Interpret Mode, save the kernel arg
+          # transforms. Checks the string name to avoid a conditional import.
+          # TODO(jburnim): Clean this up.
+          **(dict(kernel_arg_transforms=kernel_arg_transforms)
+             if type(interpret).__name__ == "InterpretGPUParams" else {}),
       )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out

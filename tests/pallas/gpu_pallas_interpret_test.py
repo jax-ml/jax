@@ -115,6 +115,65 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_equal(jax.jit(_kernel)(), np.arange(num_threads))
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
+  def test_tiling_and_swizzle_transforms(self):
+    @jax.jit
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float16),
+        scratch_shapes=dict(
+            smem_ref1=plgpu.SMEM((2, 128, 128), jnp.float16, transforms=(
+                plgpu.TilingTransform((8, 64)),
+                plgpu.SwizzleTransform(128),
+            )),
+            smem_ref2=plgpu.SMEM((4, 128, 32), jnp.float16, transforms=(
+                plgpu.SwizzleTransform(64),
+            )),
+            smem_ref3=plgpu.SMEM((256, 128), jnp.float16, transforms=(
+                plgpu.TilingTransform((16, 32)),
+            )),
+        ),
+        interpret=InterpretParams(),
+    )
+    def kernel(o_ref, smem_ref1, smem_ref2, smem_ref3):
+      smem_ref1[...] = jnp.full_like(smem_ref1, 42.0)
+      smem_ref2[...] = jnp.full_like(smem_ref2, 1.0)
+      smem_ref3[...] = jnp.full_like(smem_ref3, 2.0)
+      o_ref[...] = (smem_ref1[0, ...] + smem_ref2[...].reshape((128, 128))
+                    + smem_ref3[:128])
+
+    np.testing.assert_equal(kernel(), np.full((128, 128), 45.0, jnp.float16))
+
+  def test_tiling_and_swizzle_transforms_with_pallas_call(self):
+    def _kernel(o_ref, smem_ref1, smem_ref2, smem_ref3):
+      smem_ref1[...] = jnp.full_like(smem_ref1, 42.0)
+      smem_ref2[...] = jnp.full_like(smem_ref2, 1.0)
+      smem_ref3[...] = jnp.full_like(smem_ref3, 2.0)
+      o_ref[...] = (smem_ref1[0, ...] + smem_ref2[...].reshape((128, 128))
+                    + smem_ref3[:128])
+
+    @jax.jit
+    def run():
+      return pl.pallas_call(
+          _kernel,
+          out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float16),
+          out_specs=plgpu.BlockSpec((128, 128), memory_space=plgpu.SMEM),
+          scratch_shapes=dict(
+              smem_ref1=plgpu.SMEM((2, 128, 128), jnp.float16, transforms=(
+                  plgpu.TilingTransform((8, 64)),
+                  plgpu.SwizzleTransform(128),
+              )),
+              smem_ref2=plgpu.SMEM((4, 128, 32), jnp.float16, transforms=(
+                  plgpu.SwizzleTransform(64),
+              )),
+              smem_ref3=plgpu.SMEM((256, 128), jnp.float16, transforms=(
+                  plgpu.TilingTransform((16, 32)),
+              )),
+          ),
+          interpret=InterpretParams(),
+      )()
+
+    np.testing.assert_equal(run(), np.full((128, 128), 45.0, jnp.float16))
+
   def test_skip_floating_point_ops(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
       # TODO(nrink): Matrix multiplication with `@` is nor supported for real
