@@ -355,7 +355,7 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
       with config.enable_compilation_cache(False):
         # Capture stdout to verify PTX
         with self.capture_stdout() as get_ptx:
-          out = f(x)
+          out = jax.block_until_ready(f(x))
 
     np.testing.assert_allclose(out, x + 1.0)
 
