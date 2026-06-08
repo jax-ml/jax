@@ -336,6 +336,7 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
 
       return self.kernel(
           kernel_body,
+          kernel_name=f"test_griddepcontrol_{id(x)}",
           out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
       )(x)
 
