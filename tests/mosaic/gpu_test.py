@@ -242,6 +242,47 @@ class Sm90ATestCase(TestCase, jtu.CudaArchSpecificTest):
       # No artificially lowered limit for arch-specific tests
       super().setUp(artificial_shared_memory_limit=None)
 
+  def test_clear_kernel_cache(self):
+    def kernel(ctx, src, dst, _):
+      # Do nothing. Just testing compilation and cache clearing.
+      pass
+
+    x = np.arange(128, dtype=np.float32)
+    out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
+    smem = jax.ShapeDtypeStruct(x.shape, x.dtype)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (32, 1, 1), x, out_type, ())
+
+    # Warmup
+    jax.block_until_ready(f(x))
+
+    xla_flags = os.environ.get("XLA_FLAGS", "")
+    new_xla_flags = re.sub(r"--xla_gpu_kernel_cache_file=\S+", "", xla_flags)
+
+    def run_and_get_ptx():
+      with jtu.set_env(
+          MOSAIC_GPU_DUMP_PTX="1",
+          XLA_FLAGS=new_xla_flags,
+          MOSAIC_GPU_DUMP_TO=None,
+      ):
+        with config.enable_compilation_cache(False):
+          with self.capture_stdout() as get_ptx:
+            out_res = jax.block_until_ready(f(x))
+      return out_res, get_ptx()
+
+    # Rerun without clearing caches - should use cached PTX (i.e., not compile again)
+    _, ptx_output = run_and_get_ptx()
+    self.assertNotIn(".visible .entry", ptx_output)
+
+    # Clear caches
+    jax.clear_caches()
+    if mosaic_gpu_lib is not None:
+      mosaic_gpu_lib._mosaic_gpu_ext._clear_kernel_cache()
+
+    # Rerun after clearing caches - should generate PTX
+    out, ptx_output = run_and_get_ptx()
+
+    self.assertIn(".visible .entry", ptx_output)
+
 
 class TestUtilTest(TestCase):
 
