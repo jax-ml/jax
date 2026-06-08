@@ -41,10 +41,10 @@ class MMALayouts:
         vector_dim=-1,
     )
     self.rhs = fa.TiledLayout(
-        fa.Tiling(((8, k), (8, sub_k), (elems_per_reg,))),
+        fa.Tiling(((k, 8), (sub_k, 8), (elems_per_reg, 1))),
         warp_dims=(fa.Replicated(4),),
-        lane_dims=(-3, -2),
-        vector_dim=-1,
+        lane_dims=(-3, -4),
+        vector_dim=-2,
     )
     self.acc = fa.TiledLayout(
         fa.Tiling(((64, 8), (16, 8), (8, 8), (2,))),
@@ -70,12 +70,12 @@ def _ptx_dtype_str(dtype: ir.Type, *, is_signed: bool | None = None) -> str:
 def _mma_single_tile(
     acc: fa.FragmentedArray, a: fa.FragmentedArray, b: fa.FragmentedArray
 ) -> fa.FragmentedArray:
-  """Performs `acc + a @ b.T` using warp level MMA instructions."""
+  """Performs `acc + a @ b` using warp level MMA instructions."""
   i32 = ir.IntegerType.get_signless(32)
 
   k_tile = 256 // utils.bitwidth(a.mlir_dtype)
   assert a.shape == (64, k_tile)
-  assert b.shape == (8, k_tile)
+  assert b.shape == (k_tile, 8)
   assert acc.shape == (64, 8)
   assert a.mlir_dtype == b.mlir_dtype
   is_integer = isinstance(a.mlir_dtype, ir.IntegerType)
@@ -157,7 +157,7 @@ def mma(
     a: fa.FragmentedArray,
     b: fa.FragmentedArray,
 ) -> fa.FragmentedArray:
-  """Computes `acc + a @ b.T` using synchronouse MMA instructions.
+  """Computes `acc + a @ b` using synchronous warp-level MMA instructions.
 
   All operands must have `TiledLayout`s. The layouts must be generated
   by the `MMALayouts` class, which ensures that the tiles are mapped
@@ -176,7 +176,7 @@ def mma(
   """
 
   (m, k) = a.shape
-  (n, k2) = b.shape
+  (k2, n) = b.shape
   (m2, n2) = acc.shape
 
   if m != m2:
@@ -220,7 +220,7 @@ def mma(
   assert isinstance(b.layout, fa.TiledLayout)
   assert isinstance(acc.layout, fa.TiledLayout)
   m_tile, k_tile = a.layout.base_tile_shape
-  n_tile, k_tile2 = b.layout.base_tile_shape
+  k_tile2, n_tile = b.layout.base_tile_shape
   m_tile2, n_tile2 = acc.layout.base_tile_shape
 
   assert k_tile == k_tile2
@@ -238,6 +238,6 @@ def mma(
         ms = s(m_idx, m_tile)
         ns = s(n_idx, n_tile)
         ks = s(k_idx, k_tile)
-        acc[ms, ns] = _mma_single_tile(acc[ms, ns], a[ms, ks], b[ns, ks])
+        acc[ms, ns] = _mma_single_tile(acc[ms, ns], a[ms, ks], b[ks, ns])
 
   return acc
