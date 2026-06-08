@@ -74,20 +74,6 @@ inline absl::StatusOr<gpuDataType> SolverDataType(ffi::DataType dataType,
   }
 }
 
-#define SOLVER_DISPATCH_IMPL(impl, ...)           \
-  switch (dataType) {                             \
-    case ffi::F32:                                \
-      return impl<float>(__VA_ARGS__);            \
-    case ffi::F64:                                \
-      return impl<double>(__VA_ARGS__);           \
-    case ffi::C64:                                \
-      return impl<gpuComplex>(__VA_ARGS__);       \
-    case ffi::C128:                               \
-      return impl<gpuDoubleComplex>(__VA_ARGS__); \
-    default:                                      \
-      break;                                      \
-  }
-
 #define SOLVER_BLAS_DISPATCH_IMPL(impl, ...)          \
   switch (dataType) {                                 \
     case ffi::F32:                                    \
@@ -1346,6 +1332,16 @@ ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
   FFI_RETURN_IF_ERROR_STATUS(
       solver::SetWorkspace(handle.get(), workspace_ptr, workspace_size));
 
+  // RAII guard: clears the workspace pointer from the handle on all exit paths
+  // (success, early return on error, or exception), preventing a dangling
+  // device pointer after XLA frees the scratch buffer.
+  struct WorkspaceGuard {
+    gpusolverDnHandle_t handle;
+    ~WorkspaceGuard() {
+      solver::SetWorkspace(handle, nullptr, 0).IgnoreError();
+    }
+  } workspace_guard{handle.get()};
+
   auto a_data = static_cast<T*>(a.untyped_data());
   auto out_data = static_cast<T*>(out->untyped_data());
   auto s_data =
@@ -1377,7 +1373,6 @@ ffi::Error GesddImpl(int64_t batch, int64_t rows, int64_t cols,
     if (vt_data) vt_data += vt_step;
     ++info_data;
   }
-
   return ffi::Error::Success();
 }
 
@@ -1438,6 +1433,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesddFfi, GesddDispatch,
                                   .Ret<ffi::AnyBuffer>()         // vt
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
+
 #endif  // JAX_GPU_HIP
 
 // Singular Value Decomposition: gesvdp (Polar decomposition)
@@ -1870,7 +1866,6 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GeevFfi, GeevImpl,
 
 #endif  // JAX_GPU_HAVE_SOLVER_GEEV
 
-#undef SOLVER_DISPATCH_IMPL
 #undef SOLVER_BLAS_DISPATCH_IMPL
 
 }  // namespace JAX_GPU_NAMESPACE
