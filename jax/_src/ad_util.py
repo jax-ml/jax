@@ -62,6 +62,13 @@ aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 def zeros_like_jaxval(val):
   return zeros_like_aval(core.typeof(val))
 
+def empty_like_aval(aval):
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
+  if isinstance(aval, HiType):
+    return aval.raise_val(*map(empty_like_aval, aval.lo_ty()))
+  return aval_empty_likers[type(aval)](aval)
+aval_empty_likers: dict[type, Callable[[Any], Array]] = {}
+
 def instantiate(z: Zero | Array) -> Array:
   if isinstance(z, Zero):
     return zeros_like_aval(z.aval)

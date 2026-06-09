@@ -746,6 +746,60 @@ class ExtendedDTypeTest(jtu.JaxTestCase):
     dt_ = dtypes.primal_tangent_dtype(jnp.int8, jnp.bfloat16)
     self.assertEqual(dt, dt_)
 
+  def test_primal_tangent_dtype_cond(self):
+    differentiable_int8 = dtypes.primal_tangent_dtype(jnp.int8, jnp.float32)
+    w_float = jnp.arange(10, dtype=jnp.float32)
+
+    @jax.custom_vjp
+    def cast_to_differentiable_int8(w_fl):
+      w_int8 = w_fl.astype(jnp.int8)
+      return w_int8.astype(differentiable_int8)
+
+    def cast_to_differentiable_int8_fwd(w_fl):
+      return cast_to_differentiable_int8(w_fl), None
+
+    def cast_to_differentiable_int8_bwd(res, g):
+      return (g,)
+
+    cast_to_differentiable_int8.defvjp(cast_to_differentiable_int8_fwd, cast_to_differentiable_int8_bwd)
+
+    @jax.custom_vjp
+    def quantized_mul(w_df, x):
+      w_int8 = w_df.astype(jnp.int8)
+      w_f = w_int8.astype(jnp.float32)
+      return w_f * x
+
+    def quantized_mul_fwd(w_df, x):
+      return quantized_mul(w_df, x), (w_df, x)
+
+    def quantized_mul_bwd(res, g):
+      w_df, x = res
+      w_f = w_df.astype(jnp.int8).astype(jnp.float32)
+      return g * x, g * w_f
+
+    quantized_mul.defvjp(quantized_mul_fwd, quantized_mul_bwd)
+
+    @jax.jit
+    def train_step(w_fl, x, pred):
+
+      def loss_fn(w_float_arg):
+        w_diff = cast_to_differentiable_int8(w_float_arg)
+
+        def true_fn():
+          # Captures w_diff (PrimalTangentDType) as a residual
+          out = quantized_mul(w_diff, x)
+          return jnp.sum(out)
+
+        def false_fn():
+          return jnp.float32(0.0)
+
+        out = jax.lax.cond(pred, true_fn, false_fn)
+        return out
+
+      return jax.grad(loss_fn)(w_fl)
+    x = jnp.ones((10,), dtype=jnp.float32)
+    _ = train_step(w_float, x, True)  # don't crash
+
   @parameterized.parameters(itertools.product([(), (2,), (3, 4)], repeat=2))
   def test_edtype_conversion(self, shape_prefix, shape_suffix):
     class scalar(dtypes.extended): ...

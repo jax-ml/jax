@@ -56,7 +56,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
-from jax._src.mesh import get_abstract_mesh, get_concrete_mesh
+from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
@@ -3635,6 +3635,13 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
   return core.pvary(out, tuple(aval.mat.varying))
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
+
+def empty_like_shaped_array(aval):
+  out = core.pvary(empty2(aval.dtype, memory_space=aval.memory_space),
+                   tuple(aval.mat.varying))
+  with use_abstract_mesh(aval.sharding.mesh):
+    return broadcast(out, aval.shape, out_sharding=aval.sharding)
+ad_util.aval_empty_likers[ShapedArray] = empty_like_shaped_array
 
 def iota(dtype: DTypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
