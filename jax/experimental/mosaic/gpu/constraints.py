@@ -602,12 +602,12 @@ class IsTransferableTmemRegisters(IsTransferable):
         and ((self.bitwidth == 16 and packing == 1) or self.bitwidth == 32)
     ):
       return True
-    if (
+    if columns % 16 == 0 and packing <= columns // 2 and (
         reg_layout == fa.WGMMA_LAYOUT
         and tmem_layout == tcgen05.tmem_half_lane_layout(columns, packing)
     ):
       return True
-    if (
+    if columns % 16 == 0 and packing <= 8 and (
         reg_layout == tcgen05.fa_m64_collective_layout(columns)
         and tmem_layout == tcgen05.tmem_m64_collective_layout(columns, packing)
     ):

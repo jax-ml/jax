@@ -1078,9 +1078,10 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInTmemLayouts(op, [layout])
     self.assertNotIn("out_tmem_layouts", op.attributes)
 
-  def test_infer_async_load_chooses_in_tmem_layouts_compatible_with_register_layout(self):
+  @parameterized.parameters(24, 128)
+  def test_infer_async_load_chooses_in_tmem_layouts_compatible_with_register_layout(self, columns):
     f32 = ir.F32Type.get()
-    shape = (128, 128)
+    shape = (128, columns)
     ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
     out_layout = layouts.to_layout_attr(fa.TCGEN05_LAYOUT)
 
@@ -1095,15 +1096,19 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.checkInTmemLayouts(op, [in_layout])
     self.checkOutLayouts(op, [out_layout])
 
-  @parameterized.parameters(
-      (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
-      (tcgen05.scales_layout(), tcgen05.scales_layout().as_tiled_layout()),
+  @parameterized.product(
+      in_out_layouts=(
+          (tcgen05.tmem_default_layout(packing=1), fa.TCGEN05_LAYOUT),
+          (tcgen05.scales_layout(), tcgen05.scales_layout().as_tiled_layout()),
+      ),
+      columns=(24, 128),
   )
   def test_infer_async_load_chooses_out_layouts_compatible_with_tmem_layout(
-      self, in_layout, out_layout
+      self, in_out_layouts, columns
   ):
     f8 = ir.Float8E4M3FNType.get()
-    shape = (128, 128)
+    in_layout, out_layout = in_out_layouts
+    shape = (128, columns)
     ref_type = ir.MemRefType.get(shape, f8, memory_space=mgpu.utils.tmem())
     in_layout = layouts.to_layout_attr(in_layout)
 
