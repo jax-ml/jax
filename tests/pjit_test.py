@@ -68,7 +68,9 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import curry, unzip2
+from jax._src import tree_util
 
 config.parse_flags_with_absl()
 
@@ -12004,6 +12006,34 @@ class UtilTest(jtu.JaxTestCase):
 
       # Compiling with a device assignment should succeed.
       lowered.compile(device_assignment=tuple(mesh.devices.flat))
+
+  @unittest.skipIf(jaxlib_extension_version < 466, "Requires jaxlib >= 466")
+  def test_pjit_function_cache_explicit_mutation_during_lookup(self):
+    cache = xc._xla.PjitFunctionCache(capacity=64)
+
+    class MutatingKey:
+      def __hash__(self):
+        return 0
+
+      def __eq__(self, other):
+        cache.clear()
+        return False
+
+    def shared_f(x):
+      return x
+
+    def make_one(key):
+      return xc._xla.pjit(
+          'shared_f', shared_f, lambda *a, **kw: (shared_f(*a, **kw), None, False),
+          [], [], key, tree_util.dispatch_registry,
+          pxla.cc_shard_arg, cache)
+
+    key1 = MutatingKey()
+    pj1 = make_one(key1)
+
+    key2 = MutatingKey()
+    make_one(key2)
+    del pj1
 
 
 if __name__ == '__main__':

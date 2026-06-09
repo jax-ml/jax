@@ -65,6 +65,7 @@ limitations under the License.
 #include "jaxlib/py_values.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/pytree.h"
+#include "jaxlib/reentrant_hash_map.h"
 #include "jaxlib/sharding.h"
 #include "jaxlib/to_ifrt_sharding.h"
 #include "xla/layout.h"
@@ -164,23 +165,6 @@ class PjitFunctionCache {
     nb::object global_cache_key;
 
     size_t cached_hash;
-
-    bool operator==(const Key& other) const {
-      bool global_cache_eq;
-      try {
-        global_cache_eq = global_cache_key.equal(other.global_cache_key);
-      } catch (const nanobind::python_error& e) {
-        throw std::invalid_argument(
-            absl::StrCat("Equality of  global cache key lead to an exception. "
-                         "The error was:\n",
-                         e.what(), "\n"));
-      }
-      return function.ptr() == other.function.ptr() && global_cache_eq;
-    }
-
-    struct Hash {
-      size_t operator()(const Key& key) const { return key.cached_hash; }
-    };
   };
 
   template <typename H>
@@ -199,6 +183,42 @@ class PjitFunctionCache {
     return h;
   }
 
+  // Helper for fast, Python-free lookup during deletion.
+  struct PointerKey {
+    nb::handle function;
+    nb::handle global_cache_key;
+    size_t cached_hash;
+  };
+
+  struct KeyEq {
+    // Normal lookup: uses Python equal() but short-circuits on pointer
+    // mismatch.
+    bool operator()(const Key& a, const Key& b) const {
+      if (a.function.ptr() != b.function.ptr()) return false;
+      try {
+        return a.global_cache_key.equal(b.global_cache_key);
+      } catch (const nanobind::python_error& e) {
+        throw std::invalid_argument(
+            absl::StrCat("Equality of global cache key led to an exception. "
+                         "The error was:\n",
+                         e.what(), "\n"));
+      }
+    }
+
+    // Fast lookup: pure pointer equality, no Python calls.
+    // Explicitly compare .ptr() to ensure we do not trigger Python-level
+    // equality.
+    bool operator()(const Key& a, const PointerKey& b) const {
+      return a.function.ptr() == b.function.ptr() &&
+             a.global_cache_key.ptr() == b.global_cache_key.ptr();
+    }
+  };
+
+  struct Hash {
+    size_t operator()(const Key& key) const { return key.cached_hash; }
+    size_t operator()(const PointerKey& pkey) const { return pkey.cached_hash; }
+  };
+
   struct Value {
     explicit Value(std::shared_ptr<Cache> cache) : cache(std::move(cache)) {}
     std::shared_ptr<Cache> cache;
@@ -214,8 +234,8 @@ class PjitFunctionCache {
   // lru_list_ and functions_ are protected by the GIL in GIL mode, and by the
   // self object lock in freethreading mode.
   Cache::LRUList lru_list_;
-  // We use std::unordered_map because ABSL containers are not exception safe:
-  std::unordered_map<Key, std::unique_ptr<Value>, Key::Hash> functions_;
+  // We use ReentrantHashMap to be safe against reentrant mutations.
+  jax::ReentrantHashMap<Key, std::unique_ptr<Value>, Hash, KeyEq> functions_;
   // mu_ prevents concurrent insertions into functions_ if the gil or critical
   // section lock is released during insertion.
   absl::Mutex mu_;
@@ -249,7 +269,7 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
   key.function = function;
   key.global_cache_key = global_cache_key;
   key.cached_hash = absl::HashOf(key);
-  auto insert = self->functions_.emplace(key, nullptr);
+  auto insert = self->functions_.try_emplace(key, nullptr);
   if (!insert.second) {
     return insert.first->second->cache;
   }
@@ -257,7 +277,8 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
   auto callback =
       nb::cpp_function([self, key{std::move(key)}](nb::handle weakref) {
         nb::ft_object_guard lock(self);
-        auto it = self->functions_.find(key);
+        PointerKey pkey{key.function, key.global_cache_key, key.cached_hash};
+        auto it = self->functions_.find(pkey);
         if (it == self->functions_.end()) {
           return;
         }
@@ -278,7 +299,11 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
     // `function` is not weak-referenceable. Don't bother adding it to the
     // shared cache in that case; the `jit` object will hold the only shared
     // reference to the cache entry.
-    self->functions_.erase(insert.first);
+    PointerKey pkey{key.function, key.global_cache_key, key.cached_hash};
+    auto it = self->functions_.find(pkey);
+    if (it != self->functions_.end()) {
+      self->functions_.erase(it);
+    }
   }
   return cache;
 }
