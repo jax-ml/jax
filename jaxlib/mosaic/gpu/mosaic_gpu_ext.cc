@@ -32,6 +32,8 @@ limitations under the License.
 namespace jax::cuda {
 namespace {
 
+extern "C" void MosaicGpuClearKernelCache();
+
 namespace nb = nanobind;
 
 #define THROW(...)                                                 \
@@ -175,6 +177,9 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       "NOTE: This PTX ISA version may not be supported by the LLVM compiler. "
       "LLVM's PTX ISA support should also be checked, unless using inline asm "
       "(which bypasses LLVM).");
+  m.def("_clear_kernel_cache", []() {
+    MosaicGpuClearKernelCache();
+  });
 }
 
 }  // namespace

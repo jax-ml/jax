@@ -341,8 +341,10 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
       )(x)
 
     x = jnp.arange(128).astype(jnp.float32)
-    util.clear_all_caches()
-    compilation_cache.reset_cache()
+    # Pollute the caches so cleaning is tested
+    jax.block_until_ready(f(x))
+    jax.clear_caches()
+    mosaic_gpu_lib._mosaic_gpu_ext._clear_kernel_cache()
 
     xla_flags = os.environ.get("XLA_FLAGS", "")
     new_xla_flags = re.sub(r"--xla_gpu_kernel_cache_file=\S+", "", xla_flags)
