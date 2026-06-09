@@ -1570,14 +1570,66 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       (jnp.float16, tcgen05.LAYOUT, tcgen05.tmem_default_layout(1)),
       (jnp.float16, tcgen05.LAYOUT, tcgen05.tmem_default_layout(2)),
       (
+        jnp.float16,
+        None,
+        tcgen05.tmem_half_lane_layout(columns=32, packing=2),
+      ),
+      (
+        jnp.float16,
+        None,
+        tcgen05.tmem_m64_collective_layout(columns=32, packing=2),
+      ),
+      (
           jnp.float8_e5m2,
-          tcgen05.scales_layout().as_tiled_layout(),
+          None,
           tcgen05.scales_layout(),
       ),
+      (
+          jnp.float8_e5m2,
+          None,
+          tcgen05.b_scales_m64_collective_layout(),
+      ),
   )
-  def test_tmem_column_slicing_128_rows(self, dtype, reg_layout, tmem_layout):
-    shape = (128, 64)
+  def test_tmem_column_slicing(self, dtype, reg_layout, tmem_layout):
+    shape = (tmem_layout.base_tile_shape[0], 64)
     slicing = (slice(None), slice(32, 64))
+    if reg_layout is None:
+      reg_layout = tmem_layout.as_tiled_layout()
+
+    def kernel(ctx, input, output, tmem):
+      del ctx
+      reg = fa.FragmentedArray.load_untiled(
+          input, layout=reg_layout, optimized=False
+      )
+      tmem.store(reg)
+      tcgen05.commit_tmem()
+      tmem_slice = tmem.slice(*slicing)
+      tmem_slice.load(reg_layout).store_untiled(output, optimized=False)
+
+    x = self.prng.uniform(-1, 1, shape).astype(dtype)
+    expected = x[*slicing]
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        expected,
+        mgpu.TMEM(x.shape, x.dtype, layout=tmem_layout),
+    )(x)
+    np.testing.assert_array_equal(expected, y)
+
+  def test_tmem_column_slicing_custom_layout(self):
+    # We test the case where tile number of rows is not a divisor of TMEM_ROWS.
+    shape, dtype = (26, 512), jnp.float32
+    slicing = (slice(None), slice(256, 512))
+    packing = 1
+    tmem_layout = tcgen05.TMEMLayout(
+      fa.Tiling(((26, packing * 128), (fa.WARP_SIZE * packing,), (packing,))),
+      warp_dims=(-3,),
+      lane_dims=(-2,),
+      vector_dim=-1,
+    )
+    reg_layout = tmem_layout.as_tiled_layout()
 
     def kernel(ctx, input, output, tmem):
       del ctx
@@ -8976,7 +9028,7 @@ if hp is not None:
 
       run()
 
-    def test_tmem_column_slicing_128_rows(self):
+    def test_tmem_column_slicing(self):
       self.skip_unless_tcgen05()
 
       @hps.composite
@@ -8984,7 +9036,11 @@ if hp is not None:
         dtype = draw(
             hps.sampled_from([jnp.float32, jnp.float16, jnp.float8_e5m2])
         )
-        initial_tile = (128, draw(hps.sampled_from([1, 2, 4, 8, 16])))
+        initial_tile = (
+            draw(hps.sampled_from([32, 64, 128, 256])),
+            draw(hps.sampled_from([1, 2, 4, 8, 16])),
+        )
+        hp.assume(math.prod(initial_tile) >= 128)
         tiled_layout = draw(tiled_layouts(initial_tile, vector_transfer=True))
         bitwidth = jax.dtypes.itemsize_bits(dtype)
         # Ensure we can copy from/to registers.

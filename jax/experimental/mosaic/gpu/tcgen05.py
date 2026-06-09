@@ -1179,28 +1179,48 @@ class TMEMRef:
       raise ValueError("TMEM can only be sliced, not indexed")
     if base_idx == [0] * len(base_idx) and slice_shape == self.shape:
       return self  # Trivial slice
-    if self.layout.base_tile_shape[0] != TMEM_ROWS:
-      raise NotImplementedError(
-          f"Slicing only implemented with layouts using 128 rows, got: "
-          f"{self.layout}"
-      )
     # If we slice along rows, or attempt to extract several rows, then we may
     # end up with a non-contiguous slice of memory.
-    if base_idx[0] != 0 or slice_shape[0] != TMEM_ROWS:
+    if base_idx[0] != 0 or slice_shape[0] != self.shape[0]:
       raise NotImplementedError("TMEM cannot be sliced along rows")
+    # If we attempt to extract non-contiguous tiles, then we will end up with a
+    # non-contiguous slice of memory.
+    # We check that we have a single tile along rows. Hence slicing along
+    # columns produces a contiguous slice of memory.
+    if self.shape[0] != self.layout.base_tile_shape[0]:
+      raise NotImplementedError(
+          "Cannot slice TMEM with multiple tiles along rows."
+      )
     col_idx = base_idx[1]
     if not isinstance(col_idx, ir.Value):
+      # TODO(allanrenucci): We should consider performing a similar check on
+      # dynamic values (i.e. using `utils.is_known_divisible`). It currently
+      # breaks many tests though.
+      if col_idx % self.layout.base_tile_shape[1] != 0:
+        raise ValueError(
+            f"Column index ({col_idx}) must be divisible by tile shape column"
+            f" dimension {self.layout.base_tile_shape[1]}"
+        )
       col_idx = arith.constant(i32, col_idx)
     if col_idx.type == ir.IndexType.get():
       col_idx = arith.index_cast(i32, col_idx)
-    # When a layout replicates data (e.g., across warps/lanes), each logical
-    # column tile physically spans `replication_factor` columns of TMEM.
-    # Therefore, we scale the column index by `replication_factor` to ensure
-    # that the address offset jumps over these replicated columns.
-    if (rep := self.layout.replication_factor) > 1:
-      col_idx = arith.muli(col_idx, arith.constant(i32, rep))
-    if self.packing != 1:
-      col_idx = arith.divui(col_idx, arith.constant(i32, self.packing))
+
+    # The code below converts from a logical column index to a physical column
+    # index.
+    physical_cols_in_tile = self.layout.cols_in_shape(
+        cast(tuple[int, int], self.layout.base_tile_shape),
+        utils.bitwidth(self.dtype),
+    )
+    logical_cols_in_tile = self.layout.base_tile_shape[1]
+    # All branches below are equivalent modulo manual constant folding.
+    if physical_cols_in_tile == logical_cols_in_tile:
+      pass
+    elif physical_cols_in_tile % logical_cols_in_tile == 0:
+      scale_factor = physical_cols_in_tile // logical_cols_in_tile
+      col_idx = arith.muli(col_idx,arith.constant(i32, scale_factor))
+    else:
+      col_idx = arith.muli(col_idx, arith.constant(i32, physical_cols_in_tile))
+      col_idx = arith.divui(col_idx, arith.constant(i32, logical_cols_in_tile))
     return TMEMRef(
         address=arith.addi(self.address, col_idx),
         shape=slice_shape,
