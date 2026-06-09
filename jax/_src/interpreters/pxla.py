@@ -1753,10 +1753,8 @@ class UnloadedMeshExecutable:
         global_in_avals, global_out_avals)
 
     del in_layouts, out_layouts
-    dispatch_in_layouts = [
-        None if is_default_layout(l, s, a) else l
-        for l, s, a, in safe_zip(xla_in_layouts, in_shardings, global_in_avals)
-    ]
+    dispatch_in_layouts = get_dispatch_layouts(xla_in_layouts, in_shardings,
+                                               global_in_avals)
 
     out_shardings = maybe_recover_user_shardings(
         in_shardings, out_shardings, global_in_avals, global_out_avals,
@@ -1968,17 +1966,23 @@ class MeshExecutable(stages.Executable):
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
   def shard_const_args(self, const_args: Sequence[ArrayLike]):
-    nr_const_args = len(const_args)
-    return shard_args(
-        self._in_shardings[:nr_const_args],
-        self._xla_in_layouts[:nr_const_args],
-        [xc.ArrayCopySemantics.REUSE_INPUT] * nr_const_args,
-        const_args)
+    num_const_args = len(const_args)
+    xla_const_layouts = self._xla_in_layouts[:num_const_args]
+    in_const_shardings = self._in_shardings[:num_const_args]
+    const_avals = [core.typeof(c) for c in const_args]
+    dispatch_layouts = get_dispatch_layouts(
+        xla_const_layouts, in_const_shardings, const_avals)
+    return shard_args(in_const_shardings, dispatch_layouts,
+                      [xc.ArrayCopySemantics.REUSE_INPUT] * num_const_args,
+                      const_args)
 
 def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],
                     [x])[0]
 
+def get_dispatch_layouts(xla_in_layouts, in_shardings, in_avals):
+  return [None if is_default_layout(l, s, a) else l
+          for l, s, a, in safe_zip(xla_in_layouts, in_shardings, in_avals)]
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
                              jaxpr_debug_info: core.DebugInfo):
