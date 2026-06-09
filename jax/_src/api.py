@@ -333,7 +333,7 @@ def jit(
 
     >>> from functools import partial
     >>>
-    >>> @jax.jit(static_argnames=['n'])
+    >>> @partial(jax.jit, static_argnames=['n'])
     ... def g(x, n):
     ...   for i in range(n):
     ...     x = x ** 2
