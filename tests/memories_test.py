@@ -2289,7 +2289,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
     compiled_text = f.lower(arr, arr2).compile().as_text()
-    # self.assertRegex(compiled_text, r"all-reduce.*all-reduce.*dense")
+    self.assertRegex(compiled_text, r"all-reduce.*all-reduce.*dense")
     self.assertRegex(
         compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
 
