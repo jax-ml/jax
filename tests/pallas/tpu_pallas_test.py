@@ -2410,6 +2410,73 @@ class PallasCallTest(ptu.PallasTPUTest):
     ])
     np.testing.assert_allclose(res, expected)
 
+  def test_fori_loop_unroll_with_program_id(self):
+    @functools.partial(self.pallas_call,
+                       out_shape=jax.ShapeDtypeStruct((512,), jnp.int32),
+                       grid=(2,),
+                       in_specs=(pl.BlockSpec((256,), lambda i: (i,)),),
+                       out_specs=pl.BlockSpec((256,), lambda i: (i,)))
+    def f(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      def body(i, _):
+        pid = pl.program_id(0)
+        y_ref[...] += pid + i
+      lax.fori_loop(0, 4, body, None, unroll=2)
+
+    x = jnp.zeros((512,), jnp.int32)
+    y = f(x)
+    np.testing.assert_array_equal(y[:256], np.full((256,), 6, dtype=np.int32))
+    np.testing.assert_array_equal(y[256:], np.full((256,), 10, dtype=np.int32))
+
+  @parameterized.parameters([0, True])
+  @jtu.thread_unsafe_test()
+  def test_fori_loop_unroll_full(self, unroll):
+    with string_stdout() as msg:
+      @functools.partial(self.pallas_call,
+                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+                         debug=True)
+      def f(x_ref, y_ref):
+        y_ref[...] = x_ref[...]
+        def body(i, _):
+          y_ref[...] += i
+        lax.fori_loop(0, 5, body, None, unroll=unroll)
+      y = f(jnp.array([0], jnp.int32))
+      self.assertEqual(y[0], 10)
+      debug_string = msg.getvalue()
+    self.assertNotIn('scf.for', debug_string)
+
+  @jtu.thread_unsafe_test()
+  def test_fori_loop_unroll_partial_divides(self):
+    with string_stdout() as msg:
+      @functools.partial(self.pallas_call,
+                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+                         debug=True)
+      def f(x_ref, y_ref):
+        y_ref[...] = x_ref[...]
+        def body(i, _):
+          y_ref[...] += i
+        lax.fori_loop(0, 6, body, None, unroll=2)
+      y = f(jnp.array([0], jnp.int32))
+      self.assertEqual(y[0], 15)
+      debug_string = msg.getvalue()
+    self.assertIn('scf.for', debug_string)
+
+  @jtu.thread_unsafe_test()
+  def test_fori_loop_unroll_partial_remainder(self):
+    with string_stdout() as msg:
+      @functools.partial(self.pallas_call,
+                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+                         debug=True)
+      def f(x_ref, y_ref):
+        y_ref[...] = x_ref[...]
+        def body(i, _):
+          y_ref[...] += i
+        lax.fori_loop(0, 5, body, None, unroll=2)
+      y = f(jnp.array([0], jnp.int32))
+      self.assertEqual(y[0], 10)
+      debug_string = msg.getvalue()
+    self.assertIn('scf.for', debug_string)
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):
@@ -3041,73 +3108,6 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
       y = inner(x)
       assert jax.typeof(y) == jax.typeof(x)
       np.testing.assert_array_equal(x, y)
-
-  @parameterized.parameters([0, True])
-  @jtu.thread_unsafe_test()
-  def test_fori_loop_unroll_full(self, unroll):
-    with string_stdout() as msg:
-      @functools.partial(self.pallas_call,
-                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-                         debug=True)
-      def f(x_ref, y_ref):
-        y_ref[...] = x_ref[...]
-        def body(i, _):
-          y_ref[...] += i
-        lax.fori_loop(0, 5, body, None, unroll=unroll)
-      y = f(jnp.array([0], jnp.int32))
-      self.assertEqual(y[0], 10)
-      debug_string = msg.getvalue()
-    self.assertNotIn('scf.for', debug_string)
-
-  @jtu.thread_unsafe_test()
-  def test_fori_loop_unroll_partial_divides(self):
-    with string_stdout() as msg:
-      @functools.partial(self.pallas_call,
-                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-                         debug=True)
-      def f(x_ref, y_ref):
-        y_ref[...] = x_ref[...]
-        def body(i, _):
-          y_ref[...] += i
-        lax.fori_loop(0, 6, body, None, unroll=2)
-      y = f(jnp.array([0], jnp.int32))
-      self.assertEqual(y[0], 15)
-      debug_string = msg.getvalue()
-    self.assertIn('scf.for', debug_string)
-
-  @jtu.thread_unsafe_test()
-  def test_fori_loop_unroll_partial_remainder(self):
-    with string_stdout() as msg:
-      @functools.partial(self.pallas_call,
-                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-                         debug=True)
-      def f(x_ref, y_ref):
-        y_ref[...] = x_ref[...]
-        def body(i, _):
-          y_ref[...] += i
-        lax.fori_loop(0, 5, body, None, unroll=2)
-      y = f(jnp.array([0], jnp.int32))
-      self.assertEqual(y[0], 10)
-      debug_string = msg.getvalue()
-    self.assertIn('scf.for', debug_string)
-
-  def test_fori_loop_unroll_with_program_id(self):
-    @functools.partial(self.pallas_call,
-                       out_shape=jax.ShapeDtypeStruct((256,), jnp.int32),
-                       grid=(2,),
-                       in_specs=(pl.BlockSpec((128,), lambda i: (i,)),),
-                       out_specs=pl.BlockSpec((128,), lambda i: (i,)))
-    def f(x_ref, y_ref):
-      y_ref[...] = x_ref[...]
-      def body(i, _):
-        pid = pl.program_id(0)
-        y_ref[...] += pid + i
-      lax.fori_loop(0, 4, body, None, unroll=2)
-
-    x = jnp.zeros((256,), jnp.int32)
-    y = f(x)
-    np.testing.assert_array_equal(y[:128], np.full((128,), 6, dtype=np.int32))
-    np.testing.assert_array_equal(y[128:], np.full((128,), 10, dtype=np.int32))
 
 
 class PallasScalarIOpsTest(ptu.PallasTPUTest):
