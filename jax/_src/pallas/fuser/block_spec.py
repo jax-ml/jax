@@ -809,6 +809,10 @@ def _get_fusion_values(
         jaxpr, allow_additional_outputs=allow_additional_outputs, dce=True)
     values = [v for used, v in zip(used_consts, values) if used]
 
+  if jaxpr.constvars:
+    print(f'XXX jaxpr.constvars: {jaxpr.constvars}')
+    assert False, jaxpr.constvars
+
   out_usages = tuple({Usage.REGULAR} for _ in jaxpr.outvars)
   read_usage_env = compute_usage(jaxpr, out_usages)
   constvar_usages = util.safe_map(read_usage_env, jaxpr.constvars)
