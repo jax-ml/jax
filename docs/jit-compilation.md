@@ -210,11 +210,9 @@ g_jit_correct = jax.jit(g, static_argnames=['n'])
 print(g_jit_correct(10, 20))
 ```
 
-To specify such arguments when using `jit` as a decorator, a common pattern is to use python's {func}`functools.partial`:
+To specify such arguments when using `jit` as a decorator, use the decorator factory pattern:
 
 ```{code-cell}
-from functools import partial
-
 @jax.jit(static_argnames=['n'])
 def g_jit_decorated(x, n):
   i = 0
