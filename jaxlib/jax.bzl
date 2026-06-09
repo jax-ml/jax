@@ -60,6 +60,7 @@ pallas_sc_internal_users = []
 pallas_fuser_users = []
 serialize_executable_internal_users = []
 buffer_callback_internal_users = []
+xla_python_packages = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []

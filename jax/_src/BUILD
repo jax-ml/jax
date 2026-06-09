@@ -42,6 +42,7 @@ pytype_strict_library(
         "interpreters/__init__.py",
     ],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("init"),
     deps = [":traceback_util"],
 )
 
@@ -987,6 +988,7 @@ pytype_strict_library(
     name = "batching",
     srcs = ["interpreters/batching.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("batching"),
     deps = [
         ":ad_util",
         ":config",
@@ -1606,6 +1608,7 @@ pytype_strict_library(
     name = "util",
     srcs = ["util.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("util"),
     deps = [
         ":config",
         "//jax/_src/lib",

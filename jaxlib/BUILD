@@ -28,6 +28,7 @@ load(
     "py_test",
     "pytype_library",
     "pytype_strict_library",
+    "xla_python_packages",
 )
 load(
     "//jaxlib:pywrap.bzl",
@@ -49,6 +50,7 @@ package_group(
     includes = [
         "//jax:internal",
     ],
+    packages = xla_python_packages,
 )
 
 pytype_strict_library(
@@ -1423,6 +1425,7 @@ nanobind_pywrap_extension(
         "_sdy_mpmd\\.(NONE|IMPORT|OPTIMIZE|PARTITION|ALL)": "\\1: PartitioningPhase = ...",
         "_sdy_mpmd\\.(KEEP_TRANSFERRED|DROP_TRANSFERRED)": "\\1: SplitFragmentType = ...",
     },
+    visibility = ["//jax:internal"] + jax_visibility("jaxlib/_sdy_mpmd"),
     deps = [
         ":nb_class_ptr",
         ":py_client",
