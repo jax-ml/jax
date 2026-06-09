@@ -29,7 +29,6 @@ limitations under the License.
 #include <string_view>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1492,9 +1491,9 @@ nb::object CanonicalizeValue(nb::handle x) {
   throw nb::python_error();
 }
 
-std::unordered_map<std::string, int64_t> DevicePutInfo::GetInfo() {
+absl::flat_hash_map<std::string, int64_t> DevicePutInfo::GetInfo() {
   const DevicePutInfo& info = GetDevicePutInfo();
-  return std::unordered_map<std::string, int64_t>({
+  return absl::flat_hash_map<std::string, int64_t>({
       {"device_put_with_device", info.device_put_with_device},
       {"device_put_with_sharding", info.device_put_with_sharding},
       {"device_put_fully_replicated", info.device_put_fully_replicated},

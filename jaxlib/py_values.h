@@ -22,9 +22,9 @@ limitations under the License.
 #include <functional>
 #include <string>
 #include <tuple>
-#include <unordered_map>
 #include <utility>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
@@ -154,7 +154,7 @@ struct DevicePutInfo {
   int device_put_assembled = 0;
 
   // Returns a map of the counters for the current thread.
-  static std::unordered_map<std::string, int64_t> GetInfo();
+  static absl::flat_hash_map<std::string, int64_t> GetInfo();
 };
 
 // Canonicalizes a Python value. "Canonicalize" means to resolve any ambiguities

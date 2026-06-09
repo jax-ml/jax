@@ -787,6 +787,7 @@ nanobind_pywrap_extension(
     deps = [
         ":nb_class_ptr",
         ":py_client",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log:log_entry",
@@ -795,6 +796,7 @@ nanobind_pywrap_extension(
         "@com_google_absl//absl/time",
         "@nanobind",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:attribute_map",
         "@xla//xla/python/ifrt_proxy/client:grpc_client",
