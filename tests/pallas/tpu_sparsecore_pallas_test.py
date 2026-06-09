@@ -1908,15 +1908,15 @@ class VectorSubcoreTest(PallasSCTest):
             core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
         scratch_types=dict(
-            indices_vmem=pltpu.VMEM([8], jnp.int32),
-            scratch_ref=pltpu.VMEM([8, 32], dtype),
+            indices_vmem=pltpu.VMEM([self.num_lanes], jnp.int32),
+            scratch_ref=pltpu.VMEM([self.num_lanes, 32], dtype),
         ),
     )
     def kernel(x_ref, indices_ref, o_ref, indices_vmem, scratch_ref):
       subcore_id = lax.axis_index("subcore")
       pltpu.sync_copy(indices_ref, indices_vmem)
       # Initialize scratch space.
-      pltpu.sync_copy(x_ref.at[subcore_id, pl.ds(0, 8)], scratch_ref)
+      pltpu.sync_copy(x_ref.at[subcore_id, pl.ds(0, self.num_lanes)], scratch_ref)
       # Gather-add selected indices to scratch.
       # TODO(selebedev): Allow mixing array and ref indexers in ``.at``.
       pltpu.sync_copy(
@@ -1924,8 +1924,8 @@ class VectorSubcoreTest(PallasSCTest):
       )
       pltpu.sync_copy(scratch_ref, o_ref.at[subcore_id])
 
-    indices = jnp.arange(8) * 8
-    np.testing.assert_array_equal(kernel(x, indices), x[:, :8] + x[:, indices])
+    indices = jnp.arange(self.num_lanes) * (64 // self.num_lanes)
+    np.testing.assert_array_equal(kernel(x, indices), x[:, :self.num_lanes] + x[:, indices])
 
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_scatter_add(self, dtype):
