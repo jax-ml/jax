@@ -595,7 +595,26 @@ LogicalResult arith_constant_downgrade(Operation* op, int version, bool&) {
   return success();
 }
 
+LogicalResult reinterpret_cast_upgrade(Operation* op, int version, bool&) {
+  if (version < 15) {
+    bool dynamic_offset = op->getNumOperands() > 1;
+    op->setAttr("operandSegmentSizes",
+                mlir::DenseI32ArrayAttr::get(op->getContext(),
+                                             {1, dynamic_offset ? 1 : 0, 0}));
+  }
+  return success();
+}
+
 LogicalResult reinterpret_cast_downgrade(Operation* op, int version, bool&) {
+  if (version < 15) {
+    auto operand_segment_sizes =
+        op->getAttrOfType<DenseI32ArrayAttr>("operandSegmentSizes");
+    if (operand_segment_sizes && operand_segment_sizes.asArrayRef()[2] > 0) {
+      return op->emitOpError(
+          "Can only downgrade below version 15 when dynamic_sizes is empty");
+    }
+    op->removeAttr("operandSegmentSizes");
+  }
   if (version < 12) {
     if (op->getNumOperands() == 2) {
       return op->emitOpError(
@@ -642,6 +661,7 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
        vector_multi_dim_reduce_upgrade},
       {StoreOp::getOperationName(), store_upgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_upgrade},
+      {ReinterpretCastOp::getOperationName(), reinterpret_cast_upgrade},
       {MatmulOp::getOperationName(), matmul_upgrade},
   };
   return *rules;

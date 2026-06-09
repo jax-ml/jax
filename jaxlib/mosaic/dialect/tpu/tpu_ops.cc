@@ -922,6 +922,21 @@ LogicalResult VectorStoreIdxOp::verify() {
   return verifyStoreOp(*this);
 }
 
+void ReinterpretCastOp::build(OpBuilder& builder, OperationState& state,
+                              Type result_type, Value input,
+                              Value dynamic_offset, ValueRange dynamic_sizes) {
+  state.addOperands(input);
+  if (dynamic_offset) {
+    state.addOperands(dynamic_offset);
+  }
+  state.addOperands(dynamic_sizes);
+  state.addAttribute("operandSegmentSizes",
+                     builder.getDenseI32ArrayAttr(
+                         {1, dynamic_offset ? 1 : 0,
+                          static_cast<int32_t>(dynamic_sizes.size())}));
+  state.addTypes(result_type);
+}
+
 LogicalResult ReinterpretCastOp::verify() {
   auto source_type = getMemRefType(getInput());
   auto target_type = getType();
@@ -929,6 +944,13 @@ LogicalResult ReinterpretCastOp::verify() {
     return emitOpError("Source and target memory spaces must match, but got ")
            << source_type.getMemorySpace() << " and "
            << target_type.getMemorySpace();
+  }
+  int64_t num_dynamic_dims = target_type.getNumDynamicDims();
+  if (static_cast<int64_t>(getDynamicSizes().size()) != num_dynamic_dims) {
+    return emitOpError("expected ")
+           << num_dynamic_dims
+           << " dynamic size(s) for the result type, but got "
+           << getDynamicSizes().size();
   }
   return success();
 }

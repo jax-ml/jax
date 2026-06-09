@@ -1260,19 +1260,24 @@ def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
-def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
+def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure, AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyMemRef:$input,
     // Dynamic offset shifts the memref pointer by the specified number of
     // elements of the output type.
     // NOTE: The size of the shift must be a multiple of the memory space word
     // size for lowering to succeed.
-    Optional<I32>:$dynamic_offset
+    Optional<I32>:$dynamic_offset,
+    Variadic<I32>:$dynamic_sizes
   );
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
-    $input ($dynamic_offset^)? attr-dict `:` type($input) `->` type($result)
+    $input ($dynamic_offset^)? (`<` $dynamic_sizes^ `>`)? attr-dict `:` type($input) `->` type($result)
   }];
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Type":$result_type, "::mlir::Value":$input, CArg<"::mlir::Value", "nullptr">:$dynamic_offset, CArg<"::mlir::ValueRange", "{}">:$dynamic_sizes)>
+  ];
   let hasVerifier = 1;
 }
 
