@@ -1176,7 +1176,13 @@ def kl_div(
   p, q = promote_args_inexact("kl_div", p, q)
   if dtypes.issubdtype(p.dtype, np.complexfloating):
     raise ValueError("kl_div does not support complex-valued inputs.")
-  return rel_entr(p, q) - p + q
+  # kl_div(p,q) = p*log(p/q) - p + q when p>0,q>0; q when p=0,q>=0; inf otherwise.
+  # Use piecewise to avoid inf - inf = nan for cases like (inf, 0).
+  case1 = (p > 0) & (q > 0)
+  case2 = (p == 0) & (q >= 0)
+  with jnp.errstate(invalid='ignore', divide='ignore'):
+    return jnp.where(case1, rel_entr(p, q) - p + q,
+                     jnp.where(case2, q, jnp.inf))
 
 
 def rel_entr(
