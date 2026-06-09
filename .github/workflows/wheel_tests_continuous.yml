@@ -62,7 +62,8 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
-            runner: ["linux-x86-n4-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
+            # Temporarily narrowed for TPU-only validation of TPU7x core splitting.
+            runner: ["linux-x86-n4-16"]
             artifact: ["jaxlib"]
             python: ["3.11"]
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
@@ -78,7 +79,8 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-cuda-artifacts:
-    if: github.repository_owner == 'jax-ml'
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -99,7 +101,11 @@ jobs:
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-cpu:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
@@ -118,7 +124,11 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-pytest-cuda:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
@@ -159,7 +169,8 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-cpu-py-import:
-    if: github.repository_owner == 'jax-ml'
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -177,7 +188,11 @@ jobs:
       clone_main_xla: 1
 
   run-bazel-test-cuda:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
@@ -206,7 +221,11 @@ jobs:
       clone_main_xla: 1
 
   run-bazel-test-cuda-py-import:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -248,8 +267,9 @@ jobs:
     name: "Pytest TPU (JAX artifacts version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
-      cores: ${{ matrix.tpu-specs.cores }}
+      cores: ${{ matrix.tpu-specs.type == 'v7x-8' && '8' || matrix.tpu-specs.cores }}
       tpu-type: ${{ matrix.tpu-specs.type }}
+      tpu-parallelism-mode: ${{ matrix.tpu-specs.type == 'v7x-8' && 'core' || 'chip' }}
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
@@ -272,8 +292,9 @@ jobs:
     name: "Bazel tests TPU (JAX artifacts version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
-      cores: ${{ matrix.tpu-specs.cores }}
+      cores: ${{ matrix.tpu-specs.type == 'v7x-8' && '8' || matrix.tpu-specs.cores }}
       tpu-type: ${{ matrix.tpu-specs.type }}
+      tpu-parallelism-mode: ${{ matrix.tpu-specs.type == 'v7x-8' && 'core' || 'chip' }}
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
@@ -283,7 +304,8 @@ jobs:
       clone_main_xla: 1
 
   build-rocm-artifacts:
-    if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     uses: ./.github/workflows/build_rocm_artifacts.yml
     permissions:
       id-token: write
@@ -318,7 +340,8 @@ jobs:
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/pytest_rocm.yml
     permissions:
@@ -345,7 +368,8 @@ jobs:
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    # Temporarily disabled for TPU-only validation of TPU7x core splitting.
+    if: ${{ false }}
     needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
     uses: ./.github/workflows/bazel_rocm.yml
     permissions:

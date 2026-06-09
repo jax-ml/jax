@@ -330,8 +330,9 @@ jobs:
     name: "Pytest TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
-      cores: ${{ matrix.tpu-specs.cores }}
+      cores: ${{ matrix.tpu-specs.type == 'v7x-8' && matrix.libtpu-version-type == 'nightly' && '8' || matrix.tpu-specs.cores }}
       tpu-type: ${{ matrix.tpu-specs.type }}
+      tpu-parallelism-mode: ${{ matrix.tpu-specs.type == 'v7x-8' && matrix.libtpu-version-type == 'nightly' && 'core' || 'chip' }}
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
@@ -401,8 +402,9 @@ jobs:
     name: "Bazel tests TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
-      cores: ${{ matrix.tpu-specs.cores }}
+      cores: ${{ matrix.tpu-specs.type == 'v7x-8' && matrix.libtpu-version-type == 'nightly' && '8' || matrix.tpu-specs.cores }}
       tpu-type: ${{ matrix.tpu-specs.type }}
+      tpu-parallelism-mode: ${{ matrix.tpu-specs.type == 'v7x-8' && matrix.libtpu-version-type == 'nightly' && 'core' || 'chip' }}
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}

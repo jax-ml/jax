@@ -12,6 +12,87 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import time
+
+
+def _device_info(device):
+  return {
+      'repr': repr(device),
+      'id': getattr(device, 'id', None),
+      'process_index': getattr(device, 'process_index', None),
+      'coords': getattr(device, 'coords', None),
+      'core_on_chip': getattr(device, 'core_on_chip', None),
+  }
+
+
+def _run_tpu_core_split_diagnostic():
+  import jax
+  import jax.numpy as jnp
+  import numpy as np
+
+  shard_status_file = os.environ.get('TEST_SHARD_STATUS_FILE')
+  if shard_status_file:
+    with open(shard_status_file, 'a', encoding='utf-8'):
+      pass
+
+  print('JAX TPU core split Bazel diagnostic', flush=True)
+  env_keys = (
+      'TEST_RUN_NUMBER',
+      'TEST_SHARD_INDEX',
+      'TEST_TOTAL_SHARDS',
+      'TEST_SHARD_STATUS_FILE',
+      'TPU_VISIBLE_DEVICES',
+      'TPU_VISIBLE_CHIPS',
+      'TPU_CHIPS_PER_PROCESS_BOUNDS',
+      'TPU_PROCESS_BOUNDS',
+      'JAX_PLATFORMS',
+      'TPU_TOPOLOGY',
+      'TPU_TOPOLOGY_ALT',
+      'TPU_TOPOLOGY_WRAP',
+      'TPU_WORKER_ID',
+      'TPU_CHIPS_PER_HOST_BOUNDS',
+      'TPU_HOST_BOUNDS',
+      'CHIPS_PER_HOST_BOUNDS',
+      'HOST_BOUNDS',
+      'TPU_WORKER_HOSTNAMES',
+      'TPU_ACCELERATOR_TYPE',
+      'TPU_RUNTIME_METRICS_PORTS',
+      'VBAR_CONTROL_SERVICE_URL',
+  )
+  for key in env_keys:
+    print(f'{key}: {os.environ.get(key)}', flush=True)
+  print('default backend:', jax.default_backend(), flush=True)
+  print('process count:', jax.process_count(), flush=True)
+  print('process index:', jax.process_index(), flush=True)
+  print('device count:', jax.device_count(), flush=True)
+  local_devices = jax.local_devices()
+  print('local devices:', [_device_info(d) for d in local_devices], flush=True)
+  if len(local_devices) != 1:
+    raise SystemExit(
+        f'Expected exactly one local TPU device; got {len(local_devices)}'
+    )
+
+  @jax.jit
+  def _compute(x):
+    return jnp.sum((x + 1.0) * (x + 2.0))
+
+  x = jax.device_put(np.arange(16, dtype=np.float32), local_devices[0])
+  result = _compute(x).block_until_ready()
+  actual = float(jax.device_get(result))
+  expected = float(sum((i + 1) * (i + 2) for i in range(16)))
+  print('compute result:', actual, flush=True)
+  if actual != expected:
+    raise SystemExit(f'Expected compute result {expected}; got {actual}')
+  time.sleep(float(os.environ.get('JAX_TPU_CORE_SPLIT_DIAGNOSTIC_SLEEP', '5')))
+  print('JAX TPU core split Bazel diagnostic finished', flush=True)
+
+
+if os.environ.get('JAX_TPU_CORE_SPLIT_DIAGNOSTIC') == '1':
+  _run_tpu_core_split_diagnostic()
+  raise SystemExit(0)
+
+
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
