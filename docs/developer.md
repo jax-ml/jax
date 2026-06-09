@@ -106,12 +106,12 @@ current directory.
 
    ```bash
    python build/build.py build --wheels=jax-cuda-plugin --cuda_version=12.3.2 \
-   --cudnn_version=9.1.1 --nccl_version=2.28.9
+   --cudnn_version=9.1.1 --nccl_version=2.29.7
    ```
    or
    ```bash
    python build/build.py build --wheels=jax-cuda-pjrt --cuda_version=12.3.2 \
-   --cudnn_version=9.1.1  --nccl_version=2.28.9
+   --cudnn_version=9.1.1  --nccl_version=2.29.7
    ```
 
    Please note that these parameters are optional: by default Bazel will
