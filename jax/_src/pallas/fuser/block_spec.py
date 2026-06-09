@@ -1886,10 +1886,11 @@ def _tile_eval_rule(
     eval_ctx: KernelEvalContext, x, reps: tuple[int, ...]
 ):
   block_spec = eval_ctx.out_block_specs[0]
-  block_shape = block_spec.block_shape
-  if any(isinstance(dim, pallas_core.Element) for dim in block_shape):
+  block_shape = tuple(d for d in block_spec.block_shape
+                      if not isinstance(d, pallas_core.Squeezed))
+  if not all(isinstance(dim, int) for dim in block_shape):
     raise NotImplementedError(
-        'tile with Element-indexed dimensions not supported yet'
+        'tile with non-int block dimensions not supported yet'
     )
   if not all(
       out_dim % in_dim == 0 for out_dim, in_dim in zip(block_shape, x.shape)
@@ -1917,13 +1918,15 @@ def _tile_pull_rule(
   aval_in = ctx.avals_in[0]
   assert isinstance(aval_in, core.ShapedArray)
   assert len(block_shape) == len(aval_in.shape)
-  if any(isinstance(dim, pallas_core.Element) for dim in block_shape):
+  if not all(isinstance(dim, (int, pallas_core.Squeezed))
+             for dim in block_shape):
     raise NotImplementedError(
-        'tile with Element-indexed dimensions not supported yet'
+        'tile with non-int block dimensions not supported yet'
     )
 
   if not all(
-      (block_dim % in_dim == 0) or (in_dim % block_dim == 0)
+      (pallas_core.get_block_size(block_dim) % in_dim == 0) or
+      (in_dim % pallas_core.get_block_size(block_dim) == 0)
       for block_dim, in_dim in zip(block_shape, aval_in.shape)
   ):
     raise NotImplementedError(
@@ -1932,14 +1935,16 @@ def _tile_pull_rule(
     )
 
   new_shape = tuple(
-      min(block_dim, in_dim)
+      block_dim if isinstance(block_dim, pallas_core.Squeezed)
+      else min(block_dim, in_dim)
       for block_dim, in_dim in zip(block_shape, aval_in.shape)
   )
 
   def new_block_index_transform(*idxs):
     original_idxs = block_transform.block_index_transform(*idxs)
     return tuple(
-        0 if block_dim >= in_dim else orig_idx % (in_dim // block_dim)
+        0 if pallas_core.get_block_size(block_dim) >= in_dim
+        else orig_idx % (in_dim // pallas_core.get_block_size(block_dim))
         for orig_idx, block_dim, in_dim in zip(
             original_idxs, block_shape, aval_in.shape
         )

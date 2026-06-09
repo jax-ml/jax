@@ -1305,6 +1305,38 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         jnp.tile(x_block, block_reps),
     )
 
+  def test_tile_with_squeezed(self):
+    x = jax.random.normal(jax.random.key(0), (1, 64, 256), dtype=np.float32)
+    block_shape = (pl.Squeezed(), 128, 128)
+    reps = (4, 4, 2)  # logical shape after tiling: (4, 256, 512)
+
+    def f():
+      return jnp.tile(x, reps)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec(block_shape, lambda i, j, k: (i, j, k))
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=3,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    self.assertLen(value_block_specs, 1)
+    x_block_spec = value_block_specs[0]
+
+    self.assertIsInstance(x_block_spec.block_shape[0], pl.Squeezed)
+    self.assertEqual(x_block_spec.block_shape[1:], (64, 128))
+
+    for i, j, k in itertools.product(range(4), range(2), range(4)):
+      self.assertEqual(x_block_spec.index_map(i, j, k), (0, 0, k % 2))
+
+    x_block = jax.random.normal(jax.random.key(0), (64, 128), dtype=np.float32)
+    out = kernel_fn((0, 0, 0), (), (x_block,))
+    np.testing.assert_array_equal(out, jnp.tile(x_block, (2, 1)))
+
   def test_pipeline_mode(self):
     def f(x):
       return jnp.tanh(x) + x
