@@ -41,6 +41,7 @@ from jax.experimental.mosaic.gpu import layout_inference
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import test_util as mtu
+from jax.experimental.mosaic.gpu.mma import MMALayouts
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -1639,6 +1640,37 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(
         inference_utils.in_transforms(wgmma_op), in_transforms
     )
+
+  @parameterized.parameters(
+      ir.F16Type.get,
+      ir.BF16Type.get,
+      ir.Float8E4M3FNType.get,
+      ir.Float8E5M2Type.get,
+      lambda: ir.IntegerType.get_signless(8),
+      lambda: ir.IntegerType.get_signless(4),
+  )
+  def test_infer_layouts_for_mma_op(self, elt_ty_fn):
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = elt_ty_fn()
+      m, n, k = 64, 8, 8 * (32 // mgpu.utils.bitwidth(elt_ty))
+      acc_elem_ty = (
+          ir.IntegerType.get_signless(32)
+          if isinstance(elt_ty, ir.IntegerType)
+          else ir.F32Type.get()
+      )
+      acc_ty = ir.VectorType.get((m, n), acc_elem_ty)
+      lhs_ty = ir.VectorType.get((m, k), elt_ty)
+      rhs_ty = ir.VectorType.get((k, n), elt_ty)
+      acc, lhs, rhs = undefs(acc_ty, lhs_ty, rhs_ty)
+      mma_op = mgpu.dialect.MMAOp(acc, lhs, rhs)
+
+    mgpu.infer_layout(self.module)
+
+    layouts_inst = MMALayouts(elt_ty)
+    self.checkInLayouts(
+        mma_op, [layouts_inst.acc, layouts_inst.lhs, layouts_inst.rhs]
+    )
+    self.checkOutLayouts(mma_op, [layouts_inst.acc])
 
   @parameterized.product(
       dtype=(jnp.int8, jnp.uint8),
