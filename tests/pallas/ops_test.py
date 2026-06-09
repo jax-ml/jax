@@ -678,6 +678,8 @@ class OpsTest(PallasBaseTest):
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
+      elif not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+        self.skipTest("Requires libtpu built on or after 2026-05-26")
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
@@ -772,6 +774,8 @@ class OpsTest(PallasBaseTest):
     } or to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Not supported on this hardware")
+      elif not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+        self.skipTest("Requires libtpu built on or after 2026-05-26")
     if from_dtype in ("uint2", "int2") and to_dtype == "bool":
       self.skipTest(
           "TODO(b/343490729): XLA compare(s2, s2) yields wrong results"
@@ -869,6 +873,9 @@ class OpsTest(PallasBaseTest):
   )
   @jtu.skip_on_devices("gpu")
   def test_scalar_downcast_float32(self, dtype):
+    if dtype in {jnp.float8_e5m2, jnp.float8_e4m3fn}:
+      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+        self.skipTest("Requires libtpu built on or after 2026-05-26")
 
     def kernel(x_ref, o_ref):
       o_ref[0, 0] = x_ref[:][0, 0].astype(dtype)

@@ -40,7 +40,7 @@ jobs:
       cores: "8"
       tpu-type: "v6e-8"
       python: "3.14-nogil"
-      libtpu-version-type: "nightly"
+      libtpu-version-type: "pinned"
       halt-for-connection: ${{ inputs.halt-for-connection }}
       build_jaxlib: ${{ 'true' }}
       build_jax: ${{ 'true' }}

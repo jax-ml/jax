@@ -370,8 +370,8 @@ class VectorSubcoreTest(PallasSCTest):
   def test_slicing(self, dtype, data):
     self.skip_if_tc_tiling()
 
-    if dtype == "float16" and not jtu.is_cloud_tpu_at_least(2026, 6, 7):
-      self.skipTest("Needs a newer libtpu")
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 7):
+      self.skipTest("Requires libtpu built on or after 2026-06-07")
 
     out_shape = data.draw(
         hps.sampled_from(sc_core.supported_shapes(dtype)), label="out_shape"

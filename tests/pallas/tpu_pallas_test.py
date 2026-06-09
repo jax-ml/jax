@@ -2759,6 +2759,8 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(y, jnp.tile(x, reps))
 
   def test_mixed_precision_dot(self):
+    if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+      self.skipTest('Requires libtpu built on or after 2026-05-26')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('float8_e4m3b11fnuz not supported on TPU generations <= 4')
     if jtu.is_device_tpu(7, 'x'):
@@ -2808,6 +2810,9 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
       ],
   )
   def test_scalar_casting(self, in_dtype, out_dtype):
+    if in_dtype in {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}:
+      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
     def kernel(x_ref, o_ref):
       o_ref[0] = x_ref[0].astype(out_dtype)
 
@@ -4236,6 +4241,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_small_last_two_dims(
       self, input_output_major_dims, input_minor_dims, dtype
   ):
+    if dtype in {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}:
+      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
 
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('TPU v5+ required.')
@@ -5017,6 +5025,9 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn],
   )
   def test_reshape_fold_minormost_dim(self, dtype):
+    if dtype == jnp.float8_e4m3fn:
+      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
     packing = 32 // (8 * np.dtype(dtype).itemsize)
     in_shape = (8 * packing, 128)
     out_shape = (1, math.prod(in_shape))
@@ -5202,6 +5213,9 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('f32_transpose', jnp.float32, True),
   )
   def test_basic(self, dtype, transpose):
+    if dtype in {jnp.float8_e4m3fn, jnp.float8_e5m2}:
+      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
     m = 128 + 64
     k = n = 256
     generator = np.random.default_rng(1234)

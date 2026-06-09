@@ -244,7 +244,7 @@ jobs:
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"},
             {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"}
           ]
-          libtpu-version-type: ["nightly"]
+          libtpu-version-type: ["pinned"]
     name: "Pytest TPU (JAX artifacts version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
@@ -268,7 +268,7 @@ jobs:
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"},
           ]
-          libtpu-version-type: ["nightly"]
+          libtpu-version-type: ["pinned"]
     name: "Bazel tests TPU (JAX artifacts version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
