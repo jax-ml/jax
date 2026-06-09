@@ -1161,6 +1161,40 @@ class OpsTest(ptu.PallasTPUTest):
         result, jnp.einsum("km,kn->mn", lhs, rhs), atol=1e-5
     )
 
+  @parameterized.product(
+      dtype=[jnp.int8, jnp.int16, jnp.uint8, jnp.uint16],
+      op=[lax.eq, lax.ne, lax.lt, lax.gt, lax.le, lax.ge],
+  )
+  def test_scalar_comparison(self, dtype, op):
+    from jax._src.lib import jaxlib_extension_version
+    if jaxlib_extension_version < 467:
+      self.skipTest("Requires jaxlib_extension_version >= 467")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.bool_),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+    )
+    def _kernel(x_ref, y_ref, o_ref):
+      o_ref[0] = op(x_ref[0], y_ref[0])
+
+    if jnp.issubdtype(dtype, jnp.signedinteger):
+      x_val = -1
+      y_val = 0
+    else:
+      x_val = 255 if dtype == jnp.uint8 else 65535
+      y_val = 0
+
+    x = jnp.array([x_val], dtype=dtype)
+    y = jnp.array([y_val], dtype=dtype)
+    out = _kernel(x, y)
+    expected = op(x, y)
+    self.assertAllClose(out, expected)
+
 
 if __name__ == "__main__":
   absltest.main()
