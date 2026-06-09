@@ -11145,6 +11145,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                          P('x', None, None, unreduced={'y'}))
     self.assertNotIn('all-reduce(', f.lower(x, y).compile().as_text())
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_to_pinned_host_error(self, mesh):
+    named_sharding = NamedSharding(
+        mesh.abstract_mesh, P('x'), memory_kind='pinned_host')
+    with self.assertRaisesRegex(
+        ValueError, "sharding with memory_kind is not allowed"):
+      jnp.full((2,), fill_value=0, out_sharding=named_sharding)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

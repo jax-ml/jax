@@ -2266,7 +2266,10 @@ def get_sharding(sharding, shape):
     raise ValueError("Mesh of an aval must be an AbstractMesh. "
                      f"Got {out_s.mesh} of type {type(out_s.mesh)}")
   _check_divisibility(out_s, shape)
-  assert out_s.memory_kind is None
+  if out_s.memory_kind is not None:
+    raise ValueError(
+        "sharding with memory_kind is not allowed. Please use `jax.device_put`"
+        f" to transfer to different memory spaces. Got {sharding=}")
   return out_s
 
 
