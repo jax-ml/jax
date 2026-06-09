@@ -403,8 +403,8 @@ class DevicePutTest(jtu.JaxTestCase):
     if jtu.device_under_test() != "tpu":
       self.skipTest("This test is only for TPU")
 
-    if not jtu.is_cloud_tpu_at_least(2026, 4, 15):
-      self.skipTest("Requires libtpu built after 2026-04-15")
+    if not jtu.is_cloud_tpu_at_least(2026, 5, 22):
+      self.skipTest("Requires libtpu built after 2026-05-22")
 
     np_inp = np.arange(1)
 
