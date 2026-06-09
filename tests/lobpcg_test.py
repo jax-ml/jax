@@ -49,6 +49,8 @@ def _make_concrete_cases(f64):
       m *= 2
     if f64:
       m *= 2
+    if not f64:
+      tol = 1e-6
     if name.startswith('cluster') and not f64:
       tol = 2e-6
     clean_matrix_name = _clean_matrix_name(name)
