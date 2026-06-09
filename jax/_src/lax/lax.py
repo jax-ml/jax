@@ -9599,8 +9599,7 @@ def _eq_meet(a, b):
   return eq(a, b)
 
 
-def empty(shape, dtype, *, out_sharding=None,
-          out_memory_space=core.MemorySpace.Device):
+def empty(shape, dtype, *, out_sharding=None):
   """Create an empty array of possibly uninitialized values.
 
   This initialization is backend dependent.
@@ -9622,22 +9621,18 @@ def empty(shape, dtype, *, out_sharding=None,
   .. _explicit sharding: https://docs.jax.dev/en/latest/parallel.html
   """
   out_sharding = canonicalize_sharding(out_sharding, 'lax.empty')
-  return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding,
-                      out_memory_space=out_memory_space)
+  return empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)
 
 empty_p = core.Primitive('empty')
 empty_p.def_impl(partial(dispatch.apply_primitive, empty_p))
 
-def _empty_abstract_eval(*, shape, dtype, out_sharding, out_memory_space):
-  return core.ShapedArray(shape, dtype, sharding=out_sharding,
-                          memory_space=out_memory_space)
+def _empty_abstract_eval(*, shape, dtype, out_sharding):
+  return core.ShapedArray(shape, dtype, sharding=out_sharding)
 empty_p.def_abstract_eval(_empty_abstract_eval)
 
-def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding,
-                             out_memory_space):
+def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding):
   if not core.is_constant_shape(shape):
-    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding,
-                        out_memory_space=out_memory_space)
+    return _empty_lower(ctx, shape=shape, dtype=dtype, out_sharding=out_sharding)
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
   phys_aval = core.physical_aval(aval_out)
@@ -9654,7 +9649,7 @@ def _empty_custom_call_lower(ctx, *, shape, dtype, out_sharding,
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'tpu')
 mlir.register_lowering(empty_p, _empty_custom_call_lower, 'gpu')
 
-def _empty_lower(ctx, *, shape, dtype, out_sharding, out_memory_space):
+def _empty_lower(ctx, *, shape, dtype, out_sharding):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   aval_out = core.ShapedArray(shape, dtype, sharding=out_sharding)
   phys_aval = core.physical_aval(aval_out)
@@ -9663,15 +9658,13 @@ def _empty_lower(ctx, *, shape, dtype, out_sharding, out_memory_space):
   return [mlir.lower_with_sharding_in_types(ctx, out, phys_aval)]
 mlir.register_lowering(empty_p, _empty_lower)
 
-def _empty_batcher(axis_data, vals_in, dims_in, *, shape, dtype, out_sharding,
-                   out_memory_space):
+def _empty_batcher(axis_data, vals_in, dims_in, *, shape, dtype, out_sharding):
   batched_shape = tuple_insert(shape, 0, axis_data.size)
   batched_out_sharding = (
       None if out_sharding is None else
       batching.get_sharding_for_vmap(axis_data, out_sharding, 0))
   y = empty_p.bind(shape=batched_shape, dtype=dtype,
-                   out_sharding=batched_out_sharding,
-                   out_memory_space=out_memory_space)
+                   out_sharding=batched_out_sharding)
   return y, 0
 batching.fancy_primitive_batchers[empty_p] = _empty_batcher
 
