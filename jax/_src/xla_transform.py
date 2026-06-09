@@ -69,8 +69,12 @@ def register_hlo_module_transformation(
   stage_int = stage.value
 
   # Canonicalize platforms to a list of strings early.
+  # When platforms=None we want all backends. Backend factory keys (e.g.
+  # "rocm") may differ from the platform string a client reports at runtime
+  # (e.g. "gpu"), so we include both forms and "gpu" as a catch-all for GPU
+  # plugin clients.
   if platforms is None:
-    platforms_list = ["cpu"] + list(xla_bridge._backend_factories.keys())
+    platforms_list = ["cpu", "gpu"] + list(xla_bridge._backend_factories.keys())
     platforms_list = list(dict.fromkeys(platforms_list))
   elif isinstance(platforms, str):
     platforms_list = [platforms]

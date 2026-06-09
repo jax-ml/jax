@@ -278,7 +278,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "xla_transform_test",
     srcs = ["xla_transform_test.py"],
-    enable_backends = ["cpu"],
+    enable_backends = ["cpu", "gpu"],
     deps = [
         "//jax/extend:xla",
         "//jaxlib:_xla",
