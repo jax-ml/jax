@@ -79,6 +79,33 @@ def _raise_if_unsupported_memory_space(
     raise NotImplementedError(f"Unsupported memory space: {space}")
 
 
+def _raise_if_unsupported_collective_axes(
+    mesh: plgpu.Mesh | None,
+    is_collective_by_thread_cluster_axis: tuple[bool, ...],
+):
+  if not mesh or not mesh.thread_name:
+    if any(is_collective_by_thread_cluster_axis):
+      raise ValueError(
+          "Requesting collective allocations, but no explicit thread axis"
+          " specified."
+      )
+  else:
+    # Note that the leading entries in `is_collective_by_thread__cluster_axis`
+    # correspond to the cluster axes, while the last entry corresponds to the
+    # thread axis within a block.
+    *is_collective_by_cluster_axis, is_thread_axis_collective = (
+        is_collective_by_thread_cluster_axis
+    )
+    if any(is_collective_by_cluster_axis):
+      raise ValueError(
+          "Collective allocations along cluster axes are not supported."
+      )
+    if not is_thread_axis_collective:
+      raise ValueError(
+          "Scoped allocation must have the thread axis in its collective axes."
+      )
+
+
 # TODO(nrink): Try unifying this function with `_extract_barrier_slice_base`
 # from `jax._src.pallas.mosaic_gpu.primitives`.
 def _get_index_for_barrier_allocation_key(
@@ -135,6 +162,17 @@ def _get_barrier_allocation_key_from_inval(
     return allocation_key_as_array[index]
 
 
+def _get_num_threads_sharing_collective_allocation(
+    axes_dims: tuple[int, ...],
+    is_last_thread_axis_collective: bool,
+) -> int:
+  """Returns the number of threads that share a collective allocation."""
+  if is_last_thread_axis_collective:
+    return axes_dims[-1]
+  else:
+    return 1
+
+
 _SENTINEL = jnp.inf
 
 
@@ -168,7 +206,7 @@ class JaxprInterpreter:
   # The `thread_id` maps to a thread's coordinates along the cluster and thread
   # axes as follows:
   #
-  #   thread_coord_tuple = (*self.cluster_coords, self.thread_id_in_block),
+  #   all_thread_coords = (*self.cluster_coords, self.thread_id_in_block),
   #
   # where the `self.thread_id_in_block` is the minor-most coordinate, and
   # `self.cluster_coords` are in major-to-minor order.
@@ -194,6 +232,64 @@ class JaxprInterpreter:
   def cluster_coords(self) -> tuple[int, ...]:
     thread_id = self.thread_id // self.num_threads_per_block
     return interpret_utils.get_indices(self.cluster_dims, thread_id)
+
+  @functools.cached_property
+  def thread_cluster_shape(self) -> tuple[int, ...]:
+    """Returns the number of threads along the cluster axes *and* within a block."""
+    return self.cluster_dims + (self.num_threads_per_block,)
+
+  @functools.cached_property
+  def thread_cluster_coords(self) -> jax.Array:
+    """Returns the coordinates of the thread along the cluster axes *and* within the block."""
+    return jnp.array(
+        list(self.cluster_coords) + [jnp.int32(self.thread_id_in_block)],
+        dtype=jnp.int32,
+    )
+
+  def are_thread_cluster_axes_collective(
+      self, collective_axes: tuple[jax_core.AxisName, ...]
+  ) -> tuple[bool, ...]:
+    """Returns a tuple of booleans indicating whether each thread cluster axis is collective.
+
+    Args:
+      collective_axes: A tuple of collective axis names. The order of the axis
+        names in the tuple does not matter.
+
+    Returns:
+      A tuple of booleans, where the i-th boolean is true if the i-th axis in
+      `thread_cluster_shape` is among the axes in `collective_axes`.
+
+    Raises:
+      ValueError: If `collective_axes` contains an axis name that is not a
+        thread cluster axis.
+    """
+    thread_axis_names: list[str | object] = []
+    if self.mesh is not None:
+      if self.mesh.cluster_names is not None:
+        thread_axis_names.extend(self.mesh.cluster_names)
+      if self.mesh.thread_name is not None:
+        thread_axis_names.append(self.mesh.thread_name)
+      else:
+        # If `thread_name` is not set, we use a sentinel value for the final
+        # axis that corresponds to the (Pallas) threads in a block.
+        thread_axis_names.append(object())
+    else:
+      # If there is no mesh, we use a sentinel value for the single thread axis
+      # that corresponds to the single (Pallas) thread in a block.
+      thread_axis_names.append(object())
+    for axis in collective_axes:
+      if not axis in thread_axis_names:
+        raise ValueError(
+            f"Collective axis `{axis}` not found among axes"
+            f" `{thread_axis_names}`"
+        )
+    return tuple(axis in collective_axes for axis in thread_axis_names)
+
+  def is_thread_block_axis_collective(
+      self, collective_axes: tuple[jax_core.AxisName, ...]
+  ) -> bool:
+    """Returns whether the axis corresponding to the threads in a block is collective."""
+    return self.are_thread_cluster_axes_collective(collective_axes)[-1]
 
   def _interpret_axis_index_p(self, eqn):
     assert eqn.primitive is lax.axis_index_p
@@ -261,8 +357,12 @@ class JaxprInterpreter:
     def _allocate_for_aval(token,
                            aval,
                            transforms: tuple[state_types.Transform, ...],
-                           same_allocations_for_all_threads: bool):
+                           is_thread_block_axis_collective: bool):
       _raise_if_unsupported_memory_space(aval.memory_space)
+      ref_count = _get_num_threads_sharing_collective_allocation(
+          self.thread_cluster_shape,
+          is_thread_block_axis_collective,
+      )
       match aval:
         case state_types.AbstractRef(
             inner_aval=inner, memory_space=memory_space, kind=_
@@ -280,53 +380,54 @@ class JaxprInterpreter:
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
-                # Allocating a barrier is meaningful only if the barrier is
-                # shared between all threads. Hence we assert on
-                # `same_allocations_for_all_threads`.
-                assert same_allocations_for_all_threads
                 assert len(shape) == 1
+                # A barrier is shared between the threads in a block. Hence its
+                # ref count, when computed based on the collective axes, should
+                # equal the number of threads in a block.
+                assert ref_count == self.num_threads_per_block
+                # TODO(nrink): Simplify the interface to
+                # `call_allocate_barriers`. Consider making it similar to
+                # `call_allocate_buffer`, see below.
                 return gpu_callbacks.call_allocate_barriers(
                     token=token,
                     device_id=jnp.int32(self.device_info.device_id),
                     grid_point_coords=self.grid_point_coords,
                     thread_id=self.thread_id,
+                    axes_dims=self.thread_cluster_shape,
                     num_arrivals=jnp.int32(dtype.num_arrivals),
                     num_barriers=shape[0],
-                    ref_count=jnp.int32(self.num_threads_per_block),
+                    ref_count=jnp.int32(ref_count),
                     source_info=eqn.source_info,
                 )
               else:
                 memory_space_idx = gpu_callbacks.get_memory_space_idx(
                     memory_space
                 )
+                thread_id_for_allocation_key = gpu_callbacks.get_thread_id_for_collective_allocation_key(
+                    thread_id=jnp.int32(self.thread_id),
+                    axes_dims=self.thread_cluster_shape,
+                    is_last_thread_axis_collective=is_thread_block_axis_collective,
+                )
                 token, allocation_request = (
                     gpu_callbacks.call_make_allocation_request_array(
                         token=token,
                         device_id=jnp.int32(self.device_info.device_id),
                         memory_space_id=memory_space_idx,
-                        thread_id=(
-                            jnp.int32(0)
-                            if same_allocations_for_all_threads
-                            else self.thread_id
-                        ),
-                        initial_ref_count=(
-                            self.num_threads_per_block
-                            if same_allocations_for_all_threads
-                            else 1
-                        ),
+                        thread_id=jnp.int32(thread_id_for_allocation_key),
+                        initial_ref_count=ref_count,
                     )
                 )
-              return gpu_callbacks.call_allocate_buffer(
-                  token=token,
-                  device_id=jnp.int32(self.device_info.device_id),
-                  grid_point_coords=self.grid_point_coords,
-                  thread_id=self.thread_id,
-                  allocation_request_as_array=allocation_request,
-                  value=interpret_utils.get_uninitialized_array(
-                      shape, dtype, self.interpret_params.uninitialized_memory
-                  ),
-                  source_info=eqn.source_info,
-              )
+                return gpu_callbacks.call_allocate_buffer(
+                    token=token,
+                    device_id=jnp.int32(self.device_info.device_id),
+                    grid_point_coords=self.grid_point_coords,
+                    thread_id=self.thread_id,
+                    allocation_request_as_array=allocation_request,
+                    value=interpret_utils.get_uninitialized_array(
+                        shape, dtype, self.interpret_params.uninitialized_memory
+                    ),
+                    source_info=eqn.source_info,
+                )
             case _:
               raise ValueError(f"Unsupported inner aval: {inner}")
 
@@ -368,40 +469,24 @@ class JaxprInterpreter:
     assert eqn.primitive is primitives.run_scoped_p
     collective_axes = eqn.params["collective_axes"]
     ref_transforms = eqn.params["ref_transforms"]
-    # Note that on GPU, `SMEM` buffers and barriers can only be allocated
-    # collectively (i.e. corresponding to `same_allocations=True`). In the
-    # interpreter we are a little more lenient and allow non-collective
-    # allocations for `SMEM` buffers.
-    same_allocations = False
-    if self.num_threads_per_block == 1:
-      # When there is only one thread, we set `same_allocations` to `True`
-      # regardless of whether `collective_axes` is set or not. Since the
-      # allocation of barriers asserts on `same_allocations`, setting
-      # `same_allocations = True` here ensures that barriers can be allocated
-      # when only a single thread is present and `collective_axes` is empty.
-      same_allocations = True
-    elif collective_axes:
-      if (
-          self.mesh is None
-          or len(collective_axes) != 1
-          or collective_axes[0] != self.mesh.thread_name
-      ):
-        raise NotImplementedError(
-            "When interpreting `run_scoped` in a GPU kernel, non-empty"
-            " `collective_axes` is currently only supported when it contains a"
-            " single axis that agrees with the thread axis (i.e. `thread_name`)"
-            " of the mesh."
-        )
-      same_allocations = True
 
     # Allocate a buffer or barrier for each element of
     # `eqn.params['jaxpr'].invars`. It is assumed that each thread runs the same
     # sequence of `run_scoped`s.
     invars = eqn.params["jaxpr"].invars
     allocs = []
+    _raise_if_unsupported_collective_axes(
+        self.mesh, self.are_thread_cluster_axes_collective(collective_axes)
+    )
+
     for v, transforms in safe_zip(invars, ref_transforms):
       token, alloc = _allocate_for_aval(
-          token, v.aval, transforms, same_allocations)
+          token,
+          v.aval,
+          transforms,
+          self.is_thread_block_axis_collective(collective_axes),
+      )
+
       allocs.append(alloc)
 
     token, out = self.interpret(

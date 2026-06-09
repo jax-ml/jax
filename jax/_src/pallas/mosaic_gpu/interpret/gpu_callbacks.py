@@ -871,11 +871,40 @@ def call_swap(
   )
 
 
+def get_thread_id_for_collective_allocation_key(
+    thread_id: int,
+    axes_dims: tuple[int, ...],
+    is_last_thread_axis_collective: bool,
+) -> int:
+  """Returns the thread ID to use for the allocation key in a collective allocation.
+
+  Only the last thread coordinate (corresponding to the threads in a block) can
+  be collective; whether this is the case is determined by
+  `is_last_thread_axis_collective`.
+
+  Args:
+    thread_id: A 'flat' thread ID.
+    axes_dims: The dimensions of the cluster axes and block (row-major order,
+      where the last/minor-most dimension is the block dimension).
+    is_last_thread_axis_collective: A boolean indicating whether the last thread
+      axis (correspodning to the threads in a block) is collective.
+
+  Returns:
+    The thread ID to use for the allocation key in a collective allocation.
+  """
+  if is_last_thread_axis_collective:
+    return thread_id // axes_dims[-1]
+  else:
+    return thread_id
+
+
 def _allocate_barriers(
+    *,
     token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
+    axes_dims: tuple[int, ...],
     num_arrivals: jax.Array,
     num_barriers: jax.Array,
     ref_count: jax.Array,
@@ -884,6 +913,7 @@ def _allocate_barriers(
   device_id_as_int = int(device_id)
   grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
   thread_id_as_int = int(thread_id)
+  axes_dims = tuple(int(x) for x in axes_dims)
   num_arrivals_as_int = int(num_arrivals)
   num_barriers_as_int = int(num_barriers)
   ref_count_as_int = int(ref_count)
@@ -899,12 +929,19 @@ def _allocate_barriers(
         device_id_as_int, thread_id_as_int
     )
     smem_space_id = IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.SMEM]
+
+    # Barriers are shared between threads. For each group of threads that share
+    # a barrier, we compute the thread ID to be used for the allocation key.
+    # Invariant: `thread_id_for_key` is the same for all threads in a group that
+    # shares the barrier.
+    thread_id_for_key = get_thread_id_for_collective_allocation_key(
+        thread_id_as_int, axes_dims, is_last_thread_axis_collective=True
+    )
+
     key = HostAllocationKey(
         memory_space_id=smem_space_id,
         device_id=device_id_as_int,
-        # Barriers are shared between threads. Hence we associate all
-        # allocations for `Barrier`s with the 0th thread.
-        thread_id=0,
+        thread_id=thread_id_for_key,
         initial_ref_count=ref_count_as_int,
         buffer_id=barrier_id,
     )
@@ -927,10 +964,12 @@ def _allocate_barriers(
 
 
 def call_allocate_barriers(
+    *,
     token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
+    axes_dims: tuple[int, ...],
     num_arrivals: jax.Array,
     num_barriers: jax.Array,
     ref_count: jax.Array,
@@ -942,15 +981,19 @@ def call_allocate_barriers(
       result_shape, shape_and_dtype.dtype
   )
   return callback.io_callback(
-      functools.partial(_allocate_barriers, source_info=source_info),
+      functools.partial(
+          _allocate_barriers,
+          source_info=source_info,
+          axes_dims=axes_dims,
+      ),
       (TOKEN_SHAPE_DTYPE, result_shape_and_dtype),
-      token,
-      device_id,
-      grid_point_coords,
-      thread_id,
-      num_arrivals,
-      num_barriers,
-      ref_count,
+      token=token,
+      device_id=device_id,
+      grid_point_coords=grid_point_coords,
+      thread_id=thread_id,
+      num_arrivals=num_arrivals,
+      num_barriers=num_barriers,
+      ref_count=ref_count,
   )
 
 

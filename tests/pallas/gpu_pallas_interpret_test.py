@@ -268,8 +268,7 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(z, x @ y, atol=1e-3)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
-  @jtu.parameterized.parameters(False, True)
-  def test_run_scoped(self, with_race):
+  def test_run_scoped(self):
     mesh = plgpu.Mesh(num_threads=2, thread_name='n')
 
     @jax.jit
@@ -278,7 +277,9 @@ class InterpretTest(jtu.JaxTestCase):
 
         @pl.core_map(
             mesh,
-            interpret=InterpretParams(detect_races=True),
+            interpret=InterpretParams(
+                detect_races=True,
+            ),
         )
         def _():
           def body(ref):
@@ -295,23 +296,202 @@ class InterpretTest(jtu.JaxTestCase):
           pl.run_scoped(
               body,
               plgpu.GMEM(o_ref.shape[1:], dtype=o_ref.dtype),
-              collective_axes=('n',) if with_race else (),
+              collective_axes=('n',),
           )
 
       y = pl.run_state(inner)(x)
       return y
 
-    y = f(jnp.zeros((2, 16, 128)))
+    _ = f(jnp.zeros((2, 16, 128)))
+    self.assertTrue(mosaic_interpret.get_races().races_found)
 
-    if with_race:
-      # Due to the presence of a race, we cannot expect `y` to have a
-      # well-defined value. Hence, we do not assert anything about `y`.
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+  @jtu.parameterized.parameters(
+      ((),),
+      (('t',),),
+      (('c0',),),
+      (('c1',),),
+      (('c0', 't'),),
+      (('c1', 't'),),
+      (('c0', 'c1'),),
+      (('c0', 'c1', 't'),),
+  )
+  def test_run_scoped_with_cluster(self, collective_axes):
+    all_axis_names = ('c0', 'c1', 't')
+    non_collective_axis_names = tuple(
+        name for name in all_axis_names if name not in collective_axes
+    )
+
+    mesh = plgpu.Mesh(
+        cluster=(2, 2),
+        cluster_names=('c0', 'c1'),
+        num_threads=2,
+        thread_name='t',
+    )
+
+    @jax.jit
+    def f(x):
+      def inner(o_ref):
+
+        @pl.core_map(
+            mesh,
+            interpret=InterpretParams(
+                detect_races=True,
+            ),
+        )  # type: ignore[wrong-arg-types]
+        def _():
+          def body(ref):
+            collective_indices = tuple(
+                jax.lax.axis_index(axis_name) for axis_name in collective_axes
+            )
+            non_collective_indices = tuple(
+                jax.lax.axis_index(axis_name)
+                for axis_name in non_collective_axis_names
+            )
+
+            ref[collective_indices] = sum(
+                stride * index
+                for stride, index in zip(
+                    (1, 2, 4), reversed(collective_indices)
+                )
+            )
+
+            o_ref[non_collective_indices + collective_indices] = ref[
+                collective_indices
+            ]
+
+          pl.run_scoped(
+              body,
+              plgpu.GMEM((2,) * len(collective_axes), dtype=jnp.int32),
+              collective_axes=collective_axes,
+          )
+
+      y = pl.run_state(inner)(x)
+      return y
+
+    if 'c0' in collective_axes or 'c1' in collective_axes:
+      with self.assertRaisesRegex(
+          Exception,
+          r'Collective allocations along cluster axes are not' r' supported\.',
+      ):
+        _ = f(jnp.zeros((2, 2, 2), dtype=jnp.int32))
+      mosaic_interpret.reset_gpu_interpret_mode_state()
+    elif 't' not in collective_axes:
+      with self.assertRaisesRegex(
+          Exception,
+          r'Scoped allocation must have the thread axis in its collective'
+          r' axes\.',
+      ):
+        _ = f(jnp.zeros((2, 2, 2), dtype=jnp.int32))
+      mosaic_interpret.reset_gpu_interpret_mode_state()
     else:
-      np.testing.assert_array_equal(
-          y, np.broadcast_to(np.arange(2).reshape(2, 1, 1), y.shape)
-      )
+      y = f(jnp.zeros((2, 2, 2), dtype=jnp.int32))
       self.assertFalse(mosaic_interpret.get_races().races_found)
+      expected = np.arange(2 ** len(collective_axes)).reshape(
+          (1,) * len(non_collective_axis_names) + (2,) * len(collective_axes)
+      )
+      expected = np.broadcast_to(expected, (2, 2, 2))
+      np.testing.assert_array_equal(y, expected)
+
+  def test_run_scoped_with_unknown_collective_axis(self):
+    mesh = plgpu.Mesh(
+        cluster=(2, 2),
+        cluster_names=('c0', 'c1'),
+        num_threads=2,
+        thread_name='t',
+    )
+
+    @jax.jit
+    def f(x):
+      def inner(o_ref):
+
+        @pl.core_map(
+            mesh,
+            interpret=InterpretParams(),
+        )
+        def _():
+          def body(_):
+            o_ref[...] = 42
+
+          pl.run_scoped(
+              body,
+              plgpu.GMEM((), dtype=jnp.int32),
+              collective_axes=('unknown_axis',),
+          )
+      y = pl.run_state(inner)(x)
+      return y
+
+    with self.assertRaisesRegex(
+        Exception,
+        r"Collective axis `unknown_axis` not found among axes `\['c0', 'c1', 't'\]`",
+    ):
+      _ = f(jnp.zeros((), dtype=jnp.int32))
+    mosaic_interpret.reset_gpu_interpret_mode_state()
+
+  @jtu.parameterized.parameters(
+      (
+          True,
+          ('c0',),
+          r'Collective allocations along cluster axes are not'
+          r' supported\.',
+      ),
+      (
+          True,
+          ('c0', 't'),
+          r'Collective allocations along cluster axes are not'
+          r' supported\.',
+      ),
+      (
+          True,
+          (),
+          (
+              r'Scoped allocation must have the thread axis in its collective'
+              r' axes\.'
+          ),
+      ),
+      (
+          False,
+          ('c0',),
+          r'Requesting collective allocations, but no explicit thread axis'
+          r' specified\.',
+      ),
+      (False, ('t',), r'Collective axis `t` not found among axes'),
+  )
+  def test_run_scoped_barrier_with_incorrect_collective_axes(
+      self, has_thread_axis, collective_axes, expected_error_regex
+  ):
+    mesh_kwargs = dict(
+        cluster=(2, 2),
+        cluster_names=('c0', 'c1'),
+    )
+    if has_thread_axis:
+      mesh_kwargs.update(
+          num_threads=2,
+          thread_name='t',
+      )
+    mesh = plgpu.Mesh(**mesh_kwargs)
+
+    @jax.jit
+    def f(x):
+      def inner(o_ref):
+        @pl.core_map(
+            mesh,
+            interpret=InterpretParams(),
+        )
+        def _():
+          def body(_):
+            o_ref[...] = 42
+
+          pl.run_scoped(
+              body,
+              plgpu.Barrier(),
+              collective_axes=collective_axes,
+          )
+      y = pl.run_state(inner)(x)
+      return y
+
+    with self.assertRaisesRegex(Exception, expected_error_regex):
+      _ = f(jnp.zeros((), dtype=jnp.int32))
+    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   # Test adapted from
   # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#using-multiple-pallas-threads-per-cuda-block
@@ -440,7 +620,8 @@ class InterpretTest(jtu.JaxTestCase):
         num_threads=2,
         thread_name='t',
         interpret=InterpretParams(
-            detect_races=True, skip_floating_point_ops=skip_floating_point_ops
+            detect_races=True,
+            skip_floating_point_ops=skip_floating_point_ops,
         ),
     )
     def _kernel(x_ref, out_ref, queue, produced, consumed):
