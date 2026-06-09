@@ -737,6 +737,62 @@ class DistributionsTest(RandomTestBase):
     a=[0.1, 1., 10.],
     dtype=jtu.dtypes.floating,
   )
+  def testGammaApproximate(self, a, dtype):
+    # The approximate method should still follow the gamma distribution.
+    key = lambda: self.make_key(1)
+    rand = lambda key, a: random.gamma(key, a, (10000,), dtype,
+                                       method='approximate')
+    crand = jax.jit(rand)
+
+    for samples in [rand(key(), a), crand(key(), a)]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
+
+  @jtu.sample_product(
+    a=[0.1, 1., 10.],
+    dtype=jtu.dtypes.floating,
+  )
+  def testLogGammaApproximate(self, a, dtype):
+    # The approximate method should still follow the log-gamma distribution.
+    key = lambda: self.make_key(1)
+    rand = lambda key, a: random.loggamma(key, a, (10000,), dtype,
+                                          method='approximate')
+    crand = jax.jit(rand)
+
+    for samples in [rand(key(), a), crand(key(), a)]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.loggamma(a).cdf)
+
+  @jtu.sample_product(
+    a=[0.1, 1., 10.],
+    dtype=jtu.dtypes.floating,
+  )
+  def testGammaVsLogGammaApproximate(self, a, dtype):
+    # For a shared key, approximate gamma is exactly exp of approximate loggamma.
+    # This holds bit-exactly only when dtype is the compute dtype (>= float32);
+    # narrower dtypes differ by the exp/round ordering, so we skip them.
+    if dtypes.finfo(dtype).bits < 32:
+      self.skipTest("exact only for dtype >= float32")
+    key = self.make_key(0)
+    g = random.gamma(key, a, (100,), dtype, method='approximate')
+    lg = random.loggamma(key, a, (100,), dtype, method='approximate')
+    self.assertArraysEqual(g, jnp.exp(lg))
+
+  def testGammaApproximateShape(self):
+    key = self.make_key(0)
+    for sampler in [random.gamma, random.loggamma]:
+      x = sampler(key, np.array([0.2, 0.3]), shape=(3, 2), method='approximate')
+      assert x.shape == (3, 2)
+
+  def testGammaInvalidMethod(self):
+    key = self.make_key(0)
+    with self.assertRaisesRegex(ValueError, "method argument to `gamma`"):
+      random.gamma(key, 1.0, method='nonsense')
+    with self.assertRaisesRegex(ValueError, "method argument to `loggamma`"):
+      random.loggamma(key, 1.0, method='nonsense')
+
+  @jtu.sample_product(
+    a=[0.1, 1., 10.],
+    dtype=jtu.dtypes.floating,
+  )
   def testGamma(self, a, dtype):
     key = lambda: self.make_key(1)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
@@ -760,11 +816,16 @@ class DistributionsTest(RandomTestBase):
   def testGammaGrad(self, log_space, alpha):
     rng = lambda: self.make_key(0)
     alphas = np.full((100,), alpha)
-    z = random.gamma(rng(), alphas)
+    z = random.gamma(rng(), alphas, method='exact')
+    # use 'exact' because 'approximate' has a different gradient altogether,
+    # it's not just a different approximation
     if log_space:
-      actual_grad = jax.grad(lambda x: lax.exp(random.loggamma(rng(), x)).sum())(alphas)
+      actual_grad = jax.grad(
+          lambda x: lax.exp(random.loggamma(rng(), x, method='exact')).sum()
+      )(alphas)
     else:
-      actual_grad = jax.grad(lambda x: random.gamma(rng(), x).sum())(alphas)
+      actual_grad = jax.grad(
+          lambda x: random.gamma(rng(), x, method='exact').sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
@@ -776,6 +837,28 @@ class DistributionsTest(RandomTestBase):
     rtol = 2e-2 if jtu.test_device_matches(["tpu"]) else 7e-4
     self.assertAllClose(actual_grad, expected_grad, check_dtypes=True,
                         rtol=rtol)
+
+  @jtu.sample_product(
+    log_space=[True, False],
+    alpha=[0.1, 1.0, 10.0],
+  )
+  def testGammaGradApproximate(self, log_space, alpha):
+    key = self.make_key(0)
+    a = jnp.full((100,), alpha)
+    if log_space:
+      sampler = lambda x: lax.exp(
+          random.loggamma(key, x, method='approximate'))
+    else:
+      sampler = lambda x: random.gamma(key, x, method='approximate')
+
+    # the 'approximate' gamma sampler is a derivable expression w.r.t. `alpha`
+    # so we compare the gradient against finite differences
+    if jtu.test_device_matches(["tpu"]):
+      rtol, atol = 2e-2, 1e-3  # to check, made up without a tpu
+    else:
+      rtol, atol = 2e-3, 1e-4  # on cpu, to check on gpu
+    jtu.check_grads(sampler, (a,), order=1, modes=["fwd", "rev"],
+                    rtol=rtol, atol=atol, eps=1e-2 * alpha)
 
   def testGammaGradType(self):
     # Regression test for https://github.com/jax-ml/jax/issues/2130

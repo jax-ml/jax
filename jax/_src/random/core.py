@@ -1626,6 +1626,7 @@ def gamma(key: ArrayLike,
           shape: Shape | None = None,
           dtype: DTypeLikeFloat | None = None,
           *,
+          method: str = 'exact',
           out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Gamma random values with given shape and float dtype.
 
@@ -1650,6 +1651,11 @@ def gamma(key: ArrayLike,
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. `a` differs between the two methods
+      because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1668,6 +1674,9 @@ def gamma(key: ArrayLike,
       accuracy for small values of ``a``.
   """
   key, _ = _check_prng_key("gamma", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `gamma` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1676,6 +1685,9 @@ def gamma(key: ArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gamma", shape)
+  if method == 'approximate':
+    return maybe_auto_axes(_gamma_approx, out_sharding,
+                           shape=shape, dtype=dtype)(key, a)
   return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype)(key, a)
 
 
@@ -1684,6 +1696,7 @@ def loggamma(key: ArrayLike,
              shape: Shape | None = None,
              dtype: DTypeLikeFloat | None = None,
              *,
+             method: str = 'exact',
              out_sharding: NamedSharding | P | None =None) -> Array:
   """Sample log-gamma random values with given shape and float dtype.
 
@@ -1704,6 +1717,11 @@ def loggamma(key: ArrayLike,
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. `a` differs between the two methods
+      because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1721,6 +1739,9 @@ def loggamma(key: ArrayLike,
     gamma : standard gamma sampler.
   """
   key, _ = _check_prng_key("loggamma", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `loggamma` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1729,6 +1750,9 @@ def loggamma(key: ArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   out_sharding = canonicalize_sharding(out_sharding, "loggamma")
+  if method == 'approximate':
+    return maybe_auto_axes(_gamma_approx, out_sharding, shape=shape,
+                           dtype=dtype, log_space=True)(key, a)
   return maybe_auto_axes(_gamma, out_sharding, shape=shape, dtype=dtype, log_space=True)(key, a)
 
 
@@ -1744,6 +1768,145 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
     a = jnp.broadcast_to(a, shape)
   key, (a,) = random_insert_pvary('gamma', key, a)
   return random_gamma_p.bind(key, a, log_space=log_space)
+
+
+# Coefficients of the chi-square quantile series used by `_gamma_approx` (see
+# there for how they are applied). Each inner tuple k (k=0..6) holds the
+# coefficients of x^k nu^(-k/2), written as a quadratic in 1 / nu: entry [k][j]
+# multiplies nu^(-j) for j=0..2. The leading constant is set to exactly 1 rather
+# than the published 1.0000886; see `_gamma_approx` for why.
+_CHI2_QUANTILE_COEF = (
+    (1.0, -0.2237368, -0.01513904),
+    (0.4713941, 0.02607083, -0.008986007),
+    (0.0001348028, 0.01128186, 0.02277679),
+    (-0.008553069, -0.01153761, -0.01323293),
+    (0.00312558, 0.005169654, -0.006950356),
+    (-0.0008426812, 0.00253001, 0.001060438),
+    (0.00009780499, -0.001450117, 0.001565326),
+)
+
+# Number of Stuart boosting steps used by `_gamma_approx`. Four steps keep the
+# base draw at shape a + 4 >= 4, where the chi-square quantile series is
+# accurate, even as a -> 0.
+_LOGGAMMA_NUM_BOOSTS = 4
+
+
+def _loggamma_chisquare(key, a) -> Array:
+  r"""Sample ``log(Gamma(a, 1))`` via the chi-square quantile series.
+
+  Cubes a 6th-degree polynomial in a standard normal applied to the chi-square
+  distribution with ``nu = 2 * a`` degrees of freedom, using
+  ``Gamma(a, 1) = chi2(2a) / 2``. The polynomial is evaluated by Horner's method
+  both in the normal variate and in ``1 / nu``. The series is only accurate for
+  ``a`` away from zero, so callers boost ``a`` to keep it there; see
+  :func:`_gamma_approx` for the references and overall algorithm.
+  """
+  nu = 2 * a
+  x = _normal(key, np.shape(a), a.dtype)
+  u = 1 / nu
+  # x^k nu^(-k/2) = t^k, so the series is a degree-6 Horner polynomial in t.
+  t = x * lax.rsqrt(nu)
+
+  def row_coef(c):
+    # Evaluate one coefficient row as a quadratic in 1 / nu, by Horner.
+    return c[0] + u * (c[1] + u * c[2])
+
+  poly = row_coef(_CHI2_QUANTILE_COEF[-1])
+  for row in reversed(_CHI2_QUANTILE_COEF[:-1]):
+    poly = poly * t + row_coef(row)
+
+  # chi2 = nu poly^3 and Gamma(a, 1) = chi2 / 2 = a poly^3, so log gains log(a).
+  # `poly` should never actually reach values <= 0, but clip just in case
+  # someone changes some other param
+  poly = jnp.maximum(poly, dtypes.finfo(a.dtype).tiny)
+  return jnp.log(a) + 3 * jnp.log(poly)
+
+
+@jit(static_argnames=('shape', 'dtype', 'log_space'))
+def _gamma_approx(key, a, shape, dtype, log_space=False) -> Array:
+  r"""Loop-free approximate sampler for ``Gamma(a, 1)``.
+
+  Backs the ``method='approximate'`` path of :func:`gamma` and :func:`loggamma`,
+  returning ``log(Gamma(a, 1))`` when ``log_space`` is true and ``Gamma(a, 1)``
+  otherwise. It avoids the rejection loops of the exact sampler, trading a small
+  bias for a fully vectorized computation that is much faster, especially on
+  accelerators.
+
+  The sampler has two ingredients. The first is a base draw from a chi-square
+  quantile series: since :math:`\mathrm{Gamma}(a, 1) = \chi^2_{2a} / 2`, a draw
+  is obtained by cubing a 6th-degree polynomial in a standard normal evaluated at
+  :math:`\nu = 2a` degrees of freedom (eq. 18.37 of Johnson, Kotz & Balakrishnan,
+  originally Goldstein's Algorithm 451). This series is accurate to about 0.05%
+  relative error on the quantiles for shape :math:`\geq 4` (Zar, 1978, table 2)
+  but degrades near zero. The second is Stuart's boosting identity (Stuart,
+  1962), which for independent uniforms :math:`U_k` on :math:`(0, 1)` gives
+
+  .. math::
+     \log G_a = \log G_{a + n} + \sum_{k=0}^{n-1} \frac{\log U_k}{a + k}.
+
+  We take the base draw :math:`G_{a + n}` at the boosted shape :math:`a + n`,
+  where the series is accurate, and let the sum carry the small-``a`` behavior,
+  which it does exactly. :math:`\log U_k` is drawn as
+  :math:`-\mathrm{Exponential}(1)` to avoid evaluating ``log`` at zero.
+
+  With ``n = _LOGGAMMA_NUM_BOOSTS = 4`` the base shape stays :math:`\geq 4` even
+  as :math:`a \to 0`. The cubed polynomial can become non-positive for an
+  extreme normal draw, which would imply a negative chi-square value; we clip it
+  to the smallest positive float, though it should never actually reach that
+  value.
+
+  One coefficient in ``_CHI2_QUANTILE_COEF`` departs from the published series:
+  the leading constant is set to exactly 1 rather than the published 1.0000886.
+  As :math:`\nu \to \infty` the cube root :math:`(\chi^2 / \nu)^{1/3} \to 1`, so
+  this term must be 1; the published value is a fit artifact that scales every
+  draw by :math:`1.0000886^3`, adding a constant :math:`3 \log(1.0000886)
+  \approx 2.7 \times 10^{-4}` bias to ``log(Gamma)``. That bias is negligible
+  against the :math:`O(1 / \sqrt{a})` spread at small ``a``, but at large ``a``
+  the spread shrinks below it and it would otherwise dominate the sampling error.
+
+  The computation runs in at least float32 and narrows to ``dtype`` only at the
+  end: its cost is the rng and transcendentals, which run in float32 regardless,
+  so a narrower compute dtype gives no speedup and only loses accuracy in the
+  draws. Samples below the smallest representable ``dtype`` value underflow to
+  :math:`-\infty` in log space, or to ``0`` otherwise.
+
+  References:
+    Stuart, A. (1962). Gamma-distributed products of independent random
+    variables. Biometrika, 49(3-4), 564-565.
+
+    Johnson, N. L., Kotz, S., & Balakrishnan, N. (1994). Continuous Univariate
+    Distributions, vol. 1 (2nd ed.), eq. 18.37. Wiley.
+
+    Goldstein, R. B. (1973). Algorithm 451: Chi-square quantiles. Communications
+    of the ACM, 16(8), 483-485.
+
+    Zar, J. H. (1978). Approximations for the percentage points of the
+    chi-squared distribution. Journal of the Royal Statistical Society Series C,
+    27(3), 280-290.
+  """
+  # compute at least in float32; don't use dtypes.promote_types, fails in strict mode
+  compute_dtype = np.dtype('float32') if dtypes.finfo(dtype).bits < 32 else dtype
+  shape = _check_broadcast_shapes("gamma", shape, a)
+  a = lax.convert_element_type(a, compute_dtype)
+  if np.shape(a) != shape:
+    a = jnp.broadcast_to(a, shape)
+  key, (a,) = random_insert_pvary('gamma', key, a)
+
+  key_base, key_boost = _split(key)
+  n = _LOGGAMMA_NUM_BOOSTS
+
+  # Base draw at the boosted shape a + n, where the series is accurate.
+  log_base = _loggamma_chisquare(key_base, a + n)
+
+  # Boosting correction sum_k log(U_k) / (a + k), with log(U_k) = -Exp(1). The
+  # boost index k and a sample are stacked along a leading axis; both operands
+  # are reshaped to that rank so the divide needs no implicit rank promotion.
+  k = jnp.arange(n, dtype=compute_dtype).reshape((n,) + (1,) * len(shape))
+  log_u = -_exponential(key_boost, (n, *shape), compute_dtype)
+  log_sample = log_base + jnp.sum(log_u / (a[None, ...] + k), axis=0)
+
+  out = log_sample if log_space else lax.exp(log_sample)
+  return lax.convert_element_type(out, dtype)
 
 
 @jit(static_argnums=(2, 3, 4))
