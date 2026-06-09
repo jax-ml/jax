@@ -545,8 +545,6 @@ class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
       )
 
 
-
-
 class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -2190,8 +2188,11 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
         state.shaped_array_ref((512,), jnp.float32),
         state.shaped_array_ref((512,), jnp.float32),
     )
-    expected_effects = {state.ReadEffect(0), state.ReadEffect(1),
-                        state.WriteEffect(2)}
+    expected_effects = {
+        state.ReadEffect(jaxpr.invars[0]),
+        state.ReadEffect(jaxpr.invars[1]),
+        state.WriteEffect(jaxpr.invars[2]),
+    }
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
   def test_dynamic_grid_and_consts_effects(self):
@@ -2211,7 +2212,11 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
         state.shaped_array_ref((512,), jnp.float32),
         state.shaped_array_ref((512,), jnp.float32),
     )
-    expected_effects = {state.ReadEffect(2), state.WriteEffect(3)}
+    binders = [*jaxpr.constvars, *jaxpr.invars]
+    expected_effects = {
+        state.ReadEffect(binders[2]),
+        state.WriteEffect(binders[3]),
+    }
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
   def test_transformed_refs_effects(self):
@@ -2230,7 +2235,10 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
         state.shaped_array_ref((2, 512), jnp.float32),
         state.shaped_array_ref((512,), jnp.float32),
     )
-    expected_effects = {state.ReadEffect(0), state.WriteEffect(1)}
+    expected_effects = {
+        state.ReadEffect(jaxpr.invars[0]),
+        state.WriteEffect(jaxpr.invars[1]),
+    }
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
 

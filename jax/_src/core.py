@@ -14,8 +14,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
-                             Sequence, MutableSet, MutableMapping)
+from collections.abc import ( Callable, Collection, Hashable, Iterable, Iterator, MutableMapping, MutableSet,
+                             Sequence)
 from contextlib import contextmanager
 from dataclasses import dataclass
 import enum
@@ -29,40 +29,50 @@ import operator
 import re
 import threading
 import types
-from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar, final,
-                    overload, Union, TYPE_CHECKING, Literal as Literal_)
+from typing import (
+    AbstractSet,
+    Any,
+    ClassVar,
+    Generic,
+    Literal as Literal_,
+    NamedTuple,
+    TYPE_CHECKING,
+    TypeVar,
+    Union,
+    final,
+    overload,
+)
 import warnings
 import weakref
 
-import numpy as np
-
-from jax._src import dtypes
 from jax._src import config
+from jax._src import dtypes
 from jax._src import effects
-from jax._src.frozen_dict import FrozenDict
+from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
-from jax._src.mesh import AxisType
-from jax._src.partition_spec import PartitionSpec as P
+from jax._src import named_sharding as ns
+from jax._src import source_info_util
+from jax._src import traceback_util
+from jax._src import xla_metadata_lib
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
-from jax._src import linear_util as lu
-from jax._src.tree_util import tree_map, FlatTree
-from jax._src import source_info_util
-from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
-                           tuple_delete, cache, HashableWrapper,
-                           weakref_lru_cache, partition_list, StrictABCMeta,
-                           foreach, weakref_cache_key_types, set_module,
-                           weak_value_interner, immutable)
-import jax._src.pretty_printer as pp
-from jax._src.named_sharding import NamedSharding, get_replicated_axes
-from jax._src import named_sharding as ns
-from jax._src.sharding import Sharding
-from jax._src.layout import Format, AutoLayoutSingleton
+from jax._src.frozen_dict import FrozenDict
+from jax._src.layout import AutoLayoutSingleton, Format
 from jax._src.lib import _jax
-from jax._src import traceback_util
+from jax._src.mesh import AxisType
+from jax._src.named_sharding import NamedSharding, get_replicated_axes
+from jax._src.partition_spec import PartitionSpec as P
+import jax._src.pretty_printer as pp
+from jax._src.sharding import Sharding
+from jax._src.tree_util import FlatTree, tree_map
 from jax._src.typing import Array, ArrayLike, DimSize, Shape
-from jax._src import xla_metadata_lib
+from jax._src.util import ( HashableWrapper, StrictABCMeta, cache, curry,
+                           foreach, immutable, partition_list, safe_map,safe_zip, set_module,
+                           tuple_delete, tuple_insert,
+                           weak_value_interner, weakref_cache_key_types,
+                           weakref_lru_cache)
+import numpy as np
 
 traceback_util.register_exclusion(__file__)
 
@@ -88,6 +98,7 @@ Effect = effects.Effect
 Effects = effects.Effects
 EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
+JaxprInputEffect = effects.JaxprInputEffect
 
 
 DebugInfo = lu.DebugInfo
@@ -480,7 +491,15 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
-  return JaxprEqn(invars, outvars, primitive, params, effects, source_info, ctx)
+  converted_effects = {
+      eff.replace(input_index=invars[eff.input_index])
+      if isinstance(eff, JaxprInputEffect) and isinstance(eff.input_index, int)
+      else eff
+      for eff in effects
+  }
+  return JaxprEqn(
+      invars, outvars, primitive, params, converted_effects, source_info, ctx
+  )
 
 class Var:
   __slots__ = ["aval", "initial_qdd", "final_qdd"]
@@ -3421,6 +3440,35 @@ def replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: Effects):
 def _replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: frozenset[Effect]):
   return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(effects=set(effects)))
 
+
+def jaxpr_effects_indices(jaxpr: Jaxpr | ClosedJaxpr) -> Effects:
+  raw_jaxpr = jaxpr.jaxpr if isinstance(jaxpr, ClosedJaxpr) else jaxpr
+  binders = [*raw_jaxpr.constvars, *raw_jaxpr.invars]
+  new_effs = set()
+  for eff in raw_jaxpr.effects:
+    if isinstance(eff, JaxprInputEffect) and isinstance(eff.input_index, Var):
+      try:
+        idx = binders.index(eff.input_index)
+      except ValueError:
+        raise ValueError(
+            f"Effect target {eff.input_index} not found in binders: {binders}"
+        ) from None
+      eff = eff.replace(input_index=idx)
+    new_effs.add(eff)
+  return frozenset(new_effs)
+
+
+def replace_effects_vars(
+    effects: AbstractSet[Effect], var_map: dict[Var, Var]
+) -> frozenset[Effect]:
+  return frozenset({
+      eff.replace(input_index=var_map.get(eff.input_index, eff.input_index))
+      if isinstance(eff, JaxprInputEffect) and eff.input_index in var_map
+      else eff
+      for eff in effects
+  })
+
+
 # ------------------- Jaxpr checking -------------------
 
 def typecheck(aval: AbstractValue, x) -> bool:
@@ -3492,6 +3540,7 @@ class JaxprTypeError(TypeError):
   pass
 
 custom_typechecks: dict[Primitive, Callable] = {}
+custom_effect_mapping_rules: dict[Primitive, Callable] = {}
 
 def _check_closed_call(_, *in_atoms, call_jaxpr):
   in_avals = [x.aval for x in in_atoms]
@@ -3500,7 +3549,39 @@ def _check_closed_call(_, *in_atoms, call_jaxpr):
   return call_jaxpr.out_avals, eqn_effects(call_jaxpr)
 custom_typechecks[closed_call_p] = _check_closed_call
 
-def check_jaxpr(jaxpr: Jaxpr):
+
+def map_inner_effects_to_outer(
+    inner_jaxpr: Jaxpr | ClosedJaxpr,
+    new_outer_invars: Sequence[Atom],
+    inner_effects: AbstractSet[Effect],
+) -> set[Effect]:
+  raw_jaxpr = (
+      inner_jaxpr.jaxpr if isinstance(inner_jaxpr, ClosedJaxpr) else inner_jaxpr
+  )
+  num_consts = len(raw_jaxpr.constvars)
+  new_effs = set()
+  for eff in inner_effects:
+    if isinstance(eff, JaxprInputEffect):
+      if isinstance(eff.input_index, int):
+        if eff.input_index >= num_consts:
+          invar_idx = eff.input_index - num_consts
+          if invar_idx < len(new_outer_invars):
+            new_effs.add(eff.replace(input_index=new_outer_invars[invar_idx]))
+        else:
+          continue
+      elif isinstance(eff.input_index, Var):
+        if eff.input_index in raw_jaxpr.invars:
+          invar_idx = raw_jaxpr.invars.index(eff.input_index)
+          if invar_idx < len(new_outer_invars):
+            new_effs.add(eff.replace(input_index=new_outer_invars[invar_idx]))
+        elif eff.input_index in raw_jaxpr.constvars:
+          continue
+    else:
+      new_effs.add(eff)
+  return new_effs
+
+
+def check_jaxpr(jaxpr: Jaxpr | ClosedJaxpr) -> None:
   """Checks well-formedness of a jaxpr.
 
   Specifically, check that:
@@ -3511,16 +3592,25 @@ def check_jaxpr(jaxpr: Jaxpr):
   Raises `JaxprTypeError` if `jaxpr` is determined invalid. Returns `None`
   otherwise.
   """
+  consts = ()
+  if isinstance(jaxpr, ClosedJaxpr):
+    consts = jaxpr.consts
+    jaxpr = jaxpr.jaxpr
+
   @functools.cache
   def ctx_factory():
     ctx = JaxprPpContext(_dropvars(jaxpr))
     pp_settings = JaxprPpSettings()
-    try: pp_jaxpr(jaxpr, ctx, pp_settings)  # side-effect on ctx, build variable names
-    except: pass
+    try:
+      pp_jaxpr(
+          jaxpr, ctx, pp_settings
+      )  # side-effect on ctx, build variable names
+    except Exception:
+      pass
     return ctx, pp_settings
 
   try:
-    _check_jaxpr(ctx_factory, jaxpr)
+    _check_jaxpr(ctx_factory, jaxpr, consts)
   except JaxprTypeError as e:
     ctx, pp_settings = ctx_factory()
     if len(e.args) == 2:
@@ -3539,9 +3629,11 @@ def check_jaxpr(jaxpr: Jaxpr):
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pyrefly: ignore[missing-import]
     check_key_reuse_jaxpr(jaxpr)
 
+
 # A place to track the quasi-dynamic data associated with a variable during typechecking
 @dataclass(frozen=True, slots=True)
 class MutableTypecheckVal:
+  var: Var
   aval : AbstractValue
   mutable_qdd : MutableQuasiDynamicData
 
@@ -3559,9 +3651,13 @@ def _dropvars(jaxpr: Jaxpr) -> dict[Var, Literal_['_']]:
 
 def _check_jaxpr(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
-    jaxpr: Jaxpr
-  ) -> None:
+    jaxpr: Jaxpr,
+    consts: Sequence = (),
+) -> None:
   env: dict[Var, Atom | MutableTypecheckVal] = {}
+  outer_constid_to_var = {
+      id(val): v for v, val in unsafe_zip(jaxpr.constvars, consts)
+  }
 
   def read(x: Atom) -> Atom | MutableTypecheckVal:
     # Check the type annotation is itself well-typed.
@@ -3604,7 +3700,7 @@ def _check_jaxpr(
       if qdd is None:
         env[v] = v
       else:
-        env[v] = MutableTypecheckVal(aval, MutableQuasiDynamicData(qdd))
+        env[v] = MutableTypecheckVal(v, aval, MutableQuasiDynamicData(qdd))
 
   # # Don't return refs
   if config.mutable_array_checks.value:
@@ -3619,7 +3715,6 @@ def _check_jaxpr(
     write(v, AvalQDD(v.aval, v.initial_qdd))
 
   # Check each eqn.
-  sentinel = object()
   in_idx: dict[Var, int | None] = {
       v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))
   }
@@ -3649,23 +3744,93 @@ def _check_jaxpr(
           outvar, = eqn.outvars
           in_idx[outvar] = None
           mut_arrays.add(outvar)
-      if eqn.effects != eqn_effects:
-        raise JaxprTypeError("Inferred effects do not match equation effects. "
-                             f"Equation effects: {eqn.effects}. "
-                             f"Inferred effects: {eqn_effects}")
+      if prim in custom_effect_mapping_rules:
+        converted_eqn_effects = custom_effect_mapping_rules[prim](
+            eqn.params, eqn.invars, eqn_effects, outer_constid_to_var
+        )
+        effects_to_map = []
+      else:
+        converted_eqn_effects = set()
+        effects_to_map = eqn_effects
+      for eff in effects_to_map:
+        if isinstance(eff, JaxprInputEffect):
+          if isinstance(eff.input_index, int):
+            inner_jaxpr = eqn.params.get("jaxpr") or eqn.params.get("call_jaxpr")
+            if inner_jaxpr is not None:
+              constvars = (
+                  inner_jaxpr.constvars
+                  if hasattr(inner_jaxpr, "constvars")
+                  else ()
+              )
+              if isinstance(inner_jaxpr, ClosedJaxpr):
+                inner_consts = inner_jaxpr.consts
+              else:
+                inner_consts = ()
+              num_consts = len(constvars)
+              if eff.input_index < num_consts:
+                if inner_consts:
+                  const_val = inner_consts[eff.input_index]
+                  outer_var = outer_constid_to_var.get(id(const_val))
+                  if outer_var is not None:
+                    eff = eff.replace(input_index=outer_var)
+                  else:
+                    continue
+                else:
+                  eff = eff.replace(input_index=eqn.invars[eff.input_index])
+              else:
+                invar_idx = eff.input_index - num_consts
+                eff = eff.replace(input_index=eqn.invars[invar_idx])
+            else:
+              eff = eff.replace(input_index=eqn.invars[eff.input_index])
+          elif isinstance(eff.input_index, Var):
+            inner_jaxpr = eqn.params.get("jaxpr") or eqn.params.get("call_jaxpr")
+            if inner_jaxpr is not None:
+              jaxpr_to_map = (
+                  inner_jaxpr.jaxpr
+                  if isinstance(inner_jaxpr, ClosedJaxpr)
+                  else inner_jaxpr
+              )
+              if eff.input_index in jaxpr_to_map.invars:
+                invar_idx = jaxpr_to_map.invars.index(eff.input_index)
+                offset = len(eqn.invars) - len(jaxpr_to_map.invars)
+                if offset >= 0 and offset + invar_idx < len(eqn.invars):
+                  eff = eff.replace(input_index=eqn.invars[offset + invar_idx])
+                else:
+                  continue
+              elif eff.input_index in jaxpr_to_map.constvars:
+                const_idx = jaxpr_to_map.constvars.index(eff.input_index)
+                if len(eqn.invars) == len(jaxpr_to_map.constvars) + len(
+                    jaxpr_to_map.invars
+                ):
+                  eff = eff.replace(input_index=eqn.invars[const_idx])
+                else:
+                  if isinstance(inner_jaxpr, ClosedJaxpr):
+                    const_val = inner_jaxpr.consts[const_idx]
+                    outer_var = outer_constid_to_var.get(id(const_val))
+                    if outer_var is not None:
+                      eff = eff.replace(input_index=outer_var)
+                    else:
+                      continue
+                  else:
+                    continue
+        converted_eqn_effects.add(eff)
+      if eqn.effects != converted_eqn_effects:
+        raise JaxprTypeError(
+            "Inferred effects do not match equation effects. "
+            f"Equation effects: {eqn.effects}. "
+            f"Inferred effects: {converted_eqn_effects}"
+        )
       for eff in eqn.effects:
-        if isinstance(eff, effects.JaxprInputEffect):
-          eqn_invar = eqn.invars[eff.input_index]
-          if type(eqn_invar) is Literal or eqn_invar in mut_arrays:
+        if isinstance(eff, JaxprInputEffect):
+          eqn_invar = eff.input_index
+          if eqn_invar in mut_arrays:
             continue
-          if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
-            raise JaxprTypeError(
-                "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
-          jaxpr_effect = eff.replace(input_index=jaxpr_index)
-          if jaxpr_effect not in jaxpr.effects:
-            raise JaxprTypeError(
-                "Invalid `JaxprInputEffect`: must be present in jaxpr. "
-                f"{jaxpr_effect} is not in {jaxpr.effects}.")
+          if eqn_invar in in_idx:
+            if eff not in jaxpr.effects:
+              raise JaxprTypeError(
+                  "Invalid `JaxprInputEffect`: must be present in jaxpr. "
+                  f"{eff} is not in {jaxpr.effects}."
+              )
         elif isinstance(eff, NamedAxisEffect):
           # It is valid for a primitive to discharge the named axis effect.
           continue
@@ -3697,6 +3862,7 @@ def _check_jaxpr(
   # TODO(mattjj): include output type annotation on jaxpr and check it here
   foreach(read, jaxpr.outvars)
 
+
 def check_type(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
     env: dict[Var, Atom | MutableTypecheckVal],
@@ -3717,10 +3883,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(
         f"Call primitive {prim} missing 'call_jaxpr' parameter")
-  if isinstance(prim, ClosedCallPrimitive):
-    call_jaxpr = params["call_jaxpr"].jaxpr
-  else:
-    call_jaxpr = params["call_jaxpr"]
+  call_jaxpr = params["call_jaxpr"]
 
   if len(in_atoms) != len(call_jaxpr.invars):
     raise JaxprTypeError(f"Call primitive {prim} with {len(in_atoms)} "
@@ -3740,19 +3903,10 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   check_jaxpr(call_jaxpr)
 
   out_avals = [x.aval for x in call_jaxpr.outvars]
-  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
-  # should have effects indexed only on its explicit arguments
-  effs = {e.replace(input_index=e.input_index - len(call_jaxpr.constvars))
-          if isinstance(e, effects.JaxprInputEffect)
-          else e for e in call_jaxpr.effects}
-  return out_avals, effs
+  return out_avals, call_jaxpr.effects
 
 def eqn_effects(jaxpr):
-  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
-  # should have effects indexed only on its explicit arguments
-  effs = jaxpr.effects
-  return {e.replace(input_index=e.input_index - len(jaxpr.constvars))
-          if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
+  return jaxpr_effects_indices(jaxpr)
 
 
 # ------------------- ShapeDtypeStruct -------------------
@@ -4160,11 +4314,8 @@ def pp_jaxpr_skeleton(jaxpr: Jaxpr, eqns_fn, context: JaxprPpContext,
     for i, eff in enumerate(jaxpr.effects):
       if i > 0:
         eff_text.append(pp.text(", "))
-      if isinstance(eff, effects.JaxprInputEffect):
-        index = eff.input_index
-        all_vars = [*jaxpr.constvars, *jaxpr.invars]
-        eff_text.append(pp_effect(eff.replace(input_index=all_vars[index]),
-                                  context))
+      if isinstance(eff, JaxprInputEffect):
+        eff_text.append(pp_effect(eff, context))
       else:
         eff_text.append(pp_effect(eff, context))
     eff_text.append(pp.text(" }"))

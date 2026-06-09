@@ -770,11 +770,35 @@ def _parallel_loop_abstract_eval(*args, jaxpr, tree, **params):
   updated_effects = set()
   for eff in jaxpr.effects:
     if isinstance(eff, effects.JaxprInputEffect):
-      # Offset for the parallel_loop eqn to account for start, stop, and step
-      # args passed to parallel_loop_p.bind.
-      eff = eff.replace(input_index=eff.input_index + 3)
+      if eff.input_index in jaxpr.constvars:
+        const_idx = jaxpr.constvars.index(eff.input_index)
+        eff = eff.replace(input_index=const_idx + 3)
+      else:
+        continue
     updated_effects.add(eff)
   return carries, updated_effects
+
+
+def _parallel_loop_effect_mapping(
+    params, invars, eqn_effects, outer_constid_to_var
+):
+  del outer_constid_to_var  # Unused.
+  mapped_effects = set()
+  for eff in eqn_effects:
+    if isinstance(eff, effects.JaxprInputEffect):
+      if isinstance(eff.input_index, int):
+        if eff.input_index < len(invars):
+          mapped_effects.add(eff.replace(input_index=invars[eff.input_index]))
+      elif isinstance(eff.input_index, jax_core.Var):
+        mapped_effects.add(eff)
+    else:
+      mapped_effects.add(eff)
+  return mapped_effects
+
+
+jax_core.custom_effect_mapping_rules[parallel_loop_p] = (
+    _parallel_loop_effect_mapping
+)
 
 
 @sc_lowering.register_lowering_rule(parallel_loop_p)

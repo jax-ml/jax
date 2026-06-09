@@ -522,9 +522,18 @@ def _custom_jvp_call_dce(
       jvp_jaxpr_fun=lu.wrap_init(dce_jvp_jaxpr_thunk,
                                  debug_info=jvp_jaxpr_fun.debug_info)
   )
+  new_effs = core.map_inner_effects_to_outer(
+      dce_call_jaxpr, eqn.invars, dce_call_jaxpr.effects
+  )
   new_eqn = pe.new_jaxpr_eqn(
-      eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
-      eqn.source_info, eqn.ctx)
+      eqn.invars,
+      outvars,
+      eqn.primitive,
+      new_params,
+      new_effs,
+      eqn.source_info,
+      eqn.ctx,
+  )
   return used_ins, new_eqn
 pe.dce_rules[custom_jvp_call_p] = _custom_jvp_call_dce
 
@@ -1125,9 +1134,18 @@ def _custom_vjp_call_dce(
       fwd_jaxpr_thunk=dce_fwd_jaxpr_thunk,
       bwd=dce_bwd_wrapped,
   )
+  new_effs = core.map_inner_effects_to_outer(
+      dce_call_jaxpr, eqn.invars, dce_call_jaxpr.effects
+  )
   new_eqn = pe.new_jaxpr_eqn(
-      eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
-      eqn.source_info, eqn.ctx)
+      eqn.invars,
+      outvars,
+      eqn.primitive,
+      new_params,
+      new_effs,
+      eqn.source_info,
+      eqn.ctx,
+  )
   return list(used_ins), new_eqn
 pe.dce_rules[custom_vjp_call_p] = _custom_vjp_call_dce
 
@@ -1840,9 +1858,18 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     new_params["num_consts"] = new_num_consts
     new_params["fwd_jaxpr"] = closed_jaxpr
     new_params["num_res"] = sum(used_res)
+    new_effs = core.map_inner_effects_to_outer(
+        closed_jaxpr, invars, closed_jaxpr.effects
+    )
     new_eqn = pe.new_jaxpr_eqn(
-        invars, outvars, remat_opt_p, new_params, closed_jaxpr.effects,
-        eqn.source_info, eqn.ctx)
+        invars,
+        outvars,
+        remat_opt_p,
+        new_params,
+        new_effs,
+        eqn.source_info,
+        eqn.ctx,
+    )
     return used_ins, new_eqn
   else:
     # If none of the residuals are used, we run the primal computation instead.
@@ -1855,9 +1882,18 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     closed_jaxpr = core.ClosedJaxpr(new_jaxpr, consts)
     _, invars = split_list(eqn.invars, [eqn.params["num_consts"]])
     invars = [v for used, v in zip(used_ins, invars) if used]
+    new_effs = core.map_inner_effects_to_outer(
+        closed_jaxpr, invars, closed_jaxpr.effects
+    )
     new_eqn = pe.new_jaxpr_eqn(
-        invars, outvars, core.closed_call_p, dict(call_jaxpr=closed_jaxpr),
-        closed_jaxpr.effects, eqn.source_info, eqn.ctx)
+        invars,
+        outvars,
+        core.closed_call_p,
+        dict(call_jaxpr=closed_jaxpr),
+        new_effs,
+        eqn.source_info,
+        eqn.ctx,
+    )
     used_ins = [False] * eqn.params["num_consts"] + used_ins
     return used_ins, new_eqn
 

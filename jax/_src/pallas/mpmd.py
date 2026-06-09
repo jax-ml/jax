@@ -114,8 +114,9 @@ def _mpmd_map_abstract_eval(
         # We emit an effect if we have a Ref input that has been written to in
         # the kernel.
         assert not jaxpr.constvars
-        if eff.input_index < len(in_avals) and isinstance(
-            in_avals[eff.input_index], state.AbstractRef
+        invar_idx = jaxpr.invars.index(eff.input_index)
+        if invar_idx < len(in_avals) and isinstance(
+            in_avals[invar_idx], state.AbstractRef
         ):
           effs.add(eff)
         continue

@@ -117,7 +117,7 @@ dispatch.simple_impl(compute_on_p)
 
 def _compute_on_abstract_eval(*in_avals, jaxpr, compute_type, out_memory_spaces,
                               compiler_options_json):
-  effs = core.eqn_effects(jaxpr) if jaxpr.constvars else jaxpr.effects
+  effs = core.eqn_effects(jaxpr)
   out_avals = [a.update(memory_space=s)
                for a, s in zip(jaxpr.out_avals, out_memory_spaces)]
   return out_avals, effs

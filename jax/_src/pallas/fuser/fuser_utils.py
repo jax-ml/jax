@@ -101,14 +101,28 @@ def _jaxpr_signature(jaxpr_obj):
   for eqn in jaxpr.eqns:
     in_sigs = tuple(hash(get_var_sig(v)) for v in eqn.invars)
     params_sig = hash(_make_hashable(eqn.params))
-    effects = tuple(sorted(str(e) for e in getattr(eqn, 'effects', [])))
+    eqn_effects = []
+    for e in getattr(eqn, 'effects', []):
+      if isinstance(e, core.JaxprInputEffect) and isinstance(e.input_index, core.Var):
+        name = getattr(e, 'name', e.__class__.__name__)
+        eqn_effects.append(f"{name}<{env.get(e.input_index, ('unknown_var', str(e.input_index)))}>")
+      else:
+        eqn_effects.append(str(e))
+    effects = tuple(sorted(eqn_effects))
     op_sig = ('eqn', eqn.primitive.name, in_sigs, params_sig, effects)
     eqn_sigs.append(op_sig)
     for i, outvar in enumerate(eqn.outvars):
       if type(outvar).__name__ != 'DropVar':
         env[outvar] = ('out', op_sig, i)  # pyrefly: ignore[unsupported-operation]
   out_sigs = tuple(get_var_sig(v) for v in jaxpr.outvars)
-  jaxpr_effects = tuple(sorted(str(e) for e in getattr(jaxpr, 'effects', [])))
+  jaxpr_effects_list = []
+  for e in getattr(jaxpr, 'effects', []):
+    if isinstance(e, core.JaxprInputEffect) and isinstance(e.input_index, core.Var):
+      name = getattr(e, 'name', e.__class__.__name__)
+      jaxpr_effects_list.append(f"{name}<{env.get(e.input_index, ('unknown_var', str(e.input_index)))}>")
+    else:
+      jaxpr_effects_list.append(str(e))
+  jaxpr_effects = tuple(sorted(jaxpr_effects_list))
   eqn_sigs_sorted = tuple(sorted(eqn_sigs, key=lambda x: str(x)))
   return ('jaxpr_dag', out_sigs, eqn_sigs_sorted, jaxpr_effects)
 
@@ -126,7 +140,9 @@ def get_write_indices(jaxpr):
   for eqn in jaxpr.eqns:
     for e in eqn.effects:
       if isinstance(e, (state_types.WriteEffect, state_types.AccumEffect)):
-        v = eqn.invars[e.input_index]
+        v = e.input_index
+        if isinstance(v, int):
+          v = eqn.invars[v]
         if (idx := all_vars.get(v, None)) is not None:
           effects.add(idx)
   return effects

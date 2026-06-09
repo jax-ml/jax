@@ -1312,14 +1312,14 @@ pe.forwarding_rules[jit_p] = pjit_forwarding_rule
 
 
 def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
-  return core._check_call(ctx_factory, jit_p, in_atoms,
-                          dict(params, call_jaxpr=jaxpr.jaxpr))
+  return core._check_call(
+      ctx_factory, jit_p, in_atoms, dict(params, call_jaxpr=jaxpr)
+  )
 core.custom_typechecks[jit_p] = _pjit_typecheck
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
-  effs = core.eqn_effects(jaxpr) if jaxpr.constvars else jaxpr.effects
-  return jaxpr.out_avals, effs
+  return jaxpr.out_avals, jaxpr.effects
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
@@ -1787,12 +1787,15 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
       for aval in unknown_out_avals
   ]
   unknown_tracers_in = [*unknown_tracers_in, *residual_tracers]
-  eqn = pe.new_eqn_recipe(trace, unknown_tracers_in,
-                          unknown_tracers_out,
-                          jit_p,
-                          unknown_params,
-                          unknown_jaxpr.effects,
-                          source_info_util.current())
+  eqn = pe.new_eqn_recipe(
+      trace,
+      unknown_tracers_in,
+      unknown_tracers_out,
+      jit_p,
+      unknown_params,
+      core.jaxpr_effects_indices(unknown_jaxpr),
+      source_info_util.current(),
+  )
   for t in unknown_tracers_out: t.recipe = eqn
   if effects_lib.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
     trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))
@@ -1947,11 +1950,19 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None
   else:
-    new_effs = core.eqn_effects(dced_jaxpr)
+    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+    new_effs = core.map_inner_effects_to_outer(
+        dced_jaxpr, new_invars, core.eqn_effects(dced_jaxpr)
+    )
     new_eqn = core.new_jaxpr_eqn(
-        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        new_invars,
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
+        eqn.primitive,
+        new_params,
+        new_effs,
+        eqn.source_info,
+        eqn.ctx,
+    )
     return used_inputs, new_eqn
 
 pe.dce_rules[jit_p] = dce_jaxpr_pjit_rule

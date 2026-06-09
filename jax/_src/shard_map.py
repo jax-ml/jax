@@ -2015,11 +2015,18 @@ def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     _, out_specs = partition_list(used_outputs, eqn.params['out_specs'])
     new_params = dict(eqn.params, jaxpr=jaxpr, in_specs=tuple(in_specs),
                       out_specs=tuple(out_specs))
-    effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
+    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+    new_effs = core.map_inner_effects_to_outer(jaxpr, new_invars, jaxpr.effects)
+    effs = core.filter_named_axis_effects(new_effs, mesh.axis_names)
     new_eqn = pe.new_jaxpr_eqn(
-        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        new_invars,
         [x for x, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, effs, eqn.source_info, eqn.ctx)
+        eqn.primitive,
+        new_params,
+        effs,
+        eqn.source_info,
+        eqn.ctx,
+    )
     return used_inputs, new_eqn
 pe.dce_rules[shard_map_p] = _shard_map_dce
 

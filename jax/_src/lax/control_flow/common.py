@@ -75,8 +75,7 @@ def _pad_constvars(jaxpr: core.ClosedJaxpr, num_consts: int,
     return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
   invars = [*map(make_var, left), *jaxpr.invars[:num_consts],
             *map(make_var, right), *jaxpr.invars[num_consts:]]
-  effs = pe._renumber_effects(invars, jaxpr.invars, jaxpr.effects)
-  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, effects=effs))
+  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars))
   config.enable_checks.value and core.check_jaxpr(jaxpr.jaxpr)
   return jaxpr
 
@@ -85,14 +84,16 @@ def _dedup_consts(jaxpr, num_consts, const_ids):
   newvars = {}
   canonicalize = {v: newvars.setdefault(constid, v)
                   for constid, v in zip(const_ids, jaxpr.invars[:num_consts])}
-  eqns = [e.replace(invars=[canonicalize.get(x, x) if isinstance(x, core.Var)
-                            else x for x in e.invars]) for e in jaxpr.eqns]
+  new_eqns = []
+  for e in jaxpr.eqns:
+    new_invars = [canonicalize.get(x, x) if isinstance(x, core.Var) else x for x in e.invars]
+    new_eqn_effects = core.replace_effects_vars(e.effects, canonicalize)  # type: ignore
+    new_eqns.append(e.replace(invars=new_invars, effects=new_eqn_effects))
+  eqns = new_eqns
   outvars = [canonicalize.get(x, x) if isinstance(x, core.Var) else x
              for x in jaxpr.outvars]
   invars = [*list(newvars.values()), *jaxpr.invars[num_consts:]]
-  effs = pe._renumber_effects(invars,
-      [*map(canonicalize.get, jaxpr.invars[:num_consts]), *jaxpr.invars[num_consts:]],
-      jaxpr.effects)
+  effs = core.replace_effects_vars(jaxpr.effects, canonicalize)  # type: ignore
   jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, eqns=eqns, outvars=outvars,
                         effects=effs))
   config.enable_checks.value and core.check_jaxpr(jaxpr)

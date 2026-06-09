@@ -168,10 +168,10 @@ def _switch_internal(
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
-  jaxprs = [replace_jaxpr_effects(jaxpr, joined_effects) for jaxpr in jaxprs]
+  jaxprs = _propagate_branch_effects(jaxprs)
   params = dict(branches=tuple(jaxprs))
   if branches_platforms is not None:
-    params["branches_platforms"] = branches_platforms
+    params["branches_platforms"] = branches_platforms  # type: ignore
   out = cond_p.bind(index, *consts, *args, **params)
   out_ = iter(out)
 
@@ -309,8 +309,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
         f'Effects not supported in `cond`: {disallowed_effects}')
 
   index = lax.convert_element_type(pred, np.int32)
-  false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
-  true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
+  false_jaxpr, true_jaxpr = _propagate_branch_effects((false_jaxpr, true_jaxpr))
 
   out = cond_p.bind(index, *consts, *args, branches=(false_jaxpr, true_jaxpr))
   out_ = iter(out)
@@ -409,12 +408,36 @@ def _capitalize(s):
   # s.capitalize() converts s[1:] to lowercase which we don't want.
   return s[0].capitalize() + s[1:]
 
+
+def _translate_branch_effects(
+    from_jaxpr: core.ClosedJaxpr, to_jaxpr: core.ClosedJaxpr, effs: core.Effects
+) -> core.Effects:
+  var_map = {
+      **dict(safe_zip(from_jaxpr.jaxpr.constvars, to_jaxpr.jaxpr.constvars)),
+      **dict(safe_zip(from_jaxpr.jaxpr.invars, to_jaxpr.jaxpr.invars)),
+  }
+  return core.replace_effects_vars(effs, var_map)
+
+
+def _propagate_branch_effects(
+    jaxprs: Sequence[core.ClosedJaxpr],
+) -> list[core.ClosedJaxpr]:
+  new_jaxprs = []
+  for to_jaxpr in jaxprs:
+    new_effects = set()
+    for from_jaxpr in jaxprs:
+      new_effects.update(
+          _translate_branch_effects(from_jaxpr, to_jaxpr, from_jaxpr.effects)
+      )
+    new_jaxprs.append(replace_jaxpr_effects(to_jaxpr, new_effects))
+  return new_jaxprs
+
+
 def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
   joined_effects = set()
   for b in branches:
-    for eff in b.effects:
+    for eff in core.jaxpr_effects_indices(b):
       if isinstance(eff, effects.JaxprInputEffect):
-        # Offset index to handle predicate
         eff = eff.replace(input_index=eff.input_index + 1)
       joined_effects.add(eff)
   return joined_effects
@@ -820,11 +843,21 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
 
   # Finally, update parameters and form the new eqn.
   new_params = dict(eqn.params, branches=tuple(dce_branches))
-  new_effects = _join_cond_effects(dce_branches)
+  new_invars = [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used]
+  new_effects = set()
+  for branch in dce_branches:
+    new_effects.update(
+        core.map_inner_effects_to_outer(branch, new_invars[1:], branch.effects)
+    )
   new_eqn = pe.new_jaxpr_eqn(
-      [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used],
+      new_invars,
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, new_effects, eqn.source_info, eqn.ctx)
+      eqn.primitive,
+      new_params,
+      new_effects,
+      eqn.source_info,
+      eqn.ctx,
+  )
 
   assert all(len(new_eqn.invars ) == 1 + len(jaxpr.in_avals )
              for jaxpr in new_params['branches'])

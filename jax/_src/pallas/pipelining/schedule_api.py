@@ -138,13 +138,16 @@ def trace_fun(
   ref_effects = [
       eff for eff in jaxpr.effects if isinstance(eff, state_types.RefEffect)
   ]
-  # Subtract off the consts and state_avals, since this is variable per stage.
   n_const = len(consts)
-  ref_effects = [
-      type(eff)(input_index=eff.input_index - n_const - num_ctx_avals)
-      for eff in ref_effects
-  ]
-  return jax_core.ClosedJaxpr(jaxpr, consts), ref_effects
+  mapped_ref_effects = []
+  binders = [*jaxpr.constvars, *jaxpr.invars]
+  for eff in ref_effects:
+    var = eff.input_index
+    if var in binders:
+      idx = binders.index(var)
+      relative_idx = idx - n_const - num_ctx_avals
+      mapped_ref_effects.append(eff.replace(input_index=relative_idx))
+  return jax_core.ClosedJaxpr(jaxpr, consts), mapped_ref_effects
 
 def apply_ref_filter(
     stages: Sequence[internal.PipelineStage],

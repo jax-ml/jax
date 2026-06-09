@@ -1999,11 +1999,13 @@ def _emit_pipeline_effectful_abstract_eval(
     if not isinstance(e, effects.JaxprInputEffect):
       out_effects.add(e)
       continue
-    if e.input_index < len(body_jaxpr.constvars):
+    assert isinstance(e, effects.JaxprInputEffect)
+    if e.input_index in body_jaxpr.constvars:
       const_offset = num_index_map_consts + num_dynamic
-      out_effects.add(e.replace(input_index=const_offset + e.input_index))
+      constvars_idx = body_jaxpr.constvars.index(e.input_index)
+      out_effects.add(e.replace(input_index=const_offset + constvars_idx))
     else:
-      invar_idx = e.input_index - len(body_jaxpr.constvars)
+      invar_idx = body_jaxpr.invars.index(e.input_index)
       if invar_idx < num_inputs and isinstance(e, WriteEffect):
         raise ValueError(
             f"WriteEffect should not apply to an input buffer {invar_idx} in"
@@ -2027,9 +2029,10 @@ pipeline_body_p.multiple_results = True
 # information which the caching doesn't support yet.
 _uncacheable_primitives.add(pipeline_body_p)
 
+
 @pipeline_body_p.def_effectful_abstract_eval
 def _pipeline_body_effectful_abstract_eval(
-    *avals, jaxpr, in_tree, num_inputs, **params
+    *avals, body_jaxpr, in_tree, num_inputs, **params
 ):
   del params
   # Because `avals` are grid indices, body constants, and flattened
@@ -2048,15 +2051,18 @@ def _pipeline_body_effectful_abstract_eval(
     ref_idx = get_ref_idx(x)
     if isinstance(avals[ref_idx], state.AbstractRef):
       out_effects.add(ReadEffect(ref_idx) if i < num_inputs else WriteEffect(ref_idx))
-  # Propagate effects from `jaxpr`, mapping them to the correct indices in `avals`.
-  for e in jaxpr.effects:
+  # Propagate effects from `body_jaxpr`, mapping them to the correct indices in `avals`.
+  for e in core.jaxpr_effects_indices(body_jaxpr):
     if not isinstance(e, effects.JaxprInputEffect):
       out_effects.add(e)
       continue
-    if e.input_index < len(jaxpr.constvars):
-      out_effects.add(e.replace(input_index=flat_consts_idx[e.input_index]))
+    assert isinstance(e, effects.JaxprInputEffect)
+    num_constvars = len(body_jaxpr.constvars)
+    if e.input_index < num_constvars:
+      constvars_idx = e.input_index
+      out_effects.add(e.replace(input_index=flat_consts_idx[constvars_idx]))
     else:
-      invar_idx = e.input_index - len(jaxpr.constvars)
+      invar_idx = e.input_index - num_constvars
       if invar_idx < num_inputs and isinstance(e, WriteEffect):
         raise ValueError(f"WriteEffect on input buffer {invar_idx}")
       ref_idx = get_ref_idx(flat_refs_idx[invar_idx])
@@ -2065,13 +2071,13 @@ def _pipeline_body_effectful_abstract_eval(
 
 
 @register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
-def _pipeline_body_lowering_rule(ctx, *args_flat, jaxpr, in_tree, **_):
+def _pipeline_body_lowering_rule(ctx, *args_flat, body_jaxpr, in_tree, **_):
   # TODO(rdyro): This function is a near duplicate of _jaxpr_call_lowering_rule
   # from sc_lowering.py, we should factor out and unify the two.
   (indices, body_consts, refs) = in_tree.unflatten(args_flat)
   (_, body_const_shapes, refs_shapes) = in_tree.unflatten(ctx.block_shapes)
 
-  refs_avals = tuple(var.aval for var in jaxpr.invars)
+  refs_avals = tuple(var.aval for var in body_jaxpr.invars)
   # manually resolve the transformed refs
   if refs:
     resolved_refs, resolved_ref_shapes = zip(
@@ -2095,9 +2101,12 @@ def _pipeline_body_lowering_rule(ctx, *args_flat, jaxpr, in_tree, **_):
   # Lift the constants out of the jaxpr, disabling checks to avoid a redundant
   # re-checking of jaxpr, like its grid and sharding information.
   with config.enable_checks(False):
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-  assert len(jaxpr.invars) == len(lowering_context.block_shapes)
-  return jaxpr_subcomp(lowering_context, jaxpr, *body_consts, *resolved_refs)
+    body_jaxpr = pe.convert_constvars_jaxpr(body_jaxpr)
+  assert len(body_jaxpr.invars) == len(lowering_context.block_shapes)
+  return jaxpr_subcomp(
+      lowering_context, body_jaxpr, *body_consts, *resolved_refs
+  )
+
 
 @register_lowering_rule(emit_pipeline_p, kernel_types=[*tpu_core.CoreType])
 def _emit_pipeline_lowering_rule(
@@ -2148,7 +2157,7 @@ def _emit_pipeline_lowering_rule(
       args_flat, args_tree = tracing_registry.flatten(indices_consts_args)
       return pipeline_body_p.bind(
           *args_flat,
-          jaxpr=body_jaxpr,
+          body_jaxpr=body_jaxpr,
           in_tree=args_tree,
           num_inputs=grid_mapping.num_inputs,
       )
