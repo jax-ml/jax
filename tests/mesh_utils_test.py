@@ -16,6 +16,7 @@
 import collections
 from collections.abc import Sequence
 import dataclasses
+import math
 
 from absl import logging
 from absl.testing import absltest
@@ -728,6 +729,16 @@ class SplitAxesDeviceMeshCreationTest(test_util.JaxTestCase):
     self.assertEqual(mesh_utils._get_prime_factors(12), [2, 2, 3])
     self.assertEqual(mesh_utils._get_prime_factors(121), [11, 11])  # square
     self.assertEqual(mesh_utils._get_prime_factors(43), [43])  # prime
+    # Numbers whose largest prime factor exceeds sqrt(x) (the trial-division
+    # bound) must still retain the smaller factors found before it.
+    self.assertEqual(mesh_utils._get_prime_factors(10), [2, 5])
+    self.assertEqual(mesh_utils._get_prime_factors(14), [2, 7])
+    self.assertEqual(mesh_utils._get_prime_factors(15), [3, 5])
+    self.assertEqual(mesh_utils._get_prime_factors(28), [2, 2, 7])
+    self.assertEqual(mesh_utils._get_prime_factors(2 * 9973), [2, 9973])
+    # The product of the returned factors must always reconstruct the input.
+    for n in range(1, 1000):
+      self.assertEqual(math.prod(mesh_utils._get_prime_factors(n)), n)
 
   @parameterized.named_parameters(
       (
