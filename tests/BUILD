@@ -278,12 +278,18 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "xla_transform_test",
     srcs = ["xla_transform_test.py"],
-    enable_backends = ["cpu"],
+    enable_backends = [
+        "cpu",
+        "tpu",
+    ],
     deps = [
         "//jax/extend:xla",
         "//jaxlib:_xla",
         "@xla//xla/python:_hlo",
-    ] + py_deps("absl/testing"),
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
 )
 
 jax_multiplatform_test(
