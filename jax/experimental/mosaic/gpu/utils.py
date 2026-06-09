@@ -14,13 +14,13 @@
 # ==============================================================================
 """Utilities for code generator."""
 
-from absl import logging
 from collections.abc import Iterator, Sequence
 import contextlib
 import dataclasses
 import enum
 import functools
 import inspect
+import logging
 import math
 from typing import Any, Literal, overload
 
@@ -39,6 +39,7 @@ from jaxlib.mlir.dialects import scf
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
+logger = logging.getLogger(__name__)
 
 WARP_SIZE: int = 32
 WARPGROUP_SIZE: int = 128
@@ -2131,9 +2132,8 @@ def is_known_divisible(value: ir.Value, divisor: int, max_depth=10) -> bool:
       return (divisor.bit_count() == 1 and
               is_known_divisible(def_op.in_, divisor, new_depth))
 
-  if logging.vlog_is_on(2):
-    print(f"Unsupported defining operation {def_op} when checking divisibility "
-          "of {value}")
+  logger.debug("Unsupported defining operation %s when "
+               "checking divisibility of %s", def_op, value)
 
   return False
 
