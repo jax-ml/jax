@@ -1491,14 +1491,15 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(f(x), np.stack([x, x], axis=1))
 
   @parameterized.parameters(
-      ((),),
-      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),),
+      ((), plgpu.Layout.TMA_INDICES),
+      ((), plgpu.Layout.TMA_INDICES_4),
+      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)), plgpu.Layout.TMA_INDICES),
   )
-  def test_copy_gmem_to_smem_gather(self, transforms):
+  def test_copy_gmem_to_smem_gather(self, transforms, idxs_layout):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100")
     dtype = jnp.int32
-    out_shape = (64, 128)
+    out_shape = (64 if idxs_layout == plgpu.Layout.TMA_INDICES else 12, 128)
     shape = (128, 64 + out_shape[-1])
     @functools.partial(
         self.pallas_call,
@@ -1506,12 +1507,12 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         out_specs=plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
         in_specs=(
             pl.BlockSpec(memory_space=plgpu.GMEM),
-            pl.BlockSpec(memory_space=plgpu.SMEM),
+            pl.BlockSpec(memory_space=plgpu.GMEM),
         ),
         scratch_shapes=[plgpu.Barrier()],
     )
     def kernel(x_ref_gmem, idx_ref, o_ref, barrier_ref):
-      idxs = plgpu.load(idx_ref, (), layout=plgpu.Layout.TMA_INDICES)
+      idxs = plgpu.load(idx_ref, (), layout=idxs_layout, optimized=False)
       plgpu.copy_gmem_to_smem(x_ref_gmem.at[idxs, 64:], o_ref, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
 
@@ -1520,19 +1521,21 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x, idx), x[idx, 64:])
 
   @parameterized.parameters(
-      ((),),
-      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),),
+      ((), plgpu.Layout.TMA_INDICES),
+      ((), plgpu.Layout.TMA_INDICES_4),
+      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)), plgpu.Layout.TMA_INDICES),
   )
-  def test_copy_smem_to_gmem_scatter(self, transforms):
+  def test_copy_smem_to_gmem_scatter(self, transforms, idxs_layout):
     if not jtu.is_cuda_compute_capability_at_least("10.0"):
       self.skipTest("Only works on a GPU with capability >= sm100")
     # Make sure we can infer the layout in WG
     indices_layout = tokens_layout = None
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
-      indices_layout = plgpu.Layout.TMA_INDICES
-      tokens_layout = plgpu.Layout.WGMMA
+      indices_layout = idxs_layout
+      tokens_layout = plgpu.Layout.WGMMA if idxs_layout == plgpu.Layout.TMA_INDICES else None
     dtype = jnp.int32
-    shape = (64, 128)
+    num_indices = 64 if idxs_layout == plgpu.Layout.TMA_INDICES else 12
+    shape = (num_indices, 128)
     @functools.partial(
         self.kernel,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),

@@ -1694,6 +1694,7 @@ class Layout(SomeLayout, enum.Enum):
 
   SMEM_GMEM_COPY = enum.auto()
   TMA_INDICES = enum.auto()
+  TMA_INDICES_4 = enum.auto()
 
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
@@ -1756,6 +1757,8 @@ class Layout(SomeLayout, enum.Enum):
         )
       case Layout.TMA_INDICES:
         return mgpu.TMA_INDICES_LAYOUT
+      case Layout.TMA_INDICES_4:
+        return mgpu.TMA_INDICES_4_LAYOUT
 
 
 class TMEMLayout(enum.Enum):
