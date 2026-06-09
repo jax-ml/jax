@@ -9,7 +9,7 @@ bazel_dep(name = "bazel_features", version = "1.36.0")
 bazel_dep(name = "bazel_skylib", version = "1.8.2")
 bazel_dep(name = "flatbuffers", version = "25.2.10", repo_name = "com_github_google_flatbuffers")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
-bazel_dep(name = "grpc", version = "1.78.0", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "grpc", version = "1.81.0", repo_name = "com_github_grpc_grpc")
 bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
@@ -40,7 +40,7 @@ single_version_override(
     module_name = "grpc",
     patch_strip = 1,
     patches = ["//third_party/grpc:grpc.patch"],  # upstreaming in cl/822016400
-    version = "1.78.0",
+    version = "1.81.0",
 )
 
 ##############################################################
