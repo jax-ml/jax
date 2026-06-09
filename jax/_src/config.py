@@ -1798,6 +1798,15 @@ traceback_filtering = enum_state(
          "a brief message (to the ``__cause__`` of the exception) describing that this has "
          "happened.\n\n")
 
+# TODO(rdyro): Remove once we always enable emit_pipeline primitive.
+use_emit_pipeline_primitive = bool_state(
+    name = 'jax_use_emit_pipeline_primitive',
+    default=False,
+    help="Controls whether to use the emit_pipeline primitive.",
+    include_in_jit_key=True,
+    include_in_trace_context=True)
+
+
 # This flag is for internal use.
 # TODO(tianjianlu): Removes once we always enable cusparse lowering.
 # TODO(b/262050896): Set to true after bug is fixed

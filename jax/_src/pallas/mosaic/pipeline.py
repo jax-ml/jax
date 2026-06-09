@@ -21,6 +21,7 @@ import contextlib
 import dataclasses
 import enum
 import functools
+import itertools
 import math
 from typing import Any, Literal, Union
 
@@ -28,19 +29,29 @@ import jax
 from jax import core as jax_core
 from jax import lax
 from jax import tree_util
+from jax._src import core
+from jax._src import config
 from jax._src import state
 from jax._src import util as jax_util
+from jax._src.interpreters import partial_eval as pe
+from jax._src import linear_util as lu
+from jax._src import api_util
+from jax._src.tree_util import tracing_registry
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import helpers
 from jax._src.pallas import primitives
 from jax._src.pallas import utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import helpers as tpu_helpers
+from jax._src.pallas.mosaic.lowering import (
+    register_lowering_rule, jaxpr_subcomp, _transform_ref, ir_constant,
+    _uncacheable_primitives)
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import tpu_info
+from jax._src import effects
+from jax._src.state import WriteEffect, ReadEffect
 from jax._src.state import indexing
 import jax.numpy as jnp
-
 
 cdiv = utils.cdiv
 contextmanager = contextlib.contextmanager
@@ -74,6 +85,8 @@ GridIndices = tuple[jax.Array, ...]
 CondVal = Union[jax.Array, bool]
 PipelineBlockSpecs = Union[Sequence[pallas_core.BlockSpec], Any]
 PipelineRefs = Union[Sequence[REF], Any]
+
+is_transformed_ref = lambda x: isinstance(x, state.TransformedRef)
 
 
 def _create_blocked_slice(
@@ -169,13 +182,12 @@ def _tuple_all_binop(binop, xs, ys):
 
 _tuple_lt = functools.partial(_tuple_all_binop, lambda x, y: x < y)
 
-
 def _spec_has_trivial_windowing(spec, grid, full_shape):
   if spec is None:
     return True
   if spec.block_shape is None:
     return True
-  for bs, fs in zip(spec.block_shape, full_shape):
+  for bs, fs in jax_util.safe_zip(spec.block_shape, full_shape):
     if bs is None:
       return False
     if isinstance(
@@ -1564,7 +1576,7 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     tpu_helpers.sync_copy(window_ref, hbm_ref)
 
 
-def emit_pipeline(
+def _emit_pipeline(
     body,
     *,
     grid: tuple[int | jax.Array, ...],
@@ -1577,6 +1589,7 @@ def emit_pipeline(
     trace_scopes: bool = True,
     no_pipelining: bool = False,
     _explicit_indices: bool = False,
+    _grid_offsets: tuple[int | jax.Array, ...] | None = None,
 ):
   """Creates a function to emit a manual pallas pipeline.
 
@@ -1602,7 +1615,11 @@ def emit_pipeline(
       synchronous. This is useful for debugging multiple-buffering related bugs.
     _explicit_indices: If True, the body will receive the iteration indices as
       its first argument. This parameter is meant for internal use only.
+    _grid_offsets: If provided, the grid partitioning offset indices and sizes
+      are already precomputed and the scheduler will use these values directly.
+      Internal use only.
   """
+
   if any(not isinstance(d, (int, jax.Array)) for d in grid):
     grid_types = tuple(type(d) for d in grid)
     raise ValueError(
@@ -1610,8 +1627,11 @@ def emit_pipeline(
     )
   if not (core_axis is None or core_axis_name is None):
     raise ValueError("core_axis and core_axis_name cannot both be provided.")
-  core_axis_ = core_axis_name if core_axis is None else core_axis
-  grid, grid_offsets = _partition_grid(grid, core_axis_, dimension_semantics)
+  if _grid_offsets is None:
+    core_axis_ = core_axis_name if core_axis is None else core_axis
+    grid, grid_offsets = _partition_grid(grid, core_axis_, dimension_semantics)
+  else:
+    grid_offsets = _grid_offsets
 
   num_steps = math.prod(grid)
   in_specs = _normalize_specs(in_specs)
@@ -1654,7 +1674,7 @@ def emit_pipeline(
               out_specs=out_specs,
               grid=grid,
               tiling=tiling,
-          ),
+          )
       )
     if isinstance(allocations, list):
       allocations = tuple(allocations)
@@ -1810,3 +1830,394 @@ def emit_pipeline_with_allocations(
       in_specs=in_specs,
       out_specs=out_specs)
   return pipeline, make_allocations
+
+
+def emit_pipeline(
+    body,
+    *,
+    grid: tuple[int | jax.Array, ...],
+    in_specs=(),
+    out_specs=(),
+    tiling: Tiling | None = None,
+    core_axis: tuple[int, ...] | int | None = None,
+    core_axis_name: tuple[str, ...] | str | None = None,
+    dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
+    trace_scopes: bool = True,
+    no_pipelining: bool = False,
+    _explicit_indices: bool = False,
+):
+  if not config.use_emit_pipeline_primitive.value:
+    return _emit_pipeline(
+        body,
+        grid=grid,
+        in_specs=in_specs,
+        out_specs=out_specs,
+        tiling=tiling,
+        core_axis=core_axis,
+        core_axis_name=core_axis_name,
+        dimension_semantics=dimension_semantics,
+        trace_scopes=trace_scopes,
+        no_pipelining=no_pipelining,
+        _explicit_indices=_explicit_indices,
+    )
+
+  in_specs = _normalize_specs(in_specs)
+  out_specs = _normalize_specs(out_specs)
+  in_specs_flat, _ = tree_util.tree_flatten(in_specs)
+  out_specs_flat, _ = tree_util.tree_flatten(out_specs)
+
+  def wrapped(*args, allocations=None):
+    refs_flat, refs_tree = tracing_registry.flatten(args, is_transformed_ref)
+    if allocations is not None:
+      # TODO(rdyro): Add support for allocations.
+      raise NotImplementedError("`allocations` are not yet supported.")
+    else:
+      local_in_specs = in_specs_flat
+      local_out_specs = out_specs_flat
+
+    num_inputs = len(local_in_specs)
+    in_refs, out_refs = refs_flat[:num_inputs], refs_flat[num_inputs:]
+
+    # Split the grid into static and dynamic parts the latter passed as args.
+    in_avals = [_ref_to_value_aval(r) for r in in_refs]
+    out_avals = [_ref_to_value_aval(r) for r in out_refs]
+
+    core_axis_ = core_axis_name if core_axis is None else core_axis
+    grid_, grid_offsets = _partition_grid(grid, core_axis_, dimension_semantics)
+    dynamic_offset_tracers, static_grid_offsets = [], []
+    for d in grid_offsets:
+      if isinstance(d, (core.Tracer, jax.Array)):
+        dynamic_offset_tracers.append(d)
+        static_grid_offsets.append(pallas_core.DynamicGridDim())
+      else:
+        static_grid_offsets.append(d)
+
+    grid_spec = pallas_core.GridSpec(
+        grid=grid_, in_specs=local_in_specs, out_specs=local_out_specs)
+    static_grid_spec, dynamic_bounds = (
+        pallas_core.unzip_dynamic_grid_bounds(grid_spec))
+    # TODO(rdyro): Move this primitive to pallas_core or vendor get_grid_mapping
+    # here.
+    _, in_tree = tracing_registry.flatten(tuple(in_refs), is_transformed_ref)
+    _, out_tree = tracing_registry.flatten(tuple(out_refs), is_transformed_ref)
+    kernel_args, grid_mapping = pallas_core.get_grid_mapping(
+        static_grid_spec,
+        in_avals,
+        in_tree,
+        [""] * len(in_avals),
+        out_avals,
+        out_tree,
+        [""] * len(out_avals),
+        allow_captured_consts=True,
+    )
+    # Trace the kernel body to a jaxpr.
+    kernel_args = refs_tree.unflatten(kernel_args)
+    flat_kernel_args, kernel_in_tree = tracing_registry.flatten(
+        kernel_args, is_transformed_ref)
+    # Ensure the get_grid_mapping didn't produce TransformedRefs for tracing.
+    assert all(
+        not isinstance(x, state.TransformedRef) for x in flat_kernel_args)
+
+    with grid_mapping.trace_env():
+      body_fun_dbg = api_util.debug_info(
+          "emit_pipeline body", body, kernel_args, {})
+      flat_body_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
+          lu.wrap_init(body, debug_info=body_fun_dbg),
+          kernel_in_tree
+      )
+      body_jaxpr, _, body_consts = pe.trace_to_jaxpr_dynamic(
+        flat_body_fun, tuple(flat_kernel_args)
+      )
+      if out_tree_thunk().num_leaves != 0:
+        raise ValueError("The emit_pipeline body function must return None.")
+
+    all_index_map_consts = tuple(itertools.chain.from_iterable(
+        bm.index_map_jaxpr.consts for bm in grid_mapping.block_mappings))
+
+    args_flat, args_tree = tracing_registry.flatten(args)
+    return emit_pipeline_p.bind(
+        *all_index_map_consts,
+        *dynamic_bounds,
+        *dynamic_offset_tracers,
+        *body_consts,
+        *args_flat,
+        body_consts_len=len(body_consts),
+        body_jaxpr=body_jaxpr,
+        grid_mapping=grid_mapping,
+        tiling=tiling,
+        core_axis=core_axis,
+        core_axis_name=core_axis_name,
+        args_tree=args_tree,
+        dimension_semantics=dimension_semantics,
+        trace_scopes=trace_scopes,
+        no_pipelining=no_pipelining,
+        _static_grid_offsets=tuple(static_grid_offsets),
+        _num_extra_dynamic=len(dynamic_offset_tracers),
+    )
+  return wrapped
+
+
+emit_pipeline_p = core.Primitive("emit_pipeline")
+emit_pipeline_p.multiple_results = True
+# TODO(rdyro): This primitive requires both memory pipeline and core grid
+# information which the caching doesn't support yet.
+_uncacheable_primitives.add(emit_pipeline_p)
+
+@emit_pipeline_p.def_effectful_abstract_eval
+def _emit_pipeline_effectful_abstract_eval(
+    *avals, body_jaxpr: core.Jaxpr, body_consts_len,
+    grid_mapping, _num_extra_dynamic, args_tree, **params):
+  del params
+  index_map_consts_counts = tuple(
+      len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
+  num_index_map_consts = sum(index_map_consts_counts)
+  num_dynamic = grid_mapping.num_dynamic_grid_bounds + _num_extra_dynamic
+  offset = num_index_map_consts + num_dynamic + body_consts_len
+
+  # Because we can have TransformedRefs as argumetns to the body, but the flat
+  # arguments are flattened Refs and transforms, we unflatten the positional
+  # indices to be able to identify the index of an n-th Ref from a positional
+  # index.
+  indices_flat = list(range(offset, len(avals)))
+  flat_refs_idx, _ = tracing_registry.flatten(
+      args_tree.unflatten(indices_flat), is_transformed_ref)
+  # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
+  get_ref_idx = lambda x: x.ref if isinstance(x, state.TransformedRef) else x
+
+  out_effects: set[effects.Effect] = set()
+  num_inputs = grid_mapping.num_inputs
+  # Attach base ReadEffect / WriteEffect instances for the logical references.
+  for i, x in enumerate(flat_refs_idx):
+    ref_idx = get_ref_idx(x)
+    if isinstance(avals[ref_idx], state.AbstractRef):
+      out_effects.add(ReadEffect(ref_idx)
+                      if i < num_inputs else WriteEffect(ref_idx))
+
+  # Propagate effects from `body_jaxpr`, mapping them to the correct indices in
+  # `avals`.
+  for e in body_jaxpr.effects:
+    if not isinstance(e, effects.JaxprInputEffect):
+      out_effects.add(e)
+      continue
+    if e.input_index < len(body_jaxpr.constvars):
+      const_offset = num_index_map_consts + num_dynamic
+      out_effects.add(e.replace(input_index=const_offset + e.input_index))
+    else:
+      invar_idx = e.input_index - len(body_jaxpr.constvars)
+      if invar_idx < num_inputs and isinstance(e, WriteEffect):
+        raise ValueError(
+            f"WriteEffect should not apply to an input buffer {invar_idx} in"
+            f" pipeline body jaxpr: {body_jaxpr}")
+      ref_idx = get_ref_idx(flat_refs_idx[invar_idx])
+      out_effects.add(e.replace(input_index=ref_idx))
+  return (), frozenset(out_effects)
+
+# TODO(rdyro): Either generalize or merge with another primitive. This primitive
+# perfoms an "eval jaxpr" operation, but is currently tailored to calling the
+# pipeline body in the emit_pipeline primtiive - it resolves TransformedRefs and
+# binds the user grid indices to lowering.
+# This primitive is specialized to resolve TransformedRefs passed as arguments
+# and evaluate the body jaxpr with the resolved Refs because it assumes the body
+# was traced "generically" with Refs. However, the emit_pipeline is allowed to
+# pass in TransformedRefs as arguments to the body.
+pipeline_body_p = core.Primitive("pipeline_body")
+pipeline_body_p.multiple_results = True
+
+# TODO(rdyro): This primitive requires both memory pipeline and core grid
+# information which the caching doesn't support yet.
+_uncacheable_primitives.add(pipeline_body_p)
+
+@pipeline_body_p.def_effectful_abstract_eval
+def _pipeline_body_effectful_abstract_eval(
+    *avals, jaxpr, in_tree, num_inputs, **params
+):
+  del params
+  # Because `avals` are grid indices, body constants, and flattened
+  # TransformedRefs as arguments, we unflatten a flat index list to be able to
+  # identify the index of an n-th Ref from a positional index.
+  indices_flat = list(range(len(avals)))
+  (_, consts_idx, refs_idx) = in_tree.unflatten(indices_flat)
+  flat_refs_idx, _ = tracing_registry.flatten(refs_idx, is_transformed_ref)
+  flat_consts_idx, _ = tracing_registry.flatten(consts_idx)
+  # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
+  get_ref_idx = lambda x: x.ref if isinstance(x, state.TransformedRef) else x
+
+  out_effects: set[effects.Effect] = set()
+  # Attach base ReadEffect / WriteEffect instances for the logical references.
+  for i, x in enumerate(flat_refs_idx):
+    ref_idx = get_ref_idx(x)
+    if isinstance(avals[ref_idx], state.AbstractRef):
+      out_effects.add(ReadEffect(ref_idx) if i < num_inputs else WriteEffect(ref_idx))
+  # Propagate effects from `jaxpr`, mapping them to the correct indices in `avals`.
+  for e in jaxpr.effects:
+    if not isinstance(e, effects.JaxprInputEffect):
+      out_effects.add(e)
+      continue
+    if e.input_index < len(jaxpr.constvars):
+      out_effects.add(e.replace(input_index=flat_consts_idx[e.input_index]))
+    else:
+      invar_idx = e.input_index - len(jaxpr.constvars)
+      if invar_idx < num_inputs and isinstance(e, WriteEffect):
+        raise ValueError(f"WriteEffect on input buffer {invar_idx}")
+      ref_idx = get_ref_idx(flat_refs_idx[invar_idx])
+      out_effects.add(e.replace(input_index=ref_idx))
+  return (), frozenset(out_effects)
+
+
+@register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
+def _pipeline_body_lowering_rule(ctx, *args_flat, jaxpr, in_tree, **_):
+  # TODO(rdyro): This function is a near duplicate of _jaxpr_call_lowering_rule
+  # from sc_lowering.py, we should factor out and unify the two.
+  (indices, body_consts, refs) = in_tree.unflatten(args_flat)
+  (_, body_const_shapes, refs_shapes) = in_tree.unflatten(ctx.block_shapes)
+
+  refs_avals = tuple(var.aval for var in jaxpr.invars)
+  # manually resolve the transformed refs
+  if refs:
+    resolved_refs, resolved_ref_shapes = zip(
+        *(_transform_ref(ref, ref_aval, ref_shape)
+          for ref, ref_aval, ref_shape in zip(refs, refs_avals, refs_shapes)))
+  else:
+    resolved_refs, resolved_ref_shapes = (), ()
+
+  user_grid_indices = ctx.lowering_context.user_grid_indices
+  # TODO(rdyro): As a temporary workaround, to support both core mesh axes
+  # (jax.lax.axis_(index|size)) and memory pipeline axes
+  # (pl.(program_id|num_programs)), we append the core grid to the end of the
+  # end of the user grid dimensions. This is error prone (the user could request
+  # a core grid dimension with pl.program_id); we should fix this soon.
+  lowering_context = ctx.lowering_context.replace(
+      user_grid_indices=(tuple(indices)
+                         + tuple(user_grid_indices[len(indices):])),
+      block_shapes=(list(body_const_shapes)
+                    + list(resolved_ref_shapes))
+  )
+  # Lift the constants out of the jaxpr, disabling checks to avoid a redundant
+  # re-checking of jaxpr, like its grid and sharding information.
+  with config.enable_checks(False):
+    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  assert len(jaxpr.invars) == len(lowering_context.block_shapes)
+  return jaxpr_subcomp(lowering_context, jaxpr, *body_consts, *resolved_refs)
+
+@register_lowering_rule(emit_pipeline_p, kernel_types=[*tpu_core.CoreType])
+def _emit_pipeline_lowering_rule(
+    ctx, *args, grid_mapping, _num_extra_dynamic, _static_grid_offsets,
+    args_tree, body_jaxpr, body_consts_len, **params
+):
+  index_map_consts_counts = tuple(
+      len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
+
+  def wrapped_pipeline_fun(*all_args, grid_mapping=grid_mapping):
+    num_index_map_consts = sum(index_map_consts_counts)
+    num_dynamic = grid_mapping.num_dynamic_grid_bounds + _num_extra_dynamic
+    grid_mapping_consts, dynamic_vals, body_consts, flat_refs = (
+        jax_util.split_list(
+            all_args, [num_index_map_consts, num_dynamic, body_consts_len]))
+
+    index_map_consts = jax_util.split_list(
+        grid_mapping_consts, index_map_consts_counts)
+    new_bms = []
+    for i, bm in enumerate(grid_mapping.block_mappings):
+      bm = bm.replace(index_map_jaxpr=core.ClosedJaxpr(
+          bm.index_map_jaxpr.jaxpr, index_map_consts[i]))
+      new_bms.append(bm)
+    grid_mapping = dataclasses.replace(grid_mapping, block_mappings=new_bms)
+
+    flat_refs, _ = tracing_registry.flatten(  # flatten to TransformedRefs
+        args_tree.unflatten(flat_refs), is_transformed_ref)
+    dynamic_vals_iter = iter(dynamic_vals)
+    grid = tuple(next(dynamic_vals_iter)
+                 if pallas_core.is_dynamic_dim(d) else d
+                 for d in grid_mapping.grid)
+    grid_offsets = tuple(next(dynamic_vals_iter)
+                         if pallas_core.is_dynamic_dim(d) else d
+                         for d in _static_grid_offsets)
+    in_specs = [
+        bm.to_block_spec()
+        for bm in grid_mapping.block_mappings[:grid_mapping.num_inputs]]
+    out_specs = [
+        bm.to_block_spec()
+        for bm in grid_mapping.block_mappings[grid_mapping.num_inputs:]]
+
+    def new_body(indices, *args):
+      original_indices = tuple(
+          idx for i, idx in enumerate(indices)
+          if i not in grid_mapping.vmapped_dims
+      )
+      indices_consts_args = (original_indices, body_consts, args)
+      args_flat, args_tree = tracing_registry.flatten(indices_consts_args)
+      return pipeline_body_p.bind(
+          *args_flat,
+          jaxpr=body_jaxpr,
+          in_tree=args_tree,
+          num_inputs=grid_mapping.num_inputs,
+      )
+
+    pipeline_fun = _emit_pipeline(
+        new_body, grid=grid, in_specs=in_specs, out_specs=out_specs,
+        _grid_offsets=grid_offsets, _explicit_indices=True, **params)
+
+    # Use a logical grid env (excluding vmapped dims) so that
+    # num_programs(axis) resolves against the user's original grid axes.
+    pipeline_grid = tuple(d for i, d in enumerate(grid_mapping.grid)
+                          if i not in grid_mapping.vmapped_dims)
+
+    # re-create the pallas core grid env
+    grid_names = ctx.lowering_context.grid_names
+    grid_sizes = ctx.lowering_context.grid_sizes
+    if grid_names is None:
+      grid_names = (None,) * len(grid_sizes)
+    axis_env_ctx = core.extend_axis_env_nd(
+        [(name, size) for name, size in zip(grid_names, grid_sizes)
+        if name is not None and isinstance(size, int)]
+    )
+
+    # run the actual pipeline function
+    with (axis_env_ctx, pallas_core.tracing_grid_env(pipeline_grid, ())):
+      pipeline_fun(*flat_refs)
+    return ()
+
+  dbg = api_util.debug_info(
+      "emit_pipeline_lowering", wrapped_pipeline_fun, ctx.avals_in, {})
+  wrapped_lu_fun = lu.wrap_init(wrapped_pipeline_fun, debug_info=dbg)
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, ctx.avals_in)
+  assert not consts and not jaxpr.constvars, (
+      f"wrapped_pipeline_fun should not close over JAX constants, but found: "
+      f"{consts=} {jaxpr.constvars=}")
+  jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  num_index_map_consts = sum(index_map_consts_counts)
+  num_dynamic = grid_mapping.num_dynamic_grid_bounds + _num_extra_dynamic
+  _, dynamic_vals, _, _ = jax_util.split_list(
+      args, [num_index_map_consts, num_dynamic, body_consts_len]
+  )
+  grid_val_iter = iter(dynamic_vals)
+  grid = tuple(next(grid_val_iter) if pallas_core.is_dynamic_dim(d)
+               else ir_constant(d) for d in grid_mapping.grid)
+
+  # TODO(rdyro): We append the core grid dimensions to the end of the memory
+  # pipeline grid dimensions as a temporary workaround, but this conflates the
+  # pipeline and core grid.  Separate them in the lowering definition.
+  grid_names = ctx.lowering_context.grid_names
+  if grid_names is None:
+    grid_names = (None,) * len(ctx.lowering_context.grid_sizes)
+  grid_names = (tuple(None for i, _ in enumerate(grid)
+                      if i not in grid_mapping.vmapped_dims)
+                + (tuple(grid_names or ())))
+  user_grid_indices = (tuple(g for i, g in enumerate(grid)
+                             if i not in grid_mapping.vmapped_dims)
+                       + tuple(ctx.lowering_context.user_grid_indices))
+  grid += tuple(ctx.lowering_context.grid_sizes)
+
+  lowering_context = ctx.lowering_context.replace(
+      block_shapes=ctx.block_shapes,
+      grid_sizes=grid,
+      grid_names=grid_names,
+      user_grid_indices=user_grid_indices,
+      vmapped_dims=grid_mapping.vmapped_dims,
+  )
+
+  assert len(jaxpr.invars) == len(lowering_context.block_shapes)
+  valid_grid_sizes = tuple(d for i, d in enumerate(lowering_context.grid_sizes)
+                         if i not in grid_mapping.vmapped_dims)
+  assert len(valid_grid_sizes) == len(lowering_context.grid_names)
+  return jaxpr_subcomp(lowering_context, jaxpr, *args)

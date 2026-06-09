@@ -215,6 +215,7 @@ pytype_library(
         "//jax/_src:lax",
         "//jax/_src:util",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic:lowering",
         "//jax/extend:backend",
     ] + py_deps("numpy"),
 )

@@ -1224,6 +1224,7 @@ class BlockSpec(pallas_core.BlockSpec):
       index_map_tree: tree_util.PyTreeDef,
       grid: pallas_core.GridMappingGrid,
       vmapped_dims: tuple[int, ...],
+      allow_captured_consts: bool = False,
       debug: bool = False,
   ) -> pallas_core.BlockMapping:
     if self.collective_axes:
@@ -1238,6 +1239,7 @@ class BlockSpec(pallas_core.BlockSpec):
         index_map_tree=index_map_tree,
         grid=grid,
         vmapped_dims=vmapped_dims,
+        allow_captured_consts=allow_captured_consts,
         debug=debug,
     )
     block_inner_aval = bm.block_aval.inner_aval
