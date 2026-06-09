@@ -4380,6 +4380,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_eager_reduced_out(self, mesh):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(8.), P('x'))
 
     @shard_map(out_specs=P(reduced={'x'}))
@@ -4396,6 +4398,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_eager_reduced_in(self, mesh):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
 
     @shard_map(out_specs=P('x'))
@@ -4413,6 +4417,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_eager_unreduced_out(self, mesh):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
+      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(8.), P('x'))
 
     @shard_map(out_specs=P(unreduced={'x'}))
