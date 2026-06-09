@@ -66,7 +66,10 @@ def gammaln(x: ArrayLike) -> Array:
     ``gammaln`` does not support complex-valued inputs.
   """
   x, = promote_args_inexact("gammaln", x)
-  return lax.lgamma(x)
+  # gammaln(x) = log(|gamma(x)|). At x = -inf, |gamma(-inf)| → 0+,
+  # so gammaln(-inf) = -inf. Adjust for XLA lgamma returning +inf at -inf.
+  with jnp.errstate(invalid='ignore'):
+    return jnp.where(isneginf(x), -jnp.inf, lax.lgamma(x))
 
 
 @jit
