@@ -1762,6 +1762,7 @@ class OpsTest(PallasBaseTest):
         rhs,
         dimension_numbers=dims_numbers,
         preferred_element_type=jnp.float32,
+        precision=jax.lax.Precision.HIGHEST,
     )
 
     @functools.partial(
@@ -1774,6 +1775,7 @@ class OpsTest(PallasBaseTest):
           rhs_ref[...],
           dimension_numbers=dims_numbers,
           preferred_element_type=jnp.float32,
+          precision=jax.lax.Precision.HIGHEST,
       )
 
     np.testing.assert_allclose(kernel(lhs, rhs), expected, atol=5e-6, rtol=5e-4)

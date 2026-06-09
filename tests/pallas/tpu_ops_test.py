@@ -256,7 +256,10 @@ class OpsTest(ptu.PallasTPUTest):
       )(a, b, c, d)
 
     result_pallas = pallas_fn(a_val, b_val, c_val, d_val)
-    expected = jnp.dot(a_val, b_val) + jnp.dot(c_val, d_val)
+    expected = (
+        jnp.dot(a_val, b_val, precision=jax.lax.Precision.HIGHEST)
+        + jnp.dot(c_val, d_val, precision=jax.lax.Precision.HIGHEST)
+    )
     self.assertAllClose(result_pallas, expected, atol=1e-5, rtol=1e-5)
 
   @parameterized.product(from_dtype=_JAX_INT_DTYPES,
