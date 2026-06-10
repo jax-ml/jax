@@ -1,0 +1,61 @@
+name: Lint
+
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main branches.
+  cancel-in-progress: ${{ github.ref != 'main' }}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  UV_MANAGED_PYTHON: true  # Make sure `uv` uses its own Python installations
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  # Print cache hits/misses for setup-uv-python Python and packages,
+  # as well as timing, in summaries. For packages, time taken has to be echo'ed
+  # separately in the workflow step.
+  CI_UV_DEBUG: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint_and_typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHON_VERSION: '3.11'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        id: setup_python
+        uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install lint dependencies
+        env:
+          PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
+        run: |
+          PKG_INSTALL_START_TIME=$(date +%s)
+          uv pip install --python "$PYTHON_BIN" pre-commit
+          echo "### lint_and_typecheck dependency install" >> "$GITHUB_STEP_SUMMARY"
+          echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
+      - id: get-date
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ steps.get-date.outputs.date }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
+      - run: $PYTHON_BIN -m pre_commit run --show-diff-on-failure --color=always --all-files

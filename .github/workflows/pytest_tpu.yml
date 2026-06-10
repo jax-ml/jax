@@ -71,7 +71,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
-    name: "${{ inputs.tpu-type }}, py ${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
+    name: "${{ inputs.tpu-type }}, py${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
 
     env:
       LIBTPU_OLDEST_VERSION_DATE: 20250228
@@ -95,7 +95,7 @@ jobs:
         run: |
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
           # xprof depends on cffi, which doesn't support Python 3.13 free-threaded.
-          if [[ "${JAXCI_HERMETIC_PYTHON_VERSION}" != "3.13-nogil" ]]; then
+          if [[ "${JAXCI_HERMETIC_PYTHON_VERSION}" != "3.13t" ]]; then
             $JAXCI_PYTHON -m uv pip install -r build/collect-profile-requirements.txt
           fi
       - name: Set up libtpu wheels

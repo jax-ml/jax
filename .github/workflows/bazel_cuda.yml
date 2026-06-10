@@ -112,7 +112,7 @@ jobs:
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, jaxlib=${{ inputs.jaxlib-version }}, CUDA=${{ inputs.cuda-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py${{ inputs.python }}, CUDA=${{ inputs.cuda-version }}, jaxlib=${{ inputs.jaxlib-version }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

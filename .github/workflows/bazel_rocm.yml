@@ -124,7 +124,7 @@ jobs:
       HSA_NO_SCRATCH_RECLAIM: "1"
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+    name: "linux x86, py${{ inputs.python }}, ROCM=${{ inputs.rocm-version }}, jaxlib=${{ inputs.jaxlib-version }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-rocm-presubmits
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

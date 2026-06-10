@@ -62,7 +62,7 @@ jobs:
 
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py ${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
+        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
