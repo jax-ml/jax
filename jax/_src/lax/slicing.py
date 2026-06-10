@@ -1402,6 +1402,9 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
   # which involves data movement.
   return operand.sharding
 
+def _slice_ur_rule(operand, *, start_indices, limit_indices, strides):
+  return core.getu(operand), core.getr(operand)
+
 def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
   # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
   # change this logic to `return operand.sharding` directly.
@@ -1465,7 +1468,8 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
 
 slice_p = standard_primitive(_slice_shape_rule, input_dtype, 'slice',
                              sharding_rule=_slice_sharding_rule,
-                             vma_rule=partial(core.standard_vma_rule, 'slice'))
+                             vma_rule=partial(core.standard_vma_rule, 'slice'),
+                             ur_rule=_slice_ur_rule)
 ad.primitive_jvps[slice_p] = _slice_jvp_rule
 ad.fancy_transposes[slice_p] = _slice_transpose_fancy
 batching.primitive_batchers[slice_p] = _slice_batching_rule
