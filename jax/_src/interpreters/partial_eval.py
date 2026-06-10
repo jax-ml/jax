@@ -2576,22 +2576,6 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
   return ClosedJaxpr(jaxpr, consts), out_avals
 
 @weakref_lru_cache
-def lower_jaxpr_reference(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]:
-  dbg = hi_jaxpr.jaxpr.debug_info.with_unknown_names()
-  return trace_to_jaxpr(partial(_lower_traceable, hi_jaxpr), lo_avals,
-                        dbg, requires_low=True, fun_returns_flat_tree=True)
-
-def _lower_traceable(jaxpr, *lo_args):
-  hi_args = [a.raise_val(*xs) if not a.has_qdd else a.new_from_loval(*xs)
-             for a, xs in zip(jaxpr.in_aval_qdds, lo_args)]
-  hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
-  fu = FlatTree.flatten(())
-  mut_outs = [a.read_loval_out(x) if a.has_qdd else fu
-              for a, x in zip(jaxpr.final_aval_qdds, hi_args)]
-  lo_outs = [a.lower_val2(y) for a, y in zip(jaxpr.out_avals, hi_outs)]
-  return FlatTree.pack((tuple(mut_outs), tuple(lo_outs)))
-
-@weakref_lru_cache
 def convert_const_himutables(jaxpr):
   move = [typeof(c).has_qdd for c in jaxpr.consts]
   constvals, in_mutables = partition_list(move, jaxpr.consts)
@@ -2617,5 +2601,3 @@ def raise_lo_outs(hi_avals, lo_outs):
   hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty()))) for t in hi_avals]
   assert next(lo_outs_, None) is None
   return hi_outs
-def num_himuts_out(final_qdds):
-  return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)

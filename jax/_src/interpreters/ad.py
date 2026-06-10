@@ -90,21 +90,6 @@ def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
   auxs = tuple(aux.unflatten() for aux in auxs)
   return out_primals, out_tangents, *auxs
 
-@lu.transformation2
-def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
-  tag = core.TraceTag()
-  tangents = [p2tz(t) if not isinstance(t, Zero)
-              and isinstance(typeof(t), core.ShapedArray)
-              and dtype(t) == float0 else t for t in tangents]
-  ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
-         else contextlib.nullcontext())
-  with ctx:
-    out_primals, out_tangents = f(tag, primals, tangents)
-  if type(instantiate) is bool:
-    instantiate = [instantiate] * len(out_tangents)
-  out_tangents = [instantiate_zeros(t) if inst else t for t, inst
-                  in zip(out_tangents, instantiate)]
-  return out_primals, out_tangents
 
 # The result of `f` should be a `FlatTree`
 def linearize_subtrace_2(f: Callable, is_vjp: bool,

@@ -76,14 +76,6 @@ def flatten_fun(f: Callable, store: lu.Store,
   store.store(out_tree)
   return ans
 
-def apply_flat_fun(fun, io_tree, *py_args):
-  in_tree_expected, out_tree = io_tree
-  args, in_tree = tree_flatten((py_args, {}))
-  if in_tree != in_tree_expected:
-    raise TypeError(f"Expected {in_tree_expected}, got {in_tree}")
-  ans = fun(*args)
-  return tree_unflatten(out_tree, ans)
-
 @lu.transformation_with_aux2
 def flatten_fun_nokwargs(f: Callable, store: lu.Store,
                          in_tree: PyTreeDef, *args_flat):
@@ -92,19 +84,6 @@ def flatten_fun_nokwargs(f: Callable, store: lu.Store,
   ans, out_tree = tree_flatten(ans)
   store.store(out_tree)
   return ans
-
-@lu.transformation_with_aux2
-def flatten_fun_nokwargs2(f, store, in_tree, *args_flat):
-  py_args = tree_unflatten(in_tree, args_flat)
-  pair = f(*py_args)
-  if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-    raise TypeError("expected function with aux output to return a two-element "
-                    f"tuple, but got type {type(pair)} with value {pair!r}")
-  ans, aux = pair
-  ans_flat, ans_tree = tree_flatten(ans)
-  aux_flat, aux_tree = tree_flatten(aux)
-  store.store((ans_tree, aux_tree))
-  return ans_flat, aux_flat
 
 class _HashableWithStrictTypeEquality:
   """Box object used when comparing static arguments as a jit key.
