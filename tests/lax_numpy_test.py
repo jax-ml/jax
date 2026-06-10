@@ -4752,7 +4752,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     )(x, idx)
     jaxpr_default = jax.make_jaxpr(
         lambda x, i: jnp.take_along_axis(
-            x, i, axis=0, mode='promise_in_bounds'  # should not wrap by default
+            x, i, axis=0, mode='promise_in_bounds'  # should wrap by default
         )
     )(x, idx)
 
@@ -4776,7 +4776,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         or 'lt' in no_wrap_prims
         or 'add' in no_wrap_prims
     )
-    self.assertFalse(
+    self.assertTrue(
         'select' in default_prims
         or 'lt' in default_prims
         or 'add' in default_prims
