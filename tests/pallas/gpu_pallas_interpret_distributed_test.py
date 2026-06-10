@@ -155,7 +155,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     def body(x):
       return plgpu.kernel(
           kernel,
-          out_shape=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+          out_type=jax.ShapeDtypeStruct(out_shape, jnp.int32),
           grid=grid,
           grid_names=grid_names,
           cluster=cluster,

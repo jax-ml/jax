@@ -247,7 +247,7 @@ def mixed_matmul_kernel(
   )
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), out_dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), out_dtype),
       grid=(num_sms // cluster_size,),
       grid_names=("cluster_grid",),
       cluster=(cluster_size,),
@@ -255,7 +255,7 @@ def mixed_matmul_kernel(
       num_threads=3,
       thread_name="wg",
       compiler_params=compiler_params,
-      scratch_shapes=dict(
+      scratch_types=dict(
           out_smem=plgpu.SMEM(
               (2, num_out_slots, epi_tile_m, epi_tile_n),
               out_dtype,

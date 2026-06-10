@@ -156,10 +156,10 @@ def all_gather(
   )
   return plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
+      out_type=jax.ShapeDtypeStruct(output_shape, dtype),
       grid=(num_blocks,),
       grid_names=("blocks",),
-      scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+      scratch_types=[plgpu.SemaphoreType.REGULAR],
       compiler_params=compiler_params,
   )(x)
 

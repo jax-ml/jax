@@ -162,7 +162,7 @@ def all_gather_lhs_matmul(
   )
   result, _ = plgpu.kernel(
       kernel_body,
-      out_shape=[
+      out_type=[
           # The output, with its M dimension all-gathered.
           jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
           # The scratch buffer used for the all-gather.

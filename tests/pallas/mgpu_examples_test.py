@@ -108,10 +108,10 @@ def matmul0(a, b, config: TuningConfig):
 
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
-      scratch_shapes=dict(
+      scratch_types=dict(
           acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
           acc_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
           consumed_barriers=plgpu.Barrier(
@@ -194,10 +194,10 @@ def matmul1(a, b, config: TuningConfig):
 
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_m, tile_k),
               dtype,
@@ -304,10 +304,10 @@ def matmul2(a, b, config: TuningConfig):
 
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
           ),
@@ -414,12 +414,12 @@ def matmul3(a, b, config: TuningConfig):
 
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters, n_iters),
       grid_names=("m", "n"),
       cluster=(2,),
       cluster_names=("cluster",),
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
           ),
@@ -535,12 +535,12 @@ def matmul4(a, b, config: TuningConfig):
   num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms // 2,),
       grid_names=("cluster_grid",),
       cluster=(2,),
       cluster_names=("cluster",),
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
           ),
@@ -669,14 +669,14 @@ def matmul5(a, b, config: TuningConfig):
   num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms // 2,),
       grid_names=("cluster_grid",),
       cluster=(2,),
       cluster_names=("cluster",),
       num_threads=2,
       thread_name="wg",
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms,
           ),
@@ -817,14 +817,14 @@ def matmul6(a, b, config: TuningConfig):
   num_sms = backend.get_default_device().core_count
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms // 2,),
       grid_names=("cluster_grid",),
       cluster=(2,),
       cluster_names=("cluster",),
       num_threads=2,
       thread_name="wg",
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
           ),

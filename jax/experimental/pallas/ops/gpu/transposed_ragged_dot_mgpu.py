@@ -195,7 +195,7 @@ def transposed_ragged_dot(
   )
   kernel = plgpu.kernel(
       body,
-      out_shape=jax.ShapeDtypeStruct((g, m, n), lhs.dtype),
+      out_type=jax.ShapeDtypeStruct((g, m, n), lhs.dtype),
       grid=(num_sms,),
       grid_names=("sm",),
       compiler_params=compiler_params,

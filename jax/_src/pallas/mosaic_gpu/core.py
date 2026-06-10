@@ -27,9 +27,11 @@ import math
 from typing import Any, ClassVar, Literal, Union
 
 import jax
+from jax._src import api
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_batching
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
@@ -55,6 +57,8 @@ _Ref = state.AbstractRef | state_types.TransformedRef
 
 DimensionSemantics = Literal["parallel", "sequential"]
 TransposeTransform = state_types.TransposeTransform
+
+ScratchShapeTree = pallas_core.ScratchShapeTree
 
 # We align all our SMEM allocations to 1024 bytes. TMA and WGMMA are very
 # sensitive to alignment and while this is quite conservative, it gets the job
@@ -238,12 +242,13 @@ WGxWARP_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warp)
 
 
-# TODO(justinfu): Reconcile with pl.kernel.
 def kernel(
-    body: Callable[..., None],
-    out_shape: object,
+    body: Callable[..., None] | api.NotSpecified = api.NotSpecified(),
+    out_shape: object | api.NotSpecified = api.NotSpecified(),
     *,
-    scratch_shapes: pallas_core.ScratchShapeTree = (),
+    out_type: object = (),
+    scratch_types: ScratchShapeTree = (),
+    scratch_shapes: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
     compiler_params: pallas_core.CompilerParams | None = None,
     # Mesh kwargs
     grid: tuple[int, ...] = (),
@@ -254,19 +259,21 @@ def kernel(
     thread_name: str | None = None,
     interpret: Any = None,
     **mesh_kwargs: Any,
-):
-  """Entry point for defining a Mosaic GPU kernel.
+) -> Any:
+  r"""Entry point for defining a Mosaic GPU kernel.
 
   Args:
-    body: The kernel body, which should take as arguments the input, output,
-      and scratch Refs. The number of input Refs is determined by the number
-      of arguments passed into kernel returned by this function. The number of
+    body: The kernel body, which should take as arguments the input, output, and
+      scratch Refs. The number of input Refs is determined by the number of
+      arguments passed into kernel returned by this function. The number of
       output and scratch Refs are determined by `out_shape` and `scratch_shapes`
       respectively.
-    out_shape: a PyTree of :class:`jax.ShapeDtypeStruct` describing the shape
-      and dtypes of the outputs.
-    scratch_shapes: an iterable (may be nested) of GPUMemoryRef describing
-      scratch Refs to allocate for this kernel.
+    out_shape: A deprecated alias for ``out_type``.
+    out_type: The type of the output. Should be a PyTree of
+      ``jax.ShapeDtypeStruct`` or JAX types.
+    scratch_shapes: A deprecated alias for ``scratch_types``.
+    scratch_types: The types of the scratch ``Ref``\s to allocate. Should be a
+      PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: Additional compiler options. See the `CompilerParams`
       dataclass for more details.
     grid: A tuple of integers specifying the size of the kernel grid.
@@ -274,19 +281,53 @@ def kernel(
     cluster: A tuple of integers specifying the size of the kernel cluster.
     cluster_names: The axis names of the grid. Must be the same length as
       `cluster`.
-    num_threads: The number of threads to launch per block. Note that these
-      do not correspond to CUDA threads, but rather to warpgroups on Hopper
-      and Blackwell GPUs.
+    num_threads: The number of threads to launch per block. Note that these do
+      not correspond to CUDA threads, but rather to warpgroups on Hopper and
+      Blackwell GPUs.
     thread_name: The axis name used to query the thread index.
     **mesh_kwargs: Additional mesh kwargs. See `Mesh` for more details.
 
   Returns:
-    A function that runs the kernel. It should take any number of input
-    operands and returns an output with the same PyTree structure as
-    `out_shape`.
+    If ``body`` is provided, returns a function that runs the kernel. It should
+    take any number of input operands and returns an output with the same PyTree
+    structure as ``out_shape``.
+
+    If ``body`` is omitted, returns a decorator that can be used to annotate
+    a kernel body.
   """
-  if unwrap_out := not isinstance(out_shape, (tuple, list)):
-    out_shape = (out_shape,)
+  if isinstance(body, api.NotSpecified):
+    return lambda fun: kernel(
+        fun,
+        out_shape,
+        out_type=out_type,
+        scratch_shapes=scratch_shapes,
+        scratch_types=scratch_types,
+        compiler_params=compiler_params,
+        grid=grid,
+        grid_names=grid_names,
+        cluster=cluster,
+        cluster_names=cluster_names,
+        num_threads=num_threads,
+        thread_name=thread_name,
+        interpret=interpret,
+        **mesh_kwargs,
+    )
+
+  # NOTE: We should ideally check that at most one of ``*_shape`` and ``*_type``
+  # args are specified, but it seems very unlikely anyone will pass both.
+  if not isinstance(out_shape, api.NotSpecified):
+    deprecations.warn(
+        "jax-pallas-mgpu-shapes-types",
+        "The out_shape and scratch_shapes arguments to plgpu.kernel are"
+        " deprecated. Use out_type and scratch_types instead.",
+        stacklevel=2,
+    )
+    out_type = out_shape
+  if not isinstance(scratch_shapes, api.NotSpecified):
+    scratch_types = scratch_shapes
+
+  if unwrap_out := not isinstance(out_type, (tuple, list)):
+    out_type = (out_type,)
 
   mesh = Mesh(
       grid=grid,
@@ -309,9 +350,9 @@ def kernel(
       # ``get_ref_aval``, which is not yet supported by ``mpmd_map``.
       pallas_primitives.run_scoped(
           functools.partial(body, *refs),
-          *scratch_shapes if isinstance(scratch_shapes, Sequence) else (),
+          *scratch_types if isinstance(scratch_types, Sequence) else (),
           collective_axes=thread_name,
-          **scratch_shapes if isinstance(scratch_shapes, Mapping) else {},
+          **scratch_types if isinstance(scratch_types, Mapping) else {},
       )
 
     name = (
@@ -323,7 +364,7 @@ def kernel(
     with config._check_vma(False):
       outs = pallas_helpers.kernel(
           kernel_body,
-          out_type=out_shape,
+          out_type=out_type,
           mesh=mesh,
           compiler_params=compiler_params,
           interpret=interpret,
@@ -337,20 +378,20 @@ def kernel(
 
     def batched_body(*refs, **scratch_ref_kwargs):
       idx = lax.axis_index(axis_name)
-      lens = (len(args), len(out_shape))
+      lens = (len(args), len(out_type))
       operand_refs, out_refs, scratch_refs = util.split_list(refs, lens)
       slice_ref = lambda r, b=True: (r.at[idx] if b else r)
       operand_refs = tree_util.tree_map(slice_ref, operand_refs, in_batched)
       out_refs = tree_util.tree_map(slice_ref, out_refs)
       return body(*operand_refs, *out_refs, *scratch_refs, **scratch_ref_kwargs)
 
-    out_shape_ = out_shape[0] if unwrap_out else out_shape
+    out_type_ = out_type[0] if unwrap_out else out_type
     add_batch_dim = lambda x: x.update(shape=(axis_size, *x.shape))
     mesh_kwargs_ = dict(mesh_kwargs)
     out = kernel(
         batched_body,
-        out_shape=tree_util.tree_map(add_batch_dim, out_shape_),
-        scratch_shapes=scratch_shapes,
+        out_type=tree_util.tree_map(add_batch_dim, out_type_),
+        scratch_types=scratch_types,
         compiler_params=compiler_params,
         grid=(axis_size,) + grid,
         grid_names=(axis_name,) + grid_names,  # pyrefly: ignore[bad-argument-type]
@@ -361,7 +402,7 @@ def kernel(
         interpret=interpret,
         **mesh_kwargs_,
     )(*args)
-    out_batched = tree_util.tree_map(lambda _: True, out_shape_)
+    out_batched = tree_util.tree_map(lambda _: True, out_type_)
     return out, out_batched
 
   return wrapper
@@ -1053,7 +1094,6 @@ def transpose_ref(
   if ref.memory_space == MemorySpace.TMEM:
     raise ValueError("Can't transpose a TMEM reference.")
   return ref.transpose(permutation)
-
 
 
 @tree_util.register_dataclass

@@ -95,7 +95,7 @@ class CompatTest(bctu.CompatTestBase):
 
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
         grid=(2,),
         grid_names=("x",),
     )

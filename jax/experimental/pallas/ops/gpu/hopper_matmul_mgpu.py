@@ -254,7 +254,7 @@ def matmul(a, b, c, config: TuningConfig):
   )
   f = plgpu.kernel(
       functools.partial(kernel, config=config),
-      out_shape=jax.ShapeDtypeStruct((m, n), out_dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), out_dtype),
       grid=(num_sms // cluster_size,),
       grid_names=("cluster_grid",),
       cluster=(cluster_size,),

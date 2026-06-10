@@ -336,7 +336,7 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
       kernel,
       compiler_params=compiler_params,
       kernel_name=f"ragged_dot_kernel_{str(config)}",
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms//2,) if collective else (num_sms,),
       grid_names=("sm",),
       num_threads=2,

@@ -192,8 +192,8 @@ class PallasCallRemoteDMATest(TestCase):
     def body(x):
       return self.kernel(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-          scratch_shapes=[
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_types=[
               plgpu.SemaphoreType.REGULAR,
               plgpu.SemaphoreType.REGULAR,
           ],
@@ -245,16 +245,16 @@ class PallasCallRemoteDMATest(TestCase):
       for _ in range(25):
         result = self.kernel(
             kernel,
-            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-            scratch_shapes=[
+            out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_types=[
                 plgpu.SemaphoreType.REGULAR,
             ],
         )(result)
 
         result = self.kernel(
             different_kernel,
-            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-            scratch_shapes=[
+            out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+            scratch_types=[
                 plgpu.SemaphoreType.REGULAR,
                 plgpu.SemaphoreType.REGULAR,
             ],
@@ -295,8 +295,8 @@ class PallasCallRemoteDMATest(TestCase):
     def body(x):
       return self.kernel(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-          scratch_shapes=[
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_types=[
               plgpu.SemaphoreType.REGULAR,
               plgpu.SemaphoreType.REGULAR,
           ],
@@ -341,8 +341,8 @@ class PallasCallRemoteDMATest(TestCase):
         def body(x):
           return self.kernel(
               kernel,
-              out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-              scratch_shapes=[
+              out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+              scratch_types=[
                   plgpu.SemaphoreType.REGULAR,
                   plgpu.SemaphoreType.REGULAR,
               ],
@@ -384,8 +384,8 @@ class PallasCallRemoteDMATest(TestCase):
     def body(x):
       return self.kernel(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((1, 128), jnp.float32),
-          scratch_shapes=[
+          out_type=jax.ShapeDtypeStruct((1, 128), jnp.float32),
+          scratch_types=[
               plgpu.SemaphoreType.REGULAR,
               plgpu.SemaphoreType.REGULAR,
           ],
@@ -421,8 +421,8 @@ class PallasCallRemoteDMATest(TestCase):
     def body(x):
       return self.kernel(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((1, 128), jnp.int32),
-          scratch_shapes=[
+          out_type=jax.ShapeDtypeStruct((1, 128), jnp.int32),
+          scratch_types=[
               plgpu.SemaphoreType.REGULAR,
               plgpu.SemaphoreType.REGULAR,
           ],
@@ -459,8 +459,8 @@ class PallasCallRemoteDMATest(TestCase):
     def body(x):
       return self.kernel(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-          scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_types=[plgpu.SemaphoreType.REGULAR],
           compiler_params=plgpu.CompilerParams(),
       )(x)
 
@@ -488,8 +488,8 @@ class PallasCallRemoteDMATest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_types=[plgpu.SemaphoreType.REGULAR],
         compiler_params=plgpu.CompilerParams(),
     )
 
@@ -516,8 +516,8 @@ class PallasCallRemoteDMATest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_types=[plgpu.SemaphoreType.REGULAR],
         compiler_params=plgpu.CompilerParams(),
     )
 
@@ -546,8 +546,8 @@ class PallasCallRemoteDMATest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR] * 2,
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_types=[plgpu.SemaphoreType.REGULAR] * 2,
         compiler_params=plgpu.CompilerParams(),
     )
 
@@ -575,11 +575,11 @@ class PallasCallRemoteDMATest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=(
+        out_type=(
             jax.ShapeDtypeStruct((8, 128), jnp.float32),
             jax.ShapeDtypeStruct((2,), jnp.int32),
         ),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR((2,))],
+        scratch_types=[plgpu.SemaphoreType.REGULAR((2,))],
         compiler_params=plgpu.CompilerParams(),
     )
 
@@ -627,11 +627,11 @@ class PallasCallRemoteDMATest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=(
+        out_type=(
             jax.ShapeDtypeStruct((8, 128), jnp.float32),
             jax.ShapeDtypeStruct((2,), jnp.int32),
         ),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR((2,))],
+        scratch_types=[plgpu.SemaphoreType.REGULAR((2,))],
         compiler_params=plgpu.CompilerParams(),
     )
 
@@ -659,8 +659,8 @@ class PallasCallRemoteDMATest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        scratch_types=[plgpu.SemaphoreType.REGULAR],
         compiler_params=plgpu.CompilerParams(),
     )
     mesh = jax.sharding.Mesh(jax.devices()[::-1], ['x'])  # Reverse the devices.
@@ -705,8 +705,8 @@ class PallasCallRemoteDMATest(TestCase):
     transforms = self.default_transforms(dtype=jnp.int32)
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
-        scratch_shapes=[
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        scratch_types=[
             plgpu.SMEM((128, 128), jnp.int32, transforms=transforms),
             plgpu.SemaphoreType.REGULAR,
         ],
@@ -763,8 +763,8 @@ class PallasCallRemoteDMATest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
-        scratch_shapes=[
+        out_type=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_types=[
             plgpu.SMEM((tile,), jnp.int32),
             plgpu.SemaphoreType.REGULAR,
         ],
@@ -811,8 +811,8 @@ class PallasCallMultimemTest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        scratch_types=[plgpu.SemaphoreType.REGULAR],
         compiler_params=plgpu.CompilerParams(),
     )
     mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
@@ -839,8 +839,8 @@ class PallasCallMultimemTest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        out_type=jax.ShapeDtypeStruct((1,), jnp.int32),
+        scratch_types=[plgpu.SemaphoreType.REGULAR],
         compiler_params=plgpu.CompilerParams(),
     )
     mesh = jax.sharding.Mesh(jax.devices()[:2], ['x'])
@@ -871,8 +871,8 @@ class PallasCallMultimemTest(TestCase):
     transforms = self.default_transforms(dtype=jnp.int32)
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
-        scratch_shapes=[
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        scratch_types=[
             plgpu.SMEM((128, 128), jnp.int32, transforms=transforms),
             plgpu.SemaphoreType.REGULAR,
         ],
@@ -918,8 +918,8 @@ class PallasCallMultimemTest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.int32),
-        scratch_shapes=[
+        out_type=jax.ShapeDtypeStruct(shape, jnp.int32),
+        scratch_types=[
             plgpu.SMEM(
                 (tile,),
                 jnp.int32,
@@ -1027,8 +1027,8 @@ class PallasCallMultimemTest(TestCase):
         jax.shard_map(
             self.kernel(
                 kernel,
-                out_shape=y_shape,
-                scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+                out_type=y_shape,
+                scratch_types=[plgpu.SemaphoreType.REGULAR],
                 compiler_params=plgpu.CompilerParams(),
             ),
             mesh=mesh,
@@ -1076,8 +1076,8 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
 
     kernel_call = self.kernel(
         kernel,
-        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.int32),
-        scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.int32),
+        scratch_types=[plgpu.SemaphoreType.REGULAR],
     )
     mesh = jax.sharding.Mesh(jax.devices()[:2], ["x"])
     f = jax.jit(

@@ -2350,7 +2350,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x, y):
-        return g(x, y)
+      return g(x, y)
 
     compiled_f = jax.jit(f).lower(arr1, arr2).compile()
     compiled_text = compiled_f.as_text()
@@ -2446,10 +2446,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
 
-    @functools.partial(
-        plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
-    )
+    @plgpu.kernel(out_type=jax.ShapeDtypeStruct([128], jnp.float32))
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...] * 2.0
 

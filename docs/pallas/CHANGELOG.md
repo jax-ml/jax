@@ -67,6 +67,10 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.experimental.pallas.num_programs` no longer work inside
     kernels defined via {func}`jax.experimental.pallas.mosaic_gpu.kernel`.
     Use {func}`jax.lax.axis_index` and {func}`jax.lax.axis_size` instead.
+  * {func}`jax.experimental.pallas.mosaic_gpu.kernel` now has the same API as
+    {func}`jax.experimental.pallas.kernel`, meaning that it can be used as
+    a decorator and also uses ``out_type`` and ``scratch_types`` instead of
+    ``out_shape`` and ``scratch_shapes``.
 
 * Removals
 

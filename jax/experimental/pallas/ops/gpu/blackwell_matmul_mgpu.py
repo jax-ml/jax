@@ -217,7 +217,7 @@ def matmul_kernel(a, b, config: TuningConfig):
   )
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters * n_iters,),
       grid_names=("mn_linear",),
       num_threads=2,
@@ -225,7 +225,7 @@ def matmul_kernel(a, b, config: TuningConfig):
       cluster_names=("x",),
       cluster=(1 + collective,),
       compiler_params=compiler_params,
-      scratch_shapes=dict(
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, block_tile_m, tile_k),
               dtype,

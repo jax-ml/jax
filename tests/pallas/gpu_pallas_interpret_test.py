@@ -101,9 +101,10 @@ class InterpretTest(jtu.JaxTestCase):
 
   @jtu.parameterized.parameters(range(1, 17))
   def test_interpret_kernel(self, num_threads):
+
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((num_threads,), jnp.int32),
+        out_type=jax.ShapeDtypeStruct((num_threads,), jnp.int32),
         num_threads=num_threads,
         thread_name='x',
         interpret=InterpretParams(detect_races=True),
@@ -116,21 +117,30 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
   def test_tiling_and_swizzle_transforms(self):
+
     @jax.jit
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((128, 128), jnp.float16),
-        scratch_shapes=dict(
-            smem_ref1=plgpu.SMEM((2, 128, 128), jnp.float16, transforms=(
-                plgpu.TilingTransform((8, 64)),
-                plgpu.SwizzleTransform(128),
-            )),
-            smem_ref2=plgpu.SMEM((4, 128, 32), jnp.float16, transforms=(
-                plgpu.SwizzleTransform(64),
-            )),
-            smem_ref3=plgpu.SMEM((256, 128), jnp.float16, transforms=(
-                plgpu.TilingTransform((16, 32)),
-            )),
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.float16),
+        scratch_types=dict(
+            smem_ref1=plgpu.SMEM(
+                (2, 128, 128),
+                jnp.float16,
+                transforms=(
+                    plgpu.TilingTransform((8, 64)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+            smem_ref2=plgpu.SMEM(
+                (4, 128, 32),
+                jnp.float16,
+                transforms=(plgpu.SwizzleTransform(64),),
+            ),
+            smem_ref3=plgpu.SMEM(
+                (256, 128),
+                jnp.float16,
+                transforms=(plgpu.TilingTransform((16, 32)),),
+            ),
         ),
         interpret=InterpretParams(),
     )
@@ -227,13 +237,7 @@ class InterpretTest(jtu.JaxTestCase):
 
       @functools.partial(
           plgpu.kernel,
-          out_shape=jax.ShapeDtypeStruct(
-              (
-                  x.shape[0],
-                  y.shape[1],
-              ),
-              x.dtype,
-          ),
+          out_type=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), x.dtype),
           num_threads=num_threads,
           thread_name='t',
           interpret=InterpretParams(
@@ -500,8 +504,8 @@ class InterpretTest(jtu.JaxTestCase):
 
     @functools.partial(
         plgpu.kernel,
-        out_shape=x,
-        scratch_shapes=dict(
+        out_type=x,
+        scratch_types=dict(
             smem_ref=plgpu.SMEM(x.shape, x.dtype),
             barrier_ref=plgpu.Barrier(),
         ),
@@ -531,8 +535,8 @@ class InterpretTest(jtu.JaxTestCase):
 
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=dict(
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
             smem_ref=plgpu.SMEM((num_threads - 1,), jnp.int32),
             barrier_ref=plgpu.Barrier(
                 num_arrivals=num_threads - 1, num_barriers=1
@@ -563,8 +567,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_multiple_barriers_with_single_arrival(self, num_threads):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=dict(
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
             smem_ref=plgpu.SMEM((num_threads - 1,), jnp.int32),
             barrier_ref=plgpu.Barrier(
                 num_arrivals=1, num_barriers=num_threads - 1
@@ -611,8 +615,8 @@ class InterpretTest(jtu.JaxTestCase):
 
     @functools.partial(
         plgpu.kernel,
-        out_shape=x,
-        scratch_shapes=dict(
+        out_type=x,
+        scratch_types=dict(
             queue=plgpu.SMEM((buffer_size,), jnp.float32),
             produced=plgpu.Barrier(num_arrivals=1, num_barriers=buffer_size),
             consumed=plgpu.Barrier(num_arrivals=1, num_barriers=buffer_size),
@@ -679,8 +683,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_indexing_singleton_barrier_ok(self):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=(plgpu.Barrier(),),
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=(plgpu.Barrier(),),
         num_threads=1,
         thread_name='t',
         interpret=InterpretParams(),
@@ -696,8 +700,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_not_indexing_multiple_barriers_raises(self):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=(plgpu.Barrier(num_barriers=2),),
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=(plgpu.Barrier(num_barriers=2),),
         num_threads=1,
         thread_name='t',
         interpret=InterpretParams(),
@@ -717,8 +721,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_wait_for_barrier_twice(self):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=dict(
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
             barrier_ref=plgpu.Barrier(num_arrivals=1, num_barriers=2)
         ),
         num_threads=3,
@@ -753,8 +757,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_completing_barrier_twice_in_same_thread_raises(self):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
         interpret=InterpretParams(),
     )
     def _kernel(out_ref, barrier_ref):
@@ -773,8 +777,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_completing_barrier_twice_in_different_threads_raises(self):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
-        scratch_shapes=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
+        out_type=jax.ShapeDtypeStruct((2,), jnp.int32),
+        scratch_types=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
         interpret=InterpretParams(),
         num_threads=2,
         thread_name='t',
@@ -802,8 +806,8 @@ class InterpretTest(jtu.JaxTestCase):
   ):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((num_threads,), jnp.int32),
-        scratch_shapes=dict(
+        out_type=jax.ShapeDtypeStruct((num_threads,), jnp.int32),
+        scratch_types=dict(
             barrier_ref=plgpu.Barrier(
                 num_arrivals=num_arriving_threads, num_barriers=1
             )
@@ -830,8 +834,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_more_barrier_completions_than_waits_raises(self):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(barrier_ref=plgpu.Barrier(num_arrivals=1)),
         num_threads=2,
         thread_name='t',
         interpret=InterpretParams(),
@@ -860,8 +864,8 @@ class InterpretTest(jtu.JaxTestCase):
   def test_not_waiting_for_all_barrier_completions_in_thread_raises(self):
     @functools.partial(
         plgpu.kernel,
-        out_shape=jax.ShapeDtypeStruct((), jnp.int32),
-        scratch_shapes=dict(
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
             barrier_ref=plgpu.Barrier(num_arrivals=1, num_barriers=2)
         ),
         num_threads=3,
@@ -928,7 +932,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct.like(a),
+        out_type=jax.ShapeDtypeStruct.like(a),
         grid=(num_blocks_w, num_blocks_x, num_blocks_y),
         grid_names=('w', 'x', 'y'),
         num_threads=num_threads,
@@ -980,7 +984,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct((x, y, z), dtype),
+        out_type=jax.ShapeDtypeStruct((x, y, z), dtype),
         grid=_maybe_reverse((x_iters, y_iters), swap_grid_axes),
         grid_names=_maybe_reverse(('x', 'y'), swap_grid_axes),
         num_threads=z_iters,
@@ -1053,8 +1057,8 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-        scratch_shapes=dict(
+        out_type=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_types=dict(
             acc_smem=plgpu.SMEM((tile_m, tile_n), dtype),
             barrier=plgpu.Barrier(num_barriers=k_iters),
         ),
@@ -1107,8 +1111,8 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
-        scratch_shapes=dict(
+        out_type=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_types=dict(
             acc_smem=plgpu.SMEM((tile_m, tile_n), dtype),
         ),
         grid=(m_iters, n_iters),
@@ -1133,9 +1137,9 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct.like(x),
+        out_type=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
-        scratch_shapes=dict(
+        scratch_types=dict(
             barrier=plgpu.Barrier(), smem=plgpu.SMEM(x.shape, x.dtype)
         ),
     )
@@ -1166,9 +1170,9 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct.like(x),
+        out_type=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
-        scratch_shapes=dict(
+        scratch_types=dict(
             barrier=plgpu.Barrier(),
             smem=plgpu.SMEM(x.shape, x.dtype),
         ),
@@ -1203,9 +1207,9 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct.like(x),
+        out_type=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
-        scratch_shapes=dict(
+        scratch_types=dict(
             per_thread_barrier=plgpu.Barrier(num_barriers=2),
             smem0=plgpu.SMEM(x.shape, x.dtype),
             smem1=plgpu.SMEM(x.shape, x.dtype),
@@ -1237,12 +1241,12 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct.like(x),
+        out_type=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(
             detect_races=True,
             num_tma_threads_per_device=num_tma_threads_per_device,
         ),
-        scratch_shapes=dict(
+        scratch_types=dict(
             barrier=plgpu.Barrier(num_barriers=2),
             smem=plgpu.SMEM(x.shape, x.dtype),
         ),
@@ -1274,9 +1278,9 @@ class InterpretTest(jtu.JaxTestCase):
 
     kernel = plgpu.kernel(
         _kernel,
-        out_shape=jax.ShapeDtypeStruct.like(x),
+        out_type=jax.ShapeDtypeStruct.like(x),
         interpret=InterpretParams(detect_races=True),
-        scratch_shapes=dict(
+        scratch_types=dict(
             barrier=plgpu.Barrier(num_arrivals=2),
             smem0=plgpu.SMEM(x.shape, x.dtype),
             smem1=plgpu.SMEM(x.shape, x.dtype),
@@ -1316,7 +1320,7 @@ class InterpretTest(jtu.JaxTestCase):
 
       y = plgpu.kernel(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((), jnp.int32),
+          out_type=jax.ShapeDtypeStruct((), jnp.int32),
           interpret=InterpretParams(detect_races=True),
       )()
 

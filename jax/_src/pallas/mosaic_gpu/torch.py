@@ -51,9 +51,7 @@ def as_torch_kernel(fn):
 
   Example::
 
-      @functools.partial(
-          plgpu.kernel, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
-      )
+      @plgpu.kernel(out_type=jax.ShapeDtypeStruct([128], jnp.int32)
       def kernel(x_gmem_ref, y_gmem_ref, o_gmem_ref):
         ...
 

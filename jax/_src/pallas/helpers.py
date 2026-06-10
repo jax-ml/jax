@@ -155,7 +155,7 @@ def loop(
 
 def kernel(
     body: Callable | Sequence[Callable] | api.NotSpecified = api.NotSpecified(),
-    out_type: object | None = (),
+    out_type: object = (),
     *,
     mesh: pl_core.Mesh | Sequence[pl_core.Mesh],
     scratch_types: pl_core.ScratchShapeTree = (),
@@ -166,7 +166,7 @@ def kernel(
     name: str | None = None,
     metadata: dict[str, str] | None = None,
 ):
-  """Entry point for creating a Pallas kernel.
+  r"""Entry point for creating a Pallas kernel.
 
   This is a convenience wrapper around ``mpmd_map`` for executing a kernel
   over a mesh.
@@ -220,7 +220,8 @@ def kernel(
       ``jax.ShapeDtypeStruct`` or JAX types.
     mesh: The mesh to run the kernel on. Must be a sequence of meshes if
       ``body`` is a sequence of callables.
-    scratch_types: The shapes of the scratch arrays.
+    scratch_types: The types of the scratch ``Ref``\s to allocate. Should be a
+      PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: The compiler parameters to pass to the backend.
     interpret: Whether to run the function in interpret mode.
     debug: Whether or not to out helpful debugging information.

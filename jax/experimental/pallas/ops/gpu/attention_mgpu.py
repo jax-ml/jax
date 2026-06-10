@@ -322,7 +322,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
 
   out, lse = plgpu.kernel(
       entry,
-      out_shape=out_shape,
+      out_type=out_shape,
       grid=(num_q_heads, num_q_tiles, batch_size),
       grid_names=("heads", "q_seq", "batch"),
       num_threads=3,
@@ -605,8 +605,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   delta_scratch = plgpu.SMEM((compute_wgs, config.block_q_dq), jnp.float32)
   dq = plgpu.kernel(
       partial(kernel_dq, block_q=config.block_q_dq, block_kv=config.block_kv_dq),
-      out_shape=q,
-      scratch_shapes=[
+      out_type=q,
+      scratch_types=[
           (q_scratch, do_scratch, lse_scratch, delta_scratch),
           (plgpu.Barrier(num_barriers=compute_wgs),) * 4
       ],
@@ -626,8 +626,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       (batch_size, kv_seq_len, num_q_heads, head_dim), dtype=jnp.float16)
   dk, dv = plgpu.kernel(
     partial(kernel_dkv, block_q=config.block_q_dkv, block_kv=config.block_kv_dkv),
-    out_shape=[out_shape_kv, out_shape_kv],
-    scratch_shapes=[
+    out_type=[out_shape_kv, out_shape_kv],
+    scratch_types=[
         (k_scratch, v_scratch),
         (plgpu.Barrier(num_barriers=compute_wgs),) * 2
   ],
@@ -794,8 +794,8 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
       grid_names=("heads", "q_seq", "batch"),
       num_threads=3,
       thread_name="wg",
-            out_shape=out_shape,
-      scratch_shapes=(
+      out_type=out_shape,
+      scratch_types=(
           tuple(smem_scratch),
           plgpu.Barrier(num_barriers=compute_wgs),
           plgpu.Barrier(num_arrivals=compute_wgs),),
