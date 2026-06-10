@@ -1,4 +1,4 @@
-Pallas:Mosaic GPU
+Pallas Mosaic GPU
 =================
 Backend specific documentation for the Mosaic GPU backend.
 
@@ -6,6 +6,7 @@ Backend specific documentation for the Mosaic GPU backend.
    :caption: Reference documentation
    :maxdepth: 2
 
+   quickstart
    reference
    pipelining
    blackwell_matmul
@@ -14,4 +15,3 @@ Backend specific documentation for the Mosaic GPU backend.
 .. toctree::
    :caption: Guides
    :maxdepth: 2
-
