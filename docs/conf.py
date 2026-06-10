@@ -157,6 +157,8 @@ exclude_patterns = [
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
     'pallas/quickstart.md',
+    'pallas/gpu/quickstart.md',
+    'pallas/tpu/quickstart.md',
     'pallas/pipelining.md',
     'pallas/gpu/pipelining.md',
     'pallas/tpu/pipelining.md',
