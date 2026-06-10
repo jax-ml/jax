@@ -295,6 +295,7 @@ jax_multiplatform_test(
     shard_count = 8,
     tags = [
         "mosaic_gpu_test",
+        "noasan",
         "notsan",  # Times out.
     ],
     deps = [
