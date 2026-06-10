@@ -756,13 +756,17 @@ def _normalize_index(index, axis_size):
 
 
 @export
-@api.jit(static_argnames=('axis', 'mode', 'fill_value'))
+@api.jit(
+    static_argnames=("axis", "mode", "fill_value", "wrap_negative_indices")
+)
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
     axis: int | None = -1,
     mode: str | slicing.GatherScatterMode | None = None,
     fill_value: StaticScalar | None = None,
+    *,
+    wrap_negative_indices: bool | None = None,
 ) -> Array:
   """Take elements from an array.
 
@@ -772,14 +776,20 @@ def take_along_axis(
 
   Args:
     a: array from which to take values.
-    indices: array of integer indices. If ``axis`` is ``None``, must be one-dimensional.
-      If ``axis`` is not None, must have ``a.ndim == indices.ndim``, and ``a`` must be
-      broadcast-compatible with ``indices`` along dimensions other than ``axis``.
+    indices: array of integer indices. If ``axis`` is ``None``, must be
+      one-dimensional. If ``axis`` is not None, must have ``a.ndim ==
+      indices.ndim``, and ``a`` must be broadcast-compatible with ``indices``
+      along dimensions other than ``axis``.
     axis: the axis along which to take values. If not specified, the array will
       be flattened before indexing is applied.
-    mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
-      ``mode="fill"`` returns invalid values (e.g. NaN) for out-of bounds indices.
-      For more discussion of ``mode`` options, see :attr:`jax.numpy.ndarray.at`.
+    mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The
+      default ``mode="fill"`` returns invalid values (e.g. NaN) for out-of
+      bounds indices. For more discussion of ``mode`` options, see
+      :attr:`jax.numpy.ndarray.at`.
+    wrap_negative_indices: Whether to wrap negative indices to positive like
+      Numpy. If unset, defaults to a legacy behavior (wrapping unless the
+      indexing mode is 'promise_in_bounds'), but this will likely be removed and
+      the default changed to True in the future, so do not depend on it.
 
   Returns:
     Array of values extracted from ``a``.
@@ -800,7 +810,8 @@ def take_along_axis(
     Array([[1., 3.],
            [5., 4.]], dtype=float32)
 
-    Out-of-bound indices fill with invalid values. For float inputs, this is `NaN`:
+    Out-of-bound indices fill with invalid values. For float inputs, this is
+    `NaN`:
 
     >>> indices = jnp.array([[1, 0, 2]])
     >>> jnp.take_along_axis(x, indices, axis=0)
@@ -864,9 +875,17 @@ def take_along_axis(
   if axis_size == 0:
     return lax.full(out_shape, 0, a.dtype)
 
-  index_dtype = lax_utils.int_dtype_for_dim(a.shape, signed=True)
+  # Legacy behavior - should eventually be removed, since wrap_negative_indices
+  # should be independent of indexing mode.
+  if wrap_negative_indices is None:
+    wrap_negative_indices = mode != "promise_in_bounds"
+
+  index_dtype = lax_utils.index_dtype_for_axis_size(
+      dtypes.dtype(indices), axis_size, wrap_negative_indices
+  )
   indices = lax.convert_element_type(indices, index_dtype)
-  if mode != "promise_in_bounds":
+
+  if wrap_negative_indices:
     indices = _normalize_index(indices, axis_size)
 
   if mode == "one_hot":
