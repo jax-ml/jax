@@ -644,6 +644,12 @@ def _call_hi_primitive_linearized_transpose(cts_flat, *args, _prim,
   assert none is None
 ad.fancy_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_transpose
 
+def _call_hi_primitive_linearized_prettyprint(eqn, context, settings):
+  params = dict(eqn.params, _prim=str(eqn.params['_prim'].__class__),
+                residuals_tree='...')
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
+core.pp_eqn_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_prettyprint
+
 def _call_hi_primitive_jvp(primals, tangents, *, _prim):
   primals = tree_unflatten(_prim.in_tree, primals)
   tangents = tree_unflatten(_prim.in_tree, tangents)

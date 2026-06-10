@@ -5992,7 +5992,6 @@ def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
   printed_params.pop('out_sharding', None)  # implied by the let binder type
   return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
-
 dot_general_p = standard_primitive(
     _dot_general_shape_rule,
     _dot_general_dtype_rule,
@@ -6002,6 +6001,16 @@ dot_general_p = standard_primitive(
     ur_rule=_dot_general_ur_rule,
 )
 
+
+def _dot_general_remat(policy, lhs, rhs, **params):
+  from jax._src.ad_checkpoint import DotsSaveable, primal_left_tangent_right
+  dot = partial(dot_general_p.bind, **params)
+  out = dot(lhs, rhs)
+  if (isinstance(policy, DotsSaveable) and
+      policy(dot_general_p, typeof(lhs), typeof(rhs), **params)):
+    return out, lambda lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))
+  return out, dot  # full remat
+remat.rules[dot_general_p] = _dot_general_remat
 
 def _dot_general_batch_unpack_args(batch_args):
   lhs, rhs = batch_args

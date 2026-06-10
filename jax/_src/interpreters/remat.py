@@ -41,8 +41,7 @@ def remat_transform(policy, f, *args):
     trace = RematTrace(parent_trace, jaxpr_trace, core.TraceTag(), policy)
     args_ft = FlatTree.flatten_static_argnums_argnames(args, {}, (), ())
     in_tracers = args_ft.map(
-        # pyrefly: ignore[bad-argument-type]
-        lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # noqa F821
+        lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # type: ignore # noqa F821
     with core.set_current_trace(trace):
       args, kwargs = in_tracers.unflatten()
       ans_pytree = f(*args, **kwargs)
@@ -50,7 +49,9 @@ def remat_transform(policy, f, *args):
       ans_ft = FlatTree.flatten(ans_pytree)
       del ans_pytree, args, kwargs
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
-    jaxpr, res = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, source_info_util.current())
+    src = source_info_util.current()
+    out_tracer_ft = out_tracer_ft.map(partial(jaxpr_trace.to_jaxpr_tracer, source_info=src))
+    jaxpr, res = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, src)
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
   def f_rem(res, *args):
@@ -94,7 +95,7 @@ class RematTrace(core.Trace):
         out_primal, rem = rules[prim](self.policy, *in_vals, **params)
       with core.set_current_trace(self.jaxpr_trace):
         out_primal2 = rem(*in_vals2)
-    else:
+    else:  # default: full remat
       with core.set_current_trace(self.parent_trace):
         out_primal = prim.bind(*in_vals, **params)
       with core.set_current_trace(self.jaxpr_trace):
@@ -103,6 +104,28 @@ class RematTrace(core.Trace):
       return map(partial(RematTracer, self), out_primal, out_primal2)
     else:
       return RematTracer(self, out_primal, out_primal2)
+
+  def process_call(self, call_primitive, f, tracers, params):
+    in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
+    raise NotImplementedError  # TODO remat_subtrace...
+
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
+    in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
+    with core.set_current_trace(self.parent_trace):
+      out_primal = fun.call_wrapped(*in_vals)
+    with core.set_current_trace(self.jaxpr_trace):
+      out_primal2 = prim.bind(*in_vals2, subfuns=(fun, jvp),
+                              symbolic_zeros=symbolic_zeros)
+    return map(partial(RematTracer, self), out_primal, out_primal2)
+
+  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
+    in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
+    with core.set_current_trace(self.parent_trace):
+      out_primal = f.call_wrapped(*in_vals)
+    with core.set_current_trace(self.jaxpr_trace):
+      out_primal2 = prim.bind(*in_vals2, subfuns=(f, fwd, bwd),
+                              out_trees=out_trees, symbolic_zeros=symbolic_zeros)
+    return map(partial(RematTracer, self), out_primal, out_primal2)
 
 def reduce_precision(x):
   if (h := reduce_precision_handlers.get(type(t := core.typeof(x)))):
@@ -114,7 +137,7 @@ reduce_precision_handlers: dict[type, Callable] = {}
 
 
 def remat_jaxpr(jaxpr, policy):
-  return _remat_jaxpr(jaxpr, frozenset(policy))
+  return _remat_jaxpr(jaxpr, policy)
 
 @weakref_lru_cache
 def _remat_jaxpr(jaxpr, policy):
@@ -135,12 +158,16 @@ def _remat_jaxpr(jaxpr, policy):
     out_primals, out_rem = unzip2(map(trace.to_val_tracer_pair, ans))
     del trace, ans, new_arg, tracers
 
+  out_rem = [rem_trace.to_jaxpr_tracer(x, source_info=src) for x in out_rem]
   rem_jaxpr_, rem_consts = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
   rem_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(rem_jaxpr_))
   rem_trace.invalidate()
+
   rem_consts = map(partial(fwd_trace.to_jaxpr_tracer, source_info=src), rem_consts)
+  out_primals = [fwd_trace.to_jaxpr_tracer(x, source_info=src) for x in out_primals]
   fwd_jaxpr_, fwd_consts = fwd_trace.to_jaxpr(
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
+
   fwd_jaxpr = core.ClosedJaxpr(fwd_jaxpr_, fwd_consts)
   return fwd_jaxpr, rem_jaxpr, len(rem_consts)
