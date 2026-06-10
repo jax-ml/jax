@@ -1658,7 +1658,7 @@ class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
   constid_to_tracer: WeakValueDictionary[ConstId, DynamicJaxprTracer]
   constvar_to_val: dict[Var, Any]
-  tracing_eqns: list[ReferenceType[TracingEqn] | TracingEqn | JaxprEqn]
+  tracing_eqns: list[ReferenceType[TracingEqn] | TracingEqn]
   invars: list[Var]
   effects: core.Effects
   debug_info: core.DebugInfo | None
