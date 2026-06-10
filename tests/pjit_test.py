@@ -11271,6 +11271,50 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "sharding with memory_kind is not allowed"):
       jnp.full((2,), fill_value=0, out_sharding=named_sharding)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_slice_unreduced(self, mesh):
+    jnp_inp = jnp.arange(16.).reshape(4, 4)
+    arr = jax.device_put(jnp_inp, P(unreduced={'x'}))
+
+    @jax.jit
+    def f(x):
+      y = lax.slice(x, (0, 0), (4, 3))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertArraysEqual(reshard(out, P()), lax.slice(jnp_inp, (0, 0), (4, 3)))
+
+    out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, reduced={'x'})))
+
+    expected_out = jax.jit(jax.grad(lambda x: f(x).sum()))(jnp_inp)
+    self.assertArraysEqual(out, expected_out)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_slice_reduced(self, mesh):
+    jnp_inp = jnp.arange(16.).reshape(4, 4)
+    arr = jax.device_put(jnp_inp, P(reduced={'x'}))
+
+    @jax.jit
+    def f(x):
+      y = lax.slice(x, (0, 0), (4, 3))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, reduced={'x'})))
+    self.assertArraysEqual(out, lax.slice(jnp_inp, (0, 0), (4, 3)))
+
+    out = jax.jit(jax.grad(lambda x: f(x).sum()))(arr)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+
+    expected_out = jax.jit(jax.grad(lambda x: f(x).sum()))(jnp_inp)
+    self.assertArraysEqual(reshard(out, P()), expected_out)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

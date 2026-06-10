@@ -7537,6 +7537,8 @@ def _pad_sharding_rule(operand, padding_value, *, padding_config):
   return slicing._get_sharding_for_varying_out_shape(
       out_shape, operand, 'padding')
 
+def _pad_ur_rule(operand, padding_value, *, padding_config):
+  return core.getu(operand), core.getr(operand)
 
 def _pad_transpose(t, operand, padding_value, *, padding_config):
   if type(t) is ad_util.Zero:
@@ -7579,7 +7581,8 @@ def _pad_batch_rule(batched_args, batch_dims, *, padding_config):
 
 pad_p = standard_primitive(_pad_shape_rule, _pad_dtype_rule, 'pad',
                            sharding_rule=_pad_sharding_rule,
-                           vma_rule=partial(core.standard_vma_rule, 'pad'))
+                           vma_rule=partial(core.standard_vma_rule, 'pad'),
+                           ur_rule=_pad_ur_rule)
 ad.deflinear2(pad_p, _pad_transpose)
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
