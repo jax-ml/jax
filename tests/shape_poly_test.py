@@ -3748,6 +3748,10 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
       #one_containing="",
   )
   def test_harness(self, harness: PolyHarness):
+    if harness.fullname == "ragged_dot_mode_3_batch":
+      if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
+        raise unittest.SkipTest("ragged_dot mode_3_batch requires newer libtpu on Cloud TPU")
+
     # We do not expect the associative scan error on TPUs
     if harness.expect_error == expect_error_associative_scan and jtu.test_device_matches(["tpu"]):
       harness.expect_error = None

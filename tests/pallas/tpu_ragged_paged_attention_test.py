@@ -208,6 +208,8 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
   ):
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Expect TPUv5+")
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 1):
+      self.skipTest("float8 quantized kv cache requires newer libtpu on Cloud TPU")
     seq_lens = [(192, 328), (128, 180), (64, 255)]
     num_heads = (32, 8)
     head_dim = 128
