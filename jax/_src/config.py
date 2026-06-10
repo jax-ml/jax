@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
 _ET = TypeVar('_ET', bound=enum.Enum)
+_F = TypeVar('_F', bound=Callable[..., Any])
 
 class EffortLevel(enum.Enum):
   """Effort level enum, mirroring the XLA effort options."""
@@ -341,12 +342,12 @@ class StateContextManager:
       else:
         self.state._update_thread_local_hook(cast(Optional[Any], self.prev))
 
-  def __call__(self, func):
+  def __call__(self, func: _F) -> _F:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with StateContextManager(self.state, self.new_val):
         return func(*args, **kwargs)
-    return wrapper
+    return cast(_F, wrapper)
 
 
 UPGRADE_BOOL_HELP = (

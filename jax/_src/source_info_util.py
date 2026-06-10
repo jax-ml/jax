@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Generator
+from collections.abc import Callable, Generator, Iterator
 import contextlib
 import dataclasses
 import functools
@@ -24,7 +24,7 @@ import re
 import sysconfig
 import threading
 import types
-from typing import NamedTuple
+from typing import Any, NamedTuple, TypeVar, cast
 
 from jax._src.lib import xla_client
 
@@ -266,6 +266,9 @@ def current_name_stack() -> NameStack:
   return _source_info_context.context.name_stack
 
 
+_F = TypeVar('_F', bound=Callable[..., Any])
+
+
 class ExtendNameStackContextManager:
   __slots__ = ['name', 'prev']
 
@@ -281,12 +284,12 @@ class ExtendNameStackContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
-  def __call__(self, func):
+  def __call__(self, func: _F) -> _F:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with ExtendNameStackContextManager(self.name):
         return func(*args, **kwargs)
-    return wrapper
+    return cast(_F, wrapper)
 
 extend_name_stack = ExtendNameStackContextManager
 
@@ -304,12 +307,12 @@ class SetNameStackContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
-  def __call__(self, func):
+  def __call__(self, func: _F) -> _F:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with SetNameStackContextManager(self.name_stack):
         return func(*args, **kwargs)
-    return wrapper
+    return cast(_F, wrapper)
 
 
 set_name_stack = SetNameStackContextManager
@@ -340,11 +343,11 @@ class TransformNameStackContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
-  def __call__(self, func):
+  def __call__(self, func: _F) -> _F:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with TransformNameStackContextManager(self.name):
         return func(*args, **kwargs)
-    return wrapper
+    return cast(_F, wrapper)
 
 transform_name_stack = TransformNameStackContextManager
