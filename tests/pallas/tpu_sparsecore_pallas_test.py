@@ -546,6 +546,28 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices), jnp.empty_like(x).at[indices].set(x)
     )
 
+  def test_addupdate_scatter_core_memory_space(self):
+    # Regression test ensuring that we can addupdate_scatter into a VMEM ref
+    # associated to a vector subcore memory space.
+    mesh = plsc.VectorSubcoreMesh(core_axis_name="core",
+                                  subcore_axis_name="subcore",
+                                  num_cores=1)
+    info = plsc.get_sparse_core_info()
+    shape = (info.num_lanes,)
+    dtype = jnp.int32
+    @pl.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype),
+               mesh=mesh,
+               scratch_types=[pltpu.VMEM(shape, dtype) @ mesh],
+               compiler_params=pltpu.CompilerParams(needs_layout_passes=False))
+    def kernel(output_ref, scratch):
+      scratch[...] = jnp.zeros_like(scratch)
+      plsc.addupdate_scatter(
+          scratch, [jnp.arange(info.num_lanes)], jnp.ones(info.num_lanes, dtype)
+      )
+      pltpu.sync_copy(scratch, output_ref)
+
+    np.testing.assert_array_equal(kernel(), jnp.ones(shape, dtype))
+
   def test_scatter_1d_array_from_transformed_src(self):
     x = jnp.arange(2 * self.num_lanes).reshape(2, -1)
     indices = jax.random.permutation(jax.random.key(42), jnp.arange(self.num_lanes))
