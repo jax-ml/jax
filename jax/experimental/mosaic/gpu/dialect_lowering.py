@@ -443,6 +443,14 @@ def _vector_load_op_lowering_rule(
 
   if isinstance(out_layout, fa.WGStridedFragLayout):
     # TODO(bchetioui): Process transforms.
+    if transforms_attr is not None:
+      swizzle = swizzle_from_transforms_attr(transforms_attr)
+      transforms = memref_transforms_from_transforms_attr(transforms_attr)
+      if swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms:
+        raise NotImplementedError(
+            "Transformed or swizzled strided loads are not supported"
+        )
+
     fragmented_array = fa.FragmentedArray.load_strided(
         transformed_ref,
         is_signed=is_signed,
