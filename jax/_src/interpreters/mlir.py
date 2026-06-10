@@ -3181,14 +3181,17 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
   else:
     result_shapes = [eval_dynamic_shape_as_tensor(ctx, out_shape)]
 
-  op = custom_call('LayoutConstraint', result_types=[result_type], operands=[x],
-                   api_version=1,
-                   result_shapes=result_shapes,
-                   # Set operand layouts to anything. XLA will ignore it.
-                   operand_layouts=[list(range(aval_in.ndim))],  # pyrefly: ignore[missing-attribute]
-                   # TODO(yashkatariya): Figure out how to pass tiling to the
-                   # custom call.
-                   result_layouts=[layout.major_to_minor[::-1]])
+  op = custom_call(
+      "LayoutConstraint",
+      result_types=[result_type],
+      operands=[x],
+      api_version=1,
+      result_shapes=result_shapes,
+      # Set operand layouts to anything. XLA will ignore it.
+      operand_layouts=[list(range(aval_in.ndim))],  # pyrefly: ignore[missing-attribute]
+      result_layouts=[layout.major_to_minor[::-1]],
+      result_tilings=[layout.tiling],
+  )
   return op.result
 
 
@@ -3291,6 +3294,7 @@ def build_mlir_module_helper(
       lowering_parameters=LoweringParameters(hoist_constants_as_args=False))
   return lowering_result.module
 
+
 def custom_call(
     call_target_name: str,
     *,
@@ -3302,8 +3306,9 @@ def custom_call(
     called_computations: Sequence[str] = (),
     api_version: int = 2,
     operand_output_aliases: dict[int, int] | None = None,
-    operand_layouts: Sequence[Sequence[int]] | None = None,
-    result_layouts: Sequence[Sequence[int]] | None = None,
+    operand_layouts: Sequence[Sequence[int] | None] | None = None,
+    result_layouts: Sequence[Sequence[int] | None] | None = None,
+    result_tilings: Sequence[Sequence[Sequence[int]] | None] | None = None,
     extra_attributes: dict[str, ir.Attribute] | None = None,
 ) -> hlo.CustomCallOp:
   """Helper function for building an hlo.CustomCall.
@@ -3314,14 +3319,15 @@ def custom_call(
     operands: the MLIR IR values that are arguments to the custom call
     backend_config: an opaque string passed to the custom call kernel
     has_side_effect: if True, marks the custom call as effectful
-    result_shapes: tensors that represent the result shapes, to be used when
-      the results have dynamic shapes. If not-None, its length must match the
-      number of the results.
+    result_shapes: tensors that represent the result shapes, to be used when the
+      results have dynamic shapes. If not-None, its length must match the number
+      of the results.
     called_computations: the list of function names called by the custom call.
     api_version: the ABI contract version of the custom call
     operand_output_aliases: a dict mapping operand numbers to outputs they alias
     operand_layouts: a sequence of layouts (dimension orders) for each operand
     result_layouts: a sequence of layouts (dimension orders) for each result
+    result_tilings: a sequence of tilings for each result
     extra_attributes: additional IR attributes to apply to the custom_call.
   """
   operands = list(operands)
@@ -3393,6 +3399,23 @@ def custom_call(
         ir.DenseIntElementsAttr.get(
             np.atleast_1d(np.asarray(l, dtype=np.int64)),
             type=ir.IndexType.get()) for l in result_layouts
+    ])
+  if result_tilings is not None:
+    assert result_tilings is not None
+    assert len(result_tilings) == len(result_types), (
+        result_tilings,
+        result_types,
+    )
+    attributes["result_tilings"] = ir.ArrayAttr.get([
+        ir.ArrayAttr.get([
+            ir.DenseIntElementsAttr.get(
+                np.asarray(tile_dim, dtype=np.int64), type=ir.IndexType.get()
+            )
+            for tile_dim in tiling
+        ])
+        if tiling is not None
+        else ir.ArrayAttr.get([])
+        for tiling in result_tilings
     ])
 
   op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,

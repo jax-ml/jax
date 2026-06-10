@@ -16,16 +16,16 @@ import math
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import numpy as np
-
 import jax
-import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec as P
-from jax._src.sharding_impls import make_single_device_sharding
+from jax import export
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
-from jax.experimental.layout import with_layout_constraint, Format, Layout
+from jax.experimental.layout import Format, Layout, with_layout_constraint
+import jax.numpy as jnp
+from jax.sharding import NamedSharding, PartitionSpec as P
+import numpy as np
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -682,6 +682,57 @@ class LayoutTest(jtu.JaxTestCase):
 
     lowered_text = f.lower(arr).as_text()
     self.assertIn('LayoutConstraint', lowered_text)
+
+  def test_with_layout_constraint_with_tiling(self):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+    shape = (64, 256)
+    np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
+    arr = jax.device_put(np_inp)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = Layout(
+        major_to_minor=arr.format.layout.major_to_minor[::-1],
+        tiling=((16, 128), (2, 1)),
+    )
+
+    @jax.jit
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      return with_layout_constraint(y, custom_dll) * 2
+
+    out = f(arr)
+    self.assertEqual(
+        out.format.layout.major_to_minor, custom_dll.major_to_minor
+    )
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+    self.assertIn(
+        'result_tilings = [[dense<[16, 128]> : tensor<2xindex>, dense<[2, 1]> :'
+        ' tensor<2xindex>]]',
+        lowered_text,
+    )
+
+  def test_export_layout_constraint_custom_call(self):
+    custom_layout = Layout(
+        major_to_minor=(1, 0),
+        tiling=((16, 128), (2, 1)),
+    )
+
+    def f(x):
+      return with_layout_constraint(x, custom_layout)
+
+    inp = jnp.zeros((64, 256), dtype=jnp.bfloat16)
+
+    # Exporting with the default 4-week compat window (v1.15.0) will fail
+    # during VHLO downgrade because `result_tilings` cannot be downgraded to <
+    # v1.18.0.
+    with self.assertRaisesRegex(Exception, 'Failed to serialize StableHLO'):
+      export.export(jax.jit(f))(inp)
 
   def test_with_layout_constraint_vmap(self):
     if not jtu.test_device_matches(['tpu']):
