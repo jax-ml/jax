@@ -308,7 +308,7 @@ class State(config_ext.Config[_T]):
     update_global_hook(self.get_global())
 
 
-class StateContextManager(contextlib.ContextDecorator):
+class StateContextManager:
   __slots__ = ['state', 'new_val', 'prev']
 
   def __init__(self, state, new_val):
@@ -328,7 +328,6 @@ class StateContextManager(contextlib.ContextDecorator):
     else:
       self.new_val = new_val
 
-
   def __enter__(self):
     self.prev = self.state.swap_local(self.new_val)
     if self.state._update_thread_local_hook:
@@ -341,6 +340,13 @@ class StateContextManager(contextlib.ContextDecorator):
         self.state._update_thread_local_hook(None)
       else:
         self.state._update_thread_local_hook(cast(Optional[Any], self.prev))
+
+  def __call__(self, func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      with StateContextManager(self.state, self.new_val):
+        return func(*args, **kwargs)
+    return wrapper
 
 
 UPGRADE_BOOL_HELP = (

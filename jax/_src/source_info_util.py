@@ -266,7 +266,7 @@ def current_name_stack() -> NameStack:
   return _source_info_context.context.name_stack
 
 
-class ExtendNameStackContextManager(contextlib.ContextDecorator):
+class ExtendNameStackContextManager:
   __slots__ = ['name', 'prev']
 
   def __init__(self, name: str):
@@ -281,10 +281,17 @@ class ExtendNameStackContextManager(contextlib.ContextDecorator):
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
+  def __call__(self, func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      with ExtendNameStackContextManager(self.name):
+        return func(*args, **kwargs)
+    return wrapper
+
 extend_name_stack = ExtendNameStackContextManager
 
 
-class SetNameStackContextManager(contextlib.ContextDecorator):
+class SetNameStackContextManager:
   __slots__ = ['name_stack', 'prev']
 
   def __init__(self, name_stack: NameStack):
@@ -296,6 +303,13 @@ class SetNameStackContextManager(contextlib.ContextDecorator):
 
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
+
+  def __call__(self, func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      with SetNameStackContextManager(self.name_stack):
+        return func(*args, **kwargs)
+    return wrapper
 
 
 set_name_stack = SetNameStackContextManager
@@ -311,7 +325,7 @@ def reset_name_stack() -> Generator[None, None, None]:
     yield
 
 
-class TransformNameStackContextManager(contextlib.ContextDecorator):
+class TransformNameStackContextManager:
   __slots__ = ['name', 'prev']
 
   def __init__(self, name: str):
@@ -325,5 +339,12 @@ class TransformNameStackContextManager(contextlib.ContextDecorator):
 
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
+
+  def __call__(self, func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      with TransformNameStackContextManager(self.name):
+        return func(*args, **kwargs)
+    return wrapper
 
 transform_name_stack = TransformNameStackContextManager
