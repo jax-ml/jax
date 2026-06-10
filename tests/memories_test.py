@@ -1085,7 +1085,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     lowered_text = jf.lower(inp).as_text('hlo')
     out = re.findall(r"call.*to_apply.*_xla_compute_type", lowered_text)
-    self.assertLen(out, 1)
+    self.assertLen(out, 2)
 
   def test_nested_no_op_compute(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -2292,6 +2292,33 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     self.assertRegex(compiled_text, r"all-reduce.*all-reduce.*dense")
     self.assertRegex(
         compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
+
+  def test_compute_on_remat_custom_vjp(self):
+    @jax.custom_vjp
+    def my_unroute(tokens, selected_experts):
+      return tokens
+
+    def _unroute_fwd(tokens, selected_experts):
+      return tokens, selected_experts
+
+    def _unroute_bwd(selected_experts, grads):
+      shape = selected_experts.shape
+      return grads * math.prod(shape), None
+    my_unroute.defvjp(_unroute_fwd, _unroute_bwd)
+
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
+    def g(w):
+      return w * 2
+
+    @jax.remat
+    def f(x, w):
+      w = g(w)
+      return my_unroute(x, w)
+
+    x = jnp.ones((2, 2))
+    w = jnp.ones((2, 2))
+    jax.jit(jax.grad(lambda x, w: f(x, w).sum(), argnums=1))(x, w)  # doesn't crash
 
 
 class StreamAnnotationTest(jtu.JaxTestCase):

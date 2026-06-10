@@ -1677,7 +1677,6 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
                        in_layouts, out_layouts, donated_invars, ctx_mesh,
                        name, keep_unused, inline, compiler_options_kvs):
   in_pvals = [t.pval for t in in_tracers]
-
   known_ins = tuple(pv.is_known() for pv in in_pvals)
   unknown_ins = tuple(not k for k in known_ins)
   known_jaxpr, unknown_jaxpr, unknown_outs, res_out_avals, in_fwd_res = \
@@ -1747,8 +1746,8 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   # Add back in the input fwds.
   all_known_outs = subs_list(in_fwd, known_inputs, all_known_outs)
 
-  known_out_vals, residual_vals = \
-      split_list(all_known_outs, [len(all_known_outs) - len(res_out_avals)])
+  known_out_vals, residual_vals = split_list(
+      all_known_outs, [len(all_known_outs) - len(res_out_avals)])
   residual_vals_ = iter(residual_vals)
   residual_vals = [next(residual_vals_) if f is None
                    else [*jaxpr.consts, *known_inputs][f] for f in in_fwd_res]

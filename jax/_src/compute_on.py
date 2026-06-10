@@ -22,11 +22,13 @@ from jax._src import config
 from jax._src.lib import _jax
 from jax._src import dispatch
 from jax._src import core
+from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
+from jax._src import source_info_util
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
-                           split_list, subs_list)
+                           split_list, subs_list, merge_lists)
 from jax._src.api_util import debug_info, flatten_fun_nokwargs, flatten_axes
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir import ir
@@ -237,6 +239,63 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
   residuals_ans = subs_list(in_fwd_res, [*jaxpr.consts, *primals], residuals_ans)
   return primal_ans, nzs_out, residuals_ans, tangent_fun
 ad.primitive_linearizations[compute_on_p] = _compute_on_lin
+
+def _compute_on_partial_eval(trace: pe.JaxprTrace, *in_tracers, jaxpr,
+                             compute_type, out_memory_spaces,
+                             compiler_options_json):
+  in_pvals = [t.pval for t in in_tracers]
+  known_ins = tuple(pv.is_known() for pv in in_pvals)
+  unknown_ins = tuple(not k for k in known_ins)
+
+  (known_jaxpr, unknown_jaxpr, unknown_outs, res_out_avals,
+   in_fwd_res) = pe.partial_eval_jaxpr_nounits_fwd(
+       jaxpr, unknown_ins, instantiate=False)
+  unknown_outs = tuple(unknown_outs)
+  known_outs = tuple(not uk for uk in unknown_outs)
+
+  def keep_where(l, should_keep):
+    return tuple(x for x, keep in zip(l, should_keep) if keep)
+
+  known_out_memory_spaces = (keep_where(out_memory_spaces, known_outs)
+                             + (core.MemorySpace.Device,) * len(res_out_avals))
+  known_params = dict(jaxpr=known_jaxpr, compute_type=compute_type,
+                      out_memory_spaces=known_out_memory_spaces,
+                      compiler_options_json=compiler_options_json)
+
+  known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
+  all_known_outs = compute_on_p.bind(*known_inputs, **known_params)
+
+  known_out_vals, residual_vals = split_list(
+      all_known_outs, [len(all_known_outs) - len(res_out_avals)])
+  residual_vals_ = iter(residual_vals)
+  residual_vals = [next(residual_vals_) if f is None
+                   else [*jaxpr.consts, *known_inputs][f] for f in in_fwd_res]
+  assert next(residual_vals_, None) is None
+  residual_tracers = map(trace.new_instantiated_const, residual_vals)
+
+  unknown_params = dict(
+      jaxpr=unknown_jaxpr, compute_type=compute_type,
+      out_memory_spaces=keep_where(out_memory_spaces, unknown_outs),
+      compiler_options_json=compiler_options_json)
+
+  unknown_tracers_in = [*residual_tracers,
+                        *(t for t in in_tracers if not t.pval.is_known())]
+  unknown_out_avals = unknown_jaxpr.out_avals
+  unknown_tracers_out = [
+      pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
+      for aval in unknown_out_avals
+  ]
+  eqn = pe.new_eqn_recipe(trace, unknown_tracers_in,
+                          unknown_tracers_out,
+                          compute_on_p,
+                          unknown_params,
+                          unknown_jaxpr.effects,
+                          source_info_util.current())
+  for t in unknown_tracers_out: t.recipe = eqn
+  if effects_lib.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
+    trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))
+  return merge_lists(unknown_outs, known_out_vals, unknown_tracers_out)
+pe.custom_partial_eval_rules[compute_on_p] = _compute_on_partial_eval
 
 def _compute_on_partial_eval_custom_params_updater(
     unks_in: Sequence[bool], inst_in: Sequence[bool],
