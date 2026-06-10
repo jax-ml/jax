@@ -96,6 +96,7 @@ class TestBFGS(jtu.JaxTestCase):
     self.assertAllClose(scipy_res, jax_res, atol=2e-4, rtol=2e-4,
                         check_dtypes=False)
 
+  @jax.default_matmul_precision("highest")
   def test_fixes4594(self):
     n = 2
     A = jnp.eye(n) * 1e4

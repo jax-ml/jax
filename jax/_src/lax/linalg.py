@@ -1530,6 +1530,7 @@ def _ormqr_shape_rule(a_shape, taus_shape, c_shape, *, left, transpose):
   return c_shape
 
 
+@config.default_matmul_precision("highest")
 def _ormqr_lowering(a, taus, c, *, left, transpose):
   # Apply Householder reflectors H_i = I - tau_i * v_i * v_i^H directly to c
   # without materializing Q. Cost: O(k * m * c_cols) if left,

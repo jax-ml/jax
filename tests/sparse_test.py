@@ -620,6 +620,7 @@ class cuSparseTest(sptu.SparseTestCase):
 
 class SparseGradTest(sptu.SparseTestCase):
   @jtu.sample_product(has_aux=[True, False])
+  @jax.default_matmul_precision("highest")
   def test_sparse_value_and_grad(self, has_aux):
     rng_sparse = sptu.rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())
@@ -645,6 +646,7 @@ class SparseGradTest(sptu.SparseTestCase):
                           sparse.value_and_grad(f, argnums=1, has_aux=has_aux)(Xsp, y))
 
   @jtu.sample_product(has_aux=[True, False])
+  @jax.default_matmul_precision("highest")
   def test_sparse_grad(self, has_aux):
     rng_sparse = sptu.rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())
@@ -672,6 +674,7 @@ class SparseGradTest(sptu.SparseTestCase):
       self.assertAllClose(jax.grad(f, argnums=1, has_aux=has_aux)(X, y),
                           sparse.grad(f, argnums=1, has_aux=has_aux)(Xsp, y))
 
+  @jax.default_matmul_precision("highest")
   def test_bcoo_dot_general_vmap_matvec_grad(self):
     A_dense = jnp.array(
         [[4.0, -1.0, 0.0, 0.0],
@@ -747,6 +750,7 @@ class SparseGradTest(sptu.SparseTestCase):
                       deep=[True,False],
                       arg0=[True,False],
                       bias=[True,False])
+  @jax.default_matmul_precision("highest")
   def test_sparse_pytree_grad(self, has_aux, deep, arg0, bias):
     rng_sparse = sptu.rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())
