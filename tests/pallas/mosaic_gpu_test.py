@@ -3101,7 +3101,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       (plgpu.Layout.TCGEN05_TMEM_NATIVE(4), 1),
   )
   def test_reduction_is_batch_invariant(self, layout, axis):
-    @self.kernel(out_type=jnp.zeros((128,), jnp.float32),
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
     )
     def kernel(x_ref, out_ref):
       x = plgpu.load(x_ref, (), layout=layout, optimized=False)
@@ -3181,7 +3183,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   )
   def test_reduce_with_layout(self, layout, op, dtype):
     axis = -1
-    @self.kernel(out_type=jnp.zeros((128,), dtype),
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128,), dtype),
     )
     def kernel(x_ref, y_ref):
       x_val = plgpu.load(x_ref, (), layout=layout, optimized=False)
@@ -3197,7 +3200,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=5e-5)
 
   def test_cross_warp_reduction(self):
-    @self.kernel(out_type=jnp.zeros((128,), jnp.float32),
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
     )
     def kernel(x_ref, y_ref):
       layout = plgpu.Layout.TCGEN05_TMEM_NATIVE(4)
@@ -3210,7 +3215,8 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   def _test_broadcast_in_dim_base(self, shape, layout, *, axis, hint):
     assert len(shape) == 2
 
-    @self.kernel(out_type=jnp.zeros(shape, jnp.float32),
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(shape, jnp.float32),
     )
     def kernel(x_ref, y_ref):
       reduced_layout = layout.reduce(axis)
@@ -3289,7 +3295,9 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
                                   jnp.broadcast_to(inp, out_shape) + side_load)
 
   def test_broadcast_in_dim_tcgen05_native_layout(self):
-    @self.kernel(out_type=jnp.zeros((128, 128), jnp.float32),
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.float32),
     )
     def kernel(x_ref, y_ref):
       reduced = plgpu.load(x_ref, (), layout=plgpu.Layout.TCGEN05_TMEM_NATIVE.reduce(1), optimized=False)
@@ -3917,7 +3925,9 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
     np.testing.assert_array_equal(result, expected)
 
   def test_debug_print(self):
-    @self.kernel(out_type=jnp.zeros(128, np.int32),
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128,), np.int32),
     )
     def kernel(ref):
       ref[...] = ref[...]  # Prevent kernel from being DCE'd
@@ -4713,7 +4723,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
   @parameterized.parameters((False,), (True,))
   def test_tmem(self, collective):
     transforms = self.default_transforms(dtype=jnp.float32)
-    @self.kernel(out_type=jnp.zeros((128, 128), jnp.float32),
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.float32),
         scratch_types=[
             plgpu.TMEM((128, 128), jnp.float32, collective=collective),
             plgpu.TMEM((128, 128), jnp.float32, collective=collective),
@@ -4751,7 +4762,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     All of the refs below are packed and should fit into TMEM at once.
     """
     transforms = self.default_transforms(dtype=jnp.bfloat16)
-    @self.kernel(out_type=jnp.zeros((128, 256), jnp.bfloat16),
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128, 256), jnp.bfloat16),
         scratch_types=[
             plgpu.TMEM((128, 256), jnp.bfloat16, packed=True),
             plgpu.TMEM((128, 256), jnp.bfloat16, packed=True),
@@ -4783,12 +4795,15 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
   def test_tmem_ref_aliasing(self):
     transforms = self.default_transforms(dtype=jnp.float32)
-    @self.kernel(out_type=jnp.zeros((128, 128), jnp.float32),
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128, 128), jnp.float32),
         scratch_types=[
             plgpu.RefUnion(
-              [plgpu.TMEM((128, 32), jnp.float32),
-               plgpu.TMEM((128, 32), jnp.float32)],
-              plgpu.TMEM((128, 64), jnp.float32),
+                [
+                    plgpu.TMEM((128, 32), jnp.float32),
+                    plgpu.TMEM((128, 32), jnp.float32),
+                ],
+                plgpu.TMEM((128, 64), jnp.float32),
             ),
             plgpu.SMEM((128, 128), jnp.float32, transforms=transforms),
             plgpu.Barrier(),
@@ -7545,7 +7560,8 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_multiple_wg(self):
 
-    @self.kernel(out_type=jnp.zeros((2, 128), np.int32),
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((2, 128), np.int32),
         num_threads=2,
         thread_name="wg",
     )
@@ -7559,7 +7575,8 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_multiple_wg_with_grid(self):
 
-    @self.kernel(out_type=jnp.zeros((4, 2, 128), np.int32),
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((4, 2, 128), np.int32),
         grid=(2, 2),
         grid_names=("x", "y"),
         num_threads=2,
@@ -7587,7 +7604,8 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     z_dim = 7
     num_threads = 2
 
-    @self.kernel(out_type=jnp.zeros(
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(
             (b, x_dim, y_dim, z_dim, num_threads, 128), np.int32
         ),
         grid=(b, x_dim, y_dim, z_dim),
@@ -7613,7 +7631,9 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(result, ref)
 
   def test_cross_wg_barrier(self):
-    @self.kernel(out_type=jnp.zeros((2, 128), np.int32),
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((2, 128), np.int32),
         # Each warpgroup is a single logical thread!
         scratch_types=[plgpu.Barrier(num_arrivals=2)],
         num_threads=2,
@@ -7630,7 +7650,9 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
     )
 
   def test_cluster(self):
-    @self.kernel(out_type=jnp.zeros(128, np.int32),
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128,), np.int32),
         grid=(2,),
         grid_names=("x",),
         cluster=(2,),
