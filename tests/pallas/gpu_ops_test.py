@@ -264,7 +264,13 @@ class FusedAttentionTest(PallasBaseTest):
     def f_ref(q, k, v):
       return attention.mha_reference(q, k, v, segment_ids, causal=causal).sum()
 
-    dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
+    try:
+      dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
+    except jax.errors.JaxRuntimeError as e:
+      if "RESOURCE_EXHAUSTED" in str(e):
+        self.skipTest(f"Skipped: block size configuration exceeds device "
+                      f"resources: {e}")
+      raise
     dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
     # TODO(sharadmv): Fix test.
     self.assertAllClose(dq, dq_ref, atol=5e-2)
