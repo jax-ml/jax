@@ -1471,10 +1471,6 @@ def _get_layouts_from_executable(
   return new_in_layouts, new_out_layouts
 
 
-def get_logical_mesh_ids(mesh_shape):
-  return np.arange(math.prod(mesh_shape)).reshape(mesh_shape)
-
-
 def create_compile_options(
     computation, tuple_args, allow_prop_to_inputs, allow_prop_to_outputs,
     backend, np_dev, compiler_options):
