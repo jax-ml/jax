@@ -1383,10 +1383,6 @@ let assemblyFormat = [{
   let extraClassDeclaration = [{
     mlir::tpu::CoreType getTargetCoreType();
   }];
-  let builders = [
-    // A backward-compatible builder that sets `subcore_id` to nullptr.
-    OpBuilder<(ins "Value":$semaphore, "Value":$amount, "Value":$device_id, "Value":$core_id)>,
-  ];
 }
 
 def TPU_BarrierOp : TPU_Op<"barrier"> {
@@ -1450,10 +1446,6 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let extraClassDeclaration = [{
     mlir::tpu::CoreType getTargetCoreType();
   }];
-  let builders = [
-    // A backward-compatible builder that sets `subcore_id` to nullptr.
-    OpBuilder<(ins "Value":$source, "Value":$source_semaphore, "Value":$target, "Value":$target_semaphore, "Value":$device_id, "Value":$core_id, CArg<"uint32_t", "0">:$priority, CArg<"bool", "false">:$strict_ordering)>,
-  ];
 }
 
 // A base class for all ops that need to differentiate between gather and
