@@ -117,6 +117,8 @@ class TPUPipelineModeTest(ptu.PallasTPUTest):
 
     @jax.jit
     def vadd(x, y):
+      x = pltpu.with_memory_space_constraint(x, pltpu.HBM)
+      y = pltpu.with_memory_space_constraint(y, pltpu.HBM)
       return self.pallas_call(
         body,
         out_shape=jax.ShapeDtypeStruct.like(x),
@@ -2293,7 +2295,11 @@ class PallasCallTest(ptu.PallasTPUTest):
             flops=1234, transcendentals=21, bytes_accessed=12345
         ),
     )
-    analysis_result = jax.jit(f).lower(x).compile().cost_analysis()
+    @jax.jit
+    def wrapper(x_arg):
+      x_hbm = pltpu.with_memory_space_constraint(x_arg, pltpu.HBM)
+      return f(x_hbm)
+    analysis_result = wrapper.lower(x).compile().cost_analysis()
     self.assertEqual(analysis_result['flops'], 1234)
     self.assertEqual(analysis_result['transcendentals'], 21)
     self.assertEqual(analysis_result['bytes accessed'], 12345)
@@ -2311,7 +2317,11 @@ class PallasCallTest(ptu.PallasTPUTest):
         ),
     )
     f = jax.vmap(f)
-    analysis_result = jax.jit(f).lower(x).compile().cost_analysis()
+    @jax.jit
+    def wrapper(x_arg):
+      x_hbm = pltpu.with_memory_space_constraint(x_arg, pltpu.HBM)
+      return f(x_hbm)
+    analysis_result = wrapper.lower(x).compile().cost_analysis()
     self.assertEqual(analysis_result['flops'], batch_size * 1234)
     self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
     self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
