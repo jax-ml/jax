@@ -26,7 +26,6 @@ limitations under the License.
 #include <string_view>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -812,9 +811,14 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
 }
 
 ::xla::ffi::Error TritonKernelCallFfi(gpuStream_t stream,
-                                      std::string_view opaque,
                                       ::xla::ffi::RemainingArgs args,
-                                      ::xla::ffi::RemainingRets rets) {
+                                      ::xla::ffi::RemainingRets rets,
+                                      ::xla::ffi::Dictionary attrs) {
+  auto opaque_attr = attrs.get<std::string_view>("opaque");
+  if (opaque_attr.has_error()) {
+    return opaque_attr.error();
+  }
+  std::string_view opaque = opaque_attr.value();
   std::vector<void*> buffers = CombineBuffers(args, rets);
   auto kernel_call_or = GetKernelCall(opaque, stream, buffers.data());
   if (!kernel_call_or.ok()) {
@@ -830,9 +834,15 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
 
 // For command buffer support, make sure that the kernel cache is populated
 // during initialization.
-::xla::ffi::Error TritonKernelCallFfiInitialize(
-    gpuStream_t stream, std::string_view opaque, ::xla::ffi::RemainingArgs args,
-    ::xla::ffi::RemainingRets rets) {
+::xla::ffi::Error TritonKernelCallFfiInitialize(gpuStream_t stream,
+                                                ::xla::ffi::RemainingArgs args,
+                                                ::xla::ffi::RemainingRets rets,
+                                                ::xla::ffi::Dictionary attrs) {
+  auto opaque_attr = attrs.get<std::string_view>("opaque");
+  if (opaque_attr.has_error()) {
+    return opaque_attr.error();
+  }
+  std::string_view opaque = opaque_attr.value();
   std::vector<void*> buffers = CombineBuffers(args, rets);
   auto kernel_call_or = GetKernelCall(opaque, stream, buffers.data());
   if (!kernel_call_or.ok()) {
@@ -846,18 +856,18 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kTritonKernelCallFfi, TritonKernelCallFfi,
     ::xla::ffi::Ffi::Bind()
         .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
-        .Attr<std::string_view>("opaque")
         .RemainingArgs()
-        .RemainingRets(),
+        .RemainingRets()
+        .Attrs(),
     {::xla::ffi::Traits::kCmdBufferCompatible});
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kTritonKernelCallFfiInitialize, TritonKernelCallFfiInitialize,
     ::xla::ffi::Ffi::BindInitialize()
         .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
-        .Attr<std::string_view>("opaque")
         .RemainingArgs()
-        .RemainingRets(),
+        .RemainingRets()
+        .Attrs(),
     {::xla::ffi::Traits::kCmdBufferCompatible});
 
 }  // namespace jax::JAX_GPU_NAMESPACE
