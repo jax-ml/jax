@@ -28,6 +28,7 @@ from .core import (
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
     as_torch_gpu_kernel as as_torch_gpu_kernel,
+    is_nvshmem_available as is_nvshmem_available,
 )
 
 from .launch_context import (
