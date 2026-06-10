@@ -21,8 +21,8 @@ load(
     "mosaic_gpu_internal_users",
     "mosaic_internal_users",
     "pallas_fuser_users",
-    "pallas_gpu_internal_users",
     "pallas_sc_internal_users",
+    "pallas_triton_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_strict_library",
@@ -67,9 +67,9 @@ package_group(
 )
 
 package_group(
-    name = "pallas_gpu_users",
+    name = "pallas_triton_users",
     includes = ["//jax:internal"],
-    packages = pallas_gpu_internal_users,
+    packages = pallas_triton_internal_users,
 )
 
 package_group(
@@ -399,7 +399,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_gpu",
     visibility = [
-        ":pallas_gpu_users",
+        ":pallas_triton_users",
     ],
     deps = [
         ":pallas_triton",
@@ -412,7 +412,7 @@ pytype_strict_library(
     srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
     type_checking = "pyrefly",
     visibility = [
-        ":pallas_gpu_users",
+        ":pallas_triton_users",
     ],
     deps = [
         ":pallas",
@@ -519,7 +519,7 @@ pytype_strict_library(
     ],
     type_checking = "pyrefly",
     visibility = [
-        ":pallas_gpu_users",
+        ":pallas_triton_users",
     ],
     deps = [
         "//jax/_src:deprecations",
