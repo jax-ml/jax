@@ -735,7 +735,10 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma",
 
     The `accumulator` must be a vector with a FragmentedLayout. The WGMMA
     operation will be executed in the async proxy and any inputs in
-    registers need to be synchronized with a memory fence.
+    registers need to be synchronized with a memory fence. Note that the
+    caller is responsible for fencing the `accumulator` prior to issuing
+    the op, whereas `a` is fenced automatically in the lowering if it is
+    passed in registers.
 
     Usually `a` is read from shared memory if it is used directly in the WGMMA
     operation. If `a` needs to be transformed before it is used in the WGMMA

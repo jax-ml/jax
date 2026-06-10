@@ -4254,6 +4254,32 @@ class PallasCallSm90ATest(PallasSm90ATest):
         rtol=1e-3,
     )
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_wgmma_fence_ptx(self):
+    in_dtype, out_dtype = jnp.float16, jnp.float32
+    shape = (64, 64)
+    transforms = self.default_transforms(dtype=in_dtype)
+
+    @functools.partial(
+        self.kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, out_dtype),
+        scratch_shapes=[
+            plgpu.SMEM(shape, in_dtype, transforms=transforms),
+            plgpu.SMEM(shape, in_dtype, transforms=transforms),
+        ],
+    )
+    def kernel(o_ref, a_smem, b_smem):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_smem, b_smem)
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC(shape, out_dtype))
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      jax.block_until_ready(kernel())
+
+    self.assertEqual(ptx().count("wgmma.fence.sync.aligned"), 1)
+
   @parameterized.parameters(jnp.float16, jnp.float32)
   def test_wgmma(self, dtype):
     # TensorCores can only fuse transposes of 16-bit values, and RHS

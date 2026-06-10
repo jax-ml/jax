@@ -1602,13 +1602,10 @@ def _mgpu_wgmma_op_lowering_rule(
   # s8/i8 WGMMA expects signed integer accumulator.
   element_type = wgmma_op.a.type.element_type
   is_signed = True if isinstance(element_type, ir.IntegerType) else None
-  # TODO(dasenov): Move the value -> accumulator conversion outside of wgmma.
-  # The associated fence could be a little expensive and is not needed if the
-  # result a wgmma feeds into another wgmma (even in another loop step).
   regs = _fragmented_array_from_ir(
       wgmma_op.accumulator, in_layouts[0], is_signed
   )
-  acc = wgmma.WGMMAAccumulator.from_registers(regs)  # pyrefly: ignore[missing-attribute]
+  acc = wgmma.WGMMAAccumulator.from_registers(regs, sync=False)  # pyrefly: ignore[missing-attribute]
 
   if isinstance(wgmma_op.a.type, ir.VectorType):
     a_transforms = None
