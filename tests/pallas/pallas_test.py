@@ -21,6 +21,7 @@ import math
 import os
 import re
 import sys
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -95,6 +96,19 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
 
 @absltest.skipThisClass("Base class for Pallas tests")
 class PallasTest(ptu.PallasTest):
+
+  def setUp(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message=(
+              "Using ``pl.pallas_call`` for Mosaic GPU kernels is deprecated"
+          ),
+      )
+
+    super().setUp()
 
   def test_add_one(self):
     x = jnp.ones((128,), floatx)
