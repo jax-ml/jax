@@ -53,6 +53,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * Added `jax.random.key_dtype` to get the dtype corresponding to a PRNG
       implementation name.
     * `jax.random.key` and `wrap_key_data` now accept a `dtype` argument.
+  * Added `Device.clear_memory_stats()`, which resets `peak_bytes_in_use` (and
+    other peak counters) reported by `Device.memory_stats()` for backends that
+    support memory stats.
 
 * Breaking changes
   * `with mesh:` context manager has been deprecated. Please use
