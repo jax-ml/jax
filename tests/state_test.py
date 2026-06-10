@@ -970,6 +970,13 @@ class GetVmapParams(NamedTuple):
   bat_ref: np.ndarray
   bat_idxs: tuple[np.ndarray, ...]
 
+  def __repr__(self):
+    return (
+        f"GetVmapParams(vmap_index_param={self.vmap_index_param}, "
+        f"bat_ref=array(shape={self.bat_ref.shape}, dtype={self.bat_ref.dtype}), "
+        f"bat_idxs={tuple(f'array(shape={x.shape}, dtype={x.dtype})' for x in self.bat_idxs)})"
+    )
+
 @hps.composite
 def get_vmap_params(draw):
   vmap_index_param: VmappableIndexParam = draw(
@@ -990,6 +997,14 @@ class SetVmapParams(NamedTuple):
   bat_ref: np.ndarray
   bat_val: np.ndarray
   bat_idxs: tuple[np.ndarray, ...]
+
+  def __repr__(self):
+    return (
+        f"SetVmapParams(vmap_index_param={self.vmap_index_param}, "
+        f"bat_ref=array(shape={self.bat_ref.shape}, dtype={self.bat_ref.dtype}), "
+        f"bat_val=array(shape={self.bat_val.shape}, dtype={self.bat_val.dtype}), "
+        f"bat_idxs={tuple(f'array(shape={x.shape}, dtype={x.dtype})' for x in self.bat_idxs)})"
+    )
 
 @hps.composite
 def set_vmap_params(draw):
