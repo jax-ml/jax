@@ -51,7 +51,6 @@ def register_extra_dialect(loader: Callable[[ir.Context], None]):
   _extra_dialect_loaders.append(loader)
 
 
-
 # Controls the IR serialization version. Upon incrementing the
 # default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
 # continue to use the old serialization version when in forward compatibility
@@ -106,6 +105,7 @@ class MemorySpace(enum.Enum):
   SMEM = enum.auto()
   HOST = enum.auto()
   SC_SCALAR_SEMAPHORE_MEM = enum.auto()
+  SC_VECTOR_SEMAPHORE_MEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -117,6 +117,8 @@ class MemorySpace(enum.Enum):
       return 2
     elif self == MemorySpace.SC_SCALAR_SEMAPHORE_MEM:
       return 8
+    elif self == MemorySpace.SC_VECTOR_SEMAPHORE_MEM:
+      return 10
     elif self == MemorySpace.SMEM:
       return 4
     elif self == MemorySpace.HOST:

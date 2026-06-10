@@ -73,6 +73,8 @@ def _get_memory_space_from_aval(
       match kernel_type:
         case tpu_core.CoreType.SC_SCALAR_SUBCORE:
           return tpu_custom_call.MemorySpace.SC_SCALAR_SEMAPHORE_MEM
+        case tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_VECTOR_SEMAPHORE_MEM
         case tpu_core.CoreType.TC:
           return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
         case _:
@@ -89,6 +91,8 @@ def _get_memory_space_from_aval(
       match mesh.core_type:
         case tpu_core.CoreType.SC_SCALAR_SUBCORE:
           return tpu_custom_call.MemorySpace.SC_SCALAR_SEMAPHORE_MEM
+        case tpu_core.CoreType.SC_VECTOR_SUBCORE:
+          return tpu_custom_call.MemorySpace.SC_VECTOR_SEMAPHORE_MEM
         case tpu_core.CoreType.TC:
           return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
         case _:
