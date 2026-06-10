@@ -188,6 +188,21 @@ class OpsTest(ptu.PallasTPUTest):
     )(x, y)
     np.testing.assert_array_equal(out, inp.reshape(m * 2, n))
 
+  @parameterized.parameters(0, 1)
+  def test_bitcast_vmap(self, axis):
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jax.vmap(functools.partial(pltpu.bitcast, ty=jnp.uint8),
+                              in_axes=axis, out_axes=axis)(x_ref[...])
+    expected = np.random.randint(0, 255, size=(2, 16, 4, 128), dtype=np.uint8)
+    inp = np.ascontiguousarray(
+        expected.swapaxes(-1, -2)).view(np.uint32)[..., 0]
+    assert inp.shape == (2, 16, 128), inp.shape
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 16 * 4, 128), jnp.uint8)
+    )(inp)
+    self.assertArraysEqual(out, expected.reshape(2, 16 * 4, 128))
+
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
     bitwidth = dtypes.itemsize_bits(dtype)
@@ -342,7 +357,6 @@ class OpsTest(ptu.PallasTPUTest):
     if dtype == jnp.int16:
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
-
 
     shape = (128, 128)
 
@@ -507,7 +521,6 @@ class OpsTest(ptu.PallasTPUTest):
     if msk_dtype == jnp.int16:
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
-
 
     shape = (1024,)
 
@@ -1129,7 +1142,6 @@ class OpsTest(ptu.PallasTPUTest):
     )
 
   def test_fuse_transposed_lhs_in_matmul(self):
-
 
     lhs_shape = (512, 128)
     rhs_shape = (512, 256)

@@ -103,6 +103,13 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
 
 mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
+
+def _bitcast_batch_rule(batched_args, batch_axes, *, ty):
+  return bitcast(*batched_args, ty=ty), batch_axes[0]
+
+batching.primitive_batchers[bitcast_p] = _bitcast_batch_rule
+
+
 roll_p = jax_core.Primitive("roll")
 
 
