@@ -33,6 +33,7 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
+@jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")
 @jtu.thread_unsafe_test_class()  # debug print test is not thread safe
 class PallasCallPrintTest(ptu.PallasTPUTest):
 

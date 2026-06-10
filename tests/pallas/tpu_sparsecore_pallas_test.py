@@ -164,6 +164,7 @@ class PallasSCTest(jtu.JaxTestCase):
       self.skipTest(f"TC tiling is not supported. {reason}")
 
 
+@jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")
 class DebugPrintTest(PallasSCTest):
 
   def setUp(self):
