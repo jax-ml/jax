@@ -299,7 +299,13 @@ PyType_Slot PyDevice::slots_[] = {
       .def(
           "clear_memory_stats",
           [](const PyDevice& self) {
-            xla::ThrowIfError(self.ClearMemoryStats());
+            absl::Status status = self.ClearMemoryStats();
+            if (absl::IsUnimplemented(status)) {
+              PyErr_SetString(PyExc_NotImplementedError,
+                              std::string(status.message()).c_str());
+              throw nb::python_error();
+            }
+            xla::ThrowIfError(status);
           },
           "Clears the peak memory tracking statistics for this device.")
       .def(

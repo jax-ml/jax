@@ -347,7 +347,10 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
     del x
     jax.effects_barrier()
-    device.clear_memory_stats()
+    try:
+      device.clear_memory_stats()
+    except NotImplementedError:
+      self.skipTest("clear_memory_stats not supported on this device")
     peak_after_clear = device.memory_stats()["peak_bytes_in_use"]
     self.assertLess(peak_after_clear, peak_before)
 
