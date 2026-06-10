@@ -2661,6 +2661,9 @@ class ShardMapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('data', 'seq'))
   def test_shmap_unreduced_fsdp_custom_vjp_bwd(self, mesh):
+    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 9):
+      self.skipTest("Test fails in CI")
+
     np_inp1 = np.arange(64.).reshape(8, 4, 2)
     np_inp2 = np.arange(12.).reshape(2, 6)
     arr1 = jax.device_put(np_inp1, P('data', 'seq', None))
