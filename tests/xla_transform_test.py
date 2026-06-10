@@ -32,6 +32,7 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 
 
+@jtu.skip_under_pytest("Test mutates global state of compiler")
 class XlaTransformTest(jtu.JaxTestCase):
 
   def setUp(self):
