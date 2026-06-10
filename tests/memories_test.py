@@ -47,6 +47,7 @@ except ImportError:
 config.parse_flags_with_absl()
 FLAGS = flags.FLAGS
 
+jtu.request_cpu_devices(8)
 
 def get_memory_kinds_from_executable(f, args):
   compiled = f.lower(*args).compile()
@@ -2328,6 +2329,22 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     x = jnp.ones((2, 2))
     w = jnp.ones((2, 2))
     jax.jit(jax.grad(lambda x, w: f(x, w).sum(), argnums=1))(x, w)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_compute_on_reshard_inside(self, mesh):
+    arr = jnp.ones((2, 8))
+
+    @compute_on2(compute_type="tpu_sparsecore",
+                 out_memory_spaces=jax.memory.Space.Device)
+    def ag_w(w):
+      w_sharded = jax.reshard(w, P('x'))
+      return w_sharded * 2
+
+    @jax.jit
+    def f(w):
+      return ag_w(w)
+
+    f(arr)  # doesn't crash
 
 
 class StreamAnnotationTest(jtu.JaxTestCase):
