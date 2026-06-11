@@ -11347,9 +11347,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(reshard(out, P()), expected_out)
 
   @jtu.with_explicit_mesh((8,), ('x',))
-  def test_dot_ag_pipeline_grad(self, mesh):
+  def test_fsdp_pipeline_grad(self, mesh):
     def ag(x):
-      assert jax.typeof(x).sharding.spec == P('x', None)
       return jax.reshard(x, P(reduced={'x'}))
 
     if jtu.is_device_tpu_at_least(7):
@@ -11358,8 +11357,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                        compiler_options={'sparse_core_config': {'core_ids': [0]}})
 
     def rs(x):
-      assert jax.typeof(x).sharding.spec == P(None, None, unreduced={'x'})
-      return jax.reshard(x, P('x'))
+      return jax.reshard(x, (P('x', None), P(None, 'x')))
 
     if jtu.is_device_tpu_at_least(7):
       rs = compute_on2(rs, compute_type='tpu_sparsecore',
@@ -11368,24 +11366,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def fsdp_pipe(f, x, ws):
-      w = ag(ws[0])
+      w = ag(jax.tree.map(lambda x: x[0], ws))
       carry = (x, w)
       def body(carry, w_n_sharded):
         x, w = carry
         w_n = ag(w_n_sharded)
         x = f(x, w)
         return (x, w_n), ()
-      (x, w), () = jax.lax.scan(body, carry, ws[1:], unroll=2)  # !!
+      (x, w), () = jax.lax.scan(body, carry, jax.tree.map(lambda x: x[1:], ws),
+                                unroll=2)  # need for double buffering
       x = f(x, w)
       return x
 
     def fsdp_pipe_fwd(f, x, ws):
-      w = ag(ws[0])
+      w = ag(jax.tree.map(lambda x: x[0], ws))
       x, f_vjp_first = jax.vjp(f, x, w)
       f_vjp_first.args_res[1] = None  # could instead use remat
 
-      w1 = ag(ws[1])
-      carry = (x, w1)
+      w = ag(jax.tree.map(lambda x: x[1], ws))
+      carry = (x, w)
+
       def body(carry, w_n_sharded):
         x, w = carry
         w_n = ag(w_n_sharded)
@@ -11394,7 +11394,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         f_vjp.args_res[1] = None
 
         return (x, w_n), f_vjp
-      (x, w_last), f_vjps = jax.lax.scan(body, carry, ws[2:], unroll=2)  # !!
+      (x, w_last), f_vjps = jax.lax.scan(
+          body, carry, jax.tree.map(lambda x: x[2:], ws), unroll=2)  # need for double buffering
+
       x, f_vjp_last = jax.vjp(f, x, w_last)
       f_vjp_last.args_res[1] = None
       return x, (f_vjp_first, f_vjps, f_vjp_last, ws)
@@ -11402,11 +11404,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def fsdp_pipe_bwd(_, res, x_bar):
       f_vjp_first, f_vjps, f_vjp_last, ws = res
 
-      w_m1 = ag(ws[-1])
+      w_m1 = ag(jax.tree.map(lambda x: x[-1], ws))
       f_vjp_last.args_res[1] = w_m1
       x_bar, w_m1_bar_unreduced = f_vjp_last(x_bar)
 
-      w_m2 = ag(ws[-2])
+      w_m2 = ag(jax.tree.map(lambda x: x[-2], ws))
       carry = (x_bar, w_m2, w_m1_bar_unreduced)
 
       def body(carry, f_vjp_and_w_m1_sharded):
@@ -11418,27 +11420,39 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         w_p1_bar_sharded = rs(w_p1_bar_unreduced)
         return (x_bar, w_m1, w_bar_unreduced), w_p1_bar_sharded
 
-      (x_bar, w_0, w_1_bar_unreduced), ws_bar = \
-          jax.lax.scan(body, carry, (f_vjps, ws[:-2]), reverse=True, unroll=2)
+      (x_bar, w_0, w_1_bar_unreduced), ws_bar = jax.lax.scan(
+          body, carry, (f_vjps, jax.tree.map(lambda x: x[:-2], ws)),
+          reverse=True, unroll=2)
 
       f_vjp_first.args_res[1] = w_0
       x_bar, w_0_bar_unreduced = f_vjp_first(x_bar)
       w_1_bar = rs(w_1_bar_unreduced)
       w_0_bar = rs(w_0_bar_unreduced)
-      ws_bar = jnp.concatenate([w_0_bar[None], w_1_bar[None], ws_bar], axis=0)
+      ws_bar = jax.tree.map(
+          lambda x, y, z: jnp.concatenate([x[None], y[None], z], axis=0),
+          w_0_bar, w_1_bar, ws_bar)
       return x_bar, ws_bar
 
     fsdp_pipe.defvjp(fsdp_pipe_fwd, fsdp_pipe_bwd)
 
-    f = jnp.dot
-    ws = jnp.ones((32, 128, 128), out_sharding=P(None, 'x', None))
+    def f(x, w):
+      w1, w2 = w
+      temp = x @ w1
+      out = temp @ w2
+      return out
+
     x = jnp.ones((32 * 32, 128), out_sharding=P('x', None))
+    w1s = jnp.ones((32, 128, 256), out_sharding=P(None, 'x', None))
+    w2s = jnp.ones((32, 256, 128), out_sharding=P(None, None, 'x'))
+    ws = (w1s, w2s)
+
+    # primal only
+    jax.jit(partial(fsdp_pipe, f))(x, ws)  # doesn't crash
 
     @jax.jit
     def g(x, ws):
       y, f_vjp = jax.vjp(partial(fsdp_pipe, f), x, ws)
-      return f_vjp(y)
-
+      return f_vjp(jnp.ones_like(y))
     jax.block_until_ready(g(x, ws))  # doesn't crash
 
   @jtu.with_explicit_mesh((2,), ('x',))
