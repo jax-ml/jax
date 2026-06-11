@@ -311,6 +311,7 @@ jax_multiplatform_test(
     name = "fft_test",
     srcs = ["fft_test.py"],
     backend_tags = {
+        "gpu": ["noasan"],
         "tpu": [
             "noasan",
             "notsan",
