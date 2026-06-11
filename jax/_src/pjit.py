@@ -281,7 +281,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   cpp_cache = (cache
                if ((cache := config.jax_jit_cpp_cache_obj.value) is not None
-                   and core.trace_state_clean())
+                   and core.trace_ctx.is_top_level())
                else _get_cpp_global_cache(cache_key.contains_explicit_attributes))
 
   cpp_pjit_f = _jax.pjit(
@@ -525,7 +525,7 @@ def _trace_for_jit(
       dispatch.log_elapsed_time(
           "Finished tracing {fun_name} for jit in {elapsed_time:.9f} sec",
           fun_name(fun), event=dispatch.JAXPR_TRACE_EVENT)
-      if core.trace_state_clean() else contextlib.nullcontext())
+      if core.trace_ctx.is_top_level() else contextlib.nullcontext())
   with elapsed_time_ctx:
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
