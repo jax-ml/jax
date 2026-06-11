@@ -221,19 +221,21 @@ def _get_fastpath_data(
       executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
       executable._dispatch_in_layouts, const_args)
 
+def make_jit_cpp_cache(capacity):
+  return _jax.PjitFunctionCache(capacity=capacity)
 
 # The entries are doubled here from the default 4096 because _pjit_call_impl
 # also has a cpp dispatch path and that would double the number of entries in
 # the global shared cache.
 # This cache is only used for jit's with only fun. For example: jax.jit(f)
-_cpp_pjit_cache_fun_only = _jax.PjitFunctionCache(capacity=8192)
+_cpp_pjit_cache_fun_only = make_jit_cpp_cache(8192)
 
 # This cache is used for jit where extra arguments are defined other than the
 # fun. For example: jax.jit(f, donate_argnums=...) OR
 # jax.jit(f, out_shardings=...), etc. We don't use the same cache because the
 # capacity might get full very fast because of all the jitted function in JAX
 # which might evict train_step for example.
-_cpp_pjit_cache_explicit_attributes = _jax.PjitFunctionCache(capacity=8192)
+_cpp_pjit_cache_explicit_attributes = make_jit_cpp_cache(8192)
 
 
 def _get_cpp_global_cache(contains_explicit_attributes: bool):
@@ -276,11 +278,16 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       out_layouts_treedef=jit_info.out_layouts_treedef,
       out_layouts_leaves=jit_info.out_layouts_leaves,
       compiler_options_kvs=jit_info.compiler_options_kvs)
+
+  cpp_cache = (cache
+               if ((cache := config.jax_jit_cpp_cache_obj.value) is not None
+                   and core.trace_state_clean())
+               else _get_cpp_global_cache(cache_key.contains_explicit_attributes))
+
   cpp_pjit_f = _jax.pjit(
       fun_name(fun), fun, cache_miss, jit_info.static_argnums,
       jit_info.static_argnames, cache_key, tree_util.dispatch_registry,
-      pxla.cc_shard_arg,
-      _get_cpp_global_cache(cache_key.contains_explicit_attributes))
+      pxla.cc_shard_arg, cpp_cache)
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun  # pyrefly: ignore[missing-attribute]
@@ -291,6 +298,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   cpp_jitted_f_class.trace = jit_trace
   cpp_jitted_f_class.eval_shape = jit_eval_shape
   return cpp_pjitted_f
+
 
 @api_boundary
 def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:

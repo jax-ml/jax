@@ -62,7 +62,7 @@ from jax._src.sharding_impls import (
     UNSPECIFIED, NamedSharding, GSPMDSharding,
     make_single_device_sharding, parse_flatten_op_sharding)
 from jax._src.mesh import use_abstract_mesh
-from jax._src.pjit import pjit, _pjit_lower
+from jax._src.pjit import pjit, _pjit_lower, make_jit_cpp_cache
 from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
@@ -4841,6 +4841,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jax.sharding.use_abstract_mesh(am):
       f.trace(np.arange(8)).lower()  # doesn't crash
+
+  def test_jit_cpp_cache_obj_config(self):
+    cpp_cache = make_jit_cpp_cache(4)
+    with config.jax_jit_cpp_cache_obj(cpp_cache):
+      @jax.jit
+      def f(x):
+        return x * 2
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      for i in range(5):
+        f(np.arange(i))
+      for i in range(5):
+        f(np.arange(i))
+    self.assertEqual(count(), 10)
 
 
 class ShardingInTypesTest(jtu.JaxTestCase):
