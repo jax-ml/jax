@@ -83,6 +83,20 @@ class prng_key(extended):
   """
 
 
+@export
+class bcomplex32_scalar(extended):
+  """Scalar class for bcomplex32 (complex<bfloat16>) dtype.
+
+  This is an abstract class that should never be instantiated, but rather
+  exists for the sake of `jnp.issubdtype`.
+
+  Examples:
+    >>> from jax._src import dtypes
+    >>> jnp.issubdtype(dtypes.bcomplex32_edtype, dtypes.bcomplex32_scalar)
+    True
+  """
+
+
 class ExtendedDType(StrictABC):
   """Abstract Base Class for extended dtypes"""
   @property
@@ -90,6 +104,37 @@ class ExtendedDType(StrictABC):
   def type(self) -> type: ...
 
   _rules: Any = None
+
+
+class _BComplex32DType(ExtendedDType):
+  """ExtendedDType for bcomplex32 (complex<bfloat16>).
+
+  Logical representation: shape (N,), dtype=bcomplex32_edtype
+  Physical representation: shape (N, 2), dtype=bfloat16
+  The trailing dimension stores [real_part, imaginary_part].
+  """
+  type = bcomplex32_scalar
+  _rules = None  # Set later to avoid circular imports
+
+  @property
+  def name(self):
+    return 'bcomplex32'
+
+  @property
+  def itemsize(self):
+    return 4  # 2 * bfloat16
+
+  def __repr__(self):
+    return 'bcomplex32'
+
+  def __eq__(self, other):
+    return type(other) is _BComplex32DType
+
+  def __hash__(self):
+    return hash(self.__class__)
+
+
+bcomplex32_edtype = _BComplex32DType()
 
 # fp8 support
 float8_e3m4: type[np.generic] = ml_dtypes.float8_e3m4
@@ -132,6 +177,10 @@ def supports_inf(dtype: DTypeLike) -> bool:
 # bfloat16 support
 bfloat16: type[np.generic] = ml_dtypes.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
+
+# bcomplex32 support (complex<bfloat16>, 4 bytes)
+bcomplex32: type[np.generic] = ml_dtypes.bcomplex32
+_bcomplex32_dtype: np.dtype = np.dtype(bcomplex32)
 
 _custom_float_scalar_types = [
     float4_e2m1fn,
@@ -270,7 +319,11 @@ def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
     return obj  # pyrefly: ignore[bad-return]
   elif isinstance(obj, type) and (f := _DEFAULT_TYPEMAP.get(obj)) is not None:
     obj = f()
-  return np.dtype(obj, align=align, copy=copy)
+  result = np.dtype(obj, align=align, copy=copy)
+  # Map bcomplex32 np.dtype to its ExtendedDType counterpart
+  if result == _bcomplex32_dtype:
+    return bcomplex32_edtype
+  return result
 
 _DEFAULT_TYPEMAP: dict[type, Callable[[], np.dtype]] = {
   bool: lambda: np.dtype(bool),
@@ -285,6 +338,8 @@ def itemsize_bits(dtype: DTypeLike) -> int:
   # incorrect for sub-byte integer types.
   if dtype is None:
     raise ValueError("dtype cannot be None.")
+  if dtype is bcomplex32_edtype:
+    return 32  # 2 * 16 bits for bfloat16
   if dtype == np.dtype(bool):
     return 8  # physical bit layout for boolean dtype
   elif issubdtype(dtype, np.integer):
@@ -328,6 +383,11 @@ def to_numeric_dtype(dtype: DTypeLike) -> DType:
 
 def to_inexact_dtype(dtype: DTypeLike) -> DType:
   """Promotes a dtype into an inexact dtype, if it is not already one."""
+  if isinstance(dtype, ExtendedDType):
+    # ExtendedDTypes like bcomplex32 are already inexact; return as-is.
+    if issubdtype(dtype, np.complexfloating) or issubdtype(dtype, np.floating):
+      return dtype
+    raise TypeError(f"Cannot interpret {dtype!r} as a data type")
   dtype_ = np.dtype(dtype)
   return _dtype_to_inexact.get(dtype_, dtype_)
 
@@ -340,6 +400,8 @@ def to_floating_dtype(dtype: DTypeLike) -> DType:
 
 def to_complex_dtype(dtype: DTypeLike) -> DType:
   ftype = to_inexact_dtype(dtype)
+  if ftype == _bfloat16_dtype:
+    return bcomplex32_edtype
   if ftype in [np.dtype('float64'), np.dtype('complex128')]:
     return np.dtype('complex128')
   return np.dtype('complex64')
@@ -358,6 +420,9 @@ def _canonicalize_dtype(x64_enabled: bool, allow_extended_dtype: bool, dtype: An
     raise TypeError(f'dtype {dtype!r} not understood') from e
 
   if x64_enabled:
+    # Map bcomplex32 np.dtype to its ExtendedDType counterpart
+    if dtype_ == _bcomplex32_dtype:
+      return bcomplex32_edtype
     return dtype_
   else:
     return _dtype_to_32bit_dtype.get(dtype_, dtype_)
@@ -449,6 +514,15 @@ python_scalar_types_to_dtypes: dict[type, DType] = {
 def scalar_type_of(x: Any) -> type:
   """Return the scalar type associated with a JAX value."""
   typ = dtype(x)
+  if isinstance(typ, ExtendedDType):
+    if issubdtype(typ, np.complexfloating):
+      return complex
+    elif issubdtype(typ, np.floating):
+      return float
+    elif issubdtype(typ, np.integer):
+      return int
+    else:
+      raise TypeError(f"Invalid scalar value {x}")
   if typ in _custom_float_dtypes:
     return float
   elif typ in _intn_dtypes:
@@ -459,6 +533,8 @@ def scalar_type_of(x: Any) -> type:
     return int
   elif np.issubdtype(typ, np.floating):
     return float
+  elif typ == _bcomplex32_dtype or typ is bcomplex32_edtype:
+    return complex
   elif np.issubdtype(typ, np.complexfloating):
     return complex
   else:
@@ -576,6 +652,8 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
   # to the normal scalar type hierarchy.
   if a_sctype in _custom_float_scalar_types:
     return b_sctype in {a_sctype, np.floating, np.inexact, np.number, np.generic}
+  if a_sctype == bcomplex32 or a_sctype is bcomplex32_scalar:
+    return b_sctype in {bcomplex32, bcomplex32_scalar, np.complexfloating, np.inexact, np.number, np.generic}
   if a_sctype in [int2, int4] or (int1 is not None and a_sctype == int1):
     return b_sctype in {a_sctype, np.signedinteger, np.integer, np.number, np.generic}
   if a_sctype in [uint2, uint4] or (uint1 is not None and a_sctype == uint1):
@@ -645,7 +723,12 @@ _jax_dtype_set = {
     *_int_types,
     *_float_types,
     *_complex_types,
+    _bcomplex32_dtype,
 }
+
+# bcomplex32_edtype is a valid JAX dtype but is an ExtendedDType, not np.dtype.
+# It's checked separately in issubdtype/check_valid_dtype.
+_jax_dtype_set_with_extended = _jax_dtype_set | {bcomplex32_edtype}
 
 if jaxlib_extension_version >= 465:
   _jax.set_valid_dtypes(_jax_dtype_set)
@@ -718,6 +801,12 @@ def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
       return float
     return type(dtype.type(0).item())
   return dtype
+
+
+def _lattice_result_to_dtype(lattice_type: JAXType) -> DType:
+  """Map a lattice result type back to the appropriate dtype."""
+  return dtype(lattice_type)
+
 
 def _dtype_and_weaktype(value: Any) -> tuple[DType, bool]:
   """Return a (dtype, weak_type) tuple for the given input."""
@@ -980,7 +1069,7 @@ def is_weakly_typed_scalar(x: Any) -> bool:
     return type(x) in python_scalar_types
 
 def check_valid_dtype(dtype: DType) -> None:
-  if dtype not in _jax_dtype_set:
+  if dtype not in _jax_dtype_set_with_extended:
     raise TypeError(f"Dtype {dtype} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
 
@@ -1041,6 +1130,9 @@ def dtype(x: Any) -> DType:
     # Numpy scalar types, e.g., np.int32, np.float32
     if _issubclass(x, np.generic):
       dt = np.dtype(x)
+      # Map bcomplex32 np.dtype to ExtendedDType
+      if dt == _bcomplex32_dtype:
+        return bcomplex32_edtype
       return _maybe_canonicalize_explicit_dtype(dt, "dtype")
 
   # Python scalar values, e.g., int(3), float(3.14)
@@ -1057,6 +1149,9 @@ def dtype(x: Any) -> DType:
     if dt not in _jax_dtype_set and not issubdtype(dt, extended):
       raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                       "type. Only arrays of numeric types are supported by JAX.")
+    # Map bcomplex32 np.dtype to ExtendedDType
+    if dt == _bcomplex32_dtype:
+      return bcomplex32_edtype
     return _maybe_canonicalize_explicit_dtype(dt, "dtype")
 
   # If x has a dtype attribute, and it's a valid dtype, use it. This avoids
@@ -1077,13 +1172,13 @@ def dtype(x: Any) -> DType:
   return canonicalize_dtype(dt, allow_extended_dtype=True)  # pyrefly: ignore[bad-return]
 
 def lattice_result_type(*args: Any) -> tuple[DType, bool]:
-  dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
-  if len(dtypes) == 1:
-    out_dtype = dtypes[0]
+  dtypes_list, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
+  if len(dtypes_list) == 1:
+    out_dtype = dtypes_list[0]
     out_weak_type = weak_types[0]
-  elif len(set(dtypes)) == 1 and not all(weak_types):
+  elif len(set(dtypes_list)) == 1 and not all(weak_types):
     # Trivial promotion case. This allows extended dtypes through.
-    out_dtype = dtypes[0]
+    out_dtype = dtypes_list[0]
     out_weak_type = False
   elif all(weak_types) and config.numpy_dtype_promotion.value != config.NumpyDtypePromotion.STRICT:
     # If all inputs are weakly typed, we compute the bound of the strongly-typed
@@ -1092,14 +1187,14 @@ def lattice_result_type(*args: Any) -> tuple[DType, bool]:
     # TODO(jakevdp): explore removing this special case.
     result_type = _least_upper_bound(
         config.numpy_dtype_promotion.value, config.enable_x64.value,
-        *{_jax_type(dtype, False) for dtype in dtypes})
-    out_dtype = dtype(result_type)
+        *{_jax_type(dtype, False) for dtype in dtypes_list})
+    out_dtype = _lattice_result_to_dtype(result_type)
     out_weak_type = True
   else:
     result_type = _least_upper_bound(
         config.numpy_dtype_promotion.value, config.enable_x64.value,
-        *{_jax_type(d, w) for d, w in zip(dtypes, weak_types)})
-    out_dtype = dtype(result_type)
+        *{_jax_type(d, w) for d, w in zip(dtypes_list, weak_types)})
+    out_dtype = _lattice_result_to_dtype(result_type)
     out_weak_type = any(result_type is t for t in _weak_types)
   return out_dtype, (out_dtype != bool_) and out_weak_type
 
@@ -1147,6 +1242,9 @@ def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
   if isinstance(dtype, type) and (f := _DEFAULT_TYPEMAP.get(dtype)) is not None:
     return f()
   np_dtype = np.dtype(dtype)
+  # Map bcomplex32 np.dtype to its ExtendedDType counterpart
+  if np_dtype == _bcomplex32_dtype:
+    return bcomplex32_edtype
   if np_dtype not in _jax_dtype_set:
     msg = (
         f'JAX only supports number, bool, and string dtypes, got dtype {dtype}'

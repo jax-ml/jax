@@ -570,7 +570,9 @@ def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
     if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
         dtypes.issubdtype(aval.dtype, np.integer) or
         dtypes.issubdtype(aval.dtype, np.bool_)):
-      if not allow_int:
+      is_complex_ext = (dtypes.issubdtype(aval.dtype, dtypes.extended) and
+                        dtypes.issubdtype(aval.dtype, np.inexact))
+      if not allow_int and not is_complex_ext:
         raise TypeError(f"{name} requires real- or complex-valued inputs (input dtype "
                         f"that is a sub-dtype of np.inexact), but got {aval.dtype.name}. "
                         "If you want to use Boolean- or integer-valued inputs, use vjp "
