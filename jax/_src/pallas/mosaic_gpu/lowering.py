@@ -1608,7 +1608,11 @@ def _commute_transform(
   """
   match t1, t2:
     case (
-        (gpu_core.UntilingTransform() | gpu_core.UnswizzleRef()) as t1,
+        (
+            gpu_core.UntilingTransform()
+            | gpu_core.UnswizzleRef()
+            | gpu_core.ExpandLeadingBatchDimensionsTransform()
+        ) as t1,
         indexing.NDIndexer() as t2,
     ):
       new_indexer, new_t1 = t1.commute_ndindexer(aval, t2)
@@ -1686,8 +1690,9 @@ def _bubble_up_transform(
     (t, new_transform), (t_aval, new_transform_aval) = _lower_fn_with_avals(
         functools.partial(_commute_transform, aval), avals
     )(ctx, transform, t)
-    new_transforms_rev.append(new_transform)
-    new_transforms_avals_rev.append(new_transform_aval)
+    if not isinstance(new_transform, gpu_core.IdentityTransform):
+      new_transforms_rev.append(new_transform)
+      new_transforms_avals_rev.append(new_transform_aval)
   new_transforms_rev.reverse()
   new_transforms_avals_rev.reverse()
   return (
@@ -1763,20 +1768,20 @@ def _bubble_up_transforms_for_lowering(
   remaining_transform_avals = []
 
   for t_aval, t in zip(transform_avals, transforms):
-    should_bubble_up = False
     match t:
-      case indexing.NDIndexer():
-        should_bubble_up = True
       case TransposeTransform():
         should_bubble_up = handle_transposes
       case ReshapeTransform():
         should_bubble_up = handle_reshapes
       case (
-          gpu_core.PeerMemRef()
+          indexing.NDIndexer()
+          | gpu_core.PeerMemRef()
           | gpu_core.MulticastRef()
           | gpu_core.ClusterRefTransform()
       ):
         should_bubble_up = True
+      case _:
+        should_bubble_up = False
 
     if should_bubble_up:
       (

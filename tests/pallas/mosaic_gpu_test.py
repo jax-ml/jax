@@ -4960,9 +4960,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     np.testing.assert_array_equal(kernel(x), (x + 1)[:, 0:128])
 
   def test_tmem_batch_dimension_indexing(self):
-    b, m, n = 2, 128, 128
-    # TODO(b/514542868): Support nD TMEM shapes.
-    shape = (m, b * n)  # (b, m, n) encoded as a 2D shape
+    b1, b2, m, n = 2, 3, 128, 4
+    shape = (b1, b2, m, n)
     dtype = jnp.float8_e5m2
     tmem_layout = plgpu.TMEMLayout.SCALES_LAYOUT
     reg_layout = plgpu.Layout.TILED(  # tmem_layout.as_tiled_layout()
@@ -4978,18 +4977,22 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
             plgpu.TMEM(shape, dtype, layout=tmem_layout),
         ],
     )
-    def kernel(src_ref, idx_ref, dst_ref, tmem_ref):
-      idx = idx_ref[...]
-      src = plgpu.load(src_ref, (), layout=reg_layout, optimized=False)
-      plgpu.async_store_tmem(tmem_ref, src)
+    def kernel(src_ref, idx1_ref, idx2_ref, dst_ref, tmem_ref):
+      # TODO(allanrenucci): Support nD TMEM load/store. I.e.
+      #  src = plgpu.load(src_ref, (), layout=reg_layout, optimized=False)
+      #  plgpu.async_store_tmem(tmem_ref, src)
+      for i, j in itertools.product(range(b1), range(b2)):
+        src = plgpu.load(src_ref, (i, j), layout=reg_layout, optimized=False)
+        plgpu.async_store_tmem(tmem_ref.at[i, j], src)
       plgpu.commit_tmem()
-      tmem_slice = tmem_ref.at[:, pl.ds(idx * n, n)]
+      i = idx1_ref[...]
+      j = idx2_ref[...]
+      tmem_slice = tmem_ref.at[i, j]
       dst_ref[...] = plgpu.async_load_tmem(tmem_slice, layout=reg_layout)
 
-    idx = 1
+    idx1, idx2 = 1, 2
     src = jax.random.uniform(jax.random.key(42), shape, dtype, -1, 1)
-    dst = src[:, idx * n : (idx + 1) * n]
-    np.testing.assert_array_equal(kernel(src, idx), dst)
+    np.testing.assert_array_equal(kernel(src, idx1, idx2), src[idx1, idx2])
 
   @parameterized.product(
       m=[64, 128],
