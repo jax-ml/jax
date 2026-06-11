@@ -201,6 +201,29 @@ NB_MODULE(_xla, m) {
       },
       nb::arg("name"), nb::arg("stage"), nb::arg("callback"));
 
+  m.def(
+      "clear_xla_transform",
+      [](std::string name, int stage) {
+#if JAX_IFRT_VERSION_NUMBER >= 55
+        xla::HloXlaTransform::PipelineStage pipeline_stage;
+        switch (stage) {
+          case 0:
+            pipeline_stage = xla::HloXlaTransform::PipelineStage::kPreScheduler;
+            break;
+          case 1:
+            pipeline_stage =
+                xla::HloXlaTransform::PipelineStage::kPostScheduler;
+            break;
+          default:
+            throw std::runtime_error("Invalid pipeline stage");
+        }
+        return xla::ClearHloXlaTransform(pipeline_stage, name);
+#else
+        throw std::runtime_error("clear_xla_transform is not implemented");
+#endif
+      },
+      nb::arg("name"), nb::arg("stage"));
+
   // Register a transform via the PJRT C API XlaTransform extension.
   // This is used for plugin backends (e.g. TPU, GPU).
   m.def(
@@ -259,4 +282,50 @@ NB_MODULE(_xla, m) {
       },
       nb::arg("client"), nb::arg("name"), nb::arg("stage"),
       nb::arg("callback"));
+
+  m.def(
+      "clear_xla_transform_c_api",
+      [](nb::object client_obj, std::string name, int stage) {
+#if JAX_IFRT_VERSION_NUMBER >= 55
+        if (client_obj.is_none()) {
+          throw std::runtime_error(
+              "clear_xla_transform_c_api: client cannot be None.");
+        }
+        auto client = nb::cast<jax::nb_class_ptr<jax::PyClient>>(client_obj);
+        std::shared_ptr<xla::PjRtClient> pjrt_client =
+            client->shared_ptr_pjrt_client();
+        auto* c_api_client =
+            dynamic_cast<xla::PjRtCApiClient*>(pjrt_client.get());
+        if (c_api_client == nullptr) {
+          return false;
+        }
+        const PJRT_Api* c_api_value = c_api_client->pjrt_c_api();
+
+        PJRT_Xla_Transform_Extension* extension =
+            pjrt::FindExtension<PJRT_Xla_Transform_Extension>(
+                c_api_value,
+                PJRT_Extension_Type::PJRT_Extension_Type_XlaTransform);
+        if (extension == nullptr) {
+          return false;
+        }
+
+        PJRT_Clear_Xla_Transform_Args args;
+        args.struct_size = PJRT_Clear_Xla_Transform_Args_STRUCT_SIZE;
+        args.name = name.c_str();
+        args.name_size = name.size();
+        args.stage = static_cast<PJRT_XlaTransform_PipelineStage>(stage);
+        args.callbacks = nullptr;
+
+        PJRT_Error* error = extension->clear_xla_transform(&args);
+        if (error != nullptr) {
+          absl::Status status = pjrt::PjrtErrorToStatus(error);
+          throw std::runtime_error(status.ToString());
+        }
+        return args.cleared;
+#else
+        throw std::runtime_error(
+            "clear_xla_transform_c_api is not implemented");
+#endif
+      },
+      nb::arg("client"), nb::arg("name"), nb::arg("stage"));
 }
