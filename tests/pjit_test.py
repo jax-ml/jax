@@ -11342,7 +11342,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       assert jax.typeof(x).sharding.spec == P('x', None)
       return jax.reshard(x, P(reduced={'x'}))
 
-    if jtu.device_under_test() == 'tpu':
+    if jtu.is_device_tpu_at_least(7):
       ag = compute_on2(ag, compute_type='tpu_sparsecore',
                        out_memory_spaces=jax.memory.Space.Device,
                        compiler_options={'sparse_core_config': {'core_ids': [0]}})
@@ -11351,7 +11351,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       assert jax.typeof(x).sharding.spec == P(None, None, unreduced={'x'})
       return jax.reshard(x, P('x'))
 
-    if jtu.device_under_test() == 'tpu':
+    if jtu.is_device_tpu_at_least(7):
       rs = compute_on2(rs, compute_type='tpu_sparsecore',
                        out_memory_spaces=jax.memory.Space.Device,
                        compiler_options={'sparse_core_config': {'core_ids': [1]}})
