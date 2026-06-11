@@ -977,11 +977,15 @@ class GetVmapParams(NamedTuple):
         f"bat_idxs={tuple(f'array(shape={x.shape}, dtype={x.dtype})' for x in self.bat_idxs)})"
     )
 
+_float_elements = hps.floats(min_value=-100.0, max_value=100.0,
+                             allow_nan=False, allow_infinity=False)
+
 @hps.composite
 def get_vmap_params(draw):
   vmap_index_param: VmappableIndexParam = draw(
       vmappable_index_params(op_type="get"))
-  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape))
+  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape,
+                            elements=_float_elements))
   bat_idx_shapes_ = iter(vmap_index_param.bat_non_slice_idx_shapes)
   bat_idxs = tuple(
       draw(index_arrays(size, next(bat_idx_shapes_)))
@@ -1010,7 +1014,8 @@ class SetVmapParams(NamedTuple):
 def set_vmap_params(draw):
   vmap_index_param: VmappableIndexParam = draw(vmappable_index_params(
     op_type="swap"))
-  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape))
+  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape,
+                            elements=_float_elements))
   bat_idx_shapes_ = iter(vmap_index_param.bat_non_slice_idx_shapes)
   bat_idxs = tuple(
       draw(index_arrays(size, next(bat_idx_shapes_)))
@@ -1019,7 +1024,8 @@ def set_vmap_params(draw):
         vmap_index_param.index_param.indexed_dims)
       if indexed)
   assert next(bat_idx_shapes_, None) is None
-  bat_val = draw(hnp.arrays(np.float32, vmap_index_param.bat_slice_shape))
+  bat_val = draw(hnp.arrays(np.float32, vmap_index_param.bat_slice_shape,
+                            elements=_float_elements))
   return SetVmapParams(vmap_index_param, bat_ref, bat_val, bat_idxs)
 
 Indexer = tuple[Union[int, slice, np.ndarray]]
