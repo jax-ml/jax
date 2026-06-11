@@ -22,6 +22,7 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+echo "::group::Setup Environment" >&2
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
@@ -94,7 +95,13 @@ fi
 
 TEST_ARTIFACTS_DIR="test-artifacts"
 mkdir -p "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
+
+echo "::group::Bazel CPU RBE tests" >&2
+INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
+
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
+    --invocation_id="$INVOCATION_ID" \
     $BZLMOD_CONFIG \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \
@@ -119,6 +126,10 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
     //jaxlib/tools:check_cpu_wheel_sources_test \
     $IGNORE_TESTS || bazel_retval=$?
+echo "::endgroup::" >&2
+python3 ci/utilities/report_resultstore_link.py "CPU RBE tests" "$INVOCATION_ID" "${bazel_retval:-0}"
 
+echo "::group::Cleanup" >&2
 ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
 exit "${bazel_retval:-0}"

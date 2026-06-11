@@ -23,6 +23,7 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+echo "::group::Setup Environment" >&2
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
@@ -108,6 +109,9 @@ done
 
 TEST_ARTIFACTS_DIR="test-artifacts"
 mkdir -p "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
+
+echo "::group::Bazel ROCm RBE tests" >&2
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --config=rocm_clang_hermetic \
@@ -131,7 +135,10 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     //tests/pallas:gpu_tests \
     //tests/pallas:backend_independent_tests \
     //jaxlib/tools:check_gpu_wheel_sources_test \
-    "${TESTS_TO_IGNORE[@]}"
+    "${TESTS_TO_IGNORE[@]}" || bazel_retval=$?
+echo "::endgroup::" >&2
 
+echo "::group::Cleanup" >&2
 ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
 exit "${bazel_retval:-0}"
