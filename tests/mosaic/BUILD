@@ -41,6 +41,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = [
         "gpu_h100",
+        "gpu_h100_x32",
         "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
