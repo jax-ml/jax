@@ -11332,12 +11332,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     expected_out = jax.jit(jax.grad(lambda x: f(x).sum()))(jnp_inp)
     self.assertArraysEqual(reshard(out, P()), expected_out)
 
-  @jtu.run_on_devices('tpu', 'gpu')
   @jtu.with_explicit_mesh((8,), ('x',))
-  def test_dot_ag_pipeline_grad_tpu(self, mesh):
-    if not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Needs TPU version >= 5')
-
+  def test_dot_ag_pipeline_grad(self, mesh):
     def ag(x):
       assert jax.typeof(x).sharding.spec == P('x', None)
       return jax.reshard(x, P(reduced={'x'}))
@@ -11358,11 +11354,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def fsdp_pipe(f, x, ws):
-      w = jax.reshard(ws[0], P())
+      w = ag(ws[0])
       carry = (x, w)
       def body(carry, w_n_sharded):
         x, w = carry
-        w_n = jax.reshard(w_n_sharded, P())
+        w_n = ag(w_n_sharded)
         x = f(x, w)
         return (x, w_n), ()
       (x, w), () = jax.lax.scan(body, carry, ws[1:], unroll=2)  # !!
@@ -11421,8 +11417,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     fsdp_pipe.defvjp(fsdp_pipe_fwd, fsdp_pipe_bwd)
 
     f = jnp.dot
-    ws = jnp.ones((32, 1024, 1024), out_sharding=P(None, 'x', None))
-    x = jnp.ones((32 * 512 * 8, 1024), out_sharding=P('x', None))
+    ws = jnp.ones((32, 128, 128), out_sharding=P(None, 'x', None))
+    x = jnp.ones((32 * 32, 128), out_sharding=P('x', None))
 
     @jax.jit
     def g(x, ws):

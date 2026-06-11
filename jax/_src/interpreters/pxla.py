@@ -96,8 +96,11 @@ def shard_args(
     arg = args[0]
     if canonicalize:
       arg = dtypes.canonicalize_value(arg)
-    return shard_arg_handlers[type(arg)]([arg], shardings, layouts,
-                                         copy_semantics)
+    handler = shard_arg_handlers.get(type(arg), None)
+    if handler is None:
+      raise dtypes.InvalidInputException(
+          f"Argument of type {type(arg)} is not a valid JAX type.")
+    return handler([arg], shardings, layouts, copy_semantics)
 
   # type(arg) -> (list[indices], list[args], list[shardings], list[layouts],
   #               list[copy_semantics])
@@ -119,7 +122,7 @@ def shard_args(
   # indices to put each array back to its original position.
   results: list[typing.Array | None] = [None] * len(args)
   for t, (indices, a, s, l, xcs) in batches.items():
-    handler = shard_arg_handlers.get(t)
+    handler = shard_arg_handlers.get(t, None)
     if handler is None:
       raise dtypes.InvalidInputException(
           f"Argument of type {t} is not a valid JAX type.")
