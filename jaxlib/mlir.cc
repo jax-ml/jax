@@ -282,14 +282,7 @@ void BuildMlirSubmodule(nb::module_& m) {
   mlir_module.def(
       "serialize_portable_artifact",
       [](nb::any mlir_module, std::string_view target,
-         bool use_mixed_serialization) {
-#if JAX_IFRT_VERSION_NUMBER >= 54
-        // TODO(hyeontaek): Take a Sdy version as an argument to
-        // `serialize_portable_artifact()`.
-        const std::string sdy_version = xla::GetDefaultSdyVersion();
-#else
-        const std::string sdy_version = "unused";
-#endif
+         std::string_view sdy_version, bool use_mixed_serialization) {
         if (nb::isinstance<PyModule>(mlir_module)) {
           PyModule& module = nb::cast<PyModule&>(mlir_module);
           return xla::ValueOrThrow(PySerializePortableArtifact(
@@ -308,10 +301,11 @@ void BuildMlirSubmodule(nb::module_& m) {
         }
         throw nb::type_error("mlir_module must be bytes, str, or MlirModule");
       },
-      nb::arg("mlir_module"), nb::arg("target"),
+      nb::arg("mlir_module"), nb::arg("target"), nb::arg("sdy_version"),
       nb::arg("use_mixed_serialization") = false,
       nb::sig("def serialize_portable_artifact(mlir_module: typing.Any, "
-              "target: str, use_mixed_serialization: bool = False) -> bytes"));
+              "target: str, sdy_version: str, "
+              "use_mixed_serialization: bool = False) -> bytes"));
   mlir_module.def("deserialize_portable_artifact",
                   xla::ValueOrThrowWrapper(PyDeserializePortableArtifact),
                   nb::arg("mlir_module"), nb::arg("context") = nb::none(),

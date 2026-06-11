@@ -40,6 +40,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import linalg
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
@@ -916,8 +917,20 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   target_version = hlo.get_version_from_compatibility_requirement(
     hlo.StablehloCompatibilityRequirement.WEEK_4)
 
-  module_serialized = _jax.mlir.serialize_portable_artifact(
-      module, target_version, xb.get_backend().serialize_with_sdy)
+  if jaxlib_extension_version >= 467:
+    sdy_version = sdy.get_version_from_compatibility_requirement(
+        sdy.CompatibilityRequirement.WEEK_4
+    )
+    module_serialized = _jax.mlir.serialize_portable_artifact(
+        module,
+        target_version,
+        sdy_version,
+        xb.get_backend().serialize_with_sdy,
+    )
+  else:
+    module_serialized = _jax.mlir.serialize_portable_artifact(
+        module, target_version, xb.get_backend().serialize_with_sdy
+    )
   return module_serialized
 
 
