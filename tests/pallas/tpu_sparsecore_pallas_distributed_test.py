@@ -147,6 +147,8 @@ class DistributedMpmdTest(parameterized.TestCase):
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('SparseCore only supported on TPU v5+')
+    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
+      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
 
   def test_mpmd_reduce_scatter(self):
     P = jax.P

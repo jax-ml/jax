@@ -512,6 +512,8 @@ class StatePrimitivesTest(jtu.JaxTestCase):
   )
   def test_vmap(self, ref_shape, ref_bdim, idx_shape, indexed_dims,
                     idx_bdims, out_bdim, op):
+    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
+      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
     intx = dtypes.default_int_dtype()
     floatx = dtypes.default_float_dtype()
     axis_size = 7
@@ -1052,6 +1054,8 @@ class StateHypothesisTest(jtu.JaxTestCase):
                max_examples=jtu.NUM_GENERATED_CASES.value,
                suppress_health_check=[hp.HealthCheck.too_slow])
   def test_get_vmap(self, get_vmap_param: GetVmapParams):
+    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
+      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
 
     indexed_dims = get_vmap_param.vmap_index_param.index_param.indexed_dims
 
@@ -1094,6 +1098,8 @@ class StateHypothesisTest(jtu.JaxTestCase):
   def test_set_vmap(self, set_vmap_param: SetVmapParams):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Scatter is nondeterministic on GPU")
+    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
+      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
     indexed_dims = set_vmap_param.vmap_index_param.index_param.indexed_dims
 
     def f(ref, val, *non_slice_idx):
@@ -1139,6 +1145,8 @@ class StateHypothesisTest(jtu.JaxTestCase):
                max_examples=jtu.NUM_GENERATED_CASES.value,
                suppress_health_check=[hp.HealthCheck.too_slow])
   def test_addupdate_vmap(self, set_vmap_param: SetVmapParams):
+    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
+      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
 
     indexed_dims = set_vmap_param.vmap_index_param.index_param.indexed_dims
 
