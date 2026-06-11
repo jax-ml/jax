@@ -11441,6 +11441,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     jax.block_until_ready(g(x, ws))  # doesn't crash
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_percentile(self, mesh):
+    arr = jax.device_put(np.arange(100), P('x'))
+
+    @jax.jit
+    def f(x):
+      return jnp.percentile(x, 50, axis=0, out_sharding=P())
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

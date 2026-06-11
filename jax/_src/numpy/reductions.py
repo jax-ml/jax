@@ -35,6 +35,9 @@ from jax._src.lax import other as lax_other
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax import slicing as lax_slicing
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from jax._src.sharding_impls import (canonicalize_sharding, NamedSharding,
+                                     PartitionSpec as P)
+from jax._src.pjit import auto_axes
 from jax._src.util import canonicalize_axis, canonicalize_axis_tuple, maybe_named_axis, set_module
 from jax._src.numpy import indexing
 
@@ -2708,11 +2711,13 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
 
 @export
-@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
+@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method',
+                          'out_sharding'))
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
+               keepdims: bool = False, *, weights: ArrayLike | None = None,
+               out_sharding: NamedSharding | P | None = None) -> Array:
   """Compute the percentile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.percentile`.
@@ -2765,8 +2770,16 @@ def percentile(a: ArrayLike, q: ArrayLike,
   if weights is not None:
     weights = ensure_arraylike("percentile", weights)
   q, = promote_dtypes_inexact(q)
-  return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
-                  method=method, weights=weights, keepdims=keepdims)
+  def internal_quantile(x, y, w):
+    return quantile(x, y, axis=axis, out=out, overwrite_input=overwrite_input,
+                    method=method, keepdims=keepdims, weights=w)
+  if out_sharding is not None:
+    assert isinstance(out_sharding, (NamedSharding, P))
+    out_sharding = canonicalize_sharding(out_sharding, 'jnp.percentile')
+    return auto_axes(internal_quantile, out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes
+                     )(a, q / 100, weights)
+  return internal_quantile(a, q / 100, weights)
 
 
 @export
