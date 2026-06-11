@@ -343,6 +343,18 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         self.assertAllClose(osp_special.gammasgn(inp),
                             lsp_special.gammasgn(inp))
 
+  def testLoggammaZeroPole(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38240
+    # gamma has a simple pole at x=0, so loggamma(0) is +inf and must match
+    # scipy. rand_positive excludes 0 from the parameterized test above, so
+    # cover the pole explicitly here for both 0.0 and -0.0.
+    dtype = jnp.zeros(0).dtype  # default float dtype.
+    x = np.array([0.0, -0.0], dtype=dtype)
+    self.assertArraysEqual(lsp_special.loggamma(x),
+                           np.array([np.inf, np.inf], dtype=dtype))
+    self.assertAllClose(osp_special.loggamma(x), lsp_special.loggamma(x),
+                        check_dtypes=False)
+
   def testNdtriExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
     dtype = jnp.zeros(0).dtype  # default float dtype.
