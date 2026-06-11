@@ -397,17 +397,6 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "pallas_gpu",
-    visibility = [
-        ":pallas_triton_users",
-    ],
-    deps = [
-        ":pallas_triton",
-        # TODO(slebedev): Add :pallas_mosaic_gpu once it is ready.
-    ],
-)
-
-pytype_strict_library(
     name = "pallas_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
     type_checking = "pyrefly",
@@ -416,7 +405,7 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",
-        ":pallas_gpu",
+        ":pallas_triton",
         "//jax",
         "//jax/_src:lax",
     ] + py_deps("numpy"),
