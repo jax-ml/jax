@@ -2611,6 +2611,30 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     result = lax.associative_scan(operator.add, data, reverse=True)
     self.assertAllClose(result, expected, check_dtypes=False)
 
+  def testAssociativeScanNativeTransforms(self):
+    # Transforms of an elementwise-combiner associative_scan (the form that
+    # binds associative_scan_p with a native TPU lowering) fall back to the
+    # parallel-prefix decomposition; check vmap/jvp/grad against cumsum.
+    data = jnp.float32(np.arange(24).reshape(4, 6) % 7 + 1)
+
+    f = lambda x: lax.associative_scan(operator.add, x)
+    self.assertAllClose(
+        jax.vmap(f, in_axes=1, out_axes=1)(data),
+        jnp.cumsum(data, axis=0),
+        check_dtypes=False,
+    )
+
+    g = lambda x: lax.associative_scan(operator.add, x).sum()
+    row = data[:, 0]
+    primal, tangent = jax.jvp(g, (row,), (jnp.ones_like(row),))
+    self.assertAllClose(primal, jnp.cumsum(row).sum(), check_dtypes=False)
+    expected_tangent = jnp.sum(jnp.cumsum(jnp.ones_like(row)))
+    self.assertAllClose(tangent, expected_tangent, check_dtypes=False)
+
+    grads = jax.grad(g)(row)
+    expected_grads = jnp.arange(row.shape[0], 0, -1, dtype=row.dtype)
+    self.assertAllClose(grads, expected_grads, check_dtypes=False)
+
   def testAssociativeScanStructured3(self):
     pair = collections.namedtuple('pair', ('first', 'second'))
     data = pair(first=np.array([0., 1., 2.]),
