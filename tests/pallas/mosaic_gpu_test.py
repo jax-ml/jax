@@ -3560,13 +3560,14 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     else:
       cluster = (1, 2)
 
-    x = jnp.arange(2 * 256, dtype=jnp.float32).reshape(2, 256)
+    x = jnp.arange(2 * 64 * 32, dtype=jnp.float32).reshape(2, 64, 32)
+    transforms = self.default_transforms(dtype=jnp.float32)
 
     y = self.kernel(
         kernel,
-        out_type=jax.ShapeDtypeStruct((2, 256), jnp.float32),
+        out_type=jax.ShapeDtypeStruct((2, 64, 32), jnp.float32),
         scratch_types=[
-            plgpu.SMEM((256,), jnp.float32),
+            plgpu.SMEM((64, 32), jnp.float32, transforms=transforms),
             plgpu.Barrier(),
             plgpu.ClusterBarrier(collective_axes=(axis_name,)),
         ],

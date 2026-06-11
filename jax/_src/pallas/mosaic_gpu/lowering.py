@@ -1647,6 +1647,13 @@ def _commute_transform(
       assert isinstance(aval, jax_core.ShapedArray)
       new_reshape, new_untile = t1.commute_reshape(aval, t2)
       return new_reshape, new_untile
+    case (
+        gpu_core.UntilingTransform() | gpu_core.UnswizzleRef() as t1,
+        gpu_core.ClusterRefTransform()
+        | gpu_core.MulticastRef()
+        | gpu_core.PeerMemRef() as t2,
+    ):
+      return t2, t1
     case _:
       raise NotImplementedError(t1, t2)
 
