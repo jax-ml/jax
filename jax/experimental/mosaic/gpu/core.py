@@ -895,7 +895,7 @@ def _lower_as_gpu_kernel(
               or not is_nvshmem_available()
           )
       ):
-        num_params = len(arg_refs)
+        num_params = len(arg_refs) + len(inout_ref_tys)
         num_peers = jax_mesh.size
         metadata_ptr = llvm.load(
             ptr_ty, utils.getelementptr(buffers, [num_params], ptr_ty)
@@ -997,11 +997,14 @@ def _kernel_to_module(
 
   inout_shape = jax.tree.map(jax.ShapeDtypeStruct.like, inout_shape)
   out_shape = jax.tree.map(jax.ShapeDtypeStruct.like, out_shape)
+  jax_mesh = mesh_lib.get_concrete_mesh()
+  if jax_mesh.empty:
+    jax_mesh = mesh_lib.thread_resources.env.physical_mesh
   module, out_shape, unwrap_output_tuple, launch_ctx = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, inout_shape,
           smem_scratch_shape, thread_semantics, module_name, kernel_name,
-          prof_spec
+          prof_spec, jax_mesh=jax_mesh
       )
   )
 

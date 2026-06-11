@@ -111,7 +111,7 @@ jax_multiplatform_test(
         "gpu_h100x2",
         "gpu_b200x2",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0 --xla_gpu_experimental_enable_nvshmem=true"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = ["multiaccelerator"],
     deps = [
         "//jax/_src:test_multiprocess",
