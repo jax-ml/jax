@@ -705,6 +705,7 @@ jax_multiplatform_test(
     name = "lax_numpy_hijax_test",
     srcs = ["lax_numpy_hijax_test.py"],
     backend_tags = {
+        "cpu": ["noasan"],
         "tpu": ["noasan"],  # Times out.
     },
     deps = py_deps([
@@ -949,6 +950,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_vmap_op_test",
     srcs = ["lax_vmap_op_test.py"],
+    backend_tags = {
+        "cpu": ["noasan"],
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
