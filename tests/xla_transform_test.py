@@ -32,27 +32,21 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 
 
-@jtu.thread_unsafe_test_class()
-@unittest.skipIf(
-    lib.jaxlib_extension_version < 461,
-    "Requires jaxlib_extension_version >= 461",
-)
+@jtu.skip_under_pytest("Test mutates global state of compiler")
 class XlaTransformTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
     if jax.devices()[0].platform != "cpu":
       self.skipTest("Skipping test for non-CPU devices")
-    self._registered_transforms = []
-
-  def tearDown(self):
-    for name, stage in self._registered_transforms:
-      jex_xla.clear_hlo_module_transformation(name, stage)
-    super().tearDown()
 
   @parameterized.parameters(
       jex_xla.PipelineStage.PRE_SCHEDULER,
       jex_xla.PipelineStage.POST_SCHEDULER,
+  )
+  @unittest.skipIf(
+      lib.jaxlib_extension_version < 461,
+      "Requires jaxlib_extension_version >= 461",
   )
   def test_sin_to_cos(self, stage):
     """Register a pass that replaces sin ops with cos ops."""
@@ -77,13 +71,11 @@ class XlaTransformTest(jtu.JaxTestCase):
 
       return module.as_serialized_hlo_module_proto()
 
-    name = f"sin_to_cos_{stage.name}_test"
     jex_xla.register_hlo_module_transformation(
         sin_to_cos,
-        name=name,
+        name=f"sin_to_cos_{stage.name}_test",
         stage=stage,
     )
-    self._registered_transforms.append((name, stage))
 
     @jax.jit
     def f(x):
@@ -94,6 +86,10 @@ class XlaTransformTest(jtu.JaxTestCase):
     expected = jnp.cos(x)
     self.assertAllClose(result, expected, atol=1e-5)
 
+  @unittest.skipIf(
+      lib.jaxlib_extension_version < 461,
+      "Requires jaxlib_extension_version >= 461",
+  )
   def test_sin_to_cos_platform_filtering(self):
     """Register a pass for tpu only, compiling on cpu should not apply it."""
 
@@ -118,15 +114,12 @@ class XlaTransformTest(jtu.JaxTestCase):
 
     # Registering for "tpu" only. Since our test runs on "cpu", this pass
     # should NOT be executed.
-    name = "sin_to_cos_tpu_only_test"
-    stage = jex_xla.PipelineStage.PRE_SCHEDULER
     jex_xla.register_hlo_module_transformation(
         sin_to_cos,
-        name=name,
-        stage=stage,
+        name="sin_to_cos_tpu_only_test",
+        stage=jex_xla.PipelineStage.PRE_SCHEDULER,
         platforms="tpu",
     )
-    self._registered_transforms.append((name, stage))
 
     @jax.jit
     def f(x):
@@ -137,58 +130,6 @@ class XlaTransformTest(jtu.JaxTestCase):
     # Since it's compiled on CPU, it should still return sin(x), not cos(x).
     expected = jnp.sin(x)
     self.assertAllClose(result, expected, atol=1e-5)
-
-  def test_clear_transform(self):
-    """Register a pass, verify it applies, clear it, verify it doesn't apply."""
-
-    def sin_to_cos(serialized_hlo: bytes) -> bytes | None:
-      module = _hlo.HloModule.from_serialized_hlo_module_proto(serialized_hlo)
-      changed = False
-
-      for comp in module.computations():
-        for inst in comp.instructions():
-          if inst.opcode == _hlo.HloOpcode.kSin:
-            operand = inst.operands()[0]
-            new_inst = comp.create_unary_instruction(
-                _hlo.HloOpcode.kCos, operand
-            )
-            comp.replace_instruction(inst, new_inst)
-            changed = True
-
-      if not changed:
-        return None
-
-      return module.as_serialized_hlo_module_proto()
-
-    name = "sin_to_cos_clear_test"
-    stage = jex_xla.PipelineStage.PRE_SCHEDULER
-
-    jex_xla.register_hlo_module_transformation(
-        sin_to_cos,
-        name=name,
-        stage=stage,
-    )
-    self._registered_transforms.append((name, stage))
-
-    @jax.jit
-    def f(x):
-      return jnp.sin(x)
-
-    x = jnp.array([0.0, 1.0, 2.0])
-
-    # 1. Verify it applies.
-    self.assertAllClose(f(x), jnp.cos(x), atol=1e-5)
-
-    # 2. Clear it.
-    cleared = jex_xla.clear_hlo_module_transformation(name, stage)
-    self.assertTrue(cleared)
-    self._registered_transforms.remove((name, stage))
-
-    # Clear JIT cache to force recompilation.
-    f.clear_cache()
-
-    # 3. Verify it does NOT apply anymore.
-    self.assertAllClose(f(x), jnp.sin(x), atol=1e-5)
 
 
 def layernorm(x, eps=1e-5):
@@ -245,21 +186,7 @@ def sharded_mlp_model(x, params, mesh, activation):
   return x
 
 
-@jtu.thread_unsafe_test_class()
-@unittest.skipIf(
-    lib.jaxlib_extension_version < 461,
-    "Requires jaxlib_extension_version >= 461",
-)
 class XlaTransformE2ETest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    self._registered_transforms = []
-
-  def tearDown(self):
-    for name, stage in self._registered_transforms:
-      jex_xla.clear_hlo_module_transformation(name, stage)
-    super().tearDown()
 
   # Pre-scheduler XLA transformation: replaces all sin ops with cos.
   def sin_to_cos(self, serialized_hlo: bytes) -> bytes | None:
@@ -372,30 +299,26 @@ class XlaTransformE2ETest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("tpu")
   def test_transformer_schedule_async_ops_sharded(self):
+    if lib.jaxlib_extension_version < 461:
+      self.skipTest("Requires jaxlib_extension_version >= 461")
     if not jtu.is_cloud_tpu_at_least(2026, 6, 10):
       self.skipTest("Requires newer libtpu")
 
     # Register the pre-scheduler transformation.
-    name_pre = "schedule_async_ops_test_pre_scheduler_transformation"
-    stage_pre = jex_xla.PipelineStage.PRE_SCHEDULER
     jex_xla.register_hlo_module_transformation(
         self.sin_to_cos,
-        name=name_pre,
-        stage=stage_pre,
+        name="schedule_async_ops_test_pre_scheduler_transformation",
+        stage=jex_xla.PipelineStage.PRE_SCHEDULER,
         platforms="tpu",
     )
-    self._registered_transforms.append((name_pre, stage_pre))
 
     # Register the post-scheduler transformation.
-    name_post = "schedule_async_ops_test_post_scheduler_transformation"
-    stage_post = jex_xla.PipelineStage.POST_SCHEDULER
     jex_xla.register_hlo_module_transformation(
         self.schedule_async_ops,
-        name=name_post,
-        stage=stage_post,
+        name="schedule_async_ops_test_post_scheduler_transformation",
+        stage=jex_xla.PipelineStage.POST_SCHEDULER,
         platforms="tpu",
     )
-    self._registered_transforms.append((name_post, stage_post))
 
     # Setup Mesh
     num_devices = jax.local_device_count()
