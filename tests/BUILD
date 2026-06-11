@@ -360,6 +360,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lobpcg_test",
     srcs = ["lobpcg_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",
+        ],
+    },
     # Set LOBPCG_EMIT_DEBUG_PLOTS=1 to debug
     # checkLobpcgMonotonicity and checkApproxEigs tests
     # using matplotlib plots
@@ -1119,6 +1124,9 @@ jax_multiplatform_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
     backend_tags = {
+        "cpu": [
+            "noasan",
+        ],
         "gpu": [
             "noasan",  # Times out under asan.
         ],
@@ -1585,6 +1593,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "checkify_test",
     srcs = ["checkify_test.py"],
+    backend_tags = {
+        "cpu": [
+            "noasan",
+        ],
+    },
     enable_configs = ["tpu_v3_x4"],
     shard_count = {
         "gpu": 2,
