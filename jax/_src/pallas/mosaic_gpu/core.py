@@ -246,8 +246,8 @@ def kernel(
     body: Callable[..., None] | api.NotSpecified = api.NotSpecified(),
     out_shape: object | api.NotSpecified = api.NotSpecified(),
     *,
-    out_type: object = (),
-    scratch_types: ScratchShapeTree = (),
+    out_type: object | api.NotSpecified = api.NotSpecified(),
+    scratch_types: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
     scratch_shapes: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
     compiler_params: pallas_core.CompilerParams | None = None,
     # Mesh kwargs
@@ -313,18 +313,35 @@ def kernel(
         **mesh_kwargs,
     )
 
-  # NOTE: We should ideally check that at most one of ``*_shape`` and ``*_type``
-  # args are specified, but it seems very unlikely anyone will pass both.
-  if not isinstance(out_shape, api.NotSpecified):
+  if (
+      not isinstance(out_shape, api.NotSpecified)
+      or not isinstance(scratch_shapes, api.NotSpecified)
+  ):
     deprecations.warn(
         "jax-pallas-mgpu-shapes-types",
         "The out_shape and scratch_shapes arguments to plgpu.kernel are"
         " deprecated. Use out_type and scratch_types instead.",
         stacklevel=2,
     )
+
+  if not isinstance(out_shape, api.NotSpecified):
+    if not isinstance(out_type, api.NotSpecified):
+      raise ValueError(
+          "Cannot specify both out_shape and out_type. Use out_type."
+      )
     out_type = out_shape
+  elif isinstance(out_type, api.NotSpecified):
+    out_type = ()
+
   if not isinstance(scratch_shapes, api.NotSpecified):
+    if not isinstance(scratch_types, api.NotSpecified):
+      raise ValueError(
+          "Cannot specify both scratch_shapes and scratch_types. Use"
+          " scratch_types."
+      )
     scratch_types = scratch_shapes
+  elif isinstance(scratch_types, api.NotSpecified):
+    scratch_types = ()
 
   if unwrap_out := not isinstance(out_type, (tuple, list)):
     out_type = (out_type,)
