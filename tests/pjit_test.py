@@ -3637,16 +3637,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertEmpty(jaxpr.consts)
       self.assertIs(const, inner_pjit_jaxpr.consts[0])
 
-  def test_lowering_cache_hit_with_closed_over_constants_jit(self):
+  @parameterized.named_parameters(
+      ("hoist", True),
+      ("no_hoist", False),
+  )
+  def test_lowering_cache_hit_with_closed_over_constants_jit(self, hoist):
     np_inp = np.arange(8)
     arr = jnp.arange(8)
     np_const = np.arange(9)  # distinctive shape
     arr_const = jnp.arange(10)  # distinctive shape
+    if not config.use_simplified_jaxpr_constants.value and hoist:
+      self.skipTest("Hoisting works only with use_simplified_jaxpr_constants")
+    self.enterContext(
+      config.embedded_constants_max_bytes(0 if hoist else arr_const.nbytes))
+
     @jax.jit
     def f(x):
       return x + np_const[:8] + arr_const[:8]
 
-    # all misses
     self.assertCacheMisses(lambda: f(np_inp), cpp=1)
     # all hits
     self.assertCacheMisses(lambda: f(np_inp), cpp=0, tracing=0, lowering=0)
@@ -3679,9 +3687,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # Hits the lowering cache when using the AOT
     self.assertCacheMisses(lambda: f.lower(inp), cpp=0, tracing=0, lowering=0)
 
-  @jtu.thread_unsafe_test()
-  def test_lowering_cache_hit_with_closed_over_constants_scan(self):
+  @parameterized.named_parameters(
+      ("hoist", True),
+      ("no_hoist", False),
+  )
+  def test_lowering_cache_hit_with_closed_over_constants_scan(self, hoist):
     np_inp = np.arange(8)
+    if not config.use_simplified_jaxpr_constants.value and hoist:
+      self.skipTest("Hoisting works only with use_simplified_jaxpr_constants")
+    self.enterContext(
+      config.embedded_constants_max_bytes(0 if hoist else np_inp.nbytes))
 
     @jax.jit
     def scan_body(carry, x):
@@ -3692,6 +3707,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return lax.scan(scan_body, np.zeros_like(np_inp),
                       np.ones((8,), dtype=np.float32))
 
+    # all misses
     self.assertCacheMisses(f, cpp=1, lowering=1)
     self.assertCacheMisses(f, cpp=0, tracing=0, lowering=0)
     # Run the scan body directly

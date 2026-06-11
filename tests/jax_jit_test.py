@@ -250,8 +250,8 @@ class JaxJitTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", True)
   def test_check_for_large_number_of_constants_old(self):
-    y = jnp.ones((128, 128))
-    x = jnp.zeros((128,))
+    y = jnp.ones((128, 128), dtype=np.float32)
+    x = jnp.zeros((128,), dtype=np.float32)
 
     def jit_maker(): # need to ensure we lower at each test
       def func(x):
@@ -272,8 +272,8 @@ class JaxJitTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
   def test_check_for_large_number_of_constants_new(self):
     self.enter_context(config.embedded_constants_max_bytes(4))
-    y = np.ones((128, 128))
-    x = jnp.zeros((128,))
+    y = np.ones((128, 128), dtype=np.float32)
+    x = jnp.zeros((128,), dtype=np.float32)
 
     def jit_maker(): # need to ensure we lower at each test
       def my_func(x):
