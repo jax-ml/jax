@@ -4084,6 +4084,46 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
 
   @parameterized.product(
+      # minor dim is aligned to 128
+      shape=((2, 128), (8, 128), (16, 256), (64, 256)),
+      shift=(0, 2, 3, 129),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8),
+      stride=(1, 2),
+  )
+  def test_roll_static_lane_shift_with_stride_and_aligned_shape(
+      self, shape, shift, dtype, stride
+  ):
+    if not jtu.is_cloud_tpu_at_least(2026, 6, 18):
+      self.skipTest('Needs a newer libtpu')
+    # if stride is too large, the max shift on a row will exceed the column dim.
+    if not jtu.is_device_tpu_at_least(5) or stride * shape[0] >= 128:
+      self.skipTest('Requires TPU v5+ and not too large stride.')
+    if dtype == jnp.int8 and not jtu.is_device_tpu_at_least(6):
+      self.skipTest('8-bit types require TPU v6+.')
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = pltpu.roll(
+          x_ref[...],
+          shift=shift,
+          axis=1,
+          stride=stride,
+          stride_axis=0,
+      )
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x)
+    split_x = np.split(x, x.shape[0], axis=0)
+    rolled_splits = [
+        np.roll(split_x[i], shift + i * stride, axis=1)
+        for i in range(len(split_x))
+    ]
+    expected = np.concatenate(rolled_splits, axis=0)
+    np.testing.assert_array_equal(out, expected)
+
+  @parameterized.product(
       shape_and_axis=(((128, 64), 1), ((63, 256), 0)),
   )
   def test_roll_partial_with_dynamic_shift(
