@@ -470,7 +470,12 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     key0, key1 = jax.random.split(jax.random.key(0), 2)
     if is_int_op:
       info = jnp.iinfo(dtype)
-      x = jnp.linspace(info.min, info.max, 256, dtype=dtype)
+      x = jnp.linspace(
+          jnp.array(info.min, dtype=dtype),
+          jnp.array(info.max, dtype=dtype),
+          256,
+          dtype=dtype,
+      )
       y = jnp.linspace(0, (jax.dtypes.itemsize_bits(dtype)) - 1, 256, dtype=dtype)
     else:
       x = (jax.random.uniform(key0, [256]) * 42 - 21).astype(dtype)
