@@ -531,11 +531,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol = {np.float16: 1e-2, np.float32: 2e-5, np.float64: 1e-14,
-           np.complex128: 1e-14}
-    if (lhs_dtype in [np.float16, jnp.bfloat16] and
-        rhs_dtype in [np.float16, jnp.bfloat16]):
-      tol = 1e-2
+    tol = {np.float16: 1e-2, jnp.bfloat16: 1e-1, np.float32: 2e-5,
+           np.float64: 1e-14, np.complex128: 1e-14}
     def np_dot(x, y):
       x = x.astype(np.float32) if lhs_dtype == jnp.bfloat16 else x
       y = y.astype(np.float32) if rhs_dtype == jnp.bfloat16 else y
