@@ -74,10 +74,10 @@ jax_multiplatform_test(
         "//jax/_src:shard_map",
         "//jax/experimental:checkify",
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_gpu",
         "//jax/experimental:pallas_gpu_ops",
         "//jax/experimental:pallas_tpu",
         "//jax/experimental:pallas_tpu_ops",
+        "//jax/experimental:pallas_triton",
     ] + py_deps([
         "numpy",
         "absl/testing",
