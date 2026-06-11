@@ -2601,3 +2601,6 @@ def raise_lo_outs(hi_avals, lo_outs):
   hi_outs = [t.raise_val(*it.islice(lo_outs_, len(t.lo_ty()))) for t in hi_avals]
   assert next(lo_outs_, None) is None
   return hi_outs
+
+def num_himuts_out(final_qdds):
+  return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
