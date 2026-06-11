@@ -29,6 +29,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import flattree as ft
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import api_util
@@ -47,7 +48,7 @@ from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry, FlatTree)
+    tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry)
 from jax._src.typing import DeprecatedArg
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
@@ -487,9 +488,9 @@ def _trace_to_jaxpr(fun: Callable,
                     in_avals: Sequence[core.AbstractValue],
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
-  in_avals_flat_tree = FlatTree(in_avals, in_tree, False)
+  ak = ft.flatten_args_and_kwargs(*in_tree.unflatten(in_avals))
   try:
-    closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals_flat_tree, debug)
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, ak, debug)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -826,9 +827,8 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     return in_cts_nz
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  in_avals_flat_tree = FlatTree.flatten((tuple(in_avals), {}))
-  transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
-      transposed, in_avals_flat_tree, dbg)
+  ak = ft.flatten_args(*in_avals)
+  transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(transposed, ak, dbg)
   return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
@@ -1012,15 +1012,15 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
     return partial(_remat3, policy, static_argnums, static_argnames, f)
 
 def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
-  args_ft = FlatTree.flatten_static_argnums_argnames(
+  ak = ft.flatten_args_and_kwargs(
       args, kwargs, static_argnums, static_argnames)
-  avals_ft = args_ft.map(typeof)
+  avals = ak.map(typeof)
   dbg = api_util.debug_info(
       'remat3', f, args, kwargs, static_argnums=static_argnums,
       static_argnames=static_argnames)
-  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals, dbg)
   jaxpr, consts = pe.separate_consts(jaxpr_)
-  out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
+  out_flat = RematTraced(jaxpr, policy)(*consts, *ak)
   return out_avals_ft.update(out_flat).unflatten()
 
 def dce(traced):
@@ -1142,8 +1142,7 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
   helper.defvjp(f2, lambda res, g: (None, *fbwd(res, g)))
   def call(*args, **kwargs):
-    args_ft = FlatTree.flatten_static_argnums_argnames(
-        args, kwargs, static_argnums, static_argnames)
+    args_ft = ft.flatten_args_and_kwargs(args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
     dbg = api_util.debug_info(
         'custom_remat', f, args, kwargs, static_argnums=static_argnums,

@@ -43,7 +43,8 @@ from jax._src.util import safe_zip, safe_map, split_list, unzip2
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, tree_map_with_path, keystr,
-    tracing_registry, FlatTree)
+    tracing_registry)
+from jax._src import flattree as ft
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
