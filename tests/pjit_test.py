@@ -38,6 +38,7 @@ from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax._src import literals
 from jax._src import pretty_printer as pp
+from jax._src.compute_on import compute_on2
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
@@ -11314,6 +11315,189 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     expected_out = jax.jit(jax.grad(lambda x: f(x).sum()))(jnp_inp)
     self.assertArraysEqual(reshard(out, P()), expected_out)
+
+  @jtu.run_on_devices('tpu')
+  @jtu.with_explicit_mesh((8,), ('x',))
+  def test_dot_ag_pipeline_grad_tpu(self, mesh):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Needs TPU version >= 5')
+
+    @compute_on2(compute_type='tpu_sparsecore',
+                 out_memory_spaces=jax.memory.Space.Device,
+                 compiler_options={'sparse_core_config': {'core_ids': [0]}})
+    def ag(x):
+      assert jax.typeof(x).sharding.spec == P('x', None)
+      return jax.reshard(x, P(reduced={'x'}))
+
+    @compute_on2(compute_type='tpu_sparsecore',
+                 out_memory_spaces=jax.memory.Space.Device,
+                 compiler_options={'sparse_core_config': {'core_ids': [1]}})
+    def rs(x):
+      assert jax.typeof(x).sharding.spec == P(None, None, unreduced={'x'})
+      return jax.reshard(x, P('x'))
+
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def fsdp_pipe(f, x, ws):
+      w = jax.reshard(ws[0], P())
+      carry = (x, w)
+      def body(carry, w_n_sharded):
+        x, w = carry
+        w_n = jax.reshard(w_n_sharded, P())
+        x = f(x, w)
+        return (x, w_n), ()
+      (x, w), () = jax.lax.scan(body, carry, ws[1:], unroll=2)  # !!
+      x = f(x, w)
+      return x
+
+    def fsdp_pipe_fwd(f, x, ws):
+      w = ag(ws[0])
+      x, f_vjp_first = jax.vjp(f, x, w)
+      f_vjp_first.args_res[1] = None  # could instead use remat
+
+      w1 = ag(ws[1])
+      carry = (x, w1)
+      def body(carry, w_n_sharded):
+        x, w = carry
+        w_n = ag(w_n_sharded)
+
+        x, f_vjp = jax.vjp(f, x, w)
+        f_vjp.args_res[1] = None
+
+        return (x, w_n), f_vjp
+      (x, w_last), f_vjps = jax.lax.scan(body, carry, ws[2:], unroll=2)  # !!
+      x, f_vjp_last = jax.vjp(f, x, w_last)
+      f_vjp_last.args_res[1] = None
+      return x, (f_vjp_first, f_vjps, f_vjp_last, ws)
+
+    def fsdp_pipe_bwd(_, res, x_bar):
+      f_vjp_first, f_vjps, f_vjp_last, ws = res
+
+      w_m1 = ag(ws[-1])
+      f_vjp_last.args_res[1] = w_m1
+      x_bar, w_m1_bar_unreduced = f_vjp_last(x_bar)
+
+      w_m2 = ag(ws[-2])
+      carry = (x_bar, w_m2, w_m1_bar_unreduced)
+
+      def body(carry, f_vjp_and_w_m1_sharded):
+        y_bar, w, w_p1_bar_unreduced = carry
+        f_vjp, w_m1_sharded = f_vjp_and_w_m1_sharded
+        w_m1 = ag(w_m1_sharded)
+        f_vjp.args_res[1] = w
+        x_bar, w_bar_unreduced = f_vjp(y_bar)
+        w_p1_bar_sharded = rs(w_p1_bar_unreduced)
+        return (x_bar, w_m1, w_bar_unreduced), w_p1_bar_sharded
+
+      (x_bar, w_0, w_1_bar_unreduced), ws_bar = \
+          jax.lax.scan(body, carry, (f_vjps, ws[:-2]), reverse=True, unroll=2)
+
+      f_vjp_first.args_res[1] = w_0
+      x_bar, w_0_bar_unreduced = f_vjp_first(x_bar)
+      w_1_bar = rs(w_1_bar_unreduced)
+      w_0_bar = rs(w_0_bar_unreduced)
+      ws_bar = jnp.concatenate([w_0_bar[None], w_1_bar[None], ws_bar], axis=0)
+      return x_bar, ws_bar
+
+    fsdp_pipe.defvjp(fsdp_pipe_fwd, fsdp_pipe_bwd)
+
+    f = jnp.dot
+    ws = jnp.ones((32, 1024, 1024), out_sharding=P(None, 'x', None))
+    x = jnp.ones((32 * 512 * 8, 1024), out_sharding=P('x', None))
+
+    @jax.jit
+    def g(x, ws):
+      y, f_vjp = jax.vjp(partial(fsdp_pipe, f), x, ws)
+      return f_vjp(y)
+
+    print(g.lower(x, ws).as_text())
+    jax.block_until_ready(g(x, ws))
+
+  @jtu.run_on_devices('gpu')
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_dot_ag_pipeline_grad_gpu(self, mesh):
+    def ag(x):
+      assert jax.typeof(x).sharding.spec == P('x', None)
+      return jax.reshard(x, P(reduced={'x'}))
+
+    def rs(x):
+      assert jax.typeof(x).sharding.spec == P(None, None, unreduced={'x'})
+      return jax.reshard(x, P('x'))
+
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def fsdp_pipe(f, x, ws):
+      w = jax.reshard(ws[0], P())
+      carry = (x, w)
+      def body(carry, w_n_sharded):
+        x, w = carry
+        w_n = jax.reshard(w_n_sharded, P())
+        x = f(x, w)
+        return (x, w_n), ()
+      (x, w), () = jax.lax.scan(body, carry, ws[1:], unroll=2)  # !!
+      x = f(x, w)
+      return x
+
+    def fsdp_pipe_fwd(f, x, ws):
+      w = ag(ws[0])
+      x, f_vjp_first = jax.vjp(f, x, w)
+      f_vjp_first.args_res[1] = None  # could instead use remat
+
+      w1 = ag(ws[1])
+      carry = (x, w1)
+      def body(carry, w_n_sharded):
+        x, w = carry
+        w_n = ag(w_n_sharded)
+
+        x, f_vjp = jax.vjp(f, x, w)
+        f_vjp.args_res[1] = None
+
+        return (x, w_n), f_vjp
+      (x, w_last), f_vjps = jax.lax.scan(body, carry, ws[2:], unroll=2)  # !!
+      x, f_vjp_last = jax.vjp(f, x, w_last)
+      f_vjp_last.args_res[1] = None
+      return x, (f_vjp_first, f_vjps, f_vjp_last, ws)
+
+    def fsdp_pipe_bwd(_, res, x_bar):
+      f_vjp_first, f_vjps, f_vjp_last, ws = res
+
+      w_m1 = ag(ws[-1])
+      f_vjp_last.args_res[1] = w_m1
+      x_bar, w_m1_bar_unreduced = f_vjp_last(x_bar)
+
+      w_m2 = ag(ws[-2])
+      carry = (x_bar, w_m2, w_m1_bar_unreduced)
+
+      def body(carry, f_vjp_and_w_m1_sharded):
+        y_bar, w, w_p1_bar_unreduced = carry
+        f_vjp, w_m1_sharded = f_vjp_and_w_m1_sharded
+        w_m1 = ag(w_m1_sharded)
+        f_vjp.args_res[1] = w
+        x_bar, w_bar_unreduced = f_vjp(y_bar)
+        w_p1_bar_sharded = rs(w_p1_bar_unreduced)
+        return (x_bar, w_m1, w_bar_unreduced), w_p1_bar_sharded
+
+      (x_bar, w_0, w_1_bar_unreduced), ws_bar = \
+          jax.lax.scan(body, carry, (f_vjps, ws[:-2]), reverse=True, unroll=2)
+
+      f_vjp_first.args_res[1] = w_0
+      x_bar, w_0_bar_unreduced = f_vjp_first(x_bar)
+      w_1_bar = rs(w_1_bar_unreduced)
+      w_0_bar = rs(w_0_bar_unreduced)
+      ws_bar = jnp.concatenate([w_0_bar[None], w_1_bar[None], ws_bar], axis=0)
+      return x_bar, ws_bar
+
+    fsdp_pipe.defvjp(fsdp_pipe_fwd, fsdp_pipe_bwd)
+
+    f = jnp.dot
+    ws = jnp.ones((32, 1024, 1024), out_sharding=P(None, 'x', None))
+    x = jnp.ones((32 * 512 * 16, 1024), out_sharding=P('x', None))
+
+    @jax.jit
+    def g(x, ws):
+      y, f_vjp = jax.vjp(partial(fsdp_pipe, f), x, ws)
+      return f_vjp(y)
+
+    print(g.lower(x, ws).as_text())
+    jax.block_until_ready(g(x, ws))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
