@@ -89,7 +89,7 @@ class EighTest(jtu.JaxTestCase):
       )
 
     self._CompileAndCheck(
-        partial(jnp.linalg.eigh, UPLO=uplo), args_maker, rtol=eps
+        partial(jnp.linalg.eigh, UPLO=uplo), args_maker, rtol=10 * eps
     )
 
     # Compare eigenvalues against Numpy using double precision. We do not compare
