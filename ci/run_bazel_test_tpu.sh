@@ -36,8 +36,8 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"

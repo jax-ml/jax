@@ -1,0 +1,111 @@
+name: Documentation
+
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main branches.
+  cancel-in-progress: ${{ github.ref != 'main' }}
+
+env:
+  UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  UV_MANAGED_PYTHON: true  # Make sure `uv` uses its own Python installations
+  PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  # Print cache hits/misses for setup-uv-python Python and packages,
+  # as well as timing, in summaries. For packages, time taken has to be echo'ed
+  # separately in the workflow step.
+  CI_UV_DEBUG: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  documentation:
+    name: Documentation - test code snippets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.12']
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      with:
+        persist-credentials: false
+    - name: Set up Python ${{ matrix.python-version }}
+      id: setup_python
+      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
+      run: |
+        PKG_INSTALL_START_TIME=$(date +%s)
+        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
+        echo "### documentation dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
+    - name: Test documentation
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
+        XLA_FLAGS: "--xla_force_host_platform_device_count=8"
+        JAX_TRACEBACK_FILTERING: "off"
+        JAX_ARRAY: 1
+        PY_COLORS: 1
+      run: |
+        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
+        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/triton.py --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib
+
+  documentation_render:
+    if: github.repository_owner == 'jax-ml'
+    name: Documentation - render documentation
+    runs-on: linux-x86-n4-16
+    container:
+      image: index.docker.io/library/ubuntu@sha256:4e0171b9275e12d375863f2b3ae9ce00a4c53ddda176bd55868df97ac6f21a6e #  ratchet:ubuntu:22.04
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ['3.12']
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      with:
+        persist-credentials: false
+    - name: Image Setup
+      run: |
+        apt update
+        apt install -y build-essential
+    - name: Set up Python ${{ matrix.python-version }}
+      id: setup_python
+      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
+      run: |
+        PKG_INSTALL_START_TIME=$(date +%s)
+        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
+        echo "### documentation_render dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
+    - name: Render documentation
+      env:
+        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
+      run: |
+        $PYTHON_BIN build/portserver.py &
+        SERVER_PID=$!
+        # Stop the background portserver even if Sphinx exits with an error.
+        cleanup_portserver() {
+          kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+        }
+        trap cleanup_portserver EXIT
+        PORTSERVER_ADDRESS=@unittest-portserver $PYTHON_BIN -m sphinx -j auto --color -W --keep-going -b html docs docs/build/html

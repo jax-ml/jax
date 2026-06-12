@@ -96,7 +96,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "${{ inputs.tpu-type }}, py ${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
+    name: "${{ inputs.tpu-type }}, py${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}, jaxlib=${{ inputs.jaxlib-version }}"
     # End Presubmit Naming Check github-tpu-presubmits
 
     env:

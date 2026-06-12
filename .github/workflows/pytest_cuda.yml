@@ -65,7 +65,7 @@ jobs:
                 inputs.use-nvidia-pip-wheels && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'}}
     name: "${{ (contains(inputs.runner, 'h100') && 'h100') ||
         (contains(inputs.runner, 'b200') && 'b200') ||
-        (contains(inputs.runner, 'l4') && 'l4') }}, CUDA ${{ inputs.cuda-version }}, py ${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
+        (contains(inputs.runner, 'l4') && 'l4') }}, CUDA ${{ inputs.cuda-version }}, py${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
