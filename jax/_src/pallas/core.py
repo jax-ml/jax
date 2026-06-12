@@ -1620,7 +1620,7 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, interpret, **kwargs):
     if kernel_local_effects.contains(eff):
       continue
     if isinstance(eff, effects.JaxprInputEffect):
-      if eff.input_index < len(jaxpr.constvars):
+      if eff.input_index in jaxpr.constvars:
         effs.add(eff)
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
@@ -1734,10 +1734,10 @@ def default_mesh_discharge_rule(
     )
 
   modified_idxs = sorted(
-      eff.input_index
+      jaxpr.constvars.index(eff.input_index)
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
-      and eff.input_index < len(in_avals)
+      and eff.input_index in jaxpr.constvars
   )
   default_memory_space = mesh.default_memory_space
   in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]

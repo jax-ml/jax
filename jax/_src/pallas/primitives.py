@@ -712,6 +712,7 @@ def run_scoped(
   # there.
   with config.mutable_array_checks(False):
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
+
   out = run_scoped_p.bind(*consts,
                           jaxpr=jaxpr,
                           collective_axes=collective_axes,
@@ -722,18 +723,39 @@ def run_scoped(
 @run_scoped_p.def_effectful_abstract_eval
 def _run_scoped_abstract_eval(*args, jaxpr, collective_axes, **_):
   del args, collective_axes
-  # jaxpr will have effects for its inputs (Refs that are allocated) and for
-  # constvars (closed over Refs). The effects for the allocated Refs are local
-  # to the jaxpr and shouldn't propagate out.
   nonlocal_effects = {
       eff
       for eff in jaxpr.effects
       if not (
           isinstance(eff, effects.JaxprInputEffect)
-          and eff.input_index >= len(jaxpr.constvars)
+          and eff.input_index in jaxpr.invars
       )
   }
   return [v.aval for v in jaxpr.outvars], nonlocal_effects
+
+
+def _run_scoped_effect_mapping(
+    params, invars, eqn_effects, outer_constid_to_var
+):
+  del outer_constid_to_var  # Unused.
+  inner_jaxpr = params.get("jaxpr")
+  if inner_jaxpr is None:
+    return eqn_effects
+  mapped_effects = set()
+  for eff in eqn_effects:
+    if isinstance(eff, effects.JaxprInputEffect):
+      if isinstance(eff.input_index, jax_core.Var):
+        if eff.input_index in inner_jaxpr.constvars:
+          idx = inner_jaxpr.constvars.index(eff.input_index)
+          mapped_effects.add(eff.replace(input_index=invars[idx]))
+      else:
+        mapped_effects.add(eff)
+    else:
+      mapped_effects.add(eff)
+  return mapped_effects
+
+
+jax_core.custom_effect_mapping_rules[run_scoped_p] = _run_scoped_effect_mapping
 
 
 def _run_scoped_discharge_rule(

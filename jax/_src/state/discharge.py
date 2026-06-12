@@ -82,7 +82,6 @@ def discharge_state(
     should_discharge = (should_discharge,) * len(closed_jaxpr.in_avals)
   return _discharge_state(closed_jaxpr, tuple(should_discharge), lower)
 
-@weakref_lru_cache
 def _discharge_state(
     closed_jaxpr: core.ClosedJaxpr,
     should_discharge: tuple[bool, ...],
@@ -723,31 +722,26 @@ def _run_state_abstract_eval(*avals: core.AbstractValue, jaxpr: core.Jaxpr,
   # input avals are `Ref`s and which are not. If an aval is a `Ref`, we want to
   # "propagate" out its inner effects. Otherwise, the effects are local to this
   # `run_state`.
-  inner_to_outer_aval_mapping = {}
-  outer_ref_index = 0
+  inner_to_outer_idx = {}
+  outer_idx = 0
   for i, is_init in enumerate(is_initialized):
-    if not is_init:
-      pass
-    inner_to_outer_aval_mapping[i] = outer_ref_index
-    outer_ref_index += 1
+    if is_init:
+      inner_to_outer_idx[i] = outer_idx
+      outer_idx += 1
   nonlocal_effects = set()
   is_ref = {i for i, aval in enumerate(avals) if isinstance(aval, AbstractRef)}
-  for eff in jaxpr.effects:
+  for eff in core.jaxpr_effects_indices(jaxpr):
     if not isinstance(eff, RefEffect):
       nonlocal_effects.add(eff)
       continue
-    if eff.input_index not in inner_to_outer_aval_mapping:
-      # This means that this effect corresponds to an uninitialized Ref and
-      # should not propagate out of the primitive.
+    inner_idx = eff.input_index
+    if inner_idx not in inner_to_outer_idx:
+      # Uninitialized, ignore
       continue
-    # If we do propagate the effect, we need to update the input index to
-    # correspond to the outer index.
-    outer_index = inner_to_outer_aval_mapping[eff.input_index]
+
+    outer_index = inner_to_outer_idx[inner_idx]
     if outer_index in is_ref:
-      # This means that the effect corresponds to a Ref from an outside scope.
-      nonlocal_effects.add(
-          eff.replace(input_index=inner_to_outer_aval_mapping[eff.input_index])
-      )
+      nonlocal_effects.add(eff.replace(input_index=outer_index))
   assert len(jaxpr.invars) == len(is_initialized)
   if not all(is_initialized):
     raise NotImplementedError  # Uninitialized refs are not in avals.

@@ -572,6 +572,67 @@ def _call_hi_primitive_typecheck(_ctx_factory, *in_atoms_flat, _prim):
   return _prim.out_avals_flat, _prim.effects
 core.custom_typechecks[call_hi_primitive_p] = _call_hi_primitive_typecheck
 
+
+def _call_hi_primitive_effect_mapping_rule(
+    params, invars, effects, outer_constid_to_var
+):
+  _prim = params["_prim"]
+  inner_jaxpr = getattr(_prim, "jaxpr", None)
+
+  if inner_jaxpr is None:
+    converted_effects = set()
+    for eff in effects:
+      if isinstance(eff, core.JaxprInputEffect) and isinstance(
+          eff.input_index, int
+      ):
+        if eff.input_index < len(invars):
+          eff = eff.replace(input_index=invars[eff.input_index])
+          converted_effects.add(eff)
+      else:
+        converted_effects.add(eff)
+    return converted_effects
+
+  raw_jaxpr = (
+      inner_jaxpr.jaxpr
+      if isinstance(inner_jaxpr, core.ClosedJaxpr)
+      else inner_jaxpr
+  )
+  num_constvars = getattr(_prim, "num_consts", 0)
+
+  converted_effects = set()
+  for eff in effects:
+    if isinstance(eff, core.JaxprInputEffect):
+      if isinstance(eff.input_index, int):
+        if eff.input_index < num_constvars:
+          if eff.input_index < len(invars):
+            eff = eff.replace(input_index=invars[eff.input_index])
+            converted_effects.add(eff)
+        else:
+          invar_idx = eff.input_index - num_constvars
+          if num_constvars + invar_idx < len(invars):
+            eff = eff.replace(input_index=invars[num_constvars + invar_idx])
+            converted_effects.add(eff)
+      elif isinstance(eff.input_index, core.Var):
+        if eff.input_index in raw_jaxpr.invars:
+          invar_idx = raw_jaxpr.invars.index(eff.input_index)
+          outer_idx = num_constvars + invar_idx
+          if outer_idx < len(invars):
+            eff = eff.replace(input_index=invars[outer_idx])
+            converted_effects.add(eff)
+        elif eff.input_index in raw_jaxpr.constvars:
+          const_idx = raw_jaxpr.constvars.index(eff.input_index)
+          if const_idx < len(invars):
+            eff = eff.replace(input_index=invars[const_idx])
+            converted_effects.add(eff)
+    else:
+      converted_effects.add(eff)
+  return converted_effects
+
+
+core.custom_effect_mapping_rules[call_hi_primitive_p] = (
+    _call_hi_primitive_effect_mapping_rule
+)
+
 def _call_hi_primitive_staging(trace, source_info, *args_flat, _prim):
   trace.frame.is_high = True
   args = tree_unflatten(_prim.in_tree, args_flat)

@@ -1240,6 +1240,18 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   avals_in = ft.pack_args(primal_avals_in, nz_tangent_avals_in)
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   def f_jvp_traceable(primals, nonzero_tangents):
+    active_trace = core.trace_ctx.trace
+    if isinstance(active_trace, pe.DynamicJaxprTrace):
+      for v_inner, c_parent in zip(jaxpr.jaxpr.constvars, jaxpr.consts):
+        if isinstance(c_parent, pe.Tracer):
+          source_info = getattr(
+              c_parent, "source_info", source_info_util.new_source_info()
+          )
+          tracer_inner = pe.DynamicJaxprTracer(
+              active_trace, v_inner.aval, v_inner, source_info
+          )
+          active_trace.frame.constid_to_tracer[id(c_parent)] = tracer_inner
+          active_trace.frame.constvar_to_val[v_inner] = c_parent
     tangents = nonzero_tangents.unfilter()
     primals_out, tangents_out = jvp(core.jaxpr_as_fun(jaxpr), primals, tangents,
                                     instantiate=instantiate,
@@ -1273,12 +1285,12 @@ def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_
   new_debug_info = jaxpr.jaxpr.debug_info._replace(
       arg_names=new_arg_names, result_paths=new_result_paths)
   constvars = jaxpr.jaxpr.constvars
-  new_effects = pe._renumber_effects(
-      (*constvars, *new_invars), (*constvars, *jaxpr.jaxpr.invars),
-      jaxpr.jaxpr.effects)
   new_jaxpr = jaxpr.jaxpr.replace(
-      constvars=constvars, invars=new_invars, outvars=new_outvars,
-      effects=new_effects, debug_info=new_debug_info)
+      constvars=constvars,
+      invars=new_invars,
+      outvars=new_outvars,
+      debug_info=new_debug_info,
+  )
   return core.ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
 def _perm(primal_counts: Sequence[int], tangent_counts: Sequence[int],

@@ -136,8 +136,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     else:
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           wrap_init(f, 1), [ref_aval])
-      self.assertSetEqual(jaxpr.effects,
-                          {ReadEffect(len(jaxpr.constvars))})
+      self.assertSetEqual(jaxpr.effects, {ReadEffect(jaxpr.invars[0])})
       self.assertLen(out_avals, 1)
       out_aval, = out_avals
       self.assertIsInstance(out_aval, core.ShapedArray)
@@ -257,8 +256,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     else:
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           wrap_init(f, 2), [ref_aval, val_aval])
-      self.assertSetEqual(jaxpr.effects,
-                          {WriteEffect(len(jaxpr.constvars))})
+      self.assertSetEqual(jaxpr.effects, {WriteEffect(jaxpr.invars[0])})
       self.assertLen(out_avals, 1)
       out_aval, = out_avals
       self.assertIsInstance(out_aval, core.ShapedArray)
@@ -334,8 +332,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     else:
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           wrap_init(f, 2), [ref_aval, val_aval])
-      self.assertSetEqual(jaxpr.effects,
-                          {AccumEffect(len(jaxpr.constvars))})
+      self.assertSetEqual(jaxpr.effects, {AccumEffect(jaxpr.invars[0])})
       self.assertLen(out_avals, 0)
 
   def test_addupdate_abstract_eval_must_take_in_refs(self):
@@ -788,8 +785,19 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertLen(discharged_jaxpr.outvars, 1)
     self.assertIsInstance(discharged_jaxpr.invars[0].aval, AbstractRef)
     self.assertIsInstance(discharged_jaxpr.invars[1].aval, core.ShapedArray)
-    self.assertEqual(discharged_jaxpr.effects,
-        {WriteEffect(len(discharged_jaxpr.constvars))})
+    self.assertEqual(
+        discharged_jaxpr.effects, {WriteEffect(discharged_jaxpr.invars[0])}
+    )
+
+  def test_closed_jaxpr_init(self):
+    debug_info = api_util.debug_info(
+        "test_closed_jaxpr_init", lambda: None, (), {},
+        result_paths_thunk=lambda: ()
+    )
+    jaxpr = core.Jaxpr(
+        [], [], [], [], core.effects.no_effects, debug_info=debug_info
+    )
+    core.ClosedJaxpr(jaxpr, [])
 
   def test_ellipsis_index(self):
     def f(ref):
@@ -831,9 +839,21 @@ class StateDischargeTest(jtu.JaxTestCase):
     ref = lambda x: AbstractRef(core.typeof(x))
     f_jaxpr = jax.make_jaxpr(f)(ref(1.), ref(2.))
     jaxpr = discharge_state(f_jaxpr, should_discharge=[False, True])
+
     # Effects on y_ref were discharged away but not the effects on x_ref
-    self.assertEqual(f_jaxpr.effects, {ReadEffect(0), WriteEffect(0), ReadEffect(1), WriteEffect(1)})
-    self.assertEqual(jaxpr.effects, {ReadEffect(0), WriteEffect(0)})
+    self.assertEqual(
+        f_jaxpr.effects,
+        {
+            ReadEffect(f_jaxpr.invars[0]),
+            WriteEffect(f_jaxpr.invars[0]),
+            ReadEffect(f_jaxpr.invars[1]),
+            WriteEffect(f_jaxpr.invars[1]),
+        },
+    )
+    self.assertEqual(
+        jaxpr.effects,
+        {ReadEffect(jaxpr.invars[0]), WriteEffect(jaxpr.invars[0])},
+    )
     # x_ref arg is still a reference but y_ref is discharged
     self.assertNotIsInstance(jaxpr.invars[1].aval, AbstractRef)
     self.assertIsInstance(jaxpr.invars[0].aval, AbstractRef)
@@ -1202,8 +1222,19 @@ class StateControlFlowTest(jtu.JaxTestCase):
     f_jaxpr = jax.make_jaxpr(f0)(False, ref(3.), ref(4.))
     jaxpr = discharge_state(f_jaxpr, should_discharge=[False, False, True])
     # Effects on y_ref were discharged away but not the effects on x_ref
-    self.assertEqual(f_jaxpr.effects, {ReadEffect(1), WriteEffect(1), ReadEffect(2), WriteEffect(2)})
-    self.assertEqual(jaxpr.effects, {ReadEffect(1), WriteEffect(1)})
+    self.assertEqual(
+        f_jaxpr.effects,
+        {
+            ReadEffect(f_jaxpr.invars[1]),
+            WriteEffect(f_jaxpr.invars[1]),
+            ReadEffect(f_jaxpr.invars[2]),
+            WriteEffect(f_jaxpr.invars[2]),
+        },
+    )
+    self.assertEqual(
+        jaxpr.effects,
+        {ReadEffect(jaxpr.invars[1]), WriteEffect(jaxpr.invars[1])},
+    )
     # x_ref arg is still a reference but y_ref is discharged
     self.assertNotIsInstance(jaxpr.invars[2].aval, AbstractRef)
     self.assertIsInstance(jaxpr.invars[1].aval, AbstractRef)
@@ -1785,11 +1816,12 @@ class RunStateTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(2)
     self.assertEmpty(jaxpr.effects)
     self.assertEmpty(jaxpr.jaxpr.eqns[0].effects)
-    self.assertSetEqual(jaxpr.jaxpr.eqns[0].params["jaxpr"].effects,
-                        {ReadEffect(0)})
+    cj1 = jaxpr.jaxpr.eqns[0].params["jaxpr"]
+    self.assertSetEqual(cj1.effects, {ReadEffect(cj1.invars[0])})
+    cj2 = jaxpr.jaxpr.eqns[0].params["jaxpr"].eqns[0].params["jaxpr"]
     self.assertSetEqual(
-        jaxpr.jaxpr.eqns[0].params["jaxpr"].eqns[0].params["jaxpr"].effects,
-                        {ReadEffect(0), ReadEffect(1)})
+        cj2.effects, {ReadEffect(cj2.invars[0]), ReadEffect(cj2.invars[1])}
+    )
 
   def test_jvp_of_run_state(self):
     @run_state

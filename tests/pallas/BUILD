@@ -764,6 +764,7 @@ jax_multiplatform_test(
         "tpu_pallas_interpret_distributed_test.py",
     ],
     enable_backends = ["cpu"],
+    shard_count = 8,
     tags = [
         "noasan",  # Times out.
         "notsan",  # Times out.
