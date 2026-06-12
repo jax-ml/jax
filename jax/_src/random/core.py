@@ -2955,7 +2955,7 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
       return (1 + rho_val * rho_val) / (2 * rho_val)
     # Use second order Taylor expansion for small kappa
     s_val = lax.select(
-      safe_kappa < kappa_mid_small, 1.0 / kappa + kappa, s_val_from_kappa(safe_kappa)
+      safe_kappa < kappa_mid_small, 1.0 / safe_kappa + safe_kappa, s_val_from_kappa(safe_kappa)
     )
 
     def body_fn(state):
@@ -2979,7 +2979,7 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
       accepted = state[-2]
       return (~accepted).any()
 
-    *_, w_final = lax_control_flow.while_loop(
+    _, key_final, _, w_final = lax_control_flow.while_loop(
       cond_fn,
       body_fn,
       # Set so cond_fn returns True for the first iteration if kappa in range
@@ -2989,7 +2989,7 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
        jnp.zeros_like(kappa)),
     )
 
-    uniform_sign = 2.0 * binomial(key, jnp.ones_like(kappa), 0.5, dtype=dtype) - 1.0
+    uniform_sign = rademacher(key_final, shape=np.shape(kappa), dtype=dtype)
     return uniform_sign * jnp.arccos(jnp.clip(w_final, -1.0, 1.0))
 
   samples = lax.select(
