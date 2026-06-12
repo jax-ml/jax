@@ -193,10 +193,10 @@ def ppf(p: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   quantile = lax.add(loc, t)
   quantile = jnp.where(
     p == 0,
-    lax.add(loc, lax.mul(scale, _lax_const(p, -np.inf))),
+    loc - np.inf,
     jnp.where(
       p == 1,
-      lax.add(loc, lax.mul(scale, _lax_const(p, np.inf))),
+      loc + np.inf,
       quantile,
     ),
   )
