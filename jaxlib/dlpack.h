@@ -20,6 +20,7 @@ limitations under the License.
 #include <optional>
 
 #include "absl/status/statusor.h"
+#include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
 #include "jaxlib/nb_class_ptr.h"
@@ -42,7 +43,8 @@ absl::StatusOr<nanobind::capsule> BufferToDLPackManagedTensor(
 absl::StatusOr<nanobind::object> DLPackManagedTensorToBuffer(
     const nanobind::capsule& tensor, xla::ifrt::Device* device,
     nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream,
-    std::optional<bool> copy);
+    std::optional<bool> copy,
+    std::optional<DLDeviceType> dl_device_type = std::nullopt);
 
 // Converts a PrimitiveType to the nanobind specific implementation of
 // DLDataType.
