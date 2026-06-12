@@ -3532,7 +3532,11 @@ def isinf(x: ArrayLike, /) -> Array:
   x = ensure_arraylike("isinf", x)
   dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
-    return lax.eq(lax.abs(x), _constant_like(x, np.inf))
+    # If the dtype has no representation for infinity, return False
+    if not np.isinf(np.array(np.inf, dtype).astype('float64')):
+      return lax.full_like(x, False, dtype=np.bool_)
+    else:
+      return lax.eq(lax.abs(x), _constant_like(x, np.inf))
   elif dtypes.issubdtype(dtype, np.complexfloating):
     re = lax.real(x)
     im = lax.imag(x)
@@ -3547,7 +3551,11 @@ def _isposneginf(infinity: float, x: Array, out) -> Array:
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = x.dtype
   if dtypes.issubdtype(dtype, np.floating):
-    return lax.eq(x, _constant_like(x, infinity))
+    # If the dtype has no representation for infinity, return False
+    if not np.isinf(np.array(np.inf, dtype).astype('float64')):
+      return lax.full_like(x, False, dtype=np.bool_)
+    else:
+      return lax.eq(x, _constant_like(x, infinity))
   elif dtypes.issubdtype(dtype, np.complexfloating):
     raise ValueError("isposinf/isneginf are not well defined for complex types")
   else:
