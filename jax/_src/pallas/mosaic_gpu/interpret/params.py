@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import dataclasses
 
 from jax._src import callback
+from jax._src import config
 from jax._src import effects
 import jax._src.pallas.mosaic.interpret.params as interpret_params
 
@@ -65,3 +67,30 @@ class InterpretGPUParams(interpret_params.SharedInterpretParams):
 
 def get_interpret_effects() -> set[effects.Effect]:
   return {callback._OrderedIOEffect}
+
+
+@contextlib.contextmanager
+def force_gpu_interpret_mode(params: InterpretGPUParams = InterpretGPUParams()):
+  """Context manager that forces GPU interpret mode under its dynamic context.
+
+  See :class:`InterpretGPUParams` for additional information.
+
+  Args:
+    params: an instance of :class:`InterpretGPUParams`.  Any call to
+       :func:`jax.experimental.pallas.mosaic_gpu.kernel`,
+      :func:`jax.experimental.pallas.core_map`, or
+      :func:`jax.experimental.pallas.pallas_call` that is traced under this
+      context manager will be run with ``interpret=params``.  When ``params``
+      is not``None``, this will cause those calls to run with GPU
+      interpret mode.
+  """
+  # TODO(jburnim): Rename to config.pallas_interpret_mode_context_manager.
+  prev = config.pallas_tpu_interpret_mode_context_manager.swap_local(params)
+  try:
+    yield
+  finally:
+    config.pallas_tpu_interpret_mode_context_manager.set_local(prev)
+
+
+def set_gpu_interpret_mode(params: InterpretGPUParams = InterpretGPUParams()):
+  config.pallas_tpu_interpret_mode_context_manager.set_global(params)

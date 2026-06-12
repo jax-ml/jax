@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import threading
 from typing import Any, cast
@@ -281,6 +282,12 @@ class GPUSharedMemory(memory.SharedMemory):
 
   next_tma_thread_id_per_device: dict[int, int]
 
+  # (device_id, thread_id) -> next available REGS buffer ID.
+  #
+  # NOTE: We use negative integers so that, when debugging, it is easy to
+  # visually distinguish REGS IDs from other IDs.
+  next_regs_id: dict[tuple[int, int], int]
+
   def __init__(self, **kwargs):
     num_threads_per_block = kwargs.pop("num_threads_per_block")
     num_blocks_per_cluster = kwargs.pop("num_blocks_per_cluster")
@@ -352,6 +359,7 @@ class GPUSharedMemory(memory.SharedMemory):
     self.next_tma_thread_id_per_device = {
         device_id: 0 for device_id in range(self.num_devices)
     }
+    self.next_regs_id = collections.defaultdict(lambda: -100)
 
   @property
   def num_concurrent_threads(self) -> int:
@@ -378,6 +386,13 @@ class GPUSharedMemory(memory.SharedMemory):
           next_tma_thread_id + 1
       ) % self.num_tma_threads_per_device
       return self.num_devices * self.num_concurrent_threads + next_tma_thread_id
+
+  def get_next_wgmma_accumulator_id(
+      self, device_id: int, thread_id: int) -> int:
+    with self.lock:
+      regs_id = self.next_regs_id[(device_id, thread_id)]
+      self.next_regs_id[(device_id, thread_id)] = regs_id - 1
+      return regs_id
 
   # TODO(nrink): Is this method needed? If not, remove it.
   def update_clock(self, vector_clock_idx, clock: vc.VectorClock):

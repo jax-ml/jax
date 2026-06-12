@@ -20,8 +20,10 @@ import jax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
+from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
 import jax.numpy as jnp
 import numpy as np
 
@@ -49,6 +51,36 @@ class InterpretTest(jtu.JaxTestCase):
     self.num_devices = jax.device_count()
     if self.num_devices > 1:
       self.skipTest(f'requires 1 device, found {self.num_devices}')
+
+  def test_hopper_matmul(self):
+    (m, n, k) = 512, 512, 512
+    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    a = jax.random.uniform(k1, (m, k), jnp.float16)
+    b = jax.random.uniform(k2, (k, n), jnp.float16)
+    c = jax.random.uniform(k3, (m, n), jnp.float32)
+
+    spec = hopper_matmul_mgpu.TuningConfig(
+        tile_m=128,
+        tile_n=128,
+        tile_k=128,
+        max_concurrent_steps=2,
+        epi_tile_m=64,
+        epi_tile_n=64,
+        wg_dimension=hopper_matmul_mgpu.MatmulDimension.M,
+    )
+
+    device = jax.sharding.AbstractDevice(
+        device_kind='NVIDIA H100 80GB HBM3',
+        platform='gpu',
+        num_cores=8,
+    )
+    with (jax.sharding.use_abstract_mesh(
+              jax.sharding.AbstractMesh((), (), abstract_device=device)),
+          force_gpu_interpret_mode(InterpretParams())):
+      res = hopper_matmul_mgpu.matmul(a, b, c, spec).block_until_ready()
+    expected = (
+        jnp.dot(a, b, preferred_element_type=jnp.float32) + c)
+    np.testing.assert_allclose(res, expected, rtol=5e-3)
 
   def test_interpret_pallas_call(self):
     def _kernel(o_ref):
@@ -1293,6 +1325,37 @@ class InterpretTest(jtu.JaxTestCase):
     else:
       self.assertFalse(mosaic_interpret.get_races().races_found)
       np.testing.assert_array_equal(z, x + y)
+
+  def test_copy_smem_to_gmem(self):
+    def _kernel(out_gmem, smem_ref):
+      tid = jax.lax.axis_index('t')
+      i = jax.lax.axis_index('i')
+      j = jax.lax.axis_index('j')
+
+      smem_ref[tid, pl.ds(i*16, 16), pl.ds(j*32, 32)] = (
+          jnp.arange((2*32*128), dtype=jnp.int32).reshape((2, 32, 128))[
+              tid, pl.ds(i*16, 16), pl.ds(j*32, 32)])
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(
+          smem_ref.at[tid, pl.ds(i*16, 16), pl.ds(j*32, 32)],
+          out_gmem.at[tid, pl.ds(i*16, 16), pl.ds(j*32, 32)])
+      plgpu.wait_smem_to_gmem(0)
+
+    y = jax.jit(plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct((2, 32, 128), jnp.int32),
+        interpret=InterpretParams(),
+        grid=(2, 4),
+        grid_names=('i', 'j'),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((2, 32, 128), jnp.int32)
+        ),
+        num_threads=2,
+        thread_name='t',
+    ))()
+
+    expected = jnp.arange((2*32*128), dtype=jnp.int32).reshape((2, 32, 128))
+    np.testing.assert_array_equal(y, expected)
 
   @jtu.parameterized.product(
       grid_dict=[

@@ -16,10 +16,11 @@ from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 import functools
 import math
-from typing import Any
+from typing import Any, Literal
 
 import jax
 from jax import lax
+from jax._src import callback
 from jax._src import core as jax_core
 from jax._src import source_info_util
 from jax._src.pallas import primitives
@@ -75,6 +76,7 @@ def _raise_if_unsupported_memory_space(
   if space is not None and space not in [
       mosaic_gpu_core.MemorySpace.GMEM,
       mosaic_gpu_core.MemorySpace.SMEM,
+      mosaic_gpu_core.MemorySpace.REGS,
   ]:
     raise NotImplementedError(f"Unsupported memory space: {space}")
 
@@ -185,6 +187,18 @@ def apply_unswizzle_and_untile(
              for t in transforms):
     raise ValueError("Unsupported transforms:", transforms)
   return state_types.TransformedRef(aval, transforms).type
+
+
+def get_uninitialized_array(
+    shape: tuple[int, ...],
+    dtype: jnp.dtype,
+    memory_space: mosaic_gpu_core.MemorySpace,
+    uninitialized_memory: Literal["nan", "zero"]
+) -> jax.Array:
+  if memory_space == mosaic_gpu_core.MemorySpace.REGS:
+    uninitialized_memory = "zero"
+  return interpret_utils.get_uninitialized_array(
+      shape, dtype, uninitialized_memory)
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -423,8 +437,11 @@ class JaxprInterpreter:
                     grid_point_coords=self.grid_point_coords,
                     thread_id=self.thread_id,
                     allocation_request_as_array=allocation_request,
-                    value=interpret_utils.get_uninitialized_array(
-                        shape, dtype, self.interpret_params.uninitialized_memory
+                    value=get_uninitialized_array(
+                        shape,
+                        dtype,
+                        memory_space,
+                        self.interpret_params.uninitialized_memory
                     ),
                     source_info=eqn.source_info,
                 )
@@ -472,12 +489,24 @@ class JaxprInterpreter:
 
     # Allocate a buffer or barrier for each element of
     # `eqn.params['jaxpr'].invars`. It is assumed that each thread runs the same
-    # sequence of `run_scoped`s.
+    # sequence of `run_scoped`s (except for allocations of MemorySpace.REGS,
+    # which are WGMMA accumulators).
     invars = eqn.params["jaxpr"].invars
     allocs = []
-    _raise_if_unsupported_collective_axes(
-        self.mesh, self.are_thread_cluster_axes_collective(collective_axes)
-    )
+    memory_spaces = {v.aval.memory_space for v in invars}
+    if mosaic_gpu_core.MemorySpace.REGS in memory_spaces:
+      if len(memory_spaces) > 1:
+        raise ValueError(
+            "Scoped allocations in MemorySpace.REGS cannot be mixed with "
+            "scoped allocations in other memory spaces.")
+      if collective_axes:
+        raise ValueError(
+            "Scoped allocations in MemorySpace.REGS cannot be "
+            "collective allocations.")
+    else:
+      _raise_if_unsupported_collective_axes(
+          self.mesh, self.are_thread_cluster_axes_collective(collective_axes)
+      )
 
     for v, transforms in safe_zip(invars, ref_transforms):
       token, alloc = _allocate_for_aval(
@@ -667,6 +696,97 @@ class JaxprInterpreter:
     )
     return token, []
 
+  def _interpret_copy_smem_to_gmem_p(
+      self,
+      eqn,
+      token: jax.Array,
+      src,
+      dst,
+      *flat_args,
+      src_transforms_treedef: jax.tree_util.PyTreeDef,
+      dst_transforms_treedef: jax.tree_util.PyTreeDef,
+      has_user_predicate: bool,
+      **params,
+  ):
+    assert eqn.primitive is gpu_primitives.copy_smem_to_gmem_p
+    if has_user_predicate:
+      *flat_args, predicate = flat_args
+    else:
+      predicate = None
+    src_transforms, dst_transforms = jax.tree.unflatten(
+        jax.tree_util.treedef_tuple((
+            src_transforms_treedef,
+            dst_transforms_treedef,
+        )),
+        flat_args,
+    )
+
+    return callback.io_callback(
+        functools.partial(gpu_callbacks.copy_smem_to_gmem,
+                          source_info=eqn.source_info, **params),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        device_id=self.device_info.device_id,
+        grid_point_coords=self.grid_point_coords,
+        thread_id=self.thread_id,
+        src_allocation_key_as_array=src,
+        src_transforms=src_transforms,
+        dst_allocation_key_as_array=dst,
+        dst_transforms=dst_transforms,
+        predicate=predicate,
+        ordered=True,
+    ), []
+
+  def _interpret_wgmma_ref_p(
+      self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is gpu_primitives.wgmma_ref_p
+    acc, a, b, *leaves = get_invals()
+    empty_treedef = jax.tree.structure([])
+    acc_transforms, a_transforms, b_transforms = jax.tree.unflatten(
+        jax.tree_util.treedef_tuple((
+            eqn.params["acc_transforms_tree"] or empty_treedef,
+            eqn.params["a_transforms_tree"] or empty_treedef,
+            eqn.params["b_transforms_tree"] or empty_treedef,
+        )),
+        leaves,
+    )
+    return callback.io_callback(
+        functools.partial(gpu_callbacks.wgmma,
+                          acc_dtype=eqn.invars[0].aval.dtype,
+                          source_info=eqn.source_info),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        device_id=self.device_info.device_id,
+        grid_point_coords=self.grid_point_coords,
+        thread_id=self.thread_id,
+        acc_allocation_key_as_array=acc,
+        acc_transforms=acc_transforms,
+        a_allocation_key_as_array=a,
+        a_transforms=a_transforms,
+        b_allocation_key_as_array=b,
+        b_transforms=b_transforms,
+        ordered=True,
+    ), []
+
+  def _interpret_wgmma_accumulator_deref_p(
+      self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]):
+    assert eqn.primitive is gpu_primitives.wgmma_accumulator_deref_p
+    acc, = get_invals()
+    return callback.io_callback(
+        functools.partial(
+            gpu_callbacks.wgmma_accumulator_deref, source_info=eqn.source_info
+        ),
+        (gpu_callbacks.TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
+        token=token,
+        device_id=self.device_info.device_id,
+        grid_point_coords=self.grid_point_coords,
+        thread_id=self.thread_id,
+        acc_allocation_key_as_array=acc,
+        wait_n=eqn.params["wait_n"],
+        ordered=True,
+    )
+
   def interpret(self, jaxpr, token, *args):
     sentinel_for_floating_point_values = (
         _SENTINEL if self.interpret_params.skip_floating_point_ops else None
@@ -722,8 +842,33 @@ class JaxprInterpreter:
           case gpu_primitives.copy_gmem_to_smem_p:
             token, out = self._interpret_copy_gmem_to_smem_p(
                 eqn, token, deferred_invals)
+          case gpu_primitives.copy_smem_to_gmem_p:
+            token, out = self._interpret_copy_smem_to_gmem_p(
+                eqn, token, *deferred_invals(), **eqn.params)
+          case gpu_primitives.wgmma_ref_p:
+            token, out = self._interpret_wgmma_ref_p(
+                eqn, token, deferred_invals)
+          case gpu_primitives.wgmma_accumulator_deref_p:
+            token, out = self._interpret_wgmma_accumulator_deref_p(
+                eqn, token, deferred_invals)
+          case gpu_primitives.commit_group_p:
+            out = []  # TODO(jburnim): commit_group_p
+          case gpu_primitives.wgmma_wait_p:
+            out = []  # TODO(jburnim): wgmma_wait_p
+          case gpu_primitives.wait_smem_to_gmem_p:
+            out = []  # TODO(jburnim): wait_smem_to_gmem_p
+          case gpu_primitives.set_max_registers_p:
+            # This primitive is a no-op in GPU Interpret Mode.
+            out = []
+          case gpu_primitives.commit_smem_p:
+            out = []  # TODO(jburnim): commit_smem_p
           case _:
             out = self._interpret_arithmetic_primitive(eqn, deferred_invals)
+
+        # TODO(jburnim): Handle run_state_p above.  In particular, the Mosaic
+        # GPU docs say (re: wgmma accumulator refs):
+        # "If pl.run_state has accumulator operands, it implicitly awaits all
+        # outstanding WGMMA operations before returning the final values."
 
         out = out if eqn.primitive.multiple_results else [out]
         env.write_many(eqn.outvars, out)

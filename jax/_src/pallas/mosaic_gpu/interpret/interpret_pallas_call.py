@@ -237,8 +237,11 @@ def _get_kernel_buffers(
         # the tiled shape, so we undo the swizzing and/or tiling here to get
         # the logical shape.
         aval = jaxpr_interpret.apply_unswizzle_and_untile(transforms, aval)
-      init_val = interpret_utils.get_uninitialized_array(
-          aval.shape, aval.dtype, interpret_params.uninitialized_memory
+      init_val = jaxpr_interpret.get_uninitialized_array(
+          aval.shape,
+          aval.dtype,
+          aval.memory_space,
+          interpret_params.uninitialized_memory
       )
       token, key = gpu_callbacks.call_allocate_buffer_for_all_threads(
           token, jnp.int32(device_id), None, req, init_val

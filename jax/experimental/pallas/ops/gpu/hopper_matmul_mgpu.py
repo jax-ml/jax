@@ -28,6 +28,12 @@ import jax.numpy as jnp
 import numpy as np
 
 
+def get_num_sms() -> int:
+  if abstract_device := jax.sharding.get_abstract_mesh().abstract_device:
+    return abstract_device.num_cores
+  return backend.get_default_device().core_count
+
+
 class MatmulDimension(enum.IntEnum):
   M = 0
   N = 1
@@ -247,7 +253,7 @@ def matmul(a, b, c, config: TuningConfig):
   epi_tile_m = config.epi_tile_m or tile_m
   config = dataclasses.replace(config, epi_tile_n=epi_tile_n, epi_tile_m=epi_tile_m)
 
-  num_sms = backend.get_default_device().core_count
+  num_sms = get_num_sms()
   cluster_size = 1 + (config.cluster_dimension is not None)
   compiler_params = plgpu.CompilerParams(
       lowering_semantics=plgpu.LoweringSemantics.Warpgroup
