@@ -5458,6 +5458,58 @@ class RaggedTest(jtu.JaxTestCase):
           batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
       )
 
+  @parameterized.product(
+      batch_size=[2, 4],
+      m=[16],
+      k=[8],
+      n=[16],
+      num_groups=[2, 4],
+  )
+  def test_ragged_dot_vmap_unbatched_rhs(
+      self, batch_size: int, m: int, k: int, n: int, num_groups: int
+  ):
+    """Tests vmap over ragged_dot with shared (unbatched) rhs weights.
+
+    This is the pattern produced by vmap(grad(loss)) for per-example gradient
+    computation, where lhs (data) is batched but rhs (model weights) and
+    group_sizes are shared across examples.
+    """
+    if (jtu.test_device_matches(["tpu"])):
+      raise SkipTest("batched ragged_dot not yet supported on TPU")
+
+    lhs_shape = (batch_size, m, k)
+    rhs_shape = (num_groups, k, n)
+    dtype = jnp.float32
+
+    rng = jtu.rand_small(self.rng())
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
+    tokens_per_group = m // num_groups
+    group_sizes = jnp.full((num_groups,), tokens_per_group, dtype=jnp.int32)
+
+    ragged_fn = partial(
+        jax.lax.ragged_dot,
+        preferred_element_type=dtype,
+        precision=jax.lax.Precision.HIGHEST,
+    )
+
+    # vmap over lhs only (rhs and group_sizes shared).
+    batch_res = jax.vmap(lambda x: ragged_fn(x, rhs, group_sizes))(lhs)
+
+    # Compare against sequential loop.
+    tol = 1e-5
+    for i in range(batch_size):
+      ref_res = ragged_fn(lhs[i], rhs, group_sizes)
+      self.assertArraysAllClose(batch_res[i], ref_res, rtol=tol, atol=tol)
+
+    # Also test vmap(grad) — the DP-SGD use case.
+    def loss(w, x):
+      return jnp.sum(ragged_fn(x, w, group_sizes))
+
+    grads_vmap = jax.vmap(jax.grad(loss), in_axes=(None, 0))(rhs, lhs)
+    grads_loop = jnp.stack([jax.grad(loss)(rhs, lhs[i]) for i in range(batch_size)])
+    self.assertArraysAllClose(grads_vmap, grads_loop, rtol=tol, atol=tol)
+
   @jtu.with_explicit_mesh((1,), ("x",))
   def test_ragged_dot_out_sharding(self, mesh):
     args = [jnp.ones((16, 4)), jnp.ones((2, 4, 3)), jnp.array([8, 8])]

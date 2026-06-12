@@ -6542,7 +6542,7 @@ def _ragged_dot_batch_unpack_args(batched_args):
 
 
 def _ragged_dot_batch_unpack_dims(batch_dims):
-  if not all(dim == 0 for dim in batch_dims):
+  if not all(dim == 0 or dim is None for dim in batch_dims):
     raise NotImplementedError('ragged_dot vmap over any dim but 0 - NYI')
   lbd, rbd, _ = batch_dims
   return (lbd, rbd)
@@ -6579,7 +6579,60 @@ def _ragged_dot_general_batch_rule(
     group_offset,
     out_sharding,
 ):
-  invoke = partial(_ragged_dot_general_invoke_prim, batched_args[2])
+  lhs, rhs, group_sizes = batched_args
+  lbd, rbd, gbd = batch_dims
+
+  if (lbd is not None) != (rbd is not None):
+    # One operand is unbatched (e.g. shared weights in vmap(grad(loss))).
+    # We can't use _dot_batch_rule's tensor-product path because ragged_dot's
+    # group dimension is consumed, not a tensor product dim. Instead, broadcast
+    # the unbatched operand and call ragged_dot_general directly with updated
+    # dimension numbers that include the new batch dim.
+    if lbd is not None:
+      batch_size = lhs.shape[lbd]
+    else:
+      batch_size = rhs.shape[rbd]
+
+    if rbd is None:
+      rhs = broadcast_in_dim(rhs, (batch_size, *rhs.shape),
+                             tuple(range(1, rhs.ndim + 1)))
+    if lbd is None:
+      lhs = broadcast_in_dim(lhs, (batch_size, *lhs.shape),
+                             tuple(range(1, lhs.ndim + 1)))
+    if gbd is None:
+      group_sizes = broadcast_in_dim(
+          group_sizes, (batch_size, *group_sizes.shape),
+          tuple(range(1, group_sizes.ndim + 1)))
+
+    # Build new dimension numbers with batch dim 0: bump all existing dims by 1
+    # (since we prepended the batch dim) and add 0 to batch dimensions.
+    (lhs_c, rhs_c), (lhs_b, rhs_b) = _from_maybe_ragged(
+        ragged_dot_dimension_numbers)
+    bump = lambda dims: tuple(d + 1 for d in dims)
+    new_dnums = RaggedDotDimensionNumbers(
+        dot_dimension_numbers=(
+            (bump(lhs_c), bump(rhs_c)),
+            ((0,) + bump(lhs_b), (0,) + bump(rhs_b)),
+        ),
+        lhs_ragged_dimensions=bump(
+            ragged_dot_dimension_numbers.lhs_ragged_dimensions),
+        rhs_group_dimensions=bump(
+            ragged_dot_dimension_numbers.rhs_group_dimensions),
+    )
+
+    batched_out = ragged_dot_general(
+        lhs, rhs, group_sizes,
+        ragged_dot_dimension_numbers=new_dnums,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+    result_batch_dim = 0
+    if _is_ragged_contracting(lhs.ndim - 1, ragged_dot_dimension_numbers):
+      result_batch_dim += 1
+    return batched_out, result_batch_dim
+
+  # Both batched or both unbatched — use existing _dot_batch_rule path.
+  invoke = partial(_ragged_dot_general_invoke_prim, group_sizes)
   batched_out, result_batch_dim = _dot_batch_rule(
       _ragged_dot_batch_unpack_args,
       _ragged_dot_batch_unpack_dims,
