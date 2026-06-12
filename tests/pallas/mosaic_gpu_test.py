@@ -6712,6 +6712,26 @@ class PipelineTest(PallasTest):
     # are never written to.
     np.testing.assert_array_equal(kernel_fn(x)[:, :16], y[:, :16])
 
+  @parameterized.parameters(((0, 2),), ((2, -1),))
+  def test_emit_with_empty_grid(self, grid):
+    def kernel_body(o_smem):
+      o_smem[...] = jnp.zeros((128, 128))
+
+    def kernel(o_gmem):
+      plgpu.emit_pipeline(
+          kernel_body,
+          out_specs=[pl.BlockSpec((128, 128), lambda i, j: (i, j))],
+          grid=grid,
+      )(o_gmem)
+
+    with self.assertRaisesRegex(
+        ValueError, 'All elements in the grid must be strictly positive'
+    ):
+      self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((256, 256), jnp.float32),
+      )()
+
   def test_emit_with_no_output(self):
     m, n = 16, 128
 

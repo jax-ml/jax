@@ -115,6 +115,25 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
 
     super().setUp()
 
+  @parameterized.parameters(((0, 2),), ((2, -1),))
+  def test_pipeline_empty_grid(self, grid):
+    def kernel(o_hbm_ref):
+      def body(o_ref):
+        o_ref[...] = jnp.zeros((128, 128))
+
+      pltpu.emit_pipeline(
+          body, grid=grid, out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j))
+      )(o_hbm_ref)
+
+    with self.assertRaisesRegex(
+        ValueError, 'All elements in the grid must be strictly positive'
+    ):
+      pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((256, 256), jnp.float32),
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+      )()
+
   def test_pipeline_without_inputs(self):
     def kernel(o_hbm_ref):
       def body(o_ref):

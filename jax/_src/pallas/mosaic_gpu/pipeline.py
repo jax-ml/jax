@@ -251,6 +251,11 @@ def emit_pipeline(
     otherwise it returns None.
   """
 
+  if any(g <= 0 for g in grid if isinstance(g, int)):
+    raise ValueError(
+        f"All elements in the grid must be strictly positive, but got {grid=}"
+    )
+
   in_specs = tuple(map(_downcast_spec, in_specs))
   out_specs = tuple(map(_downcast_spec, out_specs))
   for spec in in_specs:
