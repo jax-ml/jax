@@ -2514,6 +2514,7 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
   with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
         TracebackScope()):
     src = source_info_util.current()
+    invals = outs = None
 
     lo_avals_lol, () = lo_avals.unflatten()
     for v, xs in zip(hi_jaxpr.invars, lo_avals_lol):
@@ -2561,7 +2562,7 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
     tracer = partial(trace.to_jaxpr_tracer, source_info=src)
     fu = FlatTree.flatten(())
     out_mut = [v.aval.read_loval_out(v.final_qdd, env[v]).map(tracer)
-              if v.aval.has_qdd else fu for v in hi_jaxpr.invars]
+               if v.aval.has_qdd else fu for v in hi_jaxpr.invars]
     out_tracers = [dtypes.canonicalize_value(read(src, x)) for x in hi_jaxpr.outvars]
     out_tracers = [v.aval.lower_val2(hi_val).map(tracer)
                   for v, hi_val in zip(hi_jaxpr.outvars, out_tracers)]
@@ -2569,7 +2570,7 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
     out_avals = out_tracers.map(typeof)
     dbg = _lower_debug_info(hi_jaxpr, out_mut)
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(out_tracers), dbg, src)
-    del trace, env, out_tracers
+    del trace, env, out_tracers, out_mut, tracer, read, outs, invals, eqns
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   assert not any(v.aval.is_high for v in it.chain(jaxpr.constvars, jaxpr.invars))

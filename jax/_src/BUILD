@@ -400,6 +400,7 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
+        ":hijax",
         ":lax",
         ":mesh",
         ":mlir",
