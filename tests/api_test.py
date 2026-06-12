@@ -7319,7 +7319,7 @@ class Remat3Test(RematTest):
     jaxpr_text = str(jax.jit(f_lin).trace(1.).jaxpr)
     self.assertNotIn(' sin ', jaxpr_text)
     self.assertNotIn(' cos ', jaxpr_text)
-    # jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])  # TODO
+    jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
 
   # TODO(mattjj): re-implement these tests using custom_remat, as above
   def test_remat_of_scan_funky_custom_jvp(self): pass

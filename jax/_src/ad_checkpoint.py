@@ -1065,7 +1065,7 @@ class RematTraced(VJPHiPrimitive):
 
   def jvp(self, primals, tangents):
     traced = core.jaxpr_as_fun(self.jaxpr)
-    tangents = tuple(map(ad_util.instantiate, tangents))  # TODO
+    tangents = tuple(map(ad_util.instantiate, tangents))  # TODO don't instantiate
     return api.jvp(traced, primals, tangents)
 
   def lin(self, nzs_in, *primals):
@@ -1139,7 +1139,7 @@ def _jvp(primals, tangents):
 
 def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
-  helper.defvjp(f2, fbwd)
+  helper.defvjp(f2, lambda res, g: (None, *fbwd(res, g)))
   def call(*args, **kwargs):
     args_ft = FlatTree.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
@@ -1154,6 +1154,7 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   return call
 
 class CustomRemat(VJPHiPrimitive):
+  jaxpr: core.ClosedJaxpr
   f1: Callable
   f2_fbwd: Callable
 
@@ -1165,7 +1166,7 @@ class CustomRemat(VJPHiPrimitive):
     super().__init__()
 
   def expand(self, *args):
-    assert False
+    return core.jaxpr_as_fun(self.jaxpr)(*args)
 
   def remat(self, policy, *args_flat):  # type: ignore
     args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
@@ -1176,6 +1177,11 @@ class CustomRemat(VJPHiPrimitive):
       out_primal = self.f2_fbwd(res, *args, **kwargs)
       return tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
     return out_primal_flat, rem_flat
+
+  def jvp(self, primals, tangents):
+    traced = core.jaxpr_as_fun(self.jaxpr)
+    tangents = tuple(map(ad_util.instantiate, tangents))  # TODO
+    return api.jvp(traced, primals, tangents)
 
   def lin(self, nzs_in, *primals):
     raise NotImplementedError  # TODO(mattjj)
