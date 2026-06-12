@@ -1,7 +1,7 @@
 # CI - Oldest Supported NumPy (presubmit)
 # This workflow tests the oldest supported NumPy and jaxlib versions.
 
-name: Pytest CPU
+name: Oldest Supported NumPy
 
 on:
   pull_request:
