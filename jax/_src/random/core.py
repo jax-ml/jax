@@ -2990,7 +2990,7 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
     )
 
     uniform_sign = 2.0 * binomial(key, jnp.ones_like(kappa), 0.5, dtype=dtype) - 1.0
-    return uniform_sign * jnp.arccos(w_final)
+    return uniform_sign * jnp.arccos(jnp.clip(w_final, -1.0, 1.0))
 
   samples = lax.select(
     kappa < kappa_small,
