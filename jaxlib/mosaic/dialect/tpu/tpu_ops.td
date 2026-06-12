@@ -519,29 +519,6 @@ def TPU_VectorStoreIdxOp :TPU_Op<"vector_store_idx", [DefaultMemWrite, AttrSized
   let hasVerifier = 1;
 }
 
-// TODO(jevinjiang): deprecate to use dynamic_rotate.
-def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
-  let description = [{
-    Rotates the given vector by the given amount in the given dimension, i.e.,
-    for a 2D vector of shape (m, n), rotating dim 0 by `amount` will shift a row
-    at index `i` to index `(i + amount) % m`
-  }];
-  let arguments = (ins
-    AnyVectorOfNonZeroRank:$value,
-    SI32Attr:$amount,
-    SI32Attr:$dimension,
-    // When the stride is specified, the rotation amount for each index on the
-    // stride dimension will be (amount + stride * index).
-    OptionalAttr<SI32Attr>:$stride,
-    OptionalAttr<SI32Attr>:$stride_dimension
-  );
-  let results = (outs AnyVectorOfNonZeroRank:$result);
-  let assemblyFormat = [{
-    $value `by` $amount `dim` $dimension (`stride` $stride `stride_dim` $stride_dimension^)? attr-dict `:` type($value)
-  }];
-  let hasVerifier = 1;
-}
-
 def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure, AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$value,
