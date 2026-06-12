@@ -192,6 +192,7 @@ pytype_strict_library(
     srcs = ["fuser_utils.py"],
     type_checking = "pyrefly",
     deps = [
+        "//jax/_src:effects",
         "//jax/_src:api_util",
         "//jax/_src:core",
         "//jax/_src:lax",

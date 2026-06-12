@@ -165,12 +165,15 @@ def _switch_internal(
   keep = [f is None for f in in_fwd]
   jaxprs = [pe.prune_closed_jaxpr_outputs(jaxpr, keep) for jaxpr in jaxprs]
 
-  joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
+  joined_effects = core.join_effects(
+      *(core.positional_effects(jaxpr) for jaxpr in jaxprs))
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
-  jaxprs = [replace_jaxpr_effects(jaxpr, joined_effects) for jaxpr in jaxprs]
+  jaxprs = [replace_jaxpr_effects(
+      jaxpr, core.resolve_input_effects(joined_effects, jaxpr.jaxpr.invars))
+      for jaxpr in jaxprs]
   params = dict(branches=tuple(jaxprs))
   if branches_platforms is not None:
     params["branches_platforms"] = branches_platforms
@@ -304,15 +307,20 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   true_jaxpr = pe.prune_closed_jaxpr_outputs(true_jaxpr, keep)
   false_jaxpr = pe.prune_closed_jaxpr_outputs(false_jaxpr, keep)
 
-  joined_effects = core.join_effects(true_jaxpr.effects, false_jaxpr.effects)
+  joined_effects = core.join_effects(core.positional_effects(true_jaxpr),
+                                     core.positional_effects(false_jaxpr))
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
 
   index = lax.convert_element_type(pred, np.int32)
-  false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
-  true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
+  false_jaxpr = replace_jaxpr_effects(
+      false_jaxpr,
+      core.resolve_input_effects(joined_effects, false_jaxpr.jaxpr.invars))
+  true_jaxpr = replace_jaxpr_effects(
+      true_jaxpr,
+      core.resolve_input_effects(joined_effects, true_jaxpr.jaxpr.invars))
 
   out = cond_p.bind(index, *consts, *args, branches=(false_jaxpr, true_jaxpr))
   out_ = iter(out)
@@ -414,10 +422,10 @@ def _capitalize(s):
 def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
   joined_effects = set()
   for b in branches:
-    for eff in b.effects:
+    for eff in core.positional_effects(b):
       if isinstance(eff, effects.JaxprInputEffect):
         # Offset index to handle predicate
-        eff = eff.replace(input_index=eff.input_index + 1)
+        eff = eff.replace(eff.input + 1)
       joined_effects.add(eff)
   return joined_effects
 
@@ -638,7 +646,7 @@ def _cond_partial_eval(trace, *tracers, branches, **params):
   source = source_info_util.current().replace(name_stack=name_stack)
   eqn = pe.new_eqn_recipe(
       trace, [index_tracer] + res_tracers + ops_tracers, out_tracers, cond_p, params,
-      core.join_effects(*(j.effects for j in branches_unknown)), source)
+      _join_cond_effects(branches_unknown), source)
   for t in out_tracers: t.recipe = eqn
   return util.merge_lists(out_uks, out_consts, out_tracers)
 
