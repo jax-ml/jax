@@ -1417,7 +1417,7 @@ class DistributionsTest(RandomTestBase):
     r = self.rng()
     key = lambda: self.make_key(0)
     mu = 2.0 * r.randn(ndim) - 1.0
-    mu = mu / jnp.maximum(jnp.linalg.norm(mu), 1e-8)
+    mu = (mu / jnp.maximum(jnp.linalg.norm(mu), 1e-8)).astype(dtype)
     rand = lambda key: random.vonmises_fisher(key, mean=mu, kappa=kappa, shape=(10000,), dtype=dtype)
     crand = jax.jit(rand)
 
@@ -1427,7 +1427,7 @@ class DistributionsTest(RandomTestBase):
     for samples in [uncompiled_samples, compiled_samples]:
       # Check that all samples are on unit sphere
       assert jnp.isfinite(samples).all(), f"Non-finite samples found with mu: {mu}"
-      self.assertAllClose(jnp.linalg.norm(samples, axis=-1), jnp.ones(samples.shape[:-1]), rtol=1e-4)
+      self.assertAllClose(jnp.linalg.norm(samples, axis=-1), jnp.ones(samples.shape[:-1], dtype=dtype), rtol=1e-4)
       if ndim == 1:
         # For 1D, crudely check that mean is approximately tanh(kappa)
         self.assertAllClose(jnp.mean(samples), jnp.mean(mu * jnp.tanh(kappa)), rtol=1e-2, atol=1e-2)
@@ -1438,15 +1438,17 @@ class DistributionsTest(RandomTestBase):
         # Recenter around mu_angle and re-fmod
         angles_recentered = sample_angles - mu_angle
         angles_recentered = (angles_recentered - (jnp.ceil((angles_recentered + jnp.pi) / (2.0*jnp.pi) - 1.0) * 2.0*jnp.pi))
-        self.assertAllClose(jnp.mean(angles_recentered), 0.0, rtol=1e-1, atol=1e-1)
+        self.assertAllClose(jnp.mean(angles_recentered), jnp.array(0.0, dtype=dtype), rtol=1e-1, atol=1e-1)
         self._CheckKolmogorovSmirnovCDF(angles_recentered, scipy.stats.vonmises(kappa).cdf)
       elif ndim == 3:
         # For 3D, crudely check the mean is close to theoretical value
         if kappa >= 1e0:
           # For smaller kappa values, the variance of the mean is too high
           self.assertAllClose(jnp.mean(samples, axis=0) / jnp.linalg.norm(jnp.mean(samples, axis=0)), mu, rtol=1e-1, atol=1e-1)
-        theoretical_mean_length = scipy.special.iv(1.5, kappa) / scipy.special.iv(0.5, kappa)
-        self.assertAllClose(jnp.linalg.norm(jnp.mean(samples, axis=0)), theoretical_mean_length, rtol=1e-1, atol=1e-1)
+        if kappa < 1e3:
+          # iv overflows for large kappa values
+          theoretical_mean_length = scipy.special.iv(1.5, kappa) / scipy.special.iv(0.5, kappa)
+          self.assertAllClose(jnp.linalg.norm(jnp.mean(samples, axis=0)), theoretical_mean_length, rtol=1e-1, atol=1e-1)
 
   @jtu.sample_product(
       mean= [0.2, 1., 2., 10. ,100.],

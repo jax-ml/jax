@@ -3087,8 +3087,8 @@ def _vonmises_fisher(key, mean, kappa, shape, dtype) -> Array:
     shape = lax.broadcast_shapes(mean.shape[:-1], kappa.shape)
   else:
     _check_shape("vonmises_fisher", shape, mean.shape[:-1], kappa.shape)
-  kappa = jnp.broadcast_to(kappa, shape)
-  mean = jnp.broadcast_to(mean, shape + (n_dim,))
+  kappa = jnp.broadcast_to(kappa, shape).astype(dtype)
+  mean = jnp.broadcast_to(mean, shape + (n_dim,)).astype(dtype)
 
   safe_norm_mean = mean / jnp.maximum(jnp.linalg.norm(mean, axis=-1, keepdims=True), 1e-8)
   with np.errstate(over="ignore"):
@@ -3116,7 +3116,7 @@ def _vonmises_fisher(key, mean, kappa, shape, dtype) -> Array:
       # For 3D, use Wenzel's method, start sampling around [1, 0, 0]
       x_key, yz_key = _split(key, 2)
       us = uniform(x_key, shape=shape, dtype=dtype)
-      xs = 1.0 + jnp.log(us + (1.0 - us)*jnp.exp(-2.0*safe_kappa))/safe_kappa
+      xs = 1.0 + jnp.log((1.0 - us) + us * jnp.exp(-2.0 * safe_kappa)) / safe_kappa
 
       yz_us = normal(yz_key, shape=shape + (2,), dtype=dtype)
       uniformcircle = yz_us / jnp.maximum(jnp.linalg.norm(yz_us, axis=-1, keepdims=True), 1e-8)
@@ -3127,9 +3127,9 @@ def _vonmises_fisher(key, mean, kappa, shape, dtype) -> Array:
       # This rotation is then applied to all samples.
       base_point = jnp.zeros(shape + (n_dim,), dtype=dtype)
       base_point = base_point.at[..., 0].set(1.0)
-      embedded = jnp.concatenate([safe_norm_mean[..., None, :], jnp.zeros(shape + (n_dim - 1, n_dim))], axis=-2)
+      embedded = jnp.concatenate([safe_norm_mean[..., None, :], jnp.zeros(shape + (n_dim - 1, n_dim), dtype=dtype)], axis=-2)
       rotmatrix, _ = jnp.linalg.qr(embedded.swapaxes(-2, -1))
-      rotsign = (2.0 * jnp.all(isclose((rotmatrix @ base_point[..., None])[..., 0], safe_norm_mean), axis=1, keepdims=True).astype(dtype) - 1.0)
+      rotsign = (2.0 * jnp.all(isclose((rotmatrix @ base_point[..., None])[..., 0], safe_norm_mean), axis=-1, keepdims=True).astype(dtype) - 1.0)
       samples = (einsum('...ij,...j->...i', rotmatrix, samples_aboutx) * rotsign).astype(dtype)
     else:
       # Should never reach
