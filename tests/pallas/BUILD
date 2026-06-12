@@ -313,7 +313,7 @@ jax_multiplatform_test(
     enable_backends = ["cpu"],
     enable_configs = [
         "gpu_a100_x32",
-        # "gpu_h100_x32",
+        "gpu_h100_x32",
         "gpu_b200",
     ],
     tags = [],

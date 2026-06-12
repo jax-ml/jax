@@ -69,6 +69,10 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data)
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message=".*pl.pallas_call.*for Mosaic GPU kernels")
+  # TODO: remove this 6 months after we remove pl.pallas_call for Mosaic GPU.
   def test_mosaic_gpu_add_one(self):
     if jtu.test_device_matches(["rocm"]):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
@@ -103,6 +107,10 @@ class CompatTest(bctu.CompatTestBase):
       o_ref[...] = x_ref[...] + 1
 
     data = self.load_testdata(mosaic_gpu_add_one.kernel_data_2025_09_07)
+    self.run_one_test(add_one, data,
+                      expect_current_custom_calls=["mosaic_gpu_v2"])
+
+    data = self.load_testdata(mosaic_gpu_add_one.kernel_data_2026_06_12)
     self.run_one_test(add_one, data)
 
   @jax.default_matmul_precision("bfloat16")
