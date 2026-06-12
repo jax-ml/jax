@@ -29,6 +29,8 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import numpy as jnp
+from jax._src.numpy.einsum import einsum
+from jax._src.numpy.lax_numpy import isclose
 from jax._src.random import prng
 from jax._src.random import threefry2x32
 from jax._src import xla_bridge
@@ -2915,7 +2917,7 @@ def vonmises(key: ArrayLike,
   _check_all_safe_to_cast("vonmises", dtype, kappa)
   return maybe_auto_axes(_vonmises, out_sharding, shape=shape, dtype=dtype)(key, kappa)
 
-@jit(static_argnums=(2, 3))
+#@jit(static_argnums=(2, 3))
 def _vonmises(key, kappa, shape, dtype) -> Array:
   """Sample from von Mises distribution with mean angle 0 and concentration kappa
 
@@ -3003,6 +3005,144 @@ def _vonmises(key, kappa, shape, dtype) -> Array:
   )
 
   return jnp.reshape(samples, shape)
+
+def vonmises_fisher(key: ArrayLike,
+                    mean: RealArray,
+                    kappa: RealArray,
+                    shape: Shape | None = None,
+                    dtype: DTypeLikeFloat | None = None,
+                    *,
+                    out_sharding: NamedSharding | P | None = None) -> Array:
+  r"""Sample von Mises-Fisher random values with given mean direction and concentration parameter.
+
+  The normalized vectors are returned according to the probability density function:
+
+  .. math::
+     f(x;\mu, \kappa) = \frac{\kappa^{k/2-1}}{(2\pi^{k/2} I_{k/2-1}(\kappa)} e^{\kappa \mu^T x}
+
+  where :math:`k` is the dimension, :math:`\mu` is the mean direction (given by ``mean``) and
+  :math:`\kappa` is the concentration parameter (given by ``kappa``).
+
+  Args:
+    key: a PRNG key used as the random key.
+    mean: a mean direction of shape ``(..., k)``, which will be normalized to unit length.
+    kappa: a concentration parameter of shape ``(...,)``.
+    shape: optional, a tuple of nonnegative integers specifying the result
+      batch shape; that is, the prefix of the result shape excluding the last
+      axis. Must be broadcast-compatible with ``mean.shape[:-1]`` and
+      ``kappa.shape``. The default (None) produces a result batch shape by
+      broadcasting together the batch shapes of ``mean`` and ``kappa``.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+    out_sharding: Optional. Specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
+
+  Returns:
+    A random array with the specified dtype and shape given by
+    ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
+    ``broadcast_shapes(mean.shape[:-1], kappa.shape) + mean.shape[-1:]``.
+  """
+  key, _ = _check_prng_key("vonmises_fisher", key)
+  mean, kappa = promote_dtypes_inexact(mean, kappa)
+  if dtype is None:
+    dtype = mean.dtype
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype)
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `vonmises_fisher` must be a float "
+                     f"dtype, got {dtype}")
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "vonmises_fisher", shape)
+  return maybe_auto_axes(_vonmises_fisher, out_sharding,
+                         shape=shape, dtype=dtype)(key, mean, kappa)
+
+#@jit(static_argnums=(3, 4))
+def _vonmises_fisher(key, mean, kappa, shape, dtype) -> Array:
+  """Sample from von Mises-Fisher distribution with mean direction `mean` and concentration `kappa`.
+
+  1D: Weighted Rademacher distribution
+  2D: Jax transcription of Scipy's implementation, which uses the von Mises distribution
+  3D: Jax transcription of Scipy's implementation, which explicitly references:
+      https://www.mitsuba-renderer.org/~wenzel/files/vmf.pdf
+  4+D: Scipy uses rejection sampling, which is NOT reproduced here.
+  """
+
+  from jax._src.nn.functions import sigmoid  # pyrefly: ignore[missing-import]
+  if not np.ndim(mean) >= 1:
+    msg = "vonmises_fisher requires mean.ndim >= 1, got mean.ndim == {}"
+    raise ValueError(msg.format(np.ndim(mean)))
+  n_dim = mean.shape[-1]
+  if n_dim > 3:
+    msg = "vonmises_fisher is only implemented for 1D, 2D, and 3D spaces, got mean.shape[-1] == {}"
+    raise ValueError(msg.format(n_dim))
+
+  if shape is None:
+    shape = lax.broadcast_shapes(mean.shape[:-1], kappa.shape)
+  else:
+    _check_shape("vonmises_fisher", shape, mean.shape[:-1], kappa.shape)
+  kappa = jnp.broadcast_to(kappa, shape)
+  mean = jnp.broadcast_to(mean, shape + (n_dim,))
+
+  safe_norm_mean = mean / jnp.maximum(jnp.linalg.norm(mean, axis=-1, keepdims=True), 1e-8)
+  with np.errstate(over="ignore"):
+    kappa_small = jnp.array(1e-5).astype(dtype)
+
+  if n_dim == 1:
+    # For 1D, use weighted Rademacher distribution
+    bernoulli_samples = bernoulli(key=key, p=sigmoid(2*kappa[..., None])).astype(dtype)
+    return safe_norm_mean * (2 * bernoulli_samples - 1).astype(dtype)
+
+  def small_kappa_uniform(key, kappa):
+    # For small kappa values, we use a uniform distribution over the n-sphere
+    uniforms = uniform(key, shape + (n_dim,), dtype=dtype)
+    return uniforms / jnp.maximum(jnp.linalg.norm(uniforms, axis=-1, keepdims=True), 1e-8)
+
+  def large_kappa_sample(key, kappa):
+    # Implementation for larger kappa values
+    safe_kappa = jnp.where(kappa < kappa_small, 1.0, kappa).astype(dtype)
+    if n_dim == 2:
+      # For 2D, reduce to the von Mises distribution
+      mean_angle = jnp.arctan2(safe_norm_mean[..., 1], safe_norm_mean[..., 0])
+      angle_samples = vonmises(key, safe_kappa, shape=shape, dtype=dtype) + mean_angle
+      samples = jnp.stack([jnp.cos(angle_samples), jnp.sin(angle_samples)], axis=-1).astype(dtype)
+    elif n_dim == 3:
+      # For 3D, use Wenzel's method, start sampling around [1, 0, 0]
+      x_key, yz_key = _split(key, 2)
+      us = uniform(x_key, shape=shape, dtype=dtype)
+      xs = 1.0 + jnp.log(us + (1.0 - us)*jnp.exp(-2.0*safe_kappa))/safe_kappa
+
+      yz_us = normal(yz_key, shape=shape + (2,), dtype=dtype)
+      uniformcircle = yz_us / jnp.maximum(jnp.linalg.norm(yz_us, axis=-1, keepdims=True), 1e-8)
+      temp = jnp.sqrt(1.0 - jnp.square(xs))
+      samples_aboutx = jnp.stack([xs, temp*uniformcircle[..., 0], temp*uniformcircle[..., 1]], axis=-1).astype(dtype)
+
+      # QR decomposition is used to find the rotation that maps the north pole (1, 0,...,0) to the vector mu.
+      # This rotation is then applied to all samples.
+      base_point = jnp.zeros(shape + (n_dim,), dtype=dtype)
+      base_point = base_point.at[..., 0].set(1.0)
+      embedded = jnp.concatenate([safe_norm_mean[..., None, :], jnp.zeros(shape + (n_dim - 1, n_dim))], axis=-2)
+      rotmatrix, _ = jnp.linalg.qr(embedded.swapaxes(-2, -1))
+      rotsign = (2.0 * jnp.all(isclose((rotmatrix @ base_point[..., None])[..., 0], safe_norm_mean), axis=1, keepdims=True).astype(dtype) - 1.0)
+      samples = (einsum('...ij,...j->...i', rotmatrix, samples_aboutx) * rotsign).astype(dtype)
+    else:
+      # Should never reach
+      samples = jnp.zeros(shape + (n_dim,), dtype=dtype)
+      raise ValueError("vonmises_fisher is only implemented for 1D, 2D, and 3D spaces.")
+
+    return samples
+
+  return lax.select(
+    jnp.broadcast_to(kappa[..., None], mean.shape).astype(dtype) < kappa_small,
+    small_kappa_uniform(key, kappa),
+    large_kappa_sample(key, kappa)
+  )
 
 def wald(key: ArrayLike,
          mean: RealArray,
