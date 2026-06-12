@@ -408,6 +408,11 @@ class PallasCallTest(ptu.PallasTest):
     self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
     self.enter_context(mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS))
 
+  @jtu.ignore_warning(
+      category=DeprecationWarning,
+      message="Using .*pl.pallas_call.* for Mosaic GPU kernels is "
+      "deprecated",
+  )
   def test_pallas_call_infers_backend_from_compiler_params(self):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Only works on GPU.")
