@@ -19,7 +19,8 @@ from collections.abc import Callable
 
 from jax._src import core
 from jax._src import api_util
-from jax._src.util import safe_map, safe_zip, unzip2, weakref_lru_cache
+from jax._src.util import (safe_map, safe_zip, unzip2, weakref_lru_cache,
+                           partition_list)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (
     FlatTree, Partial, tree_unflatten, tree_leaves_checked)
@@ -38,7 +39,8 @@ def remat_transform(policy, f, *args):
   dbg = api_util.debug_info("remat", f, args, {})
   with core.take_current_trace() as parent_trace:
     jaxpr_trace = pe.DynamicJaxprTrace(None)
-    trace = RematTrace(parent_trace, jaxpr_trace, core.TraceTag(), policy)
+    jaxpr_trace.tag = core.TraceTag()
+    trace = RematTrace(parent_trace, jaxpr_trace, policy)
     args_ft = FlatTree.flatten_static_argnums_argnames(args, {}, (), ())
     in_tracers = args_ft.map(
         lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # type: ignore # noqa F821
@@ -69,13 +71,14 @@ class RematTracer(core.Tracer['RematTrace']):
     self.tracer = jaxpr_tracer
 
 class RematTrace(core.Trace):
-  def __init__(self, parent_trace, jaxpr_trace, tag, policy):
+  def __init__(self, parent_trace, jaxpr_trace, policy):
     super().__init__()
     self.parent_trace = parent_trace
     self.jaxpr_trace = jaxpr_trace
-    self.tag = tag
     self.policy = policy
     self.requires_low = False
+
+  tag = property(lambda self: self.jaxpr_trace.tag)
 
   def to_val_tracer_pair(self, x):
     if isinstance(x, RematTracer) and x._trace.tag is self.tag:
@@ -127,6 +130,36 @@ class RematTrace(core.Trace):
                               out_trees=out_trees, symbolic_zeros=symbolic_zeros)
     return map(partial(RematTracer, self), out_primal, out_primal2)
 
+def remat_subtrace(f: Callable, tag: core.TraceTag, policy,
+                   debug_info: core.DebugInfo, args):
+  source_info = source_info_util.current()
+  with core.take_current_trace() as parent_trace:
+    rem_trace = pe.DynamicJaxprTrace(debug_info, auto_dce=True)
+    rem_trace.tag = tag
+    trace = RematTrace(parent_trace, rem_trace, policy)
+    tracers = [RematTracer(trace, x, rem_trace.new_arg(typeof(x), source_info))
+               for x in args]
+    with core.set_current_trace(trace, check_leaks=True):
+      ans = f(*tracers)
+      out_primals, out_rem = ans.map(trace.to_val_tracer_pair).unzip2()
+      del trace, ans, tracers
+  out_rem = map(partial(rem_trace.to_jaxpr_tracer, source_info=source_info), out_rem)
+  jaxpr, consts = rem_trace.to_jaxpr(out_rem, debug_info.with_unknown_names(),
+                                     source_info)
+  which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
+                getattr(c._trace, 'tag', None) is tag) for c in consts]
+  jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
+  res, env = partition_list(which_env, consts)
+  residual_avals = map(typeof, res)
+  id_map = {id(p): i for i, p in enumerate(args)}
+  in_fwd: list[int | None] = [id_map.get(id(r)) for r in res]
+  id_map = {id(p): i for i, p in enumerate(out_primals)}
+  out_fwd: list[int | None] = [id_map.get(id(r)) for r in res]
+  res = [p for p, f1, f2 in zip(res, in_fwd, out_fwd) if f1 is None and f2 is None]
+  aux = (residual_avals, jaxpr, env, in_fwd, out_fwd)
+  return res, out_primals, aux
+
+
 def reduce_precision(x):
   if (h := reduce_precision_handlers.get(type(t := core.typeof(x)))):
     return h(t, x)
@@ -144,9 +177,8 @@ def _remat_jaxpr(jaxpr, policy):
   dbg = jaxpr.jaxpr.debug_info
   fwd_trace = pe.DynamicJaxprTrace(dbg)
   rem_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
-  tag = core.TraceTag()
-  trace = RematTrace(fwd_trace, rem_trace, tag, policy)
-  rem_trace.tag = tag
+  rem_trace.tag = core.TraceTag()
+  trace = RematTrace(fwd_trace, rem_trace, policy)
   src = source_info_util.current()
 
   def new_arg(a):

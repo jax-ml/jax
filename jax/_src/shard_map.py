@@ -55,6 +55,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import ad
+from jax._src.interpreters import remat
 from jax._src.tree_util import (
     broadcast_prefix, keystr, prefix_errors, generate_key_paths, tree_flatten,
     tree_leaves, tree_map, tree_structure, tree_unflatten, KeyPath, PyTreeDef, FlatTree)
@@ -1798,6 +1799,71 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
                   for nz, primal in zip(nzs_out, primals_out)]
   return primals_out.map3(partial(ad.maybe_linearize_tracer, trace), nzs_out, tangents_out)
 ad.LinearizeTrace.process_shard_map = _shard_map_linearize
+
+
+def _shard_map_remat(trace, shard_map_p, f, tracers, mesh, in_specs, check_vma,
+                     newly_manual_axes, debug_info):
+  debug_info = debug_info.with_unknown_names()
+  in_vals, in_vals2 = unzip2(map(trace.to_val_tracer_pair, tracers))
+  all_names = _all_newly_manual_mesh_names(mesh, newly_manual_axes)
+
+  def f_fwd(*in_vals):
+    res, ans_aux, rem_data = remat.remat_subtrace(
+        f, trace.tag, trace.policy, debug_info, in_vals)
+    primals_out, out_specs = ans_aux.unpack_aux()
+
+    res_avals, _, _, in_fwd, out_fwd = rem_data
+    res_avals = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
+                 if f1 is None and f2 is None]
+    res_specs = [a.nospec(mesh, check_vma, all_names) for a in res_avals]
+    new_out_specs = (*res_specs, *out_specs)
+    res = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+           for x in res]
+    res_and_primal = FlatTree.pack((FlatTree.flatten_list(res), primals_out))
+    return res_and_primal.with_aux((rem_data, out_specs)).with_aux(new_out_specs)
+
+  fwd_params = dict(
+      mesh=mesh, in_specs=in_specs,
+      check_vma=check_vma, newly_manual_axes=newly_manual_axes, debug_info=debug_info)
+  avals = [typeof(x) for x in in_vals]
+  all_results_aux = shard_map_p.bind_with_trace(
+      trace.parent_trace, tuple(in_vals), avals, dict(fwd_params, subfuns=(f_fwd,)))
+  all_results, (rem_data, out_specs) = all_results_aux.unpack_aux()
+  res_avals, rem_jaxpr, env, in_fwd, out_fwd = rem_data
+  non_fwd_res, primals_out = all_results.unpack()
+  residuals = subs_list2(in_fwd, out_fwd, in_vals, (*primals_out,), non_fwd_res)
+  args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
+                     for aval, f1, f2 in zip(res_avals, in_fwd, out_fwd)]
+  with (_extend_axis_env(mesh, newly_manual_axes),
+        use_abstract_mesh(_as_manual_mesh(mesh, newly_manual_axes)),
+        config._check_vma(check_vma)):
+    rem_jaxpr = _promote_scalar_residuals_jaxpr(rem_jaxpr, args_to_promote)
+  res_avals2 = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
+                if f1 is None and f2 is None]
+  res_avals_iter = iter(res_avals2)
+  res_specs = [in_specs[f1] if f1 is not None else out_specs[f2] if f2 is not None
+               else next(res_avals_iter).nospec(mesh, check_vma, all_names)
+               for f1, f2 in zip(in_fwd, out_fwd)]
+  assert next(res_avals_iter, None) is None
+  env_specs = [_repspec(typeof(e)) for e in env]
+  rem_params = dict(
+      mesh=mesh, in_specs=(*res_specs, *env_specs, *in_specs),
+      check_vma=check_vma, newly_manual_axes=newly_manual_axes,
+      debug_info=rem_jaxpr.debug_info)
+
+  def f_rem(*args):
+    out = core.eval_jaxpr(rem_jaxpr, (), *args)
+    return FlatTree.flatten_list(out).with_aux(out_specs)
+
+  args = (*residuals, *env, *in_vals2)
+  avals = [typeof(x) for x in args]
+  primals_out2_ft = shard_map_p.bind_with_trace(
+      trace.jaxpr_trace, args, avals, dict(rem_params, subfuns=(f_rem,)))
+
+  out_tracers = map(partial(remat.RematTracer, trace),
+                    list(primals_out), list(primals_out2_ft))
+  return primals_out.update(out_tracers)
+remat.RematTrace.process_shard_map = _shard_map_remat
 
 
 def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):

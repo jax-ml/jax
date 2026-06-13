@@ -1265,6 +1265,7 @@ pytype_strict_library(
         ":mlir",
         ":named_sharding",
         ":partial_eval",
+        ":remat",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",

@@ -770,8 +770,7 @@ class LinearizeTrace(Trace):
 
   @property
   def tag(self) -> core.TraceTag:
-    assert hasattr(self.tangent_trace, "tag")
-    return self.tangent_trace.tag
+    return self.tangent_trace.tag  # type: ignore
 
   def _name_stack_suffix(self):
     return source_info_util.current_name_stack()[self._name_stack_prefix_len:]
@@ -885,16 +884,16 @@ class LinearizeTrace(Trace):
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
     nzs_in = tuple(type(t) is not Zero for t in tangents)
-    f_primal, linearize_outs_thunk = linearize_subtrace(
+    f_fwd, linearize_outs_thunk = linearize_subtrace(
         f, self.is_vjp, self.tag, nzs_in, f.debug_info)
 
     avals = [typeof(x) for x in primals]
-    all_primal_results = call_primitive.bind_with_trace(
-        self.parent_trace, primals, avals, dict(params, subfuns=(f_primal,)))
+    all_fwd_results = call_primitive.bind_with_trace(
+        self.parent_trace, primals, avals, dict(params, subfuns=(f_fwd,)))
     residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
     num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-    non_fwd_res = all_primal_results[:num_res_out]
-    primals_out = all_primal_results[num_res_out:]
+    non_fwd_res = all_fwd_results[:num_res_out]
+    primals_out = all_fwd_results[num_res_out:]
     residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
     update_params = call_linearize_param_updaters.get(call_primitive)
     num_new_args = len(residuals) + len(env)
