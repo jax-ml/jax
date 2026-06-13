@@ -747,7 +747,7 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
         'temporary workaround pass the check_vma=False argument to '
         '`jax.shard_map`')
   ys_avals = _map(partial(core.unmapped_leading_aval, length), y_avals)
-  return out_carry_avals + ys_avals, core.eqn_effects(jaxpr)
+  return out_carry_avals + ys_avals, core.positional_effects(jaxpr)
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
               unroll):
@@ -1005,7 +1005,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
                                jaxpr=jaxpr_unknown,
                                num_consts=len(int_res) + sum(const_uk),
                                num_carry=sum(carry_uk)),
-                          jaxpr_unknown.effects, source)
+                          core.positional_effects(jaxpr_unknown), source)
   for t in out_tracers: t.recipe = eqn
   if effects.partial_eval_kept_effects.filter_in(jaxpr_unknown.effects):
     trace.effect_handles.append(pe.EffectHandle(unknown_tracers_in, eqn))
@@ -1044,12 +1044,7 @@ def _rearrange_mutable_binders(
     new_arg_names = [*fst, *mut_names, *immut_names, *rst]
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
 
-  # TODO(mattjj): don't we need to re-number effects? test coverage?
-  new_effs = pe._renumber_effects((*jaxpr.jaxpr.constvars, *new_invars),
-                                  (*jaxpr.jaxpr.constvars, *jaxpr.jaxpr.invars),
-                                  jaxpr.jaxpr.effects)
-  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, effects=new_effs,
-                                  debug_info=dbg)
+  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, debug_info=dbg)
   if config.enable_checks.value: core.check_jaxpr(new_jaxpr)
   return ClosedJaxpr(new_jaxpr, jaxpr.consts)
 
@@ -1324,22 +1319,24 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn: core.JaxprEqn):
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*intensive_res, *out_binders_known, *extensive_res],
       core.closed_call_p, dict(call_jaxpr=call_jaxpr),
-      core.eqn_effects(call_jaxpr), eqn.source_info, eqn.ctx)
+      core.eqn_effects(call_jaxpr, ins_known), eqn.source_info, eqn.ctx)
 
   # Create the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   params_staged = dict(eqn.params, jaxpr=jaxpr_staged,
                        num_consts=len(intensive_res) + eqn.params['num_consts'])
+  staged_invars = [*intensive_res, *eqn.invars, *extensive_res]
   eqn_staged = pe.new_jaxpr_eqn(
-      [*intensive_res, *eqn.invars, *extensive_res], out_binders_staged,
-      eqn.primitive, params_staged, core.eqn_effects(jaxpr_staged),
+      staged_invars, out_binders_staged,
+      eqn.primitive, params_staged,
+      core.eqn_effects(jaxpr_staged, staged_invars),
       eqn.source_info, eqn.ctx)
 
   new_vars = [*new_inst, *intensive_res, *extensive_res]
   for e in [eqn_known, eqn_staged]:
     for eff in e.effects:
       if isinstance(eff, effects.JaxprInputEffect):
-        assert isinstance(e.invars[eff.input_index].aval, AbstractRef)
+        assert isinstance(eff.input.aval, AbstractRef)
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
 
 def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
@@ -1381,7 +1378,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
     raise core.JaxprTypeError(
       f'scan jaxpr takes input sequence types\n{_avals_short(x_avals_jaxpr)},\n'
       f'called with sequence whose items have type\n{_avals_short(x_avals_mapped)}')
-  return [*init_avals, *y_avals], core.eqn_effects(jaxpr)
+  return [*init_avals, *y_avals], core.positional_effects(jaxpr)
 
 def _scan_state_partial_discharge_rule(
     should_discharge, in_avals, out_avals, *args, jaxpr, num_consts, num_carry,
@@ -1700,17 +1697,16 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts
                        ) -> effects.Effects:
   joined_effects = set()
-  for eff in cond_jaxpr.effects:
+  for eff in core.positional_effects(cond_jaxpr):
     if isinstance(eff, effects.JaxprInputEffect):
-      index = eff.input_index
+      index = eff.input
       if index >= cond_nconsts:
         index += body_nconsts
-      eff = eff.replace(input_index=index)
+      eff = eff.replace(index)
     joined_effects.add(eff)
-  for eff in body_jaxpr.effects:
+  for eff in core.positional_effects(body_jaxpr):
     if isinstance(eff, effects.JaxprInputEffect):
-      index = eff.input_index + cond_nconsts
-      eff = eff.replace(input_index=index)
+      eff = eff.replace(eff.input + cond_nconsts)
     joined_effects.add(eff)
   return joined_effects
 
@@ -2001,8 +1997,9 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   params_known = dict(cond_jaxpr=cond_jaxpr_known, body_jaxpr=body_jaxpr_known,
                       cond_nconsts=len(cond_consts_uk) - sum(cond_consts_uk),
                       body_nconsts=len(body_consts_uk) - sum(body_consts_uk))
-  effects_known = core.join_effects(cond_jaxpr_known.effects,
-                                    body_jaxpr_known.effects)
+  effects_known = _join_while_effects(body_jaxpr_known, cond_jaxpr_known,
+                                      params_known['body_nconsts'],
+                                      params_known['cond_nconsts'])
   eqn_known = pe.new_jaxpr_eqn(ins_known, out_binders_known, while_p,
                                params_known, effects_known, eqn.source_info,
                                eqn.ctx)
@@ -2203,11 +2200,13 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
                                                                   body_nconsts])
 
   # Check if the same Ref is written to in both cond and body.
-  cond_write_ids = {id(cond_consts_avals[effect.input_index])
-    for effect in cond_jaxpr.effects if isinstance(effect, state.WriteEffect)}
+  cond_write_ids = {id(cond_consts_avals[effect.input])
+    for effect in core.positional_effects(cond_jaxpr)
+    if isinstance(effect, state.WriteEffect)}
   cond_has_writes = len(cond_write_ids) > 0
-  body_write_ids = {id(body_consts_avals[effect.input_index])
-    for effect in body_jaxpr.effects if isinstance(effect, state.WriteEffect)}
+  body_write_ids = {id(body_consts_avals[effect.input])
+    for effect in core.positional_effects(body_jaxpr)
+    if isinstance(effect, state.WriteEffect)}
   write_to_both_ids = cond_write_ids & body_write_ids
   if write_to_both_ids:
     raise NotImplementedError(

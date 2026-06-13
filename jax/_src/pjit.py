@@ -1326,8 +1326,7 @@ core.custom_typechecks[jit_p] = _pjit_typecheck
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
-  effs = core.eqn_effects(jaxpr) if jaxpr.constvars else jaxpr.effects
-  return jaxpr.out_avals, effs
+  return jaxpr.out_avals, core.positional_effects(jaxpr)
 jit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
@@ -1799,7 +1798,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
                           unknown_tracers_out,
                           jit_p,
                           unknown_params,
-                          unknown_jaxpr.effects,
+                          core.positional_effects(unknown_jaxpr),
                           source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
   if effects_lib.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
@@ -1955,9 +1954,10 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None
   else:
-    new_effs = core.eqn_effects(dced_jaxpr)
+    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
+    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
     new_eqn = core.new_jaxpr_eqn(
-        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        new_invars,
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
         eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn

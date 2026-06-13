@@ -607,7 +607,7 @@ def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
 @remat_p.def_effectful_abstract_eval
 def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
   del args, prevent_cse, differentiated, policy  # Unused.
-  return [v.aval for v in jaxpr.outvars], core.eqn_effects(jaxpr)
+  return [v.aval for v in jaxpr.outvars], core.positional_effects(jaxpr)
 
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
@@ -674,7 +674,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True,
                     prevent_cse=prevent_cse)
   recipe = pe.new_eqn_recipe(trace, in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
-                             new_params, core.eqn_effects(jaxpr_unknown),
+                             new_params, core.positional_effects(jaxpr_unknown),
                              source_info_util.current())
 
   # log info about saved residuals
@@ -857,10 +857,11 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
       _has_effects(new_jaxpr.effects)):
     return used_inputs, None
   else:
+    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
     new_eqn = pe.new_jaxpr_eqn(
-        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        new_invars,
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, core.eqn_effects(new_jaxpr),
+        eqn.primitive, new_params, core.eqn_effects(new_jaxpr, new_invars),
         eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce

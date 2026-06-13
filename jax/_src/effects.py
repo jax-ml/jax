@@ -62,33 +62,34 @@ class Effect:
 Effects = Set[Effect]
 
 class JaxprInputEffect(Effect):
-  """A side-effect associated with the input of a `JaxprEqn` or a `Jaxpr`.
+  """A side-effect associated with an input of a `JaxprEqn` or a `Jaxpr`.
 
   This is used as a base class for effects associated with inputs, e.g.,
   reading/writing from mutable inputs.
 
-  When used in a `JaxprEqn`, `input_index` refers to `eqn.invars`.
-  When used in a `Jaxpr`, `input_index` refers to `jaxpr.constvars + jaxpr.invars`.
+  In a `JaxprEqn` or a `Jaxpr`, `input` is the `core.Var` for the input the
+  effect is associated with. An abstract eval rule has no variables in scope,
+  so there `input` is instead an int, the position of the corresponding
+  primitive input. The tracing machinery resolves positions into variables
+  when it forms an equation (see `core.resolve_input_effects`).
   """
 
-  def __init__(self, input_index: Any):
-    self.input_index = input_index
+  def __init__(self, input: Any):
+    self.input = input
 
-  def replace(self, *, input_index: Any | None = None):
-    if input_index is None:
-      input_index = self.input_index
-    return self.__class__(input_index)
+  def replace(self, input: Any):
+    return self.__class__(input)
 
   def __eq__(self, other):
     if not isinstance(other, JaxprInputEffect):
       return NotImplemented
-    return self.input_index == other.input_index
+    return self.input == other.input
 
   def __hash__(self):
-    return hash((self.__class__, self.input_index))
+    return hash((self.__class__, self.input))
 
   def __repr__(self):
-    return f"{self.__class__.__name__}({self.input_index})"
+    return f"{self.__class__.__name__}({self.input})"
 
 class EffectTypeSet:
 

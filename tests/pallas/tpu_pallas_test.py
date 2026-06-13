@@ -929,7 +929,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
             state.shaped_array_ref((8,), jnp.float32),
         ],
     )
-    expected_effects = {state.ReadEffect(1), state.WriteEffect(0)}
+    x, y = jaxpr.invars
+    expected_effects = {state.ReadEffect(y), state.WriteEffect(x)}
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
   def test_scoped_allocation(self):
@@ -1094,7 +1095,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     self.assertLen(discharged_jaxpr.outvars, 1)
     self.assertIsInstance(discharged_jaxpr.invars[0].aval, state.AbstractRef)
     self.assertIsInstance(discharged_jaxpr.invars[1].aval, jax.core.ShapedArray)
-    self.assertEqual(discharged_jaxpr.effects, {state.WriteEffect(0)})
+    self.assertEqual(discharged_jaxpr.effects,
+                     {state.WriteEffect(discharged_jaxpr.invars[0])})
 
   def test_can_allocate_semaphore(self):
     def kernel(y_ref):
