@@ -109,7 +109,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
     json_str = _jax.pprof_profile_to_json(profile_proto)
     profile = json.loads(json_str)
     self.assertSetEqual(
-        {'sampleType', 'sample', 'stringTable', 'location', 'function', 'comment'},
+        {"sampleType", "sample", "stringTable", "location", "function"},
         set(profile.keys()))
 
   def test_all_eqns_with_traceback(self):

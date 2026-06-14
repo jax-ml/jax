@@ -107,7 +107,7 @@ _SHUTDOWN_TIMEOUT = absl.flags.DEFINE_integer(
 
 _BARRIER_TIMEOUT = absl.flags.DEFINE_integer(
     "barrier_timeout",
-    60,
+    10,
     "Barrier timeout in seconds. Set to a higher number when running under"
     " sanitizers.",
 )

@@ -1995,24 +1995,21 @@ def _emit_pipeline_effectful_abstract_eval(
 
   # Propagate effects from `body_jaxpr`, mapping them to the correct indices in
   # `avals`.
-  body_input_idx = {v: i for i, v in enumerate(
-      (*body_jaxpr.constvars, *body_jaxpr.invars))}
   for e in body_jaxpr.effects:
     if not isinstance(e, effects.JaxprInputEffect):
       out_effects.add(e)
       continue
-    input_idx = body_input_idx[e.input]
-    if input_idx < len(body_jaxpr.constvars):
+    if e.input_index < len(body_jaxpr.constvars):
       const_offset = num_index_map_consts + num_dynamic
-      out_effects.add(e.replace(const_offset + input_idx))
+      out_effects.add(e.replace(input_index=const_offset + e.input_index))
     else:
-      invar_idx = input_idx - len(body_jaxpr.constvars)
+      invar_idx = e.input_index - len(body_jaxpr.constvars)
       if invar_idx < num_inputs and isinstance(e, WriteEffect):
         raise ValueError(
             f"WriteEffect should not apply to an input buffer {invar_idx} in"
             f" pipeline body jaxpr: {body_jaxpr}")
       ref_idx = get_ref_idx(flat_refs_idx[invar_idx])
-      out_effects.add(e.replace(ref_idx))
+      out_effects.add(e.replace(input_index=ref_idx))
   return (), frozenset(out_effects)
 
 # TODO(rdyro): Either generalize or merge with another primitive. This primitive
@@ -2052,21 +2049,18 @@ def _pipeline_body_effectful_abstract_eval(
     if isinstance(avals[ref_idx], state.AbstractRef):
       out_effects.add(ReadEffect(ref_idx) if i < num_inputs else WriteEffect(ref_idx))
   # Propagate effects from `jaxpr`, mapping them to the correct indices in `avals`.
-  jaxpr_input_idx = {v: i for i, v in enumerate(
-      (*jaxpr.constvars, *jaxpr.invars))}
   for e in jaxpr.effects:
     if not isinstance(e, effects.JaxprInputEffect):
       out_effects.add(e)
       continue
-    input_idx = jaxpr_input_idx[e.input]
-    if input_idx < len(jaxpr.constvars):
-      out_effects.add(e.replace(flat_consts_idx[input_idx]))
+    if e.input_index < len(jaxpr.constvars):
+      out_effects.add(e.replace(input_index=flat_consts_idx[e.input_index]))
     else:
-      invar_idx = input_idx - len(jaxpr.constvars)
+      invar_idx = e.input_index - len(jaxpr.constvars)
       if invar_idx < num_inputs and isinstance(e, WriteEffect):
         raise ValueError(f"WriteEffect on input buffer {invar_idx}")
       ref_idx = get_ref_idx(flat_refs_idx[invar_idx])
-      out_effects.add(e.replace(ref_idx))
+      out_effects.add(e.replace(input_index=ref_idx))
   return (), frozenset(out_effects)
 
 

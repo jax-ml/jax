@@ -6722,8 +6722,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     # - The lowering updates references to inlined operations.
     def body(ctx, result, scratch):
       del ctx, scratch
-      result_ty = ir.MemRefType(result.type)
-      el_type = result_ty.element_type
+      i64 = ir.IntegerType.get_signless(64)
       index = ir.IndexType.get()
       op = mgpu_dialect.CustomPrimitiveOp(
           result=[],
@@ -6737,7 +6736,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       with ir.InsertionPoint(block):
         is_leader_thread = single_thread_predicate()
         with when(is_leader_thread):
-          c5 = arith.constant(el_type, 5)
+          c5 = arith.constant(i64, 5)
           memref.store(c5, block.arguments[0], [c(0, index)])
         mgpu_dialect.return_([])
 

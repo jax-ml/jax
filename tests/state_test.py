@@ -137,7 +137,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           wrap_init(f, 1), [ref_aval])
       self.assertSetEqual(jaxpr.effects,
-                          {ReadEffect(jaxpr.invars[0])})
+                          {ReadEffect(len(jaxpr.constvars))})
       self.assertLen(out_avals, 1)
       out_aval, = out_avals
       self.assertIsInstance(out_aval, core.ShapedArray)
@@ -258,7 +258,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           wrap_init(f, 2), [ref_aval, val_aval])
       self.assertSetEqual(jaxpr.effects,
-                          {WriteEffect(jaxpr.invars[0])})
+                          {WriteEffect(len(jaxpr.constvars))})
       self.assertLen(out_avals, 1)
       out_aval, = out_avals
       self.assertIsInstance(out_aval, core.ShapedArray)
@@ -335,7 +335,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           wrap_init(f, 2), [ref_aval, val_aval])
       self.assertSetEqual(jaxpr.effects,
-                          {AccumEffect(jaxpr.invars[0])})
+                          {AccumEffect(len(jaxpr.constvars))})
       self.assertLen(out_avals, 0)
 
   def test_addupdate_abstract_eval_must_take_in_refs(self):
@@ -512,8 +512,6 @@ class StatePrimitivesTest(jtu.JaxTestCase):
   )
   def test_vmap(self, ref_shape, ref_bdim, idx_shape, indexed_dims,
                     idx_bdims, out_bdim, op):
-    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
-      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
     intx = dtypes.default_int_dtype()
     floatx = dtypes.default_float_dtype()
     axis_size = 7
@@ -789,7 +787,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertIsInstance(discharged_jaxpr.invars[0].aval, AbstractRef)
     self.assertIsInstance(discharged_jaxpr.invars[1].aval, core.ShapedArray)
     self.assertEqual(discharged_jaxpr.effects,
-        {WriteEffect(discharged_jaxpr.invars[0])})
+        {WriteEffect(len(discharged_jaxpr.constvars))})
 
   def test_ellipsis_index(self):
     def f(ref):
@@ -832,11 +830,8 @@ class StateDischargeTest(jtu.JaxTestCase):
     f_jaxpr = jax.make_jaxpr(f)(ref(1.), ref(2.))
     jaxpr = discharge_state(f_jaxpr, should_discharge=[False, True])
     # Effects on y_ref were discharged away but not the effects on x_ref
-    a, b = f_jaxpr.jaxpr.invars
-    self.assertEqual(f_jaxpr.effects, {ReadEffect(a), WriteEffect(a),
-                                       ReadEffect(b), WriteEffect(b)})
-    self.assertEqual(jaxpr.effects, {ReadEffect(jaxpr.invars[0]),
-                                     WriteEffect(jaxpr.invars[0])})
+    self.assertEqual(f_jaxpr.effects, {ReadEffect(0), WriteEffect(0), ReadEffect(1), WriteEffect(1)})
+    self.assertEqual(jaxpr.effects, {ReadEffect(0), WriteEffect(0)})
     # x_ref arg is still a reference but y_ref is discharged
     self.assertNotIsInstance(jaxpr.invars[1].aval, AbstractRef)
     self.assertIsInstance(jaxpr.invars[0].aval, AbstractRef)
@@ -982,15 +977,11 @@ class GetVmapParams(NamedTuple):
         f"bat_idxs={tuple(f'array(shape={x.shape}, dtype={x.dtype})' for x in self.bat_idxs)})"
     )
 
-_float_elements = hps.floats(min_value=-100.0, max_value=100.0,
-                             allow_nan=False, allow_infinity=False)
-
 @hps.composite
 def get_vmap_params(draw):
   vmap_index_param: VmappableIndexParam = draw(
       vmappable_index_params(op_type="get"))
-  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape,
-                            elements=_float_elements))
+  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape))
   bat_idx_shapes_ = iter(vmap_index_param.bat_non_slice_idx_shapes)
   bat_idxs = tuple(
       draw(index_arrays(size, next(bat_idx_shapes_)))
@@ -1019,8 +1010,7 @@ class SetVmapParams(NamedTuple):
 def set_vmap_params(draw):
   vmap_index_param: VmappableIndexParam = draw(vmappable_index_params(
     op_type="swap"))
-  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape,
-                            elements=_float_elements))
+  bat_ref = draw(hnp.arrays(np.float32, vmap_index_param.bat_ref_shape))
   bat_idx_shapes_ = iter(vmap_index_param.bat_non_slice_idx_shapes)
   bat_idxs = tuple(
       draw(index_arrays(size, next(bat_idx_shapes_)))
@@ -1029,8 +1019,7 @@ def set_vmap_params(draw):
         vmap_index_param.index_param.indexed_dims)
       if indexed)
   assert next(bat_idx_shapes_, None) is None
-  bat_val = draw(hnp.arrays(np.float32, vmap_index_param.bat_slice_shape,
-                            elements=_float_elements))
+  bat_val = draw(hnp.arrays(np.float32, vmap_index_param.bat_slice_shape))
   return SetVmapParams(vmap_index_param, bat_ref, bat_val, bat_idxs)
 
 Indexer = tuple[Union[int, slice, np.ndarray]]
@@ -1057,8 +1046,6 @@ class StateHypothesisTest(jtu.JaxTestCase):
                max_examples=jtu.NUM_GENERATED_CASES.value,
                suppress_health_check=[hp.HealthCheck.too_slow])
   def test_get_vmap(self, get_vmap_param: GetVmapParams):
-    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
-      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
 
     indexed_dims = get_vmap_param.vmap_index_param.index_param.indexed_dims
 
@@ -1101,8 +1088,6 @@ class StateHypothesisTest(jtu.JaxTestCase):
   def test_set_vmap(self, set_vmap_param: SetVmapParams):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Scatter is nondeterministic on GPU")
-    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
-      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
     indexed_dims = set_vmap_param.vmap_index_param.index_param.indexed_dims
 
     def f(ref, val, *non_slice_idx):
@@ -1148,8 +1133,6 @@ class StateHypothesisTest(jtu.JaxTestCase):
                max_examples=jtu.NUM_GENERATED_CASES.value,
                suppress_health_check=[hp.HealthCheck.too_slow])
   def test_addupdate_vmap(self, set_vmap_param: SetVmapParams):
-    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 1):
-      self.skipTest("Skipping on TPU 7x with libtpu < 0.0.41")
 
     indexed_dims = set_vmap_param.vmap_index_param.index_param.indexed_dims
 
@@ -1205,11 +1188,8 @@ class StateControlFlowTest(jtu.JaxTestCase):
     f_jaxpr = jax.make_jaxpr(f0)(False, ref(3.), ref(4.))
     jaxpr = discharge_state(f_jaxpr, should_discharge=[False, False, True])
     # Effects on y_ref were discharged away but not the effects on x_ref
-    _, x, y = f_jaxpr.jaxpr.invars
-    self.assertEqual(f_jaxpr.effects, {ReadEffect(x), WriteEffect(x),
-                                       ReadEffect(y), WriteEffect(y)})
-    self.assertEqual(jaxpr.effects, {ReadEffect(jaxpr.invars[1]),
-                                     WriteEffect(jaxpr.invars[1])})
+    self.assertEqual(f_jaxpr.effects, {ReadEffect(1), WriteEffect(1), ReadEffect(2), WriteEffect(2)})
+    self.assertEqual(jaxpr.effects, {ReadEffect(1), WriteEffect(1)})
     # x_ref arg is still a reference but y_ref is discharged
     self.assertNotIsInstance(jaxpr.invars[2].aval, AbstractRef)
     self.assertIsInstance(jaxpr.invars[1].aval, AbstractRef)
@@ -1791,13 +1771,11 @@ class RunStateTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(2)
     self.assertEmpty(jaxpr.effects)
     self.assertEmpty(jaxpr.jaxpr.eqns[0].effects)
-    body_jaxpr = jaxpr.jaxpr.eqns[0].params["jaxpr"]
-    self.assertSetEqual(body_jaxpr.effects,
-                        {ReadEffect(body_jaxpr.invars[0])})
-    inner_jaxpr = body_jaxpr.eqns[0].params["jaxpr"]
-    self.assertSetEqual(inner_jaxpr.effects,
-                        {ReadEffect(inner_jaxpr.invars[0]),
-                         ReadEffect(inner_jaxpr.invars[1])})
+    self.assertSetEqual(jaxpr.jaxpr.eqns[0].params["jaxpr"].effects,
+                        {ReadEffect(0)})
+    self.assertSetEqual(
+        jaxpr.jaxpr.eqns[0].params["jaxpr"].eqns[0].params["jaxpr"].effects,
+                        {ReadEffect(0), ReadEffect(1)})
 
   def test_jvp_of_run_state(self):
     @run_state

@@ -25,7 +25,6 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
-echo "::group::Setup Environment" >&2
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
@@ -64,8 +63,8 @@ if [[ $host_memory_limit -lt $num_test_jobs ]]; then
 fi
 # End of test environment variables setup.
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -146,13 +145,7 @@ set +e
 # should match the VM's CPU core count (set in `--local_test_jobs`).
 TEST_ARTIFACTS_DIR="test-artifacts-single"
 mkdir -p "$TEST_ARTIFACTS_DIR"
-echo "::endgroup::" >&2
-
-echo "::group::Bazel CUDA single-accelerator tests" >&2
-INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
-
 bazel "${single_accelerator_bazel_test_args[@]}" \
-  --invocation_id="$INVOCATION_ID_SINGLE" \
   --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
   --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
   --test_output=errors \
@@ -165,19 +158,12 @@ bazel "${single_accelerator_bazel_test_args[@]}" \
 
 # Store the return value of the first bazel command.
 first_bazel_cmd_retval=$?
-echo "::endgroup::" >&2
-python3 ci/utilities/report_resultstore_link.py "CUDA single-accelerator tests" "$INVOCATION_ID_SINGLE" "${first_bazel_cmd_retval:-0}"
 ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE...
 TEST_ARTIFACTS_DIR="test-artifacts-multi"
 mkdir -p "$TEST_ARTIFACTS_DIR"
-
-echo "::group::Bazel CUDA multi-accelerator tests" >&2
-INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
-
 bazel "${common_bazel_test_args[@]}" \
-  --invocation_id="$INVOCATION_ID_MULTI" \
   --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
   --test_output=errors \
   --local_test_jobs=8 \
@@ -187,11 +173,8 @@ bazel "${common_bazel_test_args[@]}" \
 
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
-echo "::endgroup::" >&2
-python3 ci/utilities/report_resultstore_link.py "CUDA multi-accelerator tests" "$INVOCATION_ID_MULTI" "${second_bazel_cmd_retval:-0}"
 ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
-echo "::group::Cleanup" >&2
 # Merge results with prefixes to avoid overwriting
 { set +x; } 2>/dev/null
 mkdir -p test-artifacts
@@ -208,7 +191,6 @@ if [[ -d test-artifacts-multi ]]; then
   done
 fi
 set -x
-echo "::endgroup::" >&2
 
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then

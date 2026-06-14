@@ -957,7 +957,6 @@ def dlpack_managed_tensor_to_buffer(
     device: Device,
     stream: int | None,
     copy: bool | None = ...,
-    dl_device_type: int | None = ...,
 ) -> ArrayImpl: ...
 def cuda_array_interface_to_buffer(
     cai: dict, gpu_backend: Client | None = ..., device_id: int | None = ...

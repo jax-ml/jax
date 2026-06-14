@@ -35,7 +35,6 @@ from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import shared_memory as memory
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.state import indexing
-from jax.experimental.mosaic import gpu as mgpu
 import numpy as np
 
 
@@ -371,9 +370,6 @@ def _allocate_buffer_for_all_threads(
     raise ValueError(
         "`thread_id` must be zero when allocating a buffer for all threads"
     )
-  assert allocation_request.memory_space_id != get_memory_space_idx(
-      mosaic_gpu_core.MemorySpace.REGS
-  )
 
   shared_memory = _get_shared_memory()
 
@@ -469,17 +465,7 @@ def _allocate_buffer(
 
   shared_memory = _get_shared_memory()
 
-  if (allocation_request.memory_space_id
-      == get_memory_space_idx(mosaic_gpu_core.MemorySpace.REGS)):
-    # For barrier and buffer identifiers to line up across threads, we rely on
-    # each thread making the same sequence of allocations.  But threads are
-    # permitted to make different REGS allocations, so we use a different
-    # sequence of integer identifiers for REGS allocations.
-    buffer_id = shared_memory.get_next_wgmma_accumulator_id(
-        device_id_as_int, thread_id_as_int)
-  else:
-    buffer_id = shared_memory.get_next_buffer_id(
-        device_id_as_int, thread_id_as_int)
+  buffer_id = shared_memory.get_next_buffer_id(device_id_as_int, thread_id_as_int)
 
   key = HostAllocationKey(
       memory_space_id=allocation_request.memory_space_id,
@@ -1311,152 +1297,6 @@ def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
   # transforms that match how the buffer was allocated?
   return tuple(itertools.dropwhile(lambda t: isinstance(t, NOOP_TRANSFORMS),
                                    transforms))
-
-
-def wgmma(
-    *,
-    token: jax.Array,
-    device_id: jax.Array,
-    grid_point_coords: jax.Array,
-    thread_id: jax.Array,
-    acc_allocation_key_as_array: jax.Array,
-    acc_transforms: tuple[Any, ...],
-    acc_dtype: jnp.dtype,
-    a_allocation_key_as_array: jax.Array,
-    a_transforms: tuple[Any, ...],
-    b_allocation_key_as_array: jax.Array,
-    b_transforms: tuple[Any, ...],
-    source_info: source_info_util.SourceInfo | None = None,
-):
-  # TODO(jburnim): Vector clocks.
-  # TODO(jburnim): Async wgmma.
-
-  device_id: int = int(device_id)  # pyrefly: ignore[redefinition]
-  grid_point_coords: tuple[int, ...] = tuple(int(x) for x in grid_point_coords)  # pyrefly: ignore[redefinition]
-  thread_id: int = int(thread_id)  # pyrefly: ignore[redefinition]
-  acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
-  a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
-  b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))  # pyrefly: ignore[redefinition]
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))  # pyrefly: ignore[redefinition]
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))  # pyrefly: ignore[redefinition]
-
-  shared_memory = _get_shared_memory()
-  global_thread_id = shared_memory.get_global_thread_id(device_id, thread_id)
-
-  logging_info = interpret_utils.GPULoggingInfo(
-      device_id=device_id,
-      grid_point_coords=grid_point_coords,
-      thread_id=thread_id,
-      source_info=source_info,
-  )
-
-  a, _, _ = shared_memory.get_buffer_content(
-      a_allocation_key, interpret_utils.to_range(a_transforms),
-      global_thread_id, logging_info=logging_info)
-  b, _, _ = shared_memory.get_buffer_content(
-      b_allocation_key, interpret_utils.to_range(b_transforms),
-      global_thread_id, logging_info=logging_info)
-  assert a is not None
-  assert b is not None
-  acc_range = interpret_utils.to_range(acc_transforms)
-  acc, _, _ = shared_memory.get_buffer_content(
-      acc_allocation_key, acc_range, global_thread_id,
-      logging_info=logging_info)
-
-  res = acc + np.matmul(a, b, dtype=acc_dtype)
-
-  shared_memory.store_buffer_content(
-      acc_allocation_key, acc_range, res,
-      global_thread_id, logging_info=logging_info)
-
-  return token
-
-
-def wgmma_accumulator_deref(
-    *,
-    token: jax.Array,
-    device_id: jax.Array,
-    grid_point_coords: jax.Array,
-    thread_id: jax.Array,
-    acc_allocation_key_as_array: jax.Array,
-    wait_n: int | None,
-    source_info: source_info_util.SourceInfo | None = None,
-):
-  # TODO(jburnim): wait_n for async wgmma.
-  del wait_n
-
-  device_id: int = int(device_id)  # pyrefly: ignore[redefinition]
-  grid_point_coords: tuple[int, ...] = tuple(int(x) for x in grid_point_coords)  # pyrefly: ignore[redefinition]
-  thread_id: int = int(thread_id)  # pyrefly: ignore[redefinition]
-  acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
-
-  shared_memory = _get_shared_memory()
-  global_thread_id = shared_memory.get_global_thread_id(device_id, thread_id)
-
-  logging_info = interpret_utils.GPULoggingInfo(
-      device_id=device_id,
-      grid_point_coords=grid_point_coords,
-      thread_id=0,
-      source_info=source_info,
-  )
-
-  acc, _, _ = shared_memory.get_buffer_content(
-      acc_allocation_key, (), global_thread_id, logging_info=logging_info)
-  return token, acc
-
-
-def copy_smem_to_gmem(
-    *,
-    token: jax.Array,
-    device_id: jax.Array,
-    grid_point_coords: jax.Array,
-    thread_id: jax.Array,
-    src_allocation_key_as_array: jax.Array,
-    src_transforms: tuple[Any, ...],
-    dst_allocation_key_as_array: jax.Array,
-    dst_transforms: tuple[Any, ...],
-    predicate: jax.Array | None,
-    source_info: source_info_util.SourceInfo,
-    commit_group: bool,
-    reduction_op: mgpu.TMAReductionOp,
-):
-  # TODO(jburnim): Make the copy async, and implement commit_group.
-  # TODO(jburnim): Vector clocks and race detection.
-  del commit_group
-  device_id: int = int(device_id)  # pyrefly: ignore[redefinition]
-  grid_point_coords: tuple[int, ...] = jax.tree.map(int, grid_point_coords)  # pyrefly: ignore[redefinition]
-  thread_id: int = int(thread_id)  # pyrefly: ignore[redefinition]
-  src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))  # pyrefly: ignore[redefinition]
-  dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))  # pyrefly: ignore[redefinition]
-
-  if predicate is not None:
-    raise NotImplementedError("predicate not supported")
-  if reduction_op is not None:
-    raise NotImplementedError("reduction_op not supported")
-
-  shared_memory = _get_shared_memory()
-  global_thread_id = shared_memory.get_global_thread_id(device_id, thread_id)
-
-  logging_info = interpret_utils.GPULoggingInfo(
-      device_id=device_id,
-      grid_point_coords=grid_point_coords,
-      thread_id=thread_id,
-      source_info=source_info,
-  )
-
-  val, _, _ = shared_memory.get_buffer_content(
-      src_allocation_key, interpret_utils.to_range(src_transforms),
-      global_thread_id, logging_info=logging_info)
-  assert val is not None
-  shared_memory.store_buffer_content(
-      dst_allocation_key, interpret_utils.to_range(dst_transforms),
-      val,
-      global_thread_id, logging_info=logging_info)
-
-  return token
 
 
 # TODO(nrink): Once non-eager execution of memory transfers/DMAs is supported in

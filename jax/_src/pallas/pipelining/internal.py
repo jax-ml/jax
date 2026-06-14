@@ -34,7 +34,7 @@ def filter_read_effects(effects: set[RefEffect]) -> set[ReadEffect]:
 
 
 def filter_tokens(effects: set[RefEffect]) -> set[RefEffect]:
-  return {effect for effect in effects if isinstance(effect.input, str)}
+  return {effect for effect in effects if isinstance(effect.input_index, str)}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,14 +60,14 @@ class PipelineStage:
   def get_read_idxs(self) -> set[BufferIndex]:
     """Returns the buffer indices that this stage reads from."""
     return {
-        effect.input
+        effect.input_index
         for effect in filter_read_effects(self.effects)
     }
 
   def get_write_idxs(self) -> set[BufferIndex]:
     """Returns the buffer indices that this stage writes to."""
     return {
-        effect.input
+        effect.input_index
         for effect in filter_write_effects(self.effects)
     }
 

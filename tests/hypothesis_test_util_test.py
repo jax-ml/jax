@@ -22,9 +22,6 @@ import hypothesis as hp
 from jax._src import hypothesis_test_util as htu
 from jax._src import test_util as jtu
 
-htu.setup_hypothesis()
-
-
 shard_index = int(os.environ.get("TEST_SHARD_INDEX", "0"))
 total_shards = int(os.environ.get("TEST_TOTAL_SHARDS", "1"))
 

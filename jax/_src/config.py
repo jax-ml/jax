@@ -1065,7 +1065,6 @@ def make_user_context(default_value=None):
   """
   return UserConfig(default_value)
 
-jax_jit_cpp_cache_obj = make_user_context(None)
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
 jax2tf_associative_scan_reductions = bool_state(

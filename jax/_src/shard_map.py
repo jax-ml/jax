@@ -762,8 +762,7 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
   const_tracers = map(to_jaxpr_tracer, consts)
   in_tracers = [to_jaxpr_tracer(loval) for arg in hi_args
                 for loval in typeof(arg).lower_val(arg)]
-  effs = core.filter_named_axis_effects(core.positional_effects(jaxpr),
-                                        mesh.axis_names)
+  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   out = trace.emit_eqn([*const_tracers, *in_tracers], list(out_avals_ft), shard_map_p,
                        dict(params, jaxpr=lo_jaxpr.jaxpr, in_specs=in_specs,
                             out_specs=lo_out_specs), effs, source_info)
@@ -819,8 +818,7 @@ def _shard_map_staging(
   params = dict(mesh=mesh, in_specs=in_specs_staged,
                 out_specs=out_specs, jaxpr=jaxpr.jaxpr,
                 check_vma=check_vma, newly_manual_axes=newly_manual_axes)
-  effs = core.filter_named_axis_effects(core.positional_effects(jaxpr),
-                                        mesh.axis_names)
+  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
   const_tracers = map(to_jaxpr_tracer, consts)
   trace.frame.is_high |= jaxpr.is_high
@@ -937,8 +935,7 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_specs, out_specs,
   out_avals_sharded = [x.aval for x in jaxpr.outvars]
   out_avals = map(partial(unshard_aval, mesh, check_vma), out_specs,
                   out_avals_sharded)
-  effs = core.filter_named_axis_effects(core.positional_effects(jaxpr),
-                                        mesh.axis_names)
+  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   return out_avals, effs
 core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
@@ -1716,8 +1713,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
                   out_avals_sharded)
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in out_avals]
-  effs = core.filter_named_axis_effects(core.positional_effects(jaxpr),
-                                        mesh.axis_names)
+  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   eqn = pe.new_eqn_recipe(trace, (*const_tracers, *env_tracers, *unk_arg_tracers),
                           out_tracers, shard_map_p, unk_params,
                           effs, source_info_util.current())
@@ -2019,11 +2015,9 @@ def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     _, out_specs = partition_list(used_outputs, eqn.params['out_specs'])
     new_params = dict(eqn.params, jaxpr=jaxpr, in_specs=tuple(in_specs),
                       out_specs=tuple(out_specs))
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    effs = core.filter_named_axis_effects(
-        core.eqn_effects(jaxpr, new_invars), mesh.axis_names)
+    effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
     new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
+        [v for v, used in zip(eqn.invars, used_inputs) if used],
         [x for x, used in zip(eqn.outvars, used_outputs) if used],
         eqn.primitive, new_params, effs, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn

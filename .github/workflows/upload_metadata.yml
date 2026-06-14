@@ -8,21 +8,21 @@ on:
       - "CI - Wheel Tests (Continuous)"
       - "CI - Pytest CPU"
       - "CI - Bazel CPU tests with wheel dependencies (RBE)"
-      - "Bazel CUDA"
+      - "CI - Bazel CUDA tests"
       - "CI - Pytest TPU"
       - "CI - Bazel test TPU"
       - "CI - Pytest CUDA"
       - "CI - Bazel H100 and B200 CUDA tests"
-      - "Bazel ROCm"
+      - "CI - Bazel ROCm tests"
       - "CI - Pytest ROCm"
       - "CI - jaxlib head with NumPy nightly"
-      - "Pytest CPU"
+      - "CI - Oldest Supported NumPy (presubmit)"
       - "Mosaic GPU B200 Presubmit"
       - "JAX Array API"
       - "CI - with Numpy/Scipy nightly wheels (nightly)"
       - "CI - Address Sanitizer (nightly)"
-      - "Bazel CPU"
-      - "Bazel TPU"
+      - "CI - Bazel CPU tests"
+      - "CI - Cloud TPU (presubmit)"
       - "CI - Wheel Tests (Nightly/Release)"
     types:
       - completed
@@ -42,7 +42,7 @@ jobs:
         shell: bash
     steps:
       - name: Checkout repo
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 

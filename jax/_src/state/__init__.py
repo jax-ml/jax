@@ -21,6 +21,7 @@ from jax._src.state.types import (
     Transform as Transform,
     TransformedRef as TransformedRef,
     WriteEffect as WriteEffect,
+    get_ref_state_effects as get_ref_state_effects,
     transform_type as transform_type,
     shaped_array_ref as shaped_array_ref,
 )

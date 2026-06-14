@@ -255,17 +255,12 @@ NB_MODULE(_xla, m) {
           return;
         }
 
-        // Allocate callback state on the heap. Cleared via dtor if
-        // clear_xla_transform is called.
+        // Allocate callback state on the heap. Intentionally leaked since
+        // transforms persist for the lifetime of the process.
         auto* state = new CApiCallbackState();
         state->py_callback = std::move(callback);
         state->callbacks.version = PJRT_API_XLA_TRANSFORM_EXTENSION_VERSION;
-        state->callbacks.dtor = [](PJRT_XlaTransform_Callbacks* callbacks) {
-          auto* state = reinterpret_cast<CApiCallbackState*>(
-              reinterpret_cast<char*>(callbacks) -
-              offsetof(CApiCallbackState, callbacks));
-          delete state;
-        };
+        state->callbacks.dtor = [](PJRT_XlaTransform_Callbacks*) {};
         state->callbacks.transform_hlo_module = CApiTransformHloModuleCallback;
 
         PJRT_Register_Xla_Transform_Args args;

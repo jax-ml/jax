@@ -162,10 +162,6 @@ def _strip_workspace_root(filename: str, workspace_root: str) -> str:
 def _pprof_profile(
     profile: dict[tuple[xla_client.Traceback | None, core.Primitive], int],
     workspace_root: str | None = None,
-    *,
-    sample_type: str,
-    sample_unit: str,
-    comment: str = "",
 ) -> bytes:
   """Converts a profile into a compressed pprof protocol buffer.
 
@@ -214,25 +210,22 @@ def _pprof_profile(
       if pattern:
         filename = re.sub(pattern, '', filename)
     name = f"{filename.removesuffix('.py').replace('/', '.')}.{name}"
-    functions.append({
-        "id": func_id,
+    functions.append(
+        {"id": func_id,
         "name": s[name],
         "filename": s[filename],
-        "start_line": code.co_firstlineno,
-    })
+        "start_line": code.co_firstlineno}
+    )
+  sample_type = [{"type": s["equations"], "unit": s["count"]}]
   # This is the JSON encoding of a pprof profile protocol buffer. See:
   # https://github.com/google/pprof/blob/master/proto/profile.proto for a
   # description of the format.
-  sample_type_id = s[sample_type]
-  sample_unit_id = s[sample_unit]
-  comment_id = s[comment]
   json_profile = json.dumps({
-      "string_table": list(s.keys()),
-      "location": locations,
-      "function": functions,
-      "sample_type": [{"type": sample_type_id, "unit": sample_unit_id}],
-      "sample": samples,
-      "comment": comment_id,
+    "string_table": list(s.keys()),
+    "location": locations,
+    "function": functions,
+    "sample_type": sample_type,
+    "sample": samples,
   })
   return gzip.compress(_jax.json_to_pprof_profile(json_profile))
 
@@ -257,20 +250,7 @@ def pprof_equation_profile(jaxpr: core.Jaxpr, *,
       (tb, eqn.primitive)
       for tb, eqn in _all_eqns_with_traceback(jaxpr, None, set())
   )
-  comment = jaxpr.debug_info.func_name
-  if func_filename := jaxpr.debug_info.func_filename:
-    if workspace_root is not None:
-      func_filename = _strip_workspace_root(func_filename, workspace_root)
-    comment += f" at {func_filename}"
-  if func_lineno := jaxpr.debug_info.func_lineno:
-    comment += f":{func_lineno}"
-  return _pprof_profile(
-      d,
-      workspace_root,
-      sample_type="equations",
-      sample_unit="count",
-      comment=comment,
-  )
+  return _pprof_profile(d, workspace_root)
 
 
 def eqns_using_var_with_invar_index(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[tuple[core.JaxprEqn, int]]:

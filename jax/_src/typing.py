@@ -106,7 +106,6 @@ class DeprecatedArg:
 class DLDeviceType(enum.IntEnum):
   kDLCPU = 1
   kDLCUDA = 2
-  kDLCUDAHost = 3
   kDLROCM = 10
 
 AnyInt = int | np.integer

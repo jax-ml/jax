@@ -66,8 +66,8 @@ else
   exit 1
 fi
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
 fi
 
 # Figure out the bazelrc config to use. We will use one of the "rbe_"/"ci_"

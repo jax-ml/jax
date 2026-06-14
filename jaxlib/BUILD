@@ -708,7 +708,6 @@ cc_library(
         "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/pjrt:exceptions",
-        "@xla//xla/pjrt:host_memory_spaces",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_common",
         "@xla//xla/pjrt:pjrt_compiler",

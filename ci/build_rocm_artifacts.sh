@@ -73,18 +73,6 @@ if [[ -n "${JAXCI_BAZEL_OUTPUT_BASE}" ]]; then
   bazel_startup_options="--bazel_startup_options=--output_base=${JAXCI_BAZEL_OUTPUT_BASE}"
 fi
 
-# Point the build ROCm at the TheRock SDK already installed in this image, so
-# the wheel's ROCm SONAMEs (e.g. librocsolver) match the runtime image. Without
-# this, rules_ml_toolchain silently downloads its default distro (a different,
-# older ROCm) and the wheel links e.g. librocsolver.so.1 while the runtime only
-# has librocsolver.so.0. rules_ml_toolchain honors ROCM_PATH ahead of its
-# download path; rocm-sdk path --root is the pip-installed SDK root (no
-# /opt/rocm needed). Gated on rocm-sdk so apt-ROCm images keep the default.
-rocm_path_flags=()
-if command -v rocm-sdk >/dev/null 2>&1; then
-  rocm_path_flags=("--bazel_options=--repo_env=ROCM_PATH=$(rocm-sdk path --root)")
-fi
-
 echo "Building $artifact..."
 
 python build/build.py build --wheels="$artifact" \
@@ -98,8 +86,7 @@ python build/build.py build --wheels="$artifact" \
   --output_path="$JAXCI_OUTPUT_DIR" \
   $artifact_tag_flags \
   $override_xla_repo \
-  $wheel_version_suffix_flag \
-  "${rocm_path_flags[@]}"
+  $wheel_version_suffix_flag
 
 # Verify manylinux compliance.
 ./ci/utilities/run_auditwheel.sh

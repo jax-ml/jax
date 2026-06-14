@@ -117,9 +117,10 @@ dispatch.simple_impl(compute_on_p)
 
 def _compute_on_abstract_eval(*in_avals, jaxpr, compute_type, out_memory_spaces,
                               compiler_options_json):
+  effs = core.eqn_effects(jaxpr) if jaxpr.constvars else jaxpr.effects
   out_avals = [a.update(memory_space=s)
                for a, s in zip(jaxpr.out_avals, out_memory_spaces)]
-  return out_avals, core.positional_effects(jaxpr)
+  return out_avals, effs
 compute_on_p.def_effectful_abstract_eval(_compute_on_abstract_eval)
 
 
@@ -288,7 +289,7 @@ def _compute_on_partial_eval(trace: pe.JaxprTrace, *in_tracers, jaxpr,
                           unknown_tracers_out,
                           compute_on_p,
                           unknown_params,
-                          core.positional_effects(unknown_jaxpr),
+                          unknown_jaxpr.effects,
                           source_info_util.current())
   for t in unknown_tracers_out: t.recipe = eqn
   if effects_lib.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
@@ -373,10 +374,9 @@ def dce_jaxpr_compute_on_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
     return used_inputs, None
   else:
-    new_invars = [v for v, used in zip(eqn.invars, used_inputs) if used]
-    new_effs = core.eqn_effects(dced_jaxpr, new_invars)
+    new_effs = core.eqn_effects(dced_jaxpr)
     new_eqn = pe.new_jaxpr_eqn(
-        new_invars,
+        [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
         eqn.primitive, new_params, new_effs, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn

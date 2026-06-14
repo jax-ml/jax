@@ -288,7 +288,14 @@ def _pallas_call_jvp_rule(
       jvp_jaxpr.invars, [len(primals), grid_mapping.num_outputs, len(tangents)]
   )
   invars = (*primal_refs, *tangent_refs, *primal_out_refs, *tangent_out_refs)
-  jvp_jaxpr = jvp_jaxpr.replace(invars=invars)
+  effs = []
+  for eff in jvp_jaxpr.effects:
+    if isinstance(eff, effects.JaxprInputEffect):
+      eff = eff.replace(
+          input_index=invars.index(jvp_jaxpr.invars[eff.input_index])
+      )
+    effs.append(eff)
+  jvp_jaxpr = jvp_jaxpr.replace(invars=invars, effects=effs)
   if debug:
     print(f"\nThe jaxpr for the jvp of pallas_call {debug_info.func_src_info}:")
     print(jvp_jaxpr)

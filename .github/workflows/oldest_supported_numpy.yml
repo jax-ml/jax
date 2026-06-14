@@ -1,7 +1,7 @@
 # CI - Oldest Supported NumPy (presubmit)
 # This workflow tests the oldest supported NumPy and jaxlib versions.
 
-name: Oldest Supported NumPy
+name: CI - Oldest Supported NumPy (presubmit)
 
 on:
   pull_request:
@@ -28,7 +28,7 @@ jobs:
     runs-on: "linux-x86-n4-64"
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "Oldest supported numpy, py3.11, x64=0"
+    name: "CI - Oldest Supported NumPy (Python 3.11, x64=0)"
 # End Presubmit Naming Check github-oldest-supported-numpy-presubmit
 
     env:
@@ -39,7 +39,7 @@ jobs:
       SCIPY_VERSION: "1.13.0"
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
       - name: Install Python dependencies

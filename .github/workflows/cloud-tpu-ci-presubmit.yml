@@ -1,6 +1,6 @@
 # Cloud TPU CI (presubmit)
 
-name: Bazel TPU
+name: CI - Cloud TPU (presubmit)
 
 on:
   workflow_dispatch:
@@ -34,12 +34,12 @@ jobs:
     if: github.event.repository.fork == false && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_test_tpu.yml
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "Test"
+    name: "TPU test (jaxlib=head)"
     with:
       runner: "linux-x86-ct6e-180-8tpu"
       cores: "8"
       tpu-type: "v6e-8"
-      python: "3.14t"
+      python: "3.14-nogil"
       libtpu-version-type: "pinned"
       halt-for-connection: ${{ inputs.halt-for-connection }}
       build_jaxlib: ${{ 'true' }}

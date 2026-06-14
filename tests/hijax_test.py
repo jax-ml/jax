@@ -1372,9 +1372,7 @@ class HijaxTest(jtu.JaxTestCase):
 
     f(0, x_ref)
     self.assertAllClose(x_ref[...], 4., check_dtypes=False)
-    traced_jaxpr = jax.jit(f).trace(0, x_ref).jaxpr
-    self.assertEqual(traced_jaxpr.effects,
-                     {state.WriteEffect(traced_jaxpr.jaxpr.invars[1])})
+    self.assertEqual(jax.jit(f).trace(0, x_ref).jaxpr.effects, {state.WriteEffect(1)})
 
   def test_lower_preserves_arg_names_for_shaped_arrays(self):
     x = jnp.array(1.0)

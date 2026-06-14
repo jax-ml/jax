@@ -62,7 +62,7 @@ from jax._src.sharding_impls import (
     UNSPECIFIED, NamedSharding, GSPMDSharding,
     make_single_device_sharding, parse_flatten_op_sharding)
 from jax._src.mesh import use_abstract_mesh
-from jax._src.pjit import pjit, _pjit_lower, make_jit_cpp_cache
+from jax._src.pjit import pjit, _pjit_lower
 from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
@@ -4841,20 +4841,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jax.sharding.use_abstract_mesh(am):
       f.trace(np.arange(8)).lower()  # doesn't crash
-
-  def test_jit_cpp_cache_obj_config(self):
-    cpp_cache = make_jit_cpp_cache(4)
-    with config.jax_jit_cpp_cache_obj(cpp_cache):
-      @jax.jit
-      def f(x):
-        return x * 2
-
-    with jtu.count_pjit_cpp_cache_miss() as count:
-      for i in range(5):
-        f(np.arange(i))
-      for i in range(5):
-        f(np.arange(i))
-    self.assertEqual(count(), 10)
 
 
 class ShardingInTypesTest(jtu.JaxTestCase):
@@ -11346,46 +11332,50 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     expected_out = jax.jit(jax.grad(lambda x: f(x).sum()))(jnp_inp)
     self.assertArraysEqual(reshard(out, P()), expected_out)
 
+  @jtu.run_on_devices('tpu', 'gpu')
   @jtu.with_explicit_mesh((8,), ('x',))
-  def test_fsdp_pipeline_grad(self, mesh):
+  def test_dot_ag_pipeline_grad_tpu(self, mesh):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Needs TPU version >= 5')
+
     def ag(x):
+      assert jax.typeof(x).sharding.spec == P('x', None)
       return jax.reshard(x, P(reduced={'x'}))
 
-    if jtu.is_device_tpu_at_least(7):
+    if jtu.device_under_test() == 'tpu':
       ag = compute_on2(ag, compute_type='tpu_sparsecore',
                        out_memory_spaces=jax.memory.Space.Device,
                        compiler_options={'sparse_core_config': {'core_ids': [0]}})
 
     def rs(x):
-      return jax.reshard(x, (P('x', None), P(None, 'x')))
+      assert jax.typeof(x).sharding.spec == P(None, None, unreduced={'x'})
+      return jax.reshard(x, P('x'))
 
-    if jtu.is_device_tpu_at_least(7):
+    if jtu.device_under_test() == 'tpu':
       rs = compute_on2(rs, compute_type='tpu_sparsecore',
                        out_memory_spaces=jax.memory.Space.Device,
                        compiler_options={'sparse_core_config': {'core_ids': [1]}})
 
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def fsdp_pipe(f, x, ws):
-      w = ag(jax.tree.map(lambda x: x[0], ws))
+      w = jax.reshard(ws[0], P())
       carry = (x, w)
       def body(carry, w_n_sharded):
         x, w = carry
-        w_n = ag(w_n_sharded)
+        w_n = jax.reshard(w_n_sharded, P())
         x = f(x, w)
         return (x, w_n), ()
-      (x, w), () = jax.lax.scan(body, carry, jax.tree.map(lambda x: x[1:], ws),
-                                unroll=2)  # need for double buffering
+      (x, w), () = jax.lax.scan(body, carry, ws[1:], unroll=2)  # !!
       x = f(x, w)
       return x
 
     def fsdp_pipe_fwd(f, x, ws):
-      w = ag(jax.tree.map(lambda x: x[0], ws))
+      w = ag(ws[0])
       x, f_vjp_first = jax.vjp(f, x, w)
       f_vjp_first.args_res[1] = None  # could instead use remat
 
-      w = ag(jax.tree.map(lambda x: x[1], ws))
-      carry = (x, w)
-
+      w1 = ag(ws[1])
+      carry = (x, w1)
       def body(carry, w_n_sharded):
         x, w = carry
         w_n = ag(w_n_sharded)
@@ -11394,9 +11384,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         f_vjp.args_res[1] = None
 
         return (x, w_n), f_vjp
-      (x, w_last), f_vjps = jax.lax.scan(
-          body, carry, jax.tree.map(lambda x: x[2:], ws), unroll=2)  # need for double buffering
-
+      (x, w_last), f_vjps = jax.lax.scan(body, carry, ws[2:], unroll=2)  # !!
       x, f_vjp_last = jax.vjp(f, x, w_last)
       f_vjp_last.args_res[1] = None
       return x, (f_vjp_first, f_vjps, f_vjp_last, ws)
@@ -11404,11 +11392,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def fsdp_pipe_bwd(_, res, x_bar):
       f_vjp_first, f_vjps, f_vjp_last, ws = res
 
-      w_m1 = ag(jax.tree.map(lambda x: x[-1], ws))
+      w_m1 = ag(ws[-1])
       f_vjp_last.args_res[1] = w_m1
       x_bar, w_m1_bar_unreduced = f_vjp_last(x_bar)
 
-      w_m2 = ag(jax.tree.map(lambda x: x[-2], ws))
+      w_m2 = ag(ws[-2])
       carry = (x_bar, w_m2, w_m1_bar_unreduced)
 
       def body(carry, f_vjp_and_w_m1_sharded):
@@ -11420,51 +11408,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         w_p1_bar_sharded = rs(w_p1_bar_unreduced)
         return (x_bar, w_m1, w_bar_unreduced), w_p1_bar_sharded
 
-      (x_bar, w_0, w_1_bar_unreduced), ws_bar = jax.lax.scan(
-          body, carry, (f_vjps, jax.tree.map(lambda x: x[:-2], ws)),
-          reverse=True, unroll=2)
+      (x_bar, w_0, w_1_bar_unreduced), ws_bar = \
+          jax.lax.scan(body, carry, (f_vjps, ws[:-2]), reverse=True, unroll=2)
 
       f_vjp_first.args_res[1] = w_0
       x_bar, w_0_bar_unreduced = f_vjp_first(x_bar)
       w_1_bar = rs(w_1_bar_unreduced)
       w_0_bar = rs(w_0_bar_unreduced)
-      ws_bar = jax.tree.map(
-          lambda x, y, z: jnp.concatenate([x[None], y[None], z], axis=0),
-          w_0_bar, w_1_bar, ws_bar)
+      ws_bar = jnp.concatenate([w_0_bar[None], w_1_bar[None], ws_bar], axis=0)
       return x_bar, ws_bar
 
     fsdp_pipe.defvjp(fsdp_pipe_fwd, fsdp_pipe_bwd)
 
-    def f(x, w):
-      w1, w2 = w
-      temp = x @ w1
-      out = temp @ w2
-      return out
-
-    x = jnp.ones((32 * 32, 128), out_sharding=P('x', None))
-    w1s = jnp.ones((32, 128, 256), out_sharding=P(None, 'x', None))
-    w2s = jnp.ones((32, 256, 128), out_sharding=P(None, None, 'x'))
-    ws = (w1s, w2s)
-
-    # primal only
-    jax.jit(partial(fsdp_pipe, f))(x, ws)  # doesn't crash
+    f = jnp.dot
+    ws = jnp.ones((32, 1024, 1024), out_sharding=P(None, 'x', None))
+    x = jnp.ones((32 * 512 * 8, 1024), out_sharding=P('x', None))
 
     @jax.jit
     def g(x, ws):
       y, f_vjp = jax.vjp(partial(fsdp_pipe, f), x, ws)
-      return f_vjp(jnp.ones_like(y))
+      return f_vjp(y)
+
     jax.block_until_ready(g(x, ws))  # doesn't crash
-
-  @jtu.with_explicit_mesh((2,), ('x',))
-  def test_percentile(self, mesh):
-    arr = jax.device_put(np.arange(100), P('x'))
-
-    @jax.jit
-    def f(x):
-      return jnp.percentile(x, 50, axis=0, out_sharding=P())
-
-    out = f(arr)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

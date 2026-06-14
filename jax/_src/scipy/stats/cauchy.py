@@ -16,6 +16,7 @@
 import numpy as np
 
 from jax._src import lax
+from jax._src import numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.ufuncs import arctan
 from jax._src.numpy.util import promote_args_inexact
@@ -229,6 +230,14 @@ def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return logcdf(-x, -loc, scale)
 
 
+def _select_quantile(q: Array, lower: Array, upper: Array, value: Array) -> Array:
+  return jnp.where(
+    jnp.isnan(q) | (q < 0) | (q > 1),
+    np.nan,
+    jnp.where(q == 0, lower, jnp.where(q == 1, upper, value)),
+  )
+
+
 def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   r"""Cauchy distribution inverse survival function.
 
@@ -258,7 +267,10 @@ def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   pi = _lax_const(q, np.pi)
   half_pi = _lax_const(q, np.pi / 2)
   unscaled = lax.tan(lax.sub(half_pi, lax.mul(pi, q)))
-  return lax.add(lax.mul(unscaled, scale), loc)
+  value = lax.add(lax.mul(unscaled, scale), loc)
+  lower = lax.add(lax.mul(_lax_const(q, -np.inf), scale), loc)
+  upper = lax.add(lax.mul(_lax_const(q, np.inf), scale), loc)
+  return _select_quantile(q, upper, lower, value)
 
 
 def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -290,4 +302,7 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   pi = _lax_const(q, np.pi)
   half_pi = _lax_const(q, np.pi / 2)
   unscaled = lax.tan(lax.sub(lax.mul(pi, q), half_pi))
-  return lax.add(lax.mul(unscaled, scale), loc)
+  value = lax.add(lax.mul(unscaled, scale), loc)
+  lower = lax.add(lax.mul(_lax_const(q, -np.inf), scale), loc)
+  upper = lax.add(lax.mul(_lax_const(q, np.inf), scale), loc)
+  return _select_quantile(q, lower, upper, value)

@@ -140,9 +140,8 @@ def trace_fun(
   ]
   # Subtract off the consts and state_avals, since this is variable per stage.
   n_const = len(consts)
-  input_idx = {v: i for i, v in enumerate((*jaxpr.constvars, *jaxpr.invars))}
   ref_effects = [
-      type(eff)(input_idx[eff.input] - n_const - num_ctx_avals)
+      type(eff)(input_index=eff.input_index - n_const - num_ctx_avals)
       for eff in ref_effects
   ]
   return jax_core.ClosedJaxpr(jaxpr, consts), ref_effects
@@ -168,7 +167,7 @@ def apply_ref_filter(
         if ref_filter(aval)
     }
     new_effects = [
-        eff for eff in ref_effects if eff.input in refs_to_keep
+        eff for eff in ref_effects if eff.input_index in refs_to_keep
     ] + token_effects
     new_stages.append(dataclasses.replace(stage_, effects=set(new_effects)))
   return new_stages
@@ -185,7 +184,7 @@ def convert_accum_effects_to_writes(stages: Sequence[internal.PipelineStage]
     new_read_effs = (
         eff
         for eff in read_effs
-        if state_types.WriteEffect(eff.input) not in write_effs
+        if state_types.WriteEffect(eff.input_index) not in write_effs
     )
     effs = (*new_read_effs, *write_effs)
     new_stages.append(dataclasses.replace(stage_, effects=set(effs)))
@@ -209,7 +208,7 @@ def remove_duplicate_writes_between_async_stages(
       write_token = internal.filter_tokens(start_write_effs)
       assert len(write_token) == 1, stage_.effects
       write_token = tuple(write_token)[0]
-      read_token = state_types.ReadEffect(write_token.input)
+      read_token = state_types.ReadEffect(write_token.input_index)
 
       done_stage = [
           x

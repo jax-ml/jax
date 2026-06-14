@@ -1614,16 +1614,14 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, interpret, **kwargs):
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
   effs = {*get_interpret_effects(interpret)}
-  constvar_idx = {v: i for i, v in enumerate(jaxpr.constvars)}
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff) or isinstance(eff, CommsEffect):
       continue
     if kernel_local_effects.contains(eff):
       continue
     if isinstance(eff, effects.JaxprInputEffect):
-      # The eqn's inputs are the jaxpr's constvars (closed-over refs).
-      if eff.input in constvar_idx:
-        effs.add(eff.replace(constvar_idx[eff.input]))
+      if eff.input_index < len(jaxpr.constvars):
+        effs.add(eff)
       continue
     if not isinstance(eff, jax_core.NamedAxisEffect):
       effs.add(eff)
@@ -1735,12 +1733,11 @@ def default_mesh_discharge_rule(
         "default_mesh_discharge_rule only supports Ref inputs/outputs."
     )
 
-  input_idx = {v: i for i, v in enumerate((*jaxpr.constvars, *jaxpr.invars))}
   modified_idxs = sorted(
-      input_idx[eff.input]
+      eff.input_index
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
-      and input_idx[eff.input] < len(in_avals)
+      and eff.input_index < len(in_avals)
   )
   default_memory_space = mesh.default_memory_space
   in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]

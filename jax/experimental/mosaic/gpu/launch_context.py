@@ -2021,15 +2021,6 @@ class LaunchContext:
     ref_int = llvm.ptrtoint(ir.IntegerType.get_signless(64), ref)
     return arith.subi(ref_int, parameter_address)
 
-  def _mark_parameters_if_multiprocess(self):
-    # All multi-process parameters should be allocated in collective memory.
-    if self.num_processes > 1:
-      parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
-
-      self.module.operation.attributes[MULTIMEM_ARGS_ATTR] = (
-          ir.DenseIntElementsAttr.get(parameter_uses_multimem)
-      )
-
   def to_remote(
       self,
       ref: ir.Value,
@@ -2082,7 +2073,13 @@ class LaunchContext:
         raise ValueError(f"peer index must be an i32, got {peer.type}")
       return llvm.call(ref.type, [ref, peer], [], [], callee="nvshmem_ptr")
     else:
-      self._mark_parameters_if_multiprocess()
+      # All multi-process parameters should be allocated in collective memory.
+      if self.num_processes > 1:
+        parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
+
+        self.module.operation.attributes[MULTIMEM_ARGS_ATTR] = (
+            ir.DenseIntElementsAttr.get(parameter_uses_multimem)
+        )
 
       # Collective metadata contains pointers of kernel arguments for each peer
       # device. The pointer has the following format:
@@ -2145,17 +2142,18 @@ class LaunchContext:
     # In multiprocess mode, all parameters should be allocated within collective
     # memory.
     module_attributes = self.module.operation.attributes
-    self._mark_parameters_if_multiprocess()
-    if self.num_processes == 1:
+    if self.num_processes > 1:
+      parameter_uses_multimem = np.ones(self.num_params, dtype=np.bool)
+    else:
       if MULTIMEM_ARGS_ATTR in module_attributes:
         parameter_uses_multimem = np.array(module_attributes[MULTIMEM_ARGS_ATTR])
       else:
         parameter_uses_multimem = np.zeros(self.num_params, dtype=np.bool)
       parameter_uses_multimem[parameter_id] = True
 
-      module_attributes[MULTIMEM_ARGS_ATTR] = ir.DenseIntElementsAttr.get(
-          parameter_uses_multimem
-      )
+    module_attributes[MULTIMEM_ARGS_ATTR] = ir.DenseIntElementsAttr.get(
+        parameter_uses_multimem
+    )
 
     current_device = self.device_id(on_host)
     parameter_on_current_device = self._get_parameter_address_on_peer(
@@ -2189,8 +2187,6 @@ class LaunchContext:
       self._ensure_nvshmem_decls()
       return cast(ir.Value, llvm.call(i32, [], [], [], callee="nvshmem_my_pe"))
     else:
-      self._mark_parameters_if_multiprocess()
-
       # Rank id is stored as the first element of the collective metadata.
       self.module.operation.attributes[COLLECTIVE_ATTR] = ir.UnitAttr.get()
       rank_offset_constant = arith.constant(ir.IndexType.get(), 0)

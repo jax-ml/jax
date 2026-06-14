@@ -4109,11 +4109,6 @@ class APITest(jtu.JaxTestCase):
         lax.scan(to_scan, x, None, length=1)
       f(np.arange(5.))  # doesn't crash
 
-  def test_leak_checker_avoids_false_positives_remat3_jit(self):
-    with config.remat3(True), jax.checking_leaks():
-      f = jax.jit(jax.remat(lambda x: x + 1))
-      f(jnp.arange(3))  # doesn't crash
-
   def test_leak_checker_catches_a_sublevel_leak(self):
     with jax.checking_leaks():
       @jit

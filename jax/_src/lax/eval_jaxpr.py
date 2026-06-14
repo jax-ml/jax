@@ -37,7 +37,7 @@ pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
 
 @eval_jaxpr_p.def_effectful_abstract_eval  # abstract eval only used for jax2tf
 def _stage_jaxpr_abstract_eval(*_, jaxpr):
-  return jaxpr.out_avals, core.positional_effects(jaxpr)
+  return jaxpr.out_avals, jaxpr.effects
 
 @eval_jaxpr_p.def_impl
 def _eval_jaxpr_impl(*args, jaxpr):

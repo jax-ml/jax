@@ -178,7 +178,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     op = partial(lax.dot, precision=lax.Precision.HIGHEST)
     self._CheckBatching(op, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
-                        rng, rtol={np.float16: 5e-2, np.float64: 5e-14, jnp.bfloat16: 5e-2})
+                        rng, rtol={np.float16: 5e-2, np.float64: 5e-14})
 
   @jtu.sample_product(
     [dict(bdims=bdims, lhs_shape=lhs_shape, rhs_shape=rhs_shape,

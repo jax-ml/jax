@@ -494,13 +494,7 @@ def _get_tpu_info_impl(chip_version: ChipVersion, num_cores: int) -> TpuInfo:
           int8_ops_per_second=0,  # Not Available
           fp8_ops_per_second=int(8.808e15 // tensor_cores_per_chip),
           int4_ops_per_second=0,  # Not Available
-          sparse_core=SparseCoreInfo(
-              num_cores=1,
-              num_subcores=4,
-              num_lanes=16,
-              vmem_capacity_bytes=512 * 1024,  # 512 KiB per vector subcore
-              dma_granule_size_bytes=64,
-          ),
+          sparse_core=None,  # TODO(aryarahul, sharadmv): It's complicated...
       )
     case _:
       raise ValueError(f"Unsupported TPU chip version: {chip_version}")

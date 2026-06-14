@@ -177,8 +177,6 @@ class MemorySpace(enum.Enum):
         raise ValueError("transforms are not supported for TMEM")
       if collective is None:
         collective = False
-      if len(shape) > 2:
-        transforms = (CollapseLeadingBatchDimensionsTransform(),)
       if layout is None:
         if packed is None:
           if dtypes.itemsize_bits(dtype) != 32:
@@ -187,9 +185,8 @@ class MemorySpace(enum.Enum):
                 " or an explicit TMEM layout"
             )
           packed = False
-        # Ignore batch dimensions for layout inference.
         mgpu_layout = infer_tmem_layout(
-            shape[-2:], dtype, packed=packed, collective=collective
+            shape, dtype, packed=packed, collective=collective
         )
       else:
         if packed is not None:
@@ -439,18 +436,17 @@ class GPUMemoryRef(pallas_core.MemoryRef):
     is_tmem = self.memory_space == MemorySpace.TMEM
     assert (self.layout is not None) == is_tmem
     assert (self.collective is not None) == is_tmem
+    assert not (self.transforms and is_tmem)
 
   def get_ref_aval(self) -> _Ref:
     aval: Any = jax_core.ShapedArray(self.shape, self.dtype)
-    physical_aval = state_types.transform_type(self.transforms, aval)
     if self.memory_space == MemorySpace.TMEM:
       aval = AbstractTMEMRef(
           aval, self.memory_space, self.layout, self.collective
       )
-      physical_ref_aval = AbstractTMEMRef(
-          physical_aval, self.memory_space, self.layout, self.collective
-      )
+      physical_ref_aval = aval
     else:
+      physical_aval = state_types.transform_type(self.transforms, aval)
       aval = state.AbstractRef(aval, memory_space=self.memory_space)
       physical_ref_aval = state.AbstractRef(physical_aval, memory_space=self.memory_space)
     transforms: list[state_types.Transform] = pallas_core.undo_transforms(
@@ -1254,123 +1250,6 @@ class UnswizzleRef(state_types.Transform):
 
   def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
     return pp.text(f"{{unswizzle({self.swizzle})}}")
-
-
-@tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
-class CollapseLeadingBatchDimensionsTransform(state_types.Transform):
-  """A transform that collapses leading batch dimensions into the minor dimension.
-
-  Specifically, it maps `(*batch_shape, m, n)` to `(m, math.prod(batch_shape) *
-  n)`.
-  """
-
-  def transform_type(
-      self, x: jax_core.AbstractValue
-  ) -> state_types.AbstractRef:
-    match x:
-      case jax_core.ShapedArray():
-        if x.ndim < 2:
-          raise ValueError(f"Unsupported ndim: {x.ndim}")
-        batch_size = math.prod(x.shape[:-2])
-        transformed_shape = (x.shape[-2], batch_size * x.shape[-1])
-        return x.update(shape=transformed_shape)
-      case state_types.AbstractRef():
-        return x.update(inner_aval=self.transform_type(x.inner_aval))
-      case _:
-        raise TypeError(f"Unsupported type: {x}")
-
-  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
-    assert hasattr(x, "shape")
-    return ExpandLeadingBatchDimensionsTransform(x.shape[:-2])
-
-
-@tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
-class ExpandLeadingBatchDimensionsTransform(state_types.Transform):
-  """The inverse of CollapseLeadingBatchDimensionsTransform.
-
-  Specifically, it maps `(m, math.prod(batch_shape) * n)` to `(*batch_shape, m,
-  n)`.
-  """
-
-  batch_shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
-
-  def transform_type(
-      self, x: jax_core.AbstractValue
-  ) -> state_types.AbstractRef:
-    match x:
-      case jax_core.ShapedArray():
-        if x.ndim != 2:
-          raise ValueError(f"Unsupported shape: {x.shape}")
-        batch_size = math.prod(self.batch_shape)
-        if x.shape[1] % batch_size != 0:
-          raise ValueError(
-              f"Second dimension {x.shape[1]} must be divisible by batch_size"
-              f" {batch_size}"
-          )
-        transformed_shape = self.batch_shape + (
-            x.shape[0],
-            x.shape[1] // batch_size,
-        )
-        return x.update(shape=transformed_shape)
-      case state_types.AbstractRef():
-        return x.update(inner_aval=self.transform_type(x.inner_aval))
-      case _:
-        raise TypeError(f"Unsupported type: {x}")
-
-  def commute_ndindexer(
-      self, aval: jax_core.AbstractValue, indexer: indexing.NDIndexer
-  ) -> tuple[indexing.NDIndexer, state_types.Transform]:
-    del aval
-    batch_shape = self.batch_shape
-    k = len(batch_shape)
-    if len(indexer.indices) != k + 2:
-      raise ValueError(
-          f"Expected indexer to have exactly {k + 2} dimensions, "
-          f"but got {len(indexer.indices)}."
-      )
-    batch_indices = indexer.indices[:-2]
-    row_idx = indexer.indices[-2]
-    col_idx = indexer.indices[-1]
-
-    for idx in batch_indices:
-      if isinstance(idx, indexing.Slice):
-        raise NotImplementedError("Slicing batch dimensions is not supported.")
-
-    batch_size = math.prod(batch_shape)
-    m, n = indexer.shape[-2], indexer.shape[-1]
-    physical_shape = (m, batch_size * n)
-
-    batch_idx = 0
-    for idx, size in zip(batch_indices, batch_shape):
-      assert isinstance(idx, indexing.IntIndexer)
-      batch_idx = batch_idx * size + idx
-
-    if isinstance(col_idx, indexing.Slice):
-      # We shift the column slice by batch_idx * n.
-      new_col_idx = indexing.Slice(
-          batch_idx * n + col_idx.start, col_idx.size, col_idx.stride
-      )
-    else:
-      new_col_idx = batch_idx * n + col_idx
-
-    new_indexer = indexing.NDIndexer.from_indices_shape(
-        (row_idx, new_col_idx), physical_shape
-    )
-    return new_indexer, IdentityTransform()
-
-
-@tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
-class IdentityTransform(state_types.Transform):
-  """An identity transform."""
-
-  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
-    return x
-
-  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
-    return self
 
 
 @dataclasses.dataclass

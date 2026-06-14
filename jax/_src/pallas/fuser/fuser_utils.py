@@ -19,7 +19,6 @@ import itertools
 
 from jax._src import api_util
 from jax._src import core
-from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
@@ -98,25 +97,18 @@ def _jaxpr_signature(jaxpr_obj):
     else:
       return ('unknown_var', str(v))
 
-  def get_effect_sig(e):
-    if isinstance(e, effects_lib.JaxprInputEffect) and isinstance(
-        e.input, core.Var):
-      return f'{type(e).__name__}<{get_var_sig(e.input)}>'
-    return str(e)
-
   eqn_sigs = []
   for eqn in jaxpr.eqns:
     in_sigs = tuple(hash(get_var_sig(v)) for v in eqn.invars)
     params_sig = hash(_make_hashable(eqn.params))
-    effects = tuple(sorted(get_effect_sig(e) for e in getattr(eqn, 'effects', [])))
+    effects = tuple(sorted(str(e) for e in getattr(eqn, 'effects', [])))
     op_sig = ('eqn', eqn.primitive.name, in_sigs, params_sig, effects)
     eqn_sigs.append(op_sig)
     for i, outvar in enumerate(eqn.outvars):
       if type(outvar).__name__ != 'DropVar':
         env[outvar] = ('out', op_sig, i)  # pyrefly: ignore[unsupported-operation]
   out_sigs = tuple(get_var_sig(v) for v in jaxpr.outvars)
-  jaxpr_effects = tuple(
-      sorted(get_effect_sig(e) for e in getattr(jaxpr, 'effects', [])))
+  jaxpr_effects = tuple(sorted(str(e) for e in getattr(jaxpr, 'effects', [])))
   eqn_sigs_sorted = tuple(sorted(eqn_sigs, key=lambda x: str(x)))
   return ('jaxpr_dag', out_sigs, eqn_sigs_sorted, jaxpr_effects)
 
@@ -134,7 +126,8 @@ def get_write_indices(jaxpr):
   for eqn in jaxpr.eqns:
     for e in eqn.effects:
       if isinstance(e, (state_types.WriteEffect, state_types.AccumEffect)):
-        if (idx := all_vars.get(e.input, None)) is not None:
+        v = eqn.invars[e.input_index]
+        if (idx := all_vars.get(v, None)) is not None:
           effects.add(idx)
   return effects
 

@@ -1,4 +1,4 @@
-name: Bazel CPU
+name: CI - Bazel CPU tests
 
 on:
   workflow_dispatch:
@@ -49,7 +49,7 @@ jobs:
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
     # dashboard only if we use an expression in the "name" field. Otherwise, it appends the matrix
     # values to the name and creates a separate entry for each matrix combination.
-    name: "${{ matrix.runner && 'Build wheel' }}"
+    name: "Build ${{ format('{0}', 'jaxlib') }} artifacts"
     with:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
@@ -82,7 +82,7 @@ jobs:
             # TODO: Just test against Python 3.11 with Bzlmod to avoid adding too much CI load.
             - python: "3.14"
               enable-bzlmod: 1
-    name: "${{ (contains(matrix.runner, 'linux-x86') && 'Test' || 'Build') }}"
+    name: "Bazel CPU ${{ (contains(matrix.runner, 'linux-x86') && 'tests' || 'build only') }}"
 # End Presubmit Naming Check github-cpu-presubmits
     with:
       runner: ${{ matrix.runner }}

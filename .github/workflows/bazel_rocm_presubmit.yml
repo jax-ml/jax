@@ -1,4 +1,4 @@
-name: Bazel ROCm
+name: CI - Bazel ROCm tests
 
 on:
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1]
           rocm-version: ["7"]
-    name: "${{ matrix.runner && 'Test' }}"
+    name: "Bazel single accelerator ${{ format('{0}', 'ROCm tests') }}"
 # End Presubmit Naming Check github-rocm-presubmits
     with:
       runner: ${{ matrix.runner }}

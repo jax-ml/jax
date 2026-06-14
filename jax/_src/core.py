@@ -477,26 +477,10 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
   ctx = ctx or current_jaxpr_eqn_context()
-  effects = resolve_input_effects(effects, invars)
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info, ctx)
-
-
-def resolve_input_effects(effs, invars) -> Effects:
-  if not any(isinstance(e, effects.JaxprInputEffect) and isinstance(e.input, int)
-             for e in effs):
-    return effs
-  out_effs = set()
-  for eff in effs:
-    if isinstance(eff, effects.JaxprInputEffect) and isinstance(eff.input, int):
-      invar = invars[eff.input]
-      if isinstance(invar, Literal):
-        continue
-      eff = eff.replace(invar)
-    out_effs.add(eff)
-  return out_effs
 
 class Var:
   __slots__ = ["aval", "initial_qdd", "final_qdd"]
@@ -3314,8 +3298,7 @@ class ClosedCallPrimitive(CallPrimitive):
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
 closed_call_p.def_impl(call_impl)
 closed_call_p.def_effectful_abstract_eval(
-    lambda *_, call_jaxpr: (call_jaxpr.out_avals,
-                            positional_effects(call_jaxpr)))
+    lambda *_, call_jaxpr: (call_jaxpr.out_avals, eqn_effects(call_jaxpr)))
 
 # ------------------- Map -------------------
 
@@ -3514,7 +3497,7 @@ def _check_closed_call(_, *in_atoms, call_jaxpr):
   in_avals = [x.aval for x in in_atoms]
   if not all(map(typecompat, call_jaxpr.in_avals, in_avals)):
     raise JaxprTypeError("Closed call in_avals mismatch")
-  return call_jaxpr.out_avals, positional_effects(call_jaxpr)
+  return call_jaxpr.out_avals, eqn_effects(call_jaxpr)
 custom_typechecks[closed_call_p] = _check_closed_call
 
 def check_jaxpr(jaxpr: Jaxpr):
@@ -3636,7 +3619,10 @@ def _check_jaxpr(
     write(v, AvalQDD(v.aval, v.initial_qdd))
 
   # Check each eqn.
-  input_vars = set(it.chain(jaxpr.constvars, jaxpr.invars))
+  sentinel = object()
+  in_idx: dict[Var, int | None] = {
+      v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))
+  }
   mut_arrays = set()
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
@@ -3661,23 +3647,25 @@ def _check_jaxpr(
       if prim.ref_primitive:
         if prim.ref_allocating:
           outvar, = eqn.outvars
+          in_idx[outvar] = None
           mut_arrays.add(outvar)
-      eqn_effects = resolve_input_effects(eqn_effects, eqn.invars)
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
                              f"Inferred effects: {eqn_effects}")
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
-          if eff.input in mut_arrays:
+          eqn_invar = eqn.invars[eff.input_index]
+          if type(eqn_invar) is Literal or eqn_invar in mut_arrays:
             continue
-          if eff.input not in input_vars:
+          if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
-          if eff not in jaxpr.effects:
+          jaxpr_effect = eff.replace(input_index=jaxpr_index)
+          if jaxpr_effect not in jaxpr.effects:
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must be present in jaxpr. "
-                f"{eff} is not in {jaxpr.effects}.")
+                f"{jaxpr_effect} is not in {jaxpr.effects}.")
         elif isinstance(eff, NamedAxisEffect):
           # It is valid for a primitive to discharge the named axis effect.
           continue
@@ -3752,30 +3740,19 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   check_jaxpr(call_jaxpr)
 
   out_avals = [x.aval for x in call_jaxpr.outvars]
-  return out_avals, positional_effects(call_jaxpr)
+  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
+  # should have effects indexed only on its explicit arguments
+  effs = {e.replace(input_index=e.input_index - len(call_jaxpr.constvars))
+          if isinstance(e, effects.JaxprInputEffect)
+          else e for e in call_jaxpr.effects}
+  return out_avals, effs
 
-def eqn_effects(jaxpr, invars) -> Effects:
-  return resolve_input_effects(positional_effects(jaxpr), invars)
-
-def subst_input_effects(effs, env) -> Effects:
-  return {e.replace(env.get(e.input, e.input))
+def eqn_effects(jaxpr):
+  # jaxpr input effects are indexed to include jaxpr.constvars, but the eqn
+  # should have effects indexed only on its explicit arguments
+  effs = jaxpr.effects
+  return {e.replace(input_index=e.input_index - len(jaxpr.constvars))
           if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
-
-def positional_effects(jaxpr) -> Effects:
-  if isinstance(jaxpr, ClosedJaxpr):
-    jaxpr = jaxpr.jaxpr
-  if not any(isinstance(e, effects.JaxprInputEffect) for e in jaxpr.effects):
-    return jaxpr.effects
-  idx = {v: i for i, v in enumerate(jaxpr.invars)}
-  out_effs = set()
-  for eff in jaxpr.effects:
-    if isinstance(eff, effects.JaxprInputEffect):
-      i = idx.get(eff.input)
-      if i is None:
-        continue
-      eff = eff.replace(i)
-    out_effs.add(eff)
-  return out_effs
 
 
 # ------------------- ShapeDtypeStruct -------------------
@@ -4183,7 +4160,13 @@ def pp_jaxpr_skeleton(jaxpr: Jaxpr, eqns_fn, context: JaxprPpContext,
     for i, eff in enumerate(jaxpr.effects):
       if i > 0:
         eff_text.append(pp.text(", "))
-      eff_text.append(pp_effect(eff, context))
+      if isinstance(eff, effects.JaxprInputEffect):
+        index = eff.input_index
+        all_vars = [*jaxpr.constvars, *jaxpr.invars]
+        eff_text.append(pp_effect(eff.replace(input_index=all_vars[index]),
+                                  context))
+      else:
+        eff_text.append(pp_effect(eff, context))
     eff_text.append(pp.text(" }"))
   else:
     eff_text = []

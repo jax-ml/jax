@@ -2460,20 +2460,14 @@ class SplashAttentionKernel:
     self.dkv_mask_info = dkv_mask_info
 
   def __call__(self, *args, **kwargs) -> SplashCustomReturnType:
-    ctx = (
-        jax.named_scope("dynamic_sparsity_splash")
-        if self.fwd_mask_info.is_dynamic_mask
-        else jax.named_scope("static_sparsity_splash")
+    return _splash_attention(
+        self.fwd_mask_info,
+        self.dq_mask_info,
+        self.dkv_mask_info,
+        *args,
+        **kwargs,
+        **self.kwargs,
     )
-    with ctx:
-      return _splash_attention(
-          self.fwd_mask_info,
-          self.dq_mask_info,
-          self.dkv_mask_info,
-          *args,
-          **kwargs,
-          **self.kwargs,
-      )
 
   def manual_sharding_spec(self, sharding: jax.sharding.NamedSharding):
     """Returns a value that can be used as a shard_map partition spec for the kernel."""

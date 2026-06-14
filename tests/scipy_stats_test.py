@@ -462,6 +462,36 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
   @jtu.sample_product(
+    func=["isf", "ppf"],
+    dtype=jtu.dtypes.floating,
+  )
+  def testCauchyQuantileDomain(self, func, dtype):
+    q = np.array([np.nan, -1., 0., 0.25, 0.5, 0.75, 1., 2.], dtype)
+    scipy_fun = getattr(osp_stats.cauchy, func)
+    lax_fun = getattr(lsp_stats.cauchy, func)
+
+    self.assertAllClose(
+      scipy_fun(q), lax_fun(q), check_dtypes=False)
+    self.assertAllClose(
+      scipy_fun(q), jax.jit(lax_fun)(q), check_dtypes=False)
+
+    q_broadcast = q[:, None]
+    loc = np.array([-1., 2.], dtype)
+    scale = np.array([0.5, 3.], dtype)
+    self.assertAllClose(
+      scipy_fun(q_broadcast, loc, scale),
+      lax_fun(q_broadcast, loc, scale),
+      check_dtypes=False)
+    self.assertAllClose(
+      scipy_fun(q_broadcast, loc, scale),
+      jax.jit(lax_fun)(q_broadcast, loc, scale),
+      check_dtypes=False)
+
+    q_empty = np.empty((0,), dtype)
+    self.assertEqual(lax_fun(q_empty).shape, (0,))
+    self.assertEqual(jax.jit(lax_fun)(q_empty).shape, (0,))
+
+  @jtu.sample_product(
     shapes=[
       [x_shape, alpha_shape]
       for x_shape in one_and_two_dim_shapes

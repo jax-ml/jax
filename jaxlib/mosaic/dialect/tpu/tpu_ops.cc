@@ -986,26 +986,38 @@ LogicalResult EraseLayoutOp::verify() {
   return success();
 }
 
-LogicalResult DynamicRotateOp::verify() {
-  auto vty = getResult().getType();
-  if (vty.getRank() <= getDimension() || getDimension() < 0) {
-    return emitOpError("Invalid dimension: ") << getDimension();
+template <typename Op>
+LogicalResult verifyRotateOp(Op op) {
+  auto vty = op.getResult().getType();
+  if (vty.getRank() <= op.getDimension() || op.getDimension() < 0) {
+    op.emitOpError("Invalid dimension: ") << op.getDimension();
+    return failure();
   }
-  if (getStride().has_value() && getStride().value() < 0) {
-    return emitOpError("Rotate stride must be >= 0 if it is specified");
+  if (op.getStride().has_value() && op.getStride().value() < 0) {
+    op.emitOpError("Rotate stride must be >= 0 if it is specified");
+    return failure();
   }
-  if (getStrideDimension().has_value() &&
-      (vty.getRank() <= getStrideDimension().value() ||
-       getStrideDimension().value() < 0)) {
-    return emitOpError("Invalid stride dimension: ")
-           << getStrideDimension().value();
+  if (op.getStrideDimension().has_value() &&
+      (vty.getRank() <= op.getStrideDimension().value() ||
+       op.getStrideDimension().value() < 0)) {
+    op.emitOpError("Invalid stride dimension: ")
+        << op.getStrideDimension().value();
+    return failure();
   }
-  if (getStride().has_value() != getStrideDimension().has_value()) {
-    return emitOpError(
+  if (op.getStride().has_value() != op.getStrideDimension().has_value()) {
+    op.emitOpError(
         "Expected either none or both stride and stride dimension are "
         "present");
+    return failure();
   }
   return success();
+}
+
+// TODO(b/347016737): deprecate static rotate
+LogicalResult RotateOp::verify() { return verifyRotateOp<RotateOp>(*this); }
+
+LogicalResult DynamicRotateOp::verify() {
+  return verifyRotateOp<DynamicRotateOp>(*this);
 }
 
 LogicalResult ScanCountOp::inferReturnTypes(
@@ -1270,10 +1282,10 @@ LogicalResult MatmulOp::verify() {
   return success();
 }
 
-void MatmulOp::getCanonicalizationPatterns(RewritePatternSet& results,
+void MatmulOp::getCanonicalizationPatterns(RewritePatternSet& patterns,
                                            MLIRContext* context) {
-  results.add<CanonicalizeAddOfMatmul<arith::AddFOp>,
-              CanonicalizeAddOfMatmul<arith::AddIOp>>(context);
+  patterns.add<CanonicalizeAddOfMatmul<arith::AddFOp>,
+               CanonicalizeAddOfMatmul<arith::AddIOp>>(context);
 }
 
 LogicalResult MaskCastOp::verify() {

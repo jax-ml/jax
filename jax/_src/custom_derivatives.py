@@ -461,7 +461,7 @@ def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_jvp`: {disallowed_effects}')
-  return call_jaxpr.out_avals, core.positional_effects(call_jaxpr)
+  return call_jaxpr.out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
 def _custom_jvp_vjp_call_lowering(ctx: mlir.LoweringRuleContext, *args,
@@ -523,8 +523,7 @@ def _custom_jvp_call_dce(
                                  debug_info=jvp_jaxpr_fun.debug_info)
   )
   new_eqn = pe.new_jaxpr_eqn(
-      eqn.invars, outvars, eqn.primitive, new_params,
-      core.eqn_effects(dce_call_jaxpr, eqn.invars),
+      eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
       eqn.source_info, eqn.ctx)
   return used_ins, new_eqn
 pe.dce_rules[custom_jvp_call_p] = _custom_jvp_call_dce
@@ -1071,7 +1070,7 @@ def _custom_vjp_call_typecheck(_, *in_avals, call_jaxpr, **kwargs):
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_vjp`: {disallowed_effects}')
-  return call_jaxpr.out_avals, core.positional_effects(call_jaxpr)
+  return call_jaxpr.out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_vjp_call_p] = _custom_vjp_call_typecheck
 
 def _custom_vjp_call_dce(
@@ -1127,8 +1126,7 @@ def _custom_vjp_call_dce(
       bwd=dce_bwd_wrapped,
   )
   new_eqn = pe.new_jaxpr_eqn(
-      eqn.invars, outvars, eqn.primitive, new_params,
-      core.eqn_effects(dce_call_jaxpr, eqn.invars),
+      eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
       eqn.source_info, eqn.ctx)
   return list(used_ins), new_eqn
 pe.dce_rules[custom_vjp_call_p] = _custom_vjp_call_dce
@@ -1734,7 +1732,7 @@ def _remat_opt_impl(
 
 def _remat_opt_abstract_eval(*args, fwd_jaxpr: core.ClosedJaxpr, **_):
   del args
-  return fwd_jaxpr.out_avals, core.positional_effects(fwd_jaxpr)
+  return fwd_jaxpr.out_avals, fwd_jaxpr.effects
 
 def _remat_opt_vmap(
     axis_data, args, in_dims,
@@ -1843,8 +1841,7 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     new_params["fwd_jaxpr"] = closed_jaxpr
     new_params["num_res"] = sum(used_res)
     new_eqn = pe.new_jaxpr_eqn(
-        invars, outvars, remat_opt_p, new_params,
-        core.eqn_effects(closed_jaxpr, invars),
+        invars, outvars, remat_opt_p, new_params, closed_jaxpr.effects,
         eqn.source_info, eqn.ctx)
     return used_ins, new_eqn
   else:
@@ -1860,7 +1857,7 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     invars = [v for used, v in zip(used_ins, invars) if used]
     new_eqn = pe.new_jaxpr_eqn(
         invars, outvars, core.closed_call_p, dict(call_jaxpr=closed_jaxpr),
-        core.eqn_effects(closed_jaxpr, invars), eqn.source_info, eqn.ctx)
+        closed_jaxpr.effects, eqn.source_info, eqn.ctx)
     used_ins = [False] * eqn.params["num_consts"] + used_ins
     return used_ins, new_eqn
 

@@ -41,11 +41,10 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = [
         "gpu_h100",
-        "gpu_h100_x32",
         "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
-    shard_count = 32,
+    shard_count = 16,
     tags = [
         "noasan",  # Times out.
     ],
@@ -112,7 +111,7 @@ jax_multiplatform_test(
         "gpu_h100x2",
         "gpu_b200x2",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0 --xla_gpu_experimental_enable_nvshmem=true"},
     tags = ["multiaccelerator"],
     deps = [
         "//jax/_src:test_multiprocess",
