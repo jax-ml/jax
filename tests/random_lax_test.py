@@ -835,6 +835,14 @@ class DistributionsTest(RandomTestBase):
     samples = random.poisson(key, lam, shape=(2, 20))
     self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
 
+  def testPoissonLamInf(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38335
+    # lam=inf should saturate to dtype max, not return 0
+    key = self.make_key(0)
+    samples = random.poisson(key, jnp.inf, shape=(10,), dtype=np.int64)
+    expected = jnp.full(10, jnp.iinfo(np.int64).max, dtype=np.int64)
+    self.assertArraysEqual(samples, expected)
+
   def testPoissonCornerCases(self):
     key = self.make_key(0)
     lam = jnp.array([-1, 0, jnp.nan])
