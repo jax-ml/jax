@@ -87,6 +87,7 @@ permissions: {}
 
 env:
   PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  PIP_EXTRA_INDEX_URL: "https://pypi.org/simple"
 
 jobs:
   run-bazel-tests:

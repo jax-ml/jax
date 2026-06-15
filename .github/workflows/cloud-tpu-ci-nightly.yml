@@ -25,6 +25,8 @@ permissions:
 
 env:
   UV_DEFAULT_INDEX: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  UV_EXTRA_INDEX: "https://pypi.org/simple"
+  PIP_EXTRA_INDEX_URL: "https://pypi.org/simple"
 
 jobs:
   cloud-tpu-test:
