@@ -60,6 +60,8 @@ def _can_reuse_cupti_v2_subscriber() -> bool:
   if cuda_versions is None:
     return False
 
+  # TODO: Use cuda_versions.cupti_has_multi_subscriber_v2() directly once
+  # jaxlib 0.10.2 is the minimum supported version.
   has_multi_subscriber_v2 = getattr(
       cuda_versions, "cupti_has_multi_subscriber_v2", None
   )
