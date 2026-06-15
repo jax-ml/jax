@@ -60,6 +60,9 @@ Remember to align the itemized text with the first line of an item within a list
   * Support allocating multidimensional `plgpu.Barrier`s and
     `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
     parameter.
+  * Support for TMEM references with batch dimensions. This includes indexing
+    over batch dimensions and `plgpu.async_store_tmem` support for TMEM
+    references with batch dimensions.
 
 * Changes
 

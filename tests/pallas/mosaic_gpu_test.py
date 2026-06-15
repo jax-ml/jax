@@ -4984,12 +4984,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         ],
     )
     def kernel(src_ref, idx1_ref, idx2_ref, dst_ref, tmem_ref):
-      # TODO(allanrenucci): Support nD TMEM load/store. I.e.
-      #  src = plgpu.load(src_ref, (), layout=reg_layout, optimized=False)
-      #  plgpu.async_store_tmem(tmem_ref, src)
-      for i, j in itertools.product(range(b1), range(b2)):
-        src = plgpu.load(src_ref, (i, j), layout=reg_layout, optimized=False)
-        plgpu.async_store_tmem(tmem_ref.at[i, j], src)
+      src = plgpu.load(src_ref, (), layout=reg_layout, optimized=False)
+      plgpu.async_store_tmem(tmem_ref, src)
       plgpu.commit_tmem()
       i = idx1_ref[...]
       j = idx2_ref[...]
