@@ -684,7 +684,14 @@ def _process_mask(
            and isinstance(m.array, Tracer)
             for m in mask.masks)
 
-  if _is_numpy_mask_with_traced_arrays(mask):
+  if _is_numpy_mask_with_traced_arrays(mask) and q_seq_shards == 1:
+    # Sequence sharding (q_seq_shards > 1) is not supported for materialized
+    # NumpyMask in this path: full masks crash in _process_mask's per-shard
+    # np.concatenate, and causal/random numpy masks produce wrong output for
+    # shards. Unlike _ComputableMask, NumpyMask has no mask_function to
+    # evaluate per shard -- it's a materialized array -- so there's no
+    # shard-agnostic rule to re-slice correctly. See the q_seq_shards > 1 branch
+    # below, which rejects that case explicitly.
     _check_smem_limit(leading_dim=head_count,
                       q_blocks_count=q_blocks_per_shard,
                       kv_blocks_count=kv_blocks_count,
@@ -704,6 +711,12 @@ def _process_mask(
           q_seq_shards=q_seq_shards,
           shrink_grid=shrink_grid,
       )
+  elif _is_numpy_mask_with_traced_arrays(mask) and q_seq_shards > 1:
+    raise ValueError("Sequence sharding (q_seq_shards > 1) is not supported for "
+                      "materialized NumpyMask under JIT. Unlike _ComputableMask, NumpyMask has no "
+                      "mask_function to evaluate per shard, so it cannot be sharded "
+                      "correctly along the sequence dimension. Use a computable mask "
+                      "(e.g. LocalMask, CausalMask), disable JIT, or set q_seq_shards == 1.")
   # Uniquify the masks.
   # Create a collection of the unique head masks in the input multi-head mask.
   # This avoids processing the same mask multiple times and it enables

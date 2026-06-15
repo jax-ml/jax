@@ -23,6 +23,7 @@ from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask_info as mask_info_lib
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
+from jax.sharding import Mesh, PartitionSpec as P
 import jax.numpy as jnp
 import numpy as np
 
@@ -2419,9 +2420,59 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     # Attention output should match between eager and jit. Under jit, NumpyMask
     # arrays become tracers and are routed through the dynamic mask path, producing
-    # different intermediate representations, but the final result must be identical .
+    # different intermediate representations.
 
     self.assertArraysEqual(eager_output, jit_output)
+
+  @parameterized.product(
+    shape=[(128, 128), (256, 256), (256, 512),(512, 256), (512, 512)],
+    seed=[0, 1, 2],
+    mask_type=['causal', 'random', 'full'],)
+  def test_numpy_mask_jit_vs_eager_distributed_heads(self, shape, seed,mask_type):
+    q_len, kv_len = shape
+    batch_size = 2
+    num_heads = 8
+    head_dim = 128
+
+    q = jax.random.normal(jax.random.key(seed), (batch_size, num_heads, q_len, head_dim))
+    k = jax.random.normal(jax.random.key(seed + 1), (batch_size, num_heads, kv_len, head_dim))
+    v = jax.random.normal(jax.random.key(seed + 2), (batch_size, num_heads, kv_len, head_dim))
+
+    mask_factories = {
+        'causal': lambda: jnp.tril(jnp.ones((q_len, kv_len), dtype=jnp.bool_)),
+        'random': lambda: jax.random.bernoulli(jax.random.key(seed), p=0.5, shape=(q_len, kv_len)),
+        'full': lambda: jnp.ones((q_len, kv_len), dtype=jnp.bool_),
+    }
+    dense_mask = mask_factories[mask_type]()
+    num_devices = jax.device_count()
+    mesh = Mesh(np.array(jax.devices()), axis_names=('heads',))
+
+    # Path A: concrete mask captured as constant should follow static pathway (process_mask)
+    def run_static(query, key, value):
+        mask = mask_lib.NumpyMask(array=np.asarray(dense_mask))
+        mhm = mask_lib.MultiHeadMask(masks=(mask,) * num_heads)
+        kernel = splash_attention_kernel.make_splash_mha(
+            mask=mhm, head_shards=num_devices, q_seq_shards=1)
+        return jax.vmap(kernel)(query, key, value)
+
+    # Path B: mask passed as arg becomes a tracer should follow dynamic pathway (process_dynamic_mask)
+    def run_dynamic(query, key, value, mask_array):
+        mask = mask_lib.NumpyMask(array=mask_array)
+        mhm = mask_lib.MultiHeadMask(masks=(mask,) * num_heads)
+        kernel = splash_attention_kernel.make_splash_mha(
+            mask=mhm, head_shards=num_devices, q_seq_shards=1)
+        return jax.vmap(kernel)(query, key, value)
+
+    static_out  = jax.shard_map(run_static,  mesh=mesh,
+                    in_specs=(P(None,'heads',None,None),)*3,
+                    out_specs=P(None,'heads',None,None), check_vma=False)(q, k, v)
+
+    dynamic_out = jax.shard_map(run_dynamic, mesh=mesh,
+                    in_specs=(P(None,'heads',None,None),)*3 + (P(),),
+                    out_specs=P(None,'heads',None,None), check_vma=False)(q, k, v, dense_mask)
+
+
+    self.assertArraysEqual(static_out, dynamic_out)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
