@@ -5450,6 +5450,22 @@ class APITest(jtu.JaxTestCase):
     with jax.allow_f16_reductions(False):
       jax.lax.reduce_sum(x, [0])  # allowed on singleton axes
 
+  def test_vjp3_not_saveable(self):
+    def f(x, y):
+      return x * y
+
+    x = jnp.arange(3.)
+    y = 2 * jnp.arange(3.)
+    z, f_vjp = jax.vjp(f, x, jax.ad.NotSaveable(y))
+
+    with self.assertRaisesRegex(Exception, "need to restore"):
+      f_vjp(z)
+
+    f_vjp.args_res[1] = y
+    x_bar, y_bar = f_vjp(jnp.ones_like(z))
+    self.assertAllClose(x_bar, y)
+    self.assertAllClose(y_bar, x)
+
   def test_vjp3_dont_want(self):
     @jax.jit
     def f(x, y):
