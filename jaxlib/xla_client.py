@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 467  # Add dl_device_type param to dlpack_managed_tensor_to_buffer
+_version = 468  # Guard gpu_pallas_distributed_nvshmem_test_gpu on jaxlib_extension_version
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

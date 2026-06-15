@@ -33,6 +33,7 @@ from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax._src.config import config
 from jax._src.lib import cuda_versions
+from jax._src.lib import jaxlib_extension_version
 from jax.experimental import multihost_utils
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as _plgpu
@@ -122,6 +123,9 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
   monkey_patched_api_was_used: bool
 
   def setUp(self):
+    if is_nvshmem_used() and jaxlib_extension_version < 468:
+      self.skipTest("NVSHMEM requires jaxlib_extension_version >= 468")
+
     if jtu.is_device_rocm():
       self.skipTest("Mosaic GPU is not supported on ROCm.")
 
