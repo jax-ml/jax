@@ -109,6 +109,46 @@ class ProfilerTest(unittest.TestCase):
     with self.assertRaisesRegex(ValueError, "No active profiler server."):
       jax.profiler.stop_server()
 
+  def testPGLEProfilerAddsCuptiV2ReuseOnlyWhenAvailable(self):
+    captured_options = []
+
+    class FakeProfilerSession:
+
+      def __init__(self, options):
+        captured_options.append(options)
+
+      def stop(self):
+        return b"xspace"
+
+    for can_reuse_cupti_v2, expected_advanced_configuration in [
+        (False, {}),
+        (True, {"gpu_reuse_cupti_v2_subscriber": True}),
+    ]:
+      captured_options.clear()
+      pgle_profiler = profiler.PGLEProfiler(1, 90)
+      with (
+          unittest.mock.patch.object(
+              profiler,
+              "_can_reuse_cupti_v2_subscriber",
+              return_value=can_reuse_cupti_v2,
+              create=True,
+          ),
+          unittest.mock.patch.object(
+              profiler._profiler, "ProfilerSession", FakeProfilerSession
+          ),
+          unittest.mock.patch.object(
+              profiler._profiler, "get_fdo_profile", return_value=b"profile"
+          ),
+      ):
+        with profiler.PGLEProfiler.trace(pgle_profiler):
+          pass
+
+      self.assertEqual(len(captured_options), 1)
+      self.assertEqual(
+          captured_options[0].advanced_configuration,
+          expected_advanced_configuration,
+      )
+
   def testProgrammaticProfiling(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       try:

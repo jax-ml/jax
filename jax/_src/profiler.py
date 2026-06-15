@@ -32,6 +32,10 @@ from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 from jax._src import xla_bridge
+try:
+  from jax._src.lib import cuda_versions
+except ImportError:
+  cuda_versions = None
 from jax._src.lib import _profiler
 from jax._src.lib import _profile_data
 from jax import version as jax_version_module
@@ -45,9 +49,38 @@ _profiler_server: _profiler.ProfilerServer | None = None
 
 logger = logging.getLogger(__name__)
 
+_CUPTI_V2_SUBSCRIBER_REUSE_OPTION = "gpu_reuse_cupti_v2_subscriber"
+
 
 class ProfileOptions(_profiler.ProfileOptions):
   """Profiler Options to configure the collectors for the profiler."""
+
+
+def _can_reuse_cupti_v2_subscriber() -> bool:
+  if cuda_versions is None:
+    return False
+
+  has_multi_subscriber_v2 = getattr(
+      cuda_versions, "cupti_has_multi_subscriber_v2", None
+  )
+  if has_multi_subscriber_v2 is None:
+    return False
+  try:
+    return bool(has_multi_subscriber_v2())
+  except Exception as err:  # pylint: disable=broad-exception-caught
+    logger.debug("CUPTI V2 subscriber reuse check failed: %s", err)
+    return False
+
+
+def _enable_cupti_v2_subscriber_reuse_by_default(
+    options: _profiler.ProfileOptions,
+) -> None:
+  if not _can_reuse_cupti_v2_subscriber():
+    return
+
+  advanced_configuration = dict(options.advanced_configuration or {})
+  advanced_configuration.setdefault(_CUPTI_V2_SUBSCRIBER_REUSE_OPTION, True)
+  options.advanced_configuration = advanced_configuration
 
 
 def start_server(
@@ -194,6 +227,7 @@ def start_trace(
     options = profiler_options
     if options is None:
       options = ProfileOptions()
+    _enable_cupti_v2_subscriber_reuse_by_default(options)
     set_metadata("jax_version", jax_version_module.__version__)
     jaxlib_version_str = ".".join(map(str, version_lib))
     set_metadata("jaxlib_version", jaxlib_version_str)
@@ -513,6 +547,7 @@ class PGLEProfiler:
       options = _profiler.ProfileOptions()
       options.enable_hlo_proto = True
       options.raise_error_on_start_failure = True
+      _enable_cupti_v2_subscriber_reuse_by_default(options)
       runner.current_session = _profiler.ProfilerSession(options)
 
       try:
