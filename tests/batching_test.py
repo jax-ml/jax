@@ -460,6 +460,12 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(sv, np.broadcast_to(v[0, ::-1], (3, 4)))
 
   def testConvGeneralDilated(self):
+    if jtu.is_device_rocm():
+      # A bug at the boundary between XLA and MIOpen causes a rare scenario
+      # where batched convolution returns wrong results. Skip until fixed.
+      # TODO(magaoka-amd): unskip once the issue is addressed.
+      self.skipTest("Skipped on ROCm: XLA/MIOpen boundary bug causes rare "
+                    "wrong results for batched convolution.")
     W = jnp.array(self.rng().randn(3, 3, 1, 5), dtype=np.float32)
     X = jnp.array(self.rng().randn(10, 5, 5, 1), dtype=np.float32)
 
