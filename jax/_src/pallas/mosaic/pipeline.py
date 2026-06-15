@@ -1846,6 +1846,11 @@ def emit_pipeline(
     no_pipelining: bool = False,
     _explicit_indices: bool = False,
 ):
+  if any(g <= 0 for g in grid if isinstance(g, int)):
+    raise ValueError(
+        f"All elements in the grid must be strictly positive, but got {grid=}"
+    )
+
   if not config.use_emit_pipeline_primitive.value:
     return _emit_pipeline(
         body,
