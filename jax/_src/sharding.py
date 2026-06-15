@@ -70,11 +70,11 @@ def _common_shard_shape(self, global_shape: Shape) -> Shape:
     quotient, remainder = divmod(s, p)
     if remainder != 0:
       raise IndivisibleError(
-          f"Sharding {self} implies that array axis {dim} is partitioned "
+          f"{self} implies that array axis {dim} is partitioned "
           f"{p} times, but the dimension size is {s} "
           f"(full shape: {global_shape}, "
-          f"per-dimension tiling factors: {partitions} should evenly divide "
-          "the shape)")
+          f"per-dimension tiling factors: {tuple(partitions)} should evenly "
+          "divide the shape)")
     out.append(quotient)
   return tuple(out)
 

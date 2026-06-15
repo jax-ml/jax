@@ -62,7 +62,7 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh
-from jax._src.sharding import Sharding
+from jax._src.sharding import Sharding, IndivisibleError
 from jax._src.named_sharding import remove_size_one_mesh_axis
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
@@ -854,7 +854,15 @@ def pjit_check_aval_sharding(
           f'annotation {s}: {e}')
 
     if not allow_uneven_sharding:
-      s.shard_shape(aval.shape)  # will check for divisibility
+      try:
+        s.shard_shape(aval.shape)  # will check for divisibility
+      except IndivisibleError as e:
+        print(source_info_util.summarize(source_info_util.current()))
+        raise IndivisibleError(
+            f'One of {what_aval}{name_str} was given the sharding {str(e)}.'
+            ' This error occurs at source: '
+            f' {source_info_util.summarize(source_info_util.current())}'
+        ) from None
 
 def check_aval_layout_compatibility(
     layouts, flat_avals, names: Sequence[str], what_aval: str):
