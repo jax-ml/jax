@@ -602,9 +602,6 @@ class MpmdTest(PallasSCTest):
   def test_parallel_subkernels_semaphores(
       self, use_tc_tiling, full_core_spec, signalling_direction, subcores
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 5, 15):
-      self.skipTest("Needs a newer libtpu")
-
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="s_core",
         subcore_axis_name="subcore",
@@ -654,9 +651,6 @@ class MpmdTest(PallasSCTest):
     jax.block_until_ready(test_mpmd_map())
 
   def test_copy_with_cross_core_signaling(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 5, 15):
-      self.skipTest("Needs a newer libtpu")
-
     v_mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore",
         num_cores=self.sc_info.num_cores,

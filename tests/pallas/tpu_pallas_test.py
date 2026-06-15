@@ -2771,8 +2771,6 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(y, jnp.tile(x, reps))
 
   def test_mixed_precision_dot(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest('Requires libtpu built on or after 2026-05-26')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('float8_e4m3b11fnuz not supported on TPU generations <= 4')
     if jtu.is_device_tpu(7, 'x'):
@@ -2822,9 +2820,6 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
       ],
   )
   def test_scalar_casting(self, in_dtype, out_dtype):
-    if in_dtype in {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
     def kernel(x_ref, o_ref):
       o_ref[0] = x_ref[0].astype(out_dtype)
 
@@ -4047,8 +4042,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_roll_with_static_major_dim_shift(
       self, shape: tuple[int, int, int], shift: int, dtype: jnp.dtype
   ):
-    if dtype != jnp.float32 and not jtu.is_cloud_tpu_at_least(2026, 6, 3):
-      self.skipTest('Needs a newer libtpu')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
@@ -4070,8 +4063,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_roll_static_lane_shift_with_no_stride(
       self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 11):
-      self.skipTest('Needs a newer libtpu')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
@@ -4095,8 +4086,8 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_roll_static_lane_shift_with_stride_and_aligned_shape(
       self, shape, shift, dtype, stride
   ):
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 18):
-      self.skipTest('Needs a newer libtpu')
+    if not jtu.is_libtpu_at_least("0.0.43"):
+      self.skipTest("Requires libtpu 0.0.43 or newer")
     # if stride is too large, the max shift on a row will exceed the column dim.
     if not jtu.is_device_tpu_at_least(5) or stride * shape[0] >= 128:
       self.skipTest('Requires TPU v5+ and not too large stride.')
@@ -4293,10 +4284,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_small_last_two_dims(
       self, input_output_major_dims, input_minor_dims, dtype
   ):
-    if dtype in {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
-
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('TPU v5+ required.')
 
@@ -5077,9 +5064,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       dtype=[jnp.float32, jnp.bfloat16, jnp.float8_e4m3fn],
   )
   def test_reshape_fold_minormost_dim(self, dtype):
-    if dtype == jnp.float8_e4m3fn:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
     packing = 32 // (8 * np.dtype(dtype).itemsize)
     in_shape = (8 * packing, 128)
     out_shape = (1, math.prod(in_shape))
@@ -5130,8 +5114,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       self.skipTest("Interpret not supported for manual DMA test")
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs not supported on TPU generations <= 3')
-    if not jtu.is_cloud_tpu_at_least(2026, 4, 10):
-      self.skipTest("Needs a newer libtpu")
 
     def kernel(x_hbm, y_hbm):
       @functools.partial(
@@ -5181,8 +5163,6 @@ class EmitPipelineTest(ptu.PallasTPUTest):
     dtype=[jnp.int32, jnp.int16, jnp.int8]
   )
   def test_emit_pipeline_small_window(self, tile_major, dtype):
-    if not jtu.is_cloud_tpu_at_least(2026, 5, 16):
-      self.skipTest("Needs a newer libTPU")
     if not jtu.is_device_tpu_at_least(4) and tile_major == 1:
       expect_ctx = self.assertRaisesRegex(
           error_handling.MosaicError,
@@ -5265,9 +5245,6 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('f32_transpose', jnp.float32, True),
   )
   def test_basic(self, dtype, transpose):
-    if dtype in {jnp.float8_e4m3fn, jnp.float8_e5m2}:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest('Requires libtpu built on or after 2026-05-26 for float8')
     m = 128 + 64
     k = n = 256
     generator = np.random.default_rng(1234)

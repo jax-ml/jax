@@ -370,10 +370,6 @@ class VectorSubcoreTest(PallasSCTest):
   @hp.given(hps.data())
   def test_slicing(self, dtype, data):
     self.skip_if_tc_tiling()
-
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 7):
-      self.skipTest("Requires libtpu built on or after 2026-06-07")
-
     out_shape = data.draw(
         hps.sampled_from(sc_core.supported_shapes(dtype)), label="out_shape"
     )
@@ -2333,8 +2329,6 @@ class VectorSubcoreTest(PallasSCTest):
       (jnp.float8_e5m2, (4, 16), 7.0),
   )
   def test_store_splat_constant(self, dtype, shape, val):
-    if not jtu.is_cloud_tpu_at_least(2026, 5, 20):
-      self.skipTest("Needs a newer libTPU")
     if len(shape) == 1 and jax.dtypes.itemsize_bits(dtype) < 32:
       self.skipTest("Load/store for interleaved-minor-128 unsupported")
 

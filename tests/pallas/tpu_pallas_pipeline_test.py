@@ -526,10 +526,6 @@ class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
       dtype=[jnp.float32, jnp.int32, jnp.int8, jnp.float8_e4m3fn],
       no_pipelining=[False, True])
   def test_poison_buffers(self, dtype, no_pipelining):
-    if dtype == jnp.float8_e4m3fn:
-      if not jtu.is_cloud_tpu_at_least(2026, 6, 1):
-        self.skipTest("float8_e4m3fn poison buffers requires newer libtpu on Cloud TPU")
-
     def pipeline_body(x_ref, o_ref):
       o_ref[:4, :] = x_ref[:4, :]
 

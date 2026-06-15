@@ -906,8 +906,6 @@ class PallasCallTest(ptu.PallasTest):
   def test_float8_e4m3b11fnuz_dot(self, transpose):
     if not jtu.test_device_matches(["tpu"]) or not jtu.is_device_tpu_at_least(5):
       self.skipTest("`float8_e4m3b11fnuz` dot only supported on TPU.")
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 1):
-      self.skipTest("`float8_e4m3b11fnuz` dot requires newer libtpu on Cloud TPU")
     if jtu.is_device_tpu(7, "x"):
       self.skipTest("Unsupported type for matmul.")
 

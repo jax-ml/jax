@@ -403,10 +403,6 @@ class DevicePutTest(jtu.JaxTestCase):
   def test_oom(self):
     if jtu.device_under_test() != "tpu":
       self.skipTest("This test is only for TPU")
-
-    if not jtu.is_cloud_tpu_at_least(2026, 5, 22):
-      self.skipTest("Requires libtpu built after 2026-05-22")
-
     np_inp = np.arange(1)
 
     @functools.partial(jax.jit)
@@ -2040,9 +2036,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), "x")
   def test_fsdp_ag_no_offload(self, mesh):
-    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 9):
-      self.skipTest("Test fails in CI")
-
     if not (
         jax.devices()[0].device_kind == "TPU v5"
         or jtu.is_device_tpu_at_least(6)
@@ -2082,9 +2075,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), "x")
   def test_sparsecore_fsdp_ag_offload_core_id_1(self, mesh):
-    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 9):
-      self.skipTest("Test fails in CI")
-
     if not jtu.is_device_tpu_at_least(7):
       self.skipTest(
           "Queuing is not enabled, which is a prerequisite for immutable"
@@ -2235,9 +2225,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
   def test_sparsecore_two_rss(self):
-    if jtu.is_device_tpu(7, "x") and not jtu.is_cloud_tpu_at_least(2026, 6, 9):
-      self.skipTest("Test fails in CI")
-
     if not jtu.is_device_tpu_at_least(7):
       self.skipTest("Requires device with SC support and queuing enabled.")
 

@@ -90,10 +90,6 @@ class OpsTest(ptu.PallasTPUTest):
   def test_bitcast(
       self, from_dtype, to_dtype, is_ref_bitcast, use_primitive_io_op
   ):
-    affected_types = {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}
-    if from_dtype in affected_types or to_dtype in affected_types:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest("Requires libtpu built on or after 2026-05-26 for float8")
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Run on TPUv4+ to have expected memory layout")
     if from_dtype == to_dtype:
@@ -136,10 +132,6 @@ class OpsTest(ptu.PallasTPUTest):
       to_dtype=_JAX_DTYPES,
   )
   def test_bitcast_scalar(self, from_dtype, to_dtype):
-    affected_types = {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}
-    if from_dtype in affected_types or to_dtype in affected_types:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest("Requires libtpu built on or after 2026-05-26 for float8")
     if from_dtype == to_dtype:
       self.skipTest("No bitcast needed")
     if dtypes.itemsize_bits(from_dtype) != dtypes.itemsize_bits(to_dtype):
@@ -804,9 +796,6 @@ class OpsTest(ptu.PallasTPUTest):
       [jnp.bfloat16, jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz]
   )
   def test_stochastic_round(self, target_dtype):
-    if target_dtype in {jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float8_e4m3b11fnuz}:
-      if not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-        self.skipTest("Requires libtpu built on or after 2026-05-26")
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("Requires TPU v5+")
 
@@ -922,10 +911,6 @@ class OpsTest(ptu.PallasTPUTest):
         version=5
     ):
       self.skipTest("Requires TPU v5+")
-    if dtypes.itemsize_bits(
-        unpacked_dtype
-    ) != 32 and not jtu.is_cloud_tpu_at_least(2026, 5, 27):
-      self.skipTest("Requires newer libtpu")
     if packed_dtype == jnp.int2:
       if not jtu.is_device_tpu_at_least(version=5):
         self.skipTest("Requires TPU v5+")
@@ -1178,8 +1163,6 @@ class OpsTest(ptu.PallasTPUTest):
       op=[lax.eq, lax.ne, lax.lt, lax.gt, lax.le, lax.ge],
   )
   def test_scalar_comparison(self, dtype, op):
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 13):
-      self.skipTest("Requires libtpu built on or after 2026-06-13 ")
     if not jtu.is_libtpu_at_least("0.0.43"):
       self.skipTest("Requires libtpu 0.0.43 or newer")
 

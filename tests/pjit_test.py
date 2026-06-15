@@ -4177,8 +4177,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertIsInstance(out[1].sharding, NamedSharding)
 
   def test_device_put_efficient_reshard_single_host(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     if jax.device_count() < 4:
       self.skipTest('Requires >= 4 devices')
 
@@ -8051,8 +8049,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_unreduced_einsum_basic(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = np.arange(4).reshape(2, 2)
     x = jax.device_put(np_inp, P(None, 'x'))
     y = jax.device_put(np_inp, P('x', None))
@@ -8080,8 +8076,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_einsum_add_basic(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = np.arange(16.).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
@@ -8124,8 +8118,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_einsum_unreduced_with_transpose(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr1 = jax.device_put(jnp.arange(192).reshape(6, 4, 8), P(None, 'x', 'y'))
     arr2 = jax.device_put(jnp.arange(320).reshape(4, 8, 10), P('x', 'y', None))
 
@@ -8148,8 +8140,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_multi_axes_einsum(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     x = jax.device_put(np.arange(16.).reshape(8, 2), P(('x', 'y'), None))
     y = jax.device_put(np.arange(8.), P(('x', 'y')))
 
@@ -8170,8 +8160,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_multi_axes_none_einsum(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = np.arange(64.).reshape(4, 4, 2, 2)
     x = jax.device_put(np_inp, P(None, 'x', None, 'y'))
     y = jax.device_put(np_inp, P(None, 'x', None, 'y'))
@@ -8193,8 +8181,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_unreduced_error(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = np.arange(16).reshape(8, 2)
     # Case 1
     x = jax.device_put(np_inp, P('x', 'y'))
@@ -8246,8 +8232,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_three_operand_einsum_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     n1, n2, n3 = np.arange(2), np.arange(8).reshape(2, 4), np.arange(2)
     arr1 = jax.device_put(n1, P('x'))
     arr2 = jax.device_put(n2, P('x', 'y'))
@@ -8272,8 +8256,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_add_unreduced_error(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = np.arange(16).reshape(8, 2)
     x = jax.device_put(np_inp, P('x', 'y'))
     y = jax.device_put(np_inp.T, P('y', None))
@@ -9056,8 +9038,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 1), ('x', 'y'))
   def test_typeof_not_mesh_context_dependent(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
     self.assertEqual(jax.sharding.get_abstract_mesh().axis_names, ('x', 'y'))
     self.assertEqual(jax.typeof(arr).sharding.spec, P('x', 'y'))
@@ -9084,8 +9064,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   def test_unreduced_output_from_jit(
       self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = jtu.create_mesh(axis_sizes, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
     with jax.set_mesh(mesh):
@@ -9126,8 +9104,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   def test_unreduced_input_to_jit(
       self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = jtu.create_mesh(axis_sizes, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
     with jax.set_mesh(mesh):
@@ -9169,8 +9145,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   def test_in_and_out_unreduced(
       self, axis_sizes, axis_names, x_spec, y_spec, out_spec, shard_shape):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = jtu.create_mesh(axis_sizes, axis_names,
                            axis_types=(AxisType.Explicit,) * len(axis_names))
     with jax.set_mesh(mesh):
@@ -9308,8 +9282,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_einsum_lowers_to_reduce_sum(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(jnp.arange(8).reshape(4, 2), P('x', None))
 
     @jax.jit
@@ -9331,8 +9303,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = np.arange(16).reshape(4, 2, 2)
     arr = jax.device_put(np_inp, P('x', 'y', None))
 
@@ -9353,8 +9323,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_error(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     # Case 1
     arr = jax.device_put(np.arange(16).reshape(8, 2), P('y', None))
 
@@ -9383,8 +9351,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_multi_axes_reduce_sum(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     x = jax.device_put(np.arange(16.).reshape(8, 2), P(('x', 'y'), None))
 
     @jax.jit
@@ -9403,8 +9369,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduce_sum_scalar_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     x = jax.device_put(np.arange(8, dtype=np.float32), P('x'))
 
     @jax.jit
@@ -9437,8 +9401,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_minibatch_scan_unreduced(self, use_custom_vjp, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     def assert_unreduced(tup):
       for val in tup:
         self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
@@ -9520,8 +9482,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @config.numpy_dtype_promotion('standard')
   @jtu.with_explicit_mesh((2,), 'x')
   def test_scan_over_layers_minibatch_unreduced(self, use_custom_vjp, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     def assert_unreduced(val):
       self.assertEqual(val.aval.sharding.spec.unreduced, {'x'})
 
@@ -9649,8 +9609,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduced_sin_fwd_mul_bwd(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
 
     np_inp1 = np.arange(8.).reshape(4, 2)
     np_inp2 = np.arange(16.).reshape(2, 8)
@@ -9723,8 +9681,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_both_inputs_reduced(self, func, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr1 = jax.device_put(np.arange(8.), P(reduced={'x'}))
     arr2 = jax.device_put(np.arange(8.), P(reduced={'x'}))
 
@@ -9751,8 +9707,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_one_input_reduced_another_replicated(self, func, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr1 = jax.device_put(np.arange(8.).reshape(4, 2), P('x', reduced={'y'}))
     arr2 = jax.device_put(np.arange(8.).reshape(4, 2), P('x', None))
 
@@ -9787,8 +9741,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_sharded_unreduced_roundtrip(self, shape, orig_spec, un_spec, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np1 = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np1, orig_spec)
 
@@ -9801,8 +9753,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_scalar_to_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     inp = jnp.array(1)
     for s in inp.addressable_shards:
       self.assertArraysEqual(s.data, inp)
@@ -9837,8 +9787,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2, 2, 2), ('x', 'y', 'z'))
   def test_replicated_sharded_unreduced_roundtrip(
       self, shape, orig_spec, un_spec, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np1 = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np1, orig_spec)
 
@@ -9855,8 +9803,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2,), 'x')
   def test_one_input_sharded_another_reduced(self, func, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np1 = np.arange(8.)
     arr1 = jax.device_put(np1, P('x'))
     arr2 = jax.device_put(np1, P(None, reduced={'x'}))
@@ -9887,8 +9833,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduced_reshard_unreduced_bwd(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np1 = np.arange(4.)
     arr = jax.device_put(np1, P(None, reduced={'x'}))
 
@@ -9916,8 +9860,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduced_reshard_unreduced_bwd_sharded(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np1 = np.arange(8.).reshape(4, 2)
     arr = jax.device_put(np1, P('x', None, reduced={'y'}))
 
@@ -9946,8 +9888,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduced_at_get_out_sharding(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np1 = np.ones((2048, 64), dtype=jnp.float32)
     np2 = np.ones((4, 128), dtype=jnp.int32)
     params = jax.device_put(np1, P(None, None, reduced={'x'}))
@@ -10251,8 +10191,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_vjp_unreduced_zeros(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr1 = jax.reshard(np.arange(8.), P(reduced={'x'}))
     arr2 = jax.reshard(np.arange(8.), P(reduced={'x'}))
     arr2_unr = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
@@ -10268,8 +10206,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('fsdp',))
   def test_microbatch_vmap_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     inputs = jax.device_put(jnp.ones((4, 8, 16)), P(None, 'fsdp'))
     targets = jax.device_put(jnp.ones((4, 8, 16)), P(None, 'fsdp'))
     params = {'w_in': jnp.ones((2, 16, 64)), 'w_out': jnp.ones((2, 64, 16))}
@@ -10293,8 +10229,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_broadcast_reduced_inp_unreduced_out(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
 
     @jax.jit
@@ -10315,8 +10249,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_concat_reduced_split_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     x = jax.device_put(np.arange(8.).reshape(2, 4), P('x'))
     w1 = jax.device_put(np.arange(32.).reshape(4, 8), P(reduced={'x'}))
     w2 = jax.device_put(np.arange(32.).reshape(4, 8), P(reduced={'x'}))
@@ -10343,8 +10275,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_split_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
 
     @jax.jit
@@ -10369,8 +10299,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduce_sum_unreduced_inp(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.reshard(jnp.arange(4.), P(unreduced={'x'}))
 
     @jax.jit
@@ -10400,8 +10328,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_sum_unreduced_inp_multi_mesh(self, axes, out_s, eq_out_s, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
 
     inp1 = jax.device_put(np.arange(16).reshape(8, 2), P('x', 'y'))
     inp2 = jax.device_put(np.arange(8).reshape(2, 4), P('y', None))
@@ -10418,8 +10344,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_split_reduced_concat_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
 
     x = jax.device_put(np.arange(8.).reshape(2, 4), P('x'))
     w = jax.device_put(np.arange(64.).reshape(4, 16), P(reduced={'x'}))
@@ -10442,8 +10366,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_concat_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr1 = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
     arr2 = jax.reshard(jnp.arange(8.), P(unreduced={'x'}))
 
@@ -10468,8 +10390,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshape_unreduced_fwd_reduced_bwd(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     inp1 = jnp.arange(16.).reshape(8, 2)
     arr = jax.reshard(inp1, P(unreduced={'x', 'y'}))
     re_arr = jnp.reshape(arr, (2, 8))
@@ -10506,8 +10426,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshape_reduced_fwd_unreduced_bwd(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(8.), P(reduced={'x', 'y'}))
 
     @jax.jit
@@ -10528,8 +10446,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reshape_unreduced_out_sharding_error(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     with self.assertRaisesRegex(ValueError, "cannot contain unreduced"):
       jnp.reshape(np.arange(8), (4, 2), out_sharding=P(unreduced={'x'}))
 
@@ -10655,8 +10571,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshard_replicated_to_sharded_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
 
     inp = jnp.arange(16).reshape(8, 2)
     arr = jax.reshard(inp, P('x', unreduced={'y'}))
@@ -10679,8 +10593,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_unreduced_mul_scalar_fwd(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.reshard(jnp.arange(4), P(unreduced={'x'}))
     with self.assertRaisesRegex(
         core.ShardingTypeError,
@@ -10689,8 +10601,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_unreduced_add_jaxvals(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.reshard(np.ones((2, 2)), P(reduced={'x'}))
     arr2 = jax.device_put(np.ones((2, 2)), P())
 
@@ -10763,8 +10673,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_cet_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     x = jnp.array([[1, 2], [3, 4]])
     out = jnp.array(x, out_sharding=P(unreduced={'x'}))
     self.assertEqual(out.sharding,
@@ -10813,8 +10721,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_identity_jit_out_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     def check_rep(out):
       self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
       for s, es in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
@@ -10918,8 +10824,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_unreduced_is_fully_replicated(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.reshard(jnp.arange(8), P(unreduced={'x', 'y'}))
     self.assertFalse(arr.sharding.is_fully_replicated)
 
@@ -10928,8 +10832,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reshard_on_scalar_reduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(4.), P(reduced={'x'}))
 
     @jax.jit
@@ -11014,8 +10916,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduce_precision(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(8, dtype=np.float32), P(reduced={'x'}))
 
     @jax.jit
@@ -11059,8 +10959,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_select_reduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = np.arange(16.).reshape(8, 2)
     arr1 = jax.device_put(np_inp, P(reduced={'x'}))
     arr2 = jax.device_put(np_inp, P(reduced={'x'}))
@@ -11088,8 +10986,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_remat_reduced_transpose(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     arr = jax.device_put(np.arange(8.), P(reduced={'x'}))
 
     @jax.remat
@@ -11105,8 +11001,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_select_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np_inp = jnp.arange(16.).reshape(8, 2)
     arr1 = jax.device_put(np_inp, P(unreduced={'x'}))
     arr2 = jax.device_put(np_inp, P(unreduced={'x'}))
@@ -11134,8 +11028,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ("x",))
   def test_bincount(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     a = jnp.ones((4,), dtype=jnp.int32, out_sharding=jax.P("x"))
 
     @jax.jit(static_argnums=1)
@@ -11158,8 +11050,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((4,), ("x",))
   def test_segment_sum(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     a = jax.device_put(jnp.arange(8, dtype=jnp.int32), P("x"))
     b = jax.device_put(jnp.array([0, 0, 1, 1, 1, 2, 2, 3]), P("x"))
 
@@ -11184,8 +11074,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((4,), ("x",))
   def test_segment_max(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     a = jax.device_put(jnp.arange(8, dtype=jnp.int32), P("x"))
     b = jax.device_put(jnp.array([0, 0, 1, 1, 1, 2, 2, 3]), P("x"))
 
@@ -11202,8 +11090,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((4,), ("x",))
   def test_segment_prod(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     a = jax.device_put(jnp.arange(8, dtype=jnp.int32), P("x"))
     b = jax.device_put(jnp.array([0, 0, 1, 1, 1, 2, 2, 3]), P("x"))
 
@@ -11271,8 +11157,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
   def test_jnp_matmul_out_sharding_unreduced(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     np1 = np.ones((1, 1, 4))
     np2 = np.ones((1, 4, 2))
     x = jax.reshard(np1, P('x', None, 'y'))

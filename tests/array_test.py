@@ -884,8 +884,6 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unreduced_printing(self, mesh):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     x = jax.device_put(jnp.arange(8., dtype='float32'), P('x'))
     x = jax.lax.reduce_sum(x, [0], out_sharding=P(unreduced={'x'}))
     self.assertIn('nreduced', str(x.sharding))
@@ -1384,8 +1382,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding.spec, P('a', 'b', None, None))
 
   def test_aval_str_short(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = AbstractMesh(
         (2, 2, 2), ('a', 'b', 'c'),
         axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Manual))
@@ -1421,8 +1417,6 @@ class ShardingTest(jtu.JaxTestCase):
       mt.varying = {'y'}
 
   def test_modify_spec_auto_unreduced(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = AbstractMesh(
         (2, 2, 2), ('a', 'b', 'c'),
         axis_types=(AxisType.Explicit, AxisType.Explicit, AxisType.Auto))
@@ -1447,8 +1441,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(out, P(reduced={'a', 'b'}))
 
   def test_pspec_unreduced(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
     self.assertEqual(
         repr(pspec),
@@ -1498,8 +1490,6 @@ class ShardingTest(jtu.JaxTestCase):
       P('x', None, 'y', unreduced={'z', 'y'})
 
   def test_named_sharding_unreduced_error(self):
-    if jtu.test_device_matches(["tpu"]) and not jtu.is_cloud_tpu_at_least(2026, 5, 26):
-      self.skipTest("Requires libtpu built on or after 2026-05-26")
     mesh = jtu.create_mesh((1, 1, 1), ('x', 'y', 'z'))
 
     with self.assertRaisesRegex(

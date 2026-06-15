@@ -372,9 +372,6 @@ class XlaTransformE2ETest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("tpu")
   def test_transformer_schedule_async_ops_sharded(self):
-    if not jtu.is_cloud_tpu_at_least(2026, 6, 10):
-      self.skipTest("Requires newer libtpu")
-
     # Register the pre-scheduler transformation.
     name_pre = "schedule_async_ops_test_pre_scheduler_transformation"
     stage_pre = jex_xla.PipelineStage.PRE_SCHEDULER
