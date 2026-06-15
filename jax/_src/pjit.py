@@ -188,6 +188,7 @@ def _get_fastpath_data(
     executable, out_tree, args_flat, out_flat, effects, consts_for_constvars,
     pgle_profiler, const_args: Sequence[ArrayLike]
     ) -> pxla.MeshExecutableFastpathData | None:
+  active_traces = set(core.unsafe_get_trace_stack(core.trace_ctx.trace))
   if (
       executable is None
       or not isinstance(executable, pxla.MeshExecutable)
@@ -199,6 +200,8 @@ def _get_fastpath_data(
       or any(isinstance(e, RefEffect) for e in effects)
       or _need_to_rebuild_with_fdo(pgle_profiler)
       or config.no_execution.value
+      or any(isinstance(c, core.Tracer) and c._trace not in active_traces for c in const_args)
+      or any(isinstance(c, core.Tracer) and c._trace not in active_traces for c in consts_for_constvars)
   ):
     return None
 
@@ -527,12 +530,19 @@ def _trace_for_jit(
           fun_name(fun), event=dispatch.JAXPR_TRACE_EVENT)
       if core.trace_state_clean() else contextlib.nullcontext())
   with elapsed_time_ctx:
-    if ji.use_resource_env:  # pjit
-      with (_internal_use_concrete_mesh(ctx_mesh),
-            mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
-    else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+    def _run_trace():
+      if ji.use_resource_env:  # pjit
+        with (_internal_use_concrete_mesh(ctx_mesh),
+              mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
+          return pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+      else:
+        return pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+
+    jaxpr, out_avals = _run_trace()
+    active_traces = set(core.unsafe_get_trace_stack(core.trace_ctx.trace))
+    if any(isinstance(c, core.Tracer) and c._trace not in active_traces for c in jaxpr.consts):
+      pe.trace_to_jaxpr.evict_weakref(fun)
+      jaxpr, out_avals = _run_trace()
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -627,11 +637,15 @@ def _infer_params(
   avals = _infer_input_type(fun, dbg_fn, dynargs)
   entry = _infer_params_cached(fun, ji, arg_signature, avals, ctx_mesh)
 
+  active_traces = set(core.unsafe_get_trace_stack(core.trace_ctx.trace))
   if entry.pjit_params is not None:
-    return entry.pjit_params, entry.pjit_params.consts + dynargs
+    if any(isinstance(c, core.Tracer) and c._trace not in active_traces for c in entry.pjit_params.consts):
+      entry.pjit_params = None
+    else:
+      return entry.pjit_params, entry.pjit_params.consts + dynargs
 
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
-  if p.params['jaxpr'].jaxpr.is_high:
+  if p.params['jaxpr'].jaxpr.is_high or any(isinstance(c, core.Tracer) and c._trace not in active_traces for c in p.consts):
     return p, p.consts + dynargs
   entry.pjit_params = p
   return p, p.consts + dynargs
