@@ -37,6 +37,7 @@ load(
     "pywrap_library",
 )
 load("//jaxlib:symlink_files.bzl", "symlink_files")
+load("//tools/build_defs/testing:bzl_library.bzl", "bzl_library")
 
 licenses(["notice"])
 
@@ -903,7 +904,6 @@ cc_library(
         "@llvm-project//mlir:BytecodeWriter",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:MLIRBindingsPythonCore",
         "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
         "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
@@ -1046,7 +1046,11 @@ cc_library(
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    visibility = jax_visibility("jaxlib/py_client"),
+    visibility = jax_visibility("jaxlib/py_client") + [
+        # copybara:strip_begin
+        "//third_party/tpu_raiden/tpu_raiden/frameworks/jax:__pkg__",
+        # copybara:strip_end
+    ],
     deps = [
         ":cached_py_object",
         ":call_location",
@@ -1340,7 +1344,6 @@ cc_library(
         "@nanobind",
         "@tsl//tsl/platform:random",
         "@xla//third_party/python_runtime:headers",
-        "@xla//xla/python:version",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/service:slow_operation_alarm",
         "@xla//xla/tsl/concurrency:ref_count",
@@ -1638,6 +1641,23 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "oneapi/oneapi_plugin_extension",
+    srcs = ["oneapi/oneapi_plugin_extension.cc"],
+    deps = [
+        ":kernel_nanobind_helpers",
+        "//jaxlib/gpu:gpu_plugin_extension",
+        "@com_google_absl//absl/status",
+        "@nanobind",
+        "@xla//xla/pjrt:status_casters",
+    ],
+)
+
+cc_library(
+    name = "pyinit_stub",
+    srcs = ["pyinit_stub.c"],
+)
+
 cc_test(
     name = "reentrant_hash_test",
     srcs = ["reentrant_hash_test.cc"],
@@ -1698,4 +1718,22 @@ py_test(
         "absl/testing",
         "numpy",
     ]),
+)
+
+bzl_library(
+    name = "pywrap_bzl",
+    srcs = ["pywrap.bzl"],
+    parse_tests = False,
+    visibility = ["//visibility:private"],
+    deps = [
+        "@bazel_skylib//rules:expand_template",
+        "@rules_cc//cc:core_rules",
+    ],
+)
+
+bzl_library(
+    name = "symlink_files_bzl",
+    srcs = ["symlink_files.bzl"],
+    parse_tests = False,
+    visibility = ["//visibility:private"],
 )
