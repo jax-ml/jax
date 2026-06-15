@@ -728,6 +728,16 @@ class SplitAxesDeviceMeshCreationTest(test_util.JaxTestCase):
     self.assertEqual(mesh_utils._get_prime_factors(12), [2, 2, 3])
     self.assertEqual(mesh_utils._get_prime_factors(121), [11, 11])  # square
     self.assertEqual(mesh_utils._get_prime_factors(43), [43])  # prime
+    # Regression: composites whose largest prime factor exceeds isqrt(x)+1 were
+    # previously returned as [largest_prime], discarding smaller factors (#38286).
+    self.assertEqual(mesh_utils._get_prime_factors(10), [2, 5])
+    self.assertEqual(mesh_utils._get_prime_factors(14), [2, 7])
+    self.assertEqual(mesh_utils._get_prime_factors(22), [2, 11])
+    self.assertEqual(mesh_utils._get_prime_factors(26), [2, 13])
+    for n in range(2, 200):
+      factors = mesh_utils._get_prime_factors(n)
+      import math as _math
+      self.assertEqual(_math.prod(factors), n, msg=f"factors of {n} don't multiply back: {factors}")
 
   @parameterized.named_parameters(
       (

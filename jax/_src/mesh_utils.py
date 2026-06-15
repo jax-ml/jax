@@ -459,8 +459,11 @@ def _get_prime_factors(x: int) -> list[int]:
       x //= p
     if x == 1:
       return factors
-  else:
-    return [x]  # x is a prime number.
+  # If x > 1 after the loop, the remaining x is a prime factor (it was not
+  # divisible by any integer in [2, isqrt(original_x) + 1]).
+  if x > 1:
+    factors.append(x)
+  return factors
 
 
 def _enumerate_feasible_logical_axis_assignments(
