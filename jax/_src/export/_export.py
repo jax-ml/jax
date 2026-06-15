@@ -1275,6 +1275,8 @@ def _check_module(mod: ir.Module, *,
       _has_non_replicated_sharding_mhlo
   )
 
+  all_custom_calls_allowed = "ALL" in allowed_custom_call_targets
+
   def check_op(op: ir.Operation):
     nonlocal module_uses_non_replicated_sharding
     op_name = op.operation.name
@@ -1284,7 +1286,10 @@ def _check_module(mod: ir.Module, *,
 
     elif op_name == "stablehlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
-      if (call_target_name_attr not in allowed_custom_call_targets_attrs):
+      if (
+          not all_custom_calls_allowed
+          and call_target_name_attr not in allowed_custom_call_targets_attrs
+      ):
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
         if has_non_replicated_sharding(op):
