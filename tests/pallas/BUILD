@@ -521,7 +521,7 @@ jax_multiplatform_test(
         "gpu_b200x2",
     ],
     env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
+        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true --xla_gpu_enable_allocator_spatial_partitioning=false",
         "MULTIPROCESS_TEST": "1",
     },
     tags = [
