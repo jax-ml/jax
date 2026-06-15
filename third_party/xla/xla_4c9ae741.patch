@@ -1,0 +1,73 @@
+From 4c9ae74123073318fb2ea3825e40b72aeb8b58e4 Mon Sep 17 00:00:00 2001
+From: Peter Hawkins <phawkins@google.com>
+Date: Mon, 15 Jun 2026 08:29:45 -0700
+Subject: [PATCH] [XLA:GPU] Fix integer underflow and crash in Autotuner
+ sharding when `total_shards > instructions_to_tune`.
+
+Multiprocess JAX tests have been crashing for the last few days with:
+```
+ERROR: test_all_gather_shard_map0 () (__main__.AllGatherTest)
+AllGatherTest.test_all_gather_shard_map0 ()
+test_all_gather_shard_map()
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/__w/.cache/bazel/bazel/_bazel_root/78563004db3df495dc7c02b4a6eb08ea/execroot/__main__/bazel-out/k8-opt/bin/tests/multiprocess/all_gather_test_gpu.runfiles/pypi_absl_py/site-packages/absl/testing/parameterized.py", line 323, in bound_param_test
+    return test_method(self, *testcase_params)
+  File "/__w/.cache/bazel/bazel/_bazel_root/78563004db3df495dc7c02b4a6eb08ea/execroot/__main__/bazel-out/k8-opt/bin/tests/multiprocess/all_gather_test_gpu.runfiles/__main__/tests/multiprocess/all_gather_test.py", line 48, in test_all_gather_shard_map
+    out = f(global_xs)
+  File "/__w/.cache/bazel/bazel/_bazel_root/78563004db3df495dc7c02b4a6eb08ea/execroot/__main__/bazel-out/k8-opt/bin/tests/multiprocess/all_gather_test_gpu.runfiles/__main__/tests/multiprocess/all_gather_test.py", line 39, in f
+    return lax.all_gather(out, "y", axis=1, tiled=True)
+           ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: vector::reserve
+```
+
+During multiprocess autotuning (e.g., when running with 4 processes but only 1 instruction to tune), the `ConfigAssigner` sharding logic calculated a `start` index that exceeded the total number of instructions.
+Because `end` was capped at `all_instruction_groups.size()` but `start` was not, this resulted in `end < start`. In `instruction_groups.reserve(end - start)`, the unsigned subtraction `end - start` underflowed to a large positive value (e.g., `2^64 - 1`), causing `std::vector::reserve` to throw a `std::length_error` ("vector::reserve") and crashing the worker processes.
+
+While we are here, also use CeilOfRation rather than std::ceil of a floating-point division.
+
+PiperOrigin-RevId: 932476207
+---
+ xla/backends/autotuner/BUILD              | 1 +
+ xla/backends/autotuner/config_assigner.cc | 9 +++++----
+ 2 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/xla/backends/autotuner/BUILD b/xla/backends/autotuner/BUILD
+index 14d428abc02ea..219f032291499 100644
+--- a/xla/backends/autotuner/BUILD
++++ b/xla/backends/autotuner/BUILD
+@@ -108,6 +108,7 @@ cc_library(
+         "//xla/service/gpu/autotuning:autotuner_status_key",
+         "//xla/tools:hlo_decomposer_lib",
+         "//xla/tsl/concurrency:future",
++        "//xla/tsl/lib/math:math_util",
+         "//xla/tsl/platform:errors",
+         "//xla/tsl/platform:status_macros",
+         "@com_google_absl//absl/algorithm:container",
+diff --git a/xla/backends/autotuner/config_assigner.cc b/xla/backends/autotuner/config_assigner.cc
+index c77a91a27ee29..bd208ff06bd1e 100644
+--- a/xla/backends/autotuner/config_assigner.cc
++++ b/xla/backends/autotuner/config_assigner.cc
+@@ -52,6 +52,7 @@ limitations under the License.
+ #include "xla/service/gpu/autotuning/autotuner_status_key.h"
+ #include "xla/tools/hlo_decomposer.h"
+ #include "xla/tsl/concurrency/future.h"
++#include "xla/tsl/lib/math/math_util.h"
+ #include "xla/tsl/platform/errors.h"
+ #include "tsl/platform/fingerprint.h"
+ 
+@@ -165,10 +166,10 @@ absl::Status ConfigAssigner::AssignConfigs(
+   }
+ 
+   // 2. Shard and get configs for instructions in the current shard.
+-  const size_t bucket_size =
+-      std::ceil(static_cast<double>(all_instruction_groups.size()) /
+-                static_cast<double>(total_shards));
+-  const size_t start = bucket_size * my_shard_index;
++  const size_t bucket_size = tsl::MathUtil::CeilOfRatio<size_t>(
++      all_instruction_groups.size(), static_cast<size_t>(total_shards));
++  const size_t start =
++      std::min(bucket_size * my_shard_index, all_instruction_groups.size());
+   const size_t end =
+       std::min(start + bucket_size, all_instruction_groups.size());
+   std::vector<EquivalentInstructions> instruction_groups;
