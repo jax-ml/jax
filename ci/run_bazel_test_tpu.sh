@@ -54,7 +54,8 @@ J=$((NB_TPUS * JOBS_PER_ACC))
 
 # TODO(ybaturina): Bazel cache shouldn't be invalidated when
 # `VBAR_CONTROL_SERVICE_URL` changes.
-COMMON_TPU_TEST_ENV_VARS="--test_env=TPU_SKIP_MDS_QUERY=true \
+COMMON_TPU_TEST_ENV_VARS="--test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver \
+ --test_env=TPU_SKIP_MDS_QUERY=true \
  --test_env=TPU_TOPOLOGY \
  --test_env=TPU_WORKER_ID \
  --test_env=TPU_TOPOLOGY_WRAP \
@@ -78,6 +79,8 @@ set +e
 IGNORE_TESTS_MULTIACCELERATOR="-//tests/multiprocess:array_test_tpu"
 
 echo "::endgroup::" >&2
+
+source ci/utilities/setup_portserver.sh
 
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic

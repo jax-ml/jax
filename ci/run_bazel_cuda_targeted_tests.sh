@@ -76,6 +76,7 @@ bazel_args=(
   --repo_env=HERMETIC_PYTHON_VERSION="${hermetic_python_version}"
   --repo_env=HERMETIC_CUDNN_VERSION=9.11.0
   --repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1
+  --test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver
   --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
   --test_output=errors
   --strategy=TestRunner=local
@@ -127,6 +128,8 @@ if [[ ${#targets[@]} -eq 0 ]]; then
   exit 1
 fi
 echo "::endgroup::" >&2
+
+source ci/utilities/setup_portserver.sh
 
 echo "::group::Bazel CUDA targeted tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
