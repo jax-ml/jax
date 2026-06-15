@@ -66,7 +66,8 @@ jobs:
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
-      JAXCI_PYTHON: "python${{ inputs.python }}"
+      # TODO(phawkins): Remove this workaround when python3.14t is present in the linux aarch64 image.
+      JAXCI_PYTHON: ${{ (inputs.python == '3.14t' && contains(inputs.runner, 'linux-arm64')) && 'python3.14-nogil' || format('python{0}', inputs.python) }}
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
       MAX_PROCESSES: ${{ inputs.max-processes }}
 
