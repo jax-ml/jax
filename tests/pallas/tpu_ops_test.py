@@ -1180,6 +1180,8 @@ class OpsTest(ptu.PallasTPUTest):
   def test_scalar_comparison(self, dtype, op):
     if not jtu.is_cloud_tpu_at_least(2026, 6, 13):
       self.skipTest("Requires libtpu built on or after 2026-06-13 ")
+    if not jtu.is_libtpu_at_least("0.0.43"):
+      self.skipTest("Requires libtpu 0.0.43 or newer")
 
     @functools.partial(
         self.pallas_call,
