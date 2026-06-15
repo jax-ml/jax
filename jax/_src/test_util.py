@@ -33,6 +33,7 @@ import textwrap
 import threading
 from typing import Any, TextIO
 import unittest
+import warnings
 import zlib
 
 from absl.testing import parameterized
@@ -437,6 +438,53 @@ def is_cloud_tpu_at_least(year: int, month: int, day: int) -> bool:
     return True
   build_date = date.fromtimestamp(int(results[0][1:-1]))
   return build_date >= date
+
+def is_libtpu_at_least(version_str: str) -> bool:
+  """Returns True if not running on Cloud TPU.
+
+  If running on Cloud TPU, returns True if the installed libtpu version
+  is at least `version_str`.
+
+  Note: This checks the version of the installed `libtpu` Python package.
+  If `TPU_LIBRARY_PATH` is set to a different path than the installed
+  package's default, a warning will be issued as the loaded library
+  might not match the package version we are checking.
+  """
+  if not is_cloud_tpu():
+    return True
+
+  tpu_library_path = os.environ.get('TPU_LIBRARY_PATH')
+  try:
+    import libtpu  # pyrefly: ignore[missing-import]
+  except ImportError:
+    if tpu_library_path:
+      warnings.warn(
+          f"libtpu Python package is not installed, but TPU_LIBRARY_PATH is set to {tpu_library_path}. "
+          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
+          stacklevel=2
+      )
+    else:
+      warnings.warn(
+          f"libtpu Python package is not installed, but we appear to be on a Cloud TPU VM. "
+          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
+          stacklevel=2
+      )
+    return True
+
+  if tpu_library_path and tpu_library_path != libtpu.get_library_path():
+    warnings.warn(
+        f"TPU_LIBRARY_PATH is set to {tpu_library_path}, which differs from "
+        f"the installed package default ({libtpu.get_library_path()}). "
+        "is_libtpu_at_least will check the installed package version, "
+        "which may not match the loaded library.",
+        stacklevel=2
+    )
+
+  # Parse unconditionally. If it throws ValueError, let it propagate.
+  actual_version = parse_version(libtpu.__version__)
+  required_version = parse_version(version_str)
+
+  return actual_version >= required_version
 
 def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
