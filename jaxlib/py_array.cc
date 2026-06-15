@@ -2367,7 +2367,8 @@ absl::Status PyArray::Register(nb::module_& m) {
             self.ifrt_array()->sharding().devices();
         absl::string_view platform_name =
             devices->devices().front()->PlatformName();
-        if (platform_name == "cuda" || platform_name == "rocm") {
+        if (platform_name == "cuda" || platform_name == "rocm" ||
+            platform_name == "oneapi") {
           return std::string_view("gpu");
         } else {
           return platform_name;
