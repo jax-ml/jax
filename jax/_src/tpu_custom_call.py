@@ -51,6 +51,10 @@ def register_extra_dialect(loader: Callable[[ir.Context], None]):
   _extra_dialect_loaders.append(loader)
 
 
+# Hook to override get_ir_version.
+# TODO(b/499085720): Remove this in favor of something principled.
+ir_version_override: Callable[[], int | None] | None = None
+
 
 # Controls the IR serialization version. Upon incrementing the
 # default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
@@ -65,6 +69,8 @@ def register_extra_dialect(loader: Callable[[ir.Context], None]):
 # We should also add a TODO to remove the conditional one month later.
 _FWD_COMPAT_VERSION = 11
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
+  if ir_version_override is not None:
+    return ir_version_override()
   backend = ctx.module_context.get_backend(optional=True)
   if (
       ctx.is_forward_compat()
