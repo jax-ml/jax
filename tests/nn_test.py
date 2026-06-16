@@ -873,8 +873,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
 
     # Use small dimensions to keep the Jacobian computation tractable.
-    B, T, N, H = 1, 4, 1, 8
-    keys = random.split(random.PRNGKey(42), 3)
+    B, T, N, H = 1, 2, 1, 16
+    keys = random.split(random.key(42), 3)
     Q = random.normal(keys[0], (B, T, N, H), dtype)
     K = random.normal(keys[1], (B, T, N, H), dtype)
     V = random.normal(keys[2], (B, T, N, H), dtype)
