@@ -253,7 +253,7 @@ class TileTransform(MemRefTransform):
     # size would be 1 if so.
     tiling_rank = len(self.tiling)
     if self.rounding is None:
-      for size, tile_size in zip(shape[-tiling_rank:], self.tiling):
+      for size, tile_size in zip(shape[-tiling_rank:], self.tiling, strict=True):
         if size % tile_size:
           raise ValueError(
               f"Expected GMEM slice shape {shape} suffix to be a multiple of"
