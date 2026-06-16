@@ -828,7 +828,7 @@ class WGMMALayoutTest(TestCase):
       self.skipTest("Not implemented")
     col_tiling = swizzle // bytewidth(mlir_dtype)
     m = 64
-    n = col_tiling * 3
+    n = col_tiling * 2
     tiling = (64, col_tiling)
     def kernel(ctx, out, smem):
       del ctx
