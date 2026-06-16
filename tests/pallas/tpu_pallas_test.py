@@ -4656,11 +4656,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_two_minor_dims_to_R2_padded_last_dim(self, q, m, n, dtype):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0], x_ref.shape[1] * x_ref.shape[2]
@@ -4692,11 +4687,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_two_minor_dims_to_R3_padded_last_dim(
       self, q, m, n, k, dtype
   ):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0], x_ref.shape[1], x_ref.shape[2] * x_ref.shape[3]
@@ -4774,13 +4764,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_fold_three_minor_dims_to_R2(self, q, m, n, k, dtype):
-    unsupported_dtype = (
-        dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)
-    ) or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
-
-    if k % 128 != 0 and unsupported_dtype:
-      self.skipTest('Operation not supported on this TPU version.')
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0], x_ref.shape[1] * x_ref.shape[2] * x_ref.shape[3]
@@ -4815,13 +4798,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_fold_four_minor_dims_to_R2(self, p, q, m, n, k, dtype):
-    unsupported_dtype = (
-        dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)
-    ) or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
-
-    if k % 128 != 0 and unsupported_dtype:
-      self.skipTest('Operation not supported on this TPU version.')
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0],
@@ -4881,10 +4857,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_fold_two_leading_dims_and_two_minor_dims_R4_to_R2(
       self, q, m, n, k, dtype
   ):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           x_ref.shape[0] * x_ref.shape[1], x_ref.shape[2] * x_ref.shape[3]
@@ -4912,10 +4884,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_unfold_leading_dim_and_fold_two_minor_dims_R3_to_R3(
       self, q, m, n, k, dtype
   ):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(
           q,
@@ -5001,10 +4969,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_fold_middle_dims(self, q, m, n, k, dtype):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(q, m * n, k)
 
@@ -5028,10 +4992,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_middle_dims(self, q, m, n, k, dtype):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(q, m, n, k)
 
