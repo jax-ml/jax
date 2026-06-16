@@ -175,9 +175,9 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
 
 class PallasCallRemoteDMATest(TestCase):
   def setUp(self):
+    super().setUp()
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    super().setUp()
 
   def test_remote_dma_basic(self):
     if jax.process_index() > 2:
@@ -790,9 +790,9 @@ class PallasCallRemoteDMATest(TestCase):
 
 class PallasCallMultimemTest(TestCase):
   def setUp(self):
+    super().setUp()
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    super().setUp()
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
@@ -1056,9 +1056,9 @@ class PallasCallMultimemThreadUnsafeTest(TestCase):
   """
 
   def setUp(self):
+    super().setUp()
     if jax.device_count() < 2:
       self.skipTest("Needs at least two devices")
-    super().setUp()
     if any(
       not cuda_versions.cuda_supports_multicast(d.local_hardware_id)
       for d in jax.local_devices()
