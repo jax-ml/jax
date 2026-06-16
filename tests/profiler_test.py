@@ -125,10 +125,10 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
   def testProgrammaticProfilingConcurrency(self):
     def work():
@@ -151,10 +151,10 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
   @unittest.skipIf(not portpicker, "Test requires portpicker")
   def testSubprocessProfiling(self):
@@ -188,12 +188,12 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
-      self.assertIn(b"/host:CPU", proto)
-      self.assertIn(b"/host:CPU [" + str(p.pid).encode("utf-8") + b"]", proto)
-      self.assertIn(b"main_step", proto)
-      self.assertIn(b"main", proto)
-      self.assertIn(b"worker_step", proto)
-      self.assertIn(b"work", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
+      self.assertTrue(b"/host:CPU [" + str(p.pid).encode("utf-8") + b"]" in proto, "Expected worker process CPU trace in profile proto")
+      self.assertTrue(b"main_step" in proto, "Expected 'main_step' in profile proto")
+      self.assertTrue(b"main" in proto, "Expected 'main' in profile proto")
+      self.assertTrue(b"worker_step" in proto, "Expected 'worker_step' in profile proto")
+      self.assertTrue(b"work" in proto, "Expected 'work' in profile proto")
 
   def testProgrammaticProfilingWithOptions(self):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -215,10 +215,10 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Verify that the serialized proto contains host and device traces, and
       # does not contain Python traces.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertNotIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertFalse(b"pxla.py" in proto, "Expected 'pxla.py' to not be in profile proto")
 
   def testProgrammaticProfilingPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
@@ -235,10 +235,10 @@ class ProfilerTest(unittest.TestCase):
       proto = proto_path[0].read_bytes()
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
   def testProgrammaticProfilingWithOptionsPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
@@ -258,10 +258,10 @@ class ProfilerTest(unittest.TestCase):
       proto = proto_path[0].read_bytes()
       # Verify that the serialized proto contains host traces and does not
       # contain TPU device traces.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertNotIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertFalse(b"/device:TPU" in proto, "Expected '/device:TPU' to not be in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
   def testProfilerGetFDOProfile(self):
     # Tests stop_and_get_fod_profile could run.
@@ -273,7 +273,7 @@ class ProfilerTest(unittest.TestCase):
     finally:
       fdo_profile = profiler.stop_and_get_fdo_profile()
     if jtu.test_device_matches(["gpu"]) and jtu.is_device_cuda():
-      self.assertIn(b"copy", fdo_profile)
+      self.assertTrue(b"copy" in fdo_profile, "Expected 'copy' in FDO profile")
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
@@ -303,9 +303,9 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
 
   @jtu.run_on_devices("gpu")
   @jtu.thread_unsafe_test()
@@ -326,7 +326,7 @@ class ProfilerTest(unittest.TestCase):
 
       proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
       proto_bytes = proto_path[0].read_bytes()
-      self.assertIn(b"/device:GPU", proto_bytes)
+      self.assertTrue(b"/device:GPU" in proto_bytes, "Expected '/device:GPU' in profile proto")
 
   @jtu.run_on_devices("gpu")
   @jtu.thread_unsafe_test()
@@ -353,7 +353,7 @@ class ProfilerTest(unittest.TestCase):
 
       proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
       proto_bytes = proto_path[0].read_bytes()
-      self.assertIn(b"/device:GPU", proto_bytes)
+      self.assertTrue(b"/device:GPU" in proto_bytes, "Expected '/device:GPU' in profile proto")
 
   # TODO: b/443121646 - Enable PM sampling test on JAX OSS once the Github CI
   # host machine has privileged access.
@@ -404,9 +404,9 @@ class ProfilerTest(unittest.TestCase):
       proto = proto_path[0].read_bytes()
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
 
   def testTraceAnnotation(self):
     x = 3
@@ -603,7 +603,7 @@ class ProfilerTest(unittest.TestCase):
       with open(proto_path[0], "rb") as f:
         proto = f.read()
       # Sanity check that serialized proto contains GPU traces
-      self.assertIn(b"/device:GPU", proto)
+      self.assertTrue(b"/device:GPU" in proto, "Expected '/device:GPU' in profile proto")
 
   @jtu.run_on_devices("rocm")
   @jtu.thread_unsafe_test()
@@ -625,7 +625,7 @@ class ProfilerTest(unittest.TestCase):
       with gzip.open(trace_files[0], "rt") as f:
         trace_content = f.read()
       # Sanity check that trace contains kernel_details
-      self.assertIn("kernel_details", trace_content)
+      self.assertTrue("kernel_details" in trace_content, "Expected 'kernel_details' in trace content")
 
 
 if __name__ == "__main__":
