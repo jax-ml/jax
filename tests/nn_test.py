@@ -854,6 +854,47 @@ class NNFunctionsTest(jtu.JaxTestCase):
         "Attention output should differ with different local_window_size, even without a mask.",
     )
 
+  @parameterized.product(
+      dtype=[jnp.float16, jnp.bfloat16],
+      impl=['cudnn', 'xla'],
+  )
+  def testDotProductAttentionJacobian(self, dtype, impl):
+    """Regression test: jax.jacobian with cuDNN attention backward pass.
+
+    Tests that the vmap batch dimension introduced by jax.jacobian is
+    correctly handled in _dot_product_attention_bwd_batcher.
+    See https://github.com/jax-ml/jax/issues/38495
+    """
+    if impl == 'cudnn' and jtu.is_device_rocm():
+      raise unittest.SkipTest("cuDNN not available on ROCm.")
+    if impl == 'cudnn' and not jtu.is_cuda_compute_capability_at_least("8.0"):
+      raise unittest.SkipTest("Needs compute capability 8.0 or higher.")
+    if impl == 'cudnn' and jtu.is_cuda_version_at_least(13, 0):
+      raise unittest.SkipTest("cuDNN creates no execution plans on CUDA 13.0.")
+
+    # Use small dimensions to keep the Jacobian computation tractable.
+    B, T, N, H = 1, 2, 1, 16
+    keys = random.split(random.key(42), 3)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, T, N, H), dtype)
+    V = random.normal(keys[2], (B, T, N, H), dtype)
+
+    attn_fn = partial(nn.dot_product_attention, implementation=impl)
+
+    # This should not crash with a reshape error.
+    jac = jax.jacobian(attn_fn)(Q, K, V)
+
+    # Verify output shape: Jacobian of output w.r.t. Q has shape
+    # (*output_shape, *Q_shape) = (B, T, N, H, B, T, N, H)
+    expected_shape = (B, T, N, H, B, T, N, H)
+    self.assertEqual(jac.shape, expected_shape)
+
+    # Cross-check against XLA reference if testing cuDNN.
+    if impl == 'cudnn':
+      attn_ref = partial(nn.dot_product_attention, implementation='xla')
+      jac_ref = jax.jacobian(attn_ref)(Q, K, V)
+      self.assertAllClose(jac_ref, jac, rtol=0.05, atol=0.05)
+
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
