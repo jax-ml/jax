@@ -120,7 +120,7 @@ class PgleTest(jtu.JaxTestCase):
     pgle_profiler = profiler.PGLEProfiler(1, 90)
     with config.enable_pgle(False):
       with profiler.PGLEProfiler.trace(pgle_profiler):
-        f(x)
+        jax.block_until_ready(f(x))
     fdo_profile = pgle_profiler.consume_fdo_profile()
     self.assertEqual(fdo_profile.count(b'custom'), its)
 
@@ -349,7 +349,7 @@ class PgleTest(jtu.JaxTestCase):
 
     with tempfile.TemporaryDirectory() as cache_dir:
       jax.profiler.start_trace(cache_dir)
-      compiled(x, y)
+      jax.block_until_ready(compiled(x, y))
       jax.profiler.stop_trace()
       directories = glob.glob(os.path.join(cache_dir, 'plugins/profile/**/'))
       directories = [d for d in directories if os.path.isdir(d)]
@@ -521,12 +521,12 @@ class PgleTest(jtu.JaxTestCase):
       get_new_files.seen_files = set()
 
       # Run 1
-      self.assertArraysEqual(f(x), expected)
+      self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
       self.assertNotIn(
           'xla_gpu_enable_command_buffer: 1', get_new_files()
       )  # b/376647494 workaround
       # Run 2
-      self.assertArraysEqual(f(x), expected)
+      self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
       self.assertIn(
           'xla_gpu_enable_command_buffer', get_new_files()
       )  # workaround disabled
