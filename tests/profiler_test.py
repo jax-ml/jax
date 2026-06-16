@@ -267,9 +267,10 @@ class ProfilerTest(unittest.TestCase):
     # Tests stop_and_get_fod_profile could run.
     try:
       jax.profiler.start_trace("test")
-      jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+      out = jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
           jnp.ones(jax.local_device_count())
       )
+      jax.block_until_ready(out)
     finally:
       fdo_profile = profiler.stop_and_get_fdo_profile()
     if jtu.test_device_matches(["gpu"]) and jtu.is_device_cuda():
