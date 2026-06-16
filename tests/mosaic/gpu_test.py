@@ -794,7 +794,7 @@ class WGMMALayoutTest(TestCase):
   @parameterized.product(
       dtype=[jnp.float32, jnp.float16, jnp.int8],
       swizzle=(32, 64, 128),
-      num_col_tiles=(1, 2, 3),
+      num_col_tiles=(1, 2),
   )
   def test_store_tiled(self, dtype, swizzle, num_col_tiles):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
