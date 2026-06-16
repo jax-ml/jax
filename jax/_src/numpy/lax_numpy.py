@@ -8539,6 +8539,11 @@ def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
     return roll(arr.ravel(), shift, 0).reshape(arr.shape)
   axis = _ensure_index_tuple(axis)
   axis = tuple(_canonicalize_axis(ax, arr.ndim) for ax in axis)
+  arr_aval = core.typeof(arr)
+  if any(arr_aval.sharding.spec[i] is not None for i in axis):
+    raise core.ShardingTypeError(
+        "`a` cannot be sharded on the axis being rolled over. Got arr"
+        f" type={arr_aval.str_short(True)} and {axis=}")
   try:
     shift = _ensure_index_tuple(shift)
   except TypeError:

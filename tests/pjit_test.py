@@ -11350,6 +11350,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_jnp_roll(self, mesh):
+    arr = jax.device_put(jnp.arange(64).reshape(8, 4, 2), P('x', 'y', None))
+    arr2 = jax.device_put(jnp.arange(16).reshape(8, 2), P('x', None))
+
+    @jax.jit
+    def shift_right(x, gap):
+      return jnp.roll(x, gap, axis=1)
+
+    jax.vmap(shift_right)(arr, arr2)  # doesn't crash
+    jax.jit(jax.vmap(shift_right))(arr, arr2)  # doesn't crash
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        "`a` cannot be sharded on the axis being rolled over"):
+      arr3 = jax.device_put(jnp.arange(64).reshape(8, 4, 2), P('x', None, 'y'))
+      jax.vmap(shift_right)(arr3, arr2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
