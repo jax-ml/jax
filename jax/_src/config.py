@@ -2330,3 +2330,14 @@ jax_pallas_poison_buffers = bool_state(
         " are initialized with poison values (NaN for floats) at allocation time."
     ),
 )
+
+jax_pallas_auto_assign_collective_ids = enum_state(
+    name='jax_pallas_auto_assign_collective_ids',
+    enum_values=['no', 'yes', 'override'],
+    default='no',
+    help=(
+        'Auto-assign or override the collective ids in pallas_call with'
+        ' auto-assigned ones, based on the serialized kernel (module) hash.'
+    ),
+    include_in_jit_key=True,
+)
