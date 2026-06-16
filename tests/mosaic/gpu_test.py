@@ -4622,6 +4622,22 @@ class FragmentedArrayTest(TestCase):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, ())(x)
     np.testing.assert_array_equal(y.astype(np.float32), 1 / x.astype(jnp.float32))
 
+  def test_untiled_dim_indexing(self):
+    shape = (2, 3, 64, 8)
+
+    def kernel(ctx, src, dst, _):
+      x = mgpu.FragmentedArray.load_untiled(
+          src, layout=fa.WGMMA_LAYOUT, is_signed=True, optimized=False
+      )
+      x[1, 1].store_untiled(dst, optimized=False)
+
+    out_shape = jax.ShapeDtypeStruct(shape=shape[2:], dtype=jnp.int32)
+    x = np.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, out_shape, ()
+    )(x)
+    np.testing.assert_array_equal(result, x[1, 1])
+
   @parameterized.product(
       op=[
           operator.lt,

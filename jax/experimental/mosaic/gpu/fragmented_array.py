@@ -2024,10 +2024,14 @@ class FragmentedArray:
     if any(isinstance(idx, ir.Value) for idx in base_idx):
       raise ValueError("Only slicing with static indices allowed")
     base_idx = cast(tuple[int, ...], base_idx)
-    if any(is_squeezed):
-      raise NotImplementedError("Integer indexing not implemented (only slicing allowed)")
     base_tile_shape = self.layout.base_tile_shape
-    if untiled_rank := len(self.shape) - len(base_tile_shape):
+    untiled_rank = len(self.shape) - len(base_tile_shape)
+    if any(is_squeezed[untiled_rank:]):
+      raise NotImplementedError(
+          "Integer indexing not implemented for tiled dimensions (only slicing"
+          " allowed)"
+      )
+    if untiled_rank:
       base_tile_shape = (1,) * untiled_rank + base_tile_shape
     if any(b % t for b, t in zip(base_idx, base_tile_shape, strict=True)):
       raise ValueError(
@@ -2042,8 +2046,10 @@ class FragmentedArray:
           f" {slice_shape}. Consider using a different array layout."
       )
     register_slices = tuple(
-        slice(b // t, (b + l) // t)
-        for b, l, t in zip(base_idx, slice_shape, base_tile_shape, strict=True)
+        b if sq else slice(b // t, (b + l) // t)
+        for b, l, t, sq in zip(
+            base_idx, slice_shape, base_tile_shape, is_squeezed, strict=True
+        )
     )
     new_regs = self.registers[register_slices]
     return FragmentedArray(
