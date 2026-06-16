@@ -21,7 +21,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import math
-from typing import Any, TYPE_CHECKING, assert_never, cast, final
+from typing import Any, TYPE_CHECKING, Literal, assert_never, cast, final
 
 import numpy as np
 
@@ -93,12 +93,28 @@ class SMEMTransforms:
 
   If an SMEM reference may, in principle, have transforms but should not be
   tiled, then `tiling` is `None`.
+
+  Attributes:
+    tiling: The tiling transform.
+    swizzle: The swizzle pattern length in bytes. Note that it may not
+      correspond to the trailing dimension of the provided `tiling`, since these
+      expressions may be transposed (swizzle is not transposed along with
+      tiling). A `None` swizzle means no swizzling.
+
   """
 
   tiling: lc.TileTransform | None
+  swizzle: Literal[32, 64, 128] | None = None
+
+  def __post_init__(self):
+    if self.swizzle and self.swizzle not in {32, 64, 128}:
+      raise ValueError(
+          f"Swizzle {self.swizzle} is not supported. Only 32, 64 and 128 are"
+          " accepted."
+      )
 
   def __str__(self):
-    return f"C({self.tiling})"
+    return f"C({self.tiling}, {self.swizzle})"
 
 
 Constant = RegisterLayout | TMEMLayout | SMEMTransforms
@@ -248,9 +264,9 @@ def reduce_transpose_expression(
   match reduced_expr:
     case Unsatisfiable():
       return Unsatisfiable()
-    case SMEMTransforms(tiling=tile_transform):
+    case SMEMTransforms(tiling=tile_transform, swizzle=swizzle):
       if tile_transform is None:
-        return SMEMTransforms(None)
+        return SMEMTransforms(None, swizzle)
       tiling = tile_transform.tiling
       permutation = transpose.permutation
       tiling_offset = len(permutation) - len(tiling)
@@ -262,7 +278,7 @@ def reduce_transpose_expression(
       if any(dim < tiling_offset for dim in permutation[-len(tiling) :]):
         return Unsatisfiable()
       new_tiling = tuple(tiling[dim - tiling_offset] for dim in permutation[-len(tiling):])
-      return SMEMTransforms(lc.TileTransform(new_tiling))
+      return SMEMTransforms(lc.TileTransform(new_tiling), swizzle)
     case _:
       return Transpose(expression=reduced_expr, permutation=transpose.permutation)
 
@@ -312,9 +328,9 @@ def reduce_collapse_shape_expression(
   match reduced_expr:
     case Unsatisfiable():
       return Unsatisfiable()
-    case SMEMTransforms(tiling=tile_transform):
+    case SMEMTransforms(tiling=tile_transform, swizzle=swizzle):
       if tile_transform is None:
-        return SMEMTransforms(None)
+        return reduced_expr
       tiling = tile_transform.tiling
       rev_tiling_to_process = list(tiling)[::-1]
       rev_shape_to_process = expr.source_shape[-len(tiling):][::-1]
@@ -363,7 +379,7 @@ def reduce_collapse_shape_expression(
       assert not rev_tiling_to_process
       assert not rev_shape_to_process
       new_tiling = tuple(rev_new_tiling[::-1])
-      return SMEMTransforms(lc.TileTransform(tuple(new_tiling)))
+      return SMEMTransforms(lc.TileTransform(tuple(new_tiling)), swizzle)
     case Constant():
       raise NotImplementedError(
           "CollapseShape is only implemented for variables in SMEM")
@@ -664,16 +680,19 @@ class IsTransferableSmemRegisters(IsTransferable):
 
   def _is_supported_smem_transfer(
       self,
-      smem_layout: lc.TileTransform | None,
+      smem_layout: SMEMTransforms,
       reg_layout: fa.FragmentedLayout,
   ) -> bool:
+    tiling_transform = smem_layout.tiling
+    assert smem_layout.swizzle is None
+
     if not isinstance(reg_layout, fa.TiledLayout):
-      return smem_layout is None
+      return tiling_transform is None
     if len(self.strides) < 2:
       smem_transposed = False
     else:
       smem_transposed = self.strides[-1] > self.strides[-2]
-    tiling = smem_layout.tiling if smem_layout is not None else ()
+    tiling = tiling_transform.tiling if tiling_transform is not None else ()
     tiling_rank = len(tiling)
     # TODO(bchetioui): move this below the UNOPTIMIZED check once it is
     # possible to do so.
@@ -726,9 +745,9 @@ class IsTransferableSmemRegisters(IsTransferable):
 
   def _constant_holds(self) -> bool:
     match self.source, self.target:
-      case SMEMTransforms(tiling=src), RegisterLayout(value=dst):
+      case SMEMTransforms() as src, RegisterLayout(value=dst):
         return self._is_supported_smem_transfer(src, dst)
-      case RegisterLayout(value=src), SMEMTransforms(tiling=dst):
+      case RegisterLayout(value=src), SMEMTransforms() as dst:
         return self._is_supported_smem_transfer(dst, src)
       case _:
         raise ValueError(

@@ -578,13 +578,13 @@ class ConstraintSystemTest(parameterized.TestCase):
       ((2, 4), (1, 0, 3, 2), (4, 2)),
       ((2, 4), (0, 1, 3, 2), (4, 2)),
       ((2, 4), (0, 1, 2, 3), (2, 4)),
-
   )
   def test_transpose_expression(self, tiling, permutation, expected):
+    swizzle = 32
     transform = None if tiling is None else lc.TileTransform(tiling)
     expected_transform = None if expected is None else lc.TileTransform(expected)
-    expr = cs.Transpose(cs.SMEMTransforms(transform), permutation)
-    self.assertEqual(cs.reduce_expression(expr, {}), cs.SMEMTransforms(expected_transform))
+    expr = cs.Transpose(cs.SMEMTransforms(transform, swizzle), permutation)
+    self.assertEqual(cs.reduce_expression(expr, {}), cs.SMEMTransforms(expected_transform, swizzle))
 
   @parameterized.parameters(
       ((2, 32), (1, 0, 2)),
@@ -860,11 +860,12 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_reduce_collapse_shape_reduces_tiling_(
       self, tiling, shape, reassociation, reassociated_tiling
   ):
+    swizzle = 32
     expr = cs.CollapseShape(
-        cs.SMEMTransforms(lc.TileTransform(tiling)), shape, reassociation
+        cs.SMEMTransforms(lc.TileTransform(tiling), swizzle), shape, reassociation
     )
     self.assertEqual(cs.reduce_expression(expr, assignments={}),
-                     cs.SMEMTransforms(lc.TileTransform(reassociated_tiling)))
+                     cs.SMEMTransforms(lc.TileTransform(reassociated_tiling), swizzle))
 
 
 if __name__ == "__main__":
