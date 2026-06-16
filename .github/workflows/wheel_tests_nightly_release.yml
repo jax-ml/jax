@@ -291,8 +291,6 @@ jobs:
           exclude:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            # Exclude pinned for nightly releases
-            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pinned' }}
             # Run Python versions in between min and max for v6e-8
             - tpu-specs:
                 type: "v6e-8"
@@ -356,8 +354,6 @@ jobs:
           exclude:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            # Exclude pinned for nightly releases
-            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pinned' }}
             # Run a single Python version for v4-8
             - tpu-specs:
                 type: "v4-8"
