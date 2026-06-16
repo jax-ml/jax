@@ -80,7 +80,7 @@ IGNORE_TESTS_MULTIACCELERATOR="-//tests/multiprocess:array_test_tpu"
 
 echo "::endgroup::" >&2
 
-source ci/utilities/setup_portserver.sh
+PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
 
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
