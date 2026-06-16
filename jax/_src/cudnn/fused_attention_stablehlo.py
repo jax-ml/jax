@@ -830,7 +830,7 @@ def _attention_batcher_shape_info(query_shape, query_bdim, key_shape, layout):
 
 def _attention_align_operand(x, bdim, vmap_size):
   if vmap_size and bdim is None and np.ndim(x):
-    return batching.broadcast(x, vmap_size, 0)
+    return batching.broadcast(x, vmap_size, 0, None)
   return x
 
 def _attention_restore_shape(vmap_shape, batch_shape, trailing):
@@ -925,11 +925,9 @@ def _dot_product_attention_bwd_batcher(
 
   key = _attention_align_operand(key, batch_dims[1], vmap_size)
   value = _attention_align_operand(value, batch_dims[2], vmap_size)
-  if has_bias:
-    bias = _attention_align_operand(bias, batch_dims[3], vmap_size)
-  if has_padding(mask_type):
-    q_seqlen = _attention_align_operand(q_seqlen, batch_dims[4], vmap_size)
-    kv_seqlen = _attention_align_operand(kv_seqlen, batch_dims[5], vmap_size)
+  bias = _attention_align_operand(bias, batch_dims[3], vmap_size)
+  q_seqlen = _attention_align_operand(q_seqlen, batch_dims[4], vmap_size)
+  kv_seqlen = _attention_align_operand(kv_seqlen, batch_dims[5], vmap_size)
   q_offsets = _attention_align_operand(q_offsets, batch_dims[6], vmap_size)
   kv_offsets = _attention_align_operand(kv_offsets, batch_dims[7], vmap_size)
   page_table_k = _attention_align_operand(page_table_k, batch_dims[8], vmap_size)
