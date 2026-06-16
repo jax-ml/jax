@@ -16,6 +16,7 @@
 
 import functools
 import os
+import socket
 import pathlib
 import re
 import signal
@@ -150,6 +151,11 @@ class GracefulKiller:
 
 
 def _main(argv, shard_main):
+  os.environ["BARE_METAL_MODE"] = "1"
+  os.environ["TPU_ON_GKE"] = "0"
+  os.environ["TPU_SKIP_MDS_QUERY"] = "1"
+  os.environ["TPU_ACCELERATOR_TYPE"] = "v5e"
+  os.environ["TPU_VLOG_LEVEL"] = "4"
   # TODO(emilyaf): Enable multiprocess tests on Windows.
   if sys.platform == "win32":
     print("Multiprocess tests are not supported on Windows.")
@@ -233,8 +239,9 @@ def _main(argv, shard_main):
         portpicker.pick_unused_port(portserver_address=portserver_address)
         for _ in range(num_processes)
     ]
+  hostname = socket.gethostname()
   slicebuilder_addresses = ",".join(
-      f"localhost:{port}" for port in slicebuilder_ports
+      f"{hostname}:{port}" for port in slicebuilder_ports
   )
   megascale_coordinator_port = None
 
@@ -279,7 +286,7 @@ def _main(argv, shard_main):
         *argv,
         f"--num_processes={num_processes}",
         f"--multiprocess_test_worker_id={i}",
-        f"--multiprocess_test_controller_address=localhost:{jax_port}",
+        f"--multiprocess_test_controller_address={hostname}:{jax_port}",
         f"--heartbeat_timeout={_HEARTBEAT_TIMEOUT.value}",
         f"--shutdown_timeout={_SHUTDOWN_TIMEOUT.value}",
         f"--barrier_timeout={_BARRIER_TIMEOUT.value}",
@@ -322,7 +329,7 @@ def _main(argv, shard_main):
       if megascale_coordinator_port is None:
         megascale_coordinator_port = megascale_port
       args += [
-          f"--megascale_coordinator_address=localhost:{megascale_coordinator_port}",
+          f"--megascale_coordinator_address={hostname}:{megascale_coordinator_port}",
           f"--megascale_port={megascale_port}",
       ]
 

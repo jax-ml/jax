@@ -162,6 +162,34 @@ jobs:
       - name: Install portserver dependencies
         run: |
           "$JAXCI_PYTHON" -m pip install psutil
+      - name: Debug Info (Env, Network, TPU)
+        run: |
+          echo "=== Environment Variables ==="
+          env | sort
+          
+          echo "=== Network Configuration (Python) ==="
+          "$JAXCI_PYTHON" -c "import socket; print('Hostname:', socket.gethostname()); print('IPs:', socket.gethostbyname_ex(socket.gethostname()))"
+          
+          echo "=== IPv6 Kernel Status ==="
+          echo -n "all.disable_ipv6: " && cat /proc/sys/net/ipv6/conf/all/disable_ipv6 || echo "not readable"
+          echo -n "lo.disable_ipv6: " && cat /proc/sys/net/ipv6/conf/lo/disable_ipv6 || echo "not readable"
+          
+          echo "=== Hosts and DNS ==="
+          cat /etc/hosts || echo "Cannot read /etc/hosts"
+          cat /etc/resolv.conf || echo "Cannot read /etc/resolv.conf"
+          
+          echo "=== Localhost Resolution ==="
+          "$JAXCI_PYTHON" -c "import socket; print('localhost:', socket.getaddrinfo('localhost', 80))" || echo "Failed to resolve localhost"
+          "$JAXCI_PYTHON" -c "import socket; print('127.0.0.1:', socket.getaddrinfo('127.0.0.1', 80))" || echo "Failed to resolve 127.0.0.1"
+          
+          echo "=== TPU Devices ==="
+          ls -l /dev/accel* || echo "No /dev/accel* devices found"
+          ls -l /dev/vfio/* || echo "No /dev/vfio/* devices found"
+          
+          echo "=== Proxy Settings ==="
+          echo "http_proxy: $http_proxy"
+          echo "https_proxy: $https_proxy"
+          echo "no_proxy: $no_proxy"
       - name: Run Bazel TPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}
         timeout-minutes: ${{ github.event_name == 'pull_request' && 20 || 210 }}
         run: ./ci/run_bazel_test_tpu.sh
