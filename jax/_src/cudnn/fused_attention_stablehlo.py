@@ -28,6 +28,7 @@ from jax._src.custom_partitioning import custom_partitioning
 from jax._src.custom_partitioning_sharding_rule import BATCHING, ArrayMapping, CompoundFactor, SdyShardingRule
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.lax.control_flow import loops as lax_control_flow
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lib import cuda_versions
 from jax._src.lib.mlir import ir
@@ -805,6 +806,43 @@ def _check_valid_batch_dims(bdims):
       raise NotImplementedError(
         f"Currently only support batch_dim in [0, None], but got {dim=}")
 
+def _attention_batcher_shape_info(query_shape, query_bdim, key_shape, layout):
+  """Split mapped vmap axes from cudnn batch dims and attention trailing dims."""
+  if query_bdim is not None:
+    vmap_shape = (query_shape[0],)
+    query_inner = query_shape[1:]
+    key_inner = key_shape[1:]
+  else:
+    vmap_shape = ()
+    query_inner = query_shape
+    key_inner = key_shape
+
+  if layout == AttentionLayout.BNTH.value:
+    *batch_shape, n, t, h = query_inner
+    *_, _, s, _ = key_inner
+    cudnn_tail = (n, t, h)
+  else:
+    *batch_shape, t, n, h = query_inner
+    *_, s, _, _ = key_inner
+    cudnn_tail = (t, n, h)
+  cudnn_b = math.prod(batch_shape) if batch_shape else 1
+  return vmap_shape, tuple(batch_shape), cudnn_b, cudnn_tail, (n, t), s
+
+def _attention_align_operand(x, bdim, vmap_size):
+  if vmap_size and bdim is None and np.ndim(x):
+    return batching.broadcast(x, vmap_size, 0)
+  return x
+
+def _attention_restore_shape(vmap_shape, batch_shape, trailing):
+  if vmap_shape:
+    return vmap_shape + batch_shape + trailing
+  return batch_shape + trailing
+
+def _attention_map_bind(bind_fn, args, vmap_shape, **kwargs):
+  if not vmap_shape:
+    return bind_fn(*args, **kwargs)
+  return lax_control_flow.map(lambda a: bind_fn(*a, **kwargs), args)
+
 def _dot_product_attention_fwd_batcher(
     batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
     mask_type, layout, sliding_window_length, is_training):
@@ -817,37 +855,51 @@ def _dot_product_attention_fwd_batcher(
   else:
     out_bdims = (query_bdim,)
 
-  if layout == AttentionLayout.BNTH.value:
-    *Bs, N, T, _ = query.shape
-    *_, _, S, _ = key.shape
-  else:
-    *Bs, T, N, _ = query.shape
-    *_, S, _, _ = key.shape
-  B = math.prod(Bs)
+  vmap_shape, batch_shape, cudnn_b, cudnn_tail, activation_dims, s = (
+      _attention_batcher_shape_info(query.shape, query_bdim, key.shape, layout))
+  n, t = activation_dims
+  vmap_size = vmap_shape[0] if vmap_shape else None
   has_bias, _ = variadic_args
   original_shape = query.shape
-  # reshape to 4D shape
-  query = jnp.reshape(query, (B,) + query.shape[-3:])
-  key = jnp.reshape(key, (B,) + key.shape[-3:])
-  value = jnp.reshape(value, (B,) + key.shape[-3:])
-  if has_bias and batch_dims[3] is not None:
-    bias = jnp.reshape(bias, (B, N, T, S))
-  if has_padding(mask_type):
-    q_seqlen = jnp.reshape(q_seqlen, (B, ))
-    kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
 
-  outputs = _dot_product_attention_fwd_p_wrapper.bind(
+  key = _attention_align_operand(key, batch_dims[1], vmap_size)
+  value = _attention_align_operand(value, batch_dims[2], vmap_size)
+  if has_bias:
+    bias = _attention_align_operand(bias, batch_dims[3], vmap_size)
+  if has_padding(mask_type):
+    q_seqlen = _attention_align_operand(q_seqlen, batch_dims[4], vmap_size)
+    kv_seqlen = _attention_align_operand(kv_seqlen, batch_dims[5], vmap_size)
+  q_offsets = _attention_align_operand(q_offsets, batch_dims[6], vmap_size)
+  kv_offsets = _attention_align_operand(kv_offsets, batch_dims[7], vmap_size)
+  page_table_k = _attention_align_operand(page_table_k, batch_dims[8], vmap_size)
+  page_table_v = _attention_align_operand(page_table_v, batch_dims[9], vmap_size)
+
+  query = jnp.reshape(query, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+  key = jnp.reshape(key, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+  value = jnp.reshape(value, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+  if has_bias and batch_dims[3] is not None:
+    bias = jnp.reshape(
+        bias, _attention_restore_shape(vmap_shape, (cudnn_b,), (n, t, s)))
+  if has_padding(mask_type):
+    q_seqlen = jnp.reshape(
+        q_seqlen, _attention_restore_shape(vmap_shape, (cudnn_b,), ()))
+    kv_seqlen = jnp.reshape(
+        kv_seqlen, _attention_restore_shape(vmap_shape, (cudnn_b,), ()))
+
+  bind_args = (
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      page_table_k, page_table_v, scale=scale, seed=seed, dropout_rate=dropout_rate,
+      page_table_k, page_table_v)
+  bind_kwargs = dict(
+      scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length, is_training=is_training)
+  outputs = _attention_map_bind(
+      _dot_product_attention_fwd_p_wrapper.bind, bind_args, vmap_shape, **bind_kwargs)
 
-  # reshape to original shape
-  output = outputs[0]
-  output = jnp.reshape(output, original_shape)
+  output = jnp.reshape(outputs[0], original_shape)
   if is_training:
-    activation = outputs[1]
-    activation = jnp.reshape(activation, (*Bs, N, T))
+    activation = jnp.reshape(
+        outputs[1], _attention_restore_shape(vmap_shape, batch_shape, activation_dims))
     return (output, activation), out_bdims
   else:
     return (output,), out_bdims
@@ -861,41 +913,61 @@ def _dot_product_attention_bwd_batcher(
   query_bdim = batch_dims[0]
   out_bdims = query_bdim, query_bdim, query_bdim
 
-  if layout == AttentionLayout.BNTH.value:
-    *Bs, N, T, _ = query.shape
-    *_, _, S, _ = key.shape
-  else:
-    *Bs, T, N, _ = query.shape
-    *_, S, _, _ = key.shape
-  B = math.prod(Bs)
+  vmap_shape, batch_shape, cudnn_b, cudnn_tail, activation_dims, s = (
+      _attention_batcher_shape_info(query.shape, query_bdim, key.shape, layout))
+  n, t = activation_dims
+  vmap_size = vmap_shape[0] if vmap_shape else None
   has_bias, has_dbias = variadic_args
   original_query_shape = query.shape
   original_key_shape = key.shape
   original_value_shape = value.shape
   original_bias_shape = bias.shape if has_bias else None
-  # reshape to 4D shape
-  query = jnp.reshape(query, (B,) + query.shape[-3:])
-  key = jnp.reshape(key, (B,) + key.shape[-3:])
-  value = jnp.reshape(value, (B,) + key.shape[-3:])
-  if has_bias and batch_dims[3] is not None:
-    bias = jnp.reshape(bias, (B, N, T, S))
+
+  key = _attention_align_operand(key, batch_dims[1], vmap_size)
+  value = _attention_align_operand(value, batch_dims[2], vmap_size)
+  if has_bias:
+    bias = _attention_align_operand(bias, batch_dims[3], vmap_size)
   if has_padding(mask_type):
-    q_seqlen = jnp.reshape(q_seqlen, (B, ))
-    kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
+    q_seqlen = _attention_align_operand(q_seqlen, batch_dims[4], vmap_size)
+    kv_seqlen = _attention_align_operand(kv_seqlen, batch_dims[5], vmap_size)
+  q_offsets = _attention_align_operand(q_offsets, batch_dims[6], vmap_size)
+  kv_offsets = _attention_align_operand(kv_offsets, batch_dims[7], vmap_size)
+  page_table_k = _attention_align_operand(page_table_k, batch_dims[8], vmap_size)
+  page_table_v = _attention_align_operand(page_table_v, batch_dims[9], vmap_size)
+  activation = _attention_align_operand(activation, batch_dims[10], vmap_size)
+  fwd_output = _attention_align_operand(fwd_output, batch_dims[11], vmap_size)
+  grad_output = _attention_align_operand(grad_output, batch_dims[12], vmap_size)
 
-  activation = jnp.reshape(activation, (B, N, T))
-  fwd_output = jnp.reshape(fwd_output, (B,) + query.shape[-3:])
-  grad_output = jnp.reshape(grad_output, (B,) + query.shape[-3:])
+  query = jnp.reshape(query, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+  key = jnp.reshape(key, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+  value = jnp.reshape(value, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+  if has_bias and batch_dims[3] is not None:
+    bias = jnp.reshape(
+        bias, _attention_restore_shape(vmap_shape, (cudnn_b,), (n, t, s)))
+  if has_padding(mask_type):
+    q_seqlen = jnp.reshape(
+        q_seqlen, _attention_restore_shape(vmap_shape, (cudnn_b,), ()))
+    kv_seqlen = jnp.reshape(
+        kv_seqlen, _attention_restore_shape(vmap_shape, (cudnn_b,), ()))
 
-  grads = _dot_product_attention_bwd_p_wrapper.bind(
+  activation = jnp.reshape(
+      activation, _attention_restore_shape(vmap_shape, (cudnn_b,), activation_dims))
+  fwd_output = jnp.reshape(
+      fwd_output, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+  grad_output = jnp.reshape(
+      grad_output, _attention_restore_shape(vmap_shape, (cudnn_b,), cudnn_tail))
+
+  bind_args = (
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
-      page_table_k, page_table_v, activation, fwd_output, grad_output,
-      scale=scale, seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout,
-      sliding_window_length=sliding_window_length,
-  )
+      page_table_k, page_table_v, activation, fwd_output, grad_output)
+  bind_kwargs = dict(
+      scale=scale, seed=seed, dropout_rate=dropout_rate,
+      variadic_args=variadic_args, mask_type=mask_type, layout=layout,
+      sliding_window_length=sliding_window_length)
+  grads = _attention_map_bind(
+      _dot_product_attention_bwd_p_wrapper.bind, bind_args, vmap_shape, **bind_kwargs)
 
-  # reshape to original shape
+  grads = list(grads)
   grads[0] = jnp.reshape(grads[0], original_query_shape)
   grads[1] = jnp.reshape(grads[1], original_key_shape)
   grads[2] = jnp.reshape(grads[2], original_value_shape)
@@ -906,7 +978,7 @@ def _dot_product_attention_bwd_batcher(
     else:
       grads.append(jnp.zeros(original_bias_shape, bias.dtype))
     out_bdims += (batch_dims[3],)
-  return grads, out_bdims
+  return tuple(grads), out_bdims
 
 # custom partitioning
 def _get_padded_spec(arg_info):
