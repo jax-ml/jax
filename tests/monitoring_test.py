@@ -17,6 +17,8 @@ Verify that callbacks are registered/uregistered and invoked correctly to record
 events.
 """
 from absl.testing import absltest
+import jax
+from jax import lax
 from jax import monitoring
 from jax._src import monitoring as jax_src_monitoring
 
@@ -86,6 +88,51 @@ class MonitoringTest(absltest.TestCase):
         observed_values,
         [1, 2.5, 5e5],
     )
+
+  def test_bind_calls_metric(self):
+    scalars = []
+
+    def listener(key, value, **kwargs):
+      scalars.append((key, value, kwargs))
+
+    monitoring.register_scalar_listener(listener)
+
+    def f(x):
+      return lax.add(lax.sin(x), lax.cos(x))
+
+    jax.make_jaxpr(f)(1.0)
+
+    bind_calls = [s for s in scalars if s[0] == "/jax/core/jaxpr_trace_bind_calls"]
+    self.assertNotEmpty(bind_calls)
+    f_calls = [s for s in bind_calls if s[2].get("fun_name") == "f"]
+    self.assertNotEmpty(f_calls)
+    self.assertEqual(f_calls[0][1], 3)
+
+  def test_bind_calls_metric_with_inner_jit(self):
+    scalars = []
+
+    def listener(key, value, **kwargs):
+      scalars.append((key, value, kwargs))
+
+    monitoring.register_scalar_listener(listener)
+
+    @jax.jit
+    def g(x):
+      return lax.sin(x)
+
+    # Warm up g to cache it
+    g(1.0)
+
+    def f(x):
+      return lax.add(g(x), lax.cos(x))
+
+    jax.make_jaxpr(f)(1.0)
+
+    bind_calls = [s for s in scalars if s[0] == "/jax/core/jaxpr_trace_bind_calls"]
+    self.assertNotEmpty(bind_calls)
+    f_calls = [s for s in bind_calls if s[2].get("fun_name") == "f"]
+    self.assertNotEmpty(f_calls)
+    self.assertEqual(f_calls[0][1], 3)
 
   def test_unregister_exist_callback_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
