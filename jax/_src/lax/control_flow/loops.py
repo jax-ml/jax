@@ -33,7 +33,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import hijax
 from jax._src import linear_util as lu
-from jax._src import sharding_impls as sharding
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
@@ -67,7 +67,7 @@ from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.mesh import use_abstract_mesh
+from jax._src.mesh import use_abstract_mesh, get_abstract_mesh
 from jax._src.pjit import PartitionSpec as P, auto_axes, reshard
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
@@ -716,7 +716,8 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = aval.sharding.update(spec=aval.sharding.spec.update(
+  mesh = get_abstract_mesh() if aval.sharding.mesh.empty else aval.sharding.mesh
+  sharding = aval.sharding.update(mesh=mesh, spec=aval.sharding.spec.update(
       partitions=(*length_spec, *aval.sharding.spec.partitions)))
   # TODO(yashkatariya): Replace `lax.empty2` with `lax.empty` once
   # AllocateBuffer issues are fixed. Also delete `empty2` after this usage is
@@ -1016,7 +1017,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
 def _maybe_put(x):
   if isinstance(x, np.ndarray):
     aval = core.shaped_abstractify(x)
-    s = sharding.make_single_device_sharding(
+    s = sharding_impls.make_single_device_sharding(
         xb.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
     return result_handler(
