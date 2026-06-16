@@ -1412,6 +1412,5 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     out = jax.jit(impl)(x, y)
     self.assertArraysEqual(out, out_ref)
 
-
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
