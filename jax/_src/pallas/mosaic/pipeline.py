@@ -312,6 +312,10 @@ class BufferedRefBase:
     """
     return False
 
+  @property
+  def prefetched_count(self) -> int:
+    return 0
+
   def initialize_slots(self):
     """Initializes slots to 0."""
     raise NotImplementedError()
@@ -479,7 +483,7 @@ class BufferedRef(BufferedRefBase):
   wait_in_slot: int | jax.Array | None
   copy_out_slot: int | jax.Array | None
   wait_out_slot: int | jax.Array | None
-  next_fetch: Sequence[jax.Array] | None
+  next_fetch: Sequence[jax.Array | int] | None
   sem_recvs: SemaphoreTuple | None
   sem_sends: SemaphoreTuple | None
   tiling: Tiling | None = dataclasses.field(metadata=dict(static=True))
@@ -488,6 +492,9 @@ class BufferedRef(BufferedRefBase):
   )
   has_allocated_buffer: bool = dataclasses.field(
       default=False, metadata=dict(static=True)
+  )
+  prefetched_count: int = dataclasses.field(
+      default=0, metadata=dict(static=True)
   )
 
   def __post_init__(self):
@@ -538,6 +545,7 @@ class BufferedRef(BufferedRefBase):
       source_memory_space: tpu_core.MemorySpace | Literal[ANY] = ANY,  # pyrefly: ignore[not-a-type]
       tiling: Tiling | None = None,
       is_trivial_windowing: bool = False,
+      prefetched_count: int = 0,
   ) -> BufferedRef:
     """Create a BufferedRef.
 
@@ -551,6 +559,7 @@ class BufferedRef(BufferedRefBase):
       use_lookahead: whether to enable pipeline lookahead.
       source_memory_space: The memory space of the backing source Ref.
       tiling: The tiling to assume for the buffers.
+      prefetched_count: number of buffers that have been prefetched.
 
     Returns:
       Initialized BufferedRef
@@ -606,12 +615,23 @@ class BufferedRef(BufferedRefBase):
           buffer_ty = ty.update(shape=(buffer_count * block_shape[0],))
         else:
           buffer_ty = ty.update(shape=(buffer_count, *block_shape))
+
+      window_ref = buffer_memory_space.from_type(buffer_ty)
+      if prefetched_count > 0:
+        window_ref = None
+        if not is_trivial_windowing and prefetched_count >= buffer_count:
+          raise ValueError(
+              "prefetched_count must be less than buffer_count for"
+              f" non-trivial windowing, got prefetched_count={prefetched_count}"
+              f" and buffer_count={buffer_count}"
+          )
+
       return cls(
           _spec=spec,
           _buffer_type=buffer_type,
           _buffer_count=buffer_count,
           _grid_rank=grid_rank if use_lookahead else None,
-          window_ref=buffer_memory_space.from_type(buffer_ty),
+          window_ref=window_ref,
           copy_in_slot=None,
           wait_in_slot=None,
           copy_out_slot=None,
@@ -630,6 +650,7 @@ class BufferedRef(BufferedRefBase):
           tiling=tiling,
           is_trivial_windowing=is_trivial_windowing,
           has_allocated_buffer=True,
+          prefetched_count=prefetched_count,
       )
 
   @classmethod
@@ -656,9 +677,12 @@ class BufferedRef(BufferedRefBase):
 
   def with_next_fetch(
       self,
-      next_fetch: Sequence[jax.Array] | None = None,
+      next_fetch: Sequence[jax.Array | int] | None = None,
   ):
     return dataclasses.replace(self, next_fetch=next_fetch)
+
+  def with_window_ref(self, window_ref: ArrayRef | None):
+    return dataclasses.replace(self, window_ref=window_ref)
 
   def with_slot_index(
       self,
@@ -923,6 +947,11 @@ class BufferedRef(BufferedRefBase):
           dst_ref.at[dst_slice],  # only dst shape is important
           self.sem_sends.at[wait_slot],
       ).wait()
+
+  def advance_next_fetch(self, grid):
+    if self.next_fetch is None:
+      raise ValueError("next_fetch is None")
+    return self.with_next_fetch(_next_index(tuple(self.next_fetch), grid))
 
 
 def fetch_with_lookahead(buffered_ref, src_ref,
@@ -1220,6 +1249,11 @@ class Scheduler:
       if (step + 1) >= buffered_ref.buffer_count:
         return buffered_ref
 
+      if step < buffered_ref.prefetched_count:
+        if buffered_ref.use_lookahead and step > 0:
+          buffered_ref = buffered_ref.advance_next_fetch(self.grid)
+        return buffered_ref.advance_copy_in_slot()
+
       if buffered_ref.use_lookahead:
         if step == 0:
           # We always fetch the first block.
@@ -1258,6 +1292,7 @@ class Scheduler:
     if buffered_ref.is_trivial_windowing:
       return buffered_ref
     pred = self.has_changed(buffered_ref) | self.first_step
+    pred = pred & (~(self.step < buffered_ref.prefetched_count))
 
     @when(pred)
     @self._named_scope("ep_wait_in")
@@ -1389,9 +1424,11 @@ def _make_pipeline_allocations(
     in_aval = _ref_to_value_aval(in_ref)
     buffer_count = 2
     use_lookahead = False
+    prefetched_count = 0
     if has_buffering := in_spec.pipeline_mode is not None:
       buffer_count = in_spec.pipeline_mode.buffer_count
       use_lookahead = in_spec.pipeline_mode.use_lookahead
+      prefetched_count = in_spec.pipeline_mode.prefetched_count
     if use_lookahead and grid is None:
       raise ValueError("Grid must be specified when using lookahead.")
     is_trivial = _spec_has_trivial_windowing(in_spec, grid, in_aval.shape)
@@ -1407,6 +1444,7 @@ def _make_pipeline_allocations(
         source_memory_space=in_ref.memory_space,
         tiling=tiling,
         is_trivial_windowing=is_trivial,
+        prefetched_count=prefetched_count,
     )
   in_brefs = jax.tree.map(make_input_bref, in_specs, in_refs)
   def make_output_bref(out_spec, out_ref):
@@ -1765,7 +1803,11 @@ def _emit_pipeline(
         scheduler = make_scheduler(0, initial_indices)
         brefs = map_brefs(lambda bref: bref.initialize_slots(), allocations)
         def _sync_copy_in(bref, ref):
-          if bref.is_trivial_windowing and bref.window_ref is not None:
+          if (
+              bref.is_trivial_windowing
+              and bref.window_ref is not None
+              and bref.prefetched_count < 1
+          ):
             sync_copy(ref, bref, initial_indices)
 
         map_inputs(_sync_copy_in, brefs, refs)

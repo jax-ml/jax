@@ -513,6 +513,119 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(out, x[0])
 
+  @parameterized.named_parameters(
+      ('standard', (4,), 128, 2, False, (2, 128), 'first_buffer'),
+      ('lookahead', (4,), 128, 2, True, (2, 128), 'first_buffer'),
+      ('trivial_windowing', (1,), 512, 1, False, (512,), 'full'),
+  )
+  def test_prefetched_input(
+      self,
+      grid,
+      block_size,
+      buffer_count,
+      use_lookahead,
+      vmem_shape,
+      vmem_slice_type,
+  ):
+    if config.use_emit_pipeline_primitive.value:
+      self.skipTest(
+          'allocations are not yet supported by the emit_pipeline primitive.'
+      )
+
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    if vmem_slice_type == 'first_buffer':
+      vmem_slice_fn = lambda ref: ref.at[0]
+    elif vmem_slice_type == 'full':
+      vmem_slice_fn = lambda ref: ref
+    else:
+      raise ValueError(f'Unknown vmem_slice_type: {vmem_slice_type}')
+
+    def prefetch_start(x_hbm_ref, x_vmem_ref, sem):
+      pltpu.async_copy(
+          x_hbm_ref.at[:block_size],
+          vmem_slice_fn(x_vmem_ref),
+          sem,
+      )
+
+    def prefetch_done(x_hbm_ref, x_vmem_ref, sem, x_vmem_out_ref):
+      del x_vmem_out_ref  # alias to x_vmem_ref
+      pltpu.make_async_copy(
+          x_hbm_ref.at[:block_size],
+          vmem_slice_fn(x_vmem_ref),
+          sem,
+      ).wait()
+
+    def kernel(x_hbm_ref, x_prefetched_vmem, o_hbm_ref):
+      pipeline, make_allocs = pltpu.emit_pipeline_with_allocations(
+          pipeline_body,
+          grid=grid,
+          in_specs=[
+              pl.BlockSpec(
+                  (block_size,),
+                  lambda i: (i,),
+                  pipeline_mode=pl.Buffered(
+                      buffer_count=buffer_count,
+                      use_lookahead=use_lookahead,
+                      prefetched_count=1,
+                  ),
+              )
+          ],
+          out_specs=[pl.BlockSpec((block_size,), lambda i: (i,))],
+      )
+
+      @functools.partial(
+          pl.run_scoped, allocs=make_allocs(x_hbm_ref, o_hbm_ref)
+      )
+      def _(allocs):
+        x_bref, o_bref = allocs
+        allocs = (x_bref.with_window_ref(x_prefetched_vmem), o_bref)
+        return pipeline(x_hbm_ref, o_hbm_ref, allocations=allocs)
+
+    x = jnp.arange(512, dtype=jnp.float32)
+    @jax.jit
+    def run(x):
+      prefetched, sem = pl.pallas_call(
+          prefetch_start,
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.HBM),
+          ],
+          out_specs=[
+              pl.BlockSpec(memory_space=pltpu.VMEM),
+              pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          ],
+          out_shape=(
+              pltpu.VMEM(vmem_shape, jnp.float32),
+              pltpu.SemaphoreType.DMA,
+          ),
+      )(x)
+      prefetched = pl.pallas_call(
+          prefetch_done,
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.HBM),
+              pl.BlockSpec(memory_space=pltpu.VMEM),
+              pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=pltpu.VMEM(vmem_shape, jnp.float32),
+          input_output_aliases={1: 0},
+      )(x, prefetched, sem)
+
+      out = pl.pallas_call(
+          kernel,
+          in_specs=[
+              pl.BlockSpec(memory_space=pltpu.HBM),
+              pl.BlockSpec(memory_space=pltpu.VMEM),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+      )(x, prefetched)
+      return out
+
+    out = run(x)
+    np.testing.assert_allclose(out, x)
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
@@ -558,8 +671,6 @@ class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
       np.testing.assert_array_equal(
           out[4:, :].astype(jnp.int32), expected_poison
       )
-
-
 
 
 class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):

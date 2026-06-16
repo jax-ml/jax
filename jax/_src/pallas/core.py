@@ -226,10 +226,15 @@ class Buffered:
       should not be visited again. RevisitMode.ANY relaxes this restriction, at
       a cost of addition DMAs. Input blocks ignore this field and can be visited
       at any iteration, as they read the state from memory in any case.
+    prefetched_count: optional int, the number of slots in the window buffer
+      that have been pre-populated before entering the pipeline. If > 0, the
+      pipeline expects the pre-populated buffer to be passed in via allocations
+      and will skip internal allocation.
   """
   buffer_count: int
   use_lookahead: bool = False
   revisit: RevisitMode | None = None
+  prefetched_count: int = 0
 
 
 @runtime_checkable
