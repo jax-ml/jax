@@ -6134,24 +6134,34 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     super().setUp()
 
   @parameterized.product(
-      layout=tuple(mtu.RegisterLayout),
+      layout_tag=tuple(mtu.RegisterLayout),
       dtype=(jnp.bfloat16, jnp.int8),
       optimized=(True, False, None),
   )
-  def test_smem_gmem_registers_load_store(self, layout, dtype, optimized):
-    if layout == mtu.RegisterLayout.WG_SPLAT:
+  def test_smem_gmem_registers_load_store(
+      self, layout_tag: mtu.RegisterLayout, dtype, optimized
+  ):
+    if layout_tag == mtu.RegisterLayout.WG_SPLAT:
       self.skipTest("WG_SPLAT is not supported for `vector.load`.")
     # We don't infer optimized transfer-compatible transforms for load/store to
     # registers with TCGEN05_TMEM_NATIVE layout.
     load_optimized = optimized != False
-    if load_optimized and layout == mtu.RegisterLayout.TCGEN05_TMEM_NATIVE:
+    if load_optimized and layout_tag == mtu.RegisterLayout.TCGEN05_TMEM_NATIVE:
       self.skipTest(
           "Optimized loads not supported for TCGEN05_TMEM_NATIVE layout"
       )
-    # Use a 3D shape to exercise the path where tiling does not span all
-    # dimensions.
-    shape = (1, 128, 128)
-    layout_attr = layout.to_layout_attr(shape, dtype)
+
+    # We use a (128, 128) shape to construct the layout, but specialize the
+    # actual test shape to the layout in order to avoid long test times for some
+    # layouts.
+    layout = layout_tag.to_mgpu((128, 128), dtype)
+    if isinstance(layout, fa.TiledLayout):
+      # Use a tiling_rank + 1-dimensional shape to exercise the path where
+      # tiling does not span all dimensions.
+      shape = (1, *layout.base_tile_shape[:-1], 2 * layout.base_tile_shape[-1])
+    else:
+      shape = (128, 128)
+    layout_attr = layouts.to_layout_attr(layout)
 
     def body(ctx, param: ir.Value, result: ir.Value, smem: list[ir.Value]):
       del ctx
