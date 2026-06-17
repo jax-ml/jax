@@ -4103,6 +4103,81 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     )(x, idx)
     np.testing.assert_array_equal(y, x[idx, slice(col_slice, 2 * col_slice)])
 
+  @parameterized.parameters(
+      (1024, fa.TMA_INDICES_LAYOUT, 32),
+      (2048, fa.TMA_INDICES_LAYOUT, 16),
+      (4096, fa.TMA_INDICES_4_LAYOUT, 12),
+      (8192, fa.TMA_INDICES_4_LAYOUT, 4),
+  )
+  def test_tma_gather_scatter_large_dimension(self, dim_size, idx_layout, num_items):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest(
+          "TMA scatter requires CUDA compute capability 10.0 or higher"
+      )
+    dtype = jnp.int16
+    shape = (num_items, dim_size)
+
+    def gather_kernel(ctx, src, idx, dst, smem):
+      tmp, barrier = smem
+      idxs = mgpu.FragmentedArray.load_untiled(
+          idx, layout=idx_layout, optimized=False, is_signed=False
+      )
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=None,
+          gmem_slice=(idxs, mgpu.ds(0, dim_size)),
+          barrier=barrier,
+      )
+      barrier.wait()
+      copy(tmp, dst, swizzle=None)
+
+    def scatter_kernel(ctx, src, idx, dst, smem):
+      tmp, barrier = smem
+      idxs = mgpu.FragmentedArray.load_untiled(
+          idx, layout=idx_layout, optimized=False, is_signed=False
+      )
+      copy(src, tmp, swizzle=None)
+      ctx.async_copy(
+          src_ref=tmp,
+          dst_ref=dst,
+          swizzle=None,
+          gmem_slice=(idxs, mgpu.ds(0, dim_size)),
+      )
+      ctx.await_async_copy(0)
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    idx = jax.random.permutation(jax.random.key(1234), num_items).astype(jnp.int32)
+
+    expected_instr = (
+        num_items // 16
+        if idx_layout == fa.TMA_INDICES_LAYOUT
+        else num_items // 4
+    ) * (dim_size // 256)
+
+    smem_type = jax.ShapeDtypeStruct(shape, dtype)
+    smem = (smem_type, mgpu.TMABarrier())
+    out_type = jax.ShapeDtypeStruct(shape, dtype)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y_gather = mgpu.as_gpu_kernel(
+          gather_kernel, (1, 1, 1), (128, 1, 1), (jax.ShapeDtypeStruct(shape, x.dtype), idx), out_type, smem
+      )(x, idx)
+    self.assertEqual(
+        ptx().count("cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4"),
+        expected_instr,
+    )
+    np.testing.assert_array_equal(y_gather, x[idx, :])
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y_scatter = mgpu.as_gpu_kernel(
+          scatter_kernel, (1, 1, 1), (128, 1, 1), (jax.ShapeDtypeStruct(shape, x.dtype), idx), out_type, smem
+      )(x, idx)
+    self.assertEqual(
+        ptx().count("cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4"),
+        expected_instr,
+    )
+    np.testing.assert_array_equal(y_scatter, x[np.argsort(idx), :])
+
   @parameterized.product(
       swizzle=(16, 32, 64, 128),
       shape=((64, None),),

@@ -413,6 +413,64 @@ class DropUnitDimsTransform(MemRefTransform):
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
+
+@dataclasses.dataclass(frozen=True)
+class _Gather4ChunkTransform(MemRefTransform):
+  """Transforms a GMEM reference to represent chunks of rows for TMA gather/scatter.
+
+  Gather4/Scatter4 needs a row size of <256 elements. This modifies
+  the shape and strides of the GMEM reference to expose the chunks as
+  an extra dimension, which allows the TMA descriptor to perform
+  bounded fetches.
+
+  Specifically, it logically divides the row (which is assumed to be
+  packed, meaning row stride equals row shape) into multiple
+  contiguous chunks of size `chunk_size`. TMA Gather4/Scatter4 also
+  requires 2D shapes so the transform is `[M, N] --> [M*N//256,256]`.
+
+  """
+  chunk_size: int
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    ref_ty = ir.MemRefType(ref.type)
+    strides, offset = ref_ty.get_strides_and_offset()
+    new_shape = list(self.transform_shape(ref_ty.shape))
+    new_strides = list(self.transform_strides(strides))
+    new_layout = ir.StridedLayoutAttr.get(offset, new_strides)
+    new_ref_ty = ir.MemRefType.get(
+        new_shape, ref_ty.element_type, new_layout, ref_ty.memory_space
+    )
+    if offset == ir.ShapedType.get_dynamic_stride_or_offset():
+      _, dyn_offset, *_ = memref.extract_strided_metadata(ref)  # pyrefly: ignore[not-iterable]
+      offsets = [dyn_offset]
+    else:
+      offsets = []
+    return memref.reinterpret_cast(
+        new_ref_ty, ref, offsets, [], [],
+        static_offsets=[offset], static_sizes=new_shape, static_strides=new_strides,
+    )
+
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, int]:
+    m, n = shape
+    return (m * (n // self.chunk_size), self.chunk_size)
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    raise NotImplementedError()
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    return self.transform_gmem_shape(shape)
+
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, int]:
+    assert len(strides) == 2 and strides[-2] % 256 == 0 and strides[-1] == 1
+    return (self.chunk_size, 1)
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    raise NotImplementedError()
+
+  def to_attr(self) -> ir.Attribute:
+    raise NotImplementedError()
+
+
 MOSAIC_GPU_SMEM_ALLOC_ATTR = "mosaic_gpu_smem_alloc"
 
 class Scratch:
@@ -1533,8 +1591,14 @@ class LaunchContext:
       if gather_indices.layout not in (fa.TMA_INDICES_LAYOUT, fa.TMA_INDICES_4_LAYOUT):
         raise ValueError(f"Unsupported gather indices layout: {gather_indices.layout}")
       ROWS_PER_INSTR = 4
+      chunk_size = slice_shape[-1]
+      if chunk_size > 256:
+        if chunk_size % 256 != 0:
+          raise NotImplementedError("Gather/scatter TMA chunking only implemented for multiples of 256")
+        chunk_size = 256
+
       # Make sure we'll always be accessing SMEM with sufficient alignment.
-      single_tma_bits = ROWS_PER_INSTR * slice_shape[-1] * element_bitwidth
+      single_tma_bits = ROWS_PER_INSTR * chunk_size * element_bitwidth
       if single_tma_bits % 1024:
         raise ValueError(
             "Gather/scatter TMA would require breaking it up into transfers of"
@@ -1551,6 +1615,7 @@ class LaunchContext:
         )
 
       gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+      orig_gmem_strides = gmem_strides
       assert len(gmem_strides) == 2
       _, gmem_cols = gmem_ref_ty.shape
       slice_gather_strides: tuple[int, ...] = (1, 0)  # Each row gets a new index, column has no effect.
@@ -1559,8 +1624,24 @@ class LaunchContext:
         slice_gather_strides = t.transform_strides(slice_gather_strides)
       is_gather_dim = [bool(s) for s in slice_gather_strides]
 
+      num_chunks = slice_shape[-1] // chunk_size
+
+      if num_chunks > 1:
+        if orig_gmem_strides[-2] != gmem_cols:
+          raise NotImplementedError(
+              "Gather/scatter TMA with row size > 256 requires the GMEM"
+              " reference to be packed (row stride == row shape)"
+          )
+        if gmem_cols % chunk_size != 0:
+          raise NotImplementedError(
+              "Gather/scatter TMA with row size > 256 requires the row shape to"
+              " be a multiple of 256"
+          )
+        tma_transform = (_Gather4ChunkTransform(chunk_size),)
+      else:
+        tma_transform = ()
       tma_desc = self._get_tma_desc(
-          gmem_ref, (), gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
+          gmem_ref, tma_transform, gmem_peer_id, (1, chunk_size), swizzle, reduction_op,
       )
 
       assert gather_indices.layout.vector_length == ROWS_PER_INSTR
@@ -1607,6 +1688,10 @@ class LaunchContext:
           arith.constant(index, 0),
       )
       col_base_offset = arith.index_cast(i32, col_base_offset)
+      # There always is exactly one gather dim.
+      row_base_offset = next(idx for g, idx in zip(is_gather_dim, dyn_base_indices) if g)
+      row_base_offset = arith.index_cast(i32, row_base_offset)
+
       # We need to unroll over all non-gather dimensions other than the last one
       non_gather_slice_shape = tuple(
           1 if g else d for d, g in zips(slice_shape[:-1], is_gather_dim[:-1])
@@ -1627,9 +1712,6 @@ class LaunchContext:
             if g
         ]
         gather_slice_idx = [arith.index_cast(index, i) for i in gather_slice_idx]
-        gather_rows = [
-            llvm.extractelement(reg, c(i, i32)) for i in range(ROWS_PER_INSTR)
-        ]
         # Second, step over non-gather slice indices.
         for non_gather_idxs in np.ndindex(non_gather_slice_shape):
           gather_slice_idx_it = iter(gather_slice_idx)
@@ -1650,23 +1732,54 @@ class LaunchContext:
               if not g
           )
           col_offset = arith.addi(col_base_offset, arith.constant(i32, col_slice_offset))
-          if smem_ref is src_ref:
-            llvm.inline_asm(
-                ir.Type.parse("!llvm.void"),
-                [predicate, tma_desc, smem_ptr, col_offset, *gather_rows],
-                "@$0 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group [$1, {$3, $4, $5, $6, $7}], [$2];",
-                "b,l,r" + ",r" * (ROWS_PER_INSTR + 1),
-                has_side_effects=True,
+
+          gather_rows = []
+          for k in range(ROWS_PER_INSTR):
+            gather_rows.append(
+                arith.addi(llvm.extractelement(reg, c(k, i32)), row_base_offset)
             )
-          else:
-            assert barrier is not None
-            llvm.inline_asm(
-                ir.Type.parse("!llvm.void"),
-                [predicate, smem_ptr, tma_desc, barrier.get_ptr(), col_offset, *gather_rows],
-                "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
-                "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
-                has_side_effects=True,
-            )
+
+          row_stride = orig_gmem_strides[-2] // chunk_size
+          smem_stride = ROWS_PER_INSTR * chunk_size * element_bitwidth // 8
+          scaled_gather_rows = [
+              arith.muli(row, arith.constant(i32, row_stride)) for row in gather_rows
+          ]
+          for chunk_step in range(num_chunks):
+            chunk_smem_ptr = smem_ptr
+            if chunk_step > 0:
+              chunk_smem_ptr = utils.getelementptr(
+                  smem_ptr, [arith.constant(i32, chunk_step * smem_stride)], i8
+              )
+
+            chunk_gather_rows = []
+            for k in range(ROWS_PER_INSTR):
+              flat_idx = chunk_step * ROWS_PER_INSTR + k
+              item_idx = flat_idx // num_chunks
+              chunk_idx = flat_idx % num_chunks
+              if num_chunks == 1:
+                chunk_gather_rows.append(gather_rows[k])
+              else:
+                chunk_gather_rows.append(
+                    arith.addi(scaled_gather_rows[item_idx], arith.constant(i32, chunk_idx))
+                )
+
+            if smem_ref is src_ref:
+              llvm.inline_asm(
+                  ir.Type.parse("!llvm.void"),
+                  [predicate, tma_desc, chunk_smem_ptr, col_offset, *chunk_gather_rows],
+                  "@$0 cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4.bulk_group [$1, {$3, $4, $5, $6, $7}], [$2];",
+                  "b,l,r" + ",r" * (ROWS_PER_INSTR + 1),
+                  has_side_effects=True,
+              )
+            else:
+              assert barrier is not None
+              llvm.inline_asm(
+                  ir.Type.parse("!llvm.void"),
+                  [predicate, chunk_smem_ptr, tma_desc, barrier.get_ptr(), col_offset, *chunk_gather_rows],
+                  "@$0 cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4.mbarrier::complete_tx::bytes [$1], [$2, {$4, $5, $6, $7, $8}], [$3];",
+                  "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
+                  has_side_effects=True,
+              )
       if smem_ref is src_ref and arrive:
         nvvm.cp_async_bulk_commit_group()
       return
