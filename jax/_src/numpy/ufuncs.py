@@ -3350,13 +3350,21 @@ def conjugate(x: ArrayLike, /) -> Array:
     Array([2.+1.j, 3.-5.j, 7.-0.j], dtype=complex64)
   """
   x = ensure_arraylike("conjugate", x)
-  return lax.conj(x) if np.iscomplexobj(x) else lax.asarray(x)
+  return lax.conj(x) if np.iscomplexobj(x) or _is_edtype_complex(x) else lax.asarray(x)
 
 
 @export
 def conj(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.conjugate`"""
   return conjugate(x)
+
+
+def _is_edtype_complex(val):
+  """Check if val has a complex ExtendedDType (e.g. bcomplex32_edtype)."""
+  try:
+    return isinstance(val.dtype, dtypes.ExtendedDType) and dtypes.issubdtype(val.dtype, np.complexfloating)
+  except (AttributeError, TypeError):
+    return False
 
 
 @export
@@ -3388,7 +3396,7 @@ def imag(val: ArrayLike, /) -> Array:
     Array([ 3., -1.,  0.], dtype=float32)
   """
   val = ensure_arraylike("imag", val)
-  return lax.imag(val) if np.iscomplexobj(val) else lax.full_like(val, 0)
+  return lax.imag(val) if np.iscomplexobj(val) or _is_edtype_complex(val) else lax.full_like(val, 0)
 
 
 @export
@@ -3420,7 +3428,7 @@ def real(val: ArrayLike, /) -> Array:
     Array([ 3.,  4., -0.], dtype=float32)
   """
   val = ensure_arraylike("real", val)
-  return lax.real(val) if np.iscomplexobj(val) else lax.asarray(val)
+  return lax.real(val) if np.iscomplexobj(val) or _is_edtype_complex(val) else lax.asarray(val)
 
 
 @export

@@ -4144,7 +4144,11 @@ for t in itertools.chain(
 
 _fixed_dtype = \
     lambda dtype: lambda *args, **kwargs: np.dtype(dtype)
-_complex_basetype = lambda dtype, **kwargs: np.abs(np.zeros((), dtype)).dtype
+
+def _complex_basetype(dtype, **kwargs):
+  if dtype is dtypes.bcomplex32_edtype:
+    return dtypes._bfloat16_dtype
+  return np.abs(np.zeros((), dtype)).dtype
 
 _strip_weak_type = lambda *args, **_: False
 
@@ -4404,7 +4408,7 @@ def _unary_with_accuracy_pp_rule(eqn, context, settings):
 
 _float = {np.floating}
 _complex = {np.complexfloating}
-_complex_elem_types = {np.float32, np.float64}
+_complex_elem_types = {np.dtype(dtypes.bfloat16), np.float32, np.float64}
 _int = {np.integer}
 _bool = {np.bool_}
 _signedint = {np.signedinteger}
@@ -4673,6 +4677,10 @@ def _complex_transpose_rule(t, x, y):
       return [None, _unbroadcast(y.aval, imag(neg(t)))]
 
 def _complex_dtype(dtype, *args, **kwargs):
+  if dtype is dtypes.bcomplex32_edtype:
+    return dtypes.bcomplex32_edtype
+  if np.dtype(dtype) == dtypes._bfloat16_dtype:
+    return dtypes.bcomplex32_edtype
   return (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
@@ -5363,7 +5371,13 @@ pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
 
-def _real_dtype(dtype): return np.finfo(dtype).dtype
+def _real_dtype(dtype):
+  if isinstance(dtype, dtypes.ExtendedDType):
+    # bcomplex32_edtype -> bf16
+    if dtype is dtypes.bcomplex32_edtype:
+      return dtypes._bfloat16_dtype
+    raise TypeError(f"No real dtype for extended dtype {dtype}")
+  return np.finfo(dtype).dtype
 
 def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
                                 sharding):
@@ -5808,6 +5822,11 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
                        check_bit_width=not has_algorithm)
 
 def _bit_width(d):
+  if isinstance(d, dtypes.ExtendedDType):
+    # bcomplex32_edtype is 32 bits total (2 * bf16)
+    if d is dtypes.bcomplex32_edtype:
+      return 32
+    raise TypeError(f"Cannot determine bit width for extended dtype {d}")
   if dtypes.issubdtype(d, np.inexact): return dtypes.finfo(d).bits
   elif dtypes.issubdtype(d, np.integer): return dtypes.iinfo(d).bits
   elif d == np.dtype('bool'): return 1
@@ -9803,3 +9822,8 @@ def _array_reduce_precision_handler(t, x):
     return reduce_precision(x, exponent_bits=finfo.nexp, mantissa_bits=finfo.nmant)
   return x
 remat.reduce_precision_handlers[core.ShapedArray] = _array_reduce_precision_handler
+
+
+# Register bcomplex32 ExtendedDType lowerings.
+from jax._src.lax.lax_bcomplex32 import _register_lowerings as _bcomplex32_register_lowerings
+_bcomplex32_register_lowerings()
