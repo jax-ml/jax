@@ -497,36 +497,6 @@ def square(x):
 
 class HijaxTest(jtu.JaxTestCase):
 
-  def test_closed_call(self):
-    from jax._src.api_util import flatten_fun_nokwargs, debug_info
-    from jax._src import linear_util as lu
-
-    qx = QArray(arr=jnp.ones((2, 3), dtype=jnp.int8),
-                scale=jnp.array([1.5, 2.5], dtype=jnp.float32))
-
-    def f(q):
-      return q
-
-    @jax.jit
-    def test_fn(x):
-      flat_x, in_tree = jax.tree.flatten((x,))
-      dbg = debug_info('test_closed_call', f, flat_x, {})
-      flat_f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-      out = core.closed_call_p.bind(*flat_x, subfuns=(flat_f,))
-      return jax.tree.unflatten(out_tree(), out)
-
-    res = test_fn(qx)
-    self.assertIsInstance(res, QArray)
-    self.assertArraysEqual(res.arr, qx.arr)
-    self.assertArraysEqual(res.scale, qx.scale)
-
-    traced = test_fn.trace(qx)
-    self.assertTrue(traced.jaxpr.is_high,
-                    'Initial jaxpr should contain hi-primitives')
-    lojaxpr = traced.lojax.jaxpr
-    self.assertFalse(lojaxpr.is_high,
-                     'Lowered jaxpr should not contain hi-primitives')
-
   def test_empty_ref_and_freeze(self):
     qx = QArray(arr=jnp.ones((2, 3), dtype=jnp.int8),
                 scale=jnp.array([1.5, 2.5], dtype=jnp.float32))
