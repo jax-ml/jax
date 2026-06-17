@@ -45,7 +45,7 @@ jax_multiplatform_test(
         "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
-    shard_count = 32,
+    shard_count = 16,
     tags = [
         "noasan",  # Times out.
     ],
