@@ -129,6 +129,7 @@ pytype_strict_library(
         "//jax/_src:random",
         "//jax/_src:source_info_util",
         "//jax/_src:traceback_util",
+        "//jax/_src:tree_util",
         "//jax/_src:typing",
         "//jax/_src:util",
         "//jax/_src:xla_bridge",
