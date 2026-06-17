@@ -2588,9 +2588,3 @@ def raise_lo_outs(hi_avals, lo_outs):
 
 def num_himuts_out(final_qdds):
   return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
-
-
-def _closed_call_to_lojax(*hi_args, call_jaxpr: ClosedJaxpr, **_):
-  from jax._src.custom_derivatives import _lower_and_eval  # pyrefly: ignore[missing-import]
-  return _lower_and_eval("closed_call", call_jaxpr, hi_args)
-core.closed_call_p.to_lojax = _closed_call_to_lojax
