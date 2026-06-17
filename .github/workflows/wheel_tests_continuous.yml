@@ -73,7 +73,7 @@ jobs:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
-        clone_main_xla: 1
+        clone_main_xla: 0
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
@@ -94,7 +94,7 @@ jobs:
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
-      clone_main_xla: 1
+      clone_main_xla: 0
       upload_artifacts_to_gcs: true
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
@@ -174,7 +174,7 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: "wheel"
       build_jax: "wheel"
-      clone_main_xla: 1
+      clone_main_xla: 0
 
   run-bazel-test-cuda:
     if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
@@ -203,7 +203,7 @@ jobs:
       write_to_bazel_remote_cache: 1
       run_tests_with_rbe: ${{ 'false' }}
       build_artifacts_with_rbe: ${{ 'false' }}
-      clone_main_xla: 1
+      clone_main_xla: 0
 
   run-bazel-test-cuda-py-import:
     if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
@@ -228,7 +228,7 @@ jobs:
       write_to_bazel_remote_cache: 1
       run_tests_with_rbe: ${{ 'false' }}
       build_artifacts_with_rbe: ${{ 'true' }}
-      clone_main_xla: 1
+      clone_main_xla: 0
 
   run-pytest-tpu:
     if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
@@ -280,7 +280,7 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
       build_jaxlib: "wheel"
       build_jax: "wheel"
-      clone_main_xla: 1
+      clone_main_xla: 0
 
   build-rocm-artifacts:
     if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
@@ -313,7 +313,7 @@ jobs:
       rocm-version: ${{ matrix.rocm.wheel-version }}
       rocm-release-version: ${{ matrix.rocm.release-version }}
       manylinux-image: ${{ matrix.rocm.manylinux-image }}
-      clone_main_xla: 1
+      clone_main_xla: 0
       upload_artifacts_to_s3: true
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
@@ -375,4 +375,4 @@ jobs:
       build_jax: ${{ 'false' }}
       jaxlib-version: "head"
       run_multiaccelerator_tests: ${{ 'false' }}
-      clone_main_xla: 1
+      clone_main_xla: 0
