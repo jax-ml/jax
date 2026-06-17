@@ -461,6 +461,9 @@ def _extract_variable_assignments_from_constraints(
         yield from _extract_layout_candidates_from_mma_tiling(mma_tiling)
       case cs.IsSupportedBroadcast(cs.RegisterLayout() as src, cs.Variable() as dst, dims=dims):
         yield from _extract_layout_candidates_from_broadcast(src, dst, dims)
+      case cs.OneOf(expr=cs.Variable() as var, allowed=allowed_constants):
+        for const in allowed_constants:
+          yield var, const
 
 
 def conjure_assignment(
@@ -2143,11 +2146,11 @@ def _with_transforms_constraint_system(
   return cs.ConstraintSystem(assignments=assignments), {var: [source, dest]}
 
 
-def _vector_value_sites_and_assignments_for_async_ops(
+def _vector_value_sites_and_constraints_for_async_ops(
     op: mgpu.AsyncLoadOp | mgpu.AsyncStoreOp | mgpu.AsyncPrefetchOp,
-) -> tuple[ValueSitesForVariable, dict[cs.Variable, cs.Constant]]:
+) -> tuple[ValueSitesForVariable, list[cs.Constraint]]:
   values_sites: ValueSitesForVariable = dict()
-  assignments: dict[cs.Variable, cs.Constant] = dict()
+  constraints: list[cs.Constraint] = []
 
   match op:
     case mgpu.AsyncLoadOp():
@@ -2163,18 +2166,16 @@ def _vector_value_sites_and_assignments_for_async_ops(
       value_site_var = cs.Variable(value_site)
       shape = tuple(idx.type.shape)
 
-      # TODO(cperivol): Move this choice of layouts to the conjuring
-      # logic so we can backtrack in case of incompatibility with user
-      # annotations.
+      allowed_layouts = []
       if shape[0] % 16 == 0:
-        layout = cs.RegisterLayout(value=fa.TMA_INDICES_LAYOUT)
-      elif shape[0] % 4 == 0:
-        layout = cs.RegisterLayout(value=fa.TMA_INDICES_4_LAYOUT)
-      else:
+        allowed_layouts.append(cs.RegisterLayout(value=fa.TMA_INDICES_LAYOUT))
+      if shape[0] % 4 == 0:
+        allowed_layouts.append(cs.RegisterLayout(value=fa.TMA_INDICES_4_LAYOUT))
+      if not allowed_layouts:
         raise ValueError(f"Unsupported TMA index shape {shape}")
       values_sites[value_site_var] = [value_site]
-      assignments[value_site_var] = layout
-  return values_sites, assignments
+      constraints.append(cs.OneOf(value_site_var, tuple(allowed_layouts)))
+  return values_sites, constraints
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncLoadOp)
@@ -2208,7 +2209,7 @@ def _async_load_store_constraint_system(
   operand_index = 1 if isinstance(op, mgpu.AsyncLoadOp) else 0
   operand = ValueSite(op, VariableType.OPERAND, operand_index)
   var = ctx.producer_ref(operand)
-  constraints: list[cs.Divides | cs.MinorDimDivisibleBy] = [
+  constraints: list[cs.Constraint] = [
       cs.Divides(expr=var, tiling_multiple=tuple(tiling_multiple))
   ]
   if any(isinstance(idx.type, ir.VectorType) for idx in op.indices):
@@ -2227,9 +2228,10 @@ def _async_load_store_constraint_system(
     constraints.append(cs.MinorDimDivisibleBy(expr=var, divisor=divisor))
 
   value_sites_for_variable = {var: [operand]}
-  value_sites, assignments = _vector_value_sites_and_assignments_for_async_ops(op)
+  value_sites, extra_constraints = _vector_value_sites_and_constraints_for_async_ops(op)
   value_sites_for_variable.update(value_sites)
-  return cs.ConstraintSystem(assignments, constraints), value_sites_for_variable
+  constraints.extend(extra_constraints)
+  return cs.ConstraintSystem(constraints=constraints), value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(mgpu.AsyncPrefetchOp)
@@ -2238,8 +2240,8 @@ def _async_prefetch_constraint_system(
     op: mgpu.AsyncPrefetchOp,
 ) -> ConstraintSystemDerivationRuleResult:
   del ctx
-  value_sites, assignments = _vector_value_sites_and_assignments_for_async_ops(op)
-  return cs.ConstraintSystem(assignments), value_sites
+  value_sites, constraints = _vector_value_sites_and_constraints_for_async_ops(op)
+  return cs.ConstraintSystem(constraints=constraints), value_sites
 
 
 @_add_constraint_system_derivation_rule(mgpu.WarpMapOp)

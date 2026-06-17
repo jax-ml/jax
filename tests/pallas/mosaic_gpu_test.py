@@ -1558,6 +1558,75 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel(x, idx), x[idx, 64:])
 
   @parameterized.parameters(
+      (1024, plgpu.Layout.TMA_INDICES, 32, 0, 256),
+      (2048, plgpu.Layout.TMA_INDICES_4, 16, 512, 256),
+      (4096, plgpu.Layout.TMA_INDICES_4, 12, 1024, 256),
+      (8192, plgpu.Layout.TMA_INDICES_4, 4, 2048, 256),
+  )
+  def test_copy_gather_scatter_cooperative(self, dim_size, idxs_layout, num_indices, col_start, col_len):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest("Only works on a GPU with capability >= sm100")
+    dtype = jnp.int16
+    x_shape = (num_indices, dim_size)
+    smem_shape = (num_indices, col_len)
+    col_slice = pl.ds(col_start, col_len)
+    py_col_slice = slice(col_start, col_start + col_len)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(smem_shape, dtype),
+        scratch_types=(
+            plgpu.SMEM(smem_shape, dtype),
+            plgpu.Barrier(),
+        ),
+    )
+    def gather_kernel(x_ref_gmem, idx_ref, o_ref_gmem, smem_ref, barrier_ref):
+      idxs = plgpu.load(idx_ref, (), layout=idxs_layout, optimized=False)
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem.at[idxs, col_slice], smem_ref, barrier_ref
+      )
+      plgpu.barrier_wait(barrier_ref)
+      o_ref_gmem[...] = smem_ref[...]
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(x_shape, dtype),
+        scratch_types=(
+            plgpu.SMEM(smem_shape, dtype),
+            plgpu.Barrier(),
+        ),
+    )
+    def scatter_kernel(x_ref_gmem, idx_ref, o_ref_gmem, smem_ref, barrier_ref):
+      idxs = plgpu.load(idx_ref, (), layout=idxs_layout, optimized=False)
+      plgpu.copy_gmem_to_smem(x_ref_gmem.at[:, col_slice], smem_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(smem_ref, o_ref_gmem.at[idxs, col_slice])
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(math.prod(x_shape)).reshape(x_shape).astype(dtype)
+    idx = jax.random.permutation(jax.random.key(1234), num_indices).astype(jnp.uint32)
+
+    expected_instr = (
+        num_indices // 16
+        if idxs_layout == plgpu.Layout.TMA_INDICES
+        else num_indices // 4
+    )
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y_gather = gather_kernel(x, idx)
+    self.assertEqual(
+        ptx().count("cp.async.bulk.tensor.2d.shared::cta.global.tile::gather4"),
+        expected_instr,
+    )
+    np.testing.assert_array_equal(y_gather, x[idx, py_col_slice])
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y_scatter = scatter_kernel(x, idx)
+    self.assertEqual(
+        ptx().count("cp.async.bulk.tensor.2d.global.shared::cta.tile::scatter4"),
+        expected_instr,
+    )
+    np.testing.assert_array_equal(y_scatter[:, py_col_slice], x[np.argsort(idx), py_col_slice])
+
+  @parameterized.parameters(
       ((), plgpu.Layout.TMA_INDICES),
       ((), plgpu.Layout.TMA_INDICES_4),
       ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)), plgpu.Layout.TMA_INDICES),
