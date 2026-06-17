@@ -35,7 +35,6 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
 from jax._src import hijax
-from jax._src import linear_util as lu
 from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
@@ -530,6 +529,9 @@ class _IndexMapFunc:
       return NotImplemented
     return self.index_map == other.index_map
 
+  def __hash__(self):
+    return hash(self.index_map)
+
   def __call__(self, *args, **kwargs):
     out_indices = self.index_map(*args, **kwargs)
     if isinstance(out_indices, list):
@@ -648,15 +650,12 @@ class BlockSpec:
         fake_index_map_args,
         fake_index_map_kwargs,
     )
-    flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
-        lu.wrap_init(index_map_func, debug_info=debug_info), index_map_tree
-    )
     with tracing_grid_env(grid, vmapped_dims):
-      jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(
-          flat_index_map_fun, index_map_avals
-      )
-    index_map_out_tree = index_map_out_tree_thunk()
-    unflat_avals = tree_util.tree_unflatten(index_map_out_tree, out_avals)
+      closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+          index_map_func,
+          tree_util.FlatTree(index_map_avals, index_map_tree, False),
+          debug_info)
+    unflat_avals = out_avals.unflatten()
 
     if len(unflat_avals) != len(block_shape):
       raise ValueError(
@@ -693,17 +692,17 @@ class BlockSpec:
             f"{ov}."
         )
 
-    if consts and not allow_captured_consts:
+    if closed_jaxpr.consts and not allow_captured_consts:
       raise ValueError(
           f"Index map function {debug_info.func_src_info} for "
-          f"{origin} must not capture constants: {consts}"
+          f"{origin} must not capture constants: {closed_jaxpr.consts}"
       )
 
     mapping = BlockMapping(
         block_shape=block_shape,
         transformed_block_aval=block_aval,  # There are no transforms by default
-        index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
-        index_map_out_tree=index_map_out_tree,
+        index_map_jaxpr=closed_jaxpr,
+        index_map_out_tree=out_avals.tree,
         array_aval=array_aval,
         origin=origin,
         pipeline_mode=self.pipeline_mode,
@@ -1539,37 +1538,35 @@ def core_map(
   interpret = (
       config.pallas_tpu_interpret_mode_context_manager.value or interpret)
 
-  def wrapped(f):
+  def wrapped(f: Callable):
     if isinstance(scratch_shapes, dict):
       fun_args = ((), scratch_shapes)
     else:
       fun_args = (scratch_shapes, {})
 
-    flat_args, in_tree = tree_util.tree_flatten(fun_args)
     debug_info = api_util.debug_info("pallas_core_map", f, *fun_args)  # pyrefly: ignore[bad-argument-type]
-    flat_fun, out_tree_thunk = api_util.flatten_fun(
-        lu.wrap_init(f, debug_info=debug_info), in_tree
-    )
-    ref_avals = tuple(t.get_ref_aval() for t in flat_args)
+    fun_args_refs = tree_util.FlatTree.flatten(fun_args).map(
+        lambda x: x.get_ref_aval())
+
     with (
         tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
         jax_core.extend_axis_env_nd(mesh.shape.items()),
         config._check_vma(False),
     ):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, ref_avals)
+      jaxpr, out_avals = pe.trace_to_jaxpr(
+          f, fun_args_refs, debug_info)
 
-    out_tree = out_tree_thunk()
-    if out_tree != tree_util.tree_structure(None):
+    if out_avals.tree != tree_util.tree_structure(None):
       raise ValueError(
           f"The kernel function in core_map {debug_info.func_src_info} should"
-          f" return None. It returns a PyTree: {out_tree}."
+          f" return None. It returns a PyTree: {out_avals.tree}."
       )
     if debug:
-      print(f"core_map jaxpr: {jaxpr}")
+      print(f"core_map jaxpr: {jaxpr.jaxpr}")
 
     out = core_map_p.bind(
-        *consts,
-        jaxpr=jaxpr,
+        *jaxpr.consts,
+        jaxpr=jaxpr.jaxpr,
         debug_info=debug_info,
         mesh=mesh,
         compiler_params=compiler_params,
@@ -1583,7 +1580,7 @@ def core_map(
         if metadata is not None
         else None,
     )
-    return tree_util.tree_unflatten(out_tree, out)
+    return tree_util.tree_unflatten(out_avals.tree, out)
 
   return wrapped
 
