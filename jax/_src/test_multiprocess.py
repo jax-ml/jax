@@ -158,8 +158,11 @@ def _main(argv, shard_main):
     return
 
   _, tpu_version = hardware_utils.num_available_tpu_chips_and_device_id()
-  if running_in_cloud_tpu_vm and tpu_version == hardware_utils.TpuVersion.v5e:
-    print("Skipping multiprocess tests on TPU v5e in Cloud.")
+  if running_in_cloud_tpu_vm and tpu_version in (
+      hardware_utils.TpuVersion.v4,
+      hardware_utils.TpuVersion.v5e,
+  ):
+    print(f"Skipping multiprocess tests on TPU {tpu_version.name} in Cloud.")
     return
   num_processes = NUM_PROCESSES.value
   if MULTIPROCESS_TEST_WORKER_ID.value >= 0:
