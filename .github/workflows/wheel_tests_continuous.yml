@@ -37,14 +37,71 @@ on:
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
+  check-trigger:
+    runs-on: ubuntu-latest
+    outputs:
+      run-build-bazel: ${{ steps.determine.outputs.run-build-bazel }}
+      run-pytest: ${{ steps.determine.outputs.run-pytest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          sparse-checkout: |
+            build
+            .github
+          persist-credentials: false
+
+      - name: Determine triggers
+        id: determine
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run-build-bazel=true" >> "$GITHUB_OUTPUT"
+            echo "run-pytest=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "run-pytest=false" >> "$GITHUB_OUTPUT"
+
+          # Define patterns that should trigger the build/bazel jobs.
+          # You can easily add new files or glob patterns here.
+          TRIGGER_PATTERNS=(
+            "build/requirements_lock_*.txt"
+            ".github/workflows/wheel_tests_continuous.yml"
+          )
+
+          git fetch --depth=1 origin "$BASE_REF"
+
+          # Diff only against the specified patterns.
+          CHANGED_FILES=$(git diff --name-only origin/"$BASE_REF" HEAD -- "${TRIGGER_PATTERNS[@]}")
+
+          RUN_BUILD_BAZEL="false"
+          if [ -n "$CHANGED_FILES" ]; then
+            echo "Triggering files modified in this PR:"
+            echo "$CHANGED_FILES"
+            RUN_BUILD_BAZEL="true"
+          else
+            echo "No triggering files modified in this PR."
+          fi
+
+          echo "run-build-bazel=$RUN_BUILD_BAZEL" >> "$GITHUB_OUTPUT"
+
   build-jax-artifact:
-    if: github.repository_owner == 'jax-ml'
+    needs: [check-trigger]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/build_artifacts.yml
     name: "Build jax artifact"
     with:
@@ -56,7 +113,8 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-jaxlib-artifact:
-    if: github.repository_owner == 'jax-ml'
+    needs: [check-trigger]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -78,7 +136,8 @@ jobs:
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-cuda-artifacts:
-    if: github.repository_owner == 'jax-ml'
+    needs: [check-trigger]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -99,8 +158,8 @@ jobs:
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-cpu:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
-    needs: [build-jax-artifact, build-jaxlib-artifact]
+    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact]
+    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -118,8 +177,8 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-pytest-cuda:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
-    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
+    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
+    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -159,7 +218,8 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-cpu-py-import:
-    if: github.repository_owner == 'jax-ml'
+    needs: [check-trigger]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -177,8 +237,8 @@ jobs:
       clone_main_xla: 0
 
   run-bazel-test-cuda:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
-    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
+    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -206,7 +266,8 @@ jobs:
       clone_main_xla: 0
 
   run-bazel-test-cuda-py-import:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [check-trigger]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -231,8 +292,8 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-tpu:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
-    needs: [build-jax-artifact, build-jaxlib-artifact]
+    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact]
+    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -256,9 +317,9 @@ jobs:
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-tpu:
-    if: ${{ !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [check-trigger, build-jaxlib-artifact]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
     uses: ./.github/workflows/bazel_test_tpu.yml
-    needs: [build-jaxlib-artifact]
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
@@ -283,7 +344,8 @@ jobs:
       clone_main_xla: 0
 
   build-rocm-artifacts:
-    if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
+    needs: [check-trigger]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
     uses: ./.github/workflows/build_rocm_artifacts.yml
     permissions:
       id-token: write
@@ -318,8 +380,8 @@ jobs:
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
-    needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
+    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
+    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
     uses: ./.github/workflows/pytest_rocm.yml
     permissions:
       id-token: write
@@ -345,8 +407,8 @@ jobs:
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
-    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
-    needs: [build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
+    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
+    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
     uses: ./.github/workflows/bazel_rocm.yml
     permissions:
       id-token: write
