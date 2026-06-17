@@ -256,8 +256,8 @@ class HostAllocationRequest:
     return jax.ShapeDtypeStruct((num_fields,), jnp.int32)
 
   @property
-  def as_jax_array(self) -> jax.Array:
-    return jnp.array(list(self), dtype=jnp.int32)
+  def as_np_array(self) -> np.ndarray:
+    return np.array(list(self), dtype=np.int32)
 
   @classmethod
   def from_array(cls, request: jax.Array) -> Self:
@@ -270,7 +270,7 @@ class HostAllocationRequest:
       raise ValueError(f"Expected integer dtype but got {request.dtype}")
 
     arg_names = [f.name for f in dataclasses.fields(cls)]
-    values = map(int, request)
+    values = map(int, np.asarray(request).tolist())
     return cls(**dict(zip(arg_names, values)))
 
 
@@ -281,7 +281,7 @@ def _make_allocation_request_array(
     device_id: jax.Array,
     thread_id: jax.Array | None = None,
     initial_ref_count: int = 1,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, np.ndarray]:
   device_id_as_int = int(device_id)
   thread_id_as_int = int(thread_id) if thread_id is not None else 0
   del device_id, thread_id
@@ -291,7 +291,7 @@ def _make_allocation_request_array(
       device_id=device_id_as_int,
       thread_id=thread_id_as_int,
       initial_ref_count=initial_ref_count,
-  ).as_jax_array
+  ).as_np_array
 
 
 def call_make_allocation_request_array(
@@ -336,7 +336,7 @@ def _allocate_buffer_for_all_threads(
     allocation_request_as_array: jax.Array,
     value: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, np.ndarray]:
   """Allocates a buffer for the given `allocation_request`.
 
   While only a single buffer is allocated, we increment the next buffer ID on
@@ -415,7 +415,7 @@ def _allocate_buffer_for_all_threads(
 
   # We expect the `for`-loop above to have executed its body at least once.
   assert key is not None
-  return token, key.as_jax_array
+  return token, key.as_np_array
 
 
 def call_allocate_buffer_for_all_threads(
@@ -447,7 +447,7 @@ def _allocate_buffer(
     allocation_request_as_array: jax.Array,
     value: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, np.ndarray]:
   """Allocates a buffer for the given `allocation_request`.
 
   Args:
@@ -500,7 +500,7 @@ def _allocate_buffer(
           source_info=source_info,
       ),
   )
-  return token, key.as_jax_array
+  return token, key.as_np_array
 
 
 def call_allocate_buffer(
@@ -654,7 +654,7 @@ def _get(
     increment_clock: bool = True,
     source_info=None,
     input_name=None,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, np.ndarray]:
   """Performs a read from the buffer for `allocation_key_as_array` from the given device and thread."""
   device_id_as_int = int(device_id)
   grid_point_coords_as_tuple = (
@@ -745,7 +745,7 @@ def _get(
         read_range,
         source_info=source_info,
     )
-  return token, jnp.array(ret)
+  return token, ret
 
 
 def call_get(
@@ -785,13 +785,13 @@ def _swap(
     thread_id: jax.Array,
     allocation_key_as_array: jax.Array,
     transforms,
-    val: jax.Array,
+    val: np.ndarray,
     mask: jax.Array | None,
     *,
     clock=None,
     increment_clock: bool = True,
     source_info=None,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, np.ndarray]:
   """Performs a swap into the buffer for `allocation_key` from the given device and thread."""
   device_id_as_int = int(device_id)
   grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
@@ -853,7 +853,7 @@ def _swap(
         read_write_range,
         source_info=source_info,
     )
-  return token, jnp.array(ret)
+  return token, ret
 
 
 def call_swap(
@@ -923,7 +923,7 @@ def _allocate_barriers(
     num_barriers: jax.Array,
     ref_count: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, np.ndarray]:
   device_id_as_int = int(device_id)
   grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
   thread_id_as_int = int(thread_id)
@@ -971,10 +971,10 @@ def _allocate_barriers(
             source_info=source_info,
         ),
     )
-    keys.append(key.as_jax_array)
+    keys.append(key.as_np_array)
 
   assert len(keys) == num_barriers_as_int
-  return token, jnp.array(keys, dtype=np.int32)
+  return token, np.array(keys, dtype=np.int32)
 
 
 def call_allocate_barriers(
@@ -1207,7 +1207,7 @@ class DeviceLocalMemoryTransfer:
   # `data` is only used to track internal state of the `MemoryTransfer`
   # object. Hence `data` must not be explicitly initialized, as checked in
   # `__post_init__` below.
-  data: jax.Array | None = None
+  data: np.ndarray | None = None
 
   clock: vc.VectorClock | None = None
 
