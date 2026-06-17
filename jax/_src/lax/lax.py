@@ -6871,6 +6871,24 @@ def _broadcast_in_dim_sharding_rule(operand, *, shape, broadcast_dimensions,
   return operand.sharding.update(
       mesh=mesh, spec=operand.sharding.spec.update(partitions=new_spec))
 
+def _broadcast_in_dim_unreduced_rule(operand, sharding):
+  if sharding is not None and sharding.mesh.are_all_axes_explicit:
+    return sharding.spec.unreduced
+  return getu(operand)
+
+def _broadcast_in_dim_reduced_rule(operand, sharding):
+  if sharding is not None and sharding.mesh.are_all_axes_explicit:
+    return sharding.spec.reduced
+  return getr(operand)
+
+def _broadcast_in_dim_ur_rule(operand, *, shape, broadcast_dimensions, sharding):
+  return (_broadcast_in_dim_unreduced_rule(operand, sharding),
+          _broadcast_in_dim_reduced_rule(operand, sharding))
+
+def _broadcast_in_dim_memory_space_rule(operand, *, shape, broadcast_dimensions,
+                                        sharding):
+  return operand.memory_space
+
 def _broadcast_in_dim_typecheck_rule(
     _, operand, shape, broadcast_dimensions, sharding):
   out_aval, effects = broadcast_in_dim_p.abstract_eval(
@@ -6963,21 +6981,6 @@ def _broadcast_in_dim_lower(ctx, x, shape, broadcast_dimensions,
                               broadcast_dimensions=broadcast_dimensions)
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
-def _broadcast_in_dim_abstract_eval(x, shape, broadcast_dimensions,
-                                    sharding):
-  shape = _broadcast_in_dim_shape_rule(  # error checking
-      x, shape=shape, broadcast_dimensions=broadcast_dimensions, sharding=None)
-  new_sharding = _broadcast_in_dim_sharding_rule(
-      x, shape=shape, broadcast_dimensions=broadcast_dimensions,
-      sharding=sharding)
-  new_vma = core.standard_vma_rule('broadcast_in_dim', x)
-  out_mat = x.mat.update(varying=new_vma)
-  out_aval = core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
-                              manual_axis_type=out_mat,
-                              memory_space=x.memory_space)
-  core.check_avals_context_mesh([out_aval], 'broadcast_in_dim')
-  return out_aval
-
 def _broadcast_in_dim_pp_rule(eqn, context, settings):
   params = dict(eqn.params)
   if not params['broadcast_dimensions']:
@@ -6986,8 +6989,12 @@ def _broadcast_in_dim_pp_rule(eqn, context, settings):
   params.pop('sharding', None)  # implied by let binder type
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
-broadcast_in_dim_p = core.Primitive('broadcast_in_dim')
-broadcast_in_dim_p.def_abstract_eval(_broadcast_in_dim_abstract_eval)
+broadcast_in_dim_p = standard_primitive(
+    _broadcast_in_dim_shape_rule, input_dtype, 'broadcast_in_dim',
+    sharding_rule=_broadcast_in_dim_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'broadcast_in_dim'),
+    ur_rule=_broadcast_in_dim_ur_rule,
+    memory_space_rule=_broadcast_in_dim_memory_space_rule)
 broadcast_in_dim_p.def_impl(partial(dispatch.apply_primitive, broadcast_in_dim_p))
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
