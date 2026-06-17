@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import copy
-import enum
 import hashlib
 import io
 import logging
@@ -63,22 +62,13 @@ def custom_hook() -> str:
   return ""
 
 
-class IgnoreCallbacks(enum.IntEnum):
-  # Do not remove any callback pointers from precompiled IR.
-  NO = enum.auto()
-  # Remove all callback pointers from precompiled IR.
-  ALL = enum.auto()
-  # Remove only custom_partitioning callback pointer from precompiled IR.
-  CUSTOM_PARTITIONING = enum.auto()
-
-
 def get(
     module: ir.Module,
     devices: np.ndarray,
     compile_options: xla_client.CompileOptions,
     backend: xla_client.Client,
     compression_algorithm: str = "zstandard",
-    ignore_callbacks: IgnoreCallbacks = IgnoreCallbacks.NO,
+    ignore_custom_partitioning: bool = False,
 ) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
@@ -92,8 +82,8 @@ def get(
     backend: description of the platform (e.g., TPU version)
     compression_algorithm: a string representing the compression algorithm used
       for the executable before persisting in the cache
-    ignore_callbacks: whether to remove the all callback pointer from the
-      computation.
+    ignore_custom_partitioning: whether to remove custom_partitioning callback
+      pointers from the computation.
 
   Typical return value example:
    'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
@@ -102,7 +92,7 @@ def get(
       (
           "computation",
           lambda hash_obj: _hash_computation(
-              hash_obj, module, ignore_callbacks
+              hash_obj, module, ignore_custom_partitioning
           ),
       ),
       (
@@ -167,8 +157,8 @@ def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
     )
 
 
-def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
-  """Removes callback pointers from precompiled IR.
+def _remove_custom_partitioning_callbacks(m: ir.Module):
+  """Removes custom_partitioning callback pointers from precompiled IR.
 
   Python function pointers are not deterministic across executions.
   """
@@ -177,35 +167,29 @@ def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
       return ir.WalkResult.ADVANCE
     call_target_name = op.attributes["call_target_name"]
     assert isinstance(call_target_name, ir.StringAttr)
-    if op.name == "stablehlo.custom_call" and (
-        (
-            ignore_callbacks == IgnoreCallbacks.ALL
-            and call_target_name.value.endswith("callback")
-        )
-        or call_target_name.value == "CustomSPMDPartitioning"
+    if (
+        op.name == "stablehlo.custom_call"
+        and call_target_name.value == "CustomSPMDPartitioning"
     ):
       op.attributes["backend_config"] = ir.StringAttr.get("REMOVED")
     return ir.WalkResult.ADVANCE
-
-  if ignore_callbacks == IgnoreCallbacks.NO:
-    return m
 
   m.operation.walk(_update_bc_attribute)
   return m
 
 
-def _serialize_ir(m: ir.Module, ignore_callbacks: IgnoreCallbacks) -> bytes:
+def _serialize_ir(m: ir.Module, ignore_custom_partitioning: bool) -> bytes:
   output = io.BytesIO()
-  if ignore_callbacks != IgnoreCallbacks.NO:
-    m = _remove_callbacks(
-        type_cast(ir.Module, m.operation.clone()), ignore_callbacks
+  if ignore_custom_partitioning:
+    m = _remove_custom_partitioning_callbacks(
+        type_cast(ir.Module, m.operation.clone())
     )
   m.operation.write_bytecode(file=output)
   return output.getvalue()
 
 
 def _canonicalize_ir(
-    m_original: ir.Module, ignore_callbacks: IgnoreCallbacks
+    m_original: ir.Module, ignore_custom_partitioning: bool
 ) -> bytes:
   with m_original.context:
     m = type_cast(ir.Module, m_original.operation.clone())
@@ -213,14 +197,14 @@ def _canonicalize_ir(
         "builtin.module(strip-debuginfo)"
     )
     passes.run(m.operation)
-    return _serialize_ir(m, ignore_callbacks)
+    return _serialize_ir(m, ignore_custom_partitioning)
 
 
-def _hash_computation(hash_obj, module, ignore_callbacks: IgnoreCallbacks):
+def _hash_computation(hash_obj, module, ignore_custom_partitioning: bool):
   if config.compilation_cache_include_metadata_in_key.value:
-    canonical_ir = _serialize_ir(module, ignore_callbacks)
+    canonical_ir = _serialize_ir(module, ignore_custom_partitioning)
   else:
-    canonical_ir = _canonicalize_ir(module, ignore_callbacks)
+    canonical_ir = _canonicalize_ir(module, ignore_custom_partitioning)
   hash_obj.update(canonical_ir)
 
 

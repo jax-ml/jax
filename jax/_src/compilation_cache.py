@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import logging
 import threading
+from typing import Any
 import warnings
 import zlib
 
@@ -322,7 +324,8 @@ def is_executable_in_cache(backend, cache_key: str) -> bool:
 
 
 def get_executable_and_time(
-    cache_key: str, compile_options, backend, executable_devices
+    cache_key: str, compile_options, backend, executable_devices,
+    host_callbacks: Sequence[Any] = (),
 ) -> tuple[xla_client.LoadedExecutable | None, int | None]:
   """Returns the cached executable and its compilation time if present, or None
   otherwise.
@@ -339,7 +342,8 @@ def get_executable_and_time(
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
   xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, executable_devices, compile_options)
+      serialized_executable, executable_devices, compile_options,
+      host_callbacks)
   return xla_executable_deserialized, compile_time
 
 
@@ -404,7 +408,7 @@ def get_cache_key(
     devices: np.ndarray,
     compile_options,
     backend,
-    ignore_callbacks: cache_key.IgnoreCallbacks = cache_key.IgnoreCallbacks.NO,
+    ignore_custom_partitioning: bool = False,
 ) -> str:
   return cache_key.get(
       module,
@@ -412,7 +416,7 @@ def get_cache_key(
       compile_options,
       backend,
       "zstandard" if zstandard is not None else "zlib",
-      ignore_callbacks,
+      ignore_custom_partitioning,
   )
 
 
