@@ -379,6 +379,24 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       lsp_special.beta(x=1, y=1)
 
+  def testExpnExpiInfLimits(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38519
+    # The integrand e^{-t}/t^n vanishes as t->inf, so E_n(+inf) = 0.
+    # expi(+inf) diverges to +inf. expi(-inf) = -exp1(inf) = -0.
+    inf = float('inf')
+    for dtype in [jnp.float32, jnp.float64]:
+      for n in [1, 2, 3]:
+        val = lsp_special.expn(n, dtype(inf))
+        self.assertEqual(float(val), 0.0,
+                         f"expn({n}, inf) dtype={dtype}: expected 0, got {val}")
+      self.assertEqual(float(lsp_special.exp1(dtype(inf))), 0.0,
+                       f"exp1(inf) dtype={dtype}: expected 0")
+      self.assertTrue(jnp.isposinf(lsp_special.expi(dtype(inf))),
+                      f"expi(+inf) dtype={dtype}: expected +inf")
+      # expi(-inf) = -exp1(+inf) = -0; the sign bit may differ by dtype
+      self.assertEqual(abs(float(lsp_special.expi(dtype(-inf)))), 0.0,
+                       f"expi(-inf) dtype={dtype}: expected 0")
+
   def testExpnTracerLeaks(self):
     # Regression test for https://github.com/jax-ml/jax/issues/26972
     with jax.checking_leaks():
