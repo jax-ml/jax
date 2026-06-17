@@ -4442,12 +4442,14 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       )
   )
   def test_reshape_unfold_last_dim_to_three_minor_dims(self, q, m, n, k, dtype):
-    if (
-        (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4))
-        or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
-        or (k % 128 != 0 and not jtu.is_device_tpu_at_least(5))
-    ):
+    if k % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
+
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
+          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
+      ):
+        self.skipTest('Requires newer libtpu.')
 
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(y_ref.shape)
@@ -4483,12 +4485,14 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_unfold_last_dim_to_four_minor_dims(
       self, p, q, m, n, k, dtype
   ):
-    if (
-        (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4))
-        or (dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5))
-        or (k % 128 != 0 and not jtu.is_device_tpu_at_least(5))
-    ):
+    if k % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
+
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
+          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
+      ):
+        self.skipTest('Requires newer libtpu.')
 
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(y_ref.shape)
@@ -4525,11 +4529,12 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_last_dim_to_two_minor_dims_change_major_dim(
       self, input_output_major_dims, output_minor_dims, dtype
   ):
+    if not jtu.is_device_tpu_at_least(5):
+      if output_minor_dims[-1] % 128 != 0:
+        self.skipTest('Operation not supported on this TPU version.')
+      if len(output_minor_dims) > 2 and not jtu.is_libtpu_at_least('0.0.43'):
+        self.skipTest('Requires newer libtpu.')
 
-    if (
-        output_minor_dims[-1] % 128 != 0 or len(output_minor_dims) > 2
-    ) and not jtu.is_device_tpu_at_least(5):
-      self.skipTest('Operation not supported on this TPU version.')
     input_major_dims, output_major_dims = input_output_major_dims
     input_minor_dims = (math.prod(output_minor_dims),)
     input_shape = input_major_dims + input_minor_dims
@@ -4913,10 +4918,12 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_unfold_leading_and_minor_dims_R2_to_R4(
       self, q, m, n, k, dtype
   ):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
+          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
+      ):
+        self.skipTest('Requires newer libtpu.')
+
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(q, m, n, k)
 
@@ -4942,10 +4949,11 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_fold_leading_dims_and_unfold_minor_dim(
       self, q, m, n, k, dtype
   ):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
+          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
+      ):
+        self.skipTest('Requires newer libtpu.')
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(q * m, n, k)
 
@@ -5004,10 +5012,11 @@ class MiscellaneousTest(ptu.PallasTPUTest):
 
   @parameterized.parameters([jnp.int8, jnp.bfloat16, jnp.float32])
   def test_reshape_shift_factor_from_minor_to_major(self, dtype):
-    if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-        dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-    ):
-      self.skipTest('Operation not supported on this TPU version.')
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
+          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
+      ):
+        self.skipTest('Requires newer libtpu.')
     q0, m0, n0 = 1, 3, 7680
     q1, m1, n1 = 3, 10, 768
     def kernel(x_ref, y_ref):
