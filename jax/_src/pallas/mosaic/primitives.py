@@ -1052,13 +1052,18 @@ def with_memory_space_constraint(
   """
   if memory_space is pl_core.MemorySpace.ANY:
     return x
-  if memory_space not in {
+  if not isinstance(
+      memory_space, pl_core.CoreMemorySpace
+  ) and memory_space not in {
       tpu_core.MemorySpace.HBM,
       tpu_core.MemorySpace.VMEM,
       tpu_core.MemorySpace.SMEM,
+      tpu_core.MemorySpace.SEMAPHORE,
+      jax_core.MemorySpace.Device,
   }:
     raise NotImplementedError(
-        "with_memory_space_constraint only supports HBM, VMEM and SMEM."
+        "with_memory_space_constraint only supports HBM, VMEM, SMEM,"
+        " semaphores, and Device."
     )
   return pl_core.with_memory_space_constraint_p.bind(
       x, memory_space=memory_space)

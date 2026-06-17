@@ -285,10 +285,6 @@ class CustomCallBackendConfig:
       for i, memory_space in enumerate(self.input_memory_spaces):
         if memory_space is None:
           continue
-        if memory_space is MemorySpace.SMEM:
-          # TODO(sharadmv): Add support for SMEM (though atm, XLA will not
-          # page out SMEM arrays).
-          continue
         if memory_space not in (
             MemorySpace.HBM,
             MemorySpace.VMEM,
