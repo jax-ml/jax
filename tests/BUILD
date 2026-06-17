@@ -2195,7 +2195,17 @@ jax_multiplatform_test(
     name = "fused_attention_stablehlo_test",
     srcs = ["fused_attention_stablehlo_test.py"],
     enable_backends = ["gpu"],
-    shard_count = 8,
+    shard_count = 2,
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "fused_attention_stablehlo_multigpu_test",
+    srcs = ["fused_attention_stablehlo_multigpu_test.py"],
+    enable_backends = ["gpu"],
     tags = ["multiaccelerator"],
     deps = py_deps([
         "absl/testing",
