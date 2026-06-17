@@ -1235,18 +1235,27 @@ debug_infs = bool_state(
 log_compiles = bool_state(
     name='jax_log_compiles',
     default=False,
-    help=('Log a message each time `jit` or `pmap` compiles an XLA '
-          'computation. Logging is performed with `logging`. When this '
-          'option is set, the log level is WARNING; otherwise the level is '
-          'DEBUG.'))
+    help=(
+        'Log a message each time `jit` or `pmap` compiles an XLA computation.'
+        ' Logging is performed with `logging`. When this option is set, the log'
+        ' level is WARNING; otherwise the level is DEBUG.\n\nSee'
+        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' for more details.'
+    ),
+)
 
 explain_cache_misses = bool_state(
     name='jax_explain_cache_misses',
     default=False,
-    help=('Each time there is a miss on one of the main caches (e.g. the '
-          'tracing cache), log an explanation. Logging is performed with '
-          '`logging`. When this option is set, the log level is WARNING; '
-          'otherwise the level is DEBUG.'))
+    help=(
+        'Each time there is a miss on one of the main caches (e.g. the tracing'
+        ' cache), log an explanation. Logging is performed with `logging`. When'
+        ' this option is set, the log level is WARNING; otherwise the level is'
+        ' DEBUG.\n\nSee'
+        ' https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html'
+        ' for more details.'
+    ),
+)
 
 log_checkpoint_residuals = bool_state(
     name='jax_log_checkpoint_residuals',
@@ -2143,7 +2152,6 @@ optional_enum_state(
     update_global_hook=lambda logging_level: \
       logging_config.update_logging_level_global(logging_level=logging_level)
 )
-
 
 
 use_shardy_partitioner = bool_state(

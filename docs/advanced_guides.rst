@@ -63,6 +63,7 @@ operations.
    benchmarking
    profiling
    device_memory_profiling
+   debugging/slow_tracing_compilation
 
 .. toctree::
    :caption: Non-functional programming

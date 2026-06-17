@@ -10,6 +10,7 @@ Table of contents:
 * [Functional error checks with jax.experimental.checkify](checkify_guide)
 * [Throwing Python errors with JAX’s debug flags](./flags)
 * [Attaching XLA metadata with `set_xla_metadata`](xla_metadata)
+* [Debugging slow JAX tracing and XLA compilation](slow_tracing_compilation)
 
 ## Interactive inspection with `jax.debug`
 
@@ -142,4 +143,5 @@ flags
 print_breakpoint
 checkify_guide
 xla_metadata
+slow_tracing_compilation
 ```
