@@ -176,7 +176,9 @@ pytype_strict_library(
     visibility = ["//jax:internal"],
     deps = if_building_jaxlib(
         if_building = [
+            ":cloud_tpu_init",
             ":config",
+            ":hardware_utils",
             ":test_util",
             ":xla_bridge",
             "//jax/_src/lib",

@@ -34,6 +34,8 @@ from jax._src import test_util as jtu
 from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax._src.lib import _jax
+from jax._src import hardware_utils
+from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 try:
   import portpicker
@@ -153,6 +155,11 @@ def _main(argv, shard_main):
   # TODO(emilyaf): Enable multiprocess tests on Windows.
   if sys.platform == "win32":
     print("Multiprocess tests are not supported on Windows.")
+    return
+
+  _, tpu_version = hardware_utils.num_available_tpu_chips_and_device_id()
+  if running_in_cloud_tpu_vm and tpu_version == hardware_utils.TpuVersion.v5e:
+    print("Skipping multiprocess tests on TPU v5e in Cloud.")
     return
   num_processes = NUM_PROCESSES.value
   if MULTIPROCESS_TEST_WORKER_ID.value >= 0:
