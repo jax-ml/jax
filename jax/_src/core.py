@@ -700,7 +700,7 @@ class Primitive:
     # is called frequently and it's slightly faster to avoid using a context
     # manager object.
     prev_trace = trace_ctx.trace
-    trace_ctx.set_trace(eval_trace)
+    trace_ctx.set_trace(None)
     try:
       return self.bind_with_trace(prev_trace, args, avals, params)
     finally:
@@ -1283,31 +1283,33 @@ class EvalTrace(Trace):
     return self.process_primitive(stage_p, [val], {})
 
   def process_primitive(self, primitive, args, params, /):
-    if config.debug_key_reuse.value:
-      # Import here to avoid circular imports
-      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pyrefly: ignore[missing-import]
-      return call_impl_with_key_reuse_checks(primitive, primitive.impl, *args, **params)
-    else:
-      # TODO(dougalm): delete. this shouldn't be necessary
-      args = map(full_lower, args)
-      check_eval_args(args)
-      return primitive.impl(*args, **params)
+    with set_current_trace(self):
+      if config.debug_key_reuse.value:
+        from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pyrefly: ignore[missing-import]
+        return call_impl_with_key_reuse_checks(primitive, primitive.impl, *args, **params)
+      else:
+        # TODO(dougalm): delete. this shouldn't be necessary
+        args = map(full_lower, args)
+        check_eval_args(args)
+        return primitive.impl(*args, **params)
 
   def process_call(self, primitive, f, tracers, params, /):
-    if config.debug_key_reuse.value:
-      # Import here to avoid circular imports
-      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pyrefly: ignore[missing-import]
-      return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
-    else:
-      return primitive.impl(f, *tracers, **params)
+    with set_current_trace(self):
+      if config.debug_key_reuse.value:
+        from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pyrefly: ignore[missing-import]
+        return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
+      else:
+        return primitive.impl(f, *tracers, **params)
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, **_):
     del primitive, jvp, _  # Unused.
-    return fun.call_wrapped(*tracers)
+    with set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, /, **_):
     del primitive, fwd, bwd, _  # Unused.
-    return fun.call_wrapped(*tracers)
+    with set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
   def cur_qdd(self, x):
     return x.cur_qdd()
@@ -1432,8 +1434,10 @@ class TracingContext:
     return axis_env_state.value
 
   def is_top_level(self) -> bool:
-    return (self.trace is eval_trace and
-            self.axis_env is top_axis_env)
+    return self.trace is eval_trace and self.axis_env is top_axis_env
+
+  def is_empty(self) -> bool:
+    return self.trace is None
 
   def set_trace(self, trace):
     trace_state_strong_ref.set_local(trace)
@@ -1451,7 +1455,7 @@ class TakeCurrentTraceContextManager:
 
   def __enter__(self):
     self.prev = trace_ctx.trace
-    trace_ctx.set_trace(eval_trace)
+    trace_ctx.set_trace(None)
     return self.prev
 
   def __exit__(self, exc_type, exc_value, traceback):
@@ -1559,7 +1563,7 @@ def get_axis_env():
 
 
 def trace_state_clean() -> bool:
-  return trace_ctx.is_top_level()
+  return trace_ctx.is_empty() or trace_ctx.is_top_level()
 
 def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
@@ -2040,12 +2044,11 @@ class AvalMutableQDD:
   mutable_qdd: MutableQuasiDynamicData
 
 def cur_qdd(x):
-  prev_trace = trace_ctx.trace
-  trace_ctx.set_trace(eval_trace)
-  try:
-    return prev_trace.cur_qdd(x)
-  finally:
-    trace_ctx.set_trace(prev_trace)
+  with take_current_trace() as prev_trace:
+    if prev_trace is None:
+      return x.cur_qdd()
+    else:
+      return prev_trace.cur_qdd(x)
 
 def cur_aval_qdd(x):
   aval = typeof(x)
@@ -3295,7 +3298,8 @@ class CallPrimitive(Primitive):
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
-  return f.call_wrapped(*args)
+  with set_current_trace(eval_trace):
+    return f.call_wrapped(*args)
 
 call_p: CallPrimitive = CallPrimitive('call')
 call = call_p.bind
