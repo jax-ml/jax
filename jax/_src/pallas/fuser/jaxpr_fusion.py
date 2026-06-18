@@ -65,15 +65,18 @@ def fuse(
             f"of type {ref_arg}.  Fused functions cannot take Refs as "
             "arguments -- they must close over such Refs, instead.")
 
-      flat_fun, out_tree_thunk = api_util.flatten_fun(
-          lu.wrap_init(f, debug_info=debug_info), in_tree
+      args_avals = jax.tree.map(jax_core.typeof, args)
+      kwargs_avals = jax.tree.map(jax_core.typeof, kwargs)
+      in_avals_ft = tree_util.FlatTree.flatten((args_avals, kwargs_avals))
+      closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+          f, in_avals_ft, debug_info
       )
-      flat_avals = [jax_core.typeof(x) for x in flat_args]
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+      jaxpr = closed_jaxpr.jaxpr
+      consts = closed_jaxpr.consts
       if debug:
         print("Jaxpr before fusion:")
         print(jaxpr)
-      out_tree = out_tree_thunk()
+      out_tree = out_avals_ft.tree
       out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args,
                             strict_mode=strict_mode)
       return tree_util.tree_unflatten(out_tree, out_flat)
