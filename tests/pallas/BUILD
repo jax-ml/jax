@@ -507,40 +507,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "gpu_pallas_distributed_nvshmem_test",
-    srcs = ["gpu_pallas_distributed_test.py"],
-    args = [
-        "--num_processes=2",
-        "--gpus_per_process=1",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        # Need to use 2 physical GPUs since test checks P2P memory access unavailable with MIG
-        # partitioning.
-        "gpu_h100x2_full",
-        "gpu_b200x2",
-    ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true --xla_gpu_enable_allocator_spatial_partitioning=false",
-        "MULTIPROCESS_TEST": "1",
-    },
-    tags = [
-        "mosaic_gpu_test",
-        "multiaccelerator",
-    ],
-    deps = [
-        "//jax/_src:test_multiprocess",
-        "//jax/experimental:pallas_experimental_gpu_ops",
-        "//jax/experimental:pallas_mosaic_gpu",
-        "//jax/extend",
-    ] + py_deps([
-        "portpicker",
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
     name = "gpu_pallas_distributed_test",
     srcs = ["gpu_pallas_distributed_test.py"],
     enable_backends = [],
@@ -1220,36 +1186,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "mgpu_collective_matmul_nvshmem_test",
-    srcs = ["mgpu_collective_matmul_test.py"],
-    args = [
-        "--num_processes=2",
-        "--gpus_per_process=1",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        "gpu_h100x2_full",
-        "gpu_b200x2",
-    ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-        "FAIL_ON_NVSHMEM_UNAVAILABLE": "",
-    },
-    shard_count = 8,
-    tags = [
-        "manual",
-        "multiaccelerator",
-        "notap",
-    ],
-    deps = [
-        "//jax/_src:test_multiprocess",
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_experimental_gpu_ops",
-        "//jax/experimental:pallas_mosaic_gpu",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
-)
-
-jax_multiplatform_test(
     name = "mgpu_collective_matmul_test",
     srcs = ["mgpu_collective_matmul_test.py"],
     enable_backends = [],
@@ -1290,33 +1226,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "mgpu_collective_matmul_nvshmem_run",
-    srcs = ["//jax/experimental/pallas/ops/gpu:collective_matmul_mgpu.py"],
-    args = [
-        "--num_processes=2",
-        "--gpus_per_process=1",
-    ],
-    enable_backends = [],
-    enable_configs = [
-        "gpu_h100x2_full",
-    ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-    },
-    tags = [
-        "manual",
-        "multiaccelerator",
-        "notap",
-    ],
-    deps = [
-        "//jax/_src:test_multiprocess",
-        "//jax/experimental:pallas",
-        "//jax/experimental:pallas_experimental_gpu_ops",
-        "//jax/experimental:pallas_mosaic_gpu",
-    ],
-)
-
-jax_multiplatform_test(
     name = "mgpu_collective_matmul_run",
     srcs = ["//jax/experimental/pallas/ops/gpu:collective_matmul_mgpu.py"],
     enable_backends = [],
@@ -1346,9 +1255,6 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100x2_full",
     ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-    },
     tags = [
         "manual",
         "multiaccelerator",
@@ -1373,9 +1279,6 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100x2_full",
     ],
-    env = {
-        "XLA_FLAGS": "--xla_gpu_experimental_enable_nvshmem=true",
-    },
     tags = [
         "manual",
         "mosaic_gpu_test",
