@@ -33,7 +33,10 @@ py_library_providing_imports_info(
     ],
     lib_rule = pytype_strict_library,
     type_checking = "pyrefly",
-    visibility = ["//jax:internal"] + jax_visibility("lib"),
+    visibility = [
+        "//jax:internal",
+        "//quality/brain/universal/urb_model/jax:__pkg__",
+    ] + jax_visibility("lib"),
     deps = [
         "//jax:version",
         "//jax/_src:lazy_loader",
