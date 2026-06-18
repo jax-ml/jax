@@ -309,15 +309,12 @@ def _initialize_barrier_op_lowering_rule(
   return []
 
 
-# TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.2
-if hasattr(mgpu, "AssumeMultipleOp"):
-
-  @_register_lowering(mgpu.AssumeMultipleOp)  # pyrefly: ignore[missing-attribute]
-  def _assume_multiple_op_lowering_rule(
-      _: LoweringContext,
-      op: mgpu.AssumeMultipleOp,  # pyrefly: ignore[missing-attribute]
-  ) -> Sequence[ir.Value]:
-    return [op.value]
+@_register_lowering(mgpu.AssumeMultipleOp)
+def _assume_multiple_op_lowering_rule(
+    _: LoweringContext,
+    op: mgpu.AssumeMultipleOp,
+) -> Sequence[ir.Value]:
+  return [op.value]
 
 
 @_register_lowering(mgpu.OptimizationBarrierOp)
@@ -1654,31 +1651,29 @@ def _mgpu_wgmma_op_lowering_rule(
   ]
 
 
-# TODO(slebedev): Remove once minimum supported jaxlib is 0.10.2
-if hasattr(mgpu, "MMAOp"):
-  @_register_lowering(mgpu.MMAOp)
-  def _mgpu_mma_op_lowering_rule(
-      ctx: LoweringContext, mma_op: mgpu.MMAOp
-  ) -> Sequence[ir.Value]:
-    del ctx
-    acc_layout, a_layout, b_layout = inference_utils.in_layouts(mma_op)
-    [out_layout] = inference_utils.out_layouts(mma_op)
+@_register_lowering(mgpu.MMAOp)
+def _mgpu_mma_op_lowering_rule(
+    ctx: LoweringContext, mma_op: mgpu.MMAOp
+) -> Sequence[ir.Value]:
+  del ctx
+  acc_layout, a_layout, b_layout = inference_utils.in_layouts(mma_op)
+  [out_layout] = inference_utils.out_layouts(mma_op)
 
-    a_element_type = mma_op.a.type.element_type
-    mma_layouts = MMALayouts(a_element_type)
-    expected_acc_layout = layouts_lib.to_layout_attr(mma_layouts.acc)
-    assert acc_layout == expected_acc_layout
-    assert out_layout == expected_acc_layout
-    is_signed = True if isinstance(a_element_type, ir.IntegerType) else None
+  a_element_type = mma_op.a.type.element_type
+  mma_layouts = MMALayouts(a_element_type)
+  expected_acc_layout = layouts_lib.to_layout_attr(mma_layouts.acc)
+  assert acc_layout == expected_acc_layout
+  assert out_layout == expected_acc_layout
+  is_signed = True if isinstance(a_element_type, ir.IntegerType) else None
 
-    acc = _fragmented_array_from_ir(
-        mma_op.accumulator, acc_layout, is_signed=is_signed
-    )
-    a = _fragmented_array_from_ir(mma_op.a, a_layout, is_signed=is_signed)
-    b = _fragmented_array_from_ir(mma_op.b, b_layout, is_signed=is_signed)
+  acc = _fragmented_array_from_ir(
+      mma_op.accumulator, acc_layout, is_signed=is_signed
+  )
+  a = _fragmented_array_from_ir(mma_op.a, a_layout, is_signed=is_signed)
+  b = _fragmented_array_from_ir(mma_op.b, b_layout, is_signed=is_signed)
 
-    new_acc = do_mma(acc, a, b)
-    return [fragmented_array_to_ir(new_acc, mma_op.result.type)]
+  new_acc = do_mma(acc, a, b)
+  return [fragmented_array_to_ir(new_acc, mma_op.result.type)]
 
 
 @_register_lowering(mgpu.ArriveOp, support_warp_semantics=True)

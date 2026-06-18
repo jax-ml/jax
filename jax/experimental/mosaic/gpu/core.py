@@ -61,7 +61,6 @@ from . import utils
 
 # Point Mosaic GPU tools (like nvdisasm) to the CUDA path
 cuda_root = lib.cuda_path or "/usr/local/cuda"
-# TODO(bchetioui): remove once minimum jaxlib version is 0.10.2
 os.environ["MOSAIC_GPU_CUDA_ROOT"] = cuda_root
 PYTHON_RUNFILES = os.environ.get("PYTHON_RUNFILES")
 BAZEL_TEST = os.environ.get("BAZEL_TEST", "0")

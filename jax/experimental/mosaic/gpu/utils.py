@@ -2085,11 +2085,10 @@ def is_known_divisible(value: ir.Value, divisor: int, max_depth=10) -> bool:
         operand = op.operands[arg_index]
         return is_known_divisible(operand, divisor, new_depth)
       return False
-    # TODO(bchetioui): Clean up match once minimum supported jaxlib is 0.10.2
-    case op2 if hasattr(dialect, "AssumeMultipleOp") and isinstance(op2, dialect.AssumeMultipleOp):  # pyrefly: ignore[missing-attribute]
+    case dialect.AssumeMultipleOp() as op2:
       return ir.IntegerAttr(
-          op2.multiple  # pyrefly: ignore[missing-attribute]
-      ).value % divisor == 0 or is_known_divisible(op2.value, divisor, new_depth)  # pyrefly: ignore[missing-attribute]
+          op2.multiple
+      ).value % divisor == 0 or is_known_divisible(op2.value, divisor, new_depth)
     case arith.IndexCastOp():
       return is_known_divisible(def_op.in_, divisor, max_depth - 1)
     case arith.ConstantOp():

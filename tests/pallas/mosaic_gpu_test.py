@@ -340,9 +340,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertEqual(ref.memory_space, gpu_core.MemorySpace.GMEM)
 
   def test_multiple_of(self):
-    # TODO(bchetioui): Remove once minimum supported jaxlib is 0.10.2
-    if not hasattr(mgpu.dialect, "AssumeMultipleOp"):
-      self.skip_if_wg_semantics()
     shape = (128, 64)
     out_shape = (64, 64)
 

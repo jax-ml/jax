@@ -99,10 +99,7 @@ import jaxlib.lapack as lapack  # noqa: F401
 import jaxlib.utils as utils  # noqa: F401
 import jaxlib._jax as _jax  # noqa: F401
 
-try:
-  import jaxlib._xla as _xla  # noqa: F401
-except ImportError:
-  _xla = None
+import jaxlib._xla as _xla  # noqa: F401
 
 
 import jaxlib.mlir._mlir_libs._jax_mlir_ext as jax_mlir_ext  # noqa: F401

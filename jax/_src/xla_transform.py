@@ -60,10 +60,6 @@ def register_hlo_module_transformation(
       ``"tpu"``). If ``None``, the pass is registered for all known backends by
       default. Can be a single platform string or a sequence of strings.
   """
-  if _xla is None:
-    raise NotImplementedError(
-        "register_hlo_module_transformation requires jaxlib version >= 0.10.2"
-    )
   if not isinstance(stage, PipelineStage):
     raise TypeError(f"stage must be a PipelineStage enum, got {type(stage)}")
   stage_int = stage.value
@@ -114,10 +110,6 @@ def clear_hlo_module_transformation(
   Returns:
     True if the pass was found and cleared, False otherwise.
   """
-  if _xla is None:
-    raise NotImplementedError(
-        "clear_hlo_module_transformation requires jaxlib version >= 0.10.2"
-    )
   if not isinstance(stage, PipelineStage):
     raise TypeError(f"stage must be a PipelineStage enum, got {type(stage)}")
   stage_int = stage.value
