@@ -20,7 +20,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import contextlib
 import functools
 import itertools as it
-from typing import Any, Generator, TypeVar, cast
+from typing import Any, TypeVar, cast
+from collections.abc import Generator
 
 from jax._src import api
 from jax._src import api_util
@@ -62,7 +63,7 @@ def get_super_mesh_shape(
 def mpmd_map_tracing_context(
   mesh: pallas_core.Mesh,
   other_meshes: tuple[pallas_core.Mesh, ...],
-) -> Generator[None, None, None]:
+) -> Generator[None]:
   super_mesh_shape = get_super_mesh_shape(other_meshes)
   with (
       mesh.tracing_context(),

@@ -375,7 +375,7 @@ class GridAxis:
 GridEnv = Sequence[GridAxis]
 
 @contextlib.contextmanager
-def grid_env(env: GridEnv) -> Generator[None, None, None]:
+def grid_env(env: GridEnv) -> Generator[None]:
   _pallas_tracing_env.grid_env_stack.append(env)
   try:
     yield
@@ -1684,7 +1684,7 @@ class Mesh(Protocol):
     """Return the memory spaces supported by the mesh."""
 
   @contextlib.contextmanager
-  def tracing_context(self) -> Generator[None, None, None]:
+  def tracing_context(self) -> Generator[None]:
     raise NotImplementedError()
     yield
 

@@ -467,7 +467,7 @@ def _enumerate_feasible_logical_axis_assignments(
     physical_mesh_shape: Sequence[int],
     assignment: np.ndarray,
     logical_axis_size: int,
-) -> Generator[np.ndarray, None, None]:
+) -> Generator[np.ndarray]:
   """Yields feasible assignments for a single logical axis.
 
   For a physical mesh of shape [x_1, ..., x_n], and the product of all previous

@@ -502,8 +502,6 @@ class ModuleContext:
       self, barrier: mgpu.Barrier | mgpu.ClusterBarrier
   ) -> Generator[
       mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef,
-      None,
-      None,
   ]:
     """Reserves a barrier.
 
@@ -520,7 +518,7 @@ class ModuleContext:
   @contextlib.contextmanager
   def reserve_semaphores(
       self, shape: tuple[int, ...], collective_axes: CollectiveAxesType
-  ) -> Generator[ir.Value, None, None]:
+  ) -> Generator[ir.Value]:
     allocated_sems = math.prod(shape)
     ref = mgpu.memref_slice(
         self.scoped_gmem_semaphore_base_ptr[collective_axes],
@@ -540,7 +538,7 @@ class ModuleContext:
       struct: jax.ShapeDtypeStruct,
       *,
       layout: tcgen05.TMEMLayout,
-  ) -> Generator[tcgen05.TMEMRef | ir.Value, None, None]:
+  ) -> Generator[tcgen05.TMEMRef | ir.Value]:
     assert self.tmem_base is not None
     if self.lowering_semantics == mgpu.LoweringSemantics.Lane:
       off = arith_dialect.addi(
@@ -574,7 +572,7 @@ class ModuleContext:
   @contextlib.contextmanager
   def scratch_view(
       self, struct: jax.ShapeDtypeStruct
-  ) -> Generator[ir.Value, None, None]:
+  ) -> Generator[ir.Value]:
     """Creates a view into the runtime scratch buffer for the given struct.
 
     This is a low-level API. Use it only if you know what you are doing.

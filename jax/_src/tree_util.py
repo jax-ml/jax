@@ -1598,7 +1598,7 @@ class FlatTree:
   @staticmethod
   def singleton(x):
     # a -> FlatTree[a]
-    _, tree = tracing_registry.flatten((0))
+    _, tree = tracing_registry.flatten(0)
     return FlatTree([x], tree, False)
 
 def unwrap_statics(pytree, statics):

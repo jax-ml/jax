@@ -323,7 +323,7 @@ set_name_stack = SetNameStackContextManager
 # the performance shouldn't matter. See blame commit message for repro.
 # reset_name_stack = lambda: SetNameStackContextManager(NameStack())
 @contextlib.contextmanager
-def reset_name_stack() -> Generator[None, None, None]:
+def reset_name_stack() -> Generator[None]:
   with set_name_stack(NameStack()):
     yield
 

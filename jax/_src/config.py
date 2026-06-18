@@ -1910,7 +1910,7 @@ jax_xla_profile_version = int_state(
 )
 
 @contextlib.contextmanager
-def explicit_device_put_scope() -> Generator[None, None, None]:
+def explicit_device_put_scope() -> Generator[None]:
   """Indicates that the current context is an explicit device_put*() call."""
   state = guard_lib.thread_local_state()
   prev = state.explicit_device_put
@@ -1921,7 +1921,7 @@ def explicit_device_put_scope() -> Generator[None, None, None]:
     state.explicit_device_put = prev
 
 @contextlib.contextmanager
-def explicit_device_get_scope() -> Generator[None, None, None]:
+def explicit_device_get_scope() -> Generator[None]:
   """Indicates that the current context is an explicit device_get() call."""
   state = guard_lib.thread_local_state()
   prev = state.explicit_device_get
@@ -2015,7 +2015,7 @@ _transfer_guard = optional_enum_state(
     update_global_hook=_update_all_transfer_guard_global)
 
 @contextlib.contextmanager
-def transfer_guard(new_val: str) -> Generator[None, None, None]:
+def transfer_guard(new_val: str) -> Generator[None]:
   """A contextmanager to control the transfer guard level for all transfers.
 
   For more information, see

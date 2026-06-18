@@ -188,7 +188,7 @@ def check_eq(xs: Any, ys: Any, err_msg: str = '') -> None:
 
 
 @contextmanager
-def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
+def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
   """Context manager to capture all output written to a given file object.
 
   Unlike ``contextlib.redirect_stdout``, this context manager works for
@@ -322,8 +322,6 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 @contextmanager
 def collect_lowered_jaxprs() -> Generator[
     Sequence[tuple[core.ClosedJaxpr, mlir.ir.Module]],
-    None,
-    None,
 ]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
@@ -1584,7 +1582,7 @@ ignore_warning = test_warning_util.ignore_warning
 MeshSpec = list[tuple[str, int]]
 
 @contextmanager
-def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
+def with_mesh(named_shape: MeshSpec) -> Generator[None]:
   """Test utility for setting up meshes given mesh data from `schedules`."""
   # This is similar to the `with_mesh` function above, but isn't a decorator.
   axis_names, shape = unzip2(named_shape)

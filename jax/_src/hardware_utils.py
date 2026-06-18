@@ -138,7 +138,7 @@ def num_available_amd_gpus(stop_at: int | None = None) -> int:
         if file_size <= 0 or file_size > 16 * 1024:
           continue
 
-        with open(node_props_path, "r", encoding="ascii") as f:
+        with open(node_props_path, encoding="ascii") as f:
           match = r_simd_count.search(f.read())
           if match:
             simd_count = int(match.group(1))
