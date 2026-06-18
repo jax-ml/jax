@@ -4929,35 +4929,47 @@ class FragmentedArrayTest(TestCase):
     x = np.arange(m * n, dtype=jnp.int32).reshape(m, n)
     np.testing.assert_array_equal(result, np.where(x < 16, x * 2, x * 3))
 
-  @parameterized.product(
-      ops=[
-          (mgpu.FragmentedArray.exp, np.exp),
-          (mgpu.FragmentedArray.sin, np.sin),
-          (mgpu.FragmentedArray.cos, np.cos),
-          (mgpu.FragmentedArray.rsqrt, jax.lax.rsqrt),
-          (mgpu.FragmentedArray.erf, jax.scipy.special.erf),
-      ],
-      approx=[False, True],
+  @parameterized.parameters(
+      (mgpu.FragmentedArray.exp, np.exp),
+      (mgpu.FragmentedArray.exp2, np.exp2),
+      (mgpu.FragmentedArray.log, np.log),
+      (mgpu.FragmentedArray.log2, np.log2),
+      (mgpu.FragmentedArray.sin, np.sin),
+      (mgpu.FragmentedArray.cos, np.cos),
+      (mgpu.FragmentedArray.tanh, np.tanh),
+      (mgpu.FragmentedArray.rsqrt, jax.lax.rsqrt),
+      (mgpu.FragmentedArray.erf, jax.scipy.special.erf),
   )
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``
   @jtu.ignore_warning(message="overflow encountered", category=RuntimeWarning)
-  def test_math(self, ops, approx, m=64, n=32):
-    op, np_op = ops
-    kwargs = dict(approx=approx)
+  def test_math(self, op, np_op, m=64, n=32):
+    def run_test(**kwargs):
+      def kernel(ctx, dst, _):
+        del ctx
+        iota = iota_tensor(m, n, jnp.float32) + 1
+        op(iota, **kwargs).store_untiled(dst, optimized=False)
+      out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+      with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), jtu.capture_stdout() as ptx:
+        result = mgpu.as_gpu_kernel(
+            kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+        )()
+      return result, ptx()
+    x = np.arange(m * n, dtype=jnp.float32).reshape(m, n) + 1
+    kwargs = {} if op is mgpu.FragmentedArray.erf else {"approx": False}
+    ref = np_op(x)
+    result, ptx = run_test(**kwargs)
+    np.testing.assert_allclose(result, ref, atol=2e-7, rtol=2e-7)
+
     if op is mgpu.FragmentedArray.erf:
-      if approx:
-        raise self.skipTest("ERF not supported with approximation")
-      kwargs = {}
-    def kernel(ctx, dst, _):
-      iota = iota_tensor(m, n, jnp.float32)
-      op(iota, **kwargs).store_untiled(dst, optimized=False)
-    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
-    result = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
-    )()
-    x = np.arange(m * n, dtype=jnp.float32).reshape(m, n)
-    atol = 5e-3 if approx else 2e-7
-    rtol = 4e-6 if approx else 2e-7
-    np.testing.assert_allclose(result, np_op(x), atol=atol, rtol=rtol)
+      # erf not supported with approximation.
+      return
+
+    result_approx, ptx_approx = run_test(approx=True)
+    np.testing.assert_allclose(result_approx, ref, atol=5e-3, rtol=4e-6)
+
+    # This is not super precise, but is a generic way of ensuring we take
+    # different code generation paths.
+    self.assertNotEqual(ptx, ptx_approx)
 
   def test_atan2(self, m=64, n=32):
     def kernel(ctx, dst, _):

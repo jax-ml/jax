@@ -1791,7 +1791,7 @@ class FragmentedArray:
     if approx:
       dtype = self.mlir_dtype
       log2e = arith.constant(dtype, ir.FloatAttr.get(dtype, 1.4426950408889634))
-      return cast(FragmentedArray, self * log2e).exp2()
+      return cast(FragmentedArray, self * log2e).exp2(approx=True)
     return self._pointwise(mlir_math.exp)
 
   def exp2(self, *, approx: bool = False) -> FragmentedArray:
