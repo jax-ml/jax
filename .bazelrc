@@ -80,12 +80,6 @@ common:macos --apple_platform_type=macos
 common:macos --linkopt=-Wl,-undefined,dynamic_lookup
 common:macos --host_linkopt=-Wl,-undefined,dynamic_lookup
 
-# Use cc toolchains from apple_support for Apple builds.
-# https://github.com/bazelbuild/apple_support/tree/master?tab=readme-ov-file#bazel-6-setup
-common:macos --config=clang_local
-common:macos --apple_crosstool_top=@local_config_apple_cc//:toolchain
-common:macos --crosstool_top=@local_config_apple_cc//:toolchain
-common:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
 # Disable apple_support's default layering check because dependencies (e.g. absl)
 # have layering check violations.
 common:macos --repo_env=APPLE_SUPPORT_LAYERING_CHECK_BETA=0
@@ -559,6 +553,25 @@ common:cross_compile_darwin_x86_64 --platform_mappings=platform_mappings
 # RBE cross-compile configs for Darwin x86
 common:rbe_cross_compile_darwin_x86_64 --config=cross_compile_darwin_x86_64
 common:rbe_cross_compile_darwin_x86_64 --config=rbe_cross_compile_base
+
+# Mac aarch64
+common:cross_compile_darwin_aarch64 --host_cpu=k8
+common:cross_compile_darwin_aarch64 --config=nonccl
+# Target Catalina (10.15) as the minimum supported OS
+common:cross_compile_darwin_aarch64 --action_env  MACOSX_DEPLOYMENT_TARGET=10.15
+
+# Set the target CPU to Darwin aarch64
+common:cross_compile_darwin_aarch64 --platforms=@rules_ml_toolchain//common:macos_aarch64
+common:cross_compile_darwin_aarch64 --cpu=darwin
+# Map --platforms=darwin_aarch64 to --cpu=darwin and vice-versa to make selects()
+# and transistions that use these flags work. The flag --platform_mappings needs
+# to be set to a file that exists relative to the package path roots.
+common:cross_compile_darwin_aarch64 --platform_mappings=platform_mappings
+
+# RBE cross-compile configs for Darwin aarch64
+# TODO: Check if we can use rbe_cross_compile_base
+#common:rbe_cross_compile_darwin_aarch64 --config=cross_compile_darwin_aarch64
+#common:rbe_cross_compile_darwin_aarch64 --config=rbe_cross_compile_base
 
 #############################################################################
 # Some configs to make getting some forms of debug builds. In general, the
