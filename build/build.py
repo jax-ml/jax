@@ -439,7 +439,6 @@ async def main():
   else:
     bazel_command_base.append("build")
 
-  freethreaded = False
   if args.python_version:
     # Do not add --repo_env=HERMETIC_PYTHON_VERSION with default args.python_version
     # if bazel_options override it
@@ -455,7 +454,6 @@ async def main():
     )
     # Let's interpret X.YY-ft version as free-threading python and set rules_python config flag:
     if args.python_version.endswith("-ft"):
-      freethreaded = True
       bazel_command_base.append(
         "--@rules_python//python/config_settings:py_freethreaded=\"yes\""
       )
@@ -465,25 +463,20 @@ async def main():
 
   # Requirements update subcommand execution
   if args.command == "requirements_update":
-    requirements_command = copy.deepcopy(bazel_command_base)
-    if args.bazel_options:
-      logging.debug(
-          "Using additional build options: %s", args.bazel_options
-      )
-      for option in args.bazel_options:
-        requirements_command.append(option)
+    uv_command = command.CommandBuilder(sys.executable)
+    uv_command.append("build/update_requirements_uv.py")
 
-    ft_suffix = "_ft" if freethreaded else ""
     if args.nightly_update:
-      logging.info(
-          "--nightly_update is set. Bazel will run"
-          " //build:requirements_nightly.update"
-      )
-      requirements_command.append(f"//build:requirements{ft_suffix}_nightly.update")
-    else:
-      requirements_command.append(f"//build:requirements{ft_suffix}.update")
+      uv_command.append("--nightly")
 
-    result = await executor.run(requirements_command.get_command_as_string(), args.dry_run, args.detailed_timestamped_log)
+    if args.dry_run:
+      uv_command.append("--dry-run")
+
+    result = await executor.run(
+        uv_command.get_command_as_string(),
+        args.dry_run,
+        args.detailed_timestamped_log,
+    )
     if result.return_code != 0:
       raise RuntimeError(f"Command failed with return code {result.return_code}")
     else:

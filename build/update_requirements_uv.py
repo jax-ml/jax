@@ -86,7 +86,7 @@ def update_requirements(py_ver, nightly=False, upgrade=True, dry_run=False):
     # Add a header to the output file indicating how it was generated
     cmd.extend([
         "--custom-compile-command",
-        f"python build/update_requirements_uv.py --python-version={py_ver}",
+        "python build/update_requirements_uv.py",
     ])
 
     # 4. Execute
@@ -102,12 +102,6 @@ def update_requirements(py_ver, nightly=False, upgrade=True, dry_run=False):
 def main():
     parser = argparse.ArgumentParser(
         description="Update JAX requirements_lock files using uv"
-    )
-    parser.add_argument(
-        "--python-version",
-        choices=list(PYTHON_VERSIONS.keys()) + ["all"],
-        default="all",
-        help="Python version to update, or 'all' to update all versions.",
     )
     parser.add_argument(
         "--nightly",
@@ -144,11 +138,7 @@ def main():
         )
         sys.exit(1)
 
-    versions_to_update = (
-        [args.python_version]
-        if args.python_version != "all"
-        else list(PYTHON_VERSIONS.keys())
-    )
+    versions_to_update = list(PYTHON_VERSIONS.keys())
 
     for ver in versions_to_update:
         print(f"\n--- Updating Python {ver} ---")
