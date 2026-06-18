@@ -78,6 +78,7 @@ pytype_strict_library(
         "//jax/_src:partial_eval",
         "//jax/_src:source_info_util",
         "//jax/_src:state_types",
+        "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
