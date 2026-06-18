@@ -26,8 +26,8 @@ from typing import Any, Literal
 import jax
 from jax._src import core as jax_core
 from jax._src import deprecations
-from jax._src import linear_util as lu
 from jax._src import state
+from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import partial_eval as pe
@@ -501,15 +501,15 @@ def pass_scalars_as_refs(
       ),
       jax_core.extend_axis_env_nd(mesh.shape.items()),
   ):
-    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            new_body, debug_info=jaxpr.debug_info.with_unknown_names()
-        ),
-        new_trace_avals,
+    # TODO(necula): Use trace_to_jaxpr_nocache.
+    new_jaxpr, _ = pe.trace_to_jaxpr(
+        new_body,
+        tree_util.FlatTree.flatten_args(*new_trace_avals),
+        jaxpr.debug_info.with_unknown_names(),
     )
-  jaxpr = new_jaxpr.replace(
-      constvars=new_jaxpr.invars[: len(jaxpr.constvars)],
-      invars=new_jaxpr.invars[len(jaxpr.constvars) :],
+  jaxpr = new_jaxpr.jaxpr.replace(
+      constvars=new_jaxpr.jaxpr.invars[: len(jaxpr.constvars)],
+      invars=new_jaxpr.jaxpr.invars[len(jaxpr.constvars) :],
   )
   args = [
       *[a[None] for a in scalar_consts],
