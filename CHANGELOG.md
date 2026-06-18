@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.10.2 (June 17, 2026)
+
 * New features
   * Added {func}`jax.scipy.linalg.invhilbert` for the closed-form inverse
     of the Hilbert matrix ({jax-issue}`#10144`).
