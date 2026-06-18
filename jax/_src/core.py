@@ -647,8 +647,6 @@ class Primitive:
   skip_canonicalization: bool = False
   # set for primitives that allocate references
   ref_allocating: bool = False
-
-
   is_effectful = None
 
   def __init__(self, name: str):
@@ -2996,22 +2994,10 @@ pytype_aval_mappings[Token] = lambda _: abstract_token
 dtypes.register_canonicalize_value_handler(Token, None)
 
 
-class Future:
-
-  def __init__(self, x, done_fun):
-    self.x = x
-    self.done_fun = done_fun
-
-  def done(self):
-    return self.done_fun(self.x)
-
-  def __repr__(self):
-    return f"Future(type={typeof(self.x)})"
-
-
 class AbstractFuture(AbstractValue):
-  def __init__(self, inner_aval):
+  def __init__(self, inner_aval, done_fun):
     self.inner_aval = inner_aval
+    self.done_fun = done_fun
 
   def __eq__(self, other):
     return (isinstance(other, AbstractFuture) and
@@ -3022,6 +3008,45 @@ class AbstractFuture(AbstractValue):
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False) -> str:
     return f'AbstractFuture{{{self.inner_aval.str_short(True)}}}'
+
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self: math.prod(self.shape))
+
+  @aval_method
+  def done(tracer):
+    return tracer.aval.done_fun(tracer)  # type: ignore
+
+  @property
+  def shape(self):
+    try:
+      return self.inner_aval.shape
+    except AttributeError:
+      raise AttributeError(f"{self!r} has no `sharding`.") from None
+
+  @property
+  def dtype(self):
+    try:
+      return self.inner_aval.dtype
+    except AttributeError:
+      raise AttributeError(f"{self!r} has no `sharding`.") from None
+
+  @property
+  def sharding(self):
+    try:
+      return self.inner_aval.sharding
+    except AttributeError:
+      raise AttributeError(f"{self!r} has no `sharding`.") from None
+
+  @property
+  def manual_axis_type(self):
+    try:
+      return self.inner_aval.manual_axis_type
+    except AttributeError:
+      raise AttributeError(f"{self!r} has no `manual_axis_type`.") from None
+
+  @property
+  def mat(self):
+    return self.manual_axis_type
 
 
 ### Operations on shapes and dimension sizes.

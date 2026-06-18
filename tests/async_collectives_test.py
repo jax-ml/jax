@@ -19,19 +19,15 @@ from jax._src import test_util as jtu
 from jax._src.lax import parallel
 import jax.numpy as jnp
 
-
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
 
-# AsyncCollectivesTest tests that async collectives (e.g., all_gather_start and
-# all_gather_done) behave identically to their synchronous counterparts (e.g.,
-# all_gather).
 class AsyncCollectivesTest(jtu.JaxTestCase):
 
   def create_explicit_mesh(self, axes, names):
     axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
-    return jtu.create_mesh(axes, names, iota_order=False, axis_types=axis_types)
+    return jtu.create_mesh(axes, names, axis_types=axis_types)
 
   def overlappable_math(self, a):
     # On some backends, async collectives are erased if there isn't any
@@ -66,8 +62,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
   def test_lower_async_psum_scatter(self, mesh):
     @jax.shard_map(out_specs=jax.P('i'))
     def f(x):
-      todo = parallel.psum_scatter_start(x, 'i', scatter_dimension=0, tiled=True)
-      return todo.done()
+      future = parallel.psum_scatter_start(x, 'i', scatter_dimension=0, tiled=True)
+      return future.done()
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
@@ -79,8 +75,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
   def test_lower_async_all_to_all(self, mesh):
     @jax.shard_map(out_specs=jax.P('i'))
     def f(x):
-      todo = parallel.all_to_all_start(x, 'i', split_axis=0, concat_axis=0, tiled=True)
-      return todo.done()
+      future = parallel.all_to_all_start(x, 'i', split_axis=0, concat_axis=0,
+                                         tiled=True)
+      return future.done()
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
@@ -133,8 +130,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
       @jax.shard_map(out_specs=(jax.P(None, reduced={'i'}), jax.P('i')))
       def all_gather_async(x, a):
         a = self.overlappable_math(a)
-        todo = parallel.all_gather_start(x, 'i', tiled=True, to='reduced')
-        y_async = todo.done()
+        future = parallel.all_gather_start(x, 'i', tiled=True, to='reduced')
+        y_async = future.done()
         return y_async, a
 
       x = jnp.arange(n * 4096.0, out_sharding=jax.P('i'))
@@ -196,8 +193,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
       @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
       def psum_scatter_async(x, a):
         a = self.overlappable_math(a)
-        todo = parallel.psum_scatter_start(x, 'i', scatter_dimension=0, tiled=True)
-        y_async = todo.done()
+        future = parallel.psum_scatter_start(x, 'i', scatter_dimension=0, tiled=True)
+        y_async = future.done()
         return y_async, a
 
       x = jnp.ones((n * 128, 128), dtype=jnp.float32, out_sharding=jax.P('i'))
@@ -228,8 +225,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
       @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
       def all_to_all_async(x, a):
         a = self.overlappable_math(a)
-        todo = parallel.all_to_all_start(x, 'i', split_axis=0, concat_axis=0, tiled=True)
-        y_async = todo.done()
+        future = parallel.all_to_all_start(x, 'i', split_axis=0, concat_axis=0,
+                                           tiled=True)
+        y_async = future.done()
         return y_async, a
 
       x = jnp.ones((n * 128, 128, 128), dtype=jnp.float32, out_sharding=jax.P('i'))
@@ -261,8 +259,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
       @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
       def ppermute_async(x, a):
         a = self.overlappable_math(a)
-        todo = parallel.ppermute_start(x, 'i', permutation)
-        y_async = todo.done()
+        future = parallel.ppermute_start(x, 'i', permutation)
+        y_async = future.done()
         return y_async, a
 
       x = jnp.arange(n * 4096.0, out_sharding=jax.P('i'))
@@ -279,11 +277,6 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
         if op in hlo_sync:
           self.assertIn(op, hlo_async)
 
-  # pbroadcast is only implemented on GPU. If you try to run this on another
-  # platform, you'll get an error like this:
-  #
-  # > NotImplementedError: MLIR translation rule for primitive 'pbroadcast' not
-  # > found for platform cpu
   @jtu.run_on_devices('gpu')
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_async_pbroadcast(self, mesh):
@@ -291,13 +284,14 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
     @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
     def pbroadcast(x):
       y_sync = jax.lax.pbroadcast(x, 'i', source=0)
-      todo = parallel.pbroadcast_start(x, 'i', source=0)
-      y_async = todo.done()
+      future = parallel.pbroadcast_start(x, 'i', source=0)
+      y_async = future.done()
       return y_sync, y_async
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     y_sync, y_async = pbroadcast(x)
     self.assertAllClose(y_sync, y_async)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

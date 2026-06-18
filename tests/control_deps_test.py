@@ -33,6 +33,7 @@ class ControlDepsTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cpu")
   def test_math(self):
+    @jax.jit
     def f_math(x, y, z):
       a = jnp.sin(x @ x)
       b = jnp.cos(y @ y)
@@ -41,9 +42,9 @@ class ControlDepsTest(jtu.JaxTestCase):
       return a + b + c
 
     x = jnp.ones((67, 67))
-    hlo = jax.jit(f_math).lower(x, x, x).as_text(dialect="hlo")
+    hlo = f_math.lower(x, x, x).as_text(dialect="hlo")
     self.assertIn('custom_call_target="control_dep"', hlo)
-    jax.jit(f_math)(x, x, x)
+    f_math(x, x, x)
 
   @jtu.run_on_devices("cpu")
   def test_fsdp(self):
@@ -61,12 +62,12 @@ class ControlDepsTest(jtu.JaxTestCase):
         # and ws is a list of weights, one per layer. We repeatedly all-gather
         # the weights for a layer and multiply with x.
         for w_shard in ws:
-          f = parallel.all_gather_start(w_shard, "i", tiled=True)
-          w = f.done()
+          fut = parallel.all_gather_start(w_shard, "i", tiled=True)
+          w = fut.done()
           x = x @ w
 
           # Note that we pipe out the intermediate values.
-          starts.append(f)
+          starts.append(fut)
           dones.append(w)
           maths.append(x)
 
@@ -76,10 +77,10 @@ class ControlDepsTest(jtu.JaxTestCase):
         deps = []
         for i in range(k + 1):
           if i == 0:
-            deps.append(starts[0].x)
+            deps.append(starts[0])
             deps.append(dones[0])
           elif i < k:
-            deps.append(starts[i].x)
+            deps.append(starts[i])
             deps.append(maths[i - 1])
             deps.append(dones[i])
           else:
@@ -113,13 +114,12 @@ class ControlDepsTest(jtu.JaxTestCase):
           fut = parallel.all_gather_start(w_shard, "i", tiled=True)
           x = x @ w
           w_next = fut.done()
-          schedule([fut.x, x, w_next])
+          schedule([fut, x, w_next])
           return (w_next, x), None
         (w, x), _ = jax.lax.scan(f, (w_0, x), ws[1:])
 
         # Epilogue.
-        x = x @ w_0
-
+        x = x @ w
         return x
 
       N = 128 * n
@@ -155,8 +155,8 @@ class ControlDepsTest(jtu.JaxTestCase):
 
         # We schedule things to run all the starts, then done and math in the
         # right order.
-        schedule([s.x for s in starts])
-        schedule([starts[-1].x, dones[0]])
+        schedule(starts)
+        schedule([starts[-1], dones[0]])
         schedule(maths)
         for i in range(k - 1):
           control_dep(maths[i], dones[i + 1])

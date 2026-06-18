@@ -2466,7 +2466,8 @@ batching.primitive_batchers[core.pvary_p] = _pvary_batcher
 ####################### all_gather_reduced ###########################
 
 # Varying -> Reduced collective
-def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False, is_async: bool = False):
+def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False,
+                       is_async: bool = False):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -2908,57 +2909,54 @@ all_to_all_start_p = core.Primitive("all_to_all_start")
 pbroadcast_start_p = core.Primitive("pbroadcast_start")
 ppermute_start_p = core.Primitive("ppermute_start")
 
+# Asynchronous done primitives.
+all_gather_done_p = core.Primitive("all_gather_done")
+psum_done_p = core.Primitive("psum_done")
+reduce_scatter_done_p = core.Primitive("reduce_scatter_done")
+all_to_all_done_p = core.Primitive("all_to_all_done")
+pbroadcast_done_p = core.Primitive("pbroadcast_done")
+ppermute_done_p = core.Primitive("ppermute_done")
+
+
 # Asynchronous start functions.
 def all_gather_start(*args, **kwargs):
-  x = _all_gather_is_async(*args, **kwargs, is_async=True)
-  return core.Future(x, all_gather_done_p.bind)
-
+  return _all_gather_is_async(*args, **kwargs, is_async=True)
 
 def psum_start(*args, **kwargs):
-  x = _psum_is_async(*args, **kwargs, is_async=True)
-  return core.Future(x, psum_done_p.bind)
-
+  return _psum_is_async(*args, **kwargs, is_async=True)
 
 def psum_scatter_start(*args, **kwargs):
-  x = _psum_scatter_is_async(*args, **kwargs, is_async=True)
-  return core.Future(x, reduce_scatter_done_p.bind)
-
+  return _psum_scatter_is_async(*args, **kwargs, is_async=True)
 
 def all_to_all_start(*args, **kwargs):
-  x = _all_to_all_is_async(*args, **kwargs, is_async=True)
-  return core.Future(x, all_to_all_done_p.bind)
-
+  return _all_to_all_is_async(*args, **kwargs, is_async=True)
 
 def pbroadcast_start(*args, **kwargs):
-  x = _pbroadcast_is_async(*args, **kwargs, is_async=True)
-  return core.Future(x, pbroadcast_done_p.bind)
-
+  return _pbroadcast_is_async(*args, **kwargs, is_async=True)
 
 def ppermute_start(*args, **kwargs):
-  x = _ppermute_is_async(*args, **kwargs, is_async=True)
-  return core.Future(x, ppermute_done_p.bind)
-
+  return _ppermute_is_async(*args, **kwargs, is_async=True)
 
 # Asynchronous start abstract eval.
-def _start_abstract_eval(q):
-  def f(*args, **kwargs):
-    aval, effs = q.abstract_eval(*args, **kwargs)
-    return core.AbstractFuture(aval), effs
-  return f
+def _start_abstract_eval(sync_prim, done_fun, *args, **kwargs):
+  aval, effs = sync_prim.abstract_eval(*args, **kwargs)
+  return core.AbstractFuture(aval, done_fun), effs
 
-for p, q in [
-    (all_gather_start_p, all_gather_p),
-    (all_gather_reduced_start_p, all_gather_reduced_p),
-    (psum_start_p, psum_p),
-    (psum_invariant_start_p, psum_invariant_p),
-    (unreduced_psum_start_p, unreduced_psum_p),
-    (reduce_scatter_start_p, reduce_scatter_p),
-    (unreduced_reduce_scatter_start_p, unreduced_reduce_scatter_p),
-    (all_to_all_start_p, all_to_all_p),
-    (pbroadcast_start_p, pbroadcast_p),
-    (ppermute_start_p, ppermute_p),
+for async_prim, sync_prim, done_p in [
+    (all_gather_start_p, all_gather_p, all_gather_done_p),
+    (all_gather_reduced_start_p, all_gather_reduced_p, all_gather_done_p),
+    (psum_start_p, psum_p, psum_done_p),
+    (psum_invariant_start_p, psum_invariant_p, psum_done_p),
+    (unreduced_psum_start_p, unreduced_psum_p, psum_done_p),
+    (reduce_scatter_start_p, reduce_scatter_p, reduce_scatter_done_p),
+    (unreduced_reduce_scatter_start_p, unreduced_reduce_scatter_p, reduce_scatter_done_p),
+    (all_to_all_start_p, all_to_all_p, all_to_all_done_p),
+    (pbroadcast_start_p, pbroadcast_p, pbroadcast_done_p),
+    (ppermute_start_p, ppermute_p, ppermute_done_p),
 ]:
-  p.def_effectful_abstract_eval(_start_abstract_eval(q))
+  async_prim.def_effectful_abstract_eval(
+      partial(_start_abstract_eval, sync_prim, done_p.bind))
+
 
 # Asynchronous start lowering.
 def _start_lowering(sync_lower):
@@ -3063,22 +3061,6 @@ mlir.register_lowering(
 )
 mlir.register_lowering(ppermute_start_p, _start_lowering(_ppermute_lowering))
 
-# Asynchronous done primitives.
-all_gather_done_p = core.Primitive("all_gather_done")
-psum_done_p = core.Primitive("psum_done")
-reduce_scatter_done_p = core.Primitive("reduce_scatter_done")
-all_to_all_done_p = core.Primitive("all_to_all_done")
-pbroadcast_done_p = core.Primitive("pbroadcast_done")
-ppermute_done_p = core.Primitive("ppermute_done")
-
-_dones_p = [
-    all_gather_done_p,
-    psum_done_p,
-    reduce_scatter_done_p,
-    all_to_all_done_p,
-    pbroadcast_done_p,
-    ppermute_done_p,
-]
 
 # Asynchronous done abstract eval and lowering.
 def _done_abstract_eval(aval):
@@ -3086,6 +3068,7 @@ def _done_abstract_eval(aval):
     raise TypeError(f"async done op got {aval}, want core.AbstractFuture")
   return aval.inner_aval
 
-for p in _dones_p:
+for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
+          all_to_all_done_p, pbroadcast_done_p, ppermute_done_p]:
   p.def_abstract_eval(_done_abstract_eval)
   mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])
