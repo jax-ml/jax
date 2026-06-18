@@ -127,6 +127,34 @@ class PallasLoweringDeterminismTest(jtu.JaxTestCase):
     self.assertEqual(body_a0, body_a1)
     self.assertEqual(body_b0, body_b1)
 
+  @jtu.run_on_devices("tpu")
+  def testMosaicDebugTableAttribute(self):
+    x = jnp.ones((8,), dtype=jnp.float32)
+    lowered = stable_jit_func.lower(x)
+    module = lowered.compiler_ir()
+    debug_tables = []
+
+    def _find_debug_tables(op):
+      is_tpu_custom_call = (
+          "call_target_name" in op.attributes
+          and "backend_config" in op.attributes
+          and ir.StringAttr(op.attributes["call_target_name"]).value
+          == "tpu_custom_call"
+      )
+      if is_tpu_custom_call:
+        if "mosaic_debug_table" in op.attributes:
+          debug_tables.append(
+              ir.StringAttr(op.attributes["mosaic_debug_table"]).value
+          )
+      for region in op.regions:
+        for block in region:
+          for nested_op in block:
+            _find_debug_tables(nested_op)
+
+    _find_debug_tables(module.operation)
+    self.assertLen(debug_tables, 1)
+    self.assertNotEmpty(debug_tables[0])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
