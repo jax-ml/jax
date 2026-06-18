@@ -420,6 +420,21 @@ def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef | None,
   return tree_unflatten(inner_treedef, subtrees)
 
 
+@export
+def tree_unzip(
+    pytree_to_unzip: Any,
+    inner_treedef: PyTreeDef | None = None,
+    *,
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> Any:
+  """Alias of :func:`jax.tree.unzip`."""
+  outer_treedef = tree_structure(pytree_to_unzip, is_leaf=is_leaf)
+  if inner_treedef is None:
+    first_leaf = outer_treedef.flatten_up_to(pytree_to_unzip)[0]
+    inner_treedef = tree_structure(first_leaf)
+  return tree_transpose(outer_treedef, inner_treedef, pytree_to_unzip)
+
+
 # TODO(mattjj): remove the Python-side registry when the C++-side registry is
 # sufficiently queryable that we can express _replace_nones. That may mean once
 # we have a flatten_one function.
