@@ -83,13 +83,6 @@ common:macos --apple_platform_type=macos
 common:macos --linkopt=-Wl,-undefined,dynamic_lookup
 common:macos --host_linkopt=-Wl,-undefined,dynamic_lookup
 
-# Use cc toolchains from apple_support for Apple builds.
-# https://github.com/bazelbuild/apple_support/tree/master?tab=readme-ov-file#bazel-6-setup
-common:macos --config=clang_local
-common:macos --apple_crosstool_top=@local_config_apple_cc//:toolchain
-common:macos --crosstool_top=@local_config_apple_cc//:toolchain
-common:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
-
 common:windows --config=clang_local
 
 # Windows has a relatively short command line limit, which JAX has begun to hit.
@@ -374,7 +367,6 @@ common:ci_linux_aarch64_cuda13_clang_local --config=ci_linux_aarch64_cuda_common
 common:ci_linux_aarch64_cuda13_clang_local --config=cuda13
 
 # Mac Arm64 CI configs
-common:ci_darwin_arm64 --config=clang_local
 common:ci_darwin_arm64 --macos_minimum_os=11.0
 common:ci_darwin_arm64 --config=macos_cache_push
 common:ci_darwin_arm64 --verbose_failures=true
