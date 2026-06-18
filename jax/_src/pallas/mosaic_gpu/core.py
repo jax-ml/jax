@@ -582,6 +582,7 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
     raise NotImplementedError("Only SMEM and TMEM refs are supported.")
   return tuple(flat_refs)
 
+lol = 0
 
 class AbstractRefUnion(state.AbstractRef):
   refs: Sequence[_GPUMemoryRefTree]
@@ -623,6 +624,24 @@ class AbstractRefUnion(state.AbstractRef):
     first_ref = ref_leaves[0]
     assert all(ref.collective == first_ref.collective for ref in ref_leaves)
     return first_ref.collective
+
+  def __eq__(self, other):
+    return (
+        type(self) is type(other)
+        and self.inner_aval == other.inner_aval
+        and self.memory_space == other.memory_space
+        and self.refs == other.refs
+    )
+
+  def __hash__(self):
+    # `flatten_ref_union(self)` creates `TransformedRef`s that refer to `self`,
+    # so we extract the transforms from the `TransformedRef`s in order to avoid
+    # infinite recursion.
+    all_transforms = tuple(
+        ref.transforms if isinstance(ref, pallas_core.TransformedRef) else ()
+        for ref in flatten_ref_union(self)
+    )
+    return hash((self.inner_aval, self.memory_space, all_transforms))
 
 
 @dataclasses.dataclass(init=False, frozen=True)

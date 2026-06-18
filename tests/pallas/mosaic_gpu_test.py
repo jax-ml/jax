@@ -2838,6 +2838,39 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     expected = x * 3
     np.testing.assert_array_equal(kernel_fn(x), expected)
 
+  def test_ref_union_caching(self):
+    # TODO(bchetioui,allanrenucci): debug.
+    # ValueError: Shape mismatch between variable and %45 = "mosaic_gpu.slice_smem"():r-0: (64, 32) != (64, 64)
+    self.skip_if_wg_semantics()
+    @self.kernel(
+      out_type=(
+        jax.ShapeDtypeStruct((64, 32), jnp.float32),
+        jax.ShapeDtypeStruct((64, 64), jnp.float16)
+      ),
+    )
+    def kernel(o_gmem_f32, o_gmem_f16):
+      def _scope(aliased_ref):
+        [smem] = aliased_ref
+        smem[...] = jnp.ones_like(smem)
+        plgpu.commit_smem()
+        if smem.dtype == jnp.float32:
+          plgpu.copy_smem_to_gmem(smem, o_gmem_f32)
+        else:
+          plgpu.copy_smem_to_gmem(smem, o_gmem_f16)
+        plgpu.wait_smem_to_gmem(0)
+
+      pl.run_scoped(
+          _scope,
+          plgpu.RefUnion(plgpu.SMEM((64, 32), jnp.float32)),
+      )
+      pl.run_scoped(
+          _scope,
+          plgpu.RefUnion(plgpu.SMEM((64, 64), jnp.float16)),
+      )
+    of32, of16 = kernel()
+    np.testing.assert_array_equal(of32, 1.0)
+    np.testing.assert_array_equal(of16, 1.0)
+
   @parameterized.product(
       small_ty=[jnp.int4, jnp.uint4],
       large_ty=[jnp.float8_e4m3fn, jnp.float16, jnp.bfloat16, jnp.float32, jnp.int8, jnp.int16, jnp.int32],
