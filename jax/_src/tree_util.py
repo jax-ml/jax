@@ -421,6 +421,112 @@ def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef | None,
   return tree_unflatten(inner_treedef, subtrees)
 
 
+def _infer_inner_treedef(
+    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+) -> PyTreeDef:
+  if is_leaf is not None and is_leaf(tree):
+    return tree_structure(tree)
+
+  flat_with_path, _ = tree_flatten_with_path(tree, is_leaf=is_leaf)
+  if not flat_with_path:
+    return tree_structure(tree)
+
+  first_leaf_path, _ = flat_with_path[0]
+  full_treedef = tree_structure(tree)
+  total_leaves = full_treedef.num_leaves
+
+  def get_at_path(obj, path):
+    for key in path:
+      try:
+        children_with_keys, _ = flatten_one_level_with_keys(obj)
+        found = False
+        for k, child in children_with_keys:
+          if k == key:
+            obj = child
+            found = True
+            break
+        if not found:
+          raise KeyError(f"Key {key} not found in children of {type(obj)}")
+      except ValueError:
+        raise TypeError(
+            f"Cannot walk path key {key} on non-container {type(obj)}"
+        )
+    return obj
+
+  leaf_treedef = tree_structure(0)
+
+  tried_container_prefix = False
+  for i in range(len(first_leaf_path), 0, -1):
+    prefix = first_leaf_path[:i]
+    try:
+      candidate_obj = get_at_path(tree, prefix)
+    except (TypeError, KeyError, IndexError, AttributeError):
+      continue
+
+    candidate_struct = tree_structure(candidate_obj)
+
+    if candidate_struct == leaf_treedef:
+      continue
+
+    tried_container_prefix = True
+
+    L = candidate_struct.num_leaves
+    if L == 0:
+      continue
+    if total_leaves % L != 0:
+      continue
+
+    def combined_is_leaf(x):
+      if is_leaf is not None and is_leaf(x):
+        return True
+      try:
+        return tree_structure(x) == candidate_struct
+      except:
+        return False
+
+    try:
+      outer_treedef = tree_structure(tree, is_leaf=combined_is_leaf)
+      composed = outer_treedef.compose(candidate_struct)
+      if composed == full_treedef:
+        return candidate_struct
+    except Exception as e:
+      continue
+
+  if tried_container_prefix:
+    raise TypeError("Mismatch: Inconsistent inner structures.")
+
+  return leaf_treedef
+
+
+@export
+def tree_unzip(
+    pytree_to_unzip: Any,
+    inner_treedef: PyTreeDef | None = None,
+    *,
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> Any:
+  """Alias of :func:`jax.tree.unzip`."""
+  if inner_treedef is None:
+    inner_treedef = _infer_inner_treedef(pytree_to_unzip, is_leaf=is_leaf)
+
+  leaf_treedef = tree_structure(0)
+  if inner_treedef == leaf_treedef:
+    outer_treedef = tree_structure(pytree_to_unzip, is_leaf=is_leaf)
+  else:
+
+    def combined_is_leaf(x):
+      if is_leaf is not None and is_leaf(x):
+        return True
+      try:
+        return tree_structure(x) == inner_treedef
+      except:
+        return False
+
+    outer_treedef = tree_structure(pytree_to_unzip, is_leaf=combined_is_leaf)
+
+  return tree_transpose(outer_treedef, inner_treedef, pytree_to_unzip)
+
+
 # TODO(mattjj): remove the Python-side registry when the C++-side registry is
 # sufficiently queryable that we can express _replace_nones. That may mean once
 # we have a flatten_one function.
