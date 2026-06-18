@@ -35,8 +35,8 @@ jobs:
       JAXCI_PYTHON: "python3.12"
       JAXCI_ENABLE_X64: 0
       JAX_NUM_GENERATED_CASES: 5
-      NUMPY_VERSION: "2.0.0"
-      SCIPY_VERSION: "1.13.0"
+      NUMPY_VERSION: "2.1.0"
+      SCIPY_VERSION: "1.15.0"
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

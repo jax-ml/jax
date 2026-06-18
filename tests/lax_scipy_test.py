@@ -429,11 +429,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     lsp_special_fn = partial(lsp_special.sph_harm_y, n_max=n_max)
     self._CompileAndCheck(lsp_special_fn, args_maker)
-    if scipy_version < (1, 15, 0):
-      osp_special_fn = lambda n, m, theta, phi: osp_special.sph_harm(m, n, phi, theta)
-    else:
-      osp_special_fn = osp_special.sph_harm_y
-    self._CheckAgainstNumpy(osp_special_fn, lsp_special_fn, args_maker)
+    self._CheckAgainstNumpy(osp_special.sph_harm_y, lsp_special_fn, args_maker)
 
   @jtu.sample_product(
     n_zero_sv=n_zero_svs,

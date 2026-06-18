@@ -310,6 +310,8 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       ([0, 0], [0, 4], True),
   )
   def testCombBoundaryValues(self, N_samples, k_samples, repetition):
+    if repetition and jtu.parse_version(scipy.__version__) < (1, 17):
+      self.skipTest("comb with repetition=True boundary values require scipy 1.17 or newer")
     dtype = dtypes.default_float_dtype()
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     args_maker = lambda: (np.array(N_samples, dtype=dtype), np.array(k_samples, dtype=dtype))

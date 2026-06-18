@@ -42,21 +42,7 @@ inexact_dtypes = jtu.dtypes.all_floating + jtu.dtypes.complex
 number_dtypes = default_dtypes + jtu.dtypes.complex + jtu.dtypes.all_unsigned
 
 
-def np_unique_backport(ar, return_index=False, return_inverse=False, return_counts=False,
-                       axis=None, **kwds):
-  # Wrapper for np.unique, handling the change to inverse_indices in numpy 2.0
-  result = np.unique(ar, return_index=return_index, return_inverse=return_inverse,
-                     return_counts=return_counts, axis=axis, **kwds)
-  if jtu.numpy_version() >= (2, 0, 1) or np.ndim(ar) == 1 or not return_inverse:
-    return result
 
-  idx = 2 if return_index else 1
-  inverse_indices = result[idx]
-  if axis is None:
-    inverse_indices = inverse_indices.reshape(np.shape(ar))
-  elif jtu.numpy_version() == (2, 0, 0):
-    inverse_indices = inverse_indices.reshape(-1)
-  return (*result[:idx], inverse_indices, *result[idx + 1:])
 
 def arrays_with_overlapping_values(rng, shapes, dtypes, unique=False, overlap=0.5) -> list[jax.Array]:
   """Generate multiple arrays with some overlapping values.
@@ -281,7 +267,7 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     extra_args = (return_index, return_inverse, return_counts)
     use_defaults =  (False, *(True for arg in extra_args if arg)) if any(extra_args) else False
-    np_fun = jtu.with_jax_dtype_defaults(lambda x: np_unique_backport(x, *extra_args, axis=axis), use_defaults)
+    np_fun = jtu.with_jax_dtype_defaults(lambda x: np.unique(x, *extra_args, axis=axis), use_defaults)
     jnp_fun = lambda x: jnp.unique(x, *extra_args, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
@@ -333,7 +319,7 @@ class LaxNumpySetopsTest(jtu.JaxTestCase):
 
     @partial(jtu.with_jax_dtype_defaults, use_defaults=(False, True, True, True))
     def np_fun(x, fill_value=fill_value):
-      u, ind, inv, counts = np_unique_backport(x, **kwds)
+      u, ind, inv, counts = np.unique(x, **kwds)
       axis = kwds['axis']
       if axis is None:
         x = x.ravel()

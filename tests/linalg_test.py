@@ -96,64 +96,7 @@ def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarra
     return np.vectorize(
       scipy.linalg.toeplitz, signature="(m),(n)->(m,n)", otypes=(np.result_type(c, r),))(c, r)
 
-def osp_linalg_circulant(c: np.ndarray) -> np.ndarray:
-  """Batched scipy circulant for testing."""
-  if scipy_version >= (1, 15):
-    return scipy.linalg.circulant(c)
-  c = np.atleast_1d(c)
-  return np.vectorize(
-      scipy.linalg.circulant, signature="(n)->(n,n)", otypes=(c.dtype,))(c)
 
-def osp_linalg_companion(a: np.ndarray) -> np.ndarray:
-  """Batched scipy companion for testing."""
-  if scipy_version >= (1, 15):
-    return scipy.linalg.companion(a)
-  a = np.atleast_1d(a)
-  out_dtype = np.result_type(a.dtype, np.float32)
-  return np.vectorize(
-      scipy.linalg.companion, signature="(n)->(m,m)", otypes=(out_dtype,))(a)
-
-def osp_linalg_leslie(f: np.ndarray, s: np.ndarray) -> np.ndarray:
-  """Batched scipy leslie for testing."""
-  f = np.atleast_1d(f)
-  s = np.atleast_1d(s)
-  if scipy_version >= (1, 15):
-    return scipy.linalg.leslie(f, s)
-  out_dtype = np.result_type(f.dtype, s.dtype)
-  return np.vectorize(
-      scipy.linalg.leslie, signature="(n),(m)->(n,n)",
-      otypes=(out_dtype,))(f, s)
-
-def osp_linalg_fiedler(a: np.ndarray) -> np.ndarray:
-  """Batched scipy fiedler for testing."""
-  a = np.atleast_1d(a)
-  if scipy_version >= (1, 15):
-    return scipy.linalg.fiedler(a)
-  return np.vectorize(
-      scipy.linalg.fiedler, signature="(n)->(n,n)", otypes=(a.dtype,))(a)
-
-def osp_linalg_fiedler_companion(a: np.ndarray) -> np.ndarray:
-  """Batched scipy fiedler_companion for testing."""
-  a = np.atleast_1d(a)
-  if scipy_version >= (1, 15):
-    return scipy.linalg.fiedler_companion(a)
-  out_dtype = np.result_type(a.dtype, np.float32)
-  return np.vectorize(
-      scipy.linalg.fiedler_companion, signature="(n)->(m,m)",
-      otypes=(out_dtype,))(a)
-
-def osp_linalg_convolution_matrix(a: np.ndarray, n: int,
-                                  mode: str = 'full') -> np.ndarray:
-  """Batched scipy convolution_matrix for testing."""
-  if scipy_version >= (1, 15):
-    return scipy.linalg.convolution_matrix(a, n, mode=mode)
-  a = np.atleast_1d(a)
-  if a.ndim == 1:
-    return scipy.linalg.convolution_matrix(a, n, mode=mode)
-  flat = a.reshape(-1, a.shape[-1])
-  out = np.stack([scipy.linalg.convolution_matrix(row, n, mode=mode)
-                  for row in flat])
-  return out.reshape(*a.shape[:-1], *out.shape[-2:])
 
 def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """Batched scipy hankel for testing."""
@@ -2361,7 +2304,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testCirculantConstruction(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(osp_linalg_circulant, jsp.linalg.circulant, args_maker)
+    self._CheckAgainstNumpy(scipy.linalg.circulant, jsp.linalg.circulant, args_maker)
     self._CompileAndCheck(jsp.linalg.circulant, args_maker)
 
   @jtu.sample_product(
@@ -2374,7 +2317,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     f_shape = batch + (n,)
     s_shape = batch + (n - 1,)
     args_maker = lambda: [rng(f_shape, dtype), rng(s_shape, dtype)]
-    self._CheckAgainstNumpy(osp_linalg_leslie, jsp.linalg.leslie, args_maker,
+    self._CheckAgainstNumpy(scipy.linalg.leslie, jsp.linalg.leslie, args_maker,
                             check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.leslie, args_maker)
 
@@ -2394,7 +2337,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_nonzero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     tol = {np.complex64: 1e-5, np.float32: 1e-5}
-    self._CheckAgainstNumpy(osp_linalg_companion, jsp.linalg.companion,
+    self._CheckAgainstNumpy(scipy.linalg.companion, jsp.linalg.companion,
                             args_maker, atol=tol, rtol=tol, check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.companion, args_maker)
 
@@ -2411,7 +2354,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testFiedler(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(osp_linalg_fiedler, jsp.linalg.fiedler, args_maker,
+    self._CheckAgainstNumpy(scipy.linalg.fiedler, jsp.linalg.fiedler, args_maker,
                             check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.fiedler, args_maker)
 
@@ -2423,7 +2366,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_nonzero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     tol = {np.float32: 1e-5, np.float64: 1e-10}
-    self._CheckAgainstNumpy(osp_linalg_fiedler_companion,
+    self._CheckAgainstNumpy(scipy.linalg.fiedler_companion,
                             jsp.linalg.fiedler_companion, args_maker,
                             atol=tol, rtol=tol, check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.fiedler_companion, args_maker)
@@ -2458,7 +2401,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     shape = (*batch, m)
     args_maker = lambda: [rng(shape, dtype)]
-    osp_fun = partial(osp_linalg_convolution_matrix, n=n, mode=mode)
+    osp_fun = partial(scipy.linalg.convolution_matrix, n=n, mode=mode)
     jsp_fun = partial(jsp.linalg.convolution_matrix, n=n, mode=mode)
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker)

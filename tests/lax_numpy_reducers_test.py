@@ -958,19 +958,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       return [x]
     kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
 
-    if jtu.numpy_version() >= (2, 1, 0):
-      np_op = np.cumulative_sum
-    else:
-      def np_op(x, axis=None, dtype=None, include_initial=False):
-        axis = axis or 0
-        out = np.cumsum(x, axis=axis, dtype=dtype or x.dtype)
-        if include_initial:
-          zeros_shape = list(x.shape)
-          zeros_shape[axis] = 1
-          out = jnp.concat([jnp.zeros(zeros_shape, dtype=out.dtype), out], axis=axis)
-        return out
-
-    np_fun = lambda x: np_op(x, **kwargs)
+    np_fun = lambda x: np.cumulative_sum(x, **kwargs)
     jnp_fun = lambda x: jnp.cumulative_sum(x, **kwargs)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             rtol={jnp.bfloat16: 5e-2})
@@ -1042,19 +1030,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       return [x]
     kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
 
-    if jtu.numpy_version() >= (2, 1, 0):
-      np_op = np.cumulative_prod
-    else:
-      def np_op(x, axis=None, dtype=None, include_initial=False):
-        axis = axis or 0
-        out = np.cumprod(x, axis=axis, dtype=dtype or x.dtype)
-        if include_initial:
-          ones_shape = list(x.shape)
-          ones_shape[axis] = 1
-          out = jnp.concat([jnp.ones(ones_shape, dtype=out.dtype), out], axis=axis)
-        return out
-
-    np_fun = lambda x: np_op(x, **kwargs)
+    np_fun = lambda x: np.cumulative_prod(x, **kwargs)
     jnp_fun = lambda x: jnp.cumulative_prod(x, **kwargs)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)

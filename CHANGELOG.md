@@ -16,9 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
-* Breaking changes:
+* Breaking changes
   * The deprecated module jax.cloud_tpu_init was removed. This did nothing and
     references to it can be safely removed.
+  * Support for Python 3.11, NumPy 2.0, and SciPy 1.14 has been dropped, per the
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
 
 ## JAX 0.10.2 (June 17, 2026)
 
