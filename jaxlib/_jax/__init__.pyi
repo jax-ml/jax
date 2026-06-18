@@ -602,6 +602,9 @@ class Client:
       recv_channel_ids: Sequence[int],
       serializer: Callable | None = ...,
   ) -> object: ...
+  def create_hlo_output_callback(
+      self, callback_id: int, num_operands: int, callback: Callable
+  ) -> object: ...
   def get_default_layout(
       self, dtype: numpy.dtype, shard_shape: Sequence, device: Device
   ) -> PjRtLayout: ...

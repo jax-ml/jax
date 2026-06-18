@@ -221,6 +221,17 @@ class PyClient {
       absl::Span<uint16_t const> recv_channel_ids,
       nanobind::callable serializer);
 
+  // `CreateHloOutputCallback` creates an XLA HLO output callback capsule from a
+  // Python callable `callable`. `callable` receives as arguments the replica
+  // ID, partition ID, and a list of NumPy arrays (or None for missing operands)
+  // corresponding to the reconstructed operands of the HLO output callback.
+  // It returns the host callback as an opaque capsule object whose reference
+  // will keep the Python callable alive. The host callback can be passed to
+  // `PyClient::CompileAndLoad` or `PyClient::DeserializeExecutable` via the
+  // `host_callbacks` argument.
+  absl::StatusOr<nanobind::object> CreateHloOutputCallback(
+      int64_t callback_id, int64_t num_operands, nanobind::callable callable);
+
   std::vector<PyArray> LiveArrays() const;
 
   static void Register(nanobind::module_& m);

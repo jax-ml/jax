@@ -30,6 +30,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -59,6 +60,7 @@ limitations under the License.
 #include "jaxlib/py_host_callback.h"
 #include "jaxlib/py_memory_space.h"
 #include "jaxlib/py_user_context.h"
+#include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
 #include "jaxlib/util.h"
 #include "xla/literal.h"
@@ -88,6 +90,7 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/types.h"
 #include "xla/python/version.h"
@@ -759,6 +762,49 @@ absl::StatusOr<nb::object> PyClient::MakePythonCallbackUsingHostSendAndRecv(
   return callback_capsule;
 }
 
+absl::StatusOr<nb::object> PyClient::CreateHloOutputCallback(
+    int64_t callback_id, int64_t num_operands, nb::callable callable) {
+  auto xla_cb = std::make_unique<xla::HloOutputCallback>();
+  xla_cb->callback_id = callback_id;
+  xla_cb->num_operands = num_operands;
+
+  // Use `GlobalPyRefManager()->ManageReference` to ensure `callable` is
+  // destroyed safely on the main Python thread when `xla_cb` is destroyed by
+  // the XLA runtime on a background thread without the GIL.
+  std::shared_ptr<PythonRefManager::ManagedPyObjects> managed_callable =
+      GlobalPyRefManager()->ManageReference(callable);
+
+  xla_cb->callback =
+      [callable_ref = callable.ptr(),
+       managed_callable = std::move(managed_callable)](
+          int64_t replica_id, int64_t partition_id,
+          absl::Span<std::shared_ptr<const xla::Literal> const> literals) {
+        nb::gil_scoped_acquire acquire;
+        nb::callable callable = nb::borrow<nb::callable>(callable_ref);
+        nb::list py_list = nb::steal<nb::list>(PyList_New(literals.size()));
+        for (size_t i = 0; i < literals.size(); ++i) {
+          if (literals[i] != nullptr) {
+            absl::StatusOr<nb::object> nbobj = xla::LiteralToPython(
+                std::const_pointer_cast<xla::Literal>(literals[i]));
+            if (!nbobj.ok()) {
+              LOG(ERROR) << "LiteralToPython failed: " << nbobj.status();
+              return;
+            }
+            py_list[i] = std::move(*nbobj);
+          } else {
+            py_list[i] = nb::none();
+          }
+        }
+        callable(replica_id, partition_id, py_list);
+      };
+  tsl::RCReference<ifrt::PjRtHloOutputLoadedHostCallback> loaded_host_callback =
+      tsl::MakeRef<ifrt::PjRtHloOutputLoadedHostCallback>(ifrt_client(),
+                                                          std::move(xla_cb));
+  return nb::capsule(loaded_host_callback.release(), [](void* ptr) noexcept {
+    static_cast<ifrt::LoadedHostCallback*>(ptr)->DropRef();
+  });
+}
+
 /* static */ int PyClient::tp_traverse(PyObject* self, visitproc visit,
                                        void* arg) {
   Py_VISIT(Py_TYPE(self));
@@ -1070,6 +1116,9 @@ PyType_Slot PyClient::slots_[] = {
            nb::arg("result_shapes"), nb::arg("send_channel_ids"),
            nb::arg("recv_channel_ids"),
            nb::arg("serializer").none() = nb::none())
+      .def("create_hlo_output_callback",
+           xla::ValueOrThrowWrapper(&PyClient::CreateHloOutputCallback),
+           nb::arg("callback_id"), nb::arg("num_operands"), nb::arg("callback"))
       .def(
           "get_default_layout",
           [](PyClient& self, xla::nb_dtype dtype, nb::sequence shard_shape,

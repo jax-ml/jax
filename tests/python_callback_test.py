@@ -28,10 +28,12 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax.experimental import io_callback
-from jax.experimental import pjit
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
 from jax._src.shard_map import shard_map
 from jax._src.sharding_impls import make_single_device_sharding
+from jax.experimental import io_callback
+from jax.experimental import pjit
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
@@ -1475,6 +1477,14 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.vmap(f)(jnp.arange(3.))  # don't crash
     jax.effects_barrier()
 
+  def test_create_hlo_output_callback(self):
+    if jaxlib_extension_version < 469:
+      raise unittest.SkipTest(
+          "create_hlo_output_callback requires jaxlib >= 469"
+      )
+    client = xla_client.make_cpu_client(asynchronous=False)
+    capsule = client.create_hlo_output_callback(123, 2, lambda *_args: None)
+    self.assertIsNotNone(capsule)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

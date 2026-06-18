@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 468  # Guard gpu_pallas_distributed_nvshmem_test_gpu on jaxlib_extension_version
+_version = 469  # Add CreateHloOutputCallback to PyClient
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
