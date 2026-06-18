@@ -17,12 +17,10 @@
 from __future__ import annotations
 
 import functools
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax._src import lib
 from jax._src import test_util as jtu
 from jax._src.lib import hlo as _hlo
 import jax.extend.xla as jex_xla
@@ -33,10 +31,6 @@ jax.config.parse_flags_with_absl()
 
 
 @jtu.thread_unsafe_test_class()
-@unittest.skipIf(
-    lib.jaxlib_extension_version < 461,
-    "Requires jaxlib_extension_version >= 461",
-)
 class XlaTransformTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -246,10 +240,6 @@ def sharded_mlp_model(x, params, mesh, activation):
 
 
 @jtu.thread_unsafe_test_class()
-@unittest.skipIf(
-    lib.jaxlib_extension_version < 461,
-    "Requires jaxlib_extension_version >= 461",
-)
 class XlaTransformE2ETest(jtu.JaxTestCase):
 
   def setUp(self):

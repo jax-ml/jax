@@ -23,14 +23,12 @@ from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import _jax
 from jax._src.lib import xla_client
-from jax._src.lib import jaxlib_extension_version
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import scalar_types as jnp_types
 from jax._src.sharding import Sharding
 from jax._src.typing import Array, DLDeviceType, DTypeLike
 
 import numpy as np
-
 
 DLPACK_VERSION = (0, 8)
 MIN_DLPACK_VERSION = (0, 5)
@@ -272,12 +270,8 @@ def from_dlpack(external_array,
   dlpack = external_array.__dlpack__(stream=stream)
 
   try:
-    if jaxlib_extension_version >= 467:
-      arr = _jax.dlpack_managed_tensor_to_buffer(
-        dlpack, dlpack_device, stream, copy, int(dl_device_type))
-    else:
-      arr = _jax.dlpack_managed_tensor_to_buffer(
-        dlpack, dlpack_device, stream, copy)
+    arr = _jax.dlpack_managed_tensor_to_buffer(
+      dlpack, dlpack_device, stream, copy, int(dl_device_type))
   except xla_client.XlaRuntimeError as e:
     se = str(e)
     if "is not aligned to" in se:

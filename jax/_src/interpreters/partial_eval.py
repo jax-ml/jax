@@ -48,8 +48,6 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            weakref_lru_cache, multi_weakref_lru_cache,
                            subs_list, foreach, test_event)
-from jax._src.lib import jaxlib_extension_version
-
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -64,7 +62,6 @@ PyTree = Any
 logger = logging.getLogger(__name__)
 
 TracebackScope = _jax.TracebackScope
-
 
 class PartialVal(tuple):
   """Partial value: either a known value or an unknown (abstract) value.
@@ -2199,8 +2196,6 @@ def diff_tracing_ctx(new_ctx, old_ctx) -> tuple[int, int, str] | None:
     return 0, num_diff, msg + "\n" + "\n".join(diffs)
 
   num_diff = sum(map(op.ne, new_ctx, old_ctx))
-  if jaxlib_extension_version < 455:
-    return 0, num_diff, msg
 
   context_names = config.trace_context_names()
   if len(context_names) != len(new_ctx):

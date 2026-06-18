@@ -61,7 +61,6 @@ from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
   standard_primitive, standard_abstract_eval)
 from jax._src.core import typeof, getu, getr, stage_p
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -5018,70 +5017,10 @@ def _mul_transpose_right(ct, x, y, *, out_dtype):
 ad.defbilinear(mul_p, _mul_transpose_left, _mul_transpose_right)
 mlir.register_lowering(mul_p, partial(_nary_lower_hlo, hlo.multiply))
 core.pp_eqn_rules[mul_p] = _binary_with_out_dtype_pp_rule
-
-
-@config.explicit_x64_dtypes(config.ExplicitX64Mode.ALLOW)
-def _mulhi_impl(x: Array, y: Array) -> Array:
-  """Temporary mulhi impl until XLA supports it natively."""
-  dtype = x.dtype
-  info = dtypes.iinfo(dtype)
-  bits = info.bits
-  is_signed = dtypes.issubdtype(dtype, np.signedinteger)
-
-  if bits < 64:
-    # For sub-64-bit types, widen to double-width, multiply, shift right.
-    widen_dtype = np.dtype(f'{"i" if is_signed else "u"}{bits * 2 // 8}')
-    x_wide = convert_element_type(x, widen_dtype)
-    y_wide = convert_element_type(y, widen_dtype)
-    prod = mul(x_wide, y_wide)
-    result = shift_right_arithmetic(prod, _const(prod, bits)) if is_signed \
-        else shift_right_logical(prod, _const(prod, bits))
-    return convert_element_type(result, dtype)
-  else:
-    # For 64-bit types, use half-width split multiply in uint64.
-    u64 = np.dtype('uint64')
-    x_u64 = convert_element_type(x, u64)
-    y_u64 = convert_element_type(y, u64)
-    lomask_val = np.uint64(0xFFFFFFFF)
-
-    x_lo = bitwise_and(x_u64, _const(x_u64, lomask_val))
-    x_hi = shift_right_logical(x_u64, _const(x_u64, 32))
-    y_lo = bitwise_and(y_u64, _const(y_u64, lomask_val))
-    y_hi = shift_right_logical(y_u64, _const(y_u64, 32))
-
-    # Four partial products.
-    lo_lo = mul(x_lo, y_lo)
-    lo_hi = mul(x_lo, y_hi)
-    hi_lo = mul(x_hi, y_lo)
-    hi_hi = mul(x_hi, y_hi)
-
-    # Accumulate cross terms and carry.
-    cross_lo = add(bitwise_and(lo_hi, _const(lo_hi, lomask_val)),
-                   bitwise_and(hi_lo, _const(hi_lo, lomask_val)))
-    cross_lo = add(cross_lo, shift_right_logical(lo_lo, _const(lo_lo, 32)))
-
-    # High 64 bits of the unsigned product.
-    hi64 = add(hi_hi,
-               add(shift_right_logical(lo_hi, _const(lo_hi, 32)),
-                   add(shift_right_logical(hi_lo, _const(hi_lo, 32)),
-                       shift_right_logical(cross_lo, _const(cross_lo, 32)))))
-    hi64 = convert_element_type(hi64, dtype)
-
-    if is_signed:
-      # Signed correction: signed_mulhi = unsigned_mulhi - (x<0 ? y : 0) - (y<0 ? x : 0)
-      x_sign = shift_right_arithmetic(x, _const(x, 63))
-      y_sign = shift_right_arithmetic(y, _const(y, 63))
-      hi64 = add(hi64, add(mul(x_sign, y), mul(y_sign, x)))
-    return hi64
-
 mulhi_p = naryop(input_dtype, [{np.integer}, {np.integer}], 'mulhi')
 dispatch.simple_impl(mulhi_p)
 ad.defjvp_zero(mulhi_p)
-if jaxlib_extension_version < 458:
-  # Temporary lowering for older jaxlibs without chlo.mulhi
-  mlir.register_lowering(mulhi_p, mlir.lower_fun(_mulhi_impl, multiple_results=False))
-else:
-  mlir.register_lowering(mulhi_p, partial(_nary_lower_hlo, chlo.mulhi))
+mlir.register_lowering(mulhi_p, partial(_nary_lower_hlo, chlo.mulhi))
 
 
 def _div_transpose_rule(cotangent, x, y):
@@ -6751,11 +6690,6 @@ def _ragged_dot_general_lower(
   if group_offset is not None:
     raise NotImplementedError('Unimplemented group_offset support.')
 
-  if jaxlib_extension_version < 459:
-    if any(not core.is_constant_shape(aval.shape) for aval in ctx.avals_in):
-      raise NotImplementedError(
-          'ragged_dot is not supported with dynamic shapes in this version '
-          'of jaxlib. Please update jaxlib to a newer version.')
   if not config.jax_ragged_dot_use_ragged_dot_instruction.value:
     return mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
         ctx, lhs, rhs, group_sizes,

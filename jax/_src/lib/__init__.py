@@ -23,7 +23,6 @@ import os
 import pathlib
 import re
 from types import ModuleType
-from typing import TYPE_CHECKING
 
 
 try:
@@ -122,10 +121,7 @@ import jaxlib._pretty_printer as _pretty_printer  # noqa: F401
 
 import jaxlib._ifrt_proxy as ifrt_proxy  # noqa: F401
 
-if jaxlib_extension_version >= 457 or TYPE_CHECKING:
-  from jaxlib import _hlo as hlo  # noqa: F401
-else:
-  hlo = _jax
+from jaxlib import _hlo as hlo  # noqa: F401
 
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882

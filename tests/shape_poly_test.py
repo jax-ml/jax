@@ -48,7 +48,6 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import utils as lax_utils
 from jax._src.state import discharge
 from jax._src.state import primitives as ref_primitives
-from jax._src.lib import jaxlib_extension_version
 
 import numpy as np
 
@@ -2987,7 +2986,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           ((2, 3, 4, 5), "b1, b2, m, n", ["m <= n", "m <= 32", "n <= 32"]),
       ]
     ],
-    ([ # Ragged dot
+    [ # Ragged dot
       # Mode 1: Ragged non-contracting.
       # lhs=[m,k], rhs=[g,k,n], group_sizes=[g] -> [m,n]
       PolyHarness("ragged_dot", "mode_1_non_contracting",
@@ -3077,7 +3076,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                    RandArg((5, 6, 7), jnp.float32),
                                    np.array([2, 3], dtype=np.int32)],
                   polymorphic_shapes=["b, m, k", "b, k, n", "g"]),
-    ] if jaxlib_extension_version >= 459 else []),
+    ],
     [
       # The random primitive tests, with threefry (both partitionable and
       # non-partitionable), and unsafe_rbg.

@@ -52,7 +52,6 @@ from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
 from jax._src.lib import jax_mlir_ext
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -4676,11 +4675,8 @@ def _device_id_to_logical(
         core_id = lax.axis_index(dest_mesh.core_axis_name)
       if (subcore_id := core_index_map[dest_mesh.subcore_axis_name]) is None:
         subcore_id = lax.axis_index(dest_mesh.subcore_axis_name)
-      if jaxlib_extension_version < 462:
-        core_index = sc_info.num_subcores * core_id + subcore_id
-      else:
-        core_index = core_id
-        subcore_index = subcore_id
+      core_index = core_id
+      subcore_index = subcore_id
     elif dest_kernel_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
       if not mpmd_core_axis_names and dest_kernel_type == kernel_type:
         # short circuit for same core semaphores without a core type annotation
@@ -4772,14 +4768,8 @@ def _semaphore_signal_lowering_rule(
             "Cannot specify both `core_index` and the core axis in `device_id`."
         )
       core_index = core_id
-  if jaxlib_extension_version < 462:
-    assert subcore_index is None, (
-        "`subcore_index` is not supported in this version of jaxlib."
-    )
-    tpu.sem_signal(sem, value, device_id=device_id, core_id=core_index)
-  else:
-    tpu.sem_signal(sem, value, device_id=device_id, core_id=core_index,
-                   subcore_id=subcore_index)  # pyrefly: ignore[unexpected-keyword]
+  tpu.sem_signal(sem, value, device_id=device_id, core_id=core_index,
+                 subcore_id=subcore_index)  # pyrefly: ignore[unexpected-keyword]
   return []
 
 
@@ -4830,30 +4820,16 @@ def _dma_start_lowering_rule(
       )
 
   def _dma_start(src_ref, dst_ref, sem, src_sem) -> list[ir.Value]:
-    if jaxlib_extension_version < 462:
-      assert subcore_id is None, (
-          "`subcore_id` is not supported in this version of jaxlib."
-      )
-      tpu.enqueue_dma(
-          source=src_ref,
-          target=dst_ref,
-          target_semaphore=sem,
-          source_semaphore=src_sem,
-          device_id=device_id,
-          core_id=core_id,
-          priority=priority,
-      )
-    else:
-      tpu.enqueue_dma(
-          source=src_ref,
-          target=dst_ref,
-          target_semaphore=sem,
-          source_semaphore=src_sem,
-          device_id=device_id,
-          core_id=core_id,
-          subcore_id=subcore_id,  # pyrefly: ignore[unexpected-keyword]
-          priority=priority,
-      )
+    tpu.enqueue_dma(
+        source=src_ref,
+        target=dst_ref,
+        target_semaphore=sem,
+        source_semaphore=src_sem,
+        device_id=device_id,
+        core_id=core_id,
+        subcore_id=subcore_id,  # pyrefly: ignore[unexpected-keyword]
+        priority=priority,
+    )
     return []
 
   return lower_with_transformed_refs(

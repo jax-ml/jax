@@ -69,7 +69,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
 
@@ -12104,7 +12103,6 @@ class UtilTest(jtu.JaxTestCase):
       # Compiling with a device assignment should succeed.
       lowered.compile(device_assignment=tuple(mesh.devices.flat))
 
-  @unittest.skipIf(jaxlib_extension_version < 466, "Requires jaxlib >= 466")
   def test_pjit_function_cache_explicit_mutation_during_lookup(self):
     cache = xc._xla.PjitFunctionCache(capacity=64)
 

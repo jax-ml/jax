@@ -30,7 +30,6 @@ from jax._src.lib import _jax
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
-from jax._src.lib import jaxlib_extension_version
 
 config_ext = _jax.config
 
@@ -224,13 +223,7 @@ class Config:
 register_trace_context_callback = []
 
 trace_context = config_ext.trace_context
-if jaxlib_extension_version >= 455:
-  trace_context_names = config_ext.trace_context_names
-else:
-  def trace_context_names():
-    raise NotImplementedError(
-        'trace_context_names is not supported in this JAX version.'
-    )
+trace_context_names = config_ext.trace_context_names
 
 config = Config()
 

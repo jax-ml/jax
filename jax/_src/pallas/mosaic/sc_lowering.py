@@ -24,7 +24,6 @@ from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import memref
@@ -471,30 +470,16 @@ def _dma_start_lowering_rule(
   # If not ``None``, we lower to an indirect DMA instead.
   if indirect_offsets is None:
     def _dma_start(src_ref, dst_ref, sem, src_sem):
-      if jaxlib_extension_version < 462:
-        assert subcore_index is None, (
-            "`subcore_index` is not supported in this version of jaxlib."
-        )
-        tpu.enqueue_dma(
-            source=src_ref,
-            target=dst_ref,
-            target_semaphore=sem,
-            source_semaphore=src_sem,
-            device_id=device_id,
-            priority=priority,
-            core_id=core_index,
-        )
-      else:
-        tpu.enqueue_dma(
-            source=src_ref,
-            target=dst_ref,
-            target_semaphore=sem,
-            source_semaphore=src_sem,
-            device_id=device_id,
-            priority=priority,
-            core_id=core_index,
-            subcore_id=subcore_index,  # pyrefly: ignore[unexpected-keyword]
-        )
+      tpu.enqueue_dma(
+          source=src_ref,
+          target=dst_ref,
+          target_semaphore=sem,
+          source_semaphore=src_sem,
+          device_id=device_id,
+          priority=priority,
+          core_id=core_index,
+          subcore_id=subcore_index,  # pyrefly: ignore[unexpected-keyword]
+      )
       return []
 
     return tc_lowering.lower_with_transformed_refs(
