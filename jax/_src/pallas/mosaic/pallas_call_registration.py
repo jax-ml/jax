@@ -25,10 +25,10 @@ import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import frozen_dict
-from jax._src import linear_util as lu
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
+from jax._src import tree_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -527,14 +527,13 @@ def _rewrite_jaxpr_for_lowering(
     return jax_core.eval_jaxpr(jaxpr, jaxpr.constvars, *processed_args)
 
   with mpmd.mpmd_map_tracing_context(mesh, all_meshes):
-    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            new_body, debug_info=jaxpr.debug_info.with_unknown_names()
-        ),
-        new_in_avals,
+    # TODO(necula): use trace_to_jaxpr_nocache instead
+    new_jaxpr, _ = pe.trace_to_jaxpr(
+        new_body, tree_util.FlatTree.flatten_args(*new_in_avals),
+        jaxpr.debug_info.with_unknown_names(),
     )
-  assert not new_consts
-  return new_jaxpr
+  assert not new_jaxpr.consts
+  return new_jaxpr.jaxpr
 
 
 def mpmd_map_tpu_lowering_rule(

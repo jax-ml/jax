@@ -89,6 +89,7 @@ pytype_library(
         "//jax/_src:sharding_impls",
         "//jax/_src:source_info_util",
         "//jax/_src:tpu_custom_call",
+        "//jax/_src:tree_util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
         "//jax/experimental:mosaic",
