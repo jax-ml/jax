@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 import functools
 import math
 from typing import Any
@@ -1434,6 +1435,127 @@ class InterpretTest(jtu.JaxTestCase):
     y = kernel(jnp.zeros(out_shape, jnp.int32))
     self.assertFalse(mosaic_interpret.get_races().races_found)
     np.testing.assert_array_equal(y, expected)
+
+
+@dataclasses.dataclass(frozen=True)
+class TuningConfig:
+  tile_m: int
+  tile_n: int
+  tile_k: int
+  max_concurrent_steps: int
+  epilogue_tile_n: int = 64
+  grid_minor_dim: int = 0
+  grid_tile_width: int = 1
+
+
+def matmul0(a, b, config: TuningConfig):
+  dtype = a.dtype
+  m, k = a.shape
+  _, n = b.shape
+  tile_m, tile_n, tile_k = config.tile_m, config.tile_n, config.tile_k
+  swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
+  swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+  transforms = (
+      plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(swizzle)
+  )
+  if m % tile_m != 0:
+    raise ValueError(f"{m=} must be divisible by {tile_m=}")
+  if n % tile_n != 0:
+    raise ValueError(f"{n=} must be divisible by {tile_n=}")
+  if k % tile_k != 0:
+    raise ValueError(f"{k=} must be divisible by {tile_k=}")
+  m_iters = m // tile_m
+  n_iters = n // tile_n
+  k_iters = k // tile_k
+  max_concurrent_steps = config.max_concurrent_steps
+
+  def kernel(a_gmem, b_gmem, out_gmem, acc_tmem, acc_smem, consumed_barriers):
+    mi = jax.lax.axis_index("m")
+    ni = jax.lax.axis_index("n")
+    m_slice = pl.ds(mi * tile_m, tile_m)
+    n_slice = pl.ds(ni * tile_n, tile_n)
+
+    def do_mma(idxs, a_smem, b_smem):
+      (ki,) = idxs
+      arrive_barrier_slot = ki % 2
+      wait_barrier_slot = 1 - arrive_barrier_slot
+      plgpu.tcgen05_mma(
+          acc_tmem,
+          a_smem,
+          b_smem,
+          barrier=consumed_barriers.at[arrive_barrier_slot],
+          accumulate=(ki > 0),
+      )
+      plgpu.barrier_wait(consumed_barriers.at[wait_barrier_slot])
+
+    # Make sure the wait succeeds in the first iteration.
+    plgpu.barrier_arrive(consumed_barriers.at[1])
+    block_kwargs = dict(transforms=transforms, delay_release=1)
+    plgpu.emit_pipeline(
+      do_mma,
+      in_specs=[
+          plgpu.BlockSpec((tile_m, tile_k), lambda ki: (mi, ki), **block_kwargs),
+          plgpu.BlockSpec((tile_k, tile_n), lambda ki: (ki, ni), **block_kwargs),
+      ],
+      grid=(k_iters,),
+      max_concurrent_steps=max_concurrent_steps,
+    )(a_gmem, b_gmem)
+
+    final_barrier = 1 - (k_iters % 2)
+    plgpu.barrier_wait(consumed_barriers.at[final_barrier])
+    acc_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
+    plgpu.commit_smem()
+    plgpu.copy_smem_to_gmem(acc_smem, out_gmem.at[m_slice, n_slice])
+    plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+  f = plgpu.kernel(
+      kernel,
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
+      grid=(m_iters, n_iters),
+      grid_names=("m", "n"),
+      scratch_types=dict(
+          acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
+          acc_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1, num_barriers=2, orders_tensor_core=True
+          ),
+      ),
+  )
+  return f(a, b)
+
+
+# TODO(nrink): Figure out how to safely run different instance of GPU
+# interpret mode in parallel, and then remove this decorator.
+@jtu.thread_unsafe_test_class()
+class BlackwellExampleMatmulTest(jtu.JaxTestCase):
+
+  def test_matmul0(self):
+    example_config = TuningConfig(
+        tile_m=128,
+        tile_n=128,
+        tile_k=64,
+        max_concurrent_steps=4,
+    )
+    m, n, k = 512, 512, 512
+    k1, k2 = jax.random.split(jax.random.key(0))
+    a = jax.random.uniform(k1, (m, k), jnp.float16)
+    b = jax.random.uniform(k2, (k, n), jnp.float16)
+
+    device = jax.sharding.AbstractDevice(
+        device_kind='NVIDIA B200',
+        platform='gpu',
+        num_cores=8,
+    )
+    with (
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=device)
+        ),
+        force_gpu_interpret_mode(InterpretParams()),
+    ):
+      res = matmul0(a, b, example_config).block_until_ready()
+
+    expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
+    np.testing.assert_allclose(res, expected, rtol=1e-3)
 
 
 if __name__ == '__main__':

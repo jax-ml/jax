@@ -76,6 +76,7 @@ def _raise_if_unsupported_memory_space(
   if space is not None and space not in [
       mosaic_gpu_core.MemorySpace.GMEM,
       mosaic_gpu_core.MemorySpace.SMEM,
+      mosaic_gpu_core.MemorySpace.TMEM,
       mosaic_gpu_core.MemorySpace.REGS,
   ]:
     raise NotImplementedError(f"Unsupported memory space: {space}")
@@ -441,7 +442,7 @@ class JaxprInterpreter:
                         shape,
                         dtype,
                         memory_space,
-                        self.interpret_params.uninitialized_memory
+                        self.interpret_params.uninitialized_memory,
                     ),
                     source_info=eqn.source_info,
                 )
@@ -734,7 +735,6 @@ class JaxprInterpreter:
         dst_allocation_key_as_array=dst,
         dst_transforms=dst_transforms,
         predicate=predicate,
-        ordered=True,
     ), []
 
   def _interpret_wgmma_ref_p(
@@ -766,7 +766,6 @@ class JaxprInterpreter:
         a_transforms=a_transforms,
         b_allocation_key_as_array=b,
         b_transforms=b_transforms,
-        ordered=True,
     ), []
 
   def _interpret_wgmma_accumulator_deref_p(
@@ -784,7 +783,83 @@ class JaxprInterpreter:
         thread_id=self.thread_id,
         acc_allocation_key_as_array=acc,
         wait_n=eqn.params["wait_n"],
-        ordered=True,
+    )
+
+  def _interpret_tcgen05_mma_p(self, eqn, token: jax.Array, invals):
+    assert eqn.primitive is gpu_primitives.tcgen05_mma_p
+    acc, a, b, accumulate, *invals = invals
+    barrier, a_scale, b_scale, a_sparse_metadata = None, None, None, None
+    if eqn.params["arrive"]:
+      barrier, *invals = invals
+    if eqn.params["scaled"]:
+      a_scale, b_scale, *invals = invals
+    if eqn.params["sparse"]:
+      a_sparse_metadata, *invals = invals
+
+    empty_treedef = jax.tree.structure([])
+    (acc_transforms, a_transforms, b_transforms, barrier_transforms,
+     a_scale_transforms, b_scale_transforms, a_sparse_metadata_transforms
+     ) = jax.tree.unflatten(
+        jax.tree_util.treedef_tuple(
+            (eqn.params[name] or empty_treedef for name in (
+                "acc_transforms_tree",
+                "a_transforms_tree",
+                "b_transforms_tree",
+                "barrier_transforms_tree",
+                "a_scale_transforms_tree",
+                "b_scale_transforms_tree",
+                "a_sparse_metadata_transforms_tree",
+            ))),
+        invals
+    )
+
+    if eqn.params["arrive"]:
+      leaves, treedef = jax.tree.flatten(barrier_transforms)
+      barrier_allocation_key_as_array = _get_barrier_allocation_key_from_inval(
+          barrier, treedef, leaves)
+    else:
+      barrier_allocation_key_as_array = None
+
+    return callback.io_callback(
+        functools.partial(
+            gpu_callbacks.tcgen05_mma,
+            acc_dtype=eqn.invars[0].aval.dtype,
+            source_info=eqn.source_info,
+        ),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        device_id=self.device_info.device_id,
+        grid_point_coords=self.grid_point_coords,
+        thread_id=self.thread_id,
+        acc_allocation_key_as_array=acc,
+        acc_transforms=acc_transforms,
+        a_allocation_key_as_array=a,
+        a_transforms=a_transforms,
+        b_allocation_key_as_array=b,
+        b_transforms=b_transforms,
+        accumulate=accumulate,
+        barrier_allocation_key_as_array=barrier_allocation_key_as_array,
+        a_scale_allocation_key_as_array=a_scale,
+        a_scale_transforms=a_scale_transforms,
+        b_scale_allocation_key_as_array=b_scale,
+        b_scale_transforms=b_scale_transforms,
+        a_sparse_metadata_allocation_key_as_array=a_sparse_metadata,
+        a_sparse_metadata_transforms=a_sparse_metadata_transforms,
+    ), []
+
+  def _interpret_async_load_tmem_p(self, eqn, token: jax.Array, invals):
+    assert eqn.primitive is gpu_primitives.async_load_tmem_p
+
+    return callback.io_callback(
+        functools.partial(
+            gpu_callbacks.async_load_tmem, source_info=eqn.source_info),
+        (gpu_callbacks.TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
+        token=token,
+        device_id=self.device_info.device_id,
+        grid_point_coords=self.grid_point_coords,
+        thread_id=self.thread_id,
+        src_allocation_key_as_array=invals[0],
+        src_transforms=jax.tree.unflatten(eqn.params["tree"], invals[1:]),
     )
 
   def interpret(self, jaxpr, token, *args):
@@ -851,6 +926,12 @@ class JaxprInterpreter:
           case gpu_primitives.wgmma_accumulator_deref_p:
             token, out = self._interpret_wgmma_accumulator_deref_p(
                 eqn, token, deferred_invals)
+          case gpu_primitives.tcgen05_mma_p:
+            token, out = self._interpret_tcgen05_mma_p(
+                eqn, token, deferred_invals())
+          case gpu_primitives.async_load_tmem_p:
+            token, out = self._interpret_async_load_tmem_p(
+                eqn, token, deferred_invals())
           case gpu_primitives.commit_group_p:
             out = []  # TODO(jburnim): commit_group_p
           case gpu_primitives.wgmma_wait_p:

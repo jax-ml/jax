@@ -107,7 +107,6 @@ def ordering_barrier(token):
   return token
 
 
-
 # Below we define pairs of _callback_ functions. Each pair consists of
 #
 #   (1) a module-private function, e.g. `_initialize_shared_memory`, and
@@ -1527,3 +1526,141 @@ def call_execute_device_local_memory_transfer(
       dst_transforms=dst_transforms,
       barrier_allocation_key_as_array=barrier_allocation_key_as_array,
   )
+
+
+def tcgen05_mma(
+    *,
+    token: jax.Array,
+    device_id: jax.Array,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    acc_allocation_key_as_array: jax.Array,
+    acc_transforms: tuple[Any, ...],
+    acc_dtype: jnp.dtype,
+    a_allocation_key_as_array: jax.Array,
+    a_transforms: tuple[Any, ...],
+    b_allocation_key_as_array: jax.Array,
+    b_transforms: tuple[Any, ...],
+    accumulate: jax.Array,
+    barrier_allocation_key_as_array: jax.Array | None = None,
+    a_scale_allocation_key_as_array: jax.Array | None = None,
+    a_scale_transforms: tuple[Any, ...] | None = None,
+    b_scale_allocation_key_as_array: jax.Array | None = None,
+    b_scale_transforms: tuple[Any, ...] | None = None,
+    a_sparse_metadata_allocation_key_as_array: jax.Array | None = None,
+    a_sparse_metadata_transforms: tuple[Any, ...] | None = None,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  # TODO(jburnim): Support scales and sparse metadata.
+  assert a_scale_allocation_key_as_array is None
+  assert b_scale_allocation_key_as_array is None
+  assert a_sparse_metadata_allocation_key_as_array is None
+  del a_scale_transforms, b_scale_transforms, a_sparse_metadata_transforms
+
+  device_id_as_int = int(device_id)
+  grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
+  thread_id_as_int = int(thread_id)
+  acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
+  a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
+  b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
+  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
+  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
+  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
+  accumulate: bool = bool(accumulate)  # pyrefly: ignore[redefinition]
+
+  shared_memory = _get_shared_memory()
+  global_thread_id = shared_memory.get_global_thread_id(
+      device_id_as_int, thread_id_as_int
+  )
+
+  logging_info = interpret_utils.GPULoggingInfo(
+      device_id=device_id_as_int,
+      grid_point_coords=grid_point_coords_as_tuple,
+      thread_id=thread_id_as_int,
+      source_info=source_info,
+  )
+
+  a, _, _ = shared_memory.get_buffer_content(
+      a_allocation_key,
+      interpret_utils.to_range(a_transforms),
+      global_thread_id,
+      logging_info=logging_info,
+  )
+  b, _, _ = shared_memory.get_buffer_content(
+      b_allocation_key,
+      interpret_utils.to_range(b_transforms),
+      global_thread_id,
+      logging_info=logging_info,
+  )
+  assert a is not None
+  assert b is not None
+
+  acc_range = interpret_utils.to_range(acc_transforms)
+
+  if accumulate:
+    acc, _, _ = shared_memory.get_buffer_content(
+        acc_allocation_key,
+        acc_range,
+        global_thread_id,
+        logging_info=logging_info,
+    )
+    assert acc is not None
+    res = acc + np.matmul(a, b, dtype=acc_dtype)
+  else:
+    res = np.matmul(a, b, dtype=acc_dtype)
+
+  shared_memory.store_buffer_content(
+      acc_allocation_key,
+      acc_range,
+      res,
+      global_thread_id,
+      logging_info=logging_info,
+  )
+
+  if barrier_allocation_key_as_array is not None:
+    barrier_key = HostAllocationKey.from_array(barrier_allocation_key_as_array)
+    barrier, clock = shared_memory.get_barrier_and_increment_clock(
+        barrier_key, device_id_as_int, thread_id_as_int)
+    barrier.arrive(
+        clock,
+        logging_info=logging_info)
+
+  return token
+
+
+def async_load_tmem(
+    *,
+    token: jax.Array,
+    device_id: jax.Array,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    src_allocation_key_as_array: jax.Array,
+    src_transforms: tuple[Any, ...],
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  device_id_as_int = int(device_id)
+  grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
+  thread_id_as_int = int(thread_id)
+  src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
+  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+
+  shared_memory = _get_shared_memory()
+  global_thread_id = shared_memory.get_global_thread_id(
+      device_id_as_int, thread_id_as_int
+  )
+
+  logging_info = interpret_utils.GPULoggingInfo(
+      device_id=device_id_as_int,
+      grid_point_coords=grid_point_coords_as_tuple,
+      thread_id=thread_id_as_int,
+      source_info=source_info,
+  )
+
+  val, _, _ = shared_memory.get_buffer_content(
+      src_allocation_key,
+      interpret_utils.to_range(src_transforms),
+      global_thread_id,
+      logging_info=logging_info,
+  )
+
+  return token, val
