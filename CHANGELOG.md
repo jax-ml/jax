@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Breaking changes:
+  * The deprecated module jax.cloud_tpu_init was removed. This did nothing and
+    references to it can be safely removed.
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
