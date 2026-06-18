@@ -46,7 +46,6 @@ limitations under the License.
 
 namespace nb = nanobind;
 
-#if JAX_IFRT_VERSION_NUMBER >= 55
 namespace {
 
 // An HloXlaTransform that delegates to a Python callback.
@@ -170,7 +169,6 @@ void CApiTransformHloModuleCallback(PJRT_XlaTransform_Callbacks* callbacks,
 }
 
 }  // namespace
-#endif
 
 NB_MODULE(_xla, m) {
   // Register a transform directly via RegisterHloXlaTransform.
@@ -178,7 +176,6 @@ NB_MODULE(_xla, m) {
   m.def(
       "register_xla_transform",
       [](std::string name, int stage, nb::object callback) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
         xla::HloXlaTransform::PipelineStage pipeline_stage;
         switch (stage) {
           case 0:
@@ -195,16 +192,12 @@ NB_MODULE(_xla, m) {
         auto transform = std::make_shared<PyHloXlaTransform>(
             std::move(name), std::move(callback));
         xla::RegisterHloXlaTransform(pipeline_stage, std::move(transform));
-#else
-        throw std::runtime_error("register_xla_transform is not implemented");
-#endif
       },
       nb::arg("name"), nb::arg("stage"), nb::arg("callback"));
 
   m.def(
       "clear_xla_transform",
       [](std::string name, int stage) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
         xla::HloXlaTransform::PipelineStage pipeline_stage;
         switch (stage) {
           case 0:
@@ -218,9 +211,6 @@ NB_MODULE(_xla, m) {
             throw std::runtime_error("Invalid pipeline stage");
         }
         return xla::ClearHloXlaTransform(pipeline_stage, name);
-#else
-        throw std::runtime_error("clear_xla_transform is not implemented");
-#endif
       },
       nb::arg("name"), nb::arg("stage"));
 
@@ -230,7 +220,6 @@ NB_MODULE(_xla, m) {
       "register_xla_transform_c_api",
       [](nb::object client_obj, std::string name, int stage,
          nb::object callback) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
         if (client_obj.is_none()) {
           throw std::runtime_error(
               "register_xla_transform_c_api: client cannot be None.");
@@ -280,10 +269,6 @@ NB_MODULE(_xla, m) {
           absl::Status status = pjrt::PjrtErrorToStatus(error);
           throw std::runtime_error(status.ToString());
         }
-#else
-        throw std::runtime_error(
-            "register_xla_transform_c_api is not implemented");
-#endif
       },
       nb::arg("client"), nb::arg("name"), nb::arg("stage"),
       nb::arg("callback"));
@@ -291,7 +276,6 @@ NB_MODULE(_xla, m) {
   m.def(
       "clear_xla_transform_c_api",
       [](nb::object client_obj, std::string name, int stage) {
-#if JAX_IFRT_VERSION_NUMBER >= 55
         if (client_obj.is_none()) {
           throw std::runtime_error(
               "clear_xla_transform_c_api: client cannot be None.");
@@ -327,10 +311,6 @@ NB_MODULE(_xla, m) {
           throw std::runtime_error(status.ToString());
         }
         return args.cleared;
-#else
-        throw std::runtime_error(
-            "clear_xla_transform_c_api is not implemented");
-#endif
       },
       nb::arg("client"), nb::arg("name"), nb::arg("stage"));
 }

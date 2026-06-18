@@ -204,10 +204,8 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
       compile_options);
 
   if (ifrt_ir_compile_options.has_value()) {
-#if JAX_IFRT_VERSION_NUMBER >= 52
     TF_RETURN_IF_ERROR(
         ifrt_compile_options->SetOptionsFromMap(*ifrt_ir_compile_options));
-#endif
   }
 
   {

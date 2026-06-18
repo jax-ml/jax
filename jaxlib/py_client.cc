@@ -407,7 +407,6 @@ PyClient::CompileAndLoadIfrtProgram(
   absl::Status compile_status;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 47
     auto ifrt_loaded_executable_fut =
         client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
             std::move(ifrt_program), std::move(ifrt_options));
@@ -415,13 +414,6 @@ PyClient::CompileAndLoadIfrtProgram(
     BlockUntilReadyWithCancel(ready_future);
     TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
                         std::move(ifrt_loaded_executable_fut).Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_loaded_executable,
-        client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
-            std::move(ifrt_program), std::move(ifrt_options)));
-    compile_status = ifrt_loaded_executable->GetReadyFuture().Await();
-#endif
     if (compile_status.ok()) {
       TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
     }
@@ -449,7 +441,6 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
   {
     auto xla_options =
         std::make_unique<ifrt::XlaCompileOptions>(options, std::move(devices));
-#if JAX_IFRT_VERSION_NUMBER >= 47
     TF_ASSIGN_OR_RETURN(
         ifrt_executable,
         client->ifrt_client()
@@ -457,13 +448,6 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
             ->Compile(std::make_unique<xla::ifrt::HloProgram>(std::move(clone)),
                       topology, std::move(xla_options))
             .Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_executable,
-        client->ifrt_client()->GetDefaultCompiler()->Compile(
-            std::make_unique<xla::ifrt::HloProgram>(std::move(clone)), topology,
-            std::move(xla_options)));
-#endif
   }
   return make_nb_class<PyExecutable>(ifrt_executable);
 }
@@ -561,7 +545,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 47
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
@@ -569,13 +552,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                 std::string_view(serialized.c_str(), serialized.size()),
                 std::move(ifrt_deserialize_options))
             .Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_loaded_executable,
-        client->ifrt_client_->GetDefaultCompiler()->DeserializeLoadedExecutable(
-            std::string_view(serialized.c_str(), serialized.size()),
-            std::move(ifrt_deserialize_options)));
-#endif
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
@@ -597,7 +573,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 47
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
@@ -605,13 +580,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                 std::string_view(serialized.c_str(), serialized.size()),
                 std::move(ifrt_deserialize_options))
             .Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_loaded_executable,
-        client->ifrt_client_->GetDefaultCompiler()->DeserializeLoadedExecutable(
-            std::string_view(serialized.c_str(), serialized.size()),
-            std::move(ifrt_deserialize_options)));
-#endif
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
