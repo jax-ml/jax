@@ -41,7 +41,7 @@ jobs:
           {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"},
           {type: "v7x-8", cores: "8", runner: "linux-x86-tpu7x-224-4tpu"}
         ]
-        python-version: ["3.11"]
+        python-version: ["3.12"]
         # Exclude v6e-8 tests for pypi_latest for resource constraints.
         exclude:
           - tpu:

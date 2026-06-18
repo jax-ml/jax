@@ -1024,10 +1024,6 @@ void PjitFunction::ClearPythonReferences() {
 
 struct PjitFunctionObject {
   PyObject_HEAD;
-#if PY_VERSION_HEX < 0x030C0000
-  PyObject* dict;      // Dictionary for __dict__
-  PyObject* weakrefs;  // Weak references; for use by the Python interpreter.
-#endif                 // PY_VERSION_HEX < 0x030C0000
   vectorcallfunc vectorcall;
   PjitFunction fun;
 
@@ -1141,10 +1137,7 @@ PyObject* PjitFunction_tp_new(PyTypeObject* subtype, PyObject* args,
   PjitFunctionObject* self =
       reinterpret_cast<PjitFunctionObject*>(subtype->tp_alloc(subtype, 0));
   if (!self) return nullptr;
-#if PY_VERSION_HEX < 0x030C0000
-  self->dict = nullptr;
-  self->weakrefs = nullptr;
-#endif  // PY_VERSION_HEX < 0x030C0000
+
   self->vectorcall = PjitFunction_tp_vectorcall;
   return reinterpret_cast<PyObject*>(self);
 }
@@ -1155,13 +1148,11 @@ void PjitFunction_tp_dealloc(PyObject* self) {
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
   pjit_function_store.Remove(o);
   PyObject_ClearWeakRefs(self);
-#if PY_VERSION_HEX < 0x030C0000
-  Py_CLEAR(o->dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
 #else
   PyObject_ClearManagedDict(self);
-#endif  // PY_VERSION_HEX < 0x030C0000
+#endif
   o->fun.~PjitFunction();
   tp->tp_free(self);
   Py_DECREF(tp);
@@ -1171,13 +1162,11 @@ int PjitFunction_tp_traverse(PyObject* self, visitproc visit, void* arg) {
   PjitFunctionObject* o = reinterpret_cast<PjitFunctionObject*>(self);
   // https://docs.python.org/3/c-api/typeobj.html#c.PyTypeObject.tp_traverse
   Py_VISIT(Py_TYPE(self));
-#if PY_VERSION_HEX < 0x030C0000
-  Py_VISIT(o->dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_VisitManagedDict(self, visit, arg);
 #else
   PyObject_VisitManagedDict(self, visit, arg);
-#endif  // PY_VERSION_HEX < 0x030C0000
+#endif
   Py_VISIT(o->fun.cache_miss().ptr());
   Py_VISIT(o->fun.shard_arg_fallback().ptr());
   Py_VISIT(o->fun.global_cache_key().ptr());

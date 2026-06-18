@@ -27,9 +27,8 @@ on:
       python:
         description: "Which Python version to use?"
         type: choice
-        default: "3.11"
+        default: "3.12"
         options:
-          - "3.11"
           - "3.12"
       rocm-version:
         description: "Which ROCm version to test?"
@@ -80,7 +79,7 @@ on:
       python:
         description: "Which Python version to use?"
         type: string
-        default: "3.11"
+        default: "3.12"
       rocm-version:
         description: "Which ROCm version to test?"
         type: string

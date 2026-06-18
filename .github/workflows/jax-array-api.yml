@@ -24,7 +24,7 @@ jobs:
     container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     strategy:
       matrix:
-        python-version: [3.11]
+        python-version: [3.12]
     env:
       PYTHON: "python${{ matrix.python-version }}"
     steps:

@@ -51,15 +51,12 @@ setup(
     author="MiniGoel",
     author_email="mini.goel@intel.com",
     packages=[package_name],
-    python_requires=">=3.9",
+    python_requires=">=3.12",
     install_requires=[f"jax-oneapi{oneapi_version}-pjrt=={__version__}"],
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 3 - Alpha",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
     ],
     package_data={

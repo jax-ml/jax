@@ -124,7 +124,7 @@ single_version_override(
 # TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
 # python version.
 # Keep in sync with jax/version.py (_version) and python.defaults below.
-DEFAULT_PYTHON_VERSION = "3.11"
+DEFAULT_PYTHON_VERSION = "3.12"
 
 JAXLIB_VERSION = "0.9.2"
 
@@ -134,7 +134,6 @@ python.defaults(
     python_version = DEFAULT_PYTHON_VERSION,
     python_version_env = "HERMETIC_PYTHON_VERSION",
 )
-python.toolchain(python_version = "3.11")
 python.toolchain(python_version = "3.12")
 python.toolchain(python_version = "3.13")
 python.toolchain(python_version = "3.14")
@@ -154,7 +153,6 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
     },
     python_version = python_version,
     requirements_by_platform = {} if python_version in [
-        "3.11",
         "3.12",
     ] else {
         "//build:requirements_lock_{}_ft.txt".format(python_version.replace(".", "_")): "linux_x86_64_freethreaded,windows_x86_64_freethreaded,linux_aarch64_freethreaded,osx_aarch64_freethreaded",
@@ -170,7 +168,6 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
         "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
     },
 ) for python_version in [
-    "3.11",
     "3.12",
     "3.13",
     "3.14",

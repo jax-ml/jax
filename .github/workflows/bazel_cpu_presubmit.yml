@@ -63,23 +63,23 @@ jobs:
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
-        python: ["3.11", "3.14"]
+        python: ["3.12", "3.14"]
         runner: ["linux-x86-n4-16", "linux-arm64-c4a-16", "windows-x86-n2-16"]
         enable-x64: [1, 0]
         enable-bzlmod: [1, 0]
         exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
             # coverage for one of each, we don't need to run both.
-            - python: "3.11"
+            - python: "3.12"
               enable-x64: 1
             - python: "3.14"
               enable-x64: 0
             # Only test a single Python version on Arm64 and Windows as we don't run the tests.
-            - python: "3.11"
+            - python: "3.12"
               runner: "linux-arm64-c4a-16"
-            - python: "3.11"
+            - python: "3.12"
               runner: "windows-x86-n2-16"
-            # TODO: Just test against Python 3.11 with Bzlmod to avoid adding too much CI load.
+            # TODO: Just test against Python 3.12 with Bzlmod to avoid adding too much CI load.
             - python: "3.14"
               enable-bzlmod: 1
     name: "${{ (contains(matrix.runner, 'linux-x86') && 'Test' || 'Build') }}"

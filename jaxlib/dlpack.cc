@@ -214,8 +214,8 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
       dl_device_type.value_or(dlmt->dl_tensor.device.device_type);
   xla::PjRtMemorySpace* memory_space;
   if (effective_device_type == kDLCUDAHost) {
-    TF_ASSIGN_OR_RETURN(memory_space,
-        device.memory_space_by_kind(xla::PinnedHostMemorySpace::kKind));
+    TF_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
+                                          xla::PinnedHostMemorySpace::kKind));
   } else {
     TF_ASSIGN_OR_RETURN(memory_space, device.default_memory_space());
   }
@@ -323,24 +323,15 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
   nb::capsule capsule = nb::steal<nb::capsule>(
       PyCapsule_New(&pack.release()->tensor, kDlTensorCapsuleName,
                     [](PyObject* obj) noexcept {
-#if PY_VERSION_HEX < 0x030C0000
-                      PyObject *type, *value, *traceback;
-                      PyErr_Fetch(&type, &value, &traceback);
-#else   // PY_VERSION_HEX < 0x030C0000
                       PyObject* exc = PyErr_GetRaisedException();
-#endif  // PY_VERSION_HEX < 0x030C0000
                       DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(
                           PyCapsule_GetPointer(obj, kDlTensorCapsuleName));
                       if (dlmt) {
                         DLPackTensorDeleter(dlmt);
                       }
-    // PyCapsule_GetPointer may have raised. Restore the
-    // previous exception if there was one.
-#if PY_VERSION_HEX < 0x030C0000
-                      PyErr_Restore(type, value, traceback);
-#else   // PY_VERSION_HEX < 0x030C0000
+                      // PyCapsule_GetPointer may have raised. Restore the
+                      // previous exception if there was one.
                       PyErr_SetRaisedException(exc);
-#endif  // PY_VERSION_HEX < 0x030C0000
                     }));
   if (!capsule.ptr()) {
     throw nb::python_error();
@@ -395,10 +386,10 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
       element_type, dimensions, minor_to_major);
 
-  TF_ASSIGN_OR_RETURN(auto pjrt_buffer_and_copied,
-                      MakePjrtBuffer(*device->pjrt_device(), dlmt, shape,
-                                     element_type, dimensions, copy, stream,
-                                     dl_device_type));
+  TF_ASSIGN_OR_RETURN(
+      auto pjrt_buffer_and_copied,
+      MakePjrtBuffer(*device->pjrt_device(), dlmt, shape, element_type,
+                     dimensions, copy, stream, dl_device_type));
   if (pjrt_buffer_and_copied.second) {
     // A PjRtBuffer uses a default layout if it has been created using copy.
     has_custom_layout = false;

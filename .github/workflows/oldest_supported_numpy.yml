@@ -28,11 +28,11 @@ jobs:
     runs-on: "linux-x86-n4-64"
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "Oldest supported numpy, py3.11, x64=0"
+    name: "Oldest supported numpy, py3.12, x64=0"
 # End Presubmit Naming Check github-oldest-supported-numpy-presubmit
 
     env:
-      JAXCI_PYTHON: "python3.11"
+      JAXCI_PYTHON: "python3.12"
       JAXCI_ENABLE_X64: 0
       JAX_NUM_GENERATED_CASES: 5
       NUMPY_VERSION: "2.0.0"

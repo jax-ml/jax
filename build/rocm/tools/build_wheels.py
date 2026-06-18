@@ -252,7 +252,7 @@ def parse_args():
     )
     p.add_argument(
         "--python-versions",
-        default=["3.11.13,3.12"],
+        default=["3.12,3.13,3.14"],
         help="Comma separated CPython versions that wheels will be built and output for",
     )
     p.add_argument(

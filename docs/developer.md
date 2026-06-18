@@ -457,7 +457,6 @@ which one is selected by specifying `HERMETIC_PYTHON_VERSION`. For example in
 `WORKSPACE` file:
 ```
 requirements = {
-  "3.11": "//build:requirements_lock_3_11.txt",
   "3.12": "//build:requirements_lock_3_12.txt",
   "3.13": "//build:requirements_lock_3_13.txt",
   "3.13-scenario1": "//build:scenario1_requirements_lock_3_13.txt",

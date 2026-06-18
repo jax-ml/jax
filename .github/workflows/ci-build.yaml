@@ -42,8 +42,8 @@ jobs:
       matrix:
         # Test the oldest and newest supported Python versions here.
         include:
-          - name-prefix: "with 3.11"
-            python-version: "3.11"
+          - name-prefix: "with 3.12"
+            python-version: "3.12"
             enable-x64: 1
             prng-upgrade: 1
             num_generated_cases: 1

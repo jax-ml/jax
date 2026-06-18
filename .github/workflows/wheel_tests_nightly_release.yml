@@ -56,7 +56,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-n4-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.13t", "3.14", "3.14t"]
           enable-x64: [0]
           exclude:
             - runner: "windows-x86-n2-64"
@@ -84,7 +84,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-n4-64", "linux-arm64-t2a-48"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.13t", "3.14", "3.14t"]
           enable-x64: [0]
     name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=false') }}"
     with:
@@ -106,7 +106,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu",  "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.13t", "3.14", "3.14t"]
           cuda: [
             {cuda-version: "12.1", use-nvidia-pip-wheels: false},
             {cuda-version: "12.9", use-nvidia-pip-wheels: true},
@@ -119,8 +119,6 @@ jobs:
               cuda:
                 cuda-version: "12.1"
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.12"
-            - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.13"
             - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.13t"
@@ -130,8 +128,6 @@ jobs:
             - runner: "linux-x86-a4-224-b200-1gpu"
               cuda:
                 cuda-version: "12.1"
-            - runner: "linux-x86-a4-224-b200-1gpu"
-              python: "3.12"
             - runner: "linux-x86-a4-224-b200-1gpu"
               python: "3.13"
             - runner: "linux-x86-a4-224-b200-1gpu"
@@ -158,7 +154,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu"]
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.13t", "3.14", "3.14t"]
           cuda-version: [12, 13]
           enable-x64: [0]
     name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
@@ -189,13 +185,11 @@ jobs:
         matrix:
           runner: ["linux-x86-64-1gpu-amd"]
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14"]
           rocm: [
             {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", manylinux-image: ""},
           ]
           exclude:
-            - artifact: "jax-rocm-pjrt"
-              python: "3.12"
             - artifact: "jax-rocm-pjrt"
               python: "3.13"
             - artifact: "jax-rocm-pjrt"
@@ -224,7 +218,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14"]
           rocm: [
             {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
           ]
@@ -251,7 +245,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           runner: ["linux-x86-64-1gpu-amd"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
+          python: ["3.12", "3.13", "3.14"]
           rocm: [
             {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
           ]
@@ -280,7 +274,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.13t", "3.14", "3.14t"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
@@ -294,7 +288,7 @@ jobs:
             # Run Python versions in between min and max for v6e-8
             - tpu-specs:
                 type: "v6e-8"
-              python: "3.11"
+              python: "3.12"
             - tpu-specs:
                 type: "v6e-8"
               python: "3.14"
@@ -302,9 +296,6 @@ jobs:
                 type: "v6e-8"
               python: "3.14t"
             # Run max Python versions for v5e-8
-            - tpu-specs:
-                type: "v5e-8"
-              python: "3.11"
             - tpu-specs:
                 type: "v5e-8"
               python: "3.12"
@@ -315,9 +306,6 @@ jobs:
                 type: "v5e-8"
               python: "3.13t"
             # Run min and max Python versions for v7x-8
-            - tpu-specs:
-                type: "v7x-8"
-              python: "3.12"
             - tpu-specs:
                 type: "v7x-8"
               python: "3.13"
@@ -343,7 +331,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.12", "3.13", "3.13t", "3.14", "3.14t"]
+          python: ["3.12", "3.13", "3.13t", "3.14", "3.14t"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
@@ -355,9 +343,6 @@ jobs:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
             # Run a single Python version for v4-8
-            - tpu-specs:
-                type: "v4-8"
-              python: "3.11"
             - tpu-specs:
                 type: "v4-8"
               python: "3.12"
@@ -373,9 +358,6 @@ jobs:
             # Run max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v5e-8"
               python: "3.12"
             - tpu-specs:
                 type: "v5e-8"
@@ -384,9 +366,6 @@ jobs:
                 type: "v5e-8"
               python: "3.13t"
             # Run min and max Python versions for v7x-8
-            - tpu-specs:
-                type: "v7x-8"
-              python: "3.12"
             - tpu-specs:
                 type: "v7x-8"
               python: "3.13"
@@ -420,7 +399,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.13", "3.13-nogil"]
+          python: ["3.12", "3.13", "3.13-nogil"]
           cuda-version: [12, 13]
     container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
@@ -437,7 +416,7 @@ jobs:
           final_gcs_download_uri="${INPUTS_GCS_DOWNLOAD_URI}"
 
           # Get the major and minor version of Python.
-          # E.g if python=3.11, then python_major_minor=311
+          # E.g if python=3.12, then python_major_minor=312
           # E.g if python=3.13-nogil, then python_major_minor=313t
           python_major_minor='${{ matrix.python }}'
           python_major_minor="$(echo "${python_major_minor//-nogil/t}" | tr -d '.')"

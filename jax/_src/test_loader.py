@@ -31,7 +31,6 @@ from contextlib import contextmanager
 import logging
 import os
 import re
-import sys
 import threading
 import time
 import unittest
@@ -175,9 +174,8 @@ class ThreadSafeTestResult:
   def addExpectedFailure(self, test: unittest.TestCase, err):
     self.actions.append(lambda: self.test_result.addExpectedFailure(test, err))
 
-  if sys.version_info[:2] >= (3, 12):
-    def addDuration(self, test: unittest.TestCase, elapsed):
-      self.actions.append(lambda: self.test_result.addDuration(test, elapsed))
+  def addDuration(self, test: unittest.TestCase, elapsed):
+    self.actions.append(lambda: self.test_result.addDuration(test, elapsed))
 
 
 class JaxTestSuite(unittest.TestSuite):

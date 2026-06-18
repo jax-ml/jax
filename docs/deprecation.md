@@ -15,7 +15,6 @@ This means we support at least:
 
 * All Python feature releases in the 45 months prior to each JAX release. For example:
 
-  * **Python 3.11** was released October 2022, and will be supported in new JAX releases at least until **July 2026**.
   * **Python 3.12** was released October 2023, and will be supported in new JAX releases at least until **July 2027**.
   * **Python 3.13** was released October 2024, and will be supported in new JAX releases at least until **July 2028**.
   * **Python 3.14** was released October 2025, and will be supported in new JAX releases at least until **July 2029**.

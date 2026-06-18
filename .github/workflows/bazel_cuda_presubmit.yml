@@ -54,7 +54,7 @@ jobs:
         matrix:
           # Note: For testing external dependencies updates, change the python values
           # add 3.13 and 3.13-nogil here when debugging.
-          python: ["3.11", "3.14"]
+          python: ["3.12", "3.14"]
           runner: ["linux-x86-n4-16"]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
@@ -62,12 +62,12 @@ jobs:
           exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
             # coverage for one of each, we don't need to run both.
-            - python: "3.11"
+            - python: "3.12"
               enable-x64: 1
-            - python: "3.11"
+            - python: "3.12"
               enable-x64: 0
               jaxlib-version: "head"
-            - python: "3.11"
+            - python: "3.12"
               enable-x64: 0
               jaxlib-version: "pypi_latest"
               cuda-version: "13"

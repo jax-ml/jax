@@ -93,7 +93,7 @@ exclude = [
 ]
 line-length = 80
 indent-width = 2
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 ignore = [

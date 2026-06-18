@@ -249,9 +249,6 @@ ifrt::ArrayRef CreateIfRtArrayFromSingleDeviceShardedPyArrays(
 
 struct PyBaseArrayObject {
   PyObject_HEAD;
-#if PY_VERSION_HEX < 0x030C0000
-  PyObject* weakrefs;
-#endif  // PY_VERSION_HEX < 0x030C0000
 };
 
 extern "C" void PyBaseArray_tp_dealloc(PyObject* self) {
@@ -269,10 +266,6 @@ extern "C" int PyBaseArray_tp_traverse(PyObject* self, visitproc visit,
 
 struct PyArrayObject {
   PyObject_HEAD;
-#if PY_VERSION_HEX < 0x030C0000
-  PyObject* weakrefs;
-  PyObject* dict;
-#endif  // PY_VERSION_HEX < 0x030C0000
   bool initialized;
   alignas(PyArray::Storage) char array_storage[sizeof(PyArray::Storage)];
 };
@@ -300,14 +293,11 @@ extern "C" void PyArray_tp_dealloc(PyObject* self) {
   }
 
   PyObject_ClearWeakRefs(self);
-#if PY_VERSION_HEX < 0x030C0000
-  PyObject*& dict = *_PyObject_GetDictPtr(self);
-  Py_CLEAR(dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_ClearManagedDict(self);
 #else
   PyObject_ClearManagedDict(self);
-#endif  // PY_VERSION_HEX < 0x030C0000
+#endif
 
   tp->tp_free(self);
   Py_DECREF(tp);
@@ -316,14 +306,11 @@ extern "C" void PyArray_tp_dealloc(PyObject* self) {
 // dynamic_attr: Allow the garbage collector to traverse the internal instance
 // `__dict__`.
 extern "C" int PyArray_tp_traverse(PyObject* self, visitproc visit, void* arg) {
-#if PY_VERSION_HEX < 0x030C0000
-  PyObject*& dict = *_PyObject_GetDictPtr(self);
-  Py_VISIT(dict);
-#elif PY_VERSION_HEX < 0x030D0000
+#if PY_VERSION_HEX < 0x030D0000
   _PyObject_VisitManagedDict(self, visit, arg);
 #else
   PyObject_VisitManagedDict(self, visit, arg);
-#endif  // PY_VERSION_HEX < 0x030C0000
+#endif
   // https://docs.python.org/3/c-api/typeobj.html#c.PyTypeObject.tp_traverse
   Py_VISIT(Py_TYPE(self));
   return 0;
