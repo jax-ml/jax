@@ -643,13 +643,32 @@ def check_debug_print_format(
 # because they should appear as atomic JAX values to the users.
 # TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
 # inferred by the compiler.
+# TODO(necula): remove once we get rid of lu
 @lu.transformation2
-def wrap_with_transforms(f, transforms, *args):
+def wrap_with_transforms_old(f, transforms, *args):
   new_args = tuple(
       state_types.TransformedRef(a, t) if t else a
       for a, t in zip(args, transforms)
   )
   return f(*new_args)
+
+
+@util.weakref_lru_cache
+def wrap_with_transforms(
+    fun: Callable,
+    ref_transforms: tuple[tuple[state_types.Transform, ...], ...],
+) -> Callable:
+  def wrapped(*args, **kwargs):
+    args_ft = tree_util.FlatTree.flatten(
+        (args, kwargs), registry=tree_util.default_registry
+    )
+    transformed_ft = args_ft.map2(
+        lambda a, t: state_types.TransformedRef(a, t) if t else a,
+        ref_transforms
+    )
+    t_args, t_kwargs = transformed_ft.unflatten()
+    return fun(*t_args, **t_kwargs)
+  return wrapped
 
 
 run_scoped_p = jax_core.Primitive("run_scoped")
@@ -704,7 +723,7 @@ def run_scoped(
       t.transforms if isinstance(t, state_types.TransformedRef) else ()
       for t in ref_avals
   )
-  flat_fun = wrap_with_transforms(flat_fun, ref_transforms)
+  flat_fun = wrap_with_transforms_old(flat_fun, ref_transforms)
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that

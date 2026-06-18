@@ -28,7 +28,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import hijax
-from jax._src import linear_util as lu
 from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
@@ -177,7 +176,7 @@ def _mpmd_map_discharge_rule(
   new_jaxprs = []
   all_meshes = (*meshes, *external_meshes)
 
-  def _rewrite_to_include_new_outputs(jaxpr):
+  def _rewrite_to_include_new_outputs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
 
     def new_body(*args):
       in_refs, orig_out_refs, new_out_refs, scratch_refs = util.split_list(
@@ -204,9 +203,9 @@ def _mpmd_map_discharge_rule(
     debug_info = api_util.debug_info(
         "mpmd_map_discharge", new_body, tracing_avals, {}
     )
-    wrapped_fun = lu.wrap_init(new_body, debug_info=debug_info)
-    new_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, tracing_avals)
-    return new_jaxpr
+    closed_jaxpr, _ = pe.trace_to_jaxpr(
+        new_body, tree_util.FlatTree.flatten_args(*tracing_avals), debug_info)
+    return closed_jaxpr.jaxpr
 
   for mesh, jaxpr in zip(meshes, jaxprs):
     with mpmd_map_tracing_context(mesh, all_meshes):
@@ -760,15 +759,13 @@ def _dedup_consts_and_unify_jaxpr_signatures(
         tracing_avals,
         {},
     )
-    wrapped_fun = lu.wrap_init(
-        make_rewritten_body(jaxpr, consts), debug_info=debug_info
-    )
+    fun_to_trace = make_rewritten_body(jaxpr, consts)
     with mpmd_map_tracing_context(mesh, all_meshes):
-      new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-          wrapped_fun, tracing_avals
-      )
-    assert not new_consts
-    new_jaxprs.append(new_jaxpr)
+      jaxpr, _ = pe.trace_to_jaxpr(
+          fun_to_trace, tree_util.FlatTree.flatten_args(*tracing_avals),
+          debug_info)
+    assert not jaxpr.consts, jaxpr.consts
+    new_jaxprs.append(jaxpr.jaxpr)
   return new_jaxprs, unique_consts
 
 
@@ -881,9 +878,8 @@ def _mpmd_map(
         functools.partial(_aval_to_ref_aval, meshes=meshes),
         (kernel_arg_avals, kernel_kwarg_avals),
     )
-    flat_kernel_avals, kernel_aval_tree = tree_util.tree_flatten(
-        unflat_kernel_avals
-    )
+    in_avals_ft = tree_util.FlatTree.flatten(unflat_kernel_avals)
+    flat_kernel_avals = list(in_avals_ft.vals)
 
     jaxprs: list[jax_core.Jaxpr] = []
     consts_per_fn = []
@@ -891,23 +887,20 @@ def _mpmd_map(
       debug_info = api_util.debug_info("mpmd_map", fn, flat_kernel_avals, {})
       if name is not None:
         debug_info = debug_info.replace_func_name(name)
-      flat_fun, out_tree_thunk = api_util.flatten_fun(
-          lu.wrap_init(fn, debug_info=debug_info), kernel_aval_tree
-      )
       with mpmd_map_tracing_context(mesh, all_meshes):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-            flat_fun, flat_kernel_avals
+        jaxpr, out_avals = pe.trace_to_jaxpr(
+            fn, in_avals_ft, debug_info
         )
-      fun_out_tree = out_tree_thunk()
+      fun_out_tree = out_avals.tree
       if fun_out_tree != tree_util.tree_structure(None):
         raise ValueError(
             f"The kernel function in mpmd_map {debug_info.func_src_info}"
             f" should return None. It returns a PyTree: {fun_out_tree}."
         )
-      if consts:
-        _error_if_non_ref_consts(consts, debug_info)
-      jaxprs.append(jaxpr)
-      consts_per_fn.append(consts)
+      if jaxpr.consts:
+        _error_if_non_ref_consts(jaxpr.consts, debug_info)
+      jaxprs.append(jaxpr.jaxpr)
+      consts_per_fn.append(jaxpr.consts)
 
     if any(consts_per_fn):
       # If we close over any constants in the kernel functions, we need to
