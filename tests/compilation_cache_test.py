@@ -284,53 +284,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertAllClose(f1(3), 3 * 142)
     self.assertEqual(count_cache_items(), 1 + expected_compilations)
 
-  def test_jit_with_host_callback(self):
-    calls = []
-
-    def record(x):
-      calls.append(int(x))
-      return x
-
-    f = jit(lambda x: jax.experimental.io_callback(record, x, x))
-    self.assertCacheMisses(
-    # block_until_ready to make sure callback fires before we check `calls` below
-      lambda: jax.block_until_ready(f(7)),
-      lowering=1, compilation_after_persistent_cache_miss=1)
-    self.assertEqual(count_cache_items(), 1)
-    self.assertEqual(calls, [7])
-
-    # Cache hit with same callback
-    f1 = jit(lambda x: jax.experimental.io_callback(record, x, x))
-    self.assertCacheMisses(
-      lambda: jax.block_until_ready(f1(3)),
-      lowering=1, compilation_after_persistent_cache_miss=0)
-    self.assertEqual(count_cache_items(), 1)
-    self.assertEqual(calls, [7, 3])
-
-    # Cache hit with different callback, same signature
-    def record2(x):
-      calls.append(int(x) + 1)
-      return x
-
-    f2 = jit(lambda x: jax.experimental.io_callback(record2, x, x))
-    self.assertCacheMisses(
-      lambda: jax.block_until_ready(f2(4)),
-      lowering=1, compilation_after_persistent_cache_miss=0)
-    self.assertEqual(count_cache_items(), 1)
-    self.assertEqual(calls, [7, 3, 5])
-
-    # Cache miss with new signature
-    def record3(x):
-      calls.append(int(x))
-      return x, x
-
-    f3 = jit(lambda x: jax.experimental.io_callback(record3, (x, x), x))
-    self.assertCacheMisses(
-      lambda: jax.block_until_ready(f3(8)),
-      lowering=1, compilation_after_persistent_cache_miss=1)
-    self.assertEqual(count_cache_items(), 2)
-    self.assertEqual(calls, [7, 3, 5, 8])
-
   def test_set_cache_dir_after_backends_init(self):
     # This a regression test for #25768
     with config.compilation_cache_dir(None):
@@ -581,17 +534,37 @@ class CompilationCacheTest(CompilationCacheTestCase):
           config.compilation_cache_dir(tmp_dir),
       ):
         # omitting writing to cache because compilation is too fast
+        pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
         with config.persistent_cache_min_compile_time_secs(1e5):
           with self.assertLogs(level="DEBUG") as log:
-            jit(lambda x: x + 1)(1)
+            jit(
+                lambda x: x
+                + jax.pure_callback(
+                    pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x
+                )
+            )(1)
           msg1 = "Not writing persistent cache entry"
-          msg2 = "because it took <"
+          msg2 = "because it uses host callbacks"
           self.assertTrue(
               msg_exists_in_logs(msg1, log.records, logging.WARNING)
           )
           self.assertTrue(
               msg_exists_in_logs(msg2, log.records, logging.WARNING)
           )
+
+        # omitting writing to cache because host callback is present
+        pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+        with self.assertLogs(level="DEBUG") as log:
+          jit(
+              lambda x: x
+              + jax.pure_callback(
+                  pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x
+              )
+          )(1)
+        msg1 = "Not writing persistent cache entry"
+        msg2 = "because it uses host callbacks"
+        self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+        self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
 
         # omitting writing to cache because binary is too small
         with config.persistent_cache_min_entry_size_bytes(int(1e9)):
@@ -622,6 +595,18 @@ class CompilationCacheTest(CompilationCacheTestCase):
         msg1, msg2 = "Not writing persistent cache entry", "because it took <"
         self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
         self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because host callback is present
+      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+      with self.assertLogs(level="DEBUG") as log:
+        jit(
+            lambda x: x
+            + jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+        )(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "because it uses host callbacks"
+      self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
 
       # omitting writing to cache because binary is too small
       with config.persistent_cache_min_entry_size_bytes(int(1e9)):

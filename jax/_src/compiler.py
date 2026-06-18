@@ -25,6 +25,7 @@ from typing import Any
 from collections.abc import Callable
 import warnings
 
+from jax._src import cache_key as cache_key_type
 from jax._src import compilation_cache
 from jax._src import config as config
 from jax._src import distributed
@@ -426,8 +427,7 @@ def compile_or_get_cached(
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
-      module_name, cache_key, compile_options, backend, executable_devices,
-      host_callbacks)
+      module_name, cache_key, compile_options, backend, executable_devices)
   cache_retrieval_time = time.monotonic() - cache_retrieval_start
 
   if retrieved_executable is not None:
@@ -448,6 +448,9 @@ def compile_or_get_cached(
       config.share_binary_between_hosts.value
       and is_multi_process
       and distributed.global_state.client is not None
+      # Host callbacks are currently baked into the HLO module so we can't share
+      # them.
+      and len(host_callbacks) == 0
   ):
     log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_share_module(
@@ -583,6 +586,10 @@ def _get_cache_key(
     override_fdo_profile: bytes | None = None) -> str | None:
   if not compilation_cache.is_cache_used(backend):
     return None
+  if config.remove_custom_partitioning_ptr_from_cache_key.value:
+    ignore_callbacks = cache_key_type.IgnoreCallbacks.CUSTOM_PARTITIONING
+  else:
+    ignore_callbacks = cache_key_type.IgnoreCallbacks.NO
   if override_fdo_profile is not None:
     options = copy.deepcopy(options)
     options.executable_build_options.fdo_profile = override_fdo_profile
@@ -592,7 +599,7 @@ def _get_cache_key(
         devices,
         options,
         backend,
-        config.remove_custom_partitioning_ptr_from_cache_key.value,
+        ignore_callbacks,
     )
   except _jax.JaxRuntimeError as ex:
     logger.error("compile_or_get_cached: unable to generate cache key, "
@@ -623,7 +630,7 @@ def _share_fdo_profiles(
             devices,
             compile_options,
             backend,
-            ignore_custom_partitioning=True,
+            cache_key_type.IgnoreCallbacks.ALL,
         )
         + "_fdo_sync"
     )
@@ -708,8 +715,7 @@ def _compile_and_share_module(
         serialized_executable
     )
     executable = backend.deserialize_executable(
-        serialized_executable, executable_devices, compile_options,
-        host_callbacks)
+        serialized_executable, executable_devices, compile_options)
 
   _compile_and_share_module.modules_cache[cache_key] = executable  # pyrefly: ignore[missing-attribute]
   return executable
@@ -732,7 +738,9 @@ def _compile_and_write_cache(
       backend, computation, executable_devices, compile_options, host_callbacks
   )
   compile_time = time.monotonic() - start_time
-  _cache_write(cache_key, compile_time, module_name, backend, executable)
+  _cache_write(
+      cache_key, compile_time, module_name, backend, executable, host_callbacks
+  )
   return executable
 
 
@@ -761,15 +769,13 @@ def _is_executable_in_cache(backend, cache_key) -> bool:
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,
     backend: xc.Client, executable_devices: xc.DeviceList,
-    host_callbacks: Sequence[Any],
 ) -> tuple[xc.LoadedExecutable | None, int | None]:
   """Looks up the `computation` and it's compilation time in the persistent
   compilation cache repository.
   """
   try:
     return compilation_cache.get_executable_and_time(
-        cache_key, compile_options, backend, executable_devices,
-        host_callbacks)
+        cache_key, compile_options, backend, executable_devices)
   except Exception as ex:
     if _should_raise_persistent_cache_error(ex):
       raise
@@ -782,8 +788,8 @@ def _cache_read(
 def _cache_write(cache_key: str,
                  compile_time_secs: float,
                  module_name: str,
-                 backend: xc.Client,
-                 executable: xc.LoadedExecutable) -> None:
+                 backend: xc.Client, executable: xc.LoadedExecutable,
+                 host_callbacks: Sequence[Any]) -> None:
   """Writes the `serialized_computation` and its compilation time to the
   persistent compilation cache repository.
   """
@@ -796,6 +802,13 @@ def _cache_write(cache_key: str,
   if distributed.global_state.process_id != 0:
     logger.log(log_priority,
                "Not writing persistent cache entry since process_id != 0")
+    return
+
+  if host_callbacks:
+    logger.log(
+        log_priority,
+        "Not writing persistent cache entry for '%s' because it uses host "
+        "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
   min_compile_time = config.persistent_cache_min_compile_time_secs.value
