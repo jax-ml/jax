@@ -2255,13 +2255,12 @@ def _lower_debug_info(hi_jaxpr, out_mut):
   if debug_info.result_paths is not None:
     qdd_paths = ('',) * sum(len(o) for o in out_mut)
     lo_result_paths = tuple(
-        path for aval, path in zip(hi_jaxpr.out_avals, debug_info.result_paths)
+    path for aval, path in zip(hi_jaxpr.out_avals, debug_info.result_paths)
         for _ in aval.lo_ty())
     debug_info = debug_info._replace(result_paths=(*qdd_paths, *lo_result_paths))
   return debug_info
 
-@weakref_lru_cache(maxsize=None, explain=explain)
-def trace_to_jaxpr(
+def trace_to_jaxpr_nocache(
     fun: Callable,
     in_avals: FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo,
@@ -2331,6 +2330,27 @@ def trace_to_jaxpr(
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return ClosedJaxpr(jaxpr, consts), out_avals
+
+
+@weakref_lru_cache(maxsize=None, explain=explain)
+def trace_to_jaxpr(
+    fun: Callable,
+    in_avals: FlatTree,  # (args, kwargs) pair
+    debug_info: core.DebugInfo,
+    *context_for_cache_key,
+    fun_takes_flat_tree_arg=False,
+    fun_returns_flat_tree=False,
+    requires_low=False,
+) -> tuple[ClosedJaxpr, FlatTree]:
+  return trace_to_jaxpr_nocache(
+      fun,
+      in_avals,
+      debug_info,
+      *context_for_cache_key,
+      fun_takes_flat_tree_arg=fun_takes_flat_tree_arg,
+      fun_returns_flat_tree=fun_returns_flat_tree,
+      requires_low=requires_low,
+  )
 
 
 # TODO(dougalm): remove in favor of `trace_to_jaxpr`
