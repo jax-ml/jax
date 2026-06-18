@@ -26,7 +26,7 @@ import math
 import os
 import pathlib
 import time
-from typing import Any, Generic, TypeVar
+from typing import Any
 import weakref
 
 import jax
@@ -304,11 +304,10 @@ mlir.register_lowering(mosaic_gpu_p, _mosaic_gpu_lowering_rule, "cuda")
 # ShapeTrees currently can not contain unions.
 ShapeTree = Any
 RefTree = Any
-T = TypeVar('T')
 
 
 @dataclasses.dataclass(frozen=True)
-class Union(Generic[T]):
+class Union[T]:
   members: Sequence[T]
 
   def __iter__(self):

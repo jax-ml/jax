@@ -17,7 +17,7 @@
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
-from typing import TypeVar, overload
+from typing import overload
 
 import jax
 from jax import lax
@@ -31,9 +31,6 @@ from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import llvm
 import numpy as np
-
-_T = TypeVar("_T")
-
 
 @dataclasses.dataclass(frozen=True, eq=False)
 class NDLoopInfo:
@@ -62,13 +59,13 @@ def nd_loop(
 
 
 @overload
-def nd_loop(
+def nd_loop[T](
     grid: Sequence[int | jax.Array],
     *,
     collective_axes: Sequence[Hashable] | Hashable,
     tiling: Sequence[int] | None = None,
-    init_carry: _T,
-) -> Callable[[Callable[[NDLoopInfo, _T], _T]], _T]:
+    init_carry: T,
+) -> Callable[[Callable[[NDLoopInfo, T], T]], T]:
   ...
 
 
@@ -325,13 +322,13 @@ def dynamic_scheduling_loop(
 
 
 @overload
-def dynamic_scheduling_loop(
+def dynamic_scheduling_loop[T](
     grid_names: Sequence[Hashable],
     *,
     thread_axis: Hashable | None = None,
     cluster_axes: tuple[str | tuple[str, ...], ...] = (),
-    init_carry: _T
-) -> Callable[[Callable[[NDLoopInfo, _T], _T]], _T]:
+    init_carry: T,
+) -> Callable[[Callable[[NDLoopInfo, T], T]], T]:
   ...
 
 
@@ -460,7 +457,7 @@ def inline_ptx(asm: str):
   ptx()
 
 
-def warp_map(f: Callable[[jax.Array], _T], /) -> _T:
+def warp_map[T](f: Callable[[jax.Array], T], /) -> T:
   """Runs a function with single warp semantics, passing it the warp ID."""
   mesh = gpu_core.WarpMesh(axis_name=object())
   return pallas_core.core_map(mesh)(lambda: f(lax.axis_index(mesh.axis_name)))

@@ -20,7 +20,7 @@ import json
 import math
 import os
 import tempfile
-from typing import Literal, ParamSpec, TypeVar, overload
+from typing import Literal, overload
 import warnings
 
 import jax
@@ -41,11 +41,6 @@ except ImportError:
   mosaic_gpu_lib = None
 
 # ruff: noqa: F405
-
-T = TypeVar("T")
-P = ParamSpec("P")
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Cupti:
   """CUPTI-based profiler."""
@@ -100,7 +95,7 @@ class Cupti:
     return wrapper
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[True] = ...,
@@ -109,7 +104,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[False] = ...,
@@ -118,7 +113,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[True] = ...,
@@ -127,7 +122,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[False] = ...,

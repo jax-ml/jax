@@ -1658,9 +1658,6 @@ def _commute_transform(
       raise NotImplementedError(t1, t2)
 
 
-T = TypeVar("T", bound=state_types.Transform)
-
-
 def _lower_fn_with_avals(f, avals_in):
   def inner(ctx, *args):
     f_ = lu.wrap_init(
@@ -1682,7 +1679,7 @@ def _lower_fn_with_avals(f, avals_in):
   return inner
 
 
-def _bubble_up_transform(
+def _bubble_up_transform[T: state_types.Transform](
     ctx: LoweringRuleContext,
     aval: jax_core.AbstractValue,
     transforms: Sequence[state_types.Transform],

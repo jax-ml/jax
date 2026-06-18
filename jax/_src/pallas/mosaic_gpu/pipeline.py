@@ -22,7 +22,7 @@ import enum
 import functools
 import itertools as it
 import math
-from typing import Any, Protocol, TypeVar, Union, TypeAlias
+from typing import Any, Protocol, TypeAlias, Union
 
 import jax
 from jax import api_util
@@ -41,9 +41,7 @@ import jax.numpy as jnp
 
 map = util.safe_map
 zip = util.safe_zip
-T = TypeVar('T')
-
-class PipelineCallback(Protocol):
+class PipelineCallback[T](Protocol):
   """A callback that returns the same type as the input."""
   def __call__(self, arg: T, /) -> T: ...
 
@@ -214,7 +212,7 @@ def _downcast_spec(
   )
 
 
-def emit_pipeline(
+def emit_pipeline[T](
     body: Callable[..., T],
     *,
     grid: pallas_core.TupleGrid,

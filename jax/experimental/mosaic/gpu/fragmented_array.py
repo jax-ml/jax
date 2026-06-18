@@ -22,7 +22,7 @@ import enum
 import functools
 import itertools
 import math
-from typing import Any, Literal, Protocol, TypeAlias, TypeVar, cast, overload, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, cast, overload, runtime_checkable
 
 import jax
 import jax.experimental.mosaic.gpu as mgpu
@@ -43,8 +43,6 @@ try:
 except ImportError:
   mgpu_lib = None
 
-
-T = TypeVar("T")
 WARPGROUP_SIZE = utils.WARPGROUP_SIZE
 WARP_SIZE = 32
 WARPS_IN_WARPGROUP = WARPGROUP_SIZE // WARP_SIZE
@@ -296,7 +294,7 @@ class Rounding(enum.Enum):
         return arith.RoundingMode.toward_zero
 
 
-def enumerate_negative(elems: Sequence[T]) -> Iterable[tuple[int, T]]:
+def enumerate_negative[T](elems: Sequence[T]) -> Iterable[tuple[int, T]]:
   """Like built-in enumerate, but returns negative indices into the sequence."""
   offset = len(elems)
   for i, e in enumerate(elems):

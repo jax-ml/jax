@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import functools
 import math
-from typing import cast, Any, ClassVar, Literal, TypeVar
+from typing import cast, Any, ClassVar, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
@@ -38,9 +38,6 @@ import numpy as np
 from . import fragmented_array as fa
 from . import profiler
 from . import utils
-
-_OpT = TypeVar("_OpT", bound=ir.OpView)
-
 TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
 TMAReductionOp = Literal[
@@ -485,15 +482,15 @@ class Scratch:
     assert op is not None
     self._module_op = cast(builtin.ModuleOp, op)
 
-  def _find_first_op(
-      self, op_type: type[_OpT], block: ir.Block, tag_attribute_name: str | None = None
-  ) -> _OpT | None:
+  def _find_first_op[T: ir.OpView](
+      self, op_type: type[T], block: ir.Block, tag_attribute_name: str | None = None
+  ) -> T | None:
     op_name = getattr(op_type, "OPERATION_NAME", None)
     for op in block:
       if op.name == op_name and (
           tag_attribute_name is None or tag_attribute_name in op.attributes
       ):
-        return cast(_OpT, op)
+        return cast(T, op)
       for region in op.regions:
         for block in region:
           child_op = self._find_first_op(op_type, block, tag_attribute_name)
