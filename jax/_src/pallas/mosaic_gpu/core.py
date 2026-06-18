@@ -582,7 +582,6 @@ def flatten_ref_union(ref_union: AbstractRefUnion) -> tuple[_Ref, ...]:
     raise NotImplementedError("Only SMEM and TMEM refs are supported.")
   return tuple(flat_refs)
 
-lol = 0
 
 class AbstractRefUnion(state.AbstractRef):
   refs: Sequence[_GPUMemoryRefTree]
