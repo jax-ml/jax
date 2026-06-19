@@ -3472,6 +3472,64 @@ class LayoutInferenceTest(parameterized.TestCase):
     wgmma_transforms = inference_utils.in_transforms(wgmma)
     self.assertSequenceEqual(wgmma_transforms, [lhs_transforms, rhs_transforms])
 
+  @parameterized.named_parameters(
+      ("no_tiling_no_swizzle", (64, 64), None, None),
+      ("no_tiling_valid_swizzle", (64, 64), None, 16),
+      ("valid_tiling_valid_swizzle", (64, 64), (8, 64), 128),
+      ("valid_tiling_no_swizzle", (64, 64), (8, 64), None),
+      # TODO(olechwierowicz): Comment out these cases below once we stop
+      # computing swizzle. Now it fails with ValueError originating from
+      # `layout_inference._compute_swizzle`.
+      # ("scalar_no_tiling_no_swizzle", (), None, None),
+      # ("scalar_empty_tiling_no_swizzle", (), (), None),
+  )
+  def test_with_transforms_swizzle_combinations_succeeds(
+      self, shape, tiling, swizzle
+  ):
+    # TODO(olechwierowicz): Relax no_tiling_valid_swizzle case to swizzle = 128.
+    # TODO(olechwierowicz): Add tests which check that we raise for invalid combinations.
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+      attrs = []
+      if tiling is not None:
+        attrs.append(mgpu.dialect.TileTransformAttr.get(tiling))
+      if swizzle is not None:
+        attrs.append(mgpu.dialect.SwizzleTransformAttr.get(swizzle))
+      in_transforms = ir.ArrayAttr.get(attrs)
+      mgpu.dialect.with_transforms(ref, in_transforms)
+
+    mgpu.infer_layout(self.module)
+
+    # TODO(olechwierowicz): Target state is that `expected_transforms` should be
+    # equal to `in_transforms`. Now we still compute swizzle, but we need to
+    # lift this and treat transforms as is.
+    expected_transforms = []
+    if tiling is not None:
+      expected_transforms.append(mgpu.dialect.TileTransformAttr.get(tiling))
+      computed_swizzle = inference_utils.compute_swizzle(
+          tiling[-1], mgpu.bitwidth(bf16)
+      )
+      expected_transforms.append(
+          mgpu.dialect.SwizzleTransformAttr.get(computed_swizzle)
+      )
+    ref_transforms = inference_utils.out_transforms(ref.owner)[0]
+    self.assertSequenceEqual(ref_transforms, expected_transforms)
+
+  def test_with_unit_trailing_dim_in_smem_raises_not_implemented(self):
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      ref_ty = ir.MemRefType.get((128, 1), bf16, memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+      attrs = []
+      attrs.append(mgpu.dialect.TileTransformAttr.get((128, 1)))
+      in_transforms = ir.ArrayAttr.get(attrs)
+      mgpu.dialect.with_transforms(ref, in_transforms)
+
+    with self.assertRaisesRegex(NotImplementedError, "Duplicated strides"):
+      mgpu.infer_layout(self.module)
+
   @parameterized.product(
       lhs_swizzle=(32, 64, 128),
       rhs_swizzle=(32, 64, 128),

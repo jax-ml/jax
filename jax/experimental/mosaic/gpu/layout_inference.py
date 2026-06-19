@@ -2072,6 +2072,9 @@ def _extract_smem_transforms_from_custom_transform_attrs(
     case [lc.TileTransform() as t, mgpu.SwizzlingMode() as s]:
       tile_transform = t
       swizzle = s
+    case [mgpu.SwizzlingMode() as s]:
+      tile_transform = None
+      swizzle = s
     case _:
       raise NotImplementedError(f"Unsupported transforms {transforms}")
 
@@ -2094,13 +2097,23 @@ def _with_transforms_constraint_system(
   source = ValueSite(op, VariableType.OPERAND, 0)
   dest = ValueSite(op, VariableType.RESULT, 0)
   var = ctx.producer_ref(source)
-  tiling = _extract_smem_transforms_from_custom_transform_attrs(op.ref.type, op.transforms)
-  if tiling.tiling is not None:
-    if not cs.is_valid_assignment(var, tiling):
-      raise ValueError(
-          f"Cannot apply tiling {tiling.tiling} to memref with shape {source.shape}."
-      )
-  assignments: dict[cs.Variable, cs.Constant] = {var: tiling}
+  smem_transforms = _extract_smem_transforms_from_custom_transform_attrs(op.ref.type, op.transforms)
+  if not cs.is_valid_assignment(var, smem_transforms):
+    tiling_transform_str = (
+        f"tiling {smem_transforms.tiling}"
+        if smem_transforms.tiling
+        else "empty tiling"
+    )
+    swizzle_str = (
+        f"{smem_transforms.swizzle} swizzle"
+        if smem_transforms.swizzle
+        else "no swizzle"
+    )
+    raise ValueError(
+        f"Cannot apply {tiling_transform_str} with {swizzle_str} to memref with"
+        f" shape {source.shape}."
+    )
+  assignments: dict[cs.Variable, cs.Constant] = {var: smem_transforms}
   return cs.ConstraintSystem(assignments=assignments), {var: [source, dest]}
 
 
