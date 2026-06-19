@@ -867,6 +867,22 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertEqual(cs.reduce_expression(expr, assignments={}),
                      cs.SMEMTransforms(lc.TileTransform(reassociated_tiling), swizzle))
 
+  def test_one_of_constraint_holds(self):
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    self.assertTrue(cs.OneOf(layout1, (layout1, layout2)).holds())
+    self.assertTrue(cs.OneOf(layout2, (layout1, layout2)).holds())
+    self.assertFalse(cs.OneOf(RL(mgpu.WGMMA_COL_LAYOUT), (layout1, layout2)).holds())
+
+  def test_one_of_reduces_to_unsatisfiable_if_invalid_assignment(self):
+    v0 = V(0)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    system = cs.ConstraintSystem(
+        assignments={v0: RL(mgpu.WGMMA_COL_LAYOUT)},
+        constraints=[cs.OneOf(v0, (layout1, layout2))],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
