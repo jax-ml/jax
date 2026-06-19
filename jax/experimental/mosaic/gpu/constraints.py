@@ -957,6 +957,27 @@ class IsSupportedBroadcast(_BaseConstraint):
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class OneOf(_BaseConstraint):
+  """States that `expr` evaluates to one of the given constants."""
+
+  expr: Expression
+  allowed: tuple[Constant, ...]
+
+  @property
+  def _is_constant(self) -> bool:
+    return isinstance(self.expr, Constant)
+
+  def _constant_holds(self) -> bool:
+    return self.expr in self.allowed
+
+  def canonicalize(self) -> Constraint:
+    return OneOf(self.expr, tuple(set(self.allowed)))
+
+  def __str__(self):
+    return f"OneOf({self.expr}, {self.allowed})"
+
+
 Constraint = (
     Equals
     | Relayout
@@ -967,6 +988,7 @@ Constraint = (
     | IsSupportedBroadcast
     | MinorDimDivisibleBy
     | AlwaysTrue
+    | OneOf
 )
 
 if TYPE_CHECKING:
@@ -1034,6 +1056,11 @@ def reduce_constraint(
       return IsSupportedBroadcast(src_red, dst_red, dims)
     case AlwaysTrue():
       return constraint
+    case OneOf(expr=expr, allowed=allowed) as oneof:
+      expr_red = reduce_expression(expr, assignments)
+      if isinstance(expr_red, Unsatisfiable):
+        return Unsatisfiable()
+      return dataclasses.replace(oneof, expr=expr_red)
     case _ as never:
       assert_never(never)
 
@@ -1098,6 +1125,8 @@ class ConstraintSystem:
           extract_variables(dst)
         case AlwaysTrue():
           ...
+        case OneOf(expr=expr):
+          extract_variables(expr)
         case _ as never:
           assert_never(never)
     return free_variables
