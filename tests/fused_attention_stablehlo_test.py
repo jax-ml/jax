@@ -360,11 +360,11 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     try:
-      cudnn_version = check_cudnn_version()
+      self.cudnn_version = check_cudnn_version()
     except RuntimeError as e:
       self.skipTest(str(e))
       return
-    if cudnn_version == 91000:
+    if self.cudnn_version == 91000:
       self.skipTest("cuDNN 9.10.0 does not support SDPA FP8")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")
@@ -393,6 +393,12 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
       scale: float,
       dtype: jnp.dtype,
   ):
+    if self.cudnn_version < 91900 and jtu.is_cuda_compute_capability_at_least("10.0"):
+      self.skipTest(
+          "FP8 deterministic algorithm (required for MXFP8 and "
+          "d_qk=192/d_v=128) is not supported on Blackwell with cuDNN version "
+          "below 9.19.0"
+      )
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     input_shape = (
         batch_size,
