@@ -176,6 +176,11 @@ class AsyncCopyDescriptor:
   )
 
   def __post_init__(self):
+    if self.src_ref.dtype != self.dst_ref.dtype:
+      raise ValueError(
+          "Source and destination refs must have the same dtype, but found"
+          f" {self.src_ref.dtype=} vs {self.dst_ref.dtype=}."
+      )
     if (self.src_sem is None) ^ (self.device_id is None):
       raise ValueError("Either both or neither `src_sem` and `device_id` "
                        "can be set.")
