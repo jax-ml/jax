@@ -405,7 +405,8 @@ SmallVector<int64_t> TiledLayoutAttr::getDefaultTileStrides(
   const int64_t first_tile_rank =
       first_tile == nullptr ? 0 : first_tile->dimensions().size();
   for (int64_t d = shape.size() - 1; d >= 0; --d) {
-    assert(!ShapedType::isDynamic(shape[d]));
+    // The major dimension can be dynamic as it doesn't affect the tile strides.
+    assert(!ShapedType::isDynamic(shape[d]) || d == 0);
     strides[d] = stride;
     if (d >= shape.size() - first_tile_rank) {
       assert(first_tile != nullptr);

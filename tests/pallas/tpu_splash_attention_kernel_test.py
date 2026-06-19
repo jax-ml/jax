@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import dataclasses
 import functools
-from typing import Any, TypeVar
+from typing import Any
 import unittest
 
 from absl.testing import absltest
@@ -40,7 +40,7 @@ jax.config.parse_flags_with_absl()
 htu.setup_hypothesis(max_examples=5)
 
 partial = functools.partial
-Draw = TypeVar("Draw", bound=Callable[[hps.SearchStrategy[Any]], Any])
+type Draw = Callable[[hps.SearchStrategy[Any]], Any]
 
 
 @hps.composite

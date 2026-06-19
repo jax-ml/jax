@@ -658,6 +658,10 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       if name == "exp2":
         tol = 1e-6
+      # TODO(b/538128436): Remove this logistic branch once mosaic TPU has a
+      # tpu.logistic op.
+      elif name in ("logistic", "sigmoid", "silu"):
+        tol = 1e-6
     if jtu.test_device_matches(["gpu"]):
       if func == jnp.round or func == jnp.rint:
         self.skipTest("TODO: not implemented on GPU")

@@ -25,7 +25,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Protocol, Union, runtime_checkable
 
 from jax._src import api_util
 from jax._src import checkify
@@ -448,7 +448,7 @@ class Indirect:
     return f"Indirect({self.block_size})"
 
 
-BlockDim: TypeAlias = Element | Squeezed | Blocked | BoundedSlice | Indirect
+type BlockDim = Element | Squeezed | Blocked | BoundedSlice | Indirect
 
 
 def default_index_map(ndim: int) -> Callable:

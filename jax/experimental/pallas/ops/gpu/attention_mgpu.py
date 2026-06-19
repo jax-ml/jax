@@ -27,12 +27,10 @@ import jax.experimental.pallas.mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 from functools import partial
-from typing import Protocol, TypeVar
+from typing import Protocol
 
 
-T = TypeVar('T')
-
-class PipelineCallback(Protocol):
+class PipelineCallback[T](Protocol):
   """A callback that returns the same type as the input."""
   def __call__(self, arg: T, /) -> T: ...
 
