@@ -459,7 +459,8 @@ def _get_prime_factors(x: int) -> list[int]:
       x //= p
     if x == 1:
       return factors
-  factors.append(x)
+  if x > 1:
+    factors.append(x)
   return factors
 
 
