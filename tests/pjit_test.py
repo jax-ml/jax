@@ -5549,7 +5549,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ((10, 1), (2, 5, 1), P('x', None), P('x', None, None), False),
       ((10, 1), (2, 5, 1, 1), P('x', None), P('x', None, None, None), False),
       ((10, 1, 1), (2, 5, 1, 1), P('x', None, None), P('x', None, None, None), False),
-      ( (1, 10), (1, 2, 5), P(None, 'x'), P(None, 'x', None), False),
+      ((1, 10), (1, 2, 5), P(None, 'x'), P(None, 'x', None), False),
       ((4, 2, 3, 8), (4, 6, 8), P('x', None, None, 'y'), P('x', None, 'y'), False),
       ((2, 2, 6, 8), (4, 6, 8), P(None, None, 'y', 'x'), P(None, 'y', 'x'), False),
       ((4, 6, 2, 2, 2), (4, 6, 8), P('x', None, None, None, None),
@@ -5562,6 +5562,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ((4, 2, 6, 8), (4, 12, 8), P(None, None, 'y', 'x'), None, True),
       ((4, 2, 3, 8), (4, 8, 6), P(None, 'y', None, 'x'), None, True),
       ((2, 5, 1), (10, 1), P('x', None, None), P('x', None), False),
+      ((16, 8, 4), (16, 32, 1), P('x', 'y', None), P('x', 'y', None), False),
+      ((16, 32, 1), (16, 8, 4), P('x', 'y', None), P('x', 'y', None), False),
   )
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reshape_split_merge_one_axis(self, src_shape, dst_shape, src_spec,
