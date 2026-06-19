@@ -29,7 +29,6 @@ from absl.testing import parameterized
 import jax
 from jax import api_util
 from jax import lax
-from jax._src import core as jax_core
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
@@ -43,7 +42,8 @@ from jax.experimental import mosaic
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
-from jax.extend import linear_util as lu
+from typing import Any
+from jax._src import tree_util
 import jax.numpy as jnp
 import numpy as np
 
@@ -84,11 +84,12 @@ def string_stdout():
   sys.stdout = initial_stdout
 
 
-def wrap_init(f: Callable, nr_args: int):
-  # wrapper for lu.wrap_init with debugging info
-  return lu.wrap_init(
+def trace_to_jaxpr(f: Callable, *args: Any):
+  return pe.trace_to_jaxpr(
       f,
-      debug_info=api_util.debug_info("state_test", f, (0,) * nr_args, {}))
+      tree_util.FlatTree.flatten_args(*args),
+      api_util.debug_info("tpu_pallas_test", f, (0,) * len(args), {}),
+  )
 
 
 class TPUPipelineModeTest(ptu.PallasTPUTest):
@@ -922,16 +923,14 @@ class PallasCallDMATest(ptu.PallasTPUTest):
       pl.run_scoped(body, pltpu.VMEM((8,), jnp.float32))
       return []
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(kernel, 2),
-        [
-            state.shaped_array_ref((8,), jnp.float32),
-            state.shaped_array_ref((8,), jnp.float32),
-        ],
+    jaxpr, _ = trace_to_jaxpr(
+        kernel,
+        state.shaped_array_ref((8,), jnp.float32),
+        state.shaped_array_ref((8,), jnp.float32),
     )
-    x, y = jaxpr.invars
+    x, y = jaxpr.jaxpr.invars
     expected_effects = {state.ReadEffect(y), state.WriteEffect(x)}
-    self.assertSetEqual(jaxpr.effects, expected_effects)
+    self.assertSetEqual(jaxpr.jaxpr.effects, expected_effects)
 
   def test_scoped_allocation(self):
     def kernel(y_ref):
@@ -1088,9 +1087,9 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     in_avals = [aref1, aref2]
-    stateful_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2), in_avals)
+    jaxpr, _ = trace_to_jaxpr(f, *in_avals)
     discharged_jaxpr = state_discharge.discharge_state(
-        jax_core.ClosedJaxpr(stateful_jaxpr, ()), should_discharge=[False, True])
+        jaxpr, should_discharge=[False, True])
     self.assertLen(discharged_jaxpr.invars, 2)
     self.assertLen(discharged_jaxpr.outvars, 1)
     self.assertIsInstance(discharged_jaxpr.invars[0].aval, state.AbstractRef)
@@ -3798,14 +3797,12 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
       )
       return []
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 2),
-        [
-            state.shaped_array_ref((2, 8, 128), jnp.int32),
-            jax.core.ShapedArray((), jnp.int32),
-        ],
+    jaxpr, _ = trace_to_jaxpr(
+        body,
+        state.shaped_array_ref((2, 8, 128), jnp.int32),
+        jax.core.ShapedArray((), jnp.int32),
     )
-    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
+    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(
       (
@@ -3834,14 +3831,12 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
       body_fn(sem, i)
       return []
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 2),
-        [
-            pltpu.SemaphoreType.REGULAR.get_ref_aval(),
-            jax.core.ShapedArray((), jnp.int32),
-        ],
+    jaxpr, _ = trace_to_jaxpr(
+        body,
+        pltpu.SemaphoreType.REGULAR.get_ref_aval(),
+        jax.core.ShapedArray((), jnp.int32),
     )
-    printed = jaxpr.pretty_print(use_color=False)
+    printed = jaxpr.jaxpr.pretty_print(use_color=False)
     self.assertIn('semaphore_signal', printed)
     self.assertRegex(printed, expected_regex)
 

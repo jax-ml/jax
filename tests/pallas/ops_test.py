@@ -31,14 +31,14 @@ from jax import lax
 from jax import random
 from jax._src import config
 from jax._src import dtypes
-from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
+from jax._src import tree_util
 from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
 from jax.experimental import pallas as pl
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 import jax.numpy as jnp
 import numpy as np
 
@@ -68,11 +68,14 @@ use_mosaic_gpu = config.jax_pallas_use_mosaic_gpu.value
 intx = dtypes.default_int_dtype()
 floatx = dtypes.default_float_dtype()
 
-def wrap_init(f: Callable, nr_args: int):
-  # wrapper for lu.wrap_init with debugging info
-  return lu.wrap_init(
+
+def trace_to_jaxpr(f: Callable, *args: Any):
+  return pe.trace_to_jaxpr(
       f,
-      debug_info=api_util.debug_info("state_test", f, (0,) * nr_args, {}))
+      tree_util.FlatTree.flatten_args(*args),
+      api_util.debug_info("ops_test", f, (0,) * len(args), {}),
+  )
+
 
 def is_power_of_two(n: int) -> bool:
   return (n > 0) and (n & (n - 1) == 0)
@@ -2931,9 +2934,10 @@ class PallasPrimitivesTest(PallasBaseTest):
     def body(x_ref):
       x = pallas_primitives.load(x_ref, expr())
       return [x]
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
-    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
+    jaxpr, _ = trace_to_jaxpr(
+        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+    )
+    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
     (lambda: (pl.dslice(0, 4), slice(None), slice(None)), "a[:,:,:] <-"),
@@ -2948,9 +2952,10 @@ class PallasPrimitivesTest(PallasBaseTest):
           x_ref, expr(), pallas_primitives.load(x_ref, expr())
       )
       return []
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
-    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
+    jaxpr, _ = trace_to_jaxpr(
+        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+    )
+    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
     (lambda: (pl.dslice(0, 4), slice(None), slice(None)),
@@ -2970,9 +2975,10 @@ class PallasPrimitivesTest(PallasBaseTest):
           x_ref, expr(), pallas_primitives.load(x_ref, expr())
       )
       return [x]
-    jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
-    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
+    jaxpr, _ = trace_to_jaxpr(
+        body, state.shaped_array_ref((4, 3, 2), jnp.int32)
+    )
+    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
 
   @parameterized.product(approx=[False, True], full_range=[False, True])
   def test_reciprocal(self, approx, full_range):
