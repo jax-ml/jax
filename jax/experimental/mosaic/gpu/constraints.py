@@ -693,29 +693,31 @@ class IsTransferableSmemRegisters(IsTransferable):
       smem_transposed = self.strides[-1] > self.strides[-2]
     tiling = tiling_transform.tiling if tiling_transform is not None else ()
     tiling_rank = len(tiling)
+
+    is_untiled = tiling_rank == 0
+    # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
+    # is implemented in `load_untiled` and `store_untiled`.
+    if is_untiled:
+      tiling = self.shape
+      tiling_rank = len(tiling)
+
     # TODO(bchetioui): move this below the UNOPTIMIZED check once it is
     # possible to do so.
     if smem_transposed:
       regs_transposed = reg_layout in {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
+      # TODO(olechwierowicz): Lift restriction on 2D tiling rank enforcement below.
       return tiling_rank == 2 and regs_transposed
     # For a given `TiledLayout`, all transfers are possible if optimization is
     # not required.
     if self.optimized == OptimizedTransferKind.UNOPTIMIZED:
       return True
 
-    if tiling_rank == 0 and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
+    if is_untiled and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
       # Model the Pallas behavior of downgrading to unoptimized transfers in
       # this case.
       return True
 
-    # If `tiling_rank` is 0, then we tile by the shape. This is the logic that
-    # is implemented in `load_untiled` and `store_untiled`.
-    if tiling_rank == 0:
-      tiling = self.shape
-      tiling_rank = len(tiling)
-      tiled_strides = lowering.tile_strides(self.strides, tiling)
-    else:
-      tiled_strides = lowering.tile_strides(self.strides, tiling)
+    tiled_strides = lowering.tile_strides(self.strides, tiling)
 
     first_tiled_dim = len(self.shape) - tiling_rank
     nested_ref_shape = tuple(

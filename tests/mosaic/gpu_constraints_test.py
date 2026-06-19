@@ -883,6 +883,28 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertEqual(cs.reduce_expression(expr, assignments={}),
                      cs.SMEMTransforms(lc.TileTransform(reassociated_tiling), swizzle))
 
+  @parameterized.parameters(
+      ((128, 128), (1, 128), fa.WGMMA_TRANSPOSED_LAYOUT, True),
+      ((128, 128, 128), (1, 128, 128 * 128), fa.WGMMA_TRANSPOSED_LAYOUT, False),
+      ((128, 128), (1, 128), fa.TCGEN05_TRANSPOSED_LAYOUT, True),
+      ((128, 128, 128), (1, 128, 128 * 128), fa.TCGEN05_TRANSPOSED_LAYOUT, False),
+  )
+  def test_is_transferable_untiled_smem_registers_holds_for_2d_transposed_layout(
+      self, shape, strides, reg_layout, expected_holds
+  ):
+    tiling = None
+    swizzle = 32
+    smem_layout = cs.SMEMTransforms(tiling, swizzle)
+    reg_layout_const = cs.RegisterLayout(reg_layout)
+    constraint = cs.IsTransferableSmemRegisters(
+        smem_layout,
+        reg_layout_const,
+        shape,
+        strides,
+        bitwidth=32,
+        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+    )
+    self.assertEqual(constraint.holds(), expected_holds)
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
