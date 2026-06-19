@@ -22,7 +22,7 @@ import enum
 import itertools
 import math
 import re
-from typing import Any, assert_never, cast, Literal
+from typing import Any, assert_never, cast
 
 from absl import logging
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
@@ -252,7 +252,7 @@ def _register_layouts_for_optimized_transfer_to_smem(
 def _conjure_transforms_for_smem_ref(
     variable: cs.Variable,
     divide_constraints_per_var: dict[cs.Variable, cs.Divides]
-) -> Iterator[tuple[tuple[int, ...], Literal[32, 64, 128]]]:
+) -> Iterator[tuple[tuple[int, ...], cs.Swizzle]]:
   ref_ty = variable.key.value.type
   if len(ref_ty.shape) < 2:
     return

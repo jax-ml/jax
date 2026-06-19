@@ -86,6 +86,9 @@ class TMEMLayout:
     return f"C({self.value})"
 
 
+Swizzle = Literal[32, 64, 128] | None
+
+
 @dataclasses.dataclass(frozen=True)
 class SMEMTransforms:
   """Wraps known SMEM transforms.
@@ -103,7 +106,7 @@ class SMEMTransforms:
   """
 
   tiling: lc.TileTransform | None
-  swizzle: Literal[32, 64, 128] | None
+  swizzle: Swizzle
 
   def __post_init__(self):
     if self.swizzle and self.swizzle not in {32, 64, 128}:
