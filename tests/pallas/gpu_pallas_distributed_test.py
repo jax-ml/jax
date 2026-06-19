@@ -189,7 +189,6 @@ class PallasCallRemoteDMATest(TestCase):
               plgpu.SemaphoreType.REGULAR,
               plgpu.SemaphoreType.REGULAR,
           ],
-          compiler_params=plgpu.CompilerParams(),
       )(x)
 
     devices = jax.devices()[:2]
@@ -268,6 +267,75 @@ class PallasCallRemoteDMATest(TestCase):
     )(x)
 
     expected = x[:8] if jax.process_index() == 0 else x[8:]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
+  def test_remote_dma_inline_mgpu(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    def kernel(x_ref, y_ref):
+      other_dev_id = 1 - lax.axis_index('x')
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+
+      @plgpu.inline_mgpu(arg_types=(plgpu.RefType(),))
+      def write_inline(ctx, ref):
+        del ctx
+        pass
+
+      write_inline(neighbor_ptr)
+
+    x = jnp.arange(128, dtype=jnp.float32)
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False,
+        )
+    )(x)
+    y.block_until_ready()
+
+  def test_remote_dma_atomic_store(self):
+    if jax.process_index() > 2:
+      self.skipTest("Needs at least two devices")
+    def kernel(x_ref, y_ref, ready_sem, recv_sem):
+      other_dev_id = 1 - lax.axis_index('x')
+      y_ref[...] = jnp.zeros_like(y_ref)
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+      neighbor_ptr = plgpu.remote_ref(y_ref, other_dev_id)
+      plgpu.atomic_add(neighbor_ptr, x_ref[...])
+
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(256, dtype=jnp.float32)
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+          scratch_types=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+          ],
+          compiler_params=plgpu.CompilerParams(),
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        jax.shard_map(
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False,
+        )
+    )(x)
+    y.block_until_ready()
+
+    expected = x[128:] if jax.process_index() == 0 else x[:128]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
   def test_remote_dma_with_retries(self):
