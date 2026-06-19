@@ -1864,7 +1864,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @parameterized.parameters(False, True)
   def test_get_swap_with_swizzle_transform(self, transposed):
-    self.skip_if_wg_semantics()  # Swizzle transform with no tiling transform is not supported.
     dtype = jnp.bfloat16
     swizzle = 128
     swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
