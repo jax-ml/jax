@@ -27,7 +27,6 @@ import numpy as np
 
 from . import dialect_lowering as lowering
 from . import fragmented_array as fa
-from . import inference_utils
 from . import launch_context as lc
 from . import layouts as layouts_lib
 from . import tcgen05
@@ -104,7 +103,7 @@ class SMEMTransforms:
   """
 
   tiling: lc.TileTransform | None
-  swizzle: Literal[32, 64, 128] | None = None
+  swizzle: Literal[32, 64, 128] | None
 
   def __post_init__(self):
     if self.swizzle and self.swizzle not in {32, 64, 128}:
@@ -684,10 +683,10 @@ class IsTransferableSmemRegisters(IsTransferable):
       reg_layout: fa.FragmentedLayout,
   ) -> bool:
     tiling_transform = smem_layout.tiling
-    assert smem_layout.swizzle is None
+    swizzle = smem_layout.swizzle
 
     if not isinstance(reg_layout, fa.TiledLayout):
-      return tiling_transform is None
+      return tiling_transform is None and swizzle is None
     if len(self.strides) < 2:
       smem_transposed = False
     else:
@@ -715,12 +714,8 @@ class IsTransferableSmemRegisters(IsTransferable):
       tiling = self.shape
       tiling_rank = len(tiling)
       tiled_strides = lowering.tile_strides(self.strides, tiling)
-      # Mirrors the logic in `swap_p` and `get_p` lowering, in the untiled case.
-      swizzle = 16
     else:
       tiled_strides = lowering.tile_strides(self.strides, tiling)
-      minor_tiling = tiling[np.argmin(tiled_strides[-len(tiling):])]
-      swizzle = inference_utils.compute_swizzle(minor_tiling, self.bitwidth)
 
     first_tiled_dim = len(self.shape) - tiling_rank
     nested_ref_shape = tuple(
@@ -738,7 +733,7 @@ class IsTransferableSmemRegisters(IsTransferable):
 
     try:
       fa.plan_tiled_transfer(nested_ref_shape, nested_ref_strides,
-                             reg_layout, self.bitwidth, swizzle)
+                             reg_layout, self.bitwidth, swizzle or 16)
       return True
     except fa.TransferPlanDerivationError:
       return False
@@ -905,10 +900,12 @@ class IsValidMmaTiling(_BaseConstraint):
     match self.expr:
       case SMEMTransforms(tiling=None):
         return False
-      case SMEMTransforms(tiling=lc.TileTransform(tiling=t)):
-        swizzles = [16, 32, 64, 128] if self.allow_unswizzled else [32, 64, 128]
-        valid_tilings = {(8, s * 8 // self.bitwidth) for s in swizzles}
-        return t in valid_tilings
+      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=None):
+        no_swizzle = 16
+        return self.allow_unswizzled and t == (8, no_swizzle * 8 // self.bitwidth)
+      case SMEMTransforms(tiling=lc.TileTransform(tiling=t), swizzle=swizzle):
+        assert swizzle is not None  # satisfy the type checker
+        return t == (8, swizzle * 8 // self.bitwidth)
       case RegisterLayout() | TMEMLayout() | SMEMTransforms():
         raise ValueError(f"Unexpected value {self.expr} in IsValidMmaTiling constraint")
       case _ as never:

@@ -2207,7 +2207,7 @@ def _check_collapse_shape(
   reassociation = tuple(len(ir.ArrayAttr(idx)) for idx in op.reassociation)
 
   collapsed_tiling = cs.reduce_expression(
-      cs.CollapseShape(cs.SMEMTransforms(t_in), tuple(src_ty.shape),
+      cs.CollapseShape(cs.SMEMTransforms(t_in, None), tuple(src_ty.shape),
                        reassociation),
       {},
   )

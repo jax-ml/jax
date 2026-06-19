@@ -1219,10 +1219,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     dest_layout = tcgen05.tmem_default_layout(packing=2)
     transforms = ir.ArrayAttr.get([
         mgpu.dialect.TileTransformAttr.get((8, 8)),
-        # TODO(bchetioui): get rid of the need to specify the swizzle here?
-        # Right now, layout inference will always introduce swizzling whenever
-        # possible.
-        mgpu.dialect.SwizzleTransformAttr.get(16),
     ])
     with ir.InsertionPoint(self.module.body):
       [src, dest] = undefs(src_type, dest_type)
@@ -1436,7 +1432,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     [(_, tiling)] = list(layout_inference.conjure_assignment(
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
     ))
-    self.assertEqual(tiling, cs.SMEMTransforms(None))
+    self.assertEqual(tiling, cs.SMEMTransforms(None, None))
 
   def test_conjure_smem_tiling_for_arbitrary_tiled_layout_transfer(self):
     shape = (128, 128)
@@ -1463,7 +1459,7 @@ class LayoutInferenceTest(parameterized.TestCase):
         {var}, cs.ConstraintSystem(constraints=[is_transferable]), arch=(9, 0)
     ))
     # Empty tiling is always a possible assignment.
-    self.assertIn((var, cs.SMEMTransforms(None)), assignments)
+    self.assertIn((var, cs.SMEMTransforms(None, None)), assignments)
     # Check that there is at least one non-empty tiling.
     self.assertTrue(any(tiling.tiling is not None for _, tiling in assignments))
 
@@ -1493,19 +1489,19 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     # Yield only empty tiling with no constraints.
     with self.subTest("no_constraints_yield_empty_tiling"):
-      self.assertEqual(conjure([]), [(var, cs.SMEMTransforms(None))])
+      self.assertEqual(conjure([]), [(var, cs.SMEMTransforms(None, None))])
 
     # Yield empty if not a tiled layout.
     with self.subTest("not_tiled_layout_yield_empty_tiling"):
       layout = cs.RegisterLayout(fa.WGSplatFragLayout(shape))
       constraints = [transfer_constraint(layout)]
       conjured = conjure(constraints)
-      self.assertEqual(conjured, [(var, cs.SMEMTransforms(None))])
+      self.assertEqual(conjured, [(var, cs.SMEMTransforms(None, None))])
 
     wgmma_layout = cs.RegisterLayout(fa.WGMMA_LAYOUT)
 
-    # Yield all possible tilings with no Divides constraints.
-    with self.subTest("no_divides_constraints_yields_all_possible_tilings_for_mma"):
+    # Yield all possible tilings and max swizzle with no Divides constraints.
+    with self.subTest("no_divides_constraints_yields_all_possible_tilings_and_max_swizzle_for_mma"):
       constraints = [transfer_constraint(wgmma_layout)]
       conjured = conjure(constraints)
       if transposed:
@@ -1513,13 +1509,19 @@ class LayoutInferenceTest(parameterized.TestCase):
       else:
         expected_tilings = [(8, 32), (8, 16), (8, 8)]
       expected_assignments = [
-          (var, cs.SMEMTransforms(lc.TileTransform(t))) for t in expected_tilings
+          (
+              var,
+              cs.SMEMTransforms(
+                  lc.TileTransform(t), (t[0] if transposed else t[1]) * 4
+              ),
+          )
+          for t in expected_tilings
       ]
-      expected_assignments.append((var, cs.SMEMTransforms(None)))
+      expected_assignments.append((var, cs.SMEMTransforms(None, None)))
       self.assertEqual(conjured, expected_assignments)
 
-    # Yield also valid tilings with Divides constraints.
-    with self.subTest("divides_constraints_yield_valid_assignments"):
+    # Yield also valid tilings and max swizzle with Divides constraints.
+    with self.subTest("divides_constraints_yield_valid_assignments_and_max_swizzle"):
       constraints = [
           transfer_constraint(wgmma_layout),
           cs.Divides(var, (32, 16)),
@@ -1530,9 +1532,15 @@ class LayoutInferenceTest(parameterized.TestCase):
       else:
         expected_tilings = [(8, 16), (8, 8)]
       expected_assignments = [
-          (var, cs.SMEMTransforms(lc.TileTransform(t))) for t in expected_tilings
+          (
+              var,
+              cs.SMEMTransforms(
+                  lc.TileTransform(t), (t[0] if transposed else t[1]) * 4
+              ),
+          )
+          for t in expected_tilings
       ]
-      expected_assignments.append((var, cs.SMEMTransforms(None)))
+      expected_assignments.append((var, cs.SMEMTransforms(None, None)))
       self.assertEqual(conjured, expected_assignments)
 
   def test_conjure_tries_high_priority_assignments_first(self):
@@ -2605,20 +2613,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Failed to infer"):
       mgpu.infer_layout(self.module)
 
-  def test_infer_transforms_allows_arbitrary_unswizzled_tilings(self):
-    ref_ty = ir.MemRefType.get((64, 512), ir.BF16Type.get(), memory_space=mgpu.utils.smem())
-    transforms = ir.ArrayAttr.get([
-        mgpu.dialect.TileTransformAttr.get((16, 256)),
-        mgpu.dialect.SwizzleTransformAttr.get(16),
-    ])
-    with ir.InsertionPoint(self.module.body):
-      [ref] = undefs(ref_ty)
-      mgpu.dialect.with_transforms(ref, transforms)
-    mgpu.infer_layout(self.module)
-    self.assertSequenceEqual(
-        inference_utils.out_transforms(ref.owner), [transforms]
-    )
-
   def test_infer_transforms_sets_default_empty_transforms_on_async_load(self):
     shape = (64, 64)
     elt_ty = ir.BF16Type.get()
@@ -2756,8 +2750,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     slice2_ref_ty = ir.MemRefType.get(slice2_shape, elt_ty, memory_space=mgpu.utils.smem())
     slice3_ref_ty = ir.MemRefType.get(slice3_shape, elt_ty, memory_space=mgpu.utils.smem())
 
-    want_tt = mgpu.dialect.TileTransformAttr.get((2 if even_offsets else 1, 64))
-
     with ir.InsertionPoint(self.module.body):
       [source_ref] = undefs(source_ref_ty)
       subview_op0 = memref.SubViewOp(
@@ -2771,8 +2763,11 @@ class LayoutInferenceTest(parameterized.TestCase):
           static_strides=[1, 1],
       )
 
-      transforms_0 = ir.ArrayAttr.get([want_tt])
-      mgpu.dialect.WithTransformsOp(subview_op0.result, transforms_0)
+      want = ir.ArrayAttr.get([
+          mgpu.dialect.TileTransformAttr.get((2 if even_offsets else 1, 64)),
+          mgpu.dialect.SwizzleTransformAttr.get(128),
+      ])
+      mgpu.dialect.WithTransformsOp(subview_op0.result, want)
 
       subview_op1 = memref.SubViewOp(
           slice1_ref_ty,
@@ -2818,11 +2813,6 @@ class LayoutInferenceTest(parameterized.TestCase):
       )
 
     mgpu.infer_layout(self.module)
-
-    want = ir.ArrayAttr.get([
-        want_tt,
-        mgpu.dialect.SwizzleTransformAttr.get(128),
-    ])
 
     self.assertSequenceEqual(inference_utils.out_transforms(source_ref.owner), [want])
     self.assertSequenceEqual(inference_utils.in_transforms(subview_op0), [want])
@@ -3474,20 +3464,14 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ("no_tiling_no_swizzle", (64, 64), None, None),
-      ("no_tiling_valid_swizzle", (64, 64), None, 16),
+      ("no_tiling_valid_swizzle", (64, 64), None, 128),
       ("valid_tiling_valid_swizzle", (64, 64), (8, 64), 128),
       ("valid_tiling_no_swizzle", (64, 64), (8, 64), None),
-      # TODO(olechwierowicz): Comment out these cases below once we stop
-      # computing swizzle. Now it fails with ValueError originating from
-      # `layout_inference._compute_swizzle`.
-      # ("scalar_no_tiling_no_swizzle", (), None, None),
-      # ("scalar_empty_tiling_no_swizzle", (), (), None),
+      ("scalar_no_tiling_no_swizzle", (), None, None),
   )
-  def test_with_transforms_swizzle_combinations_succeeds(
+  def test_valid_tiling_and_swizzle_combinations(
       self, shape, tiling, swizzle
   ):
-    # TODO(olechwierowicz): Relax no_tiling_valid_swizzle case to swizzle = 128.
-    # TODO(olechwierowicz): Add tests which check that we raise for invalid combinations.
     with ir.InsertionPoint(self.module.body):
       bf16 = ir.BF16Type.get()
       ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
@@ -3502,20 +3486,34 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
 
-    # TODO(olechwierowicz): Target state is that `expected_transforms` should be
-    # equal to `in_transforms`. Now we still compute swizzle, but we need to
-    # lift this and treat transforms as is.
-    expected_transforms = []
-    if tiling is not None:
-      expected_transforms.append(mgpu.dialect.TileTransformAttr.get(tiling))
-      computed_swizzle = inference_utils.compute_swizzle(
-          tiling[-1], mgpu.bitwidth(bf16)
-      )
-      expected_transforms.append(
-          mgpu.dialect.SwizzleTransformAttr.get(computed_swizzle)
-      )
-    ref_transforms = inference_utils.out_transforms(ref.owner)[0]
-    self.assertSequenceEqual(ref_transforms, expected_transforms)
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(ref.owner), [in_transforms]
+    )
+
+  @parameterized.named_parameters(
+      ("no_tiling_invalid_swizzle", (64, 32), None, 128),
+      ("valid_tiling_invalid_swizzle", (64, 64), (8, 32), 128),
+      ("scalar_no_tiling_with_swizzle", (), None , 32),
+      ("scalar_tiling_with_no_swizzle", (), (8, 32), None),
+      ("scalar_tiling_with_swizzle", (), (8, 32), 32),
+  )
+  def test_invalid_tiling_with_swizzle_combinations(
+      self, shape, tiling, swizzle
+  ):
+    with ir.InsertionPoint(self.module.body):
+      bf16 = ir.BF16Type.get()
+      ref_ty = ir.MemRefType.get(shape, bf16, memory_space=mgpu.utils.smem())
+      [ref] = undefs(ref_ty)
+      attrs = []
+      if tiling is not None:
+        attrs.append(mgpu.dialect.TileTransformAttr.get(tiling))
+      if swizzle is not None:
+        attrs.append(mgpu.dialect.SwizzleTransformAttr.get(swizzle))
+      transforms = ir.ArrayAttr.get(attrs)
+      mgpu.dialect.with_transforms(ref, transforms)
+
+    with self.assertRaisesRegex(ValueError, "Cannot apply.*tiling"):
+      mgpu.infer_layout(self.module)
 
   def test_with_unit_trailing_dim_in_smem_raises_not_implemented(self):
     with ir.InsertionPoint(self.module.body):

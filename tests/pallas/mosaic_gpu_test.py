@@ -1394,6 +1394,33 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x)
 
+  @parameterized.parameters(32, 64, 128)
+  def test_copy_with_sole_swizzle_lowers_correctly(self, swizzle):
+    dtype = jnp.float32
+    trailing_dim = 8 * swizzle // 32
+    shape = [128, trailing_dim]
+
+    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(x_ref, scratch_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    f = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct(shape, dtype),
+        scratch_types=(
+            plgpu.SMEM(
+                tuple(shape),
+                dtype,
+                transforms=(plgpu.SwizzleTransform(swizzle),),
+            ),
+            plgpu.Barrier(),
+        ),
+    )
+    x = jnp.ones(shape, dtype=dtype).reshape(shape)
+    jax.block_until_ready(f(x))
+
   def test_copy_7d_tiling_with_unit_middle_dims(self):
     # 7D GMEM/SMEM refs with a 7D TilingTransform results in a 14D physical
     # shape once tiling is applied.  The unit-sized dimensions are dropped
