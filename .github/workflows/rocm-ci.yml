@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-jax-in-docker:
     if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
-    runs-on: linux-x86_64-cirrascale-64-8gpu-amd-mi250
+    runs-on: amd-do-linux.jax.gpu.gfx950.8
     env:
       BASE_IMAGE: "ubuntu:22.04"
       TEST_IMAGE: ubuntu-jax-upstream-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}

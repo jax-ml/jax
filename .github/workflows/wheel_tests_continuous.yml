@@ -355,7 +355,7 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          runner: ["linux-x86-64-1gpu-amd"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
           artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
           python: ["3.12", "3.13", "3.14"]
           rocm: [
@@ -391,7 +391,7 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12"]
           rocm: [
             {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        tag: "rocm720"},
@@ -420,7 +420,7 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          runner: ["linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
           python: ["3.12"]
           rocm: [
             {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        tag: "rocm720"},

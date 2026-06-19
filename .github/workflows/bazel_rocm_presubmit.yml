@@ -33,7 +33,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           python: ["3.14"]
-          runner: ["linux-x86-64-1gpu-amd"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1]
           rocm-version: ["7"]
