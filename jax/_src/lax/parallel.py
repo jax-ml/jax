@@ -2938,7 +2938,7 @@ def ppermute_start(*args, **kwargs):
   return _ppermute_is_async(*args, **kwargs, is_async=True)
 
 # Asynchronous start abstract eval.
-def _start_abstract_eval(sync_prim, done_fun, *args, **kwargs):
+def _async_start_abstract_eval(sync_prim, done_fun, *args, **kwargs):
   aval, effs = sync_prim.abstract_eval(*args, **kwargs)
   return core.AbstractFuture(aval, done_fun), effs
 
@@ -2955,11 +2955,20 @@ for async_prim, sync_prim, done_p in [
     (ppermute_start_p, ppermute_p, ppermute_done_p),
 ]:
   async_prim.def_effectful_abstract_eval(
-      partial(_start_abstract_eval, sync_prim, done_p.bind))
+      partial(_async_start_abstract_eval, sync_prim, done_p.bind))
+
+def _async_done_abstract_eval(aval):
+  if not isinstance(aval, core.AbstractFuture):
+    raise TypeError(f"async done op got {aval}, want core.AbstractFuture")
+  return aval.inner_aval
+
+for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
+          all_to_all_done_p, pbroadcast_done_p, ppermute_done_p]:
+  p.def_abstract_eval(_async_done_abstract_eval)
+  mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])
 
 
-# Asynchronous start lowering.
-def _start_lowering(sync_lower):
+def _async_start_lowering(sync_lower, ctx, x, **kwargs):
   """Returns an async start lowering function given a synchronous lowering.
 
   An async StableHLO collective looks like this:
@@ -2978,25 +2987,21 @@ def _start_lowering(sync_lower):
   synchronous collective and transforms it into a lowering function for the
   async collective by wrapping everything in an async_start.
   """
-
-  def f(ctx, x, **kwargs):
-    (x_aval,) = ctx.avals_in  # e.g., f32[2, 2]
-    (out_aval,) = ctx.avals_out  # e.g., # AbstractFuture[f32[4, 2]]
-    inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
-    inner_type = mlir.aval_to_ir_type(ctx.module_context, inner_aval)  # e.g., <tensor<4x2xf32>
-    # e.g., !stablehlo.future<tensor<4x2xf32>>
-    future_type = hlo.FutureType.get([inner_type])
-    async_start = hlo.AsyncStartOp(future_type, [x])
-    block = async_start.regions[0].blocks.append(x.type)
-    with ir.InsertionPoint(block):
-      inner_ctx = ctx.replace(
-          primitive=None, avals_in=[x_aval], avals_out=[inner_aval]
-      )
-      results = sync_lower(inner_ctx, block.arguments[0], **kwargs)
-      hlo.return_(results)
-    return async_start.results
-
-  return f
+  (x_aval,) = ctx.avals_in  # e.g., f32[2, 2]
+  (out_aval,) = ctx.avals_out  # e.g., # AbstractFuture[f32[4, 2]]
+  inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
+  inner_type = mlir.aval_to_ir_type(ctx.module_context, inner_aval)  # e.g., <tensor<4x2xf32>
+  # e.g., !stablehlo.future<tensor<4x2xf32>>
+  future_type = hlo.FutureType.get([inner_type])
+  async_start = hlo.AsyncStartOp(future_type, [x])
+  block = async_start.regions[0].blocks.append(x.type)
+  with ir.InsertionPoint(block):
+    inner_ctx = ctx.replace(
+        primitive=None, avals_in=[x_aval], avals_out=[inner_aval]
+    )
+    results = sync_lower(inner_ctx, block.arguments[0], **kwargs)
+    hlo.return_(results)
+  return async_start.results
 
 
 def _reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
@@ -3005,19 +3010,17 @@ def _reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
     # lowered to two operations: a reduce_scatter and a reshape. Lowering the
     # async version of this is tricky because we need to reshape after the
     # future is resolved.
-    raise NotImplementedError("lowering reduce_scatter_start with tiled=False unimplemented")
+    raise NotImplementedError
   lower = partial(_reduce_scatter_lowering, lax.add_p)
-  return _start_lowering(lower)(ctx, x, tiled=tiled, **kwargs)
+  return _async_start_lowering(lower, ctx, x, tiled=tiled, **kwargs)
 
 
 def _unreduced_reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
   if not tiled:
-    msg = (
-        "lowering unreduced_reduce_scatter_start with tiled=False unimplemented"
-    )
-    raise NotImplementedError(msg)
+    # Same reason as _reduce_scatter_start_lowering
+    raise NotImplementedError
   lower = partial(_unreduced_reduce_scatter_lowering, lax.add_p)
-  return _start_lowering(lower)(ctx, x, tiled=tiled, **kwargs)
+  return _async_start_lowering(lower, ctx, x, tiled=tiled, **kwargs)
 
 
 mlir.register_lowering(
@@ -3041,13 +3044,13 @@ for p in ("cuda", "rocm", "tpu"):
   )
 mlir.register_lowering(
     psum_start_p,
-    _start_lowering(partial(_allreduce_lowering, lax.add_p, lax.reduce_sum)),
+    partial(_async_start_lowering, partial(_allreduce_lowering, lax.add_p, lax.reduce_sum)),
 )
 mlir.register_lowering(
-    psum_invariant_start_p, _start_lowering(_psum_invariant_lowering_rule)
+    psum_invariant_start_p, partial(_async_start_lowering, _psum_invariant_lowering_rule)
 )
 mlir.register_lowering(
-    unreduced_psum_start_p, _start_lowering(_unreduced_psum_lowering)
+    unreduced_psum_start_p, partial(_async_start_lowering, _unreduced_psum_lowering)
 )
 mlir.register_lowering(reduce_scatter_start_p, _reduce_scatter_start_lowering)
 mlir.register_lowering(
@@ -3057,18 +3060,6 @@ mlir.register_lowering(
     all_to_all_start_p, partial(_all_to_all_lowering, is_async=True)
 )
 mlir.register_lowering(
-    pbroadcast_start_p, _start_lowering(_pbroadcast_lowering), platform="gpu"
-)
-mlir.register_lowering(ppermute_start_p, _start_lowering(_ppermute_lowering))
-
-
-# Asynchronous done abstract eval and lowering.
-def _done_abstract_eval(aval):
-  if not isinstance(aval, core.AbstractFuture):
-    raise TypeError(f"async done op got {aval}, want core.AbstractFuture")
-  return aval.inner_aval
-
-for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
-          all_to_all_done_p, pbroadcast_done_p, ppermute_done_p]:
-  p.def_abstract_eval(_done_abstract_eval)
-  mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])
+    pbroadcast_start_p, partial(_async_start_lowering, _pbroadcast_lowering),
+    platform="gpu")
+mlir.register_lowering(ppermute_start_p, partial(_async_start_lowering, _ppermute_lowering))
