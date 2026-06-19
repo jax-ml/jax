@@ -3381,6 +3381,27 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     dst = lax.broadcast_in_dim(src, (2, 4, 128), (1, 2))
     np.testing.assert_array_equal(kernel(src), dst)
 
+  @parameterized.parameters(
+    ((64, 128), (64, 1), (1, 128)),
+    ((256,), (2,), (128,)),
+    # NotImplementedError: Unsupported broadcast for WGStridedFragLayout
+    # ((128, 64), (1, 16), (128, 4)),
+  )
+  def test_tile_wg_strided(self, out_shape, reps, in_shape):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+    )
+    def kernel(x_ref, y_ref):
+      to_be_tiled = plgpu.load(
+          x_ref, (), layout=plgpu.Layout.WG_STRIDED(in_shape, 1)
+      )
+      tiled = lax.tile(to_be_tiled, reps)
+      y_ref[...] = tiled
+
+    result = jax.random.uniform(jax.random.key(0), shape=in_shape, dtype=jnp.float32)
+    np.testing.assert_array_equal(kernel(result), jnp.tile(result, reps))
+
   @parameterized.named_parameters((l.name.lower(), l) for l in plgpu.Layout)
   def test_copy_layout(self, layout):
     if layout in {
