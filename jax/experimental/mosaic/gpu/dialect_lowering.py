@@ -473,8 +473,7 @@ def _vector_load_op_lowering_rule(
 
   swizzle = swizzle_from_transforms_attr(transforms_attr)
   transforms = memref_transforms_from_transforms_attr(transforms_attr)
-  has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
-  if has_transforms:
+  if transforms:
     [tiling_transform] = transforms
     assert isinstance(tiling_transform, lc.TileTransform)
 
@@ -495,6 +494,7 @@ def _vector_load_op_lowering_rule(
       return fa.FragmentedArray.load_untiled(
           transformed_ref,
           layout=out_layout,
+          swizzle=swizzle,
           is_signed=is_signed,
           optimized=optimized,
       )
@@ -563,8 +563,7 @@ def _vector_store_op_lowering_rule(
     transforms_attr = inference_utils.in_transforms(op)[0]
     swizzle = swizzle_from_transforms_attr(transforms_attr)
     transforms = memref_transforms_from_transforms_attr(transforms_attr)
-    has_transforms = swizzle != mgpu.SwizzlingMode.kNoSwizzle or transforms
-    if has_transforms:
+    if transforms:
       unwrapped_ref = unwrap_transformed_memref(ref, transforms_attr)
       [tiling_transform] = transforms
       assert isinstance(tiling_transform, lc.TileTransform)
@@ -580,7 +579,9 @@ def _vector_store_op_lowering_rule(
     else:
 
       def store_untiled(optimized: bool):
-        fragmented_array.store_untiled(ref, optimized=optimized, atomic=atomic)
+        fragmented_array.store_untiled(
+            ref, optimized=optimized, swizzle=swizzle, atomic=atomic
+        )
       _retry_on_failure(store_untiled, optimized)
   else:
     raise ValueError(f"Unsupported memory space: {ref_type.memory_space}")

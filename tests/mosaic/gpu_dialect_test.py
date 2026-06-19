@@ -2037,6 +2037,28 @@ class DialectLoweringTest(MosaicGpuTest):
     ):
       mgpu.lower_mgpu_dialect(self.module, None)
 
+  def test_lowering_load_and_store_with_only_swizzle_lowers(self):
+    shape = (128, 128)
+    elt_ty = ir.BF16Type.get()
+    with ir.InsertionPoint(self.module.body):
+      memref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=mgpu_utils.smem())
+      in_transforms = ir.ArrayAttr.get([mgpu.dialect.SwizzleTransformAttr.get(128)])
+      transforms_attr = ir.ArrayAttr.get([in_transforms])
+      mem_slice = mgpu.dialect.slice_smem(memref_ty, 0)
+      mem_slice.owner.attributes["out_transforms"] = transforms_attr
+      load = mgpu.dialect.vector_load(mem_slice)
+      load.owner.attributes["out_layouts"] = ir.ArrayAttr.get([
+          layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+      ])
+      load.owner.attributes["in_transforms"] = transforms_attr
+      store = mgpu.dialect.vector_store(load, mem_slice)
+      store.attributes["in_layouts"] = ir.ArrayAttr.get([
+          layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+      ])
+      store.attributes["in_transforms"] = transforms_attr
+
+    mgpu.lower_mgpu_dialect(self.module, None)
+
   def test_lowering_eliminates_layouts(self):
     shape = (4, 128)
     elt_ty = ir.BF16Type.get()
