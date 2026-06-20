@@ -7939,7 +7939,6 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 
 
 @export
-@api.jit(static_argnames=('axisa', 'axisb', 'axisc', 'axis'))
 def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
           axis: int | None = None):
   r"""Compute the (batched) cross product of two arrays.
@@ -8020,9 +8019,27 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
     axisa = axis
     axisb = axis
     axisc = axis
+
+  if a is b:
+    ndim = np.ndim(a)
+    axisa = _canonicalize_axis(axisa, ndim)
+    axisb = _canonicalize_axis(axisb, ndim)
+    if axisa == axisb:
+      dimension = np.shape(a)[axisa]
+      if dimension not in (2, 3):
+        raise ValueError("Dimension must be either 2 or 3 for cross product")
+      if dimension == 2:
+        return array_creation.zeros_like(moveaxis(a, axisa, -1)[..., 0])
+      return array_creation.zeros_like(moveaxis(a, axisa, axisc))
+
+  return _cross(a, b, axisa, axisb, axisc)
+
+
+@api.jit(static_argnames=('axisa', 'axisb', 'axisc'))
+def _cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1):
+  util.check_arraylike("cross", a, b)
   a = moveaxis(a, axisa, -1)
   b = moveaxis(b, axisb, -1)
-
   if a.shape[-1] not in (2, 3) or b.shape[-1] not in (2, 3):
     raise ValueError("Dimension must be either 2 or 3 for cross product")
 

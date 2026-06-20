@@ -511,6 +511,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
       self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
 
+  def testCrossSameArgumentJitGradCholeskyFinite(self):
+    key = jax.random.PRNGKey(921742)
+    key, k1 = jax.random.split(key)
+    t1 = jax.random.normal(k1, (16, 3))
+    key, k2 = jax.random.split(key)
+    t2 = jax.random.normal(k2, (16, 3))
+    key, k3 = jax.random.split(key)
+    t3 = jax.random.normal(k3, (16, 3))
+
+    def model(t1, t2, t3):
+      scale = t1.shape[-1] ** -0.5
+      w = jax.nn.softmax(
+          jnp.matmul(t1, jnp.swapaxes(t2, -2, -1)) * scale, axis=-1)
+      t = jnp.matmul(w, t3)
+      c = jnp.cross(t, t)
+      a = c / (jnp.linalg.norm(c) + 1.0)
+      a = jnp.matmul(a, a.T) + jnp.eye(16)
+      l = jnp.linalg.cholesky(a)
+      return jnp.vecdot(l, l).sum()
+
+    grads = jax.jit(jax.grad(model, argnums=(0, 1, 2)))(t1, t2, t3)
+    self.assertTrue(all(bool(jnp.isfinite(g).all()) for g in grads))
+
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [
