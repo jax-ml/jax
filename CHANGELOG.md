@@ -22,6 +22,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Support for Python 3.11, NumPy 2.0, and SciPy 1.14 has been dropped, per the
     [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
 
+* Bug fixes
+  * {func}`jax.scipy.special.betaln` now returns the correct finite value
+    instead of `nan` when ``a`` is a non-positive integer and ``a + b`` is also
+    a non-positive integer (e.g. ``betaln(-2, 1)``), matching
+    {func}`scipy.special.betaln` ({jax-issue}`#38243`).
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
