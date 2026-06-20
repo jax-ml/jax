@@ -25,6 +25,7 @@ from typing import Any, TypeVar
 import jax
 from jax import lax
 from jax import tree_util
+from jax._src.tree_util import FlatTree
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
@@ -32,7 +33,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
-from jax._src import linear_util as lu
 from jax._src import literals
 from jax._src import pjit
 from jax._src import source_info_util
@@ -465,12 +465,16 @@ def lower_fun(
   fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
 
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    wrapped_fun = lu.wrap_init(
-        fn, params,
-        debug_info=api_util.debug_info("pallas triton lower_fun", fun,
-                                       args, params))
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in, lower=True)
-    jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
+    in_avals_ft = FlatTree.flatten_static_argnums_argnames(
+        tuple(ctx.avals_in), params,
+        static_argnums=(), static_argnames=tuple(params.keys())
+    )
+    debug_info = api_util.debug_info("pallas triton lower_fun", fun,
+                                     args, params,
+                                     static_argnames=tuple(params.keys()))
+    jaxpr, _ = pe.trace_to_jaxpr(
+        fn, in_avals_ft, debug_info=debug_info, requires_low=True
+    )
     out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
 
@@ -523,25 +527,21 @@ def _atomic_rmw(
 def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   flat_args = tree_util.tree_leaves(args)
   (axis,) = axes
-  dtype = ctx.avals_in[0].dtype
-  in_avals = [
-      jax_core.ShapedArray((), dtype=dtype),
-      jax_core.ShapedArray((), dtype=dtype),
-  ]
-  in_tree = tree_util.tree_structure((args, args))
-  flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(
-          body,
-          debug_info=api_util.debug_info("pallas triton associative_scan",
-                                         body, (args, args), {})),
-      in_tree
+
+  args_structure = tree_util.tree_structure(args)
+  avals_tree = tree_util.tree_unflatten(args_structure, ctx.avals_in)
+  mapped_avals_tree = tree_util.tree_map(
+      lambda aval: jax_core.ShapedArray((), aval.dtype), avals_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      flat_fun, in_avals
+  in_avals_ft = FlatTree.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
+
+  debug_info = api_util.debug_info("pallas triton associative_scan",
+                                 body, (args, args), {})
+  combine_jaxpr, _ = pe.trace_to_jaxpr(
+      body, in_avals_ft, debug_info=debug_info
   )
-  out_tree = out_tree_thunk()
-  del out_tree  # Not needed
-  if consts:
+
+  if combine_jaxpr.consts:
     raise NotImplementedError("Associative scan with constants not supported.")
   element_types = [_element_type(arg.type) for arg in flat_args]
   scan_op = tt_dialect.ScanOp(flat_args, axis)
@@ -549,7 +549,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   entry = scan_op.regions[0].blocks.append(*param_types)
   with ir.InsertionPoint.at_block_begin(entry):
     results = lower_jaxpr_to_triton_ir(
-        ctx.context, combine_jaxpr, None, *entry.arguments
+        ctx.context, combine_jaxpr.jaxpr, None, *entry.arguments
     )
     tt_dialect.scan_return(results)
   scan_op.verify()
@@ -2476,21 +2476,20 @@ def _dot_general_lowering(
 def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   flat_args = tree_util.tree_leaves(a)
   (axis,) = axes
-  mapped_avals = [jax_core.ShapedArray((), aval.dtype) for aval in ctx.avals_in]
-  in_tree = tree_util.tree_structure((a, a))
-  flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(
-          body,
-          debug_info=api_util.debug_info("pallas triton reduction",
-                                         body, (a, a), {})),
-      in_tree
+
+  a_structure = tree_util.tree_structure(a)
+  avals_tree = tree_util.tree_unflatten(a_structure, ctx.avals_in)
+  mapped_avals_tree = tree_util.tree_map(
+      lambda aval: jax_core.ShapedArray((), aval.dtype), avals_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      flat_fun, [*mapped_avals, *mapped_avals]
+  in_avals_ft = FlatTree.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
+
+  debug_info = api_util.debug_info("pallas triton reduction", body, (a, a), {})
+  combine_jaxpr, _ = pe.trace_to_jaxpr(
+      body, in_avals_ft, debug_info=debug_info
   )
-  out_tree = out_tree_thunk()
-  del out_tree  # Not needed
-  if consts:
+
+  if combine_jaxpr.consts:
     raise NotImplementedError("Reductions with constants not supported.")
   element_types = [_element_type(arg.type) for arg in flat_args]
   reduce_op = tt_dialect.ReduceOp(flat_args, axis)
@@ -2498,7 +2497,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   entry = reduce_op.regions[0].blocks.append(*param_types)
   with ir.InsertionPoint.at_block_begin(entry):
     results = lower_jaxpr_to_triton_ir(
-        ctx.context, combine_jaxpr, None, *entry.arguments
+        ctx.context, combine_jaxpr.jaxpr, None, *entry.arguments
     )
     tt_dialect.reduce_return(results)
   reduce_op.verify()
