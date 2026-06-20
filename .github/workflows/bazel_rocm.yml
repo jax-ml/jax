@@ -91,6 +91,14 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      gate-targets-file:
+        description: "Path to a Bazel target pattern file for the blocking gate. When set, overrides the default full test suite."
+        type: string
+        default: ''
+      gpu-config:
+        description: "Bazel GPU config to use for the test run (single_gpu or multi_gpu)."
+        type: string
+        default: 'single_gpu'
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -143,13 +151,14 @@ jobs:
           fi
           rocminfo
       - name: Configure AWS Credentials
-        if: inputs.build_jaxlib == 'false' && inputs.jaxlib-version == 'head'
+        if: inputs.build_jaxlib == 'false' && inputs.jaxlib-version == 'head' && github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
           aws-region: us-east-1
       # Get the JAX/Jaxlib/Plugin/PJRT wheels from their respective
-      # sources when not building.
+      # sources when not building. ROCm wheels are fetched via CloudFront
+      # (public) so no AWS credentials are needed on pull requests.
       - name: Download JAX/Jaxlib/Plugin/PJRT wheels
         if: inputs.build_jaxlib == 'false'
         uses: ./.github/actions/download-jax-rocm-wheels
@@ -191,9 +200,11 @@ jobs:
           PYTHON: ${{ inputs.python }}
           ENABLE_X64: ${{ inputs.enable-x64 }}
           RBE_IMAGE: ${{ steps.rbe-image.outputs.rbe_image }}
+          JAXCI_GATE_TARGETS_FILE: ${{ inputs.gate-targets-file }}
+          GPU_CONFIG: ${{ inputs.gpu-config }}
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
-            --config=single_gpu \
+            --config="${GPU_CONFIG}" \
             --local_test_jobs=4 \
             --//jax:build_jaxlib="${BUILD_JAXLIB}" \
             --//jax:build_jax="${BUILD_JAX}" \
@@ -202,7 +213,7 @@ jobs:
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${RBE_IMAGE}" \
             "${JAXCI_ROCM_LOCK_FLAG:-}"
       - name: Upload test artifacts
-        if: always()
+        if: always() && github.event_name != 'pull_request'
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:
