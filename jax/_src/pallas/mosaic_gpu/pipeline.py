@@ -28,8 +28,8 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import core
-from jax._src import linear_util as lu
 from jax._src import state
+from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
@@ -155,15 +155,15 @@ def _uses_arguments(
   if not num_args:
     return ()
 
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(
-          index_map,
-          debug_info=api_util.debug_info("pallas index_map",
-                                         index_map,
-                                         (0,) * num_args, {})),
-      (core.ShapedArray((), jnp.int32),) * num_args
+  in_avals = (core.ShapedArray((), jnp.int32),) * num_args
+  in_avals_ft = tree_util.FlatTree.flatten_args(*in_avals)
+  debug_info = api_util.debug_info(
+      "pallas index_map", index_map, (0,) * num_args, {}
   )
-  _, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars))
+  jaxpr, _ = pe.trace_to_jaxpr(
+      index_map, in_avals_ft, debug_info=debug_info
+  )
+  _, used_inputs = pe.dce_jaxpr(jaxpr.jaxpr, used_outputs=[True] * len(jaxpr.jaxpr.outvars))
   return used_inputs
 
 
