@@ -115,9 +115,15 @@ def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   """
   k, mu, loc = promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
+  one = _lax_const(k, 1)
+  inf = _lax_const(k, np.inf)
   x = lax.sub(k, loc)
   p = gammaincc(jnp.floor(1 + x), mu)
-  return jnp.where(lax.lt(x, zero), zero, p)
+  return jnp.select(
+    [lax.lt(x, zero), lax.eq(x, inf)],
+    [zero, one],
+    p,
+  )
 
 @api.jit
 def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
