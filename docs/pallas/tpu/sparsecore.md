@@ -68,16 +68,12 @@ A walkthrough on each of the components:
 
 Actual specs vary by TPU version. Here are some published TPU specs:
 
-| Attribute         | TPU v4 | TPU v5p | TPU v6e       | TPU 7x (Ironwood) |
-:                   :        :         : (Trillium)    :                   :
-| :---------------- | :----- | :------ | :------------ | :---------------- |
-| SparseCores /     | 4      | 4       | 2             | 2 (4 physical     |
-: Chip              :        :         :               : cores)            :
-| Vector subcores / | 16     | 16      | 16            | 16                |
-: SparseCore        :        :         :               :                   :
-| SIMD Width        | 8      | 8       | 8 (F32)<br>16 | 16                |
-:                   :        :         : (BF16)        : (F32)<br>32(BF16) :
-| HBM Capacity      | 32 GiB | 96 GiB  | 32 GiB        | 192 GB            |
+| Attribute | TPU v4 | TPU v5p | TPU v6e (Trillium) | TPU 7x (Ironwood) |
+| :-------- | :----- | :------ | :----------------- | :---------------- |
+| SparseCores / Chip | 4 | 4 | 2 | 2 (4 physical cores) |
+| Vector subcores / SparseCore | 16 | 16 | 16 | 16 |
+| SIMD Width | 8 | 8 | 8 (F32)<br>16 (BF16) | 16 (F32)<br>32 (BF16) |
+| HBM Capacity | 32 GB | 96 GB | 32 GB | 192 GB |
 
 You can also use `pltpu.get_tpu_info()` to quickly obtain specs for your current
 hardware.
