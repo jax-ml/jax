@@ -5775,7 +5775,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     tol = 1e-2 if jtu.test_device_matches(['gpu', 'tpu']) else None
     self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
-@jtu.pytest_mark_if_available('multiaccelerator')
+@jtu.pytest_mark_if_available('multiaccelerator-only')
 class CustomPartitionerTest(jtu.JaxTestCase):
 
   def skip_if_custom_partitioning_not_supported(self):

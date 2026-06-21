@@ -72,7 +72,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --junitxml=test-artifacts/junit-single.xml \
     --deselect=tests/pallas/tpu_pallas_interpret_thread_map_test.py::InterpretThreadMapTest::test_thread_map \
-    --dist=loadfile --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
+    --dist=loadfile --maxfail=20 -m "not multiaccelerator-only" $IGNORE_FLAGS tests examples
 
   # Store the return value of the first command.
   first_cmd_retval=$?
@@ -80,7 +80,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run multi-accelerator across all chips
   "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
     --junitxml=test-artifacts/junit-multi.xml \
-    -m "multiaccelerator" tests
+    -m "multiaccelerator-only" tests
 
   # Store the return value of the second command.
   second_cmd_retval=$?
@@ -88,7 +88,7 @@ else
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --junitxml=test-artifacts/junit-single.xml \
-    --maxfail=20 -m "not multiaccelerator" \
+    --maxfail=20 -m "not multiaccelerator-only" \
     tests/pallas/ops_test.py \
     tests/pallas/export_back_compat_pallas_test.py \
     tests/pallas/export_pallas_test.py \
@@ -104,7 +104,7 @@ else
   # Run multi-accelerator across all chips
   "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 \
     --junitxml=test-artifacts/junit-multi.xml \
-    -m "multiaccelerator" \
+    -m "multiaccelerator-only" \
     tests/pjit_test.py \
     tests/pallas/tpu_pallas_distributed_test.py
 

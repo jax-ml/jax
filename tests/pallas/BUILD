@@ -492,7 +492,7 @@ jax_multiplatform_test(
     },
     tags = [
         "mosaic_gpu_test",
-        "multiaccelerator",
+        "multiaccelerator-only",
     ],
     deps = [
         "//jax/_src:test_multiprocess",
@@ -518,7 +518,7 @@ jax_multiplatform_test(
     ],
     tags = [
         "mosaic_gpu_test",
-        "multiaccelerator",
+        "multiaccelerator-only",
     ],
     deps = [
         "//jax/_src:test_multiprocess",
@@ -561,7 +561,7 @@ jax_multiplatform_test(
         "tpu_7x_x4",
     ],
     enable_backends = ["tpu"],
-    tags = ["multiaccelerator"],
+    tags = ["multiaccelerator-only"],
     deps = [
         "//jax/experimental:mesh_utils",
         "//jax/experimental:pallas_tpu",
@@ -1195,7 +1195,7 @@ jax_multiplatform_test(
     ],
     tags = [
         "manual",
-        "multiaccelerator",
+        "multiaccelerator-only",
         "notap",
     ],
     deps = [
@@ -1234,7 +1234,7 @@ jax_multiplatform_test(
     ],
     tags = [
         "manual",
-        "multiaccelerator",
+        "multiaccelerator-only",
         "notap",
     ],
     deps = [
@@ -1257,7 +1257,7 @@ jax_multiplatform_test(
     ],
     tags = [
         "manual",
-        "multiaccelerator",
+        "multiaccelerator-only",
         "notap",
     ],
     deps = [
@@ -1282,7 +1282,7 @@ jax_multiplatform_test(
     tags = [
         "manual",
         "mosaic_gpu_test",
-        "multiaccelerator",
+        "multiaccelerator-only",
         "notap",
     ],
     deps = [

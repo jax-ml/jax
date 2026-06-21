@@ -123,7 +123,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --test_env=JAX_PLATFORMS=tpu,cpu \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     $COMMON_TPU_TEST_ENV_VARS \
-    --test_tag_filters=-multiaccelerator \
+    --test_tag_filters=-multiaccelerator,-multiaccelerator-only \
     --verbose_failures \
     --test_output=errors \
     -- \
@@ -161,7 +161,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_PLATFORMS=tpu,cpu \
     $COMMON_TPU_TEST_ENV_VARS \
-    --test_tag_filters=multiaccelerator \
+    --test_tag_filters=multiaccelerator,multiaccelerator-only \
     --verbose_failures \
     --test_output=errors \
     -- \
@@ -206,7 +206,7 @@ else
     --test_env=JAX_PLATFORMS=tpu,cpu \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     $COMMON_TPU_TEST_ENV_VARS \
-    --test_tag_filters=-multiaccelerator \
+    --test_tag_filters=-multiaccelerator,-multiaccelerator-only \
     --verbose_failures \
     --test_output=errors \
     -- \
@@ -260,7 +260,7 @@ else
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_PLATFORMS=tpu,cpu \
     $COMMON_TPU_TEST_ENV_VARS \
-    --test_tag_filters=multiaccelerator \
+    --test_tag_filters=multiaccelerator,multiaccelerator-only \
     --verbose_failures \
     --test_output=errors \
     -- \

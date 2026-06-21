@@ -795,7 +795,7 @@ def jax_multiprocess_test(
             "--tpu_chips_per_process=1",
         ],
     }
-    tags = tags + ["multiaccelerator"]
+    tags = tags + ["multiaccelerator-only"]
     deps = deps + py_deps(["absl-all", "portpicker"])
     return jax_multiplatform_test(
         name = name,

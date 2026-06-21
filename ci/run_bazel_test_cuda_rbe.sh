@@ -74,7 +74,7 @@ bazel test --invocation_id="$INVOCATION_ID" \
       --remote_download_regex='.*test\.xml$' \
       --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
       --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-      --test_tag_filters=-multiaccelerator \
+      --test_tag_filters=-multiaccelerator-only \
       --test_env=JAX_SKIP_SLOW_TESTS=true \
       --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
       --color=yes \

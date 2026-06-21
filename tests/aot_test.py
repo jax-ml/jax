@@ -34,9 +34,6 @@ jax.config.parse_flags_with_absl()
 
 prev_xla_flags = None
 
-with contextlib.suppress(ImportError):
-  import pytest
-  pytestmark = pytest.mark.multiaccelerator
 
 
 class JaxAotTest(jtu.JaxTestCase):

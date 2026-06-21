@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 markers = [
-    "multiaccelerator: indicates that a test can make use of and possibly requires multiple accelerators",
+    "multiaccelerator-only: indicates that a test requires multiple accelerators to run or be useful",
     "SlurmMultiNodeGpuTest: mark a test for Slurm multinode GPU nightly CI"
 ]
 filterwarnings = [

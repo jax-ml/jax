@@ -94,10 +94,10 @@ TESTS_TO_IGNORE=(
 
 for arg in "$@"; do
     if [[ "$arg" == "--config=multi_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},multiaccelerator"
+        TAG_FILTERS="${TAG_FILTERS},multiaccelerator,multiaccelerator-only"
     fi
     if [[ "$arg" == "--config=single_gpu" ]]; then
-        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
+        TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator,-multiaccelerator-only"
     fi
     if [[ "$arg" == "--//jax:build_jaxlib=false" ]]; then
         # tests to ignore for pre-built plugin wheels

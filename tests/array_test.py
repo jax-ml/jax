@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 import math
 import unittest
 
@@ -42,9 +41,6 @@ from jax._src.random import threefry2x32
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
-with contextlib.suppress(ImportError):
-  import pytest
-  pytestmark = pytest.mark.multiaccelerator
 
 
 def create_array(shape, sharding, global_data=None):

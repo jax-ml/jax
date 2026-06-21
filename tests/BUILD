@@ -428,7 +428,7 @@ jax_multiplatform_test(
         "tpu_v3_x4",
         "gpu_h100x2_full",
     ],
-    tags = ["multiaccelerator"],
+    tags = ["multiaccelerator-only"],
     deps = [
         "//jax/experimental:custom_partitioning",
     ] + py_deps([
@@ -475,7 +475,7 @@ jax_multiplatform_test(
     enable_configs = [
         "tpu_v3_x4",
     ],
-    tags = ["multiaccelerator"],
+    tags = ["multiaccelerator-only"],
     deps = [
         "//jax/experimental:layout",
     ] + py_deps([
@@ -487,7 +487,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "shard_alike_test",
     srcs = ["shard_alike_test.py"],
-    tags = ["multiaccelerator"],
+    tags = ["multiaccelerator-only"],
     deps = [
         "//jax/experimental:shard_alike",
     ] + py_deps([
@@ -505,7 +505,7 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     tags = [
         "config-cuda-only",
-        "multiaccelerator",
+        "multiaccelerator-only",
     ],
     deps = [
         "//jax/experimental:profiler",
@@ -1059,7 +1059,7 @@ jax_multiplatform_test(
     ],
     shard_count = 2,
     tags = [
-        "multiaccelerator",
+        "multiaccelerator-only",
     ],
     deps = py_deps([
         "absl/testing",
@@ -1955,7 +1955,7 @@ jax_multiplatform_test(
         "tpu",
     ],
     tags = [
-        "multiaccelerator",
+        "multiaccelerator-only",
     ],
     deps = py_deps("absl/testing"),
 )
@@ -1975,7 +1975,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "async_collectives_test",
     srcs = ["async_collectives_test.py"],
-    tags = ["multiaccelerator"],
+    tags = ["multiaccelerator-only"],
     deps = py_deps([
         "absl/testing",
         "numpy",
@@ -1994,7 +1994,7 @@ jax_multiplatform_test(
         "tpu": 50,
     },
     tags = [
-        "multiaccelerator",
+        "multiaccelerator-only",
         "noasan",
         "nomsan",
         "notsan",
@@ -2206,7 +2206,7 @@ jax_multiplatform_test(
     name = "fused_attention_stablehlo_multigpu_test",
     srcs = ["fused_attention_stablehlo_multigpu_test.py"],
     enable_backends = ["gpu"],
-    tags = ["multiaccelerator"],
+    tags = ["multiaccelerator-only"],
     deps = py_deps([
         "absl/testing",
         "numpy",
