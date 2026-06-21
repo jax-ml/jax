@@ -23,8 +23,8 @@ from collections.abc import Sequence
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
-from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
+from jax._src.tree_util import FlatTree
 from jax._src.state import types as state_types
 from jax._src.pallas.pipelining import schedulers
 from jax._src.pallas.pipelining import internal
@@ -128,24 +128,22 @@ def trace_fun(
   """Trace a stage body function to a Jaxpr."""
   ctx_aval = PipelineContext.aval_pytree(grid, state_avals)
   num_ctx_avals = len(jax.tree.leaves(ctx_aval))
-  flat_avals, in_tree = jax.tree.flatten((ctx_aval, *ref_avals))
-  debug_info = api_util.debug_info("trace_fun", fun, flat_avals, {})
-  flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info), in_tree
-  )
-  del out_tree_thunk
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fn, flat_avals)
+  in_avals_ft = FlatTree.flatten_args(ctx_aval, *ref_avals)
+  debug_info = api_util.debug_info("trace_fun", fun, in_avals_ft.vals, {})
+  closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals_ft, debug_info)
   ref_effects = [
-      eff for eff in jaxpr.effects if isinstance(eff, state_types.RefEffect)
+      eff for eff in closed_jaxpr.jaxpr.effects
+      if isinstance(eff, state_types.RefEffect)
   ]
   # Subtract off the consts and state_avals, since this is variable per stage.
-  n_const = len(consts)
-  input_idx = {v: i for i, v in enumerate((*jaxpr.constvars, *jaxpr.invars))}
+  n_const = len(closed_jaxpr.consts)
+  input_idx = {v: i for i, v in enumerate((*closed_jaxpr.jaxpr.constvars,
+                                           *closed_jaxpr.jaxpr.invars))}
   ref_effects = [
       type(eff)(input_idx[eff.input] - n_const - num_ctx_avals)
       for eff in ref_effects
   ]
-  return jax_core.ClosedJaxpr(jaxpr, consts), ref_effects
+  return closed_jaxpr, ref_effects
 
 def apply_ref_filter(
     stages: Sequence[internal.PipelineStage],
