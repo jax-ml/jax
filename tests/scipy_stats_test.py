@@ -1099,16 +1099,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     fun=['cdf', 'sf', 'logcdf', 'logsf'],
   )
   def testTruncnormNanPropagation(self, dtype, fun):
-    # truncnorm.{cdf,sf,logcdf,logsf} previously swallowed a NaN x and returned
-    # a support-boundary value (1.0/0.0) because a NaN satisfies none of the
-    # jnp.select branches in logcdf and fell through to the default of 0. Check
-    # that NaN now propagates, matching scipy and jax.scipy.stats.norm.
+    # truncnorm.{cdf,sf,logcdf,logsf} previously swallowed a NaN in x, a, or b
+    # and returned a support-boundary value (1.0/0.0) because a NaN satisfies
+    # none of the jnp.select branches in logcdf and fell through to the default
+    # of 0. Check that a NaN in any of x, a, or b now propagates, matching scipy
+    # and jax.scipy.stats.norm.
     lax_fun = getattr(lsp_stats.truncnorm, fun)
     scipy_fun = getattr(osp_stats.truncnorm, fun)
-    x = jnp.array([np.nan, 0.5, np.nan], dtype=dtype)
-    a, b = dtype(-1.0), dtype(2.0)
+    x = jnp.array([np.nan, 0.5, 0.5, 0.5, 0.5, np.nan], dtype=dtype)
+    a = jnp.array([-1.0, -1.0, np.nan, -1.0, np.nan, np.nan], dtype=dtype)
+    b = jnp.array([2.0, 2.0, 2.0, np.nan, np.nan, np.nan], dtype=dtype)
     jax_result = lax_fun(x, a, b)
-    scipy_result = scipy_fun(np.asarray(x), a, b)
+    scipy_result = scipy_fun(np.asarray(x), np.asarray(a), np.asarray(b))
     self.assertArraysEqual(jnp.isnan(jax_result), np.isnan(scipy_result))
     self.assertAllClose(jax_result, scipy_result, check_dtypes=False, rtol=1e-5)
 
