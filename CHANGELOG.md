@@ -21,6 +21,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     references to it can be safely removed.
   * Support for Python 3.11, NumPy 2.0, and SciPy 1.14 has been dropped, per the
     [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
+  * Support for Python 3.13 free-threaded (`3.13t`) has been dropped. Python
+    3.13 free-threaded was an experimental build needed to bootstrap free
+    threading support. Now that Python 3.14t is stable, it is time to drop the
+    experimental build. Other parts of the Python ecosystem (e.g.
+    `cibuildwheel`, `scipy`) are making similar moves.
 
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.

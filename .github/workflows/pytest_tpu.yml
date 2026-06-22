@@ -96,10 +96,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
-          # xprof depends on cffi, which doesn't support Python 3.13 free-threaded.
-          if [[ "${JAXCI_HERMETIC_PYTHON_VERSION}" != "3.13t" ]]; then
-            $JAXCI_PYTHON -m uv pip install -r build/collect-profile-requirements.txt
-          fi
+          $JAXCI_PYTHON -m uv pip install -r build/collect-profile-requirements.txt
       - name: Set up libtpu wheels
         run: |
           if [[ "${INPUTS_LIBTPU_VERSION_TYPE}" == "nightly" ]]; then

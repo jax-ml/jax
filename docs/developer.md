@@ -267,7 +267,7 @@ directly (the two commands are equivalent):
 bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12
 
 # Free-threaded Python
-bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft
+bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.14-ft
 ```
 
 Note, since it is still `pip` and `pip-compile` tools used under the hood, so

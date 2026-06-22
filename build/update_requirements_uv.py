@@ -26,7 +26,6 @@ import sys
 PYTHON_VERSIONS = {
     "3.12": {"ft": False, "dest": "build/requirements_lock_3_12.txt"},
     "3.13": {"ft": False, "dest": "build/requirements_lock_3_13.txt"},
-    "3.13-ft": {"ft": True, "dest": "build/requirements_lock_3_13_ft.txt"},
     "3.14": {"ft": False, "dest": "build/requirements_lock_3_14.txt"},
     "3.14-ft": {"ft": True, "dest": "build/requirements_lock_3_14_ft.txt"},
 }

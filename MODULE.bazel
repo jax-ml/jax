@@ -155,6 +155,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
     python_version = python_version,
     requirements_by_platform = {} if python_version in [
         "3.12",
+        "3.13",
     ] else {
         "//build:requirements_lock_{}_ft.txt".format(python_version.replace(".", "_")): "linux_x86_64_freethreaded,windows_x86_64_freethreaded,linux_aarch64_freethreaded,osx_aarch64_freethreaded",
     },

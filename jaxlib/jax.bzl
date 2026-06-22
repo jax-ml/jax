@@ -107,11 +107,11 @@ _py_deps = {
     "tensorflow_core": [],
     "tensorstore": ["@pypi//tensorstore"],
     "torch": [],
-    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.13-ft", "3.14", "3.14-ft"]),
+    "tensorflow": get_optional_dep("@pypi//tensorflow", ["3.14", "3.14-ft"]),
     "tpu_ops": [],
     # We're never going to need zstandard for 3.14+ because zstandard is now
     # in the Python stdlib.
-    "zstandard": get_optional_dep("@pypi//zstandard", ["3.13-ft", "3.14", "3.14-ft"]),
+    "zstandard": get_optional_dep("@pypi//zstandard", ["3.14", "3.14-ft"]),
 }
 
 def all_py_deps(excluded = []):
