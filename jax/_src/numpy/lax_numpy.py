@@ -7440,6 +7440,9 @@ def trim_zeros(filt: ArrayLike, trim: str ='fb',
 
   JAX implementation of :func:`numpy.trim_zeros`.
 
+  Because the size of the output of ``trim_zeros`` is data-dependent, the function
+  is not compatible with :func:`jax.jit` and other JAX transformations.
+
   Args:
     filt: N-dimensional input array.
     trim: string, optional, default = ``fb``. Specifies from which end the input
