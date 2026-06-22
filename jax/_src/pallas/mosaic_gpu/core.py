@@ -261,6 +261,7 @@ def kernel(
     num_threads: int | None = None,
     thread_name: str | None = None,
     interpret: Any = None,
+    debug: bool = False,
     **mesh_kwargs: Any,
 ) -> Any:
   r"""Entry point for defining a Mosaic GPU kernel.
@@ -288,6 +289,7 @@ def kernel(
       not correspond to CUDA threads, but rather to warpgroups on Hopper and
       Blackwell GPUs.
     thread_name: The axis name used to query the thread index.
+    debug: Whether or not to output helpful debugging information.
     **mesh_kwargs: Additional mesh kwargs. See `Mesh` for more details.
 
   Returns:
@@ -313,6 +315,7 @@ def kernel(
         num_threads=num_threads,
         thread_name=thread_name,
         interpret=interpret,
+        debug=debug,
         **mesh_kwargs,
     )
 
@@ -389,6 +392,7 @@ def kernel(
           compiler_params=compiler_params,
           interpret=interpret,
           name=name,
+          debug=debug,
       )(*operands)
     return outs[0] if unwrap_out else outs
 
@@ -420,6 +424,7 @@ def kernel(
         num_threads=num_threads,
         thread_name=thread_name,
         interpret=interpret,
+        debug=debug,
         **mesh_kwargs_,
     )(*args)
     out_batched = tree_util.tree_map(lambda _: True, out_type_)

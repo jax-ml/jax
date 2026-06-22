@@ -224,7 +224,7 @@ def kernel(
       PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: The compiler parameters to pass to the backend.
     interpret: Whether to run the function in interpret mode.
-    debug: Whether or not to out helpful debugging information.
+    debug: Whether or not to output helpful debugging information.
     cost_estimate: The cost estimate of the function.
     name: The (optional) name of the kernel.
     metadata: Optional dictionary of information about the kernel that will be
