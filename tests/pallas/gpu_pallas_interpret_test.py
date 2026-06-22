@@ -1529,6 +1529,7 @@ def matmul0(a, b, config: TuningConfig):
 @jtu.thread_unsafe_test_class()
 class BlackwellExampleMatmulTest(jtu.JaxTestCase):
 
+  @jtu.run_on_devices('cpu')
   def test_matmul0(self):
     example_config = TuningConfig(
         tile_m=128,
