@@ -15,17 +15,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Sequence, Iterable
+from collections.abc import Callable, Iterable, Sequence
 import contextlib
 from dataclasses import dataclass, replace
 from functools import partial
 import inspect
 import itertools as it
-import weakref
-from typing import NamedTuple, Any, Union
+from typing import Any, NamedTuple, Union
 import warnings
-
-import numpy as np
+import weakref
 
 from jax._src import api
 from jax._src import api_util
@@ -34,6 +32,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects as effects_lib
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
@@ -45,41 +44,47 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.core import typeof, cur_qdd
 from jax._src.api_util import (
-    flatten_axes, donation_vector, check_callable, resolve_argnums, debug_info,
-    check_no_aliased_ref_args, _check_no_aliased_closed_over_refs,
-    flatten_axis_resources)
-from jax._src.interpreters import partial_eval as pe
-from jax._src.partition_spec import PartitionSpec
+    check_callable,
+    check_no_aliased_ref_args,
+    debug_info,
+    donation_vector,
+    flatten_axes,
+    flatten_axis_resources,
+    resolve_argnums,
+)
+from jax._src.core import cur_qdd, typeof
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import remat
+from jax._src.layout import AutoLayoutSingleton, Format, Layout, get_layout_for_vmap
+from jax._src.lib import _jax
+from jax._src.lib import jax_jit
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib import _jax
-from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh
-from jax._src.sharding import Sharding, IndivisibleError
 from jax._src.named_sharding import remove_size_one_mesh_axis
-from jax._src.sharding_impls import (
-    NamedSharding, GSPMDSharding,
-    make_single_device_sharding, UNSPECIFIED, UnspecifiedValue,
-    prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
-    _internal_use_concrete_mesh)
-from jax._src.layout import Format, Layout, AutoLayoutSingleton, get_layout_for_vmap
+from jax._src.partition_spec import PartitionSpec
+from jax._src.sharding import IndivisibleError, Sharding
+from jax._src.sharding_impls import ( GSPMDSharding,
+    NamedSharding, UNSPECIFIED, UnspecifiedValue,
+    _internal_use_concrete_mesh, canonicalize_sharding,
+    make_single_device_sharding, parse_flatten_op_sharding,
+    prepare_axis_resources)
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, tree_structure, treedef_children,
-    PyTreeDef, none_leaf_registry as none_lr, tree_map, FlatTree)
+    PyTreeDef, none_leaf_registry as none_lr,
+    tree_flatten, tree_map, tree_structure, tree_unflatten, treedef_children)
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
-    HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
-    split_list, weakref_lru_cache, merge_lists, subs_list, fun_name)
-from jax._src.lib import jax_jit
+    HashableFunction, distributed_debug_log, fun_name, merge_lists, safe_map, safe_zip,
+    split_list, subs_list, weakref_lru_cache, wraps)
+import numpy as np
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -463,13 +468,12 @@ class PjitParams(NamedTuple):
   arg_names: tuple[str, ...]  # Not including the const_args
 
 
+# TODO(dougalm): inline this to save a jit stack frame
 def _trace_for_jit(
     fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
-  args_ft = FlatTree.flatten_static_argnums_argnames(
-      args, kwargs, ji.static_argnums, ji.static_argnames)
-  avals_ft = args_ft.update(avals)
-
+  ak = ft.flatten_args_and_kwargs(
+      args, kwargs, ji.static_argnums, ji.static_argnames).update(avals)
   has_kwargs = bool(kwargs)
   if has_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
@@ -481,10 +485,9 @@ def _trace_for_jit(
         "device is also specified as an argument to jit.")
 
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames,
-                                     avals_ft.tree)
+    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, ak)
   else:
-    donated_invars = (False,) * len(avals_ft)
+    donated_invars = (False,) * len(ak)
 
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
@@ -509,17 +512,19 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals_ft.map2(
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
-    args_ft)
-  assert avals_ft is not None
-
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
-      in_shardings_treedef, in_shardings_leaves,
-      ji.in_layouts_treedef, ji.in_layouts_leaves,
-      avals_ft, dbg, device_or_backend_set, has_kwargs)
+      in_shardings_treedef,
+      in_shardings_leaves,
+      ji.in_layouts_treedef,
+      ji.in_layouts_leaves,
+      ak.tree_without_statics,
+      tuple(ak),
+      dbg,
+      device_or_backend_set,
+      has_kwargs,
+  )
 
-  qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
+  qdd_token = None # _qdd_cache_index(fun, tuple(in_type))
 
   elapsed_time_ctx = (
       dispatch.log_elapsed_time(
@@ -530,9 +535,9 @@ def _trace_for_jit(
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+        jaxpr, out_avals = pe.trace_to_jaxpr(fun, ak, dbg, qdd_token)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+      jaxpr, out_avals = pe.trace_to_jaxpr(fun, ak, dbg, qdd_token)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -550,24 +555,24 @@ def _trace_for_jit(
   else:
     consts = []
 
-  if config.mutable_array_checks.value:
-    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), args_ft.vals)
-  _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
-                    jaxpr.in_aval_qdds[:len(consts)])
+  # if config.mutable_array_checks.value:
+  #   _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), args_ft.vals)
+  # _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
+  #                   jaxpr.in_aval_qdds[:len(consts)])
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
-      ji.out_layouts_leaves, out_avals.tree,
+      ji.out_layouts_leaves, out_avals.treedef,
       tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
 
-  assert len(args_ft.vals) == len(in_shardings_flat) == len(in_layouts_flat)
+  assert len(ak) == len(in_shardings_flat) == len(in_layouts_flat)
 
   num_extra_args = len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(consts) + len(avals_ft))
+          len(donated_invars) == len(consts) + len(ak))
 
   params = dict(
       jaxpr=jaxpr,
@@ -582,8 +587,14 @@ def _trace_for_jit(
       inline=ji.inline,
       compiler_options_kvs=ji.compiler_options_kvs,
   )
-  return PjitParams(consts, params, avals_ft.vals, avals_ft.tree_without_statics,
-                    out_avals.tree, dbg.safe_arg_names(len(avals_ft)))
+  return PjitParams(
+      consts,
+      params,
+      tuple(ak),
+      ak.tree_without_statics,
+      out_avals.treedef,
+      dbg.safe_arg_names(len(ak)),
+  )
 
 
 @dataclass(slots=True)
@@ -743,37 +754,50 @@ def _create_sharding_with_device_backend(device, backend):
 
 
 @util.cache(max_size=4096, trace_context_in_key=False)
-def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
-                               in_layouts_treedef, in_layouts_leaves,
-                               in_avals, dbg: core.DebugInfo,
-                               device_or_backend_set, kws):
-  if kws:
-    in_tree = in_avals.tree_without_statics
-  else:
-    in_tree, _ = treedef_children(in_avals.tree_without_statics)
-
+def _process_in_axis_resources(
+    in_shardings_treedef,
+    in_shardings_leaves,
+    in_layouts_treedef,
+    in_layouts_leaves,
+    in_tree,
+    dynamic_avals,
+    dbg: core.DebugInfo,
+    device_or_backend_set,
+    kw,
+):
+  if not kw:
+    # TODO(dougal): this seems like a hack
+    in_tree, _ = treedef_children(in_tree)
   orig_in_shardings = tree_unflatten(in_shardings_treedef, in_shardings_leaves)
   # Only do this if original in_shardings are unspecified.
   if isinstance(orig_in_shardings, UnspecifiedValue):
-    in_shardings_flat = (orig_in_shardings,) * len(in_avals)
+    in_shardings_flat = (orig_in_shardings,) * len(dynamic_avals)
   else:
     in_shardings_flat = flatten_axis_resources(
         "pjit in_shardings", in_tree, orig_in_shardings, tupled_args=True)
 
   in_layouts = tree_unflatten(in_layouts_treedef, in_layouts_leaves)
   if in_layouts is None:
-    in_layouts_flat = (in_layouts,) * len(in_avals)
+    in_layouts_flat = (in_layouts,) * len(dynamic_avals)
   else:
     in_layouts_flat = flatten_axis_resources(
         "pjit in_layouts", in_tree, in_layouts, tupled_args=True)
 
-  pjit_check_aval_sharding(in_shardings_flat, in_avals,
-                           dbg.safe_arg_names(len(in_avals)),
-                           "pjit arguments", allow_uneven_sharding=False)
+  pjit_check_aval_sharding(
+      in_shardings_flat,
+      dynamic_avals,
+      dbg.safe_arg_names(len(dynamic_avals)),
+      'pjit arguments',
+      allow_uneven_sharding=False,
+  )
   check_aval_layout_compatibility(
-      in_layouts_flat, in_avals,
-      dbg.safe_arg_names(len(in_avals)), "jit arguments")
+      in_layouts_flat,
+      dynamic_avals,
+      dbg.safe_arg_names(len(dynamic_avals)),
+      'jit arguments',
+  )
   return in_shardings_flat, in_layouts_flat
+
 
 @util.cache(max_size=4096, trace_context_in_key=False)
 def _check_and_canonicalize_out_shardings(
@@ -899,7 +923,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
                  for aval, x in zip(jaxpr.in_aval_qdds, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
 
-  in_avals = FlatTree.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
+  in_avals = tuple(tuple(typeof(x) for x in xs) for xs in lo_args_lol)
   lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
   params = _lojax_expand_params(in_avals, out_avals, **params)
 
@@ -921,10 +945,8 @@ def _converted_mutables_add_params(
 
 
 def _lojax_expand_params(
-    in_avals_, out_avals, donated_invars, in_shardings, in_layouts,
+    in_lol, out_avals, donated_invars, in_shardings, in_layouts,
     out_shardings, out_layouts, **params):
-  in_avals, () = in_avals_.unpack()
-  in_lol = in_avals.unpack()
   mut_out_lol, out_lol_ = out_avals.unpack()
   out_lol = out_lol_.unpack()
 

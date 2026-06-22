@@ -22,9 +22,10 @@ import itertools
 import operator
 from typing import Any, TypeVar
 
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
-    equality_errors_pytreedef, FlatTree)
+    equality_errors_pytreedef)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -142,14 +143,16 @@ def _switch_internal(
 
   dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
-  args = FlatTree.flatten((operands, {}))
+  args = ft.flatten((operands, {}))
   avals = args.map(core.typeof)
 
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbgs[0], list(avals), list(args))
 
-  jaxprs_, out_avalss = zip(*[pe.trace_to_jaxpr(branch, avals, dbg)
-                             for branch, dbg in zip(branches, dbgs)])
+  jaxprs_, out_avalss = zip(*[
+      pe.trace_to_jaxpr_internal(branch, avals, dbg)
+      for branch, dbg in zip(branches, dbgs)
+  ])
   jaxprs_, all_consts = zip(*[pe.separate_consts(j) for j in jaxprs_])
   jaxprs, consts = _merge_common_consts(jaxprs_, all_consts)
 
@@ -270,20 +273,21 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     else:
       return false_fun(*operands)
 
-  args = FlatTree.flatten((operands, {}))
+  args = ft.flatten_args(*operands)
   dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   api_util.check_no_transformed_refs_args(lambda: dbg_true, args.vals)
   avals = args.map(core.typeof)
-  avals = avals.map2(
-      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a,
-      list(args))
+  avals = avals.map2(list(args),
+      lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a)
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbg_true, list(avals), list(args))
   dbg_false = api_util.debug_info("cond", false_fun, operands, {})
 
-  true_jaxpr_, out_avals = pe.trace_to_jaxpr(true_fun, avals, dbg_true)
+  true_jaxpr_, out_avals = pe.trace_to_jaxpr_internal(true_fun, avals, dbg_true)
   true_jaxpr_, true_consts = pe.separate_consts(true_jaxpr_)
-  false_jaxpr_, false_out_avals = pe.trace_to_jaxpr(false_fun, avals, dbg_false)
+  false_jaxpr_, false_out_avals = pe.trace_to_jaxpr_internal(
+      false_fun, avals, dbg_false
+  )
   false_jaxpr_, false_consts = pe.separate_consts(false_jaxpr_)
   (true_jaxpr, false_jaxpr), consts = _merge_common_consts(
       (true_jaxpr_, false_jaxpr_), (true_consts, false_consts))
@@ -874,7 +878,7 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-      transposed, FlatTree.flatten_args(*in_avals), dbg
+      transposed, ft.flatten_args(*in_avals), dbg
   )
   return closed_jaxpr, out_avals.tree
 

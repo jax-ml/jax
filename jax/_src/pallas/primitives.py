@@ -39,6 +39,7 @@ from jax._src import state
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
+import jax._src.flattree as ft
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
 import jax._src.lax as lax
@@ -659,9 +660,7 @@ def wrap_with_transforms(
     ref_transforms: tuple[tuple[state_types.Transform, ...], ...],
 ) -> Callable:
   def wrapped(*args, **kwargs):
-    args_ft = tree_util.FlatTree.flatten(
-        (args, kwargs), registry=tree_util.default_registry
-    )
+    args_ft = ft.flatten((args, kwargs))
     transformed_ft = args_ft.map2(
         lambda a, t: state_types.TransformedRef(a, t) if t else a,
         ref_transforms

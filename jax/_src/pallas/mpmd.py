@@ -17,11 +17,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Generator
 import contextlib
 import functools
 import itertools as it
 from typing import Any, Hashable, TypeVar, cast
-from collections.abc import Generator
 
 from jax._src import api
 from jax._src import api_util
@@ -33,6 +33,7 @@ from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+import jax._src.flattree as ft
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -205,7 +206,8 @@ def _mpmd_map_discharge_rule(
         "mpmd_map_discharge", new_body, tracing_avals, {}
     )
     closed_jaxpr, _ = pe.trace_to_jaxpr(
-        new_body, tree_util.FlatTree.flatten_args(*tracing_avals), debug_info)
+        new_body, ft.flatten_args(*tracing_avals), debug_info
+    )
     return closed_jaxpr.jaxpr
 
   for mesh, jaxpr in zip(meshes, jaxprs):
@@ -763,8 +765,8 @@ def _dedup_consts_and_unify_jaxpr_signatures(
     fun_to_trace = make_rewritten_body(jaxpr, consts)
     with mpmd_map_tracing_context(mesh, all_meshes):
       jaxpr, _ = pe.trace_to_jaxpr(
-          fun_to_trace, tree_util.FlatTree.flatten_args(*tracing_avals),
-          debug_info)
+          fun_to_trace, ft.flatten_args(*tracing_avals), debug_info
+      )
     assert not jaxpr.consts, jaxpr.consts
     new_jaxprs.append(jaxpr.jaxpr)
   return new_jaxprs, unique_consts
@@ -879,8 +881,8 @@ def _mpmd_map(
         functools.partial(_aval_to_ref_aval, meshes=meshes),
         (kernel_arg_avals, kernel_kwarg_avals),
     )
-    in_avals_ft = tree_util.FlatTree.flatten(unflat_kernel_avals)
-    flat_kernel_avals = list(in_avals_ft.vals)
+    in_avals_ft = ft.flatten_args_and_kwargs(*unflat_kernel_avals)
+    flat_kernel_avals = list(in_avals_ft)
 
     jaxprs: list[jax_core.Jaxpr] = []
     consts_per_fn = []

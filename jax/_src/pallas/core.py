@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Hashable, Iterable, Generator, Mapping, Sequence, Set
+from collections.abc import Callable, Generator, Hashable, Iterable, Mapping, Sequence, Set
 import contextlib
 import copy
 import dataclasses
@@ -42,6 +42,7 @@ from jax._src import typing as jax_typing
 from jax._src import util
 from jax._src.api import jit
 from jax._src.export._export import export
+import jax._src.flattree as ft
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
@@ -653,8 +654,9 @@ class BlockSpec:
     with tracing_grid_env(grid, vmapped_dims):
       closed_jaxpr, out_avals = pe.trace_to_jaxpr(
           index_map_func,
-          tree_util.FlatTree(index_map_avals, index_map_tree, False),
-          debug_info)
+          ft.flatten_args(*index_map_avals),
+          debug_info,
+      )
     unflat_avals = out_avals.unflatten()
 
     if len(unflat_avals) != len(block_shape):
@@ -1545,16 +1547,16 @@ def core_map(
       fun_args = (scratch_shapes, {})
 
     debug_info = api_util.debug_info("pallas_core_map", f, *fun_args)  # pyrefly: ignore[bad-argument-type]
-    fun_args_refs = tree_util.FlatTree.flatten(fun_args).map(
-        lambda x: x.get_ref_aval())
+    fun_args_refs = ft.flatten(fun_args).map(lambda x: x.get_ref_aval())
 
     with (
         tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
         jax_core.extend_axis_env_nd(mesh.shape.items()),
         config._check_vma(False),
     ):
-      jaxpr, out_avals = pe.trace_to_jaxpr(
-          f, fun_args_refs, debug_info)
+      jaxpr, out_avals = pe.trace_to_jaxpr_internal(
+          f, fun_args_refs, debug_info
+      )
 
     if out_avals.tree != tree_util.tree_structure(None):
       raise ValueError(

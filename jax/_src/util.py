@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass
 import functools
 from functools import partial
 import itertools as it
@@ -775,3 +776,37 @@ def pprint_bytes(num_bytes: int | float) -> str:
   return f"{scaled_value:.2f}{prefixes[exponent]}B"
 
 install_failure_signal_handler = jaxlib_utils.install_failure_signal_handler
+
+class Singleton():
+  def __init__(self, name): self.name = name
+  def __repr__(self): return self.name
+  def __hash__(self): return 0
+  def __eq__(self, other): return self is other
+
+@dataclass(frozen=True)
+class Either():
+  is_right : bool
+  val : Any
+
+  def from_left(self):
+    assert not self.is_right
+    return self.val
+
+  def from_right(self):
+    assert self.is_right
+    return self.val
+
+  @property
+  def is_left(self): return not self.is_right
+
+  @staticmethod
+  def left(x): return Either(False, x)
+
+  @staticmethod
+  def right(x): return Either(True, x)
+
+  def __repr__(self):
+    if self.is_left:
+      return f"Left({self.val})"
+    else:
+      return f"Right({self.val})"
