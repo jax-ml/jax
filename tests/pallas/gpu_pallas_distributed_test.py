@@ -129,13 +129,6 @@ class TestCase(_TestCaseBase, metaclass=PallasTestMetaclass):
   def tearDown(self):
     self.assertTrue(self.monkey_patched_api_was_used)
 
-  def is_wg_semantics(self):
-    return self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup
-
-  def skip_if_wg_semantics(self):
-    if self.is_wg_semantics():
-      self.skipTest("Not supported under WG semantics")
-
   def kernel(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
         kwargs.pop("compiler_params", plgpu.CompilerParams()),
