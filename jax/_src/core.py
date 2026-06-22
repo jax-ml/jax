@@ -2397,7 +2397,7 @@ def _empty_sharding(ndim):
 class ShapedArray(AbstractValue):
   # inherits slots from parent
   __slots__ = ['shape', 'dtype', 'weak_type', 'sharding', 'manual_axis_type',
-               'memory_space', '__weakref__']
+               'memory_space', '_stripped_weak_type', '__weakref__']
   array_abstraction_level = 2
 
   shape: Any
@@ -2406,6 +2406,7 @@ class ShapedArray(AbstractValue):
   sharding: Any
   manual_axis_type: Any
   memory_space: Any
+  _stripped_weak_type: Any
 
   @staticmethod
   @weak_value_interner
@@ -2418,6 +2419,7 @@ class ShapedArray(AbstractValue):
     object.__setattr__(obj, 'sharding', sharding)
     object.__setattr__(obj, 'manual_axis_type', manual_axis_type)
     object.__setattr__(obj, 'memory_space', memory_space)
+    object.__setattr__(obj, '_stripped_weak_type', None)
     return obj
 
   def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
@@ -2522,6 +2524,18 @@ class ShapedArray(AbstractValue):
       return self
     return ShapedArray._create(self.shape, self.dtype, weak_type, self.sharding,
                                self.manual_axis_type, self.memory_space)
+
+  def strip_weak_type(self) -> AbstractValue:
+    if not self.weak_type:
+      return self
+    # _stripped_weak_type is not protected by a lock, but the access should be
+    # safe because ShapedArray values are interned: if two threads race to set
+    # the value it will be the same object.
+    val = self._stripped_weak_type
+    if val is None:
+      val = self.update_weak_type(False)
+      object.__setattr__(self, '_stripped_weak_type', val)
+    return val
 
   def nospec(self, mesh, check_vma, all_names) -> P:
     # TODO(mattjj, yashkatariya): should use newly all_names in check_vma path?
