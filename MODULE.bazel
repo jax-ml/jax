@@ -96,6 +96,7 @@ single_version_override(
     patches = [
         # Upstreamed at https://github.com/bazel-contrib/rules_python/pull/3768
         "//third_party/py:rules_python_local_wheel.patch",
+        "//third_party/py:rules_python_site_init_retry.patch",
     ],
     version = "1.8.5",
 )
