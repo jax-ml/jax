@@ -371,16 +371,24 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       if dtype == np.float64 and not jax.config.x64_enabled:
         continue
       inf = dtype(np.inf)
-      nan = dtype(np.nan)
 
-      # Basic: q = +inf should give 0.0
+      # Basic: q = +inf, s > 1 → 0.0
       s_pos = np.array([2.0, 3.0, 1.5], dtype=dtype)
       q_inf = np.array([inf, inf, inf], dtype=dtype)
       out = np.asarray(lsp_special.zeta(jnp.asarray(s_pos), jnp.asarray(q_inf)))
       self.assertTrue(np.all(out == dtype(0.0)),
-                      msg=f"zeta(s, +inf) expected 0.0, got {out}")
+                      msg=f"zeta(s>1, +inf) expected 0.0, got {out}")
 
-      # q = -inf → NaN (undefined domain)
+      # s <= 1, q = +inf → NaN (function is undefined for s <= 1).
+      # Gemini bot review: the guard must NOT overwrite these with 0.0.
+      s_le_1 = np.array([0.5, 1.0, -1.0], dtype=dtype)
+      q_inf3 = np.array([inf, inf, inf], dtype=dtype)
+      out_s_le_1 = np.asarray(lsp_special.zeta(
+          jnp.asarray(s_le_1), jnp.asarray(q_inf3)))
+      self.assertTrue(np.all(np.isnan(out_s_le_1) | np.isinf(out_s_le_1)),
+                      msg=f"zeta(s<=1, +inf) expected NaN or inf, got {out_s_le_1}")
+
+      # q = -inf → NaN (undefined domain regardless of s)
       q_neginf = np.array([-inf, -inf], dtype=dtype)
       out_neg = np.asarray(lsp_special.zeta(
           jnp.asarray(np.array([2.0, 2.0], dtype=dtype)),
@@ -388,7 +396,7 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       self.assertTrue(np.all(np.isnan(out_neg)),
                       msg=f"zeta(s, -inf) expected NaN, got {out_neg}")
 
-      # Batched: mix of finite q and q=+inf
+      # Batched: mix of finite q and q=+inf with s > 1
       s_batch = np.array([2.0, 2.0], dtype=dtype)
       q_batch = np.array([1.0, inf], dtype=dtype)
       out_batch = np.asarray(lsp_special.zeta(
@@ -400,15 +408,14 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
 
       # Under JIT
       jit_zeta = jax.jit(lsp_special.zeta)
-      out_jit = np.asarray(jit_zeta(jnp.asarray(np.float32(2.0)),
-                                    jnp.asarray(np.float32(inf))))
+      out_jit = np.asarray(jit_zeta(jnp.asarray(dtype(2.0)),
+                                    jnp.asarray(dtype(inf))))
       self.assertEqual(float(out_jit), 0.0,
                        msg=f"jit(zeta)(2, +inf) expected 0.0, got {out_jit}")
 
-      # Gradient w.r.t. q at q=inf should be 0.0, not NaN.
-      # (dζ/dq = -s * ζ(s+1, q) → 0 as q → +inf)
+      # Gradient w.r.t. q at q=inf, s>1 → 0.0 (dζ/dq = -s·ζ(s+1,q) → 0)
       grad_q = jax.grad(lsp_special.zeta, argnums=1)(
-          jnp.asarray(dtype(2.0)), jnp.asarray(inf))
+          jnp.asarray(dtype(2.0)), jnp.asarray(dtype(inf)))
       self.assertEqual(float(grad_q), 0.0,
                        msg=f"grad_q zeta(2, +inf) expected 0.0, got {grad_q}")
 
