@@ -22,6 +22,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Support for Python 3.11, NumPy 2.0, and SciPy 1.14 has been dropped, per the
     [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
 
+* Bug fixes
+  * Fixed {func}`jax.scipy.stats.vonmises.pdf` and
+    {func}`jax.scipy.stats.vonmises.logpdf` returning `nan` at `kappa == 0`,
+    where the distribution reduces to the uniform distribution on the circle
+    (density `1 / (2 * pi)`), instead of the finite value returned by SciPy
+    ({jax-issue}`#38621`).
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
