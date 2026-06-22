@@ -84,6 +84,14 @@ Features here are experimental and must be tried with caution.
   preallocate memory; use ``XLA_CLIENT_MEM_FRACTION`` to control the
   fraction of GPU memory used.
 
+``XLA_PYTHON_CLIENT_ALLOCATOR=address``
+  This makes the PJRT client use a dedicated synchronous passthrough allocator
+  (``StreamExecutorAddressAllocator``) that calls the underlying StreamExecutor
+  allocate/deallocate APIs directly, bypassing the BFC allocator entirely.
+  Unlike ``platform``, it constructs its own allocator at the PJRT level instead
+  of sharing the backend allocator, which avoids the BFC allocator being built
+  alongside it. This allocator is platform-agnostic (CUDA and ROCm).
+
 ``TF_GPU_ALLOCATOR=cuda_malloc_async``
   This replace XLA's own BFC memory allocator with `cudaMallocAsync
   <https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY__POOLS.html>`_.
