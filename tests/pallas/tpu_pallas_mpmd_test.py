@@ -365,6 +365,32 @@ class MpmdTest(PallasSCTest):
 
     np.testing.assert_array_equal(x, f(x))
 
+  @parameterized.parameters([TC, SCS, SCV])
+  def test_all_semaphores_support(self, core_type):
+    mesh = from_core_type(core_type)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    @jax.jit
+    def f(x):
+      @pl.kernel(
+          mesh=mesh,
+          compiler_params=pltpu.CompilerParams(has_side_effects=True),
+          out_type=[
+              pltpu.HBM((8, 128), jnp.int32),
+              pltpu.SemaphoreType.DMA(()) @ mesh,
+              pltpu.SemaphoreType.REGULAR(()) @ mesh,
+          ],
+      )
+      def body(x_ref, out_ref, dma_sem, regular_sem):
+        pltpu.async_copy(x_ref, out_ref, dma_sem).wait()
+        pl.semaphore_signal(regular_sem, 1)
+        pl.semaphore_wait(regular_sem, 1)
+
+      out, _, _ = body(x)
+      return out
+
+    np.testing.assert_array_equal(x, f(x))
+
   @parameterized.parameters([TC, SCS])
   def test_passing_in_multiple_refs(self, core_type):
     mesh = from_core_type(core_type)
