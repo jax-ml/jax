@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import contextlib
 import functools
 import itertools as it
-from typing import Any, TypeVar, cast
+from typing import Any, Hashable, TypeVar, cast
 from collections.abc import Generator
 
 from jax._src import api
@@ -47,8 +47,8 @@ _T = TypeVar("_T")
 
 def get_super_mesh_shape(
     meshes: Iterable[pallas_core.Mesh],
-) -> Mapping[str, int]:
-  super_mesh_shape = {}
+) -> Mapping[Hashable, int]:
+  super_mesh_shape: dict[Hashable, int] = {}
   for mesh in meshes:
     for k, v in mesh.shape.items():
       # An extra check since `check_is_compatible_with` should catch it.

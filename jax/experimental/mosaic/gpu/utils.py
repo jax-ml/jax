@@ -920,7 +920,7 @@ def parse_indices(
     index = (index,)
   if trailing_dims := len(shape) - len(index):
     index += (slice(None),) * trailing_dims
-  base_indices = []
+  base_indices: list[ir.Value | int] = []
   slice_shape = []
   is_squeezed = []
   for axis, (idx, bound) in enumerate(zip(index, shape)):
