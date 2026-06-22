@@ -33,6 +33,7 @@ from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.mesh import get_abstract_mesh
 from jax._src.layout import Layout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
@@ -386,7 +387,6 @@ def ffi_call(
     result_shape_dtypes: ResultMetadata,
     *,
     has_side_effect: bool = ...,
-    vmap_method: str | None = ...,
     input_layouts: Sequence[FfiLayoutOptions] | None = ...,
     output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
     input_output_aliases: dict[int, int] | None = ...,
@@ -402,7 +402,6 @@ def ffi_call(
     result_shape_dtypes: Sequence[ResultMetadata],
     *,
     has_side_effect: bool = ...,
-    vmap_method: str | None = ...,
     input_layouts: Sequence[FfiLayoutOptions] | None = ...,
     output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = ...,
     input_output_aliases: dict[int, int] | None = ...,
@@ -417,7 +416,6 @@ def ffi_call(
     result_shape_dtypes: ResultMetadata | Sequence[ResultMetadata],
     *,
     has_side_effect: bool = False,
-    vmap_method: str | None = None,
     input_layouts: Sequence[FfiLayoutOptions] | None = None,
     output_layouts: FfiLayoutOptions | Sequence[FfiLayoutOptions] | None = None,
     input_output_aliases: dict[int, int] | None = None,
@@ -427,16 +425,6 @@ def ffi_call(
   """Call a foreign function interface (FFI) target.
 
   See the :ref:`ffi-tutorial` tutorial for more information.
-
-  Like :func:`~jax.pure_callback`, the behavior of ``ffi_call`` under
-  :func:`~jax.vmap` depends on the value of ``vmap_method``. See the
-  :func:`~jax.pure_callback` documentation for more details about the allowed
-  values and examples of their behavior.
-
-  The current default behavior is to use ``vmap_method="sequential"`` when
-  not specified, but this behavior is deprecated, and in the future, the
-  default will be to raise a ``NotImplementedError`` unless ``vmap_method`` is
-  explicitly specified.
 
   Args:
     target_name: the name of the XLA FFI custom call target that was registered
@@ -449,8 +437,6 @@ def ffi_call(
     has_side_effect: boolean specifying whether the custom call has side
       effects. When ``True``, the FFI call will be executed even when the
       outputs are not used.
-    vmap_method: string specifying how the FFI call transforms under
-      :func:`~jax.vmap` as described above.
     input_layouts: a sequence of layouts for each input argument. In each case,
       the layout can be (a) ``None`` indicating that this input is in default
       row-major order, (b) a ``Layout`` specifying the axis order,
@@ -484,13 +470,6 @@ def ffi_call(
     attributes to the FFI handler using XLA's FFI interface.
   """
 
-  allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
-                          "broadcast_all", "legacy_vectorized", None]
-  if vmap_method not in allowed_vmap_methods:
-    raise ValueError(
-        f"vmap_method must be on of the allowed methods {allowed_vmap_methods}, "
-        f"but got: {vmap_method}")
-
   output_layouts_: Sequence[FfiLayoutOptions] | None
   if isinstance(result_shape_dtypes, Sequence):
     output_layouts_ = output_layouts  # pyrefly: ignore[bad-assignment]
@@ -507,6 +486,11 @@ def ffi_call(
         f"custom_call_api_version < 4; got {custom_call_api_version}.")
 
   def wrapped(*args: ArrayLike, **kwargs: Any):
+    # TODO if everything is replicated, it's ok
+    cur_mesh = get_abstract_mesh()
+    if not cur_mesh.empty and not cur_mesh.are_all_axes_manual:
+      raise Exception("gotta be in manual mode bro")
+
     in_avals = [core.typeof(x) for x in args]
 
     if input_layouts is None:
@@ -561,7 +545,6 @@ def ffi_call(
     results = ffi_call_p.bind(
         *args,
         result_avals=result_avals,
-        vmap_method=vmap_method,
         target_name=target_name,
         has_side_effect=has_side_effect,
         input_layouts=static_input_layouts,
@@ -763,6 +746,4 @@ dispatch.simple_impl(ffi_call_p)
 ffi_call_p.def_effectful_abstract_eval(ffi_call_abstract_eval)
 ad.primitive_jvps[ffi_call_p] = ffi_call_jvp
 ad.primitive_transposes[ffi_call_p] = ffi_call_transpose
-batching.primitive_batchers[ffi_call_p] = functools.partial(
-    ffi_batching_rule, ffi_call_p)
 mlir.register_lowering(ffi_call_p, ffi_call_lowering)

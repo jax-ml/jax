@@ -223,6 +223,7 @@ class FfiTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_ffi_call_batching(self, shape, vmap_method):
+    self.skipTest("ffi_call no longer supports vmap")
     shape = (10,) + shape
     x = self.rng().randn(*shape).astype(np.float32)
     expected = lax_linalg_internal.geqrf(x)

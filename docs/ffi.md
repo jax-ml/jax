@@ -1,6 +1,6 @@
 ---
 jupytext:
-  formats: ipynb,md:myst
+  formats: ipynb,py,md:myst
   text_representation:
     extension: .md
     format_name: myst
@@ -259,10 +259,6 @@ def rms_norm(x, eps=1e-5):
     # the same shape and dtype as the input. We discuss a case with a more
     # interesting output type below.
     jax.ShapeDtypeStruct.like(x),
-
-    # The `vmap_method` parameter controls this function's behavior under `vmap`
-    # as discussed below.
-    vmap_method="broadcast_all",
   )
 
   # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
@@ -284,68 +280,131 @@ It's important to note that the first argument to {func}`~jax.ffi.ffi_call` must
 Any attributes (defined using `Attr` in the C++ wrapper above) should be passed as keyword arguments to {func}`~jax.ffi.ffi_call`.
 Note that we explicitly cast `eps` to `np.float32` because our FFI library expects a C `float`, and we can't use `jax.numpy` here, because these parameters must be static arguments.
 
-The `vmap_method` argument to {func}`~jax.ffi.ffi_call` defines how this FFI call interacts with {func}`~jax.vmap` as described next.
-
-```{tip}
-If you are familiar with the earlier "custom call" interface, you might be surprised that we're not passing the problem dimensions as parameters (batch size, etc.) to {func}`~jax.ffi.ffi_call`.
-In this earlier API, the backend had no mechanism for receiving metadata about the input arrays, but since the FFI includes dimension information with the `Buffer` objects, we no longer need to compute this using Python when lowering.
-One major perk of this change is {func}`~jax.ffi.ffi_call` can support some simple {func}`~jax.vmap` semantics out of the box, as discussed below.
-```
-
-(ffi-call-vmap)=
-### Batching with `vmap`
-
-{func}`~jax.ffi.ffi_call` supports some simple {func}`~jax.vmap` semantics out of the box using the `vmap_method` parameter.
-The docs for {func}`~jax.pure_callback` provide more details about the `vmap_method` parameter, and the same behavior applies to {func}`~jax.ffi.ffi_call`.
-
-The simplest `vmap_method` is `"sequential"`.
-In this case, when `vmap`ped, an `ffi_call` will be rewritten as a {func}`~jax.lax.scan` with the `ffi_call` in the body.
-This implementation is general purpose, but it doesn't parallelize very well.
-Many FFI calls provide more efficient batching behavior and, in some simple cases, the `"expand_dims"` or `"broadcast_all"` methods can be used to expose a better implementation.
-
-In this case, since we only have one input argument, `"expand_dims"` and `"broadcast_all"` actually have the same behavior.
-The specific assumption required to use these methods is that the foreign function knows how to handle batch dimensions.
-Another way of saying this is that the result of calling `ffi_call` on the batched inputs is assumed to be equal to stacking the repeated application of `ffi_call` to each element in the batched input, roughly:
-
-```python
-ffi_call(xs) == jnp.stack([ffi_call(x) for x in xs])
-```
-
-```{tip}
-Note that things get a bit more complicated when we have multiple input arguments.
-For simplicity, we will use the `"broadcast_all"` throughout this tutorial, which guarantees that all inputs will be broadcasted to have the same batch dimensions, but it would also be possible to implement a foreign function to handle the `"expand_dims"` method.
-The documentation for {func}`~jax.pure_callback` includes some examples of this
-```
-
-Our implementation of `rms_norm` has the appropriate semantics, and it supports `vmap` with `vmap_method="broadcast_all"` out of the box:
-
-```{code-cell} ipython3
-np.testing.assert_allclose(jax.vmap(rms_norm)(x), jax.vmap(rms_norm_ref)(x), rtol=1e-5)
-```
-
-We can inspect the [jaxpr](jax-internals-jaxpr) of the {func}`~jax.vmap` of `rms_norm` to confirm that it isn't being rewritten using {func}`~jax.lax.scan`:
-
-```{code-cell} ipython3
-jax.make_jaxpr(jax.vmap(rms_norm))(x)
-```
-
-Using `vmap_method="sequential"`, `vmap`ping a `ffi_call` will fall back on a {func}`jax.lax.scan` with the `ffi_call` in the body:
-
-```{code-cell} ipython3
-def rms_norm_sequential(x, eps=1e-5):
-  return jax.ffi.ffi_call(
-    "rms_norm",
-    jax.ShapeDtypeStruct.like(x),
-    vmap_method="sequential",
-  )(x, eps=np.float32(eps))
-
-
-jax.make_jaxpr(jax.vmap(rms_norm_sequential))(x)
-```
-
-If your foreign function provides an efficient batching rule that isn't supported by this simple `vmap_method` parameter, it might also be possible to define more flexible custom `vmap` rules using the experimental `custom_vmap` interface, but it's worth also opening an issue describing your use case on [the JAX issue tracker](https://github.com/jax-ml/jax/issues).
-
 +++
+
+## Support transformations like `vmap` and `grad` by making it a HiJAX primitive
+
+```{code-cell} ipython3
+from jax.experimental.hijax import VJPHiPrimitive
+```
+
+```{code-cell} ipython3
+jax.ffi.register_ffi_target(
+  "rms_norm_fwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormFwd), platform="cpu")
+jax.ffi.register_ffi_target(
+  "rms_norm_bwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormBwd), platform="cpu")
+```
+
+```{code-cell} ipython3
+class RMSNorm(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    if aval.dtype != jnp.float32:
+      raise ValueError("Only the float32 dtype is implemented by rms_norm")
+    self.in_avals = (aval,)
+    self.out_aval = aval
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
+
+  def expand(self, x):
+    return jax.ffi.ffi_call("rms_norm", self.out_aval)(x, eps=self.eps)
+
+  def vjp_fwd(self, nzs_in, x):
+    res_aval = jax.ShapeDtypeStruct(x.shape[:-1], x.dtype)
+    y, res = jax.ffi.ffi_call("rms_norm_fwd", (self.out_aval, res_aval))(x, eps=self.eps)
+    return y, (res, x)
+
+  def vjp_bwd_retval(self, res, ct):
+    res, x = res
+    return jax.ffi.ffi_call("rms_norm_bwd", self.in_avals)(res, x, ct)
+
+  # TODO add `def batch`
+```
+
+```{code-cell} ipython3
+def rms_norm(x, eps=1e-5):
+  return RMSNorm(jax.typeof(x), eps)(x)
+```
+
+```{code-cell} ipython3
+x = jnp.linspace(-0.5, 0.5, 32).reshape((8, 4))
+np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
+```
+
+```{code-cell} ipython3
+ct_y = jnp.ones_like(x)
+np.testing.assert_allclose(
+  jax.vjp(rms_norm, x)[1](ct_y), jax.vjp(rms_norm_ref, x)[1](ct_y), rtol=1e-5)
+```
+
+## Support sharding-in-types mode by calling `shard_map`
+
+```{code-cell} ipython3
+assert len(jax.devices()) == 4  # Set using the XLA_FLAGS environment variable
+jax.set_mesh(jax.make_mesh((4,), ("x",)))
+```
+
+```{code-cell} ipython3
+class RMSNorm(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    if aval.dtype != jnp.float32:
+      raise ValueError("Only the float32 dtype is implemented by rms_norm")
+    self.in_avals = (aval,)
+    self.out_aval = aval
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
+
+  def expand(self, x):
+    body = lambda x: jax.ffi.ffi_call("rms_norm", jax.typeof(x))(x, eps=self.eps)
+    return jax.shard_map(body, out_specs=self.out_aval.sharding.spec)(x)
+```
+
+```{code-cell} ipython3
+x_batch_shd = jax.device_put(x, jax.P("x"))
+hlo = jax.jit(rms_norm).lower(x_batch_shd).compile().as_text().strip()
+assert "all-" not in hlo
+```
+
+### Supporting multiple platforms
+
+```{code-cell} ipython3
+class RMSNorm(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    if aval.dtype != jnp.float32:
+      raise ValueError("Only the float32 dtype is implemented by rms_norm")
+    self.in_avals = (aval,)
+    self.out_aval = aval
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
+
+  def expand(self, x):
+    platform = jax.sharding.get_abstract_mesh().abstract_device.platform
+    name = {'cpu':'rms_norm', 'cuda':'rms_norm_cuda'}[platform]
+    body = lambda x: jax.ffi.ffi_call(name, jax.typeof(x))(x, eps=self.eps)
+    return jax.shard_map(body, out_specs=self.out_aval.sharding.spec)(x)
+```
+
+```{code-cell} ipython3
+np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
+```
+
+```{code-cell} ipython3
+# TODO(yashkatariya): add helpers
+AD = jax.sharding.AbstractDevice('gpu', 1, 'cuda')
+AM = jax.sharding.AbstractMesh((4,), ('x',), (jax.sharding.AxisType.Explicit,),
+                               abstract_device=AD)
+with jax.sharding.use_abstract_mesh(AM):
+  hlo = jax.jit(rms_norm).lower(x).as_text()
+print(hlo)
+```
+
+TODO
+[x] sharding
+[x] cross-platform
+[ ] ffi calls on gpu
+
+```{code-cell} ipython3
+import sys; sys.exit(0)
+```
 
 ### Differentiation
 
@@ -405,8 +464,7 @@ rms_norm.defvjp(rms_norm_fwd, rms_norm_bwd)
 # Check that this gives the right answer when compared to the reference version
 ct_y = jnp.ones_like(x)
 np.testing.assert_allclose(
-  jax.vjp(rms_norm, x)[1](ct_y), jax.vjp(rms_norm_ref, x)[1](ct_y), rtol=1e-5
-)
+  jax.vjp(rms_norm, x)[1](ct_y), jax.vjp(rms_norm_ref, x)[1](ct_y), rtol=1e-5)
 ```
 
 At this point, we can use our new `rms_norm` function transparently for many JAX applications, and it will transform appropriately under the standard JAX function transformations like {func}`~jax.vmap` and {func}`~jax.grad`.
