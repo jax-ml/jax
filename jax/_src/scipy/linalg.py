@@ -2497,9 +2497,9 @@ def _toeplitz(c: Array, r: Array) -> Array:
   if ncols == 0 or nrows == 0:
     return jnp.empty((ncols, nrows), dtype=jnp.promote_types(c.dtype, r.dtype))
   elems = jnp.concatenate((c[::-1], r[1:]))
-  i = jnp.arange(ncols)[:, None]
+  i = jnp.arange(ncols - 1, -1, -1)[:, None]
   j = jnp.arange(nrows)[None, :]
-  return elems[ncols - 1 - i + j]
+  return elems[i + j]
 
 def hankel(c: ArrayLike, r: ArrayLike | None = None) -> Array:
   r"""Construct a Hankel matrix.
