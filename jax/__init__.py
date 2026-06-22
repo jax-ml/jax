@@ -102,8 +102,6 @@ from jax._src.xla_bridge import default_backend as default_backend
 from jax._src.xla_bridge import device_count as device_count
 from jax._src.api import device_get as device_get
 from jax._src.api import device_put as device_put
-from jax._src.api import device_put_sharded as _deprecated_device_put_sharded
-from jax._src.api import device_put_replicated as _deprecated_device_put_replicated
 from jax._src.xla_bridge import devices as devices
 from jax._src.api import disable_jit as disable_jit
 from jax._src.api import eval_shape as eval_shape
@@ -202,37 +200,4 @@ del jax_api, jax_core, SimpleNamespace
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
-_deprecations = {
-    # Removed for v0.10.0
-    "device_put_replicated": (
-        (
-            "jax.device_put_replicated is deprecated; use jax.device_put"
-            " instead. See"
-            " https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements"
-            " for a drop-in replacement."
-        ),
-        None,
-    ),
-    "device_put_sharded": (
-        (
-            "jax.device_put_sharded is deprecated; use jax.device_put instead."
-            " See https://docs.jax.dev/en/latest/migrate_pmap.html#drop-in-replacements"
-            " for a drop-in replacement."
-        ),
-        None,
-    ),
-}
-
-import typing as _typing
-if _typing.TYPE_CHECKING:
-  device_put_replicated = _deprecated_device_put_replicated
-  device_put_sharded = _deprecated_device_put_sharded
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing
-
 # trailer
-del _deprecated_device_put_sharded
-del _deprecated_device_put_replicated
