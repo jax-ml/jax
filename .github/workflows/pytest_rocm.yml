@@ -19,11 +19,11 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        default: "linux-x86-64-4gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.4"
         options:
-          - "linux-x86-64-1gpu-amd"
-          - "linux-x86-64-4gpu-amd"
-          - "linux-x86-64-8gpu-amd"
+          - "amd-do-linux.jax.gpu.gfx950.1"
+          - "amd-do-linux.jax.gpu.gfx950.4"
+          - "amd-do-linux.jax.gpu.gfx950.8"
       python:
         description: "Which Python version to use?"
         type: choice
@@ -75,7 +75,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-64-4gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.4"
       python:
         description: "Which Python version to use?"
         type: string
@@ -130,9 +130,9 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
-    name: "${{ (contains(inputs.runner, '1gpu') && '1gpu') ||
-        (contains(inputs.runner, '4gpu') && '4gpu') ||
-        (contains(inputs.runner, '8gpu') && '8gpu') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
+    name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950.1') ||
+        (contains(inputs.runner, 'gfx950.4') && 'gfx950.4') ||
+        (contains(inputs.runner, 'gfx950.8') && 'gfx950.8') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
