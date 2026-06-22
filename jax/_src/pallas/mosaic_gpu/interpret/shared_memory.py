@@ -16,14 +16,16 @@ from __future__ import annotations
 
 import collections
 import dataclasses
+import logging
 import threading
 from typing import Any, cast
 
-from absl import logging
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic_gpu.interpret import params as params
+
+logger = logging.getLogger(__name__)
 
 
 class Barrier(memory.Allocation):
@@ -119,7 +121,7 @@ class Barrier(memory.Allocation):
     # interleaved with logging from other barriers or from the global
     # `SharedMemory` object.
     for msg in message.split("\n"):
-      logging.info(msg)
+      logger.info(msg)
 
   @property
   def detect_races(self) -> bool:

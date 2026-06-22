@@ -28,9 +28,9 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools
+import logging
 from typing import cast, Any
 
-from absl import logging
 import jax
 from jax import dlpack
 from jax import dtypes
@@ -41,17 +41,18 @@ from jax._src import core
 from jax._src import effects
 from jax._src import literals
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import roofline
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
-from jax._src.interpreters import mlir
 import ml_dtypes
 import numpy as np
 import tensorflow as tf
 
+logger = logging.getLogger(__name__)
 
 map = util.safe_map
 zip = util.safe_zip
@@ -320,7 +321,7 @@ def check_tf_result(idx: int, r_tf: TfVal, r_aval: core.ShapedArray | None) -> T
         f"r_tf = {r_tf}, r_aval = {r_aval}"
     )
     msg += str(e)
-    logging.warning(msg)
+    logger.warning(msg)
     return r_tf
   if (r_tf.dtype != r_aval_dtype_tf or
       len(r_tf.shape) != len(r_aval_shape_tf) or
@@ -543,7 +544,7 @@ def _call_tf_lowering(
         "variables or tensors from the context. "
         "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion. "
         f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
-    logging.warning(msg)
+    logger.warning(msg)
     for inp in concrete_function_flat_tf.captured_inputs:
       if inp.dtype == tf.resource:  # A variable; lookup by handle
         inp_vars = [v for v in concrete_function_flat_tf.variables if inp is v.handle]

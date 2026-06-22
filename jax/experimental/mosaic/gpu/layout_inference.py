@@ -20,11 +20,11 @@ from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import enum
 import itertools
+import logging
 import math
 import re
 from typing import Any, assert_never, cast
 
-from absl import logging
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -43,6 +43,7 @@ from . import layouts as layouts_lib
 from . import tcgen05
 from . import utils
 
+logger = logging.getLogger(__name__)
 
 # This value was arrived at by looking at an existing kernel where layout
 # inference would never be able to complete successfully, and kernels where it
@@ -2648,7 +2649,7 @@ def infer_layout(
       arch=arch,
   )
 
-  if logging.vlog_is_on(1):
+  if logger.isEnabledFor(logging.DEBUG):
     print("Finding a solution (or exhausting the entire search space) "
           f"consumed {fuel - remaining_fuel}/{fuel} fuel.")
 
