@@ -47,9 +47,9 @@ RUN_STARTED_AT="$(
 DATE="${RUN_STARTED_AT%%T*}"
 [[ -n "${DATE}" ]] || DATE="$(date -u +%F)"
 
-# GPU count from runner name (e.g. linux-x86-64-8gpu-amd -> 8).
+# GPU count from runner name (e.g. amd-do-linux.jax.gpu.gfx950.8 -> 8).
 GPU_COUNT=""
-if [[ "${INPUT_RUNNER}" =~ ([0-9]+)gpu ]]; then
+if [[ "${INPUT_RUNNER}" =~ gfx[0-9a-fA-F]+\.([0-9]+) ]]; then
   GPU_COUNT="${BASH_REMATCH[1]}"
 fi
 
