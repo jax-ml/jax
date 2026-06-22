@@ -81,6 +81,7 @@ jobs:
           TRIGGER_PATTERNS=(
             "build/requirements_lock_*.txt"
             ".github/workflows/wheel_tests_continuous.yml"
+            ".github/actions/download-jax-*-wheels/action.yml"
           )
 
           git fetch --depth=1 origin "$BASE_REF"

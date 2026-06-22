@@ -113,10 +113,10 @@ runs:
             fi
 
             PYTHON_BIN="python${INPUTS_PYTHON}"
-            "${PYTHON_BIN}" -m pip download --dest "$(pwd)/dist" "${WHEELS_URL}/${PJRT_FILE}" "${WHEELS_URL}/${PLUGIN_FILE}"
+            "${PYTHON_BIN}" -m pip download --no-deps --dest "$(pwd)/dist" "${WHEELS_URL}/${PJRT_FILE}" "${WHEELS_URL}/${PLUGIN_FILE}"
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
-            $PYTHON -m pip download jaxlib jax-rocm${JAXCI_ROCM_VERSION}-pjrt jax-rocm${JAXCI_ROCM_VERSION}-plugin --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib jax-rocm${JAXCI_ROCM_VERSION}-pjrt jax-rocm${JAXCI_ROCM_VERSION}-plugin --dest $(pwd)/dist/ --no-deps
           else
             echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1

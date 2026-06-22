@@ -80,7 +80,7 @@ runs:
             gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jax*cuda${JAXCI_CUDA_VERSION}*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
-            $PYTHON -m pip download jaxlib jax-cuda${JAXCI_CUDA_VERSION}-pjrt jax-cuda${JAXCI_CUDA_VERSION}-plugin --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib jax-cuda${JAXCI_CUDA_VERSION}-pjrt jax-cuda${JAXCI_CUDA_VERSION}-plugin --dest $(pwd)/dist/ --no-deps
           else
             echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1
