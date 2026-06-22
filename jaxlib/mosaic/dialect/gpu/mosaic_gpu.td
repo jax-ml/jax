@@ -696,7 +696,10 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
     differentiate between potentially aliasing allocations.
   }];
 
-  let arguments = (ins ConfinedAttr<I32Attr, [IntNonNegative]>:$offset, OptionalAttr<I32Attr>:$alias_id);
+  let arguments = (ins
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset,
+    OptionalAttr<I64Attr>:$alias_id
+  );
   let results = (outs AnyMemRef);
 }
 

@@ -2865,9 +2865,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(kernel_fn(x), expected)
 
   def test_ref_union_caching(self):
-    # TODO(bchetioui,allanrenucci): debug.
-    # ValueError: Shape mismatch between variable and %45 = "mosaic_gpu.slice_smem"():r-0: (64, 32) != (64, 64)
-    self.skip_if_wg_semantics()
     @self.kernel(
       out_type=(
         jax.ShapeDtypeStruct((64, 32), jnp.float32),
@@ -2896,6 +2893,44 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     of32, of16 = kernel()
     np.testing.assert_array_equal(of32, 1.0)
     np.testing.assert_array_equal(of16, 1.0)
+
+  def test_ref_union_caching_with_transforms(self):
+    # This is a regression test for CSE of aliased refs. Aliased refs with
+    # same shape and dtype should be treated as distinct references. I.e.
+    # they can have different transforms.
+    shape, dtype = (64, 32), jnp.float32
+
+    @self.kernel(
+        out_type=(
+            jax.ShapeDtypeStruct(shape, dtype),
+            jax.ShapeDtypeStruct(shape, dtype),
+        ),
+    )
+    def kernel(src_ref, o_ref0, o_ref1):
+      def _scope(o_ref, aliased_ref):
+        [smem] = aliased_ref
+        smem[...] = plgpu.load(
+            src_ref, (), layout=plgpu.Layout.WGMMA, optimized=False
+        )
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(smem, o_ref)
+        plgpu.wait_smem_to_gmem(0)
+
+      transforms = self.default_transforms(dtype=dtype, swizzle=32)
+      pl.run_scoped(
+          functools.partial(_scope, o_ref0),
+          plgpu.RefUnion(plgpu.SMEM(shape, dtype, transforms=transforms)),
+      )
+      transforms = self.default_transforms(dtype=dtype, swizzle=128)
+      pl.run_scoped(
+          functools.partial(_scope, o_ref1),
+          plgpu.RefUnion(plgpu.SMEM(shape, dtype, transforms=transforms)),
+      )
+
+    src = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    out0, out1 = kernel(src)
+    np.testing.assert_array_equal(out0, src)
+    np.testing.assert_array_equal(out1, src)
 
   @parameterized.product(
       small_ty=[jnp.int4, jnp.uint4],
