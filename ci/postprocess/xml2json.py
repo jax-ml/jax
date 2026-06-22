@@ -122,7 +122,7 @@ def process_xml(file_path, job_id, fallback_timestamp=None):
           tc.get("timestamp")
           or suite_timestamp
           or fallback_timestamp
-          or datetime.datetime.now(datetime.timezone.utc).isoformat()
+          or datetime.datetime.now(datetime.UTC).isoformat()
       )
 
       record = {
