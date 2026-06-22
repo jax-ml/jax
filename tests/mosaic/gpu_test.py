@@ -9019,7 +9019,6 @@ if hp is not None:
         shape, layout = args
         # Attempt to avoid spills by keeping the shape small enough.
         hp.assume(math.prod(shape) <= 128 * 128)
-        hp.assume(shape[-1] > 1)
         dtype = jnp.float32
         layout_attr = layouts.to_layout_attr(layout)
 

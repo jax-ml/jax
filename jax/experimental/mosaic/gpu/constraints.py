@@ -1342,33 +1342,19 @@ def _is_valid_smem_layout_assignment(
   ref_ty = var.key.value.type
   strides, _ = ref_ty.get_strides_and_offset()
 
-  # TODO(olechwierowicz): We raise if we encounter duplicate unit dim strides.
-  # In the code below we want to check the divisibility of the minor dimension
-  # by a number of swizzle elements to check for SMEM aligment.
-  # The problem is that a shape with a unit trailing dim has duplicate
-  # strides of 1 (e.g. shape (128, 1) has strides (1, 1)).
-  # Therefore it's not possible to recover the minor dimension, since
-  # the memref can always be logically transposed.
-  #
-  # The check below can be lifted if we implement the following logic:
-  # 1. Check if we can tile the shape.
-  # 2. Check swizzle against the minor dimension if it is unique.
-  # 3. If the minor dimension is not unique, check swizzle against the single
-  #    non-1 dimension if the operation is not `slice_smem`.
-  # 4. If the operation is `slice_smem`, check the trailing dimension against
-  #    the swizzle.
   min_stride = np.min(strides)
   if min_stride != 1:
     raise NotImplementedError("We cannot apply swizzle to non-contiguous refs")
-  if strides.count(min_stride) > 1:
-    raise NotImplementedError("Duplicated strides are unsupported.")
 
   bitwidth = utils.bitwidth(ref_ty.element_type)
   swizzle_elems = 8 * swizzle // bitwidth if swizzle is not None else None
+  duplicated_strides = strides.count(min_stride) > 1
   if tiling is None:
     # No swizzle and no tiling means it's always a valid assignment.
     if swizzle_elems is None:
       return True
+    if duplicated_strides:
+      return swizzle_elems is None
     # Otherwise, swizzle exist and we're dealing with non-scalar.
     # We check the divisibility of the minor most dim.
     minor_dim_index = np.argmin(strides)
@@ -1378,6 +1364,8 @@ def _is_valid_smem_layout_assignment(
   try:
     # `tiling.transform_shape` will raise if the shape is not tileable.
     _ = tiling.transform_shape(var.shape)
+    if duplicated_strides:
+      return swizzle_elems is None
     tiled_strides = lowering.tile_strides(strides, tiling_v)
     minor_tiling_dim_index = np.argmin(tiled_strides[-len(tiling_v):])
     if swizzle_elems:

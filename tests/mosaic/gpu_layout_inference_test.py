@@ -3468,6 +3468,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       ("valid_tiling_valid_swizzle", (64, 64), (8, 64), 128),
       ("valid_tiling_no_swizzle", (64, 64), (8, 64), None),
       ("scalar_no_tiling_no_swizzle", (), None, None),
+      ("duplicate_strides_valid_tiling_no_swizzle", (128, 1), (128, 1), None),
+      ("duplicate_strides_no_tiling_no_swizzle", (128, 1), None, None),
   )
   def test_valid_tiling_and_swizzle_combinations(
       self, shape, tiling, swizzle
@@ -3496,6 +3498,9 @@ class LayoutInferenceTest(parameterized.TestCase):
       ("scalar_no_tiling_with_swizzle", (), None , 32),
       ("scalar_tiling_with_no_swizzle", (), (8, 32), None),
       ("scalar_tiling_with_swizzle", (), (8, 32), 32),
+      ("duplicate_strides_valid_tiling_with_swizzle", (128, 1), (128, 1), 32),
+      ("duplicate_strides_invalid_tiling_no_swizzle", (128, 1), (128, 2), None),
+      ("duplicate_strides_no_tiling_with_swizzle", (128, 1), None, 32),
   )
   def test_invalid_tiling_with_swizzle_combinations(
       self, shape, tiling, swizzle
@@ -3515,18 +3520,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(ValueError, "Cannot apply.*tiling"):
       mgpu.infer_layout(self.module)
 
-  def test_with_unit_trailing_dim_in_smem_raises_not_implemented(self):
-    with ir.InsertionPoint(self.module.body):
-      bf16 = ir.BF16Type.get()
-      ref_ty = ir.MemRefType.get((128, 1), bf16, memory_space=mgpu.utils.smem())
-      [ref] = undefs(ref_ty)
-      attrs = []
-      attrs.append(mgpu.dialect.TileTransformAttr.get((128, 1)))
-      in_transforms = ir.ArrayAttr.get(attrs)
-      mgpu.dialect.with_transforms(ref, in_transforms)
-
-    with self.assertRaisesRegex(NotImplementedError, "Duplicated strides"):
-      mgpu.infer_layout(self.module)
 
   @parameterized.product(
       lhs_swizzle=(32, 64, 128),
