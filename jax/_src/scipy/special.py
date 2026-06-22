@@ -1287,7 +1287,12 @@ def zeta(x: ArrayLike, q: ArrayLike | None = None) -> Array:
     raise NotImplementedError(
       "Riemann zeta function not implemented; pass q != None to compute the Hurwitz Zeta function.")
   x, q = promote_args_inexact("zeta", x, q)
-  return lax.zeta(x, q)
+  # Guard: ζ(s, q) → 0 as q → +∞ for s > 1.  The XLA Euler-Maclaurin
+  # expansion produces NaN for q=inf (inf^-s == 0 but 0*inf/... → NaN),
+  # so we intercept the infinite-q case here before it reaches XLA.
+  # See: https://github.com/jax-ml/jax/issues/38637
+  result = lax.zeta(x, q)
+  return jnp.where(jnp.isposinf(q), jnp.zeros_like(result), result)
 
 
 # There is no general closed-form derivative for the zeta function, so we compute
@@ -1319,7 +1324,10 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
                          tuple(range(a.ndim)))
   T1 = T1 / coefs
   T = T0 * (dtype(0.5) + T1.sum(-1))
-  return S + I + T
+  result = S + I + T
+  # Guard: ζ(s, q) → 0 as q → +∞; the series expansion also diverges for
+  # q=inf (same root cause as the forward pass), so we mask it out here.
+  return jnp.where(jnp.isposinf(a), jnp.zeros_like(result), result)
 
 zeta.defjvp(partial(jvp, _zeta_series_expansion))
 
