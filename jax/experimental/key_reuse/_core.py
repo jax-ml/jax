@@ -448,6 +448,13 @@ def _slice_signature(eqn):
 key_reuse_signatures[lax.slice_p] = _slice_signature
 
 @dynamic_key_reuse_signature
+def _unstack_signature(eqn):
+  return KeyReuseSignature(Sink(0),
+                           *(Source(i) for i in range(len(eqn.outvars))))
+
+key_reuse_signatures[lax.unstack_p] = _unstack_signature
+
+@dynamic_key_reuse_signature
 def _concatenate_signature(eqn):
   num_vals = len(eqn.invars)
   # TODO(jakevdp): should this signature be more granular?
