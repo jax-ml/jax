@@ -13,7 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-from collections.abc import Sequence
 import contextlib
 import dataclasses
 import enum
@@ -45,7 +44,6 @@ import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect
 from jax.experimental.mosaic.gpu import fragmented_array as fa
-from jax.experimental.mosaic.gpu import inference_utils
 from jax.experimental.mosaic.gpu import launch_context
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import profiler
@@ -6121,22 +6119,6 @@ class Swizzle:
     return mgpu_dialect.SwizzleTransformAttr.get(self.swizzle)
 
 
-def set_in_transforms(
-    op: ir.OpView, transforms: Sequence[Sequence[Tile | Swizzle]],
-) -> None:
-  """Annotates an op with in_transforms."""
-  if not transforms:
-    return
-
-  in_transforms = []
-  smem_refs = filter(inference_utils.is_transformable_smem_memref, op.operands)
-  for _, result_transforms in jax._src.util.safe_zip(smem_refs, transforms):
-    in_transforms.append(
-        ir.ArrayAttr.get([t.attr() for t in result_transforms])
-    )
-
-  op.attributes["in_transforms"] = ir.ArrayAttr.get(in_transforms)
-
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   """Device tests with lowering from the MLIR dialect and layout inference."""
 
@@ -6344,7 +6326,12 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # GMEM -> SMEM
       tma_barrier.arrive_expect_tx(memref_bytes)
-      load_op = mgpu_dialect.AsyncLoadOp(
+      if test_case.transforms:
+        transforms_attr = ir.ArrayAttr.get(
+            [t.attr() for t in test_case.transforms]
+        )
+        smem_ref = mgpu_dialect.with_transforms(smem_ref, transforms_attr)
+      mgpu_dialect.async_load(
           source=in_gmem_ref,
           destination=smem_ref,
           barrier=tma_barrier.as_barrier_memref(),
@@ -6352,7 +6339,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           slice_lengths=test_case.slice_lengths,
           collective=ir.ArrayAttr.get([]),
       )
-      set_in_transforms(load_op, [test_case.transforms])
       tma_barrier.wait()
 
       # SMEM -> GMEM
