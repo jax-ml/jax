@@ -1492,7 +1492,7 @@ def _extract_aliased_ref(
               f" dimension, got {ref.shape[0]} != {transformed_shape[0]}."
           )
         address = arith_dialect.addi(ref.address, _i32_constant(offset))
-        ref = tcgen05.TMEMRef(
+        ref = tcgen05.TMEMRef(  # pyrefly: ignore[bad-assignment]
             address=address,
             shape=cast(tuple[int, int], transformed_shape),
             dtype=mlir_dtype,
@@ -1542,16 +1542,16 @@ def _extract_aliased_ref(
             #     RefUnion). This only holds in the absence of 0-sized refs,
             #     which don't serve a practical purpose anyway.
             slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i32, alias_group_idx)
-            ref = slice_op.result
+            ref = slice_op.result  # pyrefly: ignore[bad-assignment]
           else:
             ref_bytes = ref_bits // 8
-            ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
-            ref = _handle_dtype_bitcast(
-                ref,
-                ir.MemRefType(ref.type).element_type,
+            ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))  # pyrefly: ignore[bad-assignment]
+            ref = _handle_dtype_bitcast(  # pyrefly: ignore[bad-assignment]
+                ref,  # pyrefly: ignore[bad-argument-type]
+                ir.MemRefType(ref.type).element_type,  # pyrefly: ignore[missing-attribute]
                 mlir_dtype,
             )
-            ref = mgpu.memref_reshape(ref, transformed_shape)
+            ref = mgpu.memref_reshape(ref, transformed_shape)  # pyrefly: ignore[no-matching-overload]
         elif input_ref_ty.memory_space == mgpu_utils.tmem():
 
           if isinstance(ref.owner, mgpu.dialect.SliceTmemOp):
@@ -1571,7 +1571,7 @@ def _extract_aliased_ref(
           )
           slice_op = mgpu.dialect.SliceTmemOp(ref_ty, ref, total_offset)
           slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i32, alias_group_idx)
-          ref = slice_op.result
+          ref = slice_op.result  # pyrefly: ignore[bad-assignment]
         else:
           raise NotImplementedError("Unsupported memory space.")
       return (
@@ -1866,7 +1866,7 @@ def _handle_transforms(
       transforms_attr = ir.ArrayAttr.get([
           gpu_core.to_transform_attr(t) for t in spec_transforms
       ])
-      ref = mgpu.dialect.with_transforms(_reinterpret_cast(ref, ref_aval), transforms_attr)
+      ref = mgpu.dialect.with_transforms(_reinterpret_cast(ref, ref_aval), transforms_attr)  # pyrefly: ignore[bad-assignment]
       transforms = transforms[num_block_spec_transforms:]
       transform_avals = transform_avals[num_block_spec_transforms:]
       if any(isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)) for t in transforms):
@@ -2809,7 +2809,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
   res = x
   # Repeated doubling algorithm.
   for i in reversed(range(y.bit_length() - 1)):
-    res = mul_op(res, res)
+    res = mul_op(res, res)  # pyrefly: ignore[no-matching-overload]
     if (y >> i) & 1:
       res = mul_op(res, x)
   return res
