@@ -26,6 +26,7 @@ repos:
   - id: debug-statements
     # only include python files
     files: \.py$
+    language_version: python3.12
   - id: trailing-whitespace
     # only include python files
     files: \.py$
