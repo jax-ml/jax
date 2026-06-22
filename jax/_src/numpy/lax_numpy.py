@@ -7953,7 +7953,8 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
      c = a \times b
 
   In 3 dimensions, ``c`` is a length-3 array. In 2 dimensions, ``c`` is
-  a scalar.
+  a scalar. Note that 2-dimensional inputs are deprecated and will be
+  removed in JAX 0.12.0.
 
   Args:
     a: N-dimensional array. ``a.shape[axisa]`` indicates the dimension of
@@ -8014,7 +8015,6 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
     >>> jnp.cross(a, b, axisa=0, axisb=0, axisc=0)
     Array([-2, -2, 12], dtype=int32)
   """
-  # TODO(jakevdp): NumPy 2.0 deprecates 2D inputs. Follow suit here.
   util.check_arraylike("cross", a, b)
   if axis is not None:
     axisa = axis
@@ -8025,6 +8025,15 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
 
   if a.shape[-1] not in (2, 3) or b.shape[-1] not in (2, 3):
     raise ValueError("Dimension must be either 2 or 3 for cross product")
+
+  if a.shape[-1] == 2 or b.shape[-1] == 2:
+    deprecations.warn(
+        "jax-numpy-cross-2d-input",
+        "Support for 2-dimensional vectors in jnp.cross is deprecated and "
+        "will be removed in JAX 0.12.0. Use arrays of 3-dimensional "
+        "vectors instead.",
+        stacklevel=2,
+    )
 
   if a.shape[-1] == 2 and b.shape[-1] == 2:
     return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
