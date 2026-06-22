@@ -156,6 +156,7 @@ class ProfilerTest(unittest.TestCase):
         self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
       self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
+  @jtu.skip_under_pytest("subprocess profiling is not supported under pytest")
   @unittest.skipIf(not portpicker, "Test requires portpicker")
   def testSubprocessProfiling(self):
     """Test that subprocess profiling works correctly and aggregates results."""
