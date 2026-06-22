@@ -24,7 +24,7 @@ import functools
 import itertools
 import math
 import operator
-from typing import Any, Protocol, Self, TypeVar, assert_never, cast
+from typing import Any, Protocol, Self, assert_never, cast, overload
 
 import jax
 from jax import api_util
@@ -80,7 +80,6 @@ zip, unsafe_zip = util.safe_zip, zip
 partial = functools.partial
 SMEM = gpu_core.SMEM
 WARPGROUP_SIZE = 128
-RefOrTmemType = TypeVar("RefOrTmemType", ir.Value, tcgen05.TMEMRef)
 
 
 # This is morally ``ShapedArray | state.AbstractRef``, but pytype does not
@@ -1462,14 +1461,44 @@ def _handle_dtype_bitcast(
   return mgpu_utils.ptr_as_memref(mgpu_utils.memref_ptr(ref), result_type)
 
 
+@overload
 def _extract_aliased_ref(
-    ref: RefOrTmemType,
+  ref: ir.Value,
+  ref_aval: state_types.AbstractRef,
+  transform_avals: Sequence[state_types.Transform],
+  transforms: Sequence[state_types.Transform],
+  lowering_semantics: mgpu.LoweringSemantics,
+) -> tuple[
+    ir.Value,
+    state_types.AbstractRef,
+    Sequence[state_types.Transform],
+    Sequence[state_types.Transform]
+]:
+  ...
+
+@overload
+def _extract_aliased_ref(
+  ref: tcgen05.TMEMRef,
+  ref_aval: state_types.AbstractRef,
+  transform_avals: Sequence[state_types.Transform],
+  transforms: Sequence[state_types.Transform],
+  lowering_semantics: mgpu.LoweringSemantics,
+) -> tuple[
+    tcgen05.TMEMRef,
+    state_types.AbstractRef,
+    Sequence[state_types.Transform],
+    Sequence[state_types.Transform]
+]:
+  ...
+
+def _extract_aliased_ref(
+    ref: ir.Value | tcgen05.TMEMRef,
     ref_aval: state_types.AbstractRef,
     transform_avals: Sequence[state_types.Transform],
     transforms: Sequence[state_types.Transform],
     lowering_semantics: mgpu.LoweringSemantics,
 ) -> tuple[
-    RefOrTmemType,
+    ir.Value | tcgen05.TMEMRef,
     state_types.AbstractRef,
     Sequence[state_types.Transform],
     Sequence[state_types.Transform],
@@ -1816,10 +1845,10 @@ def _bubble_up_transforms_for_lowering(
   )
 
 
-def _handle_transforms(
+def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
     ctx: LoweringRuleContext,
     ref_aval: state_types.AbstractRef,
-    ref: RefOrTmemType,
+    ref: T,
     transform_avals: Sequence[state_types.Transform],
     transforms: Sequence[state_types.Transform],
     *,
@@ -1827,12 +1856,10 @@ def _handle_transforms(
     handle_reshapes=True,
     allow_peer_refs=False,
     allow_multicast_refs=False,
-) -> tuple[
-    RefOrTmemType, state_types.AbstractRef, Sequence[state_types.Transform]
-]:
+) -> tuple[T, state_types.AbstractRef, Sequence[state_types.Transform]]:
   # Before we handle other transforms, we resolve any possible leading
   # aliasing transform.
-  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(
+  ref, ref_aval, transform_avals, transforms = _extract_aliased_ref(  # pyrefly: ignore[no-matching-overload]
       ref,
       ref_aval,
       transform_avals,
@@ -1866,7 +1893,10 @@ def _handle_transforms(
       transforms_attr = ir.ArrayAttr.get([
           gpu_core.to_transform_attr(t) for t in spec_transforms
       ])
-      ref = mgpu.dialect.with_transforms(_reinterpret_cast(ref, ref_aval), transforms_attr)
+      ref = cast(
+          T,
+          mgpu.dialect.with_transforms(_reinterpret_cast(ref, ref_aval), transforms_attr)
+      )
       transforms = transforms[num_block_spec_transforms:]
       transform_avals = transform_avals[num_block_spec_transforms:]
       if any(isinstance(t, (gpu_core.UntilingTransform, gpu_core.UnswizzleRef)) for t in transforms):
@@ -2796,6 +2826,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
   if y <= 1:
     raise NotImplementedError
 
+  mul_op: Callable[[Any, Any], Any]
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     mul_op = operator.mul
   elif jnp.issubdtype(x_aval.dtype, jnp.integer):
@@ -2809,9 +2840,9 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
   res = x
   # Repeated doubling algorithm.
   for i in reversed(range(y.bit_length() - 1)):
-    res = mul_op(res, res)
+    res = mul_op(res, res)  # pyrefly: ignore[no-matching-overload]
     if (y >> i) & 1:
-      res = mul_op(res, x)
+      res = mul_op(res, x)  # pyrefly: ignore[no-matching-overload]
   return res
 
 
