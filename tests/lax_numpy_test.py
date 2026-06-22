@@ -491,25 +491,47 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rhs_dtype=number_dtypes,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="Support for 2-dimensional vectors in jnp.cross is deprecated")
   def testCross(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     axisa, axisb, axisc, axis = axes
     jnp_fun = lambda a, b: jnp.cross(a, b, axisa, axisb, axisc, axis)
-    # Note: 2D inputs to jnp.cross are deprecated in numpy 2.0.
-    @jtu.ignore_warning(category=DeprecationWarning,
-                        message="Arrays of 2-dimensional vectors are deprecated.")
+
     def np_fun(a, b):
+      effective_axisa = axisa if axis is None else axis
+      effective_axisb = axisb if axis is None else axis
+      effective_axisc = axisc if axis is None else axis
+
       a = a.astype(np.float32) if lhs_dtype == jnp.bfloat16 else a
       b = b.astype(np.float32) if rhs_dtype == jnp.bfloat16 else b
-      out = np.cross(a, b, axisa, axisb, axisc, axis)
+
+      a_m = np.moveaxis(a, effective_axisa, -1)
+      b_m = np.moveaxis(b, effective_axisb, -1)
+
+      if a_m.shape[-1] == 2 and b_m.shape[-1] == 2:
+        out = a_m[..., 0] * b_m[..., 1] - a_m[..., 1] * b_m[..., 0]
+      else:
+        if a_m.shape[-1] == 2:
+          a_m = np.pad(a_m, [(0, 0)] * (a_m.ndim - 1) + [(0, 1)])
+        if b_m.shape[-1] == 2:
+          b_m = np.pad(b_m, [(0, 0)] * (b_m.ndim - 1) + [(0, 1)])
+        out = np.cross(a_m, b_m, axisc=effective_axisc)
+
       return out.astype(jnp.promote_types(lhs_dtype, rhs_dtype))
+
     tol_spec = {dtypes.bfloat16: 3e-1, np.float16: 0.15}
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
       self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
+
+  def testCrossDeprecationWarning(self):
+    with jtu.test_warning_util.record_warnings() as w:
+      jnp.cross(jnp.ones(2), jnp.ones(2))
+    self.assertTrue(any("Support for 2-dimensional vectors" in str(warn.message) for warn in w))
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
