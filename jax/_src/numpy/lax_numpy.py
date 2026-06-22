@@ -7977,13 +7977,6 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
       computing cross products over 3-vectors.
 
   Examples:
-    A 2-dimensional cross product returns a scalar:
-
-    >>> a = jnp.array([1, 2])
-    >>> b = jnp.array([3, 4])
-    >>> jnp.cross(a, b)
-    Array(-2, dtype=int32)
-
     A 3-dimensional cross product returns a length-3 vector:
 
     >>> a = jnp.array([1, 2, 3])
@@ -8002,18 +7995,6 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
     >>> jnp.cross(a, b)
     Array([[-5,  4, -1],
            [ 9, -6, -1]], dtype=int32)
-
-    Specifying axis=0 makes this a batched 2-dimensional cross product,
-    operating on the columns of the inputs:
-
-    >>> jnp.cross(a, b, axis=0)
-    Array([-2, -2, 12], dtype=int32)
-
-    Equivalently, we can independently specify the axis of the inputs ``a``
-    and ``b`` and the output ``c``:
-
-    >>> jnp.cross(a, b, axisa=0, axisb=0, axisc=0)
-    Array([-2, -2, 12], dtype=int32)
   """
   util.check_arraylike("cross", a, b)
   if axis is not None:
