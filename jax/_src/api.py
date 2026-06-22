@@ -40,11 +40,12 @@ from contextlib import contextmanager
 
 from jax._src import api_util
 from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
     tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
-    register_dataclass, FlatTree)
+    register_dataclass)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -1387,11 +1388,13 @@ def jvp(
       not isinstance(tangents, (tuple, list))):
     raise TypeError("primal and tangent arguments to jax.jvp must be tuples or lists; "
                     f"found {type(primals).__name__} and {type(tangents).__name__}.")
+  primals = primals if isinstance(primals, tuple) else tuple(primals)
+  tangents = tangents if isinstance(tangents, tuple) else tuple(tangents)
   return _jvp(fun, primals, tangents, has_aux=has_aux)
 
 def _jvp(fun: Callable, primals, tangents, has_aux=False):
-  ps_ft = FlatTree.flatten(primals)
-  ts_ft = FlatTree.flatten(tangents)
+  ps_ft = ft.flatten(primals)
+  ts_ft = ft.flatten(tangents)
   if ps_ft.tree != ts_ft.tree:
     raise TypeError("primal and tangent arguments to jax.jvp must have the same tree "
                     f"structure; primals have tree structure {ps_ft.tree} whereas tangents have "
@@ -1409,7 +1412,8 @@ def _jvp(fun: Callable, primals, tangents, has_aux=False):
       raise ValueError("jvp called with different primal and tangent shapes;"
                        f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
 
-  out_primals, out_tangents, *aux = ad.jvp(fun, ps_ft, ts_ft, has_aux=has_aux)
+  out_primals, out_tangents, *aux = ad.jvp_ft(
+      ft.fun_pt_to_ft(fun), ps_ft, ts_ft, has_aux=has_aux)
   return out_primals.unflatten(), out_tangents.unflatten(), *aux
 
 @overload
@@ -1491,7 +1495,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   -6.676704
   """
   check_callable(fun)
-  primals_ft = FlatTree.flatten(primals)
+  primals_ft = ft.flatten(primals)
   out_primals_ft, out_known, jaxpr, consts, *maybe_aux = ad.linearize(
       fun, primals_ft, has_aux=has_aux)
   in_avals = primals_ft.map(core.typeof)
@@ -1502,7 +1506,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
 
 
 def _lift_linearized(jaxpr, in_avals, out_avals, out_known, consts, *tangents):
-  tangents_ft = FlatTree.flatten(tangents)
+  tangents_ft = ft.flatten(tangents)
   if tangents_ft.tree != in_avals.tree:
     raise TypeError(f"expected {in_avals.tree}, got {tangents_ft.tree}")
 
@@ -1606,7 +1610,7 @@ def vjp(
   del reduce_axes
   check_callable(fun)
   canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
-  primals_ft = FlatTree.flatten(primals).map(canon)
+  primals_ft = ft.flatten(primals).map(canon)
   primals_ft.map(dispatch.check_arg)
   out_primals_ft, out_known, jaxpr, residuals, *maybe_aux = ad.linearize(
       fun, primals_ft, is_vjp=True, has_aux=has_aux)
