@@ -42,9 +42,9 @@ from jax._src import api_util
 from jax._src import linear_util as lu
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
-    tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
-    tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
-    register_dataclass, FlatTree)
+    tree_leaves, tree_leaves_with_path, Partial, PyTreeDef, keystr,
+    generate_key_paths, tree_flatten_with_path, equality_errors_pytreedef,
+    register_pytree_node, register_dataclass, FlatTree)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -101,7 +101,6 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 ShapeDtypeStruct = core.ShapeDtypeStruct
-
 
 @api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -1606,7 +1605,9 @@ def vjp(
   del reduce_axes
   check_callable(fun)
   canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
-  primals_ft = FlatTree.flatten(primals).map(canon)
+  is_saveable = lambda x: (x.val, False) if isinstance(x, NotSaveable) else (x, True)
+  primals_ft, saveable_ft = FlatTree.flatten(primals).map(is_saveable).unzip2()
+  primals_ft = primals_ft.map(canon)
   primals_ft.map(dispatch.check_arg)
   out_primals_ft, out_known, jaxpr, residuals, *maybe_aux = ad.linearize(
       fun, primals_ft, is_vjp=True, has_aux=has_aux)
@@ -1616,8 +1617,9 @@ def vjp(
   spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)
           for r in residuals]
-  args_res = tuptree_map(lambda x: x if id(x) in used else NotNeeded(),
-                         primals_ft.tree, list(primals_ft))
+  args_res = tuptree_map(lambda x, save: NotNeeded() if id(x) not in used else
+                                         NotSaved() if not save else x,
+                         primals_ft.tree, list(primals_ft), list(saveable_ft))
   out_primal_avals = list(out_primals_ft.map(typeof))
   f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
               primals_ft.tree, out_primals_ft.tree, list(args_res), opaque_residuals)
@@ -1631,7 +1633,11 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
     maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
     if in_tree != in_tree_:
       raise Exception  # TODO accept isomorph tuple tree
-  args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
+  is_leaf = lambda x: isinstance(x, (NotNeeded, NotSaved))
+  paths, args_res_ = unzip2(tree_leaves_with_path(args_res, is_leaf=is_leaf))
+  for p, x in zip(paths, args_res_):
+    if isinstance(x, NotSaved):
+      raise Exception(f'need to restore args{keystr(p)} using f_vjp.args_res = ...')
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_accums = [check_accum(v.aval.to_ct_aval(), x) if isinstance(x, ad.GradAccum) else
                   ad.RefAccum(v.aval.to_ct_aval(), x) if _is_ref(x) else
@@ -1666,8 +1672,8 @@ class RSpec:
   idx: int
   primal: bool
 
-def tuptree_map(f, treedef, x):
-  return treedef.walk(lambda xs, _: tuple(xs), f, x)
+def tuptree_map(f, treedef, *args):
+  return treedef.walk(lambda xs, _: tuple(xs), lambda args: f(*args), zip(*args))
 
 def _is_ref(x):
   from jax._src.state.types import AbstractRef
@@ -1752,6 +1758,14 @@ class DontWant:
 class DidntWant:
   pass
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class NotSaveable:
+  val: Any
+
+@register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class NotSaved:
+  pass
 
 @dataclasses.dataclass(slots=True, weakref_slot=True)
 class VJP:

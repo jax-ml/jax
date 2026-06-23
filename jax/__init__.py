@@ -195,7 +195,8 @@ from types import SimpleNamespace
 import jax._src.api as jax_api
 import jax._src.core as jax_core
 ad = SimpleNamespace(DontWant=jax_api.DontWant, DidntWant=jax_api.DidntWant,
-                     GradRef=jax_api.GradRef, GradValue=jax_api.GradValue)
+                     GradRef=jax_api.GradRef, GradValue=jax_api.GradValue,
+                     NotSaveable=jax_api.NotSaveable)
 memory = SimpleNamespace(Space=jax_core.MemorySpace)
 del jax_api, jax_core, SimpleNamespace
 
