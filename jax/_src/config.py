@@ -2236,7 +2236,7 @@ cpu_collectives_implementation = optional_enum_state(
 use_high_dynamic_range_gumbel = bool_state(
     name='jax_high_dynamic_range_gumbel',
     default=False,
-    help='If True, gumble noise draws two samples to cover low probability '
+    help='If True, gumbel noise draws two samples to cover low probability '
          'events with more precision.',
     include_in_trace_context=True,
 )
