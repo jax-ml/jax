@@ -2544,10 +2544,10 @@ class LaxTest(jtu.JaxTestCase):
     # https://github.com/jax-ml/jax/issues/10315
     shape = (5, 3, 2)
     operand, padding, strides = np.ones(shape), 'VALID', (1,) * len(shape)
-    out = jax.eval_shape(lambda x: lax.reduce_window(x, 0., lax.add, padding=padding,
+    out = jax.jit(lambda x: lax.reduce_window(x, 0., lax.add, padding=padding,
                          window_strides=strides,
                          window_dimensions=(3, 1, 1),
-                         window_dilation=(3, 1, 1)), operand)
+                         window_dilation=(3, 1, 1))).trace(operand).out_info
     self.assertEqual((0, 3, 2), out.shape)
 
   @jtu.sample_product(
@@ -2743,7 +2743,7 @@ class LaxTest(jtu.JaxTestCase):
   def testTopKOverflow(self):
     x = jax.ShapeDtypeStruct((2 ** 31 + 1,), np.dtype('bfloat16'))
     with self.assertRaisesRegex(ValueError, "top_k returns int32 indices, which will overflow"):
-      jax.eval_shape(lambda x: jax.lax.top_k(x, 100), x)
+      jax.jit(lambda x: jax.lax.top_k(x, 100)).trace(x).out_info
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -3431,7 +3431,7 @@ class LaxTest(jtu.JaxTestCase):
       updates = lax.broadcast(y, update_shape)
       return lax.scatter(operand, indices, updates, dimension_numbers)
     with self.assertRaisesRegex(TypeError, msg):
-      jax.eval_shape(f, np.int32(1), np.int32(1))
+      jax.jit(f).trace(np.int32(1), np.int32(1)).out_info
 
   def testIssue831(self):
     # Tests the DeviceTuple constant handler

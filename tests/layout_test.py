@@ -716,7 +716,7 @@ class LayoutTest(jtu.JaxTestCase):
     def f(x):
       return x * x
 
-    out = jax.eval_shape(f, arr)
+    out = f.trace(arr).out_info
     self.assertEqual(out.format, l)
     self.assertEqual(out.sharding, s)
 

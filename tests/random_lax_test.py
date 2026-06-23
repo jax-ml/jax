@@ -168,7 +168,7 @@ class CommonRandomTest(RandomTestBase):
     def f(x):
       return random.normal(self.make_key(x), (int(1e12),))
     with jax.enable_checks(False):  # check_jaxpr will materialize array
-      jax.eval_shape(f, 0)  # doesn't error
+      jax.jit(f).trace(0).out_info  # doesn't error
 
   @jtu.sample_product(
     type_=["int", "np.array", "jnp.array"],

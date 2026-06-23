@@ -87,11 +87,11 @@ class SearchSorted(VJPHiPrimitive):
     # Attempt this here to catch overflow errors early.
     out_dtype.type(sorted_arr_aval.shape[dimension])
     self.in_avals = (sorted_arr_aval, query_aval)
-    self.out_aval = core.typeof(api.eval_shape(
+    self.out_aval = core.typeof(api.jit(
       functools.partial(_searchsorted_impl,
         dimension=dimension, batch_dims=batch_dims, side=side,
-        dtype=out_dtype, method=method),
-        sorted_arr_aval, query_aval))
+        dtype=out_dtype, method=method)
+    ).trace(sorted_arr_aval, query_aval).out_info)
     self.params = dict(
       side=side,
       dimension=dimension,
@@ -192,8 +192,9 @@ class Nonzero(VJPHiPrimitive):
     self.in_avals = (a_aval,)
 
     # Evaluate shape to set out_aval
-    self.out_aval = tree_util.tree_map(core.typeof, api.eval_shape(
-        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype), a_aval))
+    self.out_aval = tree_util.tree_map(core.typeof, api.jit(
+        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype)
+    ).trace(a_aval).out_info)
 
     self.params = dict(
         size=size,

@@ -559,10 +559,10 @@ class LaxVmapTest(jtu.JaxTestCase):
       return lax_windowed_reductions._select_and_scatter_add(
           operand, cotangents, lax.ge_p, dims, strides, pads)
     ones = (1,) * len(shape)
-    cotangent_shape = jax.eval_shape(
+    cotangent_shape = jax.jit(
       lambda x: lax_windowed_reductions._select_and_gather_add(
-          x, x, lax.ge_p, dims, strides, pads, ones, ones),
-      np.ones(shape, dtype)).shape
+          x, x, lax.ge_p, dims, strides, pads, ones, ones)
+    ).trace(np.ones(shape, dtype)).out_info.shape
 
     for bdims in lax_test_util.all_bdims(cotangent_shape, shape):
       self._CheckBatching(fun, 3, bdims, (cotangent_shape, shape),

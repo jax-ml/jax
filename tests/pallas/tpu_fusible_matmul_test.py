@@ -126,7 +126,7 @@ def _fusible_matmul(
   z_block_spec = pl.BlockSpec(block_shape=(bm, bn), index_map=z_index_map)
   dimension_semantics = (pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
 
-  z_out_type = jax.eval_shape(z, z_type)
+  z_out_type = jax.jit(z).trace(z_type).out_info
 
   # First thing we do is extract the values from the fusions. These will be
   # values that are passed in directly and values that are passed in via

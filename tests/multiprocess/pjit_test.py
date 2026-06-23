@@ -315,7 +315,7 @@ class ArrayPjitMultiHost(jt_multiprocess.MultiProcessTest):
         return jnp.zeros([32, 10])
 
       self.assertEqual(f().shape, (32, 10))
-      self.assertEqual(jax.eval_shape(f).shape, (32, 10))
+      self.assertEqual(f.trace().out_info.shape, (32, 10))
 
   @jtu.ignore_warning(category=DeprecationWarning,
                       message="`with mesh:` context manager")

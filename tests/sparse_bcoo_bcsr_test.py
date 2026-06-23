@@ -125,8 +125,8 @@ def _generate_bcoo_dot_general_sampled_properties(
                 [rhs_permute.index(d) for d in batch_dims],
             ),
         )
-        out = jax.eval_shape(partial(lax.dot_general, dimension_numbers=dimension_numbers),
-                             jax.ShapeDtypeStruct(lhs_shape, 'float32'), jax.ShapeDtypeStruct(rhs_shape, 'float32'))
+        out = jax.jit(partial(lax.dot_general, dimension_numbers=dimension_numbers)).trace(
+                             jax.ShapeDtypeStruct(lhs_shape, 'float32'), jax.ShapeDtypeStruct(rhs_shape, 'float32')).out_info
         for layout in sptu.iter_sparse_layouts(out.shape):
           yield sptu.BatchedDotGeneralProperties(
               lhs_shape=lhs_shape,
@@ -741,9 +741,9 @@ class BCOOTest(sptu.SparseTestCase):
   def test_bcoo_dot_general_sampled(self, props, dtype):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
-    out = jax.eval_shape(partial(lax.dot_general, dimension_numbers=props.dimension_numbers),
+    out = jax.jit(partial(lax.dot_general, dimension_numbers=props.dimension_numbers)).trace(
                          jax.ShapeDtypeStruct(props.lhs_shape, dtype),
-                         jax.ShapeDtypeStruct(props.rhs_shape, dtype))
+                         jax.ShapeDtypeStruct(props.rhs_shape, dtype)).out_info
     args_maker = lambda: [rng(props.lhs_shape, dtype), rng(props.rhs_shape, dtype),
                           sprng(out.shape, dtype).indices]
 
@@ -789,8 +789,8 @@ class BCOOTest(sptu.SparseTestCase):
     sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch)
     dimension_numbers = ((lhs_contract, rhs_contract), ([], []))
 
-    out_shape = jax.eval_shape(partial(lax.dot_general, dimension_numbers=dimension_numbers),
-                               jax.ShapeDtypeStruct(xshape, dtype), jax.ShapeDtypeStruct(yshape, dtype))
+    out_shape = jax.jit(partial(lax.dot_general, dimension_numbers=dimension_numbers)).trace(
+                               jax.ShapeDtypeStruct(xshape, dtype), jax.ShapeDtypeStruct(yshape, dtype)).out_info
 
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype),
                           sprng(out_shape.shape, out_shape.dtype).indices]

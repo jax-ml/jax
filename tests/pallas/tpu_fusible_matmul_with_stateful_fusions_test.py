@@ -156,7 +156,7 @@ def _fusible_matmul(
         lambda v: v.inner_aval if isinstance(v, jax.ref.AbstractRef) else v,
         jax.tree.map(jax.typeof, values))
 
-  z_out_type = jax.eval_shape(z_fn, types_without_refs(z_values), z_type)
+  z_out_type = jax.jit(z_fn).trace(types_without_refs(z_values), z_type).out_info
 
   # We construct the set of scalar prefetch arguments that will be passed to
   # the kernel.

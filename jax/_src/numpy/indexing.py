@@ -92,7 +92,7 @@ class IndexType(enum.Enum):
     elif isinstance(idx, Sequence):
       if not idx:  # empty indices default to float, so special-case this.
         return cls.ARRAY
-      idx_aval = api.eval_shape(array_constructors.asarray, idx)
+      idx_aval = api.jit(array_constructors.asarray).trace(idx).out_info
       if idx_aval.dtype == bool:
         return cls.BOOLEAN
       elif dtypes.issubdtype(idx_aval.dtype, np.integer):

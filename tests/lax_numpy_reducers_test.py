@@ -911,7 +911,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   def testMeanVeryLargeArray(self):
     # https://github.com/jax-ml/jax/pull/30769
     x = jax.ShapeDtypeStruct((1 << 32,), jnp.dtype('float32'))
-    jax.eval_shape(jnp.mean, x)
+    jax.jit(jnp.mean).trace(x).out_info
 
   def testStdLargeArray(self):
     # https://github.com/jax-ml/jax/issues/15068

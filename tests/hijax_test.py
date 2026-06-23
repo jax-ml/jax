@@ -1968,7 +1968,7 @@ class BoxTest(jtu.JaxTestCase):
     def f():
       return qarray
 
-    out_type = jax.eval_shape(f)
+    out_type = f.trace().out_info
     self.assertEqual(out_type, QArrayTy((2, 2)))
 
   def test_stages_mutable(self):

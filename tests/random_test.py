@@ -885,27 +885,27 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_eval_shape_keys_in(self):
     def f(key):
       return prng_internal.random_bits(key, bit_width=32, shape=(5,))
-    out = jax.eval_shape(f, self.make_keys())
+    out = jax.jit(f).trace(self.make_keys()).out_info
     self.assertEqual(out.shape, (5,))
     self.assertEqual(out.dtype, np.dtype('uint32'))
 
     def f(key):
       return prng_internal.random_bits(key, bit_width=16, shape=(5,))
-    out = jax.eval_shape(f, self.make_keys())
+    out = jax.jit(f).trace(self.make_keys()).out_info
     self.assertEqual(out.shape, (5,))
     self.assertEqual(out.dtype, np.dtype('uint16'))
 
   def test_eval_shape_keys_out(self):
     def f(seed):
       return self.make_keys(seed=seed)
-    out = jax.eval_shape(f, 28)
+    out = jax.jit(f).trace(28).out_info
     self.assertEqual(out.shape, ())
     # TODO(frostig): check dtype too when available
 
   def test_eval_shape_keys_in_out(self):
     def f(key):
       return random.split(key)
-    out = jax.eval_shape(f, self.make_keys())
+    out = jax.jit(f).trace(self.make_keys()).out_info
     self.assertEqual(out.shape, (2,))
     # TODO(frostig): check dtype too when available
 
@@ -1541,7 +1541,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
   def test_eval_shape(self):
     key = random.key(1701)
     shapedtype = jax.ShapeDtypeStruct.like(key)
-    out = jax.eval_shape(lambda x: x, shapedtype)
+    out = jax.jit(lambda x: x).trace(shapedtype).out_info
     self.assertEqual(out, shapedtype)
 
   def test_result_type(self):

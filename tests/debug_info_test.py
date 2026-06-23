@@ -1459,9 +1459,9 @@ class DebugInfoTest(jtu.JaxTestCase):
       tracer_spy.append(x)
       return x
 
-    _ = jax.eval_shape(my_f, 0)
+    _ = jax.jit(my_f).trace(0).out_info
     self._check_tracers_and_jaxprs(
-        lambda: jax.eval_shape(my_f, 0),
+        lambda: jax.jit(my_f).trace(0).out_info,
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[],
         expected_tracer_debug_infos=[

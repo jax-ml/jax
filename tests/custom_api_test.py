@@ -649,8 +649,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       return ans, t_out
 
     # don't crash
-    api.eval_shape(expit, jnp.ones((2, 3)))
-    api.eval_shape(api.grad(lambda x: expit(x).sum()), jnp.ones((2, 3)))
+    api.jit(expit).trace(jnp.ones((2, 3))).out_info
+    api.jit(api.grad(lambda x: expit(x).sum())).trace(jnp.ones((2, 3))).out_info
 
   def test_jaxpr_zeros(self):
     # from https://github.com/jax-ml/jax/issues/2657

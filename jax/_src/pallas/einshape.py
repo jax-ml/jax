@@ -328,9 +328,9 @@ def _einshape_lo_abstract_eval(
     assert_is_tile_preserving: bool,
 ):
   del assert_is_tile_preserving
-  out_sds = api.eval_shape(
-      functools.partial(_einshape, equation, **dict(sizes)), x_aval
-  )
+  out_sds = api.jit(
+      functools.partial(_einshape, equation, **dict(sizes))
+  ).trace(x_aval).out_info
   return x_aval.update(shape=out_sds.shape, dtype=out_sds.dtype)
 
 
@@ -366,9 +366,9 @@ class Einshape(hijax.VJPHiPrimitive):
       sizes: dict[str, int],
   ):
     self.in_avals = (x_aval,)
-    out_type = api.eval_shape(
-        functools.partial(_einshape, equation, **sizes), x_aval
-    )
+    out_type = api.jit(
+        functools.partial(_einshape, equation, **sizes)
+    ).trace(x_aval).out_info
     self.out_aval = hijax.ShapedArray(out_type.shape, out_type.dtype)
     self.equation = equation
     self.sizes = sizes

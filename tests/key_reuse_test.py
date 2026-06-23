@@ -32,8 +32,8 @@ from jax.experimental.key_reuse import _core
 jax.config.parse_flags_with_absl()
 
 
-key = jax.eval_shape(jax.random.key, 0)
-key1D = jax.eval_shape(lambda key: key[None], key)
+key = jax.jit(jax.random.key).trace(0).out_info
+key1D = jax.jit(lambda key: key[None]).trace(key).out_info
 
 
 primitives_with_static_signatures = {

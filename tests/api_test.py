@@ -2904,7 +2904,7 @@ class APITest(jtu.JaxTestCase):
 
     x = jnp.ones((2, 3))
     y = jnp.ones((3, 4))
-    out_shape = api.eval_shape(fun, x, y)
+    out_shape = api.jit(fun).trace(x, y).out_info
 
     self.assertEqual(out_shape.shape, (2, 4))
 
@@ -2914,7 +2914,7 @@ class APITest(jtu.JaxTestCase):
       y = jnp.ones((3, 4))
       return jnp.tanh(jnp.dot(x, y) + 3.)
 
-    out_shape = api.eval_shape(fun)
+    out_shape = api.jit(fun).trace().out_info
 
     self.assertEqual(out_shape.shape, (2, 4))
 
@@ -2927,7 +2927,7 @@ class APITest(jtu.JaxTestCase):
       sds = api.ShapeDtypeStruct((), jnp.float32)
       return inner(sds)
 
-    out_shape = api.eval_shape(outer)
+    out_shape = api.jit(outer).trace().out_info
     self.assertEqual(out_shape.shape, ())
 
   def test_eval_shape_tuple_unpacking(self):
@@ -2937,7 +2937,7 @@ class APITest(jtu.JaxTestCase):
 
     x = (jnp.ones(2), jnp.ones(2))
     y = 3.
-    out_shape = api.eval_shape(fun, x, y)
+    out_shape = api.jit(fun).trace(x, y).out_info
 
     self.assertEqual(out_shape.shape, (2,))
 
@@ -2947,7 +2947,7 @@ class APITest(jtu.JaxTestCase):
 
     x = (jnp.ones(2), jnp.ones(2))
     y = 3.
-    out_shape = api.eval_shape(fun, x, y)
+    out_shape = api.jit(fun).trace(x, y).out_info
 
     self.assertEqual(out_shape.shape, (2,))
 
@@ -2957,7 +2957,7 @@ class APITest(jtu.JaxTestCase):
 
     x = (jnp.ones(2), jnp.ones(2))
     y = 3.
-    out_shape = api.eval_shape(fun, x, y)
+    out_shape = api.jit(fun).trace(x, y).out_info
     out_shape = jax.tree.map(np.shape, out_shape)
 
     self.assertEqual(out_shape, {'hi': (2,)})
@@ -2969,7 +2969,7 @@ class APITest(jtu.JaxTestCase):
     x = jnp.ones((3, 3))
     y = jnp.ones((4, 4))
 
-    self.assertRaises(TypeError, lambda: api.eval_shape(fun, x, y))
+    self.assertRaises(TypeError, lambda: api.jit(fun).trace(x, y).out_info)
 
   def test_eval_shape_trace_cache_share(self):
     def f(x):
@@ -2978,7 +2978,7 @@ class APITest(jtu.JaxTestCase):
     inp = np.arange(8)
 
     with jtu.count_jit_tracing_cache_miss() as count:
-      jax.eval_shape(f, inp)
+      jax.jit(f).trace(inp).out_info
       jax.jit(f)(inp)
 
     self.assertEqual(count(), 1)
@@ -2991,7 +2991,7 @@ class APITest(jtu.JaxTestCase):
       return x * 2
 
     inp = np.arange(8)
-    out = f.eval_shape(inp)
+    out = f.trace(inp).out_info
     self.assertEqual(out.sharding, s)
     self.assertEqual(out.shape, (inp * 2).shape)
 
@@ -3007,7 +3007,7 @@ class APITest(jtu.JaxTestCase):
     A = MyArgArray((3, 4), jnp.float32)
     b = MyArgArray((1, 5), jnp.float32)
     x = MyArgArray((4, 5), jnp.float32)
-    out_shape = api.eval_shape(fun, A, b, x)
+    out_shape = api.jit(fun).trace(A, b, x).out_info
 
     self.assertEqual(out_shape.shape, (3, 5))
 
@@ -3019,7 +3019,7 @@ class APITest(jtu.JaxTestCase):
         self.__dict__ = self
 
     x = EasyDict(shape=(3,), dtype=np.dtype('float32'))
-    out_shape = api.eval_shape(lambda x: x, x)  # doesn't crash
+    out_shape = api.jit(lambda x: x).trace(x).out_info  # doesn't crash
     self.assertEqual(out_shape.shape, (3,))
 
   def test_eval_shape_error_bad_output(self):
@@ -3030,7 +3030,7 @@ class APITest(jtu.JaxTestCase):
         TypeError,
         r'function f at .*returned a value.*'
         r'at output component \[1\], which is not a valid JAX type'):
-      api.eval_shape(f, 1)
+      api.jit(f).trace(1).out_info
 
   def test_issue_871(self):
     T = jnp.array([[1., 2.], [3., 4.], [5., 6.]])
@@ -4279,8 +4279,8 @@ class APITest(jtu.JaxTestCase):
       return jax.numpy.array(x)
 
     with jtu.count_jit_tracing_cache_miss() as count:
-      jax.eval_shape(f, 1)
-      out = jax.eval_shape(f, 1)
+      jax.jit(f).trace(1).out_info
+      out = jax.jit(f).trace(1).out_info
 
     self.assertEqual(count(), 1)
     self.assertTrue(out.weak_type)

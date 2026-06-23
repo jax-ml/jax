@@ -414,8 +414,9 @@ class IndexerOpsTest(PallasBaseTest):
     nd_indexer = NDIndexer.from_indices_shape(
         data.draw(nd_indices_strategy(el_shape), label="nd_indexer"),
         el_shape)
-    expected_shape = jax.eval_shape(lambda x: x[nd_indexer],
-                                    jax.ShapeDtypeStruct(el_shape, jnp.float32))
+    expected_shape = jax.jit(lambda x: x[nd_indexer]).trace(
+        jax.ShapeDtypeStruct(el_shape, jnp.float32)
+    ).out_info
 
     ref = lambda x: x[nd_indexer]
     def kernel(x_ref, y_ref):

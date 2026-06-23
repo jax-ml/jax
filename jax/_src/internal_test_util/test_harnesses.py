@@ -2345,11 +2345,11 @@ def _make_select_and_scatter_add_harness(name,
                                          padding=((0, 0), (0, 0), (0, 0)),
                                          nb_inactive_dims=0):
   ones = (1,) * len(shape)
-  cotangent_shape = api.eval_shape(
+  cotangent_shape = api.jit(
       lambda x: lax_windowed_reductions._select_and_gather_add(
           x, x, lax.ge_p, window_dimensions, window_strides, padding,
-          ones, ones),
-      np.ones(shape, dtype)).shape
+          ones, ones)
+  ).trace(np.ones(shape, dtype)).out_info.shape
   define(
       lax.select_and_scatter_add_p,
       f"{name}_shape={jtu.format_shape_dtype_string(shape, dtype)}_selectprim={select_prim}_windowdimensions={window_dimensions}_windowstrides={window_strides}_{padding=!s}",

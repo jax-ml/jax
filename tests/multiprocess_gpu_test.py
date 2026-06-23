@@ -520,7 +520,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         return jnp.zeros([32, 10])
 
       self.assertEqual(f().shape, (32, 10))
-      self.assertEqual(jax.eval_shape(f).shape, (32, 10))
+      self.assertEqual(f.trace().out_info.shape, (32, 10))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

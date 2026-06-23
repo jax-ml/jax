@@ -4423,7 +4423,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x * 2
 
     sds = jax.ShapeDtypeStruct((8, 2), np.float32, sharding=s)
-    f.eval_shape(sds)  # doesn't crash
+    f.trace(sds).out_info  # doesn't crash
 
   def test_wsc_vmap_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -7582,7 +7582,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return x * 2
 
     with jtu.count_jit_tracing_cache_miss() as count:
-      jax.eval_shape(g, inp)
+      g.trace(inp).out_info
       g.trace(inp)
     self.assertEqual(count(), 2)  # one for `g`, one for `*`
 
@@ -8293,7 +8293,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def f(x):
       return x * 2
 
-    out = jax.eval_shape(f, arr)
+    out = f.trace(arr).out_info
     self.assertIsInstance(out, jax.ShapeDtypeStruct)
     self.assertEqual(out.sharding,
                      NamedSharding(mesh.abstract_mesh, P('x', 'y')))

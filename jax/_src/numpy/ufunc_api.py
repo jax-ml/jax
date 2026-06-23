@@ -264,7 +264,7 @@ class ufunc:
     if initial is None:
       initial = self.identity
     if dtype is None:
-      dtype = api.eval_shape(self._func, lax._one(arr), lax._one(arr)).dtype
+      dtype = api.jit(self._func).trace(lax._one(arr), lax._one(arr)).out_info.dtype
     if where is not None:
       where = _broadcast_to(where, arr.shape)
     if isinstance(axis, tuple):
@@ -383,7 +383,7 @@ class ufunc:
     arr = lax.asarray(arr)
 
     if dtype is None:
-      dtype = api.eval_shape(self._func, lax._one(arr), lax._one(arr)).dtype
+      dtype = api.jit(self._func).trace(lax._one(arr), lax._one(arr)).out_info.dtype
 
     if axis is None or isinstance(axis, tuple):
       raise ValueError("accumulate does not allow multiple axes")
@@ -446,7 +446,7 @@ class ufunc:
   def _at_via_scan(self, a: ArrayLike, indices: Any, *args: Any) -> Array:
     assert len(args) in {0, 1}
     check_arraylike(f"{self.__name__}.at", a, *args)
-    dtype = api.eval_shape(self._func, lax._one(a), *(lax._one(arg) for arg in args)).dtype
+    dtype = api.jit(self._func).trace(lax._one(a), *(lax._one(arg) for arg in args)).out_info.dtype
     a = lax.asarray(a).astype(dtype)
     args = tuple(lax.asarray(arg).astype(dtype) for arg in args)
     indices = indexing.eliminate_deprecated_list_indexing(indices)

@@ -452,7 +452,7 @@ def eval_polymorphic_shape(fun_jax: Callable,
   def do_eval_polymorphic_shape(*args_specs) -> Any:
     args_poly_specs = export.symbolic_args_specs(
         args_specs, polymorphic_shapes)
-    res_poly_spec = jax.eval_shape(fun_jax, *args_poly_specs)
+    res_poly_spec = jax.jit(fun_jax).trace(*args_poly_specs).out_info
     # TODO(necula): For now we export the polymorphic shapes using `str`.
     res_polymorphic_shape = tree_util.tree_map(lambda r: str(r.shape), res_poly_spec)
     return res_poly_spec, res_polymorphic_shape

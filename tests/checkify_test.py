@@ -998,7 +998,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     def f():
       checkify.check(False, "hi")
 
-    jax.eval_shape(f)  # does not crash.
+    jax.jit(f).trace().out_info  # does not crash.
 
   def test_assert_discharging(self):
     @checkify.checkify

@@ -1053,7 +1053,7 @@ class DimExprTest(jtu.JaxTestCase):
 
   def test_constraints_eq_bug_23456(self):
     b, = jax.export.symbolic_shape('b', constraints=['b==5'])
-    jax.eval_shape(lambda k: jnp.tile(k, 3), jax.ShapeDtypeStruct((b,), jnp.float32))
+    jax.jit(lambda k: jnp.tile(k, 3)).trace(jax.ShapeDtypeStruct((b,), jnp.float32)).out_info
 
   def test_constraints_eq_bug_23437(self):
     def f1(x, y):

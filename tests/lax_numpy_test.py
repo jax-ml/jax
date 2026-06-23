@@ -2574,19 +2574,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     a_int64 = core.ShapedArray((np.iinfo(np.int32).max + 1,), np.float32)
     v = core.ShapedArray((), np.float32)
 
-    out_int32 = jax.eval_shape(jnp.searchsorted, a_int32, v)
+    out_int32 = jax.jit(jnp.searchsorted).trace(a_int32, v).out_info
     self.assertEqual(out_int32.dtype, np.int32)
 
     if (
         config.enable_x64.value
         or config.explicit_x64_dtypes.value == config.ExplicitX64Mode.ALLOW
     ):
-      out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+      out_int64 = jax.jit(jnp.searchsorted).trace(a_int64, v).out_info
       self.assertEqual(out_int64.dtype, np.int64)
     elif config.explicit_x64_dtypes.value == config.ExplicitX64Mode.WARN:
       with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype.*int64"):
         with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
-          jax.eval_shape(jnp.searchsorted, a_int64, v)
+          jax.jit(jnp.searchsorted).trace(a_int64, v).out_info
 
   @jtu.sample_product(
     dtype=inexact_dtypes,

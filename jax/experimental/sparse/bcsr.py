@@ -536,12 +536,13 @@ def _bcsr_dot_general_abstract_eval(lhs_data, lhs_indices, lhs_indptr, rhs, *,
                                     dimension_numbers, preferred_element_type, lhs_spinfo):
   (lhs_contracting, _), (lhs_batch, _) = dimension_numbers
   props = _validate_bcsr_indices(lhs_indices, lhs_indptr, lhs_spinfo.shape)
-  out_aval = jax.eval_shape(
+  out_aval = jax.jit(
     partial(lax.dot_general,
             dimension_numbers=dimension_numbers,
-            preferred_element_type=preferred_element_type),
+            preferred_element_type=preferred_element_type)
+  ).trace(
     jax.ShapeDtypeStruct(lhs_spinfo.shape, lhs_data.dtype),
-    jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
+    jax.ShapeDtypeStruct(rhs.shape, rhs.dtype)).out_info
 
   if lhs_batch and max(lhs_batch) >= props.n_batch:
     raise NotImplementedError(

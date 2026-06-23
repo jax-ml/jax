@@ -106,7 +106,7 @@ from jax._src.api import device_put_sharded as _deprecated_device_put_sharded
 from jax._src.api import device_put_replicated as _deprecated_device_put_replicated
 from jax._src.xla_bridge import devices as devices
 from jax._src.api import disable_jit as disable_jit
-from jax._src.api import eval_shape as eval_shape
+from jax._src.api import eval_shape as _deprecated_eval_shape
 from jax._src.dtypes import float0 as float0
 from jax._src.api import fwd_and_bwd as fwd_and_bwd
 from jax._src.api import grad as grad
@@ -221,12 +221,20 @@ _deprecations = {
         ),
         None,
     ),
+    "eval_shape": (
+        (
+            "jax.eval_shape is deprecated. Use `jit(f).trace(*args).out_info`"
+            " instead. If `f` is already jitted, use `f.trace(*args).out_info`"
+        ),
+        _deprecated_eval_shape,
+    ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
   device_put_replicated = _deprecated_device_put_replicated
   device_put_sharded = _deprecated_device_put_sharded
+  eval_shape = _deprecated_eval_shape
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
@@ -236,3 +244,4 @@ del _typing
 # trailer
 del _deprecated_device_put_sharded
 del _deprecated_device_put_replicated
+del _deprecated_eval_shape

@@ -742,11 +742,11 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,
 @bcoo_dot_general_p.def_abstract_eval
 def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_numbers,
                                     preferred_element_type, lhs_spinfo: SparseInfo):
-  out_aval = jax.jit(lax.dot_general, static_argnames=("dimension_numbers", "preferred_element_type")).eval_shape(
+  out_aval = jax.jit(lax.dot_general, static_argnames=("dimension_numbers", "preferred_element_type")).trace(
           jax.ShapeDtypeStruct(lhs_spinfo.shape, lhs_data.dtype),
           jax.ShapeDtypeStruct(rhs.shape, rhs.dtype),
           dimension_numbers=dimension_numbers,
-          preferred_element_type=preferred_element_type)
+          preferred_element_type=preferred_element_type).out_info
 
   (lhs_contracting, _), (lhs_batch, _) = dimension_numbers
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_spinfo.shape)
@@ -1196,11 +1196,11 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
                                       dimension_numbers, preferred_element_type):
   lhs_shape = lhs_spinfo.shape
   rhs_shape = rhs_spinfo.shape
-  out_aval = jax.jit(lax.dot_general, static_argnames=("dimension_numbers", "preferred_element_type")).eval_shape(
+  out_aval = jax.jit(lax.dot_general, static_argnames=("dimension_numbers", "preferred_element_type")).trace(
       jax.ShapeDtypeStruct(lhs_shape, lhs_data.dtype),
       jax.ShapeDtypeStruct(rhs_shape, rhs_data.dtype),
       dimension_numbers=dimension_numbers,
-      preferred_element_type=preferred_element_type)
+      preferred_element_type=preferred_element_type).out_info
 
   lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
@@ -1783,9 +1783,9 @@ def bcoo_concatenate(operands: Sequence[BCOO], *, dimension: int) -> BCOO:
     raise ValueError("bcoo_concatenate: expected operands to be a sequence of BCOO arrays. "
                      f"Got {operands}")
   # Validate inputs using lax.concatenate abstract evaluation.
-  out_aval = jax.jit(lax.concatenate, static_argnames=("dimension",)).eval_shape(
+  out_aval = jax.jit(lax.concatenate, static_argnames=("dimension",)).trace(
           [core.ShapedArray(op.shape, op.dtype) for op in operands],
-          dimension=dimension)
+          dimension=dimension).out_info
   if len({op.n_dense for op in operands}) > 1:
     raise ValueError("bcoo_concatenate requires inputs to have matching nse dimensions.")
 
@@ -1903,9 +1903,9 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int],
 def bcoo_rev(operand, dimensions):
   """Sparse implementation of :func:`jax.lax.rev`"""
   # Check validity of dimensions via original implementation.
-  _ = jax.jit(lax.rev, static_argnames=("dimensions",)).eval_shape(
+  _ = jax.jit(lax.rev, static_argnames=("dimensions",)).trace(
           jax.ShapeDtypeStruct(operand.shape, operand.dtype),
-          dimensions=dimensions)
+          dimensions=dimensions).out_info
   batch_dims = [d for d in dimensions if d < operand.n_batch]
   sparse_dims = [d for d in dimensions if operand.n_batch <= d < operand.n_batch + operand.n_sparse]
   dense_dims = [d for d in dimensions if d >= operand.n_batch + operand.n_sparse]
@@ -2050,9 +2050,9 @@ def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Seq
   """
   slice_sizes = tuple(operator.index(i) for i in slice_sizes)
   # Use abstract eval to validate inputs.
-  jax.jit(lax.dynamic_slice, static_argnames=("slice_sizes",)).eval_shape(
+  jax.jit(lax.dynamic_slice, static_argnames=("slice_sizes",)).trace(
           jax.ShapeDtypeStruct(mat.shape, mat.dtype), start_indices,
-          slice_sizes=slice_sizes)
+          slice_sizes=slice_sizes).out_info
   if not isinstance(mat, BCOO):
     raise TypeError(f"bcoo_slice: input should be BCOO array, got type(mat)={type(mat)}")
   start_indices = tuple(jnp.asarray(i) for i in start_indices)
@@ -2319,10 +2319,10 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
   # Abstract eval lax.gather to validate arguments & determine output shape.
   static_argnames = ("dimension_numbers", "slice_sizes", "unique_indices",
           "indices_are_sorted", "mode", "fill_value",)
-  out_aval = jax.jit(lax.gather, static_argnames=static_argnames).eval_shape(
+  out_aval = jax.jit(lax.gather, static_argnames=static_argnames).trace(
           jax.ShapeDtypeStruct(operand.shape, operand.dtype),
           jax.ShapeDtypeStruct(start_indices.shape, start_indices.dtype),
-          **kwds)
+          **kwds).out_info
 
   offset_dims = dimension_numbers.offset_dims
   collapsed_slice_dims = dimension_numbers.collapsed_slice_dims

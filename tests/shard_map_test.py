@@ -1551,8 +1551,8 @@ class ShardMapTest(jtu.JaxTestCase):
       return idx
 
     xs = jnp.arange(16.)
-    jax.eval_shape(jax.grad(lambda x: jax.remat(f)(x).sum().astype('float32')),
-                   xs)
+    jax.jit(jax.grad(lambda x: jax.remat(f)(x).sum().astype('float32'))).trace(
+                   xs).out_info
 
   @jax.legacy_prng_key('allow')
   def test_prngkeyarray_eager(self):
@@ -2987,7 +2987,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def g(p, x):
       def _grad(f, p, x):
         _, vjp_fun =  jax.vjp(f, p, x)
-        y_eval_shape = jax.eval_shape(f, p, x)
+        y_eval_shape = jax.jit(f).trace(p, x).out_info
         self.assertEqual(core.typeof(y_eval_shape).mat.varying, frozenset('x'))
         one = jax.lax.full_like(y_eval_shape, 1)
         self.assertEqual(core.typeof(one).mat.varying, frozenset('x'))
@@ -5618,7 +5618,7 @@ def sample_shmap() -> Chooser:
   in_types = (tys for tys in it.product(input_shapes, repeat=spec.num_inputs)
               if not spec.valid_types or spec.valid_types(*tys))
   body_in_types = yield in_types
-  body_out_types = jax.eval_shape(spec.fun, *body_in_types)
+  body_out_types = jax.jit(spec.fun).trace(*body_in_types).out_info
   in_types, in_specs = yield from make_in_specs(mesh, body_in_types)
   args = [np.arange(ty.size, dtype=ty.dtype).reshape(ty.shape) / ty.size
           for ty in in_types]
@@ -5979,7 +5979,7 @@ def sample_smap() -> Chooser:
                          if not spec.valid_types or spec.valid_types(*tys))
   in_axes = yield from sample_in_axes(body_in_types)
   out_rep = spec.out_rep(*[ax is None for ax in in_axes])
-  body_out_type = jax.eval_shape(spec.fun, *body_in_types)
+  body_out_type = jax.jit(spec.fun).trace(*body_in_types).out_info
   out_axes = yield from sample_out_axes(out_rep, body_out_type)
   in_str = '(' + ','.join(jax.core.ShapedArray(t.shape, t.dtype).str_short()
                           for t in body_in_types) + ')'
