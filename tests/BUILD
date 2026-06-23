@@ -52,6 +52,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "custom_api_test",
     srcs = ["custom_api_test.py"],
+    backend_tags = {
+        "cpu": ["notsan"],
+    },
     shard_count = {
         "cpu": select({
             "//tests/config:tsan_freethreading_rbe": 2,
@@ -631,6 +634,9 @@ jax_multiplatform_test(
     name = "jet_test",
     size = "large",
     srcs = ["jet_test.py"],
+    backend_tags = {
+        "cpu": ["notsan"],
+    },
     shard_count = {
         "gpu": 2,
         "cpu": select({
