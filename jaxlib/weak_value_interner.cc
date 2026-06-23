@@ -94,14 +94,20 @@ bool WeakValueInterner::KeyEqual::operator()(Key a, PointerKey b) const {
 
 nb_class_ptr<WeakValueInterner> WeakValueInterner::Create(nb::callable fn) {
   auto self = make_nb_class<WeakValueInterner>(std::move(fn));
-  self->weakref_callback_ = nb::cast<nb::callable>(nb::cpp_function(
-      [this_weak = nb::weakref(self)](nb::handle dying_weakref) {
-        nb::object py_cache = this_weak();
-        if (py_cache.is_none()) return;
-        nb::ft_object_guard lock(py_cache);
-        nb::cast<WeakValueInterner*>(py_cache)->OnWeakrefDestroyed(
-            dying_weakref.ptr());
-      }));
+  for (size_t i = 0; i < kNumShards; ++i) {
+    self->shards_[i].lock = nb::steal<nb::object>(PyObject_CallObject(
+        reinterpret_cast<PyObject*>(&PyBaseObject_Type), nullptr));
+    self->shards_[i].weakref_callback = nb::cast<nb::callable>(
+        nb::cpp_function([this_weak = nb::weakref(self),
+                          shard_idx = i](nb::handle dying_weakref) {
+          nb::object py_cache = this_weak();
+          if (py_cache.is_none()) return;
+          WeakValueInterner* interner = nb::cast<WeakValueInterner*>(py_cache);
+          Shard& shard = interner->shards_[shard_idx];
+          nb::ft_object_guard lock(shard.lock);
+          interner->OnWeakrefDestroyed(shard_idx, dying_weakref.ptr());
+        }));
+  }
   return self;
 }
 
@@ -148,10 +154,13 @@ PyObject* WeakValueInterner::VectorCall(PyObject* self_obj,
     size_t hash = absl::HashOf(ptr_key);
     ptr_key.cached_hash = hash;
 
+    size_t shard_idx = hash % kNumShards;
+    Shard& shard = self->shards_[shard_idx];
+
     {
-      nb::ft_object_guard lock(self_obj);
-      auto it = self->entries_.find(ptr_key);
-      if (it != self->entries_.end()) {
+      nb::ft_object_guard lock(shard.lock);
+      auto it = shard.entries.find(ptr_key);
+      if (it != shard.entries.end()) {
         nb::object ans = it->second->value_weakref();
         if (!ans.is_none()) {
           return ans.release().ptr();
@@ -164,7 +173,7 @@ PyObject* WeakValueInterner::VectorCall(PyObject* self_obj,
         PyObject_Vectorcall(self->fn_.ptr(), args, nargsf, kwnames));
     if (!result) return nullptr;
 
-    nb::weakref value_weakref(result, self->weakref_callback_);
+    nb::weakref value_weakref(result, shard.weakref_callback);
 
     PyObject* weakref_ptr = value_weakref.ptr();
     auto entry_ptr = std::make_shared<Entry>(
@@ -172,11 +181,11 @@ PyObject* WeakValueInterner::VectorCall(PyObject* self_obj,
         std::move(value_weakref));
 
     {
-      nb::ft_object_guard lock(self_obj);
+      nb::ft_object_guard lock(shard.lock);
       auto [inserted_ptr, inserted] =
-          self->entries_.insert(entry_ptr->key, entry_ptr);
+          shard.entries.insert(entry_ptr->key, entry_ptr);
       if (inserted) {
-        self->reverse_index_[weakref_ptr] = entry_ptr.get();
+        shard.reverse_index[weakref_ptr] = entry_ptr.get();
       } else {
         nb::object ans = inserted_ptr->second->value_weakref();
         if (!ans.is_none()) {
@@ -184,11 +193,11 @@ PyObject* WeakValueInterner::VectorCall(PyObject* self_obj,
         }
         // Entry exists but value is dead. Update it.
         PyObject* old_weakref_ptr = inserted_ptr->second->value_weakref.ptr();
-        self->reverse_index_.erase(old_weakref_ptr);
+        shard.reverse_index.erase(old_weakref_ptr);
 
         inserted_ptr->second->value_weakref =
             std::move(entry_ptr->value_weakref);
-        self->reverse_index_[weakref_ptr] = inserted_ptr->second.get();
+        shard.reverse_index[weakref_ptr] = inserted_ptr->second.get();
       }
     }
 
@@ -202,18 +211,20 @@ PyObject* WeakValueInterner::VectorCall(PyObject* self_obj,
   }
 }
 
-void WeakValueInterner::OnWeakrefDestroyed(PyObject* weakref_obj) {
-  auto it = reverse_index_.find(weakref_obj);
-  if (it == reverse_index_.end()) return;
+void WeakValueInterner::OnWeakrefDestroyed(size_t shard_idx,
+                                           PyObject* weakref_obj) {
+  Shard& shard = shards_[shard_idx];
+  auto it = shard.reverse_index.find(weakref_obj);
+  if (it == shard.reverse_index.end()) return;
 
   Entry* entry = it->second;
-  reverse_index_.erase(it);
+  shard.reverse_index.erase(it);
 
   PointerKey ptr_key{entry->key.kwnames, entry->key.args,
                      entry->key.cached_hash};
-  auto map_it = entries_.find(ptr_key);
-  if (map_it != entries_.end()) {
-    entries_.erase(map_it);
+  auto map_it = shard.entries.find(ptr_key);
+  if (map_it != shard.entries.end()) {
+    shard.entries.erase(map_it);
   }
 }
 
@@ -223,15 +234,18 @@ int WeakValueInterner::tp_traverse(PyObject* self_obj, visitproc visit,
   if (!nb::inst_ready(self_obj)) return 0;
   WeakValueInterner* self = nb::inst_ptr<WeakValueInterner>(self_obj);
   Py_VISIT(self->fn_.ptr());
-  Py_VISIT(self->weakref_callback_.ptr());
-  for (const auto& [key, entry] : self->entries_) {
-    for (const auto& kwname : key.kwnames) {
-      Py_VISIT(kwname.ptr());
+  for (const auto& shard : self->shards_) {
+    Py_VISIT(shard.lock.ptr());
+    Py_VISIT(shard.weakref_callback.ptr());
+    for (const auto& [key, entry] : shard.entries) {
+      for (const auto& kwname : key.kwnames) {
+        Py_VISIT(kwname.ptr());
+      }
+      for (const auto& a : key.args) {
+        Py_VISIT(a.ptr());
+      }
+      Py_VISIT(entry->value_weakref.ptr());
     }
-    for (const auto& a : key.args) {
-      Py_VISIT(a.ptr());
-    }
-    Py_VISIT(entry->value_weakref.ptr());
   }
   return 0;
 }
@@ -239,9 +253,12 @@ int WeakValueInterner::tp_traverse(PyObject* self_obj, visitproc visit,
 int WeakValueInterner::tp_clear(PyObject* self_obj) {
   WeakValueInterner* self = nb::inst_ptr<WeakValueInterner>(self_obj);
   self->fn_.reset();
-  self->weakref_callback_.reset();
-  self->entries_.clear();
-  self->reverse_index_.clear();
+  for (auto& shard : self->shards_) {
+    shard.lock.reset();
+    shard.weakref_callback.reset();
+    shard.entries.clear();
+    shard.reverse_index.clear();
+  }
   return 0;
 }
 

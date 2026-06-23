@@ -258,7 +258,7 @@ class PyClient {
   // List guarded by executables_mutex_.
   PyLoadedExecutable* executables_ = nullptr;
 
-#ifdef NB_FREE_THREADING
+#ifdef NB_FREE_THREADED
   static constexpr size_t kNumArraysShards = 16;
 #else
   static constexpr size_t kNumArraysShards = 1;
