@@ -32,6 +32,7 @@ namespace JAX_GPU_NAMESPACE {
 
 namespace {
 
+// EVOLVE-BLOCK-START
 template <typename T>
 __device__ void drotg(T* da, T* db, T* c, T* s) {
   if (*db == 0) {
@@ -46,7 +47,9 @@ __device__ void drotg(T* da, T* db, T* c, T* s) {
   *c = a * rh;
   *s = -(b * rh);
 }
+// EVOLVE-BLOCK-END
 
+// EVOLVE-BLOCK-START
 template <typename T>
 __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
   cg::grid_group grid = cg::this_grid();
@@ -69,8 +72,10 @@ __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
     rMatrix[k * nSize + i] = r_i;
   }
 }
+// EVOLVE-BLOCK-END
 }  // namespace
 
+// EVOLVE-BLOCK-START
 template <typename T>
 gpuError_t LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
                                              void* vector, int grid_dim,
@@ -109,9 +114,11 @@ gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
                                                      grid_dim, block_dim, size);
   }
 }
+// EVOLVE-BLOCK-END
 
 namespace {
 
+// EVOLVE-BLOCK-START
 __device__ void ComputePermutation(const std::int32_t* pivots,
                                    std::int32_t* permutation_out,
                                    const std::int32_t pivot_size,
@@ -132,7 +139,9 @@ __device__ void ComputePermutation(const std::int32_t* pivots,
     permutation_out[pivots[i]] = swap_temporary;
   }
 }
+// EVOLVE-BLOCK-END
 
+// EVOLVE-BLOCK-START
 __global__ void LuPivotsToPermutationKernel(
     const std::int32_t* pivots, std::int32_t* permutation_out,
     const std::int64_t batch_size, const std::int32_t pivot_size,
@@ -145,9 +154,11 @@ __global__ void LuPivotsToPermutationKernel(
                        permutation_size);
   }
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace
 
+// EVOLVE-BLOCK-START
 void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
                                        std::int64_t batch_size,
                                        std::int32_t pivot_size,
@@ -162,9 +173,11 @@ void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
                                 /*dynamic_shared_mem_bytes=*/0, stream>>>(
       pivots, permutation, batch_size, pivot_size, permutation_size);
 }
+// EVOLVE-BLOCK-END
 
 namespace {
 
+// EVOLVE-BLOCK-START
 template <typename T>
 __global__ void TridiagonalSolvePerturbedKernel(
     std::int64_t batch_size, int n, int k_rhs, const T* subdiag, const T* diag,
@@ -180,7 +193,9 @@ __global__ void TridiagonalSolvePerturbedKernel(
         rhs_row_workspace);
   }
 }
+// EVOLVE-BLOCK-END
 
+// EVOLVE-BLOCK-START
 template <typename T>
 void LaunchTridiagonalSolvePerturbedKernelBody(
     gpuStream_t stream, std::int64_t batch_size, int n, int k_rhs,
@@ -198,9 +213,11 @@ void LaunchTridiagonalSolvePerturbedKernelBody(
           reinterpret_cast<const T*>(superdiag),
           reinterpret_cast<const T*>(rhs), reinterpret_cast<T*>(x), workspace);
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace
 
+// EVOLVE-BLOCK-START
 void LaunchTridiagonalSolvePerturbedKernel(
     gpuStream_t stream, std::int64_t batch_size, int n, int k_rhs,
     xla::ffi::DataType dtype, const void* subdiag, const void* diag,
@@ -238,6 +255,7 @@ void LaunchTridiagonalSolvePerturbedKernel(
       break;
   }
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

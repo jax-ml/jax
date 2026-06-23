@@ -246,6 +246,7 @@ class PivotingQrFactorizationHost {
   explicit PivotingQrFactorizationHost() = default;
   PivotingQrFactorizationHost(PivotingQrFactorizationHost&&) = default;
 
+// EVOLVE-BLOCK-START
   ffi::Error compute(int64_t batch, int64_t rows, int64_t cols,
                      gpuStream_t stream, ffi::ScratchAllocator& scratch,
                      ffi::AnyBuffer x, ffi::AnyBuffer jpvt,
@@ -322,6 +323,7 @@ class PivotingQrFactorizationHost {
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
     return ffi::Error::Success();
   }
+// EVOLVE-BLOCK-END
 
  private:
   absl::StatusOr<IntType> lwork(IntType m, IntType n) {
@@ -348,6 +350,7 @@ class PivotingQrFactorizationMagma {
   explicit PivotingQrFactorizationMagma() = default;
   PivotingQrFactorizationMagma(PivotingQrFactorizationMagma&&) = default;
 
+// EVOLVE-BLOCK-START
   ffi::Error compute(int64_t batch, int64_t rows, int64_t cols,
                      gpuStream_t stream, ffi::ScratchAllocator& scratch,
                      ffi::AnyBuffer x, ffi::AnyBuffer jpvt,
@@ -399,6 +402,7 @@ class PivotingQrFactorizationMagma {
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
     return ffi::Error::Success();
   }
+// EVOLVE-BLOCK-END
 
  private:
   Fn* fn_ = nullptr;
@@ -598,6 +602,7 @@ class EigRealMagma {
   Fn* fn_ = nullptr;
 };
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType DataType, typename IntType, typename Impl>
 ffi::Error EigReal(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
                    bool left, bool right, ffi::AnyBuffer x,
@@ -674,6 +679,7 @@ ffi::Error EigReal(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
 
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 
 ffi::Error EigRealDispatch(gpuStream_t stream, std::string_view magma,
                            bool left, bool right, ffi::AnyBuffer x,
@@ -841,6 +847,7 @@ class EigCompMagma {
   Fn* fn_ = nullptr;
 };
 
+// EVOLVE-BLOCK-START
 template <ffi::DataType DataType, typename IntType, typename Impl>
 ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
                    bool left, bool right, ffi::AnyBuffer x,
@@ -904,6 +911,7 @@ ffi::Error EigComp(Impl impl, int64_t batch, int64_t cols, gpuStream_t stream,
 
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 
 ffi::Error EigCompDispatch(gpuStream_t stream, std::string_view magma,
                            bool left, bool right, ffi::AnyBuffer x,

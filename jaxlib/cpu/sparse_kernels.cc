@@ -40,6 +40,7 @@ using InputMap = Eigen::Map<const MatrixT, Eigen::Aligned32>;
 template <typename MatrixT>
 using OutputMap = Eigen::Map<MatrixT, Eigen::Aligned32>;
 
+// EVOLVE-BLOCK-START
 template <typename ElementType, typename StorageType>
 static ffi::Future CsrSparseDenseKernelImpl(
     const InputMap<SparseMatrixType<ElementType, StorageType>>& lhs_matrix,
@@ -100,6 +101,7 @@ static ffi::Future CsrSparseDenseKernelImpl(
     return future;
   }
 }
+// EVOLVE-BLOCK-END
 
 template <typename ElementType, typename StorageType>
 static ffi::Future CsrSparseDenseKernelTypedDispatch(

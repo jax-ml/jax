@@ -27,6 +27,7 @@ namespace jax {
 
 namespace ffi = xla::ffi;
 
+// EVOLVE-BLOCK-START
 ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
                                             ffi::AnyBuffer du, ffi::AnyBuffer b,
                                             ffi::Result<ffi::AnyBuffer> x_out) {
@@ -135,6 +136,7 @@ ffi::Error TridiagonalSolvePerturbedFfiImpl(ffi::AnyBuffer dl, ffi::AnyBuffer d,
   }
   return ffi::Error::Success();
 }
+// EVOLVE-BLOCK-END
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(tridiagonal_solve_perturbed_ffi,
                               TridiagonalSolvePerturbedFfiImpl,

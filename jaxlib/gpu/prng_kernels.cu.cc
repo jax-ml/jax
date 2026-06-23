@@ -25,6 +25,7 @@ namespace JAX_GPU_NAMESPACE {
 namespace {
 
 __global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
+// EVOLVE-BLOCK-START
                                    const std::uint32_t* key1,
                                    const std::uint32_t* data0,
                                    const std::uint32_t* data1,
@@ -105,6 +106,7 @@ __global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
 }  // namespace
 
 void LaunchThreeFry2x32KernelFfi(gpuStream_t stream, std::int64_t n,
+// EVOLVE-BLOCK-START
                                  std::uint32_t* keys0, std::uint32_t* keys1,
                                  std::uint32_t* data0, std::uint32_t* data1,
                                  std::uint32_t* out0, std::uint32_t* out1) {
@@ -115,6 +117,7 @@ void LaunchThreeFry2x32KernelFfi(gpuStream_t stream, std::int64_t n,
                        stream>>>(keys0, keys1, data0, data1, out0, out1, n,
                                  nullptr);
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

@@ -47,6 +47,7 @@ EIGEN_USING_STD_COMPLEX_OPERATORS
 // a, tau, and c_data are all batch-major. The matrices must be
 // column major within each batch element.
 template <typename T, bool IsOrgqr = false>
+// EVOLVE-BLOCK-START
 __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel(
     int batch, int m, int n, int k, int lda, int64_t a_stride, const T* a_data,
     const T* tau_data, T* c_data, bool transpose) {
@@ -100,6 +101,7 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel(
   }
 #endif
 }
+// EVOLVE-BLOCK-END
 
 // Applies the product of elementary reflectors from the right (parallelized
 // over rows) to c, which is updated in-place. a, tau, and c_data are all
@@ -107,6 +109,7 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedLeftKernel(
 // This kernel is similar to the left-sided kernel, except that each thread
 // computes a single row of the output.
 template <typename T>
+// EVOLVE-BLOCK-START
 __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedRightKernel(
     int batch, int m, int n, int k, int lda, int64_t a_stride, const T* a_data,
     const T* tau_data, T* c_data, bool transpose) {
@@ -155,10 +158,12 @@ __global__ void ProductOfElementaryHouseholderReflectorsSmallBatchedRightKernel(
   }
 #endif
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace
 
 template <typename T>
+// EVOLVE-BLOCK-START
 gpuError_t LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
                                          int n, int k, int lda,
                                          int64_t a_stride, const T* a,
@@ -183,8 +188,10 @@ gpuError_t LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
   }
   return gpuGetLastError();
 }
+// EVOLVE-BLOCK-END
 
 template <typename T>
+// EVOLVE-BLOCK-START
 gpuError_t LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
                                          int n, int k, int lda,
                                          int64_t a_stride, const T* a,
@@ -200,6 +207,7 @@ gpuError_t LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
                                               tau, out, /*transpose=*/false);
   return gpuGetLastError();
 }
+// EVOLVE-BLOCK-END
 
 /// Explicit instantiations for real types
 template gpuError_t LaunchOrmqrSmallBatchedKernel<float>(
@@ -213,6 +221,7 @@ template gpuError_t LaunchOrmqrSmallBatchedKernel<double>(
     bool left, bool transpose);
 
 template <>
+// EVOLVE-BLOCK-START
 gpuError_t LaunchOrmqrSmallBatchedKernel<gpuComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuComplex* a, const gpuComplex* tau,
@@ -237,8 +246,10 @@ gpuError_t LaunchOrmqrSmallBatchedKernel<gpuComplex>(
   }
   return gpuGetLastError();
 }
+// EVOLVE-BLOCK-END
 
 template <>
+// EVOLVE-BLOCK-START
 gpuError_t LaunchOrmqrSmallBatchedKernel<gpuDoubleComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuDoubleComplex* a, const gpuDoubleComplex* tau,
@@ -263,6 +274,7 @@ gpuError_t LaunchOrmqrSmallBatchedKernel<gpuDoubleComplex>(
   }
   return gpuGetLastError();
 }
+// EVOLVE-BLOCK-END
 
 template gpuError_t LaunchOrgqrSmallBatchedKernel<float>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
@@ -273,6 +285,7 @@ template gpuError_t LaunchOrgqrSmallBatchedKernel<double>(
     int64_t a_stride, const double* a, const double* tau, double* out);
 
 template <>
+// EVOLVE-BLOCK-START
 gpuError_t LaunchOrgqrSmallBatchedKernel<gpuComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuComplex* a, const gpuComplex* tau,
@@ -287,8 +300,10 @@ gpuError_t LaunchOrgqrSmallBatchedKernel<gpuComplex>(
       reinterpret_cast<std::complex<float>*>(out), /*transpose=*/false);
   return gpuGetLastError();
 }
+// EVOLVE-BLOCK-END
 
 template <>
+// EVOLVE-BLOCK-START
 gpuError_t LaunchOrgqrSmallBatchedKernel<gpuDoubleComplex>(
     gpuStream_t stream, int batch, int m, int n, int k, int lda,
     int64_t a_stride, const gpuDoubleComplex* a, const gpuDoubleComplex* tau,
@@ -303,6 +318,7 @@ gpuError_t LaunchOrgqrSmallBatchedKernel<gpuDoubleComplex>(
       reinterpret_cast<std::complex<double>*>(out), /*transpose=*/false);
   return gpuGetLastError();
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

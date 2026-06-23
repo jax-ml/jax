@@ -68,20 +68,23 @@ namespace jax {
 // the i'th row of the solution as rhs[i,:] * (1 / pivot). This logic is
 // extracted from the LAPACK routine xLAGTS.
 template <typename Scalar, typename Derived>
+// EVOLVE-BLOCK-START
 EIGEN_DEVICE_FUNC void MaybePerturbPivot(
     typename Eigen::NumTraits<Scalar>::Real perturb, Scalar& pivot,
     Eigen::DenseBase<Derived>& rhs_row) {
   using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
   using std::real;
   constexpr RealScalar one(1.0);
-  const RealScalar tiny = std::numeric_limits<RealScalar>::min();
-  const RealScalar small = one / std::numeric_limits<RealScalar>::max();
+  // std::numeric_limits<T>::min/max/epsilon are constexpr in C++11+,
+  // so these constants are evaluated at compile time.
+  constexpr RealScalar tiny = std::numeric_limits<RealScalar>::min();
+  constexpr RealScalar small = one / std::numeric_limits<RealScalar>::max();
   // The following logic is extracted from xLAMCH in LAPACK.
-  const RealScalar safemin =
+  constexpr RealScalar safemin =
       (small < tiny
            ? tiny
            : small * (one + std::numeric_limits<RealScalar>::epsilon()));
-  const RealScalar bignum = one / safemin;
+  constexpr RealScalar bignum = one / safemin;
 
   RealScalar abs_pivot = Eigen::numext::abs(pivot);
   if (abs_pivot >= one) {
@@ -116,6 +119,7 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
     abs_pivot = Eigen::numext::abs(pivot);
   }
 }
+// EVOLVE-BLOCK-END
 
 // This function roughly follows LAPACK's xLAGTF + xLAGTS routines.
 //
@@ -139,6 +143,7 @@ EIGEN_DEVICE_FUNC void MaybePerturbPivot(
 // and pivoting information, and the forward solve is done on-the-fly
 // during factorization, instead of requiring a separate loop.
 template <typename Scalar>
+// EVOLVE-BLOCK-START
 EIGEN_DEVICE_FUNC void
 SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
     int n, int k_rhs, const Scalar* subdiag_ptr, const Scalar* diag_ptr,
@@ -279,6 +284,7 @@ SolveWithGaussianEliminationWithPivotingAndPerturbSingular(
     x.row(k) = rhs_row * (Scalar(1.0) / p);
   }
 }
+// EVOLVE-BLOCK-END
 
 }  // namespace jax
 
