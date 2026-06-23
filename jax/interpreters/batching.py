@@ -27,21 +27,3 @@ from jax._src.interpreters.batching import (
   register_vmappable as register_vmappable,
   unregister_vmappable as unregister_vmappable,
 )
-
-
-_deprecations = {
-  # Deprecated in JAX v0.7.1; removed in JAX v0.10.0.
-  # TODO(jakevdp):remove this for JAX v0.11.0
-  "NotMapped": (
-    "jax.interpreters.batching.NotMapped is deprecated.",
-    None,
-  ),
-}
-
-
-import typing as _typing
-if not _typing.TYPE_CHECKING:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing

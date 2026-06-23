@@ -33,58 +33,6 @@ from jax._src.core import (
 )
 
 _deprecations = {
-  # Deprecated in v0.8.2; finalized in v0.10.0.
-  # TODO(jakevdp) remove entries in v0.11.0.
-  "get_aval": (
-    "jax.core.get_aval was deprecated in JAX v0.8.2 and removed in JAX v0.10.0;"
-    " use jax.typeof instead.",
-    None,
-  ),
-  "mapped_aval": (
-    "jax.core.mapped_aval was deprecated in JAX v0.8.2 and removed in JAX"
-    " v0.10.0. Use jax.extend.core.mapped_aval.",
-    None,
-  ),
-  "unmapped_aval": (
-    "jax.core.unmapped_aval was deprecated in JAX v0.8.2 and removed in JAX"
-    " v0.10.0. Use jax.extend.core.unmapped_aval.",
-    None,
-  ),
-  "set_current_trace": (
-    "jax.core.set_current_trace was deprecated in JAX v0.8.2 and removed in"
-    " JAX v0.10.0. Use jax.extend.core.set_current_trace.",
-    None,
-  ),
-  "take_current_trace": (
-    "jax.core.take_current_trace was deprecated in JAX v0.8.2 and removed in"
-    " JAX v0.10.0. Use jax.extend.core.take_current_trace.",
-    None,
-  ),
-  "traverse_jaxpr_params": (
-    "jax.core.traverse_jaxpr_params was deprecated in JAX v0.8.2 and removed in"
-    " JAX v0.10.0.",
-    None,
-  ),
-  "TraceTag": (
-    "jax.core.TraceTag was deprecated in JAX v0.8.2 and removed in JAX v0.10.0."
-    " Use jax.extend.core.TraceTag.",
-    None,
-  ),
-  "call_impl": (
-    "jax.core.call_impl was deprecated in JAX v0.8.2 and removed in JAX"
-    " v0.10.0. Use jax.extend.core.call_impl.",
-    None,
-  ),
-  "subjaxprs": (
-    "jax.core.subjaxprs was deprecated in JAX v0.8.2 and removed in JAX"
-    " v0.10.0. Use jax.extend.core.subjaxprs.",
-    None,
-  ),
-  "AbstractToken": (
-    "jax.core.AbstractToken was deprecated in JAX v0.8.2 and removed in JAX"
-    " v0.10.0. Use jax.extend.core.AbstractToken.",
-    None,
-  ),
   # Deprecated in JAX v0.10.0; TODO(jakevdp) finalize in v0.11.0
   "CallPrimitive": (
     "jax.core.CallPrimitive is deprecated. Use jax.extend.core.CallPrimitive.",

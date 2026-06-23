@@ -408,20 +408,3 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
-
-_deprecations = {
-    # Deprecated in v0.8.2; finalized in v0.10.0.
-    # TODO(jakevdp) remove entry in v0.11.0.
-    "pvary": (
-        "jax.lax.pvary was deprecated in JAX v0.8.2 and removed in JAX v0.10.0;"
-        " use `jax.lax.pcast(..., to='varying')",
-        None,
-    ),
-}
-
-import typing as _typing
-if not _typing.TYPE_CHECKING:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing

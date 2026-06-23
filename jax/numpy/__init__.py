@@ -505,22 +505,3 @@ from jax._src.numpy.vectorize import vectorize as vectorize
 from jax._src.numpy.array_methods import register_jax_array_methods
 register_jax_array_methods()
 del register_jax_array_methods
-
-
-_deprecations = {
-  # Deprecated in v0.9.0
-  "fix": (
-    (
-      "jax.numpy.fix was deprecated in JAX v0.9.0, and will be"
-      " removed in JAX v0.10.0. Use jax.numpy.trunc instead."
-    ),
-    None,
-  ),
-}
-
-import typing as _typing
-if not _typing.TYPE_CHECKING:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing

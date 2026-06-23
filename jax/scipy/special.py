@@ -86,13 +86,6 @@ _deprecations = {
         "jax.scipy.special.lpmn_values is deprecated; no replacement is planned.",
         _deprecated_lpmn_values,
     ),
-    # Deprecated in v0.7.0, removed in v0.10.0.
-    # TODO(jakevdp): remove this entry in v0.11.0.
-    "sph_harm": (
-        "jax.scipy.special.sph_harm was deprecated in v0.7.0 and removed in"
-        " v0.10.0. Use jax.scipy.special.sph_harm_y instead.",
-        None
-    )
 }
 
 import typing as _typing
