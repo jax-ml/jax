@@ -1,0 +1,139 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 053b84f81d..74154abef7 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -26,7 +26,7 @@ bazel_dep(name = "re2", version = "2025-11-05.bcr.1", repo_name = "com_googlesou
+ bazel_dep(name = "rules_cc", version = "0.2.17")
+ bazel_dep(name = "rules_java", version = "8.16.1")
+ bazel_dep(name = "rules_license", version = "1.0.0")
+-bazel_dep(name = "rules_python", version = "1.8.5")
++bazel_dep(name = "rules_python", version = "2.0.3")
+ bazel_dep(name = "rules_shell", version = "0.6.1")
+ bazel_dep(name = "snappy", version = "1.2.1")
+ bazel_dep(name = "zlib", version = "1.3.2")
+@@ -152,12 +152,11 @@ single_version_override(
+     module_name = "rules_python",
+     patch_strip = 1,
+     patches = [
+-        "//third_party/py:rules_python_pip_version.patch",
+         "//third_party/py:rules_python_freethreaded.patch",
+         "//third_party/py:rules_python_versions.patch",
+         "//third_party/py:rules_python_scope.patch",
+     ],
+-    version = "1.8.5",
++    version = "2.0.3",
+ )
+ 
+ python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+diff --git a/third_party/py/python_init_rules.bzl b/third_party/py/python_init_rules.bzl
+index 5a192ca558..5b67d71b13 100644
+--- a/third_party/py/python_init_rules.bzl
++++ b/third_party/py/python_init_rules.bzl
+@@ -37,11 +37,10 @@ def python_init_rules(extra_patches = []):
+ 
+     tf_http_archive(
+         name = "rules_python",
+-        sha256 = "8964aa1e7525fea5244ba737458694a057ada1be96a92998a41caa1983562d00",
+-        strip_prefix = "rules_python-1.8.5",
+-        urls = tf_mirror_urls("https://github.com/bazelbuild/rules_python/releases/download/1.8.5/rules_python-1.8.5.tar.gz"),
++        sha256 = "2610f57b934dc55d1df2728290199519b11cc53508dec34fd5ef0424bcb50242",
++        strip_prefix = "rules_python-2.0.3",
++        urls = tf_mirror_urls("https://github.com/bazel-contrib/rules_python/releases/download/2.0.3/rules_python-2.0.3.tar.gz"),
+         patch_file = [
+-            "@xla//third_party/py:rules_python_pip_version.patch",
+             "@xla//third_party/py:rules_python_scope.patch",
+             "@xla//third_party/py:rules_python_freethreaded.patch",
+             "@xla//third_party/py:rules_python_versions.patch",
+diff --git a/third_party/py/rules_python_versions.patch b/third_party/py/rules_python_versions.patch
+index 5f6e79b323..0dc7aa0979 100644
+--- a/third_party/py/rules_python_versions.patch
++++ b/third_party/py/rules_python_versions.patch
+@@ -2,10 +2,7 @@ diff --git a/python/versions.bzl b/python/versions.bzl
+ index 3299a9f1..27ec699f 100644
+ --- a/python/versions.bzl
+ +++ b/python/versions.bzl
+-@@ -992,6 +992,71 @@ TOOL_VERSIONS = {
+-             "x86_64-unknown-linux-gnu-freethreaded": "python/install",
+-         },
+-     },
++@@ -1141,0 +1142,65 @@ TOOL_VERSIONS = {
+ +    "3.14.6": {
+ +        "url": {
+ +            "aarch64-apple-darwin": "20260610/cpython-3.14.6+20260610-aarch64-apple-darwin-install_only.tar.gz",
+@@ -49,44 +46,12 @@ index 3299a9f1..27ec699f 100644
+ +            "x86_64-unknown-linux-gnu-freethreaded": "cd60c024956a06318cba8d136ca6f2861e11123a5baadff76c822fa3ce4780c5",
+ +            "x86_64-unknown-linux-musl": "c55940c8ef8cfa73a8a5bc2c1cf3ea37cc87c92f7bd208adbbd283f4a1df652b",
+ +        },
+-+        "strip_prefix": {
+-+            "aarch64-apple-darwin": "python",
+-+            "aarch64-apple-darwin-freethreaded": "python",
+-+            "aarch64-pc-windows-msvc": "python",
+-+            "aarch64-pc-windows-msvc-freethreaded": "python",
+-+            "aarch64-unknown-linux-gnu": "python",
+-+            "aarch64-unknown-linux-gnu-freethreaded": "python",
+-+            "ppc64le-unknown-linux-gnu": "python",
+-+            "ppc64le-unknown-linux-gnu-freethreaded": "python",
+-+            "riscv64-unknown-linux-gnu": "python",
+-+            "riscv64-unknown-linux-gnu-freethreaded": "python",
+-+            "s390x-unknown-linux-gnu": "python",
+-+            "s390x-unknown-linux-gnu-freethreaded": "python",
+-+            "x86_64-apple-darwin": "python",
+-+            "x86_64-apple-darwin-freethreaded": "python",
+-+            "x86_64-pc-windows-msvc": "python",
+-+            "x86_64-pc-windows-msvc-freethreaded": "python",
+-+            "x86_64-unknown-linux-gnu": "python",
+-+            "x86_64-unknown-linux-gnu-freethreaded": "python",
+-+            "x86_64-unknown-linux-musl": "python",
+-+        },
+++        "strip_prefix": "python",
+ +    },
+-     "3.15.0a1": {
+-         "url": "20251031/cpython-{python_version}+20251031-{platform}-{build}.{ext}",
+-         "sha256": {
+-@@ -1091,7 +1156,7 @@ MINOR_MAPPING = {
+-     "3.11": "3.11.14",
+-     "3.12": "3.12.12",
+-     "3.13": "3.13.11",
+--    "3.14": "3.14.2",
++@@ -1266,1 +1331,1 @@ MINOR_MAPPING = {
++-    "3.14": "3.14.4",
+ +    "3.14": "3.14.6",
+-     "3.15": "3.15.0a2",
+- }
+-
+-@@ -1272,20 +1337,13 @@ def get_release_info(platform, python_version, base_url = DEFAULT_RELEASE_BASE_U
+-     for u in url:
+-         p, _, _ = platform.partition(FREETHREADED)
+- 
++@@ -1455,28 +1520,18 @@ def get_release_info(platform, python_version, base_url = DEFAULT_RELEASE_BASE_U
+ -        # Assume an unknown release_id is a newer url format
+ -        release_id = 99999999
+ -        url_parts = u.split("/")
+@@ -94,7 +59,8 @@ index 3299a9f1..27ec699f 100644
+ -            maybe_release_id = url_parts[-2]
+ -            release_id = int(maybe_release_id)
+ -
+-         if FREETHREADED.lstrip("-") in platform:
++-        if FREETHREADED.lstrip("-") in platform and release_id < 20260325:
+++        if FREETHREADED.lstrip("-") in platform:
+              build = "{}+{}-full".format(
+                  FREETHREADED.lstrip("-"),
+                  {
+@@ -105,10 +71,15 @@ index 3299a9f1..27ec699f 100644
+                      "ppc64le-unknown-linux-gnu": "lto",
+                      "riscv64-unknown-linux-gnu": "lto",
+                      "s390x-unknown-linux-gnu": "lto",
+-@@ -1298,9 +1356,6 @@ def get_release_info(platform, python_version, base_url = DEFAULT_RELEASE_BASE_U
++                     "x86_64-apple-darwin": "pgo+lto",
++                     "x86_64-pc-windows-msvc": "pgo",
++                     "x86_64-unknown-linux-gnu": "pgo+lto",
++                     "x86_64-unknown-linux-musl": "pgo+lto",
++                 }[p],
++             )
+          else:
+              build = INSTALL_ONLY
+- 
++-
+ -        if WINDOWS_NAME in platform and release_id < 20250317:
+ -            build = "shared-" + build
+ -
