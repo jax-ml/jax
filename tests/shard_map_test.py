@@ -43,6 +43,7 @@ from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AxisType, get_abstract_mesh, empty_concrete_mesh
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters.remat import remat_transform
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax.custom_derivatives import SymbolicZero
@@ -1092,7 +1093,24 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(g2, jnp.cos(jnp.sin(x)) * jnp.cos(x),
                         check_dtypes=False, atol=1e-3, rtol=1e-3)
     saved_res = saved_residuals(f2, x)
-    self.assertLen(saved_res, 2)
+    self.assertLen(saved_res, 1 if config.remat3.value else 2)
+
+  @jtu.with_explicit_mesh((2,), ('i',), axis_types=(AxisType.Auto,))
+  def test_remat_transform(self, mesh):
+    # exercise `env` logic in remat_subtrace. can't be targeted from jax.remat
+    # API while that's an initial-style primitive.
+    checkpoint_name = jax.ad_checkpoint.checkpoint_name
+    policy = jax.ad_checkpoint.checkpoint_policies.save_only_these_names('foo')
+
+    def f(x):
+      y = checkpoint_name(jax.lax.sin(x), 'foo')
+      z = jax.smap(lambda x: x * jax.lax.cos(y).sum(), in_axes=0, out_axes=0, axis_name='i')(x)
+      return z.sum()
+
+    x = jax.device_put(jnp.arange(2.), jax.P('i'))
+    y1, f_ = remat_transform(policy, f, x)  # don't crash
+    y2 = f_(x)
+    self.assertAllClose(y1, y2, check_dtypes=False)
 
   def test_shmap_of_remat_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
@@ -2418,6 +2436,10 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    if remat and config.remat3.value:
+      # remat3 doesn't support everything_saveable, which these assertions need
+      # (they check out_fwd forwarding of a saved primal output)
+      return
     jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
@@ -2453,6 +2475,10 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(16.)
     jaxpr_ = jax.make_jaxpr(jax.grad(g))(x)
+    if remat and config.remat3.value:
+      # remat3 doesn't support everything_saveable, which these assertions need
+      # (they check out_fwd forwarding of a saved primal output)
+      return
     jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
