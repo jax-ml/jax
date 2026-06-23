@@ -73,11 +73,6 @@ from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
 from jax._src.pallas import core as _pl_core
-from jax._src.pallas.core import semaphore as _deprecated_semaphore
-from jax._src.pallas.primitives import DeviceIdType as _DeprecatedDeviceIdType
-from jax._src.pallas.primitives import semaphore_read as _deprecated_semaphore_read
-from jax._src.pallas.primitives import semaphore_signal as _deprecated_semaphore_signal
-from jax._src.pallas.primitives import semaphore_wait as _deprecated_semaphore_wait
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
@@ -98,32 +93,36 @@ _deprecations = {
         "pltpu.HOST is deprecated, use pl.HOST instead.",
         _pl_core.MemorySpace.HOST,
     ),
-    # Added Mar 24, 2026
-    "semaphore": ("pltpu.semaphore is deprecated, use pl.semaphore instead.", _deprecated_semaphore),
+    # Finalized in JAX v0.11.0
+    # TODO(jakevdp): remove these for JAX v0.12.0.
+    "semaphore": (
+        "pltpu.semaphore was deprecated in JAX v0.10.0, and removed in JAX"
+        " v0.11.0. Use pl.semaphore instead.",
+        None
+      ),
     "DeviceIdType": (
-        "pltpu.DeviceIdType is deprecated, use pl.DeviceIdType instead.",
-        _DeprecatedDeviceIdType,
+        "pltpu.DeviceIdType was deprecated in JAX v0.10.0, and removed in JAX"
+        " v0.11.0. Use pl.DeviceIdType instead.",
+        None,
     ),
     "semaphore_read": (
-        "pltpu.semaphore_read is deprecated, use pl.semaphore_read instead.",
-        _deprecated_semaphore_read,
+        "pltpu.semaphore_read was deprecated in JAX v0.10.0, and removed in"
+        " JAX v0.11.0. Use pl.semaphore_read instead.",
+        None,
     ),
     "semaphore_signal": (
-        "pltpu.semaphore_signal is deprecated, use pl.semaphore_signal instead.",
-        _deprecated_semaphore_signal,
+        "pltpu.semaphore_signal was deprecated in JAX v0.10.0, and removed in"
+        " JAX v0.11.0. Use pl.semaphore_signal instead.",
+        None,
     ),
     "semaphore_wait": (
-        "pltpu.semaphore_wait is deprecated, use pl.semaphore_wait instead.",
-        _deprecated_semaphore_wait,
+        "pltpu.semaphore_wait was deprecated in JAX v0.10.0, and removed in"
+        " JAX v0.11.0. Use pl.semaphore_wait instead.",
+        None,
     ),
 }
 
 if typing.TYPE_CHECKING:
-  semaphore = _deprecated_semaphore
-  DeviceIdType = _DeprecatedDeviceIdType
-  semaphore_read = _deprecated_semaphore_read
-  semaphore_signal = _deprecated_semaphore_signal
-  semaphore_wait = _deprecated_semaphore_wait
   HOST = _pl_core.MemorySpace.HOST
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
