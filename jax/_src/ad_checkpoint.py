@@ -45,9 +45,10 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.traceback_util import api_boundary
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
-    tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry, FlatTree)
+    tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry)
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 from jax._src.core import typeof
@@ -471,7 +472,7 @@ def _trace_to_jaxpr(fun: Callable,
                     in_avals: Sequence[core.AbstractValue],
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
-  in_avals_flat_tree = FlatTree(in_avals, in_tree, False)
+  in_avals_flat_tree = ft.FlatTree(in_avals, in_tree, False)
   try:
     closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals_flat_tree, debug)
   except core.ConcretizationTypeError as e:
@@ -810,7 +811,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     return in_cts_nz
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  in_avals_flat_tree = FlatTree.flatten((tuple(in_avals), {}))
+  in_avals_flat_tree = ft.flatten((tuple(in_avals), {}))
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
       transposed, in_avals_flat_tree, dbg)
   return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
@@ -996,7 +997,7 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
     return partial(_remat3, policy, static_argnums, static_argnames, f)
 
 def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
-  args_ft = FlatTree.flatten_static_argnums_argnames(
+  args_ft = ft.flatten_static_argnums_argnames(
       args, kwargs, static_argnums, static_argnames)
   avals_ft = args_ft.map(typeof)
   dbg = api_util.debug_info(
@@ -1126,7 +1127,7 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
   helper.defvjp(f2, lambda res, g: (None, *fbwd(res, g)))
   def call(*args, **kwargs):
-    args_ft = FlatTree.flatten_static_argnums_argnames(
+    args_ft = ft.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
     dbg = api_util.debug_info(

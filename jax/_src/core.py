@@ -46,8 +46,9 @@ from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
-from jax._src.tree_util import tree_map, FlatTree
+from jax._src.tree_util import tree_map
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache, HashableWrapper,
@@ -1841,7 +1842,7 @@ class AbstractValue:
     return self.raise_val(*lo_vals_ft.unflatten())  # pyrefly: ignore[missing-attribute]
 
   def lower_val2(self, hi_val):
-    return FlatTree.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
+    return ft.flatten(self.lower_val(hi_val))  # pyrefly: ignore[missing-attribute]
 
 InputType = tuple[AbstractValue, ...]
 OutputType = tuple[AbstractValue, ...]

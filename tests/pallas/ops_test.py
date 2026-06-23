@@ -33,7 +33,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import state
 from jax._src import test_util as jtu
-from jax._src import tree_util
+from jax._src import flattree as ft
 from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
 from jax._src.pallas import primitives as pallas_primitives
@@ -72,7 +72,7 @@ floatx = dtypes.default_float_dtype()
 def trace_to_jaxpr(f: Callable, *args: Any):
   return pe.trace_to_jaxpr(
       f,
-      tree_util.FlatTree.flatten_args(*args),
+      ft.flatten_args(*args),
       api_util.debug_info("ops_test", f, (0,) * len(args), {}),
   )
 

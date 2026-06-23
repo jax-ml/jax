@@ -43,7 +43,8 @@ from jax._src.core import (
 from jax._src.lib import _jax
 from jax._src.source_info_util import SourceInfo
 from jax._src.state.types import AbstractRef, ReadEffect
-from jax._src.tree_util import FlatTree, PyTreeDef
+from jax._src import flattree as ft
+from jax._src.tree_util import PyTreeDef
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            weakref_lru_cache, multi_weakref_lru_cache,
@@ -475,7 +476,7 @@ def _trace_to_subjaxpr_nounits_no_lu_2(f: Callable, trace: JaxprTrace,
   in_args = merge_lists(in_knowns, in_tracers, in_consts)
   with core.set_current_trace(trace):
     ans = f(*in_args)
-  assert isinstance(ans, FlatTree), (
+  assert isinstance(ans, ft.FlatTree), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
   assert all(isinstance(x, Tracer) or core.valid_jaxtype(x) for x in ans), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
@@ -2262,14 +2263,14 @@ def _lower_debug_info(hi_jaxpr, out_mut):
 
 def trace_to_jaxpr_nocache(
     fun: Callable,
-    in_avals: FlatTree,  # (args, kwargs) pair
+    in_avals: ft.FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     # TODO: let's just make a `trace_to_jaxpr_ft` function for this
     fun_takes_flat_tree_arg=False,
     fun_returns_flat_tree=False,
     requires_low=False,
-) -> tuple[ClosedJaxpr, FlatTree]:
+) -> tuple[ClosedJaxpr, ft.FlatTree]:
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
                        "`jit`, but 'no_tracing' is set")
@@ -2310,7 +2311,7 @@ def trace_to_jaxpr_nocache(
         debug_info = debug_info.set_result_paths([''] * len(ans))
       else:
         debug_info = debug_info.set_result_paths(ans_pytree)
-        ans = FlatTree.flatten(ans_pytree)
+        ans = ft.flatten(ans_pytree)
       del ans_pytree, args, kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
@@ -2335,13 +2336,13 @@ def trace_to_jaxpr_nocache(
 @weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr(
     fun: Callable,
-    in_avals: FlatTree,  # (args, kwargs) pair
+    in_avals: ft.FlatTree,  # (args, kwargs) pair
     debug_info: core.DebugInfo,
     *context_for_cache_key,
     fun_takes_flat_tree_arg=False,
     fun_returns_flat_tree=False,
     requires_low=False,
-) -> tuple[ClosedJaxpr, FlatTree]:
+) -> tuple[ClosedJaxpr, ft.FlatTree]:
   return trace_to_jaxpr_nocache(
       fun,
       in_avals,
@@ -2488,12 +2489,12 @@ def try_constant_folding(primitive, tracers, params, out_avals):
 
 @weakref_lru_cache
 def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
-  in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+  in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
   lo_jaxpr, _ = lower_jaxpr(hi_jaxpr, in_avals)
   return lo_jaxpr
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]:
+def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTree]:
   env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # noqa # type:ignore
 
   parent_trace = core.trace_ctx.trace
@@ -2558,13 +2559,13 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, FlatTree]
             env[eqn.outvars[0]] = outs
 
     tracer = partial(trace.to_jaxpr_tracer, source_info=src)
-    fu = FlatTree.flatten(())
+    fu = ft.flatten(())
     out_mut = [v.aval.read_loval_out(v.final_qdd, env[v]).map(tracer)
                if v.aval.has_qdd else fu for v in hi_jaxpr.invars]
     out_tracers = [dtypes.canonicalize_value(read(src, x)) for x in hi_jaxpr.outvars]
     out_tracers = [v.aval.lower_val2(hi_val).map(tracer)
                   for v, hi_val in zip(hi_jaxpr.outvars, out_tracers)]
-    out_tracers = FlatTree.pack((tuple(out_mut), tuple(out_tracers)))
+    out_tracers = ft.pack((tuple(out_mut), tuple(out_tracers)))
     out_avals = out_tracers.map(typeof)
     dbg = _lower_debug_info(hi_jaxpr, out_mut)
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(out_tracers), dbg, src)

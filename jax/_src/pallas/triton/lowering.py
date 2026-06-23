@@ -25,7 +25,7 @@ from typing import Any, TypeVar
 import jax
 from jax import lax
 from jax import tree_util
-from jax._src.tree_util import FlatTree
+from jax._src import flattree as ft
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
@@ -465,7 +465,7 @@ def lower_fun(
   fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
 
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    in_avals_ft = FlatTree.flatten_static_argnums_argnames(
+    in_avals_ft = ft.flatten_static_argnums_argnames(
         tuple(ctx.avals_in), params,
         static_argnums=(), static_argnames=tuple(params.keys())
     )
@@ -533,7 +533,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   mapped_avals_tree = tree_util.tree_map(
       lambda aval: jax_core.ShapedArray((), aval.dtype), avals_tree
   )
-  in_avals_ft = FlatTree.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
+  in_avals_ft = ft.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
 
   debug_info = api_util.debug_info("pallas triton associative_scan",
                                  body, (args, args), {})
@@ -2482,7 +2482,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   mapped_avals_tree = tree_util.tree_map(
       lambda aval: jax_core.ShapedArray((), aval.dtype), avals_tree
   )
-  in_avals_ft = FlatTree.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
+  in_avals_ft = ft.flatten(((mapped_avals_tree, mapped_avals_tree), {}))
 
   debug_info = api_util.debug_info("pallas triton reduction", body, (a, a), {})
   combine_jaxpr, _ = pe.trace_to_jaxpr(

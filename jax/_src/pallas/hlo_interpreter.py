@@ -36,7 +36,7 @@ from jax._src.lax.control_flow import conditionals
 from jax._src.lax.control_flow import loops
 from jax._src import core as jax_core
 from jax._src import frozen_dict
-from jax._src import tree_util
+from jax._src import flattree as ft
 from jax._src import source_info_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
@@ -337,7 +337,7 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
       eval_jaxpr_recursive, jaxpr, consts,
       recurse_hop_rule=resolve_physical_types)
   closed_jaxpr, _ = pe.trace_to_jaxpr(
-      interp_fun, tree_util.FlatTree.flatten_args(*kernel_avals),
+      interp_fun, ft.flatten_args(*kernel_avals),
       jaxpr.debug_info
   )
   return closed_jaxpr.jaxpr, closed_jaxpr.consts
