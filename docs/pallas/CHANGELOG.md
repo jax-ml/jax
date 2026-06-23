@@ -2,7 +2,7 @@
 
 # Pallas Changelog
 
-<!--* freshness: { reviewed: '2026-02-13' } *-->
+<!--* freshness: { reviewed: '2026-06-23' } *-->
 
 This is the list of changes specific to {class}`jax.experimental.pallas`.
 For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
@@ -12,6 +12,8 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## Unreleased
+
+## Released with JAX 0.10.2
 
 * New features
 
