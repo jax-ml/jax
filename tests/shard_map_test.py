@@ -39,6 +39,7 @@ from jax._src.random import prng
 from jax._src.random import threefry2x32
 from jax._src.shard_map import shard_map
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.mesh import AxisType, get_abstract_mesh, empty_concrete_mesh
@@ -5437,6 +5438,8 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
 
   @config.use_rgv3(True)
+  @unittest.skipIf(jaxlib_extension_version < 470,
+                   "Requires Shardy RGV3 mesh deduplication fix.")
   def test_all_reduce_rgv3_lowering(self):
       mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
@@ -5456,6 +5459,8 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertRegex(mlir, r'mesh = (@mesh|#sdy\.mesh)')
 
   @config.use_rgv3(True)
+  @unittest.skipIf(jaxlib_extension_version < 470,
+                   "Requires Shardy RGV3 mesh deduplication fix.")
   def test_all_reduce_rgv3_multiple_meshes_lowering(self):
     with config.use_rgv3(True):
       mesh1 = jtu.create_mesh((2, 2), ('x1', 'y1'))
