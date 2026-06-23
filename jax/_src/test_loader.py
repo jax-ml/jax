@@ -20,14 +20,13 @@ Implements:
   environment variables.
 - A test suite that runs tests in parallel using threads if JAX_TEST_NUM_THREADS
   is >= 1.
-- Test decorators that mark a test case or test class as thread-hostile.
+- Test decorators that mark a test case or test class as thread-unsafe.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 import logging
 import os
 import re
@@ -38,7 +37,6 @@ import unittest
 from absl.testing import absltest
 from jax._src import config
 from jax._src import test_warning_util
-from jax._src import util
 
 logger = logging.getLogger(__name__)
 
@@ -61,61 +59,32 @@ TEST_NUM_THREADS = config.int_flag(
     'in the main thread. Using > 1 thread is experimental.'
 )
 
-# We use a reader-writer lock to protect test execution. Tests that may run in
-# parallel acquire a read lock; tests that are not thread-safe acquire a write
-# lock.
-_test_rwlock = util.Mutex()
-
-def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
-  if getattr(test.__class__, "thread_hostile", False):
-    _test_rwlock.writer_lock()
-    try:
-      test(result)  # pyrefly: ignore[bad-argument-type]
-    finally:
-      _test_rwlock.writer_unlock()
-  else:
-    _test_rwlock.reader_lock()
-    try:
-      test(result)  # pyrefly: ignore[bad-argument-type]
-    finally:
-      _test_rwlock.reader_unlock()
 
 
-@contextmanager
+
 def thread_unsafe_test(condition: bool = True):
   """Decorator for tests that are not thread-safe.
 
   Args:
     condition: If True, mark the test as thread-unsafe. If False, the test
-      runs normally without acquiring the write lock. Defaults to True.
-
-  Note: this decorator (naturally) only applies to what it wraps, not to, say,
-  code in separate setUp() or tearDown() methods.
+      may run in parallel with other tests. Defaults to True.
   """
-  if TEST_NUM_THREADS.value <= 0 or not condition:
-    yield
-    return
-
-  _test_rwlock.assert_reader_held()
-  _test_rwlock.reader_unlock()
-  _test_rwlock.writer_lock()
-  try:
-    yield
-  finally:
-    _test_rwlock.writer_unlock()
-    _test_rwlock.reader_lock()
+  def decorator(func):
+    setattr(func, "thread_unsafe", condition)
+    return func
+  return decorator
 
 
 def thread_unsafe_test_class(condition: bool = True):
-  """Decorator that marks a TestCase class as thread-hostile.
+  """Decorator that marks a TestCase class as thread-unsafe.
 
   Args:
-    condition: If True, mark the test class as thread-hostile. If False, the
+    condition: If True, mark the test class as thread-unsafe. If False, the
       test class runs normally. Defaults to True.
   """
   def f(klass):
     assert issubclass(klass, unittest.TestCase), type(klass)
-    klass.thread_hostile = condition
+    klass.thread_unsafe = condition
     return klass
   return f
 
@@ -178,6 +147,17 @@ class ThreadSafeTestResult:
     self.actions.append(lambda: self.test_result.addDuration(test, elapsed))
 
 
+def _is_thread_unsafe(test: unittest.TestCase) -> bool:
+  if not isinstance(test, unittest.TestCase):
+    return False
+  if getattr(test.__class__, "thread_unsafe", False):
+    return True
+  method = getattr(test, test._testMethodName)
+  if getattr(method, "thread_unsafe", False):
+    return True
+  return False
+
+
 class JaxTestSuite(unittest.TestSuite):
   """Runs tests in parallel using threads if TEST_NUM_THREADS is > 1.
 
@@ -198,19 +178,32 @@ class JaxTestSuite(unittest.TestSuite):
     lock = threading.Lock()
     futures = []
 
-    def run_test(test):
-      """Recursively runs tests in a test suite or test case."""
+    thread_safe_tests = []
+    thread_unsafe_tests = []
+
+    def partition_test(test):
       if isinstance(test, unittest.TestSuite):
         for subtest in test:
-          run_test(subtest)
+          partition_test(subtest)
       else:
-        test_result = ThreadSafeTestResult(lock, result)
-        futures.append(executor.submit(_run_one_test, test, test_result))
+        if _is_thread_unsafe(test):
+          thread_unsafe_tests.append(test)
+        else:
+          thread_safe_tests.append(test)
+
+    partition_test(self)
 
     with executor:
-      run_test(self)
+      for test in thread_safe_tests:
+        test_result = ThreadSafeTestResult(lock, result)
+        futures.append(executor.submit(test, test_result))
+
       for future in futures:
         future.result()
+
+    for test in thread_unsafe_tests:
+      test_result = ThreadSafeTestResult(lock, result)
+      test(test_result)
 
     return result
 

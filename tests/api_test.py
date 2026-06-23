@@ -3692,6 +3692,7 @@ class APITest(jtu.JaxTestCase):
     self.assertTrue(any('Compiling jit(' in line for line in l.output))
     self.assertTrue(any('Finished XLA compilation' in line for line in l.output))
 
+  @jtu.thread_unsafe_test()  # logging isn't thread-safe
   def test_grad_of_jit_compilation_caching(self):
     if not hasattr(self, "assertLogs"):
       raise unittest.SkipTest("test requires assertLogs (python 3)")
