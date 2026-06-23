@@ -1578,6 +1578,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda condition, x: jnp.asarray(x).compress(condition, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
+  def testCompressExtractJitErrorMessage(self):
+    # Without a static `size`, the output shape of compress/extract is
+    # data-dependent, so they cannot be used within transformations like jit.
+    # In that case we should raise a clear ConcretizationTypeError pointing the
+    # user at the `size` argument, rather than a confusing internal error.
+    # https://github.com/jax-ml/jax/issues/38603
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    msg = "The size argument of jnp.compress must be specified"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      jax.jit(jnp.compress)(x.ravel() > 0, x.ravel())
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      jax.jit(jnp.extract)(x > 0, x)
+
   @jtu.sample_product(
     [dict(base_shape=base_shape, axis=axis)
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
