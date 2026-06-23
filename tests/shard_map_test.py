@@ -5462,6 +5462,8 @@ class ShardMapTest(jtu.JaxTestCase):
   @unittest.skipIf(jaxlib_extension_version < 470,
                    "Requires Shardy RGV3 mesh deduplication fix.")
   def test_all_reduce_rgv3_multiple_meshes_lowering(self):
+    if not jtu.is_libtpu_at_least("0.0.43"):
+      self.skipTest("Requires libtpu 0.0.43 or newer")
     with config.use_rgv3(True):
       mesh1 = jtu.create_mesh((2, 2), ('x1', 'y1'))
       mesh2 = jtu.create_mesh((2, 2), ('x2', 'y2'))
