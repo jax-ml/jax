@@ -139,22 +139,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
     self.assertListEqual(device_order, list(pmap_sharding._device_assignment))
 
-  @jtu.ignore_warning(category=DeprecationWarning)
-  def test_device_put_sharded_deprecated(self):
-    # TODO(dsuo): update when we accelerate device_put_sharded/device_put_replicated internally
-    try:
-      _ = jax.device_put_sharded
-      _ = jax.device_put_replicated
-      raise unittest.SkipTest("Skipping because functions are available.")
-    except AttributeError:
-      pass
-
-    with self.assertRaisesRegex(AttributeError, "jax.device_put_sharded is deprecated"):
-      _ = jax.device_put_sharded
-
-    with self.assertRaisesRegex(AttributeError, "jax.device_put_replicated is deprecated"):
-      _ = jax.device_put_replicated
-
   @jtu.thread_unsafe_test()
   def testDefaultDeviceOrderingAfterClearBackends(self):
     # Test that clear_backends() properly drops cached PyDevice objects in pmap
