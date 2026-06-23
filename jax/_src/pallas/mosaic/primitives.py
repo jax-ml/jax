@@ -24,16 +24,17 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
-from jax._src.random import prng as jax_prng
 from jax._src import random as jax_random
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+import jax._src.flattree as ft
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.random import prng as jax_prng
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
@@ -249,7 +250,7 @@ class AsyncCopyDescriptor:
 
 
 def _dma_flatten(*args):
-  flat_tree = tree_util.FlatTree.flatten(args)
+  flat_tree = ft.flatten(args)
   return flat_tree.vals, flat_tree.tree
 
 
@@ -258,7 +259,7 @@ def _dma_unflatten(tree, flat_args):
 
 
 def _dma_tree_leaves(tree):
-  return tree_util.FlatTree.flatten(tree).vals
+  return ft.flatten(tree).vals
 
 
 def _get_dma_effects(

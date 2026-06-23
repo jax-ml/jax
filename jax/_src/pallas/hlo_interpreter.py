@@ -24,35 +24,34 @@ are carried out in stages:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Iterable, Sequence
-from functools import reduce, partial
+from functools import partial, reduce
 import itertools
 from typing import Any
-from collections.abc import Callable
 
+from jax._src import core as jax_core
+from jax._src import frozen_dict
+from jax._src import numpy as jnp
+from jax._src import source_info_util
+from jax._src import state
+from jax._src import typing as jax_typing
+from jax._src import util
+import jax._src.flattree as ft
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax.control_flow import conditionals
 from jax._src.lax.control_flow import loops
-from jax._src import core as jax_core
-from jax._src import frozen_dict
-from jax._src import tree_util
-from jax._src import source_info_util
-from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
-from jax._src import state
 from jax._src.state import discharge as state_discharge
-from jax._src import typing as jax_typing
-from jax._src import util
-
 from jax._src.util import (
     foreach,
     safe_map,
     safe_zip,
     split_list,
 )
-from jax._src import numpy as jnp
 import numpy as np
 
 map, unsafe_map = safe_map, map
@@ -337,8 +336,7 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
       eval_jaxpr_recursive, jaxpr, consts,
       recurse_hop_rule=resolve_physical_types)
   closed_jaxpr, _ = pe.trace_to_jaxpr(
-      interp_fun, tree_util.FlatTree.flatten_args(*kernel_avals),
-      jaxpr.debug_info
+      interp_fun, ft.flatten_args(*kernel_avals), jaxpr.debug_info
   )
   return closed_jaxpr.jaxpr, closed_jaxpr.consts
 

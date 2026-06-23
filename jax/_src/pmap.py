@@ -24,6 +24,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import flattree
 from jax._src import linear_util as lu
 from jax._src import pjit as pjit_lib
 from jax._src.random import prng
@@ -291,13 +292,16 @@ def pmap(
     trace_state_clean = core.trace_state_clean()
     dyn_f, dyn_argnums, dyn_args = _get_dyn_args(
         wrapped_fun, static_broadcasted_tuple, args)
-    dyn_args_flat, dyn_args_tree = tree_flatten((dyn_args, kwargs))
+
+    ak = flattree.flatten_args_and_kwargs(dyn_args, kwargs)
+    dyn_args_flat = list(ak)
+    dyn_args_tree = ak.tree_without_statics
     in_axes_flat = _get_in_axes_flat(
         in_axes, dyn_argnums, dyn_args, kwargs, len(dyn_args_flat),
         dyn_args_tree)
     local_axis_size = _mapped_axis_size(dyn_args_flat, in_axes_flat)
     donated_invars = _get_donated_invars(
-        donate_tuple, dyn_args_tree, len(dyn_args_flat))
+        donate_tuple, ak, len(dyn_args_flat))
     mesh_devices = _get_mesh_devices(
         devices, backend, local_axis_size, axis_size, trace_state_clean)
     cached = _cached_shard_map(

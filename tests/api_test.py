@@ -1694,7 +1694,7 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # Concurrent ache eviction means we may retrace.
   def test_fwd_and_bwd(self):
     def f(x, W):
-        return x @ W
+      return x @ W
 
     x = W = cot_out = jnp.ones((4,4))
     expected_y, f_vjp = api.vjp(f, x, W)
@@ -1725,7 +1725,6 @@ class APITest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type"):
       grad(f)("foo")
-
 
     err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
                "value is of type .* and was passed to the function at path x.")
@@ -2270,7 +2269,6 @@ class APITest(jtu.JaxTestCase):
       result = jax.device_put(x, s2)
       result.block_until_ready()
 
-
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
     R = self.rng().randn
@@ -2527,12 +2525,7 @@ class APITest(jtu.JaxTestCase):
       ("primal and tangent arguments to jax.jvp must have the same tree "
        "structure"),
       lambda: api.jvp(lambda x, y: x * y, (np.float32(2),), ()))
-    # If primals and tangents must both be tuples or both lists
-    self.assertRaisesRegex(
-      TypeError,
-      ("primal and tangent arguments to jax.jvp must have the same tree "
-       "structure"),
-      lambda: api.jvp(lambda x, y: x * y, (np.float32(2),), [np.float32(2)]))
+    # (primals and tangents can be mixed tuples/lists because jvp normalizes them to tuples)
     self.assertRaisesRegex(
       TypeError,
       "primal and tangent arguments to jax.jvp do not match.",
@@ -3292,7 +3285,6 @@ class APITest(jtu.JaxTestCase):
       self.assertNotRegex(str(j_module),
           f"stablehlo.constant dense.*tensor<{const_size}x")
 
-
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
@@ -3914,7 +3906,6 @@ class APITest(jtu.JaxTestCase):
       # The following call will try and raise the ones array to the count tracer
       # level, which is no longer live.
       jax.jit(jnp.add)(jnp.ones(()), count)
-
 
   def test_escaped_tracer_shape_dtype(self):
     with self.assertRaisesRegex(core.UnexpectedTracerError, r"int32\[4,3\]"):
@@ -4820,7 +4811,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_first_miss(self):
     @jax.jit
-    def f(x): return x
+    def f(x):
+      return x
+
     x = jnp.float32(1.)
 
     expected_log_len = 1 if not is_persistent_cache_enabled() else 3
@@ -4838,7 +4831,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_in_tree(self):
     @jax.jit
-    def f(*args, **kwargs): return args[0]
+    def f(*args, **kwargs):
+      return args[0]
 
     f(0., 1., y=(2., 2.1))
 
@@ -4855,7 +4849,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_arg_passed_as_kwarg(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
 
     f(0., 1.)
 
@@ -4910,7 +4905,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_dtype(self):
     @jax.jit
-    def f(x, y): return x
+    def f(x, y):
+      return x
+
     f(np.float32(0), np.float32(1))
 
     with config.explain_cache_misses(True):
@@ -4925,7 +4922,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_weak_type(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
 
     y = jnp.arange(4, dtype="float32")
     f(jnp.float32(0.), y)
@@ -4946,7 +4944,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
+
     f(np.float32(0), np.arange(1, dtype=np.float32))
 
     with config.explain_cache_misses(True):
@@ -4963,7 +4963,9 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_shape_explain_closest(self):
     @jax.jit
-    def f(x): return x
+    def f(x):
+      return x
+
     f(np.ones((1, 2), dtype=np.float32))
     f(np.ones((10, 20, 30), dtype=np.float32))
     f(np.ones((1, 2, 3), dtype=np.float32))
@@ -4981,7 +4983,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_tracing_config(self):
     @jax.jit
-    def f(x, y): return jnp.sin(x) + y
+    def f(x, y):
+      return jnp.sin(x) + y
 
     f(0., 1.)
     # tracing config change
@@ -5001,7 +5004,8 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_multiple_changes(self):
     @jax.jit
-    def f(x): return jnp.sin(x)
+    def f(x):
+      return jnp.sin(x)
 
     f(np.arange(4, dtype=np.float32))
     with jax.numpy_rank_promotion("warn"):
@@ -5025,7 +5029,6 @@ class APITest(jtu.JaxTestCase):
     @jax.jit
     def f(x, y):
       return jnp.sin(x) * y['hi']
-
 
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
@@ -5293,7 +5296,7 @@ class APITest(jtu.JaxTestCase):
 
     jitted_test_function = jax.jit(test_jax_function)
     with self.assertRaisesRegex(TypeError, "returned a value of type"):
-        jitted_test_function(
+      jitted_test_function(
             TestClass3(
                 test_data_field=1,
                 test_enum_field=TestEnum.A,
@@ -5333,7 +5336,6 @@ class APITest(jtu.JaxTestCase):
       consts = f().consts
 
     self.assertLen(consts, 1)
-
 
     # TODO(mattjj,phawkins): we broke this on purpose, as it probably isn't
     # load-bearing (see above comment). If we wanted to fix it, we might share

@@ -15,24 +15,32 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from functools import partial
 import inspect
 import operator
-from functools import partial, lru_cache
 import re
 from typing import Any, NoReturn
 
-from jax._src import core
 from jax._src import config
+from jax._src import core
 from jax._src import dtypes
+from jax._src import linear_util as lu
+from jax._src import traceback_util
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
-    PyTreeDef, tree_flatten, tree_unflatten, treedef_children,
-    broadcast_prefix, prefix_errors, none_leaf_registry,
-    broadcast_flattened_prefix_with_treedef, treedef_is_leaf, tree_structure,
-    tracing_registry)
-from jax._src import linear_util as lu
-from jax._src.util import safe_map, HashableFunction, Unhashable, safe_zip
-from jax._src import traceback_util
+    PyTreeDef,
+    broadcast_flattened_prefix_with_treedef,
+    broadcast_prefix,
+    none_leaf_registry,
+    prefix_errors,
+    tracing_registry,
+    tree_flatten,
+    tree_structure,
+    tree_unflatten,
+    treedef_children,
+    treedef_is_leaf,
+)
+from jax._src.util import (HashableFunction, Unhashable, safe_map, safe_zip)
 
 traceback_util.register_exclusion(__file__)
 
@@ -254,8 +262,7 @@ def _argnums_partial(_fun: Callable,
   return _fun(*args, **kwargs)
 
 
-@lru_cache(maxsize=4096)
-def donation_vector(donate_argnums, donate_argnames, in_tree,
+def donation_vector(donate_argnums, donate_argnames, ak,
                     kws: bool = True) -> tuple[bool, ...]:
   """Returns a tuple with a boolean value for each leaf in args and kwargs.
 
@@ -269,19 +276,7 @@ def donation_vector(donate_argnums, donate_argnames, in_tree,
   When both donate_argnums and donate_argnames are specified, only the args and
   kwargs specified are donated.
   """
-  res: list[bool] = []
-  if kws:
-    args_tree, kwargs_tree = treedef_children(in_tree)
-  else:
-    args_tree, kwargs_tree = in_tree, None
-  for i, arg in enumerate(args_tree.children()):
-    donate = bool(i in donate_argnums)
-    res.extend((donate,) * arg.num_leaves)
-  if kwargs_tree is not None:
-    for key, val in zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # pyrefly: ignore[unsupported-operation]
-      donate = key in donate_argnames
-      res.extend((donate,) * val.num_leaves)
-  return tuple(res)
+  return ak.bitvector(donate_argnums, donate_argnames)
 
 def rebase_donate_argnums(donate_argnums, static_argnums) -> tuple[int, ...]:
   """Shifts donate to account for static.

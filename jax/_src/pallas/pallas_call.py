@@ -33,6 +33,7 @@ from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import typing as jax_typing
+import jax._src.flattree as ft
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -355,8 +356,9 @@ def _batch_block_mapping(
 
   with grid_mapping.trace_env():
     jaxpr, out_avals = pe.trace_to_jaxpr(
-        _block_map_function, tree_util.FlatTree.flatten_args(*idx_avals),
-        block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()
+        _block_map_function,
+        ft.flatten_args(*idx_avals),
+        block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names(),
     )
   shape = block_mapping.block_shape
   if dim is None:
@@ -784,7 +786,7 @@ def _trace_kernel_to_jaxpr(
     fun: Callable,
     debug_info: jax_core.DebugInfo,
     grid_mapping: GridMapping,
-    kernel_avals: tree_util.FlatTree,  # of AbstractRef
+    kernel_avals: ft.FlatTree,  # of AbstractRef
     kernel_in_transforms: tuple[tuple[state.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.Jaxpr, tuple[jax_typing.Array, ...]]:
@@ -793,9 +795,9 @@ def _trace_kernel_to_jaxpr(
 
   with grid_mapping.trace_env(), config._check_vma(False):
     with config.mutable_array_checks(False):
-      closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-          fun_with_transforms, kernel_avals,
-          debug_info)
+      closed_jaxpr, out_avals = pe.trace_to_jaxpr_internal(
+          fun_with_transforms, kernel_avals, debug_info
+      )
       consts = closed_jaxpr.consts
       jaxpr, _ = pe.dce_jaxpr(closed_jaxpr.jaxpr,
                               used_outputs=[True] * len(closed_jaxpr.jaxpr.outvars),
@@ -1084,7 +1086,7 @@ def _pallas_call_state_discharge_rule(
   )
   closed_jaxpr, _ = pe.trace_to_jaxpr(
       _rewritten_body,
-      tree_util.FlatTree.flatten_args(
+      ft.flatten_args(
           *index_map_avals,
           *ref_avals,
           *jaxpr_in_avals,
@@ -1092,7 +1094,7 @@ def _pallas_call_state_discharge_rule(
           *jaxpr_out_avals,
           *jaxpr_rest_avals,
       ),
-      jaxpr.debug_info.with_unknown_names()
+      jaxpr.debug_info.with_unknown_names(),
   )
   out_flat = pallas_call_p.bind(
       *closed_jaxpr.consts,
@@ -1291,9 +1293,7 @@ def _pallas_call(
       kernel_args_kwargs = (kernel_args, scratch_args)
     else:
       kernel_args_kwargs = (kernel_args + list(scratch_args), {})
-    kernel_args_ft = tree_util.FlatTree.flatten(
-        kernel_args_kwargs, registry=tree_util.default_registry
-    )
+    kernel_args_ft = ft.flatten(kernel_args_kwargs)
     flat_kernel_avals = kernel_args_ft.map(
         lambda x: x.ref if isinstance(x, state_types.TransformedRef) else x
     )

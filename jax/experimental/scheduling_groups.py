@@ -18,12 +18,19 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
 from jax._src.api_util import debug_info
-from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
-                           split_list, subs_list)
-from jax._src.tree_util import tree_flatten, tree_unflatten, FlatTree
-from jax._src.interpreters import ad, mlir, partial_eval as pe, batching
-from jax._src.lib.mlir.dialects import func as func_dialect
+import jax._src.flattree as ft
+from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src.util import (
+    safe_map,
+    safe_zip,
+    split_list,
+    subs_list,
+    unzip2,
+    weakref_lru_cache,
+)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -40,7 +47,7 @@ def xla_metadata_call(f=None, **meta):
 def _xla_metadata_call(fun, **meta):
   def wrapped(*args, **kwargs):
     dbg = debug_info('xla_metadata_call', fun, args, kwargs)
-    args_ft = FlatTree.flatten((args, kwargs))
+    args_ft = ft.flatten((args, kwargs))
     in_avals = args_ft.map(core.shaped_abstractify)
     jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals, dbg)
     if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
