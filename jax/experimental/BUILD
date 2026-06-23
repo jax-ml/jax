@@ -755,6 +755,8 @@ pytype_strict_library(
     type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
+        ":scheduling_groups",
+        "//jax",
         "//jax/_src:xla_metadata",
     ],
 )
@@ -791,6 +793,7 @@ filegroup(
         "pjit.py",
         "scheduling_groups.py",
         "shard_map.py",
+        "xla_metadata.py",
     ],
     visibility = ["//jax:internal"],
 )
