@@ -1563,10 +1563,10 @@ class FlatTree:
     return self.tree.num_leaves
 
   def __iter__(self):
-    return self.vals.__iter__()
+    return iter(self.vals)
 
   def __getitem__(self, i):
-    assert False, "todo"
+    return self.vals[i]
 
   def filter(self, f):
     # a FlatTree version of list.filter. Unlike the latter, it keeps
