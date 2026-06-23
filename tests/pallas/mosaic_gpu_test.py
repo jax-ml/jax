@@ -1527,8 +1527,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)), plgpu.Layout.TMA_INDICES),
   )
   def test_copy_smem_to_gmem_scatter(self, transforms, idxs_layout):
-    if not jtu.is_cuda_compute_capability_at_least("10.0"):
-      self.skipTest("Only works on a GPU with capability >= sm100")
+    self.skip_unless_tcgen05()
     # Make sure we can infer the layout in WG
     indices_layout = tokens_layout = None
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
