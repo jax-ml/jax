@@ -9036,7 +9036,12 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
   arr = arr[:condition_arr.shape[0]]
 
   if size is None:
-    if reductions.any(extra):
+    msg = ("The size argument of jnp.compress must be specified in order to use "
+           "jnp.compress within JAX transformations like jax.jit, jax.vmap, and "
+           "jax.grad. For more information, refer to the jnp.compress documentation.")
+    condition_arr = core.concrete_or_error(None, condition_arr, msg)
+    extra = core.concrete_or_error(None, extra, msg)
+    if extra.any():
       raise ValueError("condition contains entries that are out of bounds")
     result = arr[condition_arr]
   elif not 0 <= size <= arr.shape[0]:
