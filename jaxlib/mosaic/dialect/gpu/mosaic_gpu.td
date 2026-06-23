@@ -92,16 +92,26 @@ def MosaicGPU_ArriveOp : Op<MosaicGPU_Dialect, "arrive", []> {
 
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   let summary = "Executes an arrive.expect_tx operation on the given barrier.";
+  let description = [{
+     Executes an arrive.expect_tx operation on the given barrier.
+
+    `expect_tx` must be positive or 0. If `expect_tx` is negative, behavior is undefined.
+  }];
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    ConfinedAttr<I32Attr, [IntNonNegative]>:$expect_tx);
+    I32:$expect_tx);
 
   let assemblyFormat = [{
     `barrier` `(` $barrier `:` type($barrier) `)`
     $expect_tx
     attr-dict
   }];
+}
+
+// TODO: Remove when the minimum jaxlib version is 0.11.1
+def ArriveDynExpectTxSupportedOp : Op<MosaicGPU_Dialect, "arrive_dyn_expect_tx_supported"> {
+  let summary = "Dummy op that will be removed. DO NOT USE.";
 }
 
 def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {

@@ -823,6 +823,9 @@ def _copy_gmem_to_smem_pp_eqn(
   pp_params = {}
   if collective_axes := eqn.params["collective_axes"]:
     pp_params["collective_axes"] = collective_axes
+  if eqn.params["has_user_predicate"]:
+    flat_args, user_predicate = flat_args[:-1], flat_args[-1]
+    pp_params["user_predicate"] = user_predicate.pretty_print(context)
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
           flat_args,
@@ -873,7 +876,7 @@ def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
     dst,
-    *args,
+    *flat_args,
     src_transforms_treedef,
     dst_transforms_treedef,
     barrier_transforms_treedef,
@@ -881,18 +884,24 @@ def _copy_gmem_to_smem_lowering(
     leader_tracked,
     oob_mode,
     has_barrier,
+    has_user_predicate,
 ):
   if has_barrier:
-    barrier, *flat_transforms = args
+    barrier, *flat_args = flat_args
     num_non_transform_args = 3  # src, dst, barrier
   else:
     barrier = None
-    flat_transforms = args
     num_non_transform_args = 2  # src, dst
   del has_barrier
+  if has_user_predicate:
+    flat_args, user_predicate = flat_args[:-1], flat_args[-1]
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)
+  else:
+    predicate = None
+
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
-          flat_transforms,
+          flat_args,
           [
               src_transforms_treedef.num_leaves,
               dst_transforms_treedef.num_leaves,
@@ -1002,6 +1011,7 @@ def _copy_gmem_to_smem_lowering(
           " GPUs, which use the cp.async implementation"
       )
 
+  i32 = ir.IntegerType.get_signless(32)
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if (
         ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup
@@ -1024,6 +1034,8 @@ def _copy_gmem_to_smem_lowering(
         # arrive with the whole transfer size, while everyone else arrives with 0.
         # But we should continue using this scheme as it's likely to be faster.
         bytes //= WARPGROUP_SIZE
+        if predicate is not None:
+          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
         if is_leader_tracked_copy:
           first_block = arith_dialect.cmpi(
               arith_dialect.CmpIPredicate.eq,
@@ -1040,6 +1052,8 @@ def _copy_gmem_to_smem_lowering(
         # TODO(justinfu): The arrival counts are wrong if called outside of a
         # single warp. Figure out how to guard against this in user code.
         bytes = bytes // WARP_SIZE
+        if predicate is not None:
+          bytes = arith_dialect.select(predicate, mgpu.c(bytes, i32), mgpu.c(0, i32))
         if is_leader_tracked_copy:
           first_block = arith_dialect.cmpi(
               arith_dialect.CmpIPredicate.eq,
@@ -1053,15 +1067,23 @@ def _copy_gmem_to_smem_lowering(
           barrier.arrive(arrival_count=3, can_complete=False)
           barrier.arrive_expect_tx(bytes)
 
+    lane_pred = ctx.module_ctx.single_lane_predicate
+    if predicate is not None:
+      predicate = arith_dialect.andi(predicate, lane_pred)
+    else:
+      predicate = lane_pred
+
     predicate_kwarg = (
         {}
         if is_cp_async
-        else dict(predicate=ctx.module_ctx.single_lane_predicate)
+        else dict(predicate=predicate)
     )
     # Gathers are a warpgroup-level collective and can't take a predicate.
     if gmem_slice := copy_params.get("gmem_slice", ()):
       first_idx = gmem_slice[0]
       if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
+        if has_user_predicate:
+          raise NotImplementedError("Gather/scatter TMA does not support predicates yet.")
         predicate_kwarg = {}
     ctx.launch_ctx.async_copy(
         src_ref=src,
@@ -1080,10 +1102,14 @@ def _copy_gmem_to_smem_lowering(
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
     return ()
-  i32 = ir.IntegerType.get_signless(32)
   if is_cp_async:
     raise NotImplementedError(
         "cp_async implementation is not supported with Warpgroup lowering"
+    )
+  # TODO: Remove when the minimum jaxlib version is 0.11.1
+  if has_user_predicate and not hasattr(mgpu.dialect, "arrive_dyn_expect_tx_supported"):
+    raise NotImplementedError(
+        "predicate is not supported with Warpgroup lowering in jaxlib < 0.11.1"
     )
   if "gmem_slice" not in copy_params or not copy_params["gmem_slice"]:
     slice_lengths = ir.MemRefType(src.type).shape
@@ -1112,6 +1138,19 @@ def _copy_gmem_to_smem_lowering(
     arrive_ctx = mgpu.when(first_block)
   else:
     arrive_ctx = contextlib.nullcontext()
+
+  # TODO: Remove when the minimum jaxlib version is 0.11.1
+  # keep the conversion of bytes from int into ir.Value
+  if hasattr(mgpu.dialect, "arrive_dyn_expect_tx_supported"):
+    bytes = mgpu.c(bytes, ir.IntegerType.get_signless(32))
+
+  if predicate is not None:
+    # We can not enter this branch with bytes as int
+    # because NotImplementedError is raised earlier for
+    # jaxlib<0.11.1 and predicate is not None
+    assert isinstance(bytes, ir.Value)
+    bytes = arith_dialect.select(predicate, bytes, mgpu.c(0, i32))
+
   with arrive_ctx:
     mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
 
@@ -1133,6 +1172,7 @@ def _copy_gmem_to_smem_lowering(
       barrier_ref,
       indices,
       slice_lengths,
+      predicate=predicate,
       collective=ir.ArrayAttr.get(  # pyrefly: ignore[bad-keyword-argument]
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
@@ -1150,6 +1190,7 @@ def copy_gmem_to_smem(
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
     oob_mode: OOBFillMode | None = None,
+    predicate: jax.Array | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
@@ -1198,6 +1239,8 @@ def copy_gmem_to_smem(
       ``OOBFillMode.UNDEFINED``, ``OOBFillMode.PROMISE_IN_BOUNDS`` or
       ``OOBFillMode.ZEROS`` for the TMA implementation, and only
       ``OOBFillMode.PROMISE_IN_BOUNDS`` for the ``cp.async`` one.
+    predicate: A boolean indicating whether the copy should be performed. If
+      ``None``, the copy is always performed.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -1241,6 +1284,7 @@ def copy_gmem_to_smem(
       *flat_src_transforms,
       *flat_dst_transforms,
       *flat_barrier_transforms,
+      *[] if predicate is None else [predicate],
       src_transforms_treedef=src_transforms_treedef,
       dst_transforms_treedef=dst_transforms_treedef,
       barrier_transforms_treedef=barrier_transforms_treedef,
@@ -1248,6 +1292,7 @@ def copy_gmem_to_smem(
       leader_tracked=leader_tracked,
       oob_mode=oob_mode,
       has_barrier=has_barrier,
+      has_user_predicate=predicate is not None,
   )
   return None
 

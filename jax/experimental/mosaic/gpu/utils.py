@@ -1363,6 +1363,9 @@ class DialectBarrierRef:
     dialect.ArriveOp(self.as_barrier_memref(), orders_tensor_core)
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
+    # TODO: Remove when the minimum jaxlib version is 0.11.1
+    if hasattr(dialect, "arrive_dyn_expect_tx_supported") and isinstance(bytes, int):
+      bytes = c(bytes, ir.IntegerType.get_signless(32))
     # pyrefly: ignore[bad-argument-type]
     dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=bytes)
 
