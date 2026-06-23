@@ -2830,6 +2830,7 @@ register_eltwise_rule(lax.square_p)
 register_eltwise_rule(lax.log_p)
 register_eltwise_rule(lax.integer_pow_p)
 register_eltwise_rule(lax.logistic_p)
+register_eltwise_rule(lax.round_p)
 register_eltwise_rule(pallas_primitives.multiple_of_p)
 
 
