@@ -6751,6 +6751,8 @@ class NumpyUfuncTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker, check_dtypes=False, tol=1E-2)
 
 
+
+
 class NumpyDocTests(jtu.JaxTestCase):
 
   def test_lax_numpy_docstrings(self):
@@ -6785,6 +6787,27 @@ class NumpyDocTests(jtu.JaxTestCase):
         if name not in ["frompyfunc", "isdtype", "promote_types"]:
           self.assertIn("Examples:", doc, msg=f"'Examples:' not found in docstring of jnp.{name}")
 
+class NumpyAngleTests(jtu.JaxTestCase):
+
+  def testAngleLogicalXorZeroBug(self):
+    t = jnp.array([1, 2, 3, 4], dtype=jnp.int32)
+    expected = jnp.zeros(4)
+
+    self.assertAllClose(jnp.angle(jnp.logical_xor(t, t)), expected)
+
+    f = lambda t: jnp.angle(jnp.logical_xor(t, t))
+    self.assertAllClose(jax.jit(f)(t), expected)
+
+    t2 = jnp.zeros((4,), dtype=jnp.bool_)
+    self.assertAllClose(jax.jit(jnp.angle)(t2), expected)
+
+    self.assertAllClose(
+        jax.jit(lambda t: jnp.angle(jnp.logical_xor(t, t), deg=True))(t),
+        jnp.zeros(4)
+    )
+
+    self.assertAllClose(jnp.angle(-0.0), jnp.pi)
+    self.assertAllClose(jax.jit(jnp.angle)(-0.0), jnp.pi)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

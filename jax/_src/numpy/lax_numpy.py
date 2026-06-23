@@ -1554,6 +1554,21 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
   result = lax.atan2(im, re)
+
+  float_zero = lax.full_like(result, 0)
+  re_zero = lax.eq(re, float_zero)
+  imag_zero = lax.eq(im, float_zero)
+  both_zero = lax.bitwise_and(re_zero, imag_zero)
+
+  re_neg = lax.lt(lax.div(lax._const(re, 1.0), re), lax._const(re, 0.0))
+  im_neg = lax.lt(lax.div(lax._const(im, 1.0), im), lax._const(im, 0.0))
+
+  pi = lax.full_like(result, np.pi)
+  zero_result = lax.select(re_neg, pi, float_zero)
+  zero_result = lax.select(im_neg, lax.neg(zero_result), zero_result)
+
+  result = lax.select(both_zero, zero_result, result)
+
   return ufuncs.degrees(result) if deg else result
 
 
