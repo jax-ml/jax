@@ -18,7 +18,6 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
-import datetime
 import functools
 from functools import cached_property, partial
 import inspect
@@ -420,25 +419,6 @@ def is_test_rbe() -> bool:
   return (
       os.getenv("IS_JAX_RBE_TESTING", "").lower() in {"true", "1", "yes", "y"}
       )
-
-# Returns True if it is not cloud TPU. If it is cloud TPU, returns True if it is
-# built at least `date``.
-# TODO(b/327203806): after libtpu adds a XLA version and the oldest support
-# libtpu contains the XLA version, remove using built time to skip tests.
-def is_cloud_tpu_at_least(year: int, month: int, day: int) -> bool:
-  date = datetime.date(year, month, day)
-  if not is_cloud_tpu():
-    return True
-  # The format of Cloud TPU platform_version is like:
-  # PJRT C API
-  # TFRT TPU v2
-  # Built on Oct 30 2023 03:04:42 (1698660263) cl/577737722
-  platform_version = xla_bridge.get_backend().platform_version.split('\n')[-1]
-  results = re.findall(r'\(.*?\)', platform_version)
-  if len(results) != 1:
-    return True
-  build_date = date.fromtimestamp(int(results[0][1:-1]))
-  return build_date >= date
 
 def is_libtpu_at_least(version_str: str) -> bool:
   """Returns True if not running on Cloud TPU.
