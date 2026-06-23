@@ -1,0 +1,126 @@
+# CI - ROCm Release Wheel Build + Test
+#
+# Builds jax-rocm-plugin and jax-rocm-pjrt wheels stamped with the release version,
+# uploads them to a per-run staging path in S3, and runs ROCm tests against that
+# exact build. Lives in ROCm/jax only — not upstreamed.
+#
+# S3 layout under s3://jax-ci-amd/rocm-wheels/<branch>/<rocm-ver>/:
+#   staging/<run_number>/<run_attempt>/   ← this workflow uploads here
+#   upstream/GATE_CHECK/                  ← promoted by rocm_release_promote_gate.yml
+#   release/                              ← published by rocm_release_publish.yml
+name: CI - ROCm Release Wheel Build + Test
+
+on:
+  push:
+    branches:
+      - 'rocm-jaxlib-v*'
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection? (yes/no)'
+        required: false
+        default: 'no'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build-rocm-artifacts:
+    if: github.repository_owner == 'ROCm'
+    uses: ./.github/workflows/build_rocm_artifacts.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+        artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        rocm:
+          - {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        manylinux-image: ""}
+          - {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"}
+        exclude:
+          - artifact: "jax-rocm-pjrt"
+            python: "3.11"
+          - artifact: "jax-rocm-pjrt"
+            python: "3.13"
+          - artifact: "jax-rocm-pjrt"
+            python: "3.14"
+    name: "Build ROCm artifacts (${{ matrix.rocm.label }})"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      manylinux-image: ${{ matrix.rocm.manylinux-image }}
+      artifact-type: release
+      clone_main_xla: 0
+      upload_artifacts_to_s3: true
+      s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/staging/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  run-pytest-rocm:
+    if: ${{ !cancelled() && github.repository_owner == 'ROCm' }}
+    needs: [build-rocm-artifacts]
+    permissions:
+      id-token: write
+      contents: read
+      checks: write
+    uses: ./.github/workflows/pytest_rocm.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        rocm:
+          - {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        tag: "rocm720"}
+          - {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", tag: "therock-latest"}
+    name: "Pytest ROCm (${{ matrix.rocm.label }})"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      rocm-tag: ${{ matrix.rocm.tag }}
+      jaxlib-version: head
+      download-jax-from-gcs: 0
+      skip-download-jaxlib-and-plugins-from-gcs: 0
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/staging/${{ github.run_number }}/${{ github.run_attempt }}'
+
+  run-bazel-test-rocm:
+    if: ${{ !cancelled() && github.repository_owner == 'ROCm' }}
+    needs: [build-rocm-artifacts]
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/bazel_rocm.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.8"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        rocm:
+          - {label: "ROCm 7.2.0",     wheel-version: "7", release-version: "7.2.0",        tag: "rocm720"}
+          - {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", tag: "therock-latest"}
+        enable-x64: [0]
+    name: "Bazel ROCm (${{ matrix.rocm.label }})"
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      rocm-tag: ${{ matrix.rocm.tag }}
+      enable-x64: ${{ matrix.enable-x64 }}
+      jaxlib-version: head
+      download-jax-from-gcs: 0
+      build_jaxlib: 'false'
+      build_jax: 'false'
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/staging/${{ github.run_number }}/${{ github.run_attempt }}'
+      run_multiaccelerator_tests: 'true'
+      clone_main_xla: 0

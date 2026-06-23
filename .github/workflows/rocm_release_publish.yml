@@ -1,0 +1,74 @@
+# CI - ROCm Release: Publish Final Release Wheels
+#
+# Copies wheels to rocm-jaxlib-v<version>/<rocm-ver>/release/ as the canonical
+# published artifacts. Source is a specific staging build (the one that passed
+# testing and was promoted to the upstream gate pin).
+# Lives in ROCm/jax only — not upstreamed.
+name: CI - ROCm Release Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Release branch name (e.g. rocm-jaxlib-v0.11.0)"
+        required: true
+        type: string
+      rocm-release-version:
+        description: "ROCm release version (e.g. 7.2.0, therock-7.13.0, therock-latest)"
+        required: true
+        type: string
+      run-number:
+        description: "Staging run number to publish"
+        required: true
+        type: string
+      run-attempt:
+        description: "Staging run attempt to publish"
+        required: false
+        default: "1"
+        type: string
+
+permissions: {}
+
+jobs:
+  publish-release:
+    if: github.repository_owner == 'ROCm'
+    runs-on: amd-do-linux.jax.gpu.gfx950.1
+    container:
+      image: ghcr.io/rocm/jax-base-ubu24.rocm720:latest  # zizmor: ignore[unpinned-images]
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+
+      - name: Publish wheels to release/
+        env:
+          BRANCH: ${{ inputs.branch }}
+          ROCM_VERSION: ${{ inputs.rocm-release-version }}
+          RUN_NUMBER: ${{ inputs.run-number }}
+          RUN_ATTEMPT: ${{ inputs.run-attempt }}
+        run: |
+          SOURCE="s3://jax-ci-amd/rocm-wheels/${BRANCH}/${ROCM_VERSION}/staging/${RUN_NUMBER}/${RUN_ATTEMPT}"
+          DEST="s3://jax-ci-amd/rocm-wheels/${BRANCH}/${ROCM_VERSION}/release"
+
+          echo "Publishing: ${SOURCE} -> ${DEST}"
+
+          WHEEL_COUNT=$(aws s3 ls --recursive "${SOURCE}/" | grep -c '\.whl$' || true)
+          if [[ "${WHEEL_COUNT}" -eq 0 ]]; then
+            echo "Error: no .whl files found at ${SOURCE}. Aborting."
+            exit 1
+          fi
+          echo "Found ${WHEEL_COUNT} wheel(s) to publish."
+
+          aws s3 sync --delete --only-show-errors "${SOURCE}/" "${DEST}/"
+
+          echo "Published wheels at ${DEST}:"
+          aws s3 ls "${DEST}/" | grep '\.whl'

@@ -1,0 +1,85 @@
+# CI - ROCm Release: Promote Staging Build to Upstream Gate Pin
+#
+# Copies a specific staging build to upstream/GATE_CHECK/<rocm-release-version>/,
+# making it the stable path used by the blocking-gate presubmit check for PRs
+# targeting upstream main. This is a deliberate human action — the gate pin does
+# not move unless this workflow is explicitly triggered.
+#
+# Run this once a release branch staging build has passed testing and is ready
+# to serve as the upstream gate reference.
+# Lives in ROCm/jax only — not upstreamed.
+name: CI - ROCm Release Promote Upstream Gate Pin
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Release branch the staging build came from (e.g. rocm-jaxlib-v0.11.0)"
+        required: true
+        type: string
+      run-number:
+        description: "Workflow run number of the staging build to promote"
+        required: true
+        type: string
+      run-attempt:
+        description: "Run attempt of the staging build to promote"
+        required: false
+        default: "1"
+        type: string
+      rocm-release-version:
+        description: "ROCm release version (e.g. 7.2.0, therock-7.13.0, therock-latest)"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  promote-gate-pin:
+    if: github.repository_owner == 'ROCm'
+    runs-on: amd-do-linux.jax.gpu.gfx950.1
+    container:
+      image: ghcr.io/rocm/jax-base-ubu24.rocm720:latest  # zizmor: ignore[unpinned-images]
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc
+          aws-region: us-east-1
+
+      - name: Promote staging build to upstream/GATE_CHECK
+        env:
+          BRANCH: ${{ inputs.branch }}
+          RUN_NUMBER: ${{ inputs.run-number }}
+          RUN_ATTEMPT: ${{ inputs.run-attempt }}
+          ROCM_VERSION: ${{ inputs.rocm-release-version }}
+        run: |
+          SOURCE="s3://jax-ci-amd/rocm-wheels/${BRANCH}/${ROCM_VERSION}/staging/${RUN_NUMBER}/${RUN_ATTEMPT}"
+          DEST="s3://jax-ci-amd/rocm-wheels/upstream/GATE_CHECK/${ROCM_VERSION}"
+
+          echo "Promoting: ${SOURCE} -> ${DEST}"
+
+          # Verify source exists and has wheels before overwriting the gate pin.
+          WHEEL_COUNT=$(aws s3 ls --recursive "${SOURCE}/" | grep -c '\.whl$' || true)
+          if [[ "${WHEEL_COUNT}" -eq 0 ]]; then
+            echo "Error: no .whl files found at ${SOURCE}. Aborting."
+            exit 1
+          fi
+          echo "Found ${WHEEL_COUNT} wheel(s) in staging build."
+
+          aws s3 sync --delete --only-show-errors "${SOURCE}/" "${DEST}/"
+
+          # Write provenance so it is clear which build this gate pin came from.
+          printf "branch=%s\nrocm_version=%s\nrun_number=%s\nrun_attempt=%s\npromoted_by=%s\npromoted_at=%s\n" \
+            "${BRANCH}" "${ROCM_VERSION}" "${RUN_NUMBER}" "${RUN_ATTEMPT}" \
+            "${{ github.actor }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | \
+            aws s3 cp --only-show-errors - "${DEST}/PROMOTED_FROM"
+
+          echo "Gate pin updated. Wheels at ${DEST}:"
+          aws s3 ls "${DEST}/" | grep '\.whl'
