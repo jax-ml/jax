@@ -2785,10 +2785,13 @@ def broadcast_to(arr: ArrayLike, shape: Shape,
   if sharding is None:
     sharding_compatible = True
   else:
-    spec_tail = sharding.spec._normalized_spec_for_aval(len(shape))[nlead:]
+    spec_tail = sharding.spec._normalized_spec_for_aval(len(shape)).partitions[
+        nlead:
+    ]
     sharding_compatible = all(
         arr_s in [None, out_s]
-        for arr_s, out_s in zip(arr_aval.sharding.spec, spec_tail))
+        for arr_s, out_s in zip(arr_aval.sharding.spec.partitions, spec_tail)
+    )
   if nlead < 0 or not shape_compatible or not sharding_compatible:
     exp_type = core.str_short_aval(
         shape, arr_aval.dtype, None if sharding is None else sharding.mesh,

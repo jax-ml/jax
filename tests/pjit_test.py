@@ -9561,6 +9561,21 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None, 'y')))
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_broadcast_unreduced(self, mesh):
+    ones = jnp.ones((16, 1), dtype=np.float32)
+    spec = P('x', None, unreduced={'y'})
+    sharding = NamedSharding(mesh, spec)
+    arr = jax.device_put(ones, sharding)
+    target_array = jax.ShapeDtypeStruct((16, 8), arr.dtype, sharding=sharding)
+
+    @jax.jit
+    def broadcast_unreduced(x):
+      return jax.lax.broadcast_like(x, target_array)
+
+    out = broadcast_unreduced(arr)
+    self.assertEqual(out.sharding, sharding)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_jacfwd_sharded_broadcast(self, mesh):
     np_inp = np.arange(16, dtype=np.float32)
     arr = jax.device_put(np_inp, NamedSharding(mesh, P('y')))
