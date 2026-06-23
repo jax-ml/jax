@@ -19,10 +19,7 @@ Remember to align the itemized text with the first line of an item within a list
 
   * Added {data}`jax.experimental.pallas.enable_poison_buffers` (config flag
     `jax_pallas_poison_buffers`) to poison (initialize with NaNs or lowest
-    possible integers) any scratch buffers allocated by Pallas in Mosaic TPU
-    lowering for debugging.
-  * Support TMA scatter.
-  * Rename `TMA_GATHER_INDICES_LAYOUT` to `TMA_INDICES_LAYOUT`.
+    possible integers) any scratch buffers allocated by Pallas for debugging.
 
 * Deprecations
 
@@ -65,6 +62,8 @@ Remember to align the itemized text with the first line of an item within a list
   * Support for TMEM references with batch dimensions. This includes indexing
     over batch dimensions and `plgpu.async_store_tmem` support for TMEM
     references with batch dimensions.
+  * Support TMA scatter.
+  * Rename `TMA_GATHER_INDICES_LAYOUT` to `TMA_INDICES_LAYOUT`.
 
 * Changes
 
