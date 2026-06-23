@@ -1728,23 +1728,40 @@ def _mgpu_arrive_op_lowering_rule(
 def _mgpu_arrive_expect_tx_op_lowering_rule(
     ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
-  num_bytes: int = arrive_expect_tx_op.expect_tx.value
+  num_bytes = cast(ir.Value, arrive_expect_tx_op.expect_tx)
   i32 = ir.IntegerType.get_signless(32)
   num_lanes = (
       utils.WARPGROUP_SIZE
       if ctx.thread_semantics == utils.ThreadSubset.WARPGROUP
       else utils.WARP_SIZE
   )
-  if num_bytes % num_lanes == 0:
-    # Prefer uniform arrival whenever possible because it's more efficient.
-    # We arrive uniformly from each lane in the WG/Warp, so we need to divide
-    # the number of bytes by the number of lanes in the WG/Warp.
-    tx_bytes = utils.c(num_bytes // num_lanes, i32)
+
+  if isinstance(num_bytes, ir.OpResult) and isinstance(
+      num_bytes.owner.opview, arith.ConstantOp
+  ):
+    num_bytes_int = int(num_bytes.owner.opview.value)
+    if num_bytes_int % num_lanes == 0:
+      # Prefer uniform arrival whenever possible because it's more efficient.
+      # We arrive uniformly from each lane in the WG/Warp, so we need to divide
+      # the number of bytes by the number of lanes in the WG/Warp.
+      tx_bytes = utils.c(num_bytes_int // num_lanes, i32)
+    else:
+      tx_bytes = arith.select(
+          ctx.single_lane_predicate,
+          utils.c(num_bytes_int, i32),
+          utils.c(0, i32),
+      )
   else:
+    zero = utils.c(0, i32)
+    num_lanes = utils.c(num_lanes, i32)
+    remainder = arith.remui(num_bytes, num_lanes)
+    is_divisible = arith.cmpi(arith.CmpIPredicate.eq, remainder, zero)
     tx_bytes = arith.select(
-        ctx.single_lane_predicate,
-        utils.c(num_bytes, i32),
-        utils.c(0, i32),
+        is_divisible,
+        arith.divui(num_bytes, num_lanes),
+        arith.select(
+            ctx.single_lane_predicate, num_bytes, zero
+        )
     )
 
   barrier = utils.DialectBarrierRef.from_barrier_memref(
