@@ -57,6 +57,7 @@ H AbslHashValue(H h, const WeakValueInterner::Key& key) {
 }
 
 bool WeakValueInterner::KeyEqual::operator()(Key a, Key b) const {
+  if (a.cached_hash != b.cached_hash) return false;
   if (a.kwnames.size() != b.kwnames.size()) return false;
   for (size_t i = 0; i < a.kwnames.size(); ++i) {
     if (a.kwnames[i].ptr() != b.kwnames[i].ptr()) return false;
@@ -69,6 +70,7 @@ bool WeakValueInterner::KeyEqual::operator()(Key a, Key b) const {
 }
 
 bool WeakValueInterner::KeyEqual::operator()(Key a, KeyView b) const {
+  if (a.cached_hash != b.cached_hash) return false;
   if (a.kwnames.size() != b.kwnames.size()) return false;
   for (size_t i = 0; i < a.kwnames.size(); ++i) {
     if (a.kwnames[i].ptr() != b.kwnames[i].ptr()) return false;
@@ -81,6 +83,7 @@ bool WeakValueInterner::KeyEqual::operator()(Key a, KeyView b) const {
 }
 
 bool WeakValueInterner::KeyEqual::operator()(Key a, PointerKey b) const {
+  if (a.cached_hash != b.cached_hash) return false;
   if (a.kwnames.size() != b.kwnames.size()) return false;
   for (size_t i = 0; i < a.kwnames.size(); ++i) {
     if (a.kwnames[i].ptr() != b.kwnames[i].ptr()) return false;

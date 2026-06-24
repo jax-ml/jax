@@ -141,6 +141,7 @@ struct WeakKey {
     // equal() may release locks, and per the contract of our hash map this may
     // invalidate references.
     bool operator()(WeakKey a, WeakKey b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       if (a.refs.size() != b.refs.size()) {
         return false;
       }
@@ -152,6 +153,7 @@ struct WeakKey {
       return true;
     }
     bool operator()(WeakKey a, PointerWeakKey b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       if (a.refs.size() != b.refs.size()) {
         return false;
       }

@@ -194,6 +194,7 @@ class PjitFunctionCache {
     // Normal lookup: uses Python equal() but short-circuits on pointer
     // mismatch.
     bool operator()(const Key& a, const Key& b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       if (a.function.ptr() != b.function.ptr()) return false;
       try {
         return a.global_cache_key.equal(b.global_cache_key);
@@ -209,6 +210,7 @@ class PjitFunctionCache {
     // Explicitly compare .ptr() to ensure we do not trigger Python-level
     // equality.
     bool operator()(const Key& a, const PointerKey& b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       return a.function.ptr() == b.function.ptr() &&
              a.global_cache_key.ptr() == b.global_cache_key.ptr();
     }
