@@ -341,9 +341,17 @@ def get_executable_and_time(
   executable_and_time = decompress_executable(executable_and_time)
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
-  xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, executable_devices, compile_options,
-      host_callbacks)
+  if host_callbacks:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable,
+        executable_devices,
+        compile_options,
+        host_callbacks,
+    )
+  else:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable, executable_devices, compile_options
+    )
   return xla_executable_deserialized, compile_time
 
 
