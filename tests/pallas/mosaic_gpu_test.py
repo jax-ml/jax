@@ -2661,18 +2661,30 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jax.lax.iota(jnp.float32, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_optimization_barrier_constant(self):
+    @functools.partial(
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.float32),
+    )
+    def kernel(o_ref):
+      c = jnp.float32(3)
+      o_ref[...] = lax.optimization_barrier(c)
+
+    np.testing.assert_array_equal(kernel(), 3)
+
   def test_optimization_barrier_multiple_inputs(self):
     @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+        self.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
     )
     def kernel(x_ref, y_ref, o_ref):
-      x, y = lax.optimization_barrier([x_ref[...], y_ref[...]])
-      o_ref[...] = x + y
+      c = jnp.float32(5)
+      x, c, y = lax.optimization_barrier([x_ref[...], c, y_ref[...]])
+      o_ref[...] = x + c + y
 
     x = jax.lax.iota(jnp.float32, 128)
     y = jax.lax.iota(jnp.float32, 128) * 3
-    np.testing.assert_array_equal(kernel(x, y), x + y)
+    np.testing.assert_array_equal(kernel(x, y), x + 5 + y)
 
   def test_smem_aliasing_works_basic(self):
     in_shape = (2, 256)
