@@ -270,8 +270,6 @@ def get_compile_options(
     if enabled_flags == "all" or "xla_gpu_kernel_cache_file" in enabled_flags:
       kernel_cache_path = path / "xla_gpu_kernel_cache_file"
       debug_options.xla_gpu_kernel_cache_file = str(kernel_cache_path)
-      # This option is required to use the kernel cache.
-      debug_options.xla_gpu_enable_llvm_module_compilation_parallelism = True
       logger.debug("Enabling XLA kernel cache at '%s'", kernel_cache_path)
 
     if enabled_flags == "all" or "xla_gpu_per_fusion_autotune_cache_dir" in enabled_flags:

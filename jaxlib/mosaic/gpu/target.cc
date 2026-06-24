@@ -117,16 +117,11 @@ GetAssemblyToBinaryCompilationProvider() {
   static absl::NoDestructor<
       absl::StatusOr<std::unique_ptr<se::cuda::CompilationProvider>>>
       compilation_provider([]() {
-#ifdef PLATFORM_GOOGLE
-        constexpr bool enable_driver_compilation = true;
-#else
         constexpr bool enable_driver_compilation = false;
-#endif
         // Defaults mirror those used in `xla/debug_options_flags.cc`.
         se::cuda::CompilationProviderOptions opts(
             se::cuda::CompilationProviderOptions::NvJitLinkMode::kAuto,
             /*enable_libnvptxcompiler=*/se::IsLibNvPtxCompilerSupported(),
-            /*enable_llvm_module_compilation_parallelism=*/false,
             enable_driver_compilation, std::string(kDefaultCudaDataDir));
         return se::cuda::AssembleCompilationProvider(opts);
       }());
