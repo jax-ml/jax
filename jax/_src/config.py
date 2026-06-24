@@ -1890,7 +1890,7 @@ disable_bwd_checks = bool_state(
 
 use_rgv3 = bool_state(
     name='jax_use_rgv3',
-    default=False,
+    default=True,
     help=(
         'Whether to use StableHLO RGV3 (mesh-axes based replica groups) during'
         ' shard_map lowering.'
