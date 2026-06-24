@@ -57,6 +57,7 @@ cc_library(
     # compatible with libtpu
     deps = [
         ":stringify_util",
+        ":tpu_enums_inc_gen",
         ":tpu_inc_gen",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/hash",
@@ -148,14 +149,6 @@ gentbl_cc_library(
             "-gen-dialect-defs",
             "-dialect=tpu",
         ],
-        "dialect/tpu/tpu_enums.h.inc": [
-            "-gen-enum-decls",
-            "-dialect=tpu",
-        ],
-        "dialect/tpu/tpu_enums.cc.inc": [
-            "-gen-enum-defs",
-            "-dialect=tpu",
-        ],
         "dialect/tpu/tpu_attr_defs.h.inc": [
             "-gen-attrdef-decls",
             "-dialect=tpu",
@@ -191,28 +184,39 @@ gentbl_cc_library(
     },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "dialect/tpu/tpu_ops.td",
-    deps = [":tpu_ops_td_files"],
+    deps = [":tpu_td_files"],
+)
+
+gentbl_cc_library(
+    name = "tpu_enums_inc_gen",
+    # compatible with libtpu
+    tbl_outs = {
+        "dialect/tpu/tpu_enums.h.inc": [
+            "-gen-enum-decls",
+            "-dialect=tpu",
+        ],
+        "dialect/tpu/tpu_enums.cc.inc": [
+            "-gen-enum-defs",
+            "-dialect=tpu",
+        ],
+    },
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "dialect/tpu/tpu_enums.td",
+    deps = [
+        ":tpu_td_files",
+    ],
 )
 
 td_library(
     name = "tpu_td_files",
     srcs = [
         "dialect/tpu/tpu.td",
-    ],
-    # compatible with libtpu
-    deps = [
-        "@llvm-project//mlir:BuiltinDialectTdFiles",
-    ],
-)
-
-td_library(
-    name = "tpu_ops_td_files",
-    srcs = [
+        "dialect/tpu/tpu_enums.td",
         "dialect/tpu/tpu_ops.td",
+        "dialect/tpu/tpu_types.td",
     ],
     # compatible with libtpu
     deps = [
-        ":tpu_td_files",
         "@llvm-project//mlir:BuiltinDialectTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
@@ -240,6 +244,7 @@ cc_library(
     hdrs = TPU_CAPI_HEADERS,
     deps = [
         ":tpu_dialect",
+        ":tpu_enums_inc_gen",
         ":tpu_inc_gen",
         ":tpu_serde_pass",
         "@llvm-project//llvm:Support",
@@ -255,6 +260,7 @@ cc_library(
     name = "tpu_dialect_capi_headers",
     hdrs = TPU_CAPI_HEADERS,
     deps = [
+        ":tpu_enums_inc_gen",
         ":tpu_inc_gen",
         "@llvm-project//mlir:CAPIIRHeaders",
     ],
@@ -267,6 +273,7 @@ cc_library(
     hdrs = TPU_CAPI_HEADERS,
     deps = [
         ":tpu_dialect",
+        ":tpu_enums_inc_gen",
         ":tpu_inc_gen",
         ":tpu_serde_pass",
         "@llvm-project//llvm:Support",
