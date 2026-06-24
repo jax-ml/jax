@@ -1380,13 +1380,17 @@ def _all_to_all_lowering(
   else:
     other_args = {}
 
+  replica_groups_attr = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
+
   if not is_async:
     return hlo.AllToAllOp(
         [x],
         split_dimension=mlir.i64_attr(split_axis),
         concat_dimension=mlir.i64_attr(concat_axis),
         split_count=mlir.i64_attr(split_count),
-        replica_groups=_device_list_replica_groups_hlo(replica_groups),
+        replica_groups=replica_groups_attr,
         **other_args,
     ).results
 
@@ -1402,7 +1406,7 @@ def _all_to_all_lowering(
         split_dimension=mlir.i64_attr(split_axis),
         concat_dimension=mlir.i64_attr(concat_axis),
         split_count=mlir.i64_attr(split_count),
-        replica_groups=_device_list_replica_groups_hlo(replica_groups),
+        replica_groups=replica_groups_attr,
         **other_args,
     ).results
     hlo.return_(results)
@@ -1830,8 +1834,9 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     x = hlo.broadcast_in_dim(
         mlir.aval_to_ir_type(ctx.module_context, x_aval.update(shape=new_shape)), x,
         mlir.dense_int_array(broadcast_dimensions))
-  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
-                                    axis_index_groups)
+  replica_groups_attr = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
   if is_spmd:
     # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
@@ -1849,7 +1854,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         [out_type],
         [x],
         all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=_device_list_replica_groups_hlo(replica_groups),
+        replica_groups=replica_groups_attr,
         **other_args,
     ).results
 
@@ -1861,7 +1866,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         [out_type],
         [block.arguments[0]],
         all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=_device_list_replica_groups_hlo(replica_groups),
+        replica_groups=replica_groups_attr,
         **other_args,
     ).results
     hlo.return_(results)
@@ -2073,8 +2078,9 @@ def _reduce_scatter_lowering(
   x_aval, = ctx.avals_in
   aval_out, = ctx.avals_out
   scalar_aval = x_aval.update(shape=())
-  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
-                                   axis_index_groups)
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
   scatter_out_shape = list(x_aval.shape)
   scatter_out_shape[scatter_dimension] //= axis_size
   axis_context = ctx.module_context.axis_context
@@ -2098,7 +2104,7 @@ def _reduce_scatter_lowering(
       ),
       x,
       scatter_dimension=mlir.i64_attr(scatter_dimension),
-      replica_groups=_device_list_replica_groups_hlo(replica_groups),
+      replica_groups=replica_groups,
       **other_args,
   )
   scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
