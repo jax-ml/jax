@@ -4821,6 +4821,29 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
     self.assertIn("tmem: TMEM_DEFAULT(packing=2)\n", output())
 
+  def test_print_layout_tmem_with_transforms(self):
+    self.skip_if_wg_semantics()  # Failed to infer a set of layouts.
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((), jnp.float32),
+        scratch_types=[
+            plgpu.RefUnion(
+                plgpu.TMEM((128, 64), jnp.float16, packed=False),
+                plgpu.TMEM((128, 128), jnp.float16, packed=True),
+            ),
+        ],
+    )
+    def kernel(o_ref, aliased_ref):
+      del o_ref
+      [ref0, ref1] = aliased_ref
+      plgpu.print_layout("ref0: {}", ref0)
+      plgpu.print_layout("ref1: {}", ref1)
+
+    with self.capture_stdout() as output:
+      kernel().block_until_ready()
+
+    self.assertIn("ref0: TMEM_DEFAULT(packing=1)", output())
+    self.assertIn("ref1: TMEM_DEFAULT(packing=2)", output())
+
   def test_mixed_tmem_allocations_raise(self):
     @functools.partial(
         self.pallas_call,

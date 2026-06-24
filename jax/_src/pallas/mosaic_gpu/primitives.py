@@ -106,8 +106,7 @@ def _print_layout_lowering(
     *transforms_leaves,
     transforms_tree
 ):
-  if transforms_leaves:
-    assert isinstance(ctx.avals_in[0], state_types.AbstractRef)
+  if isinstance(ctx.avals_in[0], state_types.AbstractRef):
     transform_avals = transforms_tree.unflatten(ctx.avals_in[1:])
     x, _, remaining_transforms = lowering._handle_transforms(  # pyrefly: ignore[bad-specialization]
         ctx, ctx.avals_in[0], x, transform_avals,
