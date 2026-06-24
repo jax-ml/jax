@@ -72,8 +72,8 @@ def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   if (
       ctx.is_forward_compat()
       or backend is None
-      # TODO(emilyaf): remove the forward compatibility check after 2026-07-08.
-      or is_cloud_tpu_older_than(2026, 6, 8, backend)
+      # TODO(slebedev): remove the forward compatibility check after 2026-08-07.
+      or is_cloud_tpu_older_than(2026, 7, 7, backend)
   ):
     return _FWD_COMPAT_VERSION
   return None
