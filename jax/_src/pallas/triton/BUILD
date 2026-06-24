@@ -72,7 +72,6 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
         "//jax/_src:debugging",
-        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:literals",
         "//jax/_src:mlir",

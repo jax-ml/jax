@@ -72,8 +72,7 @@ from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
-from jax._src import flattree as ft
-from jax._src.tree_util import (
+from jax._src.tree_util import ( FlatTree,
     keystr, tree_flatten, tree_map, tree_unflatten,
     treedef_is_leaf)
 from jax._src.typing import Array
@@ -151,8 +150,8 @@ class Scan3(hijax.VJPHiPrimitive):
     return [out[...] for out in outs]
 
   def jvp(self, primals, tangents):
-    primals_ft = ft.flatten(primals)
-    tangents_ft = ft.flatten(tangents, is_leaf=lambda x: type(x) is ad.Zero)
+    primals_ft = FlatTree.flatten(primals)
+    tangents_ft = FlatTree.flatten(tangents, is_leaf=lambda x: type(x) is ad.Zero)
     nonzeros = [type(t) is not ad_util.Zero for t in tangents_ft]
     tangent_extensives = keep(nonzeros, self.extensives)
     tangents_nz = keep(nonzeros, tangents_ft)
@@ -176,7 +175,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
          reverse: bool = False,
          unroll: int | bool = 1) -> tuple[Carry, Y]:
   dbg_body = api_util.debug_info("scan", f, (xs,), {})
-  xs_flat = ft.flatten(xs)
+  xs_flat = FlatTree.flatten(xs)
   check_no_transformed_refs_args(lambda: dbg_body, list(xs_flat))
   del xs
   xs_avals = xs_flat.map(core.typeof)
@@ -188,7 +187,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   # TODO(dougalm): promote away all weak types
-  args_avals = ft.pack(((x_avals,), {}))
+  args_avals = FlatTree.pack(((x_avals,), {}))
   jaxpr, y_avals = pe.trace_to_jaxpr(f, args_avals, dbg_body)
   jaxpr, consts = pe.separate_consts(jaxpr)
 
@@ -225,7 +224,7 @@ def scan3(f: Callable[[Carry, X], tuple[Carry, Y]],
          reverse: bool = False,
          unroll: int | bool = 1,
          _split_transpose: bool = False) -> tuple[Carry, Y]:
-  init_flat = ft.flatten(init)
+  init_flat = FlatTree.flatten(init)
   carry_avals = init_flat.map(typeof)
   carry_refs = [core.new_ref(x) for x in init_flat]
 
@@ -233,7 +232,7 @@ def scan3(f: Callable[[Carry, X], tuple[Carry, Y]],
     return carry_avals.update([r[...] for r in carry_refs]).unflatten()
 
   def write_carry(val):
-    carry_flat = ft.flatten(val)
+    carry_flat = FlatTree.flatten(val)
     assert carry_flat.tree == init_flat.tree  # TODO: better error
     for ref, c in zip(carry_refs, carry_flat):
       ref[...] = c
@@ -354,9 +353,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     raise TypeError("lax.scan: f argument should be a callable.")
 
   dbg_body = api_util.debug_info("scan", f, (init, xs), {})
-  init_flat = ft.flatten(init)
-  xs_flat = ft.flatten(xs)
-  args = ft.pack((init_flat, xs_flat))
+  init_flat = FlatTree.flatten(init)
+  xs_flat = FlatTree.flatten(xs)
+  args = FlatTree.pack((init_flat, xs_flat))
   check_no_transformed_refs_args(lambda: dbg_body, args.vals)
   del init, xs
 
@@ -384,7 +383,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   def _create_jaxpr(carry_avals):
-    new_arg_avals = ft.pack(((carry_avals, x_avals), {}))
+    new_arg_avals = FlatTree.pack(((carry_avals, x_avals), {}))
     jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
     jaxpr, consts = pe.separate_consts(jaxpr)
     if len(out_avals.unpack()) != 2:
@@ -1314,7 +1313,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn: core.JaxprEqn):
 
   call_jaxpr, _ = pe.trace_to_jaxpr(
       known,
-      ft.flatten_args(*(v.aval for v in ins_known)),
+      FlatTree.flatten_args(*(v.aval for v in ins_known)),
       debug_info=jaxpr_known_hoist.jaxpr.debug_info)
 
   eqn_known = pe.new_jaxpr_eqn(
@@ -1436,7 +1435,7 @@ def _scan_state_partial_discharge_rule(
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=arg_names, result_paths=None)
 
   new_jaxpr, _ = pe.trace_to_jaxpr(body,
-      ft.flatten_args(*in_avals),
+      FlatTree.flatten_args(*in_avals),
       debug_info=dbg)
 
   pure_consts, carry, pure_xs = split_list(
@@ -1508,7 +1507,7 @@ def _scan_to_lojax(*hi_args, jaxpr, num_carry, num_consts, **params):
   in_avals_lol = [*[[typeof(x) for x in xs] for xs in const_lol],
                   *[[typeof(x) for x in xs] for xs in carry_lol],
                   *[[rrtype(x) for x in xs] for xs in ext_lol]]
-  in_avals = ft.flatten((in_avals_lol, {}))
+  in_avals = FlatTree.flatten((in_avals_lol, {}))
 
   lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
 
@@ -1611,7 +1610,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       pass
 
   def _create_jaxpr(init_avals):
-    args_avals = ft.pack(((init_avals,), {}))
+    args_avals = FlatTree.pack(((init_avals,), {}))
     cond_jaxpr, cond_out_avals = pe.trace_to_jaxpr(cond_fun, args_avals, cond_dbg)
     body_jaxpr, body_out_avals = pe.trace_to_jaxpr(body_fun, args_avals, body_dbg)
     if not treedef_is_leaf(cond_out_avals.tree) or len(cond_jaxpr.out_avals) != 1:
@@ -1628,7 +1627,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
   body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
-  init_val_flat = ft.flatten(init_val)
+  init_val_flat = FlatTree.flatten(init_val)
   check_no_transformed_refs_args(lambda: body_dbg, init_val_flat.vals)
   del init_val
   init_aval = init_val_flat.map(core.typeof)
@@ -2303,7 +2302,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_body_jaxpr, _ = pe.trace_to_jaxpr(
       new_body,
-      ft.flatten_args(*remaining_body_const_avals,
+      FlatTree.flatten_args(*remaining_body_const_avals,
           *[a.inner_aval for a in body_ref_avals],
           *[a.inner_aval for a in cond_ref_avals],
           *carry_avals),
@@ -2331,7 +2330,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_cond_jaxpr, _ = pe.trace_to_jaxpr(
       new_cond,
-      ft.flatten_args(*remaining_cond_const_avals,
+      FlatTree.flatten_args(*remaining_cond_const_avals,
           *[a.inner_aval for a in body_ref_avals],
           *[a.inner_aval for a in cond_ref_avals],
           *carry_avals),
@@ -2404,7 +2403,7 @@ def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts
   body_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_bconsts)
 
   # lower jaxprs and bind
-  in_avals = ft.flatten(([a.lo_ty() for a in body_jaxpr.in_aval_qdds], {}))
+  in_avals = FlatTree.flatten(([a.lo_ty() for a in body_jaxpr.in_aval_qdds], {}))
   lo_body_jaxpr, out_avals = pe.lower_jaxpr(body_jaxpr, in_avals)
   all_outs = while_p.bind(*lo_cconsts, *lo_bconsts, *lo_carry,
                           cond_jaxpr=pe.lower_jaxpr2(cond_jaxpr),

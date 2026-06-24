@@ -200,7 +200,6 @@ py_library_providing_imports_info(
         "//jax/_src:export",
         "//jax/_src:ffi",
         "//jax/_src:flatten_util",
-        "//jax/_src:flattree",
         "//jax/_src:hashable_array",
         "//jax/_src:hijax",
         "//jax/_src:image",

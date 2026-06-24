@@ -20,8 +20,7 @@ from jax._src import linear_util as lu
 from jax._src.api_util import debug_info
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list, subs_list)
-from jax._src import flattree as ft
-from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src.tree_util import tree_flatten, tree_unflatten, FlatTree
 from jax._src.interpreters import ad, mlir, partial_eval as pe, batching
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir import ir
@@ -41,7 +40,7 @@ def xla_metadata_call(f=None, **meta):
 def _xla_metadata_call(fun, **meta):
   def wrapped(*args, **kwargs):
     dbg = debug_info('xla_metadata_call', fun, args, kwargs)
-    args_ft = ft.flatten((args, kwargs))
+    args_ft = FlatTree.flatten((args, kwargs))
     in_avals = args_ft.map(core.shaped_abstractify)
     jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals, dbg)
     if any(isinstance(c, core.Tracer) for c in jaxpr.consts):

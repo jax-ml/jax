@@ -275,7 +275,6 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":effects",
-        ":flattree",
         ":jaxpr_util",
         ":layout",
         ":literals",
@@ -403,7 +402,6 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
-        ":flattree",
         ":hijax",
         ":lax",
         ":mesh",
@@ -574,7 +572,6 @@ pytype_strict_library(
         ":config",
         ":dtypes",
         ":effects",
-        ":flattree",
         ":frozen_dict",
         ":layout",
         ":mesh",
@@ -981,7 +978,6 @@ pytype_strict_library(
         ":config",
         ":core",
         ":dtypes",
-        ":flattree",
         ":mesh",
         ":partial_eval",
         ":source_info_util",
@@ -1104,7 +1100,6 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
-        ":flattree",
         ":profiler",
         ":source_info_util",
         ":state_types",
@@ -1123,7 +1118,6 @@ pytype_strict_library(
         ":api_util",
         ":config",
         ":core",
-        ":flattree",
         ":partial_eval",
         ":source_info_util",
         ":tree_util",
@@ -1265,7 +1259,6 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
-        ":flattree",
         ":lax",
         ":layout",
         ":mesh",
@@ -1300,7 +1293,6 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
-        ":flattree",
         ":partial_eval",
         ":partition_spec",
         ":remat",
@@ -1319,7 +1311,6 @@ pytype_strict_library(
     deps = [
         ":config",
         ":core",
-        ":flattree",
         ":layout",
         ":mesh",
         ":mlir",
@@ -1553,17 +1544,6 @@ pytype_strict_library(
         ":typing",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "flattree",
-    srcs = ["flattree.py"],
-    type_checking = "pyrefly",
-    deps = [
-        ":tree_util",
-        ":util",
-        "//jax/_src/lib",
-    ],
 )
 
 pytype_strict_library(

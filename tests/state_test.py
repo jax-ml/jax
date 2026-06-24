@@ -34,7 +34,7 @@ from jax._src import dtypes
 from jax._src import hypothesis_test_util as htu
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
-from jax._src import flattree as ft
+from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import types as state_types
 from jax._src.state.discharge import (
@@ -56,7 +56,7 @@ htu.setup_hypothesis()
 def trace_to_jaxpr(f: Callable, *args: Any):
   return pe.trace_to_jaxpr(
       f,
-      ft.flatten_args(*args),
+      tree_util.FlatTree.flatten_args(*args),
       api_util.debug_info("state_test", f, (0,) * len(args), {}),
   )
 

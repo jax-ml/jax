@@ -43,7 +43,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
 from typing import Any
-from jax._src import flattree as ft
+from jax._src import tree_util
 import jax.numpy as jnp
 import numpy as np
 
@@ -87,7 +87,7 @@ def string_stdout():
 def trace_to_jaxpr(f: Callable, *args: Any):
   return pe.trace_to_jaxpr(
       f,
-      ft.flatten_args(*args),
+      tree_util.FlatTree.flatten_args(*args),
       api_util.debug_info("tpu_pallas_test", f, (0,) * len(args), {}),
   )
 

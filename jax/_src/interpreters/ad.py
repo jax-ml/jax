@@ -24,9 +24,9 @@ from typing import Any
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax._src import flattree as ft
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, register_pytree_node, PyTreeDef)
+    tree_flatten, tree_unflatten, register_pytree_node, PyTreeDef,
+    FlatTree as ft)
 from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util

@@ -27,7 +27,7 @@ import jax
 from jax._src import core as jax_core
 from jax._src import deprecations
 from jax._src import state
-from jax._src import flattree as ft
+from jax._src import tree_util
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import partial_eval as pe
@@ -504,7 +504,7 @@ def pass_scalars_as_refs(
     # TODO(necula): Use trace_to_jaxpr_nocache.
     new_jaxpr, _ = pe.trace_to_jaxpr(
         new_body,
-        ft.flatten_args(*new_trace_avals),
+        tree_util.FlatTree.flatten_args(*new_trace_avals),
         jaxpr.debug_info.with_unknown_names(),
     )
   jaxpr = new_jaxpr.jaxpr.replace(

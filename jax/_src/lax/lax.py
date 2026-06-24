@@ -42,7 +42,6 @@ from jax._src import literals
 from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
-from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
@@ -1815,7 +1814,7 @@ def _trace_composite_to_jaxpr(fun: Callable,
     args = tree_util.tree_unflatten(in_tree, flat_args)
     return fun(*args)
 
-  in_avals_flat_tree = ft.flatten_args(*in_avals)
+  in_avals_flat_tree = tree_util.FlatTree.flatten_args(*in_avals)
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
       flat_fun, in_avals_flat_tree, debug_info
   )
@@ -3241,7 +3240,7 @@ def _reduction_jaxpr(computation: Callable,
     return (result,)
   dbg = api_util.debug_info('reduction_jaxpr', computation, (aval, aval), {})
   closed_jaxpr, _ = pe.trace_to_jaxpr(
-      comp, ft.flatten_args(aval, aval), dbg
+      comp, tree_util.FlatTree.flatten_args(aval, aval), dbg
   )
   if any(isinstance(c, core.Tracer) for c in closed_jaxpr.consts):
     raise NotImplementedError(
@@ -3260,7 +3259,7 @@ def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
     xs, ys = tree_util.tree_unflatten(in_tree, flat_args)
     return computation(xs, ys)
 
-  in_avals_flat_tree = ft.flatten_args(*flat_in_avals)
+  in_avals_flat_tree = tree_util.FlatTree.flatten_args(*flat_in_avals)
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
       flat_computation, in_avals_flat_tree, debug_info
   )
@@ -3859,7 +3858,7 @@ def _full_like_insert_pvary(val, x):
   from jax._src.state.types import TransformedRef  # pyrefly: ignore[missing-import]
   if isinstance(x, TransformedRef):
     all_varying = frozenset.union(*[
-        typeof(l).mat.varying for l in ft.flatten(x).vals
+        typeof(l).mat.varying for l in tree_util.FlatTree.flatten(x).vals
     ])
     return core.pvary(val, all_varying)
   else:

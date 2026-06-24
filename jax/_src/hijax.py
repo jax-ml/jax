@@ -40,11 +40,10 @@ from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
 from jax._src.util import safe_zip, safe_map, split_list, unzip2
-from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, tree_map_with_path, keystr,
-    tracing_registry)
+    tracing_registry, FlatTree)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -167,7 +166,7 @@ class MutableHiType(core.AbstractValue):
   def read_loval_in(self, state, val, /):
     return self.read_loval(state, val)
   def read_loval_out(self, qdd, hi, /):
-    return ft.flatten(self.read_loval(qdd, hi))
+    return FlatTree.flatten(self.read_loval(qdd, hi))
 
   # define how to mutate/set the mutable hijax value given immutable lojax vals
   def update_from_loval(self, state: QDD, val: HiVal, /, *lo_vals: LoVal) -> None:
@@ -981,7 +980,7 @@ class LogTy(MutableHiType):
 
   def read_loval_out(self, qdd, log):
     () = qdd
-    return ft.flatten(log._dct)
+    return FlatTree.flatten(log._dct)
 
   def new_from_loval(self, qdd):  # pyrefly: ignore[bad-override]
     () = qdd
@@ -1033,5 +1032,5 @@ class ReadLog(HiPrimitive):
     raise Exception
 
   def to_lojax(_, log):
-    return list(ft.flatten(log._dct))
+    return list(FlatTree.flatten(log._dct))
 log_read_p = ReadLog('log_read')

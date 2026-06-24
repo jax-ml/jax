@@ -53,8 +53,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.sharding_impls import UnspecifiedValue
 from jax._src.mesh import AbstractMesh
-from jax._src import flattree as ft
-from jax._src.tree_util import tree_unflatten
+from jax._src.tree_util import FlatTree, tree_unflatten
 from jax._src.typing import ArrayLike
 
 source_info_util.register_exclusion(__file__)
@@ -456,7 +455,7 @@ class Traced(Stage):
     hi_jaxpr = self.jaxpr
     _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
     if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
-    in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+    in_avals = FlatTree.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
     lo_jaxpr, out_avals = pe.lower_jaxpr(hi_jaxpr, in_avals)
     params = dict(_lojax_expand_params(in_avals, out_avals, **self._params), jaxpr=lo_jaxpr)
     if any(a.is_high for a in hi_jaxpr.final_aval_qdds):

@@ -72,10 +72,9 @@ from jax._src.sharding_impls import (
 from jax._src.layout import Format, Layout, AutoLayoutSingleton, get_layout_for_vmap
 from jax._src.state.types import RefEffect
 from jax._src.traceback_util import api_boundary
-from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_structure, treedef_children,
-    PyTreeDef, none_leaf_registry as none_lr, tree_map)
+    PyTreeDef, none_leaf_registry as none_lr, tree_map, FlatTree)
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
@@ -467,7 +466,7 @@ class PjitParams(NamedTuple):
 def _trace_for_jit(
     fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
-  args_ft = ft.flatten_static_argnums_argnames(
+  args_ft = FlatTree.flatten_static_argnums_argnames(
       args, kwargs, ji.static_argnums, ji.static_argnames)
   avals_ft = args_ft.update(avals)
 
@@ -900,7 +899,7 @@ def _to_lojax(*hi_args, jaxpr, **params):
                  for aval, x in zip(jaxpr.in_aval_qdds, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
 
-  in_avals = ft.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
+  in_avals = FlatTree.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
   lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
   params = _lojax_expand_params(in_avals, out_avals, **params)
 
