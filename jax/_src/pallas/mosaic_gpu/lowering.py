@@ -24,7 +24,7 @@ import functools
 import itertools
 import math
 import operator
-from typing import Any, Protocol, Self, assert_never, cast, overload
+from typing import Any, Protocol, Self, assert_never, cast
 
 import jax
 from jax import api_util
@@ -1469,44 +1469,14 @@ def _handle_dtype_bitcast(
   return mgpu_utils.ptr_as_memref(mgpu_utils.memref_ptr(ref), result_type)
 
 
-@overload
-def _extract_aliased_ref(
-  ref: ir.Value,
-  ref_aval: state_types.AbstractRef,
-  transform_avals: Sequence[state_types.Transform],
-  transforms: Sequence[state_types.Transform],
-  lowering_semantics: mgpu.LoweringSemantics,
-) -> tuple[
-    ir.Value,
-    state_types.AbstractRef,
-    Sequence[state_types.Transform],
-    Sequence[state_types.Transform]
-]:
-  ...
-
-@overload
-def _extract_aliased_ref(
-  ref: tcgen05.TMEMRef,
-  ref_aval: state_types.AbstractRef,
-  transform_avals: Sequence[state_types.Transform],
-  transforms: Sequence[state_types.Transform],
-  lowering_semantics: mgpu.LoweringSemantics,
-) -> tuple[
-    tcgen05.TMEMRef,
-    state_types.AbstractRef,
-    Sequence[state_types.Transform],
-    Sequence[state_types.Transform]
-]:
-  ...
-
-def _extract_aliased_ref(
-    ref: ir.Value | tcgen05.TMEMRef,
+def _extract_aliased_ref[T: (ir.Value, tcgen05.TMEMRef)](
+    ref: T,
     ref_aval: state_types.AbstractRef,
     transform_avals: Sequence[state_types.Transform],
     transforms: Sequence[state_types.Transform],
     lowering_semantics: mgpu.LoweringSemantics,
 ) -> tuple[
-    ir.Value | tcgen05.TMEMRef,
+    T,
     state_types.AbstractRef,
     Sequence[state_types.Transform],
     Sequence[state_types.Transform],
