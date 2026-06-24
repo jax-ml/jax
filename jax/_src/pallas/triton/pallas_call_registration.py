@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import io
 import json
+from typing import Final
 import zlib
 
 import jax
@@ -30,6 +31,15 @@ from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import core as triton_core
 from jax._src.pallas.triton import lowering
+
+
+# TODO(b/526389887): Figure out how to flip this to True.
+USE_NEW_CUSTOM_CALL = False
+CUSTOM_CALL_TARGET_NAME: Final = (
+    "triton_kernel_call_ffi"
+    if USE_NEW_CUSTOM_CALL
+    else "__gpu$xla.gpu.triton"
+)
 
 
 def normalize_grid(grid: pallas_core.StaticGrid) -> tuple[int, int, int]:
@@ -125,8 +135,7 @@ def pallas_call_lowering(
   if metadata is not None:
     serialized_metadata = json.dumps(dict(metadata))
 
-  # TODO(b/526389887): Figure out how to re-delete this path.
-  if True:
+  if not USE_NEW_CUSTOM_CALL:
     out_types = [
         ir.RankedTensorType.get(
             bm.array_aval.shape, mlir.dtype_to_ir_type(bm.array_aval.dtype)

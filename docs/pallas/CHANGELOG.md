@@ -13,6 +13,19 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+### Triton
+
+* New features
+
+  * Added {data}`jax.experimental.pallas.triton.CUSTOM_CALL_TARGET_NAME`, the
+    name of the custom call targeted by Pallas Triton. The exact value is not
+    guaranteed to be stable, but it is safe to assume that it is always aligned
+    with what the lowering emits. This is useful, for example, when exporting
+    a computation with Pallas Triton kernels via
+    {func}`jax.experimental.export.export`, since the corresponding custom call
+    is not considered export-stable and needs to be enabled explicitly.
+
+
 ## Released with JAX 0.10.2
 
 * New features

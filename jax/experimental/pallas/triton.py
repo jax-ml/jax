@@ -16,6 +16,7 @@
 
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.triton.core import CompilerParams as CompilerParams
+from jax._src.pallas.triton.pallas_call_registration import CUSTOM_CALL_TARGET_NAME as CUSTOM_CALL_TARGET_NAME
 from jax._src.pallas.triton.primitives import approx_tanh as approx_tanh
 from jax._src.pallas.triton.primitives import atomic_add as atomic_add
 from jax._src.pallas.triton.primitives import atomic_and as atomic_and
