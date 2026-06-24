@@ -69,7 +69,7 @@ def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
         p2tz(t) if not isinstance(t, Zero)
         and isinstance(typeof(t), core.ShapedArray)
         and dtype(t) == float0 else t)
-    in_tracers = primals.map2(lambda x, t: maybe_jvp_tracer(trace, x, t), tangents)
+    in_tracers = primals.map2(tangents, lambda x, t: maybe_jvp_tracer(trace, x, t))
     with core.set_current_trace(trace), ctx:
       ans = fun(*in_tracers.unflatten())
     if has_aux:
@@ -85,7 +85,7 @@ def jvp(fun: Callable, primals, tangents, has_aux=False, instantiate=True,
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_tangents)
   out_tangents = out_tangents.map2(
-      lambda t, inst: instantiate_zeros(t) if inst else t, instantiate)
+      instantiate, lambda t, inst: instantiate_zeros(t) if inst else t)
   auxs = tuple(aux.unflatten() for aux in auxs)
   return out_primals, out_tangents, *auxs
 
@@ -1234,7 +1234,7 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   primal_avals_in = ft.flatten_list(jaxpr.in_aval_qdds)
   tangent_avals_in = primal_avals_in.map(lambda aval: aval.to_tangent_aval())
   nz_tangent_avals_in = tangent_avals_in.map2(
-      lambda aval, nz: aval if nz else Zero(aval), nonzeros).filter_with_mask(nonzeros)
+      nonzeros, lambda aval, nz: aval if nz else Zero(aval)).filter_with_mask(nonzeros)
   avals_in = ft.pack_args(primal_avals_in, nz_tangent_avals_in)
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   def f_jvp_traceable(primals, nonzero_tangents):

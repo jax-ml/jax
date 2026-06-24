@@ -327,7 +327,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
         return (lax_parallel.vary_unreduced_cast(val, tuple(unreduced))
                 if (unreduced := spec.unreduced - aval.mat.unreduced) else val)
       if check_vma:
-        ans_ft = ans_ft.map2(add_implicit_pvary_and_unreduced, out_specs_flat)
+        ans_ft = ans_ft.map2(out_specs_flat, add_implicit_pvary_and_unreduced)
       return ans_ft.with_aux(out_specs_flat)
 
     try:
@@ -750,14 +750,14 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
   lo_avals_ft = ft.flatten(
       [[typeof(x) for x in typeof(hi_arg).lower_val(hi_arg)] for hi_arg in hi_args])
   lo_avals_ft = lo_avals_ft.map2(
-      lambda a, s: shard_aval(mesh, newly_manual_axes, check_vma, s, a), in_specs)
+      in_specs, lambda a, s: shard_aval(mesh, newly_manual_axes, check_vma, s, a))
   lo_avals_ft = ft.pack((lo_avals_ft, {}))
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     lo_jaxpr_, out_avals_ft = pe.lower_jaxpr(pe.close_jaxpr(jaxpr), lo_avals_ft)
     lo_jaxpr, consts = pe.separate_consts(lo_jaxpr_)
   out_avals_ft = out_avals_ft.map2(
-      lambda a, s: unshard_aval(mesh, check_vma, s, a), lo_out_specs)
+      lo_out_specs, lambda a, s: unshard_aval(mesh, check_vma, s, a))
   trace = core.trace_ctx.trace
   source_info = source_info_util.current()
   to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
@@ -1222,8 +1222,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs,
     src_pspecs = tuple(P(order_wrt_mesh(mesh, newly_manual_axes))
                        for _ in range(len(out_mat)))
   dst_pspecs = out_specs
-  return outs.map3(partial(_match_spec, mesh, check_vma, newly_manual_axes),
-                   src_pspecs, dst_pspecs)
+  return outs.map3(src_pspecs, dst_pspecs,
+                   partial(_match_spec, mesh, check_vma, newly_manual_axes))
 core.EvalTrace.process_shard_map = _shard_map_impl
 
 def _run_shmap_lu(f, mesh, manual_axes, args, mats, check_vma):
@@ -1423,12 +1423,12 @@ class ShardMapTrace(core.Trace):
       ans, out_specs = ans_aux.unpack_aux()
       out_vals_, out_mats_ = ans.map(trace.to_val_mat_pair).unzip2()
     out_vals = out_vals_.map2(
-        lambda x, spec: _match_spec2(self.mesh, self.manual_axes, spec, x), out_specs)
+        out_specs, lambda x, spec: _match_spec2(self.mesh, self.manual_axes, spec, x))
     # TODO(yashkatariya): Handle unreduced/reduced correctly.
     out_mats = [core.ManualAxisType(varying=mat.varying - _spec_to_vma(spec))
                 for mat, spec in zip(out_mats_, out_specs)]
-    return out_vals.map2(lambda val, vma: ShardMapTracer(self, vma, val),
-                         out_mats)
+    return out_vals.map2(out_mats,
+                         lambda val, vma: ShardMapTracer(self, vma, val))
 
   def process_call(self, call_primitive, fun, tracers, params, /):
     with core.set_current_trace(self):
@@ -1584,7 +1584,7 @@ def _shard_map_batch(
   make_tracer = partial(batching.BatchTracer, trace,
                         source_info=source_info_util.current())
   out_vals, out_dims = out_vals.unpack_aux()
-  return out_vals.map2(make_tracer, out_dims)
+  return out_vals.map2(out_dims, make_tracer)
 batching.BatchTrace.process_shard_map = _shard_map_batch
 
 def _batch_out_specs(spmd_name, explicit_mesh_axis, dims, out_specs):
@@ -1640,7 +1640,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_specs,
   primal_out, nz_tangents_out = pt_out.unpack()
   tangents_stack = list(nz_tangents_out)[::-1]
   make_tracer = lambda p, nz: ad.JVPTracer(trace, p, tangents_stack.pop()) if nz else p
-  tracers_out = primal_out.map2(make_tracer, which_nz_out)
+  tracers_out = primal_out.map2(which_nz_out, make_tracer)
   assert not tangents_stack
   return tracers_out
 
@@ -1798,7 +1798,7 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
   nz_tangents_out_iter = iter(nz_tangents_out)
   tangents_out = [next(nz_tangents_out_iter) if nz else ad.p2tz(primal)
                   for nz, primal in zip(nzs_out, primals_out)]
-  return primals_out.map3(partial(ad.maybe_linearize_tracer, trace), nzs_out, tangents_out)
+  return primals_out.map3(nzs_out, tangents_out, partial(ad.maybe_linearize_tracer, trace))
 ad.LinearizeTrace.process_shard_map = _shard_map_linearize
 
 

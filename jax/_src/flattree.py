@@ -62,13 +62,13 @@ class FlatTree:
   def map(self, f: Callable) -> FlatTree:
     return self.update(f(x) for x in self.vals)
 
-  def map2(self: FlatTree, f: Callable, t2: Sequence[Any]) -> FlatTree:
+  def map2(self: FlatTree, t2: Sequence[Any], f: Callable) -> FlatTree:
     n = len(self)
     assert len(t2) == n
     return self.update(f(x1, x2) for x1, x2 in zip(self.vals, list(t2)))
 
   def map3(
-      self: FlatTree, f: Callable, t2: Sequence[Any], t3: Sequence[Any]) -> FlatTree:
+      self: FlatTree, t2: Sequence[Any], t3: Sequence[Any], f: Callable) -> FlatTree:
     n = len(self)
     assert len(t2) == n and len(t3) == n
     return self.update(f(x1, x2, x3)

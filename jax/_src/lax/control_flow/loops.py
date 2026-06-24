@@ -407,8 +407,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if len(carry_out_avals) != len(init_avals):
     _check_carry_type('scan body', f, init_avals, carry_out_avals)
   init_flat, changed = init_flat.map3(
-     _promote_weak_typed_input,
-     init_avals, carry_out_avals).unzip2()
+     init_avals, carry_out_avals,
+     _promote_weak_typed_input).unzip2()
   num_carry, num_xs, num_ys = len(init_flat), len(xs_flat), len(ys_avals)
   if any(changed):
     init_avals = init_flat.map(core.typeof)
@@ -1644,8 +1644,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     assert False, "shouldn't get here"
 
   init_val_flat, changed = init_val_flat.map3(
-      _promote_weak_typed_input,
-      list(init_aval), body_out_avals).unzip2()
+      list(init_aval), body_out_avals,
+      _promote_weak_typed_input).unzip2()
   if any(changed):
     init_aval = init_val_flat.map(core.typeof)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)

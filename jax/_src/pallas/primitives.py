@@ -664,8 +664,8 @@ def wrap_with_transforms(
         (args, kwargs), registry=tree_util.default_registry
     )
     transformed_ft = args_ft.map2(
-        lambda a, t: state_types.TransformedRef(a, t) if t else a,
-        ref_transforms
+        ref_transforms,
+        lambda a, t: state_types.TransformedRef(a, t) if t else a
     )
     t_args, t_kwargs = transformed_ft.unflatten()
     return fun(*t_args, **t_kwargs)

@@ -484,7 +484,7 @@ def _trace_to_subjaxpr_nounits_no_lu_2(f: Callable, trace: JaxprTrace,
     instantiate = [instantiate] * len(ans)
   out_tracers = ans.map(trace.to_jaxpr_tracer)
   out_tracers = out_tracers.map2(
-      lambda t, inst: trace.instantiate_const(t) if inst else t, instantiate)
+      instantiate, lambda t, inst: trace.instantiate_const(t) if inst else t)
   out_tracers_ = [t for t in out_tracers if not t.is_known()]
   jaxpr, out_consts, env = tracers_to_jaxpr(
       in_tracers, out_tracers_, trace.effect_handles,
