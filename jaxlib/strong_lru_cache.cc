@@ -103,6 +103,12 @@ class StrongLRUCache {
 
   std::vector<nb::object> GetKeys();
   nb::callable wrapped() const { return fn_; }
+  std::optional<nb::callable> cache_context_fn() const {
+    return cache_context_fn_;
+  }
+  int64_t maxsize() const { return lru_maxsize_; }
+  std::optional<nb::callable> explain() const { return explain_; }
+  size_t num_shards() const { return num_shards_; }
 
   struct CacheInfo {
     int64_t hits;
@@ -687,7 +693,40 @@ void RegisterStrongLruCache(nb::module_& m) {
           .def("cache_keys", &StrongLRUCache::GetKeys)
           .def("cache_info", &StrongLRUCache::GetCacheInfo)
           .def("cache_clear", &StrongLRUCache::Clear)
-          .def_prop_ro("__wrapped__", &StrongLRUCache::wrapped);
+          .def_prop_ro("__wrapped__", &StrongLRUCache::wrapped)
+          .def(
+              "__getstate__",
+              [](const StrongLRUCache& cache) {
+                nb::dict pickle;
+                pickle["version"] = 1;
+                pickle["fn"] = cache.wrapped();
+                pickle["cache_context_fn"] = cache.cache_context_fn();
+                pickle["maxsize"] = cache.maxsize();
+                pickle["explain"] = cache.explain();
+                pickle["num_shards"] = cache.num_shards();
+                return pickle;
+              },
+              nb::lock_self())
+          .def("__setstate__", [](StrongLRUCache* cache,
+                                  const nb::dict& pickle) {
+            int version = nb::cast<int>(pickle["version"]);
+            if (version != 1) {
+              throw std::invalid_argument(absl::StrFormat(
+                  "Invalid StrongLRUCache pickle version, got %d, expected 1",
+                  version));
+            }
+            auto fn = nb::cast<nb::callable>(pickle["fn"]);
+            auto cache_context_fn = nb::cast<std::optional<nb::callable>>(
+                pickle["cache_context_fn"]);
+            int64_t maxsize = nb::cast<int64_t>(pickle["maxsize"]);
+            auto explain =
+                nb::cast<std::optional<nb::callable>>(pickle["explain"]);
+            int64_t num_shards = nb::cast<int64_t>(pickle["num_shards"]);
+
+            new (cache)
+                StrongLRUCache(std::move(cache_context_fn), std::move(fn),
+                               maxsize, std::move(explain), num_shards);
+          });
 
   strong_lru_cache.attr("__call__") = nb::steal<nb::object>(
       PyDescr_NewMethod(reinterpret_cast<PyTypeObject*>(strong_lru_cache.ptr()),

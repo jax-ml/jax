@@ -23,6 +23,14 @@ from absl.testing import absltest
 from jax.jaxlib import weakref_lru_cache
 
 
+def _dummy_context_fn():
+  return None
+
+
+def _dummy_target_fn(x):
+  return x * 2
+
+
 class WeakrefLRUCacheTest(absltest.TestCase):
 
   def testMultiThreaded(self):
@@ -719,6 +727,28 @@ class StrongLRUCacheTest(absltest.TestCase):
     cache.cache_clear()
     info = cache.cache_info()
     self.assertEqual(info.currsize, 0)
+
+  def testPickle(self):
+    import pickle
+
+    cache = weakref_lru_cache.strong_lru_cache(
+        _dummy_target_fn, _dummy_context_fn, maxsize=10, num_shards=2
+    )
+    self.assertEqual(cache(3), 6)
+    self.assertEqual(cache.cache_info().currsize, 1)
+
+    # Serialize and deserialize
+    serialized = pickle.dumps(cache)
+    cache_2 = pickle.loads(serialized)
+
+    # Verify the unpickled cache has the same config but is empty
+    self.assertEqual(cache_2.cache_info().maxsize, 10)
+    self.assertEqual(cache_2.cache_info().currsize, 0)
+
+    # Verify it still functions correctly
+    self.assertEqual(cache_2(3), 6)
+    self.assertEqual(cache_2.cache_info().currsize, 1)
+
 
 if __name__ == "__main__":
   absltest.main()
