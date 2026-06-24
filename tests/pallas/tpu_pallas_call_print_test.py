@@ -55,6 +55,32 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn('It works!', get_output())
 
+  @parameterized.product(arg_type=[int, float])
+  def test_debug_print_with_values(self, arg_type):
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer')
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(o_ref):
+      del o_ref  # Unused.
+      pl.debug_print('DONE ', arg_type(123))
+
+    compiled_kernel = (
+        jax.jit(kernel)
+        .lower()
+        .compile({'xla_tpu_enable_log_recorder': 'true'})
+    )
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel())
+
+    if arg_type is int:
+      self.assertIn('DONE s32[] 123', get_output())
+    else:
+      self.assertIn('DONE f32[] 123', get_output())
+
   def test_debug_print_in_index_map(self):
     def index_map(i):
       pl.debug_print('It works!')
@@ -80,7 +106,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
     self.assertIn('It works!', get_output())
 
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
-  def test_debug_print_with_values(self, dtype):
+  def test_debug_print_with_formatting(self, dtype):
     @functools.partial(
         self.pallas_call,
         in_specs=(pl.BlockSpec(memory_space=pltpu.SMEM),),
