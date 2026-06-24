@@ -4822,7 +4822,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     self.assertIn("tmem: TMEM_DEFAULT(packing=2)\n", output())
 
   def test_print_layout_tmem_with_transforms(self):
-    self.skip_if_wg_semantics()  # Failed to infer a set of layouts.
     @self.kernel(
         out_type=jax.ShapeDtypeStruct((), jnp.float32),
         scratch_types=[

@@ -1322,7 +1322,7 @@ def _async_store_smem_to_tmem_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.TmemLayoutCastOp)
+@_register_lowering(mgpu.TmemLayoutCastOp, support_warp_semantics=True)
 def _tmem_layout_cast_lowering_rule(
     ctx: LoweringContext,
     op: mgpu.TmemLayoutCastOp,

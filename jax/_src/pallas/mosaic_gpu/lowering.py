@@ -1610,6 +1610,9 @@ def _extract_aliased_ref(
           slice_op = mgpu.dialect.SliceTmemOp(ref_ty, ref, total_offset)
           slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i32, alias_group_idx)
           ref = slice_op.result
+          assert layout is not None
+          layout_attr = mgpu.layouts.to_layout_attr(layout)
+          ref = mgpu.dialect.tmem_layout_cast(ref, layout_attr)
         else:
           raise NotImplementedError("Unsupported memory space.")
       return (
