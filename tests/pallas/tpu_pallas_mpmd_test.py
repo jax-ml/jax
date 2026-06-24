@@ -183,6 +183,58 @@ class MpmdTest(PallasSCTest):
       out = jax.jit(f)(x, i)
       np.testing.assert_array_equal(out[0], x[i])
 
+  def test_mpmd_with_name_arg(self):
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
+      out_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.HBM)
+      def f_scs(scratch):
+        del scratch
+        pltpu.sync_copy(x_ref, out_ref)
+      def f_scv(scratch):
+        scratch[pl.ds(pltpu.get_tpu_info().sparse_core.num_lanes)] = jnp.zeros(
+            pltpu.get_tpu_info().sparse_core.num_lanes, dtype=jnp.int32
+        )
+
+      scv_mesh = from_core_type(SCV)
+      pl.kernel(
+          body=(f_scs, f_scv),
+          mesh=(from_core_type(SCS), scv_mesh),
+          scratch_types=[pltpu.VMEM([128], jnp.int32) @ scv_mesh],
+          name="test_mpmd_with_name_arg",
+      )()
+      return jax.freeze(out_ref)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    np.testing.assert_array_equal(f(x), x)
+
+  def test_mpmd_with_dup_fn_names(self):
+    @jax.jit
+    def f(x):
+      x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
+      out_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.HBM)
+      def f_scs(scratch):
+        del scratch
+        pltpu.sync_copy(x_ref, out_ref)
+      def f_scv(scratch):
+        scratch[pl.ds(pltpu.get_tpu_info().sparse_core.num_lanes)] = jnp.zeros(
+            pltpu.get_tpu_info().sparse_core.num_lanes, dtype=jnp.int32
+        )
+      def wrapper_fn(fn, scratch):
+        return fn(scratch)
+
+      scv_mesh = from_core_type(SCV)
+      pl.kernel(
+          body=(functools.partial(wrapper_fn, f_scs),
+                functools.partial(wrapper_fn, f_scv)),
+          mesh=(from_core_type(SCS), scv_mesh),
+          scratch_types=[pltpu.VMEM([128], jnp.int32) @ scv_mesh],
+      )()
+      return jax.freeze(out_ref)
+
+    x = jnp.arange(4 * 8 * 128, dtype=jnp.int32).reshape((4, 8, 128))
+    np.testing.assert_array_equal(f(x), x)
+
   def test_mpmd_capture_multiple_scalars(self):
     mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
 

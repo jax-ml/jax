@@ -884,10 +884,17 @@ def _mpmd_map(
 
     jaxprs: list[jax_core.Jaxpr] = []
     consts_per_fn = []
-    for mesh, fn in meshes_and_fns:
-      debug_info = api_util.debug_info("mpmd_map", fn, flat_kernel_avals, {})
-      if name is not None:
-        debug_info = debug_info.replace_func_name(name)
+    debug_infos = [api_util.debug_info("mpmd_map", fn, flat_kernel_avals, {})
+                   for _, fn in meshes_and_fns]
+    if name is not None:
+      debug_infos = [di.replace_func_name(name) for di in debug_infos]
+    # If names are non-distinct (e.g. because user passed multiple functions
+    # with the same name, or because of the name= arg handled just above),
+    # uniquify them with the core type.
+    if len({di.func_name for di in debug_infos}) != len(debug_infos):
+      debug_infos = [di.replace_func_name(f"{di.func_name}__{mesh.core_type}")
+                     for di, mesh in zip(debug_infos, meshes)]
+    for (mesh, fn), debug_info in zip(meshes_and_fns, debug_infos):
       with mpmd_map_tracing_context(mesh, all_meshes):
         jaxpr, out_avals = pe.trace_to_jaxpr(
             fn, in_avals_ft, debug_info
