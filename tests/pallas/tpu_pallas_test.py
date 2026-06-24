@@ -4072,6 +4072,29 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
 
   @parameterized.product(
+      shape=((3, 16), (8, 128), (16, 256), (32, 300), (64, 8), (20, 200)),
+      shift=(0, 1, 2, 8, 9, 15, 31),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
+  )
+  def test_roll_static_sublane_shift_with_no_stride(
+      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
+  ):
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer.')
+    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU v4+.')
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=0)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x)
+    np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
+
+  @parameterized.product(
       # minor dim is aligned to 128
       shape=((2, 128), (8, 128), (16, 256), (64, 256)),
       shift=(0, 2, 3, 129),
