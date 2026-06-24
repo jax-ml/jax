@@ -202,7 +202,8 @@ def _mpmd_map_discharge_rule(
     )
 
     debug_info = api_util.debug_info(
-        "mpmd_map_discharge", new_body, tracing_avals, {}
+        "mpmd_map_discharge", new_body, tracing_avals, {},
+        sourceinfo=jaxpr.debug_info.func_src_info,
     )
     closed_jaxpr, _ = pe.trace_to_jaxpr(
         new_body, tree_util.FlatTree.flatten_args(*tracing_avals), debug_info)
@@ -756,9 +757,8 @@ def _dedup_consts_and_unify_jaxpr_signatures(
   for mesh, jaxpr, consts in zip(meshes, jaxprs, consts_per_fn):
     debug_info = api_util.debug_info(
         "mpmd_map_closed_over",
-        make_rewritten_body(jaxpr, consts),
-        tracing_avals,
-        {},
+        make_rewritten_body(jaxpr, consts), tracing_avals, {},
+        sourceinfo=jaxpr.debug_info.func_src_info,
     )
     fun_to_trace = make_rewritten_body(jaxpr, consts)
     with mpmd_map_tracing_context(mesh, all_meshes):

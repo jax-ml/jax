@@ -181,9 +181,12 @@ class DistributedMpmdTest(parameterized.TestCase):
         total_tec = axis_size * num_cores * num_subcores
         pl.semaphore_wait(my_sem, total_scs + total_tec)
 
+      # Closing over a ref triggers discharge, giving a bit more test coverage.
+      x_ref = jax.new_ref(x.reshape(num_cores, mesh.size, size_per_core),
+                          memory_space=pltpu.HBM)
+
       # SCS handles cross-chip transfers.
       def go_scs(
-          x_ref,
           recv_ref,
           *,
           vmem_shd,
@@ -224,7 +227,6 @@ class DistributedMpmdTest(parameterized.TestCase):
 
       # TEC handles within-core stream-add ops.
       def go_tec(
-          x_ref,
           recv_ref,
           *,
           vmem_shd,
@@ -288,7 +290,7 @@ class DistributedMpmdTest(parameterized.TestCase):
               needs_layout_passes=False,
           ),
           debug=True,
-      )(x.reshape(num_cores, mesh.size, size_per_core))
+      )()
       # result shape: (num_cores, 2, size_per_core)
       # Select buffer index 1 from each core, then flatten.
       actual = result[:, 1].reshape(-1)
