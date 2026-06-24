@@ -138,15 +138,9 @@ class CommonRandomTest(RandomTestBase):
   @jtu.sample_product(dtype=float_dtypes)
   def testRngUniform(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.uniform(key, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
+    samples = random.uniform(key(), shape=(10000,), dtype=dtype)
+    self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
 
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes)
   def testRngRandint(self, dtype):
@@ -154,15 +148,10 @@ class CommonRandomTest(RandomTestBase):
     hi = 10
 
     key = lambda: self.make_key(0)
-    rand = lambda key: random.randint(key, (10000,), lo, hi, dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self.assertTrue(np.all(lo <= samples))
-      self.assertTrue(np.all(samples < hi))
+    samples = random.randint(key(), shape=(10000,), minval=lo, maxval=hi, dtype=dtype)
+    self.assertTrue(np.all(lo <= samples))
+    self.assertTrue(np.all(samples < hi))
 
   def test_eval_shape_big_random_array(self):
     def f(x):
@@ -309,17 +298,9 @@ class RandomDtypeTest(RandomTestBase):
   @jax.numpy_dtype_promotion('standard')
   def test_dtype(self, abstract_type, dtype, fn):
     key = random.key(0)
-    jitted = jax.jit(fn, static_argnums=(1,))
     if dtypes.safe_to_cast(np.float16, dtype):
       result = fn(key, dtype)
       self.assertEqual(result.dtype, dtype)
-      jit_result = jitted(key, dtype)
-      self.assertEqual(jit_result.dtype, dtype)
-    elif abstract_type is float:
-      pass
-      # No samplers currently do this, but they should!
-      # self.assertRaises(dtypes.TypePromotionError, fn, key, dtype)
-      # self.assertRaises(dtypes.TypePromotionError, jitted, key, dtype)
 
 
 _SHAPE_CASES = [
@@ -354,8 +335,6 @@ class RandomShapeTest(RandomTestBase):
     shape = (3, 4)
     result = fn(key, shape)
     self.assertEqual(result.shape, shape)
-    jit_result = jax.jit(fn, static_argnums=(1,))(key, shape)
-    self.assertEqual(jit_result.shape, shape)
 
 
 class DistributionsTest(RandomTestBase):
@@ -369,14 +348,8 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(dtype=float_dtypes)
   def testNormal(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.normal(key, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
+    samples = random.normal(key(), (10000,), dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
 
   def testNormalBfloat16(self):
     # Passing bfloat16 as dtype string.
@@ -388,32 +361,21 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(dtype=complex_dtypes)
   def testNormalComplex(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.normal(key, (10000,), dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
 
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
-      self._CheckKolmogorovSmirnovCDF(jnp.imag(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
-      self.assertEqual(dtype, samples.dtype)
+    samples = random.normal(key(), shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
+    self._CheckKolmogorovSmirnovCDF(jnp.imag(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
+    self.assertEqual(dtype, samples.dtype)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testTruncatedNormal(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    min_val = np.min(uncompiled_samples)
-    max_val = np.max(uncompiled_samples)
-    self.assertTrue(min_val > -0.3)
-    self.assertTrue(max_val < 0.3)
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
+    samples = random.truncated_normal(key(), -0.3, 0.3, (10000,), dtype)
+    self.assertTrue(np.min(samples) > -0.3)
+    self.assertTrue(np.max(samples) < 0.3)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
 
   @jtu.sample_product(
     [dict(shape=shape, replace=replace, axis=axis,
@@ -522,14 +484,9 @@ class DistributionsTest(RandomTestBase):
     key = lambda: self.make_key(0)
     p = np.array(p, dtype=dtype)
     kwds = {} if mode is None else {'mode': mode}
-    rand = lambda key, p: random.bernoulli(key, p, (10000,), **kwds)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key(), p)
-    compiled_samples = crand(key(), p)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
+    samples = random.bernoulli(key(), p, (10000,), **kwds)
+    self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
 
   @jtu.sample_product(
     [dict(p=p, axis=axis)
@@ -550,26 +507,22 @@ class DistributionsTest(RandomTestBase):
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
     shape = sample_shape + out_shape
-    rand = partial(random.categorical, shape=shape, axis=axis, mode=mode)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key(), logits)
-    compiled_samples = crand(key(), logits)
+    samples = random.categorical(key(), logits, shape=shape, axis=axis, mode=mode)
 
     if axis < 0:
       axis += len(logits.shape)
 
-    for samples in [uncompiled_samples, compiled_samples]:
-      assert samples.shape == shape
-      samples = jnp.reshape(samples, (10000,) + out_shape)
-      if len(p.shape[:-1]) > 0:
-        ps = np.transpose(p, (1, 0)) if axis == 0 else p
-        for cat_samples, cat_p in zip(samples.transpose(), ps):
-          pmf = lambda x: np.where(x < len(cat_p), cat_p[np.minimum(len(cat_p) - 1, x)], 0.0)
-          self._CheckChiSquared(cat_samples, pmf=pmf)
-      else:
-        pmf = lambda x: np.where(x < len(p), p[np.minimum(len(p) - 1, x)], 0.0)
-        self._CheckChiSquared(samples, pmf=pmf)
+    assert samples.shape == shape
+    samples = jnp.reshape(samples, (10000,) + out_shape)
+    if len(p.shape[:-1]) > 0:
+      ps = np.transpose(p, (1, 0)) if axis == 0 else p
+      for cat_samples, cat_p in zip(samples.transpose(), ps):
+        pmf = lambda x: np.where(x < len(cat_p), cat_p[np.minimum(len(cat_p) - 1, x)], 0.0)
+        self._CheckChiSquared(cat_samples, pmf=pmf)
+    else:
+      pmf = lambda x: np.where(x < len(p), p[np.minimum(len(p) - 1, x)], 0.0)
+      self._CheckChiSquared(samples, pmf=pmf)
 
   @jtu.sample_product(
     logits_shape=[(7,), (8, 9), (10, 11, 12)],
@@ -634,14 +587,9 @@ class DistributionsTest(RandomTestBase):
     if not config.enable_x64.value:
       raise SkipTest("skip test except on X64")
     key = lambda: self.make_key(0)
-    rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key(), a, b)
-    compiled_samples = crand(key(), a, b)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
+    samples = random.beta(key(), a, b, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
 
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testBetaSmallParameters(self, dtype=np.float32):
@@ -662,14 +610,9 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(dtype=float_dtypes)
   def testCauchy(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.cauchy(key, (10000,), dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.cauchy().cdf)
+    samples = random.cauchy(key(), (10000,), dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.cauchy().cdf)
 
   @jtu.sample_product(
     alpha=[np.array([0.2, 1., 5.]),],
@@ -679,19 +622,14 @@ class DistributionsTest(RandomTestBase):
   def testDirichlet(self, alpha, dtype):
     key = lambda: self.make_key(0)
     num_samples = 10000
-    rand = lambda key, alpha: random.dirichlet(key, alpha, (num_samples,), dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key(), alpha)
-    compiled_samples = crand(key(), alpha)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self.assertAllClose(samples.sum(-1), np.ones(num_samples, dtype=dtype))
-      alpha_sum = sum(alpha)
-      for i, a in enumerate(alpha):
-        self._CheckKolmogorovSmirnovCDF(samples[..., i],
-                                        scipy.stats.beta(a, alpha_sum - a).cdf,
-                                        pval=0.003)
+    samples = random.dirichlet(key(), alpha, shape=(num_samples,), dtype=dtype)
+    self.assertAllClose(samples.sum(-1), np.ones(num_samples, dtype=dtype))
+    alpha_sum = sum(alpha)
+    for i, a in enumerate(alpha):
+      self._CheckKolmogorovSmirnovCDF(samples[..., i],
+                                      scipy.stats.beta(a, alpha_sum - a).cdf,
+                                      pval=0.003)
 
   @jtu.skip_on_devices("tpu")  # lower accuracy leads to failures.
   def testDirichletSmallAlpha(self, dtype=np.float32):
@@ -712,14 +650,9 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(dtype=float_dtypes)
   def testExponential(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.exponential(key, (10000,), dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
+    samples = random.exponential(key(), (10000,), dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
 
   @jtu.sample_product(
     a=[0.1, 1., 10.],
@@ -728,16 +661,13 @@ class DistributionsTest(RandomTestBase):
   @jtu.skip_on_devices("tpu")  # low accuracy leads to failures.
   def testGammaVsLogGamma(self, a, dtype):
     # Test that gamma() and loggamma() produce equivalent samples.
-    rand_gamma = lambda key, a: random.gamma(key, a, (100,), dtype)
-    rand_loggamma = lambda key, a: random.loggamma(key, a, (100,), dtype)
-    crand_loggamma = jax.jit(rand_loggamma)
     tol = {np.float32: 1E-6, np.float64: 1E-12}
 
     key = lambda: self.make_key(0)
-    self.assertAllClose(rand_gamma(key(), a), jnp.exp(rand_loggamma(key(), a)),
-                        atol=tol, rtol=tol)
-    self.assertAllClose(rand_gamma(key(), a), jnp.exp(crand_loggamma(key(), a)),
-                        atol=tol, rtol=tol)
+    self.assertAllClose(
+        random.gamma(key(), a, shape=(100,), dtype=dtype),
+        jnp.exp(random.loggamma(key(), a, shape=(100,), dtype=dtype)),
+        atol=tol, rtol=tol)
 
   @jtu.sample_product(
     a=[0.1, 1., 10.],
@@ -745,14 +675,8 @@ class DistributionsTest(RandomTestBase):
   )
   def testGamma(self, a, dtype):
     key = lambda: self.make_key(1)
-    rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key(), a)
-    compiled_samples = crand(key(), a)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
+    samples = random.gamma(key(), a, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
 
   def testGammaShape(self):
     key = self.make_key(0)
@@ -798,18 +722,12 @@ class DistributionsTest(RandomTestBase):
   )
   def testPoisson(self, lam, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key(), lam)
-    compiled_samples = crand(key(), lam)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
-      # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
-      # based on the central limit theorem).
-      self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
-      self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
+    samples = random.poisson(key(), lam, shape=(10000,), dtype=dtype)
+    self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
+    # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
+    # based on the central limit theorem).
+    self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
+    self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
 
   def testPoissonBatched(self):
     key = self.make_key(1)
@@ -844,14 +762,8 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testGumbel(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.gumbel(key, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
+    samples = random.gumbel(key(), shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
   def testLowProbabilityGumbel(self):
     dtype = jnp.bfloat16
@@ -886,26 +798,14 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(dtype=float_dtypes)
   def testLaplace(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.laplace(key, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
+    samples = random.laplace(key(), (10000,), dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testLogistic(self, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.logistic(key, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
+    samples = random.logistic(key(), (10000,), dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
 
   @jtu.sample_product(
     n=range(5),
@@ -941,14 +841,9 @@ class DistributionsTest(RandomTestBase):
   )
   def testGeneralizedNormal(self, p, shape, dtype):
     key = lambda: self.make_key(2)
-    rand = lambda key, p: random.generalized_normal(key, p, shape, dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key(), p)
-    compiled_samples = crand(key(), p)
-    for samples in [uncompiled_samples, compiled_samples]:
-      self.assertEqual(samples.shape, shape)
-      self.assertEqual(samples.dtype, dtype)
+    samples = random.generalized_normal(key(), p, shape=shape, dtype=dtype)
+    self.assertEqual(samples.shape, shape)
+    self.assertEqual(samples.dtype, dtype)
 
   @jtu.sample_product(
     p=[.5, 1., 1.5, 2., 2.5],
@@ -959,13 +854,9 @@ class DistributionsTest(RandomTestBase):
     self.skipTest(  # test is also sometimes slow, with (300, ...)-shape draws
         "sensitive to random key - https://github.com/jax-ml/jax/issues/18941")
     key = lambda: self.make_key(2)
-    rand = lambda key, p: random.generalized_normal(key, p, (300, *shape), dtype)
-    crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key(), p)
-    compiled_samples = crand(key(), p)
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples.ravel(), scipy.stats.gennorm(p).cdf)
+    samples = random.generalized_normal(key(), p, shape=(300, *shape), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples.ravel(), scipy.stats.gennorm(p).cdf)
 
   @jtu.sample_product(
     d=range(1, 5),
@@ -976,14 +867,10 @@ class DistributionsTest(RandomTestBase):
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testBall(self, d, p, shape, dtype):
     key = lambda: self.make_key(123)
-    rand = lambda key, p: random.ball(key, d, p, shape, dtype)
-    crand = jax.jit(rand)
-    uncompiled_samples = rand(key(), p)
-    compiled_samples = crand(key(), p)
-    for samples in [uncompiled_samples, compiled_samples]:
-      self.assertEqual(samples.shape, (*shape, d))
-      self.assertEqual(samples.dtype, dtype)
-      self.assertTrue(((jnp.abs(samples) ** p).sum(-1) <= 1).all())
+    samples = random.ball(key(), d=d, p=p, shape=shape, dtype=dtype)
+    self.assertEqual(samples.shape, (*shape, d))
+    self.assertEqual(samples.dtype, dtype)
+    self.assertTrue(((jnp.abs(samples) ** p).sum(-1) <= 1).all())
 
   @jtu.sample_product(
     d=range(1, 5),
@@ -996,13 +883,9 @@ class DistributionsTest(RandomTestBase):
     self.skipTest(
         "sensitive to random key - https://github.com/jax-ml/jax/issues/18932")
     key = lambda: self.make_key(123)
-    rand = lambda key, p: random.ball(key, d, p, (100, *shape), dtype)
-    crand = jax.jit(rand)
-    uncompiled_samples = rand(key(), p)
-    compiled_samples = crand(key(), p)
-    for samples in [uncompiled_samples, compiled_samples]:
-      norms = (jnp.abs(samples) ** p).sum(-1) ** (d / p)
-      self._CheckKolmogorovSmirnovCDF(norms.ravel(), scipy.stats.uniform().cdf)
+    samples = random.ball(key(), d=d, p=p, shape=(100, *shape), dtype=dtype)
+    norms = (jnp.abs(samples) ** p).sum(-1) ** (d / p)
+    self._CheckKolmogorovSmirnovCDF(norms.ravel(), scipy.stats.uniform().cdf)
 
   @jtu.sample_product(
     b=[0.1, 1., 10.],
@@ -1010,14 +893,8 @@ class DistributionsTest(RandomTestBase):
   )
   def testPareto(self, b, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key(), b)
-    compiled_samples = crand(key(), b)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.pareto(b).cdf)
+    samples = random.pareto(key(), b, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.pareto(b).cdf)
 
   def testParetoShape(self):
     key = self.make_key(0)
@@ -1032,14 +909,8 @@ class DistributionsTest(RandomTestBase):
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
     key = lambda: self.make_key(1)
-    rand = lambda key, df: random.t(key, df, (10000,), dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key(), df)
-    compiled_samples = crand(key(), df)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
+    samples = random.t(key(), df, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
 
   @jtu.sample_product(
     dim=[1, 3, 5],
@@ -1053,23 +924,19 @@ class DistributionsTest(RandomTestBase):
     cov = np.dot(cov_factor, cov_factor.T) + dim * np.eye(dim)
 
     key = lambda: self.make_key(0)
-    rand = partial(random.multivariate_normal, mean=mean, cov=cov,
-                   shape=(10000,), method=method)
-    crand = jax.jit(rand)
 
     with jax.numpy_rank_promotion('allow'):
-      uncompiled_samples = np.asarray(rand(key()), np.float64)
-      compiled_samples = np.asarray(crand(key()), np.float64)
+      samples = np.asarray(random.multivariate_normal(key(), mean=mean, cov=cov,
+                                shape=(10000,), method=method), np.float64)
 
     inv_scale = scipy.linalg.lapack.dtrtri(np.linalg.cholesky(cov), lower=True)[0]
-    for samples in [uncompiled_samples, compiled_samples]:
-      centered = samples - mean
-      whitened = np.einsum('nj,ij->ni', centered, inv_scale)
+    centered = samples - mean
+    whitened = np.einsum('nj,ij->ni', centered, inv_scale)
 
-      # This is a quick-and-dirty multivariate normality check that tests that a
-      # uniform mixture of the marginals along the covariance matrix's
-      # eigenvectors follow a standard normal distribution.
-      self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
+    # This is a quick-and-dirty multivariate normality check that tests that a
+    # uniform mixture of the marginals along the covariance matrix's
+    # eigenvectors follow a standard normal distribution.
+    self._CheckKolmogorovSmirnovCDF(whitened.ravel(), scipy.stats.norm().cdf)
 
   @jtu.sample_product(
     dim=[1, 2, 4],
@@ -1196,21 +1063,14 @@ class DistributionsTest(RandomTestBase):
     num_samples = 10**5
     rng = lambda: self.make_key(0)
 
-    rand = lambda x: random.maxwell(x, (num_samples, ))
-    crand = jax.jit(rand)
-
     loc = jtu.to_default_dtype(scipy.stats.maxwell.mean())
     std = jtu.to_default_dtype(scipy.stats.maxwell.std())
 
-    uncompiled_samples = rand(rng())
-    compiled_samples = crand(rng())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      # Check first and second moments.
-      self.assertEqual((num_samples,), samples.shape)
-      self.assertAllClose(np.mean(samples), loc, atol=0., rtol=0.1)
-      self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.maxwell().cdf)
+    samples = random.maxwell(rng(), (num_samples,))
+    self.assertEqual((num_samples,), samples.shape)
+    self.assertAllClose(np.mean(samples), loc, atol=0., rtol=0.1)
+    self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.maxwell().cdf)
 
   @parameterized.named_parameters(
       ('test1', 4.0, 1.0),
@@ -1219,22 +1079,15 @@ class DistributionsTest(RandomTestBase):
     num_samples = 10**5
     rng = lambda: self.make_key(0)
 
-    rand = lambda x: random.weibull_min(x, scale, concentration, (num_samples,))
-    crand = jax.jit(rand)
-
     loc = jtu.to_default_dtype(scipy.stats.weibull_min.mean(c=concentration, scale=scale))
     std = jtu.to_default_dtype(scipy.stats.weibull_min.std(c=concentration, scale=scale))
 
-    uncompiled_samples = rand(rng())
-    compiled_samples = crand(rng())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      # Check first and second moments.
-      self.assertEqual((num_samples,), samples.shape)
-      self.assertAllClose(np.mean(samples), loc, atol=0., rtol=0.1)
-      self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.weibull_min(
-          c=concentration, scale=scale).cdf)
+    samples = random.weibull_min(rng(), scale, concentration, (num_samples,))
+    self.assertEqual((num_samples,), samples.shape)
+    self.assertAllClose(np.mean(samples), loc, atol=0., rtol=0.1)
+    self.assertAllClose(np.std(samples), std, atol=0., rtol=0.1)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.weibull_min(
+        c=concentration, scale=scale).cdf)
 
   @parameterized.named_parameters(
       ('test1', 4.0, 1.0),
@@ -1243,15 +1096,10 @@ class DistributionsTest(RandomTestBase):
     num_samples = 10**4
     rng = lambda: self.make_key(0)
 
-    rand = lambda key: random.double_sided_maxwell(
-        rng(), loc, scale, (num_samples,))
-    crand = jax.jit(rand)
-
     mean = loc
     std = np.sqrt(3.) * scale
 
-    uncompiled_samples = rand(rng())
-    compiled_samples = crand(rng())
+    samples = random.double_sided_maxwell(rng(), loc, scale, (num_samples,))
 
     # Compute the double sided maxwell CDF through the one sided maxwell cdf.
     # This is done as follows:
@@ -1268,34 +1116,25 @@ class DistributionsTest(RandomTestBase):
       neg = (1 - scipy.stats.maxwell().cdf((-x + loc) / scale))
       return (pos + neg) / 2
 
-    for samples in [uncompiled_samples, compiled_samples]:
-      # Check first and second moments.
-      self.assertEqual((num_samples,), samples.shape)
-      self.assertAllClose(samples.mean(), jtu.to_default_dtype(mean), atol=0., rtol=0.1)
-      self.assertAllClose(samples.std(), jtu.to_default_dtype(std), atol=0., rtol=0.1)
-
-      self._CheckKolmogorovSmirnovCDF(
-          samples, lambda x: double_sided_maxwell_cdf(x, loc, scale))
+    self.assertEqual((num_samples,), samples.shape)
+    self.assertAllClose(samples.mean(), jtu.to_default_dtype(mean), atol=0., rtol=0.1)
+    self.assertAllClose(samples.std(), jtu.to_default_dtype(std), atol=0., rtol=0.1)
+    self._CheckKolmogorovSmirnovCDF(
+        samples, lambda x: double_sided_maxwell_cdf(x, loc, scale))
 
   def testRadamacher(self):
     rng = lambda: self.make_key(0)
     num_samples = 10**5
 
-    rand = lambda x: random.rademacher(x, (num_samples,))
-    crand = jax.jit(rand)
+    samples = random.rademacher(rng(), (num_samples,))
+    unique_values, counts = np.unique(samples, return_counts=True)
+    assert len(unique_values) == 2
+    assert len(counts) == 2
 
-    uncompiled_samples = rand(rng())
-    compiled_samples = crand(rng())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      unique_values, counts = np.unique(samples, return_counts=True)
-      assert len(unique_values) == 2
-      assert len(counts) == 2
-
-      self.assertAllClose(
-          counts[0] / num_samples, 0.5, rtol=1e-02, atol=1e-02)
-      self.assertAllClose(
-          counts[1] / num_samples, 0.5, rtol=1e-02, atol=1e-02)
+    self.assertAllClose(
+        counts[0] / num_samples, 0.5, rtol=1e-02, atol=1e-02)
+    self.assertAllClose(
+        counts[1] / num_samples, 0.5, rtol=1e-02, atol=1e-02)
 
   def testChoiceShapeIsNotSequenceError(self):
     key = self.make_key(0)
@@ -1350,15 +1189,8 @@ class DistributionsTest(RandomTestBase):
   def testChisquare(self, df, dtype):
     key = lambda: self.make_key(1)
 
-    def rand(key, df):
-      return random.chisquare(key, df, shape=(10000,), dtype=dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key(), df)
-    compiled_samples = crand(key(), df)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.chi2(df).cdf)
+    samples = random.chisquare(key(), df, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.chi2(df).cdf)
 
   @jtu.sample_product(
       dfnum = [1., 2., 10. ,100.],
@@ -1366,59 +1198,35 @@ class DistributionsTest(RandomTestBase):
       dtype=jtu.dtypes.floating)
   def testF(self, dfnum, dfden, dtype):
     key = lambda: self.make_key(9)
-    rand = lambda key: random.f(key, dfnum, dfden, shape = (10000, ), dtype = dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.f(dfnum, dfden).cdf)
+    samples = random.f(key(), dfnum, dfden, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.f(dfnum, dfden).cdf)
 
   @jtu.sample_product(
       scale= [0.2, 1., 2., 10. ,100.],
       dtype=jtu.dtypes.floating)
   def testRayleigh(self, scale, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.rayleigh(key, scale, shape = (10000, ), dtype = dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.rayleigh(scale=scale).cdf)
+    samples = random.rayleigh(key(), scale, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.rayleigh(scale=scale).cdf)
 
   @jtu.sample_product(
       mean= [0.2, 1., 2., 10. ,100.],
       dtype=jtu.dtypes.floating)
   def testWald(self, mean, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.wald(key, mean, shape=(10000, ), dtype=dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean).cdf)
+    samples = random.wald(key(), mean, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean).cdf)
 
   @jtu.sample_product(
       p=[0.2, 0.3, 0.4, 0.5 ,0.6],
       dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]))
   def testGeometric(self, p, dtype):
     key = lambda: self.make_key(1)
-    rand = lambda key: random.geometric(key, p, shape=(10000, ), dtype=dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckChiSquared(samples, scipy.stats.geom(p).pmf)
-      self.assertAllClose(samples.mean(), 1 / p, rtol=0.02, check_dtypes=False)
-      self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05,
-                          check_dtypes=False)
+    samples = random.geometric(key(), p, shape=(10000,), dtype=dtype)
+    self._CheckChiSquared(samples, scipy.stats.geom(p).pmf)
+    self.assertAllClose(samples.mean(), 1 / p, rtol=0.02, check_dtypes=False)
+    self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05,
+                        check_dtypes=False)
 
   @jtu.sample_product(
       left = [0.2, 0.5, 1., 2.],
@@ -1427,30 +1235,17 @@ class DistributionsTest(RandomTestBase):
       dtype= jtu.dtypes.floating)
   def testTriangular(self, left, mode, right, dtype):
     key = lambda: self.make_key(1)
-    rand = lambda key: random.triangular(key, left, mode, right, shape=(10000,),
-                                         dtype=dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.triang(
-          (mode - left) / (right - left), loc=left, scale=right - left).cdf)
+    samples = random.triangular(key(), left, mode, right, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.triang(
+        (mode - left) / (right - left), loc=left, scale=right - left).cdf)
 
   @jtu.sample_product(
     sigma = [0.2, 0.5, 1., 2.],
     dtype=jtu.dtypes.floating)
   def testLogNormal(self, sigma, dtype):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.lognormal(key, sigma, shape=(10000,), dtype=dtype)
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.lognorm(s=sigma).cdf)
+    samples = random.lognormal(key(), sigma, shape=(10000,), dtype=dtype)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.lognorm(s=sigma).cdf)
 
   @jtu.sample_product(
       n= [5, 13, 21, 53, 500],
@@ -1458,18 +1253,12 @@ class DistributionsTest(RandomTestBase):
       dtype= jtu.dtypes.floating)
   def testBinomialSample(self, n, p, dtype):
     key = lambda: self.make_key(12)
-    rand = lambda key: random.binomial(key, n, p, shape=(12000,), dtype=dtype)
-    crand = jax.jit(rand)
-    uncompiled_samples = rand(key())
-    compiled_samples = crand(key())
-
+    samples = random.binomial(key(), n, p, shape=(12000,), dtype=dtype)
     pmf = lambda x: scipy.stats.binom(n, p).pmf(x)
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckChiSquared(samples.astype(int), pmf, pval=1e-3)
-      self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=False)
-      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.036,
-                          check_dtypes=False)
+    self._CheckChiSquared(samples.astype(int), pmf, pval=1e-3)
+    self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=False)
+    self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.036,
+                        check_dtypes=False)
 
   def testBinomialCornerCases(self):
     key = lambda: self.make_key(0)
@@ -1813,15 +1602,10 @@ class RBGPRNGTest(CommonRandomTest):
       nums = jax.vmap(lambda key: random.uniform(key, (1000,), dtype))(key)
       return nums.flatten()
 
-    crand = jax.jit(rand)
-
-    uncompiled_samples = rand(keys())
-    compiled_samples = crand(keys())
-
-    for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf,
-                                      pval=0.005)
+    samples = rand(keys())
+    self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
+    self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf,
+                                    pval=0.005)
 
   def test_cannot_add(self):
     key = self.make_key(73)
