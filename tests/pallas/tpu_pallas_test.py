@@ -24,11 +24,14 @@ import json
 import math
 import re
 import sys
+from typing import Any
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import api_util
 from jax import lax
+from jax._src import flattree as ft
 from jax._src import shard_map
 from jax._src import state
 from jax._src import test_util as jtu
@@ -42,8 +45,6 @@ from jax.experimental import mosaic
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
-from typing import Any
-from jax._src import flattree as ft
 import jax.numpy as jnp
 import numpy as np
 
@@ -88,7 +89,7 @@ def trace_to_jaxpr(f: Callable, *args: Any):
   return pe.trace_to_jaxpr(
       f,
       ft.flatten_args(*args),
-      api_util.debug_info("tpu_pallas_test", f, (0,) * len(args), {}),
+      api_util.debug_info('tpu_pallas_test', f, (0,) * len(args), {}),
   )
 
 
@@ -282,8 +283,11 @@ class PallasCallScalarPrefetchTest(ptu.PallasTPUTest):
       scratch: bool, vmap: bool, dyn_grid: bool):
     # Tests what we process correctly all the various inputs and outputs:
     # dynamic_grid_dims, index, inputs, outputs, scratch.
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      self.skipTest("TODO: dslice(start, 1) raises error about slice inputs being int32 and int64")
+    if jtu.test_device_matches(['cpu']) and jax.config.x64_enabled:
+      self.skipTest(
+          'TODO: dslice(start, 1) raises error about slice inputs being int32'
+          ' and int64'
+      )
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     if vmap:
       x_shape = (4, 16, 128)
@@ -1360,7 +1364,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     if self.INTERPRET:
       self.skipTest('Interpret mode does not support host memory.')
     if jax.device_count() > 1:
-      self.skipTest("Test only works with a single device.")
+      self.skipTest('Test only works with a single device.')
     def kernel(x_host_ref, y_hbm_ref):
       def body(sem):
         pltpu.async_copy(x_host_ref, y_hbm_ref, sem).wait()
@@ -1389,7 +1393,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
 
   def test_hbm_to_host_host_output_dma(self):
     if jax.device_count() > 1:
-      self.skipTest("Test only works with a single device.")
+      self.skipTest('Test only works with a single device.')
     def kernel(y_hbm_ref, x_host_ref):
       def body(sem):
         pltpu.async_copy(y_hbm_ref, x_host_ref, sem).wait()
@@ -2031,6 +2035,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     y = kernel(*xs)
     np.testing.assert_array_equal(y[:, :128], x[:, :128])
 
+
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
 
@@ -2189,7 +2194,7 @@ class PallasCallTest(ptu.PallasTPUTest):
 
   def test_scalar_any_input(self):
     if not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Needs a newer TPU")
+      self.skipTest('Needs a newer TPU')
     def kernel(src, dst, sem):
       pltpu.async_copy(src, dst, sem).wait()
 
@@ -2597,7 +2602,7 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
       self,
   ):
     if jax.device_count() > 1:
-      self.skipTest("Test only works with a single device.")
+      self.skipTest('Test only works with a single device.')
 
     def body(s_ref, x_hbm_ref, o_hbm_ref, vmem_scratch_ref):
       del s_ref, vmem_scratch_ref
@@ -2837,7 +2842,7 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
   @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
   def test_scalar_load_upcast(self, in_dtype):
     if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Triggers an XLA bug")  # TODO(b/413602952)
+      self.skipTest('Triggers an XLA bug')  # TODO(b/413602952)
     def kernel(x_ref, o_ref):
       o_ref[0, 0] = x_ref[0, 0].astype(o_ref.dtype)
     x = jnp.asarray([[-1]], dtype=in_dtype)
@@ -2854,7 +2859,7 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
     def kernel(x_ref, o_ref):
       o_ref[0, 0] = x_ref[0, x_ref[0, 0].astype(jnp.int32)].astype(o_ref.dtype)
     if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Triggers an XLA bug")  # TODO(b/413602952)
+      self.skipTest('Triggers an XLA bug')  # TODO(b/413602952)
     x = jnp.asarray([[3, 0, 0, 1]], dtype=in_dtype)
     y = pl.pallas_call(
         kernel,
@@ -3846,7 +3851,7 @@ class MiscellaneousTest(ptu.PallasTPUTest):
 
   def test_casting_bool_to_i8(self):
     if not jtu.is_device_tpu_at_least(5):
-      self.skipTest("Operation not supported on this TPU version.")
+      self.skipTest('Operation not supported on this TPU version.')
 
     def greater_than(x: jax.Array, y: jax.Array):
       def kernel(x_ref, y_ref, out_ref):
@@ -4030,24 +4035,42 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, np.roll(x, shift, axis))
 
   @parameterized.product(
-      shape=((5, 8, 64), (15, 4, 128), (8, 3, 256)),
-      shift=(2, 3),
+      shape=((5, 8, 64), (15, 4, 128), (8, 3, 256), (7, 32, 384)),
+      shift=(0, 2, 3, 19),
       dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
+      dynamic=(False, True),
   )
-  def test_roll_with_static_major_dim_shift(
-      self, shape: tuple[int, int, int], shift: int, dtype: jnp.dtype
+  def test_roll_with_major_dim_shift(
+      self,
+      shape: tuple[int, int, int],
+      shift: int,
+      dtype: jnp.dtype,
+      dynamic: bool,
   ):
+    if dynamic and not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
     x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
 
-    def kernel(x_ref, out_ref):
-      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=0)
+    if dynamic:
 
-    out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
-    )(x)
+      def kernel(x_ref, shift_ref, out_ref):
+        out_ref[...] = pltpu.roll(x_ref[...], shift=shift_ref[0], axis=0)
+
+      shift_arr = np.array([shift], dtype=np.int32)
+      out = self.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+      )(x, shift_arr)
+    else:
+
+      def kernel(x_ref, out_ref):
+        out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=0)
+
+      out = self.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+      )(x)
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
 
   @parameterized.product(
@@ -4069,6 +4092,31 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     out = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
     )(x)
+    np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
+
+  # Lane dim is aligned: shape[-1] % 128 == 0.
+  @parameterized.product(
+      shape=((3, 128), (8, 128), (16, 256), (20, 384)),
+      shift=(0, 2, 3, 129, 258),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
+  )
+  def test_roll_dynamic_aligned_lane_shift_with_no_stride(
+      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
+  ):
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer')
+    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU v4+.')
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    shift_arr = np.array([shift], dtype=np.int32)
+
+    def kernel(x_ref, shift_ref, out_ref):
+      out_ref[...] = pltpu.roll(x_ref[...], shift=shift_ref[0], axis=1)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x, shift_arr)
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
 
   @parameterized.product(
@@ -4104,8 +4152,8 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_roll_static_lane_shift_with_stride_and_aligned_shape(
       self, shape, shift, dtype, stride
   ):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer')
     # if stride is too large, the max shift on a row will exceed the column dim.
     if not jtu.is_device_tpu_at_least(5) or stride * shape[0] >= 128:
       self.skipTest('Requires TPU v5+ and not too large stride.')
@@ -5098,7 +5146,7 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   )
   def test_manual_dma_reshape_tc(self, n, m):
     if self.INTERPRET:
-      self.skipTest("Interpret not supported for manual DMA test")
+      self.skipTest('Interpret not supported for manual DMA test')
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs not supported on TPU generations <= 3')
 
