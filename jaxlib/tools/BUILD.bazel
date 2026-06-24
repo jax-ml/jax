@@ -319,7 +319,7 @@ jax_wheel(
     platform_version = "2025.1",
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = "jax_oneapi2025_1_plugin",
+    wheel_name = "jax_oneapi_plugin",
 )
 
 jax_wheel(
@@ -329,7 +329,7 @@ jax_wheel(
     platform_version = "2025.1",
     source_files = [":jax_plugin_sources"],
     wheel_binary = ":build_gpu_kernels_wheel_tool",
-    wheel_name = "jax_oneapi2025_1_plugin",
+    wheel_name = "jax_oneapi_plugin",
 )
 
 # JAX PJRT wheel targets.
@@ -467,7 +467,7 @@ jax_wheel(
     platform_version = "2025.1",
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = "jax_oneapi2025_1_pjrt",
+    wheel_name = "jax_oneapi_pjrt",
 )
 
 jax_wheel(
@@ -477,7 +477,7 @@ jax_wheel(
     platform_version = "2025.1",
     source_files = [":jax_pjrt_sources"],
     wheel_binary = ":build_gpu_plugin_wheel_tool",
-    wheel_name = "jax_oneapi2025_1_pjrt",
+    wheel_name = "jax_oneapi_pjrt",
 )
 
 # Py_import targets.

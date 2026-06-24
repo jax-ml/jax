@@ -785,12 +785,7 @@ async def main():
         # For non-editable builds, use wildcard pattern to match any ROCm version in glob patterns
         wheel_dir = wheel.replace("rocm", "rocm*").replace("-", "_")
     elif "oneapi" in wheel:
-      if args.editable:
-        # For editable builds, use the actual oneAPI version since directory paths cannot contain wildcards
-        wheel_dir = wheel.replace("oneapi", f"oneapi{args.oneapi_version}").replace("-", "_")
-      else:
-        # For non-editable builds, use wildcard pattern to match any oneAPI version in glob patterns
-        wheel_dir = wheel.replace("oneapi", "oneapi*").replace("-", "_")
+      wheel_dir = wheel.replace("-", "_")
     else:
       wheel_dir = wheel
 

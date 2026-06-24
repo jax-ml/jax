@@ -43,10 +43,6 @@ rocm_version = os.environ.get("JAX_ROCM_VERSION")
 if rocm_version:
     __version__ += f"+rocm{rocm_version.replace('.', '')}"
 
-oneapi_version = os.environ.get("JAX_ONEAPI_VERSION")
-if oneapi_version:
-    __version__ += f"+oneapi{oneapi_version.replace('.', '')}"
-
 class BinaryDistribution(Distribution):
   """This class makes 'bdist_wheel' include an ABI tag on the wheel."""
 

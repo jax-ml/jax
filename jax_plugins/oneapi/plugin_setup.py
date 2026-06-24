@@ -20,9 +20,8 @@ from setuptools import setup
 from setuptools.dist import Distribution
 
 __version__ = None
-oneapi_version = 0  # placeholder
-project_name = f"jax-oneapi{oneapi_version}-plugin"
-package_name = f"jax_oneapi{oneapi_version}_plugin"
+project_name = "jax-oneapi-plugin"
+package_name = "jax_oneapi_plugin"
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -45,19 +44,21 @@ setup(
     name=project_name,
     version=__version__,
     cmdclass=_cmdclass,
-    description=f"JAX Plugin for Intel GPUs (OneAPI:{oneapi_version})",
+    description="JAX Plugin for Intel GPUs",
     long_description="",
     long_description_content_type="text/markdown",
     author="MiniGoel",
     author_email="mini.goel@intel.com",
     packages=[package_name],
     python_requires=">=3.12",
-    install_requires=[f"jax-oneapi{oneapi_version}-pjrt=={__version__}"],
+    install_requires=[f"jax-oneapi-pjrt=={__version__}"],
     url="https://github.com/jax-ml/jax",
     license="Apache-2.0",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
     ],
     package_data={
         package_name: [
