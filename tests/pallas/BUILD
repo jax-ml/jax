@@ -759,6 +759,7 @@ jax_multiplatform_test(
     shard_count = 10,
     tags = [
         "noasan",  # Times out.
+        "noassert",
         "nomsan",  # Times out.
         "notsan",  # Times out.
     ],

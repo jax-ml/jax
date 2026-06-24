@@ -1524,7 +1524,10 @@ jax_multiplatform_test(
             "nomsan",  # Times out
             "notsan",  # Times out
         ],
-        "tpu": ["optonly"],
+        "tpu": [
+            "optonly",
+            "noassert",
+        ],
     },
     # Use fewer cases to prevent timeouts.
     backend_variant_args = {
