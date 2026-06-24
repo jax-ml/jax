@@ -60,6 +60,7 @@ pytype_library(
         "//jax/_src:dtypes",
         "//jax/_src:effects",
         "//jax/_src:export",
+        "//jax/_src:flattree",
         "//jax/_src:frozen_dict",
         "//jax/_src:hijax",
         "//jax/_src:lax",

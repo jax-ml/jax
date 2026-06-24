@@ -22,9 +22,10 @@ import itertools
 import operator
 from typing import Any, TypeVar
 
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
-    equality_errors_pytreedef, FlatTree)
+    equality_errors_pytreedef)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -142,7 +143,7 @@ def _switch_internal(
 
   dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
-  args = FlatTree.flatten((operands, {}))
+  args = ft.flatten((operands, {}))
   avals = args.map(core.typeof)
 
   if config.mutable_array_checks.value:
@@ -270,7 +271,7 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     else:
       return false_fun(*operands)
 
-  args = FlatTree.flatten((operands, {}))
+  args = ft.flatten((operands, {}))
   dbg_true = api_util.debug_info("cond", true_fun, operands, {})
   api_util.check_no_transformed_refs_args(lambda: dbg_true, args.vals)
   avals = args.map(core.typeof)
@@ -874,7 +875,7 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-      transposed, FlatTree.flatten_args(*in_avals), dbg
+      transposed, ft.flatten_args(*in_avals), dbg
   )
   return closed_jaxpr, out_avals.tree
 

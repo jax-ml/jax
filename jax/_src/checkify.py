@@ -48,7 +48,8 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.tree_util import tree_flatten
-from jax._src.tree_util import tree_map, FlatTree
+from jax._src import flattree as ft
+from jax._src.tree_util import tree_map
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
 from jax._src.util import (split_list, safe_map, safe_zip, unzip3,
@@ -748,7 +749,7 @@ def jaxpr_to_checkify_jaxpr(
     return (error, out), error_effects
 
   debug_info = jaxpr.jaxpr.debug_info.with_unknown_names()
-  args_avals = FlatTree.flatten((flat_err_and_in_vals, {}))
+  args_avals = ft.flatten((flat_err_and_in_vals, {}))
   checked_jaxpr, full_out_avals = pe.trace_to_jaxpr(fun_wrapped, args_avals, debug_info)
   out_avals, error_effects = full_out_avals.unpack()
   error_effects = error_effects.unflatten().val
@@ -835,7 +836,7 @@ def checkify_while_body_jaxpr(
 
   jaxpr, _ = pe.trace_to_jaxpr(
       new_body_f,
-      FlatTree.flatten(((*c_consts_avals, *body_jaxpr.in_avals), {})),
+      ft.flatten(((*c_consts_avals, *body_jaxpr.in_avals), {})),
       debug_info=body_jaxpr.jaxpr.debug_info.with_unknown_names())
   err_vals, err_tree = jtu.tree_flatten(error)
   err_vals = map(core.typeof, err_vals)
@@ -1004,7 +1005,7 @@ def shard_map_error_check(
   with core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(check_vma):
     checked_jaxpr, _ = pe.trace_to_jaxpr(
         expand_errors_leading_dim,
-        FlatTree.flatten((tuple(checked_jaxpr.in_avals), {})),
+        ft.flatten((tuple(checked_jaxpr.in_avals), {})),
         debug_info=checked_jaxpr.jaxpr.debug_info)
 
   # Update shard_map params to account for extra error values.
@@ -1227,7 +1228,7 @@ def checkify(f: Callable[..., Out],
   @traceback_util.api_boundary
   def checked_fun(*args, **kwargs):
     # close over all arguments so they're not turned into abstract values.
-    in_avals = FlatTree.flatten(((), {}))
+    in_avals = ft.flatten(((), {}))
     closed_f = lambda: f(*args, **kwargs)
     # stage:
     debug_info = api_util.debug_info("checkify", f, args, kwargs).with_unknown_names()

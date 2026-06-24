@@ -31,6 +31,7 @@ from jax._src import effects
 from jax._src import hijax
 from jax._src import numpy as jnp
 from jax._src import state
+from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src.frozen_dict import FrozenDict
@@ -355,7 +356,7 @@ def _batch_block_mapping(
 
   with grid_mapping.trace_env():
     jaxpr, out_avals = pe.trace_to_jaxpr(
-        _block_map_function, tree_util.FlatTree.flatten_args(*idx_avals),
+        _block_map_function, ft.flatten_args(*idx_avals),
         block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()
     )
   shape = block_mapping.block_shape
@@ -784,7 +785,7 @@ def _trace_kernel_to_jaxpr(
     fun: Callable,
     debug_info: jax_core.DebugInfo,
     grid_mapping: GridMapping,
-    kernel_avals: tree_util.FlatTree,  # of AbstractRef
+    kernel_avals: ft.FlatTree,  # of AbstractRef
     kernel_in_transforms: tuple[tuple[state.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.Jaxpr, tuple[jax_typing.Array, ...]]:
@@ -1084,7 +1085,7 @@ def _pallas_call_state_discharge_rule(
   )
   closed_jaxpr, _ = pe.trace_to_jaxpr(
       _rewritten_body,
-      tree_util.FlatTree.flatten_args(
+      ft.flatten_args(
           *index_map_avals,
           *ref_avals,
           *jaxpr_in_avals,
@@ -1291,7 +1292,7 @@ def _pallas_call(
       kernel_args_kwargs = (kernel_args, scratch_args)
     else:
       kernel_args_kwargs = (kernel_args + list(scratch_args), {})
-    kernel_args_ft = tree_util.FlatTree.flatten(
+    kernel_args_ft = ft.flatten(
         kernel_args_kwargs, registry=tree_util.default_registry
     )
     flat_kernel_avals = kernel_args_ft.map(

@@ -18,7 +18,7 @@ import math
 from typing import Any
 from collections.abc import Sequence
 
-from jax._src import tree_util
+from jax._src import flattree as ft
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
@@ -89,7 +89,7 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
     A pallas_core.CostEstimate object containing the cost estimate.
   """
   partial_fun = functools.partial(fun, **kwargs)
-  in_args_ft = tree_util.FlatTree.flatten((args, {}))
+  in_args_ft = ft.flatten((args, {}))
   in_avals_ft = in_args_ft.map(
       lambda x: jax_core.ShapedArray(x.shape, x.dtype)
   )

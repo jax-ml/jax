@@ -36,6 +36,7 @@ from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import state
+from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import typing as jax_typing
 from jax._src import util
@@ -659,7 +660,7 @@ def wrap_with_transforms(
     ref_transforms: tuple[tuple[state_types.Transform, ...], ...],
 ) -> Callable:
   def wrapped(*args, **kwargs):
-    args_ft = tree_util.FlatTree.flatten(
+    args_ft = ft.flatten(
         (args, kwargs), registry=tree_util.default_registry
     )
     transformed_ft = args_ft.map2(
