@@ -33,6 +33,9 @@ if [[ -z "$JAXCI_XLA_GIT_DIR" && -z "$JAXCI_CLONE_MAIN_XLA" ]]; then
     export JAXCI_CLONE_MAIN_XLA=1
 fi
 
+mkdir /bazeltmpfs
+mount -t tmpfs -o size=32G tmpfs /bazeltmpfs
+
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
@@ -116,7 +119,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} \
     --strategy=TestRunner=local \
     --local_test_jobs=$J \
-    --test_env=JAX_TEST_NUM_THREADS=$J \
+    --test_env=JAX_TEST_NUM_THREADS=64 \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_ENABLE_TPU_XDIST=1 \
@@ -159,6 +162,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --local_test_jobs=1 \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
+    --test_env=JAX_TEST_NUM_THREADS=64 \
     --test_env=JAX_PLATFORMS=tpu,cpu \
     $COMMON_TPU_TEST_ENV_VARS \
     --test_tag_filters=multiaccelerator \
@@ -184,7 +188,7 @@ else
   echo "::group::Bazel TPU single-accelerator tests" >&2
   INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
 
-  bazel test \
+  bazel --output_base=/bazeltmpfs test \
     --invocation_id="$INVOCATION_ID_SINGLE" \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
@@ -199,7 +203,7 @@ else
     --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} \
     --strategy=TestRunner=local \
     --local_test_jobs=$J \
-    --test_env=JAX_TEST_NUM_THREADS=$J \
+    --test_env=JAX_TEST_NUM_THREADS=64 \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_ENABLE_TPU_XDIST=1 \
@@ -211,6 +215,7 @@ else
     --test_output=errors \
     -- \
     //jaxlib/tools:check_tpu_wheel_sources_test \
+    //tests:tpu_tests \
     //tests/pallas:ops_test_tpu \
     //tests/pallas:export_back_compat_pallas_test_tpu \
     //tests/pallas:tpu_ops_test_tpu \
@@ -242,7 +247,7 @@ else
   echo "::group::Bazel TPU multi-accelerator tests" >&2
   INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
 
-  bazel test \
+  bazel --output_base=/bazeltmpfs test \
     --invocation_id="$INVOCATION_ID_MULTI" \
     --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
@@ -256,6 +261,7 @@ else
     --strategy=TestRunner=local \
     --local_test_jobs=1 \
     --test_env=JAX_ACCELERATOR_COUNT=${NB_TPUS} \
+    --test_env=JAX_TEST_NUM_THREADS=64 \
     --repo_env=USE_MINIMAL_SHARD_COUNT=True \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_PLATFORMS=tpu,cpu \
