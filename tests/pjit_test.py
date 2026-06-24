@@ -11252,17 +11252,33 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return jax.reshard(x, P(reduced={'x'}))
 
     if jtu.is_device_tpu_at_least(7):
-      ag = compute_on2(ag, compute_type='tpu_sparsecore',
-                       out_memory_spaces=jax.memory.Space.Device,
-                       compiler_options={'sparse_core_config': {'core_ids': [0]}})
+      ag = compute_on2(
+          ag,
+          compute_type='tpu_sparsecore',
+          out_memory_spaces=jax.memory.Space.Device,
+          compiler_options={
+              'sparse_core_config': {
+                  'core_ids': [0],
+                  'core_id_mutability': 'False',
+              }
+          },
+      )
 
     def rs(x):
       return jax.reshard(x, (P('x', None), P(None, 'x')))
 
     if jtu.is_device_tpu_at_least(7):
-      rs = compute_on2(rs, compute_type='tpu_sparsecore',
-                       out_memory_spaces=jax.memory.Space.Device,
-                       compiler_options={'sparse_core_config': {'core_ids': [1]}})
+      rs = compute_on2(
+          rs,
+          compute_type='tpu_sparsecore',
+          out_memory_spaces=jax.memory.Space.Device,
+          compiler_options={
+              'sparse_core_config': {
+                  'core_ids': [1],
+                  'core_id_mutability': 'False',
+              }
+          },
+      )
 
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def fsdp_pipe(f, x, ws):
