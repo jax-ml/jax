@@ -315,6 +315,8 @@ cc_library(
 nanobind_pywrap_extension(
     name = "weakref_lru_cache",
     srcs = [
+        "strong_lru_cache.cc",
+        "strong_lru_cache.h",
         "weak_value_interner.cc",
         "weak_value_interner.h",
         "weakref_lru_cache.cc",

@@ -36,7 +36,7 @@ from jax._src import config
 from jax._src import traceback_util
 from jax._src.lib import _jax
 from jax._src.typing import Array, DType, DTypeLike
-from jax._src.util import StrictABC, set_module
+from jax._src.util import StrictABC, set_module, cache
 
 traceback_util.register_exclusion(__file__)
 
@@ -521,7 +521,7 @@ def issubdtype(a: DTypeLike | ExtendedDType | None,
   )
 
 
-@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
+@cache(max_size=512, trace_context_in_key=False)  # don't use util.memoize because there is no X64 dependence.
 def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
                        b: type | np.dtype | ExtendedDType) -> bool:
   # First handle extended dtypes, which require their own logic.

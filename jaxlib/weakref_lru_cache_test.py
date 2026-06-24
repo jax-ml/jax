@@ -629,5 +629,96 @@ class WeakKeyWeakValueCacheTest(absltest.TestCase):
       t.join()
 
 
+class StrongLRUCacheTest(absltest.TestCase):
+
+  def testBasic(self):
+    call_count = 0
+    def f(x, y):
+      nonlocal call_count
+      call_count += 1
+      return x + y
+
+    cache = weakref_lru_cache.strong_lru_cache(f, lambda: None, 2048)
+
+    self.assertEqual(cache(1, 2), 3)
+    self.assertEqual(call_count, 1)
+
+    # Hit
+    self.assertEqual(cache(1, 2), 3)
+    self.assertEqual(call_count, 1)
+
+    # Miss
+    self.assertEqual(cache(2, 3), 5)
+    self.assertEqual(call_count, 2)
+
+    self.assertEqual(len(cache.cache_keys()), 2)
+    cache.cache_clear()
+    self.assertEqual(len(cache.cache_keys()), 0)
+
+  def testEvictionIsLRU(self):
+    cache = weakref_lru_cache.strong_lru_cache(
+        lambda x: x, lambda: None, 2, num_shards=1
+    )
+
+    cache(1)
+    cache(2)
+    cache(3)  # evicts 1
+
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 3)
+    self.assertEqual(info.hits, 0)
+
+    cache(2)  # hit
+    info = cache.cache_info()
+    self.assertEqual(info.hits, 1)
+
+    cache(1)  # miss (evicted)
+    info = cache.cache_info()
+    self.assertEqual(info.misses, 4)
+
+  def testRecursiveFunction(self):
+    def recursive_fn(x):
+      return cache(x)
+
+    cache = weakref_lru_cache.strong_lru_cache(
+        recursive_fn, lambda: None, 2048
+    )
+
+    with self.assertRaisesRegex(RecursionError, "Recursively calling"):
+      cache(1)
+
+  def testMultiThreaded(self):
+    cache = weakref_lru_cache.strong_lru_cache(
+        lambda x: x, lambda: None, 2048
+    )
+    num_threads = 10
+    actions_per_thread = 100
+
+    def worker():
+      for i in range(actions_per_thread):
+        cache(i % 10)
+        cache.cache_info()
+
+    threads = [threading.Thread(target=worker) for _ in range(num_threads)]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join()
+
+  def testShardedCache(self):
+    cache = weakref_lru_cache.strong_lru_cache(
+        lambda x: x, lambda: None, maxsize=12, num_shards=4
+    )
+    # Each shard has max size (12 + 3) / 4 = 3. Total max size is 12.
+    for i in range(20):
+      cache(i)
+
+    info = cache.cache_info()
+    self.assertLessEqual(info.currsize, 12)
+
+    cache.cache_clear()
+    info = cache.cache_info()
+    self.assertEqual(info.currsize, 0)
+
 if __name__ == "__main__":
   absltest.main()
