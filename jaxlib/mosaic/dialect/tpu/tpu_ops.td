@@ -34,6 +34,7 @@ def TPU_Vmask : VectorOfRankAndType<[2, 3], [I1]>;
 
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
+def TPU_BarrierType : TPU_Type<"Barrier", "barrier", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
 
 // All indices/sizes are in element-space.
@@ -1197,6 +1198,12 @@ def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
   let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
 }
 
+def TPU_BarrierWaitOp : TPU_Op<"barrier_wait"> {
+  let arguments = (ins MemRefOf<[TPU_BarrierType]>:$barrier);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ $barrier attr-dict `:` type($barrier) `->` type($result)}];
+}
+
 def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
   let arguments = (ins
     MemRefOf<[TPU_SemaphoreType]>:$semaphore,
@@ -1210,6 +1217,12 @@ def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
 def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
   let arguments = (ins);
   let results = (outs MemRefOf<[TPU_SomeSemaphoreType]>:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
+def TPU_AllocaBarrierOp : TPU_Op<"barrier_alloc"> {
+  let arguments = (ins);
+  let results = (outs MemRefOf<[TPU_BarrierType]>:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
@@ -1239,6 +1252,27 @@ let assemblyFormat = [{
     // A backward-compatible builder that sets `subcore_id` to nullptr.
     OpBuilder<(ins "Value":$semaphore, "Value":$amount, "Value":$device_id, "Value":$core_id)>,
   ];
+}
+
+def TPU_BarrierArriveOp : TPU_Op<"barrier_arrive", [AttrSizedOperandSegments]> {
+  let summary = [{Arrives at a barrier locally or remotely, optionally with a value.}];
+  let description = [{
+    Signals arrival at `$barrier` locally or remotely, optionally writing `$value`.
+  }];
+  let arguments = (ins
+    MemRefOf<[TPU_BarrierType]>:$barrier,
+    Optional<I32>:$value,
+    Optional<I32>:$device_id,
+    Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id
+  );
+  let assemblyFormat = [{
+    $barrier (`,` $value^)? (`device_id` $device_id^)? (`core_id` $core_id^)? (`subcore_id` $subcore_id^)? attr-dict `:` type($barrier)
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    mlir::tpu::CoreType getTargetCoreType();
+  }];
 }
 
 def TPU_BarrierOp : TPU_Op<"barrier"> {
