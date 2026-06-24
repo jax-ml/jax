@@ -1103,7 +1103,10 @@ def _gmem_slice_and_predicate(
   """Returns the GMEM slice and predicate for the given async op."""
   gmem_slice: list[ir.Value | fa.FragmentedArray | utils.DynamicSlice]
   gmem_slice = []
-  predicate = dict(predicate=ctx.single_lane_predicate)
+  predicate = ctx.single_lane_predicate
+  if op.predicate is not None:
+    predicate = arith.andi(predicate, op.predicate)
+  predicate = dict(predicate=predicate)
   for idx, size in zip(op.indices, op.slice_lengths, strict=True):
     if isinstance(idx.type, ir.IntegerType):
       idx_int = arith.index_cast(ir.IndexType.get(), idx)
