@@ -203,8 +203,9 @@ class CacheKeyTest(jtu.JaxTestCase):
           r'\}'
       )
       with computation.context:
-        updated_module = cache_key._remove_custom_partitioning_callbacks(
+        updated_module = cache_key._remove_callbacks(
             type_cast(ir.Module, computation.operation.clone()),
+            ignore_callbacks=cache_key.IgnoreCallbacks.ALL,
         )
         bcs = [
             match[2]
@@ -222,12 +223,38 @@ class CacheKeyTest(jtu.JaxTestCase):
           devices,
           compile_options,
           backend,
-          ignore_custom_partitioning=True,
+          ignore_callbacks=cache_key.IgnoreCallbacks.CUSTOM_PARTITIONING,
       )
       expected_hash = cache_key.get(
           updated_module, devices, compile_options, backend
       )
       self.assertEqual(expected_hash, hash_without_callback_ptrs)
+
+  @jtu.skip_on_devices("cpu")
+  def test_host_callbacks_ptrs_removed(self):
+    def _host_callback(x, y):
+      jax.debug.print("x={x[0]} y={y[0]}", x=x, y=y)
+
+    computation = (
+        jax.jit(_host_callback)
+        .lower(
+            jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+            jax.ShapeDtypeStruct([1024], dtype=jax.numpy.float32),
+        )
+        .compiler_ir()
+    )
+    pattern = r'(.*?backend_config\s*=\s*"([^"]*)".*?)'
+    with computation.context:
+      updated_module = cache_key._remove_callbacks(
+          type_cast(ir.Module, computation.operation.clone()),
+          ignore_callbacks=cache_key.IgnoreCallbacks.ALL,
+      )
+      bcs = [
+          match[1]
+          for match in re.findall(pattern, str(updated_module), re.DOTALL)
+      ]
+      for bc in bcs:
+        self.assertEqual(bc, "REMOVED")
 
   def test_different_device_assignment(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()

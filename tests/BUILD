@@ -1757,7 +1757,6 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src:compilation_cache_internal",
         "//jax/_src:compiler",
-        "//jax/experimental",
     ] + py_deps([
         "absl/testing",
         "numpy",
