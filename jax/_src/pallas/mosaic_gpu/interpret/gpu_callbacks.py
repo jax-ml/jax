@@ -1336,9 +1336,9 @@ def wgmma(
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))  # pyrefly: ignore[redefinition]
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))  # pyrefly: ignore[redefinition]
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))  # pyrefly: ignore[redefinition]
+  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
+  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
+  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
 
   shared_memory = _get_shared_memory()
   global_thread_id = shared_memory.get_global_thread_id(device_id, thread_id)
@@ -1427,9 +1427,9 @@ def copy_smem_to_gmem(
   grid_point_coords: tuple[int, ...] = jax.tree.map(int, grid_point_coords)  # pyrefly: ignore[redefinition]
   thread_id: int = int(thread_id)  # pyrefly: ignore[redefinition]
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))  # pyrefly: ignore[redefinition]
+  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))  # pyrefly: ignore[redefinition]
+  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
 
   if predicate is not None:
     raise NotImplementedError("predicate not supported")

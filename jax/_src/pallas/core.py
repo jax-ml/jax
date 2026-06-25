@@ -1272,7 +1272,7 @@ def get_grid_mapping(
     dim_check: Any = jax_core.is_constant_dim
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
   grid_mapping_grid: GridMappingGrid = tuple(  # pyrefly: ignore[bad-assignment]
-      dynamic_grid_dim if (  # pyrefly: ignore[bad-argument-type]
+      dynamic_grid_dim if (
           d is None or (not jax_core.is_constant_dim(d) and not dynamic_shapes_export_enabled())
       ) else d
       for d in grid_spec.grid
@@ -1787,7 +1787,7 @@ def default_mesh_discharge_rule(
   )(*args)
 
   # ``outs`` lacks the unmodified inputs. Add them back in.
-  all_outs = [None] * len(args)  # pyrefly: ignore[unsupported-assignment]
+  all_outs = [None] * len(args)
   for out_idx, in_idx in enumerate(modified_idxs):
     all_outs[in_idx] = outs[out_idx]
   return all_outs, ()

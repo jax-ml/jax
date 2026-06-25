@@ -153,8 +153,7 @@ class BatchTracer(Tracer['BatchTrace']):
     elif type(batch_dim) is int:
       aval = core.mapped_aval(aval.shape[batch_dim], batch_dim, aval)
     elif isinstance(aval, hijax.HiType):
-      # pyrefly: ignore[bad-argument-type]  # pyrefly#2499
-      aval = aval.dec_rank(trace.axis_data.size, batch_dim)
+      aval = aval.dec_rank(trace.axis_data.size, batch_dim)  # pyrefly: ignore[bad-argument-type]
     else:
       raise Exception("batch dim should be int or `None`")
 

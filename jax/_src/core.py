@@ -708,7 +708,7 @@ class Primitive:
   def bind_with_trace(self, trace, args, avals, params, /):
     if self.is_high(*avals, **params) and trace.requires_low:
       with set_current_trace(trace):
-        return self.to_lojax(*args, **params)  # pyrefly: ignore[not-callable]
+        return self.to_lojax(*args, **params)
     return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):

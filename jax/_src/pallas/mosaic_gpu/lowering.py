@@ -1347,7 +1347,7 @@ def _multiple_of_wg_lowering_rule(ctx: LoweringRuleContext, val, *, values):
   if aval.shape:
     raise NotImplementedError("multiple_of only supports scalar inputs.")
   for multiple in values:
-    val = mgpu.dialect.assume_multiple(val, multiple)  # pyrefly: ignore[missing-attribute]
+    val = mgpu.dialect.assume_multiple(val, multiple)
   return val
 
 
@@ -2874,7 +2874,7 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
   for i in reversed(range(y.bit_length() - 1)):
     res = mul_op(res, res)  # pyrefly: ignore[no-matching-overload]
     if (y >> i) & 1:
-      res = mul_op(res, x)  # pyrefly: ignore[no-matching-overload]
+      res = mul_op(res, x)
   return res
 
 

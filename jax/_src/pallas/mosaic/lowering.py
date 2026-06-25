@@ -4769,7 +4769,7 @@ def _semaphore_signal_lowering_rule(
         )
       core_index = core_id
   tpu.sem_signal(sem, value, device_id=device_id, core_id=core_index,
-                 subcore_id=subcore_index)  # pyrefly: ignore[unexpected-keyword]
+                 subcore_id=subcore_index)
   return []
 
 
@@ -4827,7 +4827,7 @@ def _dma_start_lowering_rule(
         source_semaphore=src_sem,
         device_id=device_id,
         core_id=core_id,
-        subcore_id=subcore_id,  # pyrefly: ignore[unexpected-keyword]
+        subcore_id=subcore_id,
         priority=priority,
     )
     return []

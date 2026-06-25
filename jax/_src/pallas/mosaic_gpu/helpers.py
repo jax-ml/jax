@@ -281,7 +281,7 @@ def planar_snake(
   and when moving from one tile to another, the indices increase along columns
   in one of them and decrease in the other.
   """
-  tile_width = jnp.int32(tile_width)  # pyrefly: ignore[bad-assignment]
+  tile_width = jnp.int32(tile_width)
   major_size = jnp.int32(shape[1 - minor_dim])
   minor_size = jnp.int32(shape[minor_dim])
 

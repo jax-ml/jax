@@ -76,7 +76,7 @@ def _lower_and_eval(
   lo_jaxpr = pe.lower_jaxpr2(jaxpr)
   lo_args = [
       lo_val for aval, x in zip(jaxpr.in_avals, args)
-      for lo_val in aval.lower_val(x)  # pyrefly: ignore[missing-attribute]
+      for lo_val in aval.lower_val(x)
   ]
   lo_outs = eval_jaxpr_p.bind(*lo_args, jaxpr=lo_jaxpr)
   lo_outs_ = iter(lo_outs)
@@ -419,7 +419,7 @@ class CustomJVPCallPrimitive(core.Primitive):
   def is_high(self, *_, call_jaxpr, **__):
     return call_jaxpr.jaxpr.is_high
 
-  def to_lojax(self, *hi_args, call_jaxpr: core.ClosedJaxpr, **params):  # pyrefly: ignore[bad-override-mutable-attribute]
+  def to_lojax(self, *hi_args, call_jaxpr: core.ClosedJaxpr, **params):
     return _lower_and_eval("custom_jvp_call", call_jaxpr, hi_args)
 
   def get_bind_params(self, params):
@@ -1028,7 +1028,7 @@ class CustomVJPCallPrimitive(core.Primitive):
   def is_high(self, *_, call_jaxpr, **__):
     return call_jaxpr.jaxpr.is_high
 
-  def to_lojax(self, *hi_args, call_jaxpr: core.ClosedJaxpr, **params):  # pyrefly: ignore[bad-override-mutable-attribute]
+  def to_lojax(self, *hi_args, call_jaxpr: core.ClosedJaxpr, **params):
     return _lower_and_eval("custom_vjp_call", call_jaxpr, hi_args)
 
   def get_bind_params(self, params):

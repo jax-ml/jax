@@ -80,7 +80,7 @@ class HiPrimitive(core.Primitive):
     assert False, "must override"
 
   # lowering implements the primitive in terms of lojax inputs/outputs/ops
-  def to_lojax(self, *lotypes_wrapped_in_hitypes, **params):  # pyrefly: ignore[bad-override]
+  def to_lojax(self, *lotypes_wrapped_in_hitypes, **params):
     assert False, f"must override for {self}"
 
   # autodiff interface

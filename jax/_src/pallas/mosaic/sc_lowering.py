@@ -478,7 +478,7 @@ def _dma_start_lowering_rule(
           device_id=device_id,
           priority=priority,
           core_id=core_index,
-          subcore_id=subcore_index,  # pyrefly: ignore[unexpected-keyword]
+          subcore_id=subcore_index,
       )
       return []
 

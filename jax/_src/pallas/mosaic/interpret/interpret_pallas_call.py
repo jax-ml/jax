@@ -2378,8 +2378,8 @@ def interpret_pallas_call(
           assert len(cur_start_indices[num_inputs + j].shape) == 1
           assert len(next_start_indices[num_inputs + j].shape) == 1
           transform = indexing.NDIndexer(
-              indices=tuple(  # pyrefly: ignore[bad-argument-type]
-                  indexing.ds(st, sz) if not iid else st  # pyrefly: ignore[bad-argument-type]
+              indices=tuple(
+                  indexing.ds(st, sz) if not iid else st
                   for st, sz, iid in zip(
                       cur_start_indices[num_inputs + j],
                       block_shapes[num_inputs + j],
