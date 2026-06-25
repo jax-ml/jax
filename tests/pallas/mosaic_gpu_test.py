@@ -2944,6 +2944,33 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(out0, src)
     np.testing.assert_array_equal(out1, src)
 
+  def test_tmem_aliased_refs_collision(self):
+    # This is a regression test for layout inference of aliased refs.
+    # Aliased refs with the same shape and dtype should be treated as distinct
+    # references. I.e. they can have different TMEM layouts.
+    shape, dtype = (128, 128), jnp.float16
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct((), dtype))
+    def kernel(o_ref):
+      del o_ref
+      def _scope(fmt_str, aliased_ref):
+        [tmem_ref] = aliased_ref
+        plgpu.print_layout(fmt_str, tmem_ref)
+
+      pl.run_scoped(
+          functools.partial(_scope, "ref0: {}"),
+          plgpu.RefUnion(plgpu.TMEM(shape, dtype, packed=False)),
+      )
+      pl.run_scoped(
+          functools.partial(_scope, "ref1: {}"),
+          plgpu.RefUnion(plgpu.TMEM(shape, dtype, packed=True)),
+      )
+
+    with self.capture_stdout() as output:
+      jax.jit(kernel).lower()
+    self.assertIn("ref0: TMEM_DEFAULT(packing=1)", output())
+    self.assertIn("ref1: TMEM_DEFAULT(packing=2)", output())
+
   @parameterized.product(
       small_ty=[jnp.int4, jnp.uint4],
       large_ty=[jnp.float8_e4m3fn, jnp.float16, jnp.bfloat16, jnp.float32, jnp.int8, jnp.int16, jnp.int32],

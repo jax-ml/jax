@@ -482,11 +482,17 @@ class ModuleContext:
   warp_axis_name: jax_core.AxisName | None = None
   outer_traceback: xc.Traceback | None = None
   _smem_allocation_counter: int = dataclasses.field(default=0, init=False)
+  _tmem_allocation_counter: int = dataclasses.field(default=0, init=False)
 
   def next_smem_allocation_id(self) -> int:
     assert self.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
     self._smem_allocation_counter += 1
     return self._smem_allocation_counter
+
+  def next_tmem_allocation_id(self) -> int:
+    assert self.lowering_semantics == mgpu.LoweringSemantics.Warpgroup
+    self._tmem_allocation_counter += 1
+    return self._tmem_allocation_counter
 
   @property
   def single_lane_predicate(self) -> ir.Value:
@@ -561,9 +567,17 @@ class ModuleContext:
           mgpu_utils.dtype_to_ir_type(struct.dtype),
           memory_space=mgpu_utils.tmem(),
       )
-      tmem_ref = mgpu.dialect.slice_tmem(
-          type, self.tmem_base, self.tmem_used_cols
+      slice_op = mgpu.dialect.SliceTmemOp(
+          type,
+          self.tmem_base,
+          self.tmem_used_cols,
       )
+      # TODO(allanrenucci): Pass alias_id directly to SliceTmemOp after jaxlib
+      # v0.11.0 release.
+      alias_id = self.next_tmem_allocation_id()
+      i64 = ir.IntegerType.get_signless(64)
+      slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
+      tmem_ref = slice_op.result
       layout_attr = mgpu.to_layout_attr(layout)
       tmem_ref = mgpu.dialect.tmem_layout_cast(tmem_ref, layout_attr)
     cols_used = layout.cols_in_shape(
@@ -1512,7 +1526,6 @@ def _extract_aliased_ref(
     Sequence[state_types.Transform],
     Sequence[state_types.Transform],
 ]:
-  i32 = ir.IntegerType.get_signless(32)
   # Looks for the first transform being an ExtractAliasedRef and pulls out the
   # Ref there, updating the transforms.
   match transforms:
@@ -1608,8 +1621,14 @@ def _extract_aliased_ref(
           ref_ty = ir.MemRefType.get(
               transformed_shape, mlir_dtype, memory_space=mgpu_utils.tmem()
           )
+          # TODO(allanrenucci): Use alias_id directly from SliceTmemOp after
+          # jaxlib v0.11.0 release.
+          alloc_id = ir.IntegerAttr(source_slice_op.attributes["alias_id"]).value
+          # TODO(bchetioui): Use a scheme resilient to hash collisions.
+          alias_id = hash((offset, alloc_id, alias_group_idx))
           slice_op = mgpu.dialect.SliceTmemOp(ref_ty, ref, total_offset)
-          slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i32, alias_group_idx)
+          i64 = ir.IntegerType.get_signless(64)
+          slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
           ref = slice_op.result
           assert layout is not None
           layout_attr = mgpu.layouts.to_layout_attr(layout)

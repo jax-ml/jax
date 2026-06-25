@@ -1123,11 +1123,15 @@ def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
     The principal use case for this op is to do a single TMEM allocation and
     slice it into multiple smaller TMEM references. `source` is the large TMEM
     allocation and `offset` is the number of columns to start slicing from.
+
+    `slice_tmem` may optionally carry an `alias_id` attribute that is used to
+    differentiate between potentially aliasing allocations.
   }];
 
   let arguments = (ins
     MemRefRankOf<[AnyType], [2]>:$source,
-    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$offset,
+    OptionalAttr<I64Attr>:$alias_id
   );
 
   let results = (outs MemRefRankOf<[AnyType], [2]>);
