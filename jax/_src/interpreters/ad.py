@@ -457,7 +457,6 @@ class RefAccum(GradAccum):
     if self.ref is None:
       self.ref = core.new_ref(x)
     else:
-      ct_check(self, x)
       self.ref.addupdate(x)
 
   def freeze(self):
