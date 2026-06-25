@@ -1551,6 +1551,7 @@ from jax.extend.mlir.dialects import func
 from jax.extend.mlir.dialects import stablehlo as hlo
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax.interpreters.mlir import make_ir_context
 
 class MlirContext(NamedTuple):
   module: ir.Module
@@ -1571,7 +1572,7 @@ def xla_callable(hashable_jaxpr: IDHashable,
   consts = [x.val for x in hashable_consts]
   in_avals = [v.aval for v in jaxpr.in_binders[len(consts):]]
 
-  with ir.Context() as ctx, ir.Location.unknown(ctx):
+  with make_ir_context() as ctx, ir.Location.unknown(ctx):
     hlo.register_dialect(ctx)
     m = ir.Module.create()
     c = MlirContext(m, ir.SymbolTable(m.operation))
