@@ -4503,10 +4503,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, arr * 2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
-    with self.assertRaisesRegex(
-        ValueError,
-        'The size of abstract mesh 2.*must match the length of device'
-        ' assignment: 1'):
+    with self.assertRaisesRegex(RuntimeError, "Length of device_assignment"):
       lowered.compile(device_assignment=(jax.devices()[0],))
 
   def test_aot_devices_to_compile_error(self):
@@ -4852,6 +4849,57 @@ class ArrayPjitTest(jtu.JaxTestCase):
       for i in range(5):
         f(np.arange(i))
     self.assertEqual(count(), 10)
+
+  def test_abstract_lower_real_dev_compile_single_device(self):
+    abstract_device = jax.sharding.AbstractDevice('cpu', 1, 'cpu')
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (1,), ('x',), (AxisType.Explicit,), abstract_device=abstract_device)
+
+    @jax.jit
+    def f(x):
+      return x * 10
+
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      abstract_arr = jax.ShapeDtypeStruct((4, 8), np.float32)
+      lowered = f.trace(abstract_arr).lower()
+
+    compiled = lowered.compile(device_assignment=(jax.devices()[0],))
+
+    np_inp = np.ones((4, 8), dtype=np.float32)
+    out = compiled(np_inp)
+    self.assertEqual(out.sharding, NamedSharding(jax.make_mesh((1,), 'x'), P()))
+    self.assertArraysEqual(jnp.sin(out), jnp.sin(np_inp * 10))
+
+  def test_abstract_lower_real_dev_compile(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires >=2 devices')
+
+    abstract_device = jax.sharding.AbstractDevice('cpu', 1, 'cpu')
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (2,), ('x',), (AxisType.Explicit,), abstract_device=abstract_device)
+
+    @jax.jit
+    def f(x):
+      return x * 10
+
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      abstract_arr = jax.ShapeDtypeStruct(
+          (4, 8), np.float32, sharding=NamedSharding(abstract_mesh, P('x')))
+      lowered = f.trace(abstract_arr).lower()
+
+    mesh = jax.make_mesh((2,), 'x')
+
+    if jax.device_count() > mesh.size:
+      with self.assertRaisesRegex(RuntimeError, "Length of device_assignment"):
+        lowered.compile(device_assignment=tuple(jax.devices()))
+
+    compiled = lowered.compile(device_assignment=tuple(mesh.devices.flat))
+
+    np_inp = np.ones((4, 8), dtype=np.float32)
+    real_arr = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+    out = compiled(real_arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(jnp.sin(out), jnp.sin(np_inp * 10))
 
 
 class ShardingInTypesTest(jtu.JaxTestCase):

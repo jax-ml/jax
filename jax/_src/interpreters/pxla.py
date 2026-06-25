@@ -1612,11 +1612,12 @@ def _maybe_get_and_check_out_shardings(
   return new_out_shardings
 
 
-def finalize_shardings(shardings, device_assignment):
-  if len(device_assignment) == 1:
-    return [make_single_device_sharding(device_assignment[0], memory_kind=o.memory_kind)
-            if isinstance(o, GSPMDSharding) else o for o in shardings]
-  return shardings
+def finalize_shardings(shardings, da):
+  if len(da) == 1:
+    return [make_single_device_sharding(da[0], memory_kind=o.memory_kind)
+            if isinstance(o, GSPMDSharding) else maybe_concretize_mesh(o, da)
+            for o in shardings]
+  return [maybe_concretize_mesh(s, da) for s in shardings]
 
 
 def get_prop_to_input_output(in_shardings, out_shardings,
@@ -1630,8 +1631,7 @@ def get_prop_to_input_output(in_shardings, out_shardings,
 
 
 def maybe_concretize_mesh(sharding, da: xc.DeviceList):
-  if (isinstance(sharding, NamedSharding) and
-      isinstance(sharding.mesh, AbstractMesh)):
+  if isinstance(sharding, NamedSharding) and isinstance(sharding.mesh, AbstractMesh):
     if sharding.mesh.size != len(da):
       raise ValueError(
           f"The size of abstract mesh {sharding.mesh.size} in {sharding} must"
@@ -1703,7 +1703,6 @@ class UnloadedMeshExecutable:
                out_layouts: MaybeLayout,
                compiler_options_kvs: tuple[tuple[str, Any], ...],
                num_devices: int,
-
                mut: MutationData | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                all_args_info: AllArgsInfo | None = None,
@@ -1711,11 +1710,15 @@ class UnloadedMeshExecutable:
                intermediate_shardings: Sequence[JSharding] | None = None,
                context_mesh: Mesh | None = None,
   ) -> MeshExecutable:
-    del num_devices  # For compilation, we have an actual device_assignment
     if device_list is None:
       raise RuntimeError(
           "device_assignment cannot be `None` during compilation. Please pass a"
           " tuple of devices to `.compile(device_assignment=)`")
+    if num_devices != len(device_list):
+      raise RuntimeError(
+          f"Length of device_assignment ({len(device_list)}) passed"
+          " to `.compile()` must be equal to the number of devices the jitted"
+          f" function was lowered with ({num_devices}).")
 
     assert isinstance(device_list, xc.DeviceList)
     in_shardings = tuple(maybe_concretize_mesh(i, device_list)
@@ -1741,6 +1744,9 @@ class UnloadedMeshExecutable:
     out_shardings = _maybe_get_and_check_out_shardings(
         xla_executable, out_shardings, device_list, global_out_avals,
         len(ordered_effects))
+    out_shardings = maybe_recover_user_shardings(
+        in_shardings, out_shardings, global_in_avals, global_out_avals,
+        intermediate_shardings, context_mesh)
 
     # xla_in_layouts are all either None or Layout. Even default
     # layout are concrete layouts and they are used in `compiled.input_formats`
@@ -1752,12 +1758,8 @@ class UnloadedMeshExecutable:
         global_in_avals, global_out_avals)
 
     del in_layouts, out_layouts
-    dispatch_in_layouts = get_dispatch_layouts(xla_in_layouts, in_shardings,
-                                               global_in_avals)
-
-    out_shardings = maybe_recover_user_shardings(
-        in_shardings, out_shardings, global_in_avals, global_out_avals,
-        intermediate_shardings, context_mesh)
+    dispatch_in_layouts = get_dispatch_layouts(
+        xla_in_layouts, in_shardings, global_in_avals)
 
     in_shardings = finalize_shardings(in_shardings, device_list)
     out_shardings = finalize_shardings(out_shardings, device_list)
