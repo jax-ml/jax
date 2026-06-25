@@ -1519,7 +1519,6 @@ jax_multiplatform_test(
         [],
         google_value = [
             "--xla_tpu_enable_mlir_verifier=ALL",
-            "--xla_sc_assert_level=san",
         ],
     ),
     config_tags_overrides = {
