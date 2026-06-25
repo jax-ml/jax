@@ -184,6 +184,41 @@ class XlaTransformTest(jtu.JaxTestCase):
     # 3. Verify it does NOT apply anymore.
     self.assertAllClose(f(x), jnp.sin(x), atol=1e-5)
 
+  def test_simple_transform_preserves_donation_and_aliasing(self):
+    """Register an simple pass and verify it preserves donation and aliasing."""
+
+    def simple_transform(serialized_hlo: bytes) -> bytes | None:
+      return serialized_hlo
+
+    name = "transform_preserve_donation_aliasing_test"
+    stage = jex_xla.PipelineStage.PRE_SCHEDULER
+    jex_xla.register_hlo_module_transformation(
+        simple_transform,
+        name=name,
+        stage=stage,
+    )
+    self._registered_transforms.append((name, stage))
+
+    @functools.partial(jax.jit, donate_argnums=(0,))
+    def f(x):
+      return x * 2
+
+    # 1. Verify aliasing via compilation memory analysis
+    x_spec = jax.ShapeDtypeStruct((10, 10), jnp.float32)
+    compiled = f.lower(x_spec).compile()
+
+    mem_analysis = compiled.memory_analysis()
+    self.assertIsNotNone(mem_analysis)
+
+    expected_num_bytes = 10 * 10 * 4
+    # If aliasing is preserved, the alias size should match the input size.
+    self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
+
+    # 2. Verify donation (input buffer is invalidated/deleted after run)
+    x = jax.device_put(jnp.ones((10, 10), dtype=jnp.float32))
+    _ = compiled(x)
+    self.assertTrue(x.is_deleted())
+
 
 def layernorm(x, eps=1e-5):
   mean = jnp.mean(x, axis=-1, keepdims=True)
