@@ -569,6 +569,8 @@ of the compiler. We can think of the concrete array sharding being consistent
 with, but more specific than, the type-specified sharding. For example:
 
 ```{code-cell}
+jax.set_mesh(jax.make_mesh((4, 2), ('X', 'Y')))  # Explicit mode
+
 def compare_shardings(x):
   print(f"=== with mesh: {jax.sharding.get_abstract_mesh()} ===")
   print(f"Concrete value sharding: {x.sharding.spec}")
