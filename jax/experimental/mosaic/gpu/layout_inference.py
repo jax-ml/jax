@@ -598,13 +598,6 @@ def find_assignments_for(
   return cs.Unsatisfiable(), fuel
 
 
-@dataclasses.dataclass(frozen=True)
-class _AliasKey:
-  source_ref: ir.Value | None
-  offset: int
-  alias_id: int
-
-
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an constraint system."""
@@ -621,14 +614,16 @@ class DerivationContext:
   # used to disambiguate whether overlapping memory slices are independent or
   # related for the purposes of layout inference.
   #
-  # Concretely, if a memory slice op shares the same base address,
-  # `offset` and `alias_id` with another memory slice op, then they are
-  # considered to be the same ref and must have the same layout. Otherwise,
-  # they are independent.
-  slice_smem_aliases: dict[_AliasKey, cs.Variable] = dataclasses.field(
+  # Concretely, if a memory slice op shares the same `alias_id` with another
+  # memory slice op, then they are considered to be the same ref and must have
+  # the same layout. Otherwise, they are independent.
+  #
+  # It is incorrect to annotate non-overlapping refs or refs with incompatible
+  # result types with the same `alias_id`.
+  slice_smem_aliases: dict[int, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
   )
-  slice_tmem_aliases: dict[_AliasKey, cs.Variable] = dataclasses.field(
+  slice_tmem_aliases: dict[int, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
   )
 
@@ -1811,14 +1806,15 @@ def _slice_tmem_constraint_system(
   operand_variable = ctx.producer_ref(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
   # TODO(bchetioui): enforce that the parent is a TmemAllocOp.
+  # TODO(allanrenucci): Use alias_id directly from SliceTmemOp after jaxlib
+  # v0.10.3 release.
   if "alias_id" in op.attributes:
     alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
-    alias_key = _AliasKey(None, op.offset.value, alias_id)
-    if (cached_variable := ctx.slice_tmem_aliases.get(alias_key)) is not None:
+    if (cached_variable := ctx.slice_tmem_aliases.get(alias_id)) is not None:
       result_variable = cached_variable
     else:
       result_variable = cs.Variable(result)
-      ctx.slice_tmem_aliases[alias_key] = result_variable
+      ctx.slice_tmem_aliases[alias_id] = result_variable
   else:
     result_variable = cs.Variable(result)
   return (
@@ -1854,14 +1850,13 @@ def _slice_smem_constraint_system(
     op: mgpu.SliceSMEMOp,
 ) -> ConstraintSystemDerivationRuleResult:
   result = ValueSite(op, VariableType.RESULT, 0)
-  if "alias_id" in op.attributes:
-    alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
-    alias_key = _AliasKey(None, op.offset.value, alias_id)
-    if (cached_variable := ctx.slice_smem_aliases.get(alias_key)) is not None:
+  if op.alias_id is not None:
+    alias_id = op.alias_id.value
+    if (cached_variable := ctx.slice_smem_aliases.get(alias_id)) is not None:
       result_variable = cached_variable
     else:
       result_variable = cs.Variable(result)
-      ctx.slice_smem_aliases[alias_key] = result_variable
+      ctx.slice_smem_aliases[alias_id] = result_variable
   else:
     result_variable = cs.Variable(result)
   return cs.ConstraintSystem(), {result_variable: [result]}
