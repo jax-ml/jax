@@ -119,11 +119,13 @@ def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   inf = _lax_const(k, np.inf)
   x = lax.sub(k, loc)
   p = gammaincc(jnp.floor(1 + x), mu)
-  return jnp.select(
+  p = jnp.select(
     [lax.lt(x, zero), lax.eq(x, inf)],
     [zero, one],
     p,
   )
+  nan = _lax_const(mu, np.nan)
+  return jnp.where(jnp.isnan(mu) | lax.lt(mu, zero), nan, p)
 
 @api.jit
 def entropy(mu: ArrayLike, loc: ArrayLike = 0) -> Array:
