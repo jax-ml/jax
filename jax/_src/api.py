@@ -29,7 +29,6 @@ import atexit
 import collections
 from collections.abc import Callable, Hashable, Iterable, Sequence
 import dataclasses
-import enum
 from functools import partial
 import inspect
 from typing import (Any, Literal, Optional, TypeVar, overload,
@@ -104,11 +103,6 @@ zip, unsafe_zip = safe_zip, zip
 
 ShapeDtypeStruct = core.ShapeDtypeStruct
 
-class Inline(enum.Enum):
-  JAX_EARLY = "jax_early"
-  XLA_EARLY = "xla_early"
-  XLA_LATE = "xla_late"
-  AUTO = "auto"
 
 @api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -176,7 +170,7 @@ def jit(
   keep_unused: bool = ...,
   device: xc.Device | None = ...,
   backend: str | None = ...,
-  inline: bool | Inline = ...,
+  inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> pjit.JitWrapped:
   ...
@@ -193,7 +187,7 @@ def jit(
   keep_unused: bool = ...,
   device: xc.Device | None = ...,
   backend: str | None = ...,
-  inline: bool | Inline = ...,
+  inline: bool = ...,
   compiler_options: dict[str, Any] | None = ...,
 ) -> Callable[[Callable], pjit.JitWrapped]:
   ...
@@ -209,7 +203,7 @@ def jit(
   keep_unused: bool = False,
   device: xc.Device | None = None,
   backend: str | None = None,
-  inline: bool | Inline = Inline.AUTO,
+  inline: bool = False,
   compiler_options: dict[str, Any] | None = None,
 ) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
