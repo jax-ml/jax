@@ -60,6 +60,8 @@ def from_core_type(core_type):
       raise ValueError(f"Unsupported core type: {core_type}")
 
 
+# TODO(rdyro): A temporary workaround to avoid flakiness.
+@jtu.thread_unsafe_test_class()
 class PallasSCTest(jtu.JaxTestCase):
   USE_TC_TILING = False
 
@@ -77,6 +79,8 @@ class PallasSCTest(jtu.JaxTestCase):
     return plsc.get_sparse_core_info()
 
 
+# TODO(rdyro): A temporary workaround to avoid flakiness.
+@jtu.thread_unsafe_test_class()
 class MpmdAsyncTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -125,6 +129,8 @@ class MpmdAsyncTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(out, x + 1)
 
 
+# TODO(rdyro): A temporary workaround to avoid flakiness.
+@jtu.thread_unsafe_test_class()
 class MpmdTest(PallasSCTest):
 
   @staticmethod
@@ -977,6 +983,8 @@ pack_p.def_abstract_eval(lambda x0, x1: WeirdTupleTy(x0, x1))
 pack_p.to_lojax = lambda x0, x1: WeirdTuple(x0, x1)
 
 
+# TODO(rdyro): A temporary workaround to avoid flakiness.
+@jtu.thread_unsafe_test_class()
 class MpmdHijaxTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -1109,6 +1117,8 @@ class MpmdHijaxTest(jtu.JaxTestCase):
     self.assertArraysEqual(ot.x1, xt.x1)
 
 
+# TODO(rdyro): A temporary workaround to avoid flakiness.
+@jtu.thread_unsafe_test_class()
 class MpmdPhysicalizeTest(jtu.JaxTestCase):
 
   def setUp(self):
