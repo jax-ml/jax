@@ -613,6 +613,19 @@ std::optional<bool> areAnyDivisible(Value lhs, Value rhs, int64_t divisor,
 }
 }  // namespace
 
+std::optional<int64_t> getRemainder(Value value, int64_t divisor,
+                                    int64_t fuel) {
+  if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
+    if (auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue())) {
+      return int_attr.getInt() % divisor;
+    }
+  }
+  if (isGuaranteedDivisible(value, divisor, fuel)) {
+    return 0;
+  }
+  return std::nullopt;
+}
+
 std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (fuel <= 0) {
     return std::nullopt;

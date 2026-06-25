@@ -97,6 +97,11 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
 // vector ops. This functions inverts the layout erasure applied to the value.
 MemRefType getMemRefType(Value value);
 
+// Returns the remainder of the given value when divided by the given divisor.
+// Returns nullopt if the remainder is not known.
+std::optional<int64_t> getRemainder(Value val, int64_t divisor,
+                                    int64_t fuel = 128);
+
 // Returns true if `value` is guaranteed to be divisible by `divisor`, false if
 // value is known to not be divisible by `divisor`, and nullopt if the
 // divisibility is not known.
