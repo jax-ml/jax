@@ -87,6 +87,7 @@ _DL_DEVICE_TO_PLATFORM = {
     DLDeviceType.kDLCUDAHost: "cuda",
     DLDeviceType.kDLROCM: "rocm",
     DLDeviceType.kDLTPUHost: "tpu",
+    DLDeviceType.kDLOneAPI: "oneapi",
 }
 
 

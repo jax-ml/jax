@@ -138,6 +138,8 @@ absl::StatusOr<DLDeviceType> DLDeviceTypeForDevice(
     return kDLCUDA;
   } else if (device.client()->platform_id() == xla::RocmId()) {
     return kDLROCM;
+  } else if (device.client()->platform_id() == xla::OneapiId()) {
+    return kDLOneAPI;
   }
   return xla::InvalidArgument("Device %s cannot be used as a DLPack device.",
                               device.DebugString());

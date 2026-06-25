@@ -370,6 +370,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     dtype=cuda_array_interface_dtypes,
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCudaArrayInterfaceWorks(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
@@ -380,6 +381,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertEqual(z.__array_interface__["typestr"], a["typestr"])
 
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCudaArrayInterfaceBfloat16Fails(self):
     rng = jtu.rand_default(self.rng())
     x = rng((2, 2), jnp.bfloat16)
@@ -425,6 +427,7 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi") # OneAPI does not support `__cuda_array_interface__`
   def testCaiToJax(self, shape, dtype):
     dtype = np.dtype(dtype)
 
