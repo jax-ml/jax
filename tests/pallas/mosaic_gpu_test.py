@@ -4843,12 +4843,22 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     np.testing.assert_array_equal(f(x), x)
 
   def test_print_layout_tmem(self):
-    shape = (128, 256)
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((), jnp.bfloat16),
+        scratch_types=[plgpu.TMEM((128, 64), jnp.bfloat16, packed=True)],
+    )
+    def kernel(o_ref, tmem_ref):
+      del o_ref
+      plgpu.print_layout("tmem: {}", tmem_ref)
 
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(shape, jnp.bfloat16),
-        scratch_shapes=[plgpu.TMEM(shape, jnp.bfloat16, packed=True)],
+    with self.capture_stdout() as output:
+      jax.jit(kernel).lower()
+    self.assertIn("tmem: TMEM_DEFAULT(packing=2)\n", output())
+
+  def test_print_layout_tmem_with_transform(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((), jnp.bfloat16),
+        scratch_types=[plgpu.TMEM((128, 256), jnp.bfloat16, packed=True)],
     )
     def kernel(o_ref, tmem_ref):
       del o_ref
@@ -4856,8 +4866,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       plgpu.print_layout("tmem: {}", tmem_ref.at[:, :128])
 
     with self.capture_stdout() as output:
-      jax.block_until_ready(kernel())
-
+      jax.jit(kernel).lower()
     self.assertIn("tmem: TMEM_DEFAULT(packing=2)\n", output())
 
   def test_print_layout_tmem_with_transforms(self):
