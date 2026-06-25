@@ -34,24 +34,15 @@ limitations under the License.
 namespace jax {
 
 namespace JAX_GPU_NAMESPACE {
-
-std::string ErrorString(gpudnnStatus_t status) {
-  return gpudnnGetErrorString(status);
+#ifdef JAX_GPU_CUDA
+std::string ErrorString(cudnnStatus_t status) {
+  return cudnnGetErrorString(status);
 }
-
-template <typename T>
-std::string ErrorString(T status, const char* file, std::int64_t line,
-                        const char* expr) {
-  return absl::StrFormat("%s:%d: operation %s failed: %s", file, line, expr,
-                         ErrorString(status));
+#elif defined(JAX_GPU_HIP)
+std::string ErrorString(miopenStatus_t status) {
+  return miopenGetErrorString(status);
 }
-
-absl::Status AsStatus(gpudnnStatus_t status, const char* file,
-                      std::int64_t line, const char* expr) {
-  if (status != GPUDNN_STATUS_SUCCESS)
-    return absl::InternalError(ErrorString(status, file, line, expr));
-  return absl::OkStatus();
-}
+#endif
 }  // namespace JAX_GPU_NAMESPACE
 
 using DnnHandlePool = HandlePool<gpudnnHandle_t, gpuStream_t>;
