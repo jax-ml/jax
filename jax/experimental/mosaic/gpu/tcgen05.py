@@ -1193,15 +1193,12 @@ class TMEMRef:
       )
     col_idx = base_idx[1]
     if not isinstance(col_idx, ir.Value):
-      # TODO(allanrenucci): We should consider performing a similar check on
-      # dynamic values (i.e. using `utils.is_known_divisible`). It currently
-      # breaks many tests though.
-      if col_idx % self.layout.base_tile_shape[1] != 0:
-        raise ValueError(
-            f"Column index ({col_idx}) must be divisible by tile shape column"
-            f" dimension {self.layout.base_tile_shape[1]}"
-        )
       col_idx = arith.constant(i32, col_idx)
+    if not utils.is_known_divisible(col_idx, self.layout.base_tile_shape[1]):
+      raise NotImplementedError(
+          "Slicing along columns is not supported when the column index is not"
+          " known to be a multiple of the base tile shape"
+      )
     if col_idx.type == ir.IndexType.get():
       col_idx = arith.index_cast(i32, col_idx)
 
