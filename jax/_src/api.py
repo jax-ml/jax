@@ -1635,7 +1635,7 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
   args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_accums = [check_accum(v.aval.to_ct_aval(), x) if isinstance(x, ad.GradAccum) else
-                  ad.RefAccum(v.aval.to_ct_aval(), x) if _is_ref(x) else
+                  ad.RefAccum(_ref_aval(v.aval).to_ct_aval(), x) if _is_ref(x) else
                   ad.NullAccum(v.aval.to_ct_aval()) if isinstance(x, DontWant) else
                   ad.ValAccum(v.aval.to_ct_aval())
                   for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
@@ -1676,6 +1676,10 @@ def _is_ref(x):
     return isinstance(typeof(x), AbstractRef)
   except:
     return False
+
+def _ref_aval(a):
+  from jax._src.state.types import AbstractRef
+  return a.inner_aval if isinstance(a, AbstractRef) else a
 
 
 _vjp_too_many_args = """
