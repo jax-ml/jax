@@ -289,7 +289,6 @@ class DistributedMpmdTest(parameterized.TestCase):
               # TODO(ivyzheng): Remove this when the layout pass flag is gone.
               needs_layout_passes=False,
           ),
-          debug=True,
       )()
       # result shape: (num_cores, 2, size_per_core)
       # Select buffer index 1 from each core, then flatten.
