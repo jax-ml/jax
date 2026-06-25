@@ -550,7 +550,11 @@ class JaxArrayTests(jtu.JaxTestCase):
     expected = fun(*args, **kwargs)
     wrapped = fun(*wrapped_args, **kwargs)
 
-    self.assertAllClose(wrapped, expected, atol=0, rtol=0)
+    if api.fun in [jnp.empty, jnp.empty_like]:
+      self.assertEqual(wrapped.shape, expected.shape)
+      self.assertEqual(wrapped.dtype, expected.dtype)
+    else:
+      self.assertAllClose(wrapped, expected, atol=0, rtol=0)
 
   @jtu.sample_product(
       api=['array', 'asarray'],
