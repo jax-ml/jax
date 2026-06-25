@@ -45,12 +45,17 @@ on:
         type: string
         default: ""
       jaxlib-version:
-        description: "Which jaxlib version to use? (head/pypi_latest)"
+        description: "Which jaxlib version to use? (head/pypi_latest/release)"
         type: choice
         default: "head"
         options:
           - "head"
           - "pypi_latest"
+          - "release"
+      jax-version:
+        description: "PyPI jax/jaxlib version to pin (e.g. 0.10.2). Only used when jaxlib-version=release."
+        type: string
+        default: ""
       skip-download-jaxlib-and-plugins-from-gcs:
         description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
         type: choice
@@ -93,9 +98,13 @@ on:
         type: string
         default: ""
       jaxlib-version:
-        description: "Which jaxlib version to use? (head/pypi_latest)"
+        description: "Which jaxlib version to use? (head/pypi_latest/release)"
         type: string
         default: "head"
+      jax-version:
+        description: "PyPI jax/jaxlib version to pin (e.g. 0.10.2). Only used when jaxlib-version=release."
+        type: string
+        default: ""
       skip-download-jaxlib-and-plugins-from-gcs:
         description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
         default: '0'
@@ -155,6 +164,7 @@ jobs:
           rocm-version: ${{ inputs.rocm-version }}
           rocm-release-version: ${{ inputs.rocm-release-version }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
+          jax-version: ${{ inputs.jax-version }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
           s3_download_uri: ${{ inputs.s3_download_uri }}

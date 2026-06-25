@@ -21,6 +21,19 @@ on:
         required: false
         default: 'no'
         type: string
+      jaxlib-version:
+        description: "How to resolve jax/jaxlib for tests: 'head' = latest nightly from GCS (default), 'release' = pinned version from PyPI"
+        required: false
+        default: 'head'
+        type: choice
+        options:
+          - 'head'
+          - 'release'
+      jax-version:
+        description: "PyPI jax/jaxlib version to pin (e.g. 0.10.2). Only used when jaxlib-version=release. Leave empty for latest."
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -88,9 +101,8 @@ jobs:
       rocm-version: ${{ matrix.rocm.wheel-version }}
       rocm-release-version: ${{ matrix.rocm.release-version }}
       rocm-tag: ${{ matrix.rocm.tag }}
-      jaxlib-version: head
-      download-jax-from-gcs: 0
-      skip-download-jaxlib-and-plugins-from-gcs: 0
+      jaxlib-version: ${{ inputs.jaxlib-version || 'head' }}
+      jax-version: ${{ inputs.jax-version }}
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/staging/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
@@ -117,8 +129,8 @@ jobs:
       rocm-release-version: ${{ matrix.rocm.release-version }}
       rocm-tag: ${{ matrix.rocm.tag }}
       enable-x64: ${{ matrix.enable-x64 }}
-      jaxlib-version: head
-      download-jax-from-gcs: 0
+      jaxlib-version: ${{ inputs.jaxlib-version || 'head' }}
+      jax-version: ${{ inputs.jax-version }}
       build_jaxlib: 'false'
       build_jax: 'false'
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/staging/${{ github.run_number }}/${{ github.run_attempt }}'

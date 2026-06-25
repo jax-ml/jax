@@ -74,10 +74,12 @@ runs:
         mkdir -p $(pwd)/dist
         # Disable Authentication on the ROCm runners.
         gcloud config set auth/disable_credentials True
-        if [[ "${INPUTS_DOWNLOAD_JAX_FROM_GCS}" == "1" ]]; then
+        # In 'release' mode, jax/jaxlib are downloaded from PyPI below; skip GCS to
+        # avoid landing two conflicting jax wheels in dist/.
+        if [[ "${INPUTS_DOWNLOAD_JAX_FROM_GCS}" == "1" && "${INPUTS_JAXLIB_VERSION}" != "release" ]]; then
           gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl $(pwd)/dist/
         else
-          echo "JAX wheel won't be downloaded, only jaxlib pre-built wheel is tested."
+          echo "JAX wheel won't be downloaded from GCS."
         fi
 
         # Do not download the jaxlib and ROCm plugin artifacts if we are testing a jax only

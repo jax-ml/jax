@@ -50,9 +50,13 @@ on:
         type: string
         default: "0"
       jaxlib-version:
-        description: "Which jaxlib version to test? (head/pypi_latest)"
+        description: "Which jaxlib version to test? (head/pypi_latest/release)"
         type: string
         default: "head"
+      jax-version:
+        description: "PyPI jax/jaxlib version to pin (e.g. 0.10.2). Only used when jaxlib-version=release."
+        type: string
+        default: ""
       download-jax-from-gcs:
         description: "Whether to download the jax wheel from GCS"
         default: '1'
@@ -160,6 +164,7 @@ jobs:
           download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
+          jax-version: ${{ inputs.jax-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
           s3_download_uri: ${{ inputs.s3_download_uri }}
       # Halt for testing
