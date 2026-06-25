@@ -3866,56 +3866,6 @@ def _full_like_insert_pvary(val, x):
     val, _ = core.auto_insert_reshard(val, x)
     return val
 
-def empty_like(x: ArrayLike | DuckTypedArray, *,
-               dtype: DTypeLike | None = None,
-               shape: Shape | None = None,
-               out_sharding: Sharding | None = None) -> Array:
-  """Create an empty array like np.empty based on the example array `x`.
-
-  Args:
-    x: example array-like, used for shape and dtype information.
-    dtype: optional, a dtype parameter for the output ndarray.
-    shape: optional, a shape parameter for the output ndarray.
-    out_sharding: an optional sharding specification for the resulting array.
-
-  Returns:
-    An ndarray with the same shape as `x` with its entries uninitialized,
-    similar to the output of np.empty.
-  """
-  fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # pyrefly: ignore[no-matching-overload]
-  weak_type = dtype is None and dtypes.is_weakly_typed(x)
-  dtype = _dtype(dtype) if dtype is not None else _dtype(x)
-
-  if out_sharding is None and shape is None and isinstance(x, core.Tracer):
-    out_sharding = x.aval.sharding  # pyrefly: ignore[missing-attribute]
-  else:
-    use_x_sharding = (
-        out_sharding is None
-        and not isinstance(x, core.Tracer)
-        and hasattr(x, 'sharding')
-        and x.sharding is not None
-        and (x.sharding._is_concrete or not get_concrete_mesh().empty or
-             (isinstance(x.sharding, NamedSharding) and x.sharding.mesh.are_all_axes_explicit))
-        and getattr(x, '_committed', True)
-        and not weak_type
-        and (fill_shape == np.shape(x) or x.sharding.is_fully_replicated)  # pyrefly: ignore[no-matching-overload]
-    )
-    if use_x_sharding:
-      out_sharding = x.sharding  # pyrefly: ignore[missing-attribute]
-
-  if (out_sharding is not None and out_sharding._is_concrete):
-    broadcast_shape = out_sharding.shard_shape(fill_shape)
-    shard = empty(broadcast_shape, dtype)
-    shard = shard.addressable_data(0)
-    val = array.make_array_from_callback(
-        fill_shape, out_sharding, lambda _: shard, dtype=dtype)
-  else:
-    val = empty(fill_shape, dtype, out_sharding=out_sharding)
-  if weak_type:
-    val = _convert_element_type(val, weak_type=True)
-  return _full_like_insert_pvary(val, x)
-
-
 def collapse(operand: Array, start_dimension: int,
              stop_dimension: int | None = None) -> Array:
   """Collapses dimensions of an array into a single dimension.
