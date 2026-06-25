@@ -81,7 +81,6 @@ from jax._src.lax.lax import (
   dot_general_p as dot_general_p,
   dtype as dtype,
   empty as empty,
-  empty_like as empty_like,
   eq as eq,
   eq_p as eq_p,
   eq_to_p as eq_to_p,

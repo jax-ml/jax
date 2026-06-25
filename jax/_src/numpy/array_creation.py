@@ -150,9 +150,13 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
           out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an empty array.
 
-  JAX implementation of :func:`numpy.empty`. Starting in JAX v0.11.0, this
-  returns an uninitialized array on platforms that support doing so. Prior to
-  v0.11.0, this function returned an array filled with zeros on all platforms.
+  JAX implementation of :func:`numpy.empty`.
+
+  .. note::
+
+    For historical reasons, :func:`jax.numpy.empty` is currently equivalent to
+    :func:`jax.numpy.zeros`: i.e. it returns a buffer initialized with zeros.
+    To create a buffer of uninitialized values, please use :func:`jax.lax.empty`.
 
   Args:
     shape: int or sequence of ints specifying the shape of the created array.
@@ -188,14 +192,7 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype, "empty")
-  shape = canonicalize_shape(shape)
-  if device is not None and out_sharding is None:
-    # lax.empty does not accept SingleDeviceSharding, so we use api.device_put.
-    return api.device_put(lax.empty(shape, dtype), device)
-  else:
-    final_sharding = util.choose_device_or_out_sharding(
-        device, out_sharding, 'jnp.empty')
-    return lax.empty(shape, dtype, out_sharding=final_sharding)
+  return zeros(shape, dtype, device=device, out_sharding=out_sharding)
 
 
 def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:
@@ -370,14 +367,14 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
                device: xc.Device | Sharding | None = None) -> Array:
   """Create an empty array with the same shape and dtype as an array.
 
-  JAX implementation of :func:`numpy.empty_like`. Starting in JAX v0.11.0, this
-  returns an uninitialized array on platforms that support doing so. Prior to
-  v0.11.0, this function returned an array filled with zeros on all platforms.
+  JAX implementation of :func:`numpy.empty_like`. Because XLA cannot create
+  an un-initialized array, :func:`jax.numpy.empty` will always return an
+  array full of zeros.
 
   Args:
-    prototype: Array-like object with ``shape`` and ``dtype`` attributes.
-    dtype: optionally override the dtype of the created array.
+    a: Array-like object with ``shape`` and ``dtype`` attributes.
     shape: optionally override the shape of the created array.
+    dtype: optionally override the dtype of the created array.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
 
@@ -404,13 +401,13 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
     m = getattr(prototype, '__jax_array__', None)
     if m is not None:
       prototype = m()
-    util.check_arraylike("empty_like", prototype)
+    util.check_arraylike("ones_like", prototype)
   if dtype is not None:
-    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "empty_like")
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.empty_like(prototype, dtype=dtype, shape=shape,
-                        out_sharding=util.canonicalize_device_to_sharding(device))
+  return lax.full_like(prototype, 0, dtype, shape,
+                       sharding=util.canonicalize_device_to_sharding(device))
 
 
 @export

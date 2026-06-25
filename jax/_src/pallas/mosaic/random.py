@@ -107,7 +107,7 @@ jax_prng.register_prng(tpu_key_impl)
 def _pl_stateful_seed_func(seed: jnp.int32):
   del seed
   # Unused. Return the correct shape and dtype.
-  return jnp.zeros((), dtype=jnp.int32)
+  return jnp.empty((), dtype=jnp.int32)
 
 def _pl_stateful_random_bits(key: typing.Array, bit_width: int, shape: Shape):
   del key

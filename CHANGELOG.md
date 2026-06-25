@@ -26,10 +26,6 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     threading support. Now that Python 3.14t is stable, it is time to drop the
     experimental build. Other parts of the Python ecosystem (e.g.
     `cibuildwheel`, `scipy`) are making similar moves.
-  * {func}`jax.numpy.empty` and {func}`jax.numpy.empty_like` now produce
-    uninitialized arrays, similar to their NumPy counterparts. Prior to v0.11.0,
-    they produced arrays initialized to zeros. To recover the previous behavior,
-    use {func}`jax.numpy.zeros` or {func}`jax.numpy.zeros_like` instead.
 
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
