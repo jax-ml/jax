@@ -4221,7 +4221,7 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
     mode: a string or callable. Supported pad modes are:
 
       - ``'constant'`` (default): pad with a constant value, which defaults to zero.
-      - ``'empty'``: pad with empty values (i.e. zero)
+      - ``'empty'``: pad with empty (i.e. uninitialized) values
       - ``'edge'``: pad with the edge values of the array.
       - ``'wrap'``: pad by wrapping the array.
       - ``'linear_ramp'``: pad with a linear ramp to specified ``end_values``.
