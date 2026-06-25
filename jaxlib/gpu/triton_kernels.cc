@@ -229,7 +229,8 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
 
   if (success) {
     it->second = std::make_unique<ModuleImage>(
-        std::get<0>(it->first), std::move(module_image), shared_mem_bytes);
+        std::get<0>(it->first), std::move(module_image), shared_mem_bytes,
+        compute_capability);
   }
   return it->second.get();
 }
@@ -302,15 +303,54 @@ absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
   return it->second->get();
 }
 
+absl::Status AnnotateModuleLoadStatus(
+    const absl::Status& status, std::string_view kernel_name,
+    int target_compute_capability, const std::vector<uint8_t>& module_image) {
+  int actual_major = 0;
+  int actual_minor = 0;
+  gpuDevice_t device;
+  if (JAX_AS_STATUS(gpuCtxGetDevice(&device)).ok()) {
+    JAX_AS_STATUS(gpuDeviceGetAttribute(
+                      &actual_major,
+                      GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device))
+        .IgnoreError();
+    JAX_AS_STATUS(gpuDeviceGetAttribute(
+                      &actual_minor,
+                      GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device))
+        .IgnoreError();
+  }
+  bool is_elf = false;
+  std::string image_preview = "";
+  if (!module_image.empty()) {
+    is_elf = (module_image.size() >= 4 && module_image[0] == 0x7f &&
+              module_image[1] == 'E' && module_image[2] == 'L' &&
+              module_image[3] == 'F');
+    image_preview = absl::CEscape(
+        std::string_view(reinterpret_cast<const char*>(module_image.data()),
+                         std::min(module_image.size(), size_t{256})));
+  }
+  return absl::Status(
+      status.code(),
+      absl::StrCat(
+          status.message(), "\nFailed to load GPU module for Triton kernel '",
+          kernel_name, "'", "\n  Target Compute Capability (from JAX): sm_",
+          target_compute_capability, "\n  Actual GPU Compute Capability: sm_",
+          actual_major, actual_minor, "\n  Module image size: ",
+          module_image.size(), " bytes", "\n  Module image type: ",
+          (is_elf ? "ELF Binary (CUBIN/HSACO)" : "Text/Other (PTX/etc.)"),
+          "\n  Module image preview (CEscaped): ", image_preview));
+}
+
 }  // namespace
 
 class ModuleImage {
  public:
   ModuleImage(std::string_view kernel_name, std::vector<uint8_t> module_image,
-              uint32_t shared_mem_bytes)
+              uint32_t shared_mem_bytes, int compute_capability)
       : kernel_name_(kernel_name),
         module_image_(std::move(module_image)),
-        shared_mem_bytes_(shared_mem_bytes) {}
+        shared_mem_bytes_(shared_mem_bytes),
+        compute_capability_(compute_capability) {}
 
   absl::StatusOr<gpuFunction_t> GetFunctionForContext(gpuContext_t context) {
     {
@@ -330,7 +370,12 @@ class ModuleImage {
     };
 
     gpuModule_t module;
-    GPU_RETURN_IF_ERROR(gpuModuleLoadData(&module, module_image_.data()));
+    absl::Status status =
+        JAX_AS_STATUS(gpuModuleLoadData(&module, module_image_.data()));
+    if (!status.ok()) {
+      return AnnotateModuleLoadStatus(status, kernel_name_, compute_capability_,
+                                      module_image_);
+    }
 
     gpuFunction_t function;
     absl::Status function_status = JAX_AS_STATUS(
@@ -397,6 +442,7 @@ class ModuleImage {
   std::string kernel_name_;
   std::vector<uint8_t> module_image_;
   uint32_t shared_mem_bytes_;
+  int compute_capability_;
 
   absl::Mutex mutex_;
   std::vector<OwnedGPUmodule> modules_ ABSL_GUARDED_BY(mutex_);
