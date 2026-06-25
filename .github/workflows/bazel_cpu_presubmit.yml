@@ -25,11 +25,38 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
+  check-paths:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.filter.outputs.any_changed == 'true' || github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          files: |
+            jax/**
+            jaxlib/**
+            third_party/**
+            BUILD
+            *.bzl
+            WORKSPACE*
+            .github/workflows/bazel_cpu_presubmit.yml
+            .github/workflows/build_artifacts.yml
+            .github/workflows/bazel_cpu.yml
+
   build-jax-artifact:
+    needs: check-paths
     if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     name: "Build jax artifact"
     with:
+        should-run: ${{ needs.check-paths.outputs.should-run }}
         # Note that since jax is a pure python package, the runner OS and Python values do not
         # matter. In addition, cloning main XLA also has no effect.
         runner: "linux-x86-n4-16"
@@ -37,6 +64,7 @@ jobs:
         upload_artifacts_to_gcs: false
 
   build-jaxlib-artifact:
+    needs: check-paths
     if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
@@ -51,6 +79,7 @@ jobs:
     # values to the name and creates a separate entry for each matrix combination.
     name: "${{ matrix.runner && 'Build wheel' }}"
     with:
+        should-run: ${{ needs.check-paths.outputs.should-run }}
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
@@ -58,6 +87,7 @@ jobs:
         upload_artifacts_to_gcs: false
 
   run_tests:
+    needs: check-paths
     if: github.event.repository.fork == false && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cpu.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
@@ -85,6 +115,7 @@ jobs:
     name: "${{ (contains(matrix.runner, 'linux-x86') && 'Test' || 'Build') }}"
 # End Presubmit Naming Check github-cpu-presubmits
     with:
+      should-run: ${{ needs.check-paths.outputs.should-run }}
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
