@@ -16,6 +16,7 @@
 
 import dataclasses
 import enum
+import re
 from collections.abc import Callable
 
 from jax._src import mesh as mesh_lib
@@ -49,29 +50,14 @@ class GpuVersion(enum.Enum):
     return self.value
 
 
-def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
-  def loose_match(version_name, device_name):
-    # we assume that device_name is a full device name string larger than
-    # version_name string
-    name = version_name.lower()
-    dname = device_name.lower()
-    if not dname.startswith(name):
-      return False
-    # Check the next char is not digit to avoid matching e.g. NVIDIA A10 to NVIDIA A100
-    idx = len(name)
-    if idx < len(dname) and dname[idx] not in "0123456879":
-      return True
-    return False
+_GPU_VERSION_RE = re.compile(r"\b(" + "|".join(e.value for e in GpuVersion) + r")\b")
 
-  for version in GpuVersion:
-    # Loose compare due to variants of GPU names
-    # e.g. A100 GPU can be NVIDIA A100-SXM4-40GB or NVIDIA A100-SXM4-80GB
-    # or NVIDIA A100-PCIE-40GB or NVIDIA A100 80GB PCIe etc
-    if version.value == device_kind or loose_match(
-        version.value, device_kind
-    ):
-      return version
+
+def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
+  if m := _GPU_VERSION_RE.match(device_kind):
+    return GpuVersion(m.group())
   return None
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class GpuInfo:
@@ -129,8 +115,8 @@ def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
     case GpuVersion.B200 | GpuVersion.GB200:
       return GpuInfo(
           gpu_version=gpu_version,
-          arch_name="9.0",
-          compute_capability=90,
+          arch_name="10.0",
+          compute_capability=100,
       )
     case GpuVersion.B300 | GpuVersion.GB300:
       return GpuInfo(
