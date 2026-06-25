@@ -176,12 +176,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testPoissonCdfBoundary(self, dtype):
-    mu = jnp.array([0.0, 0.1, 1.0, 5.0], dtype=dtype)
+    mu = jnp.array([-1.0, 0.0, 0.1, 1.0, 5.0, np.nan], dtype=dtype)
     loc = jnp.array(0.0, dtype=dtype)
-    k = jnp.array(np.inf, dtype=dtype)
-    jax_result = lsp_stats.poisson.cdf(k, mu, loc=loc)
-    scipy_result = osp_stats.poisson.cdf(np.inf, np.asarray(mu), loc=0.0)
-    self.assertAllClose(jax_result, scipy_result, check_dtypes=False)
+    for k_val in [np.inf, -np.inf]:
+      k = jnp.array(k_val, dtype=dtype)
+      jax_result = lsp_stats.poisson.cdf(k, mu, loc=loc)
+      scipy_result = osp_stats.poisson.cdf(k_val, np.asarray(mu), loc=0.0)
+      self.assertAllClose(jax_result, scipy_result, check_dtypes=False)
 
   @genNamedParametersNArgs(3)
   def testBernoulliLogPmf(self, shapes, dtypes):
