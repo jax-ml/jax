@@ -4534,7 +4534,6 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (2, 2))
     self.assertEqual(out.dtype, jnp.float32)
 
-  @jtu.run_on_devices('gpu', 'tpu')
   def test_lax_empty_vmap(self):
     inp = np.arange(8, dtype=jnp.int32).reshape(4, 2)
 
@@ -4542,9 +4541,18 @@ class APITest(jtu.JaxTestCase):
       return jax.lax.empty(x.shape, x.dtype)
 
     f = jax.jit(jax.vmap(f))
-    f(inp)  # doesn't crash
-    lowered_text = f.lower(inp).as_text()
-    self.assertIn('@AllocateBuffer() : () -> tensor<4x2xi32>', lowered_text)
+    result = f(inp)
+    self.assertEqual(result.shape, inp.shape)
+
+  def test_lax_empty_batching_bug(self):
+    def f(x):
+      out = jax.lax.empty((2,), x.dtype)
+      out = out.at[0].set(1)
+      return out.at[1].set(out[0] * x[0])
+
+    x = jnp.arange(3.0)
+    res = jax.hessian(f)(x)
+    self.assertArraysEqual(res, np.zeros((2, 3, 3)))
 
   def test_leaked_tracer_issue_7613(self):
     # from https://github.com/jax-ml/jax/issues/7613

@@ -71,7 +71,7 @@ from jax._src.sharding_impls import (
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
 from jax._src.util import (cache, canonicalize_axis,
                            safe_map, safe_zip, split_list, weakref_lru_cache,
-                           foreach, tuple_insert)
+                           foreach)
 
 _max = builtins.max
 _min = builtins.min
@@ -9650,16 +9650,6 @@ def _empty_lower(ctx, *, shape, dtype, out_sharding):
   out = mlir.broadcast_in_dim(ctx, out, phys_aval, broadcast_dimensions=[])
   return [mlir.lower_with_sharding_in_types(ctx, out, phys_aval)]
 mlir.register_lowering(empty_p, _empty_lower)
-
-def _empty_batcher(axis_data, vals_in, dims_in, *, shape, dtype, out_sharding):
-  batched_shape = tuple_insert(shape, 0, axis_data.size)
-  batched_out_sharding = (
-      None if out_sharding is None else
-      batching.get_sharding_for_vmap(axis_data, out_sharding, 0))
-  y = empty_p.bind(shape=batched_shape, dtype=dtype,
-                   out_sharding=batched_out_sharding)
-  return y, 0
-batching.fancy_primitive_batchers[empty_p] = _empty_batcher
 
 # TODO(yashkatariya): Delete `empty2` and replace scan's usage with `empty` once
 # AllocateBuffer issues are fixed
