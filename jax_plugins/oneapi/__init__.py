@@ -23,7 +23,7 @@ import jax._src.xla_bridge as xb
 
 # oneapi_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
 # preinstalled jax oneapi plugin packages.
-for pkg_name in ['jax_oneapi2025_1_plugin', 'jaxlib.oneapi']:
+for pkg_name in ['jax_oneapi_plugin', 'jax_oneapi_pjrt', 'jaxlib.oneapi']:
   try:
     oneapi_plugin_extension = importlib.import_module(
         f'{pkg_name}.oneapi_plugin_extension'
