@@ -9652,6 +9652,10 @@ def _empty_lower(ctx, *, shape, dtype, out_sharding):
 mlir.register_lowering(empty_p, _empty_lower)
 
 def _empty_batcher(axis_data, vals_in, dims_in, *, shape, dtype, out_sharding):
+  d, = dims_in
+  if d is None:
+    y = empty_p.bind(shape=shape, dtype=dtype, out_sharding=out_sharding)
+    return y, None
   batched_shape = tuple_insert(shape, 0, axis_data.size)
   batched_out_sharding = (
       None if out_sharding is None else

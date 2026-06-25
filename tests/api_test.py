@@ -3611,6 +3611,13 @@ class APITest(jtu.JaxTestCase):
     ):
       jax.pmap(lambda x: x)({})
 
+  def test_lax_empty_vmap(self):
+    def f(x):
+      out = jax.lax.empty((2,), x.dtype)
+      return out.at[1].set(out[0] * x[0])
+    x = jax.numpy.arange(3.0)
+    jax.hessian(f)(x)  # doesn't crash
+
   @jtu.thread_unsafe_test()  # counting compilations isn't thread-safe
   def test_pmap_global_cache(self):
     def f(x, y):
