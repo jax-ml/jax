@@ -81,7 +81,7 @@ class MultiPageAsyncCopyDescriptor:
   def _make_scales_async_copy(self, i):
     page_index = self._page_indices[self._page_indices_start_offset + i]
     return pltpu.make_async_copy(
-        self._scales_pages_hbm_ref.at[page_index],
+        self._scales_pages_hbm_ref.at[page_index],  # pyrefly: ignore[missing-attribute]
         self._scales_vmem_buffer.at[i],
         self._sem,
     )
