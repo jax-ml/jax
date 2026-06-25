@@ -623,7 +623,11 @@ def _aval_is_sharded(aval: core.AbstractValue) -> bool:
   sharding = aval.sharding
   if sharding is None or sharding.mesh.empty:
     return False
-  return any(p is not None for p in sharding.spec)
+  spec = sharding.spec
+  if spec.unreduced or spec.reduced:
+    return True
+  from jax._src.named_sharding import flatten_spec
+  return any(s is not None for s in flatten_spec(spec))
 
 
 def _in_shard_map_manual_context(avals: Sequence[core.AbstractValue]) -> bool:

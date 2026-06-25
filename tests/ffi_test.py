@@ -324,19 +324,37 @@ class FfiTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Explicit,))
   @jtu.run_on_devices('cpu')
   def test_explicit_mesh_sharded_ffi_call_errors(self, mesh):
-    def f(x):
-      b, n, _ = x.shape
-      return jax.ffi.ffi_call(
-          "lapack_sgetrf_ffi",
-          (jax.ShapeDtypeStruct((b, n, n), jnp.float32),
-           jax.ShapeDtypeStruct((b, n), jnp.int32),
-           jax.ShapeDtypeStruct((b,), jnp.int32)),
-      )(x)
+    xs = jax.device_put(
+        jnp.ones((2, 4, 4), jnp.float32), NamedSharding(mesh, P('data', None, None)))
+    with self.assertRaisesRegex(ValueError, 'ffi_call with sharded inputs'):
+      jax.jit(ffi_call_sgetrf).lower(xs)
+
+  @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Explicit,))
+  @jtu.run_on_devices('cpu')
+  def test_explicit_mesh_unreduced_ffi_call_errors(self, mesh):
+    @partial(shard_map, mesh=mesh, in_specs=P('data'), out_specs=P(unreduced={'data'}))
+    def make_unreduced(x):
+      return x
 
     xs = jax.device_put(
         jnp.ones((2, 4, 4), jnp.float32), NamedSharding(mesh, P('data', None, None)))
     with self.assertRaisesRegex(ValueError, 'ffi_call with sharded inputs'):
-      jax.jit(f).lower(xs)
+      jax.jit(ffi_call_sgetrf).lower(make_unreduced(xs))
+
+  @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Explicit,))
+  @jtu.run_on_devices('cpu')
+  def test_explicit_mesh_reduced_ffi_call_errors(self, mesh):
+    xs = jax.device_put(
+        jnp.ones((2, 4, 4), jnp.float32), NamedSharding(mesh, P(reduced={'data'})))
+    with self.assertRaisesRegex(ValueError, 'ffi_call with sharded inputs'):
+      jax.jit(ffi_call_sgetrf).lower(xs)
+
+  @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Explicit,))
+  @jtu.run_on_devices('cpu')
+  def test_explicit_mesh_replicated_ffi_call_lowers(self, mesh):
+    xs = jax.device_put(
+        jnp.ones((2, 4, 4), jnp.float32), NamedSharding(mesh, P()))
+    jax.jit(ffi_call_sgetrf).lower(xs)  # doesn't crash
 
   @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Explicit,))
   @jtu.run_on_devices('cpu')
@@ -357,6 +375,16 @@ class FfiTest(jtu.JaxTestCase):
     xs = jax.device_put(jnp.ones((2, 4, 4), jnp.float32), P('data'))
     hlo = f.lower(xs).compile().as_text()
     self.assertNotIn('all-gather', hlo)
+
+
+def ffi_call_sgetrf(x):
+  b, n, _ = x.shape
+  return jax.ffi.ffi_call(
+      "lapack_sgetrf_ffi",
+      (jax.ShapeDtypeStruct((b, n, n), jnp.float32),
+       jax.ShapeDtypeStruct((b, n), jnp.int32),
+       jax.ShapeDtypeStruct((b,), jnp.int32)),
+  )(x)
 
 
 def ffi_call_geqrf(x, **kwargs):
