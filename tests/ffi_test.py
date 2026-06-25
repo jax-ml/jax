@@ -23,7 +23,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P
+from jax.sharding import AxisType, NamedSharding, PartitionSpec as P
 
 from jax._src import core
 from jax._src import dispatch
@@ -320,6 +320,43 @@ class FfiTest(jtu.JaxTestCase):
     def f(x):
       return jax.ffi.ffi_call("edtype", (), has_side_effect=True)(x)
     jax.jit(f).lower(jax.random.key(0))   # doesn't crash
+
+  @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Explicit,))
+  @jtu.run_on_devices('cpu')
+  def test_explicit_mesh_sharded_ffi_call_errors(self, mesh):
+    def f(x):
+      b, n, _ = x.shape
+      return jax.ffi.ffi_call(
+          "lapack_sgetrf_ffi",
+          (jax.ShapeDtypeStruct((b, n, n), jnp.float32),
+           jax.ShapeDtypeStruct((b, n), jnp.int32),
+           jax.ShapeDtypeStruct((b,), jnp.int32)),
+      )(x)
+
+    xs = jax.device_put(
+        jnp.ones((2, 4, 4), jnp.float32), NamedSharding(mesh, P('data', None, None)))
+    with self.assertRaisesRegex(ValueError, 'ffi_call with sharded inputs'):
+      jax.jit(f).lower(xs)
+
+  @jtu.with_explicit_mesh((2,), ('data',), axis_types=(AxisType.Explicit,))
+  @jtu.run_on_devices('cpu')
+  def test_explicit_mesh_ffi_call_inside_shard_map(self, mesh):
+    @jax.jit
+    @partial(shard_map, mesh=mesh, in_specs=P('data'), out_specs=(P('data'), P('data'), P('data')))
+    def f(x):
+      b, n, _ = x.shape
+      mat = jax.sharding.ManualAxisType(varying={'data'})
+      sharding = NamedSharding(jax.sharding.get_abstract_mesh(), P())
+      return jax.ffi.ffi_call(
+          "lapack_sgetrf_ffi",
+          (jax.ShapeDtypeStruct((b, n, n), jnp.float32, sharding=sharding, manual_axis_type=mat),
+           jax.ShapeDtypeStruct((b, n), jnp.int32, sharding=sharding, manual_axis_type=mat),
+           jax.ShapeDtypeStruct((b,), jnp.int32, sharding=sharding, manual_axis_type=mat)),
+      )(x)
+
+    xs = jax.device_put(jnp.ones((2, 4, 4), jnp.float32), P('data'))
+    hlo = f.lower(xs).compile().as_text()
+    self.assertNotIn('all-gather', hlo)
 
 
 def ffi_call_geqrf(x, **kwargs):

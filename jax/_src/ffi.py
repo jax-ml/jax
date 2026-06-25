@@ -508,6 +508,7 @@ def ffi_call(
 
   def wrapped(*args: ArrayLike, **kwargs: Any):
     in_avals = [core.typeof(x) for x in args]
+    _check_explicit_mesh_ffi_call(in_avals)
 
     if input_layouts is None:
       static_input_layouts = tuple(map(_convert_layout_for_lowering, in_avals))
@@ -614,6 +615,34 @@ def _unwrap_kwargs_hashable(kwargs: Sequence[tuple[str, Any]]) -> dict[str, Any]
     else:
       unwrapped_kwargs[k] = v
   return unwrapped_kwargs
+
+
+def _aval_is_sharded(aval: core.AbstractValue) -> bool:
+  if not isinstance(aval, core.ShapedArray):
+    return False
+  sharding = aval.sharding
+  if sharding is None or sharding.mesh.empty:
+    return False
+  return any(p is not None for p in sharding.spec)
+
+
+def _in_shard_map_manual_context(avals: Sequence[core.AbstractValue]) -> bool:
+  return any(isinstance(a, core.ShapedArray) and not a.mat.empty for a in avals)
+
+
+def _check_explicit_mesh_ffi_call(in_avals: Sequence[core.AbstractValue]) -> None:
+  from jax._src import mesh as mesh_lib
+
+  mesh = mesh_lib.get_abstract_mesh()
+  if not mesh.are_all_axes_explicit:
+    return
+  if _in_shard_map_manual_context(in_avals):
+    return
+  if any(_aval_is_sharded(a) for a in in_avals):
+    raise ValueError(
+        "ffi_call with sharded inputs is not supported under an explicit mesh"
+        " outside of jax.shard_map, because XLA may insert implicit all-gathers."
+        " Wrap the ffi_call in jax.shard_map or insert explicit collectives.")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
