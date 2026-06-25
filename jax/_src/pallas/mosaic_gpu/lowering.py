@@ -1241,12 +1241,13 @@ def lower_jaxpr_to_mosaic_gpu(
   for i, eqn in enumerate(jaxpr.eqns):
     invals = map(read_env, eqn.invars)
     eqn_name_stack = module_ctx.name_stack + eqn.source_info.name_stack
-    loc = mlir.source_info_to_location(
-        module_ctx,
-        eqn.primitive,
-        eqn_name_stack,
-        eqn.source_info.traceback or module_ctx.outer_traceback,
-    )
+    with config.include_full_tracebacks_in_locations(False):
+      loc = mlir.source_info_to_location(
+          module_ctx,
+          eqn.primitive,
+          eqn_name_stack,
+          eqn.source_info.traceback or module_ctx.outer_traceback,
+      )
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive not in mosaic_lowering_rules[
           (module_ctx.lowering_semantics, module_ctx.primitive_semantics)]:
