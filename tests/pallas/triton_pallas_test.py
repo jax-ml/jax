@@ -22,6 +22,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -503,6 +504,49 @@ class TritonPallasTest(PallasBaseTest):
     x = jax.random.normal(key, [batch_size, size], dtype=dtype)
     np.testing.assert_allclose(
         softmax(x), jax.nn.softmax(x, axis=-1), atol=1e-5, rtol=1e-5
+    )
+
+  def test_deviceless_aot(self):
+    abstract_device = mesh_lib.AbstractDevice('NVIDIA A100', 1, 'cuda')
+    abstract_mesh = mesh_lib.AbstractMesh(
+        (1,),
+        ('x',),
+        (mesh_lib.AxisType.Explicit,),
+        abstract_device=abstract_device,
+    )
+
+    batch_size = 2
+    size = 32
+    block_size = 64
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((batch_size, size), jnp.float32),
+        grid=batch_size,
+    )
+    def softmax(x_ref, o_ref):
+      row_idx = pl.program_id(0)
+      x_idx = jnp.arange(block_size)
+      row_idxs = (row_idx, x_idx)
+      mask = x_idx < x_ref.shape[1]
+      row = plgpu.load(x_ref.at[row_idxs], mask=mask, other=-float("inf"))
+      row_minus_max = row - jnp.max(row, axis=0)
+      numerator = jnp.exp(row_minus_max)
+      denominator = jnp.sum(numerator, axis=0)
+      softmax_output = numerator / denominator
+      plgpu.store(o_ref.at[row_idxs], softmax_output, mask=mask)
+
+    jitted = jax.jit(softmax)
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+        abstract_arr = jax.ShapeDtypeStruct((batch_size, size), jnp.float32)
+        traced = jitted.trace(abstract_arr)
+        lowered = traced.lower()
+
+    compiled = lowered.compile(device_assignment=tuple(jax.devices()))
+    key = jax.random.key(0)
+    x = jax.random.normal(key, [batch_size, size], dtype=jnp.float32)
+    output = compiled(x)
+    np.testing.assert_allclose(
+        output, jax.nn.softmax(x, axis=-1), atol=1e-5, rtol=1e-5
     )
 
   def test_unsigned_integer_dot_raises(self):

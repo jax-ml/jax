@@ -21,7 +21,6 @@ import json
 from typing import Final
 import zlib
 
-import jax
 from jax._src import core as jax_core
 from jax._src import frozen_dict
 from jax._src.interpreters import mlir
@@ -31,6 +30,7 @@ from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import core as triton_core
 from jax._src.pallas.triton import lowering
+from jax._src.pallas.triton import gpu_info as gpu_info_lib
 
 
 # TODO(b/526389887): Figure out how to flip this to True.
@@ -102,18 +102,18 @@ def pallas_call_lowering(
     print(grid_mapping)
 
   try:
-    gpu_device, *_ = jax.local_devices(backend="gpu")
-  except RuntimeError:
-    # GPU device is not available. Fall back to the minimum CC supported by Triton.
-    # TODO(slebedev): Make the fallback CC configurable.
-    arch_name = "9.0"
-    compute_capability = 90
+    gpu_info = gpu_info_lib.get_gpu_info()
+  except ValueError:
+    raise RuntimeError(
+        "No supported GPU devices found, please specify an abstract GPU "
+        "device using AbstractDevice. See jax.sharding.use_abstract_mesh "
+        "method for example."
+    ) from None
   else:
-    arch_name = str(gpu_device.compute_capability)
+    arch_name = gpu_info.arch_name
+    compute_capability = gpu_info.compute_capability
     if lowering_platform == "rocm":
       compute_capability = 0
-    else:
-      compute_capability = int(arch_name.replace(".", ""))
 
   # Sanitize the name to conform to NVPTX requirements. We do this here
   # to avoid the need to fetch the new name from PTX post compilation.

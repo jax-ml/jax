@@ -93,6 +93,7 @@ pytype_strict_library(
     deps = [
         ":core",
         ":lowering",
+        ":gpu_info",
         "//jax",
         "//jax/_src:api",
         "//jax/_src:core",
@@ -100,6 +101,20 @@ pytype_strict_library(
         "//jax/_src:mesh",
         "//jax/_src:mlir",
         "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
+    name = "gpu_info",
+    srcs = ["gpu_info.py"],
+    type_checking = "pyrefly",
+    deps = [
+        ":core",
+        ":lowering",
+        "//jax",
+        "//jax/_src:mesh",
+        "//jax/_src:util",
         "//jax/_src/pallas",
     ],
 )
