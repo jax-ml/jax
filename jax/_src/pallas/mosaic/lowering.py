@@ -4979,6 +4979,15 @@ def _delay_rule(ctx: LoweringRuleContext, nanos: ir.Value):
   return []
 
 
+def _aval_to_log_format_spec(aval):
+  if jnp.issubdtype(aval.dtype, jnp.floating):
+    return "f"
+  if jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
+    return "u"
+  assert jnp.issubdtype(aval.dtype, jnp.signedinteger)
+  return "s"
+
+
 @register_lowering_rule(debugging.debug_print_p)
 def _debug_print_rule(
     ctx: LoweringRuleContext,
@@ -5015,19 +5024,22 @@ def _debug_print_rule(
     if has_placeholders:
       primitives.check_debug_print_format(fmt, *args)
       if not all(
-          isinstance(arg.type, ir.IntegerType) and arg.type.width == 32
+          (isinstance(arg.type, ir.IntegerType) and arg.type.width == 32)
+          or isinstance(arg.type, ir.F32Type)
           for arg in args
       ):
         raise TypeError(
-            "All arguments must be 32-bit integers when using"
-            " placeholders (`{...}`). If you need to print values of other types,"
-            " remove placeholders from the format string."
+            "All arguments must be 32-bit integers or floats when using"
+            " placeholders (`{...}`). If you need to print values of"
+            " other types, remove placeholders from the format string."
         )
 
-      # TPU expects $0, $1 etc as placeholders.
+      # TPU expects $0, $1 etc as placeholders. Infer the format spec
+      # from the aval dtype.
       fmt = "".join(
-          f"{text}${spec}{idx}" if field is not None else text
-          for idx, (text, field, spec, _) in enumerate(
+          f"{text}${_aval_to_log_format_spec(ctx.avals_in[idx])}{idx}"
+          if field is not None else text
+          for idx, (text, field, _, _) in enumerate(
               string.Formatter().parse(fmt)
           )
       )

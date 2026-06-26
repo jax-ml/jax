@@ -607,8 +607,8 @@ def debug_print(fmt: str, *args: jax_typing.ArrayLike):
         conversions are not supported. If a single value is provided, the value
         may be an array. Otherwise, all values must be scalars.
       * On TPU, if all inputs are scalars: If ``fmt`` contains placeholders,
-        all values must be 32-bit integers. If there are no placeholders, the
-        values are printed after the format string.
+        all values must be 32-bit integers or floats. If there are no
+        placeholders, the values are printed after the format string.
       * On TPU, if the input is a single vector, the vector is printed after
         the format string. The format string must end with a single placeholder
         ``{}``.

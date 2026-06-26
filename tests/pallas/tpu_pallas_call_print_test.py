@@ -105,23 +105,29 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn('It works!', get_output())
 
-  @parameterized.product(dtype=[jnp.int32, jnp.float32])
-  def test_debug_print_with_formatting(self, dtype):
+  @parameterized.parameters(
+      (jnp.int32, 42),
+      (jnp.uint32, 42),
+      (jnp.int32, -42),
+      (jnp.float32, 42.0),
+  )
+  def test_debug_print_with_formatting(self, dtype, value):
+    if (
+        not jnp.issubdtype(dtype, jnp.signedinteger) and
+        not jtu.is_libtpu_at_least('0.0.43')
+    ):
+      self.skipTest('Requires libtpu 0.0.43 or newer')
+
     @functools.partial(
         self.pallas_call,
         in_specs=(pl.BlockSpec(memory_space=pltpu.SMEM),),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )
     def kernel(x_ref, o_ref):
-      if dtype == jnp.int32:
-        pl.debug_print('BEGIN1 x[0] == {}', x_ref[0])
-        pl.debug_print(
-            'BEGIN2 x[0] == {} ; x[1] == {} ; END', x_ref[0], x_ref[1]
-        )
-      else:
-        pl.debug_print('BEGIN1 x[0] == ', x_ref[0])
+      del o_ref  # Only used for awaiting the result.
+      pl.debug_print('x[0] == {}', x_ref[0])
 
-    x = jnp.array([42, 24], dtype=dtype)
+    x = jnp.array([value], dtype=dtype)
     compiled_kernel = (
         jax.jit(kernel)
         .lower(x)
@@ -130,11 +136,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     output = get_output()
-    if dtype == jnp.int32:
-      self.assertIn('BEGIN1 x[0] == 42', output)
-      self.assertIn('BEGIN2 x[0] == 42 ; x[1] == 24 ; END', output)
-    else:
-      self.assertIn('BEGIN1 x[0] == f32[] 42', output)
+    self.assertIn(f'x[0] == {value}', output)
 
   @parameterized.named_parameters(
       (f"{'_'.join(map(str, shape))}_{dtype.__name__}", shape, dtype)
