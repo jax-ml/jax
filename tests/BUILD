@@ -135,6 +135,7 @@ jax_multiplatform_test(
     enable_backends = [
         "cpu",
         "gpu",
+        "tpu",
     ],
     enable_configs = [
         "gpu_h100x2_full",

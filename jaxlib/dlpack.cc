@@ -150,6 +150,10 @@ absl::StatusOr<DLDevice> DLDeviceForBuffer(const xla::PjRtBuffer& buffer) {
       memory_space->kind() == xla::PinnedHostMemorySpace::kKind &&
       buffer.device()->client()->platform_id() == xla::CudaId()) {
     context.device_type = kDLCUDAHost;
+  } else if (memory_space != nullptr &&
+             memory_space->kind() == xla::PinnedHostMemorySpace::kKind &&
+             buffer.device()->client()->platform_id() == xla::TpuId()) {
+    context.device_type = kDLTPUHost;
   } else {
     TF_ASSIGN_OR_RETURN(context.device_type,
                         DLDeviceTypeForDevice(*buffer.device()));
@@ -213,7 +217,8 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   DLDeviceType effective_device_type =
       dl_device_type.value_or(dlmt->dl_tensor.device.device_type);
   xla::PjRtMemorySpace* memory_space;
-  if (effective_device_type == kDLCUDAHost) {
+  if (effective_device_type == kDLCUDAHost ||
+      effective_device_type == kDLTPUHost) {
     TF_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
                                           xla::PinnedHostMemorySpace::kKind));
   } else {
