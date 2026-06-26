@@ -583,7 +583,12 @@ class BufferedRef(BufferedRefBase):
       raise ValueError(
           f"Unsupported buffer memory space: {buffer_memory_space}"
       )
-    if source_memory_space is buffer_memory_space:
+    if source_memory_space is buffer_memory_space or buffer_memory_space is HBM:
+      if buffer_memory_space is HBM:
+        if spec.memory_space not in (ANY, HBM):
+          raise ValueError(
+              "You cannot request HBM block spec for a non-HBM source for"
+              f"{spec=} and {source_memory_space=}")
       return cls(
           _spec=spec,
           _buffer_type=buffer_type,

@@ -175,6 +175,37 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     x = jnp.arange(8 * 512).reshape(8, 512)
     np.testing.assert_allclose(kernel(x), x)
 
+  def test_emit_pipeline_input_hbm_memory_space(self):
+    def pipeline_body(x_ref, y_ref, z_ref, o_ref, scratch_ref):
+      pltpu.sync_copy(y_ref, o_ref)
+      pltpu.sync_copy(z_ref, scratch_ref)
+      o_ref[...] = o_ref[...] + x_ref[...] + 2 * scratch_ref[...]
+      assert y_ref.shape == (8, 128) and y_ref.dtype == jnp.float32
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((8 * 8, 128), jnp.float32),
+        mesh=pltpu.create_tensorcore_mesh('core'),
+        scratch_types=[pltpu.VMEM((8, 128), jnp.float32)],
+    )
+    def kernel(x_hbm_ref, y_hbm_ref, z_hbm_ref, o_hbm_ref, scratch_ref):
+      pltpu.emit_pipeline(
+          functools.partial(pipeline_body, scratch_ref=scratch_ref),
+          grid=(8,),
+          in_specs=[
+              pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              pl.BlockSpec((8, 128), lambda i: (i, 0), memory_space=pltpu.HBM),
+              pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0),
+                           memory_space=pltpu.HBM),
+          ],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+      )(x_hbm_ref, y_hbm_ref, z_hbm_ref, o_hbm_ref)
+
+    x = jnp.arange(8 * 8 * 128, dtype=jnp.float32).reshape((8 * 8, 128))
+    y = jnp.arange(8 * 8 * 128, dtype=jnp.float32).reshape((8 * 8, 128))
+    z = jnp.arange(8 * 8 * 128, dtype=jnp.float32).reshape((8, 8, 128))
+    out = kernel(x, y, z)
+    np.testing.assert_allclose(out, x + y + 2 * z.reshape((8 * 8, 128)))
+
   def test_trivial_windowing_elides_double_buffering(self):
     def pipeline_body(x_ref, y_ref, o_ref):
       o_ref[...] = x_ref[...] + y_ref[...]
