@@ -4540,6 +4540,50 @@ class PallasCallSm90ATest(PallasSm90ATest):
         res, a.astype(acc_type) @ b.T.astype(acc_type)
     )
 
+  @parameterized.parameters(
+      (jnp.float8_e4m3fn, jnp.float8_e5m2),
+      (jnp.float8_e5m2, jnp.float8_e4m3fn),
+  )
+  def test_wgmma_mixed_fp8(self, lhs_dtype, rhs_dtype):
+    m, k, n = 64, 128, 64
+
+    def kernel(a_ref, b_ref, o_ref):
+
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref, plgpu.transpose_ref(b_ref, (1, 0)))
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((m, n), jnp.float32))
+
+    # Small integers are exact in both e4m3 and e5m2, so the reference matmul is
+    # exact and the comparison is insensitive to FP8 rounding.
+    a = jax.random.randint(jax.random.key(0), (m, k), -8, 8).astype(lhs_dtype)
+    b = jax.random.randint(jax.random.key(1), (n, k), -8, 8).astype(rhs_dtype)
+
+    # Both FP8 types are 1 byte, so the LHS and RHS share the same transforms.
+    transforms = self.default_transforms(dtype=lhs_dtype)
+    res = self.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.BlockSpec(
+                (m, k),
+                lambda i, j: (i, j),
+                transforms=transforms,
+            ),
+            plgpu.BlockSpec(
+                (n, k),
+                lambda *i: i,
+                transforms=transforms,
+            ),
+        ],
+        out_specs=plgpu.BlockSpec((m, n), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_array_equal(
+        res, a.astype(jnp.float32) @ b.T.astype(jnp.float32)
+    )
+
   def test_wgmma_sliced_acc_flip(self):
     dtype = jnp.float16
 

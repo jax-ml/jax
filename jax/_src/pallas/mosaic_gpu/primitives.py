@@ -1520,8 +1520,15 @@ def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
         f" rhs={b.shape=}, acc={acc.shape}"
     )
 
-  if a.dtype != b.dtype:
-    raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a.dtype}, rhs={b.dtype}")
+  # A and B must share a dtype, except that the e4m3/e5m2 FP8 pair may be mixed:
+  # `wgmma` takes independent `.atype`/`.btype` operands for FP8.
+  fp8_dtypes = (jnp.float8_e4m3fn, jnp.float8_e5m2)
+  both_fp8 = a.dtype in fp8_dtypes and b.dtype in fp8_dtypes
+  if a.dtype != b.dtype and not both_fp8:
+    raise ValueError(
+        "Mixed input dtypes for matrix multiplication unsupported: "
+        f"lhs={a.dtype}, rhs={b.dtype}"
+    )
 
   acc_transforms_leaves: list
   if isinstance(acc, pallas_core.TransformedRef):
