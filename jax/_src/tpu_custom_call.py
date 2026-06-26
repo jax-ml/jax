@@ -51,7 +51,6 @@ def register_extra_dialect(loader: Callable[[ir.Context], None]):
   _extra_dialect_loaders.append(loader)
 
 
-
 # Controls the IR serialization version. Upon incrementing the
 # default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
 # continue to use the old serialization version when in forward compatibility
@@ -163,6 +162,7 @@ class CustomCallBackendConfig:
   lowered_module_asm: bytes
   lowered_module_asm_version: int | None
   has_communication: bool
+  has_logging: bool
   collective_id: int | None
   device_type: str | None
   cost_estimate: CostEstimate | None
@@ -234,6 +234,9 @@ class CustomCallBackendConfig:
     if self.has_communication:
       config.write(b', "has_communication": ')
       config.write(str(self.has_communication).lower().encode("ascii"))
+    if self.has_logging:
+      config.write(b', "has_logging": ')
+      config.write(str(self.has_logging).lower().encode("ascii"))
     if self.collective_id is not None:
       config.write(b', "collective_id": ')
       config.write(str(self.collective_id).encode("ascii"))
@@ -605,6 +608,20 @@ def _get_active_core_count(module: ir.Module) -> int | None:
   return core_parallel_dim_size
 
 
+def _has_log_ops(module: ir.Module) -> bool:
+  found = False
+
+  def check(op: ir.Operation) -> ir.WalkResult:
+    nonlocal found
+    if op.name in ("tpu.log", "tpu.log_buffer"):
+      found = True
+      return ir.WalkResult.INTERRUPT
+    return ir.WalkResult.ADVANCE
+
+  module.operation.walk(check, walk_order=ir.WalkOrder.PRE_ORDER)
+  return found
+
+
 def _lower_to_custom_call_config(
     module: ir.Module,
     *,
@@ -638,6 +655,7 @@ def _lower_to_custom_call_config(
       ir_version=ir_version,
   )
   active_core_count = _get_active_core_count(module)
+  has_logging = _has_log_ops(module)
   return _lowered_to_custom_call_config(
       lowered_module_asm,
       lowered_module_asm_version=ir_version,
@@ -651,6 +669,7 @@ def _lower_to_custom_call_config(
       serialization_format=serialization_format,
       has_custom_barrier=has_custom_barrier,
       has_communication=has_communication,
+      has_logging=has_logging,
       needs_hlo_passes=needs_hlo_passes,
       needs_layout_passes=needs_layout_passes,
       output_memory_spaces=output_memory_spaces,
@@ -682,6 +701,7 @@ def _lowered_to_custom_call_config(
     needs_layout_passes: bool,
     device_type: str | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
+    has_logging: bool = False,
     disable_bounds_checks: bool = False,
     disable_semaphore_checks: bool = False,
     active_core_count: int | None = None,
@@ -714,6 +734,7 @@ def _lowered_to_custom_call_config(
       lowered_module_asm,
       lowered_module_asm_version,
       has_communication,
+      has_logging,
       collective_id,
       device_type,
       cost_estimate,
@@ -899,6 +920,7 @@ def lowered_as_tpu_kernel(
       serialization_format=serialization_format,
       has_custom_barrier=has_custom_barrier,
       has_communication=has_communication,
+      has_logging=_has_log_ops(lowered_module),
       needs_hlo_passes=needs_hlo_passes,
       needs_layout_passes=needs_layout_passes,
       disable_bounds_checks=disable_bounds_checks,

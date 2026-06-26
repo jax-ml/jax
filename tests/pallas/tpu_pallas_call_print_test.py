@@ -33,6 +33,12 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
+def _enable_log_recorder():
+  if jtu.is_libtpu_at_least('0.0.43'):
+    return {}
+  return {'xla_tpu_enable_log_recorder': 'true'}
+
+
 @jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")
 @jtu.thread_unsafe_test_class()  # debug print test is not thread safe
 class PallasCallPrintTest(ptu.PallasTPUTest):
@@ -46,11 +52,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       pl.debug_print('It works!')
 
     x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({'xla_tpu_enable_log_recorder': 'true'})
-    )
+    compiled_kernel = jax.jit(kernel).lower(x).compile(_enable_log_recorder())
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn('It works!', get_output())
@@ -68,11 +70,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       del o_ref  # Unused.
       pl.debug_print('DONE ', arg_type(123))
 
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower()
-        .compile({'xla_tpu_enable_log_recorder': 'true'})
-    )
+    compiled_kernel = jax.jit(kernel).lower().compile(_enable_log_recorder())
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel())
 
@@ -96,11 +94,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       o_ref[...] = x_ref[...]
 
     x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({'xla_tpu_enable_log_recorder': 'true'})
-    )
+    compiled_kernel = jax.jit(kernel).lower(x).compile(_enable_log_recorder())
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     self.assertIn('It works!', get_output())
@@ -122,11 +116,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
         pl.debug_print('BEGIN1 x[0] == ', x_ref[0])
 
     x = jnp.array([42, 24], dtype=dtype)
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({'xla_tpu_enable_log_recorder': 'true'})
-    )
+    compiled_kernel = jax.jit(kernel).lower(x).compile(_enable_log_recorder())
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     output = get_output()
@@ -159,11 +149,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
 
     n = np.prod(shape)
     x = jnp.arange(n, dtype=dtype).reshape(shape)
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({"xla_tpu_enable_log_recorder": "true"})
-    )
+    compiled_kernel = jax.jit(kernel).lower(x).compile(_enable_log_recorder())
     with jtu.capture_stderr() as get_output:
       jax.block_until_ready(compiled_kernel(x))
     output = get_output()
