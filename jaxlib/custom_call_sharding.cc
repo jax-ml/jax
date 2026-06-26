@@ -222,22 +222,26 @@ void BuildCustomCallShardingPybindAPI(nb::module_& m) {
          nb::object infer_sharding_from_operands,
          bool can_side_effecting_have_replicated_sharding,
          std::optional<nb::capsule> c_api) {
-        auto* c_fns =
-            (new PyCustomCallPartitionerCallbacks(prop_user_sharding, partition,
-                                                  infer_sharding_from_operands))
-                ->callbacks();
+        std::unique_ptr<JAX_CustomCallPartitioner_Callbacks,
+                        void (*)(JAX_CustomCallPartitioner_Callbacks*)>
+            c_fns((new PyCustomCallPartitionerCallbacks(
+                       prop_user_sharding, partition,
+                       infer_sharding_from_operands))
+                      ->callbacks(),
+                  [](JAX_CustomCallPartitioner_Callbacks* c) { c->dtor(c); });
+
         c_fns->can_side_effecting_have_replicated_sharding =
             can_side_effecting_have_replicated_sharding;
         if (!c_api.has_value()) {
-          RegisterCustomCallPartitioner(name,
-                                        CreateCApiCustomCallPartitioner(c_fns));
+          RegisterCustomCallPartitioner(
+              name, CreateCApiCustomCallPartitioner(c_fns.release()));
           return;
         }
 
         if (std::string_view(c_api->name()) != "pjrt_c_api") {
-          throw absl::InvalidArgumentError(
+          xla::ThrowIfError(absl::InvalidArgumentError(
               "Argument to register_custom_call_partitioner was not a "
-              "pjrt_c_api capsule.");
+              "pjrt_c_api capsule."));
         }
         auto* c_api_value = static_cast<const PJRT_Api*>(c_api->data());
         PJRT_Custom_Partitioner_Extension* extension =
@@ -251,15 +255,20 @@ void BuildCustomCallShardingPybindAPI(nb::module_& m) {
         args.struct_size = PJRT_Register_Custom_Partitioner_Args_STRUCT_SIZE;
         args.name = name.c_str();
         args.name_size = name.size();
-        args.callbacks = c_fns;
+        args.callbacks = c_fns.get();
         PJRT_Error* error =
             reinterpret_cast<const PJRT_Custom_Partitioner_Extension*>(
                 extension)
                 ->register_custom_partitioner(&args);
-        std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error_ptr(
-            error, pjrt::MakeErrorDeleter(c_api_value));
-        xla::ThrowIfError(
-            pjrt::PjrtErrorToStatus(error_ptr.get(), c_api_value));
+
+        if (error != nullptr) {
+          std::unique_ptr<PJRT_Error, pjrt::PJRT_ErrorDeleter> error_ptr(
+              error, pjrt::MakeErrorDeleter(c_api_value));
+          xla::ThrowIfError(
+              pjrt::PjrtErrorToStatus(error_ptr.get(), c_api_value));
+        }
+
+        c_fns.release();
       },
       R"(Registers a partitioner for a custom-call operation.
 
