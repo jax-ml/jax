@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 472  # Add register_pipelines option to jax_mlir_ext.register_dialects.
+_version = 473  # Add inlining control with multi-state 'inline' parameter
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
