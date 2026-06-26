@@ -241,27 +241,95 @@ JAX is not supported on Mac/OSX GPU; instead use the standard {ref}`CPU installa
 (install-amd-gpu)=
 ## AMD GPU (Linux)
 
-AMD GPU support is provided by a ROCm JAX plugin supported by AMD.
+AMD GPU support is provided by a ROCm JAX plugin supported by AMD. The [ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) lists the GPU SKUs supported by ROCm. Please follow the [ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html) to install ROCm on your system before installing JAX.
 
-### pip installation: AMD GPU (ROCm)
+### ROCm version compatibility
 
-JAX supports a ROCm install via:
+JAX currently does **not** ship a pip extra that installs
+ROCm itself. ROCm must already be present on the host system or inside the
+container, and the `jax[rocm7-local]` extra installs only the JAX ROCm
+plugin/PJRT packages on top of it.
+
+Each JAX ROCm plugin release targets a specific ROCm version, so the installed
+ROCm must match the version the plugin was built against. AMD maintains the
+authoritative mapping in the
+[JAX on ROCm compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/ml-compatibility/jax-compatibility.html);
+consult it to confirm which ROCm version your target JAX release requires before
+installing. The `rocm7` plugin packages require a ROCm 7.x installation.
+
+### pip installation: AMD GPU (ROCm, pre-installed)
+
+With a compatible ROCm already installed (see above), install JAX and the ROCm
+plugins via:
 
 ```bash
 pip install --upgrade "jax[rocm7-local]"
 ```
 
 ROCm-specific fixes are shipped as *post-releases* of the ROCm plugin/PJRT
-packages (for example, `jax-rocm7-plugin==0.9.1.post1`). Upgrading
+packages (for example, `jax-rocm7-plugin==X.Y.Z.post1`). Upgrading
 `jax[rocm7-local]` will pick up the newest compatible post-release available from
 your configured package indexes.
 
-For prerequisites (ROCm/Docker), and for ROCm-specific extras such as `jax[rocm7-local]`, please see [AMD's Instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md) for details.
+```bash
+python3 -c "import jax; print(jax.devices())"
+```
+
+If the installation is working, this lists your ROCm devices (for example,
+`[RocmDevice(id=0), RocmDevice(id=1), ...]`).
+
+To build the ROCm JAX wheels from source, see [Build ROCm JAX from Source](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md).
+
+### pip installation: AMD GPU (ROCm, installed via pip)
+
+AMD is rolling out installing the ROCm wheels directly from AMD's package
+indexes, currently available as a **technology preview** in
+[ROCm 7.13.0 (preview)](https://rocm.docs.amd.com/en/7.13.0-preview/install/rocm.html).
+
+This is a preview and not yet generally available; the ROCm Core SDK must still
+be installed separately (the JAX packages do not pull in `rocm[libraries]`
+automatically). For the per-architecture index URLs and exact commands, follow
+the [ROCm 7.13.0 installation guide](https://rocm.docs.amd.com/en/7.13.0-preview/install/rocm.html).
+
+As part of the same preview effort, the ROCm JAX fork
+([ROCm/jax](https://github.com/ROCm/jax)) publishes
+[TheRock](https://github.com/ROCm/TheRock)-based JAX wheels — built against
+TheRock ROCm — as downloadable release assets. Grab the
+`wheelhouse_*_theRock*.zip` archive from the
+[latest ROCm/jax release](https://github.com/ROCm/jax/releases/latest),
+unzip it, and `pip install` the contained `jax-rocm7-pjrt` and `jax-rocm7-plugin`
+wheels (the release notes give the exact commands for each version). This path is
+also a preview and intended for evaluation.
+
+For generally available releases, use the pre-installed-ROCm path
+[above](#pip-installation-amd-gpu-rocm-pre-installed).
+
+(docker-containers-amd-gpu)=
+### AMD GPU Docker containers
+
+AMD provides prebuilt ROCm JAX Docker images that bundle ROCm, JAX, and all
+required dependencies — the simplest way to get started, since you don't need to
+install ROCm yourself. Pull the latest image with:
+
+```bash
+docker pull rocm/jax:latest
+```
+
+See the [JAX on ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/jax-install.html)
+for the recommended `docker run` flags and for version-pinned image tags.
 
 **Note**: ROCm support on Windows WSL2 is experimental. For WSL installation, you may need to:
 1. Install [ROCm for WSL](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/tutorial/quick-start.html) following AMD's official guide
 2. Follow the standard Linux ROCm JAX installation steps within your WSL environment
 3. Be aware that performance and stability may differ from native Linux installations
+
+### Getting help
+
+The ROCm JAX plugin is maintained by AMD. For ROCm-specific JAX issues — such as
+installation problems, ROCm/driver compatibility, or plugin/runtime errors —
+please report them on the [ROCm issue tracker](https://github.com/ROCm/ROCm/issues),
+which AMD monitors. For issues with JAX itself that are not ROCm-specific, use the
+[JAX issue tracker](https://github.com/jax-ml/jax/issues).
 
 (install-intel-gpu)=
 ## Intel GPU
