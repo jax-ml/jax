@@ -131,7 +131,7 @@ _deprecations = {
     _src_core.OutputType,
   ),
   "abstract_token": (
-    "jax.core.abstract_token is deprecated.",
+    "jax.core.abstract_token is deprecated. Use jax.ffi.abstract_token.",
     _src_core.abstract_token,
   ),
   "aval_mapping_handlers": (

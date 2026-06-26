@@ -150,7 +150,7 @@ class FfiTest(jtu.JaxTestCase):
   def test_token(self):
     def fun():
       token = lax.create_token()
-      return jax.ffi.ffi_call("test_ffi", core.abstract_token)(token)
+      return jax.ffi.ffi_call("test_ffi", jax.ffi.abstract_token)(token)
 
     # Ensure that token inputs and outputs are translated to the correct type
     module = jax.jit(fun).lower().compiler_ir("stablehlo")
