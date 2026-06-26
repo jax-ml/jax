@@ -1988,7 +1988,6 @@ class DynamicJaxprTrace(core.Trace):
     new_jaxpr = convert_constvars_jaxpr(jaxpr)
     if isinstance(call_primitive, core.ClosedCallPrimitive):
       new_jaxpr = close_jaxpr(new_jaxpr)
-    self.frame.is_high |= new_jaxpr.is_high
     new_params = dict(params, call_jaxpr=new_jaxpr)
     update_params = call_param_updaters.get(call_primitive)
     if update_params:
@@ -2605,12 +2604,3 @@ def raise_lo_outs(hi_avals, lo_outs):
 
 def num_himuts_out(final_qdds):
   return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
-
-
-def _closed_call_to_lojax(*hi_args, call_jaxpr: ClosedJaxpr, **_):
-  from jax._src.custom_derivatives import _lower_and_eval  # pyrefly: ignore[missing-import]
-
-  return _lower_and_eval("closed_call", call_jaxpr, hi_args)
-
-
-core.closed_call_p.to_lojax = _closed_call_to_lojax
