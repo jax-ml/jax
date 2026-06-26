@@ -18,15 +18,16 @@ limitations under the License.
 
 #include <cstdint>
 
+#include "absl/status/status.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
-gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
-                                         void* vector, int size,
-                                         bool is_single_precision);
+absl::Status LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
+                                           void* vector, int size,
+                                           bool is_single_precision);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CholeskyUpdateFfi);
 
 void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,

@@ -68,7 +68,6 @@ typedef cudaDataType gpuDataType;
 typedef CUdevice gpuDevice_t;
 typedef CUdeviceptr gpuDevicePtr_t;
 typedef cudaStream_t gpuStream_t;
-typedef cudaError_t gpuError_t;
 typedef CUevent gpuEvent_t;
 typedef CUfunction gpuFunction_t;
 typedef cudnnHandle_t gpudnnHandle_t;
@@ -407,7 +406,6 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
 #define gpuStreamSynchronize cudaStreamSynchronize
 #define gpuStreamWaitEvent cudaStreamWaitEvent
-#define gpuSuccess cudaSuccess
 
 #define gpuDeviceProp cudaDeviceProp
 #define gpuGetDeviceProperties cudaGetDeviceProperties
@@ -533,7 +531,6 @@ typedef hipDataType gpuDataType;
 typedef hipDevice_t gpuDevice_t;
 typedef hipDeviceptr_t gpuDevicePtr_t;
 typedef hipStream_t gpuStream_t;
-typedef hipError_t gpuError_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipFunction_t gpuFunction_t;
 typedef miopenHandle_t gpudnnHandle_t;
@@ -830,7 +827,6 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuStreamWaitEvent hipStreamWaitEvent
-#define gpuSuccess hipSuccess
 
 #define gpuCtxGetDevice hipCtxGetDevice
 #define gpuCtxGetCurrent hipCtxGetCurrent

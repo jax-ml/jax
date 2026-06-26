@@ -36,6 +36,7 @@ limitations under the License.
 #include "include/dlpack/dlpack.h"
 #include "nanobind/nanobind.h"
 #include "jaxlib/ffi.h"
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/pjrt/host_callback.h"
@@ -115,13 +116,15 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     }
     host_input_buffers[i] = new char[size_bytes];
     // TODO(b/238441608): Use pinned memory here to speed up the transfer.
-    auto gpu_res =
+    auto status = JAX_AS_STATUS(
         gpuMemcpyAsync(host_input_buffers[i], arg.value().untyped_data(),
-                       size_bytes, gpuMemcpyDeviceToHost, stream);
-    CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
+                       size_bytes, gpuMemcpyDeviceToHost, stream));
+    CHECK(status.ok()) << status.message();
   }
-  CHECK_EQ(gpuStreamSynchronize(stream), gpuSuccess)
-      << "Failed to gpuStreamSynchronize";
+  {
+    auto status = JAX_AS_STATUS(gpuStreamSynchronize(stream));
+    CHECK(status.ok()) << status.message();
+  }
   nb::gil_scoped_acquire gil;
   auto callback = nb::borrow<nb::callable>(
       static_cast<PyObject*>(callbacks->callbacks[index]));
@@ -253,13 +256,15 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
       size_bytes = packed_size;
     }
 
-    auto gpu_res = gpuMemcpyAsync(ret->untyped_data(), data, size_bytes,
-                                  gpuMemcpyHostToDevice, stream);
-    CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
+    auto status = JAX_AS_STATUS(gpuMemcpyAsync(
+        ret->untyped_data(), data, size_bytes, gpuMemcpyHostToDevice, stream));
+    CHECK(status.ok()) << status.message();
   }
   nb::gil_scoped_release release;
-  CHECK_EQ(gpuStreamSynchronize(stream), gpuSuccess)
-      << "Failed to gpuStreamSynchronize";
+  {
+    auto status = JAX_AS_STATUS(gpuStreamSynchronize(stream));
+    CHECK(status.ok()) << status.message();
+  }
   for (int i = 0; i < temp_buffers.size(); ++i) {
     delete[] static_cast<char*>(temp_buffers[i]);
   }

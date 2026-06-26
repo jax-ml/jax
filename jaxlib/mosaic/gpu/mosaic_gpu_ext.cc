@@ -113,14 +113,14 @@ void callback_complete(CUcontext context, uint32_t streamId, uint8_t* buffer,
 NB_MODULE(_mosaic_gpu_ext, m) {
   m.def("_sync_all_devices", []() {
     int devices = 0;
-    if (cudaGetDeviceCount(&devices) != gpuSuccess) {
+    if (cudaGetDeviceCount(&devices) != cudaSuccess) {
       throw std::runtime_error("Failed to get device count");
     }
     for (int i = 0; i < devices; ++i) {
-      if (cudaSetDevice(i) != gpuSuccess) {
+      if (cudaSetDevice(i) != cudaSuccess) {
         throw std::runtime_error("Failed to set device");
       }
-      if (cudaDeviceSynchronize() != gpuSuccess) {
+      if (cudaDeviceSynchronize() != cudaSuccess) {
         throw std::runtime_error("Failed to synchronize device");
       }
     }

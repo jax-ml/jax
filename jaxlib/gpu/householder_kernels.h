@@ -16,23 +16,24 @@ limitations under the License.
 #ifndef JAXLIB_GPU_HOUSEHOLDER_KERNELS_H_
 #define JAXLIB_GPU_HOUSEHOLDER_KERNELS_H_
 
+#include "absl/status/status.h"
 #include "jaxlib/gpu/vendor.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
 template <typename T>
-gpuError_t LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
-                                         int n, int k, int lda,
-                                         int64_t a_stride, const T* a,
-                                         const T* tau, T* out, bool left,
-                                         bool transpose);
+absl::Status LaunchOrmqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
+                                           int n, int k, int lda,
+                                           int64_t a_stride, const T* a,
+                                           const T* tau, T* out, bool left,
+                                           bool transpose);
 
 template <typename T>
-gpuError_t LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
-                                         int n, int k, int lda,
-                                         int64_t a_stride, const T* a,
-                                         const T* tau, T* out);
+absl::Status LaunchOrgqrSmallBatchedKernel(gpuStream_t stream, int batch, int m,
+                                           int n, int k, int lda,
+                                           int64_t a_stride, const T* a,
+                                           const T* tau, T* out);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
