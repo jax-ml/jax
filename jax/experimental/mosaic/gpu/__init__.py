@@ -79,6 +79,7 @@ from .fragmented_array import (
     copy_tiled as copy_tiled,
     optimization_barrier as optimization_barrier,
     Rounding as Rounding,
+    concatenate as concatenate,
 )
 from .utils import (
     BarrierRef as BarrierRef,

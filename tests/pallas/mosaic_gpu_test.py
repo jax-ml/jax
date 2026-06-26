@@ -603,6 +603,25 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x[1, 1])
 
+  @parameterized.named_parameters(
+      ("axis0", 0, ((64, 64), (128, 64))),
+      ("axis1", 1, ((64, 64), (64, 128))),
+  )
+  def test_concatenate(self, axis, shapes):
+    self.skip_if_wg_semantics()
+    x0 = np.arange(math.prod(shapes[0]), dtype=np.float32).reshape(shapes[0])
+    x1 = np.arange(math.prod(shapes[1]), dtype=np.float32).reshape(shapes[1])
+    expected = np.concatenate([x0, x1], axis=axis)
+    out_shape = jax.ShapeDtypeStruct(expected.shape, jnp.float32)
+
+    @self.kernel(out_type=out_shape)
+    def kernel(inp1_ref, inp2_ref, out_ref):
+      x0 = plgpu.load(inp1_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      x1 = plgpu.load(inp2_ref, (), layout=plgpu.Layout.WGMMA, optimized=False)
+      out_ref[...] = lax.concatenate([x0, x1], dimension=axis)
+
+    np.testing.assert_array_equal(kernel(x0, x1), expected)
+
   def test_squeeze_to_scalar(self):
 
     @self.kernel(out_type=jax.ShapeDtypeStruct((), jnp.float32))
@@ -4289,7 +4308,7 @@ class PallasCallWGTest(
 
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
-    expected_missing_primitives = set()
+    expected_missing_primitives = {lax.concatenate_p}
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 

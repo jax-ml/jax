@@ -2420,6 +2420,12 @@ def _slice_lowering_rule_wg(
   )
 
 
+@register_lowering_rule(lax.concatenate_p, mgpu.LoweringSemantics.Lane)
+def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
+  arrays = [_ensure_fa(x, aval.dtype) for x, aval in zip(args, ctx.avals_in)]
+  return mgpu.concatenate(arrays, axis=dimension)
+
+
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.select_n_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Warpgroup)
