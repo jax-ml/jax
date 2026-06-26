@@ -54,6 +54,7 @@
 # Because we demonstrate how FFI calls can be sharded at the end of this tutorial, let's first set up our environment to be treated by JAX as having multiple CPUs:
 
 # +
+# ruff: noqa
 import os
 
 os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
@@ -625,6 +626,35 @@ with jax.sharding.use_abstract_mesh(gpu_mesh):
 print(hlo)
 
 # As you can see in the lowered program above, the FFI call now targets `rms_norm_cuda`, even though it was traced on a CPU-only machine.
+
+# ## The deprecated `vmap_method` argument
+#
+# The approach above, where {func}`~jax.vmap` support comes from a HiJAX primitive's `batch` rule, is the recommended way to make a foreign function batchable.
+# But you may encounter older code that instead passes a `vmap_method` string argument directly to {func}`~jax.ffi.ffi_call`.
+# This argument is deprecated in favor of the HiJAX primitive approach, but it's worth knowing what it does.
+#
+# When `vmap_method` was specified, a bare {func}`~jax.ffi.ffi_call` could be mapped under {func}`~jax.vmap` without defining a custom primitive.
+# For example, the batching behavior of our RMS normalization example used to be written like this:
+#
+# ```python
+# def rms_norm(x, eps=1e-5):
+#   return jax.ffi.ffi_call(
+#     "rms_norm",
+#     jax.ShapeDtypeStruct.like(x),
+#     vmap_method="broadcast_all",
+#   )(x, eps=np.float32(eps))
+# ```
+#
+# The allowed values, which mirror those of {func}`~jax.pure_callback`, were:
+#
+# * `"sequential"`: apply the foreign function to one batch element at a time, in a loop (using {func}`~jax.lax.map`). This is the most general but slowest option.
+# * `"sequential_unrolled"`: like `"sequential"`, but the loop is unrolled.
+# * `"expand_dims"`: insert a new leading batch dimension and call the foreign function once; the handler is responsible for interpreting the extra dimension.
+# * `"broadcast_all"`: broadcast all of the inputs to a common batch shape and call the foreign function once (appropriate here, since our handler already treats leading axes as batch dimensions).
+# * `"legacy_vectorized"`: a legacy mode retained for backwards compatibility.
+#
+# See the {func}`~jax.pure_callback` documentation for more on the semantics of each method.
+# If you have code that relies on `vmap_method`, the recommended migration is to wrap the {func}`~jax.ffi.ffi_call` in a HiJAX primitive and implement a `batch` rule, as described in {ref}`the transformations section <ffi-call-vmap>` above.
 
 # ## Advanced topics
 #
