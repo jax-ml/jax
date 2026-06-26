@@ -160,7 +160,7 @@ jobs:
       # sources when not building. ROCm wheels are fetched via CloudFront
       # (public) so no AWS credentials are needed on pull requests.
       - name: Download JAX/Jaxlib/Plugin/PJRT wheels
-        if: inputs.build_jaxlib == 'false'
+        if: inputs.build_jaxlib == 'false' || inputs.build_jaxlib == 'wheel'
         uses: ./.github/actions/download-jax-rocm-wheels
         with:
           python: ${{ inputs.python }}
@@ -168,6 +168,7 @@ jobs:
           rocm-release-version: ${{ inputs.rocm-release-version }}
           download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+          skip-jaxlib-from-gcs: ${{ inputs.build_jaxlib == 'wheel' && '1' || '0' }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
           s3_download_uri: ${{ inputs.s3_download_uri }}

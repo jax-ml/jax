@@ -21,6 +21,9 @@ inputs:
   skip-download-jaxlib-and-plugins-from-gcs:
     description: "Whether to skip downloading the jaxlib and plugins from GCS (e.g for testing a jax only release)"
     default: '0'
+  skip-jaxlib-from-gcs:
+    description: "Skip downloading jaxlib from GCS but still download plugin/PJRT from S3 (e.g. when building jaxlib from source)"
+    default: '0'
   gcs_download_uri:
     description: "GCS location prefix from where the artifacts should be downloaded"
     default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
@@ -86,7 +89,9 @@ runs:
           echo "JAX only release. Only downloading the jax wheel from the release bucket."
         else
           if [[ ${INPUTS_JAXLIB_VERSION} == "head" ]]; then
-            gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            if [[ "${INPUTS_SKIP_JAXLIB_FROM_GCS}" != "1" ]]; then
+              gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+            fi
 
             # Resolve ROCm plugin/PJRT wheels path via CloudFront.
             ROCM_WHEELS_BASE_URL="https://d22q5eopkfeftw.cloudfront.net"
@@ -130,6 +135,7 @@ runs:
         INPUTS_DOWNLOAD_JAX_FROM_GCS: ${{ inputs.download-jax-from-gcs }}
         INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
         INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
+        INPUTS_SKIP_JAXLIB_FROM_GCS: ${{ inputs.skip-jaxlib-from-gcs }}
         INPUTS_JAXLIB_VERSION: ${{ inputs.jaxlib-version }}
         INPUTS_PYTHON: ${{ inputs.python }}
         INPUTS_S3_DOWNLOAD_URI: ${{ inputs.s3_download_uri }}
