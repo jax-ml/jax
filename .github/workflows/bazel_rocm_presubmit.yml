@@ -76,6 +76,7 @@ jobs:
       rocm-version: "7"
       rocm-tag: "rocm720"
       rocm-release-version: "7.2.0"
+      download-jax-from-gcs: 0
       jaxlib-version: "head"
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/upstream/GATE_CHECK/7.2.0'
       build_jaxlib: ${{ 'wheel' }}
