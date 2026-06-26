@@ -1,7 +1,21 @@
 # ---
+# Copyright 2024 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 # jupyter:
 #   jupytext:
-#     formats: ipynb,py,md:myst
+#     formats: ipynb,py:light,md:myst
 #     text_representation:
 #       extension: .py
 #       format_name: light
@@ -17,7 +31,7 @@
 #
 # # Foreign function interface (FFI)
 #
-# _This tutorial requires JAX v0.4.31 or newer._
+# _This tutorial requires JAX v0.4.31 or newer. The later sections that add custom transformation rules also use the experimental `jax.experimental.hijax` API, which requires a more recent version of JAX._
 #
 # While a wide range of numerical operations can be easily and efficiently implemented using JAX's built in `jax.numpy` and `jax.lax` interfaces, it can sometimes be useful to explicitly call out to external compiled libraries via a "foreign function interface" (FFI).
 # This can be particularly useful when particular operations have been previously implemented in an optimized C or CUDA library, and it would be non-trivial to reimplement these computations directly using JAX, but it can also be useful for optimizing runtime or memory performance of JAX programs.
@@ -102,7 +116,7 @@ def rms_norm_ref(x, eps=1e-5):
 #
 # To expose our library function to JAX and XLA, we need to write a thin wrapper using the APIs provided by the header-only library in the [`xla/ffi/api`](https://github.com/openxla/xla/tree/main/xla/ffi/api) directory of the [XLA project](https://github.com/openxla/xla).
 # For more information about this interface, take a look at [the XLA custom call documentation](https://openxla.org/xla/custom_call).
-# The full source listing can be downloaded [here](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc), but the key implementation details are reproduced here:
+# The full source listing can be downloaded [here](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc), but the key implementation details are reproduced here (simplified to support only the `float32` dtype; the full source instead uses `ffi::AnyBuffer` to support several dtypes, as discussed under Advanced topics below):
 #
 # ```c++
 # #include <functional>
@@ -288,19 +302,22 @@ np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
 #
 # * `expand` implements the operation in terms of other ("lojax") JAX operations. Here, that's just a call to {func}`~jax.ffi.ffi_call`, and it is what runs when the primitive isn't being transformed.
 # * `vjp_fwd` and `vjp_bwd_retval` together define the reverse-mode automatic differentiation rule (used by {func}`~jax.grad`, {func}`~jax.vjp`, and friends).
+# * `jvp` defines the forward-mode rule (used by {func}`~jax.jvp`). Unlike {func}`~jax.custom_vjp`, a single HiJAX primitive can supply *both* forward- and reverse-mode AD rules.
 # * `batch` defines the {func}`~jax.vmap` rule.
 #
 # ```{note}
 # HiJAX is a new and experimental API. The details of the interface may change in future releases of JAX.
 # ```
 #
-# To support differentiation, we implement two additional FFI targets for the forward and backward passes:
+# To support differentiation, we use two additional FFI targets for the forward and backward passes:
 #
 # 1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are saved for use on the backwards pass, and
 # 2. `rms_norm_bwd` takes the residuals and the output co-tangents, and returns the input co-tangents.
 #
 # We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc) to see how these functions are implemented on the back end.
-# The main point to emphasize here is that the "residual" computed by `rms_norm_fwd` has a different shape than the primal output, so in the {func}`~jax.ffi.ffi_call` to `rms_norm_fwd`, the output type has two elements with different shapes.
+#
+# Note that the residual computed by `rms_norm_fwd` has a different shape than the primal output (it stores one value per row), so its {func}`~jax.ffi.ffi_call` returns two outputs with different shapes.
+# We'll access these two FFI targets through small helper functions, `rms_norm_fwd` and `rms_norm_bwd`, and call those from the primitive's AD rules:
 
 # +
 from jax.experimental.hijax import VJPHiPrimitive
@@ -309,6 +326,18 @@ jax.ffi.register_ffi_target(
   "rms_norm_fwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormFwd), platform="cpu")
 jax.ffi.register_ffi_target(
   "rms_norm_bwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormBwd), platform="cpu")
+
+
+def rms_norm_fwd(x, eps):
+  # Returns the primal output `y` and the residual `res` (one value per row, so
+  # it has a different shape than `y`) that the backward pass needs.
+  out_type = (jax.typeof(x), jax.ShapeDtypeStruct(x.shape[:-1], x.dtype))
+  return jax.ffi.ffi_call("rms_norm_fwd", out_type)(x, eps=eps)
+
+
+def rms_norm_bwd(res, x, ct):
+  # Maps the output co-tangent `ct` back to the input co-tangent.
+  return jax.ffi.ffi_call("rms_norm_bwd", jax.typeof(x))(res, x, ct)
 
 
 class RMSNorm(VJPHiPrimitive):
@@ -321,25 +350,29 @@ class RMSNorm(VJPHiPrimitive):
     super().__init__()
 
   def expand(self, x):
-    # The plain implementation, in terms of other JAX operations: the FFI call.
+    # The plain implementation: a single FFI call, used when we aren't
+    # transforming.
     return jax.ffi.ffi_call("rms_norm", self.out_aval)(x, eps=self.eps)
 
   def vjp_fwd(self, nzs_in, x):
-    # The forward pass returns the primal output together with the residuals
-    # that the backward pass needs.
-    res_aval = jax.ShapeDtypeStruct(x.shape[:-1], x.dtype)
-    y, res = jax.ffi.ffi_call(
-      "rms_norm_fwd", (self.out_aval, res_aval))(x, eps=self.eps)
+    # `nzs_in` flags which inputs have nonzero tangents; we don't need it here.
+    y, res = rms_norm_fwd(x, self.eps)
     return y, (res, x)
 
   def vjp_bwd_retval(self, res, ct):
-    # The backward pass maps the output co-tangents to input co-tangents.
     res, x = res
-    return jax.ffi.ffi_call("rms_norm_bwd", self.in_avals)(res, x, ct)
+    return (rms_norm_bwd(res, x, ct),)
+
+  def jvp(self, primals, tangents):
+    (x,), (dx,) = primals, tangents
+    y, res = rms_norm_fwd(x, self.eps)
+    # RMS normalization has a symmetric Jacobian, so the same `rms_norm_bwd`
+    # kernel serves both the reverse-mode and the forward-mode rules.
+    return y, rms_norm_bwd(res, x, dx)
 
   def batch(self, axis_data, args, dims):
-    # Our handler already treats all leading axes as batch dimensions, so to
-    # support `vmap` we move the mapped axis to the front and reapply `rms_norm`.
+    # Our handler treats all leading axes as batch dimensions, so to support
+    # `vmap` we move the mapped axis to the front and reapply `rms_norm`.
     x, = args
     bdim, = dims
     return rms_norm(jnp.moveaxis(x, bdim, 0), eps=self.eps), 0
@@ -347,24 +380,108 @@ class RMSNorm(VJPHiPrimitive):
 
 def rms_norm(x, eps=1e-5):
   return RMSNorm(jax.typeof(x), eps)(x)
+
+
 # -
 
-# Now `rms_norm` produces the same values as before, but it also transforms correctly under {func}`~jax.vjp` and {func}`~jax.vmap`:
+# Now `rms_norm` evaluates to the same values as before, but it also differentiates (in both forward and reverse mode) and batches:
 
 # +
 x = jnp.linspace(-0.5, 0.5, 32).reshape((8, 4))
 np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
+np.testing.assert_allclose(jax.jit(rms_norm)(x), rms_norm_ref(x), rtol=1e-5)
 
-# The gradient now matches the reference implementation
+# Reverse-mode AD matches the reference implementation
 ct_y = jnp.ones_like(x)
 np.testing.assert_allclose(
   jax.vjp(rms_norm, x)[1](ct_y), jax.vjp(rms_norm_ref, x)[1](ct_y), rtol=1e-5)
 
-# As does the batched version
-xs = jnp.linspace(-0.5, 0.5, 96).reshape((3, 8, 4))
+# Forward-mode AD does too
+dx = jnp.ones_like(x)
 np.testing.assert_allclose(
-  jax.vmap(rms_norm)(xs), jax.vmap(rms_norm_ref)(xs), rtol=1e-5)
+  jax.jvp(rms_norm, (x,), (dx,))[1],
+  jax.jvp(rms_norm_ref, (x,), (dx,))[1], rtol=1e-4, atol=1e-5)
+
+# As does `vmap`
+xs = jnp.linspace(-0.5, 0.5, 96).reshape((3, 8, 4))
+np.testing.assert_allclose(jax.vmap(rms_norm)(xs), jax.vmap(rms_norm_ref)(xs), rtol=1e-5)
+
+
 # -
+
+# ### Composing transformations
+#
+# Each of {func}`~jax.grad`, {func}`~jax.jvp`, and {func}`~jax.vmap` works on its own, but _composing_ them doesn't work yet.
+# For example, {func}`~jax.vmap` of {func}`~jax.grad` (a batched gradient) currently fails with an error like `Batching rule for 'ffi_call' not implemented`.
+#
+# The reason is that our AD rules call the `rms_norm_fwd` and `rms_norm_bwd` helpers, which call {func}`~jax.ffi.ffi_call` directly, and a raw {func}`~jax.ffi.ffi_call` has no batching rule of its own.
+# So when {func}`~jax.vmap` tries to push through the differentiation rule, it eventually reaches an un-batchable {func}`~jax.ffi.ffi_call` and gives up.
+#
+# The fix is to give those FFI calls a `batch` rule, by wrapping each one in its own small HiJAX primitive (exactly as we did for `rms_norm`).
+# Because `RMSNorm`'s rules already call the `rms_norm_fwd` and `rms_norm_bwd` helpers by name, we only need to replace those two helpers; `RMSNorm` itself doesn't change:
+
+# +
+class RMSNormFwd(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    self.in_avals = (aval,)
+    self.out_aval = (aval, aval.update(shape=aval.shape[:-1]))  # y, res
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
+
+  def expand(self, x):
+    return jax.ffi.ffi_call("rms_norm_fwd", self.out_aval)(x, eps=self.eps)
+
+  def batch(self, axis_data, args, dims):
+    x, = args
+    bdim, = dims
+    return rms_norm_fwd(jnp.moveaxis(x, bdim, 0), self.eps), (0, 0)
+
+
+def rms_norm_fwd(x, eps):
+  return RMSNormFwd(jax.typeof(x), eps)(x)
+
+
+class RMSNormBwd(VJPHiPrimitive):
+  def __init__(self, res_aval, x_aval, ct_aval):
+    self.in_avals = (res_aval, x_aval, ct_aval)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, res, x, ct):
+    return jax.ffi.ffi_call("rms_norm_bwd", self.out_aval)(res, x, ct)
+
+  def batch(self, axis_data, args, dims):
+    # Move each mapped axis to the front; an unmapped (`None`) input is constant
+    # across the batch, so broadcast it along a new leading axis.
+    def to_front(a, d):
+      if d is None:
+        return jnp.broadcast_to(a, (axis_data.size, *a.shape))
+      return jnp.moveaxis(a, d, 0)
+    res, x, ct = (to_front(a, d) for a, d in zip(args, dims))
+    return rms_norm_bwd(res, x, ct), 0
+
+
+def rms_norm_bwd(res, x, ct):
+  return RMSNormBwd(jax.typeof(res), jax.typeof(x), jax.typeof(ct))(res, x, ct)
+
+
+# -
+
+# With the helpers now batchable, the transformations compose. Here are `vmap` of `grad` and `vmap` of `jvp`, neither of which worked above:
+
+# +
+np.testing.assert_allclose(
+  jax.vmap(jax.grad(lambda x: rms_norm(x).sum()))(xs),
+  jax.vmap(jax.grad(lambda x: rms_norm_ref(x).sum()))(xs), rtol=1e-4, atol=1e-5)
+
+np.testing.assert_allclose(
+  jax.vmap(lambda x, t: jax.jvp(rms_norm, (x,), (t,))[1])(xs, jnp.ones_like(xs)),
+  jax.vmap(lambda x, t: jax.jvp(rms_norm_ref, (x,), (t,))[1])(xs, jnp.ones_like(xs)),
+  rtol=1e-4, atol=1e-5)
+# -
+
+# Note that this primitive supports only first-order AD. Higher-order AD (such as {func}`~jax.grad` of {func}`~jax.grad`) isn't available here, because the `rms_norm_bwd` primitive has no differentiation rule of its own (its `expand` is an opaque FFI call).
 
 # ## Sharding
 #
@@ -386,6 +503,7 @@ np.testing.assert_allclose(
 assert len(jax.devices()) == 4  # Set using the XLA_FLAGS environment variable
 jax.set_mesh(jax.make_mesh((4,), ("x",)))
 
+
 # Then we redefine our primitive so that `expand` wraps the FFI call in a {func}`~jax.shard_map`.
 # To keep the example focused on sharding we only show the forward pass here, but the same `shard_map` wrapping can be applied to the `vjp_fwd` and `vjp_bwd_retval` rules above to make the differentiated program partition well too.
 
@@ -406,6 +524,8 @@ class RMSNorm(VJPHiPrimitive):
 
 def rms_norm(x, eps=1e-5):
   return RMSNorm(jax.typeof(x), eps)(x)
+
+
 # -
 
 # Sharding the input along its batch dimension, the compiled program runs the FFI call directly on each shard, with no `all-gather`, `all-reduce`, or other collectives:
@@ -416,6 +536,8 @@ np.testing.assert_allclose(rms_norm(x_batch_shd), rms_norm_ref(x), rtol=1e-5)
 
 hlo = jax.jit(rms_norm).lower(x_batch_shd).compile().as_text()
 assert "all-" not in hlo
+
+
 # -
 
 # ## FFI calls on a GPU
@@ -465,7 +587,7 @@ assert "all-" not in hlo
 #
 # Suppose we have registered both the CPU target `rms_norm` and the GPU target `rms_norm_cuda`.
 # To support running our function on either platform, we can choose the FFI target inside `expand`, based on the platform that the computation will run on.
-# In explicit sharding mode the active mesh carries an abstract description of the target device, which we can query to pick the right target name:
+# In explicit sharding mode the active mesh carries an abstract description of the target device, whose `platform` we can query to pick the right target name. Note that this returns the lowercase XLA platform name (such as `"cuda"`), while the `platform` argument to {func}`~jax.ffi.register_ffi_target` is case-insensitive, so the `"CUDA"` registration above matches the `"cuda"` lookup here:
 
 # +
 class RMSNorm(VJPHiPrimitive):

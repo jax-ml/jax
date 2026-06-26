@@ -93,6 +93,10 @@ exclude = [
     ".git",
     "build",
     "__pycache__",
+    # This tutorial intentionally redefines names across cells (progressive
+    # disclosure), which trips up several lint rules; skip it entirely.
+    "docs/ffi.py",
+    "docs/ffi.ipynb",
 ]
 line-length = 80
 indent-width = 2
