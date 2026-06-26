@@ -1018,6 +1018,8 @@ def _deallocate_barrier(
     allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ):
+  # TODO(paulbib): Add race-check validation on deallocation, i.e.: make sure
+  # there are no outstanding async copies from or to the deallocated buffer.
   device_id_as_int = int(device_id)
   grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
   thread_id_as_int = int(thread_id)
@@ -1135,8 +1137,12 @@ def _barrier_arrive(
   barrier, clock = shared_memory.get_barrier_and_increment_clock(
       barrier_key, device_id_as_int, thread_id_as_int
   )
+  smem_commit_clock = shared_memory.get_smem_commit_clock(
+      shared_memory.get_global_thread_id(device_id_as_int, thread_id_as_int)
+  )
   barrier.arrive(
       clock,
+      smem_commit_clock,
       logging_info=interpret_utils.GPULoggingInfo(
           device_id=device_id_as_int,
           grid_point_coords=grid_point_coords_as_tuple,
@@ -1177,125 +1183,250 @@ def call_assert_no_barriers_allocated(token):
   )
 
 
-@dataclasses.dataclass(kw_only=True)
-class DeviceLocalMemoryTransfer:
-  """Represents a device-local memory transfer, e.g. GMEM to SMEM."""
+class AsyncCopyTask:
+  """
+  An async task representing a TMA memory copy.
 
-  # The device ID of the device on which the memory transfer is being executed.
+  Logically, this function is not running on any main thread but on a special
+  ephemeral TMA thread, so the implementation and callbacks should not touch
+  any main thread's VC.
+
+  The implementation and callbacks are not re-entrant and not idempotent, so they
+  must only be called once. There are no dynamic safety checks to verify this.
+  """
+
+  # The device on which the memory transfer is being executed.
   device_id: int
 
   grid_point_coords: jax.Array
 
-  # The thread ID of the thread that has initiated the memory transfer.
+  # The thread that initiated the memory transfer.
   thread_id: int
 
-  # Allocation key (and transforms) for the source buffer.
-  src_allocation_key_as_array: jax.Array
+  # The pseudo-thread being used to execute the memory transfer.
+  tma_thread_id: int
+
+  # Allocation key and transforms for the source buffer.
+  src_allocation_key: HostAllocationKey
   src_transforms: tuple[Any, ...]
 
-  # Allocation key (and transforms) for the destination buffer.
-  dst_allocation_key_as_array: jax.Array
+  # Allocation key and transforms for the destination buffer.
+  dst_allocation_key: HostAllocationKey
   dst_transforms: tuple[Any, ...]
-
-  # Allocation key for the barrier that should be used to synchronize the
-  # execution of the memory transfer.
-  barrier_allocation_key_as_array: jax.Array
 
   source_info: source_info_util.SourceInfo | None = None
 
-  # `data` is only used to track internal state of the `MemoryTransfer`
-  # object. Hence `data` must not be explicitly initialized, as checked in
-  # `__post_init__` below.
+  logging_info: interpret_utils.GPULoggingInfo | None = None
+
   data: np.ndarray | None = None
 
-  clock: vc.VectorClock | None = None
+  def __init__(self,
+      device_id: int,
+      grid_point_coords: jax.Array,
+      thread_id: int,
+      src_allocation_key: HostAllocationKey,
+      src_transforms: tuple[Any, ...],
+      dst_allocation_key: HostAllocationKey,
+      dst_transforms: tuple[Any, ...],
+      source_info: source_info_util.SourceInfo | None = None,
+  ):
+    self.device_id = device_id
+    self.grid_point_coords = grid_point_coords
+    self.thread_id = thread_id
+    self.src_allocation_key = src_allocation_key
+    self.src_transforms = src_transforms
+    self.dst_allocation_key = dst_allocation_key
+    self.dst_transforms = dst_transforms
+    self.source_info = source_info
+    self.logging_info = interpret_utils.GPULoggingInfo(
+        device_id=device_id,
+        grid_point_coords=tuple(int(x) for x in grid_point_coords)
+        if grid_point_coords is not None
+        else (),
+        thread_id=thread_id,
+        source_info=source_info,
+    )
 
-  def __post_init__(self):
-    assert self.data is None
-
-  def execute(self, token):
-    """Executes the memory transfer (both reading and writing parts).
-
-    Note that the caller must not hold the lock on the shared memory (because
-    `get` and `swap` are called in this method).
-    """
-
+  def __call__(self, tma_thread_id: int):
     shared_memory = _get_shared_memory()
-
-    barrier_key = HostAllocationKey.from_array(
-        self.barrier_allocation_key_as_array
-    )
-    barrier, clock = shared_memory.get_barrier_and_increment_clock(
-        barrier_key, self.device_id, self.thread_id
+    global_thread_id = shared_memory.get_global_thread_id(
+        self.device_id, self.thread_id
     )
 
-    global_tma_thread_id = shared_memory.get_next_tma_thread_id(self.device_id)
-    # We use the `clock` from the barrier lookup to synchronize the TMA thread
-    # with the Pallas thread that initiated the transfer, i.e. the thread with
-    # `self.thread_id`. Note that the barrier lookup was done with
-    # `self.thread_id`, and hence `clock` is the vector clock for the thread
-    # with `self.thread_id`.
-    if shared_memory.detect_races:
-      self.clock = clock
+    self.pre_read(tma_thread_id, shared_memory)
 
-    # A memory transfer should be executed only once. We check this by asserting
-    # that `self.data` is `None` at the start of the transfer.
-    assert self.data is None
+    val, _, _ = shared_memory.get_buffer_content(
+        self.src_allocation_key, interpret_utils.to_range(self.src_transforms),
+        global_thread_id, logging_info=self.logging_info)
+    assert val is not None
 
-    # TODO(nrink): It might make sense to increment `self.clock` before the
-    # `_get` call already. (There should certainly not be any harm in doing so.)
+    self.post_read(tma_thread_id, shared_memory)
 
-    token, self.data = _get(
-        token=token,
-        device_id=jnp.int32(self.device_id),
-        grid_point_coords=self.grid_point_coords,
-        thread_id=jnp.int32(self.thread_id),
-        clock=vc.copy_vector_clock(self.clock),
-        increment_clock=False,
-        allocation_key_as_array=self.src_allocation_key_as_array,
-        transforms=self.src_transforms,
-        source_info=self.source_info,
-    )
-    assert self.data is not None
+    shared_memory.store_buffer_content(
+        self.dst_allocation_key, interpret_utils.to_range(self.dst_transforms),
+        val,
+        global_thread_id, logging_info=self.logging_info)
+
+    self.post_write(tma_thread_id, shared_memory)
+
+  def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    pass
+
+  def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    pass
+
+  def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    pass
+
+
+class AsyncCopyGmemToSmemTask(AsyncCopyTask):
+  """An async task representing a GMEM -> SMEM TMA memory copy."""
+
+  barrier: memory.Barrier
+  clock: vc.VectorClock | None = None
+  smem_commit_clock: vc.VectorClock | None = None
+
+  def __init__(
+      self,
+        device_id: int,
+        grid_point_coords: jax.Array,
+        thread_id: int,
+        src_allocation_key: HostAllocationKey,
+        src_transforms: tuple[Any, ...],
+        dst_allocation_key: HostAllocationKey,
+        dst_transforms: tuple[Any, ...],
+        barrier_allocation_key: HostAllocationKey,
+        source_info: source_info_util.SourceInfo | None,
+        clock: vc.VectorClock | None = None,
+        smem_commit_clock: vc.VectorClock | None = None):
+    super().__init__(
+        device_id=device_id,
+        grid_point_coords=grid_point_coords,
+        thread_id=thread_id,
+        src_allocation_key=src_allocation_key,
+        src_transforms=src_transforms,
+        dst_allocation_key=dst_allocation_key,
+        dst_transforms=dst_transforms,
+        source_info=source_info)
+    shared_memory = _get_shared_memory()
+    self.barrier = shared_memory.get_barrier(barrier_allocation_key)
+    self.clock = clock
+    self.smem_commit_clock = smem_commit_clock
+
+  def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    # TODO(paulbib): GMEM updates are only visible to the async proxy (TMA)
+    # after a device-level proxy fence. However, no such functionality
+    # is exposed in Pallas. When it is, we should use a `commit_gmem` clock here
     if shared_memory.detect_races:
       assert self.clock is not None
-      vc.inc_vector_clock(self.clock, global_tma_thread_id)
+      assert self.smem_commit_clock is not None
+      vc.inc_vector_clock(self.clock, tma_thread_id)
+      get_races().check_read(
+          self.device_id,
+          self.thread_id,
+          vc.copy_vector_clock(self.clock),
+          self.src_allocation_key,
+          interpret_utils.to_range(self.src_transforms),
+          source_info=self.source_info,
+      )
 
-    # We write `self.data` to the destination allocation using `_swap`, where
-    # the result (i.e. the old contents of the destination buffer) is ignored.
-    token, _ = _swap(
-        token=token,
-        device_id=jnp.int32(self.device_id),
-        grid_point_coords=self.grid_point_coords,
-        thread_id=jnp.int32(self.thread_id),
-        clock=vc.copy_vector_clock(self.clock),
-        increment_clock=False,
-        allocation_key_as_array=self.dst_allocation_key_as_array,
-        transforms=self.dst_transforms,
-        val=self.data,
-        mask=None,
-        source_info=self.source_info,
-    )
+  def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     if shared_memory.detect_races:
       assert self.clock is not None
-      vc.inc_vector_clock(self.clock, global_tma_thread_id)
+      assert self.smem_commit_clock is not None
+      vc.inc_vector_clock(self.clock, tma_thread_id)
+      vc.inc_vector_clock(self.smem_commit_clock, tma_thread_id)
 
-    barrier.arrive(
+      get_races().check_write(
+          self.device_id,
+          self.thread_id,
+          vc.copy_vector_clock(self.smem_commit_clock),
+          self.dst_allocation_key,
+          interpret_utils.to_range(self.dst_transforms),
+          source_info=self.source_info,
+      )
+
+  def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    self.barrier.arrive(
         clock=vc.copy_vector_clock(self.clock),
-        logging_info=interpret_utils.GPULoggingInfo(
-            device_id=self.device_id,
-            grid_point_coords=tuple(int(x) for x in self.grid_point_coords)
-            if self.grid_point_coords is not None
-            else (),
-            # Log the Pallas thread ID because this corresponds to the (CPU)
-            # thread that is being simulated and is used also to execute the
-            # (TMA) memory transfer (instead of logging the TMA thread ID, which
-            # is _only_ used for bookeeping in the vector clocks).
-            thread_id=self.thread_id,
-            source_info=self.source_info,
-        ),
+        smem_commit_clock=vc.copy_vector_clock(self.smem_commit_clock),
+        logging_info=self.logging_info,
     )
-    return token
+
+
+class AsyncCopySmemToGmemTask(AsyncCopyTask):
+  """An async task representing a SMEM -> GMEM TMA memory copy."""
+
+  clock: vc.VectorClock | None = None
+  smem_commit_clock: vc.VectorClock | None = None
+  read_clock: vc.VectorClock | None = None
+  write_clock: vc.VectorClock | None = None
+
+  def __init__(
+      self,
+      device_id: int,
+      grid_point_coords: jax.Array,
+      thread_id: int,
+      src_allocation_key: HostAllocationKey,
+      src_transforms: tuple[Any, ...],
+      dst_allocation_key: HostAllocationKey,
+      dst_transforms: tuple[Any, ...],
+      source_info: source_info_util.SourceInfo | None,
+      clock: vc.VectorClock | None = None,
+      smem_commit_clock: vc.VectorClock | None = None,
+  ):
+    super().__init__(
+        device_id=device_id,
+        grid_point_coords=grid_point_coords,
+        thread_id=thread_id,
+        src_allocation_key=src_allocation_key,
+        src_transforms=src_transforms,
+        dst_allocation_key=dst_allocation_key,
+        dst_transforms=dst_transforms,
+        source_info=source_info)
+    self.clock = clock
+    self.smem_commit_clock = smem_commit_clock
+
+  def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    if shared_memory.detect_races:
+      assert self.clock is not None
+      assert self.smem_commit_clock is not None
+      vc.inc_vector_clock(self.clock, tma_thread_id)
+      vc.inc_vector_clock(self.smem_commit_clock, tma_thread_id)
+      self.read_clock = vc.copy_vector_clock(self.clock)
+      get_races().check_read(
+          self.device_id,
+          self.thread_id,
+          self.smem_commit_clock,
+          self.src_allocation_key,
+          interpret_utils.to_range(self.src_transforms),
+          source_info=self.source_info,
+      )
+
+  def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    if shared_memory.detect_races:
+      assert self.clock is not None
+      assert self.smem_commit_clock is not None
+      vc.inc_vector_clock(self.clock, tma_thread_id)
+      self.write_clock = vc.copy_vector_clock(self.clock)
+      get_races().check_write(
+          self.device_id,
+          self.thread_id,
+          self.smem_commit_clock,
+          self.dst_allocation_key,
+          interpret_utils.to_range(self.dst_transforms),
+          source_info=self.source_info,
+      )
+
+  def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
+    if shared_memory.detect_races:
+      assert self.read_clock is not None
+      assert self.write_clock is not None
+      shared_memory.add_copy_smem_to_gmem_clocks(
+          shared_memory.get_global_thread_id(self.device_id, self.thread_id),
+          self.read_clock,
+          self.write_clock,
+      )
 
 
 NOOP_TRANSFORMS = (
@@ -1420,11 +1551,9 @@ def copy_smem_to_gmem(
     commit_group: bool,
     reduction_op: mgpu.TMAReductionOp,
 ):
-  # TODO(jburnim): Make the copy async, and implement commit_group.
-  # TODO(jburnim): Vector clocks and race detection.
+  # TODO(jburnim,paulbib): Implement commit_group.
   del commit_group
   device_id: int = int(device_id)  # pyrefly: ignore[redefinition]
-  grid_point_coords: tuple[int, ...] = jax.tree.map(int, grid_point_coords)  # pyrefly: ignore[redefinition]
   thread_id: int = int(thread_id)  # pyrefly: ignore[redefinition]
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
   src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
@@ -1436,32 +1565,60 @@ def copy_smem_to_gmem(
   if reduction_op is not None:
     raise NotImplementedError("reduction_op not supported")
 
-  shared_memory = _get_shared_memory()
-  global_thread_id = shared_memory.get_global_thread_id(device_id, thread_id)
+  clock = None
+  smem_commit_clock = None
 
-  logging_info = interpret_utils.GPULoggingInfo(
+  shared_memory = _get_shared_memory()
+  if shared_memory.detect_races:
+    clock = shared_memory.incr_clock(
+        shared_memory.get_global_thread_id(device_id, thread_id)
+    )
+    smem_commit_clock = shared_memory.get_smem_commit_clock(
+        shared_memory.get_global_thread_id(device_id, thread_id)
+    )
+
+  task = AsyncCopySmemToGmemTask(
       device_id=device_id,
       grid_point_coords=grid_point_coords,
       thread_id=thread_id,
+      src_allocation_key=src_allocation_key,
+      src_transforms=src_transforms,
+      dst_allocation_key=dst_allocation_key,
+      dst_transforms=dst_transforms,
       source_info=source_info,
+      clock=clock,
+      smem_commit_clock=smem_commit_clock,
   )
 
-  val, _, _ = shared_memory.get_buffer_content(
-      src_allocation_key, interpret_utils.to_range(src_transforms),
-      global_thread_id, logging_info=logging_info)
-  assert val is not None
-  shared_memory.store_buffer_content(
-      dst_allocation_key, interpret_utils.to_range(dst_transforms),
-      val,
-      global_thread_id, logging_info=logging_info)
+  shared_memory = _get_shared_memory()
+  shared_memory.execute_async_task(task, device_id, thread_id)
 
   return token
 
 
-# TODO(nrink): Once non-eager execution of memory transfers/DMAs is supported in
-# GPU interpret mode, consider renaming this function to something along the
-# lines of `_enqueue_device_local_memory_transfer`.
-def _execute_device_local_memory_transfer(
+def wait_smem_to_gmem(
+    *,
+    token: jax.Array,
+    device_id: jax.Array,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    n: int,
+    wait_read_only: bool,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  del grid_point_coords, source_info
+  device_id_as_int = int(device_id)
+  thread_id_as_int = int(thread_id)
+  shared_memory = _get_shared_memory()
+  global_thread_id = shared_memory.get_global_thread_id(
+      device_id_as_int, thread_id_as_int
+  )
+  shared_memory.wait_smem_to_gmem(
+      global_thread_id, n, wait_read_only)
+  return token
+
+
+def copy_gmem_to_smem(
     *,
     token: jax.Array,
     device_id: jax.Array,
@@ -1477,55 +1634,64 @@ def _execute_device_local_memory_transfer(
   device_id_as_int = int(device_id)
   thread_id_as_int = int(thread_id)
   src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
   dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
+  barrier_allocation_key = HostAllocationKey.from_array(
+      barrier_allocation_key_as_array
+  )
   del device_id, thread_id
 
-  transfer = DeviceLocalMemoryTransfer(
+  clock = None
+  smem_commit_clock = None
+
+  shared_memory = _get_shared_memory()
+  if shared_memory.detect_races:
+    clock = shared_memory.incr_clock(
+        shared_memory.get_global_thread_id(device_id_as_int, thread_id_as_int)
+    )
+    smem_commit_clock = shared_memory.get_smem_commit_clock(
+        shared_memory.get_global_thread_id(device_id_as_int, thread_id_as_int)
+    )
+
+  transfer = AsyncCopyGmemToSmemTask(
       device_id=device_id_as_int,
       grid_point_coords=grid_point_coords,
       thread_id=thread_id_as_int,
-      src_allocation_key_as_array=src_allocation_key_as_array,
+      src_allocation_key=src_allocation_key,
       src_transforms=src_transforms,
-      dst_allocation_key_as_array=dst_allocation_key_as_array,
+      dst_allocation_key=dst_allocation_key,
       dst_transforms=dst_transforms,
-      barrier_allocation_key_as_array=barrier_allocation_key_as_array,
+      barrier_allocation_key=barrier_allocation_key,
       source_info=source_info,
+      clock=clock,
+      smem_commit_clock=smem_commit_clock,
   )
-  token = transfer.execute(token)
+
+  shared_memory = _get_shared_memory()
+  shared_memory.execute_async_task(transfer, device_id_as_int, thread_id_as_int)
+
   return token
 
 
-# TODO(nrink): Once non-eager execution of memory transfers/DMAs is supported in
-# GPU interpret mode, consider renaming this function to something along the
-# lines of `call_enqueue_device_local_memory_transfer`.
-def call_execute_device_local_memory_transfer(
+def commit_smem(
     *,
     token: jax.Array,
     device_id: jax.Array,
     grid_point_coords: jax.Array,
     thread_id: jax.Array,
-    src_allocation_key_as_array: jax.Array,
-    src_transforms: tuple[Any, ...],
-    dst_allocation_key_as_array: jax.Array,
-    dst_transforms: tuple[Any, ...],
-    barrier_allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ):
-  return callback.io_callback(
-      functools.partial(
-          _execute_device_local_memory_transfer, source_info=source_info
-      ),
-      TOKEN_SHAPE_DTYPE,
-      token=token,
-      device_id=device_id,
-      grid_point_coords=grid_point_coords,
-      thread_id=thread_id,
-      src_allocation_key_as_array=src_allocation_key_as_array,
-      src_transforms=src_transforms,
-      dst_allocation_key_as_array=dst_allocation_key_as_array,
-      dst_transforms=dst_transforms,
-      barrier_allocation_key_as_array=barrier_allocation_key_as_array,
+  del grid_point_coords, source_info
+  device_id_as_int = int(device_id)
+  thread_id_as_int = int(thread_id)
+  shared_memory = _get_shared_memory()
+  global_thread_id = shared_memory.get_global_thread_id(
+      device_id_as_int, thread_id_as_int
   )
+  shared_memory.update_smem_commit_clock(global_thread_id)
+
+  return token
 
 
 def tcgen05_mma(
@@ -1664,3 +1830,18 @@ def async_load_tmem(
   )
 
   return token, val
+
+
+def kernel_thread_finished(
+    *,
+    token: jax.Array,
+    device_id: jax.Array,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+):
+  del grid_point_coords
+  device_id: int = int(device_id) # pyrefly: ignore[redefinition]
+  thread_id: int = int(thread_id) # pyrefly: ignore[redefinition]
+  shared_memory = _get_shared_memory()
+  shared_memory.kernel_thread_finished(device_id, thread_id)
+  return token

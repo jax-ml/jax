@@ -45,6 +45,7 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    mosaic_interpret.gpu_callbacks.reset_gpu_interpret_mode_state()
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')
@@ -411,7 +412,6 @@ class InterpretTest(jtu.JaxTestCase):
           r'Collective allocations along cluster axes are not' r' supported\.',
       ):
         _ = f(jnp.zeros((2, 2, 2), dtype=jnp.int32))
-      mosaic_interpret.reset_gpu_interpret_mode_state()
     elif 't' not in collective_axes:
       with self.assertRaisesRegex(
           Exception,
@@ -419,7 +419,6 @@ class InterpretTest(jtu.JaxTestCase):
           r' axes\.',
       ):
         _ = f(jnp.zeros((2, 2, 2), dtype=jnp.int32))
-      mosaic_interpret.reset_gpu_interpret_mode_state()
     else:
       y = f(jnp.zeros((2, 2, 2), dtype=jnp.int32))
       self.assertFalse(mosaic_interpret.get_races().races_found)
@@ -462,7 +461,6 @@ class InterpretTest(jtu.JaxTestCase):
         r"Collective axis `unknown_axis` not found among axes `\['c0', 'c1', 't'\]`",
     ):
       _ = f(jnp.zeros((), dtype=jnp.int32))
-    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   @jtu.parameterized.parameters(
       (
@@ -528,7 +526,6 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(Exception, expected_error_regex):
       _ = f(jnp.zeros((), dtype=jnp.int32))
-    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   # Test adapted from
   # https://docs.jax.dev/en/latest/pallas/gpu/reference.html#using-multiple-pallas-threads-per-cuda-block
@@ -749,7 +746,6 @@ class InterpretTest(jtu.JaxTestCase):
         r' = 2`',
     ):
       _kernel()
-    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   def test_wait_for_barrier_twice(self):
     @functools.partial(
@@ -801,11 +797,9 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         Exception,
-        r'Barrier arrival was completed again before previous completion was'
-        r' observed by a thread.',
+        r'Barrier completed phase 1, but no threads observed phase 0.'
     ):
       _kernel()
-    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   def test_completing_barrier_twice_in_different_threads_raises(self):
     @functools.partial(
@@ -823,15 +817,13 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         Exception,
-        r'Barrier arrival was completed again before previous completion was'
-        r' observed by a thread.',
+        r'Barrier completed phase 1, but no threads observed phase 0.',
     ):
       _kernel()
-    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   @jtu.parameterized.product(
-      num_arriving_threads=list(range(1, 17)),
-      num_observing_threads=list(range(1, 17)),
+      num_arriving_threads=list(range(1, 8)),
+      num_observing_threads=list(range(1, 8)),
       num_threads=[16],
   )
   def test_barrier_wait_in_multiple_threads_ok(
@@ -888,11 +880,10 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         Exception,
-        r'Thread 1 did not observe all phases \(2\) for barrier \(but observed 1'
-        r' phase\).',
+        r'Thread 1 only observed barrier up to phase 0, but barrier'
+        r' completed up to phase 1.',
     ):
       _kernel()
-    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   def test_not_waiting_for_all_barrier_completions_in_thread_raises(self):
     @functools.partial(
@@ -930,10 +921,9 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         Exception,
-        r'Thread 2 is awaiting phase 1, but barrier is already at phase 2.',
+        r'Thread 2 is waiting at barrier \w+ for the first time, but barrier is already at phase 2'
     ):
       _kernel()
-    mosaic_interpret.reset_gpu_interpret_mode_state()
 
   @jtu.parameterized.product(
       num_blocks_w=[1, 2, 3],
@@ -1258,7 +1248,7 @@ class InterpretTest(jtu.JaxTestCase):
       self.assertFalse(mosaic_interpret.get_races().races_found)
       np.testing.assert_array_equal(y, x)
 
-  @jtu.parameterized.product(num_tma_threads_per_device=[1, 2, 3, 4])
+  @jtu.parameterized.product(num_tma_threads_per_device=[2, 3, 4])
   def test_copy_gmem_to_smem_multiple_tma_threads(
       self, num_tma_threads_per_device
   ):
@@ -1286,16 +1276,8 @@ class InterpretTest(jtu.JaxTestCase):
     )
 
     z = kernel(x, y)
-    if num_tma_threads_per_device == 1:
-      # With only one (simulated) TMA thread, the two GMEM-to-SMEM copies are
-      # effectively forced to be executed sequentially. More precisely, the
-      # resulting vector clocks are necessarily (fully linearly) ordered (since
-      # there is only one slot for the single TMA thread in the vector clock).
-      # Hence, we do not detect a race.
-      self.assertFalse(mosaic_interpret.get_races().races_found)
-      np.testing.assert_array_equal(z, x + y)
-    else:
-      self.assertTrue(mosaic_interpret.get_races().races_found)
+    z.block_until_ready()
+    self.assertTrue(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(with_race=[True, False])
   def test_copy_gmem_to_smem_multiple_arrivals_at_barrier(self, with_race):

@@ -958,3 +958,10 @@ class SharedMemory:
     low_core_id = device_id * self.num_cores_per_device
     high_core_id = (device_id + 1) * self.num_cores_per_device
     self.update_clocks(low_core_id, high_core_id)
+
+  def incr_clock(self, global_core_id):
+    """Increments a core's own index within its clock by one."""
+    with self.lock:
+      vc.inc_vector_clock(self.clocks[global_core_id], global_core_id)
+      clock = vc.copy_vector_clock(self.clocks[global_core_id])
+    return clock

@@ -14,6 +14,7 @@
 
 from collections.abc import Mapping, Sequence
 import dataclasses
+import functools
 import jax.numpy as jnp
 import math
 from typing import Any
@@ -500,6 +501,15 @@ def interpret_pallas_call(
         interpret_params=interpret_params,
     )
     token, _ = jaxpr_interpreter.interpret(jaxpr, token, *kernel_buffer_keys)
+
+    token = callback.io_callback(
+        functools.partial(gpu_callbacks.kernel_thread_finished),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        device_id=device_info.device_id,
+        grid_point_coords=grid_point_coords,
+        thread_id=thread_id,
+    )
 
     # Note that a comment about potential races that is analogous to the comment
     # before the call to `_copy_from_gmem_buffers` above applies here too.

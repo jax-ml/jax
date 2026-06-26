@@ -681,7 +681,10 @@ class JaxprInterpreter:
         barrier, eqn.params["barrier_transforms_treedef"],
         barrier_transforms_flat)
 
-    token = gpu_callbacks.call_execute_device_local_memory_transfer(
+    return callback.io_callback(
+        functools.partial(gpu_callbacks.copy_gmem_to_smem,
+                          source_info=eqn.source_info),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
         token=token,
         device_id=jnp.int32(self.device_info.device_id),
         grid_point_coords=self.grid_point_coords,
@@ -693,9 +696,7 @@ class JaxprInterpreter:
         dst_transforms=jax.tree.unflatten(
             eqn.params["dst_transforms_treedef"], dst_transforms_flat),
         barrier_allocation_key_as_array=barrier_allocation_key_as_array,
-        source_info=eqn.source_info,
-    )
-    return token, []
+    ), []
 
   def _interpret_copy_smem_to_gmem_p(
       self,
@@ -862,6 +863,40 @@ class JaxprInterpreter:
         src_transforms=jax.tree.unflatten(eqn.params["tree"], invals[1:]),
     )
 
+  def _interpret_wait_smem_to_gmem_p(
+      self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is gpu_primitives.wait_smem_to_gmem_p
+    n, = get_invals()
+    wait_read_only = eqn.params["wait_read_only"]
+    return callback.io_callback(
+        functools.partial(
+            gpu_callbacks.wait_smem_to_gmem, source_info=eqn.source_info
+        ),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        device_id=self.device_info.device_id,
+        grid_point_coords=self.grid_point_coords,
+        thread_id=self.thread_id,
+        n=n,
+        wait_read_only=wait_read_only,
+    ), []
+
+  def _interpret_commit_smem_p(
+      self, eqn, token: jax.Array, _get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is gpu_primitives.commit_smem_p
+    return callback.io_callback(
+        functools.partial(
+            gpu_callbacks.commit_smem, source_info=eqn.source_info
+        ),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        device_id=self.device_info.device_id,
+        grid_point_coords=self.grid_point_coords,
+        thread_id=self.thread_id,
+    ), []
+
   def interpret(self, jaxpr, token, *args):
     sentinel_for_floating_point_values = (
         _SENTINEL if self.interpret_params.skip_floating_point_ops else None
@@ -937,12 +972,13 @@ class JaxprInterpreter:
           case gpu_primitives.wgmma_wait_p:
             out = []  # TODO(jburnim): wgmma_wait_p
           case gpu_primitives.wait_smem_to_gmem_p:
-            out = []  # TODO(jburnim): wait_smem_to_gmem_p
+            token, out = self._interpret_wait_smem_to_gmem_p(
+                eqn, token, deferred_invals)
           case gpu_primitives.set_max_registers_p:
             # This primitive is a no-op in GPU Interpret Mode.
             out = []
           case gpu_primitives.commit_smem_p:
-            out = []  # TODO(jburnim): commit_smem_p
+            token, out = self._interpret_commit_smem_p(eqn, token, deferred_invals)
           case _:
             out = self._interpret_arithmetic_primitive(eqn, deferred_invals)
 

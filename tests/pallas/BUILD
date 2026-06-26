@@ -1575,6 +1575,23 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_pallas_interpret_race_detection_test",
+    srcs = ["gpu_pallas_interpret_race_detection_test.py"],
+    enable_backends = ["cpu"],
+    shard_count = 4,
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_experimental_gpu_ops",
+        "//jax/experimental:pallas_mosaic_gpu",
+        "//jax/experimental:pallas_tpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "gpu_pallas_interpret_distributed_test",
     srcs = ["gpu_pallas_interpret_distributed_test.py"],
     enable_backends = ["cpu"],

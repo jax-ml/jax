@@ -48,7 +48,7 @@ class InterpretGPUParams(interpret_params.SharedInterpretParams):
     logging_mode: Logging mode for GPU interpret mode.
   """
 
-  num_tma_threads_per_device: int = 1
+  num_tma_threads_per_device: int = 5
   logging_mode: interpret_params.LoggingMode | None = None
 
   def __post_init__(self):
