@@ -22,7 +22,7 @@ import enum
 import functools
 import itertools
 import math
-from typing import Any, Literal, Protocol, TypeAlias, cast, overload, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, assert_never, cast, overload, runtime_checkable
 
 import jax
 import jax.experimental.mosaic.gpu as mgpu
@@ -30,9 +30,9 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
-from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import math as mlir_math
 from jaxlib.mlir.dialects import memref
+from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import vector
 import numpy as np
 
@@ -4872,3 +4872,91 @@ def is_supported_strided_layout_broadcast(
   if exp_indices and pre_indices and max(exp_indices) >= min(pre_indices):
     return False
   return True
+
+
+def concatenate(
+    arrays: Sequence[FragmentedArray],
+    axis: int = 0,
+) -> FragmentedArray:
+  """Concatenates fragmented arrays along the specified axis."""
+  if not arrays:
+    raise ValueError("Need at least one array to concatenate")
+  arr0 = arrays[0]
+  rank = len(arr0.shape)
+  if not -rank <= axis < rank:
+    raise ValueError(f"{axis=} is out of bounds for array of {rank=}")
+  if axis < 0:
+    axis += rank
+
+  if len(arrays) == 1:
+    return arr0
+
+  new_shape = list(arr0.shape)
+  for i, arr in enumerate(arrays[1:], start=1):
+    if len(arr.shape) != rank:
+      raise ValueError(
+          f"All arrays must have the same rank, got {len(arr.shape)} at index"
+          f" {i} (expected {rank})"
+      )
+    if arr.mlir_dtype != arr0.mlir_dtype:
+      raise ValueError(
+          f"All arrays must have the same dtype, got {arr.mlir_dtype} at"
+          f" index {i} (expected {arr0.mlir_dtype})"
+      )
+    if arr.is_signed != arr0.is_signed:
+      raise ValueError(
+          f"All arrays must have the same signedness, got {arr.is_signed} at"
+          f" index {i} (expected {arr0.is_signed})"
+      )
+    for d in range(rank):
+      if d != axis and arr.shape[d] != arr0.shape[d]:
+        raise ValueError(
+            "All arrays must have matching shapes along non-concatenated"
+            f" dimensions, got shape {arr.shape} at index {i} (expected dim"
+            f" {d} to be {arr0.shape[d]})"
+        )
+    new_shape[axis] += arr.shape[axis]
+  new_shape = tuple(new_shape)
+
+  match arr0.layout:
+    case TiledLayout():
+      for i, arr in enumerate(arrays[1:], start=1):
+        if arr.layout != arr0.layout:
+          raise ValueError(
+              f"All arrays must have the same layout, got {arr.layout} at"
+              f" index {i} (expected {arr0.layout})"
+          )
+      new_regs = np.concatenate([arr.registers for arr in arrays], axis=axis)
+      return FragmentedArray(
+          _registers=new_regs, _layout=arr0.layout, _is_signed=arr0.is_signed
+      )
+
+    case WGStridedFragLayout(vec_size=vec_size):
+      if axis != 0:
+        raise NotImplementedError(
+            "Concatenating arrays with strided layout is only supported along"
+            " axis 0"
+        )
+      for i, arr in enumerate(arrays[1:], start=1):
+        if not isinstance(arr.layout, WGStridedFragLayout):
+          raise ValueError(
+              f"Expected WGStridedFragLayout, got {arr.layout} at index {i}"
+          )
+        if arr.layout.vec_size != vec_size:
+          raise ValueError(
+              "All WGStridedFragLayout arrays must have the same vec_size,"
+              f" got {arr.layout.vec_size} at index {i} (expected {vec_size})"
+          )
+      new_layout = WGStridedFragLayout(shape=new_shape, vec_size=vec_size)
+      new_regs = np.concatenate([arr.registers for arr in arrays], axis=0)
+      return FragmentedArray(
+          _registers=new_regs, _layout=new_layout, _is_signed=arr0.is_signed
+      )
+
+    case WGSplatFragLayout():
+      raise NotImplementedError(
+          "Concatenating arrays with splat layout is not supported."
+      )
+
+    case layout:
+      assert_never(layout)

@@ -5768,6 +5768,54 @@ class FragmentedArrayTest(TestCase):
     )
     np.testing.assert_array_equal(kernel(), expected)
 
+  def test_concatenate_strided(self):
+    dtype = jnp.float32
+    is_signed = utils.is_signed(dtype)
+    shapes = (64, 64), (128, 64)
+
+    def _kernel(ctx, inp1, inp2, dst, _):
+      arr1 = mgpu.FragmentedArray.load_strided(inp1, is_signed=is_signed)
+      arr2 = mgpu.FragmentedArray.load_strided(inp2, is_signed=is_signed)
+      res = fa.concatenate([arr1, arr2], axis=0)
+      res.store_untiled(dst, optimized=False)
+
+    x0 = np.arange(math.prod(shapes[0]), dtype=np.float32).reshape(shapes[0])
+    x1 = np.arange(math.prod(shapes[1]), dtype=np.float32).reshape(shapes[1])
+    expected = np.concatenate([x0, x1], axis=0)
+    out_shape = jax.ShapeDtypeStruct(expected.shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        _kernel, (1, 1, 1), (128, 1, 1), (x0, x1), out_shape, ()
+    )
+    np.testing.assert_array_equal(kernel(x0, x1), expected)
+
+  @parameterized.named_parameters(
+      ("axis0", 0, ((64, 64), (128, 64))),
+      ("axis1", 1, ((64, 64), (64, 128))),
+  )
+  def test_concatenate_tiled(self, axis, shapes):
+    layout = fa.WGMMA_LAYOUT
+    dtype = jnp.float32
+    is_signed = utils.is_signed(dtype)
+
+    def _kernel(ctx, inp1, inp2, dst, _):
+      x0 = mgpu.FragmentedArray.load_untiled(
+          inp1, layout=layout, is_signed=is_signed, optimized=False
+      )
+      x1 = mgpu.FragmentedArray.load_untiled(
+          inp2, layout=layout, is_signed=is_signed, optimized=False
+      )
+      res = fa.concatenate([x0, x1], axis=axis)
+      res.store_untiled(dst, optimized=False)
+
+    x0 = np.arange(math.prod(shapes[0]), dtype=np.float32).reshape(shapes[0])
+    x1 = np.arange(math.prod(shapes[1]), dtype=np.float32).reshape(shapes[1])
+    expected = np.concatenate([x0, x1], axis=axis)
+    out_shape = jax.ShapeDtypeStruct(expected.shape, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        _kernel, (1, 1, 1), (128, 1, 1), (x0, x1), out_shape, ()
+    )
+    np.testing.assert_array_equal(kernel(x0, x1), expected)
+
 
 class ProfilerTest(TestCase, jtu.JaxTestCase):
 
