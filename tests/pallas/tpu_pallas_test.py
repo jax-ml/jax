@@ -23,7 +23,6 @@ import itertools
 import json
 import math
 import re
-import sys
 from typing import Any
 
 from absl.testing import absltest
@@ -73,16 +72,6 @@ def only_passes_in_interpret(
     return wrapper
 
   return decorator
-
-
-@contextlib.contextmanager
-def string_stdout():
-  """Redirects stdout to a string."""
-  initial_stdout = sys.stdout
-  stringio = io.StringIO()
-  sys.stdout = stringio
-  yield stringio
-  sys.stdout = initial_stdout
 
 
 def trace_to_jaxpr(f: Callable, *args: Any):
@@ -2447,51 +2436,58 @@ class PallasCallTest(ptu.PallasTPUTest):
   @parameterized.parameters([0, True])
   @jtu.thread_unsafe_test()
   def test_fori_loop_unroll_full(self, unroll):
-    with string_stdout() as msg:
-      @functools.partial(self.pallas_call,
-                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-                         debug=True)
-      def f(x_ref, y_ref):
-        y_ref[...] = x_ref[...]
-        def body(i, _):
-          y_ref[...] += i
-        lax.fori_loop(0, 5, body, None, unroll=unroll)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        debug=True,
+    )
+    def f(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      def body(i, _):
+        y_ref[...] += i
+      lax.fori_loop(0, 5, body, None, unroll=unroll)
+
+    with contextlib.redirect_stdout(io.StringIO()) as output:
       y = f(jnp.array([0], jnp.int32))
-      self.assertEqual(y[0], 10)
-      debug_string = msg.getvalue()
-    self.assertNotIn('scf.for', debug_string)
+
+    self.assertEqual(y[0], 10)
+    self.assertNotIn('scf.for', output.getvalue())
 
   @jtu.thread_unsafe_test()
   def test_fori_loop_unroll_partial_divides(self):
-    with string_stdout() as msg:
-      @functools.partial(self.pallas_call,
-                         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
-                         debug=True)
-      def f(x_ref, y_ref):
-        y_ref[...] = x_ref[...]
-        def body(i, _):
-          y_ref[...] += i
-        lax.fori_loop(0, 6, body, None, unroll=2)
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+        debug=True,
+    )
+    def f(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+      def body(i, _):
+        y_ref[...] += i
+      lax.fori_loop(0, 6, body, None, unroll=2)
+
+    with contextlib.redirect_stdout(io.StringIO()) as output:
       y = f(jnp.array([0], jnp.int32))
-      self.assertEqual(y[0], 15)
-      debug_string = msg.getvalue()
-    self.assertIn('scf.for', debug_string)
+
+    self.assertEqual(y[0], 15)
+    self.assertIn('scf.for', output.getvalue())
 
   @jtu.thread_unsafe_test()
   def test_fori_loop_unroll_partial_remainder(self):
-    with string_stdout() as msg:
-      @functools.partial(self.pallas_call,
+    @functools.partial(self.pallas_call,
                          out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
                          debug=True)
-      def f(x_ref, y_ref):
+    def f(x_ref, y_ref):
         y_ref[...] = x_ref[...]
         def body(i, _):
           y_ref[...] += i
         lax.fori_loop(0, 5, body, None, unroll=2)
+
+    with contextlib.redirect_stdout(io.StringIO()) as output:
       y = f(jnp.array([0], jnp.int32))
-      self.assertEqual(y[0], 10)
-      debug_string = msg.getvalue()
-    self.assertIn('scf.for', debug_string)
+
+    self.assertEqual(y[0], 10)
+    self.assertIn('scf.for', output.getvalue())
 
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
@@ -3597,15 +3593,15 @@ class PallasCallTraceTest(ptu.PallasTPUTest):
       with jax.named_scope('scope1'):
         o_ref[...] = jnp.zeros_like(o_ref[...])
 
-    with string_stdout() as msg:
+    with contextlib.redirect_stdout(io.StringIO()) as output:
       _ = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
         debug=True,
       )()
-      # TODO(justinfu): Add an official lowering API to get the MLIR.
-      debug_string = msg.getvalue()
+      # TODO(b/348033431): Add an official lowering API to get the MLIR.
 
+    debug_string = output.getvalue()
     num_start = debug_string.count('tpu.trace_start')
     num_stop = debug_string.count('tpu.trace_stop')
     self.assertEqual(num_start, 1)
@@ -3624,15 +3620,15 @@ class PallasCallTraceTest(ptu.PallasTPUTest):
           o_ref[...] = o_ref[...] + 1
       pl.run_scoped(scope2)
 
-    with string_stdout() as msg:
+    with contextlib.redirect_stdout(io.StringIO()) as output:
       _ = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
         debug=True,
       )()
-      # TODO(justinfu): Add an official lowering API to get the MLIR.
-      debug_string = msg.getvalue()
 
+    # TODO(b/348033431): Add an official lowering API to get the MLIR.
+    debug_string = output.getvalue()
     num_start = debug_string.count('tpu.trace_start')
     num_stop = debug_string.count('tpu.trace_stop')
     self.assertEqual(num_start, 2)
