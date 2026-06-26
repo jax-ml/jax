@@ -94,8 +94,18 @@ def _compute_on2(f, *, compute_type, out_memory_spaces, compiler_options):
         consts = []
     out_memory_spaces_flat = flatten_axes(
         "compute_on out_memory_spaces", out_tree, out_memory_spaces)
-    compiler_options_json = (None if compiler_options is None else
-                             json.dumps(compiler_options))
+    compiler_opts = compiler_options
+    if compute_type == 'tpu_sparsecore' and compiler_opts is not None:
+      sc_config = compiler_opts.get('sparse_core_config')
+      if isinstance(sc_config, dict) and 'core_ids' in sc_config:
+        compiler_opts = {
+            **compiler_opts,
+            'sparse_core_config': {**sc_config, 'core_id_mutability': False},
+        }
+
+    compiler_options_json = (
+        None if compiler_opts is None else json.dumps(compiler_opts)
+    )
     outs_flat = compute_on_p.bind(
         *consts, *args_flat, jaxpr=jaxpr, compute_type=compute_type,
         out_memory_spaces=tuple(out_memory_spaces_flat),
