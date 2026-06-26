@@ -360,7 +360,9 @@ class SdyArray:
                       if self.logical_device_ids is not None else '')
     rar = (f', replicated_axes={self.replicated_axes}'
            if self.replicated_axes else '')
-    return f"SdyArray([{dim_sharding_repr}]{device_id_repr}{rar})"
+    ur = (f', unreduced_axes={self.unreduced_axes}'
+          if self.unreduced_axes else '')
+    return f"SdyArray([{dim_sharding_repr}]{device_id_repr}{rar}{ur})"
 
 
 def remove_size_one_mesh_axis(spec, mesh) -> PartitionSpec:
