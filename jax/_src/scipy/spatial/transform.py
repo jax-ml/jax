@@ -317,7 +317,7 @@ def _as_rotvec(quat: Array, degrees: bool) -> Array:
   angle2 = angle * angle
   small_scale = 2 + angle2 / 12 + 7 * angle2 * angle2 / 2880
   sin_half = jnp.sin(angle / 2)
-  denom = jnp.where(jnp.abs(sin_half) < 1e-20, 1.0, sin_half)
+  denom = jnp.where(sin_half == 0, 1.0, sin_half)
   large_scale = angle / denom
   scale = jnp.where(angle <= 1e-3, small_scale, large_scale)
   scale = jnp.where(degrees, jnp.rad2deg(scale), scale)
