@@ -11432,6 +11432,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       arr3 = jax.device_put(jnp.arange(64).reshape(8, 4, 2), P('x', None, 'y'))
       jax.vmap(shift_right)(arr3, arr2)
 
+  @jtu.with_explicit_mesh((1, 1), ('x', 'y'))
+  def test_vmap_dot_out_sharding_hessian(self, mesh):
+    q = jnp.ones((1, 7, 3, 4))
+    k = jnp.ones((1, 7, 3, 4))
+
+    def g(q, k):
+      return jnp.sum(jnp.einsum('blhd,bmhd->bhlm', q, k, out_sharding=jax.P()))
+
+    def hess_g(q, k):
+      return jax.hessian(g, argnums=0)(q, k)
+
+    hess_g(q, k)  # doesn't crash
+    jax.jit(hess_g)(q, k)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator-only')
 class PJitErrorTest(jtu.JaxTestCase):

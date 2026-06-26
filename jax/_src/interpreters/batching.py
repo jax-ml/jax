@@ -219,9 +219,13 @@ class AxisData:
 
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
+  assert axis >= 0
   val = axis_data.explicit_mesh_axis
+  partitions = orig_sharding.spec.partitions
+  if len(partitions) < axis:
+    partitions = partitions + (None,) * (axis - len(partitions))
   new_spec = orig_sharding.spec.update(
-      partitions=tuple_insert(orig_sharding.spec.partitions, axis, val))
+      partitions=tuple_insert(partitions, axis, val))
   return orig_sharding.update(spec=new_spec)
 
 
