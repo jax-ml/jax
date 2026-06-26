@@ -1027,6 +1027,14 @@ class I8Type:
     return ir.IntegerType.get_signless(8)
 
 
+# Maps an FP8 MLIR element-type class to the (jax dtype, exponent_bits,
+# mantissa_bits) used to quantize reference inputs to that type.
+_FP8_DTYPE_INFO = {
+    ir.Float8E5M2Type: (jnp.float8_e5m2, 5, 2),
+    ir.Float8E4M3FNType: (jnp.float8_e4m3fn, 4, 3),
+}
+
+
 class WGMMATest(TestCase):
 
   def setUp(self):
@@ -1070,6 +1078,35 @@ class WGMMATest(TestCase):
         jax_out_dtype=jax_out_dtype,
         lhs_tiling_kind="small+no_transpose" if lhs_transpose else "small",
         rhs_tiling_kind="small+no_transpose" if rhs_transpose else "small",
+    )
+
+  @parameterized.product(
+      lhs_rhs_dtype_cls=(
+          (ir.Float8E4M3FNType, ir.Float8E5M2Type),
+          (ir.Float8E5M2Type, ir.Float8E4M3FNType),
+      ),
+      m=(64, 128),
+      n=(128,),
+      swizzle=(64, 128),
+      jax_out_dtype=(jnp.float16, jnp.float32),
+  )
+  def test_wgmma_mixed_fp8(self, lhs_rhs_dtype_cls, m, n, swizzle, jax_out_dtype):
+    # The e4m3/e5m2 FP8 pair may be mixed across the two operands. FP8 wgmma does
+    # not support operand transposes, so the only valid layout is `a` row-major
+    # and `b` column-major (rhs_transpose=True).
+    lhs_dtype_cls, rhs_dtype_cls = lhs_rhs_dtype_cls
+    self._test_wgmma_basic(
+        m=m,
+        n=n,
+        k_steps=2,
+        in_mlir_dtype_cls=lhs_dtype_cls,
+        rhs_in_mlir_dtype_cls=rhs_dtype_cls,
+        lhs_transpose=False,
+        rhs_transpose=True,
+        swizzle=swizzle,
+        jax_out_dtype=jax_out_dtype,
+        lhs_tiling_kind="small",
+        rhs_tiling_kind="small+no_transpose",
     )
 
   @parameterized.product(
@@ -1141,7 +1178,12 @@ class WGMMATest(TestCase):
       jax_out_dtype,
       rhs_tiling_kind,
       lhs_tiling_kind,
+      rhs_in_mlir_dtype_cls=None,
   ):
+    # `b` reuses `a`'s element type unless a distinct one is given (only the
+    # e4m3/e5m2 FP8 pair may be mixed).
+    if rhs_in_mlir_dtype_cls is None:
+      rhs_in_mlir_dtype_cls = in_mlir_dtype_cls
     if jax_out_dtype == jnp.int32 and in_mlir_dtype_cls != I8Type:
       self.skipTest("s32 accumulator only supported with s8 inputs")
     if jax_out_dtype != jnp.int32 and in_mlir_dtype_cls == I8Type:
@@ -1173,17 +1215,31 @@ class WGMMATest(TestCase):
         exponent_bits, mantissa_bits = 8, 7
       else:
         raise NotImplementedError(in_mlir_dtype)
-    elif in_mlir_dtype_cls == ir.Float8E5M2Type:
-      in_jax_dtype = jnp.float8_e5m2
-      exponent_bits, mantissa_bits = 5, 2
-    elif in_mlir_dtype_cls == ir.Float8E4M3FNType:
-      in_jax_dtype = jnp.float8_e4m3fn
-      exponent_bits, mantissa_bits = 4, 3
+    elif in_mlir_dtype_cls in _FP8_DTYPE_INFO:
+      in_jax_dtype, exponent_bits, mantissa_bits = (
+          _FP8_DTYPE_INFO[in_mlir_dtype_cls]
+      )
     elif in_mlir_dtype_cls == I8Type:
       in_jax_dtype = jnp.int8
       exponent_bits = mantissa_bits = None
     else:
       raise NotImplementedError(in_mlir_dtype)
+
+    # `b`'s dtype matches `a`'s except for the mixed e4m3/e5m2 FP8 case. Both FP8
+    # types are 1 byte, so the tiling/swizzle math (driven by `in_mlir_dtype`) is
+    # identical; only the operand values and `b`'s SMEM dtype differ.
+    if rhs_in_mlir_dtype_cls is in_mlir_dtype_cls:
+      rhs_in_jax_dtype = in_jax_dtype
+      rhs_exponent_bits, rhs_mantissa_bits = exponent_bits, mantissa_bits
+    elif rhs_in_mlir_dtype_cls in _FP8_DTYPE_INFO:
+      rhs_in_jax_dtype, rhs_exponent_bits, rhs_mantissa_bits = (
+          _FP8_DTYPE_INFO[rhs_in_mlir_dtype_cls]
+      )
+    else:
+      raise NotImplementedError(
+          "Mixed-dtype WGMMA is only supported for the e4m3/e5m2 FP8 pair, got"
+          f" a={in_mlir_dtype_cls} b={rhs_in_mlir_dtype_cls}"
+      )
     nk_tile = swizzle // bytewidth(in_mlir_dtype)
     k = nk_tile * k_steps
     if n % nk_tile:
@@ -1234,7 +1290,7 @@ class WGMMATest(TestCase):
       nvvm.wgmma_wait_group_sync_aligned(0)
       acc.value.store_untiled(out, optimized=False)
 
-    def quantize(x):
+    def quantize(x, exponent_bits, mantissa_bits):
       # Quantize the input to avoid rounding when feeding the WGMMA
       return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
 
@@ -1242,10 +1298,12 @@ class WGMMATest(TestCase):
     y_shape = (n, k) if rhs_transpose else (k, n)
     if in_mlir_dtype_cls == I8Type:
       x = self.prng.integers(-128, 127, x_shape).astype(in_jax_dtype)
-      y = self.prng.integers(-128, 127, y_shape).astype(in_jax_dtype)
+      y = self.prng.integers(-128, 127, y_shape).astype(rhs_in_jax_dtype)
     else:
-      x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(in_jax_dtype)
-      y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
+      x = quantize(self.prng.uniform(-1, 1, x_shape),
+                   exponent_bits, mantissa_bits).astype(in_jax_dtype)
+      y = quantize(self.prng.uniform(-1, 1, y_shape),
+                   rhs_exponent_bits, rhs_mantissa_bits).astype(rhs_in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), jax_out_dtype)
     if transpose_rhs_tiles:
       rhs_tiling_t = rhs_tiling[::-1] if rhs_transpose else rhs_tiling
@@ -1259,7 +1317,7 @@ class WGMMATest(TestCase):
       lhs_smem_shape = tile_shape(x_shape, lhs_tiling)
     scratch_shape = [
         jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
-        jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
+        jax.ShapeDtypeStruct(rhs_smem_shape, rhs_in_jax_dtype),
         mgpu.TMABarrier(2),
     ]
     z = mgpu.as_gpu_kernel(
