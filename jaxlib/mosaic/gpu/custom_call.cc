@@ -320,13 +320,14 @@ mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
     }
     pm.getContext()->disableMultithreading();
     auto print_always = [](mlir::Pass*, mlir::Operation*) { return true; };
-    pm.enableIRPrinting(/*shouldPrintBeforePass=*/print_always,
-                        /*shouldPrintAfterPass=*/print_always,
-                        /*printModuleScope=*/true,
-                        /*printAfterOnlyOnChange=*/false,
-                        /*printAfterOnlyOnFailure=*/true,
-                        dump_stream.has_value() ? *dump_stream : llvm::outs(),
-                        mlir::OpPrintingFlags().enableDebugInfo());
+    pm.enableIRPrinting(
+        /*shouldPrintBeforePass=*/print_always,
+        /*shouldPrintAfterPass=*/print_always,
+        /*printModuleScope=*/true,
+        /*printAfterOnlyOnChange=*/false,
+        /*printAfterOnlyOnFailure=*/true,
+        dump_stream.has_value() ? *dump_stream : llvm::outs(),
+        mlir::OpPrintingFlags().enableDebugInfo().printNameLocAsPrefix());
   }
   return pm.run(module);
 }
