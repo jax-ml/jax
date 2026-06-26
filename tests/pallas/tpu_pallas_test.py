@@ -4017,82 +4017,74 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(out, state_utils.bitcast(x, jnp.uint32))
 
   @parameterized.product(
-      shape=((128, 64), (15, 256), (16, 256)),
-      shift=(2, 3),
-      axis=(0, 1),
-  )
-  def test_roll_partial_with_static_shift(
-      self, shape: tuple[int, int], shift: int, axis: int
-  ):
-    x = np.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
-
-    def kernel(x_ref, out_ref):
-      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=axis)
-
-    out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
-    )(x)
-    np.testing.assert_array_equal(out, np.roll(x, shift, axis))
-
-  @parameterized.product(
       shape=((5, 8, 64), (15, 4, 128), (8, 3, 256), (7, 32, 384)),
       shift=(0, 2, 3, 19),
       dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
-      dynamic=(False, True),
+      is_dynamic=(False, True),
   )
   def test_roll_with_major_dim_shift(
       self,
       shape: tuple[int, int, int],
       shift: int,
       dtype: jnp.dtype,
-      dynamic: bool,
+      is_dynamic: bool,
   ):
-    if dynamic and not jtu.is_libtpu_at_least('0.0.43'):
+    if is_dynamic and not jtu.is_libtpu_at_least('0.0.43'):
       self.skipTest('Requires libtpu 0.0.43 or newer')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
     x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
 
-    if dynamic:
-
+    if is_dynamic:
       def kernel(x_ref, shift_ref, out_ref):
         out_ref[...] = pltpu.roll(x_ref[...], shift=shift_ref[0], axis=0)
-
       shift_arr = np.array([shift], dtype=np.int32)
       out = self.pallas_call(
           kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
       )(x, shift_arr)
     else:
-
       def kernel(x_ref, out_ref):
         out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=0)
-
       out = self.pallas_call(
           kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
       )(x)
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
 
   @parameterized.product(
-      shape=((8, 128), (16, 256), (64, 256), (8, 64), (20, 200)),
-      shift=(0, 2, 3, 129),
+      shape=(
+          (3, 16),
+          (8, 64),
+          (8, 128),
+          (15, 256),
+          (16, 256),
+          (20, 200),
+          (32, 300),
+          (64, 8),
+          (64, 256),
+          (128, 64),
+      ),
+      shift=(0, 1, 2, 3, 8, 9, 15, 31, 129),
       dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
+      axis=(0, 1),
   )
-  def test_roll_static_lane_shift_with_no_stride(
-      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
+  def test_roll_static_shift_with_no_stride(
+      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype, axis: int
   ):
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer.')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
     x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
 
     def kernel(x_ref, out_ref):
-      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=1)
+      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=axis)
 
     out = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
     )(x)
-    np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
+    np.testing.assert_array_equal(out, np.roll(x, shift, axis=axis))
 
   # Lane dim is aligned: shape[-1] % 128 == 0.
   @parameterized.product(
@@ -4118,29 +4110,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
         kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
     )(x, shift_arr)
     np.testing.assert_array_equal(out, np.roll(x, shift, axis=1))
-
-  @parameterized.product(
-      shape=((3, 16), (8, 128), (16, 256), (32, 300), (64, 8), (20, 200)),
-      shift=(0, 1, 2, 8, 9, 15, 31),
-      dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
-  )
-  def test_roll_static_sublane_shift_with_no_stride(
-      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
-  ):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      self.skipTest('Requires libtpu 0.0.43 or newer.')
-    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
-      self.skipTest('Requires TPU v4+.')
-
-    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
-
-    def kernel(x_ref, out_ref):
-      out_ref[...] = pltpu.roll(x_ref[...], shift=shift, axis=0)
-
-    out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
-    )(x)
-    np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
 
   @parameterized.product(
       # minor dim is aligned to 128
@@ -4177,6 +4146,98 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     split_x = np.split(x, x.shape[0], axis=0)
     rolled_splits = [
         np.roll(split_x[i], shift + i * stride, axis=1)
+        for i in range(len(split_x))
+    ]
+    expected = np.concatenate(rolled_splits, axis=0)
+    np.testing.assert_array_equal(out, expected)
+
+  @parameterized.product(
+      shape=((8, 57), (8, 128), (16, 256), (32, 200), (64, 128), (128, 5)),
+      shift=(0, 2, 3, 17, 34, 129, 258),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
+  )
+  def test_roll_dynamic_aligned_sublane_shift_with_no_stride(
+      self, shape: tuple[int, int], shift: int, dtype: jnp.dtype
+  ):
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer')
+    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU v4+.')
+    bitwidth = jax.dtypes.itemsize_bits(dtype)
+    packing = 32 // bitwidth
+    if shape[0] % (8 * packing) != 0:
+      self.skipTest('Requires aligned shape.')
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    shift_arr = np.array([shift], dtype=np.int32)
+
+    def kernel(x_ref, shift_ref, out_ref):
+      out_ref[...] = pltpu.roll(x_ref[...], shift=shift_ref[0], axis=0)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x, shift_arr)
+    np.testing.assert_array_equal(out, np.roll(x, shift, axis=0))
+
+  @parameterized.product(
+      shape=((2, 128, 128), (3, 64, 256), (4, 64, 200), (5, 30, 512)),
+      shift=(0, 2, 3, 17, 34, 129),
+      dtype=(jnp.float32, jnp.bfloat16, jnp.int8, jnp.int4),
+      axis=(1, 2),  # sublane and lane dim
+      stride=(1, 2, 129),
+      is_dynamic=(False, True),
+  )
+  def test_roll_with_major_stride(
+      self, shape, shift, dtype, axis, stride, is_dynamic
+  ):
+    if not jtu.is_libtpu_at_least('0.0.43'):
+      self.skipTest('Requires libtpu 0.0.43 or newer')
+    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU v4+.')
+    bitwidth = jax.dtypes.itemsize_bits(dtype)
+    packing = 32 // bitwidth
+    if (axis == 1 and shape[1] % (8 * packing) != 0) or (
+        axis == 2 and shape[2] % 128 != 0
+    ):
+      self.skipTest('Requires aligned shape.')
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+
+    if is_dynamic:
+
+      def kernel(x_ref, shift_ref, out_ref):
+        out_ref[...] = pltpu.roll(
+            x_ref[...],
+            shift=shift_ref[0],
+            axis=axis,
+            stride=stride,
+            stride_axis=0,  # major stride
+        )
+
+      shift_arr = np.array([shift], dtype=np.int32)
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, dtype),
+      )(x, shift_arr)
+    else:
+
+      def kernel(x_ref, out_ref):
+        out_ref[...] = pltpu.roll(
+            x_ref[...],
+            shift=shift,
+            axis=axis,
+            stride=stride,
+            stride_axis=0,  # major stride
+        )
+
+      out = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, dtype),
+      )(x)
+
+    split_x = np.split(x, x.shape[0], axis=0)
+    rolled_splits = [
+        np.roll(split_x[i], shift + i * stride, axis=axis)
         for i in range(len(split_x))
     ]
     expected = np.concatenate(rolled_splits, axis=0)
