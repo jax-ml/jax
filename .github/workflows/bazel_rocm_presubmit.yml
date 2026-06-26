@@ -76,10 +76,9 @@ jobs:
       rocm-version: "7"
       rocm-tag: "rocm720"
       rocm-release-version: "7.2.0"
-      download-jax-from-gcs: 0
       jaxlib-version: "head"
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/upstream/GATE_CHECK/7.2.0'
-      build_jaxlib: ${{ 'false' }}
+      build_jaxlib: ${{ 'wheel' }}
       build_jax: ${{ 'true' }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       gate-targets-file: "build/rocm/ci_blocking_test_targets.txt"
