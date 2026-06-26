@@ -4963,6 +4963,8 @@ class FragmentedArrayTest(TestCase):
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``
   @jtu.ignore_warning(message="overflow encountered", category=RuntimeWarning)
   def test_math(self, op, np_op, m=64, n=32):
+    if jtu.is_running_under_pytest():
+      self.skipTest("PTX dump capture fails under pytest")
     def run_test(**kwargs):
       def kernel(ctx, dst, _):
         del ctx
