@@ -1724,6 +1724,11 @@ def _convert_element_type(
     arr = np.asarray(operand).astype(new_dtype)
     aval = core.ShapedArray(arr.shape, arr.dtype, weak_type=weak_type)
     operand = literals.TypedNdArray(arr, aval=aval)
+  elif (isinstance(operand, np.ndarray) and operand.dtype != dtypes.float0 and
+        new_dtype != dtypes.float0):
+    arr = operand.astype(new_dtype)
+    aval = core.ShapedArray(arr.shape, arr.dtype, weak_type=weak_type)
+    operand = literals.TypedNdArray(arr, aval=aval)
 
   if isinstance(operand, (bool, int, float, builtins.complex, np.generic)):
     if sharding is None:

@@ -256,6 +256,14 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(grad(grad(g))(5.).dtype, jnp.float64)
       self.assertEqual(grad(grad(grad(g)))(5.).dtype, jnp.float64)
 
+  def test_explicit_x64_dtypes_allow(self):
+    with config.explicit_x64_dtypes('allow'):
+      with jax.enable_x64(False):
+        val_np = np.array(1 << 40, dtype=np.int64)
+        self.assertEqual(int(jnp.int64(val_np)), 1 << 40)
+        self.assertEqual(int(jnp.int64(1 << 40)), 1 << 40)
+        self.assertEqual(int(jnp.array(1 << 40, dtype=jnp.int64)), 1 << 40)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
