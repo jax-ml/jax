@@ -2922,7 +2922,7 @@ griddepcontrol_wait_p.multiple_results = True
 
 @griddepcontrol_wait_p.def_effectful_abstract_eval
 def _griddepcontrol_wait_abstract_eval():
-  return (), {gpu_core._memory_effect}
+  return (), {gpu_core._memory_effect, gpu_core._pdl_effect}
 
 
 @lowering.register_lowering_rule(

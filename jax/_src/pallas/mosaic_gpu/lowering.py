@@ -952,6 +952,7 @@ def lower_jaxpr_to_module(
   squashed_dims = squashed_dims[::-1]
   axis_names = axis_names.reverse()
 
+  uses_pdl = gpu_core._pdl_effect in jaxpr.effects
   rs = _estimate_resources(
       ResourceEstimatorContext(
           reduction_scratch_bytes=params.reduction_scratch_bytes,
@@ -1143,6 +1144,7 @@ def lower_jaxpr_to_module(
       prof_spec=prof_spec,
       jax_mesh=jax_mesh,
       base_loc=base_loc,
+      uses_pdl=uses_pdl,
   )
 
   if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:

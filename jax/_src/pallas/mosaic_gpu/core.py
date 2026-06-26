@@ -1819,6 +1819,22 @@ effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 _wgmma_pipeline_effect = _WGMMAPipelineEffect()
 
 
+class PdlEffect(jax_core.Effect):
+  """Indicates that a kernel uses Programmatic Dependency Launch (PDL).
+
+  This effect is associated with primitives that perform grid-level
+  synchronization (e.g. waiting for dependent grids). Its presence in a
+  JAXPR instructs the compiler/runtime to enable programmatic stream
+  serialization, allowing the CUDA driver to launch dependent kernels
+  concurrently in the same stream.
+  """
+
+
+pallas_core.kernel_local_effects.add_type(PdlEffect)
+effects.control_flow_allowed_effects.add_type(PdlEffect)
+_pdl_effect = PdlEffect()
+
+
 # We define the layout_cast primitive here, because it needs to be available in
 # the lowering code (to provide layout hints to the rules).
 layout_cast_p = jax_core.Primitive("layout_cast")

@@ -815,6 +815,7 @@ def _lower_as_gpu_kernel(
     prof_spec: profiler.ProfilerSpec | None = None,
     jax_mesh: mesh_lib.Mesh | None = None,
     base_loc: ir.Location | None = None,
+    uses_pdl: bool = False,
 ):
   ptr_ty = llvm.PointerType.get()
   token_ty = gpu.AsyncTokenType.get()
@@ -845,6 +846,8 @@ def _lower_as_gpu_kernel(
   arch_major, arch_minor = _infer_arch()
   attrs["mosaic_gpu.arch_major"] = ir.IntegerAttr.get(i32, arch_major)
   attrs["mosaic_gpu.arch_minor"] = ir.IntegerAttr.get(i32, arch_minor)
+  if uses_pdl:
+    attrs["mosaic_gpu.uses_pdl"] = ir.UnitAttr.get()
 
   # These are needed as nonlocal below.
   launch_ctx = None

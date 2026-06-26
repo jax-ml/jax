@@ -3883,6 +3883,60 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     self.assertIn("griddepcontrol.wait;", ptx_output)
     self.assertIn("griddepcontrol.launch_dependents;", ptx_output)
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_griddepcontrol_multi_kernel(self):
+    # Tests that we can launch two kernels that communicate via griddepcontrol.
+    @jax.jit
+    def f(x):
+      def kernel_a(x_ref, out_ref):
+        out_ref[...] = x_ref[...] + 1.0
+        plgpu.griddepcontrol_launch_dependents()
+
+      def kernel_b(in_ref, out_ref):
+        plgpu.griddepcontrol_wait()
+        out_ref[...] = in_ref[...] * 2.0
+
+      intermediate = self.kernel(
+          kernel_a,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+      return self.kernel(
+          kernel_b,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(intermediate)
+
+    x = jnp.arange(128).astype(jnp.float32)
+    with (
+        jtu.set_env(MOSAIC_GPU_DUMP_PTX="1", MOSAIC_GPU_DUMP_HOST_LLVM="1"),
+        self.capture_stdout() as output,
+    ):
+      out = jax.block_until_ready(f(x))
+
+    np.testing.assert_allclose(out, (x + 1.0) * 2.0)
+
+    # Static verification of the dynamic launch (PDL) pipeline
+    ptx_output = output()
+
+    # 1. Verify device-side hardware synchronization instructions are present
+    self.assertIn("griddepcontrol.launch_dependents;", ptx_output)
+    self.assertIn("griddepcontrol.wait;", ptx_output)
+
+    # 2. Verify host-side selective PDL launch attributes (uses_pdl flag)
+    import re
+    # kernel_a (producer) need not enable PDL (uses_pdl should be i32 0)
+    kernel_a_pattern = (
+        r"define void @kernel_a_mosaic_gpu\(.*?{.*?call void"
+        r" @mosaic_gpu_launch_kernel\(.*?, i32 0, i32 0, ptr %\w+, ptr %\w+\)"
+    )
+    self.assertRegex(ptx_output, re.compile(kernel_a_pattern, re.DOTALL))
+
+    # kernel_b (consumer) MUST enable PDL (uses_pdl should be i32 1)
+    kernel_b_pattern = (
+        r"define void @kernel_b_mosaic_gpu\(.*?{.*?call void"
+        r" @mosaic_gpu_launch_kernel\(.*?, i32 0, i32 1, ptr %\w+, ptr %\w+\)"
+    )
+    self.assertRegex(ptx_output, re.compile(kernel_b_pattern, re.DOTALL))
+
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
   def setUp(self):
