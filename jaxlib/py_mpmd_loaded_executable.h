@@ -97,6 +97,11 @@ class PyMpmdLoadedExecutable {
     }
   }
 
+  std::shared_ptr<xla::ifrt::MpmdLoadedExecutable> ifrt_loaded_executable()
+      const {
+    return ifrt_loaded_executable_;
+  }
+
   absl::StatusOr<nb::list> Execute(nb::sequence args);
 
   absl::StatusOr<nb::object> ExecuteFastpath(nb::args args, nb::kwargs kwargs);

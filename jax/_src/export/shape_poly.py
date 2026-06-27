@@ -231,12 +231,18 @@ class _DimFactor:
         raise UnexpectedDimVar(err_msg)
     else:
       operand_values = [opnd._evaluate(env) for opnd in self.operands]
+      op1, op2 = operand_values
+      if not isinstance(op1, _DimExpr) and not isinstance(op2, _DimExpr):
+        if hasattr(op1, "dtype"):
+          if not hasattr(op2, "dtype") or op1.dtype != op2.dtype:
+            op2 = np.int32(op2) if op1.dtype == np.int32 else np.int64(op2)
+        elif hasattr(op2, "dtype"):
+          op1 = np.int32(op1) if op2.dtype == np.int32 else np.int64(op1)
       if self.operation == _DimFactor.FLOORDIV:
-        return divmod(*operand_values)[0]
+        return op1 // op2
       elif self.operation == _DimFactor.MOD:
-        return divmod(*operand_values)[1]
+        return op1 % op2
       elif self.operation == _DimFactor.MAX:
-        op1, op2 = operand_values
         if core.is_constant_dim(op1) and core.is_constant_dim(op2):
           return max(op1, op2)
         if core.is_symbolic_dim(op1) or core.is_symbolic_dim(op2):
@@ -245,7 +251,6 @@ class _DimFactor:
         # JAX Tracers.
         return lax.max(op1, op2)
       elif self.operation == _DimFactor.MIN:
-        op1, op2 = operand_values
         if core.is_constant_dim(op1) and core.is_constant_dim(op2):
           return min(op1, op2)
         if core.is_symbolic_dim(op1) or core.is_symbolic_dim(op2):
@@ -582,14 +587,26 @@ class _DimExpr:
   @overload
   @staticmethod
   def _linear_combination_sorted_pairs(
-      pairs1: SortedTerms, i1: int, f1: int,
-      pairs2: SortedTerms, i2: int, f2: int) -> SortedTerms:  ...
+      pairs1: SortedTerms,
+      i1: int,
+      f1: int,
+      pairs2: SortedTerms,
+      i2: int,
+      f2: int,
+  ) -> SortedTerms:
+    ...
 
   @overload
   @staticmethod
   def _linear_combination_sorted_pairs(
-      pairs1: SortedFactors, i1: int, f1: int,
-      pairs2: SortedFactors, i2: int, f2: int) -> SortedFactors:  ...
+      pairs1: SortedFactors,
+      i1: int,
+      f1: int,
+      pairs2: SortedFactors,
+      i2: int,
+      f2: int,
+  ) -> SortedFactors:
+    ...
 
   @staticmethod
   def _linear_combination_sorted_pairs(
@@ -807,12 +824,12 @@ class _DimExpr:
 
   def __divmod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
-      return self.__jax_array__().__divmod__(divisor)
+      return (self.__jax_array__() // divisor, self.__jax_array__() % divisor)
     return self._divmod(divisor)
 
   def __rdivmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
-      return self.__jax_array__().__rdivmod__(dividend)
+      return (dividend // self.__jax_array__(), dividend % self.__jax_array__())
     return _ensure_poly(dividend, "divmod", self.scope).__divmod__(self)
 
   def __int__(self):
@@ -1488,8 +1505,15 @@ def symbolic_args_specs(
   elif constraints:
     raise ValueError("Cannot use both `scope` and `constraints`")
   args_specs_flat = (
-      api.ShapeDtypeStruct(symbolic_shape(spec, like=s, scope=scope), t)
-      for s, t, spec in zip(shapes, dtypes, polymorphic_shapes_flat))
+      api.ShapeDtypeStruct(
+          symbolic_shape(spec, like=s, scope=scope),
+          t,
+          sharding=getattr(a, "sharding", None),
+      )
+      for s, t, spec, a in zip(
+          shapes, dtypes, polymorphic_shapes_flat, args_flat
+      )
+  )
 
   return args_tree.unflatten(args_specs_flat)
 
