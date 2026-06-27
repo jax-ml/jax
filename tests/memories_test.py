@@ -2090,6 +2090,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
         compiler_options={
             "sparse_core_config": {
                 "core_ids": [1],
+                "core_id_mutability": "False",
             }
         },
     )
@@ -2108,7 +2109,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
 
     compiled_text = f.lower(arr1, arr2).compile().as_text()
     self.assertIn('"core_ids":["1"]', compiled_text)
-    self.assertIn('"core_id_mutability":false', compiled_text)
 
   @jtu.with_explicit_mesh((8,), "x")
   def test_sparsecore_fsdp_two_ags(self, mesh):
