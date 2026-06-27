@@ -34,6 +34,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
 
+* Bug fixes:
+  * Fixed {func}`jax.scipy.special.erfcx` returning a spurious `0` for a band of
+    large arguments (~[26.5, 26.64] for float64, ~[9.2, 9.42] for float32)
+    ({jax-issue}`#38607`).
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
