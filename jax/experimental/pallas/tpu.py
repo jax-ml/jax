@@ -15,6 +15,8 @@
 """Mosaic-specific Pallas APIs."""
 import typing
 
+from jax._src import core as _jax_core
+
 from jax._src.pallas.einshape import einshape as einshape
 from jax._src.pallas.mosaic import core as core
 from jax._src.pallas.mosaic.core import CoreType as CoreType
@@ -72,7 +74,6 @@ from jax._src.pallas.mosaic.tpu_info import is_tpu_device as is_tpu_device
 from jax._src.pallas.mosaic.tpu_info import Tiling as Tiling
 from jax._src.pallas.mosaic.tpu_info import TpuInfo as TpuInfo
 
-from jax._src.pallas import core as _pl_core
 
 PARALLEL = GridDimensionSemantics.PARALLEL
 CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
@@ -84,6 +85,7 @@ SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
 VMEM_SHARED = MemorySpace.VMEM_SHARED
 HBM = MemorySpace.HBM
+HOST = _jax_core.MemorySpace.Host
 SEMAPHORE = MemorySpace.SEMAPHORE
 
 
@@ -91,7 +93,7 @@ _deprecations = {
     # Added June 4, 2026
     "HOST": (
         "pltpu.HOST is deprecated, use pl.HOST instead.",
-        _pl_core.MemorySpace.HOST,
+        _jax_core.MemorySpace.Host,
     ),
     # Finalized in JAX v0.11.0
     # TODO(jakevdp): remove these for JAX v0.12.0.
@@ -123,9 +125,10 @@ _deprecations = {
 }
 
 if typing.TYPE_CHECKING:
-  HOST = _pl_core.MemorySpace.HOST
+  HOST = _jax_core.MemorySpace.Host
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
+del _jax_core

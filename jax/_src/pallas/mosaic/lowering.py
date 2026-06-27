@@ -84,16 +84,20 @@ import numpy as np
 
 NDIndexer = indexing.NDIndexer
 AnyMemorySpace = (
-    pallas_core.MemorySpace | tpu_core.MemorySpace | pallas_core.CoreMemorySpace
+    pallas_core.MemorySpace
+    | tpu_core.MemorySpace
+    | pallas_core.CoreMemorySpace
+    | jax_core.MemorySpace
 )
 TPUMemorySpace = (
     tpu_core.MemorySpace
     | pallas_core.CoreMemorySpace
     | Literal[pallas_core.MemorySpace.ANY]
+    | Literal[jax_core.MemorySpace.Host]
 )
 VMEM = tpu_core.MemorySpace.VMEM
 SMEM = tpu_core.MemorySpace.SMEM
-HOST = pallas_core.MemorySpace.HOST
+HOST = jax_core.MemorySpace.Host
 SEMAPHORE = tpu_core.MemorySpace.SEMAPHORE
 ANY = pallas_core.MemorySpace.ANY
 # Booleans are stored as the following type in memrefs.
@@ -507,14 +511,14 @@ def _memory_space_to_mosaic_attribute(
   match tpu_memory_space:
     case pallas_core.MemorySpace.ANY:
       return ir.Attribute.parse("#tpu.memory_space<any>")
-    case pallas_core.MemorySpace.HOST:
-      return ir.Attribute.parse("#tpu.memory_space<host>")
     case tpu_core.MemorySpace() as ms:
       return ir.Attribute.parse(f"#tpu.memory_space<{ms}>")
     case pallas_core.CoreMemorySpace() as cms:
       return ir.Attribute.parse(
           f"#tpu.memory_space<{cms.memory_space}, {cms.mesh.core_type}>"
       )
+    case jax_core.MemorySpace.Host:
+      return ir.Attribute.parse("#tpu.memory_space<host>")
     case _:
       raise NotImplementedError(f"Invalid memory space: {tpu_memory_space!r}")
 

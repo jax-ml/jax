@@ -541,17 +541,25 @@ def _allocate_semaphores(
 
 
 TPU_MEMORY_SPACE_IDXS: dict[
-    mosaic_core.MemorySpace | pallas_core.MemorySpace | None, int
+    mosaic_core.MemorySpace
+    | pallas_core.MemorySpace
+    | jax_core.MemorySpace
+    | None,
+    int,
 ] = {v: i for i, v in enumerate(mosaic_core.MemorySpace)}
 TPU_MEMORY_SPACE_NAMES = {
     i: v.value for i, v in enumerate(mosaic_core.MemorySpace)
 }
 
 # Inject ANY as the last memory space.
-TPU_MEMORY_SPACE_NAMES[len(TPU_MEMORY_SPACE_IDXS)] = (
-    pallas_core.MemorySpace.ANY.value
-)
-TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = len(TPU_MEMORY_SPACE_IDXS)
+any_idx = len(TPU_MEMORY_SPACE_NAMES)
+TPU_MEMORY_SPACE_NAMES[any_idx] = pallas_core.MemorySpace.ANY.value
+TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = any_idx
+
+# Inject HOST as a memory space.
+host_idx = len(TPU_MEMORY_SPACE_NAMES)
+TPU_MEMORY_SPACE_NAMES[host_idx] = 'host'
+TPU_MEMORY_SPACE_IDXS[jax_core.MemorySpace.Host] = host_idx
 
 # Default to VMEM when no memory space is specified.
 TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.DEFAULT] = TPU_MEMORY_SPACE_IDXS[

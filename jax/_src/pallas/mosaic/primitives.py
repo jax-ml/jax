@@ -1057,9 +1057,10 @@ def with_memory_space_constraint(
       tpu_core.MemorySpace.HBM,
       tpu_core.MemorySpace.VMEM,
       tpu_core.MemorySpace.SMEM,
+      jax_core.MemorySpace.Host,
   }:
     raise NotImplementedError(
-        "with_memory_space_constraint only supports HBM, VMEM and SMEM."
+        "with_memory_space_constraint only supports HBM, VMEM, SMEM, and HOST."
     )
   return pl_core.with_memory_space_constraint_p.bind(
       x, memory_space=memory_space)

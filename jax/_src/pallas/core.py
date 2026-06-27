@@ -290,7 +290,10 @@ class MemorySpace(enum.Enum):
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
   KEY = "key"  # Memory space for PRNG keys.
-  HOST = "host"  # Host memory space.
+
+  @property
+  def memory_kind(self) -> str:
+    return "device"
 
   def from_type(self, type: jax_core.AbstractValue) -> MemoryRef:
     return MemoryRef(type, memory_space=self)
@@ -329,6 +332,10 @@ class CoreMemorySpace:
   @property
   def name(self) -> Any:
     return f"{self.memory_space}@{self.mesh.core_type.name}"
+
+  @property
+  def memory_kind(self) -> str:
+    return jax_core.mem_space_to_kind(self.memory_space)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1457,18 +1464,26 @@ class CostEstimate:
 
 def get_memory_space_aval(aval: jax_core.AbstractValue) -> Any:
   """Queries the memory space of an array."""
-  if (isinstance(aval, jax_core.ShapedArray) and
-      not isinstance(aval.memory_space, jax_core.MemorySpace)):
-    return aval.memory_space
+  if isinstance(aval, jax_core.ShapedArray):
+    if aval.memory_space is jax_core.MemorySpace.Host:
+      return jax_core.MemorySpace.Host
+    if not isinstance(aval.memory_space, jax_core.MemorySpace):
+      return aval.memory_space
   if isinstance(aval, state.AbstractRef):
     if aval.memory_space is not None:
       return aval.memory_space
     return get_memory_space_aval(aval.inner_aval)
   return None
 
+
 def _get_sds(aval: jax_core.AbstractValue):
   if isinstance(aval, state.AbstractRef):
     if aval.memory_space is not None:
+      if isinstance(aval.memory_space, jax_core.MemorySpace):
+        return MemoryRef(
+            jax_core.ShapedArray(aval.shape, aval.dtype),
+            memory_space=aval.memory_space,
+        )
       return aval.memory_space(aval.shape, aval.dtype)
     return _get_sds(aval.inner_aval)
   elif isinstance(aval, jax_core.ShapedArray):
@@ -1883,6 +1898,8 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
       return jax_core.ShapedArray(
           shape=out_shape.shape, dtype=out_shape.dtype,
           sharding=jax_core.get_cur_mesh_sharding())
+    case jax_core.ShapedArray():
+      return out_shape
     case MemoryRef():
       return out_shape.get_array_aval()
     case hijax.HiType():

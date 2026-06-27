@@ -57,6 +57,7 @@ def _get_memory_space_from_aval(
           tpu_core.MemorySpace,
           pallas_core.MemorySpace,
           pallas_core.CoreMemorySpace,
+          jax_core.MemorySpace,
       ),
   ):
     return None  # If we are passed a non-TPU memory space, ignore it.
@@ -77,7 +78,7 @@ def _get_memory_space_from_aval(
           return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
         case _:
           raise ValueError(f"Invalid kernel type for semaphore: {kernel_type}")
-    case pallas_core.MemorySpace.HOST:
+    case jax_core.MemorySpace.Host:
       return tpu_custom_call.MemorySpace.HOST
     case pallas_core.CoreMemorySpace(tpu_core.MemorySpace.VMEM, mesh):
       match mesh.core_type:
@@ -108,7 +109,10 @@ def _get_memory_spaces_from_avals(
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   memory_spaces = None
   if any(isinstance(aval, jax_core.ShapedArray)
-         and not isinstance(aval.memory_space, jax_core.MemorySpace)
+         and (
+             not isinstance(aval.memory_space, jax_core.MemorySpace)
+             or aval.memory_space is jax_core.MemorySpace.Host
+         )
          for aval in avals):
     memory_spaces = tuple(
         _get_memory_space_from_aval(aval, kernel_type=kernel_type)

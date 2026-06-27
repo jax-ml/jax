@@ -20,6 +20,7 @@ import re
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import core as jax_core
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -124,9 +125,12 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pl.HOST, 5),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
-    out_shape_ctor = memory_space
     if color is None:
       out_shape_ctor = jax.ShapeDtypeStruct
+    else:
+      out_shape_ctor = lambda shape, dtype: jax_core.ShapedArray(
+          shape, dtype, memory_space=memory_space
+      )
 
     def kernel(x_ref, y_ref):
       pltpu.sync_copy(x_ref, y_ref)

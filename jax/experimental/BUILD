@@ -368,6 +368,7 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
+        "//jax/_src:core",
         "//jax/_src:deprecations",
         "//jax/_src:lax",
         "//jax/_src:source_info_util",
@@ -456,6 +457,7 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         ":pallas",  # build_cleaner: keep
+        "//jax/_src:core",
         "//jax/_src:deprecations",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",

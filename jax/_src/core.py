@@ -1867,13 +1867,21 @@ def mem_kind_to_space(mem_kind: str | None) -> MemorySpace:
     return MemorySpace.Host
   return MemorySpace.Device
 
-def mem_space_to_kind(mem_space: MemorySpace) -> str:
-  if mem_space == MemorySpace.Device:
-    return 'device'
-  elif mem_space == MemorySpace.Host:
-    return 'pinned_host'
-  else:
-    assert False, "unreachable"
+
+def mem_space_to_kind(mem_space: Any) -> str:
+  """Converts a memory space to its corresponding XLA memory kind string.
+
+  Supports standard MemorySpace enums and custom memory spaces that define
+  `memory_kind` property.
+  """
+  if isinstance(mem_space, MemorySpace):
+    if mem_space == MemorySpace.Device:
+      return "device"
+    elif mem_space == MemorySpace.Host:
+      return "pinned_host"
+  elif hasattr(mem_space, "memory_kind"):
+    return mem_space.memory_kind
+  assert False, f"unreachable: {mem_space}"
 
 
 @cache(max_size=4096,

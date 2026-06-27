@@ -2486,6 +2486,71 @@ class ScalarSubcoreTest(PallasSCTest):
 
     np.testing.assert_array_equal(kernel(x), x)
 
+  def test_host_to_hbm_dma(self):
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    mesh = jax.sharding.Mesh(jax.devices()[:1], "x")
+    x = jax.device_put(
+        x,
+        jax.sharding.NamedSharding(
+            mesh,
+            jax.sharding.PartitionSpec(),
+            memory_kind="pinned_host",
+        ),
+    )
+
+    @jax.jit
+    def foo(x):
+      sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+
+      y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
+      x_device = pltpu.with_memory_space_constraint(x, pltpu.HOST)
+      x_ref = jax.new_ref(x_device, memory_space=pltpu.HOST)
+
+      @pl.core_map(
+          mesh=sc_mesh,
+          compiler_params=pltpu.CompilerParams(
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )
+      def _():
+        pltpu.sync_copy(x_ref, y_ref)
+
+      return y_ref[...]
+
+    o = jax.block_until_ready(foo(x))
+    np.testing.assert_array_equal(o, x)
+
+  def test_hbm_to_host_dma(self):
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+
+    mesh = jax.sharding.Mesh(jax.devices()[:1], "x")
+    host_sharding = jax.sharding.NamedSharding(
+        mesh,
+        jax.sharding.PartitionSpec(),
+        memory_kind="pinned_host",
+    )
+
+    @functools.partial(jax.jit, out_shardings=host_sharding)
+    def foo(x):
+      sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+
+      y_ref = pl.empty_ref_like(pl.MemoryRef(jax.core.ShapedArray(x.shape, x.dtype), pl.HOST))
+      x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
+
+      @pl.core_map(
+          mesh=sc_mesh,
+          compiler_params=pltpu.CompilerParams(
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )
+      def _():
+        pltpu.sync_copy(x_ref, y_ref)
+
+      return pltpu.with_memory_space_constraint(y_ref[...], pltpu.HOST)
+
+    o = jax.block_until_ready(foo(x))
+    np.testing.assert_array_equal(o, x)
+
 
 class ScalarSubcoreTestWithTCTiling(ScalarSubcoreTest):
   USE_TC_TILING = True

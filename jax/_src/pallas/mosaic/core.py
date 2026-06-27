@@ -221,6 +221,10 @@ class MemorySpace(enum.Enum):
   SEMAPHORE = "semaphore_mem"
   HBM = "hbm"
 
+  @property
+  def memory_kind(self) -> str:
+    return "device"
+
   def __getattr__(self, name):
     if name == "HOST":
       # Deprecated on June 4, 2026.
@@ -229,7 +233,7 @@ class MemorySpace(enum.Enum):
           "pltpu.MemorySpace.HOST is deprecated. Use pl.HOST instead.",
           stacklevel=2,
       )
-      return pallas_core.MemorySpace.HOST
+      return jax_core.MemorySpace.Host
     super().__getattr__(name)  # pyrefly: ignore[missing-attribute]
 
   def __str__(self) -> str:
@@ -600,10 +604,16 @@ def memory_space_to_tpu_memory_space(
         MemorySpace
         | pallas_core.MemorySpace
         | pallas_core.CoreMemorySpace
+        | jax_core.MemorySpace
         | None
     ),
     core_type: CoreType,
-) -> MemorySpace | pallas_core.MemorySpace | pallas_core.CoreMemorySpace:
+) -> (
+    MemorySpace
+    | pallas_core.MemorySpace
+    | pallas_core.CoreMemorySpace
+    | jax_core.MemorySpace
+):
   match memory_space:
     case None:
       match core_type:
@@ -619,7 +629,7 @@ def memory_space_to_tpu_memory_space(
           return MemorySpace.SMEM
         case _:
           raise ValueError(f"Unsupported core type: {core_type}")
-    case pallas_core.MemorySpace.ANY | pallas_core.MemorySpace.HOST:
+    case pallas_core.MemorySpace.ANY | jax_core.MemorySpace.Host:
       return memory_space
     case (
         pallas_core.MemorySpace.ERROR

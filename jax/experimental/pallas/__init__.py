@@ -18,6 +18,7 @@ See the Pallas documentation at
 https://docs.jax.dev/en/latest/pallas/index.html.
 """
 
+from jax._src import core as _jax_core
 from jax._src.pallas.core import BlockDim as BlockDim
 from jax._src.pallas.core import Blocked as Blocked
 from jax._src.pallas.core import BlockSpec as BlockSpec
@@ -78,7 +79,7 @@ from jax._src.state.primitives import broadcast_to as broadcast_to
 
 
 ANY = MemorySpace.ANY
-HOST = MemorySpace.HOST
+HOST = _jax_core.MemorySpace.Host
 
 _deprecations = {
     # Added June 4, 2026
@@ -111,3 +112,4 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
+del _jax_core
