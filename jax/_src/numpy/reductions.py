@@ -26,6 +26,7 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import literals
 from jax._src.numpy.util import (
     _broadcast_to, ensure_arraylike,
     promote_dtypes_inexact, promote_dtypes_numeric, _where)
@@ -185,20 +186,21 @@ def _reduction_dims(a: ArrayLike, axis: Axis):
 
 def _reduction_init_val(a: Array, init_val: Any) -> np.ndarray:
   # This function uses np.* functions because lax pattern matches against the
-  # specific concrete values of the reduction inputs.
+  # specific concrete values of the reduction inputs. TypedNdArray prevents
+  # canonicalization when explicit 64-bit dtypes are allowed.
   a_dtype = a.dtype
   if a_dtype == 'bool':
-    return np.array(init_val > 0, dtype=a_dtype)
+    return literals.TypedNdArray(np.array(init_val > 0, dtype=a_dtype))
   if (np.isinf(init_val) and dtypes.issubdtype(a_dtype, np.floating)
       and not dtypes.supports_inf(a_dtype)):
     init_val = np.array(dtypes.finfo(a_dtype).min if np.isneginf(init_val)
                         else dtypes.finfo(a_dtype).max, dtype=a_dtype)
   try:
-    return np.array(init_val, dtype=a_dtype)
+    return literals.TypedNdArray(np.array(init_val, dtype=a_dtype))
   except OverflowError:
     assert dtypes.issubdtype(a_dtype, np.integer)
     sign, info = np.sign(init_val), dtypes.iinfo(a_dtype)
-    return np.array(info.min if sign < 0 else info.max, dtype=a_dtype)
+    return literals.TypedNdArray(np.array(info.min if sign < 0 else info.max, dtype=a_dtype))
 
 def _cast_to_bool(operand: Array) -> Array:
   if dtypes.issubdtype(operand.dtype, np.complexfloating):
