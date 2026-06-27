@@ -39,7 +39,8 @@ from jax._src.custom_derivatives import (
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src import ad_util
-from jax._src.util import safe_zip, safe_map, split_list, unzip2
+from jax._src.util import (
+    safe_zip, safe_map, split_list, unzip2, partition_list, merge_lists)
 from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
@@ -786,6 +787,20 @@ class CustomVJPTraced(VJPHiPrimitive):
     disallowed = effects.custom_derivatives_allowed_effects.filter_not_in(effs)
     if disallowed:
       raise NotImplementedError(f'Effects not supported in `custom_jvp`: {disallowed}')
+
+  def remat(self, policy, *args):  # type: ignore
+    if not self.static_argnums:
+      fwd, dyn_args = self.fwd, args
+    else:
+      which_static = [i in self.static_argnums for i in range(len(args))]
+      dyn_args, static_args = partition_list(which_static, args)
+      static_args = [x.val for x in static_args]
+      fwd = lambda *dyn_args: self.fwd(*merge_lists(which_static, dyn_args, static_args))
+    (out, _), rem_ = remat.remat_transform(policy, fwd, *dyn_args)
+    rem = lambda *args: rem_(*[x for i, x in enumerate(args) if i not in self.static_argnums])
+    helper = CustomVJPTraced(self.traced, rem, self.bwd, self.in_avals,
+                             False, self.static_argnums, False)
+    return out, helper
 
 def _vjp_primal_fwd_tree_mismatch_err(self, tree):
   return (f"Custom VJP fwd rule {self.fwd.__name__} for function {self.traced.fun_name} "

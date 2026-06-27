@@ -1114,13 +1114,36 @@ class CheckpointName(VJPHiPrimitive):
   def linearized(self, _, g):  # type: ignore
     return g
 
-@custom_derivatives.custom_jvp
+class PrimalLeftTangentRight(VJPHiPrimitive):
+  def __init__(self, aval_x, aval__x):
+    self.in_avals = aval_x, aval__x
+    self.out_aval = aval_x
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x, _x):  # pyrefly: ignore[bad-override]
+    return x
+
+  def lin(self, nzs_in, x, _x):  # type: ignore
+    return x, None
+
+  def linearized(self, _, xdot, _xdot):  # type: ignore
+    return _xdot
+
+  def vjp_fwd(self, nzs_in, x, _x):  # type: ignore
+    return x, None
+
+  def vjp_bwd_retval(self, _, g):
+    return None, g
+
+  def jvp(self, primals, tangents):
+    assert False
+
+  def batch(self, axis_data, args, dims):
+    assert False
+
 def primal_left_tangent_right(x, _x):
-  return x
-@primal_left_tangent_right.defjvp
-def _jvp(primals, tangents):
-  (x, _), (_, t) = primals, tangents
-  return x, t
+  return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x)
 
 
 # TODO reverse-mode only... use hijax instead of custom_vjp
