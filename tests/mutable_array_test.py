@@ -1183,6 +1183,17 @@ class MutableArrayTest(jtu.JaxTestCase):
     x = jnp.array([1.0, 2.0, 3.0])
     jax.grad(f)(x)  # don't crash
 
+  def test_with_refs_basic(self):
+    def f(x_ref):
+      return x_ref[...] ** 2
+
+    x_ref = jax.new_ref(2.)
+    _, f_vjp = jax.vjp(f, x_ref)
+    x_grad_ref = jax.new_ref(0.)
+    f_vjp = f_vjp.with_refs(x_grad_ref)
+    f_vjp(1.0)
+    self.assertAllClose(x_grad_ref[...], 4., check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):

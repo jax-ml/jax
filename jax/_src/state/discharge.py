@@ -213,7 +213,7 @@ def _eval_jaxpr_discharge_state(
         assert isinstance(outvar.aval, AbstractRef)
         aval = outvar.aval.inner_aval
         if not isinstance(aval, core.ShapedArray):
-          raise NotImplementedError  # TODO(sharadmv)
+          raise NotImplementedError  # TODO(sergei)
         ans = lax.empty(aval.shape, aval.dtype)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.free_ref_p:

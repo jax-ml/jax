@@ -1123,6 +1123,7 @@ def _jvp(primals, tangents):
   return x, t
 
 
+# TODO reverse-mode only... use hijax instead of custom_vjp
 def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
   helper.defvjp(f2, lambda res, g: (None, *fbwd(res, g)))
@@ -1156,7 +1157,7 @@ class CustomRemat(VJPHiPrimitive):
 
   def remat(self, policy, *args_flat):  # type: ignore
     args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
-    out_primal, res = self.f1(*args, **kwargs)
+    out_primal, res = self.f1(policy, *args, **kwargs)
     out_primal_flat = tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
     def rem_flat(*args_flat):
       args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
