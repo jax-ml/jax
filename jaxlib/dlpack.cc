@@ -154,6 +154,10 @@ absl::StatusOr<DLDevice> DLDeviceForBuffer(const xla::PjRtBuffer& buffer) {
              memory_space->kind() == xla::PinnedHostMemorySpace::kKind &&
              buffer.device()->client()->platform_id() == xla::TpuId()) {
     context.device_type = kDLTPUHost;
+  } else if (memory_space != nullptr &&
+             memory_space->kind() == xla::PinnedHostMemorySpace::kKind &&
+             buffer.device()->client()->platform_id() == xla::RocmId()) {
+    context.device_type = kDLROCMHost;
   } else {
     TF_ASSIGN_OR_RETURN(context.device_type,
                         DLDeviceTypeForDevice(*buffer.device()));
@@ -218,6 +222,7 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
       dl_device_type.value_or(dlmt->dl_tensor.device.device_type);
   xla::PjRtMemorySpace* memory_space;
   if (effective_device_type == kDLCUDAHost ||
+      effective_device_type == kDLROCMHost ||
       effective_device_type == kDLTPUHost) {
     TF_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
                                           xla::PinnedHostMemorySpace::kKind));
@@ -230,7 +235,9 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   // semantics is handled in dlpack._place_array function.
   bool fallback_to_copy =
       !copy.has_value() &&
-      (effective_device_type == kDLCPU || effective_device_type == kDLCUDAHost);
+      (effective_device_type == kDLCPU ||
+       effective_device_type == kDLCUDAHost ||
+       effective_device_type == kDLROCMHost);
 
   // Create a view.
   if (!copy.value_or(false)) {
