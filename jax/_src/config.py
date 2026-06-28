@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from collections.abc import Generator
 import contextlib
 import enum
 import functools
@@ -23,7 +24,7 @@ import logging
 import os
 import sys
 from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast
-from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 from jax._src import logging_config
 from jax._src.lib import _jax
@@ -102,6 +103,13 @@ class ValueHolder(Protocol[_T]):
 
 class Config:
   _HAS_DYNAMIC_ATTRIBUTES = True
+  if TYPE_CHECKING:
+
+    def __getattr__(self, name: str) -> Any:
+      ...
+
+    def __setattr__(self, name: str, value: Any) -> None:
+      ...
 
   def __init__(self):
     self._value_holders: dict[str, ValueHolder] = {}
