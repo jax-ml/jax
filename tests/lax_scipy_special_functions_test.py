@@ -418,12 +418,12 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     nan = float('nan')
     inf = float('inf')
     if jtu.parse_version(scipy.__version__) >= (1, 16):
-      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1, nan]
-      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1, inf]
+      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1, nan, inf, inf]
+      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1, inf, 1, inf]
     else:
       # disable samples that contradict with scipy/scipy#22441
-      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1]
-      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1]
+      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1, inf, inf]
+      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1, 1, inf]
 
     args_maker = lambda: (np.array(a_samples, dtype=dtype), np.array(x_samples, dtype=dtype))
 

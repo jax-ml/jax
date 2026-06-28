@@ -3643,6 +3643,8 @@ class LaxTest(jtu.JaxTestCase):
   def testIgammaSpecial(self):
     self.assertEqual(lax.igamma(1., np.inf), 1.)
     self.assertEqual(lax.igammac(1., np.inf), 0.)
+    self.assertEqual(lax.igammac(np.inf, 1.), 1.)
+    self.assertTrue(np.isnan(lax.igammac(np.inf, np.inf)))
 
   def testRegressionIssue5728(self):
     # The computation in this test gave garbage data on CPU due to an LLVM bug.

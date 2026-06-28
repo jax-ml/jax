@@ -172,6 +172,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @jtu.sample_product(
+    dtype=jtu.dtypes.floating,
+  )
+  def testPoissonCdfInfinity(self, dtype):
+    mu = jnp.array(5.0, dtype=dtype)
+    k = jnp.array(np.inf, dtype=dtype)
+    self.assertAllClose(
+      lsp_stats.poisson.cdf(k, mu),
+      osp_stats.poisson.cdf(np.inf, np.array(5.0, dtype=dtype)),
+      check_dtypes=False,
+    )
+
 
   @genNamedParametersNArgs(3)
   def testBernoulliLogPmf(self, shapes, dtypes):
