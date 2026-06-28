@@ -114,7 +114,7 @@ class Barrier(memory.Allocation):
     )
 
   def _log(self, message: str):
-    # Log every line separately to make sure `absl.logging` adds the correct
+    # Log every line separately to make sure `logging` adds the correct
     # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
     # `message`. This should not lead to mangled output within the logging for
     # `self` since the lock on `self.cv` is expected to be held whenever this
