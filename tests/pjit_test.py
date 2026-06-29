@@ -11445,6 +11445,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     hess_g(q, k)  # doesn't crash
     jax.jit(hess_g)(q, k)  # doesn't crash
 
+  @config.numpy_dtype_promotion('standard')
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_sort_grad(self, mesh):
+    x = jax.random.normal(jax.random.key(1), (1024, 32), out_sharding=P("x"))
+
+    @jax.grad
+    def f(x):
+      xi = jnp.argsort(x, axis=1)
+      return jnp.sum(xi * x)
+
+    f(x)  # doesn't crash
+    jax.jit(f)(x)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator-only')
 class PJitErrorTest(jtu.JaxTestCase):

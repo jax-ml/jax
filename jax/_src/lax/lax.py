@@ -8774,7 +8774,8 @@ def _sort_jvp(primals, tangents, *, dimension, is_stable, num_keys):
   index_dtype = lax_utils.int_dtype_for_shape(shape, signed=False)
   sorted_primals_and_idx = sort_p.bind(
       *primals,
-      broadcasted_iota(index_dtype, shape, dimension),
+      broadcasted_iota(index_dtype, shape, dimension,
+                       out_sharding=core.typeof(primals[0]).sharding),
       dimension=dimension, is_stable=is_stable, num_keys=num_keys)
   batch_dims = tuple(np.delete(np.arange(len(shape), dtype=np.int64),
                                dimension))
