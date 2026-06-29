@@ -15,9 +15,7 @@
 
 import collections
 from collections.abc import Mapping, Sequence
-import contextlib
 import functools
-import io
 import itertools
 import math
 from unittest import mock
@@ -198,11 +196,12 @@ class NamedLocationsTest(PallasSCTest):
     def f(o_hbm_ref, scratch_ref):
       del o_hbm_ref, scratch_ref
 
-    with contextlib.redirect_stdout(io.StringIO()) as output:
+    with jtu.capture_stdout() as get_output:
       jax.block_until_ready(f())
 
-    self.assertIn("%o_hbm_ref", output.getvalue())
-    self.assertIn("%scratch_ref", output.getvalue())
+    output = get_output()
+    self.assertIn("%o_hbm_ref", output)
+    self.assertIn("%scratch_ref", output)
 
   @jtu.thread_unsafe_test()
   def test_scalar_subcore(self):
@@ -216,10 +215,10 @@ class NamedLocationsTest(PallasSCTest):
     def f(o_hbm_ref):
       del o_hbm_ref
 
-    with contextlib.redirect_stdout(io.StringIO()) as output:
+    with jtu.capture_stdout() as get_output:
       jax.block_until_ready(f())
 
-    self.assertIn("%o_hbm_ref", output.getvalue())
+    self.assertIn("%o_hbm_ref", get_output())
 
 
 @jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")
