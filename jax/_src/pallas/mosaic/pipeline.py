@@ -711,6 +711,14 @@ class BufferedRef(BufferedRefBase):
   @property
   def current_ref(self):
     """Returns the current working slice of the double-buffer."""
+    if self.window_ref is None:
+      if self.prefetched_count > 0:
+        raise ValueError(
+            "Expected external window buffer to be bound for prefetched input "
+            f"(prefetched_count={self.prefetched_count}), but window_ref is None. "
+            "Ensure .with_window_ref(...) is called on the BufferedRef in allocations."
+        )
+      raise ValueError("window_ref is None")
     assert not (
         self.window_ref is None
         or isinstance(self.window_ref, state.AbstractRef)
@@ -819,6 +827,12 @@ class BufferedRef(BufferedRefBase):
     return tuple(indexer)
 
   def initialize_slots(self) -> BufferedRef:
+    if self.window_ref is None and self.prefetched_count > 0:
+      raise ValueError(
+          "Expected external window buffer to be bound for prefetched input "
+          f"(prefetched_count={self.prefetched_count}), but window_ref is None. "
+          "Ensure .with_window_ref(...) is called on the BufferedRef in allocations."
+      )
     return dataclasses.replace(
         self,
         copy_in_slot=jnp.uint32(0) if self.buffer_type.is_input else None,
@@ -870,7 +884,10 @@ class BufferedRef(BufferedRefBase):
     return self._advance_slot(self.wait_out_slot, "wait_out_slot", predicate)
 
   def _window_ref_at(self, slot, window_slice=None):
-    assert self.window_ref is not None
+    assert not (
+        self.window_ref is None
+        or isinstance(self.window_ref, state.AbstractRef)
+    )
     if self.window_ref.ndim > 1:
       return self.window_ref.at[(slot, *(window_slice or ()))]
 
@@ -887,7 +904,6 @@ class BufferedRef(BufferedRefBase):
     """Starts copy of HBM dma slice into the current slot."""
     assert self.is_input
     if not self.is_buffered: return
-    assert not (self.window_ref is None or isinstance(self.window_ref, state.AbstractRef))
     assert self.sem_recvs is not None
     slot = self.current_copy_in_slot
     src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
@@ -902,7 +918,6 @@ class BufferedRef(BufferedRefBase):
     """Starts copy of HBM dma slice from the current slot."""
     assert self.is_output
     if not self.is_buffered: return
-    assert not (self.window_ref is None or isinstance(self.window_ref, state.AbstractRef))
     assert self.sem_sends is not None
     slot = self.current_copy_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)
@@ -923,7 +938,6 @@ class BufferedRef(BufferedRefBase):
     """Waits for input copy to finish."""
     assert self.is_input
     if not self.is_buffered: return
-    assert not (self.window_ref is None or isinstance(self.window_ref, state.AbstractRef))
     assert self.sem_recvs is not None
     src_slice = self.get_dma_slice(_ref_to_value_aval(src_ref), grid_indices)
     dst_slice = self._to_window_slice(src_slice)
@@ -940,7 +954,6 @@ class BufferedRef(BufferedRefBase):
     """Waits for output copy to finish."""
     assert self.is_output
     if not self.is_buffered: return
-    assert not (self.window_ref is None or isinstance(self.window_ref, state.AbstractRef))
     assert self.sem_sends is not None
     wait_slot = self.current_wait_out_slot
     dst_slice = self.get_dma_slice(_ref_to_value_aval(dst_ref), grid_indices)

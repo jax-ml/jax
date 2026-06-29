@@ -657,6 +657,55 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     out = run(x)
     np.testing.assert_allclose(out, x)
 
+  def test_prefetched_input_unbound_error(self):
+    if config.use_emit_pipeline_primitive.value:
+      self.skipTest(
+          'allocations are not yet supported by the emit_pipeline primitive.'
+      )
+
+    def pipeline_body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def kernel(x_hbm_ref, o_hbm_ref):
+      pipeline, make_allocs = pltpu.emit_pipeline_with_allocations(
+          pipeline_body,
+          grid=(4,),
+          in_specs=[
+              pl.BlockSpec(
+                  (128,),
+                  lambda i: (i,),
+                  pipeline_mode=pl.Buffered(
+                      buffer_count=2,
+                      prefetched_count=1,
+                  ),
+              )
+          ],
+          out_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+      )
+
+      @functools.partial(
+          pl.run_scoped, allocs=make_allocs(x_hbm_ref, o_hbm_ref)
+      )
+      def _(allocs):
+        # Purposely do not bind window_ref using with_window_ref!
+        return pipeline(x_hbm_ref, o_hbm_ref, allocations=allocs)
+
+    x = jnp.arange(512, dtype=jnp.float32)
+
+    @jax.jit
+    def run(x):
+      return pl.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.HBM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.HBM),
+          out_shape=jax.ShapeDtypeStruct((512,), jnp.float32),
+      )(x)
+
+    with self.assertRaisesRegex(
+        ValueError, 'Expected external window buffer to be bound for prefetched input'
+    ):
+      run(x)
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPipelinePoisonTest(jtu.JaxTestCase):
