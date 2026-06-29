@@ -1807,7 +1807,7 @@ class DynamicJaxprTrace(core.Trace):
 
     # avoid cyclic refs
     self.frame.tracing_eqns = []  # thunk -> eqn -> in_tracers -> trace ->
-                                  # -> frame -> tracing_eqns -> thunk
+    # -> frame -> tracing_eqns -> thunk
 
     # TODO(dougalm): we might be able to remove these given refcounting dce
     self.frame.constid_to_tracer = {}  # pyrefly: ignore[bad-assignment]
@@ -1986,6 +1986,7 @@ class DynamicJaxprTrace(core.Trace):
                              propagate_source_info=False)
 
     new_jaxpr = convert_constvars_jaxpr(jaxpr)
+    self.frame.is_high |= new_jaxpr.is_high
     if isinstance(call_primitive, core.ClosedCallPrimitive):
       new_jaxpr = close_jaxpr(new_jaxpr)
     new_params = dict(params, call_jaxpr=new_jaxpr)
@@ -2243,7 +2244,6 @@ def diff_types(dbg, new_leaves, old_leaves) -> tuple[int, int, str] | None:
   if add_weak_type_hint:
     msg += 'https://docs.jax.dev/en/latest/type_promotion.html#weak-types'
   if diffs: return 3, len(diffs), msg
-
 
 
 def _lower_debug_info(hi_jaxpr, out_mut):
@@ -2604,3 +2604,12 @@ def raise_lo_outs(hi_avals, lo_outs):
 
 def num_himuts_out(final_qdds):
   return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
+
+
+def _closed_call_to_lojax(*hi_args, call_jaxpr: ClosedJaxpr, **_):
+  from jax._src.custom_derivatives import _lower_and_eval  # pyrefly: ignore[missing-import]
+
+  return _lower_and_eval("closed_call", call_jaxpr, hi_args)
+
+
+core.closed_call_p.to_lojax = _closed_call_to_lojax
