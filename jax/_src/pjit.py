@@ -1379,7 +1379,6 @@ def _pjit_lower_jaxpr_to_fun(
   func = mlir.lower_jaxpr_to_fun(
       mod_ctx, name, jaxpr, effects,
       num_const_args=len(const_args), in_avals=in_avals,
-      out_avals=jaxpr.out_avals,
       arg_shardings=arg_shardings, result_shardings=result_shardings,
       use_sharding_annotations=False,
       arg_layouts=in_layouts_expanded, result_layouts=out_layouts)
@@ -1435,10 +1434,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
       dict_attr = {'inlineable': ir.StringAttr.get(inline.value)}
       call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
   mlir.wrap_compute_type_in_place(ctx, call.operation)
-  tokens, res = split_list(call.results, [len(effects)])
-  res = tokens + [mlir.lower_with_sharding_in_types(ctx, o, a)
-                  for o, a in zip(res, ctx.avals_out)]
-  out_nodes = result.output_treedef.unflatten(res)
+  out_nodes = result.output_treedef.unflatten(call.results)
   if effects:
     tokens, out_nodes = split_list(out_nodes, [len(effects)])
     tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(effects, tokens))))

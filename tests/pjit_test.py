@@ -8294,7 +8294,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return out
 
     lowered_text = f.lower(arr1, arr2, arr3).as_text()
-    self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
+    self.assertEqual(lowered_text.count('unreduced={"x"}'), 2)
 
     out = f(arr1, arr2, arr3)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', unreduced={'x'})))
@@ -9428,7 +9428,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return out
 
     lowered_text = f.lower(x).as_text()
-    self.assertEqual(lowered_text.count('unreduced={"x"}'), 3)
+    self.assertEqual(lowered_text.count('unreduced={"x"}'), 2)
 
     out = f(x)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
@@ -10783,19 +10783,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_identity_jit_out_unreduced(self, mesh):
-    def check_rep_to_unreduced(out):
+    def check_rep(out):
       self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
       for s, es in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
         self.assertArraysEqual(s.data, es, check_dtypes=False)
 
     rep_inp = jnp.arange(4)
-    f = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))
-    out = f(rep_inp)
-    check_rep_to_unreduced(out)
+    out = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(rep_inp)
+    check_rep(out)
     out2 = jax.device_put(rep_inp, P(unreduced={'x'}))
-    check_rep_to_unreduced(out2)
+    check_rep(out2)
 
-    def check_shd_to_unreduced(out):
+    def check_shd(out):
       self.assertEqual(out.sharding, NamedSharding(mesh, P(unreduced={'x'})))
       for s, es in zip(out.addressable_shards,
                       [np.array([0, 1, 0, 0]), np.array([0, 0, 2, 3])]):
@@ -10803,9 +10802,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     shd_inp = jax.device_put(np.arange(4), P('x'))
     out = jax.jit(lambda x: x, out_shardings=P(unreduced={'x'}))(shd_inp)
-    check_shd_to_unreduced(out)
+    check_shd(out)
     out2 = jax.device_put(shd_inp, P(unreduced={'x'}))
-    check_shd_to_unreduced(out2)
+    check_shd(out2)
 
   def test_abstract_mesh_context_trace(self):
     abstract_mesh = jax.sharding.AbstractMesh((2,), ('x',), (AxisType.Explicit,))

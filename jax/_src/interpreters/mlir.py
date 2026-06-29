@@ -1290,7 +1290,6 @@ def lower_jaxpr_to_module(
     *,
     num_const_args: int,
     in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue],
     ordered_effects: list[core.Effect],
     # See ModuleContext.get_backend() for backend and platforms usage.
     platforms: Sequence[str],
@@ -1322,8 +1321,8 @@ def lower_jaxpr_to_module(
 
   sharded_in_avals = (in_avals if arg_shardings is None else
                       map(sharded_aval, in_avals, arg_shardings))
-  sharded_out_avals = (out_avals if result_shardings is None else
-                       map(sharded_aval, out_avals, result_shardings))
+  sharded_out_avals = (jaxpr.out_avals if result_shardings is None else
+                       map(sharded_aval, jaxpr.out_avals, result_shardings))
   if all_default_mem_kind:
     arg_memory_kinds = None
     result_memory_kinds = None
@@ -1407,7 +1406,6 @@ def lower_jaxpr_to_module(
         main_function=True,
         replicated_args=replicated_args,
         in_avals=in_avals,
-        out_avals=out_avals,
         arg_shardings=arg_shardings,
         result_shardings=result_shardings,
         input_output_aliases=input_output_aliases,
@@ -1619,7 +1617,6 @@ def lower_jaxpr_to_fun(
     main_function: bool = False,
     replicated_args: Sequence[bool] | None = None,
     in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue],
     arg_shardings: Sequence[JSharding | None] | None = None,
     result_shardings: Sequence[JSharding | None] | None = None,
     use_sharding_annotations: bool = True,
@@ -1692,7 +1689,7 @@ def lower_jaxpr_to_fun(
 
   # Function inputs: *dim_var_values, *tokens, *const_args, *actual_inputs
   input_types = [_aval_to_ir_types(ctx, a) for a in in_avals]
-  output_types = [_aval_to_ir_types(ctx, a) for a in out_avals]
+  output_types = [_aval_to_ir_types(ctx, a) for a in jaxpr.out_avals]
   num_tokens = len(effects)
 
   token_types = [token_type() for _ in effects]
@@ -1700,7 +1697,7 @@ def lower_jaxpr_to_fun(
   # Order of arguments: dim vars, tokens, const_args, array inputs
   input_avals = dim_var_avals + token_avals + list(in_avals)
   input_types = [*dim_var_types, *token_types, *input_types]
-  output_avals = [core.abstract_token] * num_tokens + list(out_avals)
+  output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
   output_types = [*token_types, *output_types]
 
   if input_output_aliases is not None:
@@ -1967,13 +1964,6 @@ def lower_jaxpr_to_fun(
         tokens_in=TokenSet.create([]), tokens_out=None,
         axis_size_env=None, dim_var_values=dim_var_values,
         const_lowering=const_lowering)
-
-    flat_args = [
-        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
-        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
-        else o for o, aval in zip(flat_args, input_avals)
-    ]
-
     if not use_sharding_annotations and ir_arg_shardings is not None:
       flat_args = [
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
@@ -2034,12 +2024,6 @@ def lower_jaxpr_to_fun(
           for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
                                  result_shardings)  # pyrefly: ignore[bad-argument-type]  # pyrefly#2385
       ]
-
-    flat_outputs = [
-        lower_with_sharding_in_types(entry_lowering_ctx, o, aval)
-        if isinstance(aval, core.ShapedArray) and aval.sharding.spec.unreduced
-        else o for o, aval in zip(flat_outputs, output_avals)
-    ]
 
     func_dialect.return_(flat_outputs)
 
@@ -2553,7 +2537,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
     flat_output, _ = ir_tree_registry.flatten(output)
     for o, a in zip(flat_output, ctx.avals_out):
       if not isinstance(o, ir.BlockArgument):
-        check_unreduced_constraint(o, a, description)
+        check_unreduced_constraint(o, a)
         wrap_compute_type_in_place(ctx, o)
         wrap_xla_metadata_in_place(ctx, o)
     return flat_output
@@ -2597,7 +2581,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
                         f"{description}, got output {output}") from e
       for o, a in zip(out_nodes, ctx.avals_out):
         if not isinstance(o, ir.BlockArgument):
-          check_unreduced_constraint(o, a, description)
+          check_unreduced_constraint(o, a)
           wrap_compute_type_in_place(ctx, o)
           wrap_xla_metadata_in_place(ctx, o)
       if inner_ctx.tokens_out is not None:
@@ -2663,8 +2647,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
 def _lower_jaxpr_to_fun_cached(
     ctx: ModuleContext, fn_name, call_jaxpr: core.ClosedJaxpr,
-    num_const_args: int, effects, in_avals, out_avals, arg_names=None,
-    result_names=None):
+    num_const_args: int, effects, in_avals, arg_names=None, result_names=None):
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
@@ -2674,13 +2657,12 @@ def _lower_jaxpr_to_fun_cached(
     except KeyError:
       func_op = lower_jaxpr_to_fun(
           ctx, fn_name, call_jaxpr, effects, num_const_args=num_const_args,
-          in_avals=in_avals, out_avals=out_avals, arg_names=arg_names,
-          result_names=result_names)
+          in_avals=in_avals, arg_names=arg_names, result_names=result_names)
       ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
         ctx, fn_name, call_jaxpr, effects,
-        num_const_args=num_const_args, in_avals=in_avals, out_avals=out_avals,
+        num_const_args=num_const_args, in_avals=in_avals,
         arg_names=arg_names, result_names=result_names)
   return func_op
 
@@ -2713,12 +2695,12 @@ def lower_called_computation(
   output_types = [token_type()] * len(effects) + output_types
   func_op = _lower_jaxpr_to_fun_cached(
       ctx, fn_name, call_jaxpr, num_const_args, effects, in_avals=in_avals,
-      out_avals=out_avals, arg_names=arg_names, result_names=result_names)
+      arg_names=arg_names, result_names=result_names)
   return func_op, output_types, effects
 
 
 def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
-                  ctx: LoweringRuleContext, mod_ctx: ModuleContext, in_avals,
+                  ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
@@ -2735,8 +2717,9 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
   in_avals = (*const_avals, *in_avals)
 
   func_op, output_types, effects = lower_called_computation(
-      fn_name, call_jaxpr, mod_ctx, len(const_args), in_avals, out_avals,
-      tokens_in, backend=backend, arg_names=arg_names, result_names=result_names)
+      fn_name, call_jaxpr, ctx, len(const_args), in_avals, out_avals,
+      tokens_in,
+      backend=backend, arg_names=arg_names, result_names=result_names)
   symbol_name = func_op.name.value
   flat_output_types, treedef = ir_tree_registry.flatten(output_types)
   tokens = [tokens_in.get(eff) for eff in effects]
@@ -2747,10 +2730,7 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
                              flat_args)
   if attributes:
     call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(attributes)
-  tokens, res = util.split_list(call.results, [len(effects)])
-  res = tokens + [lower_with_sharding_in_types(ctx, o, a)
-                  for o, a in zip(res, ctx.avals_out)]
-  out_nodes = treedef.unflatten(res)
+  out_nodes = treedef.unflatten(call.results)
   tokens, out_nodes = util.split_list(out_nodes, [len(effects)])
   tokens_out = tokens_in.update_tokens(TokenSet(dict(zip(effects, tokens))))
   return out_nodes, tokens_out
@@ -2763,7 +2743,7 @@ def core_call_lowering(ctx: LoweringRuleContext,
   effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
   tokens_in = ctx.tokens_in.subset(effects)
   out_nodes, tokens = call_lowering(
-      name, call_jaxpr, backend, ctx, ctx.module_context,
+      name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, tokens_in, *args,
       dim_var_values=ctx.dim_var_values,
       const_lowering=ctx.const_lowering)
@@ -2833,7 +2813,7 @@ def wrap_xla_metadata_in_place(ctx: LoweringRuleContext,
   _update_frontend_attributes(op, ctx_attributes)
 
 
-def check_unreduced_constraint(op: ir.Value | ir.Operation, aval, name) -> None:
+def check_unreduced_constraint(op: ir.Value | ir.Operation, aval) -> None:
   if not isinstance(aval, core.ShapedArray):
     return
   if not aval.sharding.spec.unreduced:
@@ -2841,16 +2821,15 @@ def check_unreduced_constraint(op: ir.Value | ir.Operation, aval, name) -> None:
   if isinstance(op, ir.Value):
     op = op.owner.operation if isinstance(op.owner, ir.OpView) else op.owner  # type: ignore
   assert isinstance(op, ir.Operation)
-  if op.name in ("sdy.manual_computation", "mpmd.named_computation"):
+  if op.name in ("func.call", "sdy.manual_computation", "mpmd.named_computation"):
     return
   assert op.name == "sdy.sharding_constraint", (
       f"Expected last op to be sdy.sharding_constraint, but got: {op.name} and "
-      f"output type={aval.str_short(True)} for primitive {name}")
+      f"output type={aval.str_short(True)}")
   sharding = sdy.TensorShardingAttr(op.attributes["sharding"])
   assert sharding.unreduced_axes, (
-      "Expected sdy.sharding_constraint to have unreduced_axes populated, but"
-      f" got: {sharding} and output type={aval.str_short(True)} for primitive"
-      f" {name}")
+      "Expected sdy.sharding_constraint to have unreduced_axes populated, "
+      f"but got: {sharding} and output type={aval.str_short(True)}")
 
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
@@ -3303,10 +3282,9 @@ def build_mlir_module_helper(
       closed_jaxpr.effects)
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {closed_jaxpr.effects}')
-  lowering_result = lower_jaxpr_to_module(
-      name, closed_jaxpr, num_const_args=0,
+  lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
+      num_const_args=0,
       in_avals=closed_jaxpr.in_avals,
-      out_avals=closed_jaxpr.out_avals,
       backend=backend, ordered_effects=[],
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
       axis_context=axis_context, platforms=platforms,

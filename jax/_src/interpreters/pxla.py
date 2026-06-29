@@ -695,13 +695,14 @@ class SemanticallyEqualShardings:
 @weakref_lru_cache
 def _cached_lowering_to_hlo(
     closed_jaxpr: core.ClosedJaxpr, module_name, backend, num_const_args: int,
-    in_avals, out_avals, semantic_in_shardings, semantic_out_shardings,
+    in_avals, semantic_in_shardings, semantic_out_shardings,
     in_layouts, out_layouts, num_devices, device_assignment, donated_invars,
     all_default_mem_kind, inout_aliases: None | tuple[None | int, ...],
     propagated_out_mem_kinds: tuple[None | str, ...], platforms: tuple[str, ...],
     lowering_parameters: mlir.LoweringParameters,
     abstract_mesh: AbstractMesh | None):
   # in_avals, in_shardings, in_layouts include the jaxpr_const_args(jaxpr)
+  out_avals = closed_jaxpr.out_avals
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
@@ -741,7 +742,6 @@ def _cached_lowering_to_hlo(
         platforms=platforms,
         axis_context=axis_ctx,
         in_avals=in_avals,
-        out_avals=out_avals,
         donated_args=donated_invars,
         replicated_args=replicated_args,
         arg_shardings=in_mlir_shardings,
@@ -1122,7 +1122,7 @@ def lower_sharding_computation(
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, module_name, backend,
-       len(const_args), tuple(global_in_avals), tuple(global_out_avals),
+       len(const_args), tuple(global_in_avals),
        semantic_in_shardings, semantic_out_shardings,
        in_layouts, out_layouts, num_devices,
        tuple(device_list) if prim_requires_devices else None,  # pyrefly: ignore[bad-argument-type]
