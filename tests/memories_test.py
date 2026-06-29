@@ -1801,6 +1801,48 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
 class SparsecoreOffloadTest(jtu.JaxTestCase):
 
+  def _assert_collective_on_both_cores(self, compiled_text: str, op_name: str):
+    # Match computation blocks and their optional trailing execution_thread attribute.
+    comp_pattern = re.compile(
+        r'(?:^|\n)(?:ENTRY\s+)?%([a-zA-Z0-9._-]+)\s*\([^)]*\)\s*->\s*[^{]*{\n(.*?)\n\s*}(?:,\s*execution_thread="([^"]+)")?',
+        re.DOTALL,
+    )
+    computations = comp_pattern.findall(compiled_text)
+    self.assertTrue(
+        computations, "Could not parse any computations from HLO text."
+    )
+
+    has_sparsecore_op = False
+    has_tensorcore_op = False
+
+    op_pattern = re.compile(rf"\b{op_name}\b")
+
+    for _, body, thread in computations:
+      is_sparsecore = thread == "sparsecore"
+      has_op = False
+      for line in body.splitlines():
+        line = line.strip()
+        if (
+            line.startswith("%") or line.startswith("ROOT %")
+        ) and op_pattern.search(line):
+          has_op = True
+          break
+
+      if has_op:
+        if is_sparsecore:
+          has_sparsecore_op = True
+        else:
+          has_tensorcore_op = True
+
+    self.assertTrue(
+        has_sparsecore_op,
+        f"SparseCore {op_name} not found in sparsecore computations",
+    )
+    self.assertTrue(
+        has_tensorcore_op,
+        f"TensorCore {op_name} not found in main/tensorcore computations",
+    )
+
   def test_sparsecore_supported_scatter2(self):
     if not (
         jax.devices()[0].device_kind == "TPU v5"
@@ -2253,9 +2295,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P("x")))
 
     compiled_text = f.lower(arr, arr2).compile().as_text()
-    self.assertRegex(compiled_text, r"reduce_scatter.*reduce-scatter.*dense")
-    self.assertRegex(
-        compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
+    self._assert_collective_on_both_cores(compiled_text, "reduce-scatter")
 
   def test_sparsecore_two_ars(self):
     if not jtu.is_device_tpu_at_least(7):
@@ -2286,9 +2326,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
     compiled_text = f.lower(arr, arr2).compile().as_text()
-    self.assertRegex(compiled_text, r"all-reduce.*all-reduce.*dense")
-    self.assertRegex(
-        compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
+    self._assert_collective_on_both_cores(compiled_text, "all-reduce")
 
   def test_compute_on_remat_custom_vjp(self):
     @jax.custom_vjp
