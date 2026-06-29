@@ -30,7 +30,7 @@ config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):
 
   def skip_if_custom_partitioning_not_supported(self):

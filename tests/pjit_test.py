@@ -102,7 +102,7 @@ def check_1d_2d_mesh(f, set_mesh):
     ))(jtu.with_mesh_from_kwargs(f) if set_mesh else f)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PJitTest(jtu.BufferDonationTestCase):
 
   def setUp(self):
@@ -1403,7 +1403,7 @@ class PJitTest(jtu.BufferDonationTestCase):
         self.assertAllClose(x + i, y)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPjitTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -11459,7 +11459,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     jax.jit(f)(x)  # doesn't crash
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -11736,7 +11736,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       jax.NamedSharding(mesh, None)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class UtilTest(jtu.JaxTestCase):
 
   def testOpShardingRoundTrip(self):

@@ -102,7 +102,7 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
       input_shape, sharding, lambda idx: input_data[idx]), input_data
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 @jtu.with_config(jax_legacy_prng_key="allow")
 class PythonPmapTest(jtu.JaxTestCase):
 
@@ -1786,7 +1786,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(result1, result2)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class VmapOfPmapTest(jtu.JaxTestCase):
 
   # TODO(apaszke)
@@ -1829,7 +1829,7 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -2009,7 +2009,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(vmap(f, axis_name='i')(x), pmap(f, axis_name='i')(x))
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
   def testAllDevices(self):
@@ -2269,7 +2269,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
                         jax.grad(mk_case(vmap))(x, y))
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayTest(jtu.JaxTestCase):
 
   def testThreadsafeIndexing(self):
@@ -2395,7 +2395,7 @@ class ArrayTest(jtu.JaxTestCase):
       _ = x[0]
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_input_array_output_array(self):
@@ -2579,7 +2579,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PmapShmapMergeTest(jtu.JaxTestCase):
 
   def setUp(self):

@@ -42,7 +42,7 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 
 
-@jtu.pytest_mark_if_available('multiaccelerator-only')
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PgleTest(jtu.JaxTestCase):
 
   def setUp(self):

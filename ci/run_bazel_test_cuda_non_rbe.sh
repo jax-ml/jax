@@ -163,7 +163,7 @@ bazel "${single_accelerator_bazel_test_args[@]}" \
   --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
   --local_test_jobs=$num_test_jobs \
   --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-  --test_tag_filters=-multiaccelerator,-multiaccelerator-only \
+  --test_tag_filters=-multiaccelerator \
   "${single_accelerator_test_targets[@]}"
 
 # Store the return value of the first bazel command.
@@ -184,7 +184,7 @@ bazel "${common_bazel_test_args[@]}" \
   --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
   --test_output=errors \
   --local_test_jobs=8 \
-  --test_tag_filters=multiaccelerator,multiaccelerator-only \
+  --test_tag_filters=multiaccelerator \
   //tests:gpu_tests //tests/pallas:gpu_tests \
   //tests/multiprocess:gpu_tests
 
