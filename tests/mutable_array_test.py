@@ -1398,6 +1398,10 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
         Exception, "Move the array reference"):
       jax.jvp(f, [1.], [1.])
 
+  def test_return_empty_ref_message(self):
+    with self.assertRaisesRegex( ValueError, "was created on line"):
+      jax.jit(lambda: jax.empty_ref(jax.typeof(3.)))()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
