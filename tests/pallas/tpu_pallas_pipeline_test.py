@@ -2105,7 +2105,9 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
       def run_kernel(x_ref, y_ref, o_ref):
         x_ref = x_ref.at[1, ...]
         y_scratch = jax.empty_ref(
-            jax.ShapeDtypeStruct((16, 512), jnp.float32), pltpu.VMEM)
+            jax.ShapeDtypeStruct((16, 512), jnp.float32,
+                                 memory_space=pltpu.VMEM)
+        )
         def outer_body(outer_x, outer_o):
           pltpu.sync_copy(y_ref, y_scratch)
           def inner_body(x, o): o[...] = x[...] + y_scratch[...]
@@ -2176,7 +2178,9 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
 
         def outer_body(outer_x, outer_o):
           tmp = jax.empty_ref(
-              jax.ShapeDtypeStruct((16, 4096), jnp.float32), pltpu.VMEM)
+              jax.ShapeDtypeStruct((16, 4096), jnp.float32,
+                                   memory_space=pltpu.VMEM)
+          )
 
           def inner_body_1(x, o):
             o[...] = x[...] * 2
@@ -2253,10 +2257,10 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
 
     def body(in_refs, out_refs):
       scratch1 = jax.empty_ref(
-          jax.ShapeDtypeStruct((256,), jnp.float32), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((256,), jnp.float32, memory_space=pltpu.VMEM)
       )
       scratch2 = jax.empty_ref(
-          jax.ShapeDtypeStruct((256,), jnp.float32), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((256,), jnp.float32, memory_space=pltpu.VMEM)
       )
       scratch2_list = [scratch2]
       scratch1[...] = in_refs[0][0][...] + in_refs[2][0][...]
@@ -2330,10 +2334,10 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
 
     def outer_body(outer_in, outer_out):
       outer_scratch1 = jax.empty_ref(
-          jax.ShapeDtypeStruct((256,), jnp.float32), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((256,), jnp.float32, memory_space=pltpu.VMEM)
       )
       outer_scratch2 = jax.empty_ref(
-          jax.ShapeDtypeStruct((256,), jnp.float32), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((256,), jnp.float32, memory_space=pltpu.VMEM)
       )
       outer_scratch2_list = [outer_scratch2]
       outer_scratch1[...] = outer_in[0][0][...] + outer_in[2][0][...]
@@ -2341,7 +2345,7 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
 
       def inner_body(in_refs, out_refs):
         inner_scratch = jax.empty_ref(
-            jax.ShapeDtypeStruct((128,), jnp.float32), memory_space=pltpu.VMEM
+            jax.ShapeDtypeStruct((128,), jnp.float32, memory_space=pltpu.VMEM)
         )
         inner_scratch[...] = in_refs[0][0][...]
         out_refs[1][0][...] = inner_scratch[...]

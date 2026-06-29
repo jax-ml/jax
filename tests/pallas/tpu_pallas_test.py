@@ -959,10 +959,8 @@ class PallasCallDMATest(ptu.PallasTPUTest):
 
   def test_empty_ref_allocation(self):
     def kernel(y_ref):
-      x_ref = jax.empty_ref(
-          jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
-          memory_space=pltpu.VMEM
-      )
+      x_ref = jax.empty_ref(jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype,
+                                                 memory_space=pltpu.VMEM))
       x_ref[...] = jnp.ones_like(x_ref)
       y_ref[...] = 4 * x_ref[...]
 
@@ -1942,7 +1940,7 @@ class PallasCallDMATest(ptu.PallasTPUTest):
         grid=(1,),
     )
     def kernel(in_ref, out_ref):
-      scratch = jax.empty_ref(jax.ShapeDtypeStruct((nrows, ncols), jnp.int32), memory_space=pltpu.VMEM)
+      scratch = jax.empty_ref(jax.ShapeDtypeStruct((nrows, ncols), jnp.int32, memory_space=pltpu.VMEM))
       for i in range(ncols):
         scratch[:nrows, i] = in_ref[...] + i
       out_ref[...] = scratch[...]
@@ -2516,16 +2514,16 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
 
     def kernel(out_f32_ref, out_i32_ref, out_i8_ref, out_bool_ref):
       scratch_f32 = jax.empty_ref(
-          jax.ShapeDtypeStruct((8, 128), jnp.float32), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((8, 128), jnp.float32, memory_space=pltpu.VMEM)
       )
       scratch_i32 = jax.empty_ref(
-          jax.ShapeDtypeStruct((8, 128), jnp.int32), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((8, 128), jnp.int32, memory_space=pltpu.VMEM)
       )
       scratch_i8 = jax.empty_ref(
-          jax.ShapeDtypeStruct((8, 128), jnp.int8), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((8, 128), jnp.int8, memory_space=pltpu.VMEM)
       )
       scratch_bool = jax.empty_ref(
-          jax.ShapeDtypeStruct((8, 128), jnp.bool_), memory_space=pltpu.VMEM
+          jax.ShapeDtypeStruct((8, 128), jnp.bool_, memory_space=pltpu.VMEM)
       )
 
       out_f32_ref[...] = scratch_f32[...]
@@ -5599,6 +5597,110 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     out = matmul(x, y).block_until_ready()
     out_ref = jnp.matmul(x, y).block_until_ready().astype(jnp.float32)
     np.testing.assert_allclose(out, out_ref, atol=1e-2, rtol=1e-2)
+
+class PallasTypeOfTest(ptu.PallasTPUTest):
+
+  def test_typeof_vmem_value(self):
+    # This test checks that jax.typeof(vmem_value) does NOT preserve
+    # memory_space (it becomes Device because AbstractRef hides it). It also
+    # checks which empty_ref calls work.
+
+    def kernel(x_ref, o_ref):
+      from jax._src import core as jax_core
+      vmem_ref_aval = jax.typeof(x_ref)
+      self.assertEqual(vmem_ref_aval.memory_space, pl.ANY)
+
+      vmem_value = x_ref[0]
+      vmem_value_aval = jax.typeof(vmem_value)
+      # It should NOT preserve VMEM, it should be Device (default).
+      self.assertEqual(
+          vmem_value_aval.memory_space, jax_core.MemorySpace.Device
+      )
+
+      # 1. jax.empty_ref(vmem_value) works, returns Ref<None> (Device -> None)
+      ref1 = jax.empty_ref(vmem_value)
+      self.assertIsNone(jax.typeof(ref1).memory_space)
+
+      # 2. jax.empty_ref(jax.typeof(vmem_value)) works, returns Ref<None>
+      ref2 = jax.empty_ref(jax.typeof(vmem_value))
+      self.assertIsNone(jax.typeof(ref2).memory_space)
+
+      # 3. jax.empty_ref(x_ref) should raise ValueError (nested Ref)
+      with self.assertRaisesRegex(
+          ValueError, "Cannot create an empty_ref of a Ref"
+      ):
+        jax.empty_ref(x_ref)
+
+      # 4. jax.empty_ref(jax.typeof(x_ref)) should raise ValueError (nested Ref)
+      with self.assertRaisesRegex(
+          ValueError, "Cannot create an empty_ref of a Ref"
+      ):
+        jax.empty_ref(jax.typeof(x_ref))
+
+      # Correct way to get Ref<VMEM> (non-nested) from x_ref:
+      ref_aval = jax.typeof(x_ref)
+      correct_ref = jax.empty_ref(
+          ref_aval.inner_aval.update(memory_space=ref_aval.memory_space)
+      )
+      self.assertEqual(jax.typeof(correct_ref).memory_space, pl.ANY)
+      self.assertNotIsInstance(
+          jax.typeof(correct_ref).inner_aval,
+          jax._src.state.types.AbstractRef,
+      )
+
+      o_ref[0] = vmem_value
+
+    x = jnp.ones((8,), jnp.float32)
+    mesh = pltpu.create_tensorcore_mesh("core")
+
+    def run_kernel(x):
+      return pl.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((1,), jnp.float32),
+          mesh=mesh,
+      )(x)
+
+    jax.make_jaxpr(run_kernel)(x)
+
+  def test_typeof_vmem_value_from_pallas_call(self):
+    # This test checks that if vmem_value is obtained from a pallas call
+    # with VMEM out_type, then jax.typeof(vmem_value) DOES preserve
+    # memory_space.
+    # It also checks that empty_ref on it returns Ref<VMEM>.
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.ones((8, 128), jnp.float32)
+    mesh = pltpu.create_tensorcore_mesh("core")
+
+    def run(x):
+      vmem_value = pl.kernel(
+          kernel,
+          out_type=pltpu.VMEM((8, 128), jnp.float32),
+          mesh=mesh,
+      )(x)
+
+      # Check typeof on the host (during tracing)
+      # It should preserve VMEM.
+      self.assertEqual(jax.typeof(vmem_value).memory_space, pltpu.VMEM)
+
+      # Check empty_ref
+      ref1 = jax.empty_ref(vmem_value)
+      self.assertEqual(jax.typeof(ref1).memory_space, pltpu.VMEM)
+      self.assertNotIsInstance(
+          jax.typeof(ref1).inner_aval, jax._src.state.types.AbstractRef
+      )
+
+      ref2 = jax.empty_ref(jax.typeof(vmem_value))
+      self.assertEqual(jax.typeof(ref2).memory_space, pltpu.VMEM)
+      self.assertNotIsInstance(
+          jax.typeof(ref2).inner_aval, jax._src.state.types.AbstractRef
+      )
+
+      return vmem_value
+
+    jax.make_jaxpr(run)(x)
 
 
 if __name__ == '__main__':

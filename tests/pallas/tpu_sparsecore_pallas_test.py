@@ -1499,8 +1499,8 @@ class VectorSubcoreTest(PallasSCTest):
     )
     def kernel(y_ref):
       x_ref = jax.empty_ref(
-          jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype),
-          memory_space=memory_space,
+          jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype,
+                               memory_space=memory_space),
       )
       s = ... if memory_space == pltpu.VMEM else 0
       x_ref[s] = jnp.ones_like(x_ref) if memory_space == pltpu.VMEM else 1.

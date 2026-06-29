@@ -8873,7 +8873,7 @@ class MosaicGPUPoisonTest(PallasTest, jtu.CudaArchSpecificTest):
   def test_poison_buffers_nyi(self):
     def kernel(o_ref):
       scratch = jax.empty_ref(
-          jax.ShapeDtypeStruct((128,), jnp.float32), memory_space=plgpu.SMEM
+          jax.ShapeDtypeStruct((128,), jnp.float32, memory_space=plgpu.SMEM)
       )
       o_ref[...] = scratch[...]
 
