@@ -606,7 +606,7 @@ def MosaicGPU_WGMMASupportedType : AnyTypeOf<[F16, BF16, F32],
     "A type supported by the WGMMA operation">;
 
 def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a vector to a new layout.";
   let description = [{Casts a vector value to a new strided or tiled layout.}];
   let arguments = (ins
@@ -625,7 +625,7 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
 }
 
 def MosaicGPU_TmemLayoutCastOp : Op<MosaicGPU_Dialect, "tmem_layout_cast",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "Casts a TMEM ref to a new TMEM layout.";
   let arguments = (ins
     MemRefRankOf<[AnyType], [2]>:$ref,
@@ -934,7 +934,7 @@ def MosaicGPU_WarpMapOp : Op<MosaicGPU_Dialect, "warp_map",
 }
 
 def MosaicGPU_WithTransformsOp : Op<MosaicGPU_Dialect, "with_transforms",
-    [SameOperandsAndResultType]> {
+    [SameOperandsAndResultType, Pure]> {
   let summary = "A noop that allows manually setting transforms on a memref.";
   let description = [{
     This op enforces the provided transforms on the parameter memref.
@@ -1117,7 +1117,7 @@ def MosaicGPU_AsyncStoreScalesSmemToTmemOp : Op<MosaicGPU_Dialect, "async_store_
   let hasVerifier = 1;
 }
 
-def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", []> {
+def MosaicGPU_SliceTmemOp : Op<MosaicGPU_Dialect, "slice_tmem", [Pure]> {
   let summary = "Constructs a TMEM MemRef with the requested type that begins at the specified TMEM column offset by the argument";
   let description = [{
     The principal use case for this op is to do a single TMEM allocation and

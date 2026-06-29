@@ -2942,10 +2942,11 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     np.testing.assert_array_equal(of32, 1.0)
     np.testing.assert_array_equal(of16, 1.0)
 
-  def test_ref_union_caching_with_transforms(self):
-    # This is a regression test for CSE of aliased refs. Aliased refs with
-    # same shape and dtype should be treated as distinct references. I.e.
-    # they can have different transforms.
+  @parameterized.parameters(True, False)
+  def test_smem_aliased_refs_collision(self, use_ref_union):
+    # This is a regression test for layout inference of aliased refs.
+    # Aliased refs with the same shape and dtype should be treated as distinct
+    # references. I.e. they can have different transforms.
     shape, dtype = (64, 32), jnp.float32
 
     @self.kernel(
@@ -2956,7 +2957,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     )
     def kernel(src_ref, o_ref0, o_ref1):
       def _scope(o_ref, aliased_ref):
-        [smem] = aliased_ref
+        if use_ref_union:
+          [smem] = aliased_ref
+        else:
+          smem = aliased_ref
         smem[...] = plgpu.load(
             src_ref, (), layout=plgpu.Layout.WGMMA, optimized=False
         )
@@ -2965,22 +2969,23 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         plgpu.wait_smem_to_gmem(0)
 
       transforms = self.default_transforms(dtype=dtype, swizzle=32)
-      pl.run_scoped(
-          functools.partial(_scope, o_ref0),
-          plgpu.RefUnion(plgpu.SMEM(shape, dtype, transforms=transforms)),
-      )
+      alloc = plgpu.SMEM(shape, dtype, transforms=transforms)
+      if use_ref_union:
+        alloc = plgpu.RefUnion(alloc)
+      pl.run_scoped(functools.partial(_scope, o_ref0), alloc)
       transforms = self.default_transforms(dtype=dtype, swizzle=128)
-      pl.run_scoped(
-          functools.partial(_scope, o_ref1),
-          plgpu.RefUnion(plgpu.SMEM(shape, dtype, transforms=transforms)),
-      )
+      alloc = plgpu.SMEM(shape, dtype, transforms=transforms)
+      if use_ref_union:
+        alloc = plgpu.RefUnion(alloc)
+      pl.run_scoped(functools.partial(_scope, o_ref1), alloc)
 
     src = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     out0, out1 = kernel(src)
     np.testing.assert_array_equal(out0, src)
     np.testing.assert_array_equal(out1, src)
 
-  def test_tmem_aliased_refs_collision(self):
+  @parameterized.parameters(True, False)
+  def test_tmem_aliased_refs_collision(self, use_ref_union):
     # This is a regression test for layout inference of aliased refs.
     # Aliased refs with the same shape and dtype should be treated as distinct
     # references. I.e. they can have different TMEM layouts.
@@ -2990,17 +2995,20 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     def kernel(o_ref):
       del o_ref
       def _scope(fmt_str, aliased_ref):
-        [tmem_ref] = aliased_ref
+        if use_ref_union:
+          [tmem_ref] = aliased_ref
+        else:
+          tmem_ref = aliased_ref
         plgpu.print_layout(fmt_str, tmem_ref)
 
-      pl.run_scoped(
-          functools.partial(_scope, "ref0: {}"),
-          plgpu.RefUnion(plgpu.TMEM(shape, dtype, packed=False)),
-      )
-      pl.run_scoped(
-          functools.partial(_scope, "ref1: {}"),
-          plgpu.RefUnion(plgpu.TMEM(shape, dtype, packed=True)),
-      )
+      alloc = plgpu.TMEM(shape, dtype, packed=False)
+      if use_ref_union:
+        alloc = plgpu.RefUnion(alloc)
+      pl.run_scoped(functools.partial(_scope, "ref0: {}"), alloc)
+      alloc = plgpu.TMEM(shape, dtype, packed=True)
+      if use_ref_union:
+        alloc = plgpu.RefUnion(alloc)
+      pl.run_scoped(functools.partial(_scope, "ref1: {}"), alloc)
 
     with self.capture_stdout() as output:
       jax.jit(kernel).lower()
