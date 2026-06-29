@@ -2718,7 +2718,7 @@ def lower_called_computation(
 
 
 def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
-                  ctx: LoweringRuleContext, mod_ctx: ModuleContext, in_avals,
+                  mod_ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
@@ -2747,10 +2747,7 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
                              flat_args)
   if attributes:
     call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(attributes)
-  tokens, res = util.split_list(call.results, [len(effects)])
-  res = tokens + [lower_with_sharding_in_types(ctx, o, a)
-                  for o, a in zip(res, ctx.avals_out)]
-  out_nodes = treedef.unflatten(res)
+  out_nodes = treedef.unflatten(call.results)
   tokens, out_nodes = util.split_list(out_nodes, [len(effects)])
   tokens_out = tokens_in.update_tokens(TokenSet(dict(zip(effects, tokens))))
   return out_nodes, tokens_out
@@ -2763,12 +2760,13 @@ def core_call_lowering(ctx: LoweringRuleContext,
   effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
   tokens_in = ctx.tokens_in.subset(effects)
   out_nodes, tokens = call_lowering(
-      name, call_jaxpr, backend, ctx, ctx.module_context,
+      name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, tokens_in, *args,
       dim_var_values=ctx.dim_var_values,
       const_lowering=ctx.const_lowering)
   ctx.set_tokens_out(ctx.tokens_in.update_tokens(tokens))
-  return out_nodes
+  return [lower_with_sharding_in_types(ctx, o, a)
+          for o, a in zip(out_nodes, ctx.avals_out)]
 
 register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 # TODO(phawkins): Not cacheable because of debug_print on TPU.

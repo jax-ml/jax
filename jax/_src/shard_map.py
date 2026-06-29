@@ -1102,10 +1102,9 @@ def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
   new_axis_context = sharding_impls.SPMDAxisContext(
       _get_spmdaxis_ctx_mesh(mesh), newly_manual_axes | set(mesh.manual_axes))
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
-  ctx = ctx.replace(module_context=sub_ctx)
   with _extend_axis_env(mesh, newly_manual_axes), config._check_vma(check_vma):
     out_nodes_, tokens_out = mlir.call_lowering(
-        "shmap_body", pe.close_jaxpr(jaxpr), None, ctx, sub_ctx, in_avals_,
+        "shmap_body", pe.close_jaxpr(jaxpr), None, sub_ctx, in_avals_,
         out_avals_, ctx.tokens_in, *in_nodes_,
         dim_var_values=ctx.dim_var_values,
         const_lowering=ctx.const_lowering,
