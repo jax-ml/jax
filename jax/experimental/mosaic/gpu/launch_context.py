@@ -1271,15 +1271,8 @@ class LaunchContext:
 
     if src_ref_ty.memory_space is None and utils.is_smem_ref(dst_ref_ty):
       gmem_ref, smem_ref = src_ref, dst_ref
-      if implementation == AsyncCopyImplementation.TMA:
-        if barrier is None:
-          raise ValueError("Barriers are required for TMA GMEM -> SMEM copies")
-      else:
-        assert implementation == AsyncCopyImplementation.CP_ASYNC
-        if barrier is not None:
-          raise NotImplementedError(
-              "Barriers are unsupported for CP_ASYNC GMEM -> SMEM copies"
-          )
+      if barrier is None:
+        raise ValueError("Barriers are required for GMEM -> SMEM copies")
       if arrive is None:
         arrive = True  # Arrive by default
     elif utils.is_smem_ref(src_ref_ty) and dst_ref_ty.memory_space is None:
@@ -1423,10 +1416,11 @@ class LaunchContext:
           constant_offset = sum(i * s for i, s in zip(get_base_idx(), gmem_strides, strict=True))
           gmem_ptr = utils.getelementptr(gmem_base_ptr, [constant_offset // offset_scale], gep_type)
           nvvm.cp_async_shared_global(smem_ptr, gmem_ptr, bytes_per_transfer, cache_modifier)
-      if barrier is None:
-        nvvm.cp_async_commit_group()
-      else:
-        raise NotImplementedError
+      assert barrier is not None
+      nvvm.cp_async_mbarrier_arrive(barrier.get_ptr())
+      barrier.arrive(
+          predicate=utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+      )
       return
 
     assert implementation == AsyncCopyImplementation.TMA
@@ -1937,9 +1931,6 @@ class LaunchContext:
     else:
       raise ValueError(f"Unsupported scope: {scope}")
 
-  def await_cp_async_copy(self, allow_groups: int):
-    nvvm.cp_async_wait_group(allow_groups)
-    utils.warpgroup_barrier()
 
   def _ensure_nvshmem_decls(self):
     if self.is_device_collective or self.device_collective_metadata is not None:

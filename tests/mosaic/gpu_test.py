@@ -4448,23 +4448,34 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       run_kernel([23])
 
   def _test_cp_async(self, shape, dtype, swizzle=None, tiling=None):
-    def kernel(ctx, src, dst, tmp):
+
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
       ctx.async_copy(
           src_ref=src,
           dst_ref=tmp,
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(tiling) if tiling else (),
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          barrier=barrier,
       )
-      ctx.await_cp_async_copy(0)
+      barrier.wait()
       if tiling:
         mgpu.copy_tiled(tmp, dst, swizzle=swizzle)
       else:
         copy(tmp, dst)
+
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     smem_shape = mgpu.tile_shape(shape, tiling) if tiling else shape
     smem = jax.ShapeDtypeStruct(smem_shape, dtype)
-    y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        x,
+        (smem, mgpu.Barrier(arrival_count=1)),
+    )(x)
     np.testing.assert_array_equal(y, x)
 
   @parameterized.product(
