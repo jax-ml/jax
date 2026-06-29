@@ -138,6 +138,30 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
     output = get_output()
     self.assertIn(f'x[0] == {value}', output)
 
+  @parameterized.parameters(
+      'x[0] == {} and x[1] == {}',
+      'x[0] == {} and x[1] == {} and trailing text',
+  )
+  def test_debug_print_multiple_with_formatting(self, fmt):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      del o_ref  # Only used for awaiting the result.
+      pl.debug_print(fmt, x_ref[0], x_ref[1])
+
+    x = jnp.array([1, 2], dtype=jnp.int32)
+    compiled_kernel = (
+        jax.jit(kernel)
+        .lower(x)
+        .compile({'xla_tpu_enable_log_recorder': 'true'})
+    )
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(x))
+    output = get_output()
+    self.assertIn(fmt.format(x[0], x[1]), output)
+
   @parameterized.named_parameters(
       (f"{'_'.join(map(str, shape))}_{dtype.__name__}", shape, dtype)
       for shape in (
