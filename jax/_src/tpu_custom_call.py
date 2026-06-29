@@ -23,6 +23,7 @@ import dataclasses
 import enum
 import io
 import json
+import logging
 from typing import Any, TypedDict, cast
 
 from jax._src import api
@@ -43,6 +44,9 @@ try:
   FLAGS = flags.FLAGS
 except ImportError:
   FLAGS = {}
+
+_AUTO_COLLECTIVE_ID_LIMIT = 25
+_AUTO_COLLECTIVE_BASE_ID = 7000
 
 _extra_dialect_loaders: list[Callable[[ir.Context], None]] = []
 
@@ -625,6 +629,7 @@ def _lower_to_custom_call_config(
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
+    ctx: mlir.LoweringRuleContext | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
@@ -662,6 +667,7 @@ def _lower_to_custom_call_config(
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=shape_invariant_numerics,
       tiling=tiling,
+      ctx=ctx,
   )
 
 
@@ -690,11 +696,72 @@ def _lowered_to_custom_call_config(
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
     tiling: Tiling | None = None,
+    kernel_name: str | None = None,
+    ctx: mlir.LoweringRuleContext | None = None,
 ):
+  auto_assign_collective_id = (
+      config.jax_pallas_auto_assign_collective_ids.value in ("yes", "override"))
+  if auto_assign_collective_id:
+    if (config.jax_pallas_auto_assign_collective_ids.value == "yes"
+        and collective_id is not None):
+      logging.warning(
+          f"{collective_id=} in {kernel_name=} should be None when"
+          " auto-assigning collective ids."
+      )
+    else:  # override mode
+      collective_id = None
   if has_custom_barrier:
+    if (auto_assign_collective_id and ctx is not None
+        and ctx.module_context.pallas_collective_id_mapping is not None):
+      key = FrozenDict(dict(lowered_module_hash=hash(lowered_module_asm),
+                            skip_device_barrier=skip_device_barrier))
+      if collective_id is None:
+        if key in ctx.module_context.pallas_collective_id_mapping.auto:
+          collective_id = (
+              ctx.module_context.pallas_collective_id_mapping.auto[key]
+          )
+        else:
+          auto_num = len(
+              ctx.module_context.pallas_collective_id_mapping.auto.values())
+          existing_ids = ctx.module_context.pallas_collective_id_mapping.all_ids
+          proposed_ids = range(
+              _AUTO_COLLECTIVE_BASE_ID + auto_num,
+              _AUTO_COLLECTIVE_BASE_ID + auto_num + len(existing_ids) + 1)
+          new_id = next(id for id in proposed_ids if id not in existing_ids)
+          ctx.module_context.pallas_collective_id_mapping.auto[key] = new_id
+          ctx.module_context.pallas_collective_id_mapping.all_ids.add(new_id)
+          collective_id = new_id
+          if (len(ctx.module_context.pallas_collective_id_mapping.auto)
+              > _AUTO_COLLECTIVE_ID_LIMIT):
+            logging.warning(
+                "The number of auto-assigned collective ids for pallas kernels"
+                " is very large, consider manually annotating the kernels with"
+                " collective ids:"
+                f" {ctx.module_context.pallas_collective_id_mapping}"
+            )
+      else:  # Manually assigned collective ID.
+        # We need to check for a conflict between the manual collective id
+        # and the auto-assigned collective ids so far.
+        if (collective_id
+            in ctx.module_context.pallas_collective_id_mapping.auto.values()):
+          raise ValueError(
+              f"The manually assigned {collective_id=} in {kernel_name=}"
+              " conflicts with an existing auto-assigned collective id."
+              " Auto-assignment uses a base collective id of"
+              f" {_AUTO_COLLECTIVE_BASE_ID}. Please use values away from this"
+              " offset."
+          )
+        ctx.module_context.pallas_collective_id_mapping.manual[key] = (
+            collective_id
+        )
+        ctx.module_context.pallas_collective_id_mapping.all_ids.add(
+            collective_id
+        )
+
     if collective_id is None:
       raise ValueError(
-          "collective_id has to be specified when using a custom barrier"
+          "collective_id has to be specified when using a custom barrier "
+          "(cannot auto-allocate without lowering context)"
       )
   elif collective_id is not None and not allow_collective_id_without_custom_barrier:
     raise ValueError(
@@ -786,6 +853,7 @@ def lower_module_to_custom_call(
       shape_invariant_numerics=shape_invariant_numerics,
       needs_layout_passes=needs_layout_passes,
       tiling=tiling,
+      ctx=ctx,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -904,6 +972,7 @@ def lowered_as_tpu_kernel(
       disable_bounds_checks=disable_bounds_checks,
       disable_semaphore_checks=disable_semaphore_checks,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
+      kernel_name=kernel_name,
   )
   return _as_jax_callable(
       config,

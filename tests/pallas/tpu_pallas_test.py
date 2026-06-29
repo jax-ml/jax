@@ -5601,5 +5601,86 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, out_ref, atol=1e-2, rtol=1e-2)
 
 
+@jtu.with_config(jax_pallas_auto_assign_collective_ids='yes')
+class PallasTPUCollectiveIdTest(ptu.PallasTPUTest):
+
+  def test_sequential_collectives_auto_allocated_ids_same_kernel(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    def kernel(x, y):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      y[...] = x[...]
+
+    @jax.jit
+    def run_sequential_collectives(x):
+      out = pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(x)
+
+      out = pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(out)
+      return out
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    lowered = run_sequential_collectives.lower(x)
+    mlir_str = str(lowered.compiler_ir())
+
+    matches = re.findall(
+        r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
+    )
+    self.assertLen(matches, 2)
+    self.assertEqual(int(matches[0]), 7000)
+    self.assertEqual(int(matches[1]), 7000)
+
+  def test_sequential_collectives_auto_allocated_ids_different_kernels(self):
+    if self.INTERPRET:
+      self.skipTest('Compilation-only test')
+
+    def kernel1(x, y):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      y[...] = x[...] + 1.0
+
+    def kernel2(x, y):
+      sem = pltpu.get_barrier_semaphore()
+      pl.semaphore_signal(sem)
+      y[...] = x[...] + 2.0
+
+    @jax.jit
+    def run_sequential_collectives(x):
+      out = pl.pallas_call(
+          kernel1,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(x)
+
+      out = pl.pallas_call(
+          kernel2,
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(out)
+      return out
+
+    lowered = run_sequential_collectives.lower(jnp.zeros((8, 128), jnp.float32))
+    mlir_str = str(lowered.compiler_ir())
+
+    matches = re.findall(
+        r'(?:\\22|\\\"|\")collective_id(?:\\22|\\\"|\"):\s*(\d+)', mlir_str
+    )
+    self.assertLen(matches, 2)
+    self.assertEqual(int(matches[0]), 7000)
+    self.assertEqual(int(matches[1]), 7001)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
