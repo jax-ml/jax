@@ -1008,16 +1008,16 @@ def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
   out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
   return out_avals_ft.update(out_flat).unflatten()
 
-def dce(traced):
+def dce(traced, policy):
   jaxpr_, used = pe.dce_jaxpr(traced.jaxpr.jaxpr, True)
   jaxpr = core.ClosedJaxpr(jaxpr_, traced.jaxpr.consts)
   used_res, used_primals = split_list(used, [traced._num_consts])
   res = [r for r, u in zip(traced._consts, used_res) if u]
-  return used_primals, Partial(partial(_dced, jaxpr, traced.out_tree), res)
+  return used_primals, Partial(partial(_dced, jaxpr, traced.out_tree, policy), res)
 
 @source_info_util.extend_name_stack('rematted_computation')
-def _dced(jaxpr, out_tree, res, *args):
-  out_flat = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *res, *args)
+def _dced(jaxpr, out_tree, policy, res, *args):
+  out_flat = RematTraced(jaxpr, policy)(*res, *args)
   return tree_unflatten(out_tree, out_flat)
 
 class RematTraced(VJPHiPrimitive):
@@ -1035,12 +1035,14 @@ class RematTraced(VJPHiPrimitive):
     return core.jaxpr_as_fun(self.jaxpr)(*args)
 
   def vjp_fwd(self, _nzs_in, *primals):
-    # TODO we're not rebinding remat here... higher-order AD behavior change
     # TODO propagate symbolic zeros
     # TODO eval_jaxpr_p trace time
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
-    used, rem = dce(api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals))
+    # Pass self.policy so the recomputation rebinds a remat primitive, which
+    # preserves the remat boundary under higher-order AD (e.g. grad-of-grad).
+    used, rem = dce(api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals),
+                    self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
     return primals_out, (primals_, rem)
 
@@ -1057,7 +1059,8 @@ class RematTraced(VJPHiPrimitive):
   def lin(self, nzs_in, *primals):
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
-    used, rem = dce(api.jit(lambda *xs: api.linearize(fwd2, *xs)[1]).trace(*primals))
+    used, rem = dce(api.jit(lambda *xs: api.linearize(fwd2, *xs)[1]).trace(*primals),
+                    self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
     return primals_out, (primals_, rem)
 

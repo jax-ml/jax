@@ -608,8 +608,27 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
   ans_flat = tree_leaves_checked(_prim.out_tree, ans)
   nzs_out = maybe_nzs_out[0] if maybe_nzs_out else True
   nzs_out_flat = broadcast_prefix(nzs_out, ans)
+  # Outputs whose tangent type is float0 (eg integer/boolean outputs) can't
+  # carry a tangent, so force them to symbolic zero. Otherwise such an output
+  # (eg an integer cond predicate threaded out of a remat as a residual) would
+  # be treated as having a (float0) tangent, breaking downstream rules that
+  # require a symbolic zero there.
+  float0_out = [_is_float0_tangent(a) for a in _prim.out_avals_flat]
+  if any(float0_out):
+    nzs_out_flat = [nz and not f0 for nz, f0 in zip(nzs_out_flat, float0_out)]
+    linearized = partial(_mask_float0_tangents, linearized, tuple(float0_out),
+                         _prim.out_avals_flat)
   return ans_flat, nzs_out_flat, residuals, linearized
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
+
+def _is_float0_tangent(aval) -> bool:
+  return getattr(aval.to_tangent_aval(), 'dtype', None) is dtypes.float0
+
+def _mask_float0_tangents(linearized, float0_out, out_avals_flat, residuals,
+                          *tangents):
+  tangents_out = linearized(residuals, *tangents)
+  return [ad_util.Zero(a.to_tangent_aval()) if f0 else t
+          for t, f0, a in zip(tangents_out, float0_out, out_avals_flat)]
 
 def fake_linear_op(prim, nz_in_flat, rs, *tangents):
   residuals_flat, residuals_tree = tree_flatten(rs)
