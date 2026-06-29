@@ -195,6 +195,21 @@ def _make_transfer_server_factory(
   return _jax.make_transfer_server_interface_factory(**transfer_server_kwargs)
 
 
+def _on_tpu_plugin_loaded(c_api) -> None:
+  """Record c_api on the TPU backend factory and fire plugin callbacks.
+
+  TPU bypasses ``discover_pjrt_plugins`` (it's loaded directly in
+  ``make_tpu_client`` / ``make_pjrt_tpu_topology``), so without this the
+  callbacks registered via ``register_plugin_callbacks`` would never fire
+  for TPU and ``_backend_factories['tpu'].c_api`` would stay ``None``.
+  """
+  with _plugin_callback_lock:
+    if 'tpu' in _backend_factories:
+      _backend_factories['tpu'].c_api = c_api
+    for plugin_callback in _plugin_callbacks:
+      plugin_callback(c_api=c_api)
+
+
 def make_tpu_client(
     library_path: str | None = None, options: _NameValueMapping | None = None
 ):
@@ -204,6 +219,7 @@ def make_tpu_client(
         "tpu", library_path or "libtpu.so"
     )
     _profiler.register_plugin_profiler(c_api)
+    _on_tpu_plugin_loaded(c_api)
     assert _jax.pjrt_plugin_loaded('tpu')
   if not _jax.pjrt_plugin_initialized('tpu'):
     _jax.initialize_pjrt_plugin('tpu')
@@ -1202,6 +1218,7 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
           " https://github.com/jax-ml/jax#installation")
     c_api = xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
     _profiler.register_plugin_profiler(c_api)
+    _on_tpu_plugin_loaded(c_api)
   assert xla_client.pjrt_plugin_loaded("tpu")
   if not xla_client.pjrt_plugin_initialized("tpu"):
     xla_client.initialize_pjrt_plugin("tpu")

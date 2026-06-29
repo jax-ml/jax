@@ -21,7 +21,7 @@ import enum
 import logging
 
 from jax._src import xla_bridge
-from jax._src.lib import _xla
+from jax._src.lib import _xla, xla_client
 
 logger = logging.getLogger(__name__)
 
@@ -77,21 +77,36 @@ def register_hlo_module_transformation(
   if "cpu" in platforms_list:
     _xla.register_xla_transform(name, stage_int, callback)
 
-  # Also register via the PJRT C API on all plugin clients when they are
-  # initialized (e.g., TPU, GPU).
-  def register_on_client(client):
-    if client.platform in platforms_list:
-      try:
-        _xla.register_xla_transform_c_api(client, name, stage_int, callback)
-      except RuntimeError:
-        logger.debug(
-            "Could not register XLA transform via C API for client platform %s",
-            client.platform,
-        )
+  # Register via the PJRT C API extension on each plugin (e.g. TPU, GPU). The
+  # extension is keyed on PJRT_Api*, not a client instance, so we register by
+  # plugin name — this works under AOT compilation (CompileOnlyPyClient has no
+  # underlying PjRtCApiClient) as well as on real hardware.
+  def register_on_plugin(platform: str) -> None:
+    try:
+      _xla.register_xla_transform_c_api_by_plugin(
+          platform, name, stage_int, callback)
+    except RuntimeError:
+      logger.debug(
+          "Could not register XLA transform via C API for platform %s",
+          platform,
+      )
 
-  # Only register the initialization hook if we need to register on some plugin backends.
-  if any(p != "cpu" for p in platforms_list):
-    xla_bridge.register_backend_initialization_hook(register_on_client)
+  for platform in platforms_list:
+    if platform == "cpu":
+      continue
+    if xla_client.pjrt_plugin_loaded(platform):
+      register_on_plugin(platform)
+    else:
+      # Plugin not loaded yet — register once it is. The callback fires for
+      # every loaded plugin, so guard so we only register on this platform
+      # once (after its plugin has loaded).
+      done = []
+      def _on_load(c_api, p=platform, done=done):
+        del c_api
+        if not done and xla_client.pjrt_plugin_loaded(p):
+          register_on_plugin(p)
+          done.append(True)
+      xla_bridge.register_plugin_callbacks(_on_load)
 
 
 def clear_hlo_module_transformation(
