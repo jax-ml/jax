@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 import inspect
 import operator
 from functools import partial, lru_cache
@@ -596,7 +596,7 @@ def debug_info(
     traced_for: str,
     fun: Callable,
     args: Sequence[Any],
-    kwargs: dict[str, Any],
+    kwargs: Mapping[str, Any],
     *,
     static_argnums: Sequence[int] = (),
     static_argnames: Sequence[str] = (),
@@ -662,7 +662,7 @@ def fun_sourceinfo(fun: Callable) -> str:
 
 
 def _non_static_arg_names(fn_signature: inspect.Signature | None,
-                          args: Sequence[Any], kwargs: dict[str, Any],
+                          args: Sequence[Any], kwargs: Mapping[str, Any],
                           static_argnums: Sequence[int],
                           static_argnames: Sequence[str],
                           ) -> tuple[str, ...]:

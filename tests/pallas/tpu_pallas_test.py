@@ -2491,6 +2491,22 @@ class PallasCallTest(ptu.PallasTPUTest):
     self.assertEqual(y[0], 10)
     self.assertIn('scf.for', output.getvalue())
 
+  @jtu.thread_unsafe_test()  # Patches ``sys.stdout``.
+  def test_arg_name_locs(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        debug=True,
+    )
+    def f(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+      f(jnp.ones((8, 128), jnp.float32), jnp.ones((8, 128), jnp.float32))
+
+    for name in ['%x_ref', '%y_ref', '%o_ref']:
+      self.assertIn(name, output.getvalue())
+
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
 class PallasCallPoisonTest(ptu.PallasTPUTest):

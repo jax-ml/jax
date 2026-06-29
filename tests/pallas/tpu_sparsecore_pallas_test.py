@@ -14,7 +14,10 @@
 """Tests for Pallas on SparseCore."""
 
 import collections
+from collections.abc import Mapping, Sequence
+import contextlib
 import functools
+import io
 import itertools
 import math
 from unittest import mock
@@ -106,6 +109,7 @@ class PallasSCTest(jtu.JaxTestCase):
       in_specs=None,
       out_specs=None,
       compiler_params=pltpu.CompilerParams(),
+      debug=False,
   ):
     if compiler_params.dimension_semantics is not None:
       raise NotImplementedError(
@@ -121,14 +125,22 @@ class PallasSCTest(jtu.JaxTestCase):
         num_cores=1,
     )
 
+    num_scratch = 0
+    if isinstance(scratch_shapes, Sequence):
+      num_scratch = len(scratch_shapes)
+    elif not isinstance(scratch_shapes, Mapping):
+      num_scratch = 1
+
     def decorator(fn):
-      @pl.kernel(
-          out_type=out_shape,
-          mesh=mesh,
-          scratch_types=dict(scratch_args=scratch_shapes),
-          compiler_params=compiler_params,
-      )
-      def wrapper(*args_hbm, scratch_args):
+      @functools.wraps(fn)
+      def wrapper(*args, **kwargs):
+        if num_scratch > 0:
+          args_hbm = args[:-len(scratch_shapes)]
+          scratch_args = args[-len(scratch_shapes):]
+        else:
+          args_hbm = args
+          scratch_args = ()
+
         @functools.partial(
             pltpu.emit_pipeline,
             grid=(1,) if grid is None else grid,
@@ -142,11 +154,18 @@ class PallasSCTest(jtu.JaxTestCase):
             else out_specs,
         )
         def pipeline(*args):
-          fn(*args, *scratch_args)
+          fn(*args, *scratch_args, **kwargs)
 
         pipeline(*args_hbm)
 
-      return wrapper
+      return pl.kernel(
+          wrapper,
+          out_type=out_shape,
+          mesh=mesh,
+          scratch_types=scratch_shapes,
+          compiler_params=compiler_params,
+          debug=debug,
+      )
 
     return decorator
 
@@ -162,6 +181,45 @@ class PallasSCTest(jtu.JaxTestCase):
   def skip_if_tc_tiling(self, reason: str = ""):
     if self.USE_TC_TILING:
       self.skipTest(f"TC tiling is not supported. {reason}")
+
+
+@jtu.skip_under_pytest(
+    "Requires pytest -s (no capture) to pass, which is not enabled in CI"
+)
+class NamedLocationsTest(PallasSCTest):
+
+  @jtu.thread_unsafe_test()
+  def test_vector_subcore(self):
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+        scratch_shapes=(pltpu.VMEM((self.num_lanes,), jnp.int32),),
+        debug=True,
+    )
+    def f(o_hbm_ref, scratch_ref):
+      del o_hbm_ref, scratch_ref
+
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+      jax.block_until_ready(f())
+
+    self.assertIn("%o_hbm_ref", output.getvalue())
+    self.assertIn("%scratch_ref", output.getvalue())
+
+  @jtu.thread_unsafe_test()
+  def test_scalar_subcore(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((self.num_lanes,), jnp.int32),
+        mesh=plsc.ScalarSubcoreMesh(
+            axis_name="x", num_cores=self.sc_info.num_cores
+        ),
+        debug=True,
+    )
+    def f(o_hbm_ref):
+      del o_hbm_ref
+
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+      jax.block_until_ready(f())
+
+    self.assertIn("%o_hbm_ref", output.getvalue())
 
 
 @jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")

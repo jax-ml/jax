@@ -885,7 +885,7 @@ def _mpmd_map(
 
     jaxprs: list[jax_core.Jaxpr] = []
     consts_per_fn = []
-    debug_infos = [api_util.debug_info("mpmd_map", fn, flat_kernel_avals, {})
+    debug_infos = [api_util.debug_info("mpmd_map", fn, kernel_arg_avals, kernel_kwarg_avals)
                    for _, fn in meshes_and_fns]
     if name is not None:
       debug_infos = [di.replace_func_name(name) for di in debug_infos]

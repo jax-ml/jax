@@ -1598,6 +1598,10 @@ def _lower_jaxpr_to_func_common(
   body: Any = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   func_op = cast(func.FuncOp, body.func_op)
 
+  if arg_names := jaxpr.debug_info.arg_names:
+    for arg, name in zip(func_op.arguments[num_grid:], arg_names):
+      arg.set_location(ir.Location.name(name, arg.location))
+
   if core_type is not None:
     func_op.attributes["tpu.core_type"] = ir.Attribute.parse(
         f"#tpu.core_type<{core_type}>"

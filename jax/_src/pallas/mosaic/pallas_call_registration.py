@@ -423,7 +423,7 @@ def pallas_call_tpu_lowering_rule(
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
     pm.run(mosaic_module.operation)
     print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
-    print(mosaic_module)
+    print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
 
   return _lower_to_custom_call(
       ctx,
@@ -656,7 +656,7 @@ def mpmd_map_tpu_lowering_rule(
     pm = passmanager.PassManager.parse("builtin.module(canonicalize)", mlir_ctx)
     pm.run(mosaic_module.operation)
     print("\nThe Mosaic module for mpmd_map:")
-    print(mosaic_module)
+    print(mosaic_module.operation.get_asm(use_name_loc_as_prefix=True))
 
   if name is None:
     name = "_".join(jaxpr.debug_info.func_name for jaxpr in jaxprs)
