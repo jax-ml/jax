@@ -415,6 +415,67 @@ class DropUnitDimsTransform(MemRefTransform):
     raise NotImplementedError  # Unused
 
 
+@dataclasses.dataclass(frozen=True)
+class SubBytePackingTransform(MemRefTransform):
+  """Packs sub-byte elements along the minor-most dimension into bytes for TMA."""
+
+  bitwidth: int
+
+  @property
+  def packing(self) -> int:
+    return 8 // self.bitwidth
+
+  def __post_init__(self):
+    if self.bitwidth not in (1, 2, 4):
+      raise ValueError(f"`bitwidth` must be 1, 2, or 4, got {self.bitwidth}")
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    ref_ty = ir.MemRefType(ref.type)
+    strides, _ = ref_ty.get_strides_and_offset()
+    new_strides = self.transform_strides(strides)
+    new_shape = self.transform_shape(ref_ty.shape)
+    new_layout = ir.StridedLayoutAttr.get(0, new_strides)
+    i8 = ir.IntegerType.get_signless(8)
+    new_ref_ty = ir.MemRefType.get(
+        new_shape, i8, new_layout, ref_ty.memory_space
+    )
+    return utils.ptr_as_memref(utils.memref_ptr(ref), new_ref_ty)
+
+  def transform_gmem_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    return self.transform_shape(shape)
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    index = ir.IndexType.get()
+    if not utils.is_known_divisible(idx[-1], self.packing):
+      raise ValueError(
+          f"Sub-byte async copies for {self.bitwidth}-bit types require the"
+          " minor-most slice base index to be statically known to be divisible"
+          f" by {self.packing}."
+      )
+    return (*idx[:-1], arith.divui(idx[-1], c(self.packing, index)))
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    if shape[-1] % self.packing != 0:
+      raise ValueError(
+          f"Sub-byte async copies for {self.bitwidth}-bit types require the"
+          " minor-most dimension size to be divisible by"
+          f" {self.packing}, got {shape[-1]}."
+      )
+    return (*shape[:-1], shape[-1] // self.packing)
+
+  def transform_strides(self, strides: Sequence[int]) -> tuple[int, ...]:
+    if any(s % self.packing != 0 for s in strides[:-1]):
+      raise ValueError(
+          f"Sub-byte async copies for {self.bitwidth}-bit types require all"
+          " strides except the last one to be divisible by"
+          f" {self.packing}, got {strides}."
+      )
+    return (*(s // self.packing for s in strides[:-1]), strides[-1])
+
+  def batch(self, leading_rank: int) -> MemRefTransform:
+    return self
+
+
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
 MOSAIC_GPU_SMEM_ALLOC_ATTR = "mosaic_gpu_smem_alloc"
@@ -644,11 +705,7 @@ def _tma_dma_type(
   """Returns the TMA DMA type for the given element type and signedness."""
   if isinstance(element_type, ir.IntegerType):
     bitwidth = utils.bitwidth_impl(element_type)
-    if bitwidth == 2:
-      tma_dtype = 8
-    elif bitwidth == 4:
-      tma_dtype = 0
-    elif bitwidth == 8:
+    if bitwidth in (2, 4, 8):
       tma_dtype = 1
     elif bitwidth == 16:
       tma_dtype = 2
@@ -665,14 +722,16 @@ def _tma_dma_type(
   elif isinstance(element_type, ir.BF16Type):
     tma_dtype = 7
   # We treat narrow floats as integers
-  elif isinstance(element_type, ir.Float8E5M2Type):
+  elif isinstance(
+      element_type,
+      (
+          ir.Float8E5M2Type,
+          ir.Float8E4M3FNType,
+          ir.Float8E8M0FNUType,
+          ir.Float4E2M1FNType,
+      ),
+  ):
     tma_dtype = 1
-  elif isinstance(element_type, ir.Float8E4M3FNType):
-    tma_dtype = 1
-  elif isinstance(element_type, ir.Float8E8M0FNUType):
-    tma_dtype = 1
-  elif isinstance(element_type, ir.Float4E2M1FNType):
-    tma_dtype = 0
   else:
     raise ValueError(f"unsupported TMA dtype {element_type}")
   return tma_dtype
@@ -1031,6 +1090,20 @@ class LaunchContext:
     squeezed_dims = tuple(
         i for i, squeezed in enumerate(is_squeezed) if squeezed
     )
+    element_bitwidth = utils.bitwidth(gmem_ref_ty.element_type)
+    if element_bitwidth < 8 and implementation == AsyncCopyImplementation.TMA:
+      if 8 % element_bitwidth:
+        raise NotImplementedError("Non-power-of 2 sub-byte types unsupported.")
+      # Although CUDA has a way to encode 4-bit dtypes (e.g.,
+      # CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B), there is none for 2-bit types.
+      # So, we use a TMA descriptor whose minor-most stride is 1 **byte** for
+      # **all** sub-byte data types. Because indices are in units of elements
+      # upon codegen, we use a `SubBytePackingTransform` to divide the
+      # minor-most index by `packing` so that the coordinate passed to TMA is in
+      # units of bytes.
+      gmem_transform = (
+          *gmem_transform, SubBytePackingTransform(element_bitwidth),
+      )
     # Indexing is really slicing + squeezing, and user transforms are meant to
     # apply after that. However, we actually have to apply the indexing last
     # (it's fused into the TMA) and so we need to commute it with all the user
@@ -1083,6 +1156,11 @@ class LaunchContext:
           "async_copy requires all GMEM strides except the last one to be a"
           " multiple of 16 bytes"
       )
+    if element_bitwidth < 8:
+      gmem_strides = SubBytePackingTransform(element_bitwidth).transform_strides(
+          gmem_strides
+      )
+      element_bitwidth = 8
     # We don't need to do this for gather TMAs, because we'll unroll the
     # transfers ourselves anyway.
     num_squeezed_dims = len(squeezed_dims)
@@ -1324,6 +1402,14 @@ class LaunchContext:
         implementation,
     )
     del gmem_slice  # Use slice_shape, dyn_base_indices and squeezed_dims instead.
+    if element_bitwidth < 8 and implementation == AsyncCopyImplementation.TMA:
+      # `_prepare_async_copy` appended `SubBytePackingTransform` to
+      # `gmem_transform`, so `slice_shape` and `dyn_base_indices` are now in
+      # byte units along the minor-most dimension. Reinterpret `smem_ref` as i8
+      # with packed shape and strides as well so that SMEM and GMEM
+      # shapes/indices stay in byte units in `_prepare_tma` and `async_copy`.
+      smem_ref = SubBytePackingTransform(element_bitwidth).apply(smem_ref)
+      element_bitwidth = 8
 
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     smem_ref_ty = ir.MemRefType(smem_ref.type)
@@ -1583,7 +1669,7 @@ class LaunchContext:
             f" {single_tma_bits // 8} bytes, but need a multiple of 128 bytes"
         )
 
-      if smem_ref is not src_ref and arrive:
+      if gmem_ref is src_ref and arrive:
         assert barrier is not None
         arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
         nvvm.mbarrier_arrive_expect_tx(
@@ -1598,7 +1684,13 @@ class LaunchContext:
       slice_gather_strides: tuple[int, ...] = (1, 0)  # Each row gets a new index, column has no effect.
       for t in gmem_transform:
         gmem_strides = t.transform_strides(gmem_strides)
-        slice_gather_strides = t.transform_strides(slice_gather_strides)
+        # `slice_gather_strides` tracks row strides along the gathered dimension
+        # (starting at 1 for rows and 0 for columns), not memory strides in
+        # elements. `SubBytePackingTransform` only packs the minor-most (column)
+        # dimension into bytes and would fail trying to divide the unit row
+        # stride by the packing factor.
+        if not isinstance(t, SubBytePackingTransform):
+          slice_gather_strides = t.transform_strides(slice_gather_strides)
       is_gather_dim = [bool(s) for s in slice_gather_strides]
 
       if slice_shape[-1] > 256:
@@ -1607,8 +1699,13 @@ class LaunchContext:
             " Consider adding a TilingTransform with the minormost dimension <="
             " 256."
         )
+      tma_transforms = tuple(
+          t for t in gmem_transform if isinstance(t, SubBytePackingTransform)
+      )
+      for t in tma_transforms:
+        _, gmem_cols = t.transform_gmem_shape((0, gmem_cols))
       tma_desc = self._get_tma_desc(
-          gmem_ref, (), gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
+          gmem_ref, tma_transforms, gmem_peer_id, (1, slice_shape[-1]), swizzle, reduction_op,
       )
 
       assert gather_indices.layout.vector_length == ROWS_PER_INSTR
@@ -1698,7 +1795,7 @@ class LaunchContext:
               if not g
           )
           col_offset = arith.addi(col_base_offset, arith.constant(i32, col_slice_offset))
-          if smem_ref is src_ref:
+          if gmem_ref is dst_ref:
             llvm.inline_asm(
                 ir.Type.parse("!llvm.void"),
                 [predicate, tma_desc, smem_ptr, col_offset, *gather_rows],
@@ -1715,7 +1812,7 @@ class LaunchContext:
                 "b,r,l,r" + ",r" * (ROWS_PER_INSTR + 1),
                 has_side_effects=True,
             )
-      if smem_ref is src_ref and arrive:
+      if gmem_ref is dst_ref and arrive:
         nvvm.cp_async_bulk_commit_group()
       return
 
@@ -1773,7 +1870,7 @@ class LaunchContext:
         to_i32 = lambda x: arith.index_cast(ir.IntegerType.get_signless(32), x)
 
         # Clamp the out-of-bounds accesses to be within the bounds of the GMEM ref shape.
-        total_elements = c(math.prod(gmem_ref_ty.shape), index)
+        total_elements = c(math.prod(ref_ty.shape), index)
         linear_offset_elems = memref.extract_strided_metadata(ref_slice)[1]  # pyrefly: ignore[bad-index]
 
         # Equivalent to: max(0, total - offset)
