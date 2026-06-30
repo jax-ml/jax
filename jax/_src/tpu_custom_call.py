@@ -51,7 +51,6 @@ def register_extra_dialect(loader: Callable[[ir.Context], None]):
   _extra_dialect_loaders.append(loader)
 
 
-
 # Controls the IR serialization version. Upon incrementing the
 # default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
 # continue to use the old serialization version when in forward compatibility
@@ -318,9 +317,10 @@ class CustomCallBackendConfig:
       config.write(b', "skip_device_barrier": ')
       config.write(str(self.skip_device_barrier).lower().encode("ascii"))
     config.write(b"}")  # End of custom_call_config.
-    if self.tiling is not None:
+    if self.device_type == "sparsecore":
+      tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       config.write(b', "sparse_core_config": ')
-      config.write(_compact_json_object(tiling=self.tiling.value))
+      config.write(_compact_json_object(tiling=tiling.value))
     if self.device_type is not None:
       config.write(b', "device_type": ')
       config.write(
