@@ -17,6 +17,7 @@ from __future__ import annotations
 import collections
 import dataclasses
 import logging
+import math
 import threading
 from typing import Any, Protocol, cast
 
@@ -24,6 +25,7 @@ from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic_gpu.interpret import params as params
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -153,10 +155,16 @@ class Barrier(memory.Allocation):
 
   def arrive(
       self,
+      *,
+      thread_id: int,
       clock: vc.VectorClock | None = None,
       smem_commit_clock: vc.VectorClock | None = None,
       logging_info: interpret_utils.GPULoggingInfo | None = None,
   ):
+    # Unused; only needed so that `arrive` has the same signature as
+    # `ClusterBarrier.arrive`.
+    del thread_id
+
     with self.cv:
       self.arrivals_count += 1
       if self.arrivals_count == self.num_arrivals:
@@ -205,19 +213,14 @@ class Barrier(memory.Allocation):
 
   def wait(
       self,
+      *,
       device_id: int,
-      local_thread_id: int,
+      thread_id: int,
       logging_info: interpret_utils.GPULoggingInfo | None = None,
   ):
-    # TODO(nrink): `local_thread_id` is the flat ID of the thread in the
-    # cluster. We need to map it to an index that is within
-    # [0, self.num_pallas_threads_per_block). Doing this with `%` here works for
-    # barriers that synchronize the threads within a block, but it may not work
-    # for cluster barriers (if the barrier is not shared by *all* threads in the
-    # cluster). Investigate and correct this when implementing cluster barriers.
-    participating_thread_id = (
-        local_thread_id % self.num_pallas_threads_per_block
-    )
+    # `thread_id` is the flat ID of the thread in the cluster. We need to map it
+    # to an index that is within `[0, self.num_pallas_threads_per_block)`.
+    participating_thread_id = thread_id % self.num_pallas_threads_per_block
 
     with self.cv:
       last_observed_phase = self.last_observed_phase_by_thread.get(
@@ -230,7 +233,7 @@ class Barrier(memory.Allocation):
       if last_observed_phase is None:
         if self.phase > 1:
           raise ValueError(
-              f"Thread {local_thread_id} is waiting at barrier {id(self)} for"
+              f"Thread {thread_id} is waiting at barrier {id(self)} for"
               " the first time, but barrier is already at phase"
               f" {self.phase}. Any thread that participates in the barrier must"
               " do so in all phases."
@@ -242,7 +245,7 @@ class Barrier(memory.Allocation):
         # Case 1: the next phase to complete is `p+3` or more, meaning we missed
         # our chance to observe phase `p+1` and must raise an error.
         raise ValueError(
-            f"Thread {local_thread_id} is awaiting phase"
+            f"Thread {thread_id} is awaiting phase"
             f" {last_observed_phase + 1}, but barrier is already at phase"
             f" {self.phase}, which violates the invariant that threads must"
             " observe each barrier completion before any arrivals in the next"
@@ -269,7 +272,7 @@ class Barrier(memory.Allocation):
         if self.enable_logging and logging_info is not None:
           self._log(
               logging_info.format(
-                  f"Device {device_id}, thread {local_thread_id}: Finished"
+                  f"Device {device_id}, thread {thread_id}: Finished"
                   f" waiting for phase {self.phase-1} of barrier {id(self)}.",
                   line_prefix="`wait`",
               )
@@ -296,7 +299,7 @@ class Barrier(memory.Allocation):
     # already held. (See the documentation of `self.cv` above.)
     if self.detect_races:
       global_thread_id = self.shared_memory.get_global_thread_id(
-          device_id, local_thread_id
+          device_id, thread_id
       )
       assert clock is not None
       assert smem_commit_clock is not None
@@ -316,6 +319,190 @@ class AsyncTask(Protocol):
   def __call__(self, tma_thread_id: int) -> None:
     """Execute the async task on the given thread."""
     ...
+
+
+class ClusterBarrier(memory.Allocation):
+
+  def __init__(
+      self,
+      shared_memory: GPUSharedMemory,
+      *,
+      axes_dims: tuple[int, ...],
+      is_axis_collective: tuple[bool, ...],
+      ref_count: int,
+      num_arrivals: int,
+      enable_logging: bool = False,
+  ):
+    """Initializes the ClusterBarrier.
+
+    Args:
+      shared_memory: The GPUSharedMemory instance managing this cluster barrier.
+      axes_dims: The dimensions of the cluster axes and the final thread-block
+        axis.
+      is_axis_collective: Whether each of the cluster axes (or the final
+        thread-block axis) is collective.
+      ref_count: The initial reference count of the cluster barrier. This is
+        typically the number of CPU threads among which the cluster barrier is
+        shared.
+      num_arrivals: Number of arrivals expected per thread block.
+      enable_logging: Whether to enable logging of cluster barrier operations.
+    """
+    self.axes_dims = axes_dims
+    self.is_axis_collective = is_axis_collective
+    self.ref_count = ref_count  # protected by `self.lock`
+    self.num_arrivals = num_arrivals
+    self.enable_logging = enable_logging
+
+    self.lock = threading.Lock()
+
+    assert not is_axis_collective[-1]
+
+    # The number of blocks along the cluster axes; equals the number of
+    # 'normal' `Barrier`s we need to allocate (in `self.barriers`, see below) to
+    # implement this `ClusterBarrier`.
+    num_blocks_in_cluster = math.prod(axes_dims[:-1])
+
+    num_blocks_for_arrival = 1 + sum(
+        axis_dim - 1
+        for axis_dim, is_collective in zip(
+            axes_dims[:-1], is_axis_collective[:-1], strict=True
+        )
+        if is_collective
+    )
+
+    # Protected by `self.lock` (to avoid races between accessing and
+    # deallocating barriers).
+    self.barriers = [
+        Barrier(
+            shared_memory,
+            num_pallas_threads_per_block=axes_dims[-1],
+            # This `ClusterBarrier` is considered the only reference for each of
+            # the underlying barriers.
+            ref_count=1,
+            num_arrivals=num_arrivals * num_blocks_for_arrival,
+            enable_logging=enable_logging,
+        )
+        for _ in range(num_blocks_in_cluster)
+    ]
+
+  def _log(self, message: str):
+    # Log every line separately to make sure `absl.logging` adds the correct
+    # prefix (i.e. I*** <time> ... <source.py>:<line_number>) to each line in
+    # `message`. This should not lead to mangled output within the logging for
+    # `self` since the lock on `self.lock` is expected to be held whenever this
+    # method is called. However, nothing keeps logged output from being
+    # interleaved with logging from other (cluster) barriers or from the global
+    # `SharedMemory` object.
+    for msg in message.split("\n"):
+      logging.info(msg)
+
+  def has_zero_ref_count(self) -> bool:
+    with self.lock:
+      return self.ref_count == 0
+
+  def arrive(
+      self,
+      *,
+      thread_id: int,
+      clock: vc.VectorClock | None = None,
+      smem_commit_clock: vc.VectorClock | None = None,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
+    if self.enable_logging and logging_info is not None:
+      with self.lock:
+        self._log(
+            logging_info.format(
+                f"Arriving at cluster barrier {id(self)}",
+                line_prefix="`arrive`",
+            )
+        )
+
+    block_index = thread_id // self.axes_dims[-1]
+    block_coords = [
+        int(x) for x in np.unravel_index(block_index, self.axes_dims[:-1])
+    ]
+
+    # Arrive at the barrier for the block that `thread_id` belongs to. Note that
+    # this is the barrier for the block whose coordinate do *not* differ (along
+    # any collective axis) from `block_coords`.
+    with self.lock:
+      barrier = self.barriers[block_index]
+    barrier.arrive(
+        clock=clock,
+        smem_commit_clock=smem_commit_clock,
+        thread_id=thread_id,
+        logging_info=logging_info,
+    )
+
+    # Arrive at the barriers for those blocks whose coordinates differ from
+    # `block_coords` along *exactly one* collective axis.
+    for i, (axis_dim, is_collective) in enumerate(
+        zip(
+            self.axes_dims[:-1],
+            self.is_axis_collective[:-1],
+            strict=True,
+        )
+    ):
+      if not is_collective:
+        continue
+
+      for j in range(axis_dim):
+        if j == block_coords[i]:
+          # The barrier for the block with coordinates identical to
+          # `block_coords` has already been arrived at above.
+          continue
+
+        block_coords_to_arrive_at = list(block_coords)
+        # Note that (because of the `if ... continue` above) we have
+        # `j != block_coords[i]` here.
+        block_coords_to_arrive_at[i] = j
+        barrier_index = np.ravel_multi_index(
+            block_coords_to_arrive_at, self.axes_dims[:-1]
+        )
+        with self.lock:
+          barrier = self.barriers[barrier_index]
+        barrier.arrive(
+            clock=clock,
+            smem_commit_clock=smem_commit_clock,
+            thread_id=thread_id,
+            logging_info=logging_info,
+        )
+
+  def wait(
+      self,
+      *,
+      device_id: int,
+      thread_id: int,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
+    if self.enable_logging and logging_info is not None:
+      with self.lock:
+        self._log(
+            logging_info.format(
+                f"Waiting for cluster barrier {id(self)}",
+                line_prefix="`wait`",
+            )
+        )
+
+    barrier_index = thread_id // self.axes_dims[-1]
+    with self.lock:
+      barrier = self.barriers[barrier_index]
+
+    barrier.wait(
+        device_id=device_id,
+        thread_id=thread_id,
+        logging_info=logging_info,
+    )
+
+  def deallocate(self):
+    """Deallocates the `ClusterBarrier`."""
+    with self.lock:
+      self.ref_count -= 1
+      if self.ref_count > 0:
+        return
+
+      for barrier in self.barriers:
+        barrier.deallocate()
 
 
 @dataclasses.dataclass(init=False)
@@ -504,7 +691,7 @@ class GPUSharedMemory(memory.SharedMemory):
 
   def get_barrier_and_increment_clock(
         self, key: Any, device_id: int, thread_id: int
-  ) -> tuple[Barrier, vc.VectorClock | None]:
+  ) -> tuple[Barrier | ClusterBarrier, vc.VectorClock | None]:
     clock = None
     with self.lock:
       if self.detect_races:
@@ -516,10 +703,12 @@ class GPUSharedMemory(memory.SharedMemory):
 
       barrier = self.mem[key]
 
-    if not isinstance(barrier, Barrier):
+    if not isinstance(barrier, Barrier) and not isinstance(
+        barrier, ClusterBarrier
+    ):
       raise ValueError(
           f"Attempting to get barrier from allocation with {key} that is not a"
-          " `Barrier`."
+          " `Barrier` or `ClusterBarrier`."
       )
 
     return barrier, clock
@@ -568,11 +757,85 @@ class GPUSharedMemory(memory.SharedMemory):
           )
         self.mem.pop(key)
 
+  # TODO(nrink): Consider unifying this method with `allocate_barrier`.
+  def allocate_cluster_barrier(
+      self,
+      key: Any,
+      axes_dims: tuple[int, ...],
+      is_axis_collective: tuple[bool, ...],
+      ref_count: int,
+      num_arrivals: int,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
+    """Allocates a cluster barrier with the given key unless it already exists."""
+    with self.lock:
+      if key not in self.mem:
+        barrier = ClusterBarrier(
+            self,
+            axes_dims=axes_dims,
+            is_axis_collective=is_axis_collective,
+            ref_count=ref_count,
+            num_arrivals=num_arrivals,
+            enable_logging=(
+                self.logging_mode is not None
+                and params.LoggingMode.BARRIER in self.logging_mode
+            ),
+        )
+        self.mem[key] = barrier
+
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  "Allocated cluster barrier"
+                  f" {id(barrier)} ({barrier}) with key {key}.",
+                  line_prefix="`allocate_cluster_barrier`",
+              )
+          )
+
+  # TODO(nrink): Consider unifying this method with `deallocate_barrier`.
+  def deallocate_cluster_barrier(
+      self,
+      key: Any,
+      logging_info: interpret_utils.GPULoggingInfo | None = None,
+  ):
+    with self.lock:
+      barrier = self.mem[key]
+      if not isinstance(barrier, ClusterBarrier):
+        raise ValueError(
+            f"Attempting to get cluster barrier from allocation with {key} that"
+            " is not a `ClusterBarrier`."
+        )
+
+      if self.enable_logging and logging_info is not None:
+        self._log(
+            logging_info.format(
+                "Decreasing ref count of"
+                f" cluster barrier {id(barrier)} with key {key}.",
+                line_prefix="`deallocate_cluster_barrier`",
+            )
+        )
+
+      barrier.deallocate()
+
+      if barrier.has_zero_ref_count():
+        if self.enable_logging and logging_info is not None:
+          self._log(
+              logging_info.format(
+                  "Deallocating cluster barrier"
+                  f" {id(barrier)} with key {key}.",
+                  line_prefix="`deallocate_cluster_barrier`",
+              )
+          )
+        self.mem.pop(key)
+
   def assert_no_barriers_allocated(self):
     for key, alloc in self.mem.items():
       assert not isinstance(
           alloc, Barrier
       ), f"Barrier remains allocated at key `{key}`."
+      assert not isinstance(
+          alloc, ClusterBarrier
+      ), f"Cluster barrier remains allocated at key `{key}`."
 
   def update_smem_commit_clock(self, global_core_id):
     """Sets the smem commit clock for the given core to its current clock."""

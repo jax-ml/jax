@@ -240,6 +240,10 @@ class JaxprInterpreter:
       return self.mesh.num_threads
 
   @functools.cached_property
+  def num_concurrent_threads(self) -> int:
+    return math.prod(self.cluster_dims) * self.num_threads_per_block
+
+  @functools.cached_property
   def thread_id_in_block(self) -> jax.Array:
     return lax.rem(self.thread_id, jnp.int32(self.num_threads_per_block))
 
@@ -395,7 +399,12 @@ class JaxprInterpreter:
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
-                assert len(shape) == 1
+                if len(shape) != 1:
+                  raise NotImplementedError(
+                      f"Got {shape} for barrier shape. Only 1D shapes are"
+                      " currently supported for barriers in GPU kernel"
+                      " interpret mode."
+                  )
                 # A barrier is shared between the threads in a block. Hence its
                 # ref count, when computed based on the collective axes, should
                 # equal the number of threads in a block.
@@ -412,6 +421,37 @@ class JaxprInterpreter:
                     num_arrivals=jnp.int32(dtype.num_arrivals),
                     num_barriers=shape[0],
                     ref_count=jnp.int32(ref_count),
+                    source_info=eqn.source_info,
+                )
+              elif isinstance(dtype, mosaic_gpu_core.ClusterBarrierType):
+                if len(shape) != 1:
+                  raise NotImplementedError(
+                      f"Got {shape} for cluster barrier shape. Only 1D shapes"
+                      " are currently supported for cluster barriers in GPU"
+                      " kernel interpret mode."
+                  )
+                if dtype.orders_tensor_core:
+                  raise NotImplementedError(
+                      "Cluster barriers with `orders_tensor_cores` are not yet"
+                      " supported in GPU kernel interpret mode."
+                  )
+                if dtype.leader_tracked:
+                  raise NotImplementedError(
+                      "Cluster barriers with `leader_tracked` are not yet"
+                      " supported in GPU kernel interpret mode."
+                  )
+                return gpu_callbacks.call_allocate_cluster_barriers(
+                    token=token,
+                    device_id=jnp.int32(self.device_info.device_id),
+                    grid_point_coords=self.grid_point_coords,
+                    thread_id=self.thread_id,
+                    axes_dims=self.thread_cluster_shape,
+                    is_axis_collective=self.are_thread_cluster_axes_collective(
+                        dtype.collective_axes
+                    ),
+                    num_arrivals=jnp.int32(dtype.num_arrivals),
+                    num_barriers=shape[0],
+                    ref_count=jnp.int32(self.num_concurrent_threads),
                     source_info=eqn.source_info,
                 )
               else:
@@ -454,7 +494,11 @@ class JaxprInterpreter:
         case state_types.AbstractRef(inner_aval=inner, memory_space=_, kind=_):
           match inner:
             case jax_core.ShapedArray(shape=_, dtype=dtype):
-              if isinstance(dtype, mosaic_gpu_core.BarrierType):
+              is_barrier = isinstance(dtype, mosaic_gpu_core.BarrierType)
+              is_cluster_barrier = isinstance(
+                  dtype, mosaic_gpu_core.ClusterBarrierType
+              )
+              if is_barrier or is_cluster_barrier:
                 return gpu_callbacks.call_deallocate_barrier(
                     token=token,
                     device_id=jnp.int32(self.device_info.device_id),
@@ -462,6 +506,7 @@ class JaxprInterpreter:
                     thread_id=self.thread_id,
                     allocation_key_as_array=allocation,
                     source_info=eqn.source_info,
+                    cluster_barrier=is_cluster_barrier,
                 )
               else:
                 _raise_if_unsupported_memory_space(aval.memory_space)

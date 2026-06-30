@@ -1017,6 +1017,7 @@ def _deallocate_barrier(
     thread_id: jax.Array,
     allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
+    cluster_barrier: bool = False,
 ):
   # TODO(paulbib): Add race-check validation on deallocation, i.e.: make sure
   # there are no outstanding async copies from or to the deallocated buffer.
@@ -1034,9 +1035,19 @@ def _deallocate_barrier(
 
   shared_memory = _get_shared_memory()
 
+  # TODO(nrink): If we had a dedicated memory space for cluster barriers
+  # (and/or for 'normal' barriers too), we could select the deallocation
+  # function based on the memory space of the allocation key (instead of needing
+  # the `deallocate_cluster_barrier` argument).
+  deallocate_fn = (
+      shared_memory.deallocate_cluster_barrier
+      if cluster_barrier
+      else shared_memory.deallocate_barrier
+  )
+
   for key in keys_to_deallocate:
     barrier_allocation_key = HostAllocationKey.from_array(key)
-    shared_memory.deallocate_barrier(
+    deallocate_fn(
         barrier_allocation_key,
         logging_info=interpret_utils.GPULoggingInfo(
             device_id=device_id_as_int,
@@ -1055,6 +1066,7 @@ def call_deallocate_barrier(
     thread_id: jax.Array,
     allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
+    cluster_barrier: bool = False,
 ):
   return callback.io_callback(
       functools.partial(_deallocate_barrier, source_info=source_info),
@@ -1064,6 +1076,7 @@ def call_deallocate_barrier(
       grid_point_coords,
       thread_id,
       allocation_key_as_array,
+      cluster_barrier=cluster_barrier,
   )
 
 
@@ -1087,8 +1100,8 @@ def _barrier_wait(
       barrier_key, device_id_as_int, thread_id_as_int
   )
   barrier.wait(
-      device_id_as_int,
-      thread_id_as_int,
+      device_id=device_id_as_int,
+      thread_id=thread_id_as_int,
       logging_info=interpret_utils.GPULoggingInfo(
           device_id=device_id_as_int,
           grid_point_coords=grid_point_coords_as_tuple,
@@ -1099,6 +1112,7 @@ def _barrier_wait(
   return token
 
 
+# Note that this callback is also used for waiting on cluster barriers.
 def call_barrier_wait(
     token: jax.Array,
     device_id: jax.Array,
@@ -1141,8 +1155,9 @@ def _barrier_arrive(
       shared_memory.get_global_thread_id(device_id_as_int, thread_id_as_int)
   )
   barrier.arrive(
-      clock,
-      smem_commit_clock,
+      thread_id=thread_id_as_int,
+      clock=clock,
+      smem_commit_clock=smem_commit_clock,
       logging_info=interpret_utils.GPULoggingInfo(
           device_id=device_id_as_int,
           grid_point_coords=grid_point_coords_as_tuple,
@@ -1153,6 +1168,7 @@ def _barrier_arrive(
   return token
 
 
+# Note that this callback is also used for arriving at cluster barriers.
 def call_barrier_arrive(
     token: jax.Array,
     device_id: jax.Array,
@@ -1180,6 +1196,111 @@ def _assert_no_barriers_allocated(token):
 def call_assert_no_barriers_allocated(token):
   return callback.io_callback(
       _assert_no_barriers_allocated, TOKEN_SHAPE_DTYPE, token
+  )
+
+
+def _allocate_cluster_barriers(
+    *,
+    token: jax.Array,
+    device_id: jax.Array,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    axes_dims: tuple[int, ...],
+    is_axis_collective: tuple[bool, ...],
+    num_arrivals: jax.Array,
+    num_barriers: jax.Array,
+    ref_count: jax.Array,
+    source_info: source_info_util.SourceInfo | None = None,
+) -> tuple[jax.Array, np.ndarray]:
+  device_id_as_int = int(device_id)
+  grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
+  thread_id_as_int = int(thread_id)
+  num_arrivals_as_int = int(num_arrivals)
+  num_barriers_as_int = int(num_barriers)
+  ref_count_as_int = int(ref_count)
+  del device_id, grid_point_coords, thread_id, num_arrivals, num_barriers, ref_count
+
+  shared_memory = _get_shared_memory()
+
+  keys = []
+  for _ in range(num_barriers_as_int):
+    # Advance `shared_memory`'s internal buffer id counter for all threads that
+    # call into this function.
+    barrier_id = shared_memory.get_next_buffer_id(
+        device_id_as_int, thread_id_as_int
+    )
+
+    # Use `SMEM` for the cluster barrier's allocation key below. Note that on
+    # real GPUs, there is not a single cluster barrier object that resides in
+    # SMEM (or any other memory space). We nonetheless use `SMEM` here to
+    # indicate that the (per thread-block) `Barrier`s that the `ClusterBarrier`
+    # is composed of are each allocated in `SMEM` (on a real GPU).
+    smem_space_id = IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.SMEM]
+
+    # Cluster barriers are shared between all threads in a cluster. Hence use 0
+    # for the thread ID in the allocation `key` below.
+    thread_id_for_key = 0
+
+    key = HostAllocationKey(
+        memory_space_id=smem_space_id,
+        device_id=device_id_as_int,
+        thread_id=thread_id_for_key,
+        initial_ref_count=ref_count_as_int,
+        buffer_id=barrier_id,
+    )
+
+    shared_memory.allocate_cluster_barrier(
+        key,
+        axes_dims=axes_dims,
+        is_axis_collective=is_axis_collective,
+        ref_count=ref_count_as_int,
+        num_arrivals=num_arrivals_as_int,
+        logging_info=interpret_utils.GPULoggingInfo(
+            device_id=device_id_as_int,
+            grid_point_coords=grid_point_coords_as_tuple,
+            thread_id=thread_id_as_int,
+            source_info=source_info,
+        ),
+    )
+    keys.append(key.as_np_array)
+
+  assert len(keys) == num_barriers_as_int
+  return token, np.array(keys, dtype=np.int32)
+
+
+def call_allocate_cluster_barriers(
+    *,
+    token: jax.Array,
+    device_id: jax.Array,
+    grid_point_coords: jax.Array,
+    thread_id: jax.Array,
+    axes_dims: tuple[int, ...],
+    is_axis_collective: tuple[bool, ...],
+    num_arrivals: jax.Array,
+    num_barriers: jax.Array,
+    ref_count: jax.Array,
+    source_info: source_info_util.SourceInfo | None = None,
+) -> tuple[jax.Array, jax.Array]:
+  shape_and_dtype = HostAllocationKey.shape_and_dtype()
+  result_shape = (num_barriers, *shape_and_dtype.shape)
+  result_shape_and_dtype = jax.ShapeDtypeStruct(
+      result_shape, shape_and_dtype.dtype
+  )
+  return callback.io_callback(
+      functools.partial(
+          _allocate_cluster_barriers,
+          source_info=source_info,
+          axes_dims=axes_dims,
+          is_axis_collective=is_axis_collective,
+      ),
+      (TOKEN_SHAPE_DTYPE, result_shape_and_dtype),
+      token=token,
+      device_id=device_id,
+      grid_point_coords=grid_point_coords,
+      thread_id=thread_id,
+      num_arrivals=num_arrivals,
+      num_barriers=num_barriers,
+      ref_count=ref_count,
   )
 
 
@@ -1348,6 +1469,7 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
 
   def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     self.barrier.arrive(
+        thread_id=tma_thread_id,
         clock=vc.copy_vector_clock(self.clock),
         smem_commit_clock=vc.copy_vector_clock(self.smem_commit_clock),
         logging_info=self.logging_info,
@@ -1788,7 +1910,8 @@ def tcgen05_mma(
     barrier, clock = shared_memory.get_barrier_and_increment_clock(
         barrier_key, device_id_as_int, thread_id_as_int)
     barrier.arrive(
-        clock,
+        thread_id=thread_id_as_int,
+        clock=clock,
         logging_info=logging_info)
 
   return token

@@ -1613,6 +1613,26 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_pallas_interpret_cluster_barrier_test",
+    srcs = ["gpu_pallas_interpret_cluster_barrier_test.py"],
+    enable_backends = ["cpu"],
+    shard_count = 8,
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
+        "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "tpu_trace_value_test",
     srcs = ["tpu_trace_value_test.py"],
     args = if_oss(
