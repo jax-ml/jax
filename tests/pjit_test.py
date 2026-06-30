@@ -11458,6 +11458,29 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     f(x)  # doesn't crash
     jax.jit(f)(x)  # doesn't crash
 
+  def test_device_put_unreduced_via_runtime_transfer(self):
+    mesh = jtu.create_mesh((2,), 'x', axis_types=(AxisType.Explicit,))
+    arr1 = jax.device_put(jnp.arange(8).reshape(2, 4),
+                          NamedSharding(mesh, P(None, 'x')))
+    arr2 = jax.device_put(jnp.arange(8).reshape(4, 2),
+                          NamedSharding(mesh, P('x', None)))
+
+    x = jnp.dot(arr1, arr2, out_sharding=NamedSharding(mesh, P(unreduced={'x'})))
+
+    cpu_mesh = Mesh(jax.devices('cpu')[:2], 'x', (AxisType.Explicit,))
+    out = jax.device_put(x, NamedSharding(cpu_mesh, P(unreduced={'x'})))
+    for s1, s2 in zip(x.addressable_shards, out.addressable_shards):
+      self.assertArraysEqual(s1.data, s2.data)
+    self.assertArraysEqual(reshard(x, NamedSharding(mesh, P())),
+                           reshard(out, NamedSharding(cpu_mesh, P())))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_device_put_unreduced_via_jit(self, mesh):
+    arr = jnp.arange(4)
+    out = jax.device_put(arr, P(unreduced={'x'}))
+    for s, ex_s in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

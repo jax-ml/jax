@@ -35,7 +35,7 @@ from jax._src import pjit
 from jax._src import traceback_util
 from jax._src import util
 
-from jax._src import xla_bridge
+from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -372,14 +372,14 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   different_process_inds = (
       src_sharding._internal_device_list.process_indices !=
       dst_sharding._internal_device_list.process_indices)
-  backend = xla_bridge.get_backend()
+  backend = xb.get_backend()
   # If a cross-host device transfer is requested but the backend does not
   # support it, then the user must set the flags to enable DCN-based transfers.
   if (different_process_inds and
-      (xla_bridge.FORCE_DCN_CROSS_HOST_TRANSFERS.value
+      (xb.FORCE_DCN_CROSS_HOST_TRANSFERS.value
       or not getattr(backend, "supports_cross_host_transfers", False)) and
-      not xla_bridge.CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value):
-    if xla_bridge.FORCE_DCN_CROSS_HOST_TRANSFERS.value:
+      not xb.CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value):
+    if xb.FORCE_DCN_CROSS_HOST_TRANSFERS.value:
       msg = ("DCN-based cross-host transfers were requested with the "
              "jax_force_dcn_cross_host_transfers flag.")
     else:
@@ -456,6 +456,12 @@ def _device_put_sharding_impl(
       return x
 
     if isinstance(s, NamedSharding) and s.spec.unreduced:
+      norm = lambda p: p._normalized_spec_for_aval(x.ndim)
+      if (xb.process_count() == 1 and x_is_jax_array and
+          isinstance(x_sharding, NamedSharding) and
+          norm(x_sharding.spec) == norm(s.spec) and
+          x_sharding.mesh.size == s.mesh.size):
+        return _DeferredShardArg(x, s, aval, True, copy)
       # TODO(mattjj,yashkatariya): handle donation
       return api.jit(_device_put_reshard, out_shardings=s)(x)
 
@@ -472,7 +478,7 @@ def _device_put_sharding_impl(
       assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
 
-    if (x_is_jax_array and x._committed and xla_bridge.process_count() > 1
+    if (x_is_jax_array and x._committed and xb.process_count() > 1
         and _is_supported_cross_host_transfer(x.ndim, x_sharding, s)):
       return _DeferredCrossHostTransferArg(x, s, copy)
 
@@ -505,7 +511,7 @@ def _device_put_sharding_impl(
         # sharding do not transfer data) or (2) the sharding contains a
         # different subset of devices on each host. For (1), the input should be
         # the same on all hosts, but for (2) it need not be.
-        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):
+        if xb.process_count() == len(s._internal_device_list.process_indices):
           multihost_utils.assert_equal(
               x, fail_message=(
                   f"{type(x)} passed to device_put is not the same on each"
