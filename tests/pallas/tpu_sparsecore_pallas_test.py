@@ -2396,6 +2396,26 @@ class VectorSubcoreTest(PallasSCTest):
     expected = jnp.full(shape, val, dtype=dtype)
     np.testing.assert_array_equal(kernel(), expected)
 
+  # TODO(anlunx): Allow compiling with O{0,1}.
+  @parameterized.parameters(
+      jax.experimental.mosaic.OptLevel.O2,
+      jax.experimental.mosaic.OptLevel.O3,
+  )
+  def test_opt_levels(self, opt_level):
+    if not jtu.is_libtpu_at_least("0.0.43"):
+      self.skipTest("opt_level requires libtpu 0.0.43 or newer.")
+
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(opt_level=opt_level),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    np.testing.assert_array_equal(kernel(x), x)
+
 
 class VectorSubcoreTestWithTCTiling(VectorSubcoreTest):
   USE_TC_TILING = True

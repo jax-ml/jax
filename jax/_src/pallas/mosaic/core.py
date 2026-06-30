@@ -26,12 +26,13 @@ from typing import Any, Literal
 import jax
 from jax._src import core as jax_core
 from jax._src import deprecations
-from jax._src import state
 from jax._src import flattree as ft
+from jax._src import state
 from jax._src import util
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax._src.tpu_custom_call import OptLevel
 import jax.numpy as jnp
 import numpy as np
 
@@ -122,6 +123,8 @@ class CompilerParams:
       flag is at the best-effort basis, and the fusion will only be performed
       when compilers determine it is feasible. Also, the fusion is not always
       profitable and therefore should be used sparingly.
+    opt_level: Optimization level. This flag is only used for ``SC_*_SUBCORE``
+      kernels and it implicitly defaults to O3.
   """
 
   dimension_semantics: tuple[DimensionSemantics, ...] | None = None
@@ -140,6 +143,7 @@ class CompilerParams:
   use_tc_tiling_on_sc: bool | None = None
   needs_layout_passes: bool = True
   fuse_transposed_lhs_in_matmul: bool = False
+  opt_level: OptLevel | None = None
 
   def __init__(
       self,
@@ -159,6 +163,7 @@ class CompilerParams:
       use_tc_tiling_on_sc: bool | None = None,
       needs_layout_passes: bool = True,
       fuse_transposed_lhs_in_matmul: bool = False,
+      opt_level: OptLevel | None = None,
   ):
     object.__setattr__(
         self,
@@ -200,6 +205,7 @@ class CompilerParams:
         "fuse_transposed_lhs_in_matmul",
         fuse_transposed_lhs_in_matmul,
     )
+    object.__setattr__(self, "opt_level", opt_level)
 
   # Replace is a method, not a field.
   replace = dataclasses.replace

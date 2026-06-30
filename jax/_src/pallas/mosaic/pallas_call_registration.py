@@ -355,6 +355,7 @@ def _lower_to_custom_call(
       shape_invariant_numerics=mosaic_params.shape_invariant_numerics,
       needs_layout_passes=mosaic_params.needs_layout_passes,
       tiling=_resolve_tiling(mosaic_params, kernel_type),
+      opt_level=mosaic_params.opt_level,
   )
   _maybe_cast_to_bool = (
       lambda x, aval: x.astype(jax.numpy.bool_)

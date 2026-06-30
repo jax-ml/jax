@@ -153,6 +153,13 @@ class Tiling(enum.Enum):
   SPARSE_CORE = "TILING_SPARSE_CORE"
 
 
+class OptLevel(enum.Enum):
+  O0 = "O0"
+  O1 = "O1"
+  O2 = "O2"
+  O3 = "O3"
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class CustomCallBackendConfig:
   """Represents an unserialized backend config for custom calls."""
@@ -177,6 +184,7 @@ class CustomCallBackendConfig:
   skip_device_barrier: bool
   shape_invariant_numerics: bool
   tiling: Tiling | None = None  # Only used for SparseCore.
+  opt_level: OptLevel | None = None  # Only used for SparseCore.
 
   def __post_init__(self):
     if self.allow_input_fusion is not None:
@@ -318,9 +326,15 @@ class CustomCallBackendConfig:
       config.write(str(self.skip_device_barrier).lower().encode("ascii"))
     config.write(b"}")  # End of custom_call_config.
     if self.device_type == "sparsecore":
-      tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
       config.write(b', "sparse_core_config": ')
-      config.write(_compact_json_object(tiling=tiling.value))
+      sparse_core_config: dict[str, Any] = {}
+      tiling = self.tiling if self.tiling is not None else Tiling.COMPACT
+      sparse_core_config["tiling"] = tiling.value
+      if self.opt_level is not None:
+        sparse_core_config["comp_env"] = {
+            "backend_opt_level": self.opt_level.value
+        }
+      config.write(_compact_json_object(**sparse_core_config))
     if self.device_type is not None:
       config.write(b', "device_type": ')
       config.write(
@@ -622,6 +636,7 @@ def _lower_to_custom_call_config(
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
+    opt_level: OptLevel | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
@@ -659,6 +674,7 @@ def _lower_to_custom_call_config(
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
       shape_invariant_numerics=shape_invariant_numerics,
       tiling=tiling,
+      opt_level=opt_level,
   )
 
 
@@ -687,6 +703,7 @@ def _lowered_to_custom_call_config(
     allow_collective_id_without_custom_barrier: bool = False,
     shape_invariant_numerics: bool = False,
     tiling: Tiling | None = None,
+    opt_level: OptLevel | None = None,
 ):
   if has_custom_barrier:
     if collective_id is None:
@@ -706,6 +723,10 @@ def _lowered_to_custom_call_config(
   if tiling is not None and  device_type != "sparsecore":
     raise ValueError(
         "explicit tiling is only supported for SparseCore kernels."
+    )
+  if opt_level is not None and device_type != "sparsecore":
+    raise ValueError(
+        "explicit opt_level is only supported for SparseCore kernels."
     )
   return CustomCallBackendConfig(
       lowered_module_asm,
@@ -729,6 +750,7 @@ def _lowered_to_custom_call_config(
       skip_device_barrier=skip_device_barrier,
       shape_invariant_numerics=shape_invariant_numerics,
       tiling=tiling,
+      opt_level=opt_level,
   )
 
 
@@ -757,6 +779,7 @@ def lower_module_to_custom_call(
     shape_invariant_numerics: bool = False,
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
+    opt_level: OptLevel | None = None,
 ) -> Sequence[ir.Value]:
   if isinstance(has_side_effects, bool):
     has_side_effects = (
@@ -783,6 +806,7 @@ def lower_module_to_custom_call(
       shape_invariant_numerics=shape_invariant_numerics,
       needs_layout_passes=needs_layout_passes,
       tiling=tiling,
+      opt_level=opt_level,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -819,6 +843,7 @@ def as_tpu_kernel(
     metadata: Any | None = None,
     tiling: Tiling | None = None,
     _ir_version: int | None = None,
+    opt_level: OptLevel | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
@@ -838,6 +863,7 @@ def as_tpu_kernel(
       needs_layout_passes=needs_layout_passes,
       ir_version=_ir_version,
       tiling=tiling,
+      opt_level=opt_level,
   )
   return _as_jax_callable(
       config,
@@ -871,6 +897,8 @@ def lowered_as_tpu_kernel(
     disable_semaphore_checks: bool = False,
     metadata: Any | None = None,
     allow_collective_id_without_custom_barrier: bool = False,
+    tiling: Tiling | None = None,
+    opt_level: OptLevel | None = None,
 ) -> Callable[..., Any]:
   device_type = _get_device_type(lowered_module)
   lowered_module_asm = cast(
@@ -901,6 +929,8 @@ def lowered_as_tpu_kernel(
       disable_bounds_checks=disable_bounds_checks,
       disable_semaphore_checks=disable_semaphore_checks,
       allow_collective_id_without_custom_barrier=allow_collective_id_without_custom_barrier,
+      tiling=tiling,
+      opt_level=opt_level,
   )
   return _as_jax_callable(
       config,
