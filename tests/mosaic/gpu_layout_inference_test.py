@@ -382,6 +382,39 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_infer_vector_concat_layout(self):
+    shape1, shape2 = (64, 32), (128, 32)
+    layout = mgpu.WGMMA_LAYOUT
+    dtype = ir.F32Type.get()
+
+    with ir.InsertionPoint(self.module.body):
+      x, y = undefs(
+          ir.VectorType.get(shape1, dtype), ir.VectorType.get(shape2, dtype)
+      )
+      x = layout_cast(x, layout)
+      op = mgpu.dialect.VectorConcatOp([x, y], 0)
+
+    mgpu.infer_layout(self.module)
+    self.checkInLayouts(op, [layout, layout])
+    self.checkOutLayouts(op, [layout])
+
+  def test_infer_vector_concat_rejects_strided_layout(self):
+    shape1, shape2 = (64, 32), (128, 32)
+    dtype = ir.F32Type.get()
+    layout = mgpu.WGStridedFragLayout(shape1, vec_size=1)
+
+    with ir.InsertionPoint(self.module.body):
+      x, y = undefs(
+          ir.VectorType.get(shape1, dtype), ir.VectorType.get(shape2, dtype)
+      )
+      x = layout_cast(x, layout)
+      mgpu.dialect.VectorConcatOp([x, y], 0)
+
+    with self.assertRaisesRegex(
+        ValueError, "user-provided layout casts are unsatisfiable"
+    ):
+      mgpu.infer_layout(self.module)
+
   @parameterized.product(
       hint_on_input=(True, False),
       src_shape_dst_shape_dims=(

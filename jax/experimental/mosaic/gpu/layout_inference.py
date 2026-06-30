@@ -1338,6 +1338,29 @@ def _broadcast_in_dim_constraint_system(
   )
 
 
+# TODO(allanrenucci): Remove guard after jaxlib v0.11.0 release.
+if hasattr(mgpu, "VectorConcatOp"):
+  @_add_constraint_system_derivation_rule(mgpu.VectorConcatOp)
+  def _vector_concat_constraint_system(
+      ctx: DerivationContext, op: mgpu.VectorConcatOp
+  ) -> ConstraintSystemDerivationRuleResult:
+    del ctx
+    result = ValueSite(op, VariableType.RESULT, 0)
+    result_var = cs.Variable(result)
+    value_sites_for_variable: ValueSitesForVariable = {result_var: [result]}
+    constraints: list[cs.Constraint] = [
+        # TODO(allanrenucci): Add support for strided layout.
+        cs.NotOfType(result_var, fa.WGSplatFragLayout),
+        cs.NotOfType(result_var, fa.WGStridedFragLayout),
+    ]
+    for i, _ in enumerate(op.operands):
+      operand_site = ValueSite(op, VariableType.OPERAND, i)
+      operand_var = cs.Variable(operand_site)
+      value_sites_for_variable[operand_var] = [operand_site]
+      constraints.append(cs.Equals(operand_var, result_var))
+    return cs.ConstraintSystem(constraints=constraints), value_sites_for_variable
+
+
 @_add_constraint_system_derivation_rule(vector.ShapeCastOp)
 def _shape_cast_constraint_system(
     ctx: DerivationContext, op: vector.ShapeCastOp

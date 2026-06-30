@@ -1211,6 +1211,50 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
+  def test_vector_concat_rank_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      x, y = undefs(
+          ir.VectorType.get([64, 32], ir.F32Type.get()),
+          ir.VectorType.get([64], ir.F32Type.get()),
+      )
+      with self.assertRaisesRegex(
+          ir.MLIRError, "All operands must have the same rank"
+      ):
+        mgpu.dialect.vector_concat([x, y], 0)
+
+  def test_vector_concat_element_type_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      x, y = undefs(
+          ir.VectorType.get([64, 32], ir.F32Type.get()),
+          ir.VectorType.get([64, 32], ir.F16Type.get()),
+      )
+      with self.assertRaisesRegex(
+          ir.MLIRError, "All operands must match result element type"
+      ):
+        mgpu.dialect.vector_concat([x, y], 0)
+
+  def test_vector_concat_dim_oob(self):
+    with ir.InsertionPoint(self.module.body):
+      x, y = undefs(
+          ir.VectorType.get([64, 32], ir.F32Type.get()),
+          ir.VectorType.get([64, 32], ir.F32Type.get()),
+      )
+      with self.assertRaisesRegex(
+          ir.MLIRError, "Dimension 2 is out of bounds"
+      ):
+        mgpu.dialect.vector_concat([x, y], 2)
+
+  def test_vector_concat_shape_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      x, y = undefs(
+          ir.VectorType.get([64, 32], ir.F32Type.get()),
+          ir.VectorType.get([64, 16], ir.F32Type.get()),
+      )
+      with self.assertRaisesRegex(
+          ir.MLIRError, "Operand shape does not match result shape"
+      ):
+        mgpu.dialect.vector_concat([x, y], 0)
+
   def test_custom_primitive_op_args_must_match_args_of_terminator(self):
     with ir.InsertionPoint(self.module.body):
       shape = (128,)

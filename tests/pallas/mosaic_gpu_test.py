@@ -608,7 +608,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       ("axis1", 1, ((64, 64), (64, 128))),
   )
   def test_concatenate(self, axis, shapes):
-    self.skip_if_wg_semantics()
     x0 = np.arange(math.prod(shapes[0]), dtype=np.float32).reshape(shapes[0])
     x1 = np.arange(math.prod(shapes[1]), dtype=np.float32).reshape(shapes[1])
     expected = np.concatenate([x0, x1], axis=axis)
@@ -4316,7 +4315,7 @@ class PallasCallWGTest(
 
     actual_missing_primitives = (lane_wg_lowered_primitives -
                                  wg_wg_lowered_primitives)
-    expected_missing_primitives = {lax.concatenate_p}
+    expected_missing_primitives = set()
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 

@@ -762,6 +762,57 @@ llvm::LogicalResult BroadcastInDimOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult VectorConcatOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  auto error = [location](auto... params) {
+    return mlir::emitOptionalError(location, llvm::formatv(params...));
+  };
+  if (operands.empty()) {
+    return error("Must have at least one operand.");
+  }
+  VectorConcatOp::Adaptor adaptor(operands, attributes, properties);
+  int64_t dim = adaptor.getDimension();
+  mlir::VectorType first_type =
+      mlir::cast<mlir::VectorType>(operands[0].getType());
+  int64_t rank = first_type.getRank();
+  if (dim < 0 || dim >= rank) {
+    return error("Dimension {0} is out of bounds for vector of rank {1}.", dim,
+                 rank);
+  }
+  llvm::SmallVector<int64_t> shape(first_type.getShape());
+  shape[dim] = 0;
+  for (auto [i, op] : llvm::enumerate(operands)) {
+    mlir::VectorType op_type = mlir::cast<mlir::VectorType>(op.getType());
+    if (op_type.getRank() != rank) {
+      return error(
+          "All operands must have the same rank, got rank {0} at index {1} "
+          "(expected {2}).",
+          op_type.getRank(), i, rank);
+    }
+    if (op_type.getElementType() != first_type.getElementType()) {
+      return error(
+          "All operands must match result element type, got {0} at index {1} "
+          "(expected {2}).",
+          op_type.getElementType(), i, first_type.getElementType());
+    }
+    for (int64_t d = 0; d < rank; ++d) {
+      if (d != dim && op_type.getDimSize(d) != first_type.getDimSize(d)) {
+        return error(
+            "Operand shape does not match result shape along non-concatenated "
+            "dimension {0} at index {1} (got {2}, expected {3}).",
+            d, i, op_type.getDimSize(d), first_type.getDimSize(d));
+      }
+    }
+    shape[dim] += op_type.getDimSize(dim);
+  }
+  inferredReturnTypes.assign(
+      {mlir::VectorType::get(shape, first_type.getElementType())});
+  return mlir::success();
+}
+
 llvm::LogicalResult ReturnOp::verify() {
   // The operand number and types must match the custom primitive signature.
   const auto& results = getParentOp()->getResultTypes();

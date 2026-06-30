@@ -667,6 +667,29 @@ def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_VectorConcatOp : Op<MosaicGPU_Dialect, "vector_concat",
+    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Concatenates vectors along a specified dimension.";
+  let description = [{
+    Concatenates a variadic list of operands along `dimension`.
+
+    All operands must have the same rank and element type.
+    This op matches the semantics of `lax.concatenate`.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyVectorOfNonZeroRank>:$operands,
+
+    // Attributes
+    I32Attr:$dimension
+  );
+
+  let results = (outs AnyVectorOfNonZeroRank);
+  let assemblyFormat = [{
+    `(` $operands `:` type($operands) `)` attr-dict `->` type(results)
+  }];
+}
+
 def MosaicGPU_ReinterpretCastOp : Op<MosaicGPU_Dialect, "reinterpret_cast",
     [Pure]> {
   let summary = "Reinterprets a memref without changing the underlying data.";

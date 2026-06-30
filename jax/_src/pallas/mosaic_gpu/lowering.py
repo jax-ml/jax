@@ -2426,6 +2426,14 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
   return mgpu.concatenate(arrays, axis=dimension)
 
 
+# TODO(allanrenucci): Remove guard after jaxlib v0.11.0 release.
+if hasattr(mgpu.dialect, "vector_concat"):
+  @register_lowering_rule(lax.concatenate_p, mgpu.LoweringSemantics.Warpgroup)
+  def _concatenate_lowering_rule_wg(ctx: LoweringRuleContext, *args, dimension):
+    operands = [_ensure_ir_value(x, a.dtype) for x, a in zip(args, ctx.avals_in)]
+    return mgpu.dialect.vector_concat(operands, dimension)
+
+
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.select_n_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Warpgroup)
