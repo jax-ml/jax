@@ -131,6 +131,8 @@ def wgmma_m64(
     b_element_type: ir.Type,
 ):
   out_ty = ir.VectorType(acc.flat[0].type).element_type
+  if not _supported_wgmma_types(out_ty, a_element_type):
+    raise ValueError(f"Unsupported wgmma types {(out_ty, a_element_type)=}")
   if not _supported_wgmma_types(out_ty, b_element_type):
     raise ValueError(f"Unsupported wgmma types {(out_ty, b_element_type)=}")
   if n % 8:
@@ -153,7 +155,7 @@ def wgmma_m64(
     if a.mlir_dtype not in {bf16, f16, i8, f8e5m2, f8e4m3fn}:
       raise ValueError(f"Unsupported A register array dtype: {a.mlir_dtype}")
     # Column count must be equal to swizzle // bytewidth.
-    elt_bytewidth = utils.bytewidth(b_element_type)
+    elt_bytewidth = utils.bytewidth(a_element_type)
     swizzle_elems = swizzle // elt_bytewidth
     if a.shape != (64, swizzle_elems):
       raise ValueError("Unsupported A register array shape")
