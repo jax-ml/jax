@@ -47,6 +47,7 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
@@ -2729,15 +2730,28 @@ class LaxTest(jtu.JaxTestCase):
     dtype=[np.float32, np.int32, np.uint32],
     shape=[(20,), (8, 20), (2000,)],
     k=[1, 3, 8],
-    axis=[0, -1]
+    axis=[0, -1],
+    is_stable=[True, False]
   )
-  def testTopK(self, shape, dtype, k, axis):
+  def testTopK(self, shape, dtype, k, axis, is_stable):
     rng = jtu.rand_some_equal(self.rng())
     def args_maker():
       return [rng(shape, dtype)]
-    op = lambda vs: lax.top_k(vs, k=k, axis=axis)
-    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis)
-    self._CheckAgainstNumpy(op, ref_op, args_maker)
+    op = lambda vs: lax.top_k(vs, k=k, axis=axis, is_stable=is_stable)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis, is_stable=is_stable)
+    if is_stable:
+      self._CheckAgainstNumpy(op, ref_op, args_maker)
+    else:
+      # Unstable sort. Validate the values match
+      args = args_maker()[0]
+      ref_values, _ = ref_op(args)
+      xla_values, xla_indices = op(args)
+      self.assertAllClose(ref_values, xla_values)
+
+      # Validate the indices actually point to the correct top-k values
+      gathered_values = np.take_along_axis(args, xla_indices, axis=axis)
+      self.assertAllClose(ref_values, gathered_values)
+
     self._CompileAndCheck(op, args_maker)
 
   def testTopKOverflow(self):
@@ -4893,6 +4907,31 @@ class CompositeTest(jtu.JaxTestCase):
         '(tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
     self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
     self.assertIn('chlo.top_k(%arg0, k = 3) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+
+  @unittest.skipIf(
+      jaxlib_extension_version < 474,
+      "TopK is_stable attribute requires jaxlib >= 474",
+  )
+  def test_composite_with_attributes_unstable(self):
+    # The static_argnames is required here since k is a constant that should
+    # come out of a larger context, but we unit test one op (composite) here.
+    @jax.jit(static_argnames=['k', 'is_stable'])
+    @partial(lax.composite, name="my.top_k")
+    def my_top_k(x, *, k, is_stable):
+      return lax.top_k(x, k, is_stable=is_stable)
+
+    x = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=jnp.float32)
+    output, indices = my_top_k(x, k=3, is_stable=False)
+    self.assertArraysEqual(output, jnp.array([5.0, 4.0, 3.0], dtype=jnp.float32))
+    self.assertArraysEqual(indices, jnp.array([4, 3, 2], dtype=jnp.int32))
+
+    mlir_module = my_top_k.lower(x, k=3, is_stable=False).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.top_k" %arg0 '
+        '{composite_attributes = {is_stable = false, k = 3 : i64}, decomposition = @my.top_k} : '
+        '(tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+    self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
+    self.assertIn('chlo.top_k(%arg0, k = 3, is_stable = false) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
 
   def test_composite_attribute_dtypes(self):
     @jax.jit
