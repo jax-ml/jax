@@ -166,14 +166,23 @@ def _mpmd_map_discharge_rule(
     external_meshes,
     **_,
 ):
-  io_indices = [
-      i
-      for i, aval in enumerate(avals_in)
-      if isinstance(aval, state.AbstractRef)
-  ]
+  write_indices = set()
+  for jaxpr in jaxprs:
+    assert not jaxpr.constvars
+    invar_idx = {v: i for i, v in enumerate(jaxpr.invars)}
+    for eff in jaxpr.effects:
+      if isinstance(eff, (state.WriteEffect, state.AccumEffect)):
+        write_index = invar_idx[eff.input]
+        if (
+            write_index < len(avals_in) and
+            isinstance(avals_in[write_index], state.AbstractRef)
+        ):
+          write_indices.add(write_index)
+
+  write_indices = sorted(write_indices)
   num_in = len(avals_in)
   num_out_orig = len(avals_out)
-  num_out_new = len(io_indices)
+  num_out_new = len(write_indices)
 
   new_jaxprs = []
   all_meshes = (*meshes, *external_meshes)
@@ -194,7 +203,7 @@ def _mpmd_map_discharge_rule(
     in_avals_trace, orig_out_avals_trace, scratch_avals_trace = util.split_list(
         all_in_avals, [num_in, num_out_orig]
     )
-    new_out_avals_trace = [avals_in[i] for i in io_indices]
+    new_out_avals_trace = [avals_in[i] for i in write_indices]
     tracing_avals = (
         in_avals_trace
         + orig_out_avals_trace
@@ -214,14 +223,11 @@ def _mpmd_map_discharge_rule(
     with mpmd_map_tracing_context(mesh, all_meshes):
       new_jaxprs.append(_rewrite_to_include_new_outputs(jaxpr))
 
-  assert all(
-      isinstance(avals_in[i], state.AbstractRef) for i in io_indices
-  )
-  new_out_avals = [avals_in[i].inner_aval for i in io_indices]  # pyrefly: ignore[missing-attribute]
+  new_out_avals = [avals_in[i].inner_aval for i in write_indices]  # pyrefly: ignore[missing-attribute]
   updated_out_avals = list(avals_out) + new_out_avals
 
   new_aliases = dict(input_output_aliases)
-  for out_idx, in_idx in enumerate(io_indices):
+  for out_idx, in_idx in enumerate(write_indices):
     new_aliases[in_idx] = num_out_orig + out_idx
 
   res = mpmd_map_p.bind(
@@ -242,7 +248,7 @@ def _mpmd_map_discharge_rule(
   # Split the results into original outputs and updated refs.
   ans, updated_refs = util.split_list(res, [num_out_orig])
   new_invals = [None] * len(avals_in)
-  for out_idx, in_idx in enumerate(io_indices):
+  for out_idx, in_idx in enumerate(write_indices):
     new_invals[in_idx] = updated_refs[out_idx]
 
   return new_invals, ans

@@ -13,6 +13,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Changes
+
+  * {func}`jax.experimental.pallas.kernel` now only aliases closed over or
+    passed in refs if the kernel writes to them. If you need aliasing without
+    an explicit write, use {func}`jax.experimental.pallas.tpu.touch`.
+
 ### Triton
 
 * New features
