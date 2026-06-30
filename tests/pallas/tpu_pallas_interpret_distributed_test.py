@@ -1181,7 +1181,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((num_devices,), ('x',))
 
     @pl.kernel(
-        mesh=pltpu.create_tensorcore_mesh('core', num_cores=2),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=2),
         out_type=jax.ShapeDtypeStruct((16, 128), jnp.float32),
         scratch_types=[pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA(2)],
@@ -1230,7 +1230,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     partition = P('x', None)
     mesh = jtu.create_mesh((num_devices,), ('x',))
 
-    core_mesh = pltpu.create_tensorcore_mesh('core', num_cores=num_cores)
+    core_mesh = pltpu.TensorCoreMesh(axis_name='core', num_cores=num_cores)
     interpret = pltpu.InterpretParams(detect_races=True)
 
     @jax.jit

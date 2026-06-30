@@ -219,7 +219,7 @@ class PRNGTest(jtu.JaxTestCase):
 
     def main(refs):
       key_hbm, o_ref = refs
-      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'))
       def _():
         @functools.partial(pl.run_scoped,
                           key_smem=pltpu.SMEM((), key_hbm.dtype),
