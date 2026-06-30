@@ -417,7 +417,9 @@ The supported MMA shapes are such that:
 * `N` is divisible by 8 and not greater than 256
 * `K` is a multiple of `swizzle` divided by the operand's element type bytewidth
 
-The currently supported data types are: `jnp.float32`, `jnp.bfloat16` and `jnp.float16`.
+The currently supported data types are: `jnp.float32`, `jnp.bfloat16`, `jnp.float16`,
+and the FP8 types `jnp.float8_e4m3fn` and `jnp.float8_e5m2` (which may be mixed across
+the two operands).
 The accumulator `D` must be a `jnp.float32`, with the exception of `jnp.float16` inputs,
 in which case it is allowed to be `jnp.float16` as well.
 
