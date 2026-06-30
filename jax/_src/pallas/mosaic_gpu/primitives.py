@@ -25,8 +25,10 @@ import math
 from typing import Any, Literal, assert_never
 
 import jax
+from jax._src import api
 from jax._src import core as jax_core
 from jax._src import debugging
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import lax
 from jax._src import literals
@@ -3530,7 +3532,7 @@ lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Warpgroup)(
 
 def load(
     src: _Ref,
-    idx,
+    idx: Any = api.NotSpecified(),
     *,
     layout: SomeLayout | None = None,
     optimized: bool = True,
@@ -3547,6 +3549,16 @@ def load(
   Returns:
     The loaded array.
   """
+  if not isinstance(idx, api.NotSpecified):
+    deprecations.warn(
+        "jax-pallas-mgpu-load-idx",
+        "Passing the index separately from the reference is deprecated. Please"
+        " index the reference via ``ref.at[idx]`` before passing it to"
+        " ``load``.",
+        stacklevel=2,
+    )
+  else:
+    idx = None
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, idx, "load"
   )

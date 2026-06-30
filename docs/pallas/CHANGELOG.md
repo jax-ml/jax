@@ -26,6 +26,14 @@ Remember to align the itemized text with the first line of an item within a list
     is not considered export-stable and needs to be enabled explicitly.
 
 
+### Mosaic GPU
+
+* Deprecations
+
+  * The `idx` parameter of {func}`jax.experimental.pallas.mosaic_gpu.load` is
+    deprecated. Index the ref explicitly via `ref.at[idx]` prior to loading
+    from it.
+
 ## Released with JAX 0.10.2
 
 * New features

@@ -901,7 +901,7 @@ plgpu.wgmma(smem_ref, ...)
 This explicit synchronization is also required in the other direction, for
 example:
 ```python
-v = plgpu.load(smem_ref, ())
+v = plgpu.load(smem_ref)
 plgpu.commit_smem()
 plgpu.copy_gmem_to_smem(..., smem_ref, ...)
 ```
@@ -1437,7 +1437,7 @@ has to be indexed with that array using the `.at` operator:
     scratch_shapes=[plgpu.Barrier()],
 )
 def kernel(x_ref_gmem, idx_ref, o_ref, barrier_ref):
-  idxs = plgpu.load(idx_ref, (), layout=plgpu.Layout.TMA_INDICES)
+  idxs = plgpu.load(idx_ref, layout=plgpu.Layout.TMA_INDICES)
   plgpu.copy_gmem_to_smem(x_ref_gmem.at[idxs], o_ref, barrier_ref)
   plgpu.barrier_wait(barrier_ref)
 ```
