@@ -1015,7 +1015,7 @@ def _kernel_to_module(
   if thread_semantics == LoweringSemantics.Warpgroup and dialect is not None:
     # We need to run a pass that removes dead-code for which layout inference
     # does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize)", module.context)
+    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
     pm.run(module.operation)
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
