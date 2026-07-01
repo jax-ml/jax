@@ -16,6 +16,7 @@
 
 import dataclasses
 import enum
+import re
 from collections.abc import Callable
 
 from jax._src import mesh as mesh_lib
@@ -24,8 +25,9 @@ from jax._src.interpreters import pxla
 
 
 class GpuVersion(enum.Enum):
-  """NVidia GPU version"""
+  """GPU version"""
 
+  # NVIDIA GPUs
   A10 = "NVIDIA A10"
   A30 = "NVIDIA A30"
   A100 = "NVIDIA A100"
@@ -45,32 +47,36 @@ class GpuVersion(enum.Enum):
   RTX_PRO_5000 = "NVIDIA RTX PRO 5000"
   RTX_PRO_6000 = "NVIDIA RTX PRO 6000"
 
+  # AMD GPUs. device_kind may be a gfx arch (e.g. "gfx942") or a product
+  # name (e.g. "AMD Instinct MI300X"), so each family has a gfx member and
+  # a regex member matching the product-name family. MI3XXX excludes MI35
+  # via a negative lookahead so it doesn't also match MI350X/MI355X.
+  GFX908 = "gfx908"
+  MI1XXX = r"AMD Instinct MI1\d+[A-Za-z]*"
+  GFX90A = "gfx90a"
+  MI2XXX = r"AMD Instinct MI2\d+[A-Za-z]*"
+  GFX942 = "gfx942"
+  MI3XXX = r"AMD Instinct MI3(?!5)\d+[A-Za-z]*"
+  GFX950 = "gfx950"
+  MI35XXX = r"AMD Instinct MI35\d+[A-Za-z]*"
+
   def __str__(self) -> str:
     return self.value
 
 
-def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
-  def loose_match(version_name, device_name):
-    # we assume that device_name is a full device name string larger than
-    # version_name string
-    name = version_name.lower()
-    dname = device_name.lower()
-    if not dname.startswith(name):
-      return False
-    # Check the next char is not digit to avoid matching e.g. NVIDIA A10 to NVIDIA A100
-    idx = len(name)
-    if idx < len(dname) and dname[idx] not in "0123456879":
-      return True
-    return False
+# Matches a GpuVersion value as a whole word, e.g. so "NVIDIA A10" doesn't
+# match "NVIDIA A100 80GB PCIe". GpuVersion values are regex fragments, so
+# the matched group name (not the matched text) identifies the enum member.
+_GPU_VERSION_RE = re.compile(
+    r"\b(?:"
+    + "|".join(f"(?P<{version.name}>{version.value})" for version in GpuVersion)
+    + r")\b"
+)
 
-  for version in GpuVersion:
-    # Loose compare due to variants of GPU names
-    # e.g. A100 GPU can be NVIDIA A100-SXM4-40GB or NVIDIA A100-SXM4-80GB
-    # or NVIDIA A100-PCIE-40GB or NVIDIA A100 80GB PCIe etc
-    if version.value == device_kind or loose_match(
-        version.value, device_kind
-    ):
-      return version
+
+def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
+  if m := _GPU_VERSION_RE.match(device_kind):
+    return GpuVersion[m.lastgroup]
   return None
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -149,6 +155,31 @@ def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
           gpu_version=gpu_version,
           arch_name="12.1",
           compute_capability=121,
+      )
+    # AMD GPUs.
+    case GpuVersion.GFX908 | GpuVersion.MI1XXX:
+      return GpuInfo(
+          gpu_version=gpu_version,
+          arch_name=GpuVersion.GFX908.value,
+          compute_capability=0,
+      )
+    case GpuVersion.GFX90A | GpuVersion.MI2XXX:
+      return GpuInfo(
+          gpu_version=gpu_version,
+          arch_name=GpuVersion.GFX90A.value,
+          compute_capability=0,
+      )
+    case GpuVersion.GFX942 | GpuVersion.MI3XXX:
+      return GpuInfo(
+          gpu_version=gpu_version,
+          arch_name=GpuVersion.GFX942.value,
+          compute_capability=0,
+      )
+    case GpuVersion.GFX950 | GpuVersion.MI35XXX:
+      return GpuInfo(
+          gpu_version=gpu_version,
+          arch_name=GpuVersion.GFX950.value,
+          compute_capability=0,
       )
     case _:
       raise ValueError(f"Unsupported GPU version: {gpu_version}")

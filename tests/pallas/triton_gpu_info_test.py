@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 import sys
 
 from absl.testing import absltest
@@ -35,18 +36,21 @@ class GpuInfoTest(jtu.JaxTestCase):
     super().setUp()
     if not plgpu:
       self.skipTest("Skipping test because device is not a GPU.")
-    if not jtu.is_device_cuda():
+    if jtu.is_device_cuda() or jtu.is_device_rocm():
+      self.assertTrue(plgpu.is_gpu_device())
+    else:
       self.assertFalse(plgpu.is_gpu_device())
       self.skipTest("Skipping test because device is not a GPU.")
-    else:
-      self.assertTrue(plgpu.is_gpu_device())
 
   def test_get_gpu_info(self):
     device = jax.devices()[0]
     info = plgpu.get_gpu_info()
     self.assertIsInstance(info, plgpu.GpuInfo)
+    self.assertEqual(info.arch_name, device.compute_capability)
     for version in plgpu.GpuVersion:
-      if version.value in device.device_kind:
+      # version.value is a regex fragment (see gpu_info.py), not a literal
+      # prefix, e.g. AMD product-name families like "AMD Instinct MI3...".
+      if re.match(version.value, device.device_kind):
         self.assertEqual(info.gpu_version, version)
         return
     self.fail(f"Unexpected device kind: {device.device_kind}")
@@ -65,6 +69,22 @@ class GpuInfoTest(jtu.JaxTestCase):
     ("NVIDIA H100 80GB HBM3", GpuVersion.H100),
     ("NVIDIA H100 PCIe", GpuVersion.H100),
     ("NVIDIA H100 NVL", GpuVersion.H100),
+    ("gfx908", GpuVersion.GFX908),
+    ("gfx90a", GpuVersion.GFX90A),
+    ("gfx90a:sramecc+:xnack-", GpuVersion.GFX90A),
+    ("gfx942", GpuVersion.GFX942),
+    ("gfx942:sramecc+:xnack-", GpuVersion.GFX942),
+    ("gfx950", GpuVersion.GFX950),
+    ("gfx950:sramecc+:xnack-", GpuVersion.GFX950),
+    ("AMD Instinct MI100", GpuVersion.MI1XXX),
+    ("AMD Instinct MI210", GpuVersion.MI2XXX),
+    ("AMD Instinct MI250X", GpuVersion.MI2XXX),
+    ("AMD Instinct MI300A", GpuVersion.MI3XXX),
+    ("AMD Instinct MI300X", GpuVersion.MI3XXX),
+    ("AMD Instinct MI325X", GpuVersion.MI3XXX),
+    ("AMD Instinct MI350X", GpuVersion.MI35XXX),
+    ("AMD Instinct MI350P", GpuVersion.MI35XXX),
+    ("AMD Instinct MI355X", GpuVersion.MI35XXX),
   ])
   def test_gpu_version_from_device_kind(self, device_kind, expected):
     info = gpu_info.gpu_version_from_device_kind(device_kind)
