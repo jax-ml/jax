@@ -1419,6 +1419,38 @@ LogicalResult SemaphoreSignalOp::verify() {
   return success();
 }
 
+mlir::tpu::CoreType BarrierArriveOp::getTargetCoreType() {
+  return getRefCoreType(getBarrier()).value_or(GetCoreTypeOfParentOp(**this));
+}
+
+LogicalResult BarrierArriveOp::verify() {
+  MemRefType barrier_type = getBarrier().getType();
+  if (barrier_type.getRank() != 0) {
+    return emitOpError("Barrier reference must be rank 0");
+  }
+
+  CoreType issuing_core_type = GetCoreTypeOfParentOp(**this);
+  CoreType target_core_type = getTargetCoreType();
+
+  if (getCoreId() == nullptr && getDeviceId() == nullptr) {
+    if (target_core_type != issuing_core_type) {
+      return emitOpError(
+          absl::StrFormat("Target core type (%s) must match source core type "
+                          "(%s) when device_id and core_id are not specified",
+                          stringifyCoreType(target_core_type),
+                          stringifyCoreType(issuing_core_type)));
+    }
+  }
+  // Subcore ID applies only to SC vector subcore barrier ops.
+  if (target_core_type != CoreType::kScVectorSubcore &&
+      getSubcoreId() != nullptr) {
+    return emitOpError(
+        "Subcore id should not be set unless target core type is SC vector "
+        "subcore");
+  }
+  return success();
+}
+
 LogicalResult SemaphoreWaitOp::verify() {
   MemRefType sem_type = getSemaphore().getType();
   if (sem_type.getRank() != 0) {
