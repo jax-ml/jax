@@ -74,6 +74,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 from jax._src.typing import Array, DTypeLike
+from jax._src.tree_util import FlatTree
 from jax._src.util import foreach
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
@@ -1634,34 +1635,38 @@ def lower_fun(
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     flat_args, in_tree = tree_util.tree_flatten(args)
     if in_avals is None:
-      flat_avals = ctx.avals_in
+      args_avals = tree_util.tree_unflatten(in_tree, ctx.avals_in)
       sub_block_shapes = ctx.block_shapes
     else:
-      flat_avals, aval_tree = tree_util.tree_flatten(in_avals)
+      _, aval_tree = tree_util.tree_flatten(in_avals)
       if in_tree != aval_tree:
         raise ValueError(
             "args and in_avals pytrees mismatch:\\nargs tree:"
             f" {in_tree}\\navals tree: {aval_tree}\\nargs: {args}\\navals:"
             f" {in_avals}"
         )
+      args_avals = in_avals
       sub_block_shapes = [None] * len(flat_args)
-    wrapped_lu_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(
-            fun,
-            params,
-            debug_info=api_util.debug_info("mosaic lower_fun", fun, args, {}),
-        ),
-        in_tree,
+
+    in_avals_ft = FlatTree.flatten_static_argnums_argnames(
+        args_avals, params, (), params.keys())
+    debug_info = api_util.debug_info(
+        "mosaic lower_fun", fun, args, params,
+        static_argnames=tuple(params.keys())
     )
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals, lower=True)
-    if consts:
+
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        fun, in_avals_ft, debug_info, requires_low=True
+    )
+
+    if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr)
     sub_lowering_ctx = ctx.lowering_context.replace(
         block_shapes=sub_block_shapes
     )
-    out = jaxpr_subcomp(sub_lowering_ctx, jaxpr, *consts, *flat_args)
-    return tree_util.tree_unflatten(out_tree_thunk(), out)
+    out = jaxpr_subcomp(sub_lowering_ctx, jaxpr, *flat_args)
+    return tree_util.tree_unflatten(out_avals_ft.tree, out)
 
   return f_lowered
 
