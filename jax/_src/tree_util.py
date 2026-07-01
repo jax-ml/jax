@@ -118,6 +118,9 @@ def tree_structure(tree: Any,
   """Alias of :func:`jax.tree.structure`."""
   return default_registry.flatten(tree, is_leaf)[1]
 
+# TODO: get rid of the tree registry system altogether (use FlatTree instead)
+def treedef_tuple_tracing_registry(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
+  return pytree.treedef_tuple(tracing_registry, list(treedefs))
 
 @export
 def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:

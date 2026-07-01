@@ -42,15 +42,15 @@ def remat_transform(policy, f, *args):
     jaxpr_trace = pe.DynamicJaxprTrace(None)
     jaxpr_trace.tag = core.TraceTag()
     trace = RematTrace(parent_trace, jaxpr_trace, policy)
-    args_ft = ft.flatten_static_argnums_argnames(args, {}, (), ())
+    args_ft, _ = ft.flatten_args(*args).unpack()
     in_tracers = args_ft.map(
         lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # type: ignore # noqa F821
     with core.set_current_trace(trace):
-      args, kwargs = in_tracers.unflatten()
-      ans_pytree = f(*args, **kwargs)
+      args = in_tracers.unflatten()
+      ans_pytree = f(*args)
       dbg = dbg.set_result_paths(ans_pytree)
       ans_ft = ft.flatten(ans_pytree)
-      del ans_pytree, args, kwargs
+      del ans_pytree, args
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
     src = source_info_util.current()
     out_tracer_ft = out_tracer_ft.map(partial(jaxpr_trace.to_jaxpr_tracer, source_info=src))
@@ -58,7 +58,7 @@ def remat_transform(policy, f, *args):
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
   def f_rem(res, *args):
-    args_flat = tree_leaves_checked(in_tree, (args, {}))
+    args_flat = tree_leaves_checked(in_tree, args)
     out_flat = core.eval_jaxpr(jaxpr, res, *args_flat)
     return tree_unflatten(out_tree, out_flat)
   return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, res))
