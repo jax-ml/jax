@@ -6025,6 +6025,30 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     self.assertArraysEqual(kernel(x), x)
 
+  def test_async_copy_scales_to_tmem_warp_semantics_lowers_correctly(self):
+    tmem_shape, dtype = (128, 4), jnp.float8_e8m0fnu
+    smem_shape = (1, 1, 32, 16)
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(smem_shape, dtype),
+        scratch_types=[
+            plgpu.SMEM(smem_shape, dtype),
+            plgpu.TMEM(tmem_shape, dtype, layout=plgpu.TMEMLayout.SCALES_LAYOUT),
+            plgpu.Barrier(orders_tensor_core=True)
+        ],
+    )
+    def kernel(out_gmem, smem, tmem, tc_barrier):
+      @plgpu.warp_map
+      def _(warp_id):
+        @pl.when(warp_id == 0)
+        def _():
+          plgpu.async_copy_scales_to_tmem(smem, tmem)
+          plgpu.tcgen05_commit_arrive(tc_barrier)
+      plgpu.barrier_wait(tc_barrier)
+      plgpu.copy_smem_to_gmem(smem, out_gmem)
+      plgpu.wait_smem_to_gmem(0)
+
+    jax.jit(kernel).lower()
+
   @parameterized.parameters(128, None)
   def test_async_copy_smem_to_tmem(self, swizzle):
     dtype = jnp.float16

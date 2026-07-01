@@ -1305,7 +1305,9 @@ def _mgpu_async_store_op_lowering_rule(
   return []
 
 
-@_register_lowering(mgpu.AsyncStoreScalesSmemToTmemOp)
+@_register_lowering(
+    mgpu.AsyncStoreScalesSmemToTmemOp, support_warp_semantics=True
+)
 def _async_copy_scales_smem_to_tmem_lowering_rule(
     ctx: LoweringContext, op: mgpu.AsyncStoreScalesSmemToTmemOp
 ) -> Sequence[ir.Value]:
