@@ -73,7 +73,7 @@ print(jax.grad(g)(1.0))  # 0.54
 
 # `Ref` is a distinct type from `Array`, and it comes with some important
 # constraints and limitations. In particular, indexed reading and writing is just
-# about the *only* thing you can do with an `Ref`. References can't be passed
+# about the *only* thing you can do with a `Ref`. References can't be passed
 # where `Array`s are expected:
 
 x_ref = jax.new_ref(1.0)
@@ -103,7 +103,7 @@ def array_ref(init_val: Array) -> Ref:
 
 # -
 
-# `jax.freeze` is its antithesis, invalidating the given ref (so that accessing it
+# `jax.freeze` is its opposite, invalidating the given ref (so that accessing it
 # afterwards is an error) and producing its final value:
 
 def freeze(ref: Ref) -> Array:
