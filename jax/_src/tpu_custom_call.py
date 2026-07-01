@@ -183,6 +183,7 @@ class CustomCallBackendConfig:
   input_memory_spaces: tuple[MemorySpace | None, ...] | None
   skip_device_barrier: bool
   shape_invariant_numerics: bool
+  mosaic_debug_table: bytes | None = None
   tiling: Tiling | None = None  # Only used for SparseCore.
   opt_level: OptLevel | None = None  # Only used for SparseCore.
 
@@ -222,9 +223,19 @@ class CustomCallBackendConfig:
       bytecode_buffer = io.BytesIO()
       module.operation.write_bytecode(bytecode_buffer, desired_version=0)
       new_lowered_module_asm = bytecode_buffer.getvalue()
+      new_mosaic_debug_table = None
+      if self.mosaic_debug_table is not None:
+        module_debug = ir.Module.parse(self.mosaic_debug_table)
+        pipeline.run(module_debug.operation)
+        bytecode_buffer_debug = io.BytesIO()
+        module_debug.operation.write_bytecode(
+            bytecode_buffer_debug, desired_version=0
+        )
+        new_mosaic_debug_table = bytecode_buffer_debug.getvalue()
     return dataclasses.replace(
         self,
         lowered_module_asm=new_lowered_module_asm,
+        mosaic_debug_table=new_mosaic_debug_table,
         lowered_module_asm_version=version,
     )
 
@@ -235,6 +246,7 @@ class CustomCallBackendConfig:
     config.write(b'{"custom_call_config": {"body": "')
     config.write(base64.b64encode(self.lowered_module_asm))
     config.write(b'"')
+
     if self.has_communication:
       config.write(b', "has_communication": ')
       config.write(str(self.has_communication).lower().encode("ascii"))
@@ -426,13 +438,18 @@ def _tpu_custom_call_lowering(
         mlir.shape_tensor(ctx.module_context, mlir.eval_dynamic_shape(ctx, aval_out.shape))
         for aval_out in ctx.avals_out
     ])
-  extra_attributes: dict[str, ir.Attribute] | None = None
+  extra_attributes: dict[str, ir.Attribute] = {}
   # Add kernel_name and kernel_metadata as attributes to the custom call op.
   # This is because we do not want to pollute the backend_config with this
   # information.
   if kernel_name is not None:
-    extra_attributes = dict(kernel_name=ir.StringAttr.get(kernel_name))
+    extra_attributes["kernel_name"] = ir.StringAttr.get(kernel_name)
+  if config.mosaic_debug_table is not None:
+    extra_attributes["mosaic_debug_table"] = ir.StringAttr.get(
+        base64.b64encode(config.mosaic_debug_table).decode("ascii")
+    )
   # If the IR version we originally generated the ASM string with is not the
+
   # same as the one we should have used, we need to downgrade the ASM string.
   ir_version = get_ir_version(ctx)
   if (
@@ -451,9 +468,14 @@ def _tpu_custom_call_lowering(
       operand_layouts=_avals_to_layouts(ctx.avals_in),
       result_layouts=_avals_to_layouts(ctx.avals_out),
       result_shapes=result_shapes,
-      extra_attributes=extra_attributes,
+      extra_attributes=extra_attributes or None,
   )
   metadata_dict: dict[str, ir.Attribute] = {}
+  if config.mosaic_debug_table is not None:
+    metadata_dict["mosaic_debug_table"] = ir.StringAttr.get(
+        base64.b64encode(config.mosaic_debug_table).decode("ascii")
+    )
+
   if metadata is not None:
     metadata_dict["kernel_metadata"] = ir.StringAttr.get(
         _compact_json_object(**metadata)
@@ -474,32 +496,46 @@ def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
     ir_version: int | None = None,
-) -> tuple[bytes, tuple[bool, bool]]:
+) -> tuple[bytes, bytes, tuple[bool, bool]]:
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
   # We'll mutate the module, so clone it
   ctx = module.context
   with ctx, module.operation.location as _:
-    module_op = module.operation.clone(ip=False)
+    module_debug = module.operation.clone(ip=False)
+    module_canon = module.operation.clone(ip=False)
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
     target_version = (
         f"target-version={ir_version}" if ir_version is not None else ""
     )
     try:
-      pipeline = PassManager.parse(
+      pipeline_debug = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
       )
-      pipeline.run(module_op)
+      pipeline_debug.run(module_debug)
+      pipeline_canon = PassManager.parse(
+          "builtin.module(strip-debuginfo,mosaic-serde{serialize=true "
+          + target_version
+          + "})"
+      )
+      pipeline_canon.run(module_canon)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
-    bytecode_buffer = io.BytesIO()
-    module_op.write_bytecode(bytecode_buffer, desired_version=0)
-    asm = bytecode_buffer.getvalue()
-    return asm, (
-        has_communication,
-        has_custom_barrier,
+    bytecode_buffer_debug = io.BytesIO()
+    module_debug.write_bytecode(bytecode_buffer_debug, desired_version=0)
+    debug_asm = bytecode_buffer_debug.getvalue()
+    bytecode_buffer_canon = io.BytesIO()
+    module_canon.write_bytecode(bytecode_buffer_canon, desired_version=0)
+    canonical_asm = bytecode_buffer_canon.getvalue()
+    return (
+        canonical_asm,
+        debug_asm,
+        (
+            has_communication,
+            has_custom_barrier,
+        ),
     )
 
 
@@ -642,9 +678,13 @@ def _lower_to_custom_call_config(
   needs_hlo_passes = config.jax_mosaic_allow_hlo.value
   # TC kernels always require layout passes.
   needs_layout_passes = needs_layout_passes or not device_type
-  lowered_module_asm, (
-      has_communication,
-      has_custom_barrier,
+  (
+      lowered_module_asm,
+      mosaic_debug_table,
+      (
+          has_communication,
+          has_custom_barrier,
+      ),
   ) = _lower_mosaic_module_to_asm(
       module,
       ir_version=ir_version,
@@ -652,6 +692,7 @@ def _lower_to_custom_call_config(
   active_core_count = _get_active_core_count(module)
   return _lowered_to_custom_call_config(
       lowered_module_asm,
+      mosaic_debug_table=mosaic_debug_table,
       lowered_module_asm_version=ir_version,
       vmem_limit_bytes=vmem_limit_bytes,
       cost_estimate=cost_estimate,
@@ -681,6 +722,7 @@ def _lower_to_custom_call_config(
 def _lowered_to_custom_call_config(
     lowered_module_asm: bytes,
     *,
+    mosaic_debug_table: bytes | None = None,
     lowered_module_asm_version: int | None,
     vmem_limit_bytes: int | None,
     cost_estimate: CostEstimate | None,
@@ -749,6 +791,7 @@ def _lowered_to_custom_call_config(
       input_memory_spaces=input_memory_spaces,
       skip_device_barrier=skip_device_barrier,
       shape_invariant_numerics=shape_invariant_numerics,
+      mosaic_debug_table=mosaic_debug_table,
       tiling=tiling,
       opt_level=opt_level,
   )
