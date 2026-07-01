@@ -1171,9 +1171,9 @@ optree==0.19.1 ; python_full_version < '3.14' \
     --hash=sha256:f658fa46305b2bdccdc5bb2cb07818aeaef88a1085499deda5be48a0a58d2971 \
     --hash=sha256:fff5fd89a9b333d91a05a7ca2e66c8e6632d0bdbc94c1725a341b77001f09511
     # via keras
-optype[numpy]==0.17.1 \
-    --hash=sha256:07bfa32b795dea28fba8605a6288d36370d072f25183fb9c29b5a90f4b6f5638 \
-    --hash=sha256:82f2508ca31cb21e53a41648482d890fe1f5c6cb153720551af41161555adaf1
+optype[numpy]==0.18.0 \
+    --hash=sha256:91822ed8516e7a4f225ba53d30f291776c35f31553fb952d7cda98286679c5a6 \
+    --hash=sha256:ea10dee61b15ca299ed0d97025d362585c4dfc5481159bb999a1d0d414bbcb04
     # via scipy-stubs
 packaging==26.2 \
     --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e \
