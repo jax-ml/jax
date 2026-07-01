@@ -240,12 +240,12 @@ class DistributedMpmdTest(parameterized.TestCase):
         core_idx = jax.lax.axis_index('core')
         my_id = jax.lax.axis_index('x')
         vmem = jax.empty_ref(
-            jax.core.ShapedArray((size_per_core,), x.dtype),
-            memory_space=pltpu.VMEM,
+            jax.ShapeDtypeStruct((size_per_core,), x.dtype,
+                                 memory_space=pltpu.VMEM),
         )
         iota = jax.empty_ref(
-            jax.core.ShapedArray(size_per_core, jnp.int32),
-            memory_space=pltpu.VMEM,
+            jax.ShapeDtypeStruct((size_per_core,), jnp.int32,
+                                 memory_space=pltpu.VMEM),
         )
         assert (sc := pltpu.get_tpu_info().sparse_core) is not None
         @plsc.parallel_loop(0, size_per_core, step=sc.num_lanes)

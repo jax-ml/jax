@@ -2433,7 +2433,7 @@ class ShapedArray(AbstractValue):
 
   def __new__(cls, shape, dtype, weak_type=False, *, sharding=None,
               manual_axis_type: ManualAxisType = empty_mat,
-              memory_space: MemorySpace = MemorySpace.Device):
+              memory_space: Any = MemorySpace.Device):
     shape = canonicalize_shape(shape)
     dtype = _dtype_object(dtype)
     if sharding is None:
@@ -2893,8 +2893,16 @@ def _ref_impl(init_val, *, memory_space: Any, kind: Any):
   return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 # TODO(mattjj,dougalm): merge with ref_p
-def empty_ref(ty, memory_space=None):
+def empty_ref(ty):
   aval = shaped_abstractify(ty)
+  from jax._src.state.types import (  # pyrefly: ignore[missing-import]
+      AbstractRef
+  )
+  if isinstance(aval, AbstractRef):
+    raise ValueError(f"Cannot create an empty_ref of a Ref: {aval}")
+  memory_space = getattr(aval, 'memory_space', None)
+  if memory_space is MemorySpace.Device:
+    memory_space = None
   return empty_ref_p.bind(ty=aval, memory_space=memory_space)
 empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
@@ -2904,9 +2912,13 @@ empty_ref_p.is_high = lambda *, ty, memory_space: ty.is_high
 
 def _empty_ref_to_lojax(*, ty, memory_space):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+  def _set_mem_space(t):
+    if isinstance(t, ShapedArray) and memory_space is not None:
+      return t.update(memory_space=memory_space)
+    return t
   hival_of_refs = ty.raise_val(
-      *map(empty_ref, ty.lo_ty(), [memory_space] * len(ty.lo_ty())))
-  return Ref(AbstractRef(ty), hival_of_refs)
+      *map(empty_ref, map(_set_mem_space, ty.lo_ty())))
+  return Ref(AbstractRef(ty, memory_space=memory_space), hival_of_refs)
 empty_ref_p.to_lojax = _empty_ref_to_lojax
 
 
@@ -3852,7 +3864,7 @@ class ShapeDtypeStruct:
     sharding: (optional) a :class:`jax.Sharding` object
   """
   __slots__ = ["shape", "dtype", "_sharding", "_dll", "weak_type",
-               "manual_axis_type", "is_ref"]
+               "manual_axis_type", "is_ref", "memory_space"]
 
   shape: Any
   dtype: Any
@@ -3861,9 +3873,10 @@ class ShapeDtypeStruct:
   weak_type: Any
   manual_axis_type: Any
   is_ref: Any
+  memory_space: Any
 
   def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
-               manual_axis_type=None, is_ref=False):
+               manual_axis_type=None, is_ref=False, memory_space=MemorySpace.Device):
     object.__setattr__(self, 'shape', tuple(shape))
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
@@ -3894,6 +3907,7 @@ class ShapeDtypeStruct:
           f" {type(manual_axis_type)}")
     object.__setattr__(self, 'manual_axis_type', manual_axis_type)
     object.__setattr__(self, 'is_ref', is_ref)
+    object.__setattr__(self, 'memory_space', memory_space)
 
   def __setattr__(self, name, value):
     if hasattr(self, name):
@@ -3964,8 +3978,10 @@ class ShapeDtypeStruct:
     mat = (f", manual_axis_type={self.manual_axis_type}"
            if self.manual_axis_type else "")
     is_ref = f", is_ref={self.is_ref}" if self.is_ref else ""
+    ms = (f", memory_space={self.memory_space}"
+          if self.memory_space != MemorySpace.Device else "")
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{sh}{l}{wt}{mat}{is_ref})")
+            f"dtype={self.dtype.name}{sh}{l}{wt}{mat}{is_ref}{ms})")
 
   __str__ = __repr__
 
@@ -3974,13 +3990,13 @@ class ShapeDtypeStruct:
       return False
     else:
       return ((self.shape, self.dtype, self.sharding, self._dll,
-               self.weak_type, self.manual_axis_type, self.is_ref) ==
+               self.weak_type, self.manual_axis_type, self.is_ref, self.memory_space) ==
               (other.shape, other.dtype, other.sharding, other._dll,
-               other.weak_type, other.manual_axis_type, other.is_ref))
+               other.weak_type, other.manual_axis_type, other.is_ref, other.memory_space))
 
   def __hash__(self):
     return hash((self.shape, self.dtype, self.sharding, self._dll,
-                 self.weak_type, self.manual_axis_type, self.is_ref))
+                 self.weak_type, self.manual_axis_type, self.is_ref, self.memory_space))
 
   def update(self, **kwargs):
     if 'sharding' in kwargs:
@@ -4000,13 +4016,14 @@ class ShapeDtypeStruct:
         sharding=sharding,
         weak_type=kwargs.pop('weak_type', self.weak_type),
         manual_axis_type=kwargs.pop('manual_axis_type', self.manual_axis_type),
-        is_ref=kwargs.pop('is_ref', self.is_ref))
+        is_ref=kwargs.pop('is_ref', self.is_ref),
+        memory_space=kwargs.pop('memory_space', self.memory_space))
 
 
 def _sds_aval_mapping(x):
   aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-      weak_type=x.weak_type)
+      weak_type=x.weak_type, memory_space=x.memory_space)
   aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]

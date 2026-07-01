@@ -497,8 +497,8 @@ def _rewrite_jaxpr_for_lowering(
         refs.append(arg)
       elif core_type == tpu_core.CoreType.SC_SCALAR_SUBCORE:
         smem_ref = jax.empty_ref(
-            jax_core.ShapedArray((1,), arg.dtype),
-            memory_space=tpu_core.MemorySpace.SMEM,
+            jax_core.ShapedArray(
+                (1,), arg.dtype, memory_space=tpu_core.MemorySpace.SMEM)
         )
         sync_copy_srcs.append(arg)
         sync_copy_dsts.append(smem_ref)
@@ -506,8 +506,9 @@ def _rewrite_jaxpr_for_lowering(
       elif core_type == tpu_core.CoreType.SC_VECTOR_SUBCORE:
         num_lanes = sc_core.get_sparse_core_info().num_lanes
         vmem_ref = jax.empty_ref(
-            jax_core.ShapedArray((num_lanes,), arg.dtype),
-            memory_space=tpu_core.MemorySpace.VMEM,
+            jax_core.ShapedArray(
+                (num_lanes,), arg.dtype, memory_space=tpu_core.MemorySpace.VMEM
+            )
         )
         sync_copy_srcs.append(arg)
         sync_copy_dsts.append(vmem_ref.at[:1])
