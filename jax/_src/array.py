@@ -451,6 +451,8 @@ class ArrayImpl(basearray.Array):
           dl_device_type = DLDeviceType.kDLCUDA
       elif "rocm" in platform_version:
         dl_device_type = DLDeviceType.kDLROCM
+      elif "oneapi" in platform_version:
+        dl_device_type = DLDeviceType.kDLOneAPI
       else:
         raise BufferError("Unknown GPU platform for __dlpack__: "
                          f"{platform_version}")
