@@ -44,6 +44,11 @@ from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Squeezed as Squeezed
 from jax._src.pallas.core import squeezed as squeezed
 from jax._src.pallas.cost_estimate import estimate_cost as estimate_cost
+from jax._src.pallas.gpu_info import GpuVersion as GpuVersion
+from jax._src.pallas.gpu_info import get_gpu_info as get_gpu_info
+from jax._src.pallas.gpu_info import get_gpu_info_from_version as get_gpu_info_from_version
+from jax._src.pallas.gpu_info import is_gpu_device as is_gpu_device
+from jax._src.pallas.gpu_info import GpuInfo as GpuInfo
 from jax._src.pallas.helpers import empty as empty
 from jax._src.pallas.helpers import empty_like as empty_like
 from jax._src.pallas.helpers import empty_ref_like as empty_ref_like

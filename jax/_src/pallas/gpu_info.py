@@ -80,6 +80,11 @@ class GpuInfo:
   arch_name: str
   compute_capability: int
 
+  def get_arch_major_minor(self) -> tuple[int, int]:
+    return (
+        self.compute_capability // 10, self.compute_capability % 10
+    )
+
 
 def is_gpu_device() -> bool:
   return gpu_version_from_device_kind(get_device_kind()) is not None
