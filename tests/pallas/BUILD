@@ -935,15 +935,14 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "triton_gpu_info_test",
+    name = "gpu_info_test",
     srcs = [
-        "triton_gpu_info_test.py",
+        "gpu_info_test.py",
     ],
     enable_backends = ["gpu"],
     shard_count = 1,
     deps = [
         "//jax/experimental:pallas",
-        "//jax/experimental:pallas_triton",
     ] + py_deps([
         "absl/testing",
     ]),
