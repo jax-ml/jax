@@ -724,6 +724,8 @@ class SplitAxesDeviceMeshCreationTest(test_util.JaxTestCase):
     self.assertEqual(mesh_utils._get_prime_factors(4), [2, 2])
     self.assertEqual(mesh_utils._get_prime_factors(8), [2, 2, 2])
     self.assertEqual(mesh_utils._get_prime_factors(6), [2, 3])
+    self.assertEqual(mesh_utils._get_prime_factors(10), [2, 5])
+    self.assertEqual(mesh_utils._get_prime_factors(22), [2, 11])
     self.assertEqual(mesh_utils._get_prime_factors(16), [2, 2, 2, 2])
     self.assertEqual(mesh_utils._get_prime_factors(12), [2, 2, 3])
     self.assertEqual(mesh_utils._get_prime_factors(121), [11, 11])  # square
