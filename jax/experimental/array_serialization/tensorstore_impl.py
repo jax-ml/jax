@@ -17,7 +17,7 @@ from functools import partial
 import functools
 import os
 from os import PathLike
-import re
+import urllib.parse
 from typing import Any
 from collections.abc import Awaitable, Callable, Sequence
 import math
@@ -33,6 +33,8 @@ import numpy as np
 import tensorstore as ts
 
 _TS_ARRAY_DRIVER = "zarr3"
+
+_REMOTE_SCHEMES = ('gs', 's3')
 
 _TS_CONTEXT = ts.Context({
   'file_io_concurrency': {'limit': 128},
@@ -227,73 +229,57 @@ def _spec_has_metadata(tree):
   return 'metadata' in tree or any(
       _spec_has_metadata(subtree) for _, subtree in tree.items())
 
-def _get_kvstore_for_gcs(ckpt_path: str):
-  m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path)
-  if m is None:
-    raise ValueError('The ckpt_path should contain the bucket name and the '
-                      f'file path inside the bucket. Got: {ckpt_path}')
-  bucket = m.group(1)
-  path_without_bucket = m.group(2)
-  return {'driver': 'gcs', 'bucket': bucket, 'path': path_without_bucket}
+def parse_path(ckpt_path: str | PathLike[str]) -> tuple[str, str, str]:
+  """Parses a path into scheme, bucket, and normalized path component.
 
-def _get_kvstore_for_s3(ckpt_path: str):
-  m = re.fullmatch('^s3://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
-  if m is None:
-    raise ValueError('The ckpt_path should contain the bucket name and the '
-                      f'file path inside the bucket. Got: {ckpt_path}')
-  bucket = m.group(1)
-  path_without_bucket = m.group(2)
-  return {'driver': 's3', 'bucket': bucket, 'path': path_without_bucket}
+  Handles gs://, s3://, file:// and local paths. Recombines query and fragment
+  for local and file paths to avoid truncation.
+  """
+  ckpt_path = str(ckpt_path)
+  parsed = urllib.parse.urlparse(ckpt_path)
+  scheme, bucket, path = parsed.scheme, parsed.netloc, parsed.path
+
+  if parsed.query:
+    path += '?' + parsed.query
+  if parsed.fragment:
+    path += '#' + parsed.fragment
+  if scheme in ('gs', 's3'):  # GCS/S3 drivers expect path without leading slash
+    path = path.lstrip('/')
+  return scheme, bucket, ('/' if path == '/' else path.rstrip('/'))
 
 def get_tensorstore_spec(
     ckpt_path: str | PathLike[str], ocdbt: bool = True,
     process_idx: int | None = None, arr: jax.Array | None = None,
     driver: str = _TS_ARRAY_DRIVER) -> dict[str, Any]:
 
-  # Normalize path to exclude trailing '/'. In GCS path case, normpath will
-  # replace a the double '//' with a single '/' and we need to restore the
-  # filesystem type:// prefix for GCS (gs://) and S3 paths (s3://)
-  ckpt_path = os.path.normpath(str(ckpt_path))
-  ckpt_path = re.sub(r"^(gs|s3):/", r"\1://", ckpt_path)
+  scheme, bucket, path = parse_path(ckpt_path)
 
-  # in cases of multi-process writes, we need to write to a different location
-  # for each process and finally created a combined symlink to the final
-  # location, tensorstore can do this via ts.KvStore.experimental_copy_range_to
+  # In cases of multi-process writes, we need to write to a different location
+  # for each process and finally create a combined store at the final location.
   if process_idx is not None:
-    _parent, _name = os.path.split(ckpt_path)
-    ckpt_path = os.path.join(_parent, _PROCESS_DIR_FORMAT.format(process_idx),
-                             _name)
+    p, n = os.path.split(path)
+    path = os.path.join(
+        p, _PROCESS_DIR_FORMAT.format(process_idx), n).rstrip('/')
 
-  is_gcs_path = ckpt_path.startswith('gs://')
-  is_s3_path = ckpt_path.startswith('s3://')
   spec = {'driver': driver, 'kvstore': {}}
-
-  # use a combined OCDBT store, the actual path is the parent path
-  # the name (filename/last part of the path) is the key in the ocdbt kvstore
   entry_key = None
+  # Use a combined OCDBT store: the actual path is the parent path, and the
+  # name (filename/last part of the path) is the key in the ocdbt kvstore.
   if ocdbt:
-    (ckpt_path, entry_key), org_ckpt_path = os.path.split(ckpt_path), ckpt_path
-    if is_gcs_path:
-      m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path)
-    elif is_s3_path:
-      m = re.fullmatch('^s3://([^/]*)/(.*)$', ckpt_path)
-    else:
-      m = re.match("a", "a")  # make it True
-    if m is None:
-      raise ValueError('Using OCDBT requires the bucket name, the directory'
-                       ' name and the array name, your path is: '
-                       f'{org_ckpt_path}')
-
-  if is_gcs_path:
-    base_kvstore = _get_kvstore_for_gcs(ckpt_path)
-  elif is_s3_path:
-    base_kvstore = _get_kvstore_for_s3(ckpt_path)
-  else:
-    base_kvstore = {'driver': _DEFAULT_BASE_DRIVER, 'path': ckpt_path}
-
-  if ocdbt:
-    if not is_gcs_path and not is_s3_path and not os.path.isabs(ckpt_path):
+    path, entry_key = os.path.split(path)
+    if not entry_key:
+      raise ValueError("OCDBT requires a non-empty entry key (filename) at the"
+                       f" end of the path. Got: {ckpt_path}")
+    if not scheme and not os.path.isabs(path):
       raise ValueError(f'Checkpoint path should be absolute. Got {ckpt_path}')
+
+  if scheme in _REMOTE_SCHEMES:
+    base_kvstore = {'driver': 'gcs' if scheme == 'gs' else 's3',
+                    'bucket': bucket, 'path': path}
+  else:
+    base_kvstore = {'driver': _DEFAULT_BASE_DRIVER, 'path': path}
+
+  if ocdbt:
     spec['kvstore'] = {'driver': 'ocdbt', 'base': base_kvstore,
                        'path': entry_key}
   else:
