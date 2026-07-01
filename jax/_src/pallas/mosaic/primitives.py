@@ -106,7 +106,12 @@ mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
 
 def _bitcast_batch_rule(batched_args, batch_axes, *, ty):
-  return bitcast(*batched_args, ty=ty), batch_axes[0]
+  (arg,), (ax,) = batched_args, batch_axes
+  if arg.ndim < 2:
+    raise ValueError("Not implemented: bitcast 1D")
+  if ax == arg.ndim - 2:
+    raise ValueError("Batching bitcast on second minor axis is undefined.")
+  return bitcast(arg, ty=ty), ax
 
 batching.primitive_batchers[bitcast_p] = _bitcast_batch_rule
 
