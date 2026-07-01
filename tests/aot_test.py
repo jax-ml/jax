@@ -188,6 +188,22 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertLen(compiled._params.const_args, 1)
     self.assertIs(compiled._params.const_args[0], const2)
 
+  @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
+  def test_numpy_const_trace_then_lower(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37445
+    # Closing over a numpy array and calling .trace().lower() used to crash with
+    # AttributeError because const_args were passed to _resolve_in_shardings
+    # without first being converted to MetaTy via convert_to_metaty.
+    np_constant = np.array([2])
+
+    def f():
+      return jnp.sum(np_constant)
+
+    traced = jax.jit(f).trace()
+    lowered = traced.lower()
+    result = lowered.compile()()
+    self.assertArraysEqual(result, np.array(2))
+
   def test_with_constants_and_dce(self):
     const = jnp.arange(16.) + 42.  # A distinctive shape and value
 
