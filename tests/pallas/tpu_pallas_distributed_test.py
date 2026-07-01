@@ -149,7 +149,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       self.skipTest('Regular semaphore DMA requires TPU v6+')
 
     if core_type is pltpu.CoreType.TC:
-      mesh = pltpu.create_tensorcore_mesh('core')
+      mesh = pltpu.TensorCoreMesh(axis_name='core')
     elif core_type is pltpu.CoreType.SC_SCALAR_SUBCORE:
       if pltpu.get_tpu_info().sparse_core is None:
         self.skipTest('No SparseCores for core_type=sc')
@@ -515,7 +515,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         axis_types=(jax.sharding.AxisType.Auto,),
     )
     ddim = jax.device_count()
-    tcmesh = pltpu.create_tensorcore_mesh('core')
+    tcmesh = pltpu.TensorCoreMesh(axis_name='core')
     pspec = P('device', None)
     sharding = jax.sharding.NamedSharding(mesh, pspec)
 
@@ -619,7 +619,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       x_ref = jax.new_ref(x)
       y_ref = jax.new_ref(jnp.empty_like(x))
 
-      tcmesh = pltpu.create_tensorcore_mesh('core')
+      tcmesh = pltpu.TensorCoreMesh(axis_name='core')
       @pl.core_map(tcmesh)
       def _():
         num_cores = jax.lax.axis_size('core')

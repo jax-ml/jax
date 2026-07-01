@@ -200,7 +200,7 @@ def _fusible_matmul(
      ) = jax.tree.map(
          jax.new_ref, (x_values, y_values, z_values, scalar_prefetch, out))
 
-    @pl.core_map(pltpu.create_tensorcore_mesh('core'),
+    @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'),
                   interpret=interpret, debug=debug)
     def _():
       def _f(acc_ref, scalar_prefetch_smem_refs):
@@ -277,7 +277,7 @@ def _fusible_matmul(
     return pl.kernel(
         body,
         out_type=(z_out_type,),
-        mesh=pltpu.create_tensorcore_mesh('core'),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
         scratch_types=[
             pltpu.VMEM((bm, bn), jnp.float32),
             jax.tree.map(pltpu.SMEM.like, scalar_prefetch),

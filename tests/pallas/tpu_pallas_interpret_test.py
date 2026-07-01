@@ -877,7 +877,7 @@ class InterpretTest(jtu.JaxTestCase):
       use_context_manager=[False, True],
   )
   def test_core_map(self, num_cores, use_context_manager):
-    mesh = pltpu.create_tensorcore_mesh('x', num_cores=num_cores)
+    mesh = pltpu.TensorCoreMesh(axis_name='x', num_cores=num_cores)
     interpret = False if use_context_manager else pltpu.InterpretParams()
 
     @jax.jit
@@ -930,7 +930,7 @@ class InterpretTest(jtu.JaxTestCase):
 
   def test_core_map_exception_no_hang(self):
     @pl.kernel(
-        mesh=pltpu.create_tensorcore_mesh('core', num_cores=2),
+        mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=2),
         out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
         scratch_types=[pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.REGULAR],
@@ -961,7 +961,7 @@ class InterpretTest(jtu.JaxTestCase):
 
   @parameterized.parameters(pltpu.HBM, pl.ANY)
   def test_hbm_allocation_in_run_scoped_raises(self, hbm_memory_space):
-    mesh = pltpu.create_tensorcore_mesh('x', num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name='x', num_cores=1)
 
     @jax.jit
     def f(x):
@@ -1002,7 +1002,7 @@ class InterpretTest(jtu.JaxTestCase):
   def test_allocate_shared_buffer_in_core_map(
       self, first_core_to_copy, dma_execution_mode, hbm_memory_space
   ):
-    mesh = pltpu.create_tensorcore_mesh('x', num_cores=2)
+    mesh = pltpu.TensorCoreMesh(axis_name='x', num_cores=2)
     second_core_to_copy = 1 if first_core_to_copy == 0 else 0
 
     @jax.jit
@@ -1101,7 +1101,7 @@ class InterpretTest(jtu.JaxTestCase):
   def test_allocate_shared_buffer_in_core_map_with_race(
       self, slow_core, dma_execution_mode, hbm_memory_space
   ):
-    mesh = pltpu.create_tensorcore_mesh('x', num_cores=2)
+    mesh = pltpu.TensorCoreMesh(axis_name='x', num_cores=2)
 
     @jax.jit
     def f(x, y):

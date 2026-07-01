@@ -41,7 +41,7 @@ def _einshape_kernel(x, equation, sizes):
   fn = functools.partial(pltpu.einshape, equation, **sizes)
   out_ref = jax.new_ref(jnp.empty_like(jax.eval_shape(fn, x)))
 
-  @pl.core_map(mesh=pltpu.create_tensorcore_mesh(num_cores=1, axis_name="x"))
+  @pl.core_map(mesh=pltpu.TensorCoreMesh(axis_name="x", num_cores=1))
   def _():
     @pl.with_scoped(
         pltpu.VMEM(x_ref.shape, x_ref.dtype),
