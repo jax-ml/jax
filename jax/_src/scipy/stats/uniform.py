@@ -49,9 +49,12 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   """
   x, loc, scale = promote_args_inexact("uniform.logpdf", x, loc, scale)
   log_probs = lax.neg(lax.log(scale))
-  return jnp.where(jnp.logical_or(lax.gt(x, lax.add(loc, scale)),
-                                  lax.lt(x, loc)),
-                   -np.inf, log_probs)
+  return jnp.where(
+      jnp.isnan(x) | jnp.isnan(loc) | jnp.isnan(scale),
+      np.nan,
+      jnp.where(jnp.logical_or(lax.gt(x, lax.add(loc, scale)),
+                              lax.lt(x, loc)),
+                -np.inf, log_probs))
 
 
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -116,7 +119,10 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   conds = [lax.lt(x, loc), lax.gt(x, lax.add(loc, scale)), lax.ge(x, loc) & lax.le(x, lax.add(loc, scale))]
   vals = [zero, one, lax.div(lax.sub(x, loc), scale)]
 
-  return jnp.select(conds, vals)
+  return jnp.where(
+      jnp.isnan(x) | jnp.isnan(loc) | jnp.isnan(scale),
+      np.nan,
+      jnp.select(conds, vals))
 
 
 def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
