@@ -21,6 +21,10 @@ load(
     "py_deps",
     "pytype_test",
 )
+load(
+    "//third_party/tensorflow:tensorflow.bzl",
+    "if_google",
+)
 
 licenses(["notice"])
 
@@ -1990,6 +1994,17 @@ jax_multiplatform_test(
     deps = py_deps([
         "absl/testing",
         "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
+    name = "import_test",
+    srcs = ["import_test.py"],
+    deps = py_deps([
+        "absl/testing",
+        "numpy",
+    ]) + if_google([
+        "@xla//xla/service:hlo_pb2",
     ]),
 )
 
