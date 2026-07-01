@@ -786,8 +786,14 @@ def _launch(
 
 def _infer_arch() -> tuple[int, int]:
   device: Any = jax.sharding.get_abstract_mesh().abstract_device
+  default_device = jex_backend.get_default_device()
   if device is None:
-    device = jex_backend.get_default_device()
+    device = default_device
+  elif (
+      hasattr(default_device, "compute_capability")
+      and device.device_kind == default_device.device_kind
+  ):
+    device = default_device
   if not hasattr(device, "compute_capability"):
     return (9, 0)  # TODO(apaszke): Remove this once we figure out the export story.
   arch_name = device.compute_capability
