@@ -247,6 +247,8 @@ _OUT_SHARDING_CASES = [
     ('triangular', lambda key, n, s: random.triangular(key, left=0., mode=0.5, right=1., shape=(n,), out_sharding=s)),
     ('uniform', lambda key, n, s: random.uniform(key, shape=(n,), out_sharding=s)),
     ('gamma', lambda key, n, s: random.gamma(key, a=2.0, shape=(n,), out_sharding=s)),
+    ('vonmises', lambda key, n, s: random.vonmises(key, kappa=1.0, shape=(n,), out_sharding=s)),
+    ('vonmises_fisher', lambda key, n, s: random.vonmises_fisher(key, mean=jnp.array([1.0, 0.0, 0.0]), kappa=1.0, shape=(n,), out_sharding=s)),
     ('wald', lambda key, n, s: random.wald(key, mean=1.0, shape=(n,), out_sharding=s)),
 ]
 
@@ -290,6 +292,8 @@ _DTYPE_CASES = [
     ('triangular', float, lambda key, dtype: random.triangular(key, np.float16(0.), np.float16(0.5), np.float16(1.), shape=(10,), dtype=dtype)),
     ('truncated_normal', float, lambda key, dtype: random.truncated_normal(key, lower=np.float16(-2.), upper=np.float16(2.), shape=(10,), dtype=dtype)),
     ('uniform', float, lambda key, dtype: random.uniform(key, shape=(10,), minval=np.float16(0.), maxval=np.float16(1.), dtype=dtype)),
+    ('vonmises', float, lambda key, dtype: random.vonmises(key, np.float16(1.0), shape=(10,), dtype=dtype)),
+    ('vonmises_fisher', float, lambda key, dtype: random.vonmises_fisher(key, mean=jnp.array([1.0, 0.0, 0.0], dtype=np.float16), kappa=np.float16(1.0), shape=(10,), dtype=dtype)),
     ('wald', float, lambda key, dtype: random.wald(key, np.float16(1.0), shape=(10,), dtype=dtype)),
     ('weibull_min', float, lambda key, dtype: random.weibull_min(key, np.float16(1.0), np.float16(1.0), shape=(10,), dtype=dtype)),
 ]
@@ -340,6 +344,8 @@ _SHAPE_CASES = [
     ('triangular', lambda key, shape: random.triangular(key, jnp.zeros(shape), jnp.full(shape, 0.5), jnp.ones(shape), shape=shape)),
     ('truncated_normal', lambda key, shape: random.truncated_normal(key, lower=jnp.full(shape, -2.), upper=jnp.full(shape, 2.), shape=shape)),
     ('uniform', lambda key, shape: random.uniform(key, shape=shape, minval=jnp.zeros(shape), maxval=jnp.ones(shape))),
+    ('vonmises', lambda key, shape: random.vonmises(key, jnp.ones(shape), shape=shape)),
+    # vonmises_fisher output shape is equal to (shape + (n_dim,)), so it will fail this test.
     ('wald', lambda key, shape: random.wald(key, jnp.ones(shape), shape=shape)),
     ('weibull_min', lambda key, shape: random.weibull_min(key, jnp.ones(shape), jnp.ones(shape), shape=shape)),
 ]
@@ -1388,6 +1394,61 @@ class DistributionsTest(RandomTestBase):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.rayleigh(scale=scale).cdf)
+
+  @jtu.sample_product(
+      kappa = [1e-6, 1e-4, 1e-2, 1e0, 1e2, 1e4, 1e6],
+      dtype = jtu.dtypes.floating)
+  def testVonMises(self, kappa, dtype):
+    key = lambda: self.make_key(0)
+    rand = lambda key: random.vonmises(key, kappa, shape=(10000,), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.vonmises(kappa).cdf)
+
+  @jtu.sample_product(
+      kappa = [1e-6, 1e-4, 1e-2, 1e0, 1e2, 1e4, 1e6],
+      ndim = [1, 2, 3],
+      dtype = jtu.dtypes.floating)
+  def testVonMisesFisher(self, kappa, ndim, dtype):
+    r = self.rng()
+    key = lambda: self.make_key(0)
+    mu = 2.0 * r.randn(ndim) - 1.0
+    mu = (mu / jnp.maximum(jnp.linalg.norm(mu), 1e-8)).astype(dtype)
+    rand = lambda key: random.vonmises_fisher(key, mean=mu, kappa=kappa, shape=(10000,), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      # Check that all samples are on unit sphere
+      assert jnp.isfinite(samples).all(), f"Non-finite samples found with mu: {mu}"
+      self.assertAllClose(jnp.linalg.norm(samples, axis=-1), jnp.ones(samples.shape[:-1], dtype=dtype), rtol=1e-4)
+      if ndim == 1:
+        # For 1D, crudely check that mean is approximately tanh(kappa)
+        self.assertAllClose(jnp.mean(samples), jnp.mean(mu * jnp.tanh(kappa)), rtol=1e-2, atol=1e-2)
+      elif ndim == 2:
+        # For 2D, check the distribution matches the von Mises distribution
+        sample_angles = jnp.arctan2(samples[:, 1], samples[:, 0])
+        mu_angle = jnp.arctan2(mu[1], mu[0])
+        # Recenter around mu_angle and re-fmod
+        angles_recentered = sample_angles - mu_angle
+        angles_recentered = (angles_recentered - (jnp.ceil((angles_recentered + jnp.pi) / (2.0*jnp.pi) - 1.0) * 2.0*jnp.pi))
+        self.assertAllClose(jnp.mean(angles_recentered), jnp.array(0.0, dtype=dtype), rtol=1e-1, atol=1e-1)
+        self._CheckKolmogorovSmirnovCDF(angles_recentered, scipy.stats.vonmises(kappa).cdf)
+      elif ndim == 3:
+        # For 3D, crudely check the mean is close to theoretical value
+        if kappa >= 1e0:
+          # For smaller kappa values, the variance of the mean is too high
+          self.assertAllClose(jnp.mean(samples, axis=0) / jnp.linalg.norm(jnp.mean(samples, axis=0)), mu, rtol=1e-1, atol=1e-1)
+        if kappa < 1e3:
+          # iv overflows for large kappa values
+          theoretical_mean_length = scipy.special.iv(1.5, kappa) / scipy.special.iv(0.5, kappa)
+          self.assertAllClose(jnp.linalg.norm(jnp.mean(samples, axis=0)), theoretical_mean_length, rtol=1e-1, atol=1e-1)
 
   @jtu.sample_product(
       mean= [0.2, 1., 2., 10. ,100.],
