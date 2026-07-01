@@ -99,6 +99,15 @@ def get_latest_profile_version(backend: xc.Client) -> int:
   return -1
 
 
+def _append_disabled_hlo_passes(
+    disabled_passes: str, pass_name: str
+) -> str:
+  passes = [p.strip() for p in disabled_passes.split(",") if p.strip()]
+  if pass_name not in passes:
+    passes.append(pass_name)
+  return ",".join(passes)
+
+
 def _walk_operations(op, k):
   k -= 1
   if k < 0:
@@ -227,7 +236,8 @@ def get_compile_options(
     debug_options.xla_test_all_input_layouts = False
 
   if not config.enable_remat_opt_pass.value:
-    debug_options.xla_disable_hlo_passes = "rematerialization"
+    debug_options.xla_disable_hlo_passes = _append_disabled_hlo_passes(
+        debug_options.xla_disable_hlo_passes, "rematerialization")
 
   # XLA-AutoFDO profile version: precedence order is:
   # 1. Whatever --jax_xla_profile_version is set to.
