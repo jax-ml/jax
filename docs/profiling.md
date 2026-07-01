@@ -268,7 +268,23 @@ your code.
 The `start_trace` method accepts an optional `profiler_options` parameter, which
 allows for fine-grained control over the profiler's behavior. This parameter
 should be an instance of `jax.profiler.ProfileOptions`.
-<!-- TODO: Add API documentation for jax.profiler.ProfileOptions -->
+
+#### `ProfileOptions` API Reference
+
+| Attribute | Type | Description |
+| :--- | :--- | :--- |
+| `host_tracer_level` | `int` | Sets the trace level for host (CPU) activities. (0: Disabled, 1: TraceMe only, 2: High-level XLA ops (default), 3: Verbose details). |
+| `device_tracer_level` | `int` | Controls whether device tracing is enabled. (0: Disabled, 1: Enabled (default)). |
+| `python_tracer_level` | `int` | Controls whether Python function call tracing is enabled. (0: Disabled (default), 1: Enabled). |
+| `include_dataset_ops` | `bool` | Whether to include dataset operations in the trace. (Default: True). |
+| `fp_exceptions` | `bool` | Whether to collect floating-point exception information. (Default: False). |
+| `collect_device_traces` | `bool` | Whether to collect device-side traces. (Default: True). |
+| `collect_stack_traces` | `bool` | Whether to collect Python stack traces for each event. (Default: False). |
+| `show_idle_op_graph` | `bool` | Whether to show idle operations in the HLO graph viewer. (Default: False). |
+| `collect_hlo_proto` | `bool` | Whether to collect HLO proto for the optimized graph. (Default: True). |
+| `collect_full_hlo_proto`| `bool` | Whether to collect the full HLO proto including all metadata. (Default: False). |
+| `collect_hlo_as_html` | `bool` | Whether to generate an HTML representation of the HLO. (Default: False). |
+| `advanced_configuration`| `dict` | A dictionary of backend-specific advanced options (e.g., TPU or GPU specific flags). |
 
 For example, to disable all python and host traces:
 
