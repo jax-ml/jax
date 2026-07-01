@@ -256,6 +256,25 @@ class EinshapeTPUKernelTest(EinshapeTest):
         and jtu.is_device_tpu(7)):
       self.skipTest("test_hypothesis_einshape is failing on TPU 7x")
 
+  @parameterized.parameters(
+      # Non-tile preserving merge.
+      ((2, 4, 4), "int32", "abc->(ab)c", {}),
+      # Non-tile preserving split.
+      ((8, 4), "float32", "(ab)c->abc", {"b": 2}),
+      # Non-tile preserving transpose.
+      ((8, 8, 4), "int32", "abc->bac", {}),
+      # Preserving transpose, non-preserving merge.
+      ((2, 3, 8, 1, 4), "float32", "abcde->ba(cd)e", {}),
+      # Would be preserving merge in f32, but not in bf16.
+      ((2, 8, 4), "bfloat16", "abc->(ab)c", {}),
+      # Would be preserving split in f32, but not in bf16.
+      ((16, 4), "bfloat16", "(ab)c->abc", {"b": 8}),
+  )
+  def test_error_not_tile_preserving(self, shape, dtype, equation, sizes):
+    x = jnp.zeros(shape, dtype=dtype)
+    with self.assertRaisesRegex(ValueError, "Tile preserving check failed"):
+      self.impl(equation, x, assert_is_tile_preserving=True, **sizes)
+
 
 if __name__ == "__main__":
   absltest.main()

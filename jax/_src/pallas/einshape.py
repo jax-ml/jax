@@ -545,11 +545,26 @@ def _apply_split(
   return result
 
 
+def _packed_tiling(ty: jax_core.AbstractValue) -> tuple[int | None, ...]:
+  """Computes how many packed values fit inside one TPU tile."""
+  tiling = tpu_info.infer_tiling(ty)
+  if not hasattr(ty, "dtype"):
+    return tiling
+  assert tiling is not None
+  if ty.dtype == jnp.dtype("int4"):
+    packing = 8
+  else:
+    packing = 4 // ty.dtype.itemsize
+  *leading_dims, t1, t2 = tiling
+  assert isinstance(t1, int)
+  assert isinstance(t2, int)
+  return *leading_dims, t1 * packing, t2
+
+
 def _tile_preserving_einshape_kernel(
     equation: str, x: jax_typing.Array, **size_vars: int
 ):
-  tiling = tpu_info.infer_tiling(jax_core.typeof(x))
-  assert tiling is not None
+  tiling = _packed_tiling(jax_core.typeof(x))
   t1, t2 = tiling[-2:]
 
   assert isinstance(t1, int)
@@ -631,9 +646,7 @@ def _einshape_kernel(
     **size_vars: int,
 ):
   transforms = get_einshape_transforms(equation, x.shape, **dict(size_vars))
-  if len(transforms) <= 1:
-    return _default_einshape_kernel(equation, x, **size_vars)
-  tiling = tpu_info.infer_tiling(jax_core.ShapedArray(x.shape, x.dtype))
+  tiling = _packed_tiling(jax_core.ShapedArray(x.shape, x.dtype))
   if _is_tile_preserving(x.shape, transforms, tiling[-2:]):  # pyrefly: ignore[bad-argument-type]
     return _tile_preserving_einshape_kernel(equation, x, **size_vars)
   elif assert_is_tile_preserving:
