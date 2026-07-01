@@ -453,7 +453,7 @@ class AbstractDevice:
 class AbstractMesh(BaseMesh):
   """AbstractMesh contains only axis names and axis sizes.
 
-  It does not contain concrete devices compared to `jax.sharding.Mesh`. You
+  It does not contain concrete devices compared to :class:`jax.sharding.Mesh`. You
   should use this as an input to the sharding passed to with_sharding_constraint
   and mesh passed to shard_map to avoid tracing and lowering cache misses when
   your mesh shape and axis names stay the same but the devices change.
