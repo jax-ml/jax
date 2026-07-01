@@ -5248,7 +5248,7 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       i = idx1_ref[...]
       j = idx2_ref[...]
       tmem_slice = tmem_ref.at[i, j]
-      dst_ref[...] = plgpu.async_load_tmem(tmem_slice, layout=reg_layout)
+      dst_ref[...] = plgpu.async_load_tmem(tmem_slice)
 
     idx1, idx2 = 1, 2
     src = jax.random.uniform(jax.random.key(42), shape, dtype, -1, 1)
