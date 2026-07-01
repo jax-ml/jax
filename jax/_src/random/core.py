@@ -2869,6 +2869,141 @@ def _rayleigh(key, scale, shape, dtype) -> Array:
   ray = lax.mul(scale, sqrt_u)
   return ray
 
+def vonmises(key: ArrayLike,
+             kappa: RealArray = 1.0,
+             shape: Shape | None = None,
+             dtype: DTypeLikeFloat | None = None,
+             *,
+             out_sharding: NamedSharding | P | None = None) -> Array:
+  r""" Sample 0-mean von Mises random values with given shape and float dtype.
+
+  The values are distributed according to the probability density function:
+
+  .. math::
+      f(x) = \frac{1}{2*\pi I_0(\kappa)}\exp\left(\kappa\cos(x)\right)
+
+  on the domain :math:`\pi > x > -\pi`, where :math:`\I_0(x)` is the
+  zero-th order modified Bessel function of the first kind.
+
+  Args:
+    key: a PRNG key used as the random key.
+    kappa: a float or array of floats broadcast-compatible with ``shape`` representing
+      the concentration parameter of the distribution. Default 1.
+    shape: optional, a tuple of nonnegative integers specifying the result
+      shape. The default (None) produces a result shape equal to ``()``.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
+
+  Returns:
+    A random array with the specified dtype and with shape given by ``shape``.
+  """
+  key, _ = _check_prng_key("vonmises", key)
+  dtype = dtypes.check_and_canonicalize_user_dtype(float if dtype is None else dtype)
+  if not dtypes.issubdtype(dtype, np.inexact):
+    raise ValueError(f"dtype argument to `vonmises` must be a float or complex dtype, "
+                     f"got {dtype}")
+  shape = _check_broadcast_shapes("vonmises", shape, kappa)
+  out_sharding = canonicalize_sharding(out_sharding, "vonmises")
+  _check_all_safe_to_cast("vonmises", dtype, kappa)
+  return maybe_auto_axes(_vonmises, out_sharding, shape=shape, dtype=dtype)(key, kappa)
+
+@jit(static_argnums=(2, 3))
+def _vonmises(key, kappa, shape, dtype) -> Array:
+  """Sample from von Mises distribution with mean angle 0 and concentration kappa
+
+  Jax transcription of Numpy's implementation of von Mises sampling, which uses Best and Fisher's algorithm
+  """
+  kappa = lax.convert_element_type(kappa, dtype)
+  kappa = jnp.broadcast_to(kappa, shape).flatten()
+
+  with np.errstate(over="ignore"):
+    kappa_large = jnp.array(1e5).astype(dtype)
+    kappa_small = jnp.array(1e-5).astype(dtype)
+    kappa_mid_small = jnp.array(1e-3).astype(dtype)
+
+  def small_kappa_uniform(key: Array, kappa: Array):
+    """For small kappa, the distribution is approximately uniform on [-pi, pi]"""
+    return uniform(
+      key, shape=np.shape(kappa), dtype=dtype, minval=-np.pi, maxval=np.pi
+    )
+
+  def large_kappa_normal(key: Array, kappa: Array):
+    """For large kappa, the distribution is approximately normal with mean 0 and variance 1/kappa"""
+    safe_kappa = jnp.where(kappa < kappa_large, 1.0, kappa)
+    return jnp.clip(
+      normal(key, shape=np.shape(kappa), dtype=dtype) / jnp.sqrt(safe_kappa),
+      -np.pi,
+      np.pi,
+    )
+
+  def mid_kappa_sample(key: Array, kappa: Array):
+
+    safe_kappa = jnp.where(kappa < kappa_small, 1.0, kappa)
+
+    def s_val_from_kappa(kappa: Array):
+      safe_kappa = jnp.where(kappa < kappa_mid_small, 1.0, kappa)
+      r_val = 1 + jnp.sqrt(1 + 4 * safe_kappa * safe_kappa)
+      rho_val = (r_val - jnp.sqrt(2 * r_val)) / (2 * safe_kappa)
+      return (1 + rho_val * rho_val) / (2 * rho_val)
+    # Use second order Taylor expansion for small kappa
+    s_val = lax.select(
+      safe_kappa < kappa_mid_small, 1.0 / safe_kappa + safe_kappa, s_val_from_kappa(safe_kappa)
+    )
+
+    def body_fn(state):
+      iter_idx, key, accepted, w_out = state
+      new_key, zkey, vkey = _split(fold_in(key, iter_idx), 3)
+      z_val = jnp.cos(
+        np.pi * uniform(zkey, shape=np.shape(kappa), dtype=dtype)
+      )
+      w_val = (1 + s_val * z_val) / (s_val + z_val)
+      y_val = safe_kappa * (s_val - w_val)
+      v_val = uniform(vkey, shape=np.shape(kappa), dtype=dtype)
+
+      cond1 = y_val * (2.0 - y_val) - v_val >= 0
+      cond2 = jnp.log(y_val / v_val) + 1 - y_val >= 0
+      accept = cond1 | cond2
+      w_out = lax.select(accept, w_val, w_out)
+      accepted |= accept
+      return (iter_idx+1, new_key, accepted, w_out)
+
+    def cond_fn(state):
+      accepted = state[-2]
+      return (~accepted).any()
+
+    _, key_final, _, w_final = lax_control_flow.while_loop(
+      cond_fn,
+      body_fn,
+      # Set so cond_fn returns True for the first iteration if kappa in range
+      # jit traces all branches regardless of kappa
+      (0, key,
+       (safe_kappa < kappa_small) | (safe_kappa > kappa_large),
+       jnp.zeros_like(kappa)),
+    )
+
+    uniform_sign = rademacher(key_final, shape=np.shape(kappa), dtype=dtype)
+    return uniform_sign * jnp.arccos(jnp.clip(w_final, -1.0, 1.0))
+
+  samples = lax.select(
+    kappa < kappa_small,
+    small_kappa_uniform(key, kappa),
+    lax.select(
+      kappa > kappa_large,
+      large_kappa_normal(key, kappa),
+      mid_kappa_sample(key, kappa)
+    )
+  )
+
+  return jnp.reshape(samples, shape)
+
 def wald(key: ArrayLike,
          mean: RealArray,
          shape: Shape | None = None,
