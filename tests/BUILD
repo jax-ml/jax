@@ -2114,7 +2114,9 @@ jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
     tags = ["multiaccelerator"],
-    deps = py_deps([
+    deps = [
+        "//jax/experimental:layout",
+    ] + py_deps([
         "absl/testing",
         "numpy",
     ]),

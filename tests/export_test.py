@@ -25,27 +25,25 @@ import unittest
 
 from absl.testing import absltest
 import jax
+from jax import export
 from jax import lax
 from jax import numpy as jnp
-from jax import export
-from jax._src.shard_map import shard_map
-from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P,
-                          reshard)
-from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 from jax import tree_util
-
-from jax._src import config
 from jax._src import compute_on
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import lib
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src import lib
 from jax._src.lib.mlir.dialects import hlo
-
+from jax._src.shard_map import shard_map
+from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
+from jax.experimental.layout import Format, Layout, with_layout_constraint
+from jax.sharding import (Mesh, NamedSharding, PartitionSpec as P, reshard)
 import numpy as np
 
 # ruff: noqa: F401
@@ -2475,6 +2473,44 @@ class JaxExportTest(jtu.JaxTestCase):
     out = exp.call(key)
     self.assertAllClose(jax.random.key_data(split_key(key)),
                         jax.random.key_data(out))
+
+  def test_export_with_layout_constraint(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Only works for TPU")
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P("x"))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = Layout(major_to_minor=arr.format.layout.major_to_minor[::-1])
+
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      y = with_layout_constraint(y, custom_dll)
+      return y * 2
+
+    f = jax.jit(f)
+    out = f(arr)
+    self.assertEqual(
+        out.format.layout.major_to_minor, custom_dll.major_to_minor
+    )
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn("LayoutConstraint", lowered_text)
+
+    # Test export for this layout constraint custom call. Should always work
+    # without "tiling" in the layout.
+    export.export(
+        f,
+        disabled_checks=[
+            export.DisabledSafetyCheck.custom_call("LayoutConstraint")
+        ],
+    )(arr)
 
 
 if __name__ == "__main__":

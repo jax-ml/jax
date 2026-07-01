@@ -479,7 +479,7 @@ def stablehlo_version_at_least(required_version: str) -> bool:
     return True
   return hlo.get_smaller_version(
       ".".join(map(str, plugin_version)), required_version
-  ) == plugin_version
+  ) == required_version
 
 def get_tpu_version() -> int:
   if device_under_test() != "tpu":

@@ -683,6 +683,44 @@ class LayoutTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('LayoutConstraint', lowered_text)
 
+  def test_with_layout_constraint_with_tiling(self):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+
+    if not jtu.stablehlo_version_at_least('1.18.0'):
+      self.skipTest('Requires stablehlo 1.18.0 or higher')
+
+    shape = (64, 256)
+    np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
+    arr = jax.device_put(np_inp)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = Layout(
+        major_to_minor=arr.format.layout.major_to_minor[::-1],
+        tiling=((16, 128), (2, 1)),
+    )
+
+    @jax.jit
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      return with_layout_constraint(y, custom_dll) * 2
+
+    out = f(arr)
+    self.assertEqual(
+        out.format.layout.major_to_minor, custom_dll.major_to_minor
+    )
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+    self.assertIn(
+        'result_tilings = [[dense<[16, 128]> : tensor<2xindex>, dense<[2, 1]> :'
+        ' tensor<2xindex>]]',
+        lowered_text,
+    )
+
   def test_with_layout_constraint_vmap(self):
     if not jtu.test_device_matches(['tpu']):
       self.skipTest('Only works for TPU')
