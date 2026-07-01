@@ -4766,3 +4766,69 @@ def _jaxpr_call_lowering_rule(
   return lower_jaxpr_to_mosaic_gpu(
       new_module_ctx, ctx.launch_ctx, jaxpr, args
   )
+
+
+@register_lowering_rule(lax.tile_p, mgpu.LoweringSemantics.Lane)
+def _tile_lowering_rule(
+  ctx: LoweringRuleContext,
+  x: mgpu.FragmentedArray,
+  reps
+):
+  # Similar to lax _tile_lower: reshape and broadcast_in_dim
+  [x_aval] = ctx.avals_in
+  [y_aval] = ctx.avals_out
+  expand_shape = tuple(j for i in x_aval.shape for j in [1, i])
+  broadcast_shape = tuple(k for pair in zip(reps, x_aval.shape) for k in pair)
+  x = _ensure_fa(x, x_aval.dtype)
+  if not isinstance(x.layout, (mgpu.WGStridedFragLayout, mgpu.WGSplatFragLayout)):
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+
+  # reshape: (1, d0, 1, d1, ...)
+  x = x.reshape(expand_shape)
+
+  if isinstance(x.layout, mgpu.WGStridedFragLayout):
+    new_layout = mgpu.WGStridedFragLayout(
+        shape=broadcast_shape, vec_size=x.layout.vec_size
+    )
+  elif isinstance(x.layout, mgpu.WGSplatFragLayout):
+    new_layout = mgpu.WGSplatFragLayout(broadcast_shape)
+  else:
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+
+  # broadcast: (n0, d0, n1, d1, ...)
+  x = x.broadcast_in_dim(
+      broadcast_shape,
+      source_dimensions=tuple(range(2 * x_aval.ndim)),
+      layout=new_layout,
+  )
+
+  # reshape: (n0 * d0, n1 * d1, ...)
+  return x.reshape(y_aval.shape)
+
+
+@register_lowering_rule(lax.tile_p, mgpu.LoweringSemantics.Warpgroup)
+def _tile_lowering_rule_wg(
+  ctx: LoweringRuleContext,
+  x,
+  reps
+):
+  # Similar to lax _tile_lower: reshape and broadcast_in_dim
+  [x_aval] = ctx.avals_in
+  [y_aval] = ctx.avals_out
+  expand_shape = tuple(j for i in x_aval.shape for j in [1, i])
+  broadcast_shape = tuple(k for pair in zip(reps, x_aval.shape) for k in pair)
+  x = _ensure_ir_value(x, x_aval.dtype)
+
+  # reshape: (1, d0, 1, d1, ...)
+  mlir_type = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
+  result_ty = ir.VectorType.get(expand_shape, mlir_type)
+  x = vector_dialect.shape_cast(result_ty, x)
+
+  # broadcast: (n0, d0, n1, d1, ...)
+  result_ty = ir.VectorType.get(broadcast_shape, mlir_type)
+  broadcast_dimensions = tuple(range(2 * x_aval.ndim))
+  x = mgpu.dialect.broadcast_in_dim(result_ty, x, broadcast_dimensions)
+
+  # reshape: (n0 * d0, n1 * d1, ...)
+  result_ty = ir.VectorType.get(y_aval.shape, mlir_type)
+  return vector_dialect.shape_cast(result_ty, x)
