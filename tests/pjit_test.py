@@ -129,6 +129,23 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Repro for a bug on addressable_shards aval
     _ = repr(actual.addressable_shards)
 
+  def test_jit_cache_leaked_tracer(self):
+    foo = []
+
+    @jax.jit
+    def brk(token):
+      [x] = foo
+      return jnp.concatenate([token, x])
+
+    def fn(x):
+      foo.append(x)
+      out = brk(x)
+      foo.clear()
+      return out
+
+    jax.eval_shape(fn, jnp.array([1.0]))
+    fn(jnp.array([1.0]))  # Should not raise UnexpectedTracerError
+
   @jtu.with_mesh([('x', 2)])
   def testBasic1D(self):
     @partial(pjit,
