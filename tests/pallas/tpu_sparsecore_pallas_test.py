@@ -2157,7 +2157,11 @@ class VectorSubcoreTest(PallasSCTest):
     @self.vector_subcore_kernel(out_shape=x)
     def kernel(x_ref, indices_ref, out_ref):
       out_ref[...] = jnp.take_along_axis(
-          x_ref[...], indices_ref[...], axis=dim, mode="promise_in_bounds"
+          x_ref[...],
+          indices_ref[...],
+          axis=dim,
+          mode="promise_in_bounds",
+          wrap_negative_indices=False,
       )
 
     np.testing.assert_array_equal(
