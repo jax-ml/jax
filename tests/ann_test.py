@@ -67,6 +67,9 @@ class AnnTest(jtu.JaxTestCase):
     recall=[0.95],
   )
   def test_approx_max_k(self, qy_shape, db_shape, dtype, k, recall):
+    # TODO(magaonka-amd): re-enable once issue is fixed.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipping due to flakiness in infra nodes in ROCm 7.2.0.")
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
     db = rng(db_shape, dtype)
@@ -85,6 +88,9 @@ class AnnTest(jtu.JaxTestCase):
     recall=[0.95],
   )
   def test_approx_min_k(self, qy_shape, db_shape, dtype, k, recall):
+    # TODO(magaonka-amd): re-enable once issue is fixed.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipping due to flakiness in infra nodes in ROCm 7.2.0.")
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
     db = rng(db_shape, dtype)
