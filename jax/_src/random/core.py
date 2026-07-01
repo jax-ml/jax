@@ -1830,7 +1830,12 @@ def _poisson(key, lam, shape, dtype) -> Array:
     _poisson_knuth(key, lam_knuth, shape, dtype, max_iters),
     _poisson_rejection(key, lam_rejection, shape, dtype, max_iters),
   )
-  return lax.select(lam == 0, jnp.zeros_like(result), result)
+  result = lax.select(lam == 0, jnp.zeros_like(result), result)
+  # lam=inf produces undefined behavior in XLA when cast to int.
+  # Saturate to dtype max, analogous to finite huge lam -> INT64_MAX.
+  isinf_lam = lax.isinf(lam) & (lam > 0)
+  return lax.select(isinf_lam, jnp.full_like(result, dtypes.iinfo(dtype).max),
+                    result)
 
 
 def poisson(key: ArrayLike,
