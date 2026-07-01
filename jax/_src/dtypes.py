@@ -1074,12 +1074,18 @@ def lattice_result_type(*args: Any) -> tuple[DType, bool]:
   return out_dtype, (out_dtype != bool_) and out_weak_type
 
 @overload
+
+
 def result_type(*args: Any, return_weak_type_flag: Literal[True]) -> tuple[DType, bool]: ...
 
 @overload
+
+
 def result_type(*args: Any, return_weak_type_flag: Literal[False] = False) -> DType: ...
 
 @overload
+
+
 def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tuple[DType, bool]: ...
 
 @export
@@ -1173,11 +1179,18 @@ class PrimalTangentDType(ExtendedDType):
   def __repr__(self): return self.name
   @property
   def _rules(self):  # pyrefly: ignore[bad-override]
+    import jax
+
     return types.SimpleNamespace(
-      physical_element_aval=
-      lambda dtype: types.SimpleNamespace(shape=(), dtype=self.primal_dtype),
-      tangent_dtype=lambda dtype: self.tangent_dtype,
-      allow_conversion=True)
+        physical_element_aval=lambda dtype: types.SimpleNamespace(
+            shape=(), dtype=self.primal_dtype
+        ),
+        tangent_dtype=lambda dtype: self.tangent_dtype,
+        allow_conversion=True,
+        zero=lambda dtype: jax.lax.convert_element_type(  # pytype: disable=module-attr
+            np.array(0, dtype.primal_dtype), dtype
+        ),
+    )
 
 def primal_tangent_dtype(primal_dtype, tangent_dtype,
                          name: str | None = None) -> ExtendedDType:
