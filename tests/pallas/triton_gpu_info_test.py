@@ -12,18 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.pallas.triton import gpu_info
-from jax.experimental.pallas import triton as plgpu
+
+if sys.platform != "win32":
+  # pylint: disable=g-import-not-at-top
+  from jax.experimental.pallas import triton as plgpu
+  GpuVersion = plgpu.GpuVersion
+else:
+  plgpu = None
+  GpuVersion = gpu_info.GpuVersion
 
 
 class GpuInfoTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if not plgpu:
+      self.skipTest("Skipping test because device is not a GPU.")
     if not jtu.is_device_cuda():
       self.assertFalse(plgpu.is_gpu_device())
       self.skipTest("Skipping test because device is not a GPU.")
@@ -46,14 +57,14 @@ class GpuInfoTest(jtu.JaxTestCase):
     self.assertEqual(info, info_version)
 
   @parameterized.parameters([
-    ("NVIDIA A100-SXM4-40GB", plgpu.GpuVersion.A100),
-    ("NVIDIA A100-SXM4-80GB", plgpu.GpuVersion.A100),
-    ("NVIDIA A100-PCIE-40GB", plgpu.GpuVersion.A100),
-    ("NVIDIA A100 80GB PCIe", plgpu.GpuVersion.A100),
-    ("NVIDIA A10 WHATEVER", plgpu.GpuVersion.A10),
-    ("NVIDIA H100 80GB HBM3", plgpu.GpuVersion.H100),
-    ("NVIDIA H100 PCIe", plgpu.GpuVersion.H100),
-    ("NVIDIA H100 NVL", plgpu.GpuVersion.H100),
+    ("NVIDIA A100-SXM4-40GB", GpuVersion.A100),
+    ("NVIDIA A100-SXM4-80GB", GpuVersion.A100),
+    ("NVIDIA A100-PCIE-40GB", GpuVersion.A100),
+    ("NVIDIA A100 80GB PCIe", GpuVersion.A100),
+    ("NVIDIA A10 WHATEVER", GpuVersion.A10),
+    ("NVIDIA H100 80GB HBM3", GpuVersion.H100),
+    ("NVIDIA H100 PCIe", GpuVersion.H100),
+    ("NVIDIA H100 NVL", GpuVersion.H100),
   ])
   def test_gpu_version_from_device_kind(self, device_kind, expected):
     info = gpu_info.gpu_version_from_device_kind(device_kind)
