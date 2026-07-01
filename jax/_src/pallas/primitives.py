@@ -31,7 +31,6 @@ from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -644,21 +643,12 @@ def check_debug_print_format(
 # because they should appear as atomic JAX values to the users.
 # TODO(apaszke): This can be deleted once we make transforms in Mosaic GPU
 # inferred by the compiler.
-# TODO(necula): remove once we get rid of lu
-@lu.transformation2
-def wrap_with_transforms_old(f, transforms, *args):
-  new_args = tuple(
-      state_types.TransformedRef(a, t) if t else a
-      for a, t in zip(args, transforms)
-  )
-  return f(*new_args)
-
-
-@util.weakref_lru_cache
 def wrap_with_transforms(
     fun: Callable,
     ref_transforms: tuple[tuple[state_types.Transform, ...], ...],
 ) -> Callable:
+  if all(not t for t in ref_transforms):
+    return fun
   def wrapped(*args, **kwargs):
     args_ft = ft.flatten(
         (args, kwargs), registry=tree_util.default_registry
@@ -706,37 +696,35 @@ def run_scoped(
   """
   if not isinstance(collective_axes, tuple):
     collective_axes = (collective_axes,)
-  flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
-  flat_fun, out_tree_thunk = api_util.flatten_fun(
-      lu.wrap_init(f,
-                   debug_info=api_util.debug_info("pallas run_scoped",
-                                                  f, types, kw_types)),
-      in_tree)
+  flat_types = tree_util.FlatTree.flatten((types, kw_types),
+                                          registry=tree_util.default_registry)
   # We allow ref avals to be transformed references.
-  ref_avals = [t.get_ref_aval() for t in flat_types]
-  avals = [
-      t.ref if isinstance(t, state_types.TransformedRef) else t
-      for t in ref_avals
-  ]
+  ref_avals = flat_types.map(lambda t: t.get_ref_aval())
+  avals = ref_avals.map(
+      lambda t: t.ref if isinstance(t, state_types.TransformedRef) else t
+  )
   # Note that only a subset of all transforms can be found here, and they are
   # never expected to contain any arrays.
   ref_transforms = tuple(
       t.transforms if isinstance(t, state_types.TransformedRef) else ()
-      for t in ref_avals
+      for t in ref_avals.vals
   )
-  flat_fun = wrap_with_transforms_old(flat_fun, ref_transforms)
+  f_with_transforms = wrap_with_transforms(f, ref_transforms)
   # Turn the function into a jaxpr. The body of run_scoped may have
   # effects (IO) on constvars (i.e. variables inherited from the
   # parent scope). Jax can't reason about effects to references that
   # are not in the invars of an operation so we just put them all
   # there.
   with config.mutable_array_checks(False):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
-  out = run_scoped_p.bind(*consts,
-                          jaxpr=jaxpr,
+    jaxpr, out_avals = pe.trace_to_jaxpr_nocache(
+        f_with_transforms,
+        avals,
+        api_util.debug_info("pallas run_scoped", f, types, kw_types))
+  out = run_scoped_p.bind(*jaxpr.consts,
+                          jaxpr=jaxpr.jaxpr,
                           collective_axes=collective_axes,
                           ref_transforms=ref_transforms)
-  return tree_util.tree_unflatten(out_tree_thunk(), out)
+  return tree_util.tree_unflatten(out_avals.tree, out)
 
 
 @run_scoped_p.def_effectful_abstract_eval
