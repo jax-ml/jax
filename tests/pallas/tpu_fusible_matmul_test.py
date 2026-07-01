@@ -596,6 +596,31 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         )
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_matmul_dynamic_slice_input(self, dtype, impl):
+    """DS before the kernel: slices part of the matmul's LHS input."""
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_ds(x, y, i):
+      x_sliced = jax.lax.dynamic_slice(x, (i, 0), (128, 512))
+      return fusible_matmul(x_sliced, y, bm=64, impl=impl)
+
+    @jit_no_excess_precision
+    def matmul_ds_ref(x, y, i):
+      x_sliced = jax.lax.dynamic_slice(x, (i, 0), (128, 512))
+      return mm_ref(x_sliced, y)
+
+    for i in range(0, 512, 64):
+      np.testing.assert_allclose(
+          matmul_ds(x, y, i),
+          matmul_ds_ref(x, y, i),
+          atol=5e-5,
+      )
+
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_mixed_slices(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 512), dtype)
@@ -1182,6 +1207,61 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         # Tol is higher because of double matmul
         atol=0.4,
     )
+
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_matmul_dynamic_update_slice_input(self, dtype, impl):
+    """DUS before the kernel: updates part of the matmul's LHS input."""
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    patch = jax.random.normal(k1, (128, 512), dtype)
+    y = jax.random.normal(k2, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_dus(x, patch, y, i):
+      x = jax.lax.dynamic_update_slice(x, patch, (i, 0))
+      return fusible_matmul(x, y, bm=64, impl=impl)
+
+    @jit_no_excess_precision
+    def matmul_dus_ref(x, patch, y, i):
+      x = jax.lax.dynamic_update_slice(x, patch, (i, 0))
+      return mm_ref(x, y)
+
+    for i in range(0, 512, 64):
+      np.testing.assert_allclose(
+          matmul_dus(x, patch, y, i),
+          matmul_dus_ref(x, patch, y, i),
+          atol=5e-5,
+      )
+
+
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_matmul_dynamic_update_slice_multi_index(self, dtype, impl):
+    """DUS with multiple dynamic indices before the kernel."""
+    k0, k1, k2 = jax.random.split(jax.random.key(0), 3)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    patch = jax.random.normal(k1, (128, 256), dtype)
+    y = jax.random.normal(k2, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_dus(x, patch, y, si, sj):
+      x = jax.lax.dynamic_update_slice(x, patch, (si, sj))
+      return fusible_matmul(x, y, impl=impl)
+
+    @jit_no_excess_precision
+    def matmul_dus_ref(x, patch, y, si, sj):
+      x = jax.lax.dynamic_update_slice(x, patch, (si, sj))
+      return mm_ref(x, y)
+
+    # si: [0, 512-128] step 128; sj: [0, 512-256] step 128 (bk=128)
+    for si in [0, 128, 256, 384]:
+      for sj in [0, 128, 256]:
+        np.testing.assert_allclose(
+            matmul_dus(x, patch, y, si, sj),
+            matmul_dus_ref(x, patch, y, si, sj),
+            atol=5e-5,
+        )
 
 
 def dot_ref(x, y, *, bm=128, bk=128, bn=128):

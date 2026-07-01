@@ -1146,13 +1146,28 @@ def _offset_indexer(
     indexer,
     slice_start,
     slice_size,
+    *,
+    negate: bool = False,
+    clamp_to_size: int | None = None,
 ):
+  """Offset a block indexer by a slice start, with optional negation and clamping.
+
+  Args:
+    bs: The block dimension specification.
+    indexer: The current block index value.
+    slice_start: The start index of the slice in the full array.
+    slice_size: The size of the slice (must be a multiple of block_size).
+    negate: If True, subtract the offset instead of adding it.
+    clamp_to_size: If set, clamp the result to [0, clamp_to_size // block_size - 1].
+        Used by dynamic_update_slice to handle blocks outside the update region.
+  """
+  sign = -1 if negate else 1
   # Short-circuit if the slice start is just at zero.
-  if isinstance(slice_start, int) and slice_start == 0:
+  if isinstance(slice_start, int) and slice_start == 0 and clamp_to_size is None:
     return indexer
   match bs:
     case None | pallas_core.Squeezed():
-      return indexer + slice_start
+      return indexer + sign * slice_start
     case pallas_core.Element(block_size):
       _maybe_static_check(
           slice_start % block_size == 0,
@@ -1162,7 +1177,11 @@ def _offset_indexer(
           slice_size % block_size == 0,
           f'slice_size is not a multiple of block_size {block_size}',
       )
-      return indexer + slice_start
+      # Element indexer is element-level, so offset by slice_start directly.
+      result = indexer + sign * slice_start
+      if clamp_to_size is not None:
+        result = jnp.clip(result, 0, clamp_to_size - 1)
+      return result
     case int() | pallas_core.Blocked():
       block_size = _block_size(bs)
       _maybe_static_check(
@@ -1174,18 +1193,22 @@ def _offset_indexer(
           f'slice_size is not a multiple of block_size {block_size}',
       )
       # indexer is a block index so we need to offset it by the block offset.
-      return indexer + slice_start // block_size
+      result = indexer + sign * (slice_start // block_size)
+      if clamp_to_size is not None:
+        num_blocks = clamp_to_size // block_size
+        result = jnp.clip(result, 0, num_blocks - 1)
+      return result
     case pallas_core.BoundedSlice(block_size):
       assert isinstance(indexer, indexing.Slice)
       _maybe_static_check(
-          indexer.start % block_size == 0,
+          slice_start % block_size == 0,
           f'slice_start is not a multiple of block_size {block_size}',
       )
       _maybe_static_check(
-          indexer.size % block_size == 0,
+          slice_size % block_size == 0,
           f'slice_size is not a multiple of block_size {block_size}',
       )
-      return indexing.ds(indexer.start + slice_start, indexer.size)
+      return indexing.ds(indexer.start + sign * slice_start, indexer.size)
     case _:
       raise ValueError(f'Unsupported block size {bs}')
 
@@ -1284,6 +1307,8 @@ def _dynamic_slice_rule(
     *,
     slice_sizes: tuple[int, ...],
 ):
+  operand_aval = ctx.avals_in[0]
+  operand_shape = operand_aval.shape
 
   def new_block_index_transform(*idxs):
     slice_starts = ctx.scalar_prefetch_fn()
@@ -1295,21 +1320,18 @@ def _dynamic_slice_rule(
     idx = block_transform.block_index_transform(*idxs)
     assert len(idx) == len(block_transform.block_shape)
 
-    # Once we have the indices, we need to offset them by the dynamic slice
-    # indices. The dynamic slice indices index the full array. For example,
-    # let's say we have a [l, m, n] array and are provided 3 dynamic slice
-    # start indices [i, j, k] with sizes [s_l, s_m, s_n]. To perform the slice,
-    # we need to compute the indices of the block that correspond to that slice
-    # in the [l, m, n] array. If we have block sizes [b_l, b_m, b_n], we require
-    # that i % b_l == 0, j % b_m == 0, k % b_n == 0 and the slice sizes are
-    # multiples of the block sizes. The indices of the block that correspond to
-    # the slice are then given by (i // b_l, j // b_m, k // b_n).
-    # We then add these block indices to block indices produced by the index
-    # map
+    # Clamp slice_starts
+    clamped_starts = tuple(
+        jnp.clip(start, 0, op_dim - size)
+        for start, op_dim, size in zip(
+            slice_starts, operand_shape, slice_sizes, strict=True
+        )
+    )
+
     block_indices = tuple(
         _offset_indexer(s, i, start, size)
         for i, s, start, size in zip(
-            idx, block_transform.block_shape, slice_starts, slice_sizes, strict=True
+            idx, block_transform.block_shape, clamped_starts, slice_sizes, strict=True
         )
     )
     return block_indices
@@ -1318,6 +1340,101 @@ def _dynamic_slice_rule(
       block_index_transform=new_block_index_transform,
   )
   return [new_block_transform] + [no_block_index_transform] * (len(ctx.avals_in) - 1)
+
+
+@register_usage_rule(lax.dynamic_update_slice_p)
+def _dynamic_update_slice_usage_rule(ctx, used_out: set[Usage], **params):
+  del params
+  if used_out == {Usage.SCALAR_PREFETCH}:
+    raise NotImplementedError('scalar prefetch not supported yet')
+  elif used_out == {Usage.REGULAR}:
+    # operand and update are REGULAR, start_indices are SCALAR_PREFETCH.
+    return ([{Usage.REGULAR}, {Usage.REGULAR}]
+            + [{Usage.SCALAR_PREFETCH}] * (len(ctx.avals_in) - 2))
+  else:
+    return [set()] * len(ctx.avals_in)
+
+
+@register_eval_rule(lax.dynamic_update_slice_p)
+def _dynamic_update_slice_eval_rule(ctx, operand, update, *start_indices):
+  out_block_spec = ctx.out_block_specs[0]
+  block_indices = ctx.get_out_block_indices()[0]
+  operand_aval = ctx.avals_in[0]
+  update_aval = ctx.avals_in[1]
+
+  # Determine if this output block is within the update region.
+  in_region = jnp.bool_(True)
+  for dim in range(len(out_block_spec.block_shape)):
+    bs = out_block_spec.block_shape[dim]
+    if bs is None or isinstance(bs, pallas_core.Squeezed):
+      continue
+    block_size = _block_size(bs)
+    block_idx = block_indices[dim]
+    start = start_indices[dim]
+    max_start = operand_aval.shape[dim] - update_aval.shape[dim]
+    start = jnp.clip(start, 0, max_start)
+    start_block = start // block_size
+    num_update_blocks = update_aval.shape[dim] // block_size
+    in_region = in_region & (
+        (block_idx >= start_block)
+        & (block_idx < start_block + num_update_blocks)
+    )
+
+  return jnp.where(in_region, update, operand)
+
+
+@register_pull_block_spec_rule(lax.dynamic_update_slice_p)
+def _dynamic_update_slice_pull_rule(
+    ctx: PullRuleContext,
+    block_transform: BlockIndexTransform,
+):
+  operand_aval = ctx.avals_in[0]
+  update_aval = ctx.avals_in[1]
+  update_shape = update_aval.shape
+  operand_shape = operand_aval.shape
+
+  # Operand gets the same block transform (same shape as output).
+  operand_transform = block_transform
+
+  # Update gets a reverse-offset block transform with clamping. This is the
+  # inverse of the dynamic_slice offset: we subtract the start offset and clamp
+  # to the valid update range so that out-of-region blocks map to a valid
+  # (clamped) position. The eval rule uses in_region checks to discard these
+  # clamped reads.
+  def new_update_block_index_transform(*idxs):
+    slice_starts = ctx.scalar_prefetch_fn()
+    if len(slice_starts) != len(block_transform.block_shape):
+      raise ValueError(
+          f'Expected {len(block_transform.block_shape)} start indices, '
+          f'got {len(slice_starts)}'
+      )
+    idx = block_transform.block_index_transform(*idxs)
+    assert len(idx) == len(block_transform.block_shape)
+
+    clamped_starts = tuple(
+        jnp.clip(start, 0, op_dim - up_dim)
+        for start, op_dim, up_dim in zip(
+            slice_starts, operand_shape, update_shape, strict=True
+        )
+    )
+
+    return tuple(
+        _offset_indexer(
+            bs, i, start, update_dim,
+            negate=True, clamp_to_size=update_dim,
+        )
+        for i, bs, start, update_dim in zip(
+            idx, block_transform.block_shape, clamped_starts, update_shape,
+            strict=True,
+        )
+    )
+
+  update_transform = block_transform.replace(
+      block_index_transform=new_update_block_index_transform,
+  )
+
+  return ([operand_transform, update_transform]
+          + [no_block_index_transform] * (len(ctx.avals_in) - 2))
 
 
 @register_pull_block_spec_rule(lax.dot_general_p)
