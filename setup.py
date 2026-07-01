@@ -123,6 +123,11 @@ setup(
           f"jax-rocm7-plugin=={_jax_version}.*",
         ],
 
+        'oneapi': [
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-oneapi-plugin[with-oneapi]>={_current_jaxlib_version},<={_jax_version}",
+        ],
+
         # For automatic bootstrapping distributed jobs in Kubernetes
         'k8s': [
           'kubernetes',
