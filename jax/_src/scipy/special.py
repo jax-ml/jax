@@ -246,7 +246,12 @@ def loggamma(x: ArrayLike) -> Array:
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     return _complex_loggamma_scipy(x)
   res = lax.lgamma(x)
-  return jnp.where(x > 0, res, jnp.nan)
+  # The gamma function has a simple pole at x = 0, so loggamma(0) = +inf,
+  # matching scipy. lax.lgamma already returns +inf there, so no explicit
+  # special case is needed, and routing x = 0 through res keeps the correct
+  # nan gradient at the pole. Negative reals (including negative integer
+  # poles) return nan, also matching scipy for real-valued inputs.
+  return jnp.where(x >= 0, res, jnp.nan)
 
 
 def gamma(x: ArrayLike) -> Array:
