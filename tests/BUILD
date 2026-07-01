@@ -287,6 +287,7 @@ jax_multiplatform_test(
         "tpu",
     ],
     deps = [
+        "//jax/experimental:topologies",
         "//jax/extend:xla",
         "//jaxlib:_xla",
         "@xla//xla/python:_hlo",
