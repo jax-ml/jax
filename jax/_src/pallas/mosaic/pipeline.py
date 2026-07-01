@@ -34,9 +34,8 @@ from jax._src import config
 from jax._src import state
 from jax._src import util as jax_util
 from jax._src.interpreters import partial_eval as pe
-from jax._src import linear_util as lu
 from jax._src import api_util
-from jax._src.tree_util import tracing_registry
+from jax._src.tree_util import tracing_registry, FlatTree
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import helpers
 from jax._src.pallas import primitives
@@ -1977,23 +1976,22 @@ def emit_pipeline(
     )
     # Trace the kernel body to a jaxpr.
     kernel_args = refs_tree.unflatten(kernel_args)
-    flat_kernel_args, kernel_in_tree = tracing_registry.flatten(
-        kernel_args, is_transformed_ref)
-    # Ensure the get_grid_mapping didn't produce TransformedRefs for tracing.
-    assert all(
-        not isinstance(x, state.TransformedRef) for x in flat_kernel_args)
-
     with grid_mapping.trace_env():
       body_fun_dbg = api_util.debug_info(
-          "emit_pipeline body", body, kernel_args, {})
-      flat_body_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-          lu.wrap_init(body, debug_info=body_fun_dbg),
-          kernel_in_tree
+          "emit_pipeline body", body, kernel_args, {}
       )
-      body_jaxpr, _, body_consts = pe.trace_to_jaxpr_dynamic(
-        flat_body_fun, tuple(flat_kernel_args)
+      in_avals_ft = FlatTree.flatten(
+          (kernel_args, {}),
+          is_leaf=is_transformed_ref,
+          registry=tracing_registry,
       )
-      if out_tree_thunk().num_leaves != 0:
+      # Ensure the get_grid_mapping didn't produce TransformedRefs for tracing.
+      assert all(
+          not isinstance(x, state.TransformedRef) for x in in_avals_ft.vals)
+      body_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+          body, in_avals_ft, debug_info=body_fun_dbg
+      )
+      if out_avals_ft.tree.num_leaves != 0:
         raise ValueError("The emit_pipeline body function must return None.")
 
     all_index_map_consts = tuple(itertools.chain.from_iterable(
@@ -2004,10 +2002,10 @@ def emit_pipeline(
         *all_index_map_consts,
         *dynamic_bounds,
         *dynamic_offset_tracers,
-        *body_consts,
+        *body_jaxpr.consts,
         *args_flat,
-        body_consts_len=len(body_consts),
-        body_jaxpr=body_jaxpr,
+        body_consts_len=len(body_jaxpr.consts),
+        body_jaxpr=body_jaxpr.jaxpr,
         grid_mapping=grid_mapping,
         tiling=tiling,
         core_axis=core_axis,
@@ -2249,12 +2247,18 @@ def _emit_pipeline_lowering_rule(
     return ()
 
   dbg = api_util.debug_info(
-      "emit_pipeline_lowering", wrapped_pipeline_fun, ctx.avals_in, {})
-  wrapped_lu_fun = lu.wrap_init(wrapped_pipeline_fun, debug_info=dbg)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, ctx.avals_in)
+      "emit_pipeline_lowering", wrapped_pipeline_fun, ctx.avals_in, {}
+  )
+  in_avals_ft = FlatTree.flatten_args(*ctx.avals_in)
+  closed_jaxpr, _ = pe.trace_to_jaxpr_nocache(
+      wrapped_pipeline_fun, in_avals_ft, debug_info=dbg
+  )
+  jaxpr = closed_jaxpr.jaxpr
+  consts = closed_jaxpr.consts
   assert not consts and not jaxpr.constvars, (
       f"wrapped_pipeline_fun should not close over JAX constants, but found: "
-      f"{consts=} {jaxpr.constvars=}")
+      f"{consts=} {jaxpr.constvars=}"
+  )
   jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   num_index_map_consts = sum(index_map_consts_counts)
   num_dynamic = grid_mapping.num_dynamic_grid_bounds + _num_extra_dynamic

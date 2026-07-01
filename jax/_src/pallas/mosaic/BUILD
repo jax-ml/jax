@@ -224,6 +224,7 @@ pytype_library(
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:lax",
+        "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:lowering",
