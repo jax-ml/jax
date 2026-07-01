@@ -143,10 +143,12 @@ def mean_error_ratio(error_estimate, rtol, atol, y0, y1):
 def optimal_step_size(last_step, mean_error_ratio, safety=0.9, ifactor=10.0,
                       dfactor=0.2, order=5.0):
   """Compute optimal Runge-Kutta stepsize."""
-  dfactor = jnp.where(mean_error_ratio < 1, 1.0, dfactor)
+  dfactor_adjusted = jnp.where(mean_error_ratio < 1, 1.0, dfactor)
+  candidate_val = mean_error_ratio**(-1.0 / order) * safety
 
-  factor = jnp.minimum(ifactor,
-                      jnp.maximum(mean_error_ratio**(-1.0 / order) * safety, dfactor))
+  # using nanmax and nanmin for not propagating nan
+  inner_max = jnp.nanmax(jnp.array([candidate_val, dfactor_adjusted]))
+  factor = jnp.nanmin(jnp.array([ifactor, inner_max]))
   return jnp.where(mean_error_ratio == 0, last_step * ifactor, last_step * factor)
 
 def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, hmax=jnp.inf):
