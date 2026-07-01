@@ -26,10 +26,11 @@ from jax._src.tree import (
     leaves as leaves,
     map_with_path as map_with_path,
     map as map,
-    reduce as reduce,
     reduce_associative as reduce_associative,
+    reduce as reduce,
     static as static,
     structure as structure,
     transpose as transpose,
     unflatten as unflatten,
+    unzip as unzip,
 )

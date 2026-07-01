@@ -25,3 +25,4 @@ List of Functions
    structure
    transpose
    unflatten
+   unzip

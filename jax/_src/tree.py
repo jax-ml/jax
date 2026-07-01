@@ -298,6 +298,101 @@ def transpose(outer_treedef: tree_util.PyTreeDef,
   return tree_util.tree_transpose(outer_treedef, inner_treedef, pytree_to_transpose)
 
 
+def unzip(
+    pytree_to_unzip: Any,
+    inner_treedef: tree_util.PyTreeDef | None = None,
+    *,
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> Any:
+  """Unzip a pytree of tuples (or other structures) into a tuple of pytrees.
+
+  This is a convenience wrapper around :func:`jax.tree.transpose` for the
+  common pattern of unpacking a pytree whose leaves are tuples (or other
+  sub-pytrees) into a tuple of pytrees of the original structure.
+
+  A typical use case is when you ``jax.tree.map`` a function that returns
+  multiple values over a pytree:
+
+  .. code-block:: python
+
+    # Each leaf produces a pair (mean, std).
+    stats = jax.tree.map(lambda x: (x.mean(), x.std()), params)
+
+    # ``stats`` is a pytree of tuples.  ``unzip`` turns it into a tuple of
+    # pytrees so you can work with means and stds separately.
+    means, stds = jax.tree.unzip(stats)
+
+  Without ``unzip``, you would have to either:
+
+  1. Call :func:`jax.tree.transpose` manually, which requires you to supply
+     both the outer and inner tree definitions.  The ``outer_treedef`` /
+     ``inner_treedef`` semantics can be confusing to reason about, especially
+     for users who just want to "unpack" a mapped result::
+
+       outer = jax.tree.structure(params)
+       inner = jax.tree.structure((0, 0))
+       means, stds = jax.tree.transpose(outer, inner, stats)
+
+  2. Use a ``tree_map`` hack.  Note that because tuples *are* pytree nodes,
+     ``tree_map`` will traverse into them rather than treating them as
+     leaves.  You therefore need to pass the *original* pytree as the first
+     argument (to define where the leaves are) and the mapped result as the
+     second, ignoring the first argument in the lambda::
+
+       means = jax.tree.map(lambda _, s: s[0], params, stats)
+       stds  = jax.tree.map(lambda _, s: s[1], params, stats)
+
+     This requires one traversal per element, becomes unwieldy when the
+     function returns more than two values, and is easy to get wrong.
+
+  ``unzip`` avoids both problems: it infers the outer tree structure
+  automatically and only requires the inner structure when it cannot be
+  inferred from the first leaf.
+
+  Args:
+    pytree_to_unzip: a pytree whose leaves are themselves pytree structures
+      (e.g., tuples, lists, dicts) that you want to "unzip" into the outer
+      level.
+    inner_treedef: optional PyTreeDef describing the structure of each leaf. If
+      ``None`` (the default), it is inferred from the first leaf of
+      ``pytree_to_unzip``.
+    is_leaf: an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether the
+      flattening should traverse the current object, or if it should be stopped
+      immediately, with the whole subtree being treated as a leaf.
+
+  Returns:
+    A pytree with the inner structure at the top level, where each leaf of
+    the inner structure is a pytree matching the original outer structure of
+    ``pytree_to_unzip``.
+
+  Examples:
+    Unzipping a list of pairs into a pair of lists:
+
+    >>> import jax
+    >>> jax.tree.unzip([(1, 10), (2, 20), (3, 30)])
+    ([1, 2, 3], [10, 20, 30])
+
+    Unzipping a dict of triples into a triple of dicts:
+
+    >>> jax.tree.unzip({'a': (1, 2, 3), 'b': (4, 5, 6)})
+    ({'a': 1, 'b': 4}, {'a': 2, 'b': 5}, {'a': 3, 'b': 6})
+
+    Using ``is_leaf`` to control how the outer tree is traversed:
+
+    >>> tree = ((1, 2), (3, 4))
+    >>> is_int_pair = lambda x: isinstance(x, tuple) and all(
+    ...     isinstance(i, int) for i in x)
+    >>> jax.tree.unzip(tree, is_leaf=is_int_pair)
+    ((1, 3), (2, 4))
+
+  See Also:
+    - :func:`jax.tree.transpose`
+    - :func:`jax.tree.map`
+  """
+  return tree_util.tree_unzip(pytree_to_unzip, inner_treedef, is_leaf=is_leaf)
+
+
 def unflatten(treedef: tree_util.PyTreeDef,
               leaves: Iterable[tree_util.Leaf]) -> Any:
   """Reconstructs a pytree from the treedef and the leaves.
