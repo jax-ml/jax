@@ -553,17 +553,7 @@ class Client:
       executable_devices: DeviceList,
       compile_options: CompileOptions | None = ...,
       host_callbacks: Sequence[CapsuleType] = ...,
-  ) -> LoadedExecutable:
-    """Deserializes an executable.
-
-    .. warning::
-       It is not safe to call this API with untrusted inputs. Do not
-       do this. Calling this API loads a serialized executable. Even
-       loading such an executable may run arbitrary code on your
-       machine. It is not safe to pass untrusted data here and
-       likely never will be.
-    """
-
+  ) -> LoadedExecutable: ...
   @overload
   def deserialize_executable(
       self,
@@ -578,7 +568,17 @@ class Client:
       serialized: bytes,
       executable_devices: Sequence,
       compile_options: CompileOptions | None = ...,
-  ) -> LoadedExecutable: ...
+  ) -> LoadedExecutable:
+    """Deserializes an executable.
+
+    .. warning::
+       It is not safe to call this API with untrusted inputs. Do not
+       do this. Calling this API loads a serialized executable. Even
+       loading such an executable may run arbitrary code on your
+       machine. It is not safe to pass untrusted data here and
+       likely never will be.
+    """
+
   def heap_profile(self) -> bytes: ...
   def defragment(self) -> None: ...
   def dma_map(self, address: int, size: int) -> None: ...
