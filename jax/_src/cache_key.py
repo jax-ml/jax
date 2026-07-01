@@ -254,6 +254,7 @@ xla_flags_to_exclude_from_cache_key = [
     "--xla_tpu_sdc_checker_no_logging_if_callbacks_are_present",
     "--xla_gpu_cuda_data_dir",
     "--xla_gpu_experimental_autotune_cache_mode",
+    "--xla_tpu_compiler_variant",
 ]
 
 env_override_flags_to_exclude_from_cache_key = {
@@ -301,6 +302,11 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   # path changes across runs despite being the same version, so we clear it
   # here.
   debug_options.xla_gpu_cuda_data_dir = ""
+
+  # Compiler variant is explicitly included in the CompileOptions proto,
+  # However, different compiler variants should not change the result of the
+  # computation. So it shouldn't impact the cache key.
+  compile_options_copy.compiler_variant = ""
   # LINT.ThenChange(:xla_flags)
 
   compile_options_copy.env_option_overrides = [
