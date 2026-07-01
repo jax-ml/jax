@@ -5024,7 +5024,9 @@ class FragmentedArrayTest(TestCase):
   def test_strided_copy_noncontig_subbyte(self):
     def kernel(ctx, src, dst, _):
       src_slice = mgpu.memref_slice(src, (slice(None), 1))
-      mgpu.FragmentedArray.load_strided(src_slice, is_signed=True, vec_size=4).store_untiled(dst)
+      mgpu.FragmentedArray.load_strided(
+          src_slice, is_signed=True
+      ).store_untiled(dst)
 
     in_shape = jax.ShapeDtypeStruct((32, 2, 256), jnp.int4)
     out_shape = jax.ShapeDtypeStruct((32, 256), jnp.int4)
