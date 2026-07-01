@@ -25,7 +25,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
+from jax._src import tree_util
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -920,22 +920,23 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
     ]
     debug_info = api_util.debug_info("parallel_loop", body, flat_avals, {})
     check_no_transformed_refs_args(lambda: debug_info, flat_carries)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(wrapped, debug_info=debug_info), flat_avals
+    in_avals_ft = tree_util.FlatTree.flatten_args(*flat_avals)
+    jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        wrapped, in_avals_ft, debug_info=debug_info
     )
-    carry_tree.unflatten(jaxpr.outvars)  # Verify same structure.
+    carry_tree.unflatten(jaxpr.jaxpr.outvars)  # Verify same structure.
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
-        jaxpr.effects
+        jaxpr.jaxpr.effects
     )
     if disallowed_effects:
       raise NotImplementedError(
           f"Effects not supported in parallel_loop: {disallowed_effects}"
       )
     flat_args, tree = jax.tree.flatten(
-        (lower, upper, step, consts, flat_carries)
+        (lower, upper, step, jaxpr.consts, flat_carries)
     )
     flat_result = parallel_loop_p.bind(
-        *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr
+        *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr.jaxpr
     )
     if carry is None:
       return None
