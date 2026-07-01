@@ -259,7 +259,7 @@ class HostAllocationRequest:
     return np.array(list(self), dtype=np.int32)
 
   @classmethod
-  def from_array(cls, request: jax.Array) -> Self:
+  def from_array(cls, request: jax.Array | np.ndarray) -> Self:
     if request.shape != cls.shape_and_dtype().shape:
       raise ValueError(
           f"Expected shape {cls.shape_and_dtype().shape} but got"
@@ -919,7 +919,7 @@ def _allocate_barriers(
     thread_id: jax.Array,
     axes_dims: tuple[int, ...],
     num_arrivals: jax.Array,
-    num_barriers: jax.Array,
+    flat_num_barriers: jax.Array,
     ref_count: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ) -> tuple[jax.Array, np.ndarray]:
@@ -928,14 +928,14 @@ def _allocate_barriers(
   thread_id_as_int = int(thread_id)
   axes_dims = tuple(int(x) for x in axes_dims)
   num_arrivals_as_int = int(num_arrivals)
-  num_barriers_as_int = int(num_barriers)
+  flat_num_barriers_as_int = int(flat_num_barriers)
   ref_count_as_int = int(ref_count)
-  del device_id, grid_point_coords, thread_id, num_arrivals, num_barriers, ref_count
+  del device_id, grid_point_coords, thread_id, num_arrivals, flat_num_barriers, ref_count
 
   shared_memory = _get_shared_memory()
 
   keys = []
-  for _ in range(num_barriers_as_int):
+  for _ in range(flat_num_barriers_as_int):
     # Advance `shared_memory`'s internal buffer id counter for all threads that
     # call into this function.
     barrier_id = shared_memory.get_next_buffer_id(
@@ -972,7 +972,7 @@ def _allocate_barriers(
     )
     keys.append(key.as_np_array)
 
-  assert len(keys) == num_barriers_as_int
+  assert len(keys) == flat_num_barriers_as_int
   return token, np.array(keys, dtype=np.int32)
 
 
@@ -984,12 +984,12 @@ def call_allocate_barriers(
     thread_id: jax.Array,
     axes_dims: tuple[int, ...],
     num_arrivals: jax.Array,
-    num_barriers: jax.Array,
+    flat_num_barriers: int | jax.Array,
     ref_count: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ) -> tuple[jax.Array, jax.Array]:
   shape_and_dtype = HostAllocationKey.shape_and_dtype()
-  result_shape = (num_barriers, *shape_and_dtype.shape)
+  result_shape = (flat_num_barriers, *shape_and_dtype.shape)
   result_shape_and_dtype = jax.ShapeDtypeStruct(
       result_shape, shape_and_dtype.dtype
   )
@@ -1005,7 +1005,7 @@ def call_allocate_barriers(
       grid_point_coords=grid_point_coords,
       thread_id=thread_id,
       num_arrivals=num_arrivals,
-      num_barriers=num_barriers,
+      flat_num_barriers=flat_num_barriers,
       ref_count=ref_count,
   )
 
@@ -1026,12 +1026,14 @@ def _deallocate_barrier(
   thread_id_as_int = int(thread_id)
   del device_id, grid_point_coords, thread_id
 
-  assert len(allocation_key_as_array.shape) == 2
-  num_barriers = allocation_key_as_array.shape[0]
+  flat_allocation_keys = np.reshape(
+      allocation_key_as_array, (-1, *HostAllocationKey.shape_and_dtype().shape)
+  )
+  num_barriers = flat_allocation_keys.shape[0]
 
   keys_to_deallocate = []
   for i in range(num_barriers):
-    keys_to_deallocate.append(allocation_key_as_array[i, :])
+    keys_to_deallocate.append(flat_allocation_keys[i, :])
 
   shared_memory = _get_shared_memory()
 
@@ -1208,7 +1210,7 @@ def _allocate_cluster_barriers(
     axes_dims: tuple[int, ...],
     is_axis_collective: tuple[bool, ...],
     num_arrivals: jax.Array,
-    num_barriers: jax.Array,
+    flat_num_barriers: jax.Array,
     ref_count: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ) -> tuple[jax.Array, np.ndarray]:
@@ -1216,14 +1218,14 @@ def _allocate_cluster_barriers(
   grid_point_coords_as_tuple = tuple(int(x) for x in grid_point_coords)
   thread_id_as_int = int(thread_id)
   num_arrivals_as_int = int(num_arrivals)
-  num_barriers_as_int = int(num_barriers)
+  flat_num_barriers_as_int = int(flat_num_barriers)
   ref_count_as_int = int(ref_count)
-  del device_id, grid_point_coords, thread_id, num_arrivals, num_barriers, ref_count
+  del device_id, grid_point_coords, thread_id, num_arrivals, flat_num_barriers, ref_count
 
   shared_memory = _get_shared_memory()
 
   keys = []
-  for _ in range(num_barriers_as_int):
+  for _ in range(flat_num_barriers_as_int):
     # Advance `shared_memory`'s internal buffer id counter for all threads that
     # call into this function.
     barrier_id = shared_memory.get_next_buffer_id(
@@ -1264,7 +1266,7 @@ def _allocate_cluster_barriers(
     )
     keys.append(key.as_np_array)
 
-  assert len(keys) == num_barriers_as_int
+  assert len(keys) == flat_num_barriers_as_int
   return token, np.array(keys, dtype=np.int32)
 
 
@@ -1277,12 +1279,12 @@ def call_allocate_cluster_barriers(
     axes_dims: tuple[int, ...],
     is_axis_collective: tuple[bool, ...],
     num_arrivals: jax.Array,
-    num_barriers: jax.Array,
+    flat_num_barriers: int | jax.Array,
     ref_count: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ) -> tuple[jax.Array, jax.Array]:
   shape_and_dtype = HostAllocationKey.shape_and_dtype()
-  result_shape = (num_barriers, *shape_and_dtype.shape)
+  result_shape = (flat_num_barriers, *shape_and_dtype.shape)
   result_shape_and_dtype = jax.ShapeDtypeStruct(
       result_shape, shape_and_dtype.dtype
   )
@@ -1299,7 +1301,7 @@ def call_allocate_cluster_barriers(
       grid_point_coords=grid_point_coords,
       thread_id=thread_id,
       num_arrivals=num_arrivals,
-      num_barriers=num_barriers,
+      flat_num_barriers=flat_num_barriers,
       ref_count=ref_count,
   )
 

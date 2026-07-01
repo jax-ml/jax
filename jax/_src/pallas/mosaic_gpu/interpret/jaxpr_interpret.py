@@ -129,11 +129,9 @@ def _get_index_for_barrier_allocation_key(
     )
   if not isinstance(transforms[0], indexing.NDIndexer):
     raise ValueError(f"Expected an `NDIndexer`, but got {transforms[0]}")
-  if len(transforms[0].indices) != 1:
-    raise ValueError(
-        f"Expected a singleton index, but got {transforms[0].indices}"
-    )
-  return transforms[0].indices[0]
+  if len(transforms[0].indices) == 1:
+    return transforms[0].indices[0]
+  return tuple(transforms[0].indices)
 
 
 def _get_barrier_allocation_key_from_inval(
@@ -145,10 +143,14 @@ def _get_barrier_allocation_key_from_inval(
   allocation_key_as_array = inval
 
   # Assert to check internal consistency: `allocation_key_as_array` should be
-  # a 2-dim array (and the size of the first dimension equals the
-  # `num_barriers` parameter from when the barrier was allocated).
-  assert len(allocation_key_as_array.shape) == 2
-  num_barriers = allocation_key_as_array.shape[0]
+  # at least a 2D array, and the size of the last dimension is 5 (which matches the
+  # fields count of HostAllocationKey).
+  assert len(allocation_key_as_array.shape) >= 2
+  assert (
+      allocation_key_as_array.shape[-1:]
+      == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
+  )
+  num_barriers = math.prod(allocation_key_as_array.shape[:-1])
 
   index = _get_index_for_barrier_allocation_key(
       transforms_treedef, transforms_leaves
@@ -160,7 +162,8 @@ def _get_barrier_allocation_key_from_inval(
           "Attempting to operate on barrier without indexing, but"
           f" `num_barriers = {num_barriers}`"
       )
-    return allocation_key_as_array[0]
+    idx = (0,) * (len(allocation_key_as_array.shape) - 1)
+    return allocation_key_as_array[idx]
   else:
     return allocation_key_as_array[index]
 
@@ -399,12 +402,6 @@ class JaxprInterpreter:
           match inner:
             case jax_core.ShapedArray(shape=shape, dtype=dtype):
               if isinstance(dtype, mosaic_gpu_core.BarrierType):
-                if len(shape) != 1:
-                  raise NotImplementedError(
-                      f"Got {shape} for barrier shape. Only 1D shapes are"
-                      " currently supported for barriers in GPU kernel"
-                      " interpret mode."
-                  )
                 # A barrier is shared between the threads in a block. Hence its
                 # ref count, when computed based on the collective axes, should
                 # equal the number of threads in a block.
@@ -412,24 +409,24 @@ class JaxprInterpreter:
                 # TODO(nrink): Simplify the interface to
                 # `call_allocate_barriers`. Consider making it similar to
                 # `call_allocate_buffer`, see below.
-                return gpu_callbacks.call_allocate_barriers(
+                token, keys = gpu_callbacks.call_allocate_barriers(
                     token=token,
                     device_id=jnp.int32(self.device_info.device_id),
                     grid_point_coords=self.grid_point_coords,
                     thread_id=self.thread_id,
                     axes_dims=self.thread_cluster_shape,
                     num_arrivals=jnp.int32(dtype.num_arrivals),
-                    num_barriers=shape[0],
+                    flat_num_barriers=math.prod(shape),
                     ref_count=jnp.int32(ref_count),
                     source_info=eqn.source_info,
                 )
+                keys = keys.reshape((*shape, -1))
+                assert (
+                    keys.shape[-1:]
+                    == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
+                )
+                return token, keys
               elif isinstance(dtype, mosaic_gpu_core.ClusterBarrierType):
-                if len(shape) != 1:
-                  raise NotImplementedError(
-                      f"Got {shape} for cluster barrier shape. Only 1D shapes"
-                      " are currently supported for cluster barriers in GPU"
-                      " kernel interpret mode."
-                  )
                 if dtype.orders_tensor_core:
                   raise NotImplementedError(
                       "Cluster barriers with `orders_tensor_cores` are not yet"
@@ -440,7 +437,7 @@ class JaxprInterpreter:
                       "Cluster barriers with `leader_tracked` are not yet"
                       " supported in GPU kernel interpret mode."
                   )
-                return gpu_callbacks.call_allocate_cluster_barriers(
+                token, keys = gpu_callbacks.call_allocate_cluster_barriers(
                     token=token,
                     device_id=jnp.int32(self.device_info.device_id),
                     grid_point_coords=self.grid_point_coords,
@@ -450,10 +447,16 @@ class JaxprInterpreter:
                         dtype.collective_axes
                     ),
                     num_arrivals=jnp.int32(dtype.num_arrivals),
-                    num_barriers=shape[0],
+                    flat_num_barriers=math.prod(shape),
                     ref_count=jnp.int32(self.num_concurrent_threads),
                     source_info=eqn.source_info,
                 )
+                keys = keys.reshape((*shape, -1))
+                assert (
+                    keys.shape[-1:]
+                    == gpu_callbacks.HostAllocationKey.shape_and_dtype().shape
+                )
+                return token, keys
               else:
                 memory_space_idx = gpu_callbacks.get_memory_space_idx(
                     memory_space

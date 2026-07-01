@@ -560,6 +560,120 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y, x + 2)
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_barrier_multidimensional_1d(self, with_race):
+    shape = (2,)
+    x = jnp.arange(2, dtype=jnp.float32)
+
+    @functools.partial(
+        plgpu.kernel,
+        out_type=x,
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM(shape, x.dtype),
+            barrier=plgpu.Barrier(num_arrivals=1, num_barriers=shape),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(x_ref, out_ref, smem_ref, barrier):
+      thread_id = jax.lax.axis_index('t')
+      for i in range(2):
+        @pl.when(thread_id == 0)
+        def _():
+          smem_ref[i] = x_ref[i] + 1
+          plgpu.barrier_arrive(barrier.at[i])
+
+        @pl.when(thread_id == 1)
+        def _():
+          if not with_race:
+            plgpu.barrier_wait(barrier.at[i])
+          out_ref[i] = smem_ref[i] + 1
+
+    y = _kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x + 2)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_barrier_multidimensional_2d(self, with_race):
+    shape = (2, 3)
+    x = jnp.arange(6, dtype=jnp.float32).reshape(shape)
+
+    @functools.partial(
+        plgpu.kernel,
+        out_type=x,
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM(shape, x.dtype),
+            barrier=plgpu.Barrier(num_arrivals=1, num_barriers=shape),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(x_ref, out_ref, smem_ref, barrier):
+      thread_id = jax.lax.axis_index('t')
+      for i in range(2):
+        for j in range(3):
+          @pl.when(thread_id == 0)
+          def _():
+            smem_ref[i, j] = x_ref[i, j] + 1
+            plgpu.barrier_arrive(barrier.at[i, j])
+
+          @pl.when(thread_id == 1)
+          def _():
+            if not with_race:
+              plgpu.barrier_wait(barrier.at[i, j])
+            out_ref[i, j] = smem_ref[i, j] + 1
+
+    y = _kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x + 2)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_barrier_multidimensional_3d(self, with_race):
+    shape = (2, 1, 3)
+    x = jnp.arange(6, dtype=jnp.float32).reshape(shape)
+
+    @functools.partial(
+        plgpu.kernel,
+        out_type=x,
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM(shape, x.dtype),
+            barrier=plgpu.Barrier(num_arrivals=1, num_barriers=shape),
+        ),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+    def _kernel(x_ref, out_ref, smem_ref, barrier):
+      thread_id = jax.lax.axis_index('t')
+      for i in range(2):
+        for j in range(1):
+          for k in range(3):
+            @pl.when(thread_id == 0)
+            def _():
+              smem_ref[i, j, k] = x_ref[i, j, k] + 1
+              plgpu.barrier_arrive(barrier.at[i, j, k])
+
+            @pl.when(thread_id == 1)
+            def _():
+              if not with_race:
+                plgpu.barrier_wait(barrier.at[i, j, k])
+              out_ref[i, j, k] = smem_ref[i, j, k] + 1
+
+    y = _kernel(x)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      np.testing.assert_array_equal(y, x + 2)
+
   @jtu.parameterized.parameters(range(2, 17))
   def test_single_barrier_with_multiple_arrival(self, num_threads):
 

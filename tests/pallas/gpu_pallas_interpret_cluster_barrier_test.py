@@ -292,6 +292,127 @@ class GpuPallasInterpretClusterBarrierTest(jtu.JaxTestCase):
         expected[my_idx] = x[read_slice]
       np.testing.assert_array_equal(y, expected)
 
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_cluster_barrier_multidimensional_1d(self, with_race):
+    shape = (2,)
+    x = jnp.arange(32, dtype=jnp.int32).reshape(2, 16)
+    out_shape = (2, 2, 16)
+
+    def _kernel(in_gmem, scratch_gmem, out_gmem, cluster_barrier):
+      cid = jax.lax.axis_index("c")
+      for i in range(2):
+        scratch_gmem[i, cid, :] = in_gmem[cid, :]
+        plgpu.barrier_arrive(cluster_barrier.at[i])
+        if not with_race:
+          plgpu.barrier_wait(cluster_barrier.at[i])
+        out_gmem[i, cid, :] = scratch_gmem[i, 1 - cid, :]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+        interpret=InterpretParams(detect_races=True),
+        scratch_types=dict(
+            cluster_barrier=plgpu.ClusterBarrier(
+                collective_axes=("c",), num_arrivals=1, num_barriers=shape
+            ),
+        ),
+        cluster=(2,),
+        cluster_names=("c",),
+    )
+
+    scratch_init = jnp.zeros((2, 2, 16), dtype=jnp.int32)
+    y = kernel(x, scratch_init)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      expected = jnp.broadcast_to(
+          jnp.flip(x, axis=0)[jnp.newaxis, :, :], out_shape
+      )
+      np.testing.assert_array_equal(y, expected)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_cluster_barrier_multidimensional_2d(self, with_race):
+    shape = (2, 3)
+    x = jnp.arange(32, dtype=jnp.int32).reshape(2, 16)
+    out_shape = (2, 3, 2, 16)
+
+    def _kernel(in_gmem, scratch_gmem, out_gmem, cluster_barrier):
+      cid = jax.lax.axis_index("c")
+      for i in range(2):
+        for j in range(3):
+          scratch_gmem[i, j, cid, :] = in_gmem[cid, :]
+          plgpu.barrier_arrive(cluster_barrier.at[i, j])
+          if not with_race:
+            plgpu.barrier_wait(cluster_barrier.at[i, j])
+          out_gmem[i, j, cid, :] = scratch_gmem[i, j, 1 - cid, :]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+        interpret=InterpretParams(detect_races=True),
+        scratch_types=dict(
+            cluster_barrier=plgpu.ClusterBarrier(
+                collective_axes=("c",), num_arrivals=1, num_barriers=shape
+            ),
+        ),
+        cluster=(2,),
+        cluster_names=("c",),
+    )
+
+    scratch_init = jnp.zeros((2, 3, 2, 16), dtype=jnp.int32)
+    y = kernel(x, scratch_init)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      expected = jnp.broadcast_to(
+          jnp.flip(x, axis=0)[jnp.newaxis, jnp.newaxis, :, :], out_shape
+      )
+      np.testing.assert_array_equal(y, expected)
+
+  @jtu.parameterized.product(with_race=[True, False])
+  def test_cluster_barrier_multidimensional_3d(self, with_race):
+    shape = (2, 1, 3)
+    x = jnp.arange(32, dtype=jnp.int32).reshape(2, 16)
+    out_shape = (2, 1, 3, 2, 16)
+
+    def _kernel(in_gmem, scratch_gmem, out_gmem, cluster_barrier):
+      cid = jax.lax.axis_index("c")
+      for i in range(2):
+        for j in range(1):
+          for k in range(3):
+            scratch_gmem[i, j, k, cid, :] = in_gmem[cid, :]
+            plgpu.barrier_arrive(cluster_barrier.at[i, j, k])
+            if not with_race:
+              plgpu.barrier_wait(cluster_barrier.at[i, j, k])
+            out_gmem[i, j, k, cid, :] = scratch_gmem[i, j, k, 1 - cid, :]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct(out_shape, jnp.int32),
+        interpret=InterpretParams(detect_races=True),
+        scratch_types=dict(
+            cluster_barrier=plgpu.ClusterBarrier(
+                collective_axes=("c",), num_arrivals=1, num_barriers=shape
+            ),
+        ),
+        cluster=(2,),
+        cluster_names=("c",),
+    )
+
+    scratch_init = jnp.zeros((2, 1, 3, 2, 16), dtype=jnp.int32)
+    y = kernel(x, scratch_init)
+    if with_race:
+      self.assertTrue(mosaic_interpret.get_races().races_found)
+    else:
+      self.assertFalse(mosaic_interpret.get_races().races_found)
+      expected = jnp.broadcast_to(
+          jnp.flip(x, axis=0)[jnp.newaxis, jnp.newaxis, jnp.newaxis, :, :],
+          out_shape,
+      )
+      np.testing.assert_array_equal(y, expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
