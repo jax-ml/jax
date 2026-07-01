@@ -116,7 +116,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} \
     --strategy=TestRunner=local \
     --local_test_jobs=$J \
-    --test_env=JAX_TEST_NUM_THREADS=$J \
+    --test_env=JAX_TEST_NUM_THREADS=32 \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_ENABLE_TPU_XDIST=1 \
@@ -199,7 +199,7 @@ else
     --test_env=JAX_TESTS_PER_ACCELERATOR=${JOBS_PER_ACC} \
     --strategy=TestRunner=local \
     --local_test_jobs=$J \
-    --test_env=JAX_TEST_NUM_THREADS=$J \
+    --test_env=JAX_TEST_NUM_THREADS=32 \
     --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
     --test_env=JAX_SKIP_SLOW_TESTS=1 \
     --test_env=JAX_ENABLE_TPU_XDIST=1 \
