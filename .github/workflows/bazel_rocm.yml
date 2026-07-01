@@ -91,6 +91,10 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -116,6 +120,7 @@ jobs:
 
     env:
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       # Required on gfx950 with ROCm 7.13 to avoid HIP "invalid device function"
       # failures during multi-accelerator collectives. RCCL emits an explicit
