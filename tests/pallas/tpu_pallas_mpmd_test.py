@@ -1197,5 +1197,19 @@ class MpmdPhysicalizeTest(jtu.JaxTestCase):
     np.testing.assert_allclose(res, x + y)
 
 
+class MpmdStagesTest(jtu.JaxTestCase):
+
+  def test_trace(self):
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+
+    @pl.kernel(out_type=jax.typeof(x), mesh=pltpu.create_tensorcore_mesh("x"))
+    def body(x_ref, o_ref):
+      del x_ref, o_ref
+
+    traced = body.trace(x)
+    self.assertLen(traced.jaxprs, 1)
+    self.assertLen(traced.meshes, 1)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
