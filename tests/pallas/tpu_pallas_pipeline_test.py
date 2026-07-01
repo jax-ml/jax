@@ -1336,8 +1336,8 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
     x = jax.random.uniform(k1, (m, k))
     y = jax.random.uniform(k2, (k, n))
 
-    def matmul_pipeline(x_ref, y_ref, z_ref):
-      @pl.when(pl.program_id(2) == 0)
+    def matmul_pipeline(ps, x_ref, y_ref, z_ref):
+      @pl.when(ps.index[2] == 0)
       def _():
         z_ref[...] = jnp.zeros_like(z_ref)
       z_ref[...] += x_ref[...] @ y_ref[...]
@@ -1356,6 +1356,7 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
           out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
           core_axis_name='core',
           dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY),
+          _explicit_indices=True,
       )(x_ref, y_ref, z_ref)
 
     @jax.jit

@@ -1632,6 +1632,31 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
     tpu_helpers.sync_copy(window_ref, hbm_ref)
 
 
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True, eq=False)
+class PipelineStep:
+  index: tuple[int | jax.Array, ...]
+  local_index: jax.Array
+
+  def tree_flatten(self):
+    children: list[jax.Array] = []
+    aux: list[int | None] = []
+    for v in (*self.index, self.local_index):
+      if isinstance(v, int):
+        aux.append(v)
+      else:
+        aux.append(None)
+        children.append(v)
+    return children, tuple(aux)
+
+  @classmethod
+  def tree_unflatten(cls, aux, children):
+    it = iter(children)
+    vals = [v if v is not None else next(it) for v in aux]
+    *index, local_index = vals
+    return cls(index=tuple(index), local_index=local_index)
+
+
 def _emit_pipeline(
     body,
     *,
@@ -1763,7 +1788,10 @@ def _emit_pipeline(
         current_refs = map_brefs(lambda x: x.current_ref, brefs)
         with scheduler._named_scope("ep_run_kernel"):
           if _explicit_indices:
-            body(scheduler.indices, *current_refs, *scratches)
+            pipeline_step = PipelineStep(
+                scheduler.indices, scheduler.step
+            )
+            body(pipeline_step, *current_refs, *scratches)
           else:
             body(*current_refs, *scratches)
 
@@ -1805,7 +1833,10 @@ def _emit_pipeline(
           current_refs = map_brefs(lambda x: x.current_ref, brefs)
           with scheduler._named_scope("ep_run_kernel"):
             if _explicit_indices:
-              body(scheduler.indices, *current_refs, *scratches)
+              pipeline_step = PipelineStep(
+                  scheduler.indices, scheduler.step
+              )
+              body(pipeline_step, *current_refs, *scratches)
             else:
               body(*current_refs, *scratches)
           # loop output handling phase
@@ -1983,6 +2014,16 @@ def emit_pipeline(
     assert all(
         not isinstance(x, state.TransformedRef) for x in flat_kernel_args)
 
+    if _explicit_indices:
+      scalar_aval: Any = core.ShapedArray((), jnp.int32)
+      ps_aval = PipelineStep(
+          index=tuple([scalar_aval] * len(grid_)),
+          local_index=scalar_aval,
+      )
+      kernel_args = (ps_aval, *kernel_args)
+      kernel_in_tree = tree_util.tree_structure(kernel_args)
+      flat_kernel_args = tree_util.tree_leaves(kernel_args)
+
     with grid_mapping.trace_env():
       body_fun_dbg = api_util.debug_info(
           "emit_pipeline body", body, kernel_args, {})
@@ -2016,6 +2057,7 @@ def emit_pipeline(
         dimension_semantics=dimension_semantics,
         trace_scopes=trace_scopes,
         no_pipelining=no_pipelining,
+        _explicit_indices=_explicit_indices,
         _static_grid_offsets=tuple(static_grid_offsets),
         _num_extra_dynamic=len(dynamic_offset_tracers),
     )
@@ -2031,7 +2073,7 @@ _uncacheable_primitives.add(emit_pipeline_p)
 @emit_pipeline_p.def_effectful_abstract_eval
 def _emit_pipeline_effectful_abstract_eval(
     *avals, body_jaxpr: core.Jaxpr, body_consts_len,
-    grid_mapping, _num_extra_dynamic, args_tree, **params):
+    grid_mapping, _num_extra_dynamic, args_tree, _explicit_indices, **params):
   del params
   index_map_consts_counts = tuple(
       len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
@@ -2058,6 +2100,11 @@ def _emit_pipeline_effectful_abstract_eval(
       out_effects.add(ReadEffect(ref_idx)
                       if i < num_inputs else WriteEffect(ref_idx))
 
+  num_ps_leaves = (
+      len(body_jaxpr.invars) - len(flat_refs_idx)
+      if _explicit_indices else 0
+  )
+
   # Propagate effects from `body_jaxpr`, mapping them to the correct indices in
   # `avals`.
   body_input_idx = {v: i for i, v in enumerate(
@@ -2072,11 +2119,14 @@ def _emit_pipeline_effectful_abstract_eval(
       out_effects.add(e.replace(const_offset + input_idx))
     else:
       invar_idx = input_idx - len(body_jaxpr.constvars)
-      if invar_idx < num_inputs and isinstance(e, WriteEffect):
+      if invar_idx < num_ps_leaves:
+        continue
+      ref_invar_idx = invar_idx - num_ps_leaves
+      if ref_invar_idx < num_inputs and isinstance(e, WriteEffect):
         raise ValueError(
-            f"WriteEffect should not apply to an input buffer {invar_idx} in"
+            f"WriteEffect should not apply to an input buffer {ref_invar_idx} in"
             f" pipeline body jaxpr: {body_jaxpr}")
-      ref_idx = get_ref_idx(flat_refs_idx[invar_idx])
+      ref_idx = get_ref_idx(flat_refs_idx[ref_invar_idx])
       out_effects.add(e.replace(ref_idx))
   return (), frozenset(out_effects)
 
@@ -2097,15 +2147,18 @@ _uncacheable_primitives.add(pipeline_body_p)
 
 @pipeline_body_p.def_effectful_abstract_eval
 def _pipeline_body_effectful_abstract_eval(
-    *avals, jaxpr, in_tree, num_inputs, **params
+    *avals, jaxpr, in_tree, num_inputs, _explicit_indices=False, **params
 ):
   del params
   # Because `avals` are grid indices, body constants, and flattened
   # TransformedRefs as arguments, we unflatten a flat index list to be able to
   # identify the index of an n-th Ref from a positional index.
   indices_flat = list(range(len(avals)))
-  (_, consts_idx, refs_idx) = in_tree.unflatten(indices_flat)
+  _, consts_idx, refs_idx = in_tree.unflatten(indices_flat)
   flat_refs_idx, _ = tracing_registry.flatten(refs_idx, is_transformed_ref)
+  num_ps_leaves = (
+      len(jaxpr.invars) - len(flat_refs_idx) if _explicit_indices else 0
+  )
   flat_consts_idx, _ = tracing_registry.flatten(consts_idx)
   # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
   get_ref_idx = lambda x: x.ref if isinstance(x, state.TransformedRef) else x
@@ -2128,21 +2181,31 @@ def _pipeline_body_effectful_abstract_eval(
       out_effects.add(e.replace(flat_consts_idx[input_idx]))
     else:
       invar_idx = input_idx - len(jaxpr.constvars)
-      if invar_idx < num_inputs and isinstance(e, WriteEffect):
-        raise ValueError(f"WriteEffect on input buffer {invar_idx}")
-      ref_idx = get_ref_idx(flat_refs_idx[invar_idx])
+      if invar_idx < num_ps_leaves:
+        continue
+      ref_invar_idx = invar_idx - num_ps_leaves
+      if ref_invar_idx < num_inputs and isinstance(e, WriteEffect):
+        raise ValueError(f"WriteEffect on input buffer {ref_invar_idx}")
+      ref_idx = get_ref_idx(flat_refs_idx[ref_invar_idx])
       out_effects.add(e.replace(ref_idx))
   return (), frozenset(out_effects)
 
 
 @register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
-def _pipeline_body_lowering_rule(ctx, *args_flat, jaxpr, in_tree, **_):
+def _pipeline_body_lowering_rule(
+    ctx, *args_flat, jaxpr, in_tree, _explicit_indices=False, **_):
   # TODO(rdyro): This function is a near duplicate of _jaxpr_call_lowering_rule
   # from sc_lowering.py, we should factor out and unify the two.
-  (indices, body_consts, refs) = in_tree.unflatten(args_flat)
-  (_, body_const_shapes, refs_shapes) = in_tree.unflatten(ctx.block_shapes)
-
-  refs_avals = tuple(var.aval for var in jaxpr.invars)
+  (ps, body_consts, refs) = in_tree.unflatten(args_flat)
+  (_, body_const_shapes, refs_shapes) = in_tree.unflatten(
+      ctx.block_shapes)
+  ps_flat = tree_util.tree_leaves(ps)
+  if _explicit_indices:
+    ps_block_shapes = [()] * len(ps_flat)
+    refs_avals = tuple(var.aval for var in jaxpr.invars[len(ps_flat):])
+  else:
+    ps_block_shapes = []
+    refs_avals = tuple(var.aval for var in jaxpr.invars)
   # manually resolve the transformed refs
   if refs:
     resolved_refs, resolved_ref_shapes = zip(
@@ -2158,22 +2221,26 @@ def _pipeline_body_lowering_rule(ctx, *args_flat, jaxpr, in_tree, **_):
   # end of the user grid dimensions. This is error prone (the user could request
   # a core grid dimension with pl.program_id); we should fix this soon.
   lowering_context = ctx.lowering_context.replace(
-      user_grid_indices=(tuple(indices)
-                         + tuple(user_grid_indices[len(indices):])),
-      block_shapes=(list(body_const_shapes)
-                    + list(resolved_ref_shapes))
+      user_grid_indices=(*ps.index, *user_grid_indices[len(ps.index) :]),
+      block_shapes=(*ps_block_shapes, *body_const_shapes, *resolved_ref_shapes),
   )
   # Lift the constants out of the jaxpr, disabling checks to avoid a redundant
   # re-checking of jaxpr, like its grid and sharding information.
   with config.enable_checks(False):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
-  return jaxpr_subcomp(lowering_context, jaxpr, *body_consts, *resolved_refs)
+  if _explicit_indices:
+    return jaxpr_subcomp(
+        lowering_context, jaxpr,
+        *body_consts, *ps_flat, *resolved_refs)
+  else:
+    return jaxpr_subcomp(
+        lowering_context, jaxpr, *body_consts, *resolved_refs)
 
 @register_lowering_rule(emit_pipeline_p, kernel_types=[*tpu_core.CoreType])
 def _emit_pipeline_lowering_rule(
     ctx, *args, grid_mapping, _num_extra_dynamic, _static_grid_offsets,
-    args_tree, body_jaxpr, body_consts_len, **params
+    args_tree, body_jaxpr, body_consts_len, _explicit_indices, **params
 ):
   index_map_consts_counts = tuple(
       len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
@@ -2210,18 +2277,17 @@ def _emit_pipeline_lowering_rule(
         bm.to_block_spec()
         for bm in grid_mapping.block_mappings[grid_mapping.num_inputs:]]
 
-    def new_body(indices, *args):
-      original_indices = tuple(
-          idx for i, idx in enumerate(indices)
-          if i not in grid_mapping.vmapped_dims
-      )
-      indices_consts_args = (original_indices, body_consts, args)
+    def new_body(ps, *args):
+      # TODO(slebedev): Update ``ps`` to account for ``vmapped_dims``.
+      assert not grid_mapping.vmapped_dims
+      indices_consts_args = (ps, body_consts, args)
       args_flat, args_tree = tracing_registry.flatten(indices_consts_args)
       return pipeline_body_p.bind(
           *args_flat,
           jaxpr=body_jaxpr,
           in_tree=args_tree,
           num_inputs=grid_mapping.num_inputs,
+          _explicit_indices=_explicit_indices,
       )
 
     pipeline_fun = _emit_pipeline(
