@@ -37,6 +37,7 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInitialize);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiV2);
 
 class ModuleImage;
 
@@ -44,15 +45,18 @@ class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
          uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-         int compute_capability);
+         int compute_capability, uint64_t global_scratch_size = 0,
+         uint64_t global_scratch_align = 0);
 
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
   static Kernel FromProto(const jax_triton::TritonKernel& proto);
   jax_triton::TritonKernel ToProto() const;
 
-  // Returns true if we can launch the kernel without crashing.
   bool CanLaunchOnDevice(gpuDevice_t) const;
+
+  uint64_t global_scratch_size() const { return global_scratch_size_; }
+  uint64_t global_scratch_align() const { return global_scratch_align_; }
 
  private:
   std::string kernel_name_;
@@ -62,6 +66,8 @@ class Kernel {
   std::string ptx_;
   std::string ttir_;
   int compute_capability_;
+  uint64_t global_scratch_size_;
+  uint64_t global_scratch_align_;
 
   ModuleImage* module_image_ = nullptr;
 };
@@ -74,12 +80,27 @@ class KernelCall {
       size_t ptr_divisibility;
     };
 
+    struct TensorDescriptor {
+      uint32_t rank;
+      std::string dtype;
+      std::vector<uint64_t> shape;
+      std::vector<int64_t> strides;
+      std::vector<uint32_t> block_shape;
+      bool padding_nan;
+      bool round_f32_to_tf32;
+      uint32_t nv_swizzle;
+      uint32_t nv_elem_size;
+      uint32_t nv_elem_type;
+      std::vector<uint32_t> nv_block_size;
+      bool nv_fp4_padded;
+    };
+
     static absl::StatusOr<Parameter> FromProto(
         const jax_triton::TritonKernelCall_Parameter& proto);
     jax_triton::TritonKernelCall_Parameter ToProto() const;
 
     std::variant<Array, bool, int32_t, uint32_t, int64_t, uint64_t, float,
-                 double>
+                 double, TensorDescriptor>
         value;
   };
 
@@ -87,15 +108,21 @@ class KernelCall {
              std::vector<Parameter> parameters);
 
   absl::Status Launch(gpuStream_t stream, void** buffers);
+  absl::Status Launch(gpuStream_t stream, void** buffers,
+                      ::xla::ffi::ScratchAllocator* scratch);
 
   static absl::StatusOr<KernelCall> FromProto(
       const jax_triton::TritonKernelCall& proto);
   jax_triton::TritonKernelCall ToProto() const;
 
-  // Returns true if we can launch the kernel without crashing.
   bool CanLaunchOnDevice(gpuDevice_t) const;
 
+  const Kernel& kernel() const { return kernel_; }
+
  private:
+  absl::Status LaunchImpl(gpuStream_t stream, void** buffers,
+                          ::xla::ffi::ScratchAllocator* scratch);
+
   Kernel kernel_;
   uint32_t grid_[3];
   std::vector<Parameter> parameters_;

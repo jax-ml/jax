@@ -50,13 +50,19 @@ nb::dict Registrations() {
   gpu_dict["initialize"] = EncapsulateFfiHandler(kTritonKernelCallFfiInitialize);
   gpu_dict["execute"] = EncapsulateFfiHandler(kTritonKernelCallFfi);
   dict["triton_kernel_call_ffi"] = gpu_dict;
+  dict["triton_kernel_call_ffi_v2"] =
+      EncapsulateFfiHandler(kTritonKernelCallFfiV2);
   return dict;
 }
 
 NB_MODULE(_triton, m) {
   nb::class_<Kernel>(m, "TritonKernel")
       .def(nb::init<std::string, uint32_t, uint32_t, uint32_t, std::string,
-                    std::string, int>());
+                    std::string, int, uint64_t, uint64_t>(),
+           nb::arg("kernel_name"), nb::arg("num_warps"), nb::arg("num_ctas"),
+           nb::arg("shared_mem_bytes"), nb::arg("ptx"), nb::arg("ttir"),
+           nb::arg("compute_capability"), nb::arg("global_scratch_size") = 0,
+           nb::arg("global_scratch_align") = 0);
 
   nb::class_<KernelCall::Parameter>(m, "TritonParameter");
 
@@ -106,6 +112,28 @@ NB_MODULE(_triton, m) {
                                               dtype.data());
           }
         }));
+
+  m.def("create_tensor_descriptor_parameter",
+        [](uint32_t rank, std::string dtype, std::vector<uint64_t> shape,
+           std::vector<int64_t> strides, std::vector<uint32_t> block_shape,
+           bool padding_nan, bool round_f32_to_tf32, uint32_t nv_swizzle,
+           uint32_t nv_elem_size, uint32_t nv_elem_type,
+           std::vector<uint32_t> nv_block_size, bool nv_fp4_padded) {
+          return KernelCall::Parameter{
+              KernelCall::Parameter::TensorDescriptor{
+                  rank,
+                  std::move(dtype),
+                  std::move(shape),
+                  std::move(strides),
+                  std::move(block_shape),
+                  padding_nan,
+                  round_f32_to_tf32,
+                  nv_swizzle,
+                  nv_elem_size,
+                  nv_elem_type,
+                  std::move(nv_block_size),
+                  nv_fp4_padded}};
+        });
 
   nb::class_<KernelCall>(m, "TritonKernelCall")
       .def(nb::init<Kernel, uint32_t, uint32_t, uint32_t,
