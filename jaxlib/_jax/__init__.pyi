@@ -447,6 +447,8 @@ class Device:
     different stats, or -1 for unavailable stats. 'bytes_in_use' is usually
     available. Intended for diagnostic use.
     """
+  def clear_memory_stats(self) -> None:
+    """Clears the peak memory tracking statistics for this device."""
 
   def get_stream_for_external_ready_events(self) -> int: ...
   def poison_execution(self, launch_id: int, error: str | object) -> bool: ...

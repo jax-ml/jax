@@ -188,6 +188,16 @@ PyDevice::MemoryStats() const {
   return result;
 }
 
+absl::Status PyDevice::ClearMemoryStats() const {
+  GlobalPyRefManager()->CollectGarbage();
+  ifrt::PjRtDevice* device = llvm::dyn_cast<ifrt::PjRtDevice>(device_);
+  if (device == nullptr || !device->IsAddressable()) {
+    return xla::InvalidArgument(
+        "ClearMemoryStats is only supported for addressable PjRt devices.");
+  }
+  return device->pjrt_device()->ClearMemoryStats();
+}
+
 absl::StatusOr<std::intptr_t> PyDevice::GetStreamForExternalReadyEvents()
     const {
   ifrt::PjRtDevice* device = llvm::dyn_cast<ifrt::PjRtDevice>(device_);
@@ -286,6 +296,18 @@ PyType_Slot PyDevice::slots_[] = {
           "be implemented on all platforms, and different platforms may return "
           "different stats, or -1 for unavailable stats. 'bytes_in_use' is "
           "usually available. Intended for diagnostic use.")
+      .def(
+          "clear_memory_stats",
+          [](const PyDevice& self) {
+            absl::Status status = self.ClearMemoryStats();
+            if (absl::IsUnimplemented(status)) {
+              PyErr_SetString(PyExc_NotImplementedError,
+                              std::string(status.message()).c_str());
+              throw nb::python_error();
+            }
+            xla::ThrowIfError(status);
+          },
+          "Clears the peak memory tracking statistics for this device.")
       .def(
           "get_stream_for_external_ready_events",
           xla::ValueOrThrowWrapper(&PyDevice::GetStreamForExternalReadyEvents))
