@@ -33,6 +33,7 @@ pytype_library(
         "core.py",
         "cost_estimate.py",
         "einshape.py",
+        "gpu_info.py",
         "helpers.py",
         "hlo_interpreter.py",
         "mpmd.py",

@@ -29,6 +29,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.interpreters import mlir
@@ -248,6 +249,28 @@ class TestUtilTest(TestCase):
       copy(src, dst)
     x = jnp.arange(2 * 3 * 5).reshape(2, 5, 3)
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, ())(x)
+    np.testing.assert_array_equal(y, x)
+
+  def test_copy_basic_deviceless_aot(self):
+    abstract_device = mesh_lib.AbstractDevice('11.0', 1, 'gpu')
+    abstract_mesh = mesh_lib.AbstractMesh(
+        (1,),
+        ('x',),
+        (mesh_lib.AxisType.Explicit,),
+        abstract_device=abstract_device,
+    )
+
+    def kernel(ctx, src, dst, _):
+      copy(src, dst)
+
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      x = jax.ShapeDtypeStruct((2, 5, 3), jnp.int32)
+      jitted = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, ())
+      lowered = jitted.lower(x)
+
+    compiled = lowered.compile(device_assignment=tuple(jax.devices()))
+    x = jnp.arange(2 * 3 * 5).reshape(2, 5, 3)
+    y = compiled(x)
     np.testing.assert_array_equal(y, x)
 
   def test_copy_swizzle(self):

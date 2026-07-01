@@ -30,7 +30,7 @@ from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import core as triton_core
 from jax._src.pallas.triton import lowering
-from jax._src.pallas.triton import gpu_info as gpu_info_lib
+from jax._src.pallas import gpu_info as gpu_info_lib
 
 
 # TODO(b/526389887): Figure out how to flip this to True.

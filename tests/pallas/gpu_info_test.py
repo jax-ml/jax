@@ -12,41 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
-from jax._src.pallas.triton import gpu_info
+from jax._src.pallas import gpu_info
+from jax.experimental import pallas as pl
 
-if sys.platform != "win32":
-  # pylint: disable=g-import-not-at-top
-  from jax.experimental.pallas import triton as plgpu
-  GpuVersion = plgpu.GpuVersion
-else:
-  plgpu = None
-  GpuVersion = gpu_info.GpuVersion
+
+GpuVersion = pl.GpuVersion
 
 
 class GpuInfoTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not plgpu:
-      self.skipTest("Triton support is not available.")
     if jtu.is_device_cuda() or jtu.is_device_rocm():
-      self.assertTrue(plgpu.is_gpu_device())
+      self.assertTrue(pl.is_gpu_device())
     else:
-      self.assertFalse(plgpu.is_gpu_device())
+      self.assertFalse(pl.is_gpu_device())
       self.skipTest("Skipping test because device is not a GPU.")
 
   def test_get_gpu_info_real_device(self):
     # on real device
     device = jax.devices()[0]
-    info = plgpu.get_gpu_info()
-    self.assertIsInstance(info, plgpu.GpuInfo)
+    info = pl.get_gpu_info()
+    self.assertIsInstance(info, pl.GpuInfo)
 
     expected_arch_name = str(device.compute_capability)
     if "cuda" in device.client.platform_version:
@@ -69,18 +61,18 @@ class GpuInfoTest(jtu.JaxTestCase):
         abstract_device=abstract_device,
     )
     with mesh_lib.use_abstract_mesh(abstract_mesh):
-      info = plgpu.get_gpu_info()
+      info = pl.get_gpu_info()
       self.assertEqual(info.arch_name, expected_info.arch_name)
       self.assertEqual(info.compute_capability, expected_info.compute_capability)
 
   def test_get_gpu_info_given_gpu_version(self):
-    info = plgpu.get_gpu_info()
+    info = pl.get_gpu_info()
     if info.gpu_version is None:
       self.skipTest(
           f"Skipping test as GPU device: {gpu_info.get_device_kind()} "
           "is not in GpuVersion."
       )
-    info_version = plgpu.get_gpu_info_from_version(info.gpu_version)
+    info_version = pl.get_gpu_info_from_version(info.gpu_version)
     self.assertEqual(info, info_version)
 
   @parameterized.parameters([

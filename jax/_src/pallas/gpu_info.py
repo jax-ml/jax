@@ -70,6 +70,11 @@ class GpuInfo:
   compute_capability: int
   gpu_version: GpuVersion | None
 
+  def get_arch_major_minor(self) -> tuple[int, int]:
+    return (
+        self.compute_capability // 10, self.compute_capability % 10
+    )
+
 
 def is_gpu_device() -> bool:
   return _get_device().platform == "gpu"
