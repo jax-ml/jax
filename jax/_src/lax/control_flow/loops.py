@@ -1545,9 +1545,13 @@ def _move_right(lst, to_move):
 ### while_loop
 
 @partial(api_boundary, repro_api_name="jax.lax.while_loop")
-def while_loop(cond_fun: Callable[[T], BooleanNumeric],
-               body_fun: Callable[[T], T],
-               init_val: T) -> T:
+def while_loop(
+  cond_fun: Callable[[T], BooleanNumeric],
+  body_fun: Callable[[T], T],
+  init_val: T,
+  *,
+  unroll: int = 1,
+) -> T:
   """Call ``body_fun`` repeatedly in a loop while ``cond_fun`` is True.
 
   The `Haskell-like type signature`_ in brief is
@@ -1585,18 +1589,46 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     :py:func:`while_loop` compiles ``cond_fun`` and ``body_fun``, so while it
     can be combined with :py:func:`jit`, it's usually unnecessary.
 
+  .. warning::
+    When ``unroll > 1``, if ``cond_fun`` or ``body_fun`` have side effects,
+    these side effects might be executed more than the correct number of times.
+
   Args:
     cond_fun: function of type ``a -> Bool``.
     body_fun: function of type ``a -> a``.
     init_val: value of type ``a``, a type that can be a scalar, array, or any
       pytree (nested Python tuple/list/dict) thereof, representing the initial
       loop carry value.
+    unroll: positive integer indicating how many iterations to unroll within a
+      single iteration of a loop. This can reduce the number of kernel launches
+      and thereby improve speed. ``unroll > 1`` might perform more computations
+      than strictly necessary (at most, ``unroll - 1``). However, for safety, it
+      always passes valid states to ``body_fun`` (that is, pre-terminal states
+      for which ``cond_fun`` is ``true``).
 
   Returns:
     The output from the final iteration of body_fun, of type ``a``.
 
   .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
+  if not (isinstance(unroll, int) and unroll > 0):
+    raise ValueError("unroll parameter must be a positive integer.")
+
+  if unroll > 1:
+    # Execute `body_fun` speculatively `unroll` times per XLA `while_loop` iteration.
+    def macro_body_fun(prev):
+      # The following evaluation is guaranteed to be safe because the outer
+      # XLA `while_loop` just evaluated `cond_fun` as true.
+      curr = body_fun(prev)
+      for _ in range(1, unroll):
+          cond = cond_fun(curr)
+          prev = tree_map(partial(lax.select, cond), curr, prev)
+          curr = body_fun(prev)
+      return curr
+    # The XLA `while_loop` now evaluates condition checks and kernel launches at
+    # the boundaries of the unrolled macro-chunks.
+    return while_loop(cond_fun, macro_body_fun, init_val)
+
   if not (callable(body_fun) and callable(cond_fun)):
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
   if config.disable_jit.value:
