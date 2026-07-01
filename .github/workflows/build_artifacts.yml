@@ -91,6 +91,11 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      should-run:
+        description: 'Whether this workflow should execute or skip.'
+        required: false
+        default: 'true'
+        type: string
     outputs:
       gcs_upload_uri:
         description: "GCS location prefix to where the artifacts were uploaded"
@@ -103,11 +108,10 @@ jobs:
         # Explicitly set the shell to bash to override Windows's default (cmd)
         shell: bash
 
-    runs-on: ${{ inputs.runner }}
+    # When should-run is false, route to ubuntu-latest instead of heavy runners to avoid reserving hardware.
+    runs-on: ${{ inputs.should-run != 'false' && inputs.runner || 'ubuntu-latest' }}
 
-    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') ||
-                   (contains(inputs.runner, 'windows-x86') && null) }}
+    container: ${{ inputs.should-run != 'false' && ((contains(inputs.runner, 'linux-x86') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest') || (contains(inputs.runner, 'linux-arm64') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-arm64:latest') || (contains(inputs.runner, 'windows-x86') && null)) || null }}
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
@@ -125,9 +129,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: inputs.should-run != 'false'
         with:
           persist-credentials: false
       - name: Configure Build Environment
+        if: inputs.should-run != 'false'
         shell: bash
         run: |
           RUNNER_TYPE="${INPUTS_RUNNER}"
@@ -152,31 +158,33 @@ jobs:
           INPUTS_ARTIFACT: ${{ inputs.artifact }}
       # Halt for testing
       - name: Wait For Connection
+        if: inputs.should-run != 'false'
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Build ${{ inputs.artifact }}
+        if: inputs.should-run != 'false'
         timeout-minutes: 60
         run: ./ci/build_artifacts.sh "${INPUTS_ARTIFACT}"
         env:
           INPUTS_ARTIFACT: ${{ inputs.artifact }}
       - name: Upload artifacts to a GCS bucket (non-Windows runs)
         if: >-
-          ${{ inputs.upload_artifacts_to_gcs && !contains(inputs.runner, 'windows-x86') }}
+          ${{ inputs.should-run != 'false' && inputs.upload_artifacts_to_gcs && !contains(inputs.runner, 'windows-x86') }}
         run:  gcloud storage cp -r "$(pwd)/dist/*.whl" "${INPUTS_GCS_UPLOAD_URI}"/
         env:
           INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
       # Set shell to cmd to avoid path errors when using gcloud commands on Windows
       - name: Upload artifacts to a GCS bucket (Windows runs)
         if: >-
-          ${{ inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
+          ${{ inputs.should-run != 'false' && inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
         shell: cmd  # zizmor: ignore[misfeature] allow the workflow to use cmd shell
         run:  gcloud storage cp -r "dist/*.whl" "%INPUTS_GCS_UPLOAD_URI%"/
         env:
           INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
       - name: Store the GCS upload URI as an output
         id: store-gcs-upload-uri
-        if: ${{ inputs.upload_artifacts_to_gcs }}
+        if: ${{ inputs.should-run != 'false' && inputs.upload_artifacts_to_gcs }}
         run:  echo "gcs_upload_uri=${INPUTS_GCS_UPLOAD_URI}" >> "$GITHUB_OUTPUT"
         env:
           INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}
