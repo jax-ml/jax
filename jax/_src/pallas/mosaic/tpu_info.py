@@ -623,7 +623,10 @@ def infer_tiling(
   match tiling:
     case Tiling.COMPACT:
       second_minor, _ = final_dims
-      factor = _get_tiling_factor(second_minor, tiling.shape[0], packing)
+      max_tiling = get_tpu_info().get_sublane_tiling(ty.dtype)
+      if second_minor % max_tiling != 0:
+        max_tiling = tiling.shape[0]
+      factor = _get_tiling_factor(second_minor, max_tiling, packing)
       return (*(1,) * len(leading_dims), factor, tiling.shape[1])
     case Tiling.SPARSE_CORE:
       [tile_size] = tiling.shape
