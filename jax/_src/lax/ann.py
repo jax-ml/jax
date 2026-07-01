@@ -228,12 +228,12 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
   if not dtypes.issubdtype(operand.dtype, np.floating):
     raise ValueError('operand must be a floating type')
   reduction_input_size = dims[reduction_dimension]
-  if aggregate_to_topk:
-    dims[reduction_dimension] = k
-  elif core.is_constant_shape((reduction_input_size, k)):
+  if core.is_constant_shape((reduction_input_size, k)):
     dims[reduction_dimension] = _jax.approx_top_k_reduction_output_size(
         reduction_input_size, len(dims), k, recall_target, aggregate_to_topk,
         reduction_input_size_override)[0]
+  elif aggregate_to_topk:
+    dims[reduction_dimension] = k
   else:
     raise NotImplementedError(
          "approx_top_k with aggregate_to_topk=False not yet implemented when "
