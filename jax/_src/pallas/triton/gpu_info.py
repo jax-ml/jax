@@ -25,8 +25,9 @@ from jax._src.interpreters import pxla
 
 
 class GpuVersion(enum.Enum):
-  """NVidia GPU version"""
+  """GPU version"""
 
+  # NVIDIA GPUs
   A10 = "NVIDIA A10"
   A30 = "NVIDIA A30"
   A100 = "NVIDIA A100"
@@ -46,6 +47,20 @@ class GpuVersion(enum.Enum):
   RTX_PRO_5000 = "NVIDIA RTX PRO 5000"
   RTX_PRO_6000 = "NVIDIA RTX PRO 6000"
   THOR = "NVIDIA Thor"
+
+  # AMD GPUs
+  GFX908 = "gfx908"
+  GFX90A = "gfx90a"
+  GFX942 = "gfx942"
+  GFX950 = "gfx950"
+  GFX1030 = "gfx1030"
+  GFX1100 = "gfx1100"
+  GFX1101 = "gfx1101"
+  GFX1103 = "gfx1103"
+  GFX1150 = "gfx1150"
+  GFX1151 = "gfx1151"
+  GFX1200 = "gfx1200"
+  GFX1201 = "gfx1201"
 
   def __str__(self) -> str:
     return self.value
@@ -142,6 +157,26 @@ def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
           gpu_version=gpu_version,
           arch_name="11.0",
           compute_capability=110,
+      )
+    # AMD GPUs. The enum value is already the gfx arch name.
+    case (
+        GpuVersion.GFX908
+        | GpuVersion.GFX90A
+        | GpuVersion.GFX942
+        | GpuVersion.GFX950
+        | GpuVersion.GFX1030
+        | GpuVersion.GFX1100
+        | GpuVersion.GFX1101
+        | GpuVersion.GFX1103
+        | GpuVersion.GFX1150
+        | GpuVersion.GFX1151
+        | GpuVersion.GFX1200
+        | GpuVersion.GFX1201
+    ):
+      return GpuInfo(
+          gpu_version=gpu_version,
+          arch_name=gpu_version.value,
+          compute_capability=0,
       )
     case _:
       raise ValueError(f"Unsupported GPU version: {gpu_version}")

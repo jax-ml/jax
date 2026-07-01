@@ -112,8 +112,6 @@ def pallas_call_lowering(
   else:
     arch_name = gpu_info.arch_name
     compute_capability = gpu_info.compute_capability
-    if lowering_platform == "rocm":
-      compute_capability = 0
 
   # Sanitize the name to conform to NVPTX requirements. We do this here
   # to avoid the need to fetch the new name from PTX post compilation.
