@@ -3461,7 +3461,10 @@ class FragmentedArray:
     if not isinstance(self.layout, TiledLayout) or not isinstance(layout, TiledLayout):
       raise NotImplementedError(self.layout, layout)
     if len(layout.base_tile_shape) != len(shape):
-      raise NotImplementedError("Tiling rank different than broadcast result rank")
+      raise NotImplementedError(
+          "Tiling rank different than broadcast result rank, "
+          f"{layout.base_tile_shape} vs {shape}"
+      )
     new_dimensions = sorted(set(range(len(shape))) - set(source_dimensions))
     expected_layout = layout.reduce(new_dimensions)
     if expected_layout != self.layout:
