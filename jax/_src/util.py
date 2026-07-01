@@ -742,7 +742,7 @@ class PyArgs:
 
   # True means keep
   def filter_with_mask(self, mask):
-    assert len(mask) == len(self), breakpoint()
+    assert len(mask) == len(self)
     keeps = iter(mask)
     return PyArgs(
         tuple(x for x in self.args if next(keeps)),

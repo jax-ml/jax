@@ -387,9 +387,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     new_arg_avals = ft.pack(((carry_avals, x_avals), {}))
     jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
     jaxpr, consts = pe.separate_consts(jaxpr)
-    if len(out_avals.unpack()) != 2:
+    try:
+      assert len(out_avals.unpack()) == 2
+    except AssertionError:
       msg = "scan body output must be a pair, got {}."
-      raise TypeError(msg.format(out_avals.unflatten()))
+      raise TypeError(msg.format(out_avals.unflatten())) from None
     return jaxpr, out_avals, consts
 
   # The carry input and output avals must match exactly. However, we want to account for

@@ -19,7 +19,8 @@ import itertools as it
 from typing import Any
 
 from jax._src.tree_util import (
-    PyTree, PyTreeDef, tracing_registry, treedef_children, treedef_tuple_tracing_registry)
+    PyTree, PyTreeDef, tracing_registry, treedef_children,
+    treedef_tuple_tracing_registry)
 from jax._src.util import (
     unzip2, Either, safe_map, safe_zip, split_list_checked, PyArgs)
 
@@ -77,6 +78,8 @@ class FlatTree:
     elif isinstance(self, FTPyTree):
       # TODO: we should be able to get rid of this case by ensuring that
       # we always have FTTuple on the output of tuple-returning HOPs.
+      assert (isinstance(nd := self.tree.node_data(), (tuple, list)) and nd and
+              nd[0] in (tuple, list))
       treedefs = treedef_children(self.tree)
       valss = split_list_checked(self.xs, [t.num_leaves for t in treedefs])
       return tuple(FTPyTree(vals, treedef) for vals, treedef in zip(valss, treedefs))
@@ -188,6 +191,8 @@ class FTDict(FlatTree):
     keys = keys if type(keys) is tuple else tuple(keys)
     assert all(isinstance(v, FlatTree) for v in vals)
     vals = vals if type(vals) is tuple else tuple(vals)
+    if keys and list(keys) != sorted(keys):
+      keys, vals = unzip2(sorted(zip(keys, vals), key=lambda kv: kv[0]))
     self.keys = keys
     self._vals = vals  # underscore to avoid collision with FlatTree.vals
   def __len__(self): return sum(len(val) for val in self._vals)
@@ -280,15 +285,14 @@ def flatten(tree: PyTree, is_leaf=None, registry=tracing_registry) -> FlatTree:
   return FTPyTree(vals, tree)
 
 def flatten_args(*arg_trees: PyTree, registry=tracing_registry) -> FlatTree:
-  arg_fts = tuple(registry.flatten(t) for t in arg_trees)
+  arg_fts = tuple(flatten(t, registry=registry) for t in arg_trees)
   return pack((arg_fts, {}))
 
-# statics to the Left, dynamics to the Right
-def statics_mask(
-    args: PyArgs[T], static_argnums, static_argnames) -> PyArgs[Either[T, T]]:
+# True means static. Flat, with args first then kwargs, matching PyArgs.map order.
+def statics_mask(args, static_argnums, static_argnames) -> list[bool]:
   num_args = len(args.args)
   static_argnums = [i % num_args if i < 0 else i for i in static_argnums]
-  return ([i in static_argnums for i in range(num_args)],
+  return ([i in static_argnums for i in range(num_args)] +
           [k in static_argnames for k in args.kwargs.keys()])
 
 def flatten_static_argnums_argnames(
@@ -297,7 +301,7 @@ def flatten_static_argnums_argnames(
   statics = statics_mask(pargs, static_argnums, static_argnames)
   fts = pargs.map2(
       statics,
-      lambda x, is_static: FTStatic(x) if is_static else flatten(x, registry))
+      lambda x, is_static: FTStatic(x) if is_static else flatten(x, registry=registry))
   return pack((fts.args, fts.kwargs))
 
 # TODO: this sucks. revise it away by using FlatTree in pjit instead of treedef.
@@ -308,7 +312,7 @@ def flatten_static_argnums_argnames_and_return_various_trees(
   statics = statics_mask(pargs, static_argnums, static_argnames)
   ans_ft = pack(pargs.map2(
       statics,
-      lambda x, static: FTStatic(x) if static else registry.flatten(x)
+      lambda x, static: FTStatic(x) if static else flatten(x, registry=registry)
       ).args_kwargs)
   _, tree_nones = registry.flatten(
       pargs.map2(statics, lambda x, static: None if static else x).args_kwargs)
