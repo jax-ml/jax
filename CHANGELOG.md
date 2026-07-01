@@ -34,6 +34,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
 
+* Bug fixes
+  * {func}`jax.scipy.special.betaln` now returns the correct finite value
+    instead of `nan` when ``a`` is a non-positive integer and ``a + b`` is also
+    a non-positive integer (e.g. ``betaln(-2, 1)``), matching
+    {func}`scipy.special.betaln` ({jax-issue}`#38243`).
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features

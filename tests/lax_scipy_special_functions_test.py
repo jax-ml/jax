@@ -345,6 +345,26 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
         self.assertAllClose(osp_special.gammasgn(inp),
                             lsp_special.gammasgn(inp))
 
+  def testBetalnNegativeIntegers(self):
+    # ref: https://github.com/jax-ml/jax/issues/38243
+    # When `a` is a non-positive integer and `a + b` is also a non-positive
+    # integer, gamma has a pole at both, so the naive
+    # lgamma(a) + lgamma(b) - lgamma(a + b) gives nan even though the poles
+    # cancel and the true value is finite.
+    dtype = jnp.zeros(0).dtype  # default float dtype.
+    # Build all (a, b) pairs with a a negative integer and b an integer.
+    a_vals, b_vals = [], []
+    for a in range(-6, 0):
+      for b in range(-6, 7):
+        a_vals.append(a)
+        b_vals.append(b)
+    args_maker = lambda: [np.array(a_vals, dtype=dtype),
+                          np.array(b_vals, dtype=dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.betaln, lsp_special.betaln, args_maker,
+                            rtol=rtol)
+    self._CompileAndCheck(lsp_special.betaln, args_maker, rtol=rtol)
+
   def testNdtriExtremeValues(self):
     # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
     dtype = jnp.zeros(0).dtype  # default float dtype.
