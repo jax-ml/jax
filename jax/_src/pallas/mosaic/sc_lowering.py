@@ -171,6 +171,17 @@ def _swap_lowering_rule(
   )
 
 
+@register_lowering_rule(state_primitives.addupdate_p)
+def _addupdate_lowering_rule(
+    ctx: LoweringRuleContext, ref, val, *flat_transforms, tree
+):
+  ctx = ctx.replace(avals_out=[ctx.avals_in[1]])
+  _store_lowering_rule(
+      ctx, ref, val, None, *flat_transforms, tree=tree, add=True
+  )
+  return ()
+
+
 def _store_lowering_rule(
     ctx: LoweringRuleContext, ref, val, mask, *flat_transforms, tree, add
 ):

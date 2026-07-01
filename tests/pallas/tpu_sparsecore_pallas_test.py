@@ -32,6 +32,7 @@ from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import discharge as state_discharge
+from jax._src.state import primitives as state_primitives
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
@@ -1135,6 +1136,20 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(),
         jnp.full(self.num_lanes, jnp.arange(self.num_lanes).sum()),
     )
+
+  def test_state_primitives_addupdate(self):
+    shape = (self.num_lanes,)
+    x = jnp.arange(self.num_lanes, dtype=jnp.int32)
+    y = jnp.ones(self.num_lanes, dtype=jnp.int32)
+
+    @self.vector_subcore_kernel(
+        out_shape=jax.ShapeDtypeStruct(shape=shape, dtype=jnp.int32)
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = x_ref[...]
+      state_primitives.ref_addupdate(o_ref, (), y_ref[...])
+
+    np.testing.assert_array_equal(kernel(x, y), x + y)
 
   @parameterized.parameters(*MASK_FNS)
   def test_addupdate_compressed(self, mask_fn):
