@@ -555,8 +555,8 @@ def _masked_cummax_abstract_eval(x, mask):
   return x
 
 
-def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
-                                *, reduction_kind: str):
+def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x,
+                                *maybe_mask, reduction_kind: str):
   sign_bit_vec = None
   # tpu.scan comparisons assume unsigned int predicates, so we compare
   # with the sign bit flipped.
@@ -565,6 +565,10 @@ def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
     sign_bit_vec = vector.broadcast(
         x.type, arith.constant(i32, ir.IntegerAttr.get(i32, 0x80000000)))
     x = arith.xori(x, sign_bit_vec)
+  match maybe_mask:
+    case (mask,): ...
+    case _:
+      mask = None
   result = tpu.scan(
       x.type, x, ir.Attribute.parse(f"#tpu.reduction_kind<{reduction_kind}>"),
       mask=mask)
@@ -588,12 +592,8 @@ def _reduce_op_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axes,
     raise NotImplementedError(
         f"reductions require axes to be (0,) on SparseCore, but got {axes}.")
   vec_dim = ctx.avals_in[0].shape[0]
-  i1t = ir.IntegerType.get_signless(1)
-  c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
-  x_shp = ctx.avals_in[0].shape
-  c1v = vector.broadcast(ir.VectorType.get(x_shp, c1.type), c1)
   return vector.extract(
-      _masked_cumop_lowering_rule(ctx, x, c1v, reduction_kind=reduction_kind),
+      _masked_cumop_lowering_rule(ctx, x, reduction_kind=reduction_kind),
       [], [vec_dim - 1])
 
 sc_lowering.register_lowering_rule(
@@ -622,9 +622,7 @@ def cummax(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
   """
   if x.ndim != 1:
     raise NotImplementedError(f"cummax: x={x.aval} must be rank 1")
-  if mask is None:
-    mask = lax.full(x.shape, True)
-  return masked_cummax_p.bind(x, mask)
+  return masked_cummax_p.bind(x, *() if mask is None else (mask,))
 
 
 def cummin(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
@@ -642,9 +640,7 @@ def cummin(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
   """
   if x.ndim != 1:
     raise NotImplementedError(f"cummin: x={x.aval} must be rank 1")
-  if mask is None:
-    mask = lax.full(x.shape, True)
-  return masked_cummin_p.bind(x, mask)
+  return masked_cummin_p.bind(x, *() if mask is None else (mask,))
 
 
 @sc_lowering.register_lowering_rule(lax.cumsum_p)
@@ -656,11 +652,7 @@ def _cumsum_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, axis,
     raise NotImplementedError(f"SC cumsum: x={ctx.avals_in[0]} must be rank 1")
   if reverse:
     raise NotImplementedError("SC cumsum: reverse=True is not yet supported")
-  i1t = ir.IntegerType.get_signless(1)
-  c1 = arith.constant(i1t, ir.IntegerAttr.get(i1t, 1))
-  c1v = vector.broadcast(ir.VectorType.get(x.type.shape, c1.type), c1)
-  return tpu.scan(
-      x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"), mask=c1v)
+  return tpu.scan(x.type, x, ir.Attribute.parse("#tpu.reduction_kind<sum>"))
 
 
 def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
@@ -675,9 +667,7 @@ def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
   """
   if x.ndim != 1:
     raise NotImplementedError(f"cumsum: x={x.aval} must be rank 1")
-  if mask is None:
-    mask = lax.full(x.shape, True)
-  return masked_cumsum_p.bind(x, mask)
+  return masked_cumsum_p.bind(x, *() if mask is None else (mask,))
 
 
 masked_sort_p = jax_core.Primitive("masked_sort")
