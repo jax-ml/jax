@@ -29,6 +29,7 @@ from jax import random
 from jax._src import test_util as jtu
 from jax._src import hypothesis_test_util as htu
 from jax._src.pallas import pallas_test_util as ptu
+from jax.experimental import pallas as pl
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 from jax.experimental.pallas.ops.tpu.splash_attention.splash_attention_mask_info import process_mask
@@ -301,6 +302,74 @@ def block_sizes_strategy(
 
 def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
   return hps.one_of(hps.just(None), hps.floats(min_value=1.0, max_value=50.0))
+
+
+class SplashAttentionCostEstimateTest(jtu.JaxTestCase):
+
+  def test_splash_mha_forward_cost_estimate(self):
+    num_q_heads = 2
+    num_kv_heads = 1
+    q_seq_len = 64
+    kv_seq_len = 128
+    head_dim_qk = 16
+    head_dim_v = 32
+    dtype = jnp.bfloat16
+
+    q = jax.ShapeDtypeStruct(
+        (num_q_heads, q_seq_len, head_dim_qk), dtype
+    )
+    k = jax.ShapeDtypeStruct(
+        (num_kv_heads, kv_seq_len, head_dim_qk), dtype
+    )
+    v = jax.ShapeDtypeStruct(
+        (num_kv_heads, kv_seq_len, head_dim_v), dtype
+    )
+    kernel_inputs = (q, k, v)
+    kernel_outputs = (
+        jax.ShapeDtypeStruct((q_seq_len, splash.NUM_LANES), jnp.float32),
+        jax.ShapeDtypeStruct((q_seq_len, splash.NUM_LANES), jnp.float32),
+        jax.ShapeDtypeStruct((q_seq_len, head_dim_v), jnp.float32),
+        jax.ShapeDtypeStruct((num_q_heads, q_seq_len, head_dim_v), dtype),
+        None,
+    )
+
+    cost = splash._splash_fwd_cost_estimate(
+        q,
+        k,
+        v,
+        None,
+        None,
+        mask_value=splash.DEFAULT_MASK_VALUE,
+        save_residuals=False,
+        attn_logits_soft_cap=None,
+        is_mqa=False,
+        kernel_inputs_specs=kernel_inputs,
+        kernel_outputs_specs=kernel_outputs,
+    )
+    per_head_cost = pl.estimate_cost(
+        splash.attention_reference,
+        jax.ShapeDtypeStruct((q_seq_len, kv_seq_len), jnp.bool_),
+        jax.ShapeDtypeStruct((q_seq_len, head_dim_qk), dtype),
+        jax.ShapeDtypeStruct((kv_seq_len, head_dim_qk), dtype),
+        jax.ShapeDtypeStruct((kv_seq_len, head_dim_v), dtype),
+        None,
+        None,
+        mask_value=splash.DEFAULT_MASK_VALUE,
+        save_residuals=False,
+        custom_type="flash",
+        attn_logits_soft_cap=None,
+    )
+    expected_bytes = sum(
+        int(np.prod(x.shape)) * x.dtype.itemsize
+        for x in jax.tree.leaves((kernel_inputs, kernel_outputs))
+    )
+
+    self.assertEqual(cost.flops, num_q_heads * per_head_cost.flops)
+    self.assertEqual(
+        cost.transcendentals,
+        num_q_heads * per_head_cost.transcendentals,
+    )
+    self.assertEqual(cost.bytes_accessed, expected_bytes)
 
 
 @jtu.with_config(jax_traceback_filtering="off")
