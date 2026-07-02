@@ -41,14 +41,14 @@ class FlatTree:
   """
 
   # === Each subclass (ADT case) should implement these ===
-  def __init__(self, *a, **k): assert False, "subclass should implement"
-  def __len__(self):           assert False, "subclass should implement"
-  def __eq__(self, other):     assert False, "subclass should implement"
-  def __hash__(self):          assert False, "subclass should implement"
-  def __repr__(self):          assert False, "subclass should implement"
-  def map(self, f):            assert False, "subclass should implement"
+  def __init__(self, *a, **k): assert False, f"subclass {self.__class__} should implement"
+  def __len__(self):           assert False, f"subclass {self.__class__} should implement"
+  def __eq__(self, other):     assert False, f"subclass {self.__class__} should implement"
+  def __hash__(self):          assert False, f"subclass {self.__class__} should implement"
+  def __repr__(self):          assert False, f"subclass {self.__class__} should implement"
+  def map(self, f):            assert False, f"subclass {self.__class__} should implement"
   @property
-  def tree(self) -> PyTreeDef: assert False, "subclass should implement"
+  def tree(self) -> PyTreeDef: assert False, f"subclass {self.__class__} should implement"
 
   # === Derived methods ===
   def map2(self: FlatTree, t2: Sequence[Any], f: Callable) -> FlatTree:
@@ -250,6 +250,8 @@ class FTStatic(FlatTree):
   def __hash__(self): return hash(self.val)
   def __repr__(self): return f"Static({self.val})"
   def map(self, f): return self
+  @property
+  def tree(self): return tracing_registry.flatten(0)[1]  # leaf treedef
 
 class FTFiltered(FlatTree):
   # Filtered (FlatTree (Either Aux a))
