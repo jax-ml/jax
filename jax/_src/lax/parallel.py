@@ -1019,9 +1019,11 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
   if positional_axes:
     reducer = mlir.lower_fun(pos_fn, multiple_results=False)
     def _positional_reduce(aval, arg):
-      aval_out = aval.update(
-          shape=np.delete(np.array(aval.shape, dtype=np.int64),
-                          positional_axes))
+      kwargs = dict(shape=np.delete(np.array(aval.shape, dtype=np.int64),
+                                    positional_axes))
+      if aval.sharding is not None:
+        kwargs['sharding'] = lax._reduce_op_sharding_rule(aval, axes=tuple(positional_axes))
+      aval_out = aval.update(**kwargs)
       reducer_ctx = ctx.replace(primitive=None, avals_in=[aval], avals_out=[aval_out])
       out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))
       return out
