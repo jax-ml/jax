@@ -9,7 +9,7 @@ common:rocm --action_env=TF_ROCM_CLANG="1"
 common:rocm --action_env=HIPCC_COMPILE_FLAGS_APPEND=--offload-compress
 common:rocm --copt=-Wno-gnu-offsetof-extensions
 common:rocm --copt=-Qunused-arguments
-common:rocm --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201"
+common:rocm --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx900,gfx906,gfx908,gfx90a,gfx942,gfx950,gfx1010,gfx1011,gfx1012,gfx1030,gfx1031,gfx1032,gfx1033,gfx1034,gfx1035,gfx1036,gfx1100,gfx1101,gfx1102,gfx1103,gfx1150,gfx1151,gfx1152,gfx1153,gfx1200,gfx1201"
 # Used for @xla//build_tools/rocm:parallel_gpu_execute
 common:rocm --legacy_external_runfiles=true
 
