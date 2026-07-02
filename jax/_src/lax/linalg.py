@@ -902,7 +902,13 @@ def _cholesky_gpu_lowering(ctx, operand, *, target_name_prefix):
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   info_aval = ShapedArray(batch_dims, np.int32)
-  rule = _linalg_ffi_lowering(f"{target_name_prefix}solver_potrf_ffi",
+  # On ROCm, use native rocsolver potrf which calls optimized rocBLAS kernels
+  # (TRSM + SYRK) instead of going through hipSOLVER.
+  if target_name_prefix == "hip":
+    ffi_target = "rocsolver_potrf_ffi"
+  else:
+    ffi_target = f"{target_name_prefix}solver_potrf_ffi"
+  rule = _linalg_ffi_lowering(ffi_target,
                               avals_out=[operand_aval, info_aval],
                               operand_output_aliases={0: 0})
   result, info = rule(ctx, operand, lower=True)
