@@ -427,5 +427,37 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  def testIstftZeroNoverlap(self):
+    # noverlap=0 must be honored, not replaced by the nperseg // 2 default.
+    shape = (33, 10)
+    dtype = np.float64
+    kwds = dict(window='boxcar', noverlap=0, input_onesided=True,
+                boundary=False)
+    osp_fun = partial(osp_signal.istft, **kwds)
+    jsp_fun = partial(jsp_signal.istft, **kwds)
+    tol = {np.float32: 1e-4, np.float64: 1e-6,
+           np.complex64: 1e-4, np.complex128: 1e-6}
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtypes.to_complex_dtype(dtype))]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
+  def testIstftOddNperseg(self):
+    # one-sided nfft=None with odd nperseg must use nfft_int, not raw nfft.
+    shape = (4, 10)  # nperseg=7 == n_default + 1 (odd)
+    dtype = np.float64
+    kwds = dict(window='boxcar', nperseg=7, nfft=None, input_onesided=True,
+                boundary=False)
+    osp_fun = partial(osp_signal.istft, **kwds)
+    jsp_fun = partial(jsp_signal.istft, **kwds)
+    tol = {np.float32: 1e-4, np.float64: 1e-6,
+           np.complex64: 1e-4, np.complex128: 1e-6}
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtypes.to_complex_dtype(dtype))]
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
