@@ -5715,6 +5715,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                             r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
       jnp.ones(2) + 3  # don't want to warn for scalars
 
+  def testStrictIndexing(self):
+    x = jnp.zeros((2, 3, 4))
+    with jax.numpy_strict_indexing(True):
+      with self.assertRaisesRegex(ValueError, "Found only 1"):
+        x[0]
+      x[0, ...]  # doesn't fail
+    with jax.numpy_strict_indexing(False):
+      x[0]  # doesn't fail
+      x[0, ...]  # doesn't fail
+
   def testStackArrayArgument(self):
     # tests https://github.com/jax-ml/jax/issues/1271
     @jax.jit
