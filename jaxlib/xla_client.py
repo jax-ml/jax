@@ -192,10 +192,18 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   collective_memory_size = os.getenv(
       'XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB', ''
   )
-  if allocator not in ('default', 'platform', 'bfc', 'cuda_async', 'vmm'):
+  allowed_allocators = (
+      'default',
+      'platform',
+      'bfc',
+      'cuda_async',
+      'vmm',
+      'address',
+  )
+  if allocator not in allowed_allocators:
     raise ValueError(
-        'XLA_PYTHON_CLIENT_ALLOCATOR env var must be "default", "platform", '
-        '"bfc", "cuda_async", or "vmm", got "%s"' % allocator
+        'XLA_PYTHON_CLIENT_ALLOCATOR env var must be one of %s, got "%s"'
+        % (', '.join(f'"{a}"' for a in allowed_allocators), allocator)
     )
   options['allocator'] = allocator
   if memory_fraction:
