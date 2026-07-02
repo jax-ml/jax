@@ -5430,8 +5430,11 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       m=[128],
       n=[128, 256],
       dtype=[jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn],
+      block_size=[16, 32],
   )
-  def test_simple_scaled_matmul(self, m, n, dtype):
+  def test_simple_scaled_matmul(self, m, n, dtype, block_size):
+    if block_size == 16 and dtype != jnp.float4_e2m1fn:
+      self.skipTest("Only float4_e2m1fn supports block size 16.")
     # TODO(apaszke): Add support for single-buffering in pallas_call.
     causes_oom = jnp.finfo(dtype).bits == 8 and n == 256
     k = 128 if causes_oom else 256
@@ -5458,8 +5461,16 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     scratch_shapes = [
         plgpu.Barrier(orders_tensor_core=True),
         plgpu.TMEM((m, n), jnp.float32),
-        plgpu.TMEM((m, k // 32), jnp.float8_e8m0fnu, layout=plgpu.TMEMLayout.SCALES_LAYOUT),
-        plgpu.TMEM((n, k // 32), jnp.float8_e8m0fnu, layout=plgpu.TMEMLayout.SCALES_LAYOUT),
+        plgpu.TMEM(
+            (m, k // block_size),
+            jnp.float8_e8m0fnu,
+            layout=plgpu.TMEMLayout.SCALES_LAYOUT,
+        ),
+        plgpu.TMEM(
+            (n, k // block_size),
+            jnp.float8_e8m0fnu,
+            layout=plgpu.TMEMLayout.SCALES_LAYOUT,
+        ),
     ]
 
     f = self.pallas_call(
@@ -5478,24 +5489,32 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     y = jax.random.uniform(jax.random.key(2), shape=(n, k), dtype=jnp.float32).astype(dtype)
     ksx, ksy = jax.random.split(jax.random.key(1234), 2)
     x_scale = jax.lax.bitcast_convert_type(
-        jax.random.randint(ksx, (m, k // 32), 122, 132, dtype=jnp.uint8),
-        jnp.float8_e8m0fnu
+        jax.random.randint(
+            ksx, (m, k // block_size), 122, 132, dtype=jnp.uint8
+        ),
+        jnp.float8_e8m0fnu,
     )
     y_scale = jax.lax.bitcast_convert_type(
-        jax.random.randint(ksy, (n, k // 32), 122, 132, dtype=jnp.uint8),
-        jnp.float8_e8m0fnu
+        jax.random.randint(
+            ksy, (n, k // block_size), 122, 132, dtype=jnp.uint8
+        ),
+        jnp.float8_e8m0fnu,
     )
     def format_scales(scales):
-      mn, k = scales.shape
-      assert mn % 128 == 0 and k % 4 == 0
+      mn, kk = scales.shape
+      assert mn % 128 == 0 and kk % 4 == 0
       return (
-          scales.reshape(mn // 128, 4, 32, k // 4, 4)
+          scales.reshape(mn // 128, 4, 32, kk // 4, 4)
           .transpose(0, 3, 2, 1, 4)
-          .reshape(mn // 128, k // 4, 32, 16)
+          .reshape(mn // 128, kk // 4, 32, 16)
       )
     result = f(x, y, format_scales(x_scale), format_scales(y_scale))
-    x_logical_scale = jnp.repeat(x_scale, 32, axis=1).astype(jnp.float32)
-    y_logical_scale = jnp.repeat(y_scale, 32, axis=1).astype(jnp.float32)
+    x_logical_scale = jnp.repeat(x_scale, block_size, axis=1).astype(
+        jnp.float32
+    )
+    y_logical_scale = jnp.repeat(y_scale, block_size, axis=1).astype(
+        jnp.float32
+    )
     expected = jnp.dot(
         x.astype(jnp.float32) * x_logical_scale,
         (y.astype(jnp.float32) * y_logical_scale).T,
