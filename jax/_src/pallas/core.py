@@ -661,7 +661,7 @@ class BlockSpec:
     with tracing_grid_env(grid, vmapped_dims):
       closed_jaxpr, out_avals = pe.trace_to_jaxpr(
           index_map_func,
-          ft.FlatTree(index_map_avals, index_map_tree, False),
+          ft.FTPyTree(index_map_avals, index_map_tree),
           debug_info)
     unflat_avals = out_avals.unflatten()
 
