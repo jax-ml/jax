@@ -108,6 +108,7 @@ class DLDeviceType(enum.IntEnum):
   kDLCUDA = 2
   kDLCUDAHost = 3
   kDLROCM = 10
+  kDLROCMHost = 11
   kDLTPUHost = 20
 
 AnyInt = int | np.integer
