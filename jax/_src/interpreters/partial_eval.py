@@ -2510,6 +2510,20 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTr
       assert not x.aval.is_high
       return trace.var_to_tracer(x, src)  # noqa
 
+  def write(v, x):
+    if v.aval.is_high:
+      env[v] = x  # noqa: F821
+    elif isinstance(x, DynamicJaxprTracer) and x._trace is trace:  # noqa: F821
+      env[v] = x  # noqa: F821
+    else:
+      env[v] = lift_lo_const(v, x)  # noqa: F821
+
+  def lift_lo_const(v, c) -> DynamicJaxprTracer:
+    tracer = DynamicJaxprTracer(trace, v.aval, v, src)  # noqa: F821
+    trace.frame.constid_to_tracer[id(c)] = tracer  # noqa: F821
+    trace.frame.constvar_to_val[v] = c  # noqa: F821
+    return tracer
+
   with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
         TracebackScope()):
     src = source_info_util.current()
@@ -2529,11 +2543,9 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTr
     for v, c in zip(hi_jaxpr.constvars, hi_jaxpr.consts):
       if v.aval.is_high:
         if v.aval.has_qdd: raise NotImplementedError
-        env[v] = c
+        env[v] = c  # treated as an HTLV
       else:
-        tracer = DynamicJaxprTracer(trace, v.aval, v, src)
-        trace.frame.constid_to_tracer[id(c)] = tracer
-        trace.frame.constvar_to_val[v] = c
+        env[v] = lift_lo_const(v, c)
 
     with core.set_current_trace(trace):
       eqns = trace.frame.tracing_eqns
@@ -2553,10 +2565,7 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTr
           with (source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack),
                 eqn.ctx.manager):
             outs = eqn.primitive.to_lojax(*invals, **eqn.params)
-          if eqn.primitive.multiple_results:
-            foreach(env.setdefault, eqn.outvars, outs)
-          else:
-            env[eqn.outvars[0]] = outs
+          foreach(write, eqn.outvars, outs if eqn.primitive.multiple_results else [outs])
 
     tracer = partial(trace.to_jaxpr_tracer, source_info=src)
     fu = ft.flatten(())

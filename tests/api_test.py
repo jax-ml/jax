@@ -5843,6 +5843,20 @@ class RematTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
+      {"testcase_name": name, "f": f}
+      for name, f in [
+          ('basic', lambda x: jnp.sin(jnp.sin(x))),
+          ('cond', lambda x: lax.cond(x > 0, jnp.sin, jnp.cos, x)),
+      ])
+  def test_remat_higher_order_ad_preserves_remat_primitive(self, f):
+    g = jax.remat(f)
+    self.assertAllClose(api.grad(api.grad(g))(0.3),
+                        api.grad(api.grad(f))(0.3), check_dtypes=False)
+    jaxpr_text = str(jax.make_jaxpr(api.grad(api.grad(g)))(0.3))
+    needle = 'RematTraced' if config.remat3.value else 'remat2'
+    self.assertIn(needle, jaxpr_text)
+
+  @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
           ('', jax.remat),

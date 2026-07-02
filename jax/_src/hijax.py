@@ -608,16 +608,22 @@ def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
   ans_flat = tree_leaves_checked(_prim.out_tree, ans)
   nzs_out = maybe_nzs_out[0] if maybe_nzs_out else True
   nzs_out_flat = broadcast_prefix(nzs_out, ans)
+  linearized = partial(linearized, nzs_out_flat) if is_vjp else linearized
   return ans_flat, nzs_out_flat, residuals, linearized
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 
-def fake_linear_op(prim, nz_in_flat, rs, *tangents):
+def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, *tangents):
   residuals_flat, residuals_tree = tree_flatten(rs)
   assert nz_in_flat == [not isinstance(t, ad_util.Zero) for t in tangents]
   nz_tangents = tree_leaves(tangents)
-  return call_hi_primitive_linearized_p.bind(
+  out_nz = call_hi_primitive_linearized_p.bind(
       *residuals_flat, *nz_tangents, residuals_tree=residuals_tree, _prim=prim,
-      nz_in_flat=tuple(nz_in_flat))
+      nz_in_flat=tuple(nz_in_flat), nz_out_flat=tuple(nz_out_flat))
+  out_nz_iter = iter(out_nz)
+  out = [next(out_nz_iter) if nz else ad_util.Zero(a.to_tangent_aval())
+         for a, nz in zip(prim.out_avals_flat, nz_out_flat)]
+  assert next(out_nz_iter, sentinel := object()) is sentinel
+  return out
 
 def flatten_user_linearized(prim, residuals, *tangents_flat):
   tangents = tree_unflatten(prim.in_tree, tangents_flat)
@@ -629,11 +635,12 @@ call_hi_primitive_linearized_p = core.Primitive("call_hi_primitive_linearized")
 call_hi_primitive_linearized_p.multiple_results = True
 call_hi_primitive_linearized_p.is_high = lambda *args, _prim, **_: True
 @call_hi_primitive_linearized_p.def_abstract_eval
-def _call_hi_primitive_linearized_abstract_eval(*_args, _prim, residuals_tree, nz_in_flat):
-  return [t.to_tangent_aval() for t in _prim.out_avals_flat]  # TODO(dougalm): handle nonzeros
+def _call_hi_primitive_linearized_abstract_eval(
+    *_args, _prim, residuals_tree, nz_in_flat, nz_out_flat):
+  return [t.to_tangent_aval() for t, nz in zip(_prim.out_avals_flat, nz_out_flat) if nz]
 
-def _call_hi_primitive_linearized_transpose(cts_flat, *args, _prim,
-                                            residuals_tree, nz_in_flat):
+def _call_hi_primitive_linearized_transpose(
+    cts_flat_, *args, _prim, residuals_tree, nz_in_flat, nz_out_flat):
   residuals_flat, accums_flat = split_list(args, [residuals_tree.num_leaves])
   residuals = tree_unflatten(residuals_tree, residuals_flat)
   accums_flat_ = iter(accums_flat)
@@ -641,6 +648,10 @@ def _call_hi_primitive_linearized_transpose(cts_flat, *args, _prim,
                  for aval, nz in zip(_prim.in_avals_flat, nz_in_flat)]
   assert next(accums_flat_, None) is None
   accums = tree_unflatten(_prim.in_tree, accums_flat)
+  cts_flat_iter = iter(cts_flat_)
+  cts_flat = [next(cts_flat_iter) if nz else ad_util.Zero(a.to_ct_aval())
+              for a, nz in zip(_prim.out_avals_flat, nz_out_flat)]
+  assert next(cts_flat_iter, sentinel := object()) is sentinel
   cts = tree_unflatten(_prim.out_tree, cts_flat)
   none = _prim.vjp_bwd(residuals, cts, *accums)
   assert none is None
@@ -717,10 +728,9 @@ class CustomVJPTraced(VJPHiPrimitive):
     return self.traced(*args)
 
   def vjp_fwd(self, in_nzs, *args):
-    in_nzs = tuple(x.val if isinstance(x, Static) else x for x in in_nzs)
-    args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
     if self.symbolic_zeros:
-      args_ = tree_map(CustomVJPPrimal, args_, in_nzs)
+      args = tree_map(CustomVJPPrimal, args, in_nzs)  # tree_map skips Statics
+    args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
     out, res = self.fwd(*args_)
     if config.mutable_array_checks.value:
       _check_for_returned_refs(self.fwd, (out, res), "fwd", tree_leaves(args),
@@ -773,7 +783,11 @@ class CustomVJPTraced(VJPHiPrimitive):
       primals_out, residuals = OptRemat(self, fwd_traced)(*primals)
     else:
       primals_out, residuals, *_ = self.vjp_fwd((True,) * len(primals), *primals)
-    tangents_out_flat = fake_linear_op(self, [True] * len(tangents), residuals, *tangents)
+    nzs_in_flat = [True] * len(self.in_avals_flat)
+    nzs_out_flat = [True] * len(self.out_avals_flat)
+    tangents_flat = tree_leaves_checked(self.in_tree, tangents)
+    tangents_out_flat = fake_linear_op(self, nzs_in_flat, nzs_out_flat, residuals,
+                                       *tangents_flat)
     tangents_out = tree_unflatten(self.out_tree, tangents_out_flat)
     return primals_out, tangents_out
 
