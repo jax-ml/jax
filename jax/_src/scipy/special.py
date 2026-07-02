@@ -486,7 +486,15 @@ def digamma(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.polygamma`
   """
   x, = promote_args_inexact("digamma", x)
-  return lax.digamma(x)
+  # digamma has a simple pole at x = 0; lax.digamma returns NaN there, but
+  # scipy.special.digamma returns -inf for +0 and +inf for -0 (signed limit
+  # from each side of the pole). Mask x to a safe value (1.0) on the pole
+  # branch so the unselected path never produces NaN that contaminates
+  # gradients via jnp.where's VJP (0 * NaN = NaN).
+  is_zero = x == 0
+  x_safe = jnp.where(is_zero, 1.0, x)
+  pole_val = jnp.where(jnp.signbit(x), jnp.inf, -jnp.inf).astype(x.dtype)
+  return jnp.where(is_zero, pole_val, lax.digamma(x_safe))
 
 
 def gammainc(a: ArrayLike, x: ArrayLike) -> Array:
