@@ -518,6 +518,16 @@ class JitTest(jtu.BufferDonationTestCase):
                          may_alias=False, donate=False)
     self.assertNotEqual(id(arr), id(out))
 
+  def test_device_put_numpy_array_may_alias_false_copies(self):
+    # may_alias=False must copy a writeable numpy buffer, otherwise later
+    # mutations to the source leak into the (supposedly immutable) array.
+    # See https://github.com/jax-ml/jax/issues/37830.
+    x = np.arange(1024, dtype=np.float32)
+    out = jax.device_put(x, jax.devices()[0], may_alias=False)
+    self.assertNotEqual(x.ctypes.data, out.unsafe_buffer_pointer())
+    x[0] = 999
+    self.assertEqual(float(out[0]), 0.0)
+
   def test_device_put_aliasing_with_diff_compatible_sharding(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
