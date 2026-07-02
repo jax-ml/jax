@@ -26,7 +26,8 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src.api_util import resolve_kwargs, infer_argnums_and_argnames
+from jax._src.api_util import resolve_kwargs, infer_argnums_and_argnames, debug_info
+from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.core import typeof
 from jax._src.interpreters import ad
@@ -44,8 +45,8 @@ from jax._src.util import (
 from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
-    broadcast_prefix, register_static, tree_map_with_path, keystr,
-    tracing_registry)
+    broadcast_prefix, register_static, register_pytree_node, tree_map_with_path,
+    keystr, tracing_registry)
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
@@ -413,8 +414,10 @@ class VJPHiPrimitive:
 
   # reverse-mode AD interface
   def vjp_fwd(self, nzs_in, /, *args):
-    raise NotImplementedError(f"for grad support, subclass {type(self)} must "
-                              "implement `vjp_fwd`")
+    raise NotImplementedError(
+        f"for grad support, subclass {type(self)} must implement `vjp_fwd`, "
+        "or derive one from its jvp or lin rule by setting `vjp_fwd = "
+        "vjp_fwd_from_jvp` or `vjp_fwd = vjp_fwd_from_lin`")
 
   def vjp_bwd(self, res, outgrad, /, *arg_accums):
     args_grad = self.vjp_bwd_retval(res, outgrad)
@@ -423,8 +426,10 @@ class VJPHiPrimitive:
 
   def vjp_bwd_retval(self, res, outgrad, /):
     # Classic API: returns values instead of using accumulators
-    raise NotImplementedError(f"for grad support, subclass {type(self)} must "
-                              "implement `vjp_bwd` or `vjp_bwd_retval`")
+    raise NotImplementedError(
+        f"for grad support, subclass {type(self)} must implement `vjp_bwd` or "
+        "`vjp_bwd_retval` (when deriving `vjp_fwd`, pair it with "
+        "`vjp_bwd_retval = transpose_jvp` or `transpose_linearized`)")
 
   # optional forward-mode AD interfaces
   def jvp(self, primals, tangents):
@@ -432,12 +437,17 @@ class VJPHiPrimitive:
                               "implement `jvp`")
 
   def lin(self, nzs_in, *primals):
-    raise NotImplementedError(f"for linearize support, subclass {type(self)} "
-                              "must implement `lin` and `linearized`")
+    raise NotImplementedError(
+        f"for linearize support, subclass {type(self)} must implement `lin` "
+        "and `linearized`, or derive them from its `jvp` rule by setting "
+        "`lin = linearize_from_jvp` and "
+        "`linearized = apply_derived_linearization`")
 
   def linearized(self, residuals, *tangents):
-    raise NotImplementedError(f"for linearize support, subclass {type(self)} "
-                              "must implement `lin` and `linearized`")
+    raise NotImplementedError(
+        f"for linearize support, subclass {type(self)} must implement `lin` "
+        "and `linearized` (when using `lin = linearize_from_jvp`, pair it "
+        "with `linearized = apply_derived_linearization`)")
 
   # optional transpose rule, for primitives that are linear in some inputs
   def transpose(self, out_ct, *maybe_accums):
@@ -706,6 +716,137 @@ def _call_hi_primitive_remat(policy, *args_flat, _prim):
     return tree_leaves_checked(_prim.out_tree, out)
   return tree_leaves_checked(_prim.out_tree, out), rem
 remat.rules[call_hi_primitive_p] = _call_hi_primitive_remat
+
+
+# === deriving lin and vjp rules from jvp and lin rules ===
+
+class DerivedLinearization:
+  """Residuals of `linearize_from_jvp`, closing over the linear map."""
+  __slots__ = ['consts', 'apply']
+
+  def __init__(self, consts, apply):
+    self.consts = consts
+    self.apply = apply
+
+register_pytree_node(DerivedLinearization,
+                     lambda res: ((res.consts,), res.apply),
+                     lambda apply, children: DerivedLinearization(children[0], apply))
+
+def linearize_from_jvp(self, nzs_in, *primals):
+  """A `lin` rule derived from a `jvp` rule.
+
+  Assign it as a class attribute on a `VJPHiPrimitive` subclass that defines a
+  `jvp` method, paired with `linearized = apply_derived_linearization`, to
+  support `jax.linearize` by partially evaluating the `jvp` rule::
+
+    class MyPrim(VJPHiPrimitive):
+      def jvp(self, primals, tangents): ...
+      lin = linearize_from_jvp
+      linearized = apply_derived_linearization
+
+  The tangents for inputs that aren't being differentiated are passed to the
+  `jvp` rule as symbolic `Zero`s, just as on the `jax.jvp` path.
+  """
+  primals_flat = tree_leaves_checked(self.in_tree, primals)
+  nzs_in_flat = tree_leaves_checked(self.in_tree, nzs_in)
+
+  def jvp_flat(primals_flat, tangents_flat):
+    primals = tree_unflatten(self.in_tree, primals_flat)
+    tangents = tree_unflatten(self.in_tree, tangents_flat)
+    out_primals, out_tangents = self.jvp(primals, tangents)
+    out_primals_flat = tree_leaves_checked(self.out_tree, out_primals)
+    out_tangents_flat = self.out_tree.flatten_up_to(out_tangents)
+    return out_primals_flat, out_tangents_flat
+
+  dbg = debug_info('linearize_from_jvp', self.jvp, (primals, primals), {})
+  out_primals_flat, nzs_out_flat, consts, linearized = ad.linearize_from_jvp(
+      lu.wrap_init(jvp_flat, debug_info=dbg), True, nzs_in_flat,
+      False, False, primals_flat, {})
+  out_primals = tree_unflatten(self.out_tree, out_primals_flat)
+  nzs_out = tree_unflatten(self.out_tree, list(nzs_out_flat))
+  return out_primals, DerivedLinearization(consts, linearized), nzs_out
+
+def apply_derived_linearization(self, residuals, *tangents):
+  """The `linearized` rule paired with `lin = linearize_from_jvp`."""
+  tangents_flat = self.in_tree.flatten_up_to(tangents)
+  out_tangents_flat = residuals.apply(residuals.consts, *tangents_flat)
+  return tree_unflatten(self.out_tree, out_tangents_flat)
+
+def jvp_from_lin(self, primals, tangents):
+  """A `jvp` rule derived from `lin` and `linearized` rules.
+
+  Assign it as a class attribute on a `VJPHiPrimitive` subclass that defines
+  `lin` and `linearized` methods, to support forward-mode autodiff::
+
+    class MyPrim(VJPHiPrimitive):
+      def lin(self, nzs_in, *primals): ...
+      def linearized(self, residuals, *tangents): ...
+      jvp = jvp_from_lin
+  """
+  if type(self).lin is linearize_from_jvp:
+    raise TypeError(
+        f"subclass {type(self)} can't set both `jvp = jvp_from_lin` and "
+        "`lin = linearize_from_jvp`, since each would be defined in terms of "
+        "the other")
+  tangents_flat = self.in_tree.flatten_up_to(tangents)
+  nzs_in = tree_unflatten(
+      self.in_tree, [not isinstance(t, ad_util.Zero) for t in tangents_flat])
+  out_primals, residuals, *_ = self.lin(nzs_in, *primals)
+  out_tangents = self.linearized(residuals, *tangents)
+  return out_primals, out_tangents
+
+def vjp_fwd_from_jvp(self, nzs_in, *primals):
+  """A `vjp_fwd` rule derived from a `jvp` rule.
+
+  Assign it as a class attribute on a `VJPHiPrimitive` subclass that defines a
+  `jvp` method, paired with `vjp_bwd_retval = transpose_jvp`, to support
+  reverse-mode autodiff by storing the primal inputs as residuals and then, on
+  the backward pass, linearizing and transposing the `jvp` rule (like
+  `jax.custom_jvp`)::
+
+    class MyPrim(VJPHiPrimitive):
+      def jvp(self, primals, tangents): ...
+      vjp_fwd = vjp_fwd_from_jvp
+      vjp_bwd_retval = transpose_jvp
+  """
+  return self(*primals), primals
+
+def transpose_jvp(self, primals, out_ct):
+  """The `vjp_bwd_retval` rule paired with `vjp_fwd = vjp_fwd_from_jvp`."""
+  def tangent_map(*tangents):
+    _, out_tangents = self.jvp(primals, tangents)
+    return out_tangents
+  return _transpose_tangent_map(self, tangent_map, out_ct)
+
+def vjp_fwd_from_lin(self, nzs_in, *primals):
+  """A `vjp_fwd` rule derived from a `lin` rule.
+
+  Assign it as a class attribute on a `VJPHiPrimitive` subclass that defines
+  `lin` and `linearized` methods (possibly themselves derived from a `jvp`
+  rule), paired with `vjp_bwd_retval = transpose_linearized`, to support
+  reverse-mode autodiff by storing the linearization's residuals and then, on
+  the backward pass, transposing the `linearized` rule::
+
+    class MyPrim(VJPHiPrimitive):
+      def lin(self, nzs_in, *primals): ...
+      def linearized(self, residuals, *tangents): ...
+      vjp_fwd = vjp_fwd_from_lin
+      vjp_bwd_retval = transpose_linearized
+  """
+  return self.lin(nzs_in, *primals)
+
+def transpose_linearized(self, residuals, out_ct):
+  """The `vjp_bwd_retval` rule paired with `vjp_fwd = vjp_fwd_from_lin`."""
+  def tangent_map(*tangents):
+    return self.linearized(residuals, *tangents)
+  return _transpose_tangent_map(self, tangent_map, out_ct)
+
+def _transpose_tangent_map(self, tangent_map, out_ct):
+  zero = lambda x: isinstance(x, ad_util.Zero)
+  out_ct = tree_map(ad_util.instantiate, out_ct, is_leaf=zero)
+  dummies = tree_map(lambda a: ad_util.zeros_like_aval(a.to_tangent_aval()),
+                     self.in_avals)
+  return api.linear_transpose(tangent_map, *dummies)(out_ct)
 
 
 class CustomVJPTraced(VJPHiPrimitive):
