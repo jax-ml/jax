@@ -224,13 +224,6 @@ class NamedLocationsTest(PallasSCTest):
 @jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")
 class DebugPrintTest(PallasSCTest):
 
-  def setUp(self):
-    if jtu.is_cloud_tpu():
-      # TODO(slebedev): Investigate this and remove the skip.
-      self.skipTest("Fails on Cloud TPUs")
-
-    super().setUp()
-
   @parameterized.product(dtype=[jnp.int32, jnp.float32])
   def test_vector_subcore(self, dtype):
     x = jnp.arange(self.num_lanes, dtype=dtype)
