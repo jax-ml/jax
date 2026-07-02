@@ -991,6 +991,21 @@ def checkpoint_name3(name, x):
   return CheckpointName(name, typeof(x))(x)
 
 def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
+  """Rematerialization decorator (new implementation, ``jax_remat3``).
+
+  Note on interaction with :func:`jax.custom_vjp`: when differentiating
+  rematted code, a custom_vjp application that appears *inside another
+  custom_vjp's fwd rule* is rematerialized as an opaque unit. For the
+  conventional idiom of a fwd rule calling its own custom_vjp-decorated
+  function to compute the primal output, that is exactly the intended
+  semantics. Values and gradients are unaffected at every order of
+  differentiation. The one observable consequence arises only under
+  higher-order AD: differentiating a second time runs the inner application's
+  own fwd rule (at first order it never runs, since the outer bwd rule
+  discharges the derivative), and values inside it (e.g.
+  ``checkpoint_name``-tagged intermediates) cannot be marked saveable by the
+  checkpoint ``policy`` there; they are always recomputed.
+  """
   if f is None:
     return partial(partial, _remat3, policy, static_argnums, static_argnames)
   else:
@@ -1037,7 +1052,8 @@ class RematTraced(VJPHiPrimitive):
   def vjp_fwd(self, _nzs_in, *primals):
     # TODO eval_jaxpr_p trace time
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
+    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
+                                        custom_vjp_rules=True)
     used, rem = dce(api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals),
                     self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
@@ -1058,7 +1074,8 @@ class RematTraced(VJPHiPrimitive):
 
   def lin(self, nzs_in, *primals):
     traced = core.jaxpr_as_fun(self.jaxpr)
-    primals_out, fwd2 = remat_transform(self.policy, traced, *primals)
+    primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
+                                        custom_vjp_rules=True)
     used, rem = dce(api.jit(lambda *xs: api.linearize(fwd2, *xs)[1]).trace(*primals),
                     self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
@@ -1089,7 +1106,8 @@ class CheckpointName(VJPHiPrimitive):
   def expand(self, x):  # pyrefly: ignore[bad-override]
     return x
 
-  def remat(self, policy, x):  # pyrefly: ignore[bad-override]
+  def remat(self, trace, x):  # pyrefly: ignore[bad-override]
+    policy = trace.policy
     x = CheckpointName(self.name, self.in_avals[0])(x)
     if isinstance(policy, (SaveOnlyTheseNames, SaveAnyNamesButThese)):
       saveable = (self.name not in policy.names if isinstance(policy, SaveAnyNamesButThese)
@@ -1181,9 +1199,9 @@ class CustomRemat(VJPHiPrimitive):
   def expand(self, *args):
     return core.jaxpr_as_fun(self.jaxpr)(*args)
 
-  def remat(self, policy, *args_flat):  # type: ignore
+  def remat(self, trace, *args_flat):  # type: ignore
     args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore
-    out_primal, res = self.f1(policy, *args, **kwargs)
+    out_primal, res = self.f1(trace.policy, *args, **kwargs)
     out_primal_flat = tree_leaves_checked(self._out_tree, out_primal)  # type: ignore
     def rem_flat(*args_flat):
       args, kwargs = tree_unflatten(self._in_tree, args_flat)  # type: ignore

@@ -36,12 +36,12 @@ zip = safe_zip
 #  [ ] allow NotAvailable sentinels
 #  [ ] primal-output-to-residual forwarding
 
-def remat_transform(policy, f, *args):
+def remat_transform(policy, f, *args, custom_vjp_rules):
   dbg = api_util.debug_info("remat", f, args, {})
   with core.take_current_trace() as parent_trace:
     jaxpr_trace = pe.DynamicJaxprTrace(None)
     jaxpr_trace.tag = core.TraceTag()
-    trace = RematTrace(parent_trace, jaxpr_trace, policy)
+    trace = RematTrace(parent_trace, jaxpr_trace, policy, custom_vjp_rules)
     args_ft, _ = ft.flatten_args(*args).unpack()
     in_tracers = args_ft.map(
         lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # type: ignore # noqa F821
@@ -72,12 +72,14 @@ class RematTracer(core.Tracer['RematTrace']):
     self.tracer = jaxpr_tracer
 
 class RematTrace(core.Trace):
-  def __init__(self, parent_trace, jaxpr_trace, policy):
+  def __init__(self, parent_trace, jaxpr_trace, policy, custom_vjp_rules):
     super().__init__()
     self.parent_trace = parent_trace
     self.jaxpr_trace = jaxpr_trace
     self.policy = policy
     self.requires_low = False
+    # flag to handle checkpoint_name calls in custom_vjp fwd w/o inf recursion
+    self.custom_vjp_rules = custom_vjp_rules
 
   tag = property(lambda self: self.jaxpr_trace.tag)
 
@@ -96,7 +98,7 @@ class RematTrace(core.Trace):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     if prim in rules:
       with core.set_current_trace(self.parent_trace):
-        out_primal, rem = rules[prim](self.policy, *in_vals, **params)
+        out_primal, rem = rules[prim](self, *in_vals, **params)
       with core.set_current_trace(self.jaxpr_trace):
         out_primal2 = rem(*in_vals2)
     else:  # default: full remat
@@ -116,7 +118,8 @@ class RematTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     with core.set_current_trace(self.parent_trace):
-      out_primal = fun.call_wrapped(*in_vals)
+      out_primal = prim.bind(*in_vals, subfuns=(fun, jvp),
+                             symbolic_zeros=symbolic_zeros)
     with core.set_current_trace(self.jaxpr_trace):
       out_primal2 = prim.bind(*in_vals2, subfuns=(fun, jvp),
                               symbolic_zeros=symbolic_zeros)
@@ -125,19 +128,20 @@ class RematTrace(core.Trace):
   def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, /, *, out_trees, symbolic_zeros):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     with core.set_current_trace(self.parent_trace):
-      out_primal = f.call_wrapped(*in_vals)
+      out_primal = prim.bind(*in_vals, subfuns=(f, fwd, bwd),
+                             out_trees=out_trees, symbolic_zeros=symbolic_zeros)
     with core.set_current_trace(self.jaxpr_trace):
       out_primal2 = prim.bind(*in_vals2, subfuns=(f, fwd, bwd),
                               out_trees=out_trees, symbolic_zeros=symbolic_zeros)
     return map(partial(RematTracer, self), out_primal, out_primal2)
 
 def remat_subtrace(f: Callable, tag: core.TraceTag, policy,
-                   debug_info: core.DebugInfo, args):
+                   debug_info: core.DebugInfo, args, custom_vjp_rules):
   source_info = source_info_util.current()
   with core.take_current_trace() as parent_trace:
     rem_trace = pe.DynamicJaxprTrace(debug_info, auto_dce=True)
     rem_trace.tag = tag
-    trace = RematTrace(parent_trace, rem_trace, policy)
+    trace = RematTrace(parent_trace, rem_trace, policy, custom_vjp_rules)
     tracers = [RematTracer(trace, x, rem_trace.new_arg(typeof(x), source_info))
                for x in args]
     with core.set_current_trace(trace, check_leaks=True):
@@ -170,16 +174,16 @@ rules: dict[core.Primitive, Callable] = {}
 reduce_precision_handlers: dict[type, Callable] = {}
 
 
-def remat_jaxpr(jaxpr, policy):
-  return _remat_jaxpr(jaxpr, policy)
+def remat_jaxpr(jaxpr, policy, custom_vjp_rules):
+  return _remat_jaxpr(jaxpr, policy, custom_vjp_rules)
 
 @weakref_lru_cache
-def _remat_jaxpr(jaxpr, policy):
+def _remat_jaxpr(jaxpr, policy, custom_vjp_rules):
   dbg = jaxpr.jaxpr.debug_info
   fwd_trace = pe.DynamicJaxprTrace(dbg)
   rem_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
   rem_trace.tag = core.TraceTag()
-  trace = RematTrace(fwd_trace, rem_trace, policy)
+  trace = RematTrace(fwd_trace, rem_trace, policy, custom_vjp_rules)
   src = source_info_util.current()
 
   def new_arg(a):

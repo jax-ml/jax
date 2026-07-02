@@ -6715,6 +6715,23 @@ class RematTest(jtu.JaxTestCase):
     self.assertIn(' sin ', str(jaxpr))
     self.assertIn(' cos ', str(jaxpr))
 
+  def test_remat_of_scan_unused_extensive_output_grad(self):
+    # The scanned-over output `b` is unused by the differentiated function, so
+    # its cotangent is a symbolic zero with the stacked aval; the scan
+    # transpose must handle it.
+    def f(c, a):
+      b = jnp.sin(a).sum() + jnp.sin(c).sum()
+      return jnp.sin(c * b), b
+
+    g = jax.remat(partial(lax.scan, f),
+                  policy=jax.checkpoint_policies.nothing_saveable)
+    c = jnp.arange(4.) / 4.
+    as_ = jnp.arange(15.).reshape(5, 3) / 15.
+
+    ans = api.grad(lambda c, as_: g(c, as_)[0].sum())(c, as_)
+    expected = api.grad(lambda c, as_: lax.scan(f, c, as_)[0].sum())(c, as_)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [

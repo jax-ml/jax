@@ -4158,5 +4158,15 @@ class CustomApiTest(jtu.JaxTestCase):
           self.assertIsInstance(getattr(f, method), Callable)
 
 
+@jtu.with_config(jax_remat3=True)
+class CustomJVPRemat3Test(CustomJVPTest):
+  ...
+
+
+@jtu.with_config(jax_remat3=True)
+class CustomVJP3Remat3Test(CustomVJP3Test):
+  ...
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

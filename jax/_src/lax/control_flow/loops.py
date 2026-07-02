@@ -1081,6 +1081,8 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
   # prepare cotangent values to be passed in to transpose
   ct_carry, ct_ys = split_list(cts, [num_carry])
   ct_carry = _map(ad.instantiate_zeros, ct_carry)  # TODO(mattjj): fixpoint
+  ct_ys = [ad.Zero(core.mapped_leading_aval(length, x.aval))
+           if isinstance(x, ad.Zero) else x for x in ct_ys]
 
   # initialize values to be used to accumulate pure constant gradients
   immut_const_avals = jaxpr.in_avals[num_ires+len(mut_consts_bar):num_consts]
@@ -1453,8 +1455,9 @@ def _scan_state_partial_discharge_rule(
   assert next(refvals_iter, None) is None
   return refvals_out, [*carry, *ys]
 
-def _scan_remat(policy, *args, jaxpr, **params):
-  jaxpr_fwd, jaxpr_rem_, num_res = remat.remat_jaxpr(jaxpr, policy)
+def _scan_remat(trace, *args, jaxpr, **params):
+  jaxpr_fwd, jaxpr_rem_, num_res = remat.remat_jaxpr(
+      jaxpr, trace.policy, trace.custom_vjp_rules)
   all_out = scan_p.bind(*args, jaxpr=jaxpr_fwd, **params)
   primals_out, res = split_list(all_out, [len(jaxpr.outvars)])
   jaxpr_rem = pe.move_binders_to_back(jaxpr_rem_, [True] * num_res)
