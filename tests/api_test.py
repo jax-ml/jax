@@ -5513,6 +5513,23 @@ class APITest(jtu.JaxTestCase):
     with jax.allow_f16_reductions(False):
       jax.lax.reduce_sum(x, [0])  # allowed on singleton axes
 
+  def test_low_precision_max_min_vjp(self):
+
+    x_tie = jnp.array([1.0, 1.0, 0.0], dtype=jnp.bfloat16)
+    x_unique = jnp.array([3.0, 1.0, 2.0], dtype=jnp.bfloat16)
+
+    with jax.allow_f16_reductions(False):
+
+      grad_max_tie = jax.jit(jax.grad(jnp.max))(x_tie)
+      self.assertEqual(grad_max_tie.dtype, jnp.bfloat16)
+      self.assertAllClose(grad_max_tie, jnp.array([0.5, 0.5, 0.0], dtype=jnp.bfloat16))
+
+      grad_max_unique = jax.jit(jax.grad(jnp.max))(x_unique)
+      self.assertAllClose(grad_max_unique, jnp.array([1.0, 0.0, 0.0], dtype=jnp.bfloat16))
+
+      grad_min = jax.jit(jax.grad(jnp.min))(x_tie)
+      self.assertAllClose(grad_min, jnp.array([0.0, 0.0, 1.0], dtype=jnp.bfloat16))
+
   def test_vjp3_dont_want(self):
     @jax.jit
     def f(x, y):
