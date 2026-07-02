@@ -1,0 +1,17 @@
+# Blocking PR gate targets.
+# Edit this file to tune which tests gate PRs; no workflow YAML changes needed.
+# Use - prefix to exclude specific tests within a suite.
+# Keep only tests that are fast and reliably passing — flaky tests block all PRs.
+# Multi-GPU tests (tagged multiaccelerator) are supported: the gate uses the
+# rocm_gate Bazel config which routes to the multi-GPU RBE pool.
+
+//tests:export_back_compat_test_gpu
+//tests:sparse_test_gpu
+//tests:lax_test_gpu
+//tests:lax_numpy_test_gpu
+//tests:pjit_test_gpu
+//tests:export_harnesses_multi_platform_test_gpu
+//tests:lax_autodiff_test_gpu
+//tests/pallas:pallas_test_gpu
+//tests:lax_numpy_operators_test_gpu
+//tests:lax_control_flow_test_gpu
