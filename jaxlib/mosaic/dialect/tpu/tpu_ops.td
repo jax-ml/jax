@@ -714,6 +714,12 @@ def TPU_RelayoutOp : TPU_Op<"relayout", [Pure, SameOperandsAndResultType]> {
   let hasVerifier = 1;
 }
 
+def TPU_LayoutConstraintOp : TPU_Op<"layout_constraint", [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins AnyVectorOfAnyRank:$input,TPU_VectorLayoutAttr:$layout);
+  let results = (outs AnyVectorOfAnyRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+}
+
 def TPU_PackMaskOp : TPU_Op<"pack_vmsk", [Pure, SameTypeOperands]> {
   let description = [{
     Packs multiple vmasks into a single vmask with more elements in each word.
