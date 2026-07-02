@@ -569,6 +569,14 @@ def _check_scalar(x):
 def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
   dispatch.check_arg(x)
   aval = core.typeof(x)
+  if _is_ref_aval(aval):
+    raise TypeError(
+        f"{name} cannot differentiate with respect to a Ref-typed argument, "
+        "because the gradient for a ref must itself be accumulated into a "
+        "ref. Instead, use `jax.vjp` and bind a gradient ref using the "
+        "returned VJP function's `with_refs` method. (Ref arguments not "
+        f"selected by {name}'s argnums are fine: they are treated as "
+        "plumbing, and are not differentiated.)")
   if holomorphic:
     if not dtypes.issubdtype(aval.dtype, np.complexfloating):
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
@@ -1632,21 +1640,88 @@ def vjp(
 
 def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                    args_res, opaque_res, *maybe_ct_refs):
-  if not maybe_ct_refs:
-    maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
-  else:
+  explicit_refs = bool(maybe_ct_refs)
+  if explicit_refs:
     maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
     if in_tree != in_tree_:
-      raise Exception  # TODO accept isomorph tuple tree
+      _vjp_with_refs_tree_error(jaxpr, in_tree, in_tree_)
+  else:
+    maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
   args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
-  maybe_accums = [check_accum(v.aval.to_ct_aval(), x) if isinstance(x, ad.GradAccum) else
-                  ad.RefAccum(_ref_aval(v.aval).to_ct_aval(), x) if _is_ref(x) else
-                  ad.NullAccum(v.aval.to_ct_aval()) if isinstance(x, DontWant) else
-                  ad.ValAccum(v.aval.to_ct_aval())
-                  for v, x in zip(jaxpr.invars, maybe_ct_refs_flat)]
+  maybe_accums = [_vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x)
+                  for idx, (v, x) in enumerate(zip(jaxpr.invars, maybe_ct_refs_flat))]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
                          out_primal_avals), residuals, maybe_accums)
+
+def _vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x):
+  if isinstance(x, ad.GradAccum):
+    return check_accum(v.aval.to_ct_aval(), x)
+  elif _is_ref(x):
+    expected_aval = _ref_aval(v.aval).to_ct_aval()
+    given_aval = _ref_aval(typeof(x))
+    if (not core.typecompat(expected_aval, given_aval) and
+        not _temporary_dtype_exception(given_aval, expected_aval)):
+      raise ValueError(
+          "unexpected JAX type (e.g. shape/dtype) for gradient ref passed to "
+          f"the VJP function's `with_refs` method for "
+          f"{_vjp_arg_name(jaxpr, in_tree, idx)}: the given ref has type "
+          f"{typeof(x).str_short()}, but accumulating this argument's "
+          f"gradient requires a ref of type Ref{{{expected_aval.str_short()}}}")
+    return ad.RefAccum(expected_aval, x)
+  elif isinstance(x, DontWant):
+    return ad.NullAccum(v.aval.to_ct_aval())
+  elif _is_ref_aval(v.aval):
+    if explicit_refs:
+      raise ValueError(
+          f"the gradient for {_vjp_arg_name(jaxpr, in_tree, idx)}, which is "
+          "Ref-typed, can't be returned as a value. In the arguments to the "
+          "VJP function's `with_refs` method, pass a `Ref` for it, to "
+          "accumulate the gradient into the ref in-place, or pass "
+          "`jax.ad.DontWant()` to skip computing this argument's gradient.")
+    else:
+      raise ValueError(
+          f"{_vjp_arg_name(jaxpr, in_tree, idx)} is Ref-typed, so its "
+          "gradient must be accumulated into a ref, but no gradient ref was "
+          "provided. Bind one using the VJP function's `with_refs` method "
+          "before applying it, as in `f_vjp.with_refs(grad_ref)(ct)`; the "
+          "gradient will be accumulated into `grad_ref` in-place via "
+          "addition. Or, to skip computing this argument's gradient, pass "
+          "`jax.ad.DontWant()` in place of a gradient ref.")
+  else:
+    return ad.ValAccum(v.aval.to_ct_aval())
+
+def _vjp_arg_name(jaxpr, in_tree, idx):
+  try:
+    dummy_args = tree_unflatten(in_tree, list(range(in_tree.num_leaves)))
+    path, _ = list(generate_key_paths(dummy_args))[idx]
+    position = f"args{keystr(path)}"
+  except Exception:  # unflattening custom pytree nodes can reject dummy leaves
+    position = f"flat argument index {idx}"
+  return (f"the argument at position {position} of the "
+          f"differentiated function {jaxpr.debug_info.func_src_info}")
+
+def _vjp_with_refs_tree_error(jaxpr, in_tree, refs_tree):
+  msg = f"""unexpected tree structure in the arguments to a VJP function's \
+`with_refs` method.
+
+The arguments to `with_refs` must match the pytree structure of the primal
+arguments of the differentiated function {jaxpr.debug_info.func_src_info},
+with one entry for each array argument. Each entry must be a `Ref` (to
+accumulate this argument's gradient into the ref in-place), a
+`jax.ad.GradValue()` (to have this argument's gradient returned as a value,
+the default behavior), or a `jax.ad.DontWant()` (to skip computing this
+argument's gradient). Note that `None` is an empty pytree, so it can't be
+used as a placeholder entry.
+
+But the tree structures differ:
+"""
+  msg += '\n'.join(f"  * args{keystr(path)} was a {thing1} in the primal "
+                   f"arguments, but a {thing2} in the `with_refs` arguments, "
+                   f"so {explanation}."
+                   for path, thing1, thing2, explanation
+                   in equality_errors_pytreedef(in_tree, refs_tree))
+  raise ValueError(msg)
 
 def check_accum(aval, acc):
   if not core.typecompat(acc.aval, aval):
@@ -1682,6 +1757,10 @@ def _is_ref(x):
     return isinstance(typeof(x), AbstractRef)
   except:
     return False
+
+def _is_ref_aval(a):
+  from jax._src.state.types import AbstractRef
+  return isinstance(a, AbstractRef)
 
 def _ref_aval(a):
   from jax._src.state.types import AbstractRef

@@ -1006,6 +1006,37 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertIn('+=', str(jaxpr))
     self.assertNotIn('0.0', str(jaxpr))
 
+  def test_static_slicing_with_vjp3(self):
+    # like test_slicing_with_vjp3, but not jitted, so that the static index
+    # hits slice_p rather than dynamic_slice_p
+    def f(x, i):
+      return x[i]
+
+    x = jnp.arange(10.)
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(f, x, 3)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(1.)
+    self.assertAllClose(grad_accum[...], jnp.zeros(10).at[3].set(1.),
+                        check_dtypes=False)
+
+    @jax.make_jaxpr
+    def run():
+      _, f_vjp = jax.vjp(f, x, 3)
+      f_vjp.with_refs(grad_accum, jax.ad.GradValue())(1.)
+
+    jaxpr = run()
+    self.assertIn('+=', str(jaxpr))
+    self.assertNotIn('0.0', str(jaxpr))
+
+    # strided slices take the sparse in-place path too
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(lambda x: x[::2], x)
+    f_vjp.with_refs(grad_accum)(jnp.arange(5.))
+    self.assertAllClose(grad_accum[...],
+                        jnp.zeros(10).at[::2].set(jnp.arange(5.)),
+                        check_dtypes=False)
+
   @absltest.skip("Not yet implemented")
   def test_none_index(self):
     ref = jax.new_ref(jnp.array([1, 2, 3]))

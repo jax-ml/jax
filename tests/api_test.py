@@ -5550,6 +5550,68 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(y_grad, x)
     self.assertLen(g.trace().jaxpr.eqns, 1)
 
+  def test_vjp3_with_refs_tree_errors(self):
+    # wrong number of entries
+    _, f_vjp = jax.vjp(lambda x, y: x * y, 1., 2.)
+    with self.assertRaisesRegex(ValueError, "tree structures differ"):
+      f_vjp.with_refs(jax.new_ref(0.))
+
+    # None is an empty pytree, so it can't be used as a placeholder
+    _, f_vjp = jax.vjp(lambda x, y: x * y, 1., 2.)
+    with self.assertRaisesRegex(ValueError, "NoneType"):
+      f_vjp.with_refs(jax.new_ref(0.), None)
+
+  def test_vjp3_with_refs_aval_mismatch_errors(self):
+    # binding a gradient ref of the wrong shape errors at bind time
+    _, f_vjp = jax.vjp(lambda x: x.sum(), jnp.zeros(3))
+    with self.assertRaisesRegex(ValueError, "requires a ref of type"):
+      f_vjp.with_refs(jax.new_ref(jnp.zeros(4)))
+
+    # wrong dtype too
+    _, f_vjp = jax.vjp(lambda x: x.sum(), jnp.zeros(3))
+    with self.assertRaisesRegex(ValueError, "requires a ref of type"):
+      f_vjp.with_refs(jax.new_ref(jnp.zeros(3, 'int32')))
+
+  def test_vjp3_ref_arg_needs_with_refs_errors(self):
+    def f(x_ref):
+      return x_ref[...] ** 2
+
+    # differentiating wrt a ref-typed argument requires binding a gradient ref
+    _, f_vjp = jax.vjp(f, jax.new_ref(2.))
+    with self.assertRaisesRegex(ValueError, "with_refs"):
+      f_vjp(1.0)
+
+    # a GradValue entry doesn't cut it either...
+    _, f_vjp = jax.vjp(f, jax.new_ref(2.))
+    with self.assertRaisesRegex(ValueError, "can't be returned as a value"):
+      f_vjp.with_refs(jax.ad.GradValue())
+
+    # ...though a DontWant entry works
+    _, f_vjp = jax.vjp(f, jax.new_ref(2.))
+    out, = f_vjp.with_refs(jax.ad.DontWant())(1.)
+    self.assertIsInstance(out, jax.ad.DidntWant)
+
+  def test_grad_wrt_ref_arg_error(self):
+    def f(x_ref):
+      return x_ref[...] ** 2
+
+    with self.assertRaisesRegex(
+        TypeError, "grad cannot differentiate with respect to a Ref"):
+      jax.grad(f)(jax.new_ref(2.))
+
+    g = lambda x, y_ref: x * y_ref[...]
+    with self.assertRaisesRegex(
+        TypeError, "grad cannot differentiate with respect to a Ref"):
+      jax.grad(g, argnums=1)(1., jax.new_ref(2.))
+
+    with self.assertRaisesRegex(
+        TypeError, "jacrev cannot differentiate with respect to a Ref"):
+      jax.jacrev(f)(jax.new_ref(2.))
+
+    # ref args not selected by argnums are plumbing, and still work
+    self.assertAllClose(jax.grad(g)(3., jax.new_ref(2.)), 2.,
+                        check_dtypes=False)
+
   def test_while_jvp_debug_info_crash(self):
     def loop_fun(x, p):
       cond = lambda val: val[0] < 3
