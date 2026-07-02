@@ -141,7 +141,7 @@ def set_tpu_interpret_mode(params: InterpretParams = InterpretParams()):
 # Maybe for running multiple distinct interpreted computations in parallel?
 _shared_memory: memory.SharedMemory | None = None
 _shared_memory_init_lock = threading.Lock()
-races: RaceDetectionState | None = None
+races: RaceDetectionState[memory.SharedMemory.ThreadKey] | None = None
 dma_id_counter: interpret_utils.Counter | None = None
 
 
@@ -203,9 +203,6 @@ def _initialize_shared_memory(
           uninitialized_memory=interpret_params.uninitialized_memory,
           detect_races=interpret_params.detect_races,
           vector_clock_size=vector_clock_size,
-          clocks=[
-              vc.make_vector_clock(vector_clock_size) for _ in range(num_cores)
-          ],
           barrier=threading.Barrier(
               num_devices, action=_update_clocks_for_global_barrier
           ),
@@ -222,14 +219,19 @@ def _initialize_shared_memory(
 def _update_clocks_for_device_barrier(token, device_id):
   """Synchronizes the vector clocks for the cores on the given device."""
   shared_memory = _get_shared_memory()
-  shared_memory.update_clocks_for_device_barrier(device_id)
+  shared_memory.update_clocks_for_device_barrier(int(device_id))
   return token
 
 
 def _update_clocks_for_global_barrier():
   """Synchronizes all vector clocks."""
   shared_memory = _get_shared_memory()
-  shared_memory.update_clocks(0, shared_memory.num_cores)
+  cores = [
+    (device_id, core_id)
+    for device_id in range(shared_memory.num_devices)
+    for core_id in range(shared_memory.num_cores_per_device)
+  ]
+  shared_memory.update_clocks(cores)
 
 
 @fail_on_exception
@@ -402,7 +404,7 @@ def _allocate_buffer(
 
   local_core_id_to_buffer_id: dict[int, int] = {}
   for lci in local_core_ids:
-    buffer_id = shared_memory.get_next_buffer_id(device_id, lci)
+    buffer_id = shared_memory.get_next_buffer_id((device_id, lci))
     if memory_space_str in ['any', 'hbm']:
       # If allocating in HBM, only actually allocate a buffer once. The first
       # local core (i.e. thread) that gets here allocates the buffer, but the
@@ -623,14 +625,13 @@ def get(
   local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
       local_core_id, memory_space
   )
-  global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   key = (memory_space, buffer_id, device_id, local_core_id_for_buffer)
   read_range = interpret_utils.to_range(transforms)
   ret, (shape, dtype), clock_ = shared_memory.get_buffer_content(
       key,
       read_range,
-      global_core_id,
+      (device_id, local_core_id),
       logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
@@ -703,8 +704,7 @@ def get(
       src_local_core_id = local_core_id
     assert races is not None
     races.check_read(
-        src_device_id,
-        src_local_core_id,
+        (src_device_id, src_local_core_id),
         clock,
         (memory_space, buffer_id, device_id, local_core_id_for_buffer),
         read_range,
@@ -757,7 +757,6 @@ def store(
   local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
       local_core_id, memory_space
   )
-  global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   key = (memory_space, buffer_id, device_id, local_core_id_for_buffer)
   write_range = interpret_utils.to_range(transforms)
@@ -765,7 +764,7 @@ def store(
       key,
       write_range,
       val,
-      global_core_id,
+      (device_id, local_core_id),
       logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
@@ -798,8 +797,7 @@ def store(
       src_local_core_id = local_core_id
     assert races is not None
     races.check_write(
-        src_device_id,
-        src_local_core_id,
+        (src_device_id, src_local_core_id),
         clock,
         (memory_space, buffer_id, device_id, local_core_id_for_buffer),
         write_range,
@@ -839,7 +837,6 @@ def swap(
   local_core_id_for_buffer = _local_core_id_or_zero_if_hbm(
       local_core_id, memory_space
   )
-  global_core_id = shared_memory.get_global_core_id(device_id, local_core_id)
 
   key = (memory_space, buffer_id, device_id, local_core_id_for_buffer)
   read_write_range = interpret_utils.to_range(transforms)
@@ -848,7 +845,7 @@ def swap(
       read_write_range,
       val,
       mask,
-      global_core_id,
+      (device_id, local_core_id),
       logging_info=interpret_utils.TPULoggingInfo(
           device_id=device_id,
           local_core_id=local_core_id,
@@ -876,8 +873,7 @@ def swap(
   if shared_memory.detect_races:
     assert races is not None
     races.check_write(
-        device_id,
-        local_core_id,
+        (device_id, local_core_id),
         clock,
         (memory_space, buffer_id, device_id, local_core_id_for_buffer),
         read_write_range,

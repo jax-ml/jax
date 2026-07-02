@@ -68,16 +68,16 @@ def _ranges_overlap(
 
 
 @dataclasses.dataclass
-class RaceDetectionState:
+class RaceDetectionState[ThreadKey]:
   # TODO(nrink): Remove this field; it seems to be unused.
   num_cores: int
 
-  # (memory_space, buffer_id, device_id, local_core_id) -> [(device_id, local_core_id, VectorClock, range)]
+  # (memory_space, buffer_id, thread_key) -> [(device_id, local_core_id, VectorClock, range)]
   reads: dict = dataclasses.field(
       default_factory=lambda: collections.defaultdict(list)
   )
 
-  # (memory_space, buffer_id, device_id, local_core_id) -> [(device_id, local_core_id, VectorClock, range)]
+  # (memory_space, buffer_id, thread_key) -> [(device_id, local_core_id, VectorClock, range)]
   writes: dict = dataclasses.field(
       default_factory=lambda: collections.defaultdict(list)
   )
@@ -87,7 +87,7 @@ class RaceDetectionState:
   races_found: bool = False
 
   def check_read(
-      self, device_id, local_core_id, clock, buffer_key, rnge, source_info=None
+      self, thread: ThreadKey, clock, buffer_key, rnge, source_info=None
   ):
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
@@ -98,13 +98,12 @@ class RaceDetectionState:
       writes = self.writes[buffer_key]
       num_writes = len(writes)
       self.reads[buffer_key].append(
-          (device_id, local_core_id, clock, rnge, user_frame)
+          (thread, clock, rnge, user_frame)
       )
 
     for i in range(num_writes):
       (
-          write_device_id,
-          write_local_core_id,
+          write_thread,
           write_clock,
           write_range,
           write_frame,
@@ -116,17 +115,17 @@ class RaceDetectionState:
       # TODO(jburnim): When printing device IDs for reads/writes, distinguish
       # between real device IDs vs. DMA IDs.
       print(
-          f'RACE DETECTED\n  read of {buffer_key}[{rnge}] from {device_id},'
-          f' {local_core_id}, {user_frame}\n  clock: {clock}\n  write of'
-          f' {buffer_key}[{write_range}] from {write_device_id},'
-          f' {write_local_core_id} {write_frame}\n  clock: {write_clock}\n'
+          f'RACE DETECTED\n  read of {buffer_key}[{rnge}] from {thread},'
+          f' {user_frame}\n  clock: {clock}\n  write of'
+          f' {buffer_key}[{write_range}] from {write_thread},'
+          f' {write_frame}\n  clock: {write_clock}\n'
       )
       with self.lock:
         self.races_found = True
       return
 
   def check_write(
-      self, device_id, local_core_id, clock, buffer_key, rnge, source_info=None
+      self, thread: ThreadKey, clock, buffer_key, rnge, source_info=None
   ):
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
@@ -138,15 +137,14 @@ class RaceDetectionState:
       reads = self.reads[buffer_key]
       num_writes = len(writes)
       num_reads = len(reads)
-      self.writes[buffer_key].append((device_id, local_core_id, clock, rnge, user_frame))
+      self.writes[buffer_key].append((thread, clock, rnge, user_frame))
 
     # TODO(jburnim): For performance, we should also probably remove any
     # conflicting reads and writes that happened-before the current write.
 
     for i in range(num_writes):
       (
-          write_device_id,
-          write_local_core_id,
+          write_thread,
           write_clock,
           write_range,
           write_frame,
@@ -158,17 +156,17 @@ class RaceDetectionState:
       # TODO(jburnim): When printing device IDs for reads/writes, distinguish
       # between real device IDs vs. DMA IDs.
       print(
-          f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {device_id},'
-          f' {local_core_id}, {user_frame}\n  clock: {clock}\n  write of'
-          f' {buffer_key}[{write_range}] from {write_device_id},'
-          f' {write_local_core_id}, {write_frame}\n  clock: {write_clock}\n'
+          f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {thread},'
+          f' {user_frame}\n  clock: {clock}\n  write of'
+          f' {buffer_key}[{write_range}] from {write_thread},'
+          f' {write_frame}\n  clock: {write_clock}\n'
       )
       with self.lock:
         self.races_found = True
       break
 
     for i in range(num_reads):
-      read_device_id, read_local_core_id, read_clock, read_range, read_frame = (
+      read_thread, read_clock, read_range, read_frame = (
           reads[i]
       )
       if vc.ordered(read_clock, clock):
@@ -178,10 +176,10 @@ class RaceDetectionState:
       # TODO(jburnim): When printing device IDs for reads/writes, distinguish
       # between real device IDs vs. DMA IDs.
       print(
-          f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {device_id},'
-          f' {local_core_id}, {user_frame}\n  clock: {clock}\n  read of'
-          f' {buffer_key}[{read_range}] from {read_device_id},'
-          f' {read_local_core_id}, {read_frame}\n  clock: {read_clock}\n'
+          f'RACE DETECTED\n  write of {buffer_key}[{rnge}] from {thread},'
+          f' {user_frame}\n  clock: {clock}\n  read of'
+          f' {buffer_key}[{read_range}] from {read_thread},'
+          f' {read_frame}\n  clock: {read_clock}\n'
       )
       with self.lock:
         self.races_found = True

@@ -111,9 +111,12 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":params",
+        "//jax",
         "//jax/_src:source_info_util",
         "//jax/_src/pallas/mosaic/interpret:shared_memory",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
-    ] + py_deps(["numpy"]),
+    ] + py_deps([
+        "numpy",
+    ]),
 )
