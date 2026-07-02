@@ -30,6 +30,7 @@ from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.interpreters import mlir
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.mesh import Mesh
@@ -162,6 +163,37 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key.get(computation1, devices, compile_options, backend),
         cache_key.get(computation2, devices, compile_options, backend),
     )
+
+  def test_identical_computations_different_private_symbol_names(self):
+    module = """
+module @jit_train_step {
+  func.func public @main(%arg0: tensor<2xf32>) -> tensor<2xf32> {
+    %0 = call @clip_0(%arg0) : (tensor<2xf32>) -> tensor<2xf32>
+    return %0 : tensor<2xf32>
+  }
+  func.func private @clip_0(%arg0: tensor<2xf32>) -> tensor<2xf32> {
+    %0 = stablehlo.negate %arg0 : tensor<2xf32>
+    return %0 : tensor<2xf32>
+  }
+}
+"""
+    ctx = mlir.make_ir_context()
+    with ctx:
+      computation1 = ir.Module.parse(module)
+      computation2 = ir.Module.parse(module.replace("@clip_0", "@clip_1"))
+      computation3 = ir.Module.parse(
+          module.replace("stablehlo.negate", "stablehlo.abs")
+      )
+    devices = np.array([[jax.local_devices()[0]]])
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+    )
+    backend = xla_bridge.get_backend()
+    key1 = cache_key.get(computation1, devices, compile_options, backend)
+    key2 = cache_key.get(computation2, devices, compile_options, backend)
+    key3 = cache_key.get(computation3, devices, compile_options, backend)
+    self.assertEqual(key1, key2)
+    self.assertNotEqual(key1, key3)
 
   # TODO(phawkins): this test flakes if test concurrency is enabled.
   @jtu.thread_unsafe_test()
