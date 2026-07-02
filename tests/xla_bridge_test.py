@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import os
 import platform
 
@@ -28,6 +29,26 @@ from jax._src.lib import xla_client as xc
 config.parse_flags_with_absl()
 
 mock = absltest.mock
+
+
+def restore_backends_and_env(test_method):
+  """Restores ``os.environ`` and ``xb._backend_factories`` after a test.
+
+  Some plugin-registration tests below set
+  ``os.environ["PJRT_NAMES_AND_LIBRARY_PATHS"]`` and add entries to the
+  ``xb._backend_factories`` global.
+  """
+  @functools.wraps(test_method)
+  def wrapper(*args, **kwargs):
+    orig_environ = dict(os.environ)
+    orig_factories = dict(xb._backend_factories)
+    try:
+      return test_method(*args, **kwargs)
+    finally:
+      os.environ.clear()
+      os.environ.update(orig_environ)
+      xb._backend_factories = orig_factories
+  return wrapper
 
 
 class XlaBridgeTest(jtu.JaxTestCase):
@@ -120,6 +141,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
       xb.local_devices(backend="foo")
 
+  @restore_backends_and_env
   def test_register_plugin(self):
     with self.assertLogs(level="WARNING") as log_output:
       with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
@@ -161,6 +183,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
       options["ml_framework_version"] = version.__version__
     mock_make.assert_called_once_with("name1", options, None)
 
+  @restore_backends_and_env
   def test_register_plugin_with_config(self):
     test_json_file_path = os.path.join(
         os.path.dirname(__file__), "testdata/example_pjrt_plugin_config.json"
@@ -202,6 +225,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
 
     mock_make.assert_called_once_with("name1", options, None)
 
+  @restore_backends_and_env
   def test_register_plugin_with_lazy_config(self):
     options = {"bar": "baz"}
 
