@@ -57,6 +57,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
+from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
@@ -3552,7 +3553,9 @@ def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
   k, v = sort_p.bind(keys, values, dimension=dimension, is_stable=is_stable, num_keys=1)
   return k, v
 
-def top_k(operand: ArrayLike, k: int, *, axis: int = -1) -> tuple[Array, Array]:
+def top_k(
+    operand: ArrayLike, k: int, *, axis: int = -1, is_stable: bool = True
+) -> tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the specified axis of ``operand``.
 
   Args:
@@ -3560,17 +3563,19 @@ def top_k(operand: ArrayLike, k: int, *, axis: int = -1) -> tuple[Array, Array]:
     k: integer specifying the number of top entries.
     axis: optional integer specifying the axis along which to compute the top
       ``k`` entries. Default is -1, indicating the last axis.
+    is_stable: optional boolean specifying whether to preserve the relative
+      order of equal elements. If True (default), equal elements preserve their
+      relative order from the input; otherwise, their order is unspecified.
 
   Returns:
     A tuple ``(values, indices)`` where
 
-    - ``values`` is an array containing the top k values along the last axis.
+    - ``values`` is an array containing the top k values along the specified
+      axis.
     - ``indices`` is an array containing the indices corresponding to values.
 
   ``values[..., i, ...]`` is the ``i``-th largest entry in ``operand`` along the
   specified axis, and its index is ``indices[..., i, ...]``.
-
-  If two elements are equal, the lower-index element appears first.
 
   See also:
     - :func:`jax.lax.approx_max_k`
@@ -3591,7 +3596,8 @@ def top_k(operand: ArrayLike, k: int, *, axis: int = -1) -> tuple[Array, Array]:
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   axis = canonicalize_axis(axis, np.ndim(operand))
-  return top_k_p.bind(operand, k=k, axis=axis)
+  return top_k_p.bind(operand, k=k, axis=axis, is_stable=is_stable)
+
 
 def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
          sharding: Sharding | None = None) -> Array:
@@ -8853,7 +8859,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
 mlir.register_lowering(sort_p, _sort_lower)
 
 
-def _top_k_abstract_eval(operand, *, k, axis):
+def _top_k_abstract_eval(operand, *, k, axis, is_stable):
   if dtypes.issubdtype(operand.dtype, np.complexfloating):
     raise ValueError("top_k is not compatible with complex inputs.")
   if k < 0:
@@ -8886,10 +8892,10 @@ def _top_k_abstract_eval(operand, *, k, axis):
   return (operand.update(shape=shape),
           operand.update(shape=shape, dtype=np.dtype(np.int32)))
 
-def _top_k_jvp(primals, tangents, *, k, axis):
+def _top_k_jvp(primals, tangents, *, k, axis, is_stable):
   operand, = primals
   tangent, = tangents
-  primals_out = top_k(operand, k, axis=axis)
+  primals_out = top_k(operand, k, axis=axis, is_stable=is_stable)
   if type(tangent) is ad_util.Zero:
     tangent_out = ad_util.p2tz(primals_out[0])
   else:
@@ -8908,19 +8914,20 @@ def _top_k_jvp(primals, tangents, *, k, axis):
     tangent_out = slicing.gather(tangent, gather_indices, dnums, slice_sizes)
   return primals_out, (tangent_out, ad_util.p2tz(primals_out[1]))
 
-def _top_k_batch_rule(batched_args, batch_dims, *, k, axis):
+def _top_k_batch_rule(batched_args, batch_dims, *, k, axis, is_stable):
   operand, = batched_args
   bdim, = batch_dims
   if bdim <= axis:
     axis += 1
-  return top_k(operand, k=k, axis=axis), (bdim, bdim)
+  return top_k(operand, k=k, axis=axis, is_stable=is_stable), (bdim, bdim)
+
 
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
 top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 
-def _top_k_lower(ctx, operand, k, axis):
+def _top_k_lower(ctx, operand, k, axis, is_stable):
   # Move axis to last dimension:
   ndim = len(ctx.avals_in[0].shape)
   if axis != ndim - 1:
@@ -8932,7 +8939,12 @@ def _top_k_lower(ctx, operand, k, axis):
 
   # Compute the top-k along the last dimension
   if core.is_constant_dim(k):
-    results = chlo.top_k(operand, mlir.i64_attr(k))
+    if jaxlib_extension_version >= 474:
+      results = chlo.top_k(
+          operand, mlir.i64_attr(k), is_stable=ir.BoolAttr.get(is_stable)
+      )
+    else:
+      results = chlo.top_k(operand, mlir.i64_attr(k))
   else:
     k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
     out_values_aval, out_indices_aval, = ctx.avals_out
@@ -8940,11 +8952,16 @@ def _top_k_lower(ctx, operand, k, axis):
         mlir.aval_to_ir_types(ctx.module_context, out_values_aval),
         mlir.aval_to_ir_types(ctx.module_context, out_indices_aval)
     ])
-    results = mlir.custom_call(
+    custom_call_op = mlir.custom_call(
         "stablehlo.dynamic_top_k",
         result_types=flat_result_types,
         operands=[operand, k_value],
-    ).results
+    )
+    if not is_stable and jaxlib_extension_version >= 474:
+      custom_call_op.operation.attributes['is_stable'] = ir.BoolAttr.get(
+          is_stable
+      )
+    results = custom_call_op.results
 
   results = [mlir.lower_with_sharding_in_types(ctx, r, aval)
              for r, aval in zip(results, ctx.avals_out)]
