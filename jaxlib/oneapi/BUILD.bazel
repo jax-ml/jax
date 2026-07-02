@@ -27,13 +27,55 @@ package(
 )
 
 cc_library(
+    name = "oneapi_gpu_runtime_hdrs",
+    hdrs = ["oneapi_gpu_runtime.h"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@local_config_sycl//sycl:sycl_headers",
+    ],
+)
+
+cc_library(
+    name = "oneapi_gpu_runtime",
+    srcs = ["oneapi_gpu_runtime.cc"],
+    hdrs = ["oneapi_gpu_runtime.h"],
+    copts = ["-fsycl"],
+    features = ["-use_header_modules"],
+    linkopts = ["-fsycl"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@local_config_sycl//sycl:sycl_headers",
+    ],
+)
+
+cc_library(
     name = "oneapi_vendor",
-    hdrs = [
+    defines = ["JAX_GPU_ONEAPI=1"],
+    textual_hdrs = [
         "//jaxlib/gpu:vendor.h",
     ],
-    defines = ["JAX_GPU_ONEAPI=1"],
     deps = [
-        "@local_config_sycl//sycl:sycl_headers",
+        ":oneapi_gpu_runtime_hdrs",
+    ],
+)
+
+cc_library(
+    name = "oneapi_gpu_kernel_helpers",
+    hdrs = ["//jaxlib/gpu:gpu_kernel_helpers.h"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_vendor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
