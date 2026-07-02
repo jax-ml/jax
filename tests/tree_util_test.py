@@ -24,6 +24,7 @@ from absl.testing import parameterized
 import jax
 from jax import flatten_util
 from jax import tree_util
+from jax._src import flattree as ft
 from jax._src import test_util as jtu
 from jax._src.tree_util import (
     prefix_errors, broadcast_flattened_prefix_with_treedef,
@@ -1820,6 +1821,22 @@ class RegistrationTest(jtu.JaxTestCase):
       static = jax.tree.static(metadata={"static": False})
       self.assertEqual(static.metadata, {"static": False})
 
+class FlatTreeTest(jtu.JaxTestCase):
+
+  def test_filter_and_tupling_commute(self):
+    xs = ft.flatten({'a': 0, 'b': 1})
+    ys = ft.flatten({'c': 2, 'd': 3, 'e': 4})
+    x_mask = [True, False]
+    y_mask = [False, True, True]
+    xs_f1 = xs.filter_with_mask(x_mask)
+    ys_f1 = ys.filter_with_mask(y_mask)
+
+    zs = ft.pack((xs, ys))
+    zs_f = zs.filter_with_mask(x_mask + y_mask)
+    xs_f2, ys_f2 = zs_f.unpack()
+    print(xs_f2)
+    print(ys_f2)
+    self.assertEqual((xs_f1, ys_f1), (xs_f2, ys_f2))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -387,7 +387,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     new_arg_avals = ft.pack(((carry_avals, x_avals), {}))
     jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
     jaxpr, consts = pe.separate_consts(jaxpr)
-    if len(out_avals.unpack()) != 2:
+    if not out_avals.unpackable or len(out_avals.unpack()) != 2:
       msg = "scan body output must be a pair, got {}."
       raise TypeError(msg.format(out_avals.unflatten()))
     return jaxpr, out_avals, consts

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass
 import functools
 from functools import partial
 import itertools as it
@@ -701,6 +702,67 @@ class HashableWrapper:
       return False
     return self.x == other.x if self.hash is not None else self.x is other.x
 
+@dataclass(frozen=True)
+class Either():
+  is_right : bool
+  val : Any
+
+  def from_left(self):
+    assert not self.is_right
+    return self.val
+
+  def from_right(self):
+    assert self.is_right
+    return self.val
+
+  @property
+  def is_left(self): return not self.is_right
+
+  @staticmethod
+  def left(x): return Either(False, x)
+
+  @staticmethod
+  def right(x): return Either(True, x)
+
+  def __repr__(self):
+    if self.is_left:
+      return f"Left({self.val})"
+    else:
+      return f"Right({self.val})"
+
+# A handy container for (args, kwargs) pairs that lets you map over it etc
+# with an API similar to FlatTree.
+# TODO: hashing, equality, printing etc
+class PyArgs:
+  def __init__(self, args, kwargs):
+    assert isinstance(args, tuple)
+    assert isinstance(kwargs, dict)
+    self.args = args
+    self.kwargs = kwargs
+
+  # True means keep
+  def filter_with_mask(self, mask):
+    assert len(mask) == len(self)
+    keeps = iter(mask)
+    return PyArgs(
+        tuple(x for x in self.args if next(keeps)),
+        {k: v for k, v in self.kwargs.items() if next(keeps)})
+
+  @property
+  def args_kwargs(self):
+    return (self.args, self.kwargs)
+
+  def map(self, f):
+    return PyArgs(
+        tuple(f(x) for x in self.args),
+        {k: f(x) for k, x in self.kwargs.items()})
+
+  def map2(self, ys, f):
+    ys_iter = iter(ys)
+    return self.map(lambda x: f(x, next(ys_iter)))
+
+  def __len__(self):
+    return len(self.args) + len(self.kwargs)
 
 def _original_func(f: Callable) -> Callable:
   if isinstance(f, property):
