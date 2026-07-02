@@ -346,9 +346,12 @@ def mma(
   scale_block: int | None = None
   if is_scaled:
     assert a_scale is not None
-    scale_block = 32 if a_scale.dtype == ir.Float8E8M0FNUType.get() else 16
-    if is_sparse:
-      scale_block *= 2
+    if k % a_scale.shape[1] != 0:
+      raise ValueError(
+          f"K={k} is not divisible by A scale second dimension"
+          f" {a_scale.shape[1]}"
+      )
+    scale_block = k // a_scale.shape[1]
     k_group_elems = max(k_group_elems, 4 * scale_block)
   required_multiple = 16 if collective else 8
   mode_name = "2 CTA" if collective else "1 CTA"
@@ -404,17 +407,48 @@ def mma(
       )
     assert a_scale is not None and b_scale is not None
     scale_element_type = a_scale.dtype
-    if (
-        a_scale.dtype != ir.Float8E8M0FNUType.get()
-        and a_scale.dtype != ir.Float8E4M3FNType.get()
-    ):
+    if b_scale.dtype != scale_element_type:
       raise ValueError(
-          f"A scale dtype mismatch: expected f8e8m0fnu or f8e4m3fn, got {a_scale.dtype}"
+          f"B scale dtype mismatch: expected {scale_element_type} (same as A),"
+          f" got {b_scale.dtype}"
       )
-    if b_scale.dtype != a_scale.dtype:
-      raise ValueError(
-          f"B scale dtype mismatch: expected {a_scale.dtype} (same as A), got"
-          f" {b_scale.dtype}"
+    assert scale_block is not None
+    base_scale_block = scale_block // (2 if is_sparse else 1)
+    if isinstance(element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
+      if not isinstance(scale_element_type, ir.Float8E8M0FNUType):
+        raise ValueError(
+            "Scale element type mismatch: expected f8e8m0fnu, got"
+            f" {scale_element_type}"
+        )
+      if base_scale_block != 32:
+        expected = 64 if is_sparse else 32
+        raise ValueError(
+            f"Scale block size mismatch: expected {expected}, got"
+            f" {scale_block}"
+        )
+    elif isinstance(element_type, ir.Float4E2M1FNType):
+      if isinstance(scale_element_type, ir.Float8E4M3FNType):
+        if base_scale_block != 16:
+          expected = 32 if is_sparse else 16
+          raise ValueError(
+              f"Scale block size mismatch: expected {expected}, got"
+              f" {scale_block}"
+          )
+      elif isinstance(scale_element_type, ir.Float8E8M0FNUType):
+        if base_scale_block not in (16, 32):
+          expected = "32 or 64" if is_sparse else "16 or 32"
+          raise ValueError(
+              f"Scale block size mismatch: expected {expected}, got"
+              f" {scale_block}"
+          )
+      else:
+        raise ValueError(
+            "Scale element type mismatch: expected f8e8m0fnu or f8e4m3fn, got"
+            f" {scale_element_type}"
+        )
+    else:
+      raise NotImplementedError(
+          f"Unsupported element type for block scaling: {element_type}"
       )
     k_scales = k // scale_block
     if a_scale.shape != (TMEM_ROWS, k_scales):
@@ -596,6 +630,7 @@ def mma(
         accumulate=acc,
         element_type=mma_element_type,
         scale_element_type=scale_element_type,
+        scale_block=scale_block,
     )
 
 
@@ -617,6 +652,7 @@ def _do_mma(
     k: int,
     element_type: ir.Type,
     scale_element_type: ir.Type | None,
+    scale_block: int | None,
     d_type: ir.Type,
     accumulate: ir.Value,
     collective: bool,
@@ -639,17 +675,14 @@ def _do_mma(
   scale_steps = None
   kind = None
   if is_scaled:
-    if isinstance(element_type, ir.Float8E5M2Type) or isinstance(
-        element_type, ir.Float8E4M3FNType
-    ):
-      if scale_element_type != ir.Float8E8M0FNUType.get():
-        raise ValueError(
-            f"Scale element type mismatch: expected f8e8m0fnu, got {scale_element_type}"
-        )
+    assert scale_block is not None
+    if isinstance(element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
+      assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
       kind = "mxf8f6f4.block_scale.scale_vec::1X"
       scale_steps = 4
       create_scaled_instr_descriptor = functools.partial(
-          create_scaled_f8f6f4_instr_descriptor, scale_type=scale_element_type,
+          create_scaled_f8f6f4_instr_descriptor,
+          scale_type=scale_element_type,
           sparse=is_sparse,
       )
     elif isinstance(element_type, ir.Float4E2M1FNType):
@@ -659,14 +692,19 @@ def _do_mma(
           scale_type=scale_element_type,
           sparse=is_sparse,
       )
-      if scale_element_type == ir.Float8E8M0FNUType.get():
-        kind = "mxf4.block_scale.scale_vec::2X"
+      base_scale_block = scale_block // (2 if is_sparse else 1)
+      assert base_scale_block in (16, 32)
+      if base_scale_block == 32:
+        assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
+        kind = "mxf4nvf4.block_scale.scale_vec::2X"
         scale_steps = 2
-      elif scale_element_type == ir.Float8E4M3FNType.get():
+      else:
         kind = "mxf4nvf4.block_scale.scale_vec::4X"
         scale_steps = 1
     else:
-      raise NotImplementedError(f"Unsupported element type for block scaling: {element_type}")
+      raise NotImplementedError(
+          f"Unsupported element type for block scaling: {element_type}"
+      )
     extra_ptx = "[$5], [$6], "
     extra_constraints = ",r,r"
   else:

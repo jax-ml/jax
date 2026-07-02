@@ -2211,23 +2211,22 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       in_jax_dtype=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn),
       scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
+      block_size=(16, 32),
       m=(128,),  # TODO(apaszke): 256
       n=(32, 64, 128, 192, 256),
       swizzle=(32, 128),
   )
-  def test_mma_block_scaled_basic(self, m, n, in_jax_dtype, scale_jax_dtype, swizzle):
+  def test_mma_block_scaled_basic(
+      self, m, n, in_jax_dtype, scale_jax_dtype, block_size, swizzle
+  ):
     out_jax_dtype = jnp.float32
     # When swizzle is small, we need to take many steps to make it large enough
     # to make the scale count a multiple of 4.
     k_steps = 4 if swizzle == 32 else 2
-    if scale_jax_dtype == jnp.float8_e8m0fnu:
-      block_size = 32
-    elif scale_jax_dtype == jnp.float8_e4m3fn:
-      if in_jax_dtype != jnp.float4_e2m1fn:
-        self.skipTest("Only float4_e2m1fn input is supported for e4m3fn scale.")
-      block_size = 16
-    else:
-      raise ValueError(f"Unsupported scale dtype: {scale_jax_dtype}")
+    if block_size == 16 and in_jax_dtype != jnp.float4_e2m1fn:
+      self.skipTest("Only float4_e2m1fn input is supported for block size 16.")
+    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
+      self.skipTest("e4m3fn scale only supports block size 16.")
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
@@ -2468,14 +2467,17 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
-    m=(256,),
-    n=(64, 128, 192, 256),
-    scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
+      m=(256,),
+      n=(64, 128, 192, 256),
+      scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
+      block_size=(16, 32),
   )
-  def test_mma_block_scaled_collective(self, m, n, scale_jax_dtype):
+  def test_mma_block_scaled_collective(self, m, n, scale_jax_dtype, block_size):
+    if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
+      self.skipTest("e4m3fn scale only supports block size 16.")
     in_jax_dtype = jnp.float4_e2m1fn
     out_jax_dtype = jnp.float32
-    scale_block = 32 if scale_jax_dtype == jnp.float8_e8m0fnu else 16
+    scale_block = block_size
     swizzle = 128
     k_steps = 2
 
@@ -3079,17 +3081,19 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       in_jax_dtype=(jnp.float4_e2m1fn,),
       scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
+      base_block_size=(16, 32),
       m=(128,),
       n=(128, 256),
       swizzle=(128,),
   )
-  def test_mma_block_scaled_sparse_f4(self, m, n, in_jax_dtype, scale_jax_dtype, swizzle):
+  def test_mma_block_scaled_sparse_f4(
+      self, m, n, in_jax_dtype, scale_jax_dtype, base_block_size, swizzle
+  ):
+    if scale_jax_dtype == jnp.float8_e4m3fn and base_block_size != 16:
+      self.skipTest("e4m3fn scale only supports block size 16.")
     out_jax_dtype = jnp.float32
     sparse_meta_dtype = jnp.uint2
-    if scale_jax_dtype == jnp.float8_e8m0fnu:
-      block_size = 64
-    elif scale_jax_dtype == jnp.float8_e4m3fn:
-      block_size = 32
+    block_size = base_block_size * 2
     k_steps = 2
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
