@@ -737,6 +737,42 @@ class TilingTransform(state_types.Transform):
   def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
     return UntilingTransform(self.tiling)
 
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class Gather4InterleaveTransform(state_types.Transform):
+  """Transforms a logical un-interleaved Gather4 output into the physical interleaved shape.
+
+  Maps `(..., num_indices, dim_size)` to `(..., num_indices * num_chunks, chunk_size)`.
+  """
+  chunk_size: int = 256
+
+  def transform_type(self, x: jax_core.AbstractValue) -> state_types.AbstractRef:
+    match x:
+      case jax_core.ShapedArray() as aval:
+        assert aval.shape[-1] % self.chunk_size == 0
+        num_chunks = aval.shape[-1] // self.chunk_size
+        new_shape = aval.shape[:-2] + (aval.shape[-2] * num_chunks, self.chunk_size)
+        return aval.update(shape=new_shape)
+      case state_types.AbstractRef() as ref:
+        return state_types.AbstractRef(self.transform_type(ref.inner_aval))
+      case _:
+        raise NotImplementedError(x)
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    raise NotImplementedError("Undo for Gather4InterleaveTransform is not implemented.")
+
+  def commute_ndindexer(
+      self, aval: jax_core.AbstractValue, indexer: indexing.NDIndexer
+  ) -> tuple[indexing.NDIndexer, state_types.Transform]:
+    # Not commuting since this transform fundamentally restructures the memory.
+    raise NotImplementedError("Commuting Gather4InterleaveTransform through an indexer is not supported.")
+
+  def to_mgpu(self):
+    # We don't have a direct mgpu transform for this; it is handled structurally.
+    raise NotImplementedError("No direct MemRefTransform mapping.")
+
+
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UntilingTransform(state_types.Transform):

@@ -3255,9 +3255,12 @@ class LayoutInferenceTest(parameterized.TestCase):
           mgpu.dialect.AsyncStoreOp,
           mgpu.dialect.AsyncPrefetchOp,
       ),
-      vec_len=(4, 12, 16, 64)
+      vec_len=(4, 12, 16, 64),
+      force_tma_4_layout=(False, True),
   )
-  def test_infer_layout_for_async_ops_with_vector_indices(self, op_type, vec_len):
+  def test_infer_layout_for_async_ops_with_vector_indices(
+      self, op_type, vec_len, force_tma_4_layout
+  ):
     with ir.InsertionPoint(self.module.body):
       elt_ty = ir.BF16Type.get()
       is_prefetch_op = isinstance(op_type, mgpu.dialect.AsyncPrefetchOp)
@@ -3273,6 +3276,8 @@ class LayoutInferenceTest(parameterized.TestCase):
       gmem_ref, smem_ref, barrier, scalar_idx, vec_idx = undefs(
           gmem_ty, smem_ty, barrier_ty, i32, vec_ty
       )
+      if force_tma_4_layout:
+        vec_idx = layout_cast(vec_idx, mgpu.TMA_INDICES_4_LAYOUT)
       if is_prefetch_op:
         indices = [vec_idx, scalar_idx, scalar_idx]
         slice_lengths = [vec_len, 4, 128]
@@ -3302,12 +3307,16 @@ class LayoutInferenceTest(parameterized.TestCase):
             source=gmem_ref,
             indices=indices,
             slice_lengths=slice_lengths,
-            collective=ir.ArrayAttr.get([]),
-        )
+          collective=ir.ArrayAttr.get([]),
+      )
 
-      layout = mgpu.TMA_INDICES_LAYOUT if vec_len % 16 == 0 else mgpu.TMA_INDICES_4_LAYOUT
+      if force_tma_4_layout or vec_len % 16 != 0:
+        layout = mgpu.TMA_INDICES_4_LAYOUT
+      else:
+        layout = mgpu.TMA_INDICES_LAYOUT
       mgpu.infer_layout(self.module)
       self.checkInLayouts(op, [layout])
+
 
   @parameterized.parameters(
       ((32, 64, 128), [[0], [1], [2]], (32, 64, 128), False),
