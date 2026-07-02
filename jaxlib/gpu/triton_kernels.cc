@@ -674,13 +674,23 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   if (global_scratch_size > 0) {
     uint64_t grid_size =
         static_cast<uint64_t>(grid_[0]) * grid_[1] * grid_[2];
-    uint64_t alloc_size =
-        grid_size * kernel_.num_ctas() * global_scratch_size;
+    uint64_t num_ctas = kernel_.num_ctas();
+    if (grid_size != 0 && num_ctas != 0 &&
+        global_scratch_size >
+            std::numeric_limits<uint64_t>::max() / grid_size / num_ctas) {
+      return absl::InvalidArgumentError(
+          "Triton global scratch buffer size overflow.");
+    }
+    uint64_t alloc_size = grid_size * num_ctas * global_scratch_size;
 #ifdef JAX_GPU_CUDA
     GPU_RETURN_IF_ERROR(cuMemAllocAsync(&global_scratch, alloc_size, stream));
 #else  // JAX_GPU_HIP
-    GPU_RETURN_IF_ERROR(hipMallocAsync(
-        reinterpret_cast<void**>(&global_scratch), alloc_size, stream));
+    // Allocate into a temporary void* rather than reinterpret_cast'ing the
+    // address of `global_scratch` itself, to avoid punning through an
+    // incompatible pointer type.
+    void* hip_scratch_ptr = nullptr;
+    GPU_RETURN_IF_ERROR(hipMallocAsync(&hip_scratch_ptr, alloc_size, stream));
+    global_scratch = reinterpret_cast<gpuDevicePtr_t>(hip_scratch_ptr);
 #endif
   }
   absl::Cleanup global_scratch_deleter = [&] {
