@@ -94,7 +94,8 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
       lambda x: jax_core.ShapedArray(x.shape, x.dtype)
   )
   debug_info = api_util.debug_info("cost_estimate", partial_fun, args, {})
-  jaxpr, _ = pe.trace_to_jaxpr(partial_fun, in_avals_ft, debug_info)
+  jaxpr, _ = pe.trace_to_jaxpr(
+      partial_fun, ft.unpack_args_kwargs(in_avals_ft)[0], debug_info)
   estimate = cost_estimate_jaxpr(jaxpr)
   input_bytes = sum(
       math.prod(a.shape) * a.dtype.itemsize for a in in_avals_ft.vals)

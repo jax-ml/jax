@@ -2136,7 +2136,7 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
 
 callsites_with_tracing_cache_miss: set[str] = set()
 
-def explain(keys, fun, in_avals, debug_info, *context, **_):
+def explain(keys, fun, in_avals, debug_info, *context, kwargs=(), **_):
   func_filename = debug_info.func_filename
   if func_filename and not source_info_util.is_user_filename(func_filename):
    return
@@ -2167,7 +2167,8 @@ def explain(keys, fun, in_avals, debug_info, *context, **_):
 
   p(f"  for {func_name}{src_info}")
 
-  key = (config.trace_context(), (in_avals, debug_info, *context), {})
+  key = (config.trace_context(), (in_avals, debug_info, *context),
+         {'kwargs': kwargs})
   min_diff = min(diff_tracing_cache_keys(key, k) for k in keys)[-1]
   p('  all previously seen cache keys differ. For the closest previous key:')
   p('  ' + min_diff)
@@ -2179,13 +2180,24 @@ def diff_tracing_cache_keys(new_key, old_key) -> tuple[int, int, str]:
     A tuple of (severity, num_diffs, explanation) for the diff between the two
     keys. Severity is an int, where lower is better.
   """
-  new_ctx, (new_tree, new_dbg, *_), () = new_key
-  old_ctx, (old_tree, old_dbg, *_), () = old_key
+  new_ctx, new_tree, new_dbg = _flat_tree_from_cache_key(new_key)
+  old_ctx, old_tree, old_dbg = _flat_tree_from_cache_key(old_key)
   return (diff_tracing_ctx(new_ctx, old_ctx) or
           diff_trees(new_tree.tree, old_tree.tree) or
           diff_debug(new_dbg, old_dbg) or
           diff_types(new_dbg, new_tree.vals, old_tree.vals) or
           (4, 0, 'cache miss explanation unavailable'))
+
+def _flat_tree_from_cache_key(key):
+  # A tracing cache key has the form (trace_context, positional_args, kwargs),
+  # where positional_args = (args, debug_info, *context_for_cache_key). Combine
+  # the positional `args` (a tuple of per-arg FlatTrees) with the keyword
+  # `kwargs` (a tuple of (key, FlatTree) pairs) into a single FlatTree for
+  # diffing.
+  ctx, (args, debug_info, *_), key_kwargs = key
+  kwargs = key_kwargs.get('kwargs', ()) if isinstance(key_kwargs, dict) else ()
+  tree = ft.FTTuple(ft.FTTuple(*args), ft.FTTuple(*(v for _, v in kwargs)))
+  return ctx, tree, debug_info
 
 def diff_tracing_ctx(new_ctx, old_ctx) -> tuple[int, int, str] | None:
   if new_ctx == old_ctx: return None
@@ -2263,9 +2275,13 @@ def _lower_debug_info(hi_jaxpr, out_mut):
 
 def trace_to_jaxpr_nocache(
     fun: Callable,
-    in_avals: ft.FlatTree,  # (args, kwargs) pair
+    args: tuple[ft.FlatTree, ...],  # one FlatTree per positional arg; statics as FTStatic
     debug_info: core.DebugInfo,
     *context_for_cache_key,
+    # (key, FlatTree) pairs, sorted by key -- a tuple rather than a dict so it's
+    # hashable for the `trace_to_jaxpr` cache key, and sorted so that varying the
+    # caller's kwarg order still hits the cache.
+    kwargs: tuple[tuple[Any, ft.FlatTree], ...] = (),
     # TODO: let's just make a `trace_to_jaxpr_ft` function for this
     fun_takes_flat_tree_arg=False,
     fun_returns_flat_tree=False,
@@ -2276,6 +2292,7 @@ def trace_to_jaxpr_nocache(
                        "`jit`, but 'no_tracing' is set")
   del context_for_cache_key  # read implicitly, e.g. qdd state
   test_event("trace_to_jaxpr")
+  in_avals = ft.FTTuple(ft.FTTuple(*args), ft.FTTuple(*(v for _, v in kwargs)))
   config.enable_checks.value and debug_info.assert_arg_names(len(in_avals))
   parent_trace = core.trace_ctx.trace
   trace = DynamicJaxprTrace(debug_info, parent_trace=parent_trace,
@@ -2298,13 +2315,17 @@ def trace_to_jaxpr_nocache(
     with core.set_current_trace(trace):
       if fun_takes_flat_tree_arg:
         args_ft, kwargs_ft = in_tracers.unpack()
-        assert kwargs_ft.unflatten() == {}  # TODO: handle kwargs
-        kwargs = {}
-        args = args_ft.unpack()
+        assert len(kwargs_ft) == 0  # TODO: handle kwargs
+        call_kwargs = {}
+        call_args = args_ft.unpack()
         del args_ft
       else:
-        args, kwargs = in_tracers.unflatten()
-      ans_pytree = fun(*args, **kwargs)
+        args_ft, kwargs_ft = in_tracers.unpack()
+        call_args = tuple(a.unflatten() for a in args_ft.unpack())
+        call_kwargs = {k: v.unflatten()
+                       for (k, _), v in zip(kwargs, kwargs_ft.unpack())}
+        del args_ft, kwargs_ft
+      ans_pytree = fun(*call_args, **call_kwargs)
       if fun_returns_flat_tree:
         # TODO(dougalm): make result paths optional
         ans = ans_pytree
@@ -2312,7 +2333,7 @@ def trace_to_jaxpr_nocache(
       else:
         debug_info = debug_info.set_result_paths(ans_pytree)
         ans = ft.flatten(ans_pytree)
-      del ans_pytree, args, kwargs
+      del ans_pytree, call_args, call_kwargs
 
     _check_returned_jaxtypes(debug_info, list(ans))
     ans = ans.map(dtypes.canonicalize_value)
@@ -2336,18 +2357,20 @@ def trace_to_jaxpr_nocache(
 @weakref_lru_cache(maxsize=None, explain=explain)
 def trace_to_jaxpr(
     fun: Callable,
-    in_avals: ft.FlatTree,  # (args, kwargs) pair
+    args: tuple[ft.FlatTree, ...],
     debug_info: core.DebugInfo,
     *context_for_cache_key,
+    kwargs: tuple[tuple[Any, ft.FlatTree], ...] = (),
     fun_takes_flat_tree_arg=False,
     fun_returns_flat_tree=False,
     requires_low=False,
 ) -> tuple[ClosedJaxpr, ft.FlatTree]:
   return trace_to_jaxpr_nocache(
       fun,
-      in_avals,
+      args,
       debug_info,
       *context_for_cache_key,
+      kwargs=kwargs,
       fun_takes_flat_tree_arg=fun_takes_flat_tree_arg,
       fun_returns_flat_tree=fun_returns_flat_tree,
       requires_low=requires_low,

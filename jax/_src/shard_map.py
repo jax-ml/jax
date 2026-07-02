@@ -751,7 +751,7 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
       [[typeof(x) for x in typeof(hi_arg).lower_val(hi_arg)] for hi_arg in hi_args])
   lo_avals_ft = lo_avals_ft.map2(
       in_specs, lambda a, s: shard_aval(mesh, newly_manual_axes, check_vma, s, a))
-  lo_avals_ft = ft.pack((lo_avals_ft, {}))
+  lo_avals_ft = ft.FTTuple(lo_avals_ft, ft.FTTuple())  # (args, no-kwargs) pair
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     lo_jaxpr_, out_avals_ft = pe.lower_jaxpr(pe.close_jaxpr(jaxpr), lo_avals_ft)
@@ -799,7 +799,7 @@ def _shard_map_staging(
                   in_specs, in_avals)
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    in_avals_flat_tree = ft.flatten((in_avals_, {}))
+    in_avals_flat_tree = ft.flatten_args(*in_avals_)
     jaxpr, out_data = pe.trace_to_jaxpr(
         f, in_avals_flat_tree, debug_info, fun_returns_flat_tree=True,
         requires_low=trace.requires_low)
@@ -1875,7 +1875,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
     return core.eval_jaxpr(jaxpr, res, *args)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
-  in_avals = ft.flatten(((*res_avals, *[v.aval for v in jaxpr.invars]), {}))
+  in_avals = ft.flatten_args(*res_avals, *[v.aval for v in jaxpr.invars])
   closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
   closed_jaxpr, _ = pe.separate_consts(closed_jaxpr)
   return closed_jaxpr.jaxpr
@@ -2002,7 +2002,7 @@ def _add_reshapes(which: Sequence[bool],
     res = [_add_singleton(x) if not x.shape else x for x in res]
     return [*out_known, *res]
   avals_in = tuple(v.aval for v in jaxpr_known.invars)
-  avals_in = ft.flatten((avals_in, {}))
+  avals_in = ft.flatten_args(*avals_in)
   jaxpr_known_closed, _ = pe.trace_to_jaxpr(
       known, avals_in, debug_info=jaxpr_known.debug_info)
 
@@ -2014,7 +2014,7 @@ def _add_reshapes(which: Sequence[bool],
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
   avals_in = (*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]])
-  avals_in = ft.flatten((avals_in, {}))
+  avals_in = ft.flatten_args(*avals_in)
   jaxpr_staged_closed, _ = pe.trace_to_jaxpr(
       staged, avals_in, debug_info=jaxpr_staged.debug_info)
 

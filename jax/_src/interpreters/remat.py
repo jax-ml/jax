@@ -42,7 +42,7 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
     jaxpr_trace = pe.DynamicJaxprTrace(None)
     jaxpr_trace.tag = core.TraceTag()
     trace = RematTrace(parent_trace, jaxpr_trace, policy, custom_vjp_rules)
-    args_ft, _ = ft.flatten_args(*args).unpack()
+    args_ft = ft.pack(ft.flatten_args(*args))
     in_tracers = args_ft.map(
         lambda x: RematTracer(trace, x, jaxpr_trace.new_arg(typeof(x), None)))  # type: ignore # noqa F821
     with core.set_current_trace(trace):

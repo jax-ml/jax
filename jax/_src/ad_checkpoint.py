@@ -488,8 +488,10 @@ def _trace_to_jaxpr(fun: Callable,
                     debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
   in_avals_flat_tree = ft.treedef_args_to_ft(in_tree, in_avals)
+  in_args, in_kwargs = ft.unpack_args_kwargs(in_avals_flat_tree)
   try:
-    closed_jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals_flat_tree, debug)
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+        fun, in_args, debug, kwargs=tuple(sorted(in_kwargs.items())))
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -826,7 +828,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     return in_cts_nz
 
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
-  in_avals_flat_tree = ft.flatten((tuple(in_avals), {}))
+  in_avals_flat_tree = ft.flatten_args(*in_avals)
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
       transposed, in_avals_flat_tree, dbg)
   return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
@@ -1030,10 +1032,13 @@ def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
   args_ft = ft.flatten_static_argnums_argnames(
       args, kwargs, static_argnums, static_argnames)
   avals_ft = args_ft.map(typeof)
+  avals_args, avals_kwarg_values = ft.unpack_args_kwarg_values(avals_ft)
+  avals_kwargs = tuple(zip(sorted(kwargs), avals_kwarg_values))
   dbg = api_util.debug_info(
       'remat3', f, args, kwargs, static_argnums=static_argnums,
       static_argnames=static_argnames)
-  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(
+      f, avals_args, dbg, kwargs=avals_kwargs)
   jaxpr, consts = pe.separate_consts(jaxpr_)
   out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
   return out_avals_ft.update(out_flat).unflatten()
@@ -1203,12 +1208,16 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
     args_ft = ft.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
+    avals_args, avals_kwarg_values = ft.unpack_args_kwarg_values(avals_ft)
+    avals_kwargs = tuple(zip(sorted(kwargs), avals_kwarg_values))
     dbg = api_util.debug_info(
         'custom_remat', f, args, kwargs, static_argnums=static_argnums,
         static_argnames=static_argnames)
-    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(
+        f, avals_args, dbg, kwargs=avals_kwargs)
     jaxpr, consts = pe.separate_consts(jaxpr_)
-    out_flat = CustomRemat(jaxpr, f1, helper, args_ft.tree, out_avals_ft.tree)(*consts, *args_ft)
+    in_tree = tracing_registry.flatten((args, kwargs))[1]
+    out_flat = CustomRemat(jaxpr, f1, helper, in_tree, out_avals_ft.tree)(*consts, *args_ft)
     return out_avals_ft.update(out_flat).unflatten()
   return call
 

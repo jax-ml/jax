@@ -149,7 +149,8 @@ def _switch_internal(
   if config.mutable_array_checks.value:
     api_util.check_no_aliased_ref_args(lambda: dbgs[0], list(avals), list(args))
 
-  jaxprs_, out_avalss = zip(*[pe.trace_to_jaxpr(branch, avals, dbg)
+  avals_args = ft.unpack_args_kwargs(avals)[0]
+  jaxprs_, out_avalss = zip(*[pe.trace_to_jaxpr(branch, avals_args, dbg)
                              for branch, dbg in zip(branches, dbgs)])
   jaxprs_, all_consts = zip(*[pe.separate_consts(j) for j in jaxprs_])
   jaxprs, consts = _merge_common_consts(jaxprs_, all_consts)
@@ -282,9 +283,10 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     api_util.check_no_aliased_ref_args(lambda: dbg_true, list(avals), list(args))
   dbg_false = api_util.debug_info("cond", false_fun, operands, {})
 
-  true_jaxpr_, out_avals = pe.trace_to_jaxpr(true_fun, avals, dbg_true)
+  avals_args = ft.unpack_args_kwargs(avals)[0]
+  true_jaxpr_, out_avals = pe.trace_to_jaxpr(true_fun, avals_args, dbg_true)
   true_jaxpr_, true_consts = pe.separate_consts(true_jaxpr_)
-  false_jaxpr_, false_out_avals = pe.trace_to_jaxpr(false_fun, avals, dbg_false)
+  false_jaxpr_, false_out_avals = pe.trace_to_jaxpr(false_fun, avals_args, dbg_false)
   false_jaxpr_, false_consts = pe.separate_consts(false_jaxpr_)
   (true_jaxpr, false_jaxpr), consts = _merge_common_consts(
       (true_jaxpr_, false_jaxpr_), (true_consts, false_consts))

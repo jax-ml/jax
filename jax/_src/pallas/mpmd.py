@@ -903,8 +903,9 @@ def _mpmd_map(
                      for di, mesh in zip(debug_infos, meshes)]
     for (mesh, fn), debug_info in zip(meshes_and_fns, debug_infos):
       with mpmd_map_tracing_context(mesh, all_meshes):
+        in_args, in_kwargs = ft.unpack_args_kwargs(in_avals_ft)
         jaxpr, out_avals = pe.trace_to_jaxpr(
-            fn, in_avals_ft, debug_info
+            fn, in_args, debug_info, kwargs=tuple(sorted(in_kwargs.items()))
         )
       fun_out_tree = out_avals.tree
       if fun_out_tree != tree_util.tree_structure(None):

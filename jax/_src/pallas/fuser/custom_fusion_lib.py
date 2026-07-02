@@ -115,7 +115,7 @@ class custom_fusion:
     # flatten and get jaxpr
     args_flat, in_tree = tree_util.tree_flatten(args)
     args_avals = tree_util.tree_map(core.typeof, args)
-    in_avals_ft = ft.flatten((args_avals, {}))
+    in_avals_ft = ft.flatten_args(*args_avals)
     closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
         self.fun, in_avals_ft, debug_fun.with_unknown_names()
     )
