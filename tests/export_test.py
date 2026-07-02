@@ -181,6 +181,27 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.in_avals)
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.out_avals)
 
+  def test_shape_poly_sharding_and_divmod(self):
+    from jax.sharding import NamedSharding, Mesh, PartitionSpec as P
+    from jax._src.export import shape_poly
+
+    mesh = Mesh(np.array(jax.devices()[:1]), ("x",))
+    sharding = NamedSharding(mesh, P("x"))
+    struct = jax.ShapeDtypeStruct((4,), np.float32, sharding=sharding)
+    specs = shape_poly.symbolic_args_specs((struct,), ("b",))
+    self.assertEqual(specs[0].sharding, sharding)
+
+    # Test divmod and evaluate with JAX Tracer/Array (Shardy/SPMD dimension variables)
+    scope = shape_poly.SymbolicScope(["b >= 1"])
+    b = shape_poly._DimExpr._from_var("b", scope)
+    b_div_2 = shape_poly._DimFactor.from_operation(
+        "floordiv", b, 2, scope=scope
+    )
+    b_mod_2 = shape_poly._DimFactor.from_operation("mod", b, 2, scope=scope)
+    env = {"b": jnp.array(4, dtype=np.int32)}
+    self.assertEqual(b_div_2.evaluate(env, scope), 2)
+    self.assertEqual(b_mod_2.evaluate(env, scope), 0)
+
   def test_pytree_export_only(self):
     a = np.arange(4, dtype=np.float32)
     b = np.arange(6, dtype=np.float32)
@@ -2411,7 +2432,9 @@ class JaxExportTest(jtu.JaxTestCase):
               sharding=NamedSharding(mesh, P("a"))))
 
       if poly_shape:
-        args = export.symbolic_args_specs(args, shapes_specs=["32, a", "32, a"])
+        args = export.symbolic_args_specs(
+            args, shapes_specs=["32, 8 * a_div_8", "32, 8 * a_div_8"]
+        )
 
       exp = get_exported(f)(*args)
 
