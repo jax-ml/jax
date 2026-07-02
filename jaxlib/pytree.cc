@@ -950,7 +950,16 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
 }
 
 nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
-  nb::list leaves = nb::steal<nb::list>(PyList_New(num_leaves()));
+  // Malformed cached leaf counts can come from deserialization.
+  if (num_leaves() < 0) {
+    throw std::invalid_argument(absl::StrCat(
+        "Malformed PyTreeDef: num_leaves() = ", num_leaves(), " is negative"));
+  }
+  PyObject* py_leaves = PyList_New(num_leaves());
+  if (py_leaves == nullptr) {
+    throw nb::python_error();
+  }
+  nb::list leaves = nb::steal<nb::list>(py_leaves);
   std::vector<nb::object> agenda;
   agenda.push_back(nb::borrow<nb::object>(xs));
   auto it = traversal_.rbegin();
