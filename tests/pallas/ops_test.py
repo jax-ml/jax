@@ -2177,36 +2177,41 @@ class OpsTest(PallasBaseTest):
     expected = jax.lax.broadcast_in_dim(x, out_shape, dims)
     np.testing.assert_array_equal(f(x), expected)
 
-  @parameterized.product(
-      lhs_and_rhs_shape=[
-          ((16, 16), (16, 16)),
-          ((32, 32), (32, 32)),
-          ((64, 64), (64, 64)),
-          ((128, 128), (128, 128)),
-          ((256, 256), (256, 256)),
-          ((8, 128), (128, 256)),
-          ((8, 128), (256, 128)),
-          ((8, 256), (256, 128)),
-          ((16, 128), (128, 256)),
-          ((16, 128), (256, 128)),
-          ((16, 256), (256, 128)),
-          ((24, 128), (128, 256)),
-          ((24, 128), (256, 128)),
-          ((24, 256), (256, 128)),
-          ((128, 8), (128, 256)),
-          ((128, 8), (256, 128)),
-          ((256, 8), (256, 128)),
-          ((128, 16), (128, 256)),
-          ((128, 16), (256, 128)),
-          ((256, 16), (256, 128)),
-          ((128, 24), (128, 256)),
-          ((128, 24), (256, 128)),
-          ((256, 24), (256, 128)),
-      ],
-      dtype=[jnp.float32, jnp.float16, jnp.bfloat16],
-      trans_x=[False, True],
-      trans_y=[False, True],
-  )
+  @parameterized.parameters(*(
+      (lhs_and_rhs_shape, dtype, trans_x, trans_y)
+      for lhs_and_rhs_shape, dtype, trans_x, trans_y in itertools.product(
+          [
+              ((16, 16), (16, 16)),
+              ((32, 32), (32, 32)),
+              ((64, 64), (64, 64)),
+              ((128, 128), (128, 128)),
+              ((256, 256), (256, 256)),
+              ((8, 128), (128, 256)),
+              ((8, 128), (256, 128)),
+              ((8, 256), (256, 128)),
+              ((16, 128), (128, 256)),
+              ((16, 128), (256, 128)),
+              ((16, 256), (256, 128)),
+              ((24, 128), (128, 256)),
+              ((24, 128), (256, 128)),
+              ((24, 256), (256, 128)),
+              ((128, 8), (128, 256)),
+              ((128, 8), (256, 128)),
+              ((256, 8), (256, 128)),
+              ((128, 16), (128, 256)),
+              ((128, 16), (256, 128)),
+              ((256, 16), (256, 128)),
+              ((128, 24), (128, 256)),
+              ((128, 24), (256, 128)),
+              ((256, 24), (256, 128)),
+          ],
+          [jnp.float32, jnp.float16, jnp.bfloat16],
+          [False, True],
+          [False, True],
+      )
+      if ((lhs_and_rhs_shape[0][::-1] if trans_x else lhs_and_rhs_shape[0])[1]
+          == (lhs_and_rhs_shape[1][::-1] if trans_y else lhs_and_rhs_shape[1])[0])
+  ))
   def test_dot(self, lhs_and_rhs_shape, dtype, trans_x, trans_y):
     self.skip_if_mosaic_gpu()
 
@@ -2214,8 +2219,7 @@ class OpsTest(PallasBaseTest):
 
     final_lhs_shape = lhs_shape[::-1] if trans_x else lhs_shape
     final_rhs_shape = rhs_shape[::-1] if trans_y else rhs_shape
-    if final_lhs_shape[1] != final_rhs_shape[0]:
-      self.skipTest("Contraction dimensions do not match")
+    self.assertEqual(final_lhs_shape[1], final_rhs_shape[0])
 
     out_shape = (final_lhs_shape[0], final_rhs_shape[1])
 
@@ -2496,10 +2500,25 @@ class OpsTest(PallasBaseTest):
           ("add", jnp.sum),
           ("max", jnp.max),
           ("min", jnp.min),
+      ]
+      for axis in [0, 1, (1,), (0, 1)]
+      for dtype in [
+          "float16",
+          "bfloat16",
+          "float32",
+          "float64",
+          "int32",
+          "int64",
+          "uint32",
+          "uint64",
+      ]
+  ] + [
+      (f"{op_name}_{dtype}_{axis}", op, dtype, axis)
+      for op_name, op in [
           ("argmax", jnp.argmax),
           ("argmin", jnp.argmin),
       ]
-      for axis in [0, 1, (1,), (0, 1)]
+      for axis in [0, 1]
       for dtype in [
           "float16",
           "bfloat16",
