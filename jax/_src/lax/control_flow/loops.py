@@ -2303,11 +2303,20 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_body_jaxpr, _ = pe.trace_to_jaxpr(
       new_body,
-      ft.flatten_args(*remaining_body_const_avals,
-          *[a.inner_aval for a in body_ref_avals],
-          *[a.inner_aval for a in cond_ref_avals],
-          *carry_avals),
-      debug_info=discharged_body_jaxpr.debug_info)
+      ft.flatten_args(
+          *remaining_body_const_avals,
+          *[
+              state_discharge._discharged_aval(a, discharge=True)
+              for a in body_ref_avals
+          ],
+          *[
+              state_discharge._discharged_aval(a, discharge=True)
+              for a in cond_ref_avals
+          ],
+          *carry_avals,
+      ),
+      debug_info=discharged_body_jaxpr.debug_info,
+  )
   if new_body_jaxpr.consts: raise NotImplementedError
 
   # Since some `Ref`s that were previously consts are now carries, we need to
@@ -2331,11 +2340,20 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
 
   new_cond_jaxpr, _ = pe.trace_to_jaxpr(
       new_cond,
-      ft.flatten_args(*remaining_cond_const_avals,
-          *[a.inner_aval for a in body_ref_avals],
-          *[a.inner_aval for a in cond_ref_avals],
-          *carry_avals),
-      debug_info=cond_jaxpr.debug_info.with_unknown_names())
+      ft.flatten_args(
+          *remaining_cond_const_avals,
+          *[
+              state_discharge._discharged_aval(a, discharge=True)
+              for a in body_ref_avals
+          ],
+          *[
+              state_discharge._discharged_aval(a, discharge=True)
+              for a in cond_ref_avals
+          ],
+          *carry_avals,
+      ),
+      debug_info=cond_jaxpr.debug_info.with_unknown_names(),
+  )
   if new_cond_jaxpr.consts: raise NotImplementedError
 
   out = while_p.bind(*remaining_cond_consts, *remaining_body_consts,
