@@ -1151,6 +1151,52 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  def test_copy_gmem_to_smem_predicate(self):
+    @self.kernel(
+      out_type=jax.ShapeDtypeStruct([256], jnp.float32),
+      scratch_types=[
+          plgpu.SMEM([256], jnp.float32),
+          plgpu.Barrier(),
+      ],
+      grid=(2,),
+      grid_names=("block",),
+    )
+    def kernel(x_ref, o_ref, scratch_ref, barrier_ref):
+      scratch_ref[...] = jnp.zeros([256], dtype=jnp.float32)
+      block_id = jax.lax.axis_index('block')
+      @pl.when(block_id == 0)
+      def block0_action():
+        idx = pl.ds(0, 128)
+        plgpu.copy_gmem_to_smem(
+            x_ref.at[idx],
+            scratch_ref.at[idx],
+            barrier_ref,
+            predicate=True,
+        )
+        plgpu.barrier_wait(barrier_ref)
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(scratch_ref.at[idx], o_ref.at[idx])
+        plgpu.wait_smem_to_gmem(0)
+
+      @pl.when(block_id != 0)
+      def other_blocks_action():
+        idx = pl.ds(128, 128)
+        plgpu.copy_gmem_to_smem(
+            x_ref.at[idx],
+            scratch_ref.at[idx],
+            barrier_ref,
+            predicate=False,
+        )
+        plgpu.barrier_wait(barrier_ref)
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(scratch_ref.at[idx], o_ref.at[idx])
+        plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(256).astype(jnp.float32)
+    output = kernel(x)
+    np.testing.assert_array_equal(output[:128], x[:128])
+    np.testing.assert_array_equal(output[128:], jnp.zeros((128,)))
+
   def test_collective_copy_gmem_to_smem(self):
 
     @self.kernel(
