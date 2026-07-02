@@ -44,7 +44,8 @@ class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
          uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-         int compute_capability);
+         int compute_capability, uint32_t global_scratch_size = 0,
+         uint32_t global_scratch_align = 1);
 
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
@@ -54,6 +55,10 @@ class Kernel {
   // Returns true if we can launch the kernel without crashing.
   bool CanLaunchOnDevice(gpuDevice_t) const;
 
+  uint32_t num_ctas() const { return num_ctas_; }
+  uint32_t global_scratch_size() const { return global_scratch_size_; }
+  uint32_t global_scratch_align() const { return global_scratch_align_; }
+
  private:
   std::string kernel_name_;
   uint32_t block_dim_x_;
@@ -62,6 +67,10 @@ class Kernel {
   std::string ptx_;
   std::string ttir_;
   int compute_capability_;
+  // Per-CTA global scratch memory required by the kernel (e.g. for
+  // on-device construction of TMA descriptors). Zero if unused.
+  uint32_t global_scratch_size_;
+  uint32_t global_scratch_align_;
 
   ModuleImage* module_image_ = nullptr;
 };
