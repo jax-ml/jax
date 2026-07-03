@@ -1471,13 +1471,12 @@ def _pjit_batcher(axis_data, vals_in,
   new_jaxpr, axes_out = batching.batch_jaxpr2(jaxpr, axis_data, dims_in)
   in_shardings = tuple(
       _pjit_batcher_for_sharding(i, axis_in, axis_data.spmd_name, ctx_mesh,
-                                 aval.ndim)
+                                 aval)
       if axis_in is not None else i
       for axis_in, i, aval in zip(dims_in, in_shardings, new_jaxpr.in_avals))
   out_shardings = tuple(
-
       _pjit_batcher_for_sharding(o, axis_out, axis_data.spmd_name, ctx_mesh,
-                                 aval.ndim)
+                                 aval)
       if axis_out is not None else o
       for axis_out, o, aval in zip(axes_out, out_shardings, new_jaxpr.out_avals))
   # TODO(yashkatariya): Figure out layouts should change under vmap.
@@ -1507,9 +1506,16 @@ batching.fancy_primitive_batchers[jit_p] = _pjit_batcher
 
 def _pjit_batcher_for_sharding(
     s, dim: int, spmd_axis_name: tuple[str, ...] | None,
-    mesh, ndim: int):
+    mesh, aval: core.AbstractValue):
   if isinstance(s, UnspecifiedValue):
     return s
+  if not hasattr(aval, 'ndim'):
+    # TODO(mattjj,yashkatariya): implement this?
+    raise NotImplementedError(
+        f'vmap-of-jit with a specified sharding {s} on a value of non-array '
+        f'type {aval} is not supported; only unspecified shardings are '
+        'supported for non-array types.')
+  ndim = aval.ndim
   hlo_s = s._to_xla_hlo_sharding(ndim)
   if spmd_axis_name is None:
     if sharding_impls.is_hlo_sharding_replicated(hlo_s):
@@ -2250,10 +2256,11 @@ def _sharding_constraint_batcher(
   if axis_data.spmd_name is None:
     unconstrained_dims.add(d)
 
+  aval = core.typeof(x)
   vmapped_sharding = _pjit_batcher_for_sharding(
-      sharding, d, axis_data.spmd_name, context_mesh, x.ndim)
+      sharding, d, axis_data.spmd_name, context_mesh, aval)
   if unconstrained_dims and isinstance(vmapped_sharding, NamedSharding):
-    new_spec = list(vmapped_sharding.spec) + [None] * (x.ndim - len(vmapped_sharding.spec))
+    new_spec = list(vmapped_sharding.spec) + [None] * (aval.ndim - len(vmapped_sharding.spec))
     for u in unconstrained_dims:
       new_spec[u] = PartitionSpec.UNCONSTRAINED
     vmapped_sharding = NamedSharding(
