@@ -1225,6 +1225,66 @@ class MutableArrayTest(jtu.JaxTestCase):
     f_vjp(1.0)
     self.assertAllClose(x_grad_ref[...], 4., check_dtypes=False)
 
+  @parameterized.parameters([False, True])
+  def test_gather_with_vjp3(self, jit):
+    # reverse-mode of advanced indexing accumulates in-place into a bound
+    # gradient ref, without materializing dense one-hot cotangents
+    def f(x, i):
+      return x[i]
+    if jit:
+      f = jax.jit(f)
+
+    x = jnp.arange(10.)
+    idx = jnp.array([3, 5, 3])  # note the duplicate index
+    ct = jnp.arange(1., 4.)
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(f, x, idx)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(ct)
+    self.assertAllClose(grad_accum[...], jnp.zeros(10).at[idx].add(ct),
+                        check_dtypes=False)
+
+    @jax.make_jaxpr
+    def run():
+      _, f_vjp = jax.vjp(f, x, idx)
+      f_vjp.with_refs(grad_accum, jax.ad.GradValue())(ct)
+
+    jaxpr_str = str(run())
+    self.assertIn('+=', jaxpr_str)
+    self.assertNotIn('scatter-add', jaxpr_str)
+
+  def test_gather_with_vjp3_multidim(self):
+    def f(x, i):
+      return x[i, i]
+
+    x = jnp.arange(84.).reshape(7, 4, 3)
+    idx = jnp.array([3, 1, 3])
+
+    _, f_vjp = jax.vjp(f, x, idx)
+    expected, _ = f_vjp(jnp.ones((3, 3)))
+
+    grad_accum = jax.new_ref(jnp.zeros_like(x))
+    _, f_vjp = jax.vjp(f, x, idx)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(jnp.ones((3, 3)))
+    self.assertAllClose(grad_accum[...], expected, check_dtypes=False)
+
+  def test_gather_with_vjp3_general_fallback(self):
+    # gathers that don't look like NumPy-style indexing (e.g. clip mode)
+    # accumulate via scatter-add on the ref's value, matching the dense result
+    def f(x, i):
+      return x.at[i].get(mode='clip')
+
+    x = jnp.arange(10.)
+    idx = jnp.array([3, 100])  # out-of-bounds index clamps under clip mode
+
+    _, f_vjp = jax.vjp(f, x, idx)
+    expected, _ = f_vjp(jnp.ones(2))
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(f, x, idx)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(jnp.ones(2))
+    self.assertAllClose(grad_accum[...], expected, check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
