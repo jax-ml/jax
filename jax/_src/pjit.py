@@ -1669,8 +1669,9 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
 ad.primitive_linearizations[jit_p] = _pjit_linearize
 
 
-def _pjit_remat(policy, *args, jaxpr, **params):
-  jaxpr_fwd, jaxpr_rem, num_res = remat.remat_jaxpr(jaxpr, policy)
+def _pjit_remat(trace, *args, jaxpr, **params):
+  jaxpr_fwd, jaxpr_rem, num_res = remat.remat_jaxpr(jaxpr, trace.policy,
+                                                    trace.custom_vjp_rules)
   params_fwd, params_rem = _add_res_to_params(num_res, **params)
   primals_res_out = jit_p.bind(*args, jaxpr=jaxpr_fwd, **params_fwd)
   primals_out, res = split_list(primals_res_out, [len(jaxpr.outvars)])

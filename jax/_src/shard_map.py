@@ -1810,7 +1810,8 @@ def _shard_map_remat(trace, shard_map_p, f, tracers, mesh, in_specs, check_vma,
 
   def f_fwd(*in_vals):
     res, ans_aux, rem_data = remat.remat_subtrace(
-        f, trace.tag, trace.policy, debug_info, in_vals)
+        f, trace.tag, trace.policy, debug_info, in_vals,
+        custom_vjp_rules=trace.custom_vjp_rules)
     primals_out, out_specs = ans_aux.unpack_aux()
 
     res_avals, _, _, in_fwd, out_fwd = rem_data

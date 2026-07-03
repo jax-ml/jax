@@ -462,7 +462,7 @@ class VJPHiPrimitive:
       return True, True, self
 
   # optional remat control
-  def remat(self, _policy, *args):
+  def remat(self, _trace, *args):
     return self(*args), self  # full remat by default
 
   def __call__(self, *args):
@@ -697,9 +697,9 @@ pe.dce_rules[call_hi_primitive_p] = _call_hi_primitive_dce
 call_hi_primitive_linearized_p.to_lojax = ad.raise_custom_vjp_error_on_jvp
 batching.fancy_primitive_batchers[call_hi_primitive_linearized_p] = ad.raise_custom_vjp_error_on_jvp
 
-def _call_hi_primitive_remat(policy, *args_flat, _prim):
+def _call_hi_primitive_remat(trace, *args_flat, _prim):
   args = tree_unflatten(_prim.in_tree, args_flat)
-  out, rem_ = _prim.remat(policy, *args)
+  out, rem_ = _prim.remat(trace, *args)
   def rem(*args_flat):
     args = tree_unflatten(_prim.in_tree, args_flat)
     out = rem_(*args)
@@ -802,7 +802,11 @@ class CustomVJPTraced(VJPHiPrimitive):
     if disallowed:
       raise NotImplementedError(f'Effects not supported in `custom_jvp`: {disallowed}')
 
-  def remat(self, policy, *args):  # type: ignore
+  def remat(self, trace, *args):  # type: ignore
+    if self.opt_remat:
+      return self(*args), self
+    if not trace.custom_vjp_rules:
+      return self(*args), self  # see https://github.com/jax-ml/jax/pull/38914
     if not self.static_argnums:
       fwd, dyn_args = self.fwd, args
     else:
@@ -810,7 +814,10 @@ class CustomVJPTraced(VJPHiPrimitive):
       dyn_args, static_args = partition_list(which_static, args)
       static_args = [x.val for x in static_args]
       fwd = lambda *dyn_args: self.fwd(*merge_lists(which_static, dyn_args, static_args))
-    (out, _), rem_ = remat.remat_transform(policy, fwd, *dyn_args)
+    # custom_vjp_rules=False so that custom_vjp applications inside fwd hit
+    # the early return above rather than recursively tracing their fwds.
+    (out, _), rem_ = remat.remat_transform(trace.policy, fwd, *dyn_args,
+                                           custom_vjp_rules=False)
     rem = lambda *args: rem_(*[x for i, x in enumerate(args) if i not in self.static_argnums])
     helper = CustomVJPTraced(self.traced, rem, self.bwd, self.in_avals,
                              False, self.static_argnums, False)

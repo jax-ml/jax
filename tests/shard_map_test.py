@@ -1109,7 +1109,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return z.sum()
 
     x = jax.device_put(jnp.arange(2.), jax.P('i'))
-    y1, f_ = remat_transform(policy, f, x)  # don't crash
+    y1, f_ = remat_transform(policy, f, x, custom_vjp_rules=True)  # don't crash
     y2 = f_(x)
     self.assertAllClose(y1, y2, check_dtypes=False)
 
