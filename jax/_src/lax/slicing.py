@@ -1428,6 +1428,7 @@ def _slice_transpose_fancy(out_ct, operand, *, start_indices, limit_indices, str
   if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
     return
   if isinstance(operand, ad.RefAccum):
+    strides = (1,) * len(start_indices) if strides is None else strides
     slices = map(_slice, start_indices, limit_indices, strides)
     assert operand.ref is not None
     operand.ref.addupdate(out_ct, tuple(slices))
