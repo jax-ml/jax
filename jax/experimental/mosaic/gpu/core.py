@@ -39,7 +39,6 @@ from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jax._src.pallas.mosaic import error_handling as error
-from jax.extend import backend as jex_backend
 from jaxlib.mlir import ir
 from jaxlib.mlir import passmanager
 from jaxlib.mlir.dialects import _gpu_ops_gen
@@ -815,28 +814,6 @@ def _launch(
     gpu.terminator()
 
 
-def _infer_arch() -> tuple[int, int]:
-  device: Any = jax.sharding.get_abstract_mesh().abstract_device
-  default_device = jex_backend.get_default_device()
-  if device is None:
-    device = default_device
-  elif (
-      hasattr(default_device, "compute_capability")
-      and device.device_kind == default_device.device_kind
-  ):
-    device = default_device
-  if not hasattr(device, "compute_capability"):
-    return (9, 0)  # TODO(apaszke): Remove this once we figure out the export story.
-  arch_name = device.compute_capability
-  # Handle ROCm devices that return architecture strings like "gfxXXX".
-  if arch_name.startswith("gfx"):
-    raise ValueError(
-        f"Mosaic GPU does not yet support AMD ROCm devices. "
-        f"Got compute_capability: {arch_name}"
-    )
-  return tuple(map(int, arch_name.split(".")))  # pyrefly: ignore[bad-return]
-
-
 def _lower_as_gpu_kernel(
     body,
     grid: tuple[int, int, int],
@@ -880,7 +857,7 @@ def _lower_as_gpu_kernel(
   dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
-  arch_major, arch_minor = _infer_arch()
+  arch_major, arch_minor = utils._infer_arch()
   attrs["mosaic_gpu.arch_major"] = ir.IntegerAttr.get(i32, arch_major)
   attrs["mosaic_gpu.arch_minor"] = ir.IntegerAttr.get(i32, arch_minor)
   if uses_pdl:
@@ -1031,7 +1008,7 @@ def lower_mgpu_module(
           dump_options.dump_path
       )
 
-    layout_inference.infer_layout(module, arch=_infer_arch())
+    layout_inference.infer_layout(module, arch=utils._infer_arch())
 
     if dump_options is not None and dump_options.mlir_passes:
       utils.dump_to_file_or_stdout(

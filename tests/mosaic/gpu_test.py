@@ -3309,6 +3309,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     out_jax_dtype = jnp.float32
     sparse_meta_dtype = jnp.uint2
     block_size = base_block_size * 2
+    # TODO: increase k to allow sparse K=192 on sm_107a
     k_steps = 2
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
@@ -3357,7 +3358,10 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     y_shape = (n, k)
     y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
-    meta_k = k // 4
+    # 8 (fp4 v0) or 4 (fp4 v1)
+    group_elems = tcgen05.sparse_group_elems(in_mlir_dtype)
+    n_groups = k // group_elems
+    meta_k = n_groups * 2
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
@@ -3371,7 +3375,6 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         mgpu.TMEM((m, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
         mgpu.TMEM((n, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
     ]
-    n_groups = k // 8
     index_pairs = np.asarray(np.meshgrid(range(4), range(4))).T.reshape(-1, 2)
     valid_pairs = index_pairs[index_pairs[:, 0] < index_pairs[:, 1]]
     assert len(valid_pairs) == 6
@@ -3404,9 +3407,10 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), args, out_shape, scratch_shape
     )(*args)
-    # 4-bit sparse data is filled in pairs of elements.
-    x32 = x.astype(np.float32).reshape(m, n_groups, 2, 2)
-    x_logical32 = np.zeros((m, n_groups, 4, 2), dtype=np.float32)
+    # 4-bit sparse data is filled in sub-chunks of 2 (v0) or 1 (v1) elements.
+    sub_chunk = group_elems // 4
+    x32 = x.astype(np.float32).reshape(m, n_groups, 2, sub_chunk)
+    x_logical32 = np.zeros((m, n_groups, 4, sub_chunk), dtype=np.float32)
     np.put_along_axis(x_logical32, x_sparse[..., np.newaxis], x32, axis=-2)
     x_logical32 = x_logical32.reshape(m, k)
     y32 = y.astype(np.float32)
