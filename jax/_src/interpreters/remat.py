@@ -174,11 +174,17 @@ rules: dict[core.Primitive, Callable] = {}
 reduce_precision_handlers: dict[type, Callable] = {}
 
 
-def remat_jaxpr(jaxpr, policy, custom_vjp_rules):
-  return _remat_jaxpr(jaxpr, policy, custom_vjp_rules)
+def remat_jaxpr(
+    jaxpr, policy, custom_vjp_rules, allow_fwds
+) -> tuple[core.ClosedJaxpr, core.ClosedJaxpr, list[int | None]]:
+  n = len(jaxpr.jaxpr.outvars)
+  if type(allow_fwds) is bool:
+    allow_fwds = (allow_fwds,) * n
+  assert len(allow_fwds) == n
+  return _remat_jaxpr(jaxpr, policy, custom_vjp_rules, tuple(allow_fwds))
 
 @weakref_lru_cache
-def _remat_jaxpr(jaxpr, policy, custom_vjp_rules):
+def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
   dbg = jaxpr.jaxpr.debug_info
   fwd_trace = pe.DynamicJaxprTrace(dbg)
   rem_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
@@ -200,6 +206,13 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules):
   rem_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(rem_jaxpr_))
   rem_trace.invalidate()
 
+  # Residuals that are just primal outputs needn't be returned again by the
+  # fwd jaxpr; the caller passes its own copies of the primal outputs for
+  # them, using fwds as the wiring.
+  id_map = {id(x): i for i, (x, a) in enumerate(zip(out_primals, allow_fwds)) if a}
+  fwds = [id_map.get(id(c)) for c in rem_consts]
+  rem_consts = [c for c, f in zip(rem_consts, fwds) if f is None]
+
   rem_consts = map(partial(fwd_trace.to_jaxpr_tracer, source_info=src), rem_consts)
   out_primals = [fwd_trace.to_jaxpr_tracer(x, source_info=src) for x in out_primals]
   fwd_jaxpr_, fwd_consts = fwd_trace.to_jaxpr(
@@ -207,4 +220,4 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules):
   fwd_trace.invalidate()
 
   fwd_jaxpr = core.ClosedJaxpr(fwd_jaxpr_, fwd_consts)
-  return fwd_jaxpr, rem_jaxpr, len(rem_consts)
+  return fwd_jaxpr, rem_jaxpr, fwds
