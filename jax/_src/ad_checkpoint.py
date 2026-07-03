@@ -1067,6 +1067,17 @@ class RematTraced(VJPHiPrimitive):
     # TODO eval_jaxpr_p
     return core.jaxpr_as_fun(self.jaxpr)(*args)
 
+  def dce(self, used_outs):
+    if not any(used_outs):
+      return False, False, None
+    if all(used_outs):
+      return True, True, self
+    new_jaxpr_, used_consts, used_ins = pe.dce_jaxpr_consts(
+        self.jaxpr.jaxpr, tuple(used_outs))
+    consts = [c for c, u in zip(self.jaxpr.consts, used_consts) if u]
+    new_jaxpr = core.ClosedJaxpr(new_jaxpr_, consts)
+    return tuple(used_ins), list(used_outs), RematTraced(new_jaxpr, self.policy)
+
   def vjp_fwd(self, _nzs_in, *primals):
     # TODO eval_jaxpr_p trace time
     traced = core.jaxpr_as_fun(self.jaxpr)
