@@ -828,6 +828,34 @@ class HijaxTest(jtu.JaxTestCase):
                    out_axes=TupSpec((0, 0)), axis_size=3)(tup)
     self.assertAllClose(out.elts, tup.elts)
 
+  def test_tuple_vmap_int_in_axes_error(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    with self.assertRaisesRegex(ValueError, "non-array type"):
+      jax.vmap(lambda x: x, axis_size=3)(tup)
+
+  def test_tuple_vmap_internal(self):
+    @jax.vmap
+    def f(x):
+      tup = make_tup(x, 2 * x)
+      return get_tuple_element(tup, 0)
+    x = jnp.arange(3.)
+    self.assertAllClose(f(x), x)
+
+  def test_tuple_vmap_custom_vjp(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.) + 1)
+
+    @jax.custom_vjp
+    def inner(tup):
+      return get_tuple_element(tup, 1)
+    def fwd(tup):
+      assert False  # unused under vmap-of-primal
+    def bwd(*_):
+      assert False
+    inner.defvjp(fwd, bwd)
+
+    f = jax.jit(jax.vmap(inner, in_axes=TupSpec((0, 0)), axis_size=3))
+    self.assertAllClose(f(tup), jnp.arange(3.) + 1)
+
   def test_tuple_vmap_infer(self):
     tup = make_tup(jnp.arange(3.), jnp.arange(3.))
     jax.vmap(lambda _: make_tup(jnp.ones(3), jnp.ones(3)),

@@ -1274,6 +1274,13 @@ def _mapped_axis_size(fn, tree, vals, dims, name, axis_size=None):
     except (IndexError, TypeError) as e:
       if not core.valid_jaxtype(x) or not isinstance(axis, int):
         return None  # Suppress the check for custom vmappable types.
+      if core.typeof(x).is_high:
+        raise ValueError(
+            f"{name} was requested to map a value of non-array type "
+            f"{core.typeof(x)} along axis {axis}, but non-array types can't "
+            "be mapped along an integer axis. Instead pass a mapping spec (a "
+            "MappingSpec instance) as this argument's in_axes entry, and "
+            "pass axis_size explicitly.") from None
       min_rank = axis + 1 if axis >= 0 else -axis
       # TODO(mattjj): better error message here
       raise ValueError(
