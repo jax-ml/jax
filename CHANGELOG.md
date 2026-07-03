@@ -16,6 +16,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added a doc on defining custom derivative rules with the experimental
+    hijax API ({ref}`hijax-custom-derivatives`), along with
+    `jax.experimental.hijax` helpers for deriving `VJPHiPrimitive` autodiff
+    rules from a `jvp` or `lin` rule: `linearize_from_jvp` with
+    `apply_derived_linearization`, `vjp_fwd_from_jvp` with `transpose_jvp`,
+    `vjp_fwd_from_lin` with `transpose_linearized`, and `jvp_from_lin`.
+
 * Breaking changes
   * The deprecated module jax.cloud_tpu_init was removed. This did nothing and
     references to it can be safely removed.
