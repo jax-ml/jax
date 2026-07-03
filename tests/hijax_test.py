@@ -821,6 +821,13 @@ class HijaxTest(jtu.JaxTestCase):
                    out_axes=TupSpec((0, 0)), axis_size=3)(tup)
     self.assertAllClose(out.elts, tup.elts)
 
+  def test_tuple_vmap_of_jit(self):
+    # https://github.com/jax-ml/jax/issues/38125
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    out = jax.vmap(jax.jit(lambda x: x), in_axes=TupSpec((0, 0)),
+                   out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+    self.assertAllClose(out.elts, tup.elts)
+
   def test_tuple_vmap_infer(self):
     tup = make_tup(jnp.arange(3.), jnp.arange(3.))
     jax.vmap(lambda _: make_tup(jnp.ones(3), jnp.ones(3)),
