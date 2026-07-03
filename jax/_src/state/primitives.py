@@ -631,7 +631,8 @@ def _swap_transpose_fancy(g, ref_, x, *idx, **params):
     swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
   else:
     x_bar = swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
-    x.accum(x_bar)
+    if isinstance(x, ad.GradAccum):
+      x.accum(x_bar)  # if x is a constant, drop x_bar, but still zero the ref ct
 ad.fancy_transposes[swap_p] = _swap_transpose_fancy
 
 def addupdate_transpose_fancy(cts_in, ref_, x, *idx, **params):
