@@ -1204,6 +1204,30 @@ class MutableArrayTest(jtu.JaxTestCase):
     stable_hlo = f.lower(1, 2).as_text()
     self.assertNotIn("add", stable_hlo)
 
+  def test_grad_of_constant_ref_set(self):
+    # https://github.com/jax-ml/jax/issues/33987
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x)
+      ref[...] = 2.0
+      return jax.freeze(ref)
+    self.assertArraysEqual(jax.grad(f)(1.0), 0.0, check_dtypes=False)
+
+    def g(x):
+      ref = jax.new_ref(x)
+      y = ref[...]
+      ref[...] = 2.0
+      return y * jax.freeze(ref)
+    self.assertArraysEqual(jax.grad(g)(3.0), 2.0, check_dtypes=False)
+
+  def test_grad_of_constant_ref_set_indexed(self):
+    def f(x):
+      ref = jax.new_ref(x)
+      ref[0] = 2.0
+      return jax.freeze(ref).sum()
+    self.assertArraysEqual(jax.grad(f)(jnp.arange(3.)),
+                           jnp.array([0., 1., 1.]))
+
   def test_grad_get_transformed_ref(self):
     @jax.jit
     def f(x):
