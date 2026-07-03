@@ -1549,8 +1549,10 @@ def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes)
     assert operand.ref is not None
     operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))
   else:
+    # use out_ct's dtype, not operand_aval's: cotangents can flow in a
+    # different (e.g. higher-precision) dtype than the primal
     operand_aval, = lax_utils.ensure_shaped(operand.aval)
-    zeros = lax.full(operand_aval.shape, 0, operand_aval.dtype,
+    zeros = lax.full(operand_aval.shape, 0, typeof(out_ct).dtype,
                      sharding=operand_aval.sharding)
     zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))
     operand.accum(dynamic_update_slice_p.bind(zeros, out_ct, *start_indices))
@@ -2162,28 +2164,67 @@ def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
                 indices_are_sorted=indices_are_sorted, mode=mode,
                 fill_value=0)
 
-def _gather_transpose_rule(t, operand, indices, *, dimension_numbers,
-                           slice_sizes, unique_indices, indices_are_sorted,
-                           mode, fill_value):
-  assert ad.is_undefined_primal(operand)
-  if type(t) is ad_util.Zero:
-    out = ad_util.Zero(operand.aval)
+def _gather_to_ref_indexer(indices, dimension_numbers, slice_sizes, mode,
+                           operand_shape):
+  # Try to express the gather as NumPy-style advanced indexing over leading
+  # operand axes, like the gathers `rewriting_take` builds for `x[idx]`.
+  # Returns a ref indexer of index arrays, or None if the gather doesn't fit.
+  dnums = dimension_numbers
+  if dnums.operand_batching_dims or dnums.start_indices_batching_dims:
+    return None
+  if mode not in (GatherScatterMode.PROMISE_IN_BOUNDS,
+                  GatherScatterMode.FILL_OR_DROP):
+    return None  # e.g. CLIP transposes to clamped updates, but addupdate drops
+  k = len(dnums.start_index_map)
+  num_batch_dims = indices.ndim - 1
+  operand_ndim = len(operand_shape)
+  if not (k > 0 and
+          dnums.start_index_map == tuple(range(k)) and
+          dnums.collapsed_slice_dims == tuple(range(k)) and
+          tuple(slice_sizes) == (1,) * k + tuple(operand_shape[k:]) and
+          dnums.offset_dims == tuple(range(num_batch_dims,
+                                           num_batch_dims + operand_ndim - k))):
+    return None
+  return tuple(indices[..., i] for i in range(k))
+
+def _gather_transpose_fancy(out_ct, operand, indices, *, dimension_numbers,
+                            slice_sizes, unique_indices, indices_are_sorted,
+                            mode, fill_value):
+  assert isinstance(operand, ad.GradAccum)
+  assert not isinstance(indices, ad.GradAccum)
+  if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
+    return
+  operand_aval, = lax_utils.ensure_shaped(operand.aval)
+  if isinstance(operand, ad.RefAccum):
+    indexer = _gather_to_ref_indexer(indices, dimension_numbers, slice_sizes,
+                                     mode, operand_aval.shape)
+    if indexer is not None:
+      # in-place add-update at the gathered indices, no dense intermediates
+      operand.inst().ref.addupdate(out_ct, indexer)
+      return
+  scatter_dnums = ScatterDimensionNumbers(
+      update_window_dims=dimension_numbers.offset_dims,
+      inserted_window_dims=dimension_numbers.collapsed_slice_dims,
+      scatter_dims_to_operand_dims=dimension_numbers.start_index_map,
+      operand_batching_dims=dimension_numbers.operand_batching_dims,
+      scatter_indices_batching_dims=dimension_numbers.start_indices_batching_dims,
+  )
+  if isinstance(operand, ad.RefAccum):
+    # scatter-add onto the ref's current value, still avoiding dense zeros
+    ref = operand.inst().ref
+    ref[...] = scatter_add(ref[...], indices, out_ct, scatter_dnums,
+                           unique_indices=unique_indices,
+                           indices_are_sorted=indices_are_sorted, mode=mode)
   else:
-    zeros = lax.full(operand.aval.shape, 0, typeof(t).dtype,
-                     sharding=operand.aval.sharding)
-    zeros = core.pvary(zeros, tuple(operand.aval.mat.varying))
-    scatter_dnums = ScatterDimensionNumbers(
-        update_window_dims=dimension_numbers.offset_dims,
-        inserted_window_dims=dimension_numbers.collapsed_slice_dims,
-        scatter_dims_to_operand_dims=dimension_numbers.start_index_map,
-        operand_batching_dims=dimension_numbers.operand_batching_dims,
-        scatter_indices_batching_dims=dimension_numbers.start_indices_batching_dims,
-    )
-    out = scatter_add(zeros, indices, t, scatter_dnums,
-                      unique_indices=unique_indices,
-                      indices_are_sorted=indices_are_sorted,
-                      mode=mode)
-  return [out, None]
+    # use out_ct's dtype, not operand_aval's: cotangents can flow in a
+    # different (e.g. higher-precision) dtype than the primal
+    zeros = lax.full(operand_aval.shape, 0, typeof(out_ct).dtype,
+                     sharding=operand_aval.sharding)
+    zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))
+    operand.accum(scatter_add(zeros, indices, out_ct, scatter_dnums,
+                              unique_indices=unique_indices,
+                              indices_are_sorted=indices_are_sorted,
+                              mode=mode))
 
 def _gather_batching_rule(batched_args: Sequence[Array], batch_dims: Sequence[int | None], *,
                           dimension_numbers, slice_sizes, unique_indices, indices_are_sorted,
@@ -2276,7 +2317,7 @@ gather_p = standard_primitive(
     weak_type_rule=_argnum_weak_type(0), sharding_rule=_gather_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'gather'))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
-ad.primitive_transposes[gather_p] = _gather_transpose_rule
+ad.fancy_transposes[gather_p] = _gather_transpose_fancy
 batching.primitive_batchers[gather_p] = _gather_batching_rule
 
 
