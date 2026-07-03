@@ -266,10 +266,10 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
             ],
             max_concurrent_steps=compiler_params.max_concurrent_steps,
         )
-        def pipeline(indices, *args):
+        def pipeline(step, *args):
           grid_env = util.merge_lists(
               which_parallel,
-              [*map(pallas_core.GridAxis, indices, sequential_grid)],
+              [*map(pallas_core.GridAxis, step.index, sequential_grid)],
               parallel_grid_env,
           )
           with pallas_core.grid_env(grid_env):
@@ -7484,12 +7484,12 @@ class WarpSpecializedPipelineTest(PallasTest):
         index_map=lambda i, j: (i, j),
     )
 
-    def tiled_add_kernel(idx, x_smem, y_smem, o_smem, *consumed_barriers):
+    def tiled_add_kernel(step, x_smem, y_smem, o_smem, *consumed_barriers):
       wg_idx = lax.axis_index("wg")
       m_slice = pl.ds(wg_idx * blk_m, blk_m)
       o_smem[m_slice] = x_smem[m_slice] + y_smem[m_slice]
       if manual_consumed_barriers:
-        @pl.when(jnp.logical_or(idx[0] != 0, idx[1] != 0))
+        @pl.when(jnp.logical_or(step.index[0] != 0, step.index[1] != 0))
         def _signal_consumed():
           for b in consumed_barriers:
             plgpu.barrier_arrive(b)
@@ -8604,7 +8604,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
         grid_names=("m", "n"),
     )
     def kernel(l_ref, r_ref, o_ref):
-      def compute(idxs, l_smem, r_smem, o_smem):
+      def compute(step, l_smem, r_smem, o_smem):
         def do_wgmma(acc_ref):
           plgpu.wgmma(acc_ref, l_smem, r_smem)
           return acc_ref[...]
@@ -8613,8 +8613,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
           o_smem[...] = acc
         def _acc():
           o_smem[...] += acc
-        step, = idxs
-        lax.cond(step == 0, _store, _acc)
+        lax.cond(step.index[0] == 0, _store, _acc)
       m = lax.axis_index("m")
       n = lax.axis_index("n")
       transforms = self.default_transforms(swizzle=64, dtype=jnp.float16)

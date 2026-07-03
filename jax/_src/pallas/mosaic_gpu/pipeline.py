@@ -51,6 +51,31 @@ AbstractRefPytree: TypeAlias = Sequence[
 ]
 
 
+@jax.tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True, eq=False)
+class PipelineStep:
+  index: tuple[int | jax.Array, ...]
+  local_index: jax.Array
+
+  def tree_flatten(self):
+    children: list[jax.Array] = []
+    aux: list[int | None] = []
+    for v in (*self.index, self.local_index):
+      if isinstance(v, int):
+        aux.append(v)
+      else:
+        aux.append(None)
+        children.append(v)
+    return children, tuple(aux)
+
+  @classmethod
+  def tree_unflatten(cls, aux, children):
+    it = iter(children)
+    vals = [v if v is not None else next(it) for v in aux]
+    *index, local_index = vals
+    return cls(index=tuple(index), local_index=local_index)
+
+
 def _get_block_size(bd: pl.BlockDim | int | None) -> int:
   match bd:
     case int():
@@ -226,7 +251,7 @@ def emit_pipeline[T](
   Args:
     body: The pipeline body function, which is called with
 
-      - ``indices``: Tuple of current loop indices.
+      - ``step``: A :class:`PipelineStep`.
       - ``*input_refs``: SMEM refs for inputs.
       - ``*output_refs``: SMEM refs for outputs.
 
@@ -373,7 +398,7 @@ def emit_pipeline[T](
         )
 
       next_body_carry = body(
-          indices,
+          PipelineStep(indices, step),
           *(
               bref.get_ref_for_slot(slot)
               for bref in it.chain(in_brefs, out_brefs)
@@ -550,13 +575,13 @@ def emit_pipeline_warp_specialized(
   ``consumed_barriers`` is an optional argument that is only passed if the
   ``manual_consumed_barriers`` argument is True::
 
-    def body(indices, *input_refs, *output_refs, *consumed_barriers) -> None:
+    def body(step, *input_refs, *output_refs, *consumed_barriers) -> None:
 
   or with a carries enabled (enabled via the ``compute_context`` argument),
   where the body returns the next carry::
 
     def body(
-        indices, *input_refs, *output_refs, *consumed_barriers, carry
+        step, *input_refs, *output_refs, *consumed_barriers, carry
     ) -> Carry:
 
   When ``manual_consumed_barriers`` is True, the user must arrive on all the
@@ -878,7 +903,7 @@ def emit_pipeline_warp_specialized(
           body_args = (*body_args, *barriers)
         if has_carry:
           body_args = (*body_args, prev_body_carry)
-        next_body_carry = body(indices, *body_args)
+        next_body_carry = body(PipelineStep(indices, step), *body_args)
 
         if not manual_consumed_barriers:
           [consumed_barrier_ref] = flat_consumed_barrier_refs

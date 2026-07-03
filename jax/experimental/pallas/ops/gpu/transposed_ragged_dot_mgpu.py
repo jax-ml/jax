@@ -99,8 +99,8 @@ def transposed_ragged_dot(
       gmem_slice = pl.ds(group_block_start, k)
 
       def acc_scope(acc_ref):
-        def block_matmul(block_idx, lhs_smem, rhs_smem):
-          block_idx = block_idx[0]
+        def block_matmul(step, lhs_smem, rhs_smem):
+          block_idx = step.index[0]
 
           @pl.when(block_idx == 0)
           def _():

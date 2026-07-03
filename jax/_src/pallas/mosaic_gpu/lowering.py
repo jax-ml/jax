@@ -858,9 +858,9 @@ def lower_pipelined_jaxpr_to_module(
     return ()  # ``wrap_init`` does not support functions returning None.
 
   def scoped_pipeline_fn(*refs, scratch_refs):
-    def body_fn(indices, *refs):
+    def body_fn(step, *refs):
       program_ids_template = util.merge_lists(
-          which_parallel, indices, [None] * sum(which_parallel)
+          which_parallel, step.index, [None] * sum(which_parallel)
       )
       assert len(refs) + len(scratch_refs) == len(jaxpr.invars)
       return primitives._jaxpr_call(

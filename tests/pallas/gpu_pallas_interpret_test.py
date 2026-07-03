@@ -1571,8 +1571,8 @@ def matmul0(a, b, config: TuningConfig):
     m_slice = pl.ds(mi * tile_m, tile_m)
     n_slice = pl.ds(ni * tile_n, tile_n)
 
-    def do_mma(idxs, a_smem, b_smem):
-      (ki,) = idxs
+    def do_mma(step, a_smem, b_smem):
+      (ki,) = step.index
       arrive_barrier_slot = ki % 2
       wait_barrier_slot = 1 - arrive_barrier_slot
       plgpu.tcgen05_mma(

@@ -34,6 +34,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Mosaic GPU
 
+* Changes
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline` and
+    {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline_warp_specialized`
+    now pass a {class}`jax.experimental.pallas.mosaic_gpu.PipelineStep` as the
+    first argument to ``body`` instead of a raw indices tuple. Use
+    ``step.index`` to access the grid indices.
+
 * Deprecations
 
   * The `idx` parameter of {func}`jax.experimental.pallas.mosaic_gpu.load` is

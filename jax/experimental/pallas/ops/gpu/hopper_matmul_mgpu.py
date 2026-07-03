@@ -212,10 +212,10 @@ def kernel(a_gmem, b_gmem, c_gmem, out_gmem, config: TuningConfig,
                   .at[epi_m_slice, epi_n_slice],
               )
 
-      def mma_body(idxs, a_smem, b_smem, acc_ref):
+      def mma_body(step, a_smem, b_smem, acc_ref):
         plgpu.wgmma(acc_ref, a_smem.at[wg_m_slice], b_smem.at[:, wg_n_slice])
         if pipeline_callback is not None:
-          (k_idx,) = idxs
+          (k_idx,) = step.index
           pipeline_callback(m_idx, n_idx, k_idx, a_smem, b_smem)
         plgpu.wgmma_wait(delay_release)
         return acc_ref
