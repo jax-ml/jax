@@ -487,8 +487,6 @@ def qarray_unshard(self, mesh, check_vma, spec):
 
 QArrayTy.shard = qarray_shard
 QArrayTy.unshard = qarray_unshard
-
-
 # -
 
 # Now quantized arrays can cross `shard_map` boundaries in either direction.
@@ -511,6 +509,8 @@ def quantize_shards(x):
 qrows = quantize_shards(rows)
 print(jax.typeof(qrows))
 print(qrows.qvalue.sharding.spec, qrows.scale.sharding.spec)
+
+
 # -
 
 # And consuming one, where each device sees a per-shard `QArray` of its own
