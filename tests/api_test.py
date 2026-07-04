@@ -6794,6 +6794,21 @@ class RematTest(jtu.JaxTestCase):
     expected = api.grad(lambda c, as_: lax.scan(f, c, as_)[0].sum())(c, as_)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_remat_of_jit_residual_forwarding(self):
+    policy = jax.checkpoint_policies.save_only_these_names('y')
+    @partial(jax.remat, policy=policy)
+    def f(x):
+      y = checkpoint_name(jnp.sin(jnp.ones(2, 'float32')), 'y')
+      x = jax.jit(lambda: x * y)()
+      x = jax.jit(lambda: x * y)()
+      return x
+
+    res = saved_residuals(f, jnp.float32(3.))
+    self.assertLen(res, 1)
+
+    ans = api.grad(lambda x: f(x).sum())(jnp.float32(3.))
+    self.assertAllClose(ans, 2 * np.sin(1.) ** 2, check_dtypes=False)
+
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
@@ -7638,6 +7653,24 @@ class Remat3Test(RematTest):
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 0)
     self.assertEqual(jaxpr_text.count(' cos '), 0)
+
+  def test_remat_output_to_residual_forwarding(self):
+    # When a saved residual is also a primal output, the fwd jaxpr shouldn't
+    # return it twice; the wiring in fwds records the forwarding instead.
+    from jax._src.interpreters import remat as remat_internal
+
+    def body(x):
+      return checkpoint_name(jnp.sin(x), 'y')
+
+    jaxpr = jax.jit(body).trace(1.).jaxpr
+    policy = jax.checkpoint_policies.save_only_these_names('y')
+    fwd_jaxpr, _, fwds = remat_internal.remat_jaxpr(
+        jaxpr, policy, custom_vjp_rules=True, allow_fwds=True)
+    self.assertEqual(fwds, [0])
+    self.assertLen(fwd_jaxpr.jaxpr.outvars, len(jaxpr.jaxpr.outvars))
+
+    f = jax.remat(lambda x: jax.jit(body)(x), policy=policy)
+    self.assertAllClose(api.grad(f)(1.), jnp.cos(1.), check_dtypes=False)
 
   # We don't support everything_saveable with remat3
   def test_remat_custom_policy_save_anything_new_remat(self): pass

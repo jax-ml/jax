@@ -1456,8 +1456,11 @@ def _scan_state_partial_discharge_rule(
   return refvals_out, [*carry, *ys]
 
 def _scan_remat(trace, *args, jaxpr, **params):
-  jaxpr_fwd, jaxpr_rem_, num_res = remat.remat_jaxpr(
-      jaxpr, trace.policy, trace.custom_vjp_rules)
+  # TODO(mattjj): allow forwarding for ys outputs; carry outputs can't be
+  # forwarded since residuals ride in the stacked ys position.
+  jaxpr_fwd, jaxpr_rem_, fwds = remat.remat_jaxpr(
+      jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=False)
+  num_res = len(fwds)
   all_out = scan_p.bind(*args, jaxpr=jaxpr_fwd, **params)
   primals_out, res = split_list(all_out, [len(jaxpr.outvars)])
   jaxpr_rem = pe.move_binders_to_back(jaxpr_rem_, [True] * num_res)

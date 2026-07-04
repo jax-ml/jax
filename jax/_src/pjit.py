@@ -1676,28 +1676,32 @@ ad.primitive_linearizations[jit_p] = _pjit_linearize
 
 
 def _pjit_remat(trace, *args, jaxpr, **params):
-  jaxpr_fwd, jaxpr_rem, num_res = remat.remat_jaxpr(jaxpr, trace.policy,
-                                                    trace.custom_vjp_rules)
-  params_fwd, params_rem = _add_res_to_params(num_res, **params)
+  jaxpr_fwd, jaxpr_rem, fwds = remat.remat_jaxpr(
+      jaxpr, trace.policy, trace.custom_vjp_rules, allow_fwds=True)
+  num_res_out = sum(f is None for f in fwds)
+  params_fwd, params_rem = _add_res_to_params(num_res_out, len(fwds), **params)
   primals_res_out = jit_p.bind(*args, jaxpr=jaxpr_fwd, **params_fwd)
   primals_out, res = split_list(primals_res_out, [len(jaxpr.outvars)])
-  return primals_out, partial(jit_p.bind, *res, jaxpr=jaxpr_rem, **params_rem)
+  res_ = iter(res)
+  res_full = [primals_out[f] if f is not None else next(res_) for f in fwds]
+  assert next(res_, None) is None
+  return primals_out, partial(jit_p.bind, *res_full, jaxpr=jaxpr_rem, **params_rem)
 remat.rules[jit_p] = _pjit_remat
 
-def _add_res_to_params(num_res, in_shardings, out_shardings, in_layouts,
-                       out_layouts, donated_invars, **params):
+def _add_res_to_params(num_res_out, num_res_in, in_shardings, out_shardings,
+                       in_layouts, out_layouts, donated_invars, **params):
   params_fwd = dict(params,
                     in_shardings=in_shardings,
-                    out_shardings=out_shardings + (UNSPECIFIED,) * num_res,
+                    out_shardings=out_shardings + (UNSPECIFIED,) * num_res_out,
                     in_layouts=in_layouts,
-                    out_layouts=out_layouts + (None,) * num_res,
+                    out_layouts=out_layouts + (None,) * num_res_out,
                     donated_invars=donated_invars)
   params_rem = dict(params,
-                    in_shardings=(UNSPECIFIED,) * num_res + in_shardings,
+                    in_shardings=(UNSPECIFIED,) * num_res_in + in_shardings,
                     out_shardings=out_shardings,
-                    in_layouts=(None,) * num_res + in_layouts,
+                    in_layouts=(None,) * num_res_in + in_layouts,
                     out_layouts=out_layouts,
-                    donated_invars=(False,) * num_res + donated_invars)
+                    donated_invars=(False,) * num_res_in + donated_invars)
   return params_fwd, params_rem
 
 
