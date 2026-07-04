@@ -36,6 +36,7 @@ from jax._src.hijax import (
     HiPrimitive as HiPrimitive,
     HiPspec as HiPspec,
     HiType as HiType,
+    MappingSpec as MappingSpec,
     MutableHiType as MutableHiType,
     VJPHiPrimitive as VJPHiPrimitive,
     apply_derived_linearization as apply_derived_linearization,
