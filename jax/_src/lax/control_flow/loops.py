@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import enum
 from functools import partial
 import inspect
 import itertools as it
@@ -38,16 +39,11 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.api_util import ( _check_no_aliased_closed_over_refs,
-    check_no_aliased_ref_args,
-    check_no_transformed_refs_args)
+from jax._src.api_util import (
+  _check_no_aliased_closed_over_refs, check_no_aliased_ref_args,
+  check_no_transformed_refs_args)
 from jax._src.core import (
-    AbstractValue,
-    ClosedJaxpr,
-    ShapedArray,
-    cur_qdd,
-    typeof,
-)
+    AbstractValue, ClosedJaxpr, ShapedArray, cur_qdd, typeof)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -60,8 +56,7 @@ from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
-    _avals_short,
-    _make_closed_jaxpr, _prune_zeros, _typecheck_param)
+    _avals_short, _make_closed_jaxpr, _prune_zeros, _typecheck_param)
 from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -74,8 +69,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
 from jax._src import flattree as ft
 from jax._src.tree_util import (
-    keystr, tree_flatten, tree_map, tree_unflatten,
-    treedef_is_leaf)
+    keystr, tree_flatten, tree_map, tree_unflatten, treedef_is_leaf)
 from jax._src.typing import Array
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
@@ -1028,21 +1022,43 @@ def _maybe_put(x):
   else:
     return x
 
+# How does a transposed scan input's cotangent (if any) get accumulated?
+#   * No means not a GradAccum, so no cotangent is needed: residuals,
+#     nonlinear plumbing refs, and (e.g. masked) tangents that were
+#     instantiated as plain zero Arrays;
+#   * Ref means a RefAccum: cotangents are accumulated in place into its ref,
+#     which we pass in to the transposed scan;
+#   * Val means a ValAccum or NullAccum: cotangents are accumulated in
+#     registers of the transposed scan (carries for consts, stacked outputs
+#     for xs).
+AccumClass = enum.Enum('AccumClass', ['No', 'Ref', 'Val'])
+
+def _scan_accum_class(x: Array | core.Ref | ad.GradAccum) -> AccumClass:
+  if isinstance(x, ad.RefAccum):
+    return AccumClass.Ref
+  elif isinstance(x, ad.GradAccum):
+    return AccumClass.Val
+  else:
+    return AccumClass.No
+
 @weakref_lru_cache
-def _rearrange_mutable_binders(
-    jaxpr: ClosedJaxpr, num_prefix: int, num_binders: int
-) -> ClosedJaxpr:
-  fst, invars, rst = split_list(jaxpr.jaxpr.invars, [num_prefix, num_binders])
-  is_mutable = [isinstance(v.aval, AbstractRef) for v in invars]
-  immut_invars, mut_invars = partition_list(is_mutable, invars)
-  new_invars = [*fst, *mut_invars, *immut_invars, *rst]
+def _rearrange_binders_for_transpose(
+    jaxpr: ClosedJaxpr, const_cls: tuple[AccumClass, ...], num_carry: int,
+    xs_cls: tuple[AccumClass, ...]) -> ClosedJaxpr:
+  def rearrange(elts):
+    consts, carry, xs = split_list(list(elts), [len(const_cls), num_carry])
+    return ([c for c, k in zip(consts, const_cls) if k is AccumClass.No ] +
+            [c for c, k in zip(consts, const_cls) if k is AccumClass.Ref] +
+            [c for c, k in zip(consts, const_cls) if k is AccumClass.Val] +
+            carry +
+            [x for x, k in zip(xs, xs_cls) if k is AccumClass.Ref] +
+            [x for x, k in zip(xs, xs_cls) if k is AccumClass.Val] +
+            [x for x, k in zip(xs, xs_cls) if k is AccumClass.No ])
+  new_invars = rearrange(jaxpr.jaxpr.invars)
   if jaxpr.jaxpr.debug_info.arg_names is None:
     new_arg_names = None
   else:
-    fst, names, rst = split_list(jaxpr.jaxpr.debug_info.arg_names,
-                                 [num_prefix, num_binders])
-    immut_names, mut_names = partition_list(is_mutable, names)
-    new_arg_names = [*fst, *mut_names, *immut_names, *rst]
+    new_arg_names = rearrange(jaxpr.jaxpr.debug_info.arg_names)
   dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
 
   new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars, debug_info=dbg)
@@ -1051,32 +1067,33 @@ def _rearrange_mutable_binders(
 
 def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
                           num_carry, jaxpr, unroll):
-  linear = [isinstance(x, ad.GradAccum) for x in args]
-  consts_lin, init_lin, xs_lin = split_list(linear, [num_consts, num_carry])
-  num_ires = len(consts_lin) - sum(consts_lin)
-
-  # Rearrange jaxpr binders to separate out refs since we in/out swap pure vals:
-  #   Before: [ires,               T d, T c,               T a, eres] -> [T c, T b]
+  # Group the consts and xs by how their cotangents (if any) get accumulated.
+  # We can't rely on positions: residuals, tangents-with-refs, and pure-val
+  # tangents can appear interleaved (e.g. when some gradients are masked, some
+  # tangent binders hold plain instantiated-zero Arrays that look just like
+  # residuals). So we classify each input by its value and rearrange the jaxpr
+  # binders with the same classification:
+  #   Before: [*consts (ires/T d mixed), T c, *xs (T a/eres mixed)] -> [T c, T b]
   #   After:  [ires, T d_mut, T d_pure, T c, T a_mut, T a_pure, eres] -> [T c, T b]
   # where
-  #   * `ires` means intensive (not scanned over / const) residuals, all Arrays;
-  #   * `T d` means the intensive tangents, each a linear GradAccum or nonlinear
-  #     plumbing ref or linear (zero) Array;
+  #   * `ires` means intensive (not scanned over / const) inputs needing no
+  #     cotangent: residuals, plumbing refs, and instantiated-zero tangents;
+  #   * `T d` means the intensive tangents, `_mut` RefAccums, `_pure` Val/Null;
   #   * `T c` means the carry tangents;
   #   * `T a` means the extensive (scanned over) input tangents;
-  #   * `eres` means the extensive residuals;
+  #   * `eres` means the extensive inputs needing no cotangent;
   #   * `T b` means the extensive tangent outputs.
-  ires, consts_dot, carry_dot, xs_dot, eres = split_list(
-      args, [num_ires, num_consts - num_ires, num_carry, sum(xs_lin)])
-  is_mutable = [isinstance(x, ad.RefAccum) or not isinstance(x, ad.GradAccum)
-                and isinstance(typeof(x), AbstractRef) for x in consts_dot]
-  immut_consts_dot, mut_consts_bar = partition_list(is_mutable, consts_dot)
-  jaxpr = _rearrange_mutable_binders(jaxpr, num_ires, num_consts - num_ires)
-  is_mutable_ = [isinstance(x, ad.RefAccum) or not isinstance(x, ad.GradAccum)
-                 and isinstance(typeof(x), AbstractRef) for x in xs_dot]
-  immut_xs_dot, mut_xs_bar = partition_list(is_mutable_, xs_dot)
-  jaxpr = _rearrange_mutable_binders(jaxpr, num_consts + num_carry, sum(xs_lin))
-  del consts_dot, xs_dot, args
+  consts, carry_dot, xs = split_list(args, [num_consts, num_carry])
+  const_cls = tuple(_map(_scan_accum_class, consts))
+  xs_cls = tuple(_map(_scan_accum_class, xs))
+  ires             = [x for x, k in zip(consts, const_cls) if k is AccumClass.No ]
+  mut_consts_bar   = [x for x, k in zip(consts, const_cls) if k is AccumClass.Ref]
+  immut_consts_dot = [x for x, k in zip(consts, const_cls) if k is AccumClass.Val]
+  mut_xs_bar   = [x for x, k in zip(xs, xs_cls) if k is AccumClass.Ref]
+  immut_xs_dot = [x for x, k in zip(xs, xs_cls) if k is AccumClass.Val]
+  eres         = [x for x, k in zip(xs, xs_cls) if k is AccumClass.No ]
+  jaxpr = _rearrange_binders_for_transpose(jaxpr, const_cls, num_carry, xs_cls)
+  del consts, xs, args
 
   # prepare cotangent values to be passed in to transpose
   ct_carry, ct_ys = split_list(cts, [num_carry])
@@ -1085,9 +1102,7 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
            if isinstance(x, ad.Zero) else x for x in ct_ys]
 
   # initialize values to be used to accumulate pure constant gradients
-  immut_const_avals = jaxpr.in_avals[num_ires+len(mut_consts_bar):num_consts]
-  ct_immut_consts = _map(lambda a: ad_util.zeros_like_aval(a.to_ct_aval()),
-                         immut_const_avals)
+  ct_immut_consts = [ad_util.zeros_like_aval(x.aval) for x in immut_consts_dot]
 
   # prepare transpose inputs, unboxing RefAccums while noting which are linear
   trans_in, trans_tree = tree_flatten([ires, mut_consts_bar, ct_immut_consts,
@@ -1107,18 +1122,22 @@ def _scan_transpose_fancy(cts, *args, reverse, length, num_consts,
   # run it
   outs = scan_p.bind(
       *trans_in, reverse=not reverse, length=length, jaxpr=jaxpr_trans,
-      num_consts=num_ires + len(mut_consts_bar),
+      num_consts=len(ires) + len(mut_consts_bar),
       num_carry=len(immut_consts_dot) + len(carry_dot), unroll=unroll)
 
   for a, x in zip([*immut_consts_dot, *carry_dot, *immut_xs_dot], outs):
     if isinstance(a, ad.GradAccum): a.accum(x)
 
-# transpose_scan_jaxpr converts the jaxpr signature:
-#  Before: [(ires,  T d_mut     T d_pure), T c,  ( T a_mut, T a, eres)] -> [T c,  T b]
-#           ---------- consts -----------        --------- ext -------
+# _transpose_scan_jaxpr_fancy converts the jaxpr signature:
+#  Before: [(ires,  T d_mut,  T d_pure), T c, ( T a_mut,  T a_pure, eres)] -> [T c, T b]
+#           ---------- consts --------        ----------- ext ----------
 #
-#  After: [(ires, CT d_mut), (CT d_pure,  CT c), (CT a_mut, CT b, eres)] -> [(CT d_pure, CT c), CT a]
+#  After: [(ires, CT d_mut), (CT d_pure,  CT c), (CT a_mut, CT b, eres)] -> [(CT d_pure, CT c), CT a_pure]
 #           --- consts ----  ----- carry ------  --------- ext --------
+# where the incoming jaxpr's binders must already be grouped by AccumClass as
+# shown in Before, via _rearrange_binders_for_transpose. The CT d_mut and
+# CT a_mut cotangents are accumulated in place into the passed-in refs, so
+# only the pure tangents' cotangents appear as outputs.
 @weakref_lru_cache
 def _transpose_scan_jaxpr_fancy(
     jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals) -> core.ClosedJaxpr:
