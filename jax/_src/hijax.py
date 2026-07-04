@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from functools import partial, update_wrapper
 import inspect
 import itertools as it
-from typing import Any
+from typing import Any, NoReturn
 from collections.abc import Hashable, Callable
 
 from jax._src import api
@@ -94,54 +94,61 @@ class HiPrimitive(core.Primitive):
 
 AxisName = Any
 
+def _must_override(ty, method: str, needed_for: str) -> NoReturn:
+  raise NotImplementedError(
+      f"{needed_for} requires {type(ty).__name__} to implement the "
+      f"`{method}` method")
+
 class HiType(core.AbstractValue):
   is_high = True
   has_qdd = False  # immutable
 
   # type equality
-  def __hash__(self): assert False, "must override"
-  def __eq__(self, other): assert False, "must override"
+  def __hash__(self):
+    _must_override(self, "__hash__", "type equality")
+  def __eq__(self, other):
+    _must_override(self, "__eq__", "type equality")
 
   # lowering from hijax type to lojax types
   def lo_ty(self) -> list[core.AbstractValue]:
-    assert False, "must override"
+    _must_override(self, "lo_ty", "lowering (e.g. under jit)")
 
   # define lowering from hijax value to lojax values and back (like pytrees)
   def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj): not lovals
-    assert False, "must override"
+    _must_override(self, "lower_val", "lowering values (e.g. under jit)")
   def raise_val(self, *lo_vals: LoVal) -> HiVal:
-    assert False, "must override"
+    _must_override(self, "raise_val", "raising lowered values (e.g. under jit)")
 
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
-    assert False, "must override"
+    _must_override(self, "to_tangent_aval", "autodiff")
   def to_ct_aval(self) -> HiType:
     return self.to_tangent_aval()
   # the next two are required if this type is itself a tangent type
   def vspace_zero(self) -> HiVal:
-    assert False, "must override"
+    _must_override(self, "vspace_zero", "use as a tangent/cotangent type")
   def vspace_add(self, x: HiVal, y: HiVal) -> HiVal:
-    assert False, "must override"
+    _must_override(self, "vspace_add", "use as a tangent/cotangent type")
 
   # vmap interface (also needed for scan)
   def dec_rank(self, size: int | None, spec: MappingSpec) -> HiType:
-    assert False, "must override"
+    _must_override(self, "dec_rank", "vmap")
   def inc_rank(self, size: int | None, spec: MappingSpec) -> HiType:
-    assert False, "must override"
+    _must_override(self, "inc_rank", "vmap")
 
   # scan interface
   def leading_axis_spec(self) -> MappingSpec:
-    assert False, "must override"
+    _must_override(self, "leading_axis_spec", "scan")
 
   # shard_map interface
   def shard(self, mesh, manual_axes: frozenset, check_vma: bool, spec: HiPspec
             ) -> HiType:
-    assert False, "must override"
+    _must_override(self, "shard", "shard_map")
   def unshard(self, mesh, check_vma: bool, spec: HiPspec) -> HiType:
-    assert False, "must override"
+    _must_override(self, "unshard", "shard_map")
   def nospec(self, mesh, check_vma: bool, all_names: tuple[AxisName, ...]
              ) -> HiPspec:
-    assert False, "must override"
+    _must_override(self, "nospec", "autodiff through shard_map")
 
 
 class MutableHiType(core.AbstractValue):
@@ -151,20 +158,20 @@ class MutableHiType(core.AbstractValue):
   type_state = core.aval_method(core.cur_qdd)
 
   # type equality
-  def __hash__(self): assert False, "must override"
-  def __eq__(self, other): assert False, "must override"
+  def __hash__(self): _must_override(self, "__hash__", "type equality")
+  def __eq__(self, other): _must_override(self, "__eq__", "type equality")
 
   # define lowering from (mutable) hijax type to (immutable) lojax types
   def lo_ty_qdd(self, state: QDD, /) -> list[core.AbstractValue]:  # pyrefly: ignore[bad-override]
-    assert False, "must override"
+    _must_override(self, "lo_ty_qdd", "lowering (e.g. under jit)")
   def lo_ty(self):
     assert False, "mutable hitypes should use lo_ty_qdd instead"
 
   # define lowering from hijax value to lojax values and back, depending on qdd
   def new_from_loval(self, state: QDD, /, *vals: LoVal) -> HiVal:
-    assert False, "must override"
+    _must_override(self, "new_from_loval", "raising lowered values")
   def read_loval(self, state: QDD, val: HiVal, /) -> list[LoVal]:
-    assert False, "must override"
+    _must_override(self, "read_loval", "lowering values")
   # default implementations of newer apis
   def read_loval_in(self, state, val, /):
     return self.read_loval(state, val)
@@ -173,14 +180,14 @@ class MutableHiType(core.AbstractValue):
 
   # define how to mutate/set the mutable hijax value given immutable lojax vals
   def update_from_loval(self, state: QDD, val: HiVal, /, *lo_vals: LoVal) -> None:
-    assert False, "must override"
+    _must_override(self, "update_from_loval", "updating values from lowered values")
   # default implementation of newer api
   def update_from_loval2(self, state, val, lo_vals_ft, /) -> None:
     self.update_from_loval(state, val, *lo_vals_ft.unflatten())
 
   # autodiff interface
   def to_tangent_aval(self) -> HiType:
-    assert False, "must override"
+    _must_override(self, "to_tangent_aval", "autodiff")
 
   # Subclasses should override if the cotangent type is a function of primal
   # type. For example, CT unreduced = reduced and vice-versa.
@@ -1090,9 +1097,12 @@ class Static:
 
 class MappingSpec: pass
 class HiPspec:
-  def to_lo(self) -> tuple[PartitionSpec, ...]: assert False, "must override"
-  def to_tangent_spec(self) -> HiPspec: assert False, "must override"
-  def to_ct_spec(self) -> HiPspec: assert False, "must override"
+  def to_lo(self) -> tuple[PartitionSpec, ...]:
+    _must_override(self, "to_lo", "shard_map")
+  def to_tangent_spec(self) -> HiPspec:
+    _must_override(self, "to_tangent_spec", "autodiff through shard_map")
+  def to_ct_spec(self) -> HiPspec:
+    _must_override(self, "to_ct_spec", "autodiff through shard_map")
 
 # Logs
 

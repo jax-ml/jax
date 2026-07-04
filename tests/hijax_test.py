@@ -833,6 +833,33 @@ class HijaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "non-array type"):
       jax.vmap(lambda x: x, axis_size=3)(tup)
 
+  def test_tuple_device_put_error(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    with self.assertRaisesRegex(NotImplementedError,
+                                "device_put does not yet support"):
+      jax.device_put(tup, jax.devices()[0])
+
+  def test_missing_hitype_method_error(self):
+    @dataclass(frozen=True)
+    class Opaque:
+      val: Any
+
+    @dataclass(frozen=True)
+    class OpaqueTy(HiType):
+      pass
+
+    @dataclass(frozen=True)
+    class OpaqueSpec(MappingSpec):
+      pass
+
+    register_hitype(Opaque, lambda _: OpaqueTy())
+
+    with self.assertRaisesRegex(
+        NotImplementedError, r"vmap requires .*OpaqueTy.* to implement the "
+        r"`dec_rank` method"):
+      jax.vmap(lambda x: x, in_axes=OpaqueSpec(), out_axes=OpaqueSpec(),
+               axis_size=3)(Opaque(jnp.arange(3.)))
+
   def test_tuple_vmap_internal(self):
     @jax.vmap
     def f(x):
