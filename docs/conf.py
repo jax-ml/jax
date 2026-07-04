@@ -150,6 +150,7 @@ exclude_patterns = [
     'autodidax2_part1.md',
     'array_refs.md',
     'hijax_custom_derivatives.md',
+    'hijax_types.md',
     'parallel.md',
     'ffi.ipynb',
 ]

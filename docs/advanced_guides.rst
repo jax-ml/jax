@@ -108,3 +108,4 @@ operations.
    xla_flags
    jax-primitives
    jaxpr
+   hijax_types
