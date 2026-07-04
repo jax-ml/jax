@@ -2080,7 +2080,8 @@ def _infer_src_sharding(src, x, x_aval) -> Sharding | None:
     val = x.to_concrete_value()
     if val is not None and isinstance(val, array.ArrayImpl):
       return val.sharding
-  if x_aval is not core.abstract_token and x_aval.sharding.mesh.are_all_axes_explicit:
+  if (x_aval is not core.abstract_token and not x_aval.is_high and
+      x_aval.sharding.mesh.are_all_axes_explicit):
     return x_aval.sharding.update(
         memory_kind=core.mem_space_to_kind(x_aval.memory_space))
   return None
@@ -2208,6 +2209,12 @@ def device_put(
 
     dst_avals = []
     for x_aval, d in zip(x_avals, device_flat):
+      if x_aval.is_high:
+        raise NotImplementedError(
+            "jax.device_put does not yet support values of hijax type "
+            f"{x_aval}. Instead, shard the value's components (e.g. before "
+            "constructing it), or produce the value with the desired "
+            "sharding under jit or shard_map.")
       aval = dispatch.update_dp_aval(x_aval, d)
       dst_avals.append(aval)
       _check_sharding(aval, d)
