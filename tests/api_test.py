@@ -6858,6 +6858,26 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 2)
     self.assertIn('<host>[3,16]', jaxpr_text)  # stacked host residuals
 
+  def test_remat_offload_dot_with_no_batch_dims_jaxpr(self):
+    # Jaxpr-level check of offload_dot_with_no_batch_dims: outputs of dots
+    # without batch dimensions are device_put to the offload destination on
+    # the fwd pass and saved there, then device_put back on the bwd pass;
+    # dots with batch dimensions are rematerialized as usual.
+    policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
+        'device', 'pinned_host')
+
+    @partial(jax.remat, policy=policy)
+    def f(x, b):
+      x = jnp.einsum('ij,jk->ik', x, x)      # offloaded
+      b = jnp.einsum('bij,bjk->bik', b, b)   # batch dims: not offloaded
+      x = jnp.sin(x)
+      return jnp.sum(x) + jnp.sum(jnp.sin(b))
+
+    jaxpr_text = str(api.make_jaxpr(api.grad(f))(jnp.ones((4, 4)),
+                                                 jnp.ones((2, 4, 4))))
+    self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
+    self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
+
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [

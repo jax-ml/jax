@@ -6002,12 +6002,24 @@ dot_general_p = standard_primitive(
 
 
 def _dot_general_remat(trace, lhs, rhs, **params):
-  from jax._src.ad_checkpoint import DotsSaveable, primal_left_tangent_right
+  from jax._src.ad_checkpoint import (
+      DotsSaveable, OffloadDotWithNoBatchDims, primal_left_tangent_right)
   dot = partial(dot_general_p.bind, **params)
   out = dot(lhs, rhs)
   if (isinstance(trace.policy, DotsSaveable) and
       trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params)):
     return out, lambda lhs, rhs: primal_left_tangent_right(out, dot(lhs, rhs))
+  if isinstance(trace.policy, OffloadDotWithNoBatchDims):
+    verdict = trace.policy(dot_general_p, typeof(lhs), typeof(rhs), **params)
+    if isinstance(verdict, pe.Offloadable):
+      from jax._src.api import device_put
+      out_host = device_put(out, core.mem_kind_to_space(verdict.dst),
+                            may_alias=False)
+      src_space = core.mem_kind_to_space(verdict.src)
+      def rem(lhs, rhs):
+        out_dev = device_put(out_host, src_space, may_alias=False)
+        return primal_left_tangent_right(out_dev, dot(lhs, rhs))
+      return out, rem
   return out, dot  # full remat
 remat.rules[dot_general_p] = _dot_general_remat
 
