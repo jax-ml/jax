@@ -6809,6 +6809,55 @@ class RematTest(jtu.JaxTestCase):
     ans = api.grad(lambda x: f(x).sum())(jnp.float32(3.))
     self.assertAllClose(ans, 2 * np.sin(1.) ** 2, check_dtypes=False)
 
+  def test_remat_offload_names_jaxpr(self):
+    # Jaxpr-level check of save_and_offload_only_these_names: offloaded values
+    # are device_put to the offload destination on the fwd pass and saved
+    # there, then device_put back on the bwd pass. (Execution needs a device
+    # with memory kinds; see tests/memories_test.py.)
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=['y'], names_which_can_be_offloaded=['z', 'w'],
+        offload_src='device', offload_dst='pinned_host')
+
+    @partial(jax.remat, policy=policy)
+    def f(x):
+      y = checkpoint_name(jnp.sin(x), 'y')
+      z = checkpoint_name(jnp.sin(y), 'z')
+      w = checkpoint_name(jnp.sin(z), 'w')
+      return jnp.sum(w * z)
+
+    jaxpr_text = str(api.make_jaxpr(api.grad(f))(jnp.arange(16.)))
+    self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 2)
+    self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 2)
+
+    with self.assertRaisesRegex(
+        ValueError, "The names should be exclusive and should not intersect"):
+      jax.checkpoint_policies.save_and_offload_only_these_names(
+          names_which_can_be_saved=['y'], names_which_can_be_offloaded=['y'],
+          offload_src='device', offload_dst='pinned_host')
+
+  def test_remat_offload_names_of_scan_jaxpr(self):
+    # Like test_remat_offload_names_jaxpr, but with the named values inside a
+    # scan body: the per-iteration offloaded copies are saved as stacked
+    # host-space residuals.
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=['y'], names_which_can_be_offloaded=['z', 'w'],
+        offload_src='device', offload_dst='pinned_host')
+
+    @partial(jax.remat, policy=policy)
+    def f(x):
+      def g(y, _):
+        y = checkpoint_name(jnp.sin(y), 'y')
+        z = checkpoint_name(jnp.sin(y), 'z')
+        w = checkpoint_name(jnp.sin(z), 'w')
+        return w, jnp.sum(w * z)
+      _, out = lax.scan(g, x, None, length=3)
+      return jnp.sum(out)
+
+    jaxpr_text = str(api.make_jaxpr(api.grad(f))(jnp.arange(16.)))
+    self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 2)
+    self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 2)
+    self.assertIn('<host>[3,16]', jaxpr_text)  # stacked host residuals
+
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [

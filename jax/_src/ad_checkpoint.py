@@ -143,28 +143,38 @@ def save_only_these_names(*names_which_can_be_saved):
   """Save only named values, and only among the names given."""
   return SaveOnlyTheseNames(frozenset(names_which_can_be_saved))
 
+@dataclass(frozen=True)
+class SaveAndOffloadOnlyTheseNames:
+  names_which_can_be_saved: frozenset[str]
+  names_which_can_be_offloaded: frozenset[str]
+  offload_src: str
+  offload_dst: str
+
+  def __call__(self, prim, *_, **params):
+    if prim is name_p and params['name'] in self.names_which_can_be_saved:
+      return pe.Saveable
+    if prim is name_p and params['name'] in self.names_which_can_be_offloaded:
+      return pe.Offloadable(src=self.offload_src, dst=self.offload_dst)
+    return pe.Recompute  # not saveable unless it's in the allow-list
+
 def save_and_offload_only_these_names(
     *, names_which_can_be_saved, names_which_can_be_offloaded,
     offload_src, offload_dst):
   """Same as ``save_only_these_names``, but offload to CPU memory instead of
   recomputing."""
-  names_which_can_be_saved = set(names_which_can_be_saved)
-  names_which_can_be_offloaded = set(names_which_can_be_offloaded)
-  intersection = names_which_can_be_saved.intersection(names_which_can_be_offloaded)
+  names_which_can_be_saved = frozenset(names_which_can_be_saved)
+  names_which_can_be_offloaded = frozenset(names_which_can_be_offloaded)
+  intersection = names_which_can_be_saved & names_which_can_be_offloaded
   if intersection:
     raise ValueError(
         "The names should be exclusive and should not intersect in"
         " `names_which_can_be_saved` and `names_which_can_be_offloaded`. Got"
-        f" names_which_can_be_saved={names_which_can_be_saved},"
-        f" names_which_can_be_offloaded={names_which_can_be_offloaded} and the"
-        f" intersection={intersection}")
-  def policy(prim, *_, **params):
-    if prim is name_p and params['name'] in names_which_can_be_saved:
-      return pe.Saveable
-    if prim is name_p and params['name'] in names_which_can_be_offloaded:
-      return pe.Offloadable(src=offload_src, dst=offload_dst)
-    return pe.Recompute  # not saveable unless it's in the allow-list
-  return policy
+        f" names_which_can_be_saved={set(names_which_can_be_saved)},"
+        f" names_which_can_be_offloaded={set(names_which_can_be_offloaded)} and"
+        f" the intersection={set(intersection)}")
+  return SaveAndOffloadOnlyTheseNames(
+      names_which_can_be_saved, names_which_can_be_offloaded,
+      offload_src, offload_dst)
 
 
 def save_from_both_policies(policy_1, policy_2):
@@ -1114,6 +1124,19 @@ class CheckpointName(VJPHiPrimitive):
                   else self.name in policy.saveable_names)
       rem = partial(primal_left_tangent_right, x) if saveable else lambda x: x
       return x, rem
+    elif isinstance(policy, SaveAndOffloadOnlyTheseNames):
+      if self.name in policy.names_which_can_be_saved:
+        return x, partial(primal_left_tangent_right, x)
+      elif self.name in policy.names_which_can_be_offloaded:
+        x_host = api.device_put(x, core.mem_kind_to_space(policy.offload_dst),
+                                may_alias=False)
+        src_space = core.mem_kind_to_space(policy.offload_src)
+        def rem(x_rem):
+          x_dev = api.device_put(x_host, src_space, may_alias=False)
+          return primal_left_tangent_right(x_dev, x_rem)
+        return x, rem
+      else:
+        return x, lambda x: x  # full remat
     elif policy is everything_saveable:
       return x, partial(primal_left_tangent_right, x)
     else:
