@@ -2898,6 +2898,44 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "dtype must be specified"):
       api.ShapeDtypeStruct(shape=(), dtype=None)
 
+  def test_shape_dtype_struct_memory_space(self):
+    s = api.ShapeDtypeStruct((2, 3), jnp.float32,
+                             memory_space=jax.memory.Space.Host)
+    self.assertEqual(s.memory_space, jax.memory.Space.Host)
+    self.assertIn('memory_space=MemorySpace.Host', repr(s))
+
+    # the default is the device memory space, and isn't shown in the repr
+    s_dev = api.ShapeDtypeStruct((2, 3), jnp.float32)
+    self.assertEqual(s_dev.memory_space, jax.memory.Space.Device)
+    self.assertNotIn('memory_space', repr(s_dev))
+
+    # memory_space participates in equality and hashing
+    self.assertNotEqual(s, s_dev)
+    self.assertNotEqual(hash(s), hash(s_dev))
+    self.assertEqual(s, s_dev.update(memory_space=jax.memory.Space.Host))
+
+    # avalization carries the memory space
+    self.assertEqual(core.typeof(s).memory_space, jax.memory.Space.Host)
+    self.assertEqual(core.typeof(s_dev).memory_space, jax.memory.Space.Device)
+
+    with self.assertRaisesRegex(TypeError, "should be of type"):
+      api.ShapeDtypeStruct((2, 3), jnp.float32, memory_space='pinned_host')
+
+  def test_eval_shape_memory_space(self):
+    # eval_shape and make_jaxpr(return_shape=True) report memory spaces
+    f = lambda x: jax.device_put(x, jax.memory.Space.Host)
+    out = api.eval_shape(f, jnp.ones(3))
+    self.assertEqual(out.memory_space, jax.memory.Space.Host)
+
+    _, out = api.make_jaxpr(f, return_shape=True)(jnp.ones(3))
+    self.assertEqual(out.memory_space, jax.memory.Space.Host)
+
+    # and memory spaces of inputs round-trip through eval_shape
+    sds = api.ShapeDtypeStruct((3,), jnp.float32,
+                               memory_space=jax.memory.Space.Host)
+    out = api.eval_shape(lambda x: x, sds)
+    self.assertEqual(out.memory_space, jax.memory.Space.Host)
+
   def test_eval_shape(self):
     def fun(x, y):
       return jnp.tanh(jnp.dot(x, y) + 3.)
@@ -6857,6 +6895,55 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 2)
     self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 2)
     self.assertIn('<host>[3,16]', jaxpr_text)  # stacked host residuals
+
+  def test_remat_offload_names_fwd_bwd_jaxprs(self):
+    # Offloaded residuals cross the fwd/bwd boundary in the offload memory
+    # space: they are host-space outputs of the fwd jaxpr and host-space
+    # inputs of the bwd jaxpr. This exercises memory-space fidelity of
+    # make_jaxpr(..., return_shape=True), which jtu.fwd_bwd_jaxprs uses to
+    # re-trace the bwd (and which tests/memories_test.py relies on).
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=['y'], names_which_can_be_offloaded=['z', 'w'],
+        offload_src='device', offload_dst='pinned_host')
+
+    @partial(jax.remat, policy=policy)
+    def f(x):
+      y = checkpoint_name(jnp.sin(x), 'y')
+      z = checkpoint_name(jnp.sin(y), 'z')
+      w = checkpoint_name(jnp.sin(z), 'w')
+      return jnp.sum(w * z)
+
+    fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, jnp.arange(16.))
+
+    fwd_host_outs = [a for a in fwd_jaxpr.out_avals
+                     if a.memory_space == jax.memory.Space.Host]
+    self.assertLen(fwd_host_outs, 2)
+    self.assertEqual(str(fwd_jaxpr).count('MemorySpace.Host'), 2)
+
+    bwd_host_ins = [a for a in bwd_jaxpr.in_avals
+                    if getattr(a, 'memory_space', None) == jax.memory.Space.Host]
+    self.assertLen(bwd_host_ins, 2)
+    self.assertEqual(str(bwd_jaxpr).count('MemorySpace.Device'), 2)
+
+  def test_remat_offload_dot_with_no_batch_dims_jaxpr(self):
+    # Jaxpr-level check of offload_dot_with_no_batch_dims: outputs of dots
+    # without batch dimensions are device_put to the offload destination on
+    # the fwd pass and saved there, then device_put back on the bwd pass;
+    # dots with batch dimensions are rematerialized as usual.
+    policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
+        'device', 'pinned_host')
+
+    @partial(jax.remat, policy=policy)
+    def f(x, b):
+      x = jnp.einsum('ij,jk->ik', x, x)      # offloaded
+      b = jnp.einsum('bij,bjk->bik', b, b)   # batch dims: not offloaded
+      x = jnp.sin(x)
+      return jnp.sum(x) + jnp.sum(jnp.sin(b))
+
+    jaxpr_text = str(api.make_jaxpr(api.grad(f))(jnp.ones((4, 4)),
+                                                 jnp.ones((2, 4, 4))))
+    self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
+    self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}

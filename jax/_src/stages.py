@@ -395,7 +395,8 @@ def _traced_out_info(self):
           core.ShapeDtypeStruct(
               a.shape, a.dtype, sharding=Format(out_l, s),
               weak_type=a.weak_type,
-              manual_axis_type=(a.mat if config._check_vma.value else None)))
+              manual_axis_type=(a.mat if config._check_vma.value else None),
+              memory_space=a.memory_space))
     else:
       out.append(a)
   return tree_util.tree_unflatten(self.out_tree, out)
@@ -581,7 +582,9 @@ class Lowered(Stage):
       s = None if isinstance(s, UnspecifiedValue) else s
       l = None if isinstance(l, AutoLayoutSingleton) else l
       format = Format(l, s)
-      outs.append(core.ShapeDtypeStruct(o.shape, o.dtype, sharding=format))
+      outs.append(core.ShapeDtypeStruct(
+          o.shape, o.dtype, sharding=format,
+          memory_space=getattr(o, 'memory_space', core.MemorySpace.Device)))
     return self.out_tree.unflatten(outs)
 
   def compile(
@@ -745,7 +748,9 @@ class Compiled(Stage):
     out_avals = self._executable.out_avals  # pyrefly: ignore[missing-attribute]
     out_formats_flat = self._output_formats_flat
     return self.out_tree.unflatten(
-        [core.ShapeDtypeStruct(o.shape, o.dtype, sharding=f)
+        [core.ShapeDtypeStruct(
+            o.shape, o.dtype, sharding=f,
+            memory_space=getattr(o, 'memory_space', core.MemorySpace.Device))
          for o, f in zip(out_avals, out_formats_flat)])
 
   def runtime_executable(self) -> Any | None:
