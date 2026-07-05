@@ -95,19 +95,24 @@ class DotsSaveable:
 checkpoint_dots = dots_saveable = DotsSaveable(False)
 dots_with_no_batch_dims_saveable = DotsSaveable(True)
 
-# TODO TODO memories_test.py
+@dataclass(frozen=True)
+class OffloadDotWithNoBatchDims:
+  offload_src: str
+  offload_dst: str
+
+  def __call__(self, prim, *_, **params):
+    if prim is lax_internal.dot_general_p:
+      (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
+      if not lhs_b and not rhs_b:
+        return pe.Offloadable(src=self.offload_src, dst=self.offload_dst)
+    return pe.Recompute
+
 def offload_dot_with_no_batch_dims(offload_src, offload_dst):
   """Same as ``dots_with_no_batch_dims_saveable``, but offload to CPU memory
   instead of recomputing.
 
   This is a useful heuristic for transformers."""
-  def policy(prim, *_, **params):
-    if prim is lax_internal.dot_general_p:
-      (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
-      if not lhs_b and not rhs_b:
-        return pe.Offloadable(src=offload_src, dst=offload_dst)
-    return pe.Recompute
-  return policy
+  return OffloadDotWithNoBatchDims(offload_src, offload_dst)
 
 
 name_p = core.Primitive('name')
