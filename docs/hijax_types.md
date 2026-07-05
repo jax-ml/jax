@@ -442,6 +442,51 @@ def norm_quantized(x):
 print(jax.vmap(jax.grad(norm_quantized))(xs).shape)
 ```
 
+## `scan` and the leading axis
+
+`jax.lax.scan` can loop over a stacked hi value, consuming one slice per
+step — and it can carry and produce hi values too. Where `vmap` asks the
+*user* for a mapping spec, `scan` always walks the leading axis, so it
+instead asks the *type*: the one extra method to implement is
+`leading_axis_spec`, which returns the mapping spec describing your type's
+leading axis. The `dec_rank` and `inc_rank` methods from the `vmap`
+section do the rest of the work.
+
+```{code-cell}
+def qarray_leading_axis_spec(self):
+  return QArraySpec()
+
+QArrayTy.leading_axis_spec = qarray_leading_axis_spec
+```
+
+Scanning over the stack of quantized arrays from the previous section, the
+body sees one `q8[2,3]` per step. As with `vmap`'s `axis_size`, when all
+the scanned-over values are hi types there's no leading-axis size to
+infer, so we pass `length` explicitly (if any scanned-over value is an
+array, `scan` infers the length from it and `length` can be omitted):
+
+```{code-cell}
+def sum_dequantized(total, qx):
+  return total + jnp.sum(dequantize(qx)), ()
+
+total, () = jax.lax.scan(sum_dequantized, 0., qxs, length=4)
+print(total)
+```
+
+Hi values also work as stacked outputs and as the loop carry. Here the
+carry is a quantized array, re-quantized after each accumulation step, and
+the second output stacks one fresh `QArray` per step into a `q8[4,2,3]`:
+
+```{code-cell}
+def accum_quantized(qtotal, x):
+  return quantize(dequantize(qtotal) + x), quantize(2 * x)
+
+qzero = quantize(jnp.zeros((2, 3), 'float32'))
+qtotal, qys = jax.lax.scan(accum_quantized, qzero, xs)
+print(jax.typeof(qtotal))
+print(jax.typeof(qys))
+```
+
 ## `shard_map` and partition specs
 
 Finally, sharding. What does it mean to partition a quantized array across
@@ -540,9 +585,7 @@ hi type, which is used to shard autodiff residuals.)
 
 ## What we haven't covered
 
-A few more corners of the interface: types can implement
-`leading_axis_spec` so that hi type values can be carried through
-`jax.lax.scan`, and on the primitive side there are hooks for customizing
+On the primitive side, there are also hooks for customizing
 rematerialization and dead code elimination.
 
 As ever with hijax, `tests/hijax_test.py` is a good source of worked
