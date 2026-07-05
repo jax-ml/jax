@@ -1785,6 +1785,33 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = (2., jnp.cos(1.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_nondiff_argnums_unhashable(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def f(lst, x):
+      return lst[0] * jnp.sin(x)
+    def f_fwd(lst, x):
+      return f(lst, x), jnp.cos(x)
+    def f_bwd(lst, cos_x, g):
+      return (lst[0] * cos_x * g,)
+    f.defvjp(f_fwd, f_bwd)
+
+    lst = [2.]  # unhashable
+
+    ans = f(lst, 3.)
+    expected = 2. * jnp.sin(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f, argnums=1)(lst, 3.)
+    expected = 2. * jnp.cos(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = jax.jit(lambda x: api.grad(f, argnums=1)(lst, x))(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = jax.vmap(api.grad(lambda x: f(lst, x)))(jnp.arange(3.))
+    expected = 2. * jnp.cos(jnp.arange(3.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_nondiff_argnums_argnames(self):
     @partial(jax.custom_vjp, nondiff_argnums=(0,), nondiff_argnames=('g',))
     def app(f, g, x):

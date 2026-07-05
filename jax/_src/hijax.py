@@ -26,7 +26,8 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src.api_util import resolve_kwargs, infer_argnums_and_argnames, debug_info
+from jax._src.api_util import (
+    resolve_kwargs, infer_argnums_and_argnames, debug_info, is_hashable)
 from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.core import typeof
@@ -1041,7 +1042,16 @@ class custom_vjp3:
     if any(isinstance(args[i], core.Tracer) for i in self.static_argnums):
       raise UnexpectedTracerError("custom_vjp inputs marked with nondiff_argnums "
                                   "must be static, not Tracers")
-    traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
+    if all(is_hashable(args[i]) for i in self.static_argnums):
+      traced = api.jit(self.f, static_argnums=(*self.static_argnums,)).trace(*args)
+    else:
+      # jit requires hashable static_argnums values, but classic custom_vjp
+      # accepted unhashable nondiff_argnums values, so close over them instead
+      which_static = [i in self.static_argnums for i in range(len(args))]
+      dyn_args, static_args = partition_list(which_static, args)
+      f = lambda *dyn: self.f(*merge_lists(which_static, dyn, static_args))
+      f.__name__ = getattr(self.f, '__name__', '<unnamed function>')
+      traced = api.jit(f).trace(*dyn_args)
     if any(isinstance(x, core.Tracer) for x in traced._consts):
       t = next(x for x in traced._consts if isinstance(x, core.Tracer))
       raise UnexpectedTracerError(
