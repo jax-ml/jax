@@ -3850,9 +3850,11 @@ class ShapeDtypeStruct:
     shape: a sequence of integers representing an array shape
     dtype: a dtype-like object
     sharding: (optional) a :class:`jax.Sharding` object
+    memory_space: (optional) a :class:`jax.memory.Space` indicating the memory
+      space in which the array lives
   """
   __slots__ = ["shape", "dtype", "_sharding", "_dll", "weak_type",
-               "manual_axis_type", "is_ref"]
+               "manual_axis_type", "is_ref", "memory_space"]
 
   shape: Any
   dtype: Any
@@ -3861,9 +3863,11 @@ class ShapeDtypeStruct:
   weak_type: Any
   manual_axis_type: Any
   is_ref: Any
+  memory_space: Any
 
   def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
-               manual_axis_type=None, is_ref=False):
+               manual_axis_type=None, is_ref=False,
+               memory_space=MemorySpace.Device):
     object.__setattr__(self, 'shape', tuple(shape))
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
@@ -3894,6 +3898,11 @@ class ShapeDtypeStruct:
           f" {type(manual_axis_type)}")
     object.__setattr__(self, 'manual_axis_type', manual_axis_type)
     object.__setattr__(self, 'is_ref', is_ref)
+    if not isinstance(memory_space, MemorySpace):
+      raise TypeError(
+          "`memory_space` argument passed to ShapeDtypeStruct should be of"
+          f" type `jax.memory.Space`. Got type {type(memory_space)}")
+    object.__setattr__(self, 'memory_space', memory_space)
 
   def __setattr__(self, name, value):
     if hasattr(self, name):
@@ -3930,7 +3939,8 @@ class ShapeDtypeStruct:
       sharding = None
     mat = None if aval.mat.empty else aval.mat
     return cls(aval.shape, aval.dtype, sharding=sharding,
-               weak_type=aval.weak_type, manual_axis_type=mat, is_ref=False)
+               weak_type=aval.weak_type, manual_axis_type=mat, is_ref=False,
+               memory_space=aval.memory_space)
 
   @property
   def sharding(self):
@@ -3964,8 +3974,10 @@ class ShapeDtypeStruct:
     mat = (f", manual_axis_type={self.manual_axis_type}"
            if self.manual_axis_type else "")
     is_ref = f", is_ref={self.is_ref}" if self.is_ref else ""
+    ms = (f", memory_space={self.memory_space}"
+          if self.memory_space != MemorySpace.Device else "")
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{sh}{l}{wt}{mat}{is_ref})")
+            f"dtype={self.dtype.name}{sh}{l}{wt}{mat}{is_ref}{ms})")
 
   __str__ = __repr__
 
@@ -3974,13 +3986,16 @@ class ShapeDtypeStruct:
       return False
     else:
       return ((self.shape, self.dtype, self.sharding, self._dll,
-               self.weak_type, self.manual_axis_type, self.is_ref) ==
+               self.weak_type, self.manual_axis_type, self.is_ref,
+               self.memory_space) ==
               (other.shape, other.dtype, other.sharding, other._dll,
-               other.weak_type, other.manual_axis_type, other.is_ref))
+               other.weak_type, other.manual_axis_type, other.is_ref,
+               other.memory_space))
 
   def __hash__(self):
     return hash((self.shape, self.dtype, self.sharding, self._dll,
-                 self.weak_type, self.manual_axis_type, self.is_ref))
+                 self.weak_type, self.manual_axis_type, self.is_ref,
+                 self.memory_space))
 
   def update(self, **kwargs):
     if 'sharding' in kwargs:
@@ -4000,7 +4015,8 @@ class ShapeDtypeStruct:
         sharding=sharding,
         weak_type=kwargs.pop('weak_type', self.weak_type),
         manual_axis_type=kwargs.pop('manual_axis_type', self.manual_axis_type),
-        is_ref=kwargs.pop('is_ref', self.is_ref))
+        is_ref=kwargs.pop('is_ref', self.is_ref),
+        memory_space=kwargs.pop('memory_space', self.memory_space))
 
 
 def _sds_aval_mapping(x):
@@ -4008,6 +4024,10 @@ def _sds_aval_mapping(x):
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
   aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
+  if x.memory_space != MemorySpace.Device:
+    # A non-default explicit memory_space takes precedence over any memory
+    # kind derived from the sharding.
+    aval = aval.update(memory_space=x.memory_space)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return AbstractRef(aval)
