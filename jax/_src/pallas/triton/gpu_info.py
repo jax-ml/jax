@@ -45,6 +45,7 @@ class GpuVersion(enum.Enum):
   RTX_PRO_4500 = "NVIDIA RTX PRO 4500"
   RTX_PRO_5000 = "NVIDIA RTX PRO 5000"
   RTX_PRO_6000 = "NVIDIA RTX PRO 6000"
+  THOR = "NVIDIA Thor"
 
   def __str__(self) -> str:
     return self.value
@@ -135,6 +136,12 @@ def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
           gpu_version=gpu_version,
           arch_name="12.1",
           compute_capability=121,
+      )
+    case GpuVersion.THOR:
+      return GpuInfo(
+          gpu_version=gpu_version,
+          arch_name="11.0",
+          compute_capability=110,
       )
     case _:
       raise ValueError(f"Unsupported GPU version: {gpu_version}")
