@@ -65,6 +65,8 @@ class GpuInfoTest(jtu.JaxTestCase):
         self.assertEqual(cc, 100)
       case GpuVersion.B300 | GpuVersion.GB300:
         self.assertEqual(cc, 103)
+      case GpuVersion.THOR:
+        self.assertEqual(cc, 110)
       case GpuVersion.RTX_PRO_4500 | GpuVersion.RTX_PRO_5000 | GpuVersion.RTX_PRO_6000:
         self.assertEqual(cc, 120)
       case GpuVersion.GB10:
