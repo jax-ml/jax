@@ -1910,10 +1910,10 @@ def interpret_pallas_call(
     # that users don't have to specify it in the InterpretParams.
     assert len(mesh.shape) == 1
     interpret_params = dataclasses.replace(
-        interpret_params, num_cores_or_threads=mesh.devices.shape[0]
+        interpret_params, num_cores_or_threads=mesh.num_cores
     )
     # When we're called from mpmp_map, dimension_semantics may not be set.
-    if mesh.devices.shape[0] > 1:
+    if mesh.num_cores > 1:
       mosaic_params = mosaic_params.replace(dimension_semantics=('parallel',))
 
   args = [remove_memory_space_p.bind(a) for a in args]

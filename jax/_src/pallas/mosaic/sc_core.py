@@ -91,9 +91,7 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
       raise ValueError(f"{self} should have the same core axis name and number"
                        f" of cores as the VectorSubcoreMesh {other_mesh}.")
     elif isinstance(other_mesh, tpu_core.TensorCoreMesh):
-      assert len(other_mesh.axis_names) == 1
-      axis_name = other_mesh.axis_names[0]
-      if self.axis_name == axis_name:
+      if self.axis_name == other_mesh.axis_name:
         raise ValueError(
             f"{self} should have a different axis name from the TensorCoreMesh"
             f" {other_mesh}."
@@ -229,14 +227,12 @@ class VectorSubcoreMesh(pallas_core.Mesh):
       raise ValueError(f"{self} should have the same core axis name and number"
                        f" of cores as the ScalarSubcoreMesh {other_mesh}.")
     elif isinstance(other_mesh, tpu_core.TensorCoreMesh):
-      assert len(other_mesh.axis_names) == 1
-      axis_name = other_mesh.axis_names[0]
-      if self.core_axis_name == axis_name:
+      if self.core_axis_name == other_mesh.axis_name:
         raise ValueError(
             f"{self} should have a different core axis name from the"
             f" TensorCoreMesh {other_mesh}."
         )
-      if self.subcore_axis_name == axis_name:
+      if self.subcore_axis_name == other_mesh.axis_name:
         raise ValueError(
             f"{self} should have a different subcore axis name from the"
             f" TensorCoreMesh {other_mesh}."

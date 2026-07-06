@@ -34,7 +34,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.tpu_custom_call import OptLevel
 import jax.numpy as jnp
-import numpy as np
 
 
 map, unsafe_map = util.safe_map, map
@@ -333,28 +332,23 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     )
 
 
-@dataclasses.dataclass(frozen=True)
-class TensorCore:
-  id: int
+def _get_default_num_cores() -> int:
+  abstract_device = jax.sharding.get_abstract_mesh().abstract_device
+  if abstract_device is None:
+    device = jax.devices()[0]
+  else:
+    device = abstract_device
+  return device.num_cores
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class TensorCoreMesh(pallas_core.Mesh):
   """A mesh of TensorCores."""
 
-  devices: np.ndarray
-  axis_names: Sequence[str]
-
-  def __init__(self, devices: np.ndarray, axis_names: Sequence[str]):
-    devices = np.copy(devices)
-    devices.setflags(write=False)
-    object.__setattr__(self, "devices", devices)
-    object.__setattr__(self, "axis_names", tuple(axis_names))
-
-  def __hash__(self) -> int:
-    return hash(
-        (self.devices.shape, tuple(np.ravel(self.devices)), self.axis_names)
-    )
+  axis_name: str
+  num_cores: int = dataclasses.field(
+      default_factory=_get_default_num_cores
+  )
 
   @property
   def core_type(self) -> CoreType:
@@ -366,7 +360,7 @@ class TensorCoreMesh(pallas_core.Mesh):
 
   @property
   def shape(self):
-    return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
+    return collections.OrderedDict({self.axis_name: self.num_cores})
 
   @property
   def dimension_semantics(self) -> Sequence[DimensionSemantics]:
@@ -405,16 +399,10 @@ def create_tensorcore_mesh(
     raise ValueError("cannot specify both devices and num_cores")
   if num_cores is None:
     if devices is None:
-      abstract_device = jax.sharding.get_abstract_mesh().abstract_device
-      if abstract_device is None:
-        devices = [jax.devices()[0]]
-      else:
-        devices = [abstract_device]
-    num_cores = devices[0].num_cores
-  return TensorCoreMesh(
-      np.array([TensorCore(i) for i in range(num_cores)]),
-      [axis_name],
-  )
+      num_cores = _get_default_num_cores()
+    else:
+      num_cores = devices[0].num_cores
+  return TensorCoreMesh(axis_name=axis_name, num_cores=num_cores)
 
 
 def pass_scalars_as_refs(
@@ -553,7 +541,7 @@ def _tensorcore_mesh_discharge_rule(
     raise NotImplementedError("Mesh must be 1D")
   if compiler_params.dimension_semantics is not None:
     raise ValueError("dimension_semantics must be None for TensorCoreMesh")
-  num_cores = len(mesh.devices)
+  num_cores = mesh.num_cores
   if num_cores > 1:
     # Since each core will have its own VMEM, we currently disallow VMEM inputs
     # and outputs since other ops might not agree on how they are sharded across
