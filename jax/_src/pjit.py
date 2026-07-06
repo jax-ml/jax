@@ -516,10 +516,14 @@ def _trace_for_jit(
     lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a)
   assert avals_ft is not None
 
+  # Static values don't affect resource canonicalization, so strip them from
+  # the cache key: this global cache must not retain user objects passed as
+  # statics (https://github.com/jax-ml/jax/issues/16226).
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      avals_ft, in_tree_filtered, dbg, device_or_backend_set, has_kwargs)
+      avals_ft.strip_statics(), in_tree_filtered, dbg, device_or_backend_set,
+      has_kwargs)
 
   qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
 

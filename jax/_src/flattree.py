@@ -165,6 +165,24 @@ class FlatTree:
   def enumerate(self):
     idxs = it.count()
     return self.map(lambda x: (next(idxs), x))
+
+  def strip_statics(self) -> FlatTree:
+    # Returns a copy with static payloads replaced by a placeholder. An
+    # operation whose result depends only on the dynamic values and the tree
+    # structure can be cached with the stripped FlatTree as the key, so that
+    # a global cache neither retains arbitrary user objects held as statics
+    # (see https://github.com/jax-ml/jax/issues/16226) nor misses when only
+    # static values differ.
+    if isinstance(self, FTStatic):
+      return _stripped_static
+    elif isinstance(self, FTTuple):
+      return FTTuple(*(elt.strip_statics() for elt in self.elts))
+    elif isinstance(self, FTDict):
+      return FTDict(self.keys, tuple(v.strip_statics() for v in self._vals))
+    elif isinstance(self, FTFiltered):
+      return FTFiltered(self.val.strip_statics())
+    else:
+      return self
   # TODO: add other helpers like map3, zip, unzip3 etc. as needed
 
 class FTTuple(FlatTree):
@@ -252,6 +270,13 @@ class FTStatic(FlatTree):
   def map(self, f): return self
   @property
   def tree(self): return tracing_registry.flatten(0)[1]  # leaf treedef
+
+class _StrippedStatic:
+  # Placeholder for a static payload removed by FlatTree.strip_statics.
+  def __repr__(self):
+    return '<stripped static>'
+
+_stripped_static = FTStatic(_StrippedStatic())
 
 class FTFiltered(FlatTree):
   # Filtered (FlatTree (Either Aux a))

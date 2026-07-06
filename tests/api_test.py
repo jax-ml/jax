@@ -893,6 +893,22 @@ class JitTest(jtu.BufferDonationTestCase):
     del g                   # no more references to x
     assert x() is None      # x is gone
 
+  def test_jit_static_argnums_reference_dropping(self):
+    # https://github.com/jax-ml/jax/issues/16226
+    class A:
+      pass
+
+    def f(x, y):
+      return x
+
+    g = jit(f, static_argnums=1)
+    g(1, A)                 # static arg value lands in jit caches
+    a = weakref.ref(A)
+    del A                   # no more strong ref to the static value here
+    del g, f                # delete the jitted and raw functions
+    gc.collect()
+    assert a() is None      # nothing should keep the static value alive
+
   def test_jit_of_nonweakreferenceable_function(self):
     class CallableWithSlots:
       __slots__ = []
