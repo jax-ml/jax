@@ -3094,5 +3094,6 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
       ):
         run_mpmd.lower(x).compile()
 
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
