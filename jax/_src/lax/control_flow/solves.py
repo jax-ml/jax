@@ -160,8 +160,8 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
   linearize_and_solve = partial(
       core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
   f_at_solution = lambda *params: f(*params, *solution)
-  _, rhs = ad.jvp(f_at_solution, ft.flatten_list(params.f),
-                  ft.flatten_list(params_dot.f))
+  _, f_at_solution_lin = api.linearize(f_at_solution, *params.f)
+  rhs = f_at_solution_lin(*params_dot.f)
   solution_dot = _map(
       operator.neg, linearize_and_solve(*solution, *rhs))
   # append aux, create symbolic zero tangents for the aux values

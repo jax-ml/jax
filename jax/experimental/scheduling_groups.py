@@ -148,31 +148,57 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, **meta):
 ad.primitive_linearizations[xla_metadata_call_p] = _xla_metadata_call_lin
 
 
-pe.partial_eval_jaxpr_custom_rules[xla_metadata_call_p] = \
-    partial(pe.closed_call_partial_eval_custom_rule, 'jaxpr',
-            lambda _, __, ___, ____, _____, ______, x, y: (x, y))
-
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr, in_avals, in_tree):
-  cell = lambda: None
+def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
+  out_tree = None
   def transposed(*in_flat):
-    primals_in, cts_in = tree_unflatten(in_tree, in_flat)
-    out = ad.backward_pass(jaxpr.jaxpr, False, jaxpr.consts, primals_in, cts_in)
-    out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
-    cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
+    nonlocal out_tree
+    primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
+    args = ad.unproject_accums(specs, primals_ctrefs)
+    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+    cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
+    cts_out, out_tree = tree_flatten(cts_out)
     return cts_out
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
+  return core.ClosedJaxpr(trans_jaxpr, consts), out_tree
 
-def _xla_metadata_call_transpose(cts_in, *primals_in, jaxpr, **meta):
-  in_flat, in_tree = tree_flatten((primals_in, cts_in))
-  in_avals = tuple(core.typeof(x) for x in in_flat)
-  trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_avals, in_tree)
+
+def _xla_metadata_call_transpose(cts_in, *args, jaxpr, **meta):
+  primals_ctrefs, specs = ad.project_accums(args)
+  in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
+  in_avals = [core.typeof(x) for x in in_flat]
+  trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_tree, (*in_avals,), specs)
+
   cts_out = xla_metadata_call_p.bind(*in_flat, jaxpr=trans_jaxpr, **meta)
-  return tree_unflatten(out_tree, cts_out)
-ad.primitive_transposes[xla_metadata_call_p] = _xla_metadata_call_transpose
+
+  for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
+    if isinstance(x, ad.ValAccum):
+      x.accum(ct)
+
+
+ad.fancy_transposes[xla_metadata_call_p] = _xla_metadata_call_transpose
+
+
+def _xla_metadata_call_partial_eval_custom_params_updater(
+    unks_in,
+    inst_in,
+    kept_outs_known,
+    kept_outs_staged,
+    num_res_out,
+    num_res_in,
+    params_known,
+    params_staged,
+):
+  return params_known, params_staged
+
+
+pe.partial_eval_jaxpr_custom_rules[xla_metadata_call_p] = partial(
+    pe.closed_call_partial_eval_custom_rule,
+    'jaxpr',
+    _xla_metadata_call_partial_eval_custom_params_updater,
+)
 
 
 def dce_jaxpr_xla_metadata_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
