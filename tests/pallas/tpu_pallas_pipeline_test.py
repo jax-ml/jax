@@ -1408,14 +1408,19 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
 
     out = func()
     out_np = np.array(out)
-    local_nprogs = grid_size // num_cores
+    if config.use_emit_pipeline_primitive.value:
+      # New primitives resolves num_programs to the full grid.
+      expected_nprogs = grid_size
+    else:
+      # Legacy behavior: num_programs reports the partitioned grid size.
+      expected_nprogs = grid_size // num_cores
     for i in range(grid_size):
       pid, nprogs = int(out_np[i, 0]), int(out_np[i, 1])
       asize, aindex = int(out_np[i, 2]), int(out_np[i, 3])
       self.assertEqual(pid, i)
-      self.assertEqual(nprogs, local_nprogs)
+      self.assertEqual(nprogs, expected_nprogs)
       self.assertEqual(asize, num_cores)
-      self.assertEqual(aindex, i // local_nprogs)
+      self.assertEqual(aindex, i // (grid_size // num_cores))
 
 @jax.jit(static_argnames=['bm', 'bk', 'bn'])
 def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):

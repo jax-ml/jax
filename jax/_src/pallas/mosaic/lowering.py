@@ -217,6 +217,7 @@ class LoweringContext:
   dynamic_shape_env: LoweringDynamicShapeEnv | None = None
   needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
+  emit_pipeline_mode: bool = False
 
   replace = dataclasses.replace
 
@@ -647,6 +648,7 @@ _uncacheable_primitives: set[jax_core.Primitive] = {
     pjit.jit_p,
     custom_derivatives.custom_jvp_call_p,
     custom_derivatives.custom_vjp_call_p,
+    primitives.num_programs_p,
 }
 
 # Primitives that need access to the user grid during their lowering.
@@ -4330,7 +4332,14 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
         f"user passed in program id with axis: {axis}, but grid only has"
         f" length: {ctx.lowering_context.grid_rank}"
     )
-  return tpu.iteration_bound(i)
+  # TODO(rdyro): Unify the grid size in pipelined/unpipelined cases to always
+  # rely on grid_sizes.
+  if ctx.lowering_context.emit_pipeline_mode:
+    # We are under emit_pipeline, so the grid size comes from the enclosing
+    # context.
+    return ctx.lowering_context.grid_sizes[i]
+  else:
+    return tpu.iteration_bound(i)
 
 
 @register_lowering_rule(lax.tile_p)
