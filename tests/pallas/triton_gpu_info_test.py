@@ -35,11 +35,11 @@ class GpuInfoTest(jtu.JaxTestCase):
     super().setUp()
     if not plgpu:
       self.skipTest("Skipping test because device is not a GPU.")
-    if not jtu.is_device_cuda():
+    if jtu.is_device_cuda() or jtu.is_device_rocm():
+      self.assertTrue(plgpu.is_gpu_device())
+    else:
       self.assertFalse(plgpu.is_gpu_device())
       self.skipTest("Skipping test because device is not a GPU.")
-    else:
-      self.assertTrue(plgpu.is_gpu_device())
 
   def test_get_gpu_info(self):
     device = jax.devices()[0]
@@ -88,6 +88,21 @@ class GpuInfoTest(jtu.JaxTestCase):
     ("NVIDIA H100 NVL", GpuVersion.H100),
     ("NVIDIA RTX 123", None),
     ("UNKNOWN", None),
+    ("gfx908", GpuVersion.GFX908),
+    ("gfx90a", GpuVersion.GFX90A),
+    ("gfx90a:sramecc+:xnack-", GpuVersion.GFX90A),
+    ("gfx942", GpuVersion.GFX942),
+    ("gfx942:sramecc+:xnack-", GpuVersion.GFX942),
+    ("gfx950", GpuVersion.GFX950),
+    ("gfx950:sramecc+:xnack-", GpuVersion.GFX950),
+    ("gfx1030", GpuVersion.GFX1030),
+    ("gfx1100", GpuVersion.GFX1100),
+    ("gfx1101", GpuVersion.GFX1101),
+    ("gfx1103", GpuVersion.GFX1103),
+    ("gfx1150", GpuVersion.GFX1150),
+    ("gfx1151", GpuVersion.GFX1151),
+    ("gfx1200", GpuVersion.GFX1200),
+    ("gfx1201", GpuVersion.GFX1201),
   ])
   def test_gpu_version_from_device_kind(self, device_kind, expected):
     info = gpu_info.gpu_version_from_device_kind(device_kind)
