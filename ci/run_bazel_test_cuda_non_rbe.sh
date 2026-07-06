@@ -153,6 +153,7 @@ source ci/utilities/setup_portserver.sh
 
 echo "::group::Bazel CUDA single-accelerator tests" >&2
 INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
+echo "INVOCATION_ID_SINGLE=$INVOCATION_ID_SINGLE" >> "$GITHUB_ENV"
 
 bazel "${single_accelerator_bazel_test_args[@]}" \
   --invocation_id="$INVOCATION_ID_SINGLE" \
@@ -178,6 +179,7 @@ mkdir -p "$TEST_ARTIFACTS_DIR"
 
 echo "::group::Bazel CUDA multi-accelerator tests" >&2
 INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
+echo "INVOCATION_ID_MULTI=$INVOCATION_ID_MULTI" >> "$GITHUB_ENV"
 
 bazel "${common_bazel_test_args[@]}" \
   --invocation_id="$INVOCATION_ID_MULTI" \
