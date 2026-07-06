@@ -86,6 +86,7 @@ _DL_DEVICE_TO_PLATFORM = {
     DLDeviceType.kDLCUDA: "cuda",
     DLDeviceType.kDLCUDAHost: "cuda",
     DLDeviceType.kDLROCM: "rocm",
+    DLDeviceType.kDLROCMHost: "rocm",
     DLDeviceType.kDLTPUHost: "tpu",
 }
 
@@ -258,6 +259,7 @@ def from_dlpack(external_array,
     stream = None
   elif dl_device_type in (
       DLDeviceType.kDLCUDAHost,
+      DLDeviceType.kDLROCMHost,
       DLDeviceType.kDLTPUHost,
   ):
     # Some producers (e.g. torch.Tensor with is_pinned()) route pinned tensors
