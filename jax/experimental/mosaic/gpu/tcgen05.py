@@ -207,10 +207,6 @@ def mma(
   if isinstance(a, TMEMRef):
     m, k2 = a.shape
     element_type2 = a.dtype
-    if is_scaled:
-      raise NotImplementedError(
-          "A in TMEM unsupported for block-scaled matmuls"
-      )
     if m != 128:
       raise NotImplementedError(f"Only M=128 is supported for MMA with A in TMEM, but got M={m}")
     # Watch out: this layout must be consistent with D's layout (up to packing).

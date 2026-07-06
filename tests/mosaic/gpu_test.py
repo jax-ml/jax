@@ -2215,9 +2215,17 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       m=(128,),  # TODO(apaszke): 256
       n=(8, 32, 64, 128, 192, 256),
       swizzle=(32, 128),
+      lhs_in_tmem=(False, True),
   )
   def test_mma_block_scaled_basic(
-      self, m, n, in_jax_dtype, scale_jax_dtype, block_size, swizzle
+      self,
+      m,
+      n,
+      in_jax_dtype,
+      scale_jax_dtype,
+      block_size,
+      swizzle,
+      lhs_in_tmem,
   ):
     out_jax_dtype = jnp.float32
     # When swizzle is small, we need to take many steps to make it large enough
@@ -2236,7 +2244,18 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     lhs_tiling = rhs_tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, lhs_scales_gmem, rhs_scales_gmem, out, scratch):
-      lhs_smem, rhs_smem, lhs_scales_smem, rhs_scales_smem, barriers, mma_barrier, acc, lhs_scales, rhs_scales = scratch
+      (
+          lhs_smem,
+          rhs_smem,
+          lhs_scales_smem,
+          rhs_scales_smem,
+          barriers,
+          mma_barrier,
+          acc,
+          lhs_scales,
+          rhs_scales,
+          lhs_tmem,
+      ) = scratch
       operand_kwargs = dict(
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(lhs_tiling),
@@ -2248,11 +2267,13 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       for i in range(4):
         barriers[i].wait()
       with mgpu.single_thread():
+        if lhs_in_tmem:
+          tcgen05.async_copy_smem_to_tmem(lhs_smem, lhs_tmem, swizzle=swizzle)
         tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales)
         tcgen05.async_copy_scales_smem_to_tmem(rhs_scales_smem, rhs_scales)
         tcgen05.mma(
             acc,
-            lhs_smem,
+            lhs_tmem if lhs_in_tmem else lhs_smem,
             mgpu.memref_transpose(rhs_smem, (1, 0, 3, 2)),
             a_swizzle=swizzle,
             b_swizzle=swizzle,
@@ -2272,13 +2293,28 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
-        jax.ShapeDtypeStruct((m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
-        jax.ShapeDtypeStruct(((n + 127) // 128, k // (block_size * 4), 32, 16), scale_jax_dtype),
+        jax.ShapeDtypeStruct(
+            (m // 128, k // (block_size * 4), 32, 16), scale_jax_dtype
+        ),
+        jax.ShapeDtypeStruct(
+            ((n + 127) // 128, k // (block_size * 4), 32, 16), scale_jax_dtype
+        ),
         mgpu.TMABarrier(4),
         mgpu.Barrier(1),
         mgpu.TMEM((m, n), out_jax_dtype),
-        mgpu.TMEM((m, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
-        mgpu.TMEM(((n + 127) // 128 * 128, k // block_size), scale_jax_dtype, layout=tcgen05.scales_layout()),
+        mgpu.TMEM(
+            (m, k // block_size),
+            scale_jax_dtype,
+            layout=tcgen05.scales_layout(),
+        ),
+        mgpu.TMEM(
+            ((n + 127) // 128 * 128, k // block_size),
+            scale_jax_dtype,
+            layout=tcgen05.scales_layout(),
+        ),
+        mgpu.TMEM((m, k), in_jax_dtype, packing=32 // bitwidth(in_mlir_dtype))
+        if lhs_in_tmem
+        else None,
     ]
     a_scales, b_scales = self._sample_scales(m, k, n, block_size, scale_jax_dtype)
     def format_scales(scales):
@@ -2471,8 +2507,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       n=(32, 64, 128, 192, 256),
       scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
       block_size=(16, 32),
+      lhs_in_tmem=(False, True),
   )
-  def test_mma_block_scaled_collective(self, m, n, scale_jax_dtype, block_size):
+  def test_mma_block_scaled_collective(
+      self, m, n, scale_jax_dtype, block_size, lhs_in_tmem
+  ):
     if scale_jax_dtype == jnp.float8_e4m3fn and block_size != 16:
       self.skipTest("e4m3fn scale only supports block size 16.")
     in_jax_dtype = jnp.float4_e2m1fn
@@ -2488,8 +2527,16 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
     def kernel(ctx, lhs, rhs, lhs_scales_gmem, rhs_scales_gmem, out, scratch):
       (
-          lhs_smem, rhs_smem, lhs_scales_smem, rhs_scales_smem,
-          barriers, mma_barrier, acc, lhs_scales, rhs_scales
+          lhs_smem,
+          rhs_smem,
+          lhs_scales_smem,
+          rhs_scales_smem,
+          barriers,
+          mma_barrier,
+          acc,
+          lhs_scales,
+          rhs_scales,
+          lhs_tmem,
       ) = scratch
       ctx.async_copy(
           src_ref=lhs,
@@ -2532,11 +2579,15 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       with when(arith.andi(is_first_block, is_leader_thread)):
         for i in range(4):
           barriers[i].wait()
+        if lhs_in_tmem:
+          tcgen05.async_copy_smem_to_tmem(
+              lhs_smem, lhs_tmem, swizzle=swizzle, collective=True
+          )
         tcgen05.async_copy_scales_smem_to_tmem(lhs_scales_smem, lhs_scales, collective=True)
         tcgen05.async_copy_scales_smem_to_tmem(rhs_scales_smem, rhs_scales, collective=True)
         tcgen05.mma(
             acc,
-            lhs_smem,
+            lhs_tmem if lhs_in_tmem else lhs_smem,
             mgpu.memref_transpose(rhs_smem, (1, 0, 3, 2)),
             a_swizzle=swizzle,
             b_swizzle=swizzle,
@@ -2587,6 +2638,16 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
             scale_jax_dtype,
             layout=tcgen05.scales_layout(),
             collective=True,
+        ),
+        (
+            mgpu.TMEM(
+                (m_block, k),
+                in_jax_dtype,
+                packing=32 // bitwidth(in_mlir_dtype),
+                collective=True,
+            )
+            if lhs_in_tmem
+            else None
         ),
     ]
 
