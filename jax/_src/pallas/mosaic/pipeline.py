@@ -1923,6 +1923,30 @@ def emit_pipeline_with_allocations(
   return pipeline, make_allocations
 
 
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class EmitPipelinePrimitiveArgs:
+  all_index_map_consts: tuple[jax.Array, ...]
+  dynamic_grid_spec: tuple[jax.Array, ...]
+  core_id: jax.Array | None
+  body_consts: tuple[jax.Array, ...]
+  refs_flat: tuple[jax.Array | state.TransformedRef | state.AbstractRef, ...]
+
+  @property
+  def body_offset(self) -> int:
+    """The offset to where the body args (consts and refs) start."""
+    return (len(self.all_index_map_consts) + len(self.dynamic_grid_spec)
+            + self.has_core_id)
+
+  @property
+  def refs_offset(self) -> int:
+    """The offset to where the body refs start (past the consts)."""
+    return self.body_offset + len(self.body_consts)
+
+  @property
+  def has_core_id(self) -> bool:
+    return self.core_id is not None
+
 def emit_pipeline(
     body,
     *,
@@ -2042,26 +2066,32 @@ def emit_pipeline(
     all_index_map_consts = tuple(itertools.chain.from_iterable(
         bm.index_map_jaxpr.consts for bm in grid_mapping.block_mappings))
 
-    args_flat, args_tree = tracing_registry.flatten(args)
+    refs_flat, refs_tree = tracing_registry.flatten(args)
+    core_id_val = (
+        dynamic_offset_tracers[0] if len(dynamic_offset_tracers) == 1 else None
+    )
+    prim_args = EmitPipelinePrimitiveArgs(
+        all_index_map_consts=all_index_map_consts,
+        dynamic_grid_spec=dynamic_bounds,
+        core_id=core_id_val,
+        body_consts=body_jaxpr.consts,
+        refs_flat=tuple(refs_flat),
+    )
+    args_flat, args_tree = tracing_registry.flatten(prim_args)
     return emit_pipeline_p.bind(
-        *all_index_map_consts,
-        *dynamic_bounds,
-        *dynamic_offset_tracers,
-        *body_jaxpr.consts,
         *args_flat,
-        body_consts_len=len(body_jaxpr.consts),
-        body_jaxpr=body_jaxpr.jaxpr,
         grid_mapping=grid_mapping,
+        body_jaxpr=body_jaxpr.jaxpr,
         tiling=tiling,
         core_axis=core_axis,
         core_axis_name=core_axis_name,
         args_tree=args_tree,
+        refs_tree=refs_tree,
         dimension_semantics=dimension_semantics,
         trace_scopes=trace_scopes,
         no_pipelining=no_pipelining,
         _explicit_indices=_explicit_indices,
         _static_grid_offsets=tuple(static_grid_offsets),
-        _num_extra_dynamic=len(dynamic_offset_tracers),
     )
   return wrapped
 
@@ -2074,22 +2104,18 @@ _uncacheable_primitives.add(emit_pipeline_p)
 
 @emit_pipeline_p.def_effectful_abstract_eval
 def _emit_pipeline_effectful_abstract_eval(
-    *avals, body_jaxpr: core.Jaxpr, body_consts_len,
-    grid_mapping, _num_extra_dynamic, args_tree, _explicit_indices, **params):
+    *avals, body_jaxpr: core.Jaxpr, args_tree, grid_mapping, refs_tree,
+    _explicit_indices, **params
+):
   del params
-  index_map_consts_counts = tuple(
-      len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
-  num_index_map_consts = sum(index_map_consts_counts)
-  num_dynamic = grid_mapping.num_dynamic_grid_bounds + _num_extra_dynamic
-  offset = num_index_map_consts + num_dynamic + body_consts_len
-
+  all_args = args_tree.unflatten(avals)
   # Because we can have TransformedRefs as argumetns to the body, but the flat
   # arguments are flattened Refs and transforms, we unflatten the positional
   # indices to be able to identify the index of an n-th Ref from a positional
   # index.
-  indices_flat = list(range(offset, len(avals)))
+  indices_flat = list(range(all_args.refs_offset, len(avals)))
   flat_refs_idx, _ = tracing_registry.flatten(
-      args_tree.unflatten(indices_flat), is_transformed_ref)
+      refs_tree.unflatten(indices_flat), is_transformed_ref)
   # Helper to resolve the underlying AbstractRef index in `avals` for any leaf.
   get_ref_idx = lambda x: x.ref if isinstance(x, state.TransformedRef) else x
 
@@ -2117,7 +2143,7 @@ def _emit_pipeline_effectful_abstract_eval(
       continue
     input_idx = body_input_idx[e.input]
     if input_idx < len(body_jaxpr.constvars):
-      const_offset = num_index_map_consts + num_dynamic
+      const_offset = all_args.body_offset
       out_effects.add(e.replace(const_offset + input_idx))
     else:
       invar_idx = input_idx - len(body_jaxpr.constvars)
@@ -2241,21 +2267,17 @@ def _pipeline_body_lowering_rule(
 
 @register_lowering_rule(emit_pipeline_p, kernel_types=[*tpu_core.CoreType])
 def _emit_pipeline_lowering_rule(
-    ctx, *args, grid_mapping, _num_extra_dynamic, _static_grid_offsets,
-    args_tree, body_jaxpr, body_consts_len, _explicit_indices, **params
+    ctx, *args_flat, grid_mapping, _static_grid_offsets,
+    args_tree, refs_tree, body_jaxpr, _explicit_indices, **params
 ):
   index_map_consts_counts = tuple(
       len(bm.index_map_jaxpr.consts) for bm in grid_mapping.block_mappings)
 
   def wrapped_pipeline_fun(*all_args, grid_mapping=grid_mapping):
-    num_index_map_consts = sum(index_map_consts_counts)
-    num_dynamic = grid_mapping.num_dynamic_grid_bounds + _num_extra_dynamic
-    grid_mapping_consts, dynamic_vals, body_consts, flat_refs = (
-        jax_util.split_list(
-            all_args, [num_index_map_consts, num_dynamic, body_consts_len]))
+    all_args = args_tree.unflatten(all_args)
 
     index_map_consts = jax_util.split_list(
-        grid_mapping_consts, index_map_consts_counts)
+        all_args.all_index_map_consts, index_map_consts_counts)
     new_bms = []
     for i, bm in enumerate(grid_mapping.block_mappings):
       bm = bm.replace(index_map_jaxpr=core.ClosedJaxpr(
@@ -2264,7 +2286,10 @@ def _emit_pipeline_lowering_rule(
     grid_mapping = dataclasses.replace(grid_mapping, block_mappings=new_bms)
 
     flat_refs, _ = tracing_registry.flatten(  # flatten to TransformedRefs
-        args_tree.unflatten(flat_refs), is_transformed_ref)
+        refs_tree.unflatten(all_args.refs_flat), is_transformed_ref)
+    dynamic_vals = all_args.dynamic_grid_spec + (
+        (all_args.core_id,) if all_args.core_id is not None else ()
+    )
     dynamic_vals_iter = iter(dynamic_vals)
     grid = tuple(next(dynamic_vals_iter)
                  if pallas_core.is_dynamic_dim(d) else d
@@ -2282,7 +2307,7 @@ def _emit_pipeline_lowering_rule(
     def new_body(ps, *args):
       # TODO(slebedev): Update ``ps`` to account for ``vmapped_dims``.
       assert not grid_mapping.vmapped_dims
-      indices_consts_args = (ps, body_consts, args)
+      indices_consts_args = (ps, all_args.body_consts, args)
       args_flat, args_tree = tracing_registry.flatten(indices_consts_args)
       return pipeline_body_p.bind(
           *args_flat,
@@ -2316,6 +2341,7 @@ def _emit_pipeline_lowering_rule(
       pipeline_fun(*flat_refs)
     return ()
 
+  all_args = args_tree.unflatten(args_flat)
   dbg = api_util.debug_info(
       "emit_pipeline_lowering", wrapped_pipeline_fun, ctx.avals_in, {}
   )
@@ -2330,12 +2356,7 @@ def _emit_pipeline_lowering_rule(
       f"{consts=} {jaxpr.constvars=}"
   )
   jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-  num_index_map_consts = sum(index_map_consts_counts)
-  num_dynamic = grid_mapping.num_dynamic_grid_bounds + _num_extra_dynamic
-  _, dynamic_vals, _, _ = jax_util.split_list(
-      args, [num_index_map_consts, num_dynamic, body_consts_len]
-  )
-  grid_val_iter = iter(dynamic_vals)
+  grid_val_iter = iter(all_args.dynamic_grid_spec)
   grid = tuple(next(grid_val_iter) if pallas_core.is_dynamic_dim(d)
                else ir_constant(d) for d in grid_mapping.grid)
 
@@ -2365,4 +2386,4 @@ def _emit_pipeline_lowering_rule(
   valid_grid_sizes = tuple(d for i, d in enumerate(lowering_context.grid_sizes)
                          if i not in grid_mapping.vmapped_dims)
   assert len(valid_grid_sizes) == len(lowering_context.grid_names)
-  return jaxpr_subcomp(lowering_context, jaxpr, *args)
+  return jaxpr_subcomp(lowering_context, jaxpr, *args_flat)
