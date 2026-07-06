@@ -1674,6 +1674,25 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     xt = x.transpose((1, 0, 2))
     np.testing.assert_array_equal(f(x), np.stack([xt, xt], axis=0))
 
+  def test_indexing_after_transpose(self):
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct([2, 32, 2, 128], jnp.float32),
+        scratch_types=[
+            plgpu.SMEM([2, 32, 2, 128], jnp.float32),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_ref, o_ref, smem_ref, barrier_ref):
+      smem_transposed = plgpu.transpose_ref(smem_ref, (1, 0, 2, 3))
+      for i in range(2):
+        plgpu.copy_gmem_to_smem(x_ref, smem_transposed.at[:, i], barrier_ref)
+        plgpu.barrier_wait(barrier_ref)
+      plgpu.copy_smem_to_gmem(smem_ref, o_ref)
+
+    x = jnp.arange(32 * 2 * 128, dtype=jnp.float32).reshape(32, 2, 128)
+    np.testing.assert_array_equal(kernel(x), np.stack([x, x], axis=0))
+
   def test_copy_gmem_to_smem_in_run_scoped(self):
 
     @self.kernel(out_type=jax.ShapeDtypeStruct([256], jnp.float32))
