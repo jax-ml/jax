@@ -273,8 +273,16 @@ class FTStatic(FlatTree):
 
 class _StrippedStatic:
   # Placeholder for a static payload removed by FlatTree.strip_statics.
+  # Value-based __eq__/__hash__ keep cache keys stable even if a stripped
+  # FlatTree is ever copied or serialized, producing new instances.
   def __repr__(self):
     return '<stripped static>'
+
+  def __eq__(self, other):
+    return isinstance(other, _StrippedStatic)
+
+  def __hash__(self):
+    return hash(_StrippedStatic)
 
 _stripped_static = FTStatic(_StrippedStatic())
 
