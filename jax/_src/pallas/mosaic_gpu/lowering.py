@@ -34,7 +34,7 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import debugging
 from jax._src import dtypes
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import literals as jax_literals
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -882,16 +882,17 @@ def lower_pipelined_jaxpr_to_module(
     )(*refs)
 
   with grid_mapping.trace_env():
-    new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info.with_unknown_names()),
-        [
-            gpu_core.GMEM(
-                bm.array_aval.shape, bm.array_aval.dtype
-            ).get_ref_aval()
-            for bm in block_mappings
-        ],
+    in_avals = [
+        gpu_core.GMEM(bm.array_aval.shape, bm.array_aval.dtype).get_ref_aval()
+        for bm in block_mappings
+    ]
+    in_avals_ft = ft.flatten_args(*in_avals)
+    new_jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        pipeline_fn,
+        in_avals_ft,
+        debug_info=jaxpr.debug_info.with_unknown_names(),
     )
-    assert not new_consts
+    assert not new_jaxpr.consts
 
   axis_names = (
       _AxisNames(gpu_mesh.grid_names, gpu_mesh.cluster_names, gpu_mesh.thread_name)
@@ -907,9 +908,9 @@ def lower_pipelined_jaxpr_to_module(
         tuple(gpu_mesh.cluster) if gpu_mesh is not None else (),
         [bm.array_aval for bm in in_block_mappings],
         [bm.array_aval for bm in out_block_mappings],
-        new_jaxpr,
+        new_jaxpr.jaxpr,
         params,
-        new_consts,
+        new_jaxpr.consts,
         outer_traceback=outer_traceback,
     )
 
@@ -1400,31 +1401,38 @@ def _lower_fun(
     )
     flat_args, in_tree = tree_util.tree_flatten(args, is_leaf=is_leaf)
     if in_avals is None:
-      flat_avals = ctx.avals_in
+      unflat_avals = tree_util.tree_unflatten(in_tree, ctx.avals_in)
     else:
-      flat_avals, aval_tree = tree_util.tree_flatten(in_avals)
+      _, aval_tree = tree_util.tree_flatten(in_avals)
       if in_tree != aval_tree:
         raise ValueError(
             "args and in_avals pytrees mismatch:\nargs tree:"
             f" {in_tree}\navals tree: {aval_tree}\nargs: {args}\navals:"
             f" {in_avals}"
         )
-    wrapped_lu_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(
-            fun,
-            params,
-            debug_info=api_util.debug_info("mosaic_gpu lower_fun", fun, args, {}),
-        ),
-        in_tree,
+      unflat_avals = in_avals
+
+    in_avals_ft = ft.flatten_static_argnums_argnames(
+        unflat_avals,
+        params,
+        static_argnums=(),
+        static_argnames=tuple(params.keys()),
     )
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals, lower=True)
-    if consts:
+    debug_info = api_util.debug_info(
+        "mosaic_gpu lower_fun", fun, args, {},
+        static_argnames=tuple(params.keys()),
+    )
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        fun, in_avals_ft, debug_info=debug_info, requires_low=True
+    )
+    if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr)
     out = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, consts
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, closed_jaxpr.consts
     )
-    return tree_util.tree_unflatten(out_tree_thunk(), out)
+    out_tree = out_avals_ft.tree
+    return tree_util.tree_unflatten(out_tree, out)
 
   return f_lowered
 
@@ -1721,22 +1729,19 @@ def _commute_transform(
 
 def _lower_fn_with_avals(f, avals_in):
   def inner(ctx, *args):
-    f_ = lu.wrap_init(
-        f,
-        debug_info=api_util.debug_info(
-            "Pallas Mosaic GPU lower_fn_with_avals", f, ("",) * len(args), {}
-        ).with_unknown_names(),
+    flat_args = tree_util.tree_leaves(args)
+    in_avals_ft = ft.flatten_args(*avals_in)
+    debug_info = api_util.debug_info(
+        "Pallas Mosaic GPU lower_fn_with_avals", f, ("",) * len(args), {}
+    ).with_unknown_names()
+    jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        f, in_avals_ft, debug_info=debug_info, requires_low=True
     )
-    flat_args, in_tree_ = tree_util.tree_flatten(args)
-    flat_avals, in_tree = tree_util.tree_flatten(avals_in)
-    fun, out_tree_thunk = api_util.flatten_fun_nokwargs(f_, in_tree)
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, flat_avals, lower=True)
-    out_tree = out_tree_thunk()
     out_flat = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, consts
+        ctx.module_ctx, ctx.launch_ctx, jaxpr.jaxpr, flat_args, jaxpr.consts
     )
-
-    return out_tree.unflatten(out_flat), out_tree.unflatten(out_avals)
+    out_tree = out_avals_ft.tree
+    return out_tree.unflatten(out_flat), out_avals_ft.unflatten()
   return inner
 
 
