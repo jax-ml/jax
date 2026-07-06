@@ -3528,14 +3528,20 @@ def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
   )(ctx, x, y)
 
 
-@register_lowering_rule(lax.rsqrt_p)
+@register_lowering_rule(
+    lax.rsqrt_p,
+    kernel_types=(tpu_core.CoreType.TC, tpu_core.CoreType.SC_VECTOR_SUBCORE),
+)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.rsqrt(x)
 
 
-@register_lowering_rule(lax.sqrt_p)
+@register_lowering_rule(
+    lax.sqrt_p,
+    kernel_types=(tpu_core.CoreType.TC, tpu_core.CoreType.SC_VECTOR_SUBCORE),
+)
 def _sqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")

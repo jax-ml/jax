@@ -1845,6 +1845,16 @@ class VectorSubcoreTest(PallasSCTest):
     expected = np.where(has_valid_value_so_far, expected, x)
     np.testing.assert_array_equal(kernel(x), expected)
 
+  @parameterized.parameters(lax.sqrt, lax.rsqrt)
+  def test_sqrt_rsqrt(self, op):
+    x = jnp.arange(1, 1 + self.num_lanes, dtype=jnp.float32)   # positive domain
+
+    @self.vector_subcore_kernel(out_shape=x)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = op(x_ref[...])
+
+    np.testing.assert_allclose(kernel(x), op(x))
+
   def test_parallel_loop_with_carry(self):
     self.skip_if_tc_tiling("The test assumes SC tiling")
 
@@ -3083,7 +3093,6 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
           "Only interpret mode is supported on CPU",
       ):
         run_mpmd.lower(x).compile()
-
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
