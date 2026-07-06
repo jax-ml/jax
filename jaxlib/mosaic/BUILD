@@ -45,14 +45,12 @@ cc_library(
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
-        "dialect/tpu/vreg_util.cc",
     ],
     hdrs = [
         "dialect/tpu/array_util.h",
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
-        "dialect/tpu/vreg_util.h",
     ],
     # compatible with libtpu
     deps = [
@@ -294,20 +292,6 @@ cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@xla//xla:shape_util",
-    ],
-)
-
-cc_test(
-    name = "vreg_util_test",
-    srcs = ["dialect/tpu/vreg_util_test.cc"],
-    deps = [
-        ":tpu_dialect",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:VectorDialect",
     ],
 )
 
