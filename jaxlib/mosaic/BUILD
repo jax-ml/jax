@@ -40,14 +40,12 @@ py_library(
 cc_library(
     name = "tpu_dialect",
     srcs = [
-        "dialect/tpu/array_util.cc",
         "dialect/tpu/layout.cc",
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
         "dialect/tpu/util.cc",
     ],
     hdrs = [
-        "dialect/tpu/array_util.h",
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
@@ -292,17 +290,6 @@ cc_test(
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Support",
         "@xla//xla:shape_util",
-    ],
-)
-
-cc_test(
-    name = "array_util_test",
-    srcs = ["dialect/tpu/array_util_test.cc"],
-    deps = [
-        ":tpu_dialect",
-        "@com_google_googletest//:gtest_main",
-        "@llvm-project//mlir:Support",
-        "@xla//xla:array",
     ],
 )
 
