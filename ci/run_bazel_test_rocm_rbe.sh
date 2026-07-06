@@ -45,52 +45,13 @@ echo "Running RBE GPU tests..."
 
 TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
 
-TESTS_TO_IGNORE=(
-    -//tests/pallas:pallas_test_gpu
-    -//tests/pallas:ops_test_gpu
-    -//tests/pallas:ops_test_mgpu_gpu
-    -//tests/pallas:pallas_shape_poly_test_gpu
-    -//tests/pallas:pallas_vmap_test_gpu
-    -//tests/pallas:triton_pallas_test_gpu
-    -//tests:export_harnesses_multi_platform_test_gpu
-    -//tests:jet_test_gpu
-    -//tests:lax_autodiff_test_gpu
-    -//tests:lax_numpy_setops_test_gpu
-    -//tests:lax_numpy_test_gpu
-    -//tests:lax_test_gpu
-    -//tests:linalg_test_gpu
-    -//tests:logging_test_gpu
-    -//tests:random_lax_test_gpu
-    -//tests:scipy_signal_test_gpu
-    -//tests:stax_test_gpu
-    -//tests:ode_test_gpu
-    -//tests:lobpcg_test_gpu
-    -//tests:scipy_stats_test_gpu
-    -//tests:nn_test_gpu
-    -//tests:lax_scipy_sparse_test_gpu
-    -//tests:lax_scipy_spectral_dac_test_gpu
-    -//tests:lax_scipy_special_functions_test_gpu
-    -//tests:cholesky_update_test_gpu
-    -//tests:api_test_gpu
-    -//tests:ann_test_gpu
-    -//tests:experimental_rnn_test_gpu
-    -//tests:lax_vmap_test_gpu
-    -//tests:qdwh_test_gpu
-    -//tests:scaled_dot_test_gpu
-    -//tests:scipy_spatial_test_gpu
-    -//tests:shape_poly_test_gpu
-    -//tests:sparsify_test_gpu
-    -//tests:lax_numpy_reducers_test_gpu
-    -//tests:scipy_optimize_test_gpu
-    #TODO(mgaonka-amd) re-enable these tests once this issue is fixed.
-    -//tests:lax_numpy_einsum_test_gpu
-    -//tests:lax_scipy_test_gpu
-    -//tests:sparse_test_gpu
-    -//tests:sparse_bcoo_bcsr_test_gpu
-    -//tests:svd_test_gpu
-    -//tests:eigh_test_gpu
-    -//tests:image_test_gpu
-)
+# JAXCI_GATE_TARGETS_FILE selects which Bazel target pattern file to use.
+# Defaults to the full CI suite; set to build/rocm/ci_blocking_test_targets.txt
+# for the PR blocking gate.
+TARGETS_FILE="${JAXCI_GATE_TARGETS_FILE:-build/rocm/ci_test_targets.txt}"
+# Effective file passed to --target_pattern_file; may be replaced by a temp
+# file below when additional dynamic exclusions are needed.
+EFFECTIVE_TARGETS_FILE="${TARGETS_FILE}"
 
 for arg in "$@"; do
     if [[ "$arg" == "--config=multi_gpu" ]]; then
@@ -100,10 +61,11 @@ for arg in "$@"; do
         TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
     fi
     if [[ "$arg" == "--//jax:build_jaxlib=false" ]]; then
-        # tests to ignore for pre-built plugin wheels
-        TESTS_TO_IGNORE+=(
-            -//tests:buffer_callback_test_gpu
-        )
+        # buffer_callback_test_gpu uses py_import deps that are incompatible
+        # with pre-built plugin wheels; exclude it in that mode.
+        EFFECTIVE_TARGETS_FILE=$(mktemp)
+        cat "${TARGETS_FILE}" > "${EFFECTIVE_TARGETS_FILE}"
+        echo "-//tests:buffer_callback_test_gpu" >> "${EFFECTIVE_TARGETS_FILE}"
     fi
 done
 
@@ -129,13 +91,7 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --color=yes \
     $@ \
     --spawn_strategy=local \
-    -- \
-    //tests:gpu_tests \
-    //tests:backend_independent_tests \
-    //tests/pallas:gpu_tests \
-    //tests/pallas:backend_independent_tests \
-    //jaxlib/tools:check_gpu_wheel_sources_test \
-    "${TESTS_TO_IGNORE[@]}" || bazel_retval=$?
+    --target_pattern_file="${EFFECTIVE_TARGETS_FILE}" || bazel_retval=$?
 echo "::endgroup::" >&2
 
 echo "::group::Cleanup" >&2

@@ -50,6 +50,14 @@ build:multi_gpu --repo_env=TF_ROCM_RBE_POOL="linux_x64_multigpu"
 build:multi_gpu --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="linux_x64_multigpu"
 build:multi_gpu --repo_env=TF_ROCM_RBE_MULTI_GPU_POOL="linux_x64_multigpu"
 
+# Config for the blocking PR gate: uses the multi-GPU RBE pool so both
+# single- and multi-GPU tests in ci_blocking_test_targets.txt can run.
+# Does NOT match single_gpu/multi_gpu in the script, so no tag filter is
+# appended — the explicit target file controls selection entirely.
+build:rocm_gate --repo_env=TF_ROCM_RBE_POOL="linux_x64_multigpu"
+build:rocm_gate --repo_env=TF_ROCM_RBE_SINGLE_GPU_POOL="linux_x64_gpu"
+build:rocm_gate --repo_env=TF_ROCM_RBE_MULTI_GPU_POOL="linux_x64_multigpu"
+
 build:rocm_rbe --tls_client_certificate="/data/ci-cert.crt"
 build:rocm_rbe --tls_client_key="/data/ci-cert.key"
 
@@ -89,6 +97,11 @@ test:rocm_rbe_dynamic --dynamic_remote_strategy=remote
 test:rocm_rbe_dynamic --experimental_local_execution_delay=1000
 # Maximum number of test jobs to run locally in parallel (50% of available CPUs)
 test:rocm_rbe_dynamic --local_resources=cpu=HOST_CPUS*0.5
+
+# Target list for the blocking PR gate — reads build/rocm/ci_blocking_test_targets.txt.
+# Cannot be combined with explicit target patterns on the command line.
+# Used locally via: bazel ... test --config=rocm_ci_local_single_gpu --config=rocm_blocking_targets
+test:rocm_blocking_targets --target_pattern_file=build/rocm/ci_blocking_test_targets.txt
 
 # Used for rules_python bootstrap 1.8.0+
 build --@rules_python//python/config_settings:bootstrap_impl=script --repo_env=RULES_PYTHON_ENABLE_PIPSTAR=0
