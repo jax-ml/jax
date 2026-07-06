@@ -22,7 +22,7 @@ from typing import Any, Protocol
 from jax._src import api_util
 from jax._src import core
 from jax._src import custom_api_util
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import util
@@ -114,24 +114,24 @@ class custom_fusion:
 
     # flatten and get jaxpr
     args_flat, in_tree = tree_util.tree_flatten(args)
-    in_avals = [core.typeof(x) for x in args_flat]
-    flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(self.fun, debug_info=debug_fun.with_unknown_names()),
-        in_tree)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    args_avals = tree_util.tree_map(core.typeof, args)
+    in_avals_ft = ft.flatten((args_avals, {}))
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        self.fun, in_avals_ft, debug_fun.with_unknown_names()
+    )
+    jaxpr = closed_jaxpr.jaxpr
+    consts = closed_jaxpr.consts
+    out_tree_val = out_avals_ft.tree
 
     # if a Pallas implementation was provided, get its jaxpr
     if self.pallas_impl is not None:
       debug_pallas_impl = api_util.debug_info(
           "custom_fusion pallas_impl", self.pallas_impl, args, kwargs)
-
-      flat_pallas_impl, pallas_out_tree = api_util.flatten_fun_nokwargs(
-          lu.wrap_init(self.pallas_impl, debug_info=debug_pallas_impl),
-          in_tree)
-      # TODO(jburnim): Error if out_tree() and kernel_out_tree() are different?
-      del pallas_out_tree
-      pallas_jaxpr, _, pallas_consts = (
-          pe.trace_to_jaxpr_dynamic(flat_pallas_impl, in_avals))
+      pallas_closed_jaxpr, _ = pe.trace_to_jaxpr(
+          self.pallas_impl, in_avals_ft, debug_pallas_impl
+      )
+      pallas_jaxpr = pallas_closed_jaxpr.jaxpr
+      pallas_consts = pallas_closed_jaxpr.consts
     else:
       pallas_jaxpr = None
       pallas_consts = []
@@ -149,10 +149,10 @@ class custom_fusion:
         pallas_jaxpr=pallas_jaxpr,
         pallas_num_consts=len(pallas_consts),
         in_tree=in_tree,
-        out_tree=out_tree(),
-        kernel_out_tree=out_tree())
+        out_tree=out_tree_val,
+        kernel_out_tree=out_tree_val)
 
-    return tree_util.tree_unflatten(out_tree(), out_flat)
+    return tree_util.tree_unflatten(out_tree_val, out_flat)
 
 
 @custom_fusion_p.def_impl

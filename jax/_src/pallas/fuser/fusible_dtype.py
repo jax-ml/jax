@@ -26,6 +26,7 @@ from jax._src import api_util
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import dtypes
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import state
@@ -138,18 +139,17 @@ def physicalize(f):
   def wrapper(*args, **kwargs):
     if kwargs:
       raise NotImplementedError()
-    flattened_args, treedef = jax.tree.flatten(args)
     debug_info = api_util.debug_info("physicalize", f, args, kwargs)
-    wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(f, debug_info=debug_info), treedef
+    args_ft = ft.flatten((args, kwargs))
+    in_avals_ft = args_ft.map(core.typeof)
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        f, in_avals_ft, debug_info
     )
-    avals = [core.typeof(a) for a in flattened_args]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-    new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
+    new_jaxpr = physicalize_closed_jaxpr(closed_jaxpr)
     out_flat = core.eval_jaxpr(
-        new_jaxpr.jaxpr, new_jaxpr.consts, *flattened_args
+        new_jaxpr.jaxpr, new_jaxpr.consts, *args_ft.vals
     )
-    return tree_util.tree_unflatten(out_tree_thunk(), out_flat)
+    return tree_util.tree_unflatten(out_avals_ft.tree, out_flat)
 
   return wrapper
 
@@ -159,14 +159,13 @@ def physicalize_closed_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
   fun = functools.partial(physicalize_interp, jaxpr.jaxpr, jaxpr.consts)
   in_avals = [_physical_aval(aval) for aval in jaxpr.in_avals]
-  flat_avals, treedef = tree_util.tree_flatten(in_avals)
+  in_avals_ft = ft.flatten_args(*in_avals)
   debug_info = api_util.debug_info("physicalize_closed_jaxpr", fun, (), {})
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info.with_unknown_names()), treedef
+  new_jaxpr, _ = pe.trace_to_jaxpr(
+      fun, in_avals_ft, debug_info.with_unknown_names()
   )
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
-  assert len(new_jaxpr.constvars) == len(consts), "Mismatched consts"
-  return core.ClosedJaxpr(new_jaxpr, consts)
+  assert len(new_jaxpr.jaxpr.constvars) == len(new_jaxpr.consts), "Mismatched consts"
+  return new_jaxpr
 
 
 def _physical_aval(aval):
@@ -190,16 +189,16 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
 
   in_avals = [_physical_aval(v.aval) for v in jaxpr.invars]
   const_avals = [_physical_aval(v.aval) for v in jaxpr.constvars]
-  flat_avals, treedef = jax.tree.flatten((const_avals, in_avals))
+  in_avals_ft = ft.flatten_args(const_avals, in_avals)
   debug_info = api_util.debug_info(
       "physicalize_jaxpr", _flat_jaxpr_eval, (const_avals, in_avals), {})
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(_flat_jaxpr_eval, debug_info=debug_info), treedef
+  # TODO: Use trace_to_jaxpr_nocache instead.
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      _flat_jaxpr_eval, in_avals_ft, debug_info
   )
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
-  assert not consts
+  assert not closed_jaxpr.consts
   new_jaxpr = pe.convert_invars_to_constvars(
-      new_jaxpr, len(tree_util.tree_leaves(const_avals))
+      closed_jaxpr.jaxpr, len(tree_util.tree_leaves(const_avals))
   )
   return new_jaxpr
 

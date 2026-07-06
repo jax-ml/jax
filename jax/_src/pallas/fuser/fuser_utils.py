@@ -20,7 +20,7 @@ import itertools
 from jax._src import api_util
 from jax._src import core
 from jax._src import effects as effects_lib
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
@@ -28,16 +28,16 @@ from jax._src.state import types as state_types
 
 import numpy as np
 
+
 def make_jaxpr(f, *args, **kwargs):
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  flat_avals = [core.shaped_abstractify(x) for x in flat_args]
+  args_avals = tree_util.tree_map(core.shaped_abstractify, args)
+  kwargs_avals = tree_util.tree_map(core.shaped_abstractify, kwargs)
+  in_avals_ft = ft.flatten((args_avals, kwargs_avals))
   debug_info = api_util.debug_info('make_jaxpr', f, args, kwargs)
-  flat_fun, out_tree_thunk = api_util.flatten_fun(
-      lu.wrap_init(f, debug_info=debug_info), in_tree
+  closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr_nocache(
+      f, in_avals_ft, debug_info
   )
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
-  out_tree = out_tree_thunk()
-  return jaxpr, consts, in_tree, out_tree
+  return closed_jaxpr.jaxpr, closed_jaxpr.consts, in_avals_ft.tree, out_avals_ft.tree
 
 
 # symbolic jaxpr comparison (for index map comparisons)
