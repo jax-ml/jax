@@ -6911,7 +6911,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         is_leader = single_thread_predicate()
         tx = arith.constant(i32, 16)
         barrier = utils.DialectBarrierRef.from_barrier_memref(block.arguments[0])
-        barrier.barrier_ref.complete_tx(tx, predicate=is_leader)
+        barrier.barrier.complete_tx(tx, predicate=is_leader)
         mgpu_dialect.return_([])
 
       mgpu_dialect.wait(barrier=mbar_ref, parity=arith.constant(i1, 0))

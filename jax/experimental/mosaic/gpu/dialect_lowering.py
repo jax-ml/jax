@@ -628,7 +628,7 @@ def _async_store_smem_op_lowering_rule(
   assert isinstance(tiling_transform, lc.TileTransform)
 
   dialect_barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
-  barrier_ref = dialect_barrier.barrier_ref
+  barrier_ref = dialect_barrier.barrier
 
   cluster_dim = gpu.Dimension(op.cluster_dim.value)  # pyrefly: ignore[missing-attribute]
   cluster_idx = arith.index_cast(index, op.cluster_idx)
@@ -1211,7 +1211,7 @@ def _mgpu_async_load_op_lowering_rule(
       src_ref=load_op.source,
       dst_ref=unwrapped_dst,
       gmem_slice=gmem_slice,
-      barrier=barrier.barrier_ref,
+      barrier=barrier.barrier,
       collective=collective,
       arrive=False,
       swizzle=swizzle,
@@ -1735,7 +1735,7 @@ def _mgpu_arrive_op_lowering_rule(
     predicate = None
     arrival_count = 1
 
-  barrier.barrier_ref.arrive(
+  barrier.barrier.arrive(
       arrival_count,
       orders_tensor_core=orders_tc,
       predicate=predicate,
@@ -1774,8 +1774,8 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
   # barrier still expects a full 128 arrivals so we arrive 4 times on each CUDA
   # thread instead.
   if ctx.thread_semantics == utils.ThreadSubset.WARP:
-    barrier.barrier_ref.arrive(arrival_count=3, can_complete=False)
-  barrier.barrier_ref.arrive_expect_tx(tx_bytes)
+    barrier.barrier.arrive(arrival_count=3, can_complete=False)
+  barrier.barrier.arrive_expect_tx(tx_bytes)
 
   return []
 
@@ -2558,7 +2558,7 @@ def _tcgen05_commit_arrive_op_lowering_rule(
   barrier = utils.DialectBarrierRef.from_barrier_memref(op.barrier)
   with utils.when(ctx.single_lane_predicate):
     tcgen05.commit_arrive(
-        barrier.barrier_ref, op.collective.value, ctx.launch_context
+        barrier.barrier, op.collective.value, ctx.launch_context
     )
   return []
 
@@ -2884,7 +2884,7 @@ def _try_cluster_cancel_op_lowering_rule(
   predicate = ctx.single_lane_predicate
   if op.predicate is not None:
     predicate = arith.andi(predicate, op.predicate)
-  utils.try_cluster_cancel(op.cancellation_result, barrier.barrier_ref, predicate)
+  utils.try_cluster_cancel(op.cancellation_result, barrier.barrier, predicate)
   return []
 
 
