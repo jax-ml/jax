@@ -2516,6 +2516,9 @@ def _broadcast_in_dim_lowering_rule(
     for candidate in candidates:
       if len(candidate.base_tile_shape) != len(shape):
         continue
+      # check if base_tile_shape is compatible with shape
+      if any(s % t != 0 for s, t in zip(shape, candidate.base_tile_shape)):
+        continue
       if candidate.reduce(new_dims) == layout:
         if new_layout is None:
           new_layout = candidate
