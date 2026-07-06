@@ -371,10 +371,12 @@ def mma(
       raise NotImplementedError(
           f"N must be a multiple of {n_div} for sparse MMA, but got N={n}"
       )
-  if is_scaled and n % 32 != 0:
-    raise NotImplementedError(
-        "N must be a multiple of 32 for block-scaled MMA, but got N={n}"
-    )
+  if is_scaled:
+    n_div = 16 if collective else 8
+    if n % n_div != 0:
+      raise NotImplementedError(
+          f"N must be a multiple of {n_div} for block-scaled MMA, but got N={n}"
+      )
   if n > 256 and n.bit_count() != 1:
     raise NotImplementedError(f"The only supported N > 256, is 512, but got N={n}")
   # TODO: We could relax those constraints if we have multiple n_lane_groups,
@@ -401,10 +403,6 @@ def mma(
   # Check that the shapes and element types are correct for block scaling.
   scale_element_type = None
   if is_scaled:
-    if n % 32:
-      raise ValueError(
-          f"MMA with block scaling requires N to be divisible by 32, got: {n}"
-      )
     assert a_scale is not None and b_scale is not None
     scale_element_type = a_scale.dtype
     if b_scale.dtype != scale_element_type:
@@ -589,7 +587,7 @@ def mma(
         raise NotImplementedError("B scale address calculation for multiple N tiles")
       assert scale_block is not None  # For type checkers.
       assert k_group_elems % (scale_block * 4) == 0
-      assert m_group_elems % 32 == 0 and n_group_elems % 32 == 0
+      assert m_group_elems % 32 == 0 and n_group_elems % (8 * num_cta) == 0
       k_scales_per_group = k_group_elems // (scale_block * 4)
       a_scale_addr = arith.addi(
           a_scale_addr_base,
@@ -775,7 +773,7 @@ def _do_mma(
           scale_id, scale_id, a_transpose, b_transpose
       )
       assert (m == 64 and collective) or m == 128
-      assert (n * num_cta) % 32 == 0
+      assert n % (8 * num_cta) == 0
       assert a_scale_addr is not None
       assert b_scale_addr is not None
       assert a_scale_m_stride is not None

@@ -2213,7 +2213,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
       block_size=(16, 32),
       m=(128,),  # TODO(apaszke): 256
-      n=(32, 64, 128, 192, 256),
+      n=(8, 32, 64, 128, 192, 256),
       swizzle=(32, 128),
   )
   def test_mma_block_scaled_basic(
@@ -2283,7 +2283,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     a_scales, b_scales = self._sample_scales(m, k, n, block_size, scale_jax_dtype)
     def format_scales(scales):
       mn, k = scales.shape
-      assert mn % 32 == 0 and k % 4 == 0, scales.shape
+      assert mn % 8 == 0 and k % 4 == 0, scales.shape
       pad_mn = (mn + 127) // 128 * 128
       scales = jnp.pad(scales, ((0, pad_mn - mn), (0, 0)))
       return (
@@ -2468,7 +2468,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
 
   @parameterized.product(
       m=(256,),
-      n=(64, 128, 192, 256),
+      n=(32, 64, 128, 192, 256),
       scale_jax_dtype=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
       block_size=(16, 32),
   )
