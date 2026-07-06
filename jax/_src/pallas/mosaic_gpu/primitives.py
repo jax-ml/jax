@@ -960,28 +960,24 @@ def copy_gmem_to_smem(
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
-  If collective_axes is specified, this performs a multicast copy where
-  all CUDA blocks that share the same index along the collective axis
-  receive a copy of the same block of data loaded from `dst` to `src`.
+  When ``collective_axes`` is specified, the copy involves multiple blocks
+  in the cluster. The value of ``leader_tracked`` determines the behavior:
 
-  If both ``collective_axes`` and ``leader_tracked`` are specified as
-  ``CopyPartition.PARTITIONED(axis)``, this will perform a partitioned
-  collective copy where each block in the cluster will receive a tile of
-  ``transfer_size // cluster_size`` data from the ``src`` Ref.
-  For example, if ``src`` has a shape of (256, 256) and a partitioned
-  copy is performed along axis 0 with cluster size 2, then the first block
-  will receive ``src[0:128, :]`` and the second will receive
-  ``src[128:256, :]``.
+  * ``None`` (**multicast**): All blocks sharing the same index along the
+    collective axes receive the same data from ``src``.
+  * ``CopyPartition.PARTITIONED(axis)``: Each block in the collective receives
+    a ``transfer_size // cluster_size`` tile of ``src``. E.g. for ``src`` of
+    shape ``(256, 256)`` with cluster size 2 along axis 0: block 0 gets
+    ``src[0:128, :]``, block 1 gets ``src[128:256, :]``.
+  * ``CopyPartition.REPLICATED``: All blocks in the collective load the same
+    data, but only the first block tracks progress via barrier arrivals.
 
-  If both ``collective_axes`` and ``leader_tracked`` are specified as
-  ``CopyPartition.REPLICATED``, this will perform a replicated copy where
-  all blocks load the same data but only the first block in the collective
-  tracks progress via barrier arrivals.
+  .. note::
 
-
-  NOTE: Only the first block in the cluster will arrive on the barrier,
-  and an additional cluster barrier is necessary to ensure that all blocks in
-  the cluster have finished the copy.
+    For leader-tracked copies, only the first block in the collective arrives
+    on the barrier. If other blocks need to consume the copied data, an
+    additional cluster barrier is necessary to ensure all blocks have
+    finished the copy.
 
   Args:
     src: The source Ref. Must be in GMEM.
