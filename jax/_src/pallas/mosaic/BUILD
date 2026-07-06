@@ -204,6 +204,7 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:dtypes",
         "//jax/_src:effects",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
         "//jax/_src/lib",
