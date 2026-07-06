@@ -19,6 +19,7 @@ from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
     NamedSharding as NamedSharding,
     SingleDeviceSharding as SingleDeviceSharding,
+    UNSPECIFIED as UNSPECIFIED,
     set_mesh as set_mesh,
     get_mesh as get_mesh,
     make_single_device_sharding as make_single_device_sharding,
