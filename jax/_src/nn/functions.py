@@ -1299,6 +1299,12 @@ def scaled_matmul(
       - We currently do not support user-defined `precision` for customizing the
         compute data type. It is fixed to `jnp.float32`.
       - Block size is inferred as `K // K_a` for `a` and `K // K_b` for `b`.
+      - **Platform support:** ``scaled_matmul`` is currently implemented only on
+        GPU (NVIDIA CUDA, natively fused on Blackwell via cuDNN; AMD ROCm). It has
+        no TPU or CPU lowering and raises ``NotImplementedError`` on those
+        platforms. Portable callers should branch on
+        ``jax.devices()[0].platform`` and provide a fallback (e.g. dequantize +
+        ``jax.lax.dot_general`` on the quantized operands).
       - To use cuDNN with Nvidia Blackwell GPUs, inputs must match::
 
           # mxfp8
