@@ -700,10 +700,7 @@ def is_vector(v: ir.Value) -> bool:
   return isinstance(v.type, ir.VectorType)
 
 
-def _is_smem_ref(v: ir.Value) -> bool:
-  return isinstance(v.type, ir.MemRefType) and (
-      utils.is_smem_ref(v) or utils.is_cluster_smem_ref(v)
-  )
+_is_smem_ref = inference_utils.is_transformable_smem_memref
 
 
 def _is_tmem_ref(v: ir.Value) -> bool:
