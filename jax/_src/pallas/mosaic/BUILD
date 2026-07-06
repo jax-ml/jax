@@ -224,6 +224,7 @@ pytype_library(
         ":tpu_info",
         "//jax",
         "//jax/_src:api_util",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:util",
         "//jax/_src/pallas",
