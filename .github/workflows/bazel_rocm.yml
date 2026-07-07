@@ -87,6 +87,14 @@ on:
         description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
         default: 'latest'
         type: string
+      gate-targets-file:
+        description: "Path to a file listing Bazel targets to run (one per line). If empty, runs the full default test suite."
+        type: string
+        default: ""
+      gpu-config:
+        description: "Bazel GPU config to use (e.g. single_gpu, rocm_gate)"
+        type: string
+        default: "single_gpu"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
@@ -191,9 +199,11 @@ jobs:
           PYTHON: ${{ inputs.python }}
           ENABLE_X64: ${{ inputs.enable-x64 }}
           RBE_IMAGE: ${{ steps.rbe-image.outputs.rbe_image }}
+          JAXCI_GATE_TARGETS_FILE: ${{ inputs.gate-targets-file }}
+          GPU_CONFIG: ${{ inputs.gpu-config }}
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
-            --config=single_gpu \
+            --config="${GPU_CONFIG}" \
             --local_test_jobs=4 \
             --//jax:build_jaxlib="${BUILD_JAXLIB}" \
             --//jax:build_jax="${BUILD_JAX}" \
