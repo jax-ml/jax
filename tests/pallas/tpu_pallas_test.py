@@ -5418,8 +5418,8 @@ class PallasHloNamesTest(ptu.PallasTPUTest):
       return self.pallas_call(kernel, out_shape=jax.typeof(x))(x + x, y + y)
 
     hlo = f.lower(x, y).compile().as_text()
-    self.assertRegex(hlo, r'%x_ref[.\d]* = .* add')
-    self.assertRegex(hlo, r'%y_ref[.\d]* = .* add')
+    self.assertRegex(hlo, r'%add[.\d]*\.x_ref[.\d]* = .* add')
+    self.assertRegex(hlo, r'%add[.\d]*\.y_ref[.\d]* = .* add')
 
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
