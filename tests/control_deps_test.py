@@ -31,7 +31,7 @@ class ControlDepsTest(jtu.JaxTestCase):
     axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
     return jtu.create_mesh(axes, names, iota_order=False, axis_types=axis_types)
 
-  @jtu.run_on_devices("tpu")
+  @jtu.run_on_devices("tpu", "cpu")
   def test_math(self):
     @jax.jit
     def f_math(x, y, z):
@@ -44,9 +44,9 @@ class ControlDepsTest(jtu.JaxTestCase):
     x = jnp.ones((67, 67))
     hlo = f_math.lower(x, x, x).as_text(dialect="hlo")
     self.assertIn('custom_call_target="control_dep"', hlo)
-    jax.jit(f_math).lower(x, x, x).compile()
+    f_math(x, x, x)  # doesn't crash
 
-  @jtu.run_on_devices("tpu")
+  @jtu.run_on_devices("tpu", "cpu")
   def test_fsdp(self):
     k = 4
     n = jax.device_count()
@@ -94,9 +94,9 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
       hlo = jax.jit(f_fsdp).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
-      jax.jit(f_fsdp).lower(x, ws).compile()
+      f_fsdp(x, ws)  # doesn't crash
 
-  @jtu.run_on_devices("tpu")
+  @jtu.run_on_devices("tpu", "cpu")
   def test_scan_fsdp(self):
     k = 4
     n = jax.device_count()
@@ -127,11 +127,11 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = jnp.ones((k, N, N), out_sharding=jax.P(None, "i", None))
       hlo = jax.jit(f_scan_fsdp).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
-      jax.jit(f_scan_fsdp).lower(x, ws).compile()
+      f_scan_fsdp(x, ws)  # doesn't crash
 
-  @jtu.run_on_devices("tpu")
+  @jtu.run_on_devices("tpu", "cpu")
   def test_pipeline(self):
-    if not jtu.is_device_tpu_at_least(7):
+    if jtu.device_under_test() == "tpu" and not jtu.is_device_tpu_at_least(7):
       self.skipTest("Needs TPU >= 7")
     k = 4
     n = jax.device_count()
@@ -170,7 +170,7 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
       hlo = jax.jit(f_pipeline).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
-      jax.jit(f_pipeline).lower(x, ws).compile()
+      f_pipeline(x, ws)  # doesn't crash
 
 
 if __name__ == "__main__":
