@@ -34,6 +34,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Mosaic GPU
 
+* New features
+
+  * Added support for Ampere matrix multiply-accumulate instructions via
+  {func}`jax.experimental.pallas.mosaic_gpu.mma`.
+
 * Deprecations
 
   * The `idx` parameter of {func}`jax.experimental.pallas.mosaic_gpu.load` is

@@ -1843,6 +1843,56 @@ def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
       *([state.ReadEffect(1)] if isinstance(lhs_ref, state.AbstractRef) else [])
   }
 
+
+def mma(acc: jax.Array, a: jax.Array, b: jax.Array, /) -> jax.Array:
+  """Computes ``acc + a @ b`` synchronously using Ampere MMA instructions."""
+  return mma_p.bind(acc, a, b)
+
+
+mma_p = jax_core.Primitive("mma")
+
+
+@mma_p.def_abstract_eval
+def _mma_abstract_eval(acc, a, b):
+  m, n = acc.shape
+  m2, k = a.shape
+  k2, n2 = b.shape
+  if m != m2 or n != n2 or k != k2:
+    raise ValueError(
+        f"Incompatible shapes for matrix multiplication: lhs={a.shape},"
+        f" rhs={b.shape}, acc={acc.shape}"
+    )
+  if a.dtype != b.dtype:
+    raise TypeError(f"Operand dtypes must match: {a.dtype} != {b.dtype}")
+  if jnp.issubdtype(a.dtype, jnp.integer) or a.dtype == jnp.bool_:
+    if acc.dtype != jnp.int32:
+      raise NotImplementedError(
+          "Only int32 accumulator supported for integer and boolean operands."
+          f" Got {acc.dtype}"
+      )
+  elif jnp.issubdtype(a.dtype, jnp.floating):
+    if acc.dtype not in (jnp.float64, jnp.float32, jnp.float16):
+      raise NotImplementedError(
+          "Only float64, float32 and float16 accumulators supported for"
+          f" floating operands. Got {acc.dtype}"
+      )
+  else:
+    raise NotImplementedError(f"Unsupported operand type: {a.dtype}")
+  return acc
+
+
+@lowering.register_lowering_rule(mma_p, mgpu.LoweringSemantics.Lane)
+def _mma_lowering(ctx: lowering.LoweringRuleContext, acc, a, b):
+  del ctx  # Unused.
+  return mgpu.mma(acc, a, b)
+
+
+@lowering.register_lowering_rule(mma_p, mgpu.LoweringSemantics.Warpgroup)
+def _mma_warpgroup_lowering(ctx: lowering.LoweringRuleContext, acc, a, b):
+  del ctx  # Unused.
+  return mgpu.dialect.mma(acc, a, b)
+
+
 wgmma_wait_p = jax_core.Primitive("wgmma_wait")
 wgmma_wait_p.multiple_results = True
 
