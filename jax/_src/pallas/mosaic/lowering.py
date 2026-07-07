@@ -34,6 +34,7 @@ from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import dtypes
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
@@ -1634,36 +1635,40 @@ def lower_fun(
   """
 
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    flat_args, in_tree = tree_util.tree_flatten(args)
+    args_ft = ft.flatten(args)
     if in_avals is None:
-      flat_avals = ctx.avals_in
+      args_avals = args_ft.update(ctx.avals_in).unflatten()
       sub_block_shapes = ctx.block_shapes
     else:
-      flat_avals, aval_tree = tree_util.tree_flatten(in_avals)
-      if in_tree != aval_tree:
+      in_avals_ft = ft.flatten(in_avals)
+      if args_ft.tree != in_avals_ft.tree:
         raise ValueError(
             "args and in_avals pytrees mismatch:\\nargs tree:"
-            f" {in_tree}\\navals tree: {aval_tree}\\nargs: {args}\\navals:"
+            f" {args_ft.tree}\\navals tree: {in_avals_ft.tree}\\nargs: {args}\\navals:"
             f" {in_avals}"
         )
-      sub_block_shapes = [None] * len(flat_args)
-    wrapped_lu_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(
-            fun,
-            params,
-            debug_info=api_util.debug_info("mosaic lower_fun", fun, args, {}),
-        ),
-        in_tree,
+      args_avals = in_avals
+      sub_block_shapes = [None] * len(args_ft.vals)
+
+    in_avals_ft = ft.flatten_static_argnums_argnames(
+        args_avals, params, (), params.keys())
+    debug_info = api_util.debug_info(
+        "mosaic lower_fun", fun, args, params,
+        static_argnames=tuple(params.keys())
     )
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_lu_fun, flat_avals, lower=True)
-    if consts:
+
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        fun, in_avals_ft, debug_info, requires_low=True
+    )
+
+    if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr)
     sub_lowering_ctx = ctx.lowering_context.replace(
         block_shapes=sub_block_shapes
     )
-    out = jaxpr_subcomp(sub_lowering_ctx, jaxpr, *consts, *flat_args)
-    return tree_util.tree_unflatten(out_tree_thunk(), out)
+    out = jaxpr_subcomp(sub_lowering_ctx, jaxpr, *args_ft.vals)
+    return out_avals_ft.update(out).unflatten()
 
   return f_lowered
 
