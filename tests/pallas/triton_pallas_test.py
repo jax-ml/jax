@@ -507,10 +507,8 @@ class TritonPallasTest(PallasBaseTest):
     )
 
   def test_deviceless_aot(self):
-    if jtu.is_device_rocm():
-      abstract_device = mesh_lib.AbstractDevice('gfx950', 1, 'rocm')
-    else:
-      abstract_device = mesh_lib.AbstractDevice('NVIDIA A100', 1, 'cuda')
+    device_kind = 'gfx950' if jtu.is_device_rocm() else '10.0'
+    abstract_device = mesh_lib.AbstractDevice(device_kind, 1, 'gpu')
     abstract_mesh = mesh_lib.AbstractMesh(
         (1,),
         ('x',),

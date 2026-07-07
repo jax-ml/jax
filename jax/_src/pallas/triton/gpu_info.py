@@ -14,39 +14,30 @@
 
 """Exposes GPU hardware information."""
 
+from collections.abc import Callable
 import dataclasses
 import enum
-import re
-from collections.abc import Callable
 
 from jax._src import mesh as mesh_lib
 from jax._src import util as jax_util
 from jax._src.interpreters import pxla
+from jax._src.lib import xla_client as xc
 
 
 class GpuVersion(enum.Enum):
   """GPU version"""
 
   # NVIDIA GPUs
-  A10 = "NVIDIA A10"
-  A30 = "NVIDIA A30"
-  A100 = "NVIDIA A100"
-  H100 = "NVIDIA H100"
-  H200 = "NVIDIA H200"
-  GH200 = "NVIDIA GH200"
-  B200 = "NVIDIA B200"
-  GB200 = "NVIDIA GB200"
-  B300 = "NVIDIA B300"
-  GB300 = "NVIDIA GB300"
-  GB10 = "NVIDIA GB10"
-  L4 = "NVIDIA L4"
-  L40 = "NVIDIA L40"
-  T4 = "Tesla T4"
-  RTX_4090 = "NVIDIA GeForce RTX 4090"
-  RTX_PRO_4500 = "NVIDIA RTX PRO 4500"
-  RTX_PRO_5000 = "NVIDIA RTX PRO 5000"
-  RTX_PRO_6000 = "NVIDIA RTX PRO 6000"
-  THOR = "NVIDIA Thor"
+  NV_7_5 = "7.5"
+  NV_8_0 = "8.0"
+  NV_8_6 = "8.6"
+  NV_8_9 = "8.9"
+  NV_9_0 = "9.0"
+  NV_10_0 = "10.0"
+  NV_10_3 = "10.3"
+  NV_11_0 = "11.0"
+  NV_12_0 = "12.0"
+  NV_12_1 = "12.1"
 
   # AMD GPUs
   GFX908 = "gfx908"
@@ -66,25 +57,22 @@ class GpuVersion(enum.Enum):
     return self.value
 
 
-_GPU_VERSION_RE = re.compile(r"\b(" + "|".join(e.value for e in GpuVersion) + r")\b")
-
-
 def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
-  if m := _GPU_VERSION_RE.match(device_kind):
-    return GpuVersion(m.group())
+  if device_kind in GpuVersion:
+    return GpuVersion(device_kind)
   return None
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class GpuInfo:
   """GPU hardware information"""
-  gpu_version: GpuVersion
   arch_name: str
   compute_capability: int
+  gpu_version: GpuVersion | None
 
 
 def is_gpu_device() -> bool:
-  return gpu_version_from_device_kind(get_device_kind()) is not None
+  return _get_device().platform == "gpu"
 
 
 registry: dict[str, Callable[[], GpuInfo]] = {}
@@ -96,102 +84,50 @@ def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
   Args:
     gpu_version: The GPU version.
   """
-  # https://developer.nvidia.com/cuda/gpus
-  match gpu_version:
-    case GpuVersion.T4:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="7.5",
-          compute_capability=75,
-      )
-    case GpuVersion.A100 | GpuVersion.A30:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="8.0",
-          compute_capability=80,
-      )
-    case GpuVersion.A10:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="8.6",
-          compute_capability=86,
-      )
-    case GpuVersion.L4 | GpuVersion.L40 | GpuVersion.RTX_4090:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="8.9",
-          compute_capability=89,
-      )
-    case GpuVersion.H100 | GpuVersion.H200 | GpuVersion.GH200:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="9.0",
-          compute_capability=90,
-      )
-    case GpuVersion.B200 | GpuVersion.GB200:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="10.0",
-          compute_capability=100,
-      )
-    case GpuVersion.B300 | GpuVersion.GB300:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="10.3",
-          compute_capability=103,
-      )
-    case GpuVersion.RTX_PRO_4500 | GpuVersion.RTX_PRO_5000 | GpuVersion.RTX_PRO_6000:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="12.0",
-          compute_capability=120,
-      )
-    case GpuVersion.GB10:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="12.1",
-          compute_capability=121,
-      )
-    case GpuVersion.THOR:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="11.0",
-          compute_capability=110,
-      )
-    # AMD GPUs. The enum value is already the gfx arch name.
-    case (
-        GpuVersion.GFX908
-        | GpuVersion.GFX90A
-        | GpuVersion.GFX942
-        | GpuVersion.GFX950
-        | GpuVersion.GFX1030
-        | GpuVersion.GFX1100
-        | GpuVersion.GFX1101
-        | GpuVersion.GFX1103
-        | GpuVersion.GFX1150
-        | GpuVersion.GFX1151
-        | GpuVersion.GFX1200
-        | GpuVersion.GFX1201
-    ):
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name=gpu_version.value,
-          compute_capability=0,
-      )
-    case _:
-      raise ValueError(f"Unsupported GPU version: {gpu_version}")
+  def get_cc(arch_name):
+    try:
+      return int(arch_name.replace(".", ""))
+    except ValueError:
+      return 0
+
+  return GpuInfo(
+      arch_name=gpu_version.value,
+      compute_capability=get_cc(gpu_version.value),
+      gpu_version=gpu_version,
+  )
 
 
 @jax_util.cache(trace_context_in_key=True)
 def get_gpu_info() -> GpuInfo:
   """Returns the GPU hardware info for the current device."""
-  device_kind = get_device_kind()
-  gpu_version = gpu_version_from_device_kind(device_kind)
-  if gpu_version is None:
+  device = _get_device()
+  if device.platform != "gpu":
+    raise RuntimeError(f"Can not get GPU info on the platform: {device.platform}")
+
+  if isinstance(device, mesh_lib.AbstractDevice):
+    device_kind = device.device_kind
+    gpu_version = gpu_version_from_device_kind(device.device_kind)
+    if gpu_version is not None:
+      return _get_gpu_info_impl(gpu_version)
+
     if device_kind in registry:
       return registry[device_kind]()
-    raise ValueError(f"Unsupported GPU device kind: {device_kind}")
-  return _get_gpu_info_impl(gpu_version)
+
+    raise RuntimeError(f"Unsupported GPU device kind: {device_kind}")
+  else:
+    # Real device case.
+    arch_name = str(device.compute_capability)
+    if "cuda" in device.client.platform_version:
+      compute_capability = int(arch_name.replace(".", ""))
+    else:
+      # Other cases, e.g. rocm.
+      compute_capability = 0
+
+    return GpuInfo(
+      arch_name=arch_name,
+      compute_capability=compute_capability,
+      gpu_version=None,
+    )
 
 
 @jax_util.cache(trace_context_in_key=True)
@@ -206,7 +142,11 @@ def get_gpu_info_from_version(
   return _get_gpu_info_impl(gpu_version)
 
 
-def get_device_kind() -> str:
+def _get_device() -> mesh_lib.AbstractDevice | xc.Device:
   if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
-    return abstract_device.device_kind
-  return pxla.get_default_device().device_kind
+    return abstract_device
+  return pxla.get_default_device()
+
+
+def get_device_kind() -> str:
+  return _get_device().device_kind
