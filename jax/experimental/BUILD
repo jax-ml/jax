@@ -284,6 +284,7 @@ py_library_providing_imports_info(
         "//jax/_src:stages",
         "//jax/_src:util",
         "//jax/_src/lib",
+        "//jax/_src/pallas",
         "//jax/extend:backend",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
@@ -515,7 +516,6 @@ pytype_strict_library(
     deps = [
         "//jax/_src/pallas",
         "//jax/_src/pallas/triton:core",
-        "//jax/_src/pallas/triton:gpu_info",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],
