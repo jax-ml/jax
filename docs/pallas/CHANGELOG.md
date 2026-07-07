@@ -58,13 +58,6 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### TPU
 
-* New features
-
-  * Added `jax_pallas_auto_assign_collective_ids` config flag to allow two new
-    custom semaphore barrier collective IDs modes: ('yes') assigning missing
-    collective IDs automatically or ('override') overridding all collective IDs
-    and assigning them automatically, both based on the serialized kernel hash.
-
 * Changes
 
   * {class}`jax.experimental.pallas.tpu.CompilerParams` now defaults

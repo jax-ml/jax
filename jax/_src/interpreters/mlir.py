@@ -761,11 +761,6 @@ class LoweringCacheKey:
         f"platforms={self.platforms})"
     )
 
-@dataclasses.dataclass(frozen=True)
-class CollectiveIdMapping:
-  auto: dict[Any, int] = dataclasses.field(default_factory=dict)
-  manual: dict[Any, int] = dataclasses.field(default_factory=dict)
-  all_ids: set[int] = dataclasses.field(default_factory=set)
 
 @dataclasses.dataclass(frozen=True)
 class LoweringCacheValue:
@@ -803,10 +798,6 @@ class ModuleContext:
   aval_to_ir_types_cache: dict[core.AbstractValue, IrTypes]
   pallas_lowering_cache: dict[Any, Any]
 
-  # In auto collective id assignment mode, we keep track of collective id
-  # mapping to ensure each unique module gets a unique collective id.
-  pallas_collective_id_mapping: CollectiveIdMapping | None
-
   # Cached traceback information.
   traceback_caches: TracebackCaches
 
@@ -833,8 +824,7 @@ class ModuleContext:
       all_default_mem_kind: bool = True,
       sharding_attr_cache: None | dict[SdyArray, sdy.TensorShardingAttr] = None,
       aval_to_ir_types_cache: None | dict[core.AbstractValue, IrTypes] = None,
-      pallas_lowering_cache: None | dict[Any, Any] = None,
-      pallas_collective_id_mapping: None | CollectiveIdMapping = None):
+      pallas_lowering_cache: None | dict[Any, Any] = None):
 
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -859,9 +849,6 @@ class ModuleContext:
     self.sharding_attr_cache = ({} if sharding_attr_cache is None else sharding_attr_cache)
     self.aval_to_ir_types_cache = ({} if aval_to_ir_types_cache is None else aval_to_ir_types_cache)
     self.pallas_lowering_cache = ({} if pallas_lowering_cache is None else pallas_lowering_cache)
-    self.pallas_collective_id_mapping = (CollectiveIdMapping()
-                                         if pallas_collective_id_mapping is None
-                                         else pallas_collective_id_mapping)
 
   def get_backend(self, optional: bool = False) -> xc.Client | None:
     if len(self.platforms) > 1:
