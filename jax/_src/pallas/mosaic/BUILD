@@ -60,6 +60,7 @@ pytype_library(
     name = "primitives",
     srcs = ["primitives.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("pallas/mosaic/primitives"),
     deps = [
         ":core",
         "//jax",
@@ -262,6 +263,7 @@ pytype_strict_library(
     name = "tpu_info",
     srcs = ["tpu_info.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("pallas/mosaic/tpu_info"),
     deps = [
         "//jax",
         "//jax/_src:api",
