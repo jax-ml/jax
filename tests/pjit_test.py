@@ -11481,6 +11481,36 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for s, ex_s in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
       self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_one_hot_out_sharding(self, mesh):
+    np_inp = np.arange(4).reshape(2, 2)
+    arr = jax.device_put(np_inp, P('x'))
+
+    @jax.jit(static_argnums=1)
+    def f(x, out_s):
+      y = jax.nn.one_hot(x, 4, out_sharding=out_s)
+      return y
+
+    out = f(arr, P('x', None, 'y'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None, 'y')))
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        'The input part of spec in out_sharding should match the spec of `x`'):
+      f(arr, P('y', None, None))
+
+    @jax.jit(static_argnums=1)
+    def g(x, out_s):
+      return jax.nn.one_hot(x, 4, axis=0, out_sharding=out_s)
+
+    out = g(arr, P('y', 'x', None))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x', None)))
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        'The input part of spec in out_sharding should match the spec of `x`'):
+      g(arr, P('x', None, None))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
