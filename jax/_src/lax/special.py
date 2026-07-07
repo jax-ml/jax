@@ -25,7 +25,8 @@ from jax._src import core
 from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
-                              gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
+                              gt, le, log, log1p, lt, max as _max, mul, ne, neg,
+                              reciprocal,
                               reduce, select, sign, sqrt, square,
                               standard_naryop, standard_unop, sub,
                               _const, _dtype,
@@ -132,8 +133,145 @@ def betainc_gradx(g, a, b, x):
                   (a - 1) * log(x) - lbeta)
   return partial_x * g
 
-def betainc_grad_not_implemented(g, a, b, x):
-  raise ValueError("Betainc gradient with respect to a and b not supported.")
+def _betainc_series_derivs(a, b, x, dtype):
+  """(dI/da, dI/db) of the regularized incomplete beta function, via the
+  series B(x;a,b) = (x**a/a) * 2F1(a, 1-b; a+1; x), differentiated term by
+  term. Valid (and fast-converging) for x <= 0.5; the reflection identity
+  I_x(a,b) = 1 - I_{1-x}(b,a) is used by the callers below to handle x > 0.5.
+
+  Each of the three running products below ((a)_k, (1-b)_k, (a+1)_k) and its
+  derivative is updated via the same O(1)-per-term recurrence used elsewhere
+  in this file for igamma/igammac (e.g. dpkm1_da): if P_k = P_{k-1} * f_{k-1}
+  then dP_k/dp = dP_{k-1}/dp * f_{k-1} + P_{k-1} * df_{k-1}/dp. This avoids
+  ever dividing by a pochhammer symbol, which is necessary since (1-b)_k is
+  exactly zero from k = ceil(b) onwards whenever b is a positive integer (a
+  case this must handle correctly, not just as an edge case: the reported
+  issue's own repro uses integer b).
+  """
+  _c = _const
+  zero = _c(x, 0.)
+  one = _c(x, 1.)
+  MACHEP = dtypes.finfo(dtype).eps
+
+  def cond_fn(vals):
+    should_stop = vals[0]
+    return bitwise_not(_any(bitwise_not(should_stop)))
+
+  def body_fn(vals):
+    (should_stop, k, S, dS_da, dS_db,
+     Pa, dPa_da, P1b, dP1b_db, Pa1, dPa1_da, fact, xk) = vals
+    enabled = bitwise_not(should_stop)
+
+    term = Pa * P1b / (Pa1 * fact) * xk
+    new_S = S + term
+
+    safe_pa1 = select(eq(Pa1, zero), one, Pa1)
+    dterm_da = select(
+        eq(Pa1, zero), zero,
+        (dPa_da / safe_pa1 - Pa * dPa1_da / (safe_pa1 * safe_pa1)) * P1b
+        / fact * xk)
+    new_dS_da = dS_da + dterm_da
+    dterm_db = Pa * dP1b_db / (Pa1 * fact) * xk
+    new_dS_db = dS_db + dterm_db
+
+    f_a = a + k
+    new_dPa_da = dPa_da * f_a + Pa
+    new_Pa = Pa * f_a
+
+    f_1b = (one - b) + k
+    new_dP1b_db = dP1b_db * f_1b - P1b
+    new_P1b = P1b * f_1b
+
+    f_a1 = (a + one) + k
+    new_dPa1_da = dPa1_da * f_a1 + Pa1
+    new_Pa1 = Pa1 * f_a1
+
+    new_fact = fact * (k + one)
+    new_xk = xk * x
+
+    # Convergence must track both the value and the two derivative sums: for
+    # integer b, (1-b)_k hits exactly zero at k = b (terminating the *value*
+    # series, since `term` becomes 0 identically from then on), but the
+    # derivative terms stay nonzero well past that point -- the derivative of
+    # a zero-crossing product is generally nonzero even where the product
+    # itself is zero. Stopping as soon as `term` vanishes would silently
+    # under-converge dS_da/dS_db whenever b (or, after reflection, a) is a
+    # positive integer.
+    converged = bitwise_and(
+        bitwise_and(abs(term) < MACHEP * abs(new_S),
+                    abs(dterm_da) < MACHEP * _max(abs(new_dS_da), one)),
+        abs(dterm_db) < MACHEP * _max(abs(new_dS_db), one))
+    new_should_stop = bitwise_or(
+        should_stop,
+        bitwise_or(bitwise_and(converged, k > _c(k, 2.)), k > _c(k, 500.)))
+
+    return (
+        new_should_stop,
+        k + one,
+        select(enabled, new_S, S),
+        select(enabled, new_dS_da, dS_da),
+        select(enabled, new_dS_db, dS_db),
+        select(enabled, new_Pa, Pa),
+        select(enabled, new_dPa_da, dPa_da),
+        select(enabled, new_P1b, P1b),
+        select(enabled, new_dP1b_db, dP1b_db),
+        select(enabled, new_Pa1, Pa1),
+        select(enabled, new_dPa1_da, dPa1_da),
+        select(enabled, new_fact, fact),
+        select(enabled, new_xk, xk),
+    )
+
+  shape = broadcast_shapes(a.shape, b.shape, x.shape)
+  a = broadcast_in_dim(a, shape, list(range(a.ndim)))
+  b = broadcast_in_dim(b, shape, list(range(b.ndim)))
+  x = broadcast_in_dim(x, shape, list(range(x.ndim)))
+
+  init_vals = (
+      full_like(x, False, dtype=bool),
+      zero, zero, zero, zero,
+      full_like(x, 1.), zero, full_like(x, 1.), zero, full_like(x, 1.), zero,
+      full_like(x, 1.), full_like(x, 1.),
+  )
+  vals = while_loop(cond_fn, body_fn, init_vals)
+  S, dS_da, dS_db = vals[2], vals[3], vals[4]
+
+  lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
+  dlbeta_da = digamma(a) - digamma(a + b)
+  dlbeta_db = digamma(b) - digamma(a + b)
+  prefactor = exp(a * log(x) - lbeta) / a
+  dprefactor_da = prefactor * (log(x) - dlbeta_da - one / a)
+  dprefactor_db = -prefactor * dlbeta_db
+
+  dIda = dprefactor_da * S + prefactor * dS_da
+  dIdb = dprefactor_db * S + prefactor * dS_db
+  return dIda, dIdb
+
+
+def betainc_grada(g, a, b, x):
+  dtype = _dtype(x)
+  use_reflection = x > _const(x, 0.5)
+  ar = select(use_reflection, b, a)
+  br = select(use_reflection, a, b)
+  xr = select(use_reflection, sub(_const(x, 1.), x), x)
+  dIda_direct, dIdb_direct = _betainc_series_derivs(ar, br, xr, dtype)
+  # Under the reflection I_x(a,b) = 1 - I_{1-x}(b,a), d/da[I_x(a,b)] is
+  # -d/db'[I_{x'}(a',b')] evaluated at (a'=b, b'=a, x'=1-x) -- i.e. the
+  # *b*-derivative of the reflected call, negated.
+  grad = select(use_reflection, neg(dIdb_direct), dIda_direct)
+  return grad * g
+
+
+def betainc_gradb(g, a, b, x):
+  dtype = _dtype(x)
+  use_reflection = x > _const(x, 0.5)
+  ar = select(use_reflection, b, a)
+  br = select(use_reflection, a, b)
+  xr = select(use_reflection, sub(_const(x, 1.), x), x)
+  dIda_direct, dIdb_direct = _betainc_series_derivs(ar, br, xr, dtype)
+  # Symmetric to betainc_grada: d/db[I_x(a,b)] under reflection is the
+  # negated *a*-derivative of the reflected call.
+  grad = select(use_reflection, neg(dIda_direct), dIdb_direct)
+  return grad * g
 
 def igamma_gradx(g, a, x):
   return g * exp(-x + (a - _ones(a)) * log(x) - lgamma(a))
@@ -694,8 +832,8 @@ mlir.register_lowering(regularized_incomplete_beta_p,
                  multiple_results=False))
 
 ad.defjvp(regularized_incomplete_beta_p,
-  betainc_grad_not_implemented,
-  betainc_grad_not_implemented,
+  betainc_grada,
+  betainc_gradb,
   betainc_gradx)
 
 lgamma_p = standard_unop(_float, 'lgamma')
