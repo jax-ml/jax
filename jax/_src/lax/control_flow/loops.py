@@ -2848,9 +2848,6 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
     raise TypeError("lax.associative_scan: fn argument should be callable.")
   elems_flat, tree = tree_flatten(elems)
 
-  if reverse:
-    elems_flat = [lax.rev(elem, [axis]) for elem in elems_flat]
-
   def combine(a_flat, b_flat):
     # Lower `fn` to operate on flattened sequences of elems.
     a = tree_unflatten(tree, a_flat)
@@ -2872,6 +2869,31 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
                      'first dimension. (saw: {})'
                      .format([elem.shape for elem in elems_flat]))
 
+  # Native path: when the combiner is a simple elementwise computation, bind
+  # a primitive that lowers to chlo.ScanOp on TPU (compiled natively by the
+  # TPU compiler) and to the parallel-prefix decomposition below everywhere
+  # else (and under autodiff/vmap).
+  combine_jaxpr = _assoc_scan_native_combine_jaxpr(combine, elems_flat, axis)
+  if combine_jaxpr is not None and _assoc_scan_native_eligible(
+      elems_flat, axis, num_elems
+  ):
+    results = associative_scan_p.bind(
+        *elems_flat, jaxpr=combine_jaxpr, axis=axis, reverse=bool(reverse)
+    )
+    return tree_unflatten(tree, results)
+
+  scans = _associative_scan_decomposition(combine, elems_flat, axis, reverse)
+  return tree_unflatten(tree, scans)
+
+
+def _associative_scan_decomposition(combine, elems_flat, axis, reverse):
+  """Blelloch-style parallel prefix decomposition of an associative scan.
+
+  `combine` is the flat combiner over (a_flat, b_flat) lists; returns the
+  flat list of scanned arrays.
+  """
+  if reverse:
+    elems_flat = [lax.rev(elem, [axis]) for elem in elems_flat]
 
   # Summary of algorithm:
   #
@@ -2927,7 +2949,8 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   if reverse:
     scans = [lax.rev(scanned, [axis]) for scanned in scans]
 
-  return tree_unflatten(tree, scans)
+  return scans
+
 
 def _interleave(a, b, axis):
   """Given two Tensors of static shape, interleave them along the first axis."""
@@ -2939,6 +2962,347 @@ def _interleave(a, b, axis):
   op = lax.bitwise_or if a.dtype == np.bool_ else lax.add
   return op(lax.pad(a, lax._const(a, 0), a_pad),
             lax.pad(b, lax._const(b, 0), b_pad))
+
+# Native associative_scan lowering.
+#
+# When the combiner is a simple elementwise computation, associative_scan
+# binds `associative_scan_p`, which lowers to chlo.ScanOp on TPU (compiled
+# natively by the TPU compiler) and to the parallel-prefix decomposition
+# everywhere else. Autodiff and vmap also fall back to the decomposition,
+# which keeps their semantics identical to the historical behavior.
+
+# Primitives the TPU compiler supports natively in scan combiner bodies:
+# elementwise ALU, comparison, select, shift, and transcendental ops, which
+# all have per vector register forms. Combiners containing anything else
+# (dot, solve, gather, reductions, reshapes, ...) keep the decomposition
+# path.
+_ASSOC_SCAN_ELEMENTWISE_PRIMS = frozenset({
+    'add',
+    'sub',
+    'mul',
+    'div',
+    'rem',
+    'max',
+    'min',
+    'pow',
+    'integer_pow',
+    'exp',
+    'exp2',
+    'log',
+    'log1p',
+    'expm1',
+    'logistic',
+    'tanh',
+    'sin',
+    'cos',
+    'tan',
+    'atan2',
+    'erf',
+    'sqrt',
+    'rsqrt',
+    'cbrt',
+    'abs',
+    'neg',
+    'sign',
+    'floor',
+    'ceil',
+    'round',
+    'is_finite',
+    'clamp',
+    'and',
+    'or',
+    'xor',
+    'not',
+    'clz',
+    'population_count',
+    'select_n',
+    'eq',
+    'ne',
+    'lt',
+    'le',
+    'gt',
+    'ge',
+    'convert_element_type',
+    'bitcast_convert_type',
+    'reduce_precision',
+    'broadcast_in_dim',
+    'copy',
+    'square',
+    'shift_left',
+    'shift_right_logical',
+    'shift_right_arithmetic',
+})
+_ASSOC_SCAN_CALL_PRIMS = frozenset({
+    'pjit',
+    'custom_jvp_call',
+    'custom_vjp_call',
+    'closed_call',
+})
+
+
+def _assoc_scan_combiner_supported(jaxpr) -> bool:
+  for eqn in jaxpr.eqns:
+    name = eqn.primitive.name
+    if name in _ASSOC_SCAN_CALL_PRIMS:
+      sub = eqn.params.get('jaxpr') or eqn.params.get('call_jaxpr')
+      if sub is None:
+        return False
+      sub_jaxpr = sub.jaxpr if isinstance(sub, core.ClosedJaxpr) else sub
+      if not _assoc_scan_combiner_supported(sub_jaxpr):
+        return False
+    elif name not in _ASSOC_SCAN_ELEMENTWISE_PRIMS:
+      return False
+  return True
+
+
+def _assoc_scan_slice_avals(elems_flat, axis):
+  avals = []
+  for elem in elems_flat:
+    aval = core.typeof(elem)
+    shape = tuple(aval.shape[:axis]) + tuple(aval.shape[axis + 1 :])
+    avals.append(core.ShapedArray(shape, aval.dtype))
+  return avals
+
+
+def _assoc_scan_native_combine_jaxpr(combine, elems_flat, axis):
+  """Returns the flat combiner as a ClosedJaxpr over slice avals, or None.
+
+  None means the combiner cannot be traced on rank-reduced slices or
+  contains ops outside the elementwise set; callers then use the
+  decomposition.
+  """
+  n = len(elems_flat)
+  try:
+    slice_avals = _assoc_scan_slice_avals(elems_flat, axis)
+  except Exception:
+    return None
+  flat_combine = lambda *args: tuple(combine(list(args[:n]), list(args[n:])))
+  specs = [core.ShapeDtypeStruct(a.shape, a.dtype) for a in slice_avals]
+  try:
+    closed_jaxpr = api.make_jaxpr(flat_combine)(*(specs + specs))
+  except Exception:
+    return None
+  if len(closed_jaxpr.out_avals) != n:
+    return None
+  for out_aval, in_aval in zip(closed_jaxpr.out_avals, slice_avals):
+    if (
+        tuple(out_aval.shape) != tuple(in_aval.shape)
+        or out_aval.dtype != in_aval.dtype
+    ):
+      return None
+  if not _assoc_scan_combiner_supported(closed_jaxpr.jaxpr):
+    return None
+  return closed_jaxpr
+
+
+def _assoc_scan_native_eligible(elems_flat, axis, num_elems):
+  if jaxlib_extension_version < 460:
+    return False
+  if num_elems < 2:
+    return False
+  for elem in elems_flat:
+    aval = core.typeof(elem)
+    if not isinstance(aval, ShapedArray):
+      return False
+    if not core.is_constant_shape(aval.shape):
+      return False
+    if aval.sharding.spec[axis] is not None:
+      return False
+    if aval.dtype == np.bool_:
+      return False
+    if np.issubdtype(aval.dtype, np.complexfloating):
+      return False
+  return True
+
+
+def _assoc_scan_combine_from_jaxpr(jaxpr):
+  """Combiner over rank-reduced slices (the avals the jaxpr was traced on)."""
+
+  def combine(a_flat, b_flat):
+    return list(core.jaxpr_as_fun(jaxpr)(*a_flat, *b_flat))
+
+  return combine
+
+
+def _assoc_scan_decomp_fun(jaxpr, axis, reverse):
+  """Decomposition fallback for the primitive's non-TPU lowering and
+
+  autodiff/vmap rules.
+
+  The combiner jaxpr is traced on rank-reduced slices (scan axis removed),
+  but the decomposition combines slabs that keep the scan axis (of varying
+  size per recursion level), so apply the jaxpr under vmap along that axis.
+  """
+  base = lambda *args: tuple(core.jaxpr_as_fun(jaxpr)(*args))
+
+  def combine(a_flat, b_flat):
+    f = api.vmap(base, in_axes=axis, out_axes=axis)
+    return list(f(*a_flat, *b_flat))
+
+  def f(*elems):
+    return _associative_scan_decomposition(combine, list(elems), axis, reverse)
+
+  return f
+
+
+associative_scan_p = core.Primitive('associative_scan')
+associative_scan_p.multiple_results = True
+associative_scan_p.def_impl(
+    partial(dispatch.apply_primitive, associative_scan_p)
+)
+
+
+@associative_scan_p.def_abstract_eval
+def _assoc_scan_abstract_eval(*in_avals, jaxpr, axis, reverse):
+  del jaxpr, axis, reverse
+  return list(in_avals)
+
+
+def _assoc_scan_jvp(primals, tangents, *, jaxpr, axis, reverse):
+  f = _assoc_scan_decomp_fun(jaxpr, axis, reverse)
+  tangents = [ad.instantiate_zeros(t) for t in tangents]
+  return api.jvp(f, tuple(primals), tuple(tangents))
+
+
+ad.primitive_jvps[associative_scan_p] = _assoc_scan_jvp
+
+
+def _assoc_scan_batch_rule(args, dims, *, jaxpr, axis, reverse):
+  f = _assoc_scan_decomp_fun(jaxpr, axis, reverse)
+  size = next(x.shape[d] for x, d in zip(args, dims) if d is not None)
+  args = [batching.bdim_at_front(x, d, size) for x, d in zip(args, dims)]
+  outs = api.vmap(f)(*args)
+  return outs, [0] * len(outs)
+
+
+batching.primitive_batchers[associative_scan_p] = _assoc_scan_batch_rule
+
+
+def _assoc_scan_lower_decomp(ctx, *elems, jaxpr, axis, reverse):
+  f = _assoc_scan_decomp_fun(jaxpr, axis, reverse)
+  return mlir.lower_fun(f, multiple_results=True)(ctx, *elems)
+
+
+mlir.register_lowering(associative_scan_p, _assoc_scan_lower_decomp)
+
+
+def _assoc_scan_lower_tpu(ctx, *elems, jaxpr, axis, reverse):
+  """Lowers to chlo.ScanOp, seeded with the first (or last) slice.
+
+  An inclusive associative scan has no identity element for an arbitrary
+  combiner, but the scan op requires an init: seed the carry with the
+  boundary slice and scan the remaining n-1 slices, then concatenate the
+  seed back on. The combiner region applies fn(accumulated, current) so
+  non-commutative associative combiners keep left-fold order.
+  """
+  # The chlo.ScanOp lowering needs a libtpu new enough to compile the native
+  # scan emitter. In forward-compatibility mode or on an older cloud TPU, fall
+  # back to the portable parallel-prefix decomposition until the forward-compat
+  # window has expired.
+  # TODO(b/524250451): Remove the forward-compat / cloud-TPU version guard
+  # after 2026-09-15.
+  backend = ctx.module_context.get_backend(optional=True)
+  if (
+      ctx.is_forward_compat()
+      or backend is None
+      or is_cloud_tpu_older_than(2026, 9, 15, backend)
+  ):
+    return _assoc_scan_lower_decomp(
+        ctx, *elems, jaxpr=jaxpr, axis=axis, reverse=reverse
+    )
+  n_leaves = len(elems)
+  num_elems = ctx.avals_in[0].shape[axis]
+  if num_elems < 2:
+    return list(elems)
+
+  slice_avals = []
+  rest_avals = []
+  seed_vals = []
+  rest_vals = []
+  init_vals = []
+  rest_types = []
+  carry_types = []
+  for elem, aval in zip(elems, ctx.avals_in):
+    elem_type = ir.RankedTensorType(elem.type)
+    rank = len(elem_type.shape)
+    full_shape = list(elem_type.shape)
+    starts = [0] * rank
+    limits = list(full_shape)
+    strides = [1] * rank
+    seed_starts = list(starts)
+    seed_limits = list(limits)
+    rest_starts = list(starts)
+    rest_limits = list(limits)
+    if reverse:
+      seed_starts[axis] = num_elems - 1
+      rest_limits[axis] = num_elems - 1
+    else:
+      seed_limits[axis] = 1
+      rest_starts[axis] = 1
+    seed = hlo.slice(
+        elem,
+        mlir.dense_int_array(seed_starts),
+        mlir.dense_int_array(seed_limits),
+        mlir.dense_int_array(strides),
+    )
+    rest = hlo.slice(
+        elem,
+        mlir.dense_int_array(rest_starts),
+        mlir.dense_int_array(rest_limits),
+        mlir.dense_int_array(strides),
+    )
+    carry_shape = full_shape[:axis] + full_shape[axis + 1 :]
+    carry_type = ir.RankedTensorType.get(carry_shape, elem_type.element_type)
+    init_vals.append(hlo.reshape(carry_type, seed))
+    seed_vals.append(seed)
+    rest_vals.append(rest)
+    rest_shape = list(full_shape)
+    rest_shape[axis] = num_elems - 1
+    rest_types.append(
+        ir.RankedTensorType.get(rest_shape, elem_type.element_type)
+    )
+    carry_types.append(carry_type)
+    slice_avals.append(core.ShapedArray(tuple(carry_shape), aval.dtype))
+    rest_avals.append(core.ShapedArray(tuple(rest_shape), aval.dtype))
+
+  scan_op = chlo.ScanOp(
+      rest_types,
+      carry_types,
+      rest_vals,
+      init_vals,
+      dimension=ir.IntegerAttr.get(ir.IntegerType.get_signless(64), axis),
+      is_reverse=ir.BoolAttr.get(bool(reverse)),
+      is_associative=ir.BoolAttr.get(True),
+  )
+  body_block = scan_op.body.blocks.append(*(carry_types + carry_types))
+  with ir.InsertionPoint(body_block):
+    x_args = list(body_block.arguments)[:n_leaves]
+    carry_args = list(body_block.arguments)[n_leaves:]
+    combine = _assoc_scan_combine_from_jaxpr(jaxpr)
+    sub_ctx = ctx.replace(
+        primitive=None,
+        avals_in=slice_avals + slice_avals,
+        avals_out=slice_avals,
+    )
+    # fn(accumulated, current): carries are the accumulated prefix.
+    outs = mlir.lower_fun(
+        lambda *args: combine(list(args[:n_leaves]), list(args[n_leaves:])),
+        multiple_results=True,
+    )(sub_ctx, *carry_args, *x_args)
+    flat_outs, _ = mlir.ir_tree_registry.flatten(outs)
+    hlo.return_(flat_outs + flat_outs)
+
+  results = []
+  for i, (elem, aval) in enumerate(zip(elems, ctx.avals_in)):
+    scanned = scan_op.results[i]
+    parts = [scanned, seed_vals[i]] if reverse else [seed_vals[i], scanned]
+    results.append(hlo.concatenate(parts, mlir.i64_attr(axis)))
+  return results
+
+
+mlir.register_lowering(
+    associative_scan_p, _assoc_scan_lower_tpu, platform='tpu'
+)
 
 ### Cumulative reductions.
 
@@ -3029,13 +3393,13 @@ def _cumred_tpu_lowering(
   # scan emitter. In forward-compatibility mode or on an older cloud TPU, keep
   # the reduce-window lowering until the forward-compat window has expired.
   # TODO(b/524250451): Remove the forward-compat / cloud-TPU version guard
-  # after 2026-07-15.
+  # after 2026-09-15.
   backend = ctx.module_context.get_backend(optional=True)
   if (
       not _is_supported_cumred_tpu(ctx.avals_in[0], axis, reverse)
       or ctx.is_forward_compat()
       or backend is None
-      or is_cloud_tpu_older_than(2026, 7, 15, backend)
+      or is_cloud_tpu_older_than(2026, 9, 15, backend)
   ):
     fun = partial(cumred_reduce_window_impl, reduce_window_fn)
     return mlir.lower_fun(fun, multiple_results=False)(

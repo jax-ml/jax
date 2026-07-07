@@ -53,18 +53,11 @@ r"""Jet is an experimental module for higher-order automatic differentiation
 """
 
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
-from functools import partial
-
-import numpy as np
-
-from jax import lax
 from jax import api_util
-import jax.numpy as jnp
-from jax.tree_util import (register_pytree_node, tree_structure,
-                           treedef_is_leaf, tree_flatten, tree_unflatten,)
-
+from jax import lax
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
@@ -73,7 +66,17 @@ from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
-from jax._src.util import unzip2, weakref_lru_cache, safe_zip
+from jax._src.lax.control_flow import loops as control_flow_loops
+from jax._src.util import safe_zip, unzip2, weakref_lru_cache
+import jax.numpy as jnp
+from jax.tree_util import (
+    register_pytree_node,
+    tree_flatten,
+    tree_structure,
+    tree_unflatten,
+    treedef_is_leaf,
+)
+import numpy as np
 
 
 def jet(fun, primals, series, factorial_scaled=True, **_):
@@ -404,6 +407,16 @@ jet_rules[lax.cummax_p] = partial(_cumulative_jet_rule,
                                                combine_fn=lax.max)
 jet_rules[lax.cummin_p] = partial(_cumulative_jet_rule,
                                                combine_fn=lax.min)
+
+
+def _associative_scan_jet_rule(primals_in, series_in, *, jaxpr, axis, reverse):
+  # Differentiate through the parallel prefix decomposition; the primitive
+  # is an opaque lowering of the same computation.
+  f = control_flow_loops._assoc_scan_decomp_fun(jaxpr, axis, reverse)
+  return jet2(f, primals_in, series_in)
+
+
+jet_rules[control_flow_loops.associative_scan_p] = _associative_scan_jet_rule
 
 
 def def_deriv(prim, deriv):
