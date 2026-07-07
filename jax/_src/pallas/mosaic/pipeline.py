@@ -1639,6 +1639,15 @@ def sync_copy(src: REF | BufferedRef, dst: REF | BufferedRef, indices):
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True, eq=False)
 class PipelineStep:
+  """Positional context for a single pipeline body invocation.
+
+  Attributes:
+    index: Multi-dimensional grid indices for the current step, one per
+      grid dimension.
+    local_index: The linear iteration counter of the pipeline loop. If the
+      grid is partitioned along some ``core_axis``, each core has its own
+      independent local index over its partition of the grid.
+  """
   index: tuple[int | jax.Array, ...]
   local_index: jax.Array
 
