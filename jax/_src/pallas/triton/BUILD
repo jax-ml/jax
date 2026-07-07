@@ -113,6 +113,5 @@ pytype_strict_library(
         "//jax/_src:api",
         "//jax/_src:mesh",
         "//jax/_src:util",
-        "//jax/_src/lib",
     ],
 )
