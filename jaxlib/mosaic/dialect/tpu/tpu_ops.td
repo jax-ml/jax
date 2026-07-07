@@ -1488,6 +1488,11 @@ def TPU_TraceValueOp : TPU_Op<"trace_value", []> {
 def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let arguments = (ins Variadic<AnyType>:$results);
   let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
+  // Allows building without results, just like scf.yield.
+  // https://github.com/llvm/llvm-project/blob/f348d964af441ec454e5fc12ab1b599cfc1e7d14/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td#L1238
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>
+  ];
 }
 
 def TPU_DelayOp : TPU_Op<"delay"> {
