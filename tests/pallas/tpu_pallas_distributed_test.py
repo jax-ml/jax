@@ -885,7 +885,7 @@ class PallasBarrierCollectiveIdsTest(jtu.JaxTestCase, parameterized.TestCase):
     @jax.jit
     @partial(shard_map.shard_map, out_specs=P('x'), check_vma=True)
     def body(x):
-      mesh = pltpu.create_tensorcore_mesh(num_cores=1, axis_name=('x',))
+      mesh = pltpu.TensorCoreMesh(num_cores=1, axis_name=('x',))
       # Intentionally assign the same collective_id to both kernels.
       # This test works because we set
       # jax_pallas_auto_assign_collective_ids='override'.
