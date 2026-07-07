@@ -100,31 +100,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "tpu_linalg_vectorization_pass",
-    srcs = ["dialect/tpu/transforms/linalg_vectorization.cc"],
-    hdrs = ["dialect/tpu/transforms/linalg_vectorization.h"],
-    # compatible with libtpu
-    deps = [
-        ":pass_boilerplate",
-        ":tpu_dialect",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@llvm-project//mlir:ArithDialect",
-        "@llvm-project//mlir:DialectUtils",
-        "@llvm-project//mlir:FuncDialect",
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:LinalgTransforms",
-        "@llvm-project//mlir:MathDialect",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TensorDialect",
-        "@llvm-project//mlir:TransformUtils",
-        "@llvm-project//mlir:VectorDialect",
-        "@llvm-project//mlir:VectorTransforms",
-    ],
-)
-
 gentbl_cc_library(
     name = "tpu_inc_gen",
     # compatible with libtpu
