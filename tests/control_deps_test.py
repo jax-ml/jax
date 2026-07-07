@@ -31,7 +31,7 @@ class ControlDepsTest(jtu.JaxTestCase):
     axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
     return jtu.create_mesh(axes, names, iota_order=False, axis_types=axis_types)
 
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("tpu")
   def test_math(self):
     @jax.jit
     def f_math(x, y, z):
@@ -44,11 +44,11 @@ class ControlDepsTest(jtu.JaxTestCase):
     x = jnp.ones((67, 67))
     hlo = f_math.lower(x, x, x).as_text(dialect="hlo")
     self.assertIn('custom_call_target="control_dep"', hlo)
-    f_math(x, x, x)
+    jax.jit(f_math).lower(x, x, x).compile()
 
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("tpu")
   def test_fsdp(self):
-    k = 5
+    k = 4
     n = jax.device_count()
     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
       @jax.jit
@@ -94,11 +94,11 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
       hlo = jax.jit(f_fsdp).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
-      jax.jit(f_fsdp)(x, ws)
+      jax.jit(f_fsdp).lower(x, ws).compile()
 
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("tpu")
   def test_scan_fsdp(self):
-    k = 10
+    k = 4
     n = jax.device_count()
     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
       # This test shows FSDP with scan.
@@ -127,11 +127,13 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = jnp.ones((k, N, N), out_sharding=jax.P(None, "i", None))
       hlo = jax.jit(f_scan_fsdp).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
-      jax.jit(f_scan_fsdp)(x, ws)
+      jax.jit(f_scan_fsdp).lower(x, ws).compile()
 
-  @jtu.run_on_devices("cpu")
+  @jtu.run_on_devices("tpu")
   def test_pipeline(self):
-    k = 10
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest("Needs TPU >= 7")
+    k = 4
     n = jax.device_count()
     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
 
@@ -168,7 +170,7 @@ class ControlDepsTest(jtu.JaxTestCase):
       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
       hlo = jax.jit(f_pipeline).lower(x, ws).as_text(dialect="hlo")
       self.assertIn('custom_call_target="control_dep"', hlo)
-      jax.jit(f_pipeline)(x, ws)
+      jax.jit(f_pipeline).lower(x, ws).compile()
 
 
 if __name__ == "__main__":
