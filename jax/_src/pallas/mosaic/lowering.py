@@ -4093,9 +4093,10 @@ def _scan_lowering_rule(
     length: int,
     reverse: bool,
     unroll: int,
-    num_consts: int,
-    num_carry: int,
+    ft_in,
+    ft_out,
 ):
+  num_consts, num_carry, _ = (len(g) for g in ft_in.unpack())
   # Can only handle fori_loop-like scans
   if reverse: raise NotImplementedError
   del reverse

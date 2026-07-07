@@ -2671,11 +2671,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr, eqn = new_jaxpr()
-    eqn.params['num_consts'] = -3
+    eqn.params['ft_in'] = -3
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        re.escape('invalid scan param num_consts of type int, '
-                  'non-negative int required: -3'),
+        re.escape('invalid scan param ft_in of type int, '
+                  'FlatTree required: -3'),
         lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_typecheck_param(self):

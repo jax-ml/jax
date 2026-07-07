@@ -1469,8 +1469,8 @@ class StateControlFlowTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda x_ref: jax.lax.scan(body, (), x_ref))(x_ref)
     jaxpr = discharge_state(jaxpr)
     scan_eqn = jaxpr.eqns[0]
-    self.assertEqual(scan_eqn.params['num_consts'], 0)
-    self.assertEqual(scan_eqn.params['num_carry'], 2)
+    consts_g, carry_g, _ = scan_eqn.params['ft_in'].unpack()
+    self.assertEqual([len(consts_g), len(carry_g)], [0, 2])
     a, b = scan_eqn.params['jaxpr'].in_avals
     self.assertEqual(a.shape, ())
     self.assertEqual(b.shape, (3,))

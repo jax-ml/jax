@@ -1412,15 +1412,14 @@ def _interpret_jaxpr(
             token, *invals[1:])
 
       elif prim is lax.scan_p:
-        consts, init_carry, xs = split_list(
-            deferred_invals(),
-            [eqn.params['num_consts'], eqn.params['num_carry']],
-        )
+        consts, init_carry, xs = (
+            list(g) for g in
+            eqn.params['ft_in'].update(deferred_invals()).unpack())
         def _scan_body(c, a):
           token, c = c
           token, ret = _interpret(
               eqn.params['jaxpr'].jaxpr, *consts, *c, *a, token=token)
-          c, b = split_list(ret, [eqn.params['num_carry']])
+          c, b = (list(g) for g in eqn.params['ft_out'].update(ret).unpack())
           return (token, c), b
         (token, carry), out = lax.scan(
             _scan_body, (token, init_carry), xs=xs,

@@ -63,6 +63,7 @@ class FlatTree:
     return self.update(f(x1, x2, x3)
                        for x1, x2, x3 in zip(self.vals, list(t2), list(t3)))
 
+  def void(self): return self.map(lambda _: None)
   def unzip2(self: FlatTree) -> tuple[FlatTree, FlatTree]:
     ys = []
     zs = []
@@ -90,8 +91,12 @@ class FlatTree:
       treedefs = treedef_children(self.tree)
       valss = split_list_checked(self.xs, [t.num_leaves for t in treedefs])
       return tuple(FTPyTree(vals, treedef) for vals, treedef in zip(valss, treedefs))
+    elif isinstance(self, FTFiltered):
+      return tuple(FTFiltered(t) for t in self.val.unpack())
     else:
       raise TypeError(f"Not a FlatTree tuple: {self}")
+
+  def unpack2(self): return tuple(x.unpack() for x in self.unpack())
 
   def with_aux(self:FlatTree, aux:Any) -> FlatTree:
     return pack((self, FTStatic(aux)))
@@ -332,6 +337,12 @@ def flatten_static_argnums_argnames_and_return_various_trees(
 def flatten_list(xs):
   # [a] -> FlatTree[a] . Treats list elements as leaves.
   return pack(tuple(FTSingleton(x) for x in xs))
+
+def nones(n):
+  return flatten_list([None] * n)
+
+def zipstar(ft):
+  return pack(tuple(zip(*ft.unpack2())))
 
 def ft_filtered(tree):
   if isinstance(tree, FTTuple):
