@@ -325,15 +325,14 @@ ExperimentalSplitByMeshAxis(
         num_devices, " vs ", mesh_axis_size));
   }
 
-  RemapPlan remap_plan;
-  remap_plan.mappings =
-      std::make_shared<std::vector<RemapPlan::Mapping>>();
-  auto& mappings = *remap_plan.mappings;
-
   TF_ASSIGN_OR_RETURN(std::vector<int> strides, GetStrides(mesh_axis_sizes));
   TF_ASSIGN_OR_RETURN(
       std::vector<int> submesh_offsets,
       GetSubmeshOffsets(mesh_axis_idx, mesh_axis_sizes, strides));
+
+  std::vector<ArraySpec> input_specs;
+  std::vector<ArraySpec> output_specs;
+  std::vector<RemapPlan::Mapping> mappings;
 
   nb_class_ptr<PyClient> backend;
   std::vector<ArrayRef> input_ifrt_arrays;
@@ -346,15 +345,14 @@ ExperimentalSplitByMeshAxis(
                                   array_idx);
     }
 
-    remap_plan.input_specs.push_back(
-        ArraySpec{/*dtype=*/array->dtype(),
-                             /*shape=*/array->shape(),
-                             /*sharding=*/array->shared_ptr_sharding()});
+    input_specs.push_back(ArraySpec{/*dtype=*/array->dtype(),
+                                    /*shape=*/array->shape(),
+                                    /*sharding=*/array->shared_ptr_sharding()});
 
     for (int submesh_idx = 0; submesh_idx < num_submeshes; ++submesh_idx) {
       auto& mapping = mappings.emplace_back();
       mapping.in_array = array_idx;
-      mapping.out_array = remap_plan.output_specs.size();
+      mapping.out_array = output_specs.size();
       int submesh_axis_size = mesh_axis_sections[submesh_idx];
       int submesh_axis_start = 0;
       if (submesh_idx > 0) {
@@ -374,26 +372,36 @@ ExperimentalSplitByMeshAxis(
             ShardingRef ifrt_submesh_sharding,
             GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
                                subshape));
-        remap_plan.output_specs.push_back(ArraySpec{
-            /*dtype=*/array->dtype(),
-            /*shape=*/std::move(subshape),
-            /*sharding=*/std::move(ifrt_submesh_sharding)});
+        output_specs.push_back(
+            ArraySpec{/*dtype=*/array->dtype(),
+                      /*shape=*/std::move(subshape),
+                      /*sharding=*/std::move(ifrt_submesh_sharding)});
       } else {
         // The arrays is replicated, so its shape does not change.
         TF_ASSIGN_OR_RETURN(
             ShardingRef ifrt_submesh_sharding,
             GetIfrtHloSharding(submesh_shardings[array_idx][submesh_idx],
                                array->shape()));
-        remap_plan.output_specs.push_back(ArraySpec{
-            /*dtype=*/array->dtype(),
-            /*shape=*/array->shape(),
-            /*sharding=*/std::move(ifrt_submesh_sharding)});
+        output_specs.push_back(
+            ArraySpec{/*dtype=*/array->dtype(),
+                      /*shape=*/array->shape(),
+                      /*sharding=*/std::move(ifrt_submesh_sharding)});
       }
     }
 
     input_ifrt_arrays.push_back(FormRef(array));
   }
 
+#if JAX_IFRT_VERSION_NUMBER >= 57
+  RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
+                       std::move(mappings));
+#else
+  RemapPlan remap_plan;
+  remap_plan.input_specs = std::move(input_specs);
+  remap_plan.output_specs = std::move(output_specs);
+  remap_plan.mappings =
+      std::make_shared<std::vector<RemapPlan::Mapping>>(std::move(mappings));
+#endif
   DCHECK_OK(remap_plan.Validate());
 
   std::vector<ArrayRef> result_ifrt_arrays;
@@ -484,10 +492,9 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
         absl::MakeSpan(current_entry), strides, submesh_offsets));
   }
 
-  RemapPlan remap_plan;
-  remap_plan.mappings =
-      std::make_shared<std::vector<RemapPlan::Mapping>>();
-  auto& mappings = *remap_plan.mappings;
+  std::vector<ArraySpec> input_specs;
+  std::vector<ArraySpec> output_specs;
+  std::vector<RemapPlan::Mapping> mappings;
 
   std::vector<ArrayRef> input_ifrt_arrays;
   input_ifrt_arrays.reserve(num_output_arrays * num_input_arrays_per_output);
@@ -518,7 +525,7 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
       }
 
       auto& mapping = mappings.emplace_back();
-      mapping.in_array = remap_plan.input_specs.size();
+      mapping.in_array = input_specs.size();
       mapping.out_array = array_idx;
       int submesh_axis_size = mesh_axis_sections[input_idx];
       int submesh_axis_start = 0;
@@ -537,10 +544,10 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
             offset_to_array, offset_to_array + num_contiguous_shards, 1});
         offset_from_array += num_contiguous_shards;
       }
-      remap_plan.input_specs.push_back(
+      input_specs.push_back(
           ArraySpec{.dtype = array->dtype(),
-                               .shape = array->shape(),
-                               .sharding = array->shared_ptr_sharding()});
+                    .shape = array->shape(),
+                    .sharding = array->shared_ptr_sharding()});
       input_ifrt_arrays.push_back(tsl::FormRef(array));
     }
 
@@ -549,10 +556,9 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
       TF_ASSIGN_OR_RETURN(
           ShardingRef ifrt_sharding,
           GetIfrtHloSharding(out_shardings[array_idx], first_array->shape()));
-      remap_plan.output_specs.push_back(
-          ArraySpec{.dtype = first_array->dtype(),
-                               .shape = first_array->shape(),
-                               .sharding = std::move(ifrt_sharding)});
+      output_specs.push_back(ArraySpec{.dtype = first_array->dtype(),
+                                       .shape = first_array->shape(),
+                                       .sharding = std::move(ifrt_sharding)});
     } else {
       std::vector<int64_t> concatenated_dims(
           first_array->shape().dims().begin(),
@@ -563,10 +569,9 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
       TF_ASSIGN_OR_RETURN(
           ShardingRef ifrt_sharding,
           GetIfrtHloSharding(out_shardings[array_idx], concatenated_shape));
-      remap_plan.output_specs.push_back(
-          ArraySpec{.dtype = first_array->dtype(),
-                               .shape = std::move(concatenated_shape),
-                               .sharding = std::move(ifrt_sharding)});
+      output_specs.push_back(ArraySpec{.dtype = first_array->dtype(),
+                                       .shape = std::move(concatenated_shape),
+                                       .sharding = std::move(ifrt_sharding)});
     }
   }
 
@@ -574,6 +579,16 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
   std::vector<ArrayRef> result_ifrt_arrays;
   {
     nb::gil_scoped_release gil_release;
+#if JAX_IFRT_VERSION_NUMBER >= 57
+    RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
+                         std::move(mappings));
+#else
+    RemapPlan remap_plan;
+    remap_plan.input_specs = std::move(input_specs);
+    remap_plan.output_specs = std::move(output_specs);
+    remap_plan.mappings =
+        std::make_shared<std::vector<RemapPlan::Mapping>>(std::move(mappings));
+#endif
     DCHECK_OK(remap_plan.Validate());
 
     TF_ASSIGN_OR_RETURN(
