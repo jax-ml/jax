@@ -180,10 +180,8 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
   batch_xs, batch_cs, batch_shardings, batch_indices = [], [], [], []
   for i, (x, sharding, layout, cs) in enumerate(
       zip(xs, shardings, layouts, copy_semantics)):
-    devices = sharding._addressable_device_assignment
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
-    aval = core.shaped_abstractify(x)
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))
     else:
@@ -194,12 +192,10 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
         batch_indices.append(i)
         batch_cs.append(cs)
       else:
-        if sharding.is_fully_replicated:
-          shards = [x] * len(devices)
-        else:
-          indices = tuple(
-              sharding.addressable_devices_indices_map(x.shape).values())
-          shards = [x[i] for i in indices]
+        devices = sharding._addressable_device_assignment
+        shards = ([x] * len(devices) if sharding.is_fully_replicated else
+                  [x[i] for i in tuple(sharding.addressable_devices_indices_map(x.shape).values())])
+        aval = core.shaped_abstractify(x)
         results.append(batched_device_put(aval, sharding, shards, devices))
   if batch_xs:
     # TODO(parkers): handle string dtypes.
@@ -207,12 +203,9 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
       outs = []
       for sharding, x in zip(shardings, xs):
         devices = sharding._addressable_device_assignment
-        if sharding.is_fully_replicated:
-          shards = [x] * len(devices)
-        else:
-          indices = tuple(
-              sharding.addressable_devices_indices_map(x.shape).values())
-          shards = [x[i] for i in indices]
+        shards = ([x] * len(devices) if sharding.is_fully_replicated else
+                  [x[i] for i in tuple(sharding.addressable_devices_indices_map(x.shape).values())])
+        aval = core.shaped_abstractify(x)
         outs.append(batched_device_put(aval, sharding, shards, devices))
       return outs
     copy_outs = _jax.shard_args(batch_shardings, [None] * len(batch_xs),
