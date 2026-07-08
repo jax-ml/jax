@@ -1423,10 +1423,11 @@ class LaunchContext:
       # called by the leader. The warpgroup barrier ensures that all lanes have
       # committed their copies before that.
       nvvm.cp_async_mbarrier_arrive(barrier.get_ptr())
-      utils.warpgroup_barrier()
-      barrier.arrive(
-          predicate=utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
-      )
+      if arrive:
+        utils.warpgroup_barrier()
+        barrier.arrive(
+            predicate=utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
+        )
       return
 
     assert implementation == AsyncCopyImplementation.TMA

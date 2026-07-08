@@ -56,6 +56,7 @@ from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import layouts as mgpu_layouts
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu.launch_context import AsyncCopyImplementation
 from jax.experimental.mosaic.gpu.launch_context import CopyPartition
 from jax.experimental.mosaic.gpu.launch_context import OOBFillMode
 import jax.numpy as jnp
@@ -757,6 +758,7 @@ def _copy_gmem_to_smem_lowering(
     collective_axes,
     leader_tracked,
     oob_mode,
+    impl,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -839,52 +841,58 @@ def _copy_gmem_to_smem_lowering(
       )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    if bytes % WARPGROUP_SIZE:
-      raise NotImplementedError(
-          "Only copies transferring a number of bytes divisible by the"
-          f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
-          f" {WARPGROUP_SIZE}"
-      )
-    if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
-      # We arrive uniformly from each thread in the WG, so we need to divide the
-      # number of bytes by the number of threads in the WG.
-      # TODO: apaszke - Relax this. We can just select the WG leader and have it
-      # arrive with the whole transfer size, while everyone else arrives with 0.
-      # But we should continue using this scheme as it's likely to be faster.
-      bytes //= WARPGROUP_SIZE
-      if ctx.module_ctx.auto_barriers:
-        mgpu.warpgroup_barrier()  # Make sure all reads have completed.
-      if is_leader_tracked_copy:
-        first_block = arith_dialect.cmpi(
-            arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(collective[0]),
-            mgpu.c(0, ir.IndexType.get()),
+    is_cp_async = impl == "cp_async"
+    if not is_cp_async:
+      if bytes % WARPGROUP_SIZE:
+        raise NotImplementedError(
+            "Only copies transferring a number of bytes divisible by the"
+            f" warpgroup size are supported. Got {bytes=} but warpgroup size is"
+            f" {WARPGROUP_SIZE}"
         )
-        barrier.arrive_expect_tx(bytes, predicate=first_block)
-      else:
-        barrier.arrive_expect_tx(bytes)
-    else:
-      # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
-      # the barrier still expects a full 128 arrivals so we arrive 4 times
-      # on each CUDA thread instead.
-      # TODO(justinfu): The arrival counts are wrong if called outside of a
-      # single warp. Figure out how to guard against this in user code.
-      bytes = bytes // WARP_SIZE
-      if is_leader_tracked_copy:
-        first_block = arith_dialect.cmpi(
-            arith_dialect.CmpIPredicate.eq,
-            mgpu.utils.cluster_idx(collective[0]),
-            mgpu.c(0, ir.IndexType.get()),
-        )
-        with mgpu.when(first_block):
-          barrier.arrive(arrival_count=3, can_complete=False)
+      if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup:
+        # We arrive uniformly from each thread in the WG, so we need to divide the
+        # number of bytes by the number of threads in the WG.
+        # TODO: apaszke - Relax this. We can just select the WG leader and have it
+        # arrive with the whole transfer size, while everyone else arrives with 0.
+        # But we should continue using this scheme as it's likely to be faster.
+        bytes //= WARPGROUP_SIZE
+        if ctx.module_ctx.auto_barriers:
+          mgpu.warpgroup_barrier()  # Make sure all reads have completed.
+        if is_leader_tracked_copy:
+          first_block = arith_dialect.cmpi(
+              arith_dialect.CmpIPredicate.eq,
+              mgpu.utils.cluster_idx(collective[0]),
+              mgpu.c(0, ir.IndexType.get()),
+          )
+          barrier.arrive_expect_tx(bytes, predicate=first_block)
+        else:
           barrier.arrive_expect_tx(bytes)
       else:
-        barrier.arrive(arrival_count=3, can_complete=False)
-        barrier.arrive_expect_tx(bytes)
+        # In Warp-level lowering, we arrive on each CUDA thread in a warp, but
+        # the barrier still expects a full 128 arrivals so we arrive 4 times
+        # on each CUDA thread instead.
+        # TODO(justinfu): The arrival counts are wrong if called outside of a
+        # single warp. Figure out how to guard against this in user code.
+        bytes = bytes // WARP_SIZE
+        if is_leader_tracked_copy:
+          first_block = arith_dialect.cmpi(
+              arith_dialect.CmpIPredicate.eq,
+              mgpu.utils.cluster_idx(collective[0]),
+              mgpu.c(0, ir.IndexType.get()),
+          )
+          with mgpu.when(first_block):
+            barrier.arrive(arrival_count=3, can_complete=False)
+            barrier.arrive_expect_tx(bytes)
+        else:
+          barrier.arrive(arrival_count=3, can_complete=False)
+          barrier.arrive_expect_tx(bytes)
 
+    predicate_kwarg = (
+        {}
+        if is_cp_async
+        else dict(predicate=ctx.module_ctx.single_lane_predicate)
+    )
     # Gathers are a warpgroup-level collective and can't take a predicate.
-    predicate_kwarg = dict(predicate=ctx.module_ctx.single_lane_predicate)
     if gmem_slice := copy_params.get("gmem_slice", ()):
       first_idx = gmem_slice[0]
       if isinstance(first_idx, mgpu.FragmentedArray) and first_idx.shape:
@@ -897,11 +905,22 @@ def _copy_gmem_to_smem_lowering(
         collective=collective,
         leader_tracked=leader_tracked,
         oob_mode=oob_mode,
+        implementation=(
+            AsyncCopyImplementation.CP_ASYNC
+            if is_cp_async
+            else AsyncCopyImplementation.TMA
+        ),
         **copy_params,
         **predicate_kwarg,  # pyrefly: ignore[bad-argument-type]
     )
+    if is_cp_async:
+      barrier.arrive()
     return ()
   i32 = ir.IntegerType.get_signless(32)
+  if impl == "cp_async":
+    raise NotImplementedError(
+        "cp_async implementation is not supported with Warpgroup lowering"
+    )
   if "gmem_slice" not in copy_params:
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
@@ -954,14 +973,16 @@ def copy_gmem_to_smem(
     dst: _Ref,
     barrier: _Ref,
     *,
+    impl: Literal["tma", "cp_async"] = "tma",
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
-    oob_mode: OOBFillMode = OOBFillMode.ZEROS,
+    oob_mode: OOBFillMode | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
-  When ``collective_axes`` is specified, the copy involves multiple blocks
-  in the cluster. The value of ``leader_tracked`` determines the behavior:
+  When ``impl="tma"`` and ``collective_axes`` is specified, the copy involves
+  multiple blocks in the cluster. The value of ``leader_tracked`` determines
+  the behavior:
 
   * ``None`` (**multicast**): All blocks sharing the same index along the
     collective axes receive the same data from ``src``.
@@ -983,13 +1004,19 @@ def copy_gmem_to_smem(
     src: The source Ref. Must be in GMEM.
     dst: The destination Ref. Must be in SMEM.
     barrier: The barrier to use for tracking completion of the copy.
-    collective_axes: The collective axes to use for the copy.
+    impl: The underlying copy implementation to use: ``"cp_async"`` or
+      ``"tma"``. Defaults to ``"tma"``.
+    collective_axes: The collective axes to use for the copy. Only supported
+      when ``impl="tma"``.
     leader_tracked: If specified, only the leader block in the cluster will
-     observe the completion of the copy. If ``CopyPartition.PARTITIONED(axis)``,
-     performs a partitioned collective copy along the given axis. If
-     ``CopyPartition.REPLICATED``, all blocks load the same data.
-    oob_mode: The optional out-of-bounds fill mode. Can be ``OOBFillMode.UNDEFINED``,
-     ``OOBFillMode.PROMISE_IN_BOUNDS`` or ``OOBFillMode.ZEROS``.
+      observe the completion of the copy. If
+      ``CopyPartition.PARTITIONED(axis)``, performs a partitioned collective
+      copy along the given axis. If ``CopyPartition.REPLICATED``, all blocks
+      load the same data. Only
+      supported when ``impl="tma"``.
+    oob_mode: The optional out-of-bounds fill mode. Can be
+      ``OOBFillMode.UNDEFINED``, ``OOBFillMode.PROMISE_IN_BOUNDS`` or
+      ``OOBFillMode.ZEROS``. Only supported when ``impl="tma"``.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -1013,12 +1040,27 @@ def copy_gmem_to_smem(
   flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
       barrier_transforms
   )
+  if impl == "cp_async":
+    if collective_axes is not None:
+      raise ValueError(
+          "`collective_axes` is not supported with `impl='cp_async'`"
+      )
+    if leader_tracked is not None:
+      raise ValueError(
+          "`leader_tracked` is not supported with `impl='cp_async'`"
+      )
+    if oob_mode is not None:
+      raise ValueError(
+          "`oob_mode` is not supported with `impl='cp_async'`"
+      )
   if isinstance(collective_axes, str):
     collective_axes = (collective_axes,)
   if leader_tracked is not None and collective_axes is None:
     raise ValueError(
         "`collective_axes` must be specified when `leader_tracked` is set"
     )
+  if impl == "tma" and oob_mode is None:
+    oob_mode = OOBFillMode.ZEROS
   copy_gmem_to_smem_p.bind(
       src,
       dst,
@@ -1032,6 +1074,7 @@ def copy_gmem_to_smem(
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
       oob_mode=oob_mode,
+      impl=impl,
   )
   return None
 
