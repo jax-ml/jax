@@ -470,6 +470,20 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertAllClose(actual,
                           expected[i * scatter_len:(i + 1) * scatter_len])
 
+  def testReduceScatterNegativeScatterDimension(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/20125: a
+    # negative scatter_dimension should give the same result as the equivalent
+    # non-negative axis.
+    device_count = jax.device_count()
+    shape = (device_count, device_count, 4 * device_count)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    # The per-device operand is rank 2, so scatter_dimension=-1 is axis 1.
+    pos = pmap(lambda x: lax.psum_scatter(x, 'i', scatter_dimension=1,
+                                          tiled=True), axis_name='i')(x)
+    neg = pmap(lambda x: lax.psum_scatter(x, 'i', scatter_dimension=-1,
+                                          tiled=True), axis_name='i')(x)
+    self.assertAllClose(neg, pos)
+
   def testReduceScatterReplicaGroupsTiled(self):
     replicas = jax.device_count()
     if replicas % 2 != 0:
@@ -566,6 +580,18 @@ class PythonPmapTest(jtu.JaxTestCase):
     ref = jnp.moveaxis(x, (pmap_in_axis, split_axis),
                           (concat_axis + 1, 0))
     self.assertAllClose(y, ref)
+
+  def testAllToAllNegativeAxes(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/20125: negative
+    # split_axis/concat_axis arguments should give the same result as the
+    # equivalent non-negative axes.
+    shape = (jax.device_count(),) * 3
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, np.float32)
+    # The per-device operand is rank 2, so (-2, -1) map to (0, 1).
+    pos = pmap(lambda x: lax.all_to_all(x, 'i', 0, 1), axis_name='i')(x)
+    neg = pmap(lambda x: lax.all_to_all(x, 'i', -2, -1), axis_name='i')(x)
+    self.assertAllClose(neg, pos)
 
   def testMismatchedAxisSizes(self):
     n = jax.device_count()
