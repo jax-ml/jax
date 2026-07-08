@@ -179,8 +179,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
   results = []
   batch_xs, batch_cs, batch_shardings, batch_indices = [], [], [], []
   for i, (x, sharding, layout, cs) in enumerate(
-      safe_zip(xs, shardings, layouts, copy_semantics)
-  ):
+      zip(xs, shardings, layouts, copy_semantics)):
     devices = sharding._addressable_device_assignment
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
@@ -189,10 +188,8 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
       results.append(api.device_put(x, Format(layout, sharding)))
     else:
       if jaxlib_extension_version >= 475:
-        # Add a placeholder result that will be filled in later.
         results.append(None)
-        # Accumulate arguments to `_jax.shard_args`.
-        batch_xs.append(x)
+        batch_xs.append(x)  # Accumulate arguments to `_jax.shard_args`
         batch_shardings.append(sharding)
         batch_indices.append(i)
         batch_cs.append(cs)
@@ -201,36 +198,27 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
           shards = [x] * len(devices)
         else:
           indices = tuple(
-              sharding.addressable_devices_indices_map(x.shape).values()
-          )
+              sharding.addressable_devices_indices_map(x.shape).values())
           shards = [x[i] for i in indices]
         results.append(batched_device_put(aval, sharding, shards, devices))
   if batch_xs:
     # TODO(parkers): handle string dtypes.
-    def _batched_device_put_fallback(shardings, layouts, copy_semantics, xs):
+    def _batched_device_put_fallback(shardings, _, __, xs):
       outs = []
-      for sharding, l, cs, x in safe_zip(
-          shardings, layouts, copy_semantics, xs
-      ):
+      for sharding, x in zip(shardings, xs):
         devices = sharding._addressable_device_assignment
         if sharding.is_fully_replicated:
           shards = [x] * len(devices)
         else:
           indices = tuple(
-              sharding.addressable_devices_indices_map(x.shape).values()
-          )
+              sharding.addressable_devices_indices_map(x.shape).values())
           shards = [x[i] for i in indices]
         outs.append(batched_device_put(aval, sharding, shards, devices))
       return outs
-
-    copy_outs = _jax.shard_args(
-        batch_shardings,
-        [None] * len(batch_xs),
-        batch_cs,
-        batch_xs,
-        fallback=_batched_device_put_fallback,
-    )
-    for i, copy_out in safe_zip(batch_indices, copy_outs):
+    copy_outs = _jax.shard_args(batch_shardings, [None] * len(batch_xs),
+                                batch_cs, batch_xs,
+                                fallback=_batched_device_put_fallback)
+    for i, copy_out in zip(batch_indices, copy_outs):
       assert results[i] is None
       results[i] = copy_out
   return results
