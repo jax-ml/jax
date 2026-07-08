@@ -415,12 +415,16 @@ class PrngTest(jtu.JaxTestCase):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
       if jtu.is_device_rocm():
         self.assertNotIn("hip_threefry2x32", hlo_text)
+      elif jtu.is_device_oneapi():
+        self.assertNotIn("oneapi_threefry2x32", hlo_text)
       else:
         self.assertNotIn("cu_threefry2x32", hlo_text)
     with jax._src.config.threefry_gpu_kernel_lowering(True):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
       if jtu.is_device_rocm():
         self.assertIn("hip_threefry2x32", hlo_text)
+      elif jtu.is_device_oneapi():
+        self.assertIn("oneapi_threefry2x32", hlo_text)
       else:
         self.assertIn("cu_threefry2x32", hlo_text)
 
