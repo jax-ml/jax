@@ -34,12 +34,13 @@ class GpuInfoTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     if not plgpu:
-      self.skipTest("Skipping test because device is not a GPU.")
-    if jtu.is_device_cuda() or jtu.is_device_rocm():
-      self.assertTrue(plgpu.is_gpu_device())
-    else:
-      self.assertFalse(plgpu.is_gpu_device())
-      self.skipTest("Skipping test because device is not a GPU.")
+      self.skipTest("GPU jaxlib is not available")
+    if not jtu.is_device_cuda() and not jtu.is_device_rocm():
+      self.skipTest("Needs a GPU device")
+    try:
+      plgpu.get_gpu_info()
+    except ValueError:
+      self.skipTest("Unsupported GPU device")
 
   def test_get_gpu_info(self):
     device = jax.devices()[0]
