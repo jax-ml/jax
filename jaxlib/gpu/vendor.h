@@ -905,9 +905,7 @@ struct GpuErrorTraits<miopenStatus_t> {
 
 #elif defined(JAX_GPU_ONEAPI)
 
-// TODO(Intel-tf):
-// placeholder for OneAPI/SYCL glue code compilation.
-// Full GPU kernel support requires additional type mappings.
+#include "jaxlib/oneapi/oneapi_gpu_runtime.h"
 
 #define JAX_GPU_NAMESPACE oneapi
 #define JAX_GPU_PREFIX "oneapi"
@@ -917,10 +915,27 @@ struct GpuErrorTraits<miopenStatus_t> {
 #define JAX_GPU_HAVE_FP8 0
 #define JAX_GPU_HAVE_SOLVER_GEEV 0
 
+typedef ::sycl::queue *gpuStream_t;
+
+#define GPU_EVENT_DEFAULT 0
+
+// The Sycl* wrappers return absl::Status; JAX_AS_STATUS resolves to the
+// AsStatus(const absl::Status&) passthrough in gpu_kernel_helpers.h.
+#define gpuMemcpyDeviceToHost ::jax::oneapi::SyclMemcpyDeviceToHost
+#define gpuMemcpyHostToDevice ::jax::oneapi::SyclMemcpyHostToDevice
+#define gpuMemcpyDeviceToDevice ::jax::oneapi::SyclMemcpyDeviceToDevice
+#define gpuMemcpyAsync ::jax::oneapi::SyclMemcpyAsync
+#define gpuGetLastError ::jax::oneapi::SyclGetLastError
+#define gpuStreamSynchronize ::jax::oneapi::SyclStreamSynchronize
+
 namespace jax::oneapi {
-// Probably the SYCL equivalent is "sub-group size".
-// Placeholder to satisfy the vendor.h interface.
 inline constexpr uint32_t kNumThreadsPerWarp = 32;
+
+// Declared here so the AsStatus<T> template in gpu_kernel_helpers.h
+// can compile. Specializations are not needed for oneAPI.
+template <typename T>
+struct GpuErrorTraits;
+
 }  // namespace jax::oneapi
 
 #else  // defined(GPU vendor)
