@@ -75,13 +75,17 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/index.h"
+#include "xla/python/ifrt/index_domain.h"
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
+#include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/safe_static_init.h"
+#include "xla/python/types.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/errors.h"
@@ -1303,6 +1307,273 @@ PyType_Slot PjitFunction_slots[] = {
     {0, nullptr},
 };
 
+class ShardArgsHandler {
+ public:
+  virtual ~ShardArgsHandler() = default;
+
+  virtual bool TryAdd(size_t result_idx, nb::handle arg, nb::handle sharding,
+                      nb::handle layout, nb::handle copy_semantics) = 0;
+
+  virtual void Run(std::vector<nb::object>& results) = 0;
+};
+
+class FallbackHandler : public ShardArgsHandler {
+ public:
+  explicit FallbackHandler(std::optional<nb::callable> fallback)
+      : fallback_(std::move(fallback)) {}
+
+  bool TryAdd(size_t result_idx, nb::handle arg, nb::handle sharding,
+              nb::handle layout, nb::handle copy_semantics) override {
+    indices_.push_back(result_idx);
+    args_.append(arg);
+    shardings_.append(sharding);
+    layouts_.append(layout);
+    copy_semantics_.append(copy_semantics);
+    return true;
+  }
+
+  void Run(std::vector<nb::object>& results) override {
+    if (indices_.empty()) {
+      return;
+    }
+    if (!fallback_.has_value() || fallback_->is_none()) {
+      throw nb::value_error("Fallback handler has no valid fallback function.");
+    }
+    nb::sequence fallback_results = nb::cast<nb::sequence>(
+        (*fallback_)(shardings_, layouts_, copy_semantics_, args_));
+
+    for (size_t i = 0; i < indices_.size(); ++i) {
+      results[indices_[i]] = fallback_results[i];
+    }
+  }
+
+ private:
+  std::optional<nb::callable> fallback_;
+  std::vector<size_t> indices_;
+  nb::list args_;
+  nb::list shardings_;
+  nb::list layouts_;
+  nb::list copy_semantics_;
+};
+
+class NumpyHandler : public ShardArgsHandler {
+ private:
+  struct GroupKey {
+    nb_class_ptr<PyClient> py_client;
+    xla::ifrt::DeviceListRef devices;
+    xla::ifrt::MemoryKind memory_kind;
+
+    template <typename H>
+    friend H AbslHashValue(H h, const GroupKey& key) {
+      return H::combine(std::move(h), key.py_client.ptr(), key.devices,
+                        key.memory_kind);
+    }
+
+    bool operator==(const GroupKey& other) const {
+      return py_client.ptr() == other.py_client.ptr() &&
+             devices == other.devices && memory_kind == other.memory_kind;
+    }
+  };
+
+  struct Group {
+    std::vector<xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec> specs;
+    std::vector<size_t> indices;
+    std::vector<nb::object> shardings;
+    std::vector<bool> weak_types;
+  };
+
+ public:
+  NumpyHandler() = default;
+
+  bool TryAdd(size_t result_idx, nb::handle arg, nb::handle sharding,
+              nb::handle layout, nb::handle copy_semantics) override {
+    if (!layout.is_none()) {
+      return false;
+    }
+    static nb::object typed_ndarray_type = []() -> nb::object {
+      try {
+        return nb::module_::import_("jax._src.literals").attr("TypedNdArray");
+      } catch (...) {
+        return nb::object();
+      }
+    }();
+    PyObject* typ = reinterpret_cast<PyObject*>(arg.type().ptr());
+    if (typ != reinterpret_cast<PyObject*>(&PyArray_Type) &&
+        (typed_ndarray_type.ptr() == nullptr ||
+         typ != typed_ndarray_type.ptr())) {
+      return false;
+    }
+
+    auto device_list_or = GetPyDeviceList(sharding);
+    if (!device_list_or.ok()) {
+      VLOG(2) << "GetPyDeviceList failed: " << device_list_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    nb_class_ptr<PyClient> arg_py_client = (*device_list_or)->py_client();
+    xla::ifrt::Client* arg_client = arg_py_client->ifrt_client();
+    if (arg_client == nullptr) {
+      VLOG(2) << "IFRT client is null; fallback to python.";
+      return false;
+    }
+
+    bool enable_x64 = GetEnableX64();
+    auto signature_or = PyArgSignatureOfValue(arg, enable_x64);
+    if (!signature_or.ok()) {
+      VLOG(2) << "PyArgSignatureOfValue failed: " << signature_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    const PyArgSignature& signature = *signature_or;
+
+    auto ifrt_dtype_or = xla::ifrt::ToDType(signature.dtype);
+    if (!ifrt_dtype_or.ok()) {
+      VLOG(2) << "ToDType failed: " << ifrt_dtype_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    xla::ifrt::DType ifrt_dtype = *ifrt_dtype_or;
+    xla::ifrt::Shape ifrt_shape(signature.shape);
+
+    xla::nb_numpy_ndarray ndarray = nb::borrow<xla::nb_numpy_ndarray>(arg);
+
+    auto actual_type_or = xla::DtypeToPrimitiveType(ndarray.dtype());
+    if (!actual_type_or.ok() || *actual_type_or != signature.dtype) {
+      VLOG(2) << "Type mismatch or conversion needed: actual="
+              << (actual_type_or.ok() ? static_cast<int>(*actual_type_or) : -1)
+              << " expected=" << static_cast<int>(signature.dtype)
+              << "; fallback to python.";
+      return false;
+    }
+
+    std::shared_ptr<PythonRefManager::ManagedPyObjects> py_buffer_ref =
+        GlobalPyRefManager()->ManageReference(nb::borrow<nb::object>(arg));
+
+    auto ifrt_sharding_or = GetIfrtHloSharding(sharding, ifrt_shape);
+    if (!ifrt_sharding_or.ok()) {
+      VLOG(2) << "GetIfrtHloSharding failed: " << ifrt_sharding_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    xla::ifrt::ShardingRef ifrt_sharding = std::move(*ifrt_sharding_or);
+    xla::ifrt::DeviceListRef devices = ifrt_sharding->devices();
+    xla::ifrt::MemoryKind memory_kind = ifrt_sharding->memory_kind();
+
+    auto index_domains_or = ifrt_sharding->IndexDomains(
+        ifrt_shape, xla::ifrt::SingleDeviceShardSemantics::kAddressableShards);
+    if (!index_domains_or.ok()) {
+      VLOG(2) << "IndexDomains failed: " << index_domains_or.status()
+              << "; fallback to python.";
+      return false;
+    }
+    auto index_domains = std::move(*index_domains_or);
+
+    absl::flat_hash_map<xla::ifrt::IndexDomain, absl::InlinedVector<int64_t, 1>>
+        shards;
+    for (int i = 0; i < index_domains.size(); ++i) {
+      shards[index_domains[i]].push_back(i);
+    }
+
+    xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec spec = {
+        .array_spec = {
+            .dtype = ifrt_dtype,
+            .shape = ifrt_shape,
+            .sharding = std::move(ifrt_sharding),
+            .layout = nullptr,
+        }};
+
+    spec.buffers.reserve(shards.size());
+    for (const auto& [index_domain, shard_indices] : shards) {
+      const char* base_ptr = reinterpret_cast<const char*>(ndarray.data());
+      int64_t offset = 0;
+      for (int d = 0; d < ndarray.ndim(); ++d) {
+        offset += index_domain.origin().elements()[d] * ndarray.strides(d);
+      }
+      const char* shard_ptr = base_ptr + offset;
+
+      xla::ifrt::Shape shard_shape = index_domain.shape();
+
+      std::vector<int64_t> byte_strides(ndarray.ndim());
+      for (int d = 0; d < ndarray.ndim(); ++d) {
+        byte_strides[d] = ndarray.strides(d);
+      }
+
+      std::function<void()> on_done = [py_buffer_ref]() {
+        // keeps py_buffer_ref alive
+      };
+
+      xla::ifrt::Client::HostBuffer host_buffer = {
+          .data = shard_ptr,
+          .dtype = ifrt_dtype,
+          .shape = shard_shape,
+          .byte_strides = std::move(byte_strides),
+          .on_done = std::move(on_done),
+      };
+      spec.buffers.push_back({shard_indices, std::move(host_buffer)});
+    }
+
+    auto transfer_guard_status = ApplyTransferGuardToHostToDevice(
+        [&arg]() { return nb::cast<std::string>(nb::repr(arg)); });
+    if (!transfer_guard_status.ok()) {
+      throw nb::value_error(
+          std::string(transfer_guard_status.message()).c_str());
+    }
+
+    GroupKey key{std::move(arg_py_client), std::move(devices),
+                 std::move(memory_kind)};
+    Group& group = groups_[key];
+    group.specs.push_back(std::move(spec));
+    group.indices.push_back(result_idx);
+    group.shardings.push_back(nb::borrow<nb::object>(sharding));
+    group.weak_types.push_back(signature.weak_type);
+    return true;
+  }
+
+  void Run(std::vector<nb::object>& results) override {
+    auto status = RunInternal(results);
+    if (!status.ok()) {
+      throw nb::value_error(
+          absl::StrCat("NumpyHandler failed: ", status.message()).c_str());
+    }
+  }
+
+ private:
+  absl::Status RunInternal(std::vector<nb::object>& results) {
+    if (groups_.empty()) {
+      return absl::OkStatus();
+    }
+    PyUserContextScope user_context_scope;
+    for (auto& [key, group] : groups_) {
+      xla::ifrt::Client* client = key.py_client->ifrt_client();
+      if (client == nullptr) {
+        return xla::InvalidArgument("Numpy handler has no valid IFRT client.");
+      }
+      std::vector<xla::ifrt::ArrayRef> arrays;
+      {
+        nb::gil_scoped_release gil_release;
+        TF_ASSIGN_OR_RETURN(
+            arrays,
+            client->MakeArraysFromHostBufferShards(
+                absl::MakeSpan(group.specs),
+                xla::ifrt::Client::HostBufferSemantics::kImmutableZeroCopy));
+      }
+
+      for (size_t i = 0; i < arrays.size(); ++i) {
+        size_t orig_idx = group.indices[i];
+        PyArray py_array = PyArray::MakeFromIfrtArrayAndSharding(
+            key.py_client, std::move(arrays[i]), group.shardings[i],
+            /*weak_type=*/group.weak_types[i], /*committed=*/true,
+            /*skip_checks=*/false);
+        results[orig_idx] = py_array;
+      }
+    }
+
+    return absl::OkStatus();
+  }
+
+  absl::flat_hash_map<GroupKey, Group> groups_;
+};
+
 }  // namespace
 
 void BuildPjitSubmodule(nb::module_& m) {
@@ -1433,6 +1704,52 @@ void BuildPjitSubmodule(nb::module_& m) {
   cfun.attr("_clear_cache") = nb::cpp_function(
       [](nb::handle self) { AsPjitFunction(self)->ClearCache(); },
       nb::is_method());
+
+  m.def(
+      "shard_args",
+      [](nb::sequence shardings, nb::sequence layouts,
+         nb::sequence copy_semantics, nb::sequence args,
+         std::optional<nb::callable> fallback) -> std::vector<nb::object> {
+        size_t num_args = nb::len(args);
+        if (nb::len(shardings) != num_args || nb::len(layouts) != num_args ||
+            nb::len(copy_semantics) != num_args) {
+          throw nb::value_error(
+              "shard_args arguments must have the same length.");
+        }
+
+        GlobalPyRefManager()->CollectGarbage();
+
+        PyUserContextScope user_context_scope;
+
+        FallbackHandler fallback_handler(fallback);
+        NumpyHandler numpy_handler;
+
+        absl::InlinedVector<ShardArgsHandler*, 2> handlers = {
+            &numpy_handler, &fallback_handler};
+
+        for (size_t i = 0; i < num_args; ++i) {
+          nb::object arg = args[i];
+          nb::object sharding = shardings[i];
+          nb::object layout = layouts[i];
+          nb::object cs = copy_semantics[i];
+
+          for (auto* handler : handlers) {
+            if (handler->TryAdd(i, arg, sharding, layout, cs)) {
+              break;
+            }
+          }
+        }
+
+        std::vector<nb::object> results_list(num_args);
+
+        for (auto* handler : handlers) {
+          handler->Run(results_list);
+        }
+
+        return results_list;
+      },
+      nb::arg("shardings"), nb::arg("layouts"), nb::arg("copy_semantics"),
+      nb::arg("args"), nb::arg("fallback").none() = nb::none());
 
   m.def(
       "pjit",

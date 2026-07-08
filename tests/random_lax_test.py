@@ -191,12 +191,6 @@ class CommonRandomTest(RandomTestBase):
     with self.assertRaises(OverflowError):
       jax.jit(self.make_key)(seed)
 
-  def test_random_split_doesnt_device_put_during_tracing(self):
-    key = self.make_key(1).block_until_ready()
-    with jtu.count_device_put() as count:
-      jax.jit(random.split)(key)
-    self.assertLessEqual(count(), 1)  # 1 for the argument device_put
-
   def test_large_prng(self):
     # https://github.com/jax-ml/jax/issues/11010
     def f():

@@ -1007,6 +1007,13 @@ class PjitFunction:
   def _cache_size(self) -> int: ...
   def _clear_cache(self) -> None: ...
 
+def shard_args(
+    shardings: Sequence,
+    layouts: Sequence,
+    copy_semantics: Sequence,
+    args: Sequence,
+    fallback: Callable | None = ...,
+) -> list[object]: ...
 def pjit(
     function_name: str,
     fun: Callable[..., Any] | None,

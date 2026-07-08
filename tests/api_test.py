@@ -1156,9 +1156,7 @@ class JitTest(jtu.BufferDonationTestCase):
       return args[1] + used
     f_pruned = jit(f)
     args = range(num_args)
-    with jtu.count_device_put() as count:
-      np.testing.assert_allclose(f_pruned(*args), 3)
-    self.assertEqual(count(), 1)
+    np.testing.assert_allclose(f_pruned(*args), 3)
 
   def testBuffersAreFreedPromptly(self):
     # Regression test for a bug where garbage collection was delayed too long
@@ -2045,39 +2043,6 @@ class APITest(jtu.JaxTestCase):
     with jtu.count_internal_device_puts() as counts:
       f(np.arange(8))
     self.assertEqual(counts(), {"device_put_with_device": 1})
-
-  def test_internal_device_put_fully_replicated(self):
-    if jax.device_count() < 2:
-      raise unittest.SkipTest("Test requires >= 2 devices")
-
-    # Creating an array from a numpy array with a fully-replicated sharding
-    # calls internal `DevicePutWithSharding`, taking the fully-replicated sub
-    # case.
-    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]), "x")
-    sharding = jax.NamedSharding(mesh, P())
-
-    with jtu.count_internal_device_puts() as counts:
-      jax.device_put(np.arange(8), sharding)
-    self.assertEqual(
-        counts(),
-        {"device_put_with_sharding": 1, "device_put_fully_replicated": 1},
-    )
-
-  def test_internal_device_put_batched(self):
-    if jax.device_count() < 2:
-      raise unittest.SkipTest("Test requires >= 2 devices")
-
-    # Creating an array from a numpy array with a non-fully-replicated sharding
-    # calls internal `DevicePutWithSharding`, performing batched creation of a
-    # multi-shard array.
-    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]), "x")
-    sharding = jax.NamedSharding(mesh, P("x"))
-
-    with jtu.count_internal_device_puts() as counts:
-      jax.device_put(np.arange(8), sharding)
-    self.assertEqual(
-        counts(), {"device_put_with_sharding": 1, "device_put_batched": 1}
-    )
 
   def test_internal_device_put_assembled(self):
     if jax.device_count() < 2:
@@ -4646,11 +4611,6 @@ class APITest(jtu.JaxTestCase):
         jax.hessian(jf)(x).block_until_ready()
 
     self.assertEqual(count(), n)
-
-  def test_jnp_array_doesnt_device_put(self):
-    with jtu.count_device_put() as count:
-      api.make_jaxpr(lambda: jnp.array(3))()
-    self.assertEqual(count(), 0)
 
   @jtu.thread_unsafe_test()  # Updating global configs is not thread-safe.
   def test_rank_promotion_forces_retrace(self):
@@ -7855,7 +7815,6 @@ class Remat3Test(RematTest):
     self.assertNotIn('cos', fwd_str)
     self.assertIn('cos ', bwd_str)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
-
 
 
 @jtu.with_config(jax_pprint_use_color=False)
