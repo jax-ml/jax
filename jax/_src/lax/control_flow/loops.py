@@ -42,7 +42,6 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   _check_no_aliased_closed_over_refs, check_no_aliased_ref_args,
   check_no_transformed_refs_args)
-from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.core import (
     AbstractValue, ClosedJaxpr, ShapedArray, cur_qdd, typeof)
 from jax._src.interpreters import ad
@@ -52,18 +51,17 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import remat
 from jax._src.lax import lax
+from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
     _avals_short, _make_closed_jaxpr, _prune_zeros, _typecheck_param)
-from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.lax.other import logaddexp
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
+from jax._src.mesh import use_abstract_mesh, get_abstract_mesh
 from jax._src.pjit import PartitionSpec as P, auto_axes, reshard
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
@@ -3000,52 +2998,6 @@ def _cumred_gpu_lowering(
   )
 
 
-def _is_supported_cumred_tpu(inp, axis, reverse):
-  # Unlike the GPU path, reverse is supported: the TPU compiler handles
-  # is_reverse natively.
-  del reverse
-  return (
-      jaxlib_extension_version >= 460
-      and isinstance(inp, ShapedArray)
-      and core.is_constant_shape(inp.shape)
-      and inp.shape[axis] > 0
-      and inp.sharding.spec[axis] is None
-      and inp.dtype != np.bool_
-      and not np.issubdtype(inp.dtype, np.complexfloating)
-  )
-
-
-def _cumred_tpu_lowering(
-    reduce_window_fn: Callable,
-    reducer: Callable,
-    identity: Callable,
-    ctx,
-    x,
-    *,
-    axis,
-    reverse,
-):
-  # The chlo.ScanOp lowering needs a libtpu new enough to compile the native
-  # scan emitter. In forward-compatibility mode or on an older cloud TPU, keep
-  # the reduce-window lowering until the forward-compat window has expired.
-  # TODO(b/524250451): Remove the forward-compat / cloud-TPU version guard
-  # after 2026-07-15.
-  backend = ctx.module_context.get_backend(optional=True)
-  if (
-      not _is_supported_cumred_tpu(ctx.avals_in[0], axis, reverse)
-      or ctx.is_forward_compat()
-      or backend is None
-      or is_cloud_tpu_older_than(2026, 7, 15, backend)
-  ):
-    fun = partial(cumred_reduce_window_impl, reduce_window_fn)
-    return mlir.lower_fun(fun, multiple_results=False)(
-        ctx, x, axis=axis, reverse=reverse
-    )
-  return _cumred_chlo_lowering(
-      ctx, x, axis=axis, reverse=reverse, reducer=reducer, identity=identity
-  )
-
-
 def cumsum(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative sum along `axis`."""
   return cumsum_p.bind(operand, axis=int(axis), reverse=bool(reverse))
@@ -3177,36 +3129,3 @@ mlir.register_lowering(
     ),
     platform='gpu',
 )
-
-for prim, reducer, identity, reduce_window_fn in [
-    (
-        cumsum_p,
-        hlo.add,
-        lax._get_sum_identity,
-        windowed_reductions._reduce_window_sum,
-    ),
-    (
-        cumprod_p,
-        hlo.multiply,
-        lax._get_prod_identity,
-        windowed_reductions._reduce_window_prod,
-    ),
-    (
-        cummax_p,
-        hlo.maximum,
-        lax._get_max_identity,
-        windowed_reductions._reduce_window_max,
-    ),
-    (
-        cummin_p,
-        hlo.minimum,
-        lax._get_min_identity,
-        windowed_reductions._reduce_window_min,
-    ),
-]:
-  mlir.register_lowering(
-      prim,
-      partial(_cumred_tpu_lowering, reduce_window_fn, reducer, identity),
-      platform='tpu',
-  )
-del prim, reducer, identity, reduce_window_fn
