@@ -569,6 +569,8 @@ def _all_to_all_is_async(x, axis_name, split_axis, concat_axis, *,
                          axis_index_groups=None, tiled=False, is_async=False):
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(x, split_axis=split_axis, concat_axis=concat_axis):
+    split_axis = canonicalize_axis(split_axis, np.ndim(x))
+    concat_axis = canonicalize_axis(concat_axis, np.ndim(x))
     group_size = _axis_size(axis_name, axis_index_groups)
     if tiled:
       if x.shape[split_axis] % group_size != 0:
@@ -2334,7 +2336,8 @@ def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
     leaf = insert_collective_pvary(axis_name, leaf)
     prim = reduce_scatter_start_p if is_async else reduce_scatter_p
     return prim.bind(
-        leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
+        leaf, axis_name=axis_name,
+        scatter_dimension=canonicalize_axis(scatter_dimension, np.ndim(leaf)),
         axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
