@@ -43,7 +43,7 @@ from jax._src.api_util import (
   _check_no_aliased_closed_over_refs, check_no_aliased_ref_args,
   check_no_transformed_refs_args)
 from jax._src.core import (
-    AbstractValue, ClosedJaxpr, ShapedArray, cur_qdd, typeof)
+    AbstractValue, ClosedJaxpr, Jaxpr, ShapedArray, cur_qdd, typeof)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1383,7 +1383,8 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, ft_in, ft_out,
   tc(reverse, 'reverse', 'bool', type(reverse) is bool)
   tc(ft_in, 'ft_in', 'FlatTree', isinstance(ft_in, ft.FlatTree))
   tc(ft_out, 'ft_out', 'FlatTree', isinstance(ft_out, ft.FlatTree))
-  tc(jaxpr, 'jaxpr', 'ClosedJaxpr', type(jaxpr) is ClosedJaxpr)
+  tc(jaxpr, 'jaxpr', 'closed Jaxpr',
+     type(jaxpr) is Jaxpr and jaxpr.is_closed)
   tc(unroll, 'unroll', 'non-negative int', type(unroll) is int and unroll >= 0)
 
   tc(length, 'length', 'non-negative int', length >= 0)

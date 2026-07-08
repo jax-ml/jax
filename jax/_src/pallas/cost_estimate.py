@@ -99,7 +99,7 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
   input_bytes = sum(
       math.prod(a.shape) * a.dtype.itemsize for a in in_avals_ft.vals)
   output_bytes = sum(
-      math.prod(a.aval.shape) * a.aval.dtype.itemsize for a in jaxpr.jaxpr.outvars)
+      math.prod(a.aval.shape) * a.aval.dtype.itemsize for a in jaxpr.jaxpr.outvars)  # type: ignore
   return pallas_core.CostEstimate(
       flops=estimate.flops,
       transcendentals=estimate.transcendentals,

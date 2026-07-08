@@ -2078,7 +2078,7 @@ def emit_pipeline(
         all_index_map_consts=all_index_map_consts,
         dynamic_grid_spec=dynamic_grid_specs,
         core_id=core_id,
-        body_consts=body_jaxpr.consts,
+        body_consts=tuple(body_jaxpr.consts),
         refs_flat=tuple(refs_flat),
     )
     args_flat, args_tree = tracing_registry.flatten(prim_args)

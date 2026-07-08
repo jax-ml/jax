@@ -886,9 +886,9 @@ def _cond_typecheck(bind_time, *in_atoms, branches, **params):
     _, *in_atoms = in_atoms
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'cond')
-  tc(branches, 'branches', 'tuple of ClosedJaxpr',
+  tc(branches, 'branches', 'tuple of closed Jaxpr',
      type(branches) is tuple and
-     all(type(x) is core.ClosedJaxpr for x in branches))
+     all(type(x) is core.Jaxpr and x.is_closed for x in branches))
 
   if len(branches) == 0:
     raise core.JaxprTypeError('cond requires at least one branch function')
