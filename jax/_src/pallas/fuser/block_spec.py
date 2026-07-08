@@ -1096,6 +1096,29 @@ def _select_n_pull_block_spec_rule(
   return [no_block_index_transform, *[block_transform] * (len(ctx.avals_in) - 1)]
 
 
+@register_eval_rule(lax.clamp_p)
+def _clamp_eval_rule(
+    ctx: KernelEvalContext, min: jax.Array, x: jax.Array, max: jax.Array
+):
+  return jax.lax.clamp(min, x, max)
+
+
+@register_pull_block_spec_rule(lax.clamp_p)
+def _clamp_pull_block_spec_rule(
+    ctx: PullRuleContext, block_transform: BlockIndexTransform,
+) -> Sequence[BlockIndexTransform]:
+  min_aval, _, max_aval = ctx.avals_in
+  assert hasattr(min_aval, 'shape')
+  assert hasattr(max_aval, 'shape')
+  min_block_transform = (
+      block_transform if min_aval.shape else no_block_index_transform
+  )
+  max_block_transform = (
+      block_transform if max_aval.shape else no_block_index_transform
+  )
+  return [min_block_transform, block_transform, max_block_transform]
+
+
 @register_eval_rule(lax.squeeze_p)
 def _squeeze_eval_rule(ctx: KernelEvalContext, x: jax.Array, **params: Any):
   del ctx, params
@@ -2762,6 +2785,27 @@ def _select_n_push_rule(
           'select_n with multiple differing inputs not supported yet'
       )
   return block_spec
+
+
+@register_push_block_spec_rule(lax.clamp_p)
+def _clamp_push_rule(
+    ctx: PushRuleContext,
+    min_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    x_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+    max_block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
+):
+  del ctx
+  if (
+      min_block_spec is not pallas_core.no_block_spec and
+      min_block_spec is not x_block_spec
+  ) or (
+      max_block_spec is not pallas_core.no_block_spec and
+      max_block_spec is not x_block_spec
+  ):
+    raise NotImplementedError(
+        'clamp with multiple differing inputs not supported yet.'
+    )
+  return x_block_spec
 
 
 @register_push_block_spec_rule(lax.dot_general_p)

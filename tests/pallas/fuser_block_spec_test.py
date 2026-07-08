@@ -1466,6 +1466,50 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         jax.lax.dot_general(x, y, (((1,), (0,)), ((), ()))),
     )
 
+  @parameterized.parameters(True, False)
+  def test_clamp_pull(self, scalar_limits):
+    in_shape = (256, 128)
+    in_type = jax.ShapeDtypeStruct((256, 128), jnp.float32)
+    lim_shape = () if scalar_limits else in_shape
+    lim_type = jax.ShapeDtypeStruct(lim_shape, jnp.float32)
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        jax.lax.clamp, lim_type, in_type, lim_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128, 128), lambda i, j, k: (i, j))
+    scalar_prefetch_handler = block_spec_lib.make_scalar_prefetch_handler()
+    kernel_fn, (value_block_specs, *in_block_specs), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid_len=3,
+            scalar_prefetch_handler=scalar_prefetch_handler,
+        )(new_values, lim_type, in_type, lim_type)
+    )
+    self.assertEmpty(value_block_specs)
+    min_block_spec, x_block_spec, max_block_spec = in_block_specs
+    self.assertEqual(x_block_spec.block_shape, (128, 128))
+    self.assertEqual(x_block_spec.index_map(0, 1, 2), (0, 1))
+    if scalar_limits:
+      self.assertEqual(min_block_spec, pl.no_block_spec)
+      self.assertEqual(max_block_spec, pl.no_block_spec)
+    else:
+      self.assertEqual(min_block_spec.block_shape, (128, 128))
+      self.assertEqual(min_block_spec.index_map(0, 1, 2), (0, 1))
+      self.assertEqual(max_block_spec.block_shape, (128, 128))
+      self.assertEqual(max_block_spec.index_map(0, 1, 2), (0, 1))
+
+    x = jax.random.normal(jax.random.key(0), in_shape, dtype=np.float32)
+    l = jnp.zeros(lim_shape)
+    u = jnp.ones(lim_shape)
+    np.testing.assert_array_equal(
+        kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, l, x, u),
+        jax.lax.clamp(l, x, u),
+    )
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 
@@ -1837,6 +1881,18 @@ class PushBlockSpecTest(parameterized.TestCase):
     )
     self.assertEqual(out_block_spec.block_shape, (128, 2))
     self.assertEqual(out_block_spec.index_map(3), (3, 0))
+
+  def test_clamp_push(self):
+    def f(x1, x2, x3):
+      return jax.lax.clamp(x1, x2, x3)
+
+    x_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+    block_spec = pl.BlockSpec((128,), lambda i: (i,))
+    out_block_spec = block_spec_lib.push_block_spec(
+        f, block_spec, block_spec, block_spec
+    )(x_type, x_type, x_type)
+    self.assertEqual(out_block_spec.block_shape, (128,))
+    self.assertEqual(out_block_spec.index_map(0), (0,))
 
 
 if __name__ == '__main__':
