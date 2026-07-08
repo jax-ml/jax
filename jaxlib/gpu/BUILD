@@ -53,6 +53,7 @@ exports_files(srcs = [
     "prng_kernels.cc",
     "prng_kernels.cu.cc",
     "prng_kernels.h",
+    "prng_kernels_oneapi.cc",
     "py_client_gpu.cc",
     "py_client_gpu.h",
     "rnn.cc",

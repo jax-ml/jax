@@ -230,6 +230,11 @@ mlir.register_lowering(
     partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='hip'),
     platform='rocm',
     inline=False)
+mlir.register_lowering(
+    threefry2x32_p,
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='oneapi'),
+    platform='oneapi',
+    inline=False)
 
 
 @api.jit(inline=True)
