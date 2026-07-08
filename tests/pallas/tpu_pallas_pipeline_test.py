@@ -2016,8 +2016,7 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
     np.testing.assert_allclose(fn(x), expected)
 
   @parameterized.product(dynamic_grid=[True, False])
-  def test_transformed_refs_as_inputs_nested_bitcast(
-      self, dynamic_grid):
+  def test_transformed_refs_as_inputs_nested_bitcast(self, dynamic_grid):
     if not config.use_emit_pipeline_primitive.value:
       self.skipTest('Requires jax_use_emit_pipeline_primitive')
 
@@ -2025,34 +2024,34 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
 
     @jax.jit
     def fn(x):
-      out_type = jax.ShapeDtypeStruct((128, 128), x.dtype)
+      out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
 
       @pl.kernel(out_type=out_type, mesh=pltpu.TensorCoreMesh(axis_name='core'))
       def run_kernel(x_ref, o_ref):
         def outer_body(outer_x, outer_o):
-          tx = outer_x.at[0:64, :].bitcast(jnp.int16)
+          tx = outer_x.bitcast(jnp.int16)
           to = outer_o.bitcast(jnp.int16)
           def inner_body(x, o): o[...] = x[...]
           pltpu.emit_pipeline(
               inner_body, grid=(jnp.array(4),) if dynamic_grid else (4,),
-              in_specs=[pl.BlockSpec((32, 128), lambda i: (i, 0))],
-              out_specs=[pl.BlockSpec((32, 128), lambda i: (i, 0))],
+              in_specs=[pl.BlockSpec((64, 128), lambda i: (i, 0))],
+              out_specs=[pl.BlockSpec((64, 128), lambda i: (i, 0))],
               dimension_semantics=(pltpu.PARALLEL,),
           )(tx, to)
 
         pltpu.emit_pipeline(
             outer_body, grid=(jnp.array(2),) if dynamic_grid else (2,),
             in_specs=[pl.BlockSpec((128, 128), lambda i: (i, 0))],
-            out_specs=[pl.BlockSpec((64, 128), lambda i: (i, 0))],
+            out_specs=[pl.BlockSpec((128, 128), lambda i: (i, 0))],
             dimension_semantics=(pltpu.PARALLEL,),
         )(x_ref, o_ref)
       return run_kernel(x)
 
     x = jnp.arange(256 * 128, dtype=jnp.float32).reshape((256, 128))
     x_i16 = state_utils.bitcast(x, jnp.int16)
-    expected_i16 = jnp.zeros((256, 128), dtype=jnp.int16)
-    expected_i16 = expected_i16.at[0:128, :].set(x_i16[0:128, :])
-    expected_i16 = expected_i16.at[128:256, :].set(x_i16[256:384, :])
+    expected_i16 = jnp.zeros((512, 128), dtype=jnp.int16)
+    expected_i16 = expected_i16.at[0:256, :].set(x_i16[0:256, :])
+    expected_i16 = expected_i16.at[256:512, :].set(x_i16[256:512, :])
     np.testing.assert_allclose(
         fn(x), state_utils.bitcast(expected_i16, jnp.float32))
 
@@ -2214,6 +2213,352 @@ class PallasCallPipelineTransformedRefsTest(jtu.JaxTestCase):
     np.testing.assert_allclose(fn(x), x[1, ...] * 2 + 1)
 
 
+class EmitPipelineVmapTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only works with TPU v5')
+    super().setUp()
+
+  def _run_basic_test(self, dynamic_grid, use_vmap, index_map_factory,
+                      body_factory=None, expected_fn=None):
+    if use_vmap and not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive enabled.')
+
+    if use_vmap:
+      x_shape, block_shape = (4, 16, 256), (16, 128)
+    else:
+      x_shape, block_shape = (512,), (256,)
+
+    out_type = jax.ShapeDtypeStruct(x_shape, jnp.float32)
+
+    @pl.kernel(out_type=out_type, mesh=pltpu.TensorCoreMesh(axis_name='core'))
+    def run_kernel(x_ref, o_ref):
+      index_map = index_map_factory(use_vmap)
+      if body_factory:
+        body = body_factory(block_shape)
+      else:
+        def body(x, o):
+          o[...] = x[...]
+
+      transform = jax.vmap if use_vmap else lambda x: x
+      transform(pltpu.emit_pipeline(
+          body,
+          grid=(jnp.array(2,),) if dynamic_grid else (2,),
+          in_specs=[pl.BlockSpec(block_shape, index_map)],
+          out_specs=[pl.BlockSpec(block_shape, index_map)],
+      ))(x_ref, o_ref)
+
+    x = jnp.arange(np.prod(x_shape), dtype=jnp.float32).reshape(x_shape)
+    out = run_kernel(x)
+    expected = expected_fn(x) if expected_fn else x
+    np.testing.assert_allclose(out, expected)
+
+  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
+  def test_index_map(self, dynamic_grid, use_vmap):
+    def index_map_factory(use_vmap):
+      const_val = jnp.array(17)
+      if use_vmap:
+        return lambda i: (0, i + const_val - 17)
+      return lambda i: (i + const_val - 17,)
+    self._run_basic_test(dynamic_grid, use_vmap, index_map_factory)
+
+  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
+  def test_copy(self, dynamic_grid, use_vmap):
+    self._run_basic_test(
+        dynamic_grid, use_vmap,
+        lambda use_vmap: (lambda i: (0, i)) if use_vmap else (lambda i: (i,))
+    )
+
+  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
+  def test_copy_and_index_map_and_body_const(self, dynamic_grid, use_vmap):
+    def index_map_factory(use_vmap):
+      const_val = jnp.array(17)  # close over the const_val
+      if use_vmap:
+        return lambda i: (0, i + const_val - 17)
+      return lambda i: (i + const_val - 17,)
+
+    def body_factory(block_shape):
+      const_2 = jax.empty_ref(
+          jax.ShapeDtypeStruct(block_shape, jnp.float32), pltpu.VMEM)
+      const_2[...] = 5 * jnp.ones_like(const_2)
+      def body(x, o): o[...] = x[...] + const_2[...]
+      return body
+
+    self._run_basic_test(
+        dynamic_grid, use_vmap, index_map_factory,
+        body_factory=body_factory, expected_fn=lambda x: x + 5
+    )
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_vmap_with_explicit_indices(self, dynamic_grid):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+
+    grid_size = 4
+    out_type = jax.ShapeDtypeStruct((3, 16, 128 * grid_size), jnp.int32)
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+    @pl.kernel(out_type=out_type, mesh=mesh)
+    def run_kernel(o_ref):
+      def body(ps, o_ref):
+        o_ref[...] = jnp.broadcast_to(ps.index[1], o_ref.shape)
+
+      grid = (1, jnp.array(grid_size),) if dynamic_grid else (1, grid_size)
+      jax.vmap(
+          pltpu.emit_pipeline(
+              body,
+              grid=grid,
+              out_specs=[pl.BlockSpec((16, 128,), lambda _, i: (0, i))],
+              _explicit_indices=True,
+          )
+      )(o_ref)
+
+    expected = jnp.repeat(jnp.arange(grid_size), 128)[None, None, :]
+    expected = jnp.broadcast_to(expected, (3, 16, grid_size * 128))
+    out = run_kernel()
+    np.testing.assert_allclose(out, expected)
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_num_programs_vmap(self, dynamic_grid):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+
+    grid_size = 4
+    out_type = jax.ShapeDtypeStruct((3, 16, 128 * grid_size), jnp.int32)
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+    @pl.kernel(out_type=out_type, mesh=mesh)
+    def run_kernel(x_ref, o_ref):
+      def body(_, o_ref):
+        o_ref[...] = jnp.broadcast_to(pl.num_programs(1), o_ref.shape)
+
+      grid = (1, jnp.array(grid_size),) if dynamic_grid else (1, grid_size)
+      jax.vmap(
+          pltpu.emit_pipeline(
+              body,
+              grid=grid,
+              in_specs=[pl.BlockSpec((16, 128,), lambda _, i: (0, i))],
+              out_specs=[pl.BlockSpec((16, 128,), lambda _, i: (0, i))],
+          )
+      )(x_ref, o_ref)
+
+    x = jnp.zeros((3, 16, grid_size * 128), dtype=jnp.int32)
+    out = run_kernel(x)
+    np.testing.assert_allclose(out, jnp.full_like(out, grid_size))
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_num_programs_index_map_vmap(self, dynamic_grid):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+    grid_size = 4
+    out_type = jax.ShapeDtypeStruct((3, 16, 128 * grid_size), jnp.int32)
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+    @pl.kernel(out_type=out_type, mesh=mesh)
+    def run_kernel(x_ref, o_ref):
+      def body(x_ref, o_ref):
+        o_ref[...] = x_ref[...]
+
+      grid = (1, jnp.array(grid_size),) if dynamic_grid else (1, grid_size)
+      jax.vmap(
+          pltpu.emit_pipeline(
+              body,
+              grid=grid,
+              in_specs=[pl.BlockSpec(
+                  (16, 128,), lambda _, i: (0, pl.num_programs(1) - 1 - i))],
+              out_specs=[pl.BlockSpec((16, 128,), lambda _, i: (0, i))],
+          )
+      )(x_ref, o_ref)
+
+    x = jnp.arange(3 * 16 * grid_size * 128, dtype=jnp.int32).reshape(
+        (3, 16, grid_size * 128)
+    )
+    out = jax.jit(run_kernel)(x)
+
+    # We expect the output blocks to be reversed along the last dimension.
+    expected_out = np.zeros_like(x)
+    for batch in range(3):
+      for block_idx in range(grid_size):
+        input_block_idx = grid_size - 1 - block_idx
+        expected_out[batch, :, block_idx * 128 : (block_idx + 1) * 128] = (
+            x[batch, :, input_block_idx * 128 : (input_block_idx + 1) * 128])
+    np.testing.assert_allclose(out, expected_out)
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_num_programs_index_map_and_body_vmap(self, dynamic_grid):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+    grid_size = 4
+    out_type = jax.ShapeDtypeStruct((3, 16, 128 * grid_size), jnp.int32)
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+    @pl.kernel(out_type=out_type, mesh=mesh)
+    def run_kernel(x_ref, o_ref):
+      def body(x_ref, o_ref):
+        o_ref[...] = x_ref[...] + pl.num_programs(1)
+
+      grid = (1, jnp.array(grid_size),) if dynamic_grid else (1, grid_size)
+      jax.vmap(
+          pltpu.emit_pipeline(
+              body,
+              grid=grid,
+              in_specs=[pl.BlockSpec(
+                  (16, 128,), lambda _, i: (0, pl.num_programs(1) - 1 - i))],
+              out_specs=[pl.BlockSpec(
+                  (16, 128,), lambda _, i: (0, pl.num_programs(1) - 1 - i))],
+              core_axis_name='core',
+              dimension_semantics=(pltpu.ARBITRARY, pltpu.ARBITRARY),
+          )
+      )(x_ref, o_ref)
+
+    x = jnp.arange(3 * 16 * grid_size * 128, dtype=jnp.int32).reshape(
+        (3, 16, grid_size * 128)
+    )
+    out = jax.jit(run_kernel)(x)
+    expected_out = x + grid_size
+    np.testing.assert_allclose(out, expected_out)
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_program_id_vmap(self, dynamic_grid):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+
+    grid_size = 4
+    out_type = jax.ShapeDtypeStruct((3, 16, 128 * grid_size), jnp.int32)
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+
+    @pl.kernel(out_type=out_type, mesh=mesh)
+    def run_kernel(x_ref, o_ref):
+      def body(_, o_ref):
+        o_ref[...] = jnp.broadcast_to(pl.program_id(1), o_ref.shape)
+
+      grid = (1, jnp.array(grid_size),) if dynamic_grid else (1, grid_size)
+      jax.vmap(
+          pltpu.emit_pipeline(
+              body,
+              grid=grid,
+              in_specs=[pl.BlockSpec((16, 128,), lambda _, i: (0, i))],
+              out_specs=[
+                  pl.BlockSpec((16, 128,), lambda _, i: (0, i)),
+              ],
+          )
+      )(x_ref, o_ref)
+
+    x = jnp.zeros((3, 16, grid_size * 128), dtype=jnp.int32)
+    out = run_kernel(x)
+    expected_out = np.zeros_like(x)
+    for i in range(grid_size):
+      expected_out[:, :, i * 128 : (i + 1) * 128] = i
+    np.testing.assert_allclose(out, expected_out)
+
+  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
+  def test_core_index(self, dynamic_grid, use_vmap):
+    if use_vmap and not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+
+    num_cores = pltpu.get_tpu_info().num_cores
+    if use_vmap:
+      out_type = jax.ShapeDtypeStruct((4, 16, 128 * num_cores), jnp.float32)
+      x_shape = (4, 16, 128 * num_cores)
+    else:
+      out_type = jax.ShapeDtypeStruct((16, 128 * num_cores), jnp.float32)
+      x_shape = (16, 128 * num_cores)
+
+    def body(x_ref, o_ref):
+      core_idx = jax.lax.axis_index('core')
+      o_ref[...] = x_ref[...] + core_idx.astype(x_ref.dtype)
+
+    @pl.kernel(out_type=out_type, mesh=pltpu.TensorCoreMesh(axis_name='core'))
+    def run_kernel(x_ref, o_ref):
+      core_idx = jax.lax.axis_index('core')
+      scratch_shape = x_shape[:-1] + (128,)
+      scratch_src = jax.empty_ref(
+          jax.ShapeDtypeStruct(scratch_shape, jnp.float32), pltpu.VMEM
+      )
+      scratch_dst = jax.empty_ref(
+          jax.ShapeDtypeStruct(scratch_shape, jnp.float32), pltpu.VMEM
+      )
+      pltpu.sync_copy(x_ref.at[..., pl.ds(128 * core_idx, 128)], scratch_src)
+      transform = jax.vmap if use_vmap else lambda x: x
+      transform(pltpu.emit_pipeline(
+          body,
+          grid=(jnp.array(1),) if dynamic_grid else (1,),
+          in_specs=[pl.BlockSpec((16, 128), lambda i: (0, i))],
+          out_specs=[pl.BlockSpec((16, 128), lambda i: (0, i))],
+          dimension_semantics=(pltpu.ARBITRARY,),
+      ))(scratch_src, scratch_dst)
+      pltpu.sync_copy(scratch_dst, o_ref.at[..., pl.ds(128 * core_idx, 128)])
+
+    x = jnp.arange(np.prod(x_shape), dtype=jnp.float32).reshape(x_shape)
+    out = jax.jit(run_kernel)(x) if not use_vmap else run_kernel(x)
+
+    expected = jnp.zeros_like(x)
+    for c in range(num_cores):
+      idx = (slice(None), jax.ds(128 * c, 128))
+      if use_vmap:
+        idx = (slice(None),) + idx
+      expected = expected.at[*idx].set(x[*idx] + c)
+    np.testing.assert_allclose(out, expected)
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_copy_pallas_call(self, dynamic_grid):
+    # TODO(rdyro): Add support for this, vmap of pallas_call with emit_pipeline.
+    self.skipTest('DMA slicing the 3D batched with a 2D unbatched slice is'
+                  ' not implemented.')
+    x = jnp.arange(512)[None, :] * jnp.arange(16)[:, None]
+    spec = pl.BlockSpec(x.shape, lambda: (0, 0))
+
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def run_kernel(x_ref, o_ref):
+      block_shape = x_ref.shape[:-1] + (256,)
+      index_map = lambda i: (0,) * (x_ref.ndim - 1) + (i,)
+      pltpu.emit_pipeline(
+          body,
+          grid=(jnp.array(2),) if dynamic_grid else (2,),
+          in_specs=[pl.BlockSpec(block_shape, index_map)],
+          out_specs=[pl.BlockSpec(block_shape, index_map)],
+          dimension_semantics=(pltpu.PARALLEL,),
+      )(x_ref, o_ref)
+
+    kernel = pl.pallas_call(
+        run_kernel, out_shape=x, in_specs=[spec], out_specs=spec)
+
+    x_ = jnp.broadcast_to(x[None, :], (4, *x.shape))
+    out = jax.vmap(kernel)(x_)
+    np.testing.assert_allclose(out, x_)
+
+  @parameterized.product(dynamic_grid=[True, False])
+  def test_copy_with_allocations(self, dynamic_grid):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('vmap requires jax_use_emit_pipeline_primitive == True.')
+    if jax.config.jax_use_emit_pipeline_primitive:
+      # TODO(rdyro): Add support for this.
+      self.skipTest('allocations require jax_use_emit_pipeline_primitive'
+                    ' == False.')
+    out_type = jax.ShapeDtypeStruct((512,), jnp.float32)
+
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    @pl.kernel(out_type=out_type, mesh=pltpu.TensorCoreMesh(axis_name='core'))
+    def run_kernel(x_ref, o_ref):
+      pipeline_func, make_allocations = pltpu.emit_pipeline_with_allocations(
+          body,
+          grid=(jnp.array(2,),) if dynamic_grid else (2,),
+          in_specs=[pl.BlockSpec((256,), lambda i: (i,))],
+          out_specs=[pl.BlockSpec((256,), lambda i: (i,))],
+      )
+      allocations = make_allocations(x_ref, o_ref)
+      pipeline_func(x_ref, o_ref, allocations=allocations)
+
+    x = jnp.arange(512, dtype=jnp.float32)
+    out = run_kernel(x)
+    np.testing.assert_allclose(out, x)
+
+
 class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -2221,11 +2566,18 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
       self.skipTest('Only works with TPU v5 or newer.')
     super().setUp()
 
-  @parameterized.product(dynamic_grid=[True, False])
-  def test_non_flat_args(self, dynamic_grid):
-    out_type = [(), (jax.ShapeDtypeStruct((512,), jnp.float32),
-                    jax.ShapeDtypeStruct((512,), jnp.float32))]
-    x_shape = (512,)
+  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
+  def test_non_flat_args(self, dynamic_grid, use_vmap):
+    if use_vmap and not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('Non-primitive emit_pipeline does not support vmap.')
+    if use_vmap:
+      out_type = [(), (jax.ShapeDtypeStruct((4, 512), jnp.float32),
+                      jax.ShapeDtypeStruct((4, 512), jnp.float32))]
+      x_shape = (4, 512)
+    else:
+      out_type = [(), (jax.ShapeDtypeStruct((512,), jnp.float32),
+                      jax.ShapeDtypeStruct((512,), jnp.float32))]
+      x_shape = (512,)
 
     def body(in_refs, out_refs):
       out_refs[1][0][...] = in_refs[0][0][...] + in_refs[2][0][...]
@@ -2238,10 +2590,11 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
                     pl.BlockSpec((256,), lambda i: (i,)))],)
       out_specs = ( [(), (pl.BlockSpec((256,), lambda i: (i,)),
                           pl.BlockSpec((256,), lambda i: (i,)))], )
-      pltpu.emit_pipeline(
+      transform = jax.vmap if use_vmap else lambda x: x
+      transform(pltpu.emit_pipeline(
           body, grid=(jnp.array(2,),) if dynamic_grid else (2,),
           in_specs=in_specs, out_specs=out_specs,
-      )([(x_ref,), (), (y_ref, z_ref)], [out_xy_ref, out_z_ref])
+      ))([(x_ref,), (), (y_ref, z_ref)], [out_xy_ref, out_z_ref])
 
     x = jnp.arange(np.prod(x_shape), dtype=jnp.float32).reshape(x_shape)
     out = run_kernel(x, x * 2, x * 3)
@@ -2250,12 +2603,19 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out[1][0], x + x * 2)
     np.testing.assert_allclose(out[1][1], x * 3)
 
-  @parameterized.product(dynamic_grid=[True, False])
-  def test_non_flat_args_and_scratch(self, dynamic_grid):
+  @parameterized.product(dynamic_grid=[True, False], use_vmap=[True, False])
+  def test_non_flat_args_and_scratch(self, dynamic_grid, use_vmap):
+    if not jax.config.jax_use_emit_pipeline_primitive:
+      self.skipTest('Requires jax_use_emit_pipeline_primitive')
 
-    out_type = [(), (jax.ShapeDtypeStruct((512,), jnp.float32),
-                     jax.ShapeDtypeStruct((512,), jnp.float32))]
-    x_shape = (512,)
+    if use_vmap:
+      out_type = [(), (jax.ShapeDtypeStruct((4, 512), jnp.float32),
+                       jax.ShapeDtypeStruct((4, 512), jnp.float32))]
+      x_shape = (4, 512)
+    else:
+      out_type = [(), (jax.ShapeDtypeStruct((512,), jnp.float32),
+                       jax.ShapeDtypeStruct((512,), jnp.float32))]
+      x_shape = (512,)
 
     def body(in_refs, out_refs):
       scratch1 = jax.empty_ref(
@@ -2277,10 +2637,12 @@ class PallasCallPipelineNonFlatArgsTest(jtu.JaxTestCase):
                     pl.BlockSpec((256,), lambda i: (i,)))],)
       out_specs = ( [(), (pl.BlockSpec((256,), lambda i: (i,)),
                           pl.BlockSpec((256,), lambda i: (i,)))],)
-      pltpu.emit_pipeline(
+      transform = jax.vmap if use_vmap else lambda x: x
+
+      transform(pltpu.emit_pipeline(
           body, grid=(jnp.array(2,),) if dynamic_grid else (2,),
           in_specs=in_specs, out_specs=out_specs,
-      )([(x_ref,), (), (y_ref, z_ref)], [out_xy_ref, out_z_ref])
+      ))([(x_ref,), (), (y_ref, z_ref)], [out_xy_ref, out_z_ref])
 
     x = jnp.arange(np.prod(x_shape), dtype=jnp.float32).reshape(x_shape)
     out = run_kernel(x, x * 2, x * 3)
@@ -2505,6 +2867,12 @@ class PallasCallPipelineTransformedRefsPrimitiveTest(
 
 class PallasCallPipelineNonFlatArgsPrimitiveTest(
     PallasCallPipelineNonFlatArgsTest):
+  def setUp(self):
+    super().setUp()
+    self.enter_context(config.use_emit_pipeline_primitive(True))
+
+
+class EmitPipelineVmapPrimitiveTest(EmitPipelineVmapTest):
   def setUp(self):
     super().setUp()
     self.enter_context(config.use_emit_pipeline_primitive(True))

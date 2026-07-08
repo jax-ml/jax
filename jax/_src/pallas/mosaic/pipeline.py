@@ -51,6 +51,8 @@ from jax._src.pallas.mosaic import tpu_info
 from jax._src import effects
 from jax._src.state import WriteEffect, ReadEffect
 from jax._src.state import indexing
+from jax._src.interpreters import batching
+from jax._src.pallas.pallas_call import _batch_block_mapping
 import jax.numpy as jnp
 
 cdiv = utils.cdiv
@@ -2393,3 +2395,55 @@ def _emit_pipeline_lowering_rule(
                            if i not in grid_mapping.vmapped_dims)
   assert len(valid_grid_sizes) == len(lowering_context.grid_names)
   return jaxpr_subcomp(lowering_context, jaxpr, *args_flat)
+
+def _emit_pipeline_batching_rule(
+    axis_data, args_flat, dims, *, grid_mapping, dimension_semantics, args_tree,
+    **params
+):
+  dimension_semantics = (PARALLEL,) + dimension_semantics
+  all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
+
+  _, dynamic_dims, _, _, flat_ref_dims = jax_util.split_list(dims, [
+      len(all_args.all_index_map_consts),
+      len(all_args.dynamic_grid_spec),
+      int(all_args.has_core_id),
+      len(all_args.body_consts)])
+
+  batch_size = axis_data.size
+
+  if any(d is not None for d in dynamic_dims):
+    raise NotImplementedError(
+      "Batching over dynamic grid values is not supported yet.")
+
+  batched_block_mappings = map(
+      functools.partial(_batch_block_mapping, grid_mapping, batch_size),
+      map(_ref_to_value_aval, all_args.refs_flat),
+      flat_ref_dims, grid_mapping.block_mappings)
+
+  index_map_tree_args, index_map_tree_kwargs = (
+      grid_mapping.index_map_tree.unflatten(grid_mapping.index_map_avals))
+  assert not index_map_tree_kwargs
+  batched_index_map_args = (
+      pallas_core.index_map_grid_aval, *index_map_tree_args)
+  batched_index_map_avals, batched_index_map_tree = tree_util.tree_flatten(
+      (batched_index_map_args, {}))
+
+  axis_size_is_dynamic = not isinstance(batch_size, int)
+  new_grid_dim = (pallas_core.dynamic_grid_dim
+                  if axis_size_is_dynamic else batch_size)
+
+  batched_grid_mapping = grid_mapping.replace(
+      grid=(new_grid_dim, *grid_mapping.grid),
+      block_mappings=tuple(batched_block_mappings),
+      index_map_avals=tuple(batched_index_map_avals),
+      index_map_tree=batched_index_map_tree,
+      vmapped_dims=(0,) + tuple(a + 1 for a in grid_mapping.vmapped_dims),
+  )
+
+  emit_pipeline_p.bind(
+      *args_flat, grid_mapping=batched_grid_mapping, args_tree=args_tree,
+      dimension_semantics=dimension_semantics, **params)
+  return (), ()
+
+batching.fancy_primitive_batchers[emit_pipeline_p] = (
+    _emit_pipeline_batching_rule)
