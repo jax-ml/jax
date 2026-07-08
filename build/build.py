@@ -376,8 +376,11 @@ async def main():
       formatter_class=argparse.RawDescriptionHelpFormatter
   )
 
-  # Create subparsers for build and requirements_update
-  subparsers = parser.add_subparsers(dest="command", required=True)
+  # Create subparsers for build and requirements_update. Set `required` as an
+  # attribute instead of passing required= to add_subparsers(): some argparse
+  # backports reject that keyword (TypeError).
+  subparsers = parser.add_subparsers(dest="command")
+  subparsers.required = True
 
   # requirements_update subcommand
   requirements_update_parser = subparsers.add_parser(
