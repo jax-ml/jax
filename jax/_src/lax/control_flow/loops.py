@@ -480,11 +480,15 @@ def _infer_scan_length(
 
   # TODO(dougalm): put this in some sort of `scannable` typeclass
   from jax._src.hijax import HiType
-  if any(isinstance(a, HiType) for a in xs_avals):
+  is_hi = [isinstance(a, HiType) for a in xs_avals]
+  if xs_flat and all(is_hi):
     if length is None:
-      raise ValueError("must provide `length` to `scan`")
-    else:
-      return length
+      raise ValueError(
+          "must provide `length` to `scan`, since the leading-axis size of "
+          "non-array (hijax) types cannot be inferred")
+    return length
+  xs_flat = [x for x, h in zip(xs_flat, is_hi) if not h]
+  xs_avals = [a for a, h in zip(xs_avals, is_hi) if not h]
 
   try:
     lengths: list[int] = [x.shape[0] for x in xs_flat]

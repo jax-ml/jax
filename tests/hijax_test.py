@@ -909,6 +909,20 @@ class HijaxTest(jtu.JaxTestCase):
       return make_tup(b, a)
     jax.vmap(f, in_axes=TupSpec((0, None)), out_axes=TupSpec((None, 0)), axis_size=3)(tup)
 
+  def test_tuple_scan_mixed_length_inference(self):
+    # length is inferred from array xs even when hi-type xs are present
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    def body(c, arr_and_tup):
+      arr, tup = arr_and_tup
+      return c + arr + get_tuple_element(tup, 0), ()
+    c, () = jax.lax.scan(body, 0., (jnp.arange(3.), tup))
+    self.assertAllClose(c, 6.)
+
+  def test_tuple_scan_length_required_error(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    with self.assertRaisesRegex(ValueError, "must provide `length`"):
+      jax.lax.scan(lambda c, x: (c, ()), 0., tup)
+
   @parameterized.parameters([False, True])
   def test_tuple_scan(self, jit):
     tup = make_tup(jnp.arange(3.), jnp.arange(3. * 4).reshape(3, 4))
