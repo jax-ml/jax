@@ -1495,10 +1495,9 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
       to_shard_indices.push_back(it->second);
     }
 
-    auto mappings =
-        std::make_shared<std::vector<xla::ifrt::RemapPlan::Mapping>>();
+    std::vector<xla::ifrt::RemapPlan::Mapping> mappings;
     {
-      auto& mapping = mappings->emplace_back();
+      auto& mapping = mappings.emplace_back();
       mapping.in_array = 0;
       mapping.out_array = 0;
       mapping.from.reserve(dst_addressable_devices.size());
@@ -1511,17 +1510,30 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
       }
     }
 
+#if JAX_IFRT_VERSION_NUMBER > 56
+    xla::ifrt::RemapPlan plan(
+        /*input_specs=*/{xla::ifrt::ArraySpec{
+            /*dtype=*/ifrt_array_ptr->dtype(),
+            /*shape=*/ifrt_array_ptr->shape(),
+            /*sharding=*/ifrt_array_ptr->shared_ptr_sharding()}},
+        {xla::ifrt::ArraySpec{/*dtype=*/ifrt_array_ptr->dtype(),
+                              /*shape=*/ifrt_array_ptr->shape(),
+                              /*sharding=*/std::move(dst_ifrt_sharding)}},
+        /*mappings=*/std::move(mappings));
+#else
     xla::ifrt::RemapPlan plan = {
         /*input_specs=*/{xla::ifrt::ArraySpec{
             /*dtype=*/ifrt_array_ptr->dtype(),
             /*shape=*/ifrt_array_ptr->shape(),
             /*sharding=*/ifrt_array_ptr->shared_ptr_sharding()}},
-        /*output_specs=*/
         {xla::ifrt::ArraySpec{/*dtype=*/ifrt_array_ptr->dtype(),
                               /*shape=*/ifrt_array_ptr->shape(),
                               /*sharding=*/std::move(dst_ifrt_sharding)}},
-        /*mappings=*/std::move(mappings),
+        /*mappings=*/
+        std::make_shared<std::vector<xla::ifrt::RemapPlan::Mapping>>(
+            std::move(mappings)),
     };
+#endif
     DCHECK_OK(plan.Validate());
     std::vector<xla::ifrt::ArrayRef> input;
     input.push_back(tsl::FormRef(ifrt_array_ptr));
