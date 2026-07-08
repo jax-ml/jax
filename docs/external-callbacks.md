@@ -33,6 +33,8 @@ As a simple example, suppose you'd like to print the *value* of some variable du
 Using a simple Python {func}`print` statement, it looks like this:
 
 ```{code-cell}
+import os
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
 import jax
 
 @jax.jit
@@ -429,3 +431,20 @@ Keep in mind that although this all works correctly with JAX, each call to your 
 When running on accelerators like GPU or TPU, this data movement and host synchronization can lead to significant overhead each time `jv` is called.
 
 However, if you are running JAX on a single CPU (where the "host" and "device" are on the same hardware), JAX will generally do this data transfer in a fast, zero-copy fashion, making this pattern a relatively straightforward way to extend JAX's capabilities.
+
+## Callbacks with sharded values
+
+If you pass a sharded value to a callback, your callback function will see the value resharded to a single device. For example:
+
+```{code-cell}
+with jax.set_mesh(jax.make_mesh((4,), ('X',))):
+  x = jax.numpy.arange(4, out_sharding=jax.P("X"))
+  shape_dtype = jax.ShapeDtypeStruct(x.shape, x.dtype)
+  print("BEFORE ", x.sharding)
+
+  def my_callback(x):
+    print("AFTER ", x.sharding)
+    return x
+
+  jax.experimental.io_callback(my_callback, shape_dtype, x)
+```
