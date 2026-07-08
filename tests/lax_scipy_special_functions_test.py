@@ -61,7 +61,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betaln", 2, float_dtypes, jtu.rand_default, False
     ),
     op_record(
-        "betainc", 3, float_dtypes, jtu.rand_positive, False
+        "betainc", 3, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
         "boxcox", 2, float_dtypes, jtu.rand_positive, True
@@ -463,43 +463,40 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
-  def testBetaIncGradAB(self):
+  @parameterized.named_parameters(
+      ("integer_b_direct", 2.0, 3.0, 0.3),      # integer b, x <= 0.5 (direct series)
+      ("integer_b_reflected", 2.0, 3.0, 0.9),    # integer b, x > 0.5 (reflected series)
+      ("integer_b_small_a", 0.3, 4.0, 0.4),      # integer b, small a
+      ("non_integer_b", 5.0, 1.5, 0.2),
+      ("symmetric_boundary", 0.5, 0.5, 0.5),
+  )
+  def testBetaIncGradAB(self, a, b, x):
     # Regression test for https://github.com/jax-ml/jax/issues/38610
     # jax.lax.betainc previously raised on jax.grad w.r.t. a or b; check the
     # new analytic gradients against central finite differences of
     # scipy.special.betainc (which only supports the value, not the
-    # gradient, so this is an independent reference). Covers both the
+    # gradient, so this is an independent reference). Cases cover both the
     # direct series (x <= 0.5) and the reflected series (x > 0.5), and both
     # integer and non-integer b (the differentiated series has a distinct
     # convergence subtlety at integer b, since the *value* series terminates
     # there while the derivative terms do not).
     with jax.numpy_dtype_promotion("standard"), jax.enable_x64():
       eps = 1e-6
-      cases = [
-          (2.0, 3.0, 0.3),   # integer b, x <= 0.5 (direct series)
-          (2.0, 3.0, 0.9),   # integer b, x > 0.5 (reflected series)
-          (0.3, 4.0, 0.4),   # integer b, small a
-          (5.0, 1.5, 0.2),   # non-integer b
-          (0.5, 0.5, 0.5),   # symmetric boundary case
-      ]
-      for a, b, x in cases:
-        a = jnp.float64(a)
-        b = jnp.float64(b)
-        x = jnp.float64(x)
+      a = jnp.float64(a)
+      b = jnp.float64(b)
+      x = jnp.float64(x)
 
-        grad_a = jax.grad(lambda a: jax.lax.betainc(a, b, x))(a)
-        fd_a = (
-            osp_special.betainc(a + eps, b, x) - osp_special.betainc(a - eps, b, x)
-        ) / (2 * eps)
-        self.assertAllClose(grad_a, fd_a, atol=1e-4, rtol=1e-4,
-                            err_msg=f"grad_a mismatch at a={a}, b={b}, x={x}")
+      grad_a = jax.grad(lambda a: jax.lax.betainc(a, b, x))(a)
+      fd_a = (
+          osp_special.betainc(a + eps, b, x) - osp_special.betainc(a - eps, b, x)
+      ) / (2 * eps)
+      self.assertAllClose(grad_a, fd_a, atol=1e-4, rtol=1e-4)
 
-        grad_b = jax.grad(lambda b: jax.lax.betainc(a, b, x))(b)
-        fd_b = (
-            osp_special.betainc(a, b + eps, x) - osp_special.betainc(a, b - eps, x)
-        ) / (2 * eps)
-        self.assertAllClose(grad_b, fd_b, atol=1e-4, rtol=1e-4,
-                            err_msg=f"grad_b mismatch at a={a}, b={b}, x={x}")
+      grad_b = jax.grad(lambda b: jax.lax.betainc(a, b, x))(b)
+      fd_b = (
+          osp_special.betainc(a, b + eps, x) - osp_special.betainc(a, b - eps, x)
+      ) / (2 * eps)
+      self.assertAllClose(grad_b, fd_b, atol=1e-4, rtol=1e-4)
 
   def testHyp2f1SpecialCases(self):
     dtype = dtypes.default_float_dtype()

@@ -155,23 +155,25 @@ def _betainc_series_derivs(a, b, x, dtype):
 
   def cond_fn(vals):
     should_stop = vals[0]
-    return bitwise_not(_any(bitwise_not(should_stop)))
+    return _any(bitwise_not(should_stop))
 
   def body_fn(vals):
     (should_stop, k, S, dS_da, dS_db,
      Pa, dPa_da, P1b, dP1b_db, Pa1, dPa1_da, fact, xk) = vals
     enabled = bitwise_not(should_stop)
 
-    term = Pa * P1b / (Pa1 * fact) * xk
+    pa1_is_zero = eq(Pa1, zero)
+    safe_pa1 = select(pa1_is_zero, one, Pa1)
+    term = select(pa1_is_zero, zero, Pa * P1b / (safe_pa1 * fact) * xk)
     new_S = S + term
 
-    safe_pa1 = select(eq(Pa1, zero), one, Pa1)
     dterm_da = select(
-        eq(Pa1, zero), zero,
+        pa1_is_zero, zero,
         (dPa_da / safe_pa1 - Pa * dPa1_da / (safe_pa1 * safe_pa1)) * P1b
         / fact * xk)
     new_dS_da = dS_da + dterm_da
-    dterm_db = Pa * dP1b_db / (Pa1 * fact) * xk
+    dterm_db = select(
+        pa1_is_zero, zero, Pa * dP1b_db / (safe_pa1 * fact) * xk)
     new_dS_db = dS_db + dterm_db
 
     f_a = a + k
