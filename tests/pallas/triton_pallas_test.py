@@ -507,10 +507,8 @@ class TritonPallasTest(PallasBaseTest):
     )
 
   def test_deviceless_aot(self):
-    if jtu.is_device_rocm():
-      abstract_device = mesh_lib.AbstractDevice('gfx950', 1, 'rocm')
-    else:
-      abstract_device = mesh_lib.AbstractDevice('NVIDIA A100', 1, 'cuda')
+    device_kind = 'gfx950' if jtu.is_device_rocm() else '10.0'
+    abstract_device = mesh_lib.AbstractDevice(device_kind, 1, 'gpu')
     abstract_mesh = mesh_lib.AbstractMesh(
         (1,),
         ('x',),
@@ -551,6 +549,31 @@ class TritonPallasTest(PallasBaseTest):
     np.testing.assert_allclose(
         output, jax.nn.softmax(x, axis=-1), atol=1e-5, rtol=1e-5
     )
+
+  def test_gpu_info_under_shard_map(self):
+    mesh = mesh_lib.Mesh(jax.devices(), 'x')
+    abstract_mesh = mesh.abstract_mesh
+
+    batch_size = 2
+    size = 32
+    block_size = 64
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((batch_size, size), jnp.float32),
+        grid=batch_size,
+    )
+    def kernel(x_ref, o_ref):
+      row_idx = pl.program_id(0)
+      x_idx = jnp.arange(block_size)
+      row_idxs = (row_idx, x_idx)
+      mask = x_idx < x_ref.shape[1]
+      row = plgpu.load(x_ref.at[row_idxs], mask=mask, other=-float("inf"))
+      plgpu.store(o_ref.at[row_idxs], row, mask=mask)
+
+    x = jnp.ones((batch_size, size))
+    kernel = jax.shard_map(kernel, mesh=abstract_mesh,
+                           in_specs=jax.P(), out_specs=jax.P(), check_vma=False)
+    jax.jit(kernel).trace(x).lower(lowering_platforms=('gpu',))
 
   def test_unsigned_integer_dot_raises(self):
     @functools.partial(
