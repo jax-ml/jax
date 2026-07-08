@@ -1164,6 +1164,43 @@ class HijaxTest(jtu.JaxTestCase):
     f = jax.vmap(mul, in_axes=(0, None))
     f = jax.vmap(f, in_axes=(2, None), out_axes=2)
     self.assertAllClose(f(x, y), x * y[None, :, None])
+
+  def test_newstyle_hiprimitive_vmap_jvp_symbolic_zero_tangent(self):
+
+    class Mul(VJPHiPrimitive):
+
+      def __init__(self, aval):
+        self.in_avals = (aval, aval)
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        return x * y
+
+      def jvp(self, primals, tangents):
+        (x, y), (x_dot, y_dot) = primals, tangents
+        x_dot, y_dot = map(instantiate_zeros, (x_dot, y_dot))
+        return mul(x, y), mul(x_dot, y) + mul(x, y_dot)
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        return in_dims[1] if in_dims[0] is None else in_dims[0]
+
+    def mul(x, y):
+      return Mul(typeof(x))(x, y)
+
+    # ys is closed over, so its tangent is a symbolic zero whose aval must be
+    # mapped before reaching the jvp rule under vmap
+    xs, ys = jnp.arange(3.0), jnp.full(3, 2.0)
+    primals_out, tangents_out = jax.jvp(
+        lambda x: jax.vmap(mul)(x, ys), (xs,), (jnp.ones(3),))
+    self.assertAllClose(primals_out, xs * ys)
+    self.assertAllClose(tangents_out, ys)
+
+    primals_out, tangents_out = jax.jvp(
+        lambda x: jax.vmap(mul, in_axes=(0, None))(x, 2.0), (xs,), (jnp.ones(3),))
+    self.assertAllClose(primals_out, 2.0 * xs)
+    self.assertAllClose(tangents_out, jnp.full(3, 2.0))
     x = jnp.arange(12.0).reshape(3, 4)
     y = jnp.arange(6.0).reshape(2, 3)
     f = jax.vmap(mul, in_axes=(None, 0))

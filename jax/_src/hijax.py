@@ -532,10 +532,15 @@ class VmapOf(VJPHiPrimitive):
                     **self._vmap_params)(*args)
 
   def jvp(self, primals, tangents):
-    # TODO probably gonna get non-pytree-prefix errors because of sym zeros...
-    return api.vmap(self.prim.jvp, in_axes=(self.in_dims, self.in_dims),  # pyrefly: ignore[missing-attribute]
-                    out_axes=(self.out_dim, self.out_dim),
-                    **self._vmap_params)(primals, tangents)
+    tangents = tree_map(partial(map_zero, self.axis_data), self.in_dims,
+                        tangents, is_leaf=lambda x: x is None)
+    primals_out, tangents_out = api.vmap(
+        self.prim.jvp, in_axes=(self.in_dims, self.in_dims),  # pyrefly: ignore[missing-attribute]
+        out_axes=(self.out_dim, self.out_dim),
+        **self._vmap_params)(primals, tangents)
+    tangents_out = tree_map(partial(unmap_zero, self.axis_data), self.out_dim,
+                            tangents_out, is_leaf=lambda x: x is None)
+    return primals_out, tangents_out
 
   def vjp_fwd(self, in_nzs, *args):
     store = lambda: None
@@ -604,6 +609,16 @@ def _call_hi_primitive_to_lojax(*args_flat, _prim):
   ans = _prim.expand(*args)
   return tree_leaves_checked(_prim.out_tree, ans)
 call_hi_primitive_p.to_lojax = _call_hi_primitive_to_lojax
+
+def _call_hi_primitive_prettyprint(eqn, context, settings):
+  # print CustomVJPTraced tersely since its params repr is noise (Traced
+  # objects, functions), but let prims like RematTraced print in full since
+  # their repr shows the inner jaxpr
+  if isinstance(eqn.params['_prim'], CustomVJPTraced):
+    params = dict(eqn.params, _prim=eqn.params['_prim'].__class__.__name__)
+    eqn = eqn.replace(params=params)
+  return core._pp_eqn(eqn, context, settings)
+core.pp_eqn_rules[call_hi_primitive_p] = _call_hi_primitive_prettyprint
 
 def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, _prim):
   args = tree_unflatten(_prim.in_tree, args_flat)
@@ -676,7 +691,7 @@ def _call_hi_primitive_linearized_transpose(
 ad.fancy_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_transpose
 
 def _call_hi_primitive_linearized_prettyprint(eqn, context, settings):
-  params = dict(eqn.params, _prim=str(eqn.params['_prim'].__class__),
+  params = dict(eqn.params, _prim=eqn.params['_prim'].__class__.__name__,
                 residuals_tree='...')
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 core.pp_eqn_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_prettyprint
@@ -924,7 +939,7 @@ class CustomVJPTraced(VJPHiPrimitive):
     return in_cts
 
   def jvp(self, primals, tangents):
-    if self.symbolic_zeros: raise NotImplementedError
+    if self.symbolic_zeros: ad.raise_custom_vjp_error_on_jvp()
     zero = lambda x: isinstance(x, ad_util.Zero)
     tangents = tree_map(ad_util.instantiate, tangents, is_leaf=zero)
     if self.opt_remat:
@@ -1058,7 +1073,6 @@ class custom_vjp3:
           f"custom_vjp-decorated function {self.f} closed over a {type(t).__name__} "
           f"of type {t.aval.str_short()}, but custom_vjp functions can't close "
           f"over Tracers. Rewrite {self.f} to take it as an explicit input.")
-      raise Exception  # TODO(mattjj):error tracer type, value type, primal name
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     in_avals = tree_map(typeof, args)
     prim = CustomVJPTraced(traced, self.fwd, self.bwd, in_avals, self.symz,
