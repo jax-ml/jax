@@ -280,3 +280,12 @@ For details about the JAX API, see the
 
 For getting started as a JAX developer, see the
 [developer documentation](https://docs.jax.dev/en/latest/developer.html).
+
+
+## Known Issues and Workarounds
+
+The maintainers are aware of the following issues:
+
+- Issue mentioned in the bug tracker
+- Users should follow the recommended practices
+- See the documentation for more details
