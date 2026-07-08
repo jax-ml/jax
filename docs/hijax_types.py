@@ -46,7 +46,9 @@
 # * its *tangent type* may differ from its primal structure, so that
 #   derivatives with respect to it aren't just "the same pytree, but for
 #   tangents";
-# * it may have its own notion of batching under `vmap`.
+# * it may have its own notion of batching under `vmap`;
+# * it can carry sharding information in the type, participating in JAX's
+#   explicit sharding mode.
 #
 # Hijax types (or "hi types") provide this. You subclass `HiType` to define
 # the type, register a Python class as carrying values of that type, and write
@@ -73,6 +75,9 @@
 #   `MappingSpec` subclass of your own design, and `batch` rules on the
 #   primitives. Mapped-over hi type arguments require an explicit `axis_size`
 #   and spec-valued `in_axes`/`out_axes` entries.
+# * For sharding in types (explicit mode), record sharding data on your type
+#   (e.g. a `NamedSharding` field), consume it in `lo_ty`, and propagate it
+#   in your primitives' typing rules.
 #
 # ## Example: quantized arrays
 #
@@ -84,7 +89,7 @@
 # +
 import os
 os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=8'
-# (8 CPU devices, for the shard_map section at the end)
+# (8 CPU devices, for the sharding sections at the end)
 
 from dataclasses import dataclass
 
@@ -134,18 +139,34 @@ class QArray:
 # This is like the pytree flatten/unflatten interface, but it lives at the
 # level of *types*: given only the type, JAX can compute the lowered types,
 # without needing a value in hand.
+#
+# We also give the type a `sharding` field, recording how values are
+# partitioned across devices; it can be ignored until the sharding sections
+# near the end of this document. We reuse JAX's `NamedSharding` to describe
+# the partitioning of the `qvalue` component, and derive `scale`'s
+# partitioning from it by dropping the last axis. Nothing about the field is
+# special to JAX, which never interprets it: only our own methods consume
+# it, chiefly `lo_ty`, which stamps the component types with their
+# shardings. You're free to track sharding information on your type with an
+# object of your own design instead, so long as you consume it the same
+# way.
 
 # +
 from jax.experimental.hijax import HiType, ShapedArray, register_hitype
+from jax.sharding import NamedSharding
 
 @dataclass(frozen=True)
 class QArrayTy(HiType):
   shape: tuple[int, ...]
+  sharding: NamedSharding  # qvalue's sharding; scale's is derived from it
 
   # lowering: which array types make up this type, and how values convert
   def lo_ty(self):
-    return [ShapedArray(self.shape, jnp.dtype('int8')),
-            ShapedArray(self.shape[:-1], jnp.dtype('float32'))]
+    scale_sharding = self.sharding.update(spec=jax.P(*self.sharding.spec[:-1]))
+    return [ShapedArray(self.shape, jnp.dtype('int8'),
+                        sharding=self.sharding),
+            ShapedArray(self.shape[:-1], jnp.dtype('float32'),
+                        sharding=scale_sharding)]
   def lower_val(self, q):
     return [q.qvalue, q.scale]
   def raise_val(self, qvalue, scale):
@@ -153,21 +174,27 @@ class QArrayTy(HiType):
 
   # autodiff: tangents of quantized arrays are plain float arrays (see below)
   def to_tangent_aval(self):
-    return ShapedArray(self.shape, jnp.dtype('float32'))
+    return ShapedArray(self.shape, jnp.dtype('float32'),
+                       sharding=self.sharding)
 
   # printing, e.g. in jaxprs
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
-    return f'q8[{",".join(map(str, self.shape))}]'
+    dims = [str(d) if p is None else f'{d}@{p}'
+            for d, p in zip(self.shape, self.sharding.spec)]
+    return f'q8[{",".join(dims)}]'
   __repr__ = str_short
 
-register_hitype(QArray, lambda q: QArrayTy(q.qvalue.shape))
+register_hitype(QArray, lambda q: QArrayTy(q.qvalue.shape,
+                                           jax.typeof(q.qvalue).sharding))
 # -
 
 # The `register_hitype` call associates the value class with the type: its
 # second argument computes the type of any given value, analogous to how
-# `jax.typeof` maps an array to its `ShapedArray` type. Indeed after
-# registration, `jax.typeof` works on `QArray`s, and JAX transformations
-# accept them anywhere a value is expected.
+# `jax.typeof` maps an array to its `ShapedArray` type. (Ours reads both the
+# shape and the sharding off the `qvalue` component — every array carries a
+# sharding, trivial when no mesh is in play.) Indeed after registration,
+# `jax.typeof` works on `QArray`s, and JAX transformations accept them
+# anywhere a value is expected.
 #
 # ## The primitives
 #
@@ -188,7 +215,7 @@ class Quantize(VJPHiPrimitive):
   def __init__(self, x_aval):
     if x_aval.dtype != jnp.dtype('float32'): raise TypeError(x_aval.dtype)
     self.in_avals = (x_aval,)
-    self.out_aval = QArrayTy(x_aval.shape)
+    self.out_aval = QArrayTy(x_aval.shape, x_aval.sharding)
     self.params = {}
     super().__init__()
 
@@ -207,7 +234,8 @@ class Quantize(VJPHiPrimitive):
 class Dequantize(VJPHiPrimitive):
   def __init__(self, q_aval):
     self.in_avals = (q_aval,)
-    self.out_aval = ShapedArray(q_aval.shape, jnp.dtype('float32'))
+    self.out_aval = ShapedArray(q_aval.shape, jnp.dtype('float32'),
+                                sharding=q_aval.sharding)
     self.params = {}
     super().__init__()
 
@@ -247,18 +275,148 @@ print(jax.typeof(qx))
 print(dequantize(qx))
 # -
 
+# ### Primitives outside, container inside
+#
+# The `expand` methods above construct `QArray` values and read their
+# attributes directly. It's important that this kind of direct container
+# manipulation happen *only* in `expand` (and in the type's own methods,
+# like `lower_val` and `raise_val`). Everywhere else — in particular, in
+# any function you might `jit`, differentiate, or `vmap` — hi values should
+# be produced and consumed only by applying primitives.
+#
+# The reason is what traced code actually sees. Under a trace, a quantized
+# array is not a `QArray` instance: it's a `Tracer` of type `q8[...]`. So
+# reading an attribute in traced code fails —
+
+try:
+  jax.jit(lambda qx: qx.qvalue)(qx)
+except AttributeError as e:
+  print('AttributeError:', e)
+
+
+# and, worse, calling the constructor on traced arrays doesn't fail right
+# away. It smuggles `Tracer`s inside a container that JAX treats as one
+# opaque concrete value, and the mistake surfaces later, as a confusing
+# error far from its cause (here a missing constant handler; under `grad`
+# it's a leaked-tracer error):
+
+# +
+def bad_quantize(x):
+  scale = jnp.max(jnp.abs(x), axis=-1) / 127.
+  return QArray(jnp.round(x / scale[..., None]).astype('int8'), scale)
+
+try:
+  jax.jit(bad_quantize)(x)
+except TypeError as e:
+  print('TypeError:', e)
+
+
+# -
+
+# In `expand` it's a different story: by the time `expand` runs, JAX has
+# committed to implementing the primitive in terms of the type's lojax
+# components, and its `QArray` arguments are genuine `QArray` instances
+# (holding lojax values — possibly traced ones). There, manipulating the
+# value as a plain container is exactly right.
+#
+# (The top-level peeks at attributes like `qx.qvalue` elsewhere in this
+# document are fine for the same reason eager `expand` is fine: they run
+# eagerly, on concrete values. But inside any function that might get
+# traced, stick to primitives.)
+#
+# ### A more realistic op: dense × quantized matmul
+#
+# Conversion ops alone make for a thin API: in practice, a quantized array
+# type earns its keep in ops that consume the type directly. The classic
+# example is an inference-style matmul, where the activations `x` are an
+# ordinary dense `f32` array and the weights are quantized:
+
+# +
+class MatmulQ(VJPHiPrimitive):
+  def __init__(self, x_aval, q_aval):
+    if not (isinstance(q_aval, QArrayTy) and len(q_aval.shape) == 2 and
+            x_aval.shape[-1] == q_aval.shape[0]):
+      raise TypeError(f'bad matmul_q operand types: {x_aval} @ {q_aval}')
+    self.in_avals = (x_aval, q_aval)
+    x_spec, q_spec = x_aval.sharding.spec, q_aval.sharding.spec
+    if x_spec[-1] is not None or q_spec[0] is not None:
+      raise TypeError('matmul_q requires unsharded contraction axes, got '
+                      f'{x_aval} @ {q_aval}')
+    out_sharding = x_aval.sharding.update(
+        spec=jax.P(*x_spec[:-1], q_spec[-1]))
+    self.out_aval = ShapedArray((*x_aval.shape[:-1], q_aval.shape[-1]),
+                                jnp.dtype('float32'), sharding=out_sharding)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x, qw):
+    # fold the per-row scales into the dense operand, then apply one matmul
+    # directly against the int8 payload
+    return (x * qw.scale) @ qw.qvalue.astype(jnp.float32)
+
+  def vjp_fwd(self, nzs_in, x, qw):
+    return self(x, qw), (x, qw)
+
+  def vjp_bwd_retval(self, res, g):
+    x, qw = res
+    w = dequantize(qw)   # rules are traced code: use primitives here
+    # cotangents live where the primals live, so use the primal operands'
+    # shardings to disambiguate the (possibly sharded) contractions
+    return (jnp.matmul(g, w.T, out_sharding=jax.typeof(x).sharding),
+            jnp.matmul(x.T, g, out_sharding=jax.typeof(w).sharding))
+
+def matmul_q(x, qw):
+  return MatmulQ(jax.typeof(x), jax.typeof(qw))(x, qw)
+
+
+# -
+
+# A few things to notice. The type signature mixes array types and hi types
+# freely: `in_avals` is a `(ShapedArray, QArrayTy)` pair, checked at
+# construction time so that a shape mismatch fails immediately, with both
+# operand types pretty-printed. And `expand` exploits the representation:
+# because the scales apply per-row along the contraction axis, they can be
+# folded into the dense operand, so the heavy matmul runs directly against
+# the `int8` payload rather than a dequantized copy. Owning the op as a
+# single primitive lets us state that rewriting once, in one place.
+#
+# Also notice the discipline from the previous section in action: `expand`
+# reads `qw.scale` and `qw.qvalue` as container attributes, while the VJP
+# rules — which are ordinary traced code — go through the `dequantize`
+# primitive instead.
+#
+# (The typing rule also computes an output *sharding* — output rows
+# partitioned like `x`'s, output columns like `qw`'s, with the contracted
+# axes required to be unsharded — and the backward rule passes
+# `out_sharding` hints to its matmuls. Both are explained in the
+# explicit-sharding section below; outside of explicit mode all these
+# shardings are trivial and the extra code is inert.)
+
+# +
+w = jnp.arange(12., dtype='float32').reshape(3, 4) / 12.
+qw = quantize(w)
+
+print(matmul_q(x, qw))
+print(x @ dequantize(qw))  # reference
+# -
+
 # ## Hi types in jaxprs
 #
 # When we trace, the quantized array appears as a single value of type
 # `q8[2,3]`, produced by one equation and consumed by another:
 
-jax.make_jaxpr(lambda x: dequantize(quantize(x)))(x)
+jax.jit(lambda x: dequantize(quantize(x))).trace(x).jaxpr
 
 # Compare to the pytree approach, where the same computation would show four
 # array-typed intermediates with no indication that they pair up. The hi type
 # only disappears at lowering time, when `expand` is traced and each
 # `q8[...]`-typed value is expanded into the array components given by
 # `lo_ty`.
+#
+# Ops with mixed operand kinds read just as directly — one equation with a
+# `f32[2,3] @ q8[3,4] -> f32[2,4]` signature:
+
+jax.jit(matmul_q).trace(x, qw).jaxpr
 #
 # `jit` works, with quantized arrays as arguments, results, and
 # intermediates:
@@ -307,6 +465,21 @@ def g(qx):
 
 print(jax.grad(g)(qx))
 print(jax.typeof(jax.grad(g)(qx)))
+
+
+# -
+
+# The same goes for ops with mixed operand kinds, like the quantized
+# matmul: differentiating a loss with respect to both operands gives an
+# `f32` gradient for the dense activations *and* an `f32` gradient for the
+# quantized weights:
+
+# +
+def loss(x, qw):
+  return jnp.sum(matmul_q(x, qw) ** 2)
+
+grad_x, grad_qw = jax.grad(loss, argnums=(0, 1))(x, qw)
+print(jax.typeof(grad_x), jax.typeof(grad_qw))
 # -
 
 # Notice that making the tangent type an `f32` array was a *choice*, and
@@ -359,11 +532,13 @@ class QArraySpec(MappingSpec):
 # +
 def qarray_dec_rank(self, size, spec):
   assert isinstance(spec, QArraySpec) and self.shape[0] == size
-  return QArrayTy(self.shape[1:])
+  return QArrayTy(self.shape[1:],
+                  self.sharding.update(spec=jax.P(*self.sharding.spec[1:])))
 
 def qarray_inc_rank(self, size, spec):
   assert isinstance(spec, QArraySpec)
-  return QArrayTy((size, *self.shape))
+  return QArrayTy((size, *self.shape),
+                  self.sharding.update(spec=jax.P(None, *self.sharding.spec)))
 
 QArrayTy.dec_rank = qarray_dec_rank
 QArrayTy.inc_rank = qarray_inc_rank
@@ -490,14 +665,102 @@ print(jax.typeof(qtotal))
 print(jax.typeof(qys))
 # -
 
+# ## Sharding in types: explicit mode
+#
+# Finally, sharding. In JAX's explicit sharding mode (see [the parallelism
+# guide](https://docs.jax.dev/en/latest/parallel.html)), shardings are part
+# of array *types*: `jax.typeof` reports how a value is partitioned across
+# the mesh, sharding propagation happens while tracing, and mismatches
+# surface as type errors. The `sharding` field on `QArrayTy`, and the typing
+# rules on our primitives that propagate it, are exactly what let hi types
+# participate. What does it mean to partition a quantized array across
+# devices? The components move together: if we shard the rows, each device
+# holds its rows' quantized values *and* their scales. As usual there's a
+# design choice to make, and we made it back in `lo_ty`: `qvalue` carries
+# the type's sharding, and `scale` shards like it with the last axis
+# dropped, so every row travels with its scale.
+#
+# Let's see it work. We make a mesh (this is where we use the 8 CPU devices
+# requested in this document's first cell), shard some rows across it, and
+# quantize — the shardings propagate through our typing rules into the
+# result type, which `jax.typeof` displays with `@` markers:
+
+# +
+mesh = jax.make_mesh((4,), ('i',))
+jax.set_mesh(mesh)
+
+rows = jax.device_put(jnp.arange(24., dtype='float32').reshape(8, 3),
+                      jax.P('i'))
+
+qrows = quantize(rows)
+print(jax.typeof(qrows))
+print(qrows.qvalue.sharding.spec, qrows.scale.sharding.spec)
+print(jax.typeof(dequantize(qrows)))
+# -
+
+# The same holds while tracing — hi types in jaxprs now display their
+# shardings, computed by our `out_aval` rules:
+
+jax.jit(lambda x: dequantize(quantize(x))).trace(rows).jaxpr
+
+# The quantized matmul propagates shardings too: its typing rule partitions
+# output rows like `x`'s rows and output columns like `qw`'s columns
+# (requiring the contracted axes to be unsharded, since neither operand can
+# say how a sharded contraction should land):
+
+# +
+w2 = jnp.arange(12., dtype='float32').reshape(3, 4) / 12.
+
+print(jax.typeof(matmul_q(rows, quantize(w2))))                # rows sharded
+
+qw2 = quantize(jax.device_put(w2, jax.P(None, 'i')))
+print(jax.typeof(qw2))                                         # cols sharded
+print(jax.typeof(matmul_q(jnp.ones((2, 3), 'float32'), qw2)))
+# -
+
+# And the contraction check fires as a type error, at trace time:
+
+# +
+xk = jax.device_put(jnp.ones((2, 8), 'float32'), jax.P(None, 'i'))
+qk = quantize(jax.device_put(jnp.ones((8, 3), 'float32'), jax.P('i')))
+
+try:
+  matmul_q(xk, qk)
+except TypeError as e:
+  print('TypeError:', e)
+
+
+# -
+
+# Autodiff composes with all of this. Recall that `MatmulQ`'s backward rule
+# passed `out_sharding` hints to its matmuls: that's because the cotangent
+# for `qw` contracts over the row axis, which may be sharded (as it is
+# here), and explicit mode refuses to guess how an all-sharded contraction
+# should land. The right answer is the primal operand's sharding —
+# cotangents live where their primals live:
+
+# +
+def qloss(x, qw):
+  return jnp.sum(matmul_q(x, qw) ** 2)
+
+grad_rows, grad_qw2 = jax.grad(qloss, argnums=(0, 1))(rows, quantize(w2))
+print(jax.typeof(grad_rows), jax.typeof(grad_qw2))
+# -
+
+# One caution: JAX does not cross-check a hi primitive's declared output
+# sharding against what its `expand` actually produces. The declared
+# `out_aval` is what downstream code sees while tracing; `expand` determines
+# what happens at runtime. Keeping them consistent is part of the typing
+# rule's job.
+#
 # ## `shard_map` and partition specs
 #
-# Finally, sharding. What does it mean to partition a quantized array across
-# devices? Once again the components move together: if we shard the rows,
-# each device should hold a `QArray` of its rows' quantized values *and*
-# their scales. And once again there's a design choice to make. We'll say a
-# quantized array can be sharded along its leading axes only, so the
-# quantized axis stays whole and every row travels with its scale.
+# Explicit mode partitions values while keeping one global view of the
+# program. Its complement is `shard_map`, which gives a per-device view. To
+# cross that boundary, a quantized array needs one more piece: a partition
+# spec type of our own, saying how `shard_map`'s `in_specs`/`out_specs`
+# apply to it. We keep the same design as above: a quantized array is
+# sharded along its leading axes only.
 #
 # For `shard_map`, we express this with an `HiPspec` subclass — the
 # partition spec analogue of the `MappingSpec` above. Users pass instances
@@ -529,28 +792,26 @@ class QArrayP(HiPspec):
 def qarray_shard(self, mesh, manual_axes, check_vma, spec):
   qvalue_ty, _ = self.lo_ty()
   qspec, _ = spec.to_lo()
-  return QArrayTy(qvalue_ty.shard(mesh, manual_axes, check_vma, qspec).shape)
+  shard_ty = qvalue_ty.shard(mesh, manual_axes, check_vma, qspec)
+  return QArrayTy(shard_ty.shape, shard_ty.sharding)
 
 def qarray_unshard(self, mesh, check_vma, spec):
   qvalue_ty, _ = self.lo_ty()
   qspec, _ = spec.to_lo()
-  return QArrayTy(qvalue_ty.unshard(mesh, check_vma, qspec).shape)
+  full_ty = qvalue_ty.unshard(mesh, check_vma, qspec)
+  return QArrayTy(full_ty.shape, full_ty.sharding)
 
 QArrayTy.shard = qarray_shard
 QArrayTy.unshard = qarray_unshard
+
+
 # -
 
-# Now quantized arrays can cross `shard_map` boundaries in either direction.
-# (This is where we use the 8 CPU devices requested in this document's first
-# cell.) Producing a sharded quantized array:
+# Now quantized arrays can cross `shard_map` boundaries in either
+# direction, continuing with the mesh and `rows` from the previous section.
+# Producing a sharded quantized array:
 
 # +
-mesh = jax.make_mesh((4,), ('i',))
-jax.set_mesh(mesh)
-
-rows = jax.device_put(jnp.arange(24., dtype='float32').reshape(8, 3),
-                      jax.P('i'))
-
 @jax.jit
 @jax.shard_map(in_specs=jax.P('i'), out_specs=QArrayP(jax.P('i')))
 def quantize_shards(x):
@@ -571,7 +832,7 @@ print(qrows.qvalue.sharding.spec, qrows.scale.sharding.spec)
 @jax.jit
 @jax.shard_map(in_specs=QArrayP(jax.P('i')), out_specs=jax.P('i'))
 def dequantize_shards(qx):
-  assert jax.typeof(qx) == QArrayTy((2, 3))  # a per-device QArray shard
+  assert jax.typeof(qx).shape == (2, 3)  # a per-device QArray shard
   return dequantize(qx)
 
 print(jnp.max(jnp.abs(dequantize_shards(qrows) - rows)))
