@@ -789,9 +789,9 @@ def cond_error_check(error: Error, enabled_errors, index, *ops,
 error_checks[lax.cond_p] = cond_error_check
 
 def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
-                     num_consts, num_carry, unroll):
+                     ft_in, ft_out, unroll):
 
-  consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
+  consts, carry, xs = map(list, ft_in.update(in_flat).unpack())
   xs_mapped = [core.mapped_aval(length, 0, core.typeof(val)) for val in xs]
   # Query body effects to create a merged error containing all effects (such
   # that in and out carried error are of the same type).
@@ -812,9 +812,12 @@ def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
             + [False] * (len(carry) + len(xs)))
   checked_jaxpr = pe.move_binders_to_front(checked_jaxpr_, tomove)
   new_in_flat = [*consts, *err_vals, *carry, *xs]
+  errs_g = ft.nones(len(err_vals))
+  consts_g, carry_g, xs_g = ft_in.unpack()
   err_and_out = lax.scan_p.bind(
       *new_in_flat, reverse=reverse, length=length, jaxpr=checked_jaxpr,
-      num_consts=len(consts), num_carry=len(carry)+len(err_vals), unroll=unroll)
+      ft_in=ft.pack((consts_g, (errs_g, carry_g), xs_g)),
+      ft_out=ft.pack(((errs_g, carry_g), ft_out.unpack()[1])), unroll=unroll)
   err, out = tree_unflatten(out_tree, err_and_out)
   return err, out
 

@@ -71,6 +71,7 @@ from jax._src.lib import pytree
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax._src.util import safe_map, safe_zip, split_list
+from jax._src import flattree as ft
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import indexing as jnp_indexing
 from jax.experimental import sparse
@@ -859,9 +860,9 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
 sparse_rules_bcoo[pjit.jit_p] = _pjit_sparse
 
 
-def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):
-  const_spvalues, carry_spvalues, xs_spvalues = split_list(
-    spvalues, [num_consts, num_carry])
+def _scan_sparse(spenv, *spvalues, jaxpr, ft_in, ft_out, **params):
+  const_spvalues, carry_spvalues, xs_spvalues = (
+      tuple(g) for g in ft_in.update(spvalues).unpack())
   if xs_spvalues:
     # TODO(jakevdp): we don't want to pass xs_spvalues, we want to pass one row
     # of xs spvalues. How to do this?
@@ -872,8 +873,12 @@ def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):
   carry, carry_tree = tree_flatten(spvalues_to_arrays(spenv, carry_spvalues))
   xs, xs_tree = tree_flatten(spvalues_to_arrays(spenv, xs_spvalues))
 
-  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr,
-                        num_consts=len(consts), num_carry=len(carry), **params)
+  out = lax.scan_p.bind(
+      *consts, *carry, *xs, jaxpr=sp_jaxpr,
+      ft_in=ft.flatten((consts, carry, xs)).void(),
+      ft_out=ft.pack((ft.nones(len(carry)),
+                      ft.nones(len(sp_jaxpr.out_avals) - len(carry)))),
+      **params)
   carry_out = tree_unflatten(carry_tree, out[:len(carry)])
   xs_out = tree_unflatten(xs_tree, out[len(carry):])
   return arrays_to_spvalues(spenv, carry_out + xs_out)

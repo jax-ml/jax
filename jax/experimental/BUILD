@@ -694,6 +694,7 @@ pytype_strict_library(
         "//jax/_src:custom_derivatives",
         "//jax/_src:dtypes",
         "//jax/_src:ffi",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:numpy",

@@ -499,8 +499,7 @@ key_reuse_signatures[lax.cond_p] = _cond_key_type_signature
 @dynamic_key_reuse_signature
 def _scan_key_type_signature(eqn):
   jaxpr = eqn.params['jaxpr'].jaxpr
-  num_consts = eqn.params['num_consts']
-  num_carry = eqn.params['num_carry']
+  num_consts, num_carry, _ = (len(g) for g in eqn.params['ft_in'].unpack())
   signature = jaxpr_type_signature(jaxpr)
 
   # scan body should not consume key in constants

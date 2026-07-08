@@ -594,17 +594,15 @@ class JaxprInterpreter:
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
     assert eqn.primitive is lax.scan_p
-    consts, init_carry, xs = split_list(
-        get_invals(),
-        [eqn.params["num_consts"], eqn.params["num_carry"]],
-    )
+    consts, init_carry, xs = (
+        list(g) for g in eqn.params["ft_in"].update(get_invals()).unpack())
 
     def _scan_body(carry, a):
       token, c = carry
       token, ret = self.interpret(
           eqn.params["jaxpr"].jaxpr, token, *consts, *c, *a
       )
-      new_c, b = split_list(ret, [eqn.params["num_carry"]])
+      new_c, b = (list(g) for g in eqn.params["ft_out"].update(ret).unpack())
       return (token, new_c), b
 
     (token, carry), out = lax.scan(

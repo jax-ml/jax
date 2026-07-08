@@ -4388,8 +4388,8 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
     param_gradient_map = jaxpr_split_transpose.jaxpr.eqns[-1]
     self.assertEqual(param_gradient_map.primitive, jax.lax.scan_p)
-    self.assertEqual(param_gradient_map.params['num_consts'], 0)
-    self.assertEqual(param_gradient_map.params['num_carry'], 0)
+    consts_g, carry_g, _ = param_gradient_map.params['ft_in'].unpack()
+    self.assertEqual([len(consts_g), len(carry_g)], [0, 0])
 
     # Assert that parameter gradients come from the map.
     self.assertEqual(ct_ws, param_gradient_map.outvars[0])
