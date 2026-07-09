@@ -6586,6 +6586,24 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(jax.checkpoint(f, policy=policy), 1.)
     self.assertLen(res, 0)  # can't save anything!
 
+  def test_checkpoint_name_vmap(self):
+    def f(x):
+      y = checkpoint_name(x * 2., 'y')
+      return y + 1.
+
+    policy = jax.checkpoint_policies.save_only_these_names('y')
+    f_remat = jax.checkpoint(f, policy=policy)
+    f_vmapped = jax.vmap(f_remat)
+
+    x = jnp.arange(6.).reshape(2, 3)
+    y_expected = f(x)
+    y_actual = f_vmapped(x)
+    self.assertAllClose(y_expected, y_actual, check_dtypes=False)
+
+    grad_actual = jax.grad(lambda a: jnp.sum(f_vmapped(a)))(x)
+    self.assertAllClose(grad_actual, jnp.full_like(x, 2.), check_dtypes=False)
+
+
   def test_saved_residuals_utility(self):
     def f(x, y):
       x1, x2 = x

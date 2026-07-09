@@ -1163,6 +1163,9 @@ class CheckpointName(VJPHiPrimitive):
   def linearized(self, _, g):  # type: ignore
     return g
 
+  def batch_dim_rule(self, axis_data, dims, /):
+    return dims[0]
+
 class PrimalLeftTangentRight(VJPHiPrimitive):
   def __init__(self, aval_x, aval__x):
     self.in_avals = aval_x, aval__x
