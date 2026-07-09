@@ -17,11 +17,13 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include "absl/algorithm/container.h"
 #include "absl/log/check.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/STLExtras.h"
@@ -247,7 +249,7 @@ LogicalResult MemRefSliceOp::verify() {
   return success();
 }
 
-mlir::InFlightDiagnostic MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
+std::optional<std::string> MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
     std::array<int64_t, 2> tc_target_shape, MemRefType source_type_override) {
   mlir::MemRefType source_ty = getMemRef().getType();
   if (source_type_override) {
@@ -255,11 +257,11 @@ mlir::InFlightDiagnostic MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
   }
   auto tiled_layout = cast<TiledLayoutAttr>(source_ty.getLayout());
   if (getResult().getType().getLayout() != tiled_layout) {
-    return emitOpError("Operand and result layouts must be equal.");
+    return std::string("Operand and result layouts must be equal.");
   }
   ArrayRef<xla::Tile> tiles = tiled_layout.getTiles();
   if (tiles.empty()) {
-    return {};
+    return std::nullopt;
   }
   const xla::Tile& first_tile = tiles.front();
   const int64_t tile_rank = first_tile.dimensions().size();
@@ -273,12 +275,11 @@ mlir::InFlightDiagnostic MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
     int64_t tile_dim = first_tile.dimension(i);
     const int64_t dim = untiled_dims + i;
     if (!isGuaranteedDivisible(getBaseIdx()[dim], tile_dim)) {
-      return emitOpError(
-                 "Offsets along tiled dimensions must be aligned to "
-                 "tiles. Failed to verify that the index at dimension ")
-             << dim << " is divisible by the tile dimension " << tile_dim
-             << ". If it is, use tpu.assume_multiple to suppress this "
-                "error.";
+      return absl::StrCat(
+          "Offsets along tiled dimensions must be aligned to tiles. Failed "
+          "to verify that the index at dimension ",
+          dim, " is divisible by the tile dimension ", tile_dim,
+          ". If it is, use tpu.assume_multiple to suppress this error.");
     }
     // We only require alignment to compact 2nd minor for large 2nd minor.
     if (tile_rank == 2 && i == 0) {
@@ -303,15 +304,14 @@ mlir::InFlightDiagnostic MemRefSliceOp::verifyOffsetAndSizeTileAlignment(
       size_is_aligned = result_type.getShape()[dim] % tile_dim == 0;
     }
     if (!size_is_aligned) {
-      return emitOpError(
-                 "Slice sizes along tiled dimensions must be aligned to "
-                 "tiles. Failed to verify that the size at dimension ")
-             << dim << " is divisible by the tile dimension " << tile_dim
-             << ". If it is, use tpu.assume_multiple to suppress this "
-                "error.";
+      return absl::StrCat(
+          "Slice sizes along tiled dimensions must be aligned to tiles. "
+          "Failed to verify that the size at dimension ",
+          dim, " is divisible by the tile dimension ", tile_dim,
+          ". If it is, use tpu.assume_multiple to suppress this error.");
     }
   }
-  return {};
+  return std::nullopt;
 }
 
 struct MemRefSliceFoldConstantDynamicDim

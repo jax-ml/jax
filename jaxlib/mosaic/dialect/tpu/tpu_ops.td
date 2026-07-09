@@ -1076,7 +1076,8 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]>
     attr-dict `:` type($mem_ref) `->` type($result)
   }];
   let extraClassDeclaration = [{
-    mlir::InFlightDiagnostic verifyOffsetAndSizeTileAlignment(
+    // Returns a message string on error, and nullopt on success.
+    std::optional<std::string> verifyOffsetAndSizeTileAlignment(
         std::array<int64_t, 2> tc_target_shape,
         MemRefType source_type_override = nullptr);
   }];
