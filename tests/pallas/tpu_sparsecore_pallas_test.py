@@ -255,7 +255,6 @@ class DebugPrintTest(PallasSCTest):
         kernel,
         compiler_options={
             "xla_tpu_enable_sc_log_recorder": "true",
-            "xla_tpu_enable_tile_log_recorder": "true",
         },
     )
     with jtu.capture_stderr() as get_output:
@@ -367,7 +366,6 @@ class DebugPrintTest(PallasSCTest):
         kernel,
         compiler_options={
             "xla_tpu_enable_sc_log_recorder": "true",
-            "xla_tpu_enable_tile_log_recorder": "true",
         },
     )
 
