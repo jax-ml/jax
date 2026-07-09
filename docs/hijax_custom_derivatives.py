@@ -159,13 +159,8 @@ print(grad(log1pexp)(100.))
 # We can get a bit more insight into what's going on by looking at the jaxpr
 # for the gradient computation:
 
-# +
-from jax import make_jaxpr
+jit(grad(log1pexp)).trace(100.).jaxpr
 
-make_jaxpr(grad(log1pexp))(100.)
-
-
-# -
 
 # Stepping through how the jaxpr would be evaluated, we can see that the last
 # line would involve multiplying values that floating point math will round to
@@ -234,7 +229,7 @@ print(vmap(jit(grad(log1pexp)))(jnp.arange(3.)))
 # We can inspect the jaxpr of the gradient computation to confirm the stable
 # formula is what runs:
 
-make_jaxpr(grad(log1pexp))(100.)
+jit(grad(log1pexp)).trace(100.).jaxpr
 
 
 # ### Example: Enforcing a differentiation convention
@@ -794,7 +789,7 @@ print(grad(grad(sin))(3.))
 # Because a hijax primitive is a real primitive, it appears as a single
 # equation in jaxprs:
 
-make_jaxpr(mul)(2., 3.)
+jit(mul).trace(2., 3.).jaxpr
 
 
 # That's true under `jit` too. It's only at lowering time that `expand` is
