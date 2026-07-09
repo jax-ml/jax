@@ -256,7 +256,7 @@ class JaxprTrace(Trace):
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
     num_new_args = len(res_tracers) + len(env_tracers)
-    new_jaxpr = convert_constvars_jaxpr(jaxpr)
+    new_jaxpr, _ = jaxpr.separate_consts()
     staged_params = dict(params, call_jaxpr=new_jaxpr)
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
@@ -307,7 +307,7 @@ class JaxprTrace(Trace):
     env_tracers = map(self.to_jaxpr_tracer, env)
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
-    closed_jaxpr = convert_constvars_jaxpr(jaxpr)
+    closed_jaxpr, _ = jaxpr.separate_consts()
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
@@ -696,51 +696,33 @@ def tracers_to_jaxpr(
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   is_high |= any(x.aval.is_high for x in it.chain(const_vars, invars, outvars))
   jaxpr = Jaxpr(const_vars, invars,  # pyrefly: ignore[bad-argument-type]
-                outvars, eqns, jaxpr_effects, debug_info, is_high)
+                outvars, eqns, jaxpr_effects, debug_info, is_high,
+                consts=const_vals)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals
 
 @weakref_lru_cache
 def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
-  constvars, envvars = partition_list(which, jaxpr.constvars)
-  return jaxpr.replace(constvars=constvars, invars=[*envvars, *jaxpr.invars])
+  """Converts all constvars to invars, ordered [residuals, env, invars].
 
-@weakref_lru_cache
+  `which` marks which constvars are environment values (tracers of the
+  enclosing trace); the rest are residuals whose values are supplied by the
+  caller at call time, so neither group can stay as (valued) constvars.
+  """
+  resvars, envvars = partition_list(which, jaxpr.constvars)
+  return jaxpr.replace(constvars=(),
+                       invars=[*resvars, *envvars, *jaxpr.invars])
+
 def separate_consts(jaxpr: Jaxpr) -> tuple[Jaxpr, list[Any]]:
-  """Moves the constvars to the start of invars and returns the consts explicitly."""
-  return convert_constvars_jaxpr(jaxpr), jaxpr.consts
+  """Splits a jaxpr into a const-free jaxpr and its consts. See
+  Jaxpr.separate_consts."""
+  return jaxpr.separate_consts()
 
-@weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
-  """Moves the constvars to the start of invars."""
-  config.enable_checks.value and core.check_jaxpr(jaxpr)
-  if jaxpr.debug_info.arg_names is None:
-    arg_names = None
-  else:
-    arg_names = ("",) * len(jaxpr.constvars) + (*jaxpr.debug_info.arg_names,)
-  dbg = jaxpr.debug_info._replace(arg_names=arg_names)
-  lifted_jaxpr = jaxpr.replace(
-      constvars=(), invars=jaxpr.constvars + jaxpr.invars, debug_info=dbg)
-  config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
-  return lifted_jaxpr
-
-@weakref_lru_cache
-def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
-  """Move n invars to constvars. Like an inverse of convert_constvars_jaxpr."""
-  if n == 0:
-    return jaxpr.replace()  # 'return jaxpr' would create cache reference cycle
-  config.enable_checks.value and core.check_jaxpr(jaxpr)
-  constvars, invars = split_list(jaxpr.invars, [n])
-  if jaxpr.debug_info.arg_names is None:
-    dbg = jaxpr.debug_info
-  else:
-    dbg = jaxpr.debug_info._replace(
-        arg_names=jaxpr.debug_info.arg_names[n:])
-  lifted_jaxpr = jaxpr.replace(constvars=tuple(constvars), invars=invars,
-                               debug_info=dbg)
-  config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
-  return lifted_jaxpr
+  # Legacy: use Jaxpr.separate_consts instead, which returns the const values
+  # rather than dropping them. TODO(dougalm): remove uses and delete.
+  return jaxpr.separate_consts()[0]
 
 
 def partial_eval_jaxpr_nounits(
@@ -830,7 +812,7 @@ def _partial_eval_jaxpr_nounits(
     assert next(known_vals_in_, None) is next(unknown_avals, None) is None
     jaxpr_unknown_, (fwds, out_pvals, residuals, ()) = trace_to_subjaxpr_nounits_fwd(
         f, TraceTag(), jaxpr.debug_info, instantiate).call_wrapped(in_pvals)
-    jaxpr_unknown = convert_constvars_jaxpr(jaxpr_unknown_)
+    jaxpr_unknown, _ = jaxpr_unknown_.separate_consts()
     out_unknowns = [not pval.is_known() for pval in out_pvals]
     if type(fwd) is bool and not fwd:
       residuals_ = iter(residuals)
@@ -1308,14 +1290,12 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
                      instantiate: bool | Sequence[bool] = False,
                      ) -> tuple[Jaxpr, list[bool], list[bool]]:
-  jaxpr_ = convert_constvars_jaxpr(jaxpr)
+  jaxpr_, consts = jaxpr.separate_consts()
   new_jaxpr, used_inputs_ = dce_jaxpr(jaxpr_, used_outputs, instantiate)
-  used_consts, used_inputs = split_list(used_inputs_, [len(jaxpr.constvars)])
+  used_consts, used_inputs = split_list(used_inputs_, [len(consts)])
   if sum(used_consts):
-    new_jaxpr = convert_invars_to_constvars(new_jaxpr, sum(used_consts))
-    if jaxpr.consts:
-      new_jaxpr = new_jaxpr.with_consts(
-          [c for c, used in zip(jaxpr.consts, used_consts) if used])
+    new_consts = [c for c, used in zip(consts, used_consts) if used]
+    new_jaxpr = new_jaxpr.with_consts(new_consts)
   return new_jaxpr, used_consts, used_inputs
 
 
@@ -1680,7 +1660,8 @@ class JaxprStackFrame:
     all_vars = it.chain(constvars, self.invars, outvars)
     is_high = self.is_high or any(v.aval.is_high for v in all_vars)
 
-    jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info, is_high)
+    jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info,
+                  is_high, consts=constvals)
     return jaxpr, list(constvals)
 
   def newvar(self, aval):
@@ -1970,7 +1951,7 @@ class DynamicJaxprTrace(core.Trace):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
 
-    new_jaxpr = convert_constvars_jaxpr(jaxpr)
+    new_jaxpr, _ = jaxpr.separate_consts()
     self.frame.is_high |= new_jaxpr.is_high
     new_params = dict(params, call_jaxpr=new_jaxpr)
     update_params = call_param_updaters.get(call_primitive)
@@ -2002,7 +1983,7 @@ class DynamicJaxprTrace(core.Trace):
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
-    closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
+    closed_fun_jaxpr, _ = fun_jaxpr.separate_consts()
 
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
     @_memoize
@@ -2047,7 +2028,7 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
-    closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
+    closed_fun_jaxpr, _ = fun_jaxpr.separate_consts()
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize

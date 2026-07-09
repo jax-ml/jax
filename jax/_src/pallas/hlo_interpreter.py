@@ -243,12 +243,12 @@ def pad_jaxpr_constvars(jaxpr: jax_core.Jaxpr,
                        for const_avals in all_const_avals]
   const_prefix = util.concatenate(unused_const_vars[:i])
   const_suffix = util.concatenate(unused_const_vars[i + 1:])
-  constvars = [*const_prefix, *jaxpr.constvars, *const_suffix]
-  jaxpr = jaxpr.replace(constvars=constvars)
-  effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
-                                  jaxpr.outvars, jaxpr.eqns)
-  jaxpr = jaxpr.replace(effects=effects)
-  return pe.convert_constvars_jaxpr(jaxpr)
+  num_own = len(jaxpr.constvars)
+  jaxpr, _ = jaxpr.separate_consts()
+  own_vars, argvars = util.split_list(jaxpr.invars, [num_own])
+  invars = [*const_prefix, *own_vars, *const_suffix, *argvars]
+  effects = pe.make_jaxpr_effects((), invars, jaxpr.outvars, jaxpr.eqns)
+  return jaxpr.replace(invars=invars, effects=effects)
 
 
 def make_hop_rule(primitive, *keys):

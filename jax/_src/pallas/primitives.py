@@ -762,7 +762,9 @@ def _run_scoped_discharge_rule(
   num_consts = len(args_flat)
   # discharge_state only discharges invars, not consts, so in order to
   # discharge the requested refs we need to move them to the invar set.
-  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
+  # The current operand values are authoritative; the attached consts are
+  # the values captured at staging time.
+  jaxpr_noconst, _ = jaxpr.separate_consts()
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
       jaxpr_noconst,
@@ -774,7 +776,7 @@ def _run_scoped_discharge_rule(
         "Cannot handle new consts created by state discharge.")
 
   # Lowering expects that the jaxpr.consts to be the eqn.invals.
-  discharged_body = pe.convert_invars_to_constvars(discharged_body, num_consts)
+  discharged_body = discharged_body.with_consts(args_flat)
 
   # Run_scoped discharged the external variables but the scoped ones
   # are not discharged.
@@ -806,7 +808,9 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
         "run_scoped lowering outside of Pallas does not support"
         " collective_axes."
     )
-  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
+  # The current operand values are authoritative; the attached consts are
+  # the values captured at staging time.
+  jaxpr_noconst, _ = jaxpr.separate_consts()
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
       jaxpr_noconst, should_discharge=True)

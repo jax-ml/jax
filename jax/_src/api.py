@@ -1554,7 +1554,7 @@ def _lift_linearized(jaxpr, in_avals, out_avals, out_known, consts, *tangents):
           "the original primal values:\n"
           f"Got tangent aval {tangent_aval} for primal aval {primal_aval} "
           f"but expected {expected_tangent_aval}.{extra_msg}")
-  tangents_out = eval_jaxpr(jaxpr, consts, *tangents_ft)
+  tangents_out = eval_jaxpr(jaxpr, (), *consts, *tangents_ft)
   tangents_out_ = iter(tangents_out)
   full_out = [a2tz(aval).instantiate() if known else next(tangents_out_)
               for aval, known in zip(out_avals, out_known)]
@@ -1656,8 +1656,11 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
     maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
   args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
+  # The residuals are the jaxpr's leading invars; the rest pair with the
+  # cotangent inputs.
+  ct_invars = jaxpr.invars[len(residuals):]
   maybe_accums = [_vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x)
-                  for idx, (v, x) in enumerate(zip(jaxpr.invars, maybe_ct_refs_flat))]
+                  for idx, (v, x) in enumerate(zip(ct_invars, maybe_ct_refs_flat))]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
                          out_primal_avals), residuals, maybe_accums)
 
@@ -1742,7 +1745,7 @@ def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
     _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
-  ad.backward_pass3(jaxpr, True, residuals, maybe_accums, cts_flat)
+  ad.backward_pass3(jaxpr, True, (), (*residuals, *maybe_accums), cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else
              DidntWant() if isinstance(x, ad.NullAccum) else GradRef()
              for x in maybe_accums]
@@ -2056,8 +2059,7 @@ def make_jaxpr(
     # consts not to be converted.
     num_consts = traced._num_consts
     if num_consts:
-      jaxpr = pe.convert_invars_to_constvars(
-          traced.jaxpr, num_consts).with_consts(traced._consts)
+      jaxpr = traced.jaxpr.with_consts(traced._consts)
     else:
       jaxpr = traced.jaxpr
     if return_shape:

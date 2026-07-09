@@ -544,6 +544,7 @@ def _pull_block_transform(
           needed_invars,
           jaxpr.eqns[: jaxpr.eqns.index(eqn)],
           debug_info=jaxpr.debug_info._replace(result_paths=None),
+          consts=jaxpr.consts,
       )
       scalar_prefetch_jaxpr, _, used_invars = pe.dce_jaxpr_consts(
           scalar_prefetch_jaxpr_no_dce,

@@ -531,7 +531,7 @@ def _rewrite_jaxpr_for_lowering(
       else:
         processed_args.append(arg)
 
-    return jax_core.eval_jaxpr(jaxpr, jaxpr.constvars, *processed_args)
+    return jax_core.eval_jaxpr(jaxpr, jaxpr.consts, *processed_args)
 
   with mpmd.mpmd_map_tracing_context(mesh, all_meshes):
     # TODO(necula): use trace_to_jaxpr_nocache instead

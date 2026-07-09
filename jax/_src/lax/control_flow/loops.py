@@ -893,7 +893,7 @@ def _scan_known_hoisting(jaxpr_known, known_consts, num_res):
         lu.wrap_init(core.jaxpr_as_fun(jaxpr_known),
                      debug_info=jaxpr_known.debug_info),
         consts + others, instantiate=[True] * num_known_outs + [False] * num_res)
-  jaxpr_known = pe.convert_constvars_jaxpr(jaxpr_known_)
+  jaxpr_known, _ = jaxpr_known_.separate_consts()
   res_pvals = pvals_out[num_known_outs:]
   which_hoisted = [pval.is_known() for pval in res_pvals]
   hoisted_res = [pval.get_known() for pval in res_pvals if pval.is_known()]

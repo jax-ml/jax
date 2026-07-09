@@ -1424,7 +1424,7 @@ def _lower_fun(
     )
     if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr)
+    jaxpr = closed_jaxpr
     out = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, closed_jaxpr.consts
     )
@@ -3646,7 +3646,7 @@ def _run_scoped_lowering_rule(
       # not JAX values during lowering. discharge_state() produces JAX
       # valiues for the arguments but expects them to be provided for the
       # consts. We also don't want to wrap the values in refs.
-      no_const_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+      no_const_jaxpr, _ = jaxpr.separate_consts()
       should_discharge = [False] * len(consts) + should_discharge
       with config._check_vma(False):
         discharged_closed_jaxpr = discharge.discharge_state(

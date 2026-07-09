@@ -55,11 +55,16 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
     src = source_info_util.current()
     out_tracer_ft = out_tracer_ft.map(partial(jaxpr_trace.to_jaxpr_tracer, source_info=src))
     jaxpr, res = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, src)
+    # The residual values are supplied when f_rem is called, so they must be
+    # invars, not constvars. This also keeps the residual tracers out of
+    # `jaxpr`, which outlives this trace (f_rem is embedded in a Partial whose
+    # treedef may be interned).
+    jaxpr, _ = jaxpr.separate_consts()
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
   def f_rem(res, *args):
     args_flat = tree_leaves_checked(in_tree, args)
-    out_flat = core.eval_jaxpr(jaxpr, res, *args_flat)
+    out_flat = core.eval_jaxpr(jaxpr, (), *res, *args_flat)
     return tree_unflatten(out_tree, out_flat)
   return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, res))
 
@@ -203,7 +208,7 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
 
   out_rem = [rem_trace.to_jaxpr_tracer(x, source_info=src) for x in out_rem]
   rem_jaxpr_, rem_consts = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
-  rem_jaxpr = pe.convert_constvars_jaxpr(rem_jaxpr_)
+  rem_jaxpr, _ = rem_jaxpr_.separate_consts()
   rem_trace.invalidate()
 
   # Residuals that are just primal outputs needn't be returned again by the

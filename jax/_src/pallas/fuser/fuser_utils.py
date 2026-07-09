@@ -173,7 +173,7 @@ def discharge_state(
   if not any(should_discharge):
     return jaxpr, [True] * len(jaxpr.constvars), {}
 
-  jaxpr_no_consts = pe.convert_constvars_jaxpr(jaxpr)
+  jaxpr_no_consts, _ = jaxpr.separate_consts()
   closed_discharged_jaxpr = state_discharge.discharge_state(
       jaxpr_no_consts,
       should_discharge=should_discharge,
@@ -214,8 +214,8 @@ def discharge_state(
                  if keep])
     used_consts = [True] * len(jaxpr.constvars)
     used_inputs = used_consts + [True] * len(jaxpr.invars)
-  discharged_jaxpr = pe.convert_invars_to_constvars(
-      discharged_jaxpr, sum(used_consts))
+  discharged_jaxpr = discharged_jaxpr.with_consts(
+      [c for c, used in zip(jaxpr.consts, used_consts) if used])
 
   # adjust indices given used_inputs, so we can compute output_input_aliases
   new_input_idx = list(itertools.accumulate(used_inputs, initial=-1))[1:]

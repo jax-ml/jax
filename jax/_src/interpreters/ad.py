@@ -249,8 +249,8 @@ def _linearize_jaxpr(
   tangent_jaxpr, tangent_consts = tangent_trace.to_jaxpr(
       out_tangents, dbg.with_unknown_names(), source_info)
   tangent_trace.invalidate()
-  tangent_jaxpr, tangent_consts = _dce_consts(tangent_jaxpr, tangent_consts)
-  tangent_jaxpr = pe.convert_constvars_jaxpr(tangent_jaxpr)
+  tangent_jaxpr, _ = _dce_consts(tangent_jaxpr, tangent_consts)
+  tangent_jaxpr, tangent_consts = tangent_jaxpr.separate_consts()
 
   fwd_inputs = (*jaxpr.consts, *in_primals)
   id_map = {id(x):i for i, (x,a) in enumerate(zip(fwd_inputs, allow_fwds)) if a}
@@ -326,7 +326,10 @@ def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
   jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
       jaxpr, [True] * len(jaxpr.outvars),
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
-  consts = [c for c, used in zip(consts, used_consts) if used]
+  # The consts (residuals) are supplied by the caller at call time, so return
+  # a const-free jaxpr with the residuals as leading invars.
+  del consts, used_consts
+  jaxpr, consts = jaxpr.separate_consts()
   out_zeros = map(op.not_, out_nzs)
   auxs = tuple(aux.unflatten() for aux in auxs)
   return out_primals, out_zeros, jaxpr, consts, *auxs
@@ -899,9 +902,7 @@ class LinearizeTrace(Trace):
     num_new_args = len(residuals) + len(env)
     new_params = (update_params(params, num_new_args, nzs_in)
                   if update_params else params)
-    num_residuals = len(residual_avals)
-
-    f_tangent = _get_f_tangent(lin_jaxpr, num_residuals)
+    f_tangent = _get_f_tangent(lin_jaxpr)
     nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
     new_params = dict(new_params, subfuns=(lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),))
     args = (*residuals, *env, *nz_tangents_in)
@@ -915,11 +916,11 @@ class LinearizeTrace(Trace):
 
 
 @weakref_lru_cache
-def _get_f_tangent(lin_jaxpr, num_residuals):
+def _get_f_tangent(lin_jaxpr):
+  # `lin_jaxpr` is const-free (see pe.move_envvars); the residuals are its
+  # leading invars.
   def _f(*args):
-    consts = args[:num_residuals]
-    nz_tangents = args[num_residuals:]
-    return core.eval_jaxpr(lin_jaxpr, consts, *nz_tangents)
+    return core.eval_jaxpr(lin_jaxpr, (), *args)
   return _f
 
 
@@ -1213,8 +1214,7 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
 fancy_transposes[core.call_p] = partial(call_transpose_fancy, call_p)
 
 def _closed_call_transpose(ct, *args, call_jaxpr, **params):
-  jaxpr_, consts = call_jaxpr, call_jaxpr.consts
-  jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
+  jaxpr_, consts = call_jaxpr.separate_consts()
   call_transpose_fancy(core.closed_call_p, ct, *consts, *args,
                        call_jaxpr=jaxpr_, **params)
 fancy_transposes[core.closed_call_p] = _closed_call_transpose

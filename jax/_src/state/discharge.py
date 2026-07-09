@@ -644,9 +644,8 @@ def _call_primitive_discharge_rule(
   closed_call_jaxpr = call_jaxpr
   discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(
       closed_call_jaxpr)
-  discharged_call_jaxpr = discharged_closed_jaxpr
-  discharged_consts = discharged_closed_jaxpr.consts
-  discharged_call_jaxpr = pe.convert_constvars_jaxpr(discharged_call_jaxpr)
+  discharged_call_jaxpr, discharged_consts = (
+      discharged_closed_jaxpr.separate_consts())
   out_and_ref_vals = prim.bind(
       *discharged_consts,
       *args,

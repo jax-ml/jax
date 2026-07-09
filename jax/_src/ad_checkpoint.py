@@ -501,7 +501,7 @@ def _trace_to_jaxpr(fun: Callable,
           "\n")
       e.args = msg,
     raise
-  return pe.convert_constvars_jaxpr(closed_jaxpr), closed_jaxpr.consts, out_avals.tree
+  return *closed_jaxpr.separate_consts(), out_avals.tree
 
 
 ### Utilities
@@ -614,11 +614,11 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   in_nonzeros = [type(t) is not ad_util.Zero for t in tangents]
   jaxpr_jvp_, out_nz = ad.jvp_jaxpr(jaxpr, in_nonzeros, False)
   nonzero_tangents = [t for t in tangents if type(t) is not ad_util.Zero]
-  jaxpr_jvp = pe.convert_constvars_jaxpr(jaxpr_jvp_)
+  jaxpr_jvp, jvp_consts = jaxpr_jvp_.separate_consts()
   if isinstance(prevent_cse, tuple):
     prevent_cse += (True,) * len(nonzero_tangents)
   outs = remat_p.bind(
-      *jaxpr_jvp_.consts, *primals, *nonzero_tangents, jaxpr=jaxpr_jvp,
+      *jvp_consts, *primals, *nonzero_tangents, jaxpr=jaxpr_jvp,
       prevent_cse=prevent_cse, differentiated=differentiated, policy=policy)
   out_primals, out_tangents_ = split_list(outs, [len(jaxpr.outvars)])
   out_tangents_ = iter(out_tangents_)
@@ -737,7 +737,8 @@ def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
           eqn.source_info, eqn.ctx)
       eqns[eqn_idx] = replace_eqn
       eqns.insert(eqn_idx+1, new_eqn)
-  new_jaxpr = jaxpr.replace(invars=invars, constvars=constvars, eqns=eqns)
+  new_jaxpr = jaxpr.replace(invars=invars, constvars=constvars, eqns=eqns,
+                            consts=jaxpr.consts)
   config.enable_checks.value and core.check_jaxpr(new_jaxpr)
   return new_jaxpr
 
@@ -765,8 +766,7 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
   transposed_jaxpr_, in_zeros = transpose_jaxpr(
       jaxpr, in_linear, out_zeros)
-  transposed_jaxpr, consts = transposed_jaxpr_, transposed_jaxpr_.consts
-  transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
+  transposed_jaxpr, consts = transposed_jaxpr_.separate_consts()
   flat_args, _ = tree_flatten((args_, out_cts))
   if isinstance(prevent_cse, tuple):
     prevent_cse_, _ = partition_list(in_linear, prevent_cse)
@@ -836,9 +836,7 @@ def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
       jaxpr, axis_data, dims,
       [batching.zero_if_mapped] * len(jaxpr.outvars))
-  jaxpr_batched, consts = jaxpr_batched_, jaxpr_batched_.consts
-  if consts:
-    jaxpr_batched = pe.convert_constvars_jaxpr(jaxpr_batched)
+  jaxpr_batched, consts = jaxpr_batched_.separate_consts()
   out_dims = [0 if b else None for b in out_batched]
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
 batching.fancy_primitive_batchers[remat_p] = remat_vmap
@@ -913,8 +911,8 @@ def _remat_to_lojax(*hi_args, jaxpr, **kwds):
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]
-  lo_jaxpr = pe.convert_constvars_jaxpr(closed_lo_jaxpr)
-  lo_args = (*closed_lo_jaxpr.consts, *lo_args)
+  lo_jaxpr, lo_consts = closed_lo_jaxpr.separate_consts()
+  lo_args = (*lo_consts, *lo_args)
   return remat_p.bind(*lo_args, jaxpr=lo_jaxpr, **kwds)
 remat_p.to_lojax = _remat_to_lojax
 

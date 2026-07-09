@@ -1833,8 +1833,8 @@ def _trace_composite_to_jaxpr(fun: Callable,
         "closes over a value that is involved in a JAX transformation. "
         "Any values that aren't explicitly known at compile time must be "
         "explicitly passed as arguments to the composite.")
-  # Absorb consts into jaxpr invars.
-  closed_jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr)
+  # Split the consts out of the jaxpr; they become explicit operands.
+  closed_jaxpr, consts = closed_jaxpr.separate_consts()
   return closed_jaxpr, consts, out_avals.tree
 
 

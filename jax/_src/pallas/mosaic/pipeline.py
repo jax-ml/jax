@@ -2258,10 +2258,8 @@ def _pipeline_body_lowering_rule(
       user_grid_indices=(*ps.index, *user_grid_indices[len(ps.index) :]),
       block_shapes=(*ps_block_shapes, *body_const_shapes, *resolved_ref_shapes),
   )
-  # Lift the constants out of the jaxpr, disabling checks to avoid a redundant
-  # re-checking of jaxpr, like its grid and sharding information.
-  with config.enable_checks(False):
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  # Lift the constants out of the jaxpr; their values arrive as operands.
+  jaxpr, _ = jaxpr.separate_consts()
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
   if _explicit_indices:
     return jaxpr_subcomp(
@@ -2358,7 +2356,6 @@ def _emit_pipeline_lowering_rule(
       f"wrapped_pipeline_fun should not close over JAX constants, but found: "
       f"{consts=} {jaxpr.constvars=}"
   )
-  jaxpr = pe.convert_constvars_jaxpr(jaxpr)
 
   grid_val_iter = iter(all_args.dynamic_grid_spec)
   grid_indices = tuple(next(grid_val_iter) if pallas_core.is_dynamic_dim(d)

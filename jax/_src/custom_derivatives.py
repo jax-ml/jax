@@ -1489,7 +1489,7 @@ def linear_call(fun: Callable,
   res_avals = map(core.typeof, operands_res)
   lin_avals = map(core.typeof, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
-  f_jaxpr_closed = pe.convert_constvars_jaxpr(f_jaxpr)
+  f_jaxpr_closed, _ = f_jaxpr.separate_consts()
   out_avals = f_jaxpr_closed.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
@@ -1510,7 +1510,8 @@ def linear_call(fun: Callable,
           'transpose output pytree structure must match that of linear inputs, '
           f'got output structure {t_out_tree()} '
           f'and input structure {lin_tree}.')
-    return pe.convert_constvars_jaxpr(t_jaxpr), t_consts
+    del t_consts
+    return t_jaxpr.separate_consts()
 
   out = linear_call_p.bind(*f_consts, *operands_res, *operands_lin,
                            callee=f_jaxpr_closed,
@@ -1684,9 +1685,9 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.typeof(x) for x in args_flat]
-    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
-                                                     in_avals)
-    fwd_jaxpr = pe.convert_constvars_jaxpr(fwd_jaxpr)
+    fwd_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
+                                                in_avals)
+    fwd_jaxpr, consts = fwd_jaxpr.separate_consts()
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
 
@@ -1746,8 +1747,7 @@ def _remat_opt_vmap(
   in_batched = [d is not None for d in in_dims]
   batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
       fwd_jaxpr, axis_data, in_batched, False)
-  extra_consts = batched_fwd_jaxpr.consts
-  batched_fwd_jaxpr = pe.convert_constvars_jaxpr(batched_fwd_jaxpr)
+  batched_fwd_jaxpr, extra_consts = batched_fwd_jaxpr.separate_consts()
   out_dims = [0 if b else None for b in out_batched]
 
   _, prim_batched = split_list(in_batched, [num_consts])
@@ -1789,7 +1789,7 @@ def _remat_opt_jvp(
   fwd_jaxpr_jvp_ = ad.rearrange_binders(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
-  fwd_jaxpr_jvp = pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_)
+  fwd_jaxpr_jvp, _ = fwd_jaxpr_jvp_.separate_consts()
 
   # @pe._memoize
   def fun_jvp_jaxpr_thunk():
