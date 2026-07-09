@@ -2689,12 +2689,9 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     eqn.params['branches'] = (4, 2)
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        re.escape(
-            "invalid cond param branches of type tuple, "
-            "tuple of closed Jaxpr required: (4, 2)"
-        ),
-        lambda: core.check_jaxpr(jaxpr),
-    )
+        re.escape('invalid cond param branches of type tuple, '
+                  'tuple of ClosedJaxpr required: (4, 2)'),
+        lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_transformation_rule_with_consts(self):
     # https://github.com/jax-ml/jax/pull/9731

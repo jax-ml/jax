@@ -1447,11 +1447,13 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
+@weakref_lru_cache
 def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
-  # Now that Jaxpr and ClosedJaxpr are merged, a jaxpr whose consts are all
-  # attached (in particular one with no constvars) is already closed.
-  assert len(jaxpr.consts) == len(jaxpr.constvars)
-  return jaxpr
+  # The `jaxpr.replace()` is making a copy of the Jaxpr, without which
+  # the cache value would have a strong reference to the same Jaxpr as
+  # the key, and we would never gc the cache entry. This works because
+  # Jaxpr is hashed by id, and the cache entry is dead is the key is dead.
+  return ClosedJaxpr(jaxpr.replace(), ())
 
 def move_invars_right(jaxpr: ClosedJaxpr, to_move: Sequence[bool]):
   return _move_invars_right(jaxpr, tuple(to_move))
@@ -2532,9 +2534,9 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTr
       if v.aval.is_high:
         xs = [trace.new_arg(x, source_info=src) for x in xs]
         if v.aval.has_qdd:
-          env[v] = v.aval.new_from_loval(v.initial_qdd, *xs)  # type: ignore
+          env[v] = v.aval.new_from_loval(v.initial_qdd, *xs)
         else:
-          env[v] = v.aval.raise_val(*xs)  # type: ignore
+          env[v] = v.aval.raise_val(*xs)
       else:
         trace.frame.invars.append(v)
 
@@ -2551,7 +2553,7 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTr
         maybe_invals = [env.get(x) if isinstance(x, Var) else None for x in eqn.invars]
         hi = eqn.primitive.is_high(*[v.aval for v in eqn.invars], **eqn.params)
         if all(x is None for x in maybe_invals) and not hi:
-          eqns.append(eqn)  # type: ignore
+          eqns.append(eqn)
         elif not hi:
           new_invars = [x if isinstance(x, Literal) else
                         t.val if (t := env.get(x)) is not None else x
@@ -2567,12 +2569,8 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTr
 
     tracer = partial(trace.to_jaxpr_tracer, source_info=src)
     fu = ft.flatten(())
-    out_mut = [
-        v.aval.read_loval_out(v.final_qdd, env[v]).map(tracer)  # type: ignore
-        if v.aval.has_qdd
-        else fu
-        for v in hi_jaxpr.invars
-    ]
+    out_mut = [v.aval.read_loval_out(v.final_qdd, env[v]).map(tracer)
+               if v.aval.has_qdd else fu for v in hi_jaxpr.invars]
     out_tracers = [dtypes.canonicalize_value(read(src, x)) for x in hi_jaxpr.outvars]
     out_tracers = [v.aval.lower_val2(hi_val).map(tracer)
                   for v, hi_val in zip(hi_jaxpr.outvars, out_tracers)]

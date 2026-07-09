@@ -96,60 +96,24 @@ InitialResultPaths = lu.InitialResultPaths
 initial_result_paths = lu.initial_result_paths
 
 class Jaxpr:
-  __slots__ = [
-      "__weakref__",
-      "_all_invars",
-      "_num_consts",
-      "_outvars",
-      "_eqns",
-      "_effects",
-      "_debug_info",
-      "_is_high",
-      "_consts",
-  ]
-  _all_invars: list[Var]
-  _num_consts: int
+  __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
+               '_effects', '_debug_info', '_is_high']
+
+  _constvars: list[Var]
+  _invars: list[Var]
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
   _debug_info: DebugInfo
   _is_high: bool
-  _consts: list[Any]
-
-  @property
-  def all_invars(self) -> list[Var]:
-    return self._all_invars
 
   @property
   def constvars(self) -> list[Var]:
-    return self._all_invars[: self._num_consts]
-
-  @property
-  def consts(self) -> list[Any]:
-    return self._consts
-
-  literals = consts  # legacy ClosedJaxpr name for consts
-
-  @property
-  def num_consts(self) -> int:
-    return self._num_consts
-
-  @property
-  def is_closed(self) -> bool:
-    # True if the constant inputs have their values attached (in particular,
-    # if there are no constant inputs). Corresponds to the old ClosedJaxpr.
-    return len(self._consts) == self._num_consts
-
-  @property
-  def jaxpr(self) -> Jaxpr:
-    # Legacy accessor from the days of ClosedJaxpr, which wrapped a Jaxpr.
-    # TODO(dougalm): remove uses and delete.
-    return self
+    return self._constvars
 
   @property
   def invars(self) -> list[Var]:
-    num_consts = self._num_consts
-    return self._all_invars[num_consts:] if num_consts else self._all_invars
+    return self._invars
 
   @property
   def outvars(self) -> list[Atom]:
@@ -189,47 +153,29 @@ class Jaxpr:
   def out_avals(self):
     return [v.aval for v in self.outvars]
 
-  def __init__(
-      self,
-      constvars: Sequence[Var] | Jaxpr,
-      invars: Sequence[Var] | Sequence[Any] | None = None,
-      outvars: Sequence[Atom] | None = None,
-      eqns: Sequence[JaxprEqn] | None = None,
-      effects: Effects = no_effects,
-      # We want all calls to pass a DebugInfo object, but for backwards
-      # compatibility we have to allow calls when the debug_info
-      # is missing.
-      debug_info: DebugInfo = None,  # pyrefly: ignore[bad-function-definition]
-      is_high: bool = False,
-      consts: Sequence[Any] | None = None,
-  ):
-    if isinstance(constvars, Jaxpr):
-      # Legacy ClosedJaxpr(jaxpr, consts) construction: share `jaxpr`'s
-      # structure and attach `consts` as its constant argument values.
-      # TODO(dougalm): migrate callers and remove.
-      jaxpr = constvars
-      assert outvars is None and eqns is None and debug_info is None
-      if consts is None:
-        jaxpr, consts = constvars, invars
-      else:
-        assert invars is None
-      assert consts is not None and len(consts) == jaxpr._num_consts
-      self._all_invars = jaxpr._all_invars
-      self._num_consts = jaxpr._num_consts
-      self._outvars = jaxpr._outvars
-      self._eqns = jaxpr._eqns
-      self._effects = jaxpr._effects
-      self._debug_info = jaxpr._debug_info
-      self._is_high = jaxpr._is_high
-      self._consts = list(consts)
-      return
-    assert invars is not None and outvars is not None and eqns is not None
-    self._consts = [] if consts is None else list(consts)
-    self._num_consts = len(constvars)
-    assert (
-        not self._consts or len(self._consts) == self._num_consts
-    ), "consts, when attached, must pair with constvars"
-    self._all_invars = [*constvars, *invars]
+  def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
+               outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
+               effects: Effects = no_effects,
+               # We want all calls to pass a DebugInfo object, but for backwards
+               # compatibility we have to allow calls when the debug_info
+               # is missing.
+               debug_info: DebugInfo = None,  # pyrefly: ignore[bad-function-definition]
+               is_high: bool = False,
+               ):
+    """
+    Args:
+      constvars: list of variables introduced for constants. Array constants are
+        replaced with such variables while scalar constants are kept inline.
+      invars: list of input variables. Together, `constvars` and `invars` are
+        the inputs to the Jaxpr.
+      outvars: list of output atoms.
+      eqns: list of equations.
+      effects: set of effects. The effects on a jaxpr are a superset of the
+        union of the effects for each equation.
+      debug_info: debugging information.
+    """
+    self._constvars = list(constvars)
+    self._invars = list(invars)
     self._outvars = list(outvars)
     self._eqns = list(eqns)
     self._effects = effects
@@ -257,28 +203,11 @@ class Jaxpr:
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
 
-  def map_jaxpr(self, f):
-    # Legacy ClosedJaxpr method: apply f to the jaxpr, keeping consts.
-    return Jaxpr(f(self), self.consts)
-
   def replace(self, **kwargs):
-    if "jaxpr" in kwargs:
-      # Legacy ClosedJaxpr.replace(jaxpr=..., consts=...) form.
-      # TODO(dougalm): migrate callers and remove.
-      jaxpr = kwargs.pop("jaxpr")
-      consts = kwargs.pop("consts", None)
-      if kwargs:
-        raise ValueError(f"Unknown keyword arguments: {kwargs}")
-      jaxpr = self if jaxpr is None else jaxpr
-      consts = self.consts if consts is None else consts
-      return Jaxpr(jaxpr, consts)
     debug_default = self.debug_info
     if (kwargs.get('invars', self.invars) != self.invars or
         kwargs.get('outvars', self.outvars) != self.outvars):
       debug_default = debug_default.with_unknown_names()
-    # Replacing constvars invalidates the consts pairing, so unless new consts
-    # are given explicitly the result has no consts attached.
-    consts_default = () if "constvars" in kwargs else self.consts
     jaxpr = Jaxpr(
         constvars=kwargs.pop("constvars", self.constvars),
         invars=kwargs.pop("invars", self.invars),
@@ -287,7 +216,6 @@ class Jaxpr:
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", debug_default),
         is_high=kwargs.pop("is_high", self.is_high),
-        consts=kwargs.pop("consts", consts_default),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -304,6 +232,8 @@ def jaxprs_in_params(params) -> Iterator[Jaxpr]:
     for v in vals:
       if isinstance(v, Jaxpr):
         yield v
+      elif isinstance(v, ClosedJaxpr):
+        yield v.jaxpr
 
 
 def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
@@ -314,12 +244,74 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
     yield from jaxprs_in_params(eqn.params)
 
 
-# ClosedJaxpr and Jaxpr have been merged into a single class: a Jaxpr carries
-# a possibly-empty list of constant argument values, `consts`. The name
-# ClosedJaxpr remains as an alias for callers that construct closed jaxprs via
-# ClosedJaxpr(jaxpr, consts) or use it in isinstance checks and annotations.
-# TODO(dougalm): migrate users and remove the alias.
-ClosedJaxpr = Jaxpr
+class ClosedJaxpr:
+  __slots__ = ['__weakref__', '_jaxpr', '_consts']
+
+  _jaxpr: Jaxpr
+  _consts: list[Any]
+
+  jaxpr = property(lambda self: self._jaxpr)
+  consts = property(lambda self: self._consts)
+  literals = consts
+
+  constvars = property(lambda self: self._jaxpr.constvars)
+  invars = property(lambda self: self._jaxpr.invars)
+  outvars = property(lambda self: self._jaxpr.outvars)
+  eqns = property(lambda self: self._jaxpr.eqns)
+  effects = property(lambda self: self._jaxpr.effects)
+  debug_info = property(lambda self: self._jaxpr.debug_info)
+  is_high = property(lambda self: self._jaxpr.is_high)
+
+  def __init__(self, jaxpr: Jaxpr, consts: Sequence):
+    assert len(consts) == len(jaxpr.constvars)
+    # assert not any(isinstance(c, Tracer) for c in consts)  # TODO(mattjj): enable
+    self._jaxpr = jaxpr
+    self._consts = list(consts)
+
+  @property
+  def in_avals(self):
+    return [v.aval for v in self.invars]
+
+  @property
+  def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
+    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
+            for v in self.invars]
+
+  @property
+  def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
+    return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
+            for v in self.invars]
+
+  @property
+  def out_avals(self):
+    return [v.aval for v in self.outvars]
+
+  def map_jaxpr(self, f):
+    return ClosedJaxpr(f(self.jaxpr), self.consts)
+
+  def replace(self, *, jaxpr=None, consts=None):
+    jaxpr = self.jaxpr if jaxpr is None else jaxpr
+    consts = self.consts if consts is None else consts
+    return ClosedJaxpr(jaxpr, consts)
+
+  def __str__(self): return str(self.jaxpr)
+  def __repr__(self): return repr(self.jaxpr)
+
+  def pretty_print(self, *, source_info=False, print_shapes=True,
+                   name_stack=False, custom_pp_eqn_rules=True,
+                   print_effects=False, **kwargs):
+    return self.jaxpr.pretty_print(
+        source_info=source_info,
+        print_shapes=print_shapes,
+        name_stack=name_stack,
+        custom_pp_eqn_rules=custom_pp_eqn_rules,
+        print_effects=print_effects,
+        **kwargs)
+
+  def _repr_pretty_(self, p, cycle):
+    return p.text(self.pretty_print(use_color=True))
+
+weakref_cache_key_types.add(ClosedJaxpr)
 
 
 @curry
@@ -757,7 +749,7 @@ class Primitive:
 
   def is_high(self, *avals, **params) -> bool:
     for v in params.values():
-      if isinstance(v, Jaxpr) and v.is_high:
+      if isinstance(v, (Jaxpr, ClosedJaxpr)) and v.is_high:
         return True
     return False
 
@@ -3822,6 +3814,8 @@ def subst_input_effects(effs, env) -> Effects:
           if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
 
 def positional_effects(jaxpr) -> Effects:
+  if isinstance(jaxpr, ClosedJaxpr):
+    jaxpr = jaxpr.jaxpr
   if not any(isinstance(e, effects.JaxprInputEffect) for e in jaxpr.effects):
     return jaxpr.effects
   idx = {v: i for i, v in enumerate(jaxpr.invars)}
@@ -4166,10 +4160,12 @@ def pp_vars(vs: Sequence[Atom], context: JaxprPpContext,
     ))
 
 def pp_kv_pair(k:str, v: Any, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
-  if type(v) is tuple and all(isinstance(j, Jaxpr) for j in v):
+  if type(v) is tuple and all(isinstance(j, (Jaxpr, ClosedJaxpr)) for j in v):
     pp_v = pp_jaxprs(v, context, settings)
   elif isinstance(v, Jaxpr):
     pp_v = pp_jaxpr(v, context, settings)
+  elif isinstance(v, ClosedJaxpr):
+    pp_v = pp_jaxpr(v.jaxpr, context, settings)
   elif isinstance(v, frozenset):
     pp_v = pp.text(f"frozenset({{{', '.join(repr(e) for e in sorted(v))}}})")
   else:
@@ -4282,9 +4278,9 @@ def pp_jaxpr(
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
 
 
-def pp_jaxprs(
-    jaxprs: Sequence[Jaxpr], context: JaxprPpContext, settings: JaxprPpSettings
-) -> pp.Doc:
+def pp_jaxprs(jaxprs: Sequence[ClosedJaxpr | Jaxpr],
+              context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
+  jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp.group(pp.concat([pp.nest(2, pp.concat([
       pp.text('('), pp.brk(""),
       pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context, settings), jaxprs))]

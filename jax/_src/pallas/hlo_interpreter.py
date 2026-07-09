@@ -267,18 +267,26 @@ def make_hop_rule(primitive, *keys):
                      value: jax_core.Jaxpr | jax_core.ClosedJaxpr,
                      mapped_idx=None):
     extra_args = ()
-    if not isinstance(value, jax_core.Jaxpr):
+    if isinstance(value, jax_core.Jaxpr):
+      if len(value.constvars) > 0:
+        raise ValueError(f"Cannot physicalize a jaxpr with constvars: {value}")
+      physical_jaxpr, physical_consts = interpreter(value, ())
+      if physical_consts:
+        if mapped_idx is not None:
+          new_jaxpr = pad_jaxpr_constvars(physical_jaxpr,
+                                          mapped_idx,
+                                          physical_consts)
+          extra_args = tuple(physical_consts)
+        else:
+          new_jaxpr = pe.convert_constvars_jaxpr(physical_jaxpr)
+          extra_args = tuple(physical_consts)
+      else:
+        new_jaxpr = physical_jaxpr
+    elif isinstance(value, jax_core.ClosedJaxpr):
+      jaxpr, new_consts = interpreter(value.jaxpr, value.consts)
+      new_jaxpr = jax_core.ClosedJaxpr(jaxpr, new_consts)
+    else:
       raise ValueError(f"Parameter of type {type(value)} is not a Jaxpr.")
-    if len(value.consts) != len(value.constvars):
-      raise ValueError(
-          f"Cannot physicalize a jaxpr with unapplied constvars: {value}"
-      )
-    # All primitives registered via make_hop_rule take closed jaxpr params, so
-    # new consts introduced by the interpreter are re-attached to the jaxpr
-    # rather than passed as extra leading arguments.
-    del mapped_idx
-    jaxpr, new_consts = interpreter(value.jaxpr, value.consts)
-    new_jaxpr = jax_core.ClosedJaxpr(jaxpr, new_consts)
     return new_jaxpr, extra_args
 
   def rule(interpreter, *args, **params):

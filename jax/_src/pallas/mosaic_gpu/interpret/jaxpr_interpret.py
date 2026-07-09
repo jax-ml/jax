@@ -702,7 +702,7 @@ class JaxprInterpreter:
     else:
       bind_params = eqn.primitive.get_bind_params(eqn.params)
       for v in bind_params.values():
-        if isinstance(v, jax_core.Jaxpr) and not v.is_closed:
+        if isinstance(v, jax_core.Jaxpr):
           raise NotImplementedError(f"Higher-order primitive {eqn.primitive}")
       return eqn.primitive.bind(*get_invals(), **bind_params)
 

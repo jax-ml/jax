@@ -820,7 +820,7 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
     num_consts = len(lower_fun_args)
     body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
     init_vals = [
-        uninitialized_value(aval.shape, aval.dtype) for aval in body_avals  # type: ignore
+        uninitialized_value(aval.shape, aval.dtype) for aval in body_avals
     ]
     out = jax_core.eval_jaxpr(discharged_body, [], *lower_fun_args, *init_vals)
     return out[:num_return_values]

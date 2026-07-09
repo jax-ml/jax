@@ -717,15 +717,23 @@ class JitTest(jtu.BufferDonationTestCase):
     # I suspect this is an artifact of other caches and garbage collection.
     self.assertGreaterEqual(num_live_initial, num_live)
 
-  def test_pe_close_jaxpr_identity(self):
-    # Since the Jaxpr/ClosedJaxpr merge, close_jaxpr is the identity on jaxprs
-    # whose consts are attached (in particular, constvar-free jaxprs).
+  @jtu.thread_unsafe_test()  # close_jaxpr cache is shared across threads
+  def test_pe_close_jaxpr_cache_leak(self):
     @jax.jit
     def f(x):
       return lax.cond(x, lambda: x, lambda: ~ x)
 
     jaxpr = f.trace(True).jaxpr
-    self.assertIs(pe.close_jaxpr(jaxpr.jaxpr), jaxpr.jaxpr)
+    jax_util.clear_all_caches()
+
+    res1 = pe.close_jaxpr(jaxpr.jaxpr)
+    res2 = pe.close_jaxpr(jaxpr.jaxpr)
+    self.assertIs(res1, res2)
+    keys_1 = pe.close_jaxpr.cache_keys()
+    self.assertGreater(len(keys_1), 0)
+    del jaxpr, res1, res2, keys_1
+    keys_2 = pe.close_jaxpr.cache_keys()
+    self.assertEmpty(keys_2, 0)
 
   def test_jit_shallow_copy(self):
     def f(x):
