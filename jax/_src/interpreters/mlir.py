@@ -1232,7 +1232,7 @@ def all_unconstrained(s, aval):
   return False
 
 
-def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
+def check_jaxpr_constants(closed_jaxpr: core.Jaxpr):
   """Check if a JAXPR contains an excessive amount of constants, if so, report where they were captured"""
   if (threshold := config.captured_constants_warn_bytes.value) == -1:
     return
@@ -1264,11 +1264,11 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
       f"Largest {min(num_frames, len(closed_jaxpr.consts))} allocation(s):\n"
   )
   try:
-    nbytes_var_const = zip(nbytes_iter, closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)
+    nbytes_var_const = zip(nbytes_iter, closed_jaxpr.constvars, closed_jaxpr.consts)
     for nbytes, var, const in heapq.nlargest(5, nbytes_var_const, key=operator.itemgetter(0)):
       message += f"  Constant {type(const)}, {var.aval.str_short()}, {util.pprint_bytes(nbytes)} captured at:\n"
 
-      for eqn in jaxpr_util.eqns_using_var(closed_jaxpr.jaxpr, var):
+      for eqn in jaxpr_util.eqns_using_var(closed_jaxpr, var):
         call_frame_source_info = source_info_util.summarize(eqn.source_info, num_frames)
         message += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2) + "\n\n"
 
@@ -1299,7 +1299,7 @@ COLLECTIVE_CHANNEL_ID = 1
 
 def lower_jaxpr_to_module(
     module_name: str,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     *,
     num_const_args: int,
     in_avals: Sequence[core.AbstractValue],
@@ -1625,7 +1625,7 @@ class TokenSet:
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     effects: Sequence[core.Effect],
     *,
     num_const_args: int,
@@ -1963,7 +1963,7 @@ def lower_jaxpr_to_fun(
     flat_args = entry_block.arguments
     dim_var_values, _, const_arg_values, _ = util.split_list(
         flat_args, [num_dim_vars, num_tokens, num_const_args])
-    const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+    const_args_and_avals = core.jaxpr_const_args(jaxpr)
     if num_const_args == 0:
       # If we did not hoist the constants out of this function, lower them now
       const_arg_values = [ir_constant(c, aval=aval)
@@ -2010,12 +2010,12 @@ def lower_jaxpr_to_fun(
     args: list[IrValues] = unflattened_args
     unique_consts = {
         id(c): _ir_constant(c, aval=var.aval)
-        for c, var in zip(jaxpr.consts, jaxpr.jaxpr.constvars)
+        for c, var in zip(jaxpr.consts, jaxpr.constvars)
     }
     consts_for_constvars = [unique_consts[id(c)] for c in jaxpr.consts]
 
     out_vals, tokens_out = jaxpr_subcomp(
-        ctx, jaxpr.jaxpr, name_stack, tokens_in, consts_for_constvars, *args,
+        ctx, jaxpr, name_stack, tokens_in, consts_for_constvars, *args,
         dim_var_values=dim_var_values, const_lowering=const_lowering,
         outer_traceback=outer_traceback)
     outs: list[IrValues] = []
@@ -2651,9 +2651,9 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
       from jax._src.interpreters import pxla  # pyrefly: ignore[missing-module-attribute]
-      closed_jaxpr = core.ClosedJaxpr(jaxpr, consts_for_constvars)
-      closed_jaxpr = pxla._discharge_internal_refs(closed_jaxpr)
-      jaxpr, consts_for_constvars = closed_jaxpr.jaxpr, closed_jaxpr.consts
+      jaxpr = pxla._discharge_internal_refs(
+          jaxpr.with_consts(consts_for_constvars))
+      consts_for_constvars = jaxpr.consts
 
     # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
@@ -2675,13 +2675,13 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
 
 def _lower_jaxpr_to_fun_cached(
-    ctx: ModuleContext, fn_name, call_jaxpr: core.ClosedJaxpr,
+    ctx: ModuleContext, fn_name, call_jaxpr: core.Jaxpr,
     num_const_args: int, effects, in_avals, out_avals, arg_names=None,
     result_names=None):
   assert num_const_args + len(call_jaxpr.in_avals) == len(in_avals)
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
-    key = (fn_name, call_jaxpr.jaxpr, tuple(effects))
+    key = (fn_name, call_jaxpr, tuple(effects))
     try:
       func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:
@@ -2716,10 +2716,10 @@ def check_backend_matches(inner_backend: str | None,
 
 
 def lower_called_computation(
-    fn_name, call_jaxpr: core.ClosedJaxpr, ctx: ModuleContext,
+    fn_name, call_jaxpr: core.Jaxpr, ctx: ModuleContext,
     num_const_args: int, in_avals, out_avals, tokens_in, backend=None,
     arg_names=None, result_names=None):
-  assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
+  assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
   effects = list(tokens_in.effects())
   output_types = [_aval_to_ir_types(ctx, a) for a in out_avals]
@@ -2730,15 +2730,15 @@ def lower_called_computation(
   return func_op, output_types, effects
 
 
-def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
+def call_lowering(fn_name, call_jaxpr: core.Jaxpr, backend,
                   mod_ctx: ModuleContext, in_avals,
                   out_avals, tokens_in, *args,
                   dim_var_values: Sequence[ir.Value],
                   const_lowering: dict[tuple[int, core.AbstractValue], IrValues],
                   arg_names=None, result_names=None,
                   attributes: None | dict[str, Any] = None):
-  assert isinstance(call_jaxpr, core.ClosedJaxpr), type(call_jaxpr)
-  const_args_and_avals = core.jaxpr_const_args(call_jaxpr.jaxpr)
+  assert isinstance(call_jaxpr, core.Jaxpr), type(call_jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(call_jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = [ir_constants(c, const_lowering=const_lowering, aval=aval)
                       for c, aval in const_args_and_avals]
@@ -2767,9 +2767,7 @@ def call_lowering(fn_name, call_jaxpr: core.ClosedJaxpr, backend,
 
 def core_call_lowering(ctx: LoweringRuleContext,
                        *args, name, backend=None,
-                       call_jaxpr: core.ClosedJaxpr | core.Jaxpr):
-  if isinstance(call_jaxpr, core.Jaxpr):
-    call_jaxpr = pe.close_jaxpr(call_jaxpr)
+                       call_jaxpr: core.Jaxpr):
   effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
   tokens_in = ctx.tokens_in.subset(effects)
   out_nodes, tokens = call_lowering(
@@ -3308,7 +3306,7 @@ SEND_TO_HOST_TYPE = 2
 RECV_FROM_HOST_TYPE = 3
 
 def build_mlir_module_helper(
-    closed_jaxpr: core.ClosedJaxpr, *, name: str,
+    closed_jaxpr: core.Jaxpr, *, name: str,
     platforms: Sequence[str],
     backend: xc.Client | None,
     axis_context: AxisContext) -> ir.Module:
@@ -3322,7 +3320,7 @@ def build_mlir_module_helper(
       in_avals=closed_jaxpr.in_avals,
       out_avals=closed_jaxpr.out_avals,
       backend=backend, ordered_effects=[],
-      donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
+      donated_args=[False] * len(closed_jaxpr.invars),
       axis_context=axis_context, platforms=platforms,
       lowering_parameters=LoweringParameters(hoist_constants_as_args=False))
   return lowering_result.module

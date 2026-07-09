@@ -924,9 +924,9 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
     jaxpr, _ = pe.trace_to_jaxpr_nocache(
         wrapped, in_avals_ft, debug_info=debug_info
     )
-    carry_tree.unflatten(jaxpr.jaxpr.outvars)  # Verify same structure.
+    carry_tree.unflatten(jaxpr.outvars)  # Verify same structure.
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
-        jaxpr.jaxpr.effects
+        jaxpr.effects
     )
     if disallowed_effects:
       raise NotImplementedError(
@@ -936,7 +936,7 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
         (lower, upper, step, jaxpr.consts, flat_carries)
     )
     flat_result = parallel_loop_p.bind(
-        *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr.jaxpr
+        *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr
     )
     if carry is None:
       return None

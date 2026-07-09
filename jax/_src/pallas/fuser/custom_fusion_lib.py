@@ -119,7 +119,7 @@ class custom_fusion:
     closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
         self.fun, in_avals_ft, debug_fun.with_unknown_names()
     )
-    jaxpr = closed_jaxpr.jaxpr
+    jaxpr = closed_jaxpr
     consts = closed_jaxpr.consts
     out_tree_val = out_avals_ft.tree
 
@@ -130,7 +130,7 @@ class custom_fusion:
       pallas_closed_jaxpr, _ = pe.trace_to_jaxpr(
           self.pallas_impl, in_avals_ft, debug_pallas_impl
       )
-      pallas_jaxpr = pallas_closed_jaxpr.jaxpr
+      pallas_jaxpr = pallas_closed_jaxpr
       pallas_consts = pallas_closed_jaxpr.consts
     else:
       pallas_jaxpr = None
@@ -259,6 +259,6 @@ def _custom_fusion_usage_rule(
     **_
 ) -> Sequence[set[block_spec_lib.Usage]]:
   del ctx
-  # TODO(jburnim): Error if jaxpr.jaxpr gives different usage than pallas_jaxpr?
+  # TODO(jburnim): Error if jaxpr gives different usage than pallas_jaxpr?
   read_usage_env = block_spec_lib.compute_usage(jaxpr, used_out)
   return util.safe_map(read_usage_env, jaxpr.invars)

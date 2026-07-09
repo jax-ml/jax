@@ -124,7 +124,7 @@ Stage = SyncStage | AsyncStage
 
 def trace_fun(
     fun, ref_avals, state_avals, grid
-) -> tuple[jax_core.ClosedJaxpr, Sequence[internal.RefEffect]]:
+) -> tuple[jax_core.Jaxpr, Sequence[internal.RefEffect]]:
   """Trace a stage body function to a Jaxpr."""
   ctx_aval = PipelineContext.aval_pytree(grid, state_avals)
   num_ctx_avals = len(jax.tree.leaves(ctx_aval))
@@ -132,13 +132,13 @@ def trace_fun(
   debug_info = api_util.debug_info("trace_fun", fun, in_avals_ft.vals, {})
   jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals_ft, debug_info)
   ref_effects = [
-      eff for eff in jaxpr.jaxpr.effects
+      eff for eff in jaxpr.effects
       if isinstance(eff, state_types.RefEffect)
   ]
   # Subtract off the consts and state_avals, since this is variable per stage.
   n_const = len(jaxpr.consts)
-  input_idx = {v: i for i, v in enumerate((*jaxpr.jaxpr.constvars,
-                                           *jaxpr.jaxpr.invars))}
+  input_idx = {v: i for i, v in enumerate((*jaxpr.constvars,
+                                           *jaxpr.invars))}
   ref_effects = [
       type(eff)(input_idx[eff.input] - n_const - num_ctx_avals)
       for eff in ref_effects
@@ -157,7 +157,7 @@ def apply_ref_filter(
   num_ctx_avals = len(jax.tree.leaves(ctx_aval))
   new_stages = []
   for stage_ in stages:
-    jaxpr = stage_.jaxpr.jaxpr
+    jaxpr = stage_.jaxpr
     ref_effects = stage_.effects
     token_effects = list(internal.filter_tokens(ref_effects))
     refs_to_keep = {

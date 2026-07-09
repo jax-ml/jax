@@ -397,20 +397,20 @@ def batch_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
 ### API for batching jaxprs
 
 def batch_jaxpr2(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
+  ) -> tuple[core.Jaxpr, tuple[int | NotMapped, ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_data, tuple(in_axes))
 
 @weakref_lru_cache
 def _batch_jaxpr2(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     axis_data,
     in_axes: tuple[int | NotMapped, ...],
-  ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
+  ) -> tuple[core.Jaxpr, tuple[int | NotMapped, ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
-                   debug_info=closed_jaxpr.jaxpr.debug_info)
+                   debug_info=closed_jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
   avals_in2 = []
@@ -427,7 +427,7 @@ def _batch_jaxpr2(
           aval = aval.update(manual_axis_type=mat)
       avals_in2.append(aval)
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in2)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
+  return jaxpr_out.with_consts(consts), out_axes()
 
 def batch_jaxpr(closed_jaxpr, axis_data, in_batched, instantiate):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
@@ -447,11 +447,11 @@ def batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes), tuple(out_axes_dest))
 
 @weakref_lru_cache
-def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
+def _batch_jaxpr_axes(closed_jaxpr: core.Jaxpr,
                       axis_data: AxisData,
                       in_axes: Sequence[int], out_axes_dest: Sequence[int]):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
-                   debug_info=closed_jaxpr.jaxpr.debug_info)
+                   debug_info=closed_jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
@@ -460,7 +460,7 @@ def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
               if b is not None
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
-  return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
+  return jaxpr_out.with_consts(consts), out_batched()
 
 @lu.transformation_with_aux2
 def _batch_jaxpr_inner(f, store, axis_data, tag, in_axes, *in_vals):

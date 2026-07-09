@@ -176,8 +176,8 @@ reduce_precision_handlers: dict[type, Callable] = {}
 
 def remat_jaxpr(
     jaxpr, policy, custom_vjp_rules, allow_fwds
-) -> tuple[core.ClosedJaxpr, core.ClosedJaxpr, list[int | None]]:
-  n = len(jaxpr.jaxpr.outvars)
+) -> tuple[core.Jaxpr, core.Jaxpr, list[int | None]]:
+  n = len(jaxpr.outvars)
   if type(allow_fwds) is bool:
     allow_fwds = (allow_fwds,) * n
   assert len(allow_fwds) == n
@@ -185,7 +185,7 @@ def remat_jaxpr(
 
 @weakref_lru_cache
 def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
-  dbg = jaxpr.jaxpr.debug_info
+  dbg = jaxpr.debug_info
   fwd_trace = pe.DynamicJaxprTrace(dbg)
   rem_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
   rem_trace.tag = core.TraceTag()
@@ -197,13 +197,13 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
 
   tracers = map(new_arg, jaxpr.in_aval_qdds)
   with core.set_current_trace(trace, check_leaks=True):
-    ans = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *tracers)
+    ans = core.eval_jaxpr(jaxpr, jaxpr.consts, *tracers)
     out_primals, out_rem = unzip2(map(trace.to_val_tracer_pair, ans))
     del trace, ans, new_arg, tracers
 
   out_rem = [rem_trace.to_jaxpr_tracer(x, source_info=src) for x in out_rem]
   rem_jaxpr_, rem_consts = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
-  rem_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(rem_jaxpr_))
+  rem_jaxpr = pe.convert_constvars_jaxpr(rem_jaxpr_)
   rem_trace.invalidate()
 
   # Residuals that are just primal outputs needn't be returned again by the
@@ -219,5 +219,4 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
 
-  fwd_jaxpr = core.ClosedJaxpr(fwd_jaxpr_, fwd_consts)
-  return fwd_jaxpr, rem_jaxpr, fwds
+  return fwd_jaxpr_, rem_jaxpr, fwds

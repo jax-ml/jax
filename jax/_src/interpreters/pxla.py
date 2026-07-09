@@ -631,22 +631,18 @@ def prune_unused_inputs(
 
 @weakref_lru_cache
 def _dce_jaxpr(closed_jaxpr, keep_unused, donated_invars):
-  assert isinstance(closed_jaxpr, core.ClosedJaxpr)
-  jaxpr = closed_jaxpr.jaxpr
-  consts = closed_jaxpr.consts
+  assert isinstance(closed_jaxpr, core.Jaxpr)
+  jaxpr = closed_jaxpr
   in_avals = closed_jaxpr.in_avals
 
   if (keep_unused or any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
                          for a in in_avals)):
     kept_var_idx = set(range(len(in_avals)))
   else:
-    jaxpr, kept_const_idx, kept_var_idx = prune_unused_inputs(jaxpr)
-    consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
+    jaxpr, _, kept_var_idx = prune_unused_inputs(jaxpr)
     donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
-    del kept_const_idx
 
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  return closed_jaxpr, donated_invars, kept_var_idx
+  return jaxpr, donated_invars, kept_var_idx
 
 
 class MutationData(NamedTuple):
@@ -658,8 +654,8 @@ class MutationData(NamedTuple):
 
 @weakref_lru_cache
 def _discharge_refs(
-    jaxpr: core.ClosedJaxpr
-) -> tuple[core.ClosedJaxpr, Sequence[int | None], MutationData]:
+    jaxpr: core.Jaxpr
+) -> tuple[core.Jaxpr, Sequence[int | None], MutationData]:
   from jax._src.state.discharge import discharge_state  # pyrefly: ignore[missing-import]
   jaxpr, in_mut = _move_mutable_consts(jaxpr)
   new_jaxpr = discharge_state(jaxpr)
@@ -673,27 +669,27 @@ def _discharge_refs(
 
 @weakref_lru_cache
 def _move_mutable_consts(
-    closed_jaxpr: core.ClosedJaxpr,
-) -> tuple[core.ClosedJaxpr, list[core.Ref]]:
-  jaxpr = closed_jaxpr.jaxpr
+    closed_jaxpr: core.Jaxpr,
+) -> tuple[core.Jaxpr, list[core.Ref]]:
+  jaxpr = closed_jaxpr
   hoist = [isinstance(c, core.Ref) for c in closed_jaxpr.consts]
   consts, in_mut = partition_list(hoist, closed_jaxpr.consts)
   constvars, mutvars = partition_list(hoist, jaxpr.constvars)
   invars = (*jaxpr.invars, *mutvars)
   effects = pe.make_jaxpr_effects(constvars, invars, jaxpr.outvars, jaxpr.eqns)
   # TODO(mattjj): debug_info must be updated...
-  jaxpr = closed_jaxpr.jaxpr.replace(
+  jaxpr = closed_jaxpr.replace(
       constvars=constvars, invars=invars, effects=effects,
-      debug_info=closed_jaxpr.debug_info.with_unknown_names())
-  return core.ClosedJaxpr(jaxpr, consts), in_mut
+      debug_info=closed_jaxpr.debug_info.with_unknown_names(), consts=consts)
+  return jaxpr, in_mut
 
 @weakref_lru_cache
-def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
+def _discharge_internal_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
   # TODO(slebedev): Inline this function.
   from jax._src.state.discharge import discharge_state  # pyrefly: ignore[missing-import]
   discharged_jaxpr = discharge_state(jaxpr)
   return discharged_jaxpr.replace(
-      jaxpr=discharged_jaxpr.jaxpr.replace(debug_info=jaxpr.jaxpr.debug_info)
+      jaxpr=discharged_jaxpr.replace(debug_info=jaxpr.debug_info)
   )
 
 
@@ -719,7 +715,7 @@ class SemanticallyEqualShardings:
 
 @weakref_lru_cache
 def _cached_lowering_to_hlo(
-    closed_jaxpr: core.ClosedJaxpr, module_name, backend, num_const_args: int,
+    closed_jaxpr: core.Jaxpr, module_name, backend, num_const_args: int,
     in_avals, out_avals, semantic_in_shardings, semantic_out_shardings,
     in_layouts, out_layouts, num_devices, device_assignment, donated_invars,
     all_default_mem_kind, inout_aliases: None | tuple[None | int, ...],
@@ -727,7 +723,7 @@ def _cached_lowering_to_hlo(
     lowering_parameters: mlir.LoweringParameters,
     abstract_mesh: AbstractMesh | None):
   # in_avals, in_shardings, in_layouts include the jaxpr_const_args(jaxpr)
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
 
@@ -832,10 +828,10 @@ def are_all_shardings_default_mem_kind(shardings):
 
 
 @weakref_lru_cache
-def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
+def get_out_layouts_via_propagation(closed_jaxpr: core.Jaxpr
                                     ) -> tuple[None | Layout]:
   env = {}
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
 
   def read(var):
     if type(var) is core.Literal:
@@ -893,11 +889,11 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
 
 
 def hoist_constants_as_args(
-    closed_jaxpr: core.ClosedJaxpr, global_in_avals, in_shardings, in_layouts,
+    closed_jaxpr: core.Jaxpr, global_in_avals, in_shardings, in_layouts,
     donated_invars, kept_var_idx: set[int], inout_aliases, mut,
     all_args_info: AllArgsInfo):
   const_args, const_arg_avals = unzip2(
-      core.jaxpr_const_args(closed_jaxpr.jaxpr)
+      core.jaxpr_const_args(closed_jaxpr)
   )
   num_const_args = len(const_args)
   if num_const_args:
@@ -978,7 +974,7 @@ def _get_context_mesh(context_mesh: Mesh | AbstractMesh) -> Mesh | AbstractMesh:
 
 @profiler.annotate_function
 def lower_sharding_computation(
-    closed_jaxpr: core.ClosedJaxpr,
+    closed_jaxpr: core.Jaxpr,
     api_name: str,
     fun_name: str,
     in_shardings: Sequence[MaybeSharding],
@@ -994,7 +990,7 @@ def lower_sharding_computation(
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None,
 ) -> MeshComputation:
-  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr._debug_info)
+  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr._debug_info)
 
   closed_jaxpr, donated_invars, kept_var_idx = _dce_jaxpr(
       closed_jaxpr, keep_unused, donated_invars)
@@ -1006,7 +1002,7 @@ def lower_sharding_computation(
        closed_jaxpr, in_shardings, in_layouts, donated_invars, out_shardings,
        out_layouts)
 
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
 
@@ -1141,7 +1137,7 @@ def lower_sharding_computation(
   semantic_out_shardings = SemanticallyEqualShardings(
       out_shardings, global_out_avals)
 
-  jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr.jaxpr)
+  jaxpr_util.maybe_dump_jaxpr_to_file(fun_name, closed_jaxpr)
   module_name = util.wrap_name(api_name, fun_name)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,

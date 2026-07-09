@@ -61,11 +61,8 @@ def _initial_style_jaxpr(fun: lu.WrappedFun,
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr, consts
 
-def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
-  return pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
-
 def _lower_and_eval(
-    name: str, jaxpr: core.ClosedJaxpr, args: Sequence[Any]
+    name: str, jaxpr: core.Jaxpr, args: Sequence[Any]
 ) -> list[Any]:
   from jax._src.lax.eval_jaxpr import eval_jaxpr_p  # pyrefly: ignore[missing-import]
   if any(aval.has_qdd for aval in jaxpr.in_aval_qdds):
@@ -417,18 +414,18 @@ class CustomJVPCallPrimitive(core.Primitive):
     raise NotImplementedError
 
   def is_high(self, *_, call_jaxpr, **__):
-    return call_jaxpr.jaxpr.is_high
+    return call_jaxpr.is_high
 
-  def to_lojax(self, *hi_args, call_jaxpr: core.ClosedJaxpr, **params):
+  def to_lojax(self, *hi_args, call_jaxpr: core.Jaxpr, **params):
     return _lower_and_eval("custom_jvp_call", call_jaxpr, hi_args)
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
+    call_jaxpr: core.Jaxpr = new_params.pop('call_jaxpr')
     num_consts: int = new_params.pop('num_consts')
     jvp_jaxpr_fun = new_params.pop('jvp_jaxpr_fun')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
-                       debug_info=call_jaxpr.jaxpr.debug_info)
+                       debug_info=call_jaxpr.debug_info)
     jvp = lift_jvp(num_consts, jvp_jaxpr_fun)
     new_params['subfuns'] = (fun, jvp)
     return new_params
@@ -465,10 +462,10 @@ def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
 def _custom_jvp_vjp_call_lowering(ctx: mlir.LoweringRuleContext, *args,
-                                  call_jaxpr: core.ClosedJaxpr, **_):
+                                  call_jaxpr: core.Jaxpr, **_):
   consts = mlir.ir_consts(
-      call_jaxpr.consts, [v.aval for v in call_jaxpr.jaxpr.constvars])
-  out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,
+      call_jaxpr.consts, [v.aval for v in call_jaxpr.constvars])
+  out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr,
                                    ctx.name_stack, ctx.tokens_in, consts,
                                    *args, dim_var_values=ctx.dim_var_values,
                                    const_lowering=ctx.const_lowering,
@@ -479,18 +476,17 @@ mlir.register_lowering(custom_jvp_call_p, _custom_jvp_vjp_call_lowering)
 
 def _custom_jvp_call_transpose_fancy(params, jaxpr, args, ct, _):
   del params
-  return ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, ct)
+  return ad.backward_pass3(jaxpr, False, jaxpr.consts, args, ct)
 ad.fancy_transposes[custom_jvp_call_p] = _custom_jvp_call_transpose_fancy
 
 @weakref_lru_cache
-def _cached_closed_call_dce_instantiate(jaxpr_: core.ClosedJaxpr,
+def _cached_closed_call_dce_instantiate(jaxpr_: core.Jaxpr,
                                         used_outputs: tuple[bool, ...]
-                                        ) -> tuple[core.ClosedJaxpr, list[bool]]:
-  jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
-  new_jaxpr, used_inputs = pe.dce_jaxpr(
-      jaxpr.replace(debug_info=jaxpr.debug_info.with_unknown_names()),
+                                        ) -> tuple[core.Jaxpr, list[bool]]:
+  # dce_jaxpr and replace preserve attached consts.
+  return pe.dce_jaxpr(
+      jaxpr_.replace(debug_info=jaxpr_.debug_info.with_unknown_names()),
       used_outputs, True)
-  return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
 
 def _custom_jvp_call_dce(
     used_outs: Sequence[bool], eqn: core.JaxprEqn
@@ -538,7 +534,7 @@ def _custom_jvp_call_pp_rule(eqn: core.JaxprEqn,
     params.pop("num_consts")
   params["jvp"] = params.pop("jvp_jaxpr_fun").debug_info.func_name
   names = sorted(params)
-  params["name"] = params["call_jaxpr"].jaxpr.debug_info.func_name
+  params["name"] = params["call_jaxpr"].debug_info.func_name
   return core._pp_eqn(eqn.replace(params=params), context, settings,
                       params=["name"] + names)
 
@@ -1026,18 +1022,18 @@ class CustomVJPCallPrimitive(core.Primitive):
     raise NotImplementedError
 
   def is_high(self, *_, call_jaxpr, **__):
-    return call_jaxpr.jaxpr.is_high
+    return call_jaxpr.is_high
 
-  def to_lojax(self, *hi_args, call_jaxpr: core.ClosedJaxpr, **params):
+  def to_lojax(self, *hi_args, call_jaxpr: core.Jaxpr, **params):
     return _lower_and_eval("custom_vjp_call", call_jaxpr, hi_args)
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
+    call_jaxpr: core.Jaxpr = new_params.pop('call_jaxpr')
     num_consts: int = new_params.pop('num_consts')
     fwd_jaxpr_thunk = new_params.pop('fwd_jaxpr_thunk')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
-                       debug_info=call_jaxpr.jaxpr.debug_info)
+                       debug_info=call_jaxpr.debug_info)
     fwd = lift_fwd(num_consts, fwd_jaxpr_thunk)
     const_avals, _ = split_list(call_jaxpr.in_avals, [num_consts])
     bwd = _handle_consts_in_bwd(new_params.pop('bwd'), const_avals)
@@ -1079,12 +1075,12 @@ def _custom_vjp_call_dce(
 ) -> tuple[list[bool], core.JaxprEqn | None]:
   if not any(used_outs) and not pe.has_effects(eqn):
     return [False] * len(eqn.invars), None
-  call_jaxpr: core.ClosedJaxpr = eqn.params["call_jaxpr"]
+  call_jaxpr: core.Jaxpr = eqn.params["call_jaxpr"]
   fwd_jaxpr_thunk = eqn.params["fwd_jaxpr_thunk"]
   bwd: lu.WrappedFun = eqn.params["bwd"]
   out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]] = eqn.params["out_trees"]
   symbolic_zeros: bool = eqn.params["symbolic_zeros"]
-  dce_call_jaxpr: core.ClosedJaxpr
+  dce_call_jaxpr: core.Jaxpr
   used_ins: Sequence[bool]
   dce_call_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
       call_jaxpr, tuple(used_outs))
@@ -1093,12 +1089,13 @@ def _custom_vjp_call_dce(
   @partial(lu.wrap_init, debug_info=fwd_jaxpr_thunk.debug_info)
   @pe._memoize
   def dce_fwd_jaxpr_thunk(*zeros):
-    fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk.call_wrapped(*zeros))
+    fwd_jaxpr_, fwd_consts_ = fwd_jaxpr_thunk.call_wrapped(*zeros)
+    fwd_jaxpr = fwd_jaxpr_.with_consts(fwd_consts_)
     _, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
     dce_fwd_jaxpr, _ = _cached_closed_call_dce_instantiate(
         fwd_jaxpr, (True,) * num_res_out + tuple(used_outs))
-    return dce_fwd_jaxpr.jaxpr, dce_fwd_jaxpr.consts
+    return dce_fwd_jaxpr, dce_fwd_jaxpr.consts
 
   def dce_bwd(*args):
     _, res_tree, _ = out_trees()
@@ -1144,7 +1141,7 @@ def _custom_vjp_call_pp_rule(eqn: core.JaxprEqn,
   params["fwd"] = params.pop("fwd_jaxpr_thunk").debug_info.func_name
   params["bwd"] = params.pop("bwd").debug_info.func_name
   names = sorted(params)
-  params["name"] = params["call_jaxpr"].jaxpr.debug_info.func_name
+  params["name"] = params["call_jaxpr"].debug_info.func_name
   return core._pp_eqn(eqn.replace(params=params), context, settings,
                       params=["name"] + names)
 
@@ -1492,7 +1489,7 @@ def linear_call(fun: Callable,
   res_avals = map(core.typeof, operands_res)
   lin_avals = map(core.typeof, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
-  f_jaxpr_closed = _close_jaxpr(f_jaxpr)
+  f_jaxpr_closed = pe.convert_constvars_jaxpr(f_jaxpr)
   out_avals = f_jaxpr_closed.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
@@ -1513,7 +1510,7 @@ def linear_call(fun: Callable,
           'transpose output pytree structure must match that of linear inputs, '
           f'got output structure {t_out_tree()} '
           f'and input structure {lin_tree}.')
-    return _close_jaxpr(t_jaxpr), t_consts
+    return pe.convert_constvars_jaxpr(t_jaxpr), t_consts
 
   out = linear_call_p.bind(*f_consts, *operands_res, *operands_lin,
                            callee=f_jaxpr_closed,
@@ -1526,7 +1523,7 @@ def linear_call(fun: Callable,
 def _linear_call_impl(*args, callee, transpose_thunk, num_callee_consts,
                       num_res):
   del transpose_thunk, num_callee_consts, num_res
-  return core.eval_jaxpr(callee.jaxpr, (), *args)
+  return core.eval_jaxpr(callee, (), *args)
 
 def _linear_call_jvp_rule(primals, tangents, callee, transpose_thunk,
                           num_callee_consts, num_res):
@@ -1689,7 +1686,7 @@ def optimize_remat_of_custom_vjp_fwd(
     in_avals = [core.typeof(x) for x in args_flat]
     fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
                                                      in_avals)
-    fwd_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr))
+    fwd_jaxpr = pe.convert_constvars_jaxpr(fwd_jaxpr)
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
 
@@ -1726,13 +1723,13 @@ def _remat_opt_impl(
     *args,
     num_consts: int,
     num_res: int,
-    fwd_jaxpr: core.ClosedJaxpr,
+    fwd_jaxpr: core.Jaxpr,
     fun_jaxpr_thunk: Callable[[], tuple[core.Jaxpr, Sequence[Any]]],
 ):
   del num_consts, num_res, fun_jaxpr_thunk  # unused
   return core.jaxpr_as_fun(fwd_jaxpr)(*args)
 
-def _remat_opt_abstract_eval(*args, fwd_jaxpr: core.ClosedJaxpr, **_):
+def _remat_opt_abstract_eval(*args, fwd_jaxpr: core.Jaxpr, **_):
   del args
   return fwd_jaxpr.out_avals, core.positional_effects(fwd_jaxpr)
 
@@ -1741,7 +1738,7 @@ def _remat_opt_vmap(
     *,
     num_consts: int,
     num_res: int,
-    fwd_jaxpr: core.ClosedJaxpr,
+    fwd_jaxpr: core.Jaxpr,
     fun_jaxpr_thunk: Callable[[], tuple[core.Jaxpr, Sequence[Any]]],
 ):
   args = [batching.moveaxis(x, d, 0) if d is not None and d != 0
@@ -1750,18 +1747,18 @@ def _remat_opt_vmap(
   batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
       fwd_jaxpr, axis_data, in_batched, False)
   extra_consts = batched_fwd_jaxpr.consts
-  batched_fwd_jaxpr = pe.close_jaxpr(
-      pe.convert_constvars_jaxpr(batched_fwd_jaxpr.jaxpr))
+  batched_fwd_jaxpr = pe.convert_constvars_jaxpr(batched_fwd_jaxpr)
   out_dims = [0 if b else None for b in out_batched]
 
   _, prim_batched = split_list(in_batched, [num_consts])
 
   @pe._memoize
   def batched_fun_jaxpr_thunk():
-    fun_jaxpr = core.ClosedJaxpr(*fun_jaxpr_thunk())
+    fun_jaxpr_, fun_consts_ = fun_jaxpr_thunk()
+    fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
     batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
         fun_jaxpr, axis_data, prim_batched, False)
-    return batched_fun_jaxpr.jaxpr, batched_fun_jaxpr.consts
+    return batched_fun_jaxpr, batched_fun_jaxpr.consts
 
   batched_outs = remat_opt_p.bind(*extra_consts, *args,
                                   num_consts=num_consts + len(extra_consts),
@@ -1777,7 +1774,7 @@ def _remat_opt_jvp(
     *,
     num_consts: int,
     num_res: int,
-    fwd_jaxpr: core.ClosedJaxpr,
+    fwd_jaxpr: core.Jaxpr,
     fun_jaxpr_thunk: Callable[[], tuple[core.Jaxpr, Sequence[Any]]],
 ):
   consts, primals = split_list(primals, [num_consts])
@@ -1792,14 +1789,15 @@ def _remat_opt_jvp(
   fwd_jaxpr_jvp_ = ad.rearrange_binders(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
-  fwd_jaxpr_jvp = pe.close_jaxpr(pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_.jaxpr))
+  fwd_jaxpr_jvp = pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_)
 
   # @pe._memoize
   def fun_jvp_jaxpr_thunk():
-    fun_jaxpr = core.ClosedJaxpr(*fun_jaxpr_thunk())
+    fun_jaxpr_, fun_consts_ = fun_jaxpr_thunk()
+    fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
     in_nz = [True] * len(primals)
     fun_jvp_jaxpr, _ = ad.jvp_jaxpr(fun_jaxpr, in_nz, True)
-    return fun_jvp_jaxpr.jaxpr, fun_jvp_jaxpr.consts
+    return fun_jvp_jaxpr, fun_jvp_jaxpr.consts
 
   new_num_consts = len(fwd_jaxpr_jvp_.consts) + num_consts + len(consts_dot)
   outs = remat_opt_p.bind(*fwd_jaxpr_jvp_.consts, *consts, *consts_dot,
@@ -1813,7 +1811,7 @@ def _remat_opt_transpose(
     cts, *args,
     num_consts: int,
     num_res: int,
-    fwd_jaxpr: core.ClosedJaxpr,
+    fwd_jaxpr: core.Jaxpr,
     fun_jaxpr_thunk: Callable[[], tuple[core.Jaxpr, Sequence[Any]]],
 ):
   # TODO(dfm): It shouldn't be too hard to implement this as needed in the
@@ -1832,10 +1830,10 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     # the input primals.
     instantiate = [False] * eqn.params["num_consts"]
     instantiate += [True] * (len(eqn.invars) - eqn.params["num_consts"])
-    new_jaxpr, used_ins = pe.dce_jaxpr(eqn.params["fwd_jaxpr"].jaxpr, used_outs,
+    new_jaxpr, used_ins = pe.dce_jaxpr(eqn.params["fwd_jaxpr"], used_outs,
                                        instantiate=instantiate)
     assert not new_jaxpr.constvars
-    closed_jaxpr = pe.close_jaxpr(new_jaxpr)
+    closed_jaxpr = new_jaxpr
     invars = [v for used, v in zip(used_ins, eqn.invars) if used]
     new_params = dict(eqn.params)
     new_num_consts = sum(split_list(used_ins, [eqn.params["num_consts"]])[0])
@@ -1855,7 +1853,7 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     fun_jaxpr, consts = eqn.params["fun_jaxpr_thunk"]()
     new_jaxpr, used_consts, used_ins = pe.dce_jaxpr_consts(fun_jaxpr, used_prims)
     consts = [c for used, c in zip(used_consts, consts) if used]
-    closed_jaxpr = core.ClosedJaxpr(new_jaxpr, consts)
+    closed_jaxpr = new_jaxpr.with_consts(consts)
     _, invars = split_list(eqn.invars, [eqn.params["num_consts"]])
     invars = [v for used, v in zip(used_ins, invars) if used]
     new_eqn = pe.new_jaxpr_eqn(
@@ -1864,12 +1862,12 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     used_ins = [False] * eqn.params["num_consts"] + used_ins
     return used_ins, new_eqn
 
-def _remat_opt_to_lojax(*hi_args, fwd_jaxpr: core.ClosedJaxpr, num_consts, **params):
+def _remat_opt_to_lojax(*hi_args, fwd_jaxpr: core.Jaxpr, num_consts, **params):
   return _lower_and_eval("remat_opt", fwd_jaxpr, hi_args)
 
 remat_opt_p = core.Primitive("remat_opt")
 remat_opt_p.multiple_results = True
-remat_opt_p.is_high = lambda *_, fwd_jaxpr, **__: fwd_jaxpr.jaxpr.is_high
+remat_opt_p.is_high = lambda *_, fwd_jaxpr, **__: fwd_jaxpr.is_high
 remat_opt_p.to_lojax = _remat_opt_to_lojax
 remat_opt_p.def_impl(_remat_opt_impl)
 remat_opt_p.def_effectful_abstract_eval(_remat_opt_abstract_eval)

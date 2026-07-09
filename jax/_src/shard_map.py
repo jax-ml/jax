@@ -754,7 +754,7 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
   lo_avals_ft = ft.pack((lo_avals_ft, {}))
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    lo_jaxpr_, out_avals_ft = pe.lower_jaxpr(pe.close_jaxpr(jaxpr), lo_avals_ft)
+    lo_jaxpr_, out_avals_ft = pe.lower_jaxpr(jaxpr, lo_avals_ft)
     lo_jaxpr, consts = pe.separate_consts(lo_jaxpr_)
   out_avals_ft = out_avals_ft.map2(
       lo_out_specs, lambda a, s: unshard_aval(mesh, check_vma, s, a))
@@ -767,7 +767,7 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
   effs = core.filter_named_axis_effects(core.positional_effects(jaxpr),
                                         mesh.axis_names)
   out = trace.emit_eqn([*const_tracers, *in_tracers], list(out_avals_ft), shard_map_p,
-                       dict(params, jaxpr=lo_jaxpr.jaxpr, in_specs=in_specs,
+                       dict(params, jaxpr=lo_jaxpr, in_specs=in_specs,
                             out_specs=lo_out_specs), effs, source_info)
   (), lo_outs = out_avals_ft.update(out).unpack()
   hi_out_avals = tuple(unshard_aval(mesh, check_vma, s, a)
@@ -819,7 +819,7 @@ def _shard_map_staging(
     out_specs = tuple(lo_spec for hi_spec in out_specs
                       for lo_spec in hi_spec.to_lo())
   params = dict(mesh=mesh, in_specs=in_specs_staged,
-                out_specs=out_specs, jaxpr=jaxpr.jaxpr,
+                out_specs=out_specs, jaxpr=jaxpr,
                 check_vma=check_vma, newly_manual_axes=newly_manual_axes)
   effs = core.filter_named_axis_effects(core.positional_effects(jaxpr),
                                         mesh.axis_names)
@@ -1104,7 +1104,7 @@ def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with _extend_axis_env(mesh, newly_manual_axes), config._check_vma(check_vma):
     out_nodes_, tokens_out = mlir.call_lowering(
-        "shmap_body", pe.close_jaxpr(jaxpr), None, sub_ctx, in_avals_,
+        "shmap_body", jaxpr, None, sub_ctx, in_avals_,
         out_avals_, ctx.tokens_in, *in_nodes_,
         dim_var_values=ctx.dim_var_values,
         const_lowering=ctx.const_lowering,
@@ -1878,7 +1878,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   in_avals = ft.flatten(((*res_avals, *[v.aval for v in jaxpr.invars]), {}))
   closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
   closed_jaxpr, _ = pe.separate_consts(closed_jaxpr)
-  return closed_jaxpr.jaxpr
+  return closed_jaxpr
 
 
 def _unmentioned2(mesh: Mesh, spec, manual_axes: frozenset[AxisName]
@@ -1997,7 +1997,7 @@ def _add_reshapes(which: Sequence[bool],
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars
 
   def known(*args):
-    out = eval_jaxpr_p.bind(*args, jaxpr=core.ClosedJaxpr(jaxpr_known, ()))
+    out = eval_jaxpr_p.bind(*args, jaxpr=jaxpr_known)
     out_known, res = split_list(out, [len(out) - sum(which)])
     res = [_add_singleton(x) if not x.shape else x for x in res]
     return [*out_known, *res]
@@ -2009,7 +2009,7 @@ def _add_reshapes(which: Sequence[bool],
   def staged(*args):
     res_, ins = split_list(args, [len(which)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res_, which_)]
-    closed_jaxpr_staged = core.ClosedJaxpr(jaxpr_staged, ())
+    closed_jaxpr_staged = jaxpr_staged
     return eval_jaxpr_p.bind(*res, *ins, jaxpr=closed_jaxpr_staged)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
@@ -2018,7 +2018,7 @@ def _add_reshapes(which: Sequence[bool],
   jaxpr_staged_closed, _ = pe.trace_to_jaxpr(
       staged, avals_in, debug_info=jaxpr_staged.debug_info)
 
-  return jaxpr_known_closed.jaxpr, jaxpr_staged_closed.jaxpr
+  return jaxpr_known_closed, jaxpr_staged_closed
 
 def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
                       in_fwd, out_fwd, out_res_specs_known, staged_in_res_specs,
@@ -2106,14 +2106,14 @@ def _shard_map_discharge(
   inner_mesh = _as_manual_mesh(mesh, newly_manual_axes)
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    discharged_jaxpr = discharge.discharge_state(core.ClosedJaxpr(jaxpr, ()))
+    discharged_jaxpr = discharge.discharge_state(jaxpr)
   if discharged_jaxpr.consts:
     raise NotImplementedError
 
   ref_specs = [spec for spec, invar in zip(in_specs, jaxpr.invars)
                if isinstance(invar.aval, AbstractRef)]
   params = dict(
-      jaxpr=discharged_jaxpr.jaxpr, out_specs=(*out_specs, *ref_specs)
+      jaxpr=discharged_jaxpr, out_specs=(*out_specs, *ref_specs)
   )
   params_ = shard_map_p.get_bind_params(params)
   f, = params_.pop('subfuns')

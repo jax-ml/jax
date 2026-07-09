@@ -264,10 +264,7 @@ def _estimate_resources(
       continue
     # Assume that unsupported primitives are neutral wrt resource usage,
     # unless they have a jaxpr in their params.
-    if any(
-        isinstance(v, (jax_core.Jaxpr, jax_core.ClosedJaxpr))
-        for v in eqn.params.values()
-    ):
+    if any( isinstance(v, jax_core.Jaxpr) for v in eqn.params.values()):
       raise NotImplementedError(
           f"Resource estimation does not support {eqn.primitive}"
       )
@@ -282,29 +279,29 @@ def _cond_resource_estimator(
   del args  # Unused.
   return functools.reduce(
       lambda a, b: a.or_(b, ctx.axis_names),
-      (_estimate_resources(ctx, branch.jaxpr) for branch in branches),
+      (_estimate_resources(ctx, branch) for branch in branches),
   )
 
 
 @_register_resource_estimator(lax.scan_p)
 def _scan_resource_estimator(
-    ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.ClosedJaxpr, **params
+    ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.Jaxpr, **params
 ) -> Resources:
   del args, params  # Unused.
-  return _estimate_resources(ctx, jaxpr.jaxpr)
+  return _estimate_resources(ctx, jaxpr)
 
 
 @_register_resource_estimator(lax.while_p)
 def _while_resource_estimator(
     ctx: ResourceEstimatorContext,
     *args,
-    cond_jaxpr: jax_core.ClosedJaxpr,
-    body_jaxpr: jax_core.ClosedJaxpr,
+    cond_jaxpr: jax_core.Jaxpr,
+    body_jaxpr: jax_core.Jaxpr,
     **params,
 ) -> Resources:
   del args, params  # Unused.
-  return _estimate_resources(ctx, cond_jaxpr.jaxpr).or_(
-      _estimate_resources(ctx, body_jaxpr.jaxpr), ctx.axis_names
+  return _estimate_resources(ctx, cond_jaxpr).or_(
+      _estimate_resources(ctx, body_jaxpr), ctx.axis_names
   )
 
 
@@ -312,11 +309,11 @@ def _while_resource_estimator(
 def _pjit_resource_estimator(
     ctx: ResourceEstimatorContext,
     *args,
-    jaxpr: jax_core.ClosedJaxpr,
+    jaxpr: jax_core.Jaxpr,
     **params,
 ) -> Resources:
   del args, params  # Unused.
-  return _estimate_resources(ctx, jaxpr.jaxpr)
+  return _estimate_resources(ctx, jaxpr)
 
 
 @_register_resource_estimator(pallas_core.core_map_p)
@@ -685,7 +682,7 @@ def _eval_index_map(
     block_mapping: pallas_core.BlockMapping,
 ) -> Sequence[ir.Value]:
   block_indices = lower_jaxpr_to_mosaic_gpu(
-      module_ctx, launch_ctx, block_mapping.index_map_jaxpr.jaxpr, idx
+      module_ctx, launch_ctx, block_mapping.index_map_jaxpr, idx
   )
   result = []
   for i, b in zip(block_indices, block_mapping.block_shape):
@@ -709,7 +706,7 @@ def _check_block_mappings(
         f" has block shape {bm.block_shape}, array shape"
         f" {bm.array_aval.shape},"
         # TODO(necula): add index_map source location info
-        f" and index_map {bm.index_map_jaxpr.jaxpr} in"
+        f" and index_map {bm.index_map_jaxpr} in"
         f" memory space {bm.transformed_block_aval.memory_space}."
         " See details at"
         " https://docs.jax.dev/en/latest/pallas/grid_blockspec.html#pallas-blockspec."
@@ -746,7 +743,7 @@ def _block_spec_from_block_mapping(
 ) -> pallas_core.BlockSpec:
   eval_index_map = functools.partial(
       jax.core.eval_jaxpr,
-      bm.index_map_jaxpr.jaxpr,
+      bm.index_map_jaxpr,
       bm.index_map_jaxpr.consts,
   )
 
@@ -908,7 +905,7 @@ def lower_pipelined_jaxpr_to_module(
         tuple(gpu_mesh.cluster) if gpu_mesh is not None else (),
         [bm.array_aval for bm in in_block_mappings],
         [bm.array_aval for bm in out_block_mappings],
-        new_jaxpr.jaxpr,
+        new_jaxpr,
         params,
         new_jaxpr.consts,
         outer_traceback=outer_traceback,
@@ -1427,7 +1424,7 @@ def _lower_fun(
     )
     if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr)
+    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr)
     out = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, closed_jaxpr.consts
     )
@@ -1738,7 +1735,7 @@ def _lower_fn_with_avals(f, avals_in):
         f, in_avals_ft, debug_info=debug_info, requires_low=True
     )
     out_flat = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr.jaxpr, flat_args, jaxpr.consts
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, jaxpr.consts
     )
     out_tree = out_avals_ft.tree
     return out_tree.unflatten(out_flat), out_avals_ft.unflatten()
@@ -2393,7 +2390,7 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
   if jaxpr.consts:
     raise NotImplementedError
   return lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, jaxpr.jaxpr, args,
+      ctx.module_ctx, ctx.launch_ctx, jaxpr, args,
   )
 
 
@@ -3653,10 +3650,10 @@ def _run_scoped_lowering_rule(
       should_discharge = [False] * len(consts) + should_discharge
       with config._check_vma(False):
         discharged_closed_jaxpr = discharge.discharge_state(
-            jax_core.ClosedJaxpr(no_const_jaxpr, ()),
+            no_const_jaxpr,
             should_discharge=should_discharge,
         )
-        discharged_jaxpr, _ = discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts
+        discharged_jaxpr, _ = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
       new_input_vals = (*consts, *input_refs)
       outs = lower_jaxpr_to_mosaic_gpu(
           ctx.module_ctx,
@@ -3744,9 +3741,9 @@ def _run_state_lowering_rule(
 
   with config._check_vma(False):
     discharged_closed_jaxpr = discharge.discharge_state(
-        jax_core.ClosedJaxpr(jaxpr, ()), should_discharge=should_discharge
+        jaxpr, should_discharge=should_discharge
     )
-    discharged_jaxpr, new_consts = discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts
+    discharged_jaxpr, new_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
   assert not new_consts
   outs = lower_jaxpr_to_mosaic_gpu(
       ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()  # pyrefly: ignore[bad-argument-type]
@@ -3845,7 +3842,7 @@ def _lower_jaxpr_to_for_loop(
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
-    jaxpr: jax_core.ClosedJaxpr,
+    jaxpr: jax_core.Jaxpr,
     length: int,
     reverse: bool,
     unroll: int,
@@ -3858,7 +3855,7 @@ def _scan_lowering_rule(
     raise NotImplementedError
   del reverse
 
-  jaxpr, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr, jaxpr_consts = jaxpr, jaxpr.consts
   if jaxpr_consts:
     raise NotImplementedError
   del jaxpr_consts
@@ -3979,7 +3976,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(before_block):
     cond_args = [*cond_consts, *carry_treedef.unflatten(before_block.arguments)]
     [cond] = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, cond_jaxpr.jaxpr, cond_args
+        ctx.module_ctx, ctx.launch_ctx, cond_jaxpr, cond_args
     )
     scf_dialect.condition(
         _ensure_ir_value(cond, *cond_jaxpr.out_avals), before_block.arguments
@@ -3989,7 +3986,7 @@ def _while_lowering_rule(
   with ir.InsertionPoint.at_block_begin(after_block):
     body_args = [*body_consts, *carry_treedef.unflatten(after_block.arguments)]
     loop_out = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, body_jaxpr.jaxpr, body_args
+        ctx.module_ctx, ctx.launch_ctx, body_jaxpr, body_args
     )
     loop_out = [*map(_ensure, loop_out, carry_avals)]
     if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
@@ -4039,7 +4036,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
 
   with ir.InsertionPoint(tmp_module.body):
     outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
+        ctx.module_ctx, ctx.launch_ctx, branches[0], args
     )
     yielded_types = [
         v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))
@@ -4063,7 +4060,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches,
     block = region.blocks[0]
     with ir.InsertionPoint(block):
       outs = lower_jaxpr_to_mosaic_gpu(
-          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
+          ctx.module_ctx, ctx.launch_ctx, branch, args, consts=branch.consts
       )
 
       yielded_leaves, yielded_treedef = jax.tree.flatten(_yielded_values(outs, ctx.avals_out))

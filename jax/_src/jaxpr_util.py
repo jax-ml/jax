@@ -289,10 +289,10 @@ def jaxpr_and_binder_in_params(params, index: int) -> Iterator[tuple[core.Jaxpr,
         if index >= len(v.invars):
           raise RuntimeError(f"Failed to find index {index} in jaxpr.invars while building report")
         yield v, v.invars[index]
-      elif isinstance(v, core.ClosedJaxpr):
-        if index >= len(v.jaxpr.invars):
+      elif isinstance(v, core.Jaxpr):
+        if index >= len(v.invars):
           raise RuntimeError(f"Failed to find index {index} in jaxpr.invars while building report")
-        yield v.jaxpr, v.jaxpr.invars[index]
+        yield v, v.invars[index]
 
 def eqns_using_var(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[core.JaxprEqn]:
   """Find the leaf equations using a variable"""

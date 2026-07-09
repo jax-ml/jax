@@ -169,7 +169,6 @@ def _roofline_interpreter(
   def sum_bytes(shapes: Sequence[RooflineShape]) -> int:
     return sum(shape.bytes for shape in shapes)
 
-  jaxpr = jaxpr.jaxpr if isinstance(jaxpr, core.ClosedJaxpr) else jaxpr
   make_roofline_shape = lambda x: RooflineShape.from_aval(aval(x))
   foreach(
     write,
@@ -297,8 +296,8 @@ def roofline(
       )
       out_shapes = tree_unflatten(treedef, flat_out_shapes)
 
-    used_outputs = (True,) * len(jaxpr.jaxpr.outvars)
-    jaxpr, _ = dce_jaxpr(jaxpr.jaxpr, used_outputs)
+    used_outputs = (True,) * len(jaxpr.outvars)
+    jaxpr, _ = dce_jaxpr(jaxpr, used_outputs)
     shard_map_eqns = [
         e for e in jaxpr.eqns if e.primitive == shard_map_p
     ]

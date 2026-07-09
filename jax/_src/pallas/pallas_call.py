@@ -175,14 +175,14 @@ def _pallas_call_to_lojax(
     raise NotImplementedError("pallas_call does not support QDD for inputs")
   if any(aval.has_qdd for aval in out_avals):
     raise NotImplementedError("pallas_call does not support QDD for outputs")
-  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
+  closed_jaxpr = jaxpr
   with grid_mapping.trace_env():
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
   assert not closed_lo_jaxpr.consts
-  lo_jaxpr = closed_lo_jaxpr.jaxpr
+  lo_jaxpr = closed_lo_jaxpr
   for block_mapping in grid_mapping.block_mappings:
     index_map_jaxpr = block_mapping.index_map_jaxpr
-    if index_map_jaxpr.jaxpr.is_high:
+    if index_map_jaxpr.is_high:
       raise NotImplementedError(
           "pallas_call does not support hijax for index_map"
       )
@@ -274,9 +274,9 @@ def _pallas_call_jvp_rule(
   nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   nonzero_tangents_with_outputs = nonzero_tangents + [True] * grid_mapping.num_outputs
-  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
+  closed_jaxpr = jaxpr
   jvp_jaxpr_, _ = ad.jvp_jaxpr(closed_jaxpr, nonzero_tangents_with_outputs, [])
-  jvp_jaxpr, () = jvp_jaxpr_.jaxpr, jvp_jaxpr_.consts  # TODO consts
+  jvp_jaxpr, () = jvp_jaxpr_, jvp_jaxpr_.consts  # TODO consts
   # `pallas_call` takes in inputs and returns outputs but its jaxpr *does not*.
   # `pallas_call` takes in a stateful jaxpr, meaning the jaxpr accepts input
   # `Ref`s that are read from followed by output `Ref`s that are written to.
@@ -340,7 +340,7 @@ def _batch_block_mapping(
     drop_last_args = args
 
     indices = jax_core.eval_jaxpr(
-        block_mapping.index_map_jaxpr.jaxpr,
+        block_mapping.index_map_jaxpr,
         block_mapping.index_map_jaxpr.consts,
         *drop_last_args,
     )
@@ -357,7 +357,7 @@ def _batch_block_mapping(
   with grid_mapping.trace_env():
     jaxpr, out_avals = pe.trace_to_jaxpr(
         _block_map_function, ft.flatten_args(*idx_avals),
-        block_mapping.index_map_jaxpr.jaxpr.debug_info.with_unknown_names()
+        block_mapping.index_map_jaxpr.debug_info.with_unknown_names()
     )
   shape = block_mapping.block_shape
   if dim is None:
@@ -798,8 +798,8 @@ def _trace_kernel_to_jaxpr(
           fun_with_transforms, kernel_avals,
           debug_info)
       consts = closed_jaxpr.consts
-      jaxpr, _ = pe.dce_jaxpr(closed_jaxpr.jaxpr,
-                              used_outputs=[True] * len(closed_jaxpr.jaxpr.outvars),
+      jaxpr, _ = pe.dce_jaxpr(closed_jaxpr,
+                              used_outputs=[True] * len(closed_jaxpr.outvars),
                               instantiate=True)
     if consts:
       consts_avals = [
@@ -1101,7 +1101,7 @@ def _pallas_call_state_discharge_rule(
       *index_operands,
       *ref_args,
       *rest_args,
-      jaxpr=closed_jaxpr.jaxpr,
+      jaxpr=closed_jaxpr,
       input_output_aliases=tuple(new_input_output_aliases),
       grid_mapping=new_grid_mapping,
       mesh=mesh,

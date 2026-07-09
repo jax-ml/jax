@@ -2350,17 +2350,17 @@ def _reduce_sum_eval_rule(
 
 @register_usage_rule(pjit.jit_p)
 def _jit_usage_rule(
-    ctx, used_out: list[set[Usage]], *, jaxpr: core.ClosedJaxpr, **_
+    ctx, used_out: list[set[Usage]], *, jaxpr: core.Jaxpr, **_
 ):
   del ctx
-  read_usage_env = compute_usage(jaxpr.jaxpr, used_out)
-  in_usages = util.safe_map(read_usage_env, jaxpr.jaxpr.invars)
+  read_usage_env = compute_usage(jaxpr, used_out)
+  in_usages = util.safe_map(read_usage_env, jaxpr.invars)
   return in_usages
 
 
 @register_eval_rule(pjit.jit_p)
 def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
-  jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr, consts = jaxpr, jaxpr.consts
   if consts:
     raise NotImplementedError('pjit with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
@@ -2395,7 +2395,7 @@ def _jit_pull_block_spec_rule(
     ctx: PullRuleContext, out_block_specs, *, jaxpr, **kwargs
 ):
   del kwargs
-  jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr, consts = jaxpr, jaxpr.consts
   if consts:
     raise NotImplementedError('pjit with consts not supported yet')
 
@@ -2415,19 +2415,19 @@ def _jit_pull_block_spec_rule(
 
 @register_usage_rule(custom_derivatives.custom_jvp_call_p)
 def _custom_jvp_call_usage_rule(
-    ctx, used_out: list[set[Usage]], *, call_jaxpr: core.ClosedJaxpr, **_
+    ctx, used_out: list[set[Usage]], *, call_jaxpr: core.Jaxpr, **_
 ):
   del ctx
-  read_usage_env = compute_usage(call_jaxpr.jaxpr, used_out)
-  in_usages = util.safe_map(read_usage_env, call_jaxpr.jaxpr.invars)
+  read_usage_env = compute_usage(call_jaxpr, used_out)
+  in_usages = util.safe_map(read_usage_env, call_jaxpr.invars)
   return in_usages
 
 
 @register_eval_rule(custom_derivatives.custom_jvp_call_p)
 def _custom_jvp_call_eval_rule(
-    ctx: KernelEvalContext, *args, call_jaxpr: core.ClosedJaxpr, **kwargs
+    ctx: KernelEvalContext, *args, call_jaxpr: core.Jaxpr, **kwargs
 ):
-  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  jaxpr, consts = call_jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError('custom_jvp_call with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
@@ -2462,7 +2462,7 @@ def _custom_jvp_call_pull_block_spec_rule(
     ctx: PullRuleContext, out_block_specs, *, call_jaxpr, **kwargs
 ):
   del kwargs
-  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  jaxpr, consts = call_jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError('custom_jvp_call with consts not supported yet')
 
@@ -2482,19 +2482,19 @@ def _custom_jvp_call_pull_block_spec_rule(
 
 @register_usage_rule(custom_derivatives.custom_vjp_call_p)
 def _custom_vjp_call_usage_rule(
-    ctx, used_out: list[set[Usage]], *, call_jaxpr: core.ClosedJaxpr, **_
+    ctx, used_out: list[set[Usage]], *, call_jaxpr: core.Jaxpr, **_
 ):
   del ctx
-  read_usage_env = compute_usage(call_jaxpr.jaxpr, used_out)
-  in_usages = util.safe_map(read_usage_env, call_jaxpr.jaxpr.invars)
+  read_usage_env = compute_usage(call_jaxpr, used_out)
+  in_usages = util.safe_map(read_usage_env, call_jaxpr.invars)
   return in_usages
 
 
 @register_eval_rule(custom_derivatives.custom_vjp_call_p)
 def _custom_vjp_call_eval_rule(
-    ctx: KernelEvalContext, *args, call_jaxpr: core.ClosedJaxpr, **kwargs
+    ctx: KernelEvalContext, *args, call_jaxpr: core.Jaxpr, **kwargs
 ):
-  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  jaxpr, consts = call_jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError('custom_vjp_call with consts not supported yet')
   out_tree = tree_util.tree_structure(tuple(jaxpr.outvars))
@@ -2529,7 +2529,7 @@ def _custom_vjp_call_pull_block_spec_rule(
     ctx: PullRuleContext, out_block_specs, *, call_jaxpr, **kwargs
 ):
   del kwargs
-  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  jaxpr, consts = call_jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError('custom_vjp_call with consts not supported yet')
 
@@ -2822,17 +2822,17 @@ def _dot_general_push_rule(
 
 @register_push_block_spec_rule(custom_derivatives.custom_jvp_call_p)
 def _custom_jvp_call_push_rule(
-    ctx, *block_specs, call_jaxpr: core.ClosedJaxpr, **_
+    ctx, *block_specs, call_jaxpr: core.Jaxpr, **_
 ):
   assert not call_jaxpr.consts
-  return _push_block_spec_jaxpr(call_jaxpr.jaxpr, *block_specs)
+  return _push_block_spec_jaxpr(call_jaxpr, *block_specs)
 
 
 @register_push_block_spec_rule(custom_derivatives.custom_vjp_call_p)
 def _custom_vjp_call_push_rule(
     ctx,
     *block_specs,
-    call_jaxpr: core.ClosedJaxpr,
+    call_jaxpr: core.Jaxpr,
     num_consts,
     fwd_jaxpr_thunk,
     bwd,
@@ -2840,7 +2840,7 @@ def _custom_vjp_call_push_rule(
     symbolic_zeros,
 ):
   del ctx, num_consts, fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros
-  return _push_block_spec_jaxpr(call_jaxpr.jaxpr, *block_specs)
+  return _push_block_spec_jaxpr(call_jaxpr, *block_specs)
 
 @register_push_block_spec_rule(hijax.call_hi_primitive_p)
 def _custom_call_hi_primitive_push_block_spec_rule(
@@ -2850,9 +2850,9 @@ def _custom_call_hi_primitive_push_block_spec_rule(
 
 
 @register_push_block_spec_rule(pjit.jit_p)
-def _pjit_push_rule(ctx, *block_specs, jaxpr: core.ClosedJaxpr, **_):
+def _pjit_push_rule(ctx, *block_specs, jaxpr: core.Jaxpr, **_):
   assert not jaxpr.consts
-  return _push_block_spec_jaxpr(jaxpr.jaxpr, *block_specs)
+  return _push_block_spec_jaxpr(jaxpr, *block_specs)
 
 
 def register_eltwise_rule(prim: core.Primitive):

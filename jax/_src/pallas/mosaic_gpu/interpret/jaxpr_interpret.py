@@ -583,7 +583,7 @@ class JaxprInterpreter:
     return lax.switch(
         invals[0],
         [
-            functools.partial(self.interpret, branch_jaxpr.jaxpr)
+            functools.partial(self.interpret, branch_jaxpr)
             for branch_jaxpr in eqn.params["branches"]
         ],
         token,
@@ -600,7 +600,7 @@ class JaxprInterpreter:
     def _scan_body(carry, a):
       token, c = carry
       token, ret = self.interpret(
-          eqn.params["jaxpr"].jaxpr, token, *consts, *c, *a
+          eqn.params["jaxpr"], token, *consts, *c, *a
       )
       new_c, b = (list(g) for g in eqn.params["ft_out"].update(ret).unpack())
       return (token, new_c), b
@@ -618,15 +618,15 @@ class JaxprInterpreter:
         [eqn.params["cond_nconsts"], eqn.params["body_nconsts"]],
     )
     token, first_cond = self.interpret(
-        eqn.params["cond_jaxpr"].jaxpr, token, *cond_consts, *init_val
+        eqn.params["cond_jaxpr"], token, *cond_consts, *init_val
     )
     def _body(val):
       token, val, _ = val
       token, val = self.interpret(
-          eqn.params["body_jaxpr"].jaxpr, token, *body_consts, *val
+          eqn.params["body_jaxpr"], token, *body_consts, *val
       )
       token, cond = self.interpret(
-          eqn.params["cond_jaxpr"].jaxpr, token, *cond_consts, *val
+          eqn.params["cond_jaxpr"], token, *cond_consts, *val
       )
       return token, val, cond[0]
 

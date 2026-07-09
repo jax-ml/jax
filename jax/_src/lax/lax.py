@@ -1833,8 +1833,8 @@ def _trace_composite_to_jaxpr(fun: Callable,
         "closes over a value that is involved in a JAX transformation. "
         "Any values that aren't explicitly known at compile time must be "
         "explicitly passed as arguments to the composite.")
-  # Absorb consts into jaxpr invars (matching behavior of old convert_constvars_jaxpr)
-  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr))
+  # Absorb consts into jaxpr invars.
+  closed_jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr)
   return closed_jaxpr, consts, out_avals.tree
 
 
@@ -1947,7 +1947,7 @@ def _composite_lowering(
     name: str,
     attributes: Sequence[tuple[str, tuple[Any, ...], tree_util.PyTreeDef]],
     version: int,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
 ):
   """Makes composite which calls the implementation function.
 
@@ -1964,7 +1964,7 @@ def _composite_lowering(
   Returns:
     The results of the composite.
   """
-  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = util.unzip2(const_args_and_avals)
   const_arg_values = tuple(
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
@@ -3253,7 +3253,7 @@ def _reduction_jaxpr(computation: Callable,
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
         "at https://github.com/jax-ml/jax.")
-  return closed_jaxpr.jaxpr, tuple(closed_jaxpr.consts)
+  return closed_jaxpr, tuple(closed_jaxpr.consts)
 
 @cache()
 def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
@@ -8362,7 +8362,7 @@ batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
 def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
-                  computation, jaxpr: core.ClosedJaxpr, dimensions):
+                  computation, jaxpr: core.Jaxpr, dimensions):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
@@ -8377,7 +8377,7 @@ def _reduce_lower(ctx: mlir.LoweringRuleContext, *values,
     name_stack = source_info_util.new_name_stack()
     if jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `reduce`.')
-    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr.jaxpr,
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr,
                                       name_stack, mlir.TokenSet(),
                                       jaxpr.consts,
                                       *reducer.arguments,

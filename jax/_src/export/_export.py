@@ -739,7 +739,7 @@ def named_to_hlo_sharding(s: NamedSharding | None,
 
 def _export_lowered(
     lowered: stages.Lowered,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
     _device_assignment_for_internal_jax2tf_use_only=None,

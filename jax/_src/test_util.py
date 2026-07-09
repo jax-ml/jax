@@ -320,13 +320,13 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 
 @contextmanager
 def collect_lowered_jaxprs() -> Generator[
-    Sequence[tuple[core.ClosedJaxpr, mlir.ir.Module]],
+    Sequence[tuple[core.Jaxpr, mlir.ir.Module]],
 ]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
   """
   assert thread_local_state.collect_lowered_jaxprs is None
-  collection: list[tuple[core.ClosedJaxpr, mlir.ir.Module]] = []
+  collection: list[tuple[core.Jaxpr, mlir.ir.Module]] = []
   thread_local_state.collect_lowered_jaxprs = collection
   try:
     yield collection
@@ -1075,7 +1075,7 @@ def iter_eqns(jaxpr):
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = f"Unexpected precision: {expected_precision} != {precision}"
@@ -1087,7 +1087,7 @@ def assert_dot_precision(expected_precision, fun, *args):
 
 def assert_dot_preferred_element_type(expected, fun, *args, **kwargs):
   jaxpr = api.make_jaxpr(partial(fun, **kwargs))(*args)
-  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr.jaxpr)
+  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr)
                    if eqn.primitive == lax.dot_general_p]
   for pref_eltype in pref_eltypes:
     msg = f"Unexpected preferred_element_type: {expected} != {pref_eltype}"

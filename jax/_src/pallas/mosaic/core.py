@@ -505,9 +505,9 @@ def pass_scalars_as_refs(
         ft.flatten_args(*new_trace_avals),
         jaxpr.debug_info.with_unknown_names(),
     )
-  jaxpr = new_jaxpr.jaxpr.replace(
-      constvars=new_jaxpr.jaxpr.invars[: len(jaxpr.constvars)],
-      invars=new_jaxpr.jaxpr.invars[len(jaxpr.constvars) :],
+  jaxpr = new_jaxpr.replace(
+      constvars=new_jaxpr.invars[: len(jaxpr.constvars)],
+      invars=new_jaxpr.invars[len(jaxpr.constvars) :],
   )
   args = [
       *[a[None] for a in scalar_consts],

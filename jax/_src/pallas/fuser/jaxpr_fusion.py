@@ -69,7 +69,7 @@ def fuse(
       closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
           f, in_avals_ft, debug_info
       )
-      jaxpr = closed_jaxpr.jaxpr
+      jaxpr = closed_jaxpr
       consts = closed_jaxpr.consts
       if debug:
         print("Jaxpr before fusion:")

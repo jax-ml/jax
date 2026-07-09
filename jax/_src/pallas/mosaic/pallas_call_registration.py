@@ -540,7 +540,7 @@ def _rewrite_jaxpr_for_lowering(
         jaxpr.debug_info.with_unknown_names(),
     )
   assert not new_jaxpr.consts
-  return new_jaxpr.jaxpr
+  return new_jaxpr
 
 
 def mpmd_map_tpu_lowering_rule(

@@ -15,7 +15,7 @@
 
 from jax._src import ad_util
 from jax._src import core
-from jax._src.core import ClosedJaxpr
+from jax._src.core import Jaxpr
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
@@ -29,7 +29,7 @@ eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
 
 def _stage_jaxpr(trace: pe.DynamicJaxprTrace, source_info, *tracers,
-                 jaxpr: ClosedJaxpr):
+                 jaxpr: Jaxpr):
   params = dict(call_jaxpr=jaxpr)
   return trace.default_process_primitive(core.closed_call_p, tracers, params,
                                          source_info=source_info)
@@ -77,7 +77,7 @@ def _eval_jaxpr_linearize(is_vjp, nzs, *primals_in, jaxpr):
   def tangent_fun(res, *tangents):
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
     nz_tangents_out = eval_jaxpr_p.bind(*res, *nz_tangents, jaxpr=tangent_jaxpr)
-    tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.jaxpr.outvars]
+    tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.outvars]
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad_util.Zero(aval)
                     for aval, nz in zip(tangent_avals_out, nzs_out)]
@@ -88,7 +88,7 @@ def _eval_jaxpr_linearize(is_vjp, nzs, *primals_in, jaxpr):
 ad.primitive_linearizations[eval_jaxpr_p] = _eval_jaxpr_linearize
 
 def _eval_jaxpr_transpose(ct, *args, jaxpr):
-  jaxpr_, consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr_, consts = jaxpr, jaxpr.consts
   jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
   ad.call_transpose_fancy(core.closed_call_p, ct, *consts, *args,
                           call_jaxpr=jaxpr_)

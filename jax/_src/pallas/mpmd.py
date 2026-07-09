@@ -217,7 +217,7 @@ def _mpmd_map_discharge_rule(
     )
     closed_jaxpr, _ = pe.trace_to_jaxpr(
         new_body, ft.flatten_args(*tracing_avals), debug_info)
-    return closed_jaxpr.jaxpr
+    return closed_jaxpr
 
   for mesh, jaxpr in zip(meshes, jaxprs):
     with mpmd_map_tracing_context(mesh, all_meshes):
@@ -416,10 +416,10 @@ def _mpmd_map_to_lojax(
   lo_jaxprs = []
   for mesh, jaxpr in zip(meshes, jaxprs):
     with mpmd_map_tracing_context(mesh, all_meshes):
-      closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, ())
+      closed_jaxpr = jaxpr
       closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
       assert not closed_lo_jaxpr.consts
-      lo_jaxprs.append(closed_lo_jaxpr.jaxpr)
+      lo_jaxprs.append(closed_lo_jaxpr)
 
   input_index_mapping = pallas_call._get_index_mapping(in_avals)
   output_index_mapping = pallas_call._get_index_mapping(out_avals)
@@ -773,7 +773,7 @@ def _dedup_consts_and_unify_jaxpr_signatures(
           fun_to_trace, ft.flatten_args(*tracing_avals),
           debug_info)
     assert not jaxpr.consts, jaxpr.consts
-    new_jaxprs.append(jaxpr.jaxpr)
+    new_jaxprs.append(jaxpr)
   return new_jaxprs, unique_consts
 
 
@@ -914,7 +914,7 @@ def _mpmd_map(
         )
       if jaxpr.consts:
         _error_if_non_ref_consts(jaxpr.consts, debug_info)
-      jaxprs.append(jaxpr.jaxpr)
+      jaxprs.append(jaxpr)
       consts_per_fn.append(jaxpr.consts)
 
     if any(consts_per_fn):

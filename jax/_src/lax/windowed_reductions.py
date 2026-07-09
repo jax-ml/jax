@@ -26,7 +26,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src import util
-from jax._src.core import ClosedJaxpr, ShapedArray, jaxpr_as_fun
+from jax._src.core import ShapedArray, jaxpr_as_fun
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -102,7 +102,7 @@ def _reduce_window(
     out_flat = reduce_window_p.bind(
         *flat_operands,
         *flat_init_values,
-        jaxpr=jaxpr.jaxpr,
+        jaxpr=jaxpr,
         consts=tuple(jaxpr.consts),
         window_dimensions=tuple(window_dimensions),
         window_strides=tuple(window_strides),
@@ -444,7 +444,7 @@ def reduce_window_jvp(
     raise TypeError("reduce_window jvp does not support non-zero init_value_tangent.")
 
   init_value_tangent = map(ad_util.instantiate, init_value_tangent)
-  c_reduction_jaxpr = ClosedJaxpr(reduction_jaxpr, consts)
+  c_reduction_jaxpr = reduction_jaxpr.with_consts(consts)
   jvp_reduction = ad.jvp_jaxpr(c_reduction_jaxpr, (True,) * len(tangents), [False] * len(init_value_tangent))[0]
 
   def wrapper(left, right):

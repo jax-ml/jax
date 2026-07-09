@@ -384,7 +384,7 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
   else:
     matvec_tangents = _tangent_linear_map(
         core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec,
-        jaxprs.matvec.jaxpr.debug_info, *x_leaves)
+        jaxprs.matvec.debug_info, *x_leaves)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
   x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)

@@ -2994,17 +2994,17 @@ def broadcasted_iota(
 
 @lowering.register_lowering_rule(jax_core.closed_call_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(jax_core.closed_call_p, mgpu.LoweringSemantics.Warpgroup)
-def _closed_call_lowering_rule(ctx, *args, call_jaxpr: jax_core.ClosedJaxpr):
+def _closed_call_lowering_rule(ctx, *args, call_jaxpr: jax_core.Jaxpr):
   if call_jaxpr.consts: raise NotImplementedError
   return lowering.lower_jaxpr_to_mosaic_gpu(
-      ctx.module_ctx, ctx.launch_ctx, call_jaxpr.jaxpr, args)
+      ctx.module_ctx, ctx.launch_ctx, call_jaxpr, args)
 
 
 @lowering._register_resource_estimator(jax_core.closed_call_p)
 def _closed_call_resource_estimator(ctx, *args, call_jaxpr):
   del args  # Unused.
   if call_jaxpr.consts: raise NotImplementedError
-  return lowering._estimate_resources(ctx, call_jaxpr.jaxpr)
+  return lowering._estimate_resources(ctx, call_jaxpr)
 
 
 @dataclasses.dataclass(frozen=True)

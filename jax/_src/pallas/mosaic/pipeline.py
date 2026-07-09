@@ -209,7 +209,7 @@ def _spec_has_trivial_windowing(spec, grid, full_shape):
   static_dummy_grid = tuple(d if isinstance(d, int) else 2 for d in grid)
   with pallas_core.tracing_grid_env(static_dummy_grid, mapped_dims=()):
     closed_jaxpr = jax.make_jaxpr(spec.index_map)(*[0] * len(grid))
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
   # Refs can be mutated while the pipeline is running so we should not assume
   # that they are constant.
   if any(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars):
@@ -2087,7 +2087,7 @@ def emit_pipeline(
     return emit_pipeline_p.bind(
         *args_flat,
         grid_mapping=grid_mapping,
-        body_jaxpr=body_jaxpr.jaxpr,
+        body_jaxpr=body_jaxpr,
         tiling=tiling,
         core_axis=core_axis,
         core_axis_name=core_axis_name,
@@ -2287,8 +2287,8 @@ def _emit_pipeline_lowering_rule(
         all_args.all_index_map_consts, index_map_consts_counts)
     new_bms = []
     for i, bm in enumerate(grid_mapping.block_mappings):
-      bm = bm.replace(index_map_jaxpr=core.ClosedJaxpr(
-          bm.index_map_jaxpr.jaxpr, index_map_consts[i]))
+      bm = bm.replace(index_map_jaxpr=bm.index_map_jaxpr.with_consts(
+          index_map_consts[i]))
       new_bms.append(bm)
     grid_mapping = dataclasses.replace(grid_mapping, block_mappings=new_bms)
 
@@ -2352,7 +2352,7 @@ def _emit_pipeline_lowering_rule(
   closed_jaxpr, _ = pe.trace_to_jaxpr_nocache(
       wrapped_pipeline_fun, in_avals_ft, debug_info=dbg
   )
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
   consts = closed_jaxpr.consts
   assert not consts and not jaxpr.constvars, (
       f"wrapped_pipeline_fun should not close over JAX constants, but found: "

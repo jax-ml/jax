@@ -118,7 +118,7 @@ def _trace_to_jaxpr(fun, in_avals, in_tree, dbg):
   f = lu.wrap_init(fun, debug_info=dbg)
   f, out_tree = flatten_fun_nokwargs(f, in_tree)
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts), out_tree()
+  return jaxpr.with_consts(consts), out_tree()
 
 compute_on_p = core.Primitive('compute_on')
 compute_on_p.multiple_results = True
@@ -138,7 +138,7 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
   if dispatch.jaxpr_has_primitive(jaxpr, 'compute_on'):
     raise ValueError("Nesting `compute_on` with different compute types is "
                      "not allowed.")
-  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = unzip2(const_args_and_avals)
   const_arg_values = [
       mlir.ir_constants(c, const_lowering=ctx.const_lowering, aval=aval)
@@ -341,14 +341,14 @@ def _transpose_jaxpr(jaxpr, in_avals, in_tree):
   cell = lambda: None
   def transposed(*in_flat):
     primals_in, cts_in = tree_unflatten(in_tree, in_flat)
-    out = ad.backward_pass(jaxpr.jaxpr, False, jaxpr.consts, primals_in, cts_in)
+    out = ad.backward_pass(jaxpr, False, jaxpr.consts, primals_in, cts_in)
     out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
     cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
     return cts_out
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
+  dbg = jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
+  return trans_jaxpr.with_consts(consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 
 def _compute_on_transpose(cts_in, *primals_in, jaxpr, compute_type,
                           out_memory_spaces, compiler_options_json):

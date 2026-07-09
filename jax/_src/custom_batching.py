@@ -159,7 +159,7 @@ class custom_vmap:
         in_tree)
     in_avals = [core.typeof(x) for x in args_flat]
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-    closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    closed_call = pe.convert_constvars_jaxpr(jaxpr)
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
     debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
@@ -263,7 +263,7 @@ def custom_vmap_abstract_eval(*in_avals, call, **_):
 
 
 def custom_vmap_jvp(primals, tangents, *,
-                    call: core.ClosedJaxpr,
+                    call: core.Jaxpr,
                     rule: ClosedRule,
                     in_tree: tree_util.PyTreeDef, out_tree: tree_util.PyTreeDef):
   def jvp_of_rule_rule(axis_size: int, in_batched, primals, tangents):
@@ -294,14 +294,14 @@ def custom_vmap_jvp(primals, tangents, *,
       out_mutually_batched.store(out_batched)
       return out
 
-    api_util.save_wrapped_fun_debug_info(to_jvp, call.jaxpr.debug_info)
+    api_util.save_wrapped_fun_debug_info(to_jvp, call.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
     to_vmap_over_extra_batched_dims_flat, out_tree2 = api_util.flatten_fun_nokwargs(
         lu.wrap_init(to_vmap_over_extra_batched_dims,
                      # TODO(necula): fix the debug_info calling convention
-                     debug_info=call.jaxpr.debug_info),
+                     debug_info=call.debug_info),
         tree_ps_ts)
 
     flat_out_ps_ts, flat_out_axes = vmap_unrestricted(
