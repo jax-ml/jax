@@ -31,6 +31,13 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.experimental.export.export`, since the corresponding custom call
     is not considered export-stable and needs to be enabled explicitly.
 
+### Mosaic GPU
+
+* New features
+
+  * {func}`jax.experimental.pallas.mosaic_gpu.wgmma` now supports mixing the
+    e4m3 and e5m2 FP8 types across its two operands.
+
 
 ### Mosaic GPU
 

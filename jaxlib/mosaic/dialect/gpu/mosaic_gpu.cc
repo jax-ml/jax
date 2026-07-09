@@ -433,8 +433,20 @@ llvm::LogicalResult WGMMAOp::verify() {
   auto b_type = getB().getType();
   auto acc_type = getAccumulator().getType();
 
-  if (a_type.getElementType() != b_type.getElementType()) {
-    return error("The `a` and `b` inputs must have the same element type.");
+  auto a_element_type = a_type.getElementType();
+  auto b_element_type = b_type.getElementType();
+  // FP8 is the exception to the "same element type" rule: the PTX
+  // `wgmma.mma_async` instruction takes independent `.atype`/`.btype` operand
+  // types, each of which may be `.e4m3` or `.e5m2`, so any mix of the two FP8
+  // types is a valid `a`/`b` pairing.
+  auto is_fp8 = [](mlir::Type t) {
+    return llvm::isa<mlir::Float8E4M3FNType, mlir::Float8E5M2Type>(t);
+  };
+  if (a_element_type != b_element_type &&
+      !(is_fp8(a_element_type) && is_fp8(b_element_type))) {
+    return error(
+        "The `a` and `b` inputs must have the same element type, except that "
+        "FP8 types (f8E4M3FN and f8E5M2) may be mixed.");
   }
 
   auto a_shape = a_type.getShape();
