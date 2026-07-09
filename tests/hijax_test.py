@@ -940,6 +940,20 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(a, jnp.arange(3.) + 1)
     self.assertAllClose(b, jnp.arange(3. * 4).reshape(3, 4) * 2)
 
+  def test_tuple_jit_shardings_error(self):
+    # jit in_shardings/out_shardings must be unspecified for hi-type
+    # args/outputs; anything else raises rather than crashing or silently
+    # broadcasting one sharding across the lojax components
+    mesh = jtu.create_mesh((2,), ('i',))
+    tup = make_tup(jnp.arange(8., dtype='float32').reshape(4, 2),
+                   jnp.arange(4., dtype='float32'))
+    s = jax.NamedSharding(mesh, jax.P('i'))
+    with jax.set_mesh(mesh):
+      with self.assertRaisesRegex(NotImplementedError, "open an issue"):
+        jax.jit(lambda t: t, in_shardings=s)(tup)
+      with self.assertRaisesRegex(NotImplementedError, "open an issue"):
+        jax.jit(lambda t: t, out_shardings=s)(tup)
+
   @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
   def test_tuple_shit(self, mesh):
     x = jax.device_put(jnp.arange(4.), jax.P('i'))

@@ -845,6 +845,13 @@ def pjit_check_aval_sharding(
     if isinstance(s, UnspecifiedValue):
       continue
     name_str = f' with pytree key path {name}' if name else ''
+    if aval.is_high:
+      raise NotImplementedError(
+          f'One of {what_aval}{name_str} has non-array (hijax) type {aval} '
+          f'with a specified sharding {s}, which is not supported; only '
+          'unspecified shardings are allowed for non-array types. If this '
+          'would be useful to you, please open an issue at '
+          'https://github.com/jax-ml/jax/issues.')
     shape = aval.shape
     try:
       s.check_compatible_aval(shape)
@@ -928,8 +935,6 @@ def _lojax_expand_params(
   mut_out_lol, out_lol_ = out_avals.unpack()
   out_lol = out_lol_.unpack()
 
-  # some pjit params match the length of hi_jaxpr.invars/outvars, so when
-  # lowering we must expand them to match their number of lojax types
   def expand(lol, stuff):
     return tuple(x for l, x in zip(lol, stuff) for _ in l)
   donated_invars = expand(in_lol , donated_invars)
