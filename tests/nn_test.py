@@ -103,14 +103,15 @@ def create_mxfp8_configs_if_available():
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
+
   @parameterized.product(
       contract=[160, 96],
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
   def testScaledMatmul(self, contract, lhs_non_contract, dtype):
-    if not jtu.test_device_matches(["gpu"]):
-      raise unittest.SkipTest("Test requires GPU.")
+    if not jtu.test_device_matches(["gpu", "cpu"]):
+      raise unittest.SkipTest("Test requires GPU or CPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
     # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
