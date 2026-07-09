@@ -452,14 +452,18 @@ class ModuleImage {
 
 Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-               int compute_capability)
+               int compute_capability, uint64_t global_scratch_size,
+               uint64_t global_scratch_align)
     : kernel_name_(std::move(kernel_name)),
       block_dim_x_(num_warps * kNumThreadsPerWarp),
       num_ctas_(num_ctas),
       shared_mem_bytes_(shared_mem_bytes),
       ptx_(std::move(ptx)),
       ttir_(std::move(ttir)),
-      compute_capability_(compute_capability) {}
+      compute_capability_(compute_capability),
+      global_scratch_size_(global_scratch_size),
+      global_scratch_align_(global_scratch_align == 0 ? 1
+                                                      : global_scratch_align) {}
 
 absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
                             void** params) {
@@ -533,7 +537,8 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
 
   return Kernel(proto.kernel_name(), proto.num_warps(), num_ctas,
                 proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
-                proto.compute_capability());
+                proto.compute_capability(), proto.global_scratch_size(),
+                proto.global_scratch_align());
 }
 
 jax_triton::TritonKernel Kernel::ToProto() const {
@@ -545,6 +550,8 @@ jax_triton::TritonKernel Kernel::ToProto() const {
   proto.set_ptx(ptx_);
   proto.set_ttir(ttir_);
   proto.set_compute_capability(compute_capability_);
+  proto.set_global_scratch_size(global_scratch_size_);
+  proto.set_global_scratch_align(global_scratch_align_);
   return proto;
 }
 
@@ -622,9 +629,29 @@ KernelCall::KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1,
       parameters_(std::move(parameters)) {}
 
 absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
+  return LaunchImpl(stream, buffers, /*scratch=*/nullptr);
+}
+
+absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers,
+                                ::xla::ffi::ScratchAllocator* scratch) {
+  return LaunchImpl(stream, buffers, scratch);
+}
+
+namespace {
+
+void* AlignPointer(void* ptr, size_t alignment) {
+  auto addr = reinterpret_cast<uintptr_t>(ptr);
+  auto aligned = (addr + alignment - 1) & ~(alignment - 1);
+  return reinterpret_cast<void*>(aligned);
+}
+
+}  // namespace
+
+absl::Status KernelCall::LaunchImpl(gpuStream_t stream, void** buffers,
+                                    ::xla::ffi::ScratchAllocator* scratch) {
   std::vector<void*> params;
-  // We need an additional parameter for the scratchpad buffer.
-  params.reserve(parameters_.size() + 1);
+  params.reserve(parameters_.size() + 2);
+
   for (size_t i = 0; i < parameters_.size(); ++i) {
     const Parameter& param = parameters_[i];
     if (std::holds_alternative<Parameter::Array>(param.value)) {
@@ -650,15 +677,29 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
           param.value)));
     }
   }
-  // Triton's kernel ABI expects an additional scratchpad global memory.
-  // For now it is only used for on-device creation of TMA descriptors, which
-  // we do not use yet, so we are just replacing this argument with a null
-  // pointer.
-  // TODO: b/381242007 - Allocate a proper buffer if we want to use
-  // device-side TMA APIs.
-  void* tma_descriptor_buffer = nullptr;  // Alive until kernel_.Launch returns.
-  params.push_back(&tma_descriptor_buffer);
-  void* profiling_buffer = nullptr;  // Alive until kernel_.Launch returns.
+
+  // Triton's kernel ABI expects a global scratch pointer.
+  uint64_t scratch_size = kernel_.global_scratch_size();
+  void* scratch_buffer = nullptr;
+  if (scratch_size > 0 && scratch != nullptr) {
+    uint64_t align = kernel_.global_scratch_align();
+    // ScratchAllocator may cap alignment at 16 bytes. Over-allocate and align
+    // manually if needed.
+    size_t alloc_size = scratch_size;
+    if (align > 16) {
+      alloc_size += align - 1;
+    }
+    auto maybe_buf = scratch->Allocate(alloc_size, std::min(align, uint64_t{16}));
+    if (!maybe_buf.has_value()) {
+      return absl::ResourceExhaustedError(absl::StrFormat(
+          "Failed to allocate %zu bytes of scratch memory for Triton kernel.",
+          alloc_size));
+    }
+    scratch_buffer = (align > 16) ? AlignPointer(*maybe_buf, align) : *maybe_buf;
+  }
+  params.push_back(&scratch_buffer);
+
+  void* profiling_buffer = nullptr;
   params.push_back(&profiling_buffer);
 
   return kernel_.Launch(stream, grid_, params.data());
@@ -915,5 +956,32 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .RemainingRets()
         .Attrs(),
     {::xla::ffi::Traits::kCmdBufferCompatible});
+
+::xla::ffi::Error TritonKernelCallFfiV2(
+    gpuStream_t stream, ::xla::ffi::ScratchAllocator scratch,
+    std::string_view opaque, ::xla::ffi::RemainingArgs args,
+    ::xla::ffi::RemainingRets rets) {
+  std::vector<void*> buffers = CombineBuffers(args, rets);
+  auto kernel_call_or = GetKernelCall(opaque, stream, buffers.data());
+  if (!kernel_call_or.ok()) {
+    return ::xla::ffi::Error::InvalidArgument(
+        std::string(kernel_call_or.status().message()));
+  }
+  absl::Status status =
+      (*kernel_call_or)->Launch(stream, buffers.data(), &scratch);
+  if (!status.ok()) {
+    return ::xla::ffi::Error::Internal(std::string(status.message()));
+  }
+  return ::xla::ffi::Error::Success();
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(
+    kTritonKernelCallFfiV2, TritonKernelCallFfiV2,
+    ::xla::ffi::Ffi::Bind()
+        .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
+        .Ctx<::xla::ffi::ScratchAllocator>()
+        .Attr<std::string_view>("opaque")
+        .RemainingArgs()
+        .RemainingRets());
 
 }  // namespace jax::JAX_GPU_NAMESPACE

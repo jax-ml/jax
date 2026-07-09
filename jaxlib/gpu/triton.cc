@@ -50,13 +50,19 @@ nb::dict Registrations() {
   gpu_dict["initialize"] = EncapsulateFfiHandler(kTritonKernelCallFfiInitialize);
   gpu_dict["execute"] = EncapsulateFfiHandler(kTritonKernelCallFfi);
   dict["triton_kernel_call_ffi"] = gpu_dict;
+  dict["triton_kernel_call_ffi_v2"] =
+      EncapsulateFfiHandler(kTritonKernelCallFfiV2);
   return dict;
 }
 
 NB_MODULE(_triton, m) {
   nb::class_<Kernel>(m, "TritonKernel")
       .def(nb::init<std::string, uint32_t, uint32_t, uint32_t, std::string,
-                    std::string, int>());
+                    std::string, int, uint64_t, uint64_t>(),
+           nb::arg("kernel_name"), nb::arg("num_warps"), nb::arg("num_ctas"),
+           nb::arg("shared_mem_bytes"), nb::arg("ptx"), nb::arg("ttir"),
+           nb::arg("compute_capability"), nb::arg("global_scratch_size") = 0,
+           nb::arg("global_scratch_align") = 0);
 
   nb::class_<KernelCall::Parameter>(m, "TritonParameter");
 
