@@ -70,6 +70,11 @@ _deprecations = {
     " v0.11.0.  Use jax.errors.JaxprTypeError.",
     None,
   ),
+  "abstract_token": (
+    "jax.core.abstract_token was deprecated in JAX v0.10.0 and removed in JAX"
+    " v0.11.0. Use jax.ffi.abstract_token, available in JAX v0.11.0.",
+    None,
+  ),
   "check_jaxpr": (
     "jax.core.check_jaxpr  was deprecated in JAX v0.10.0 and removed in JAX"
     " v0.11.0.  Use jax.extend.core.check_jaxpr.",
@@ -185,10 +190,6 @@ _deprecations = {
     None,
   ),
   # Deprecated in JAX v0.10.0, TODO(jakevdp) finalize after v0.11.0
-  "abstract_token": (
-    "jax.core.abstract_token is deprecated. Use jax.ffi.abstract_token.",
-    _src_core.abstract_token,
-  ),
   "is_concrete": (
     "jax.core.is_concrete is deprecated.",
     _src_core.is_concrete,
@@ -213,7 +214,6 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  abstract_token = _src_core.abstract_token
   is_concrete = _src_core.is_concrete
   is_constant_dim = _src_core.is_constant_dim
   is_constant_shape = _src_core.is_constant_shape
