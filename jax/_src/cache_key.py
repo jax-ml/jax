@@ -188,6 +188,66 @@ def _serialize_ir(m: ir.Module, ignore_custom_partitioning: bool) -> bytes:
   return output.getvalue()
 
 
+def _canonicalize_private_symbol_names(m: ir.Module) -> None:
+  """Renames private top-level symbols deterministically."""
+  private_symbols: list[ir.OpView] = []
+  all_symbol_names: set[str] = set()
+  public_symbol_names: set[str] = set()
+  for op in m.body.operations:
+    if "sym_name" not in op.attributes:
+      continue
+    symbol_name = ir.StringAttr(op.attributes["sym_name"]).value
+    all_symbol_names.add(symbol_name)
+    visibility = op.attributes.get("sym_visibility")
+    if (
+        visibility is not None
+        and ir.StringAttr(visibility).value == "private"
+    ):
+      private_symbols.append(op)
+    else:
+      public_symbol_names.add(symbol_name)
+
+  if not private_symbols:
+    return
+
+  name_map: dict[str, str] = {}
+  prefix = "__jax_cache_private_symbol_"
+  for i, op in enumerate(private_symbols):
+    old_name = ir.StringAttr(op.attributes["sym_name"]).value
+    new_name = f"{prefix}{i}"
+    collision_id = len(private_symbols)
+    while new_name in public_symbol_names:
+      new_name = f"{prefix}{collision_id}_{i}"
+      collision_id += 1
+    name_map[old_name] = new_name
+
+  tmp_name_map: dict[str, str] = {}
+  used_names = all_symbol_names | set(name_map.values())
+  tmp_prefix = "__jax_cache_private_symbol_tmp_"
+  # Rename through temporaries so old private names cannot collide with the
+  # canonical names assigned to earlier private symbols.
+  for i, old_name in enumerate(name_map):
+    tmp_name = f"{tmp_prefix}{i}"
+    collision_id = len(name_map)
+    while tmp_name in used_names:
+      tmp_name = f"{tmp_prefix}{collision_id}_{i}"
+      collision_id += 1
+    tmp_name_map[old_name] = tmp_name
+    used_names.add(tmp_name)
+
+  for op in private_symbols:
+    old_name = ir.StringAttr(op.attributes["sym_name"]).value
+    tmp_name = tmp_name_map[old_name]
+    ir.SymbolTable.replace_all_symbol_uses(old_name, tmp_name, m.operation)
+    ir.SymbolTable.set_symbol_name(op, tmp_name)
+  reverse_tmp_name_map = {tmp: old for old, tmp in tmp_name_map.items()}
+  for op in private_symbols:
+    tmp_name = ir.StringAttr(op.attributes["sym_name"]).value
+    new_name = name_map[reverse_tmp_name_map[tmp_name]]
+    ir.SymbolTable.replace_all_symbol_uses(tmp_name, new_name, m.operation)
+    ir.SymbolTable.set_symbol_name(op, new_name)
+
+
 def _canonicalize_ir(
     m_original: ir.Module, ignore_custom_partitioning: bool
 ) -> bytes:
@@ -197,6 +257,7 @@ def _canonicalize_ir(
         "builtin.module(strip-debuginfo)"
     )
     passes.run(m.operation)
+    _canonicalize_private_symbol_names(m)
     return _serialize_ir(m, ignore_custom_partitioning)
 
 
