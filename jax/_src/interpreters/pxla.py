@@ -185,7 +185,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))
     else:
-      if jaxlib_extension_version >= 475:
+      if jaxlib_extension_version >= 475 and config.use_cpp_shard_args.value:
         results.append(None)
         batch_xs.append(x)  # Accumulate arguments to `_jax.shard_args`
         batch_shardings.append(sharding)

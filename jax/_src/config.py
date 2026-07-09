@@ -2176,6 +2176,12 @@ use_shardy_partitioner = bool_state(
     include_in_trace_context=True,
 )
 
+use_cpp_shard_args = bool_state(
+    name='jax_use_cpp_shard_args',
+    default=False,
+    help='Whether to use C++ implementation for sharding arguments.',
+)
+
 gpu_use_magma = enum_state(
     name='jax_use_magma',
     enum_values=['off', 'on', 'auto'],
