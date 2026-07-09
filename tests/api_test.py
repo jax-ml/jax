@@ -6526,6 +6526,22 @@ class RematTest(jtu.JaxTestCase):
     res = saved_residuals(f, jnp.ones((3, 3)))
     self.assertStartsWith(res[1][1], "named 'foo'")
 
+  def test_name_vmap(self):
+    policy = jax.checkpoint_policies.save_only_these_names('foo')
+
+    @partial(jax.remat, policy=policy)
+    def f(x):
+      x = checkpoint_name(jnp.sin(x), 'foo')
+      return jnp.sin(x).sum()
+
+    xs = jnp.arange(3.)
+    ans = jax.vmap(jax.grad(f))(xs)
+    expected = jnp.cos(jnp.sin(xs)) * jnp.cos(xs)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    res = saved_residuals(jax.vmap(f), xs)
+    self.assertTrue(any(src.startswith("named 'foo'") for _, src in res))
+
   def test_name_pytree(self):
     policy = jax.checkpoint_policies.save_only_these_names('foo')
 

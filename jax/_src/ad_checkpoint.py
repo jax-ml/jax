@@ -1151,6 +1151,10 @@ class CheckpointName(VJPHiPrimitive):
     (x,), (xdot,) = primals, tangents
     return CheckpointName(self.name, self.in_avals[0])(x), xdot
 
+  def batch(self, axis_data, args, dims):
+    (x,), (d,) = args, dims
+    return CheckpointName(self.name, typeof(x))(x), d
+
   def vjp_fwd(self, _nzs_in, x):  # type: ignore
     return CheckpointName(self.name, self.in_avals[0])(x), None
 
