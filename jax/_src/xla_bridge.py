@@ -283,19 +283,6 @@ _topology_factories: dict[str, TopologyFactory] = {}
 _plugin_callbacks: list[Any] = []
 _plugin_callback_lock = threading.Lock()
 
-_backend_initialization_hooks: list[Callable[[xla_client.Client], None]] = []
-
-
-def register_backend_initialization_hook(
-    hook: Callable[[xla_client.Client], None],
-) -> None:
-  """Registers a callback to run on all initialized and future backends."""
-  _backend_initialization_hooks.append(hook)
-  with _backend_lock:
-    for backend in _backends.values():
-      hook(backend)
-
-
 # The set of known non-experimental plugins.
 #
 # If a plugin passes the JAX test suite, it can be added to the allowlist below.
@@ -934,8 +921,6 @@ def _init_backend(platform: str) -> xla_client.Client:
                              ("device_count", backend.device_count()),
                              ("local_devices", backend.local_devices()))
   logger.debug("Backend '%s' initialized", platform)
-  for hook in _backend_initialization_hooks:
-    hook(backend)
   return backend
 
 

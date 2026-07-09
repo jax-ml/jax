@@ -500,6 +500,13 @@ NB_MODULE(_jax, m) {
       },
       nb::arg("platform_name"), nb::arg("library_path").none() = std::nullopt,
       nb::arg("c_api").none() = std::nullopt);
+  m.def(
+      "get_pjrt_plugin",
+      [](std::string platform_name) -> nb::capsule {
+        const PJRT_Api* api = xla::ValueOrThrow(pjrt::PjrtApi(platform_name));
+        return nb::capsule(absl::bit_cast<void*>(api), "pjrt_c_api");
+      },
+      nb::arg("platform_name"));
   m.def("pjrt_plugin_initialized", [](std::string platform_name) -> bool {
     return xla::ValueOrThrow(pjrt::IsPjrtPluginInitialized(platform_name));
   });
