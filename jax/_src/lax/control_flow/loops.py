@@ -32,7 +32,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import sharding_impls
@@ -44,13 +43,7 @@ from jax._src.api_util import (
   _check_no_aliased_closed_over_refs, check_no_aliased_ref_args,
   check_no_transformed_refs_args)
 from jax._src.core import (
-    AbstractValue,
-    ClosedJaxpr,
-    Jaxpr,
-    ShapedArray,
-    cur_qdd,
-    typeof,
-)
+    AbstractValue, ClosedJaxpr, ShapedArray, cur_qdd, typeof)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -58,22 +51,23 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import remat
 from jax._src.lax import lax
+from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
     _avals_short, _make_closed_jaxpr, _prune_zeros, _typecheck_param)
-from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.mesh import get_abstract_mesh, use_abstract_mesh
+from jax._src.mesh import use_abstract_mesh, get_abstract_mesh
 from jax._src.pjit import PartitionSpec as P, auto_axes, reshard
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import AbstractRef, discharge as state_discharge
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
+from jax._src import flattree as ft
 from jax._src.tree_util import (
     keystr, tree_flatten, tree_map, tree_unflatten, treedef_is_leaf)
 from jax._src.typing import Array
@@ -1393,7 +1387,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, ft_in, ft_out,
   tc(reverse, 'reverse', 'bool', type(reverse) is bool)
   tc(ft_in, 'ft_in', 'FlatTree', isinstance(ft_in, ft.FlatTree))
   tc(ft_out, 'ft_out', 'FlatTree', isinstance(ft_out, ft.FlatTree))
-  tc(jaxpr, 'jaxpr', 'closed Jaxpr', type(jaxpr) is Jaxpr and jaxpr.is_closed)
+  tc(jaxpr, 'jaxpr', 'ClosedJaxpr', type(jaxpr) is ClosedJaxpr)
   tc(unroll, 'unroll', 'non-negative int', type(unroll) is int and unroll >= 0)
 
   tc(length, 'length', 'non-negative int', length >= 0)

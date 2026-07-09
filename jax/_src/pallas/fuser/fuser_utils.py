@@ -77,13 +77,14 @@ def _make_hashable(val):
 
 def _jaxpr_signature(jaxpr_obj):
   env = {}
-  jaxpr = jaxpr_obj
-  # consts pair with a prefix of constvars; any unapplied constvars are
-  # identified positionally.
-  for v, c in zip(jaxpr.constvars, jaxpr.consts):
-    env[v] = ('constval', _make_hashable(c))
-  for i, v in enumerate(jaxpr.constvars[len(jaxpr.consts) :]):
-    env[v] = ('constvar_idx', i)
+  if isinstance(jaxpr_obj, core.ClosedJaxpr):
+    jaxpr = jaxpr_obj.jaxpr
+    for v, c in zip(jaxpr.constvars, jaxpr_obj.consts):
+      env[v] = ('constval', _make_hashable(c))
+  else:
+    jaxpr = jaxpr_obj
+    for i, v in enumerate(jaxpr.constvars):
+      env[v] = ('constvar_idx', i)
   for i, v in enumerate(jaxpr.invars):
     env[v] = ('invar', i)
 

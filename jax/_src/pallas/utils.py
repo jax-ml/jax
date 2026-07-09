@@ -182,14 +182,14 @@ def pattern_match_while_to_fori_loop(
     return (None, "Conditional jaxpr have only two carry args.")
   # Check that the first two carry values are scalar ints
   a1, a2 = cond_in_avals[:2]
-  if a1.shape or a1.dtype not in (jnp.int32, jnp.int64):  # type: ignore
+  if a1.shape or a1.dtype not in (jnp.int32, jnp.int64):
     return (None, "First conditional jaxpr carry arg is not a scalar int.")
-  if a2.shape or a2.dtype not in (jnp.int32, jnp.int64):  # type: ignore
+  if a2.shape or a2.dtype not in (jnp.int32, jnp.int64):
     return (None, "Second conditional jaxpr carry arg is not a scalar int.")
   # Check that the only eqn in the cond checks the loop index condition
   v1, v2 = cond_invars[:2]
   outvar = cond_jaxpr.jaxpr.outvars[0]
-  assert outvar.aval.dtype == jnp.bool_  # type: ignore
+  assert outvar.aval.dtype == jnp.bool_
   if len(cond_jaxpr.jaxpr.eqns) != 1:
     return (None, "Non-trivial conditional jaxprs not supported.")
   eqn = cond_jaxpr.jaxpr.eqns[0]
@@ -231,7 +231,7 @@ def pattern_match_while_to_fori_loop(
   else:
     new_arg_names = None
   if jaxpr.debug_info.result_paths is not None:
-    new_result_paths = jaxpr.debug_info.result_paths[2:]  # type: ignore
+    new_result_paths = jaxpr.debug_info.result_paths[2:]
   else:
     new_result_paths = None
 
