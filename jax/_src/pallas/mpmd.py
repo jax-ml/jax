@@ -223,7 +223,7 @@ def _mpmd_map_discharge_rule(
     with mpmd_map_tracing_context(mesh, all_meshes):
       new_jaxprs.append(_rewrite_to_include_new_outputs(jaxpr))
 
-  new_out_avals = [avals_in[i].inner_aval for i in write_indices]  # pyrefly: ignore[missing-attribute]
+  new_out_avals = [state_discharge._discharged_aval(avals_in[i], discharge=True) for i in write_indices]
   updated_out_avals = list(avals_out) + new_out_avals
 
   new_aliases = dict(input_output_aliases)

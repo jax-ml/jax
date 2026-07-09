@@ -482,6 +482,78 @@ class CoreMapTest(jtu.JaxTestCase):
         r"\[{\\22color\\22:" + str(color) + r"}\].*",
     )
 
+  @parameterized.product(explicit_memory_space=[True, False])
+  def test_kernel_in_scan(self, explicit_memory_space):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
+    shape = (8, 128)
+    mesh = pltpu.create_tensorcore_mesh(axis_name="tc", num_cores=1)
+
+    @pl.kernel(out_type=pltpu.VMEM(shape, jnp.float32) @ mesh, mesh=mesh)
+    def init(o_ref):
+      o_ref[...] = jnp.zeros(shape, jnp.float32)
+
+    @pl.kernel(mesh=mesh)
+    def update(x_ref):
+      x_ref[...] += 1.0
+
+    @pl.kernel(mesh=mesh)
+    def copy_to_hbm(in_ref, o_ref):
+      pltpu.sync_copy(in_ref, o_ref)
+
+    @jax.jit
+    def run():
+      ref = jax.new_ref(
+          init(),
+          memory_space=pltpu.VMEM @ mesh if explicit_memory_space else None,
+      )
+
+      def body(c, _):
+        update(ref)
+        return c, None
+
+      jax.lax.scan(body, 0, length=4)
+      
+      hbm_ref = jax.new_ref(jnp.zeros(shape, jnp.float32))
+      copy_to_hbm(ref, hbm_ref)
+      return jax.freeze(hbm_ref)
+
+    np.testing.assert_array_equal(run(), np.full(shape, 4.0))
+
+  def test_kernel_memory_space_output(self):
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Only supported on TPU v5+")
+    shape = (8, 128)
+    mesh = pltpu.create_tensorcore_mesh(axis_name="tc", num_cores=1)
+
+    @pl.kernel(out_type=pltpu.VMEM(shape, jnp.float32) @ mesh, mesh=mesh)
+    def init(o_ref):
+      o_ref[...] = jnp.zeros(shape, jnp.float32)
+
+    @pl.kernel(mesh=mesh)
+    def add1(ref):
+      ref[...] += 1
+
+    @pl.kernel(mesh=mesh)
+    def copy_to_hbm(in_ref, o_ref):
+      pltpu.sync_copy(in_ref, o_ref)
+
+    @jax.jit
+    def run():
+      x = init()
+      ref = jax.new_ref(
+          x,
+          memory_space=pltpu.VMEM @ mesh,
+      )
+      add1(ref)
+      
+      hbm_ref = jax.new_ref(jnp.zeros(shape, jnp.float32))
+      copy_to_hbm(ref, hbm_ref)
+      return jax.freeze(hbm_ref)
+
+    x = run()
+    np.testing.assert_array_equal(x, np.full(shape, 1.0))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
