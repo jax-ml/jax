@@ -659,10 +659,13 @@ class BlockSpec:
         fake_index_map_kwargs,
     )
     with tracing_grid_env(grid, vmapped_dims):
+      index_map_args, index_map_kwargs = ft.unpack_args_kwargs(
+          ft.FTPyTree(index_map_avals, index_map_tree))
       closed_jaxpr, out_avals = pe.trace_to_jaxpr(
           index_map_func,
-          ft.FTPyTree(index_map_avals, index_map_tree),
-          debug_info)
+          index_map_args,
+          debug_info,
+          kwargs=tuple(sorted(index_map_kwargs.items())))
     unflat_avals = out_avals.unflatten()
 
     if len(unflat_avals) != len(block_shape):
@@ -1569,8 +1572,9 @@ def core_map(
         jax_core.extend_axis_env_nd(mesh.shape.items()),
         config._check_vma(False),
     ):
+      fun_args, fun_kwargs = ft.unpack_args_kwargs(fun_args_refs)
       jaxpr, out_avals = pe.trace_to_jaxpr(
-          f, fun_args_refs, debug_info)
+          f, fun_args, debug_info, kwargs=tuple(sorted(fun_kwargs.items())))
 
     if out_avals.tree != tree_util.tree_structure(None):
       raise ValueError(

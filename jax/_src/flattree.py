@@ -36,8 +36,6 @@ class FlatTree:
                     | Singleton a
                     | Static Aux
                     | Filtered (FlatTree (Either a Aux))
-                    -- TODO: remove this case
-                    | Dict [Key] [FlatTree a]
   """
 
   # === Each subclass (ADT case) should implement these ===
@@ -111,8 +109,6 @@ class FlatTree:
       return self.tree.unflatten(self.vals)
     elif isinstance(self, FTTuple):
       return tuple(elt.unflatten() for elt in self.elts)
-    elif isinstance(self, FTDict):
-      return {k: v.unflatten() for k, v in zip(self.keys, self._vals)}
     elif isinstance(self, FTStatic):
       return self.val
     elif isinstance(self, FTSingleton):
@@ -189,32 +185,6 @@ class FTTuple(FlatTree):
   def __repr__(self): return repr(self.elts)
   def map(self, f): return FTTuple(*(elt.map(f) for elt in self.elts))
 
-# TODO(dougalm): delete this case
-class FTDict(FlatTree):
-  # TODO: revise this away
-  @property
-  def tree(self):
-    # We have to roundtrip because there's no dict analog of "treedef_tuple"
-    _, t = tracing_registry.flatten(self.update([0] * len(self)).unflatten())
-    return t
-
-  # keys should be sorted
-  def __init__(self, keys, vals):
-    keys = keys if type(keys) is tuple else tuple(keys)
-    assert all(isinstance(v, FlatTree) for v in vals)
-    vals = vals if type(vals) is tuple else tuple(vals)
-    self.keys = keys
-    self._vals = vals  # underscore to avoid collision with FlatTree.vals
-  def __len__(self): return sum(len(val) for val in self._vals)
-  def __eq__(self, other):
-    return (isinstance(other, FTDict) and
-            self.keys == other.keys and
-            self._vals == other._vals)
-  def __hash__(self): return hash((self.keys, self._vals))
-  def __repr__(self): return repr(dict(zip(self.keys, self._vals)))
-  def map(self, f):
-    return FTDict(self.keys, tuple(elt.map(f) for elt in self._vals))
-
 class FTPyTree(FlatTree):
   # Pytree [a] PyTreeDef
   def __init__(self, xs, treedef):
@@ -277,29 +247,24 @@ class FTFiltered(FlatTree):
     return FTFiltered(self.val.map(apply_f_to_rights))
 
 def pack(tree):
-  # We could generalize this to arbitrary pytrees of FlatTree but tuples/dicts
-  # are sufficient for now.
+  # We could generalize this to arbitrary pytrees of FlatTree but tuples are
+  # sufficient for now. (Keyword args are handled separately, see
+  # `_pack_args_kwargs`.)
   if isinstance(tree, FlatTree):
     return tree
   elif isinstance(tree, tuple):
     return FTTuple(*map(pack, tree))
-  elif isinstance(tree, dict):
-    keys, vals = unzip2(sorted(tree.items(), key=lambda pair: pair[0]))
-    return FTDict(keys, tuple(map(pack, vals)))
   else:
     assert False, type(tree)
-
-def pack_args(*args, **kwargs):
-  # TODO: check elements of args and kwargs are all flat trees
-  return pack((args, kwargs))
 
 def flatten(tree: PyTree, is_leaf=None, registry=tracing_registry) -> FlatTree:
   vals, tree = registry.flatten(tree, is_leaf)
   return FTPyTree(vals, tree)
 
-def flatten_args(*arg_trees: PyTree, registry=tracing_registry) -> FlatTree:
-  arg_fts = tuple(flatten(t, registry=registry) for t in arg_trees)
-  return pack((arg_fts, {}))
+def flatten_args(*arg_trees: PyTree, registry=tracing_registry) -> tuple[FlatTree, ...]:
+  # One FlatTree per positional argument (no kwargs). Suitable for passing
+  # directly as the `args` argument of `trace_to_jaxpr`.
+  return tuple(flatten(t, registry=registry) for t in arg_trees)
 
 # statics to the Left, dynamics to the Right
 def statics_mask(args: PyArgs, static_argnums, static_argnames):
@@ -307,6 +272,16 @@ def statics_mask(args: PyArgs, static_argnums, static_argnames):
   static_argnums = [i % num_args if i < 0 else i for i in static_argnums]
   return ([i in static_argnums for i in range(num_args)] +
           [k in static_argnames for k in args.kwargs.keys()])
+
+def _pack_args_kwargs(arg_fts, kwarg_fts) -> FlatTree:
+  # Combine a tuple of positional-arg FlatTrees and a dict of keyword-arg
+  # FlatTrees into a single (args, kwargs) FlatTree. The keyword args are stored
+  # as an FTTuple of values in sorted-key order (callers track the keys), so
+  # that static kwargs (FTStatic) are handled just like static positional args
+  # -- unlike a dict pytree, an FTTuple tolerates elements whose leaf count and
+  # treedef leaf count differ.
+  kwarg_values = tuple(kwarg_fts[k] for k in sorted(kwarg_fts))
+  return FTTuple(FTTuple(*arg_fts), FTTuple(*kwarg_values))
 
 def flatten_static_argnums_argnames(
     args, kwargs, static_argnums, static_argnames, registry=tracing_registry):
@@ -316,7 +291,7 @@ def flatten_static_argnums_argnames(
       statics,
       lambda x, is_static:
           FTStatic(x) if is_static else flatten(x, registry=registry))
-  return pack((fts.args, fts.kwargs))
+  return _pack_args_kwargs(fts.args, fts.kwargs)
 
 # TODO: this sucks. revise it away by using FlatTree in pjit instead of treedef.
 def flatten_static_argnums_argnames_and_return_various_trees(
@@ -324,15 +299,37 @@ def flatten_static_argnums_argnames_and_return_various_trees(
   registry = tracing_registry
   pargs = PyArgs(args, kwargs)
   statics = statics_mask(pargs, static_argnums, static_argnames)
-  ans_ft = pack(pargs.map2(
+  fts = pargs.map2(
       statics,
-      lambda x, static: FTStatic(x) if static else flatten(x, registry=registry)
-      ).args_kwargs)
+      lambda x, static: FTStatic(x) if static else flatten(x, registry=registry))
+  ans_ft = _pack_args_kwargs(fts.args, fts.kwargs)
   _, tree_nones = registry.flatten(
       pargs.map2(statics, lambda x, static: None if static else x).args_kwargs)
   _, tree_filtered = registry.flatten(
       pargs.filter_with_mask([not s for s in statics]).args_kwargs)
   return ans_ft, tree_nones, tree_filtered
+
+def unpack_args_kwarg_values(tree: FlatTree) -> tuple[tuple[FlatTree, ...], tuple[FlatTree, ...]]:
+  # Inverse of `_pack_args_kwargs`: split a combined (args, kwargs) FlatTree into
+  # a tuple of per-arg FlatTrees and a tuple of per-kwarg value FlatTrees (in
+  # sorted-key order). The caller supplies the keys.
+  args_group, kwargs_group = tree.unpack()
+  return args_group.unpack(), kwargs_group.unpack()
+
+def unpack_args_kwargs(tree: FlatTree) -> tuple[tuple[FlatTree, ...], dict[Any, FlatTree]]:
+  # Split an (args, kwargs) FlatTree whose kwargs are a real pytree dict (e.g.
+  # from `flatten((args, kwargs))`) into a tuple of per-arg FlatTrees and a dict
+  # of per-kwarg FlatTrees.
+  args_group, kwargs_group = tree.unpack()
+  args = args_group.unpack()
+  if len(kwargs_group) == 0:
+    kwargs = {}
+  else:
+    # kwargs_group is a FlatTree (e.g. FTPyTree) whose unflatten is a dict; its
+    # keys (sorted) line up with its per-value FlatTree children.
+    keys = list(kwargs_group.unflatten().keys())
+    kwargs = dict(zip(keys, kwargs_group.unpack()))
+  return args, kwargs
 
 def flatten_list(xs):
   # [a] -> FlatTree[a] . Treats list elements as leaves.

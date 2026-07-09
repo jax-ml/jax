@@ -1235,7 +1235,7 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   tangent_avals_in = primal_avals_in.map(lambda aval: aval.to_tangent_aval())
   nz_tangent_avals_in = tangent_avals_in.map2(
       nonzeros, lambda aval, nz: aval if nz else Zero(aval)).filter_with_mask(nonzeros)
-  avals_in = ft.pack_args(primal_avals_in, nz_tangent_avals_in)
+  avals_in = (primal_avals_in, nz_tangent_avals_in)
   dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
   def f_jvp_traceable(primals, nonzero_tangents):
     tangents = nonzero_tangents.unfilter()

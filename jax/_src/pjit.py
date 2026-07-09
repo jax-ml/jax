@@ -523,6 +523,9 @@ def _trace_for_jit(
 
   qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
 
+  in_type_args, in_type_kwarg_values = ft.unpack_args_kwarg_values(in_type)
+  in_type_kwargs = tuple(zip(sorted(kwargs), in_type_kwarg_values))
+
   elapsed_time_ctx = (
       dispatch.log_elapsed_time(
           "Finished tracing {fun_name} for jit in {elapsed_time:.9f} sec",
@@ -532,9 +535,11 @@ def _trace_for_jit(
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+        jaxpr, out_avals = pe.trace_to_jaxpr(
+            fun, in_type_args, dbg, qdd_token, kwargs=in_type_kwargs)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+      jaxpr, out_avals = pe.trace_to_jaxpr(
+          fun, in_type_args, dbg, qdd_token, kwargs=in_type_kwargs)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports

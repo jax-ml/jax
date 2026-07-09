@@ -93,7 +93,7 @@ def custom_root(f: Callable,
   guess_flat = ft.flatten(initial_guess)
   guess_avals = guess_flat.map(core.typeof)
   f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
-  args_avals = ft.pack(((guess_avals,),{}))
+  args_avals = (guess_avals,)
   f_jaxpr, out_avals = pe.trace_to_jaxpr(f, args_avals, f_debug)
   f_jaxpr, f_consts = pe.separate_consts(f_jaxpr)
 
@@ -115,7 +115,7 @@ def custom_root(f: Callable,
       tangent_solve, (initial_guess, initial_guess), {})
 
 
-  linearize_and_solve_avals = ft.pack(((guess_avals, guess_avals), {}))
+  linearize_and_solve_avals = (guess_avals, guess_avals)
   l_and_s_jaxpr, out_avals = pe.trace_to_jaxpr(
       linearize_and_solve, linearize_and_solve_avals, linearize_and_solve_dbg)
   l_and_s_jaxpr, l_and_s_consts = pe.separate_consts(l_and_s_jaxpr)
@@ -271,7 +271,7 @@ def custom_linear_solve(
   matvec_debug = api_util.debug_info("custom_linear_solve",
                                      matvec, (b,), {})
   # no auxiliary data assumed for matvec
-  args_avals = ft.pack(((b_avals,),{}))
+  args_avals = (b_avals,)
   matvec_jaxpr, out_avals = pe.trace_to_jaxpr(
       _shape_checked(matvec, "matvec", False), args_avals,
       matvec_debug)

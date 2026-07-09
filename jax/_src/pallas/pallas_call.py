@@ -794,9 +794,10 @@ def _trace_kernel_to_jaxpr(
 
   with grid_mapping.trace_env(), config._check_vma(False):
     with config.mutable_array_checks(False):
+      kernel_args, kernel_kwargs = ft.unpack_args_kwargs(kernel_avals)
       closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-          fun_with_transforms, kernel_avals,
-          debug_info)
+          fun_with_transforms, kernel_args,
+          debug_info, kwargs=tuple(sorted(kernel_kwargs.items())))
       consts = closed_jaxpr.consts
       jaxpr, _ = pe.dce_jaxpr(closed_jaxpr.jaxpr,
                               used_outputs=[True] * len(closed_jaxpr.jaxpr.outvars),

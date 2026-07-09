@@ -182,7 +182,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   # TODO(dougalm): promote away all weak types
-  args_avals = ft.pack(((x_avals,), {}))
+  args_avals = (x_avals,)
   jaxpr, y_avals = pe.trace_to_jaxpr(f, args_avals, dbg_body)
   jaxpr, consts = pe.separate_consts(jaxpr)
 
@@ -378,7 +378,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   x_avals = xs_avals.map(lambda aval: core.mapped_leading_aval(length, aval))
   def _create_jaxpr(carry_avals):
-    new_arg_avals = ft.pack(((carry_avals, x_avals), {}))
+    new_arg_avals = (carry_avals, x_avals)
     jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
     jaxpr, consts = pe.separate_consts(jaxpr)
     if not out_avals.unpackable or len(out_avals.unpack()) != 2:
@@ -1662,7 +1662,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       pass
 
   def _create_jaxpr(init_avals):
-    args_avals = ft.pack(((init_avals,), {}))
+    args_avals = (init_avals,)
     cond_jaxpr, cond_out_avals = pe.trace_to_jaxpr(cond_fun, args_avals, cond_dbg)
     body_jaxpr, body_out_avals = pe.trace_to_jaxpr(body_fun, args_avals, body_dbg)
     if not treedef_is_leaf(cond_out_avals.tree) or len(cond_jaxpr.out_avals) != 1:
