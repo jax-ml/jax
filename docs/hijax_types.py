@@ -334,17 +334,16 @@ except TypeError as e:
 # +
 class MatmulQ(VJPHiPrimitive):
   def __init__(self, x_aval, q_aval):
-    if not (isinstance(q_aval, QArrayTy) and len(q_aval.shape) == 2 and
-            x_aval.shape[-1] == q_aval.shape[0]):
+    if not (isinstance(q_aval, QArrayTy) and len(x_aval.shape) == 2 and
+            len(q_aval.shape) == 2 and x_aval.shape[1] == q_aval.shape[0]):
       raise TypeError(f'bad matmul_q operand types: {x_aval} @ {q_aval}')
     self.in_avals = (x_aval, q_aval)
     x_spec, q_spec = x_aval.sharding.spec, q_aval.sharding.spec
-    if x_spec[-1] is not None or q_spec[0] is not None:
+    if x_spec[1] is not None or q_spec[0] is not None:
       raise TypeError('matmul_q requires unsharded contraction axes, got '
                       f'{x_aval} @ {q_aval}')
-    out_sharding = x_aval.sharding.update(
-        spec=jax.P(*x_spec[:-1], q_spec[-1]))
-    self.out_aval = ShapedArray((*x_aval.shape[:-1], q_aval.shape[-1]),
+    out_sharding = x_aval.sharding.update(spec=jax.P(x_spec[0], q_spec[1]))
+    self.out_aval = ShapedArray((x_aval.shape[0], q_aval.shape[1]),
                                 jnp.dtype('float32'), sharding=out_sharding)
     self.params = {}
     super().__init__()
@@ -521,8 +520,8 @@ class QArraySpec(MappingSpec):
 # -
 
 # (Specs can be as rich as your type demands. A tuple-like hi type might use
-# a spec carrying one axis per component; see the `TupSpec` example in
-# `tests/hijax_test.py`.)
+# a spec carrying one axis per component; see the tuple example at the end
+# of this document.)
 #
 # On the type, we implement `dec_rank` and `inc_rank`, the hi type analogues
 # of "remove the mapped axis" and "add the mapped axis." They take the axis
@@ -845,9 +844,353 @@ qrows_global = quantize(rows)
 assert (qrows.qvalue == qrows_global.qvalue).all()
 assert (qrows.scale == qrows_global.scale).all()
 
+
 # (For autodiff *through* a `shard_map`, there's a bit more to implement:
 # `to_tangent_spec` and `to_ct_spec` on the spec type, and `nospec` on the
 # hi type, which is used to shard autodiff residuals.)
+#
+# ## Additional examples
+#
+# The recipe is always the same — a value class, a `HiType` with the
+# `lo_ty`/`lower_val`/`raise_val` lowering triple, and primitives whose type
+# signatures mention the new type — so further examples can be read quickly.
+#
+# ### Rank-1 arrays
+#
+# A rank-1 array represents an `m × n` matrix as an outer product of two
+# vectors, `col : f32[m]` and `row : f32[n]`. The point of the
+# representation is to never materialize the `m × n` product: ops consume
+# the factors directly. (A general low-rank type, with `f32[m, r]` and
+# `f32[r, n]` factors, is more of the same.)
+
+# +
+@dataclass(frozen=True)
+class Rank1:
+  col: jax.Array   # f32[m]
+  row: jax.Array   # f32[n]
+
+@dataclass(frozen=True)
+class Rank1Ty(HiType):
+  shape: tuple[int, int]   # (m, n), the dense shape represented
+  sharding: NamedSharding  # sharding of the dense shape; the factors' derive
+
+  def lo_ty(self):
+    (m, n), spec = self.shape, self.sharding.spec
+    return [ShapedArray((m,), jnp.dtype('float32'),
+                        sharding=self.sharding.update(spec=jax.P(spec[0]))),
+            ShapedArray((n,), jnp.dtype('float32'),
+                        sharding=self.sharding.update(spec=jax.P(spec[1])))]
+  def lower_val(self, r1):
+    return [r1.col, r1.row]
+  def raise_val(self, col, row):
+    return Rank1(col, row)
+
+  # rank-1 matrices aren't closed under addition, so tangents are dense
+  def to_tangent_aval(self):
+    return ShapedArray(self.shape, jnp.dtype('float32'),
+                       sharding=self.sharding)
+
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
+    dims = [str(d) if p is None else f'{d}@{p}'
+            for d, p in zip(self.shape, self.sharding.spec)]
+    return f'r1[{",".join(dims)}]'
+  __repr__ = str_short
+
+def typeof_rank1(r1):
+  col_s, row_s = jax.typeof(r1.col).sharding, jax.typeof(r1.row).sharding
+  sharding = col_s.update(spec=jax.P(col_s.spec[0], row_s.spec[0]))
+  return Rank1Ty((r1.col.shape[0], r1.row.shape[0]), sharding)
+
+register_hitype(Rank1, typeof_rank1)
+
+
+# -
+
+# The type records the dense shape it represents and prints as e.g.
+# `r1[6,5]`. Note the tangent-type choice, which differs from `QArrayTy`'s
+# for a different reason: the sum of two rank-1 matrices is in general
+# rank 2, so rank-1 matrices aren't closed under addition and can't serve
+# as their own tangent space. Perturbations leave the manifold, and
+# tangents and cotangents are dense. The sharding story is the same as
+# before, with the field consumed in `lo_ty`: the dense row axis is carried
+# by `col` and the dense column axis by `row`.
+#
+# Unlike `QArray`, whose values were only ever created inside `quantize`,
+# here construction from factors is itself a primitive — and there's an
+# accessor primitive too, so that *rules* (which are ordinary traced code)
+# can get at the factors without touching container attributes:
+
+# +
+class Outer(VJPHiPrimitive):
+  def __init__(self, col_aval, row_aval):
+    if not (len(col_aval.shape) == 1 and len(row_aval.shape) == 1):
+      raise TypeError(f'bad outer factor types: {col_aval}, {row_aval}')
+    sharding = col_aval.sharding.update(
+        spec=jax.P(col_aval.sharding.spec[0], row_aval.sharding.spec[0]))
+    self.in_avals = (col_aval, row_aval)
+    self.out_aval = Rank1Ty((col_aval.shape[0], row_aval.shape[0]), sharding)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, col, row):
+    return Rank1(col, row)
+
+  def vjp_fwd(self, nzs_in, col, row):
+    return self(col, row), (col, row)
+
+  def vjp_bwd_retval(self, res, g):   # g is dense, f32[m, n]
+    col, row = res
+    return g @ row, col @ g
+
+class Factors(VJPHiPrimitive):
+  def __init__(self, r1_aval):
+    self.in_avals = (r1_aval,)
+    self.out_aval = tuple(r1_aval.lo_ty())  # the factor types are the lo types
+    self.params = {}
+    super().__init__()
+
+  def expand(self, r1):
+    return (r1.col, r1.row)
+
+class MatmulR1(VJPHiPrimitive):
+  def __init__(self, x_aval, r1_aval):
+    if not (isinstance(r1_aval, Rank1Ty) and len(x_aval.shape) == 2 and
+            x_aval.shape[1] == r1_aval.shape[0]):
+      raise TypeError(f'bad matmul_r1 operand types: {x_aval} @ {r1_aval}')
+    self.in_avals = (x_aval, r1_aval)
+    out_sharding = x_aval.sharding.update(
+        spec=jax.P(x_aval.sharding.spec[0], r1_aval.sharding.spec[1]))
+    self.out_aval = ShapedArray((x_aval.shape[0], r1_aval.shape[1]),
+                                jnp.dtype('float32'), sharding=out_sharding)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x, r1):
+    return jnp.outer(x @ r1.col, r1.row)   # never materialize col ⊗ row
+
+  def vjp_fwd(self, nzs_in, x, r1):
+    col, row = factors(r1)  # rules are traced code: primitives, not attributes
+    return self(x, r1), (x, col, row)
+
+  def vjp_bwd_retval(self, res, g):
+    x, col, row = res
+    return jnp.outer(g @ row, col), x.T @ g
+
+def outer(col, row):
+  return Outer(jax.typeof(col), jax.typeof(row))(col, row)
+
+def factors(r1):
+  return Factors(jax.typeof(r1))(r1)
+
+def matmul_r1(x, r1):
+  return MatmulR1(jax.typeof(x), jax.typeof(r1))(x, r1)
+
+
+# -
+
+# (Note `Factors` declares its output type as a *tuple* of types —
+# `in_avals` entries and `out_aval` can be pytrees of types — and that it
+# carries no autodiff rules at all, since we only apply it in forward
+# passes; rules are only needed for the transformations you actually use.
+# Note also `MatmulR1`'s backward rule computes the dense operand's
+# cotangent as an outer product, exploiting the representation the same way
+# `expand` does.)
+
+# +
+col = jnp.arange(6., dtype='float32') / 6.
+row = jnp.arange(5., dtype='float32') / 5.
+r1 = outer(col, row)
+print(jax.typeof(r1))
+
+acts = jnp.ones((3, 6), 'float32')
+print(jnp.max(jnp.abs(matmul_r1(acts, r1) - acts @ jnp.outer(col, row))))
+# -
+
+# Jaxprs, `jit`, and autodiff all work as before. The gradient with respect
+# to a rank-1 operand is dense, as the tangent type dictates, while
+# gradients chained through the constructor land back on the factors:
+
+jax.jit(matmul_r1).trace(acts, r1).jaxpr
+
+
+# +
+def r1_loss(x, r1):
+  return jnp.sum(matmul_r1(x, r1) ** 2)
+
+print(jax.typeof(jax.grad(r1_loss, argnums=1)(acts, r1)))
+
+def factor_loss(col, row):
+  return jnp.sum(matmul_r1(acts, outer(col, row)) ** 2)
+
+g_col, g_row = jax.grad(factor_loss, argnums=(0, 1))(col, row)
+print(jax.typeof(g_col), jax.typeof(g_row))
+# -
+
+# And the typing rules propagate shardings, just like `QArrayTy`'s:
+
+print(jax.typeof(outer(jax.device_put(jnp.zeros(8, 'float32'), jax.P('i')),
+                       row)))
+
+# We stopped here, but `vmap`, `scan`, and `shard_map` support would follow
+# the same recipes as in the sections above: `dec_rank`/`inc_rank` and a
+# mapping spec, `leading_axis_spec`, and `shard`/`unshard` with an `HiPspec`
+# partition spec type.
+#
+# ### Tuples
+#
+# Our last example is a generic container: a tuple whose elements are any
+# JAX values. Where `QArrayTy` and `Rank1Ty` had a fixed component
+# structure, `TupTy` is parameterized by its component *types* — and every
+# method delegates to them:
+
+# +
+import itertools
+
+@dataclass(frozen=True)
+class HiTup:
+  elts: tuple
+
+@dataclass(frozen=True)
+class TupTy(HiType):
+  tys: tuple  # component types: array types, or other hi types
+
+  # lowering delegates to the component types
+  def lo_ty(self):
+    return [lo for ty in self.tys for lo in ty.lo_ty()]
+  def lower_val(self, tup):
+    return [lo for ty, elt in zip(self.tys, tup.elts)
+            for lo in ty.lower_val(elt)]
+  def raise_val(self, *los):
+    los = iter(los)
+    return HiTup(tuple(ty.raise_val(*itertools.islice(los, len(ty.lo_ty())))
+                       for ty in self.tys))
+
+  # so does the tangent type
+  def to_tangent_aval(self):
+    return TupTy(tuple(ty.to_tangent_aval() for ty in self.tys))
+
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
+    return ('Tup{' +
+            ','.join(t.str_short(short_dtypes, mesh_axis_types)
+                     for t in self.tys) + '}')
+  __repr__ = str_short
+
+register_hitype(HiTup, lambda t: TupTy(tuple(map(jax.typeof, t.elts))))
+
+
+# -
+
+# Two things fall out of the delegation for free. First, elements can
+# themselves be hi types — tuples of tuples, or a tuple holding a `QArray` —
+# since `lo_ty` and friends just recurse. Second, there's no `sharding`
+# field this time: the stored component types carry their own shardings, a
+# third way of handling sharding-in-types alongside `QArrayTy`'s single
+# field and `Rank1Ty`'s dense-shape spec.
+#
+# The constructor and accessor primitives are familiar from the rank-1
+# example. One new ingredient: the element index is a *static parameter*,
+# passed via `params` and available as `self.idx`. And since each element
+# can be batched along its own axis (or not at all), the mapping spec
+# carries one entry per component:
+
+# +
+@dataclass(frozen=True)
+class TupSpec(MappingSpec):
+  val: tuple  # one axis entry per component
+
+def tup_dec_rank(self, size, spec):
+  return TupTy(tuple(ty.dec_rank(size, s)
+                     for ty, s in zip(self.tys, spec.val)))
+
+def tup_inc_rank(self, size, spec):
+  return TupTy(tuple(ty.inc_rank(size, s)
+                     for ty, s in zip(self.tys, spec.val)))
+
+TupTy.dec_rank = tup_dec_rank
+TupTy.inc_rank = tup_inc_rank
+
+class MakeTup(VJPHiPrimitive):
+  def __init__(self, elt_avals):
+    self.in_avals = tuple(elt_avals)
+    self.out_aval = TupTy(tuple(elt_avals))
+    self.params = {}
+    super().__init__()
+
+  def expand(self, *elts):
+    return HiTup(elts)
+
+  def batch(self, axis_data, args, in_dims):
+    return make_tup(*args), TupSpec(tuple(in_dims))
+
+class GetTupElt(VJPHiPrimitive):
+  def __init__(self, tup_aval, idx):
+    self.in_avals = (tup_aval,)
+    self.out_aval = tup_aval.tys[idx]
+    self.params = dict(idx=idx)
+    super().__init__()
+
+  def expand(self, tup):
+    return tup.elts[self.idx]
+
+  def batch(self, axis_data, args, in_dims):
+    tup, = args
+    spec, = in_dims
+    if spec is None:
+      return get_tuple_element(tup, self.idx), None
+    return get_tuple_element(tup, self.idx), spec.val[self.idx]
+
+def make_tup(*elts):
+  return MakeTup(map(jax.typeof, elts))(*elts)
+
+def get_tuple_element(tup, idx):
+  return GetTupElt(jax.typeof(tup), idx)(tup)
+
+
+# -
+
+# (Note `GetTupElt`'s batch rule handles unbatched inputs — hi primitive
+# batch rules are invoked even when no argument is batched, so `in_dims`
+# entries can be `None`.)
+#
+# Tuples work, they nest, and they hold other hi types:
+
+# +
+tup = make_tup(jnp.arange(3.), 5.)
+print(jax.typeof(tup))
+print(get_tuple_element(tup, 1))
+
+nested = make_tup(make_tup(1., 2.), jnp.arange(2.))
+print(jax.typeof(nested))
+print(jax.jit(lambda t: get_tuple_element(get_tuple_element(t, 0), 1))(nested))
+
+print(jax.typeof(make_tup(qx, 3.)))  # a quantized array element
+
+
+# -
+
+# The per-component mapping spec is the payoff under `vmap`: each element
+# gets its own `in_axes`/`out_axes` entry, visible in the types. Here the
+# first element is mapped on the way in, and only the second on the way
+# out:
+
+# +
+def swap(t):
+  a, b = get_tuple_element(t, 0), get_tuple_element(t, 1)
+  return make_tup(b, a)
+
+out = jax.vmap(swap, in_axes=TupSpec((0, None)), out_axes=TupSpec((None, 0)),
+               axis_size=3)(tup)
+print(jax.typeof(tup), '->', jax.typeof(out))
+# -
+
+# And since the component types carry their own shardings, sharding-in-types
+# needs nothing extra at all:
+
+print(jax.typeof(make_tup(rows, jnp.float32(1.))))
+
+# For autodiff rules on these primitives, and `scan` and `shard_map`
+# support (via a per-component `HiPspec`), see the `TupTy` example in
+# `tests/hijax_test.py`.
 #
 # ## What we haven't covered
 #
