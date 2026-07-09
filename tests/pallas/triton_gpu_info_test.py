@@ -75,6 +75,8 @@ class GpuInfoTest(jtu.JaxTestCase):
 
   def test_get_gpu_info_given_gpu_version(self):
     info = plgpu.get_gpu_info()
+    if info.gpu_version is None:
+      self.skipTest("device has a free-form arch with no GpuVersion")
     info_version = plgpu.get_gpu_info_from_version(info.gpu_version)
     self.assertEqual(info, info_version)
 
@@ -89,25 +91,33 @@ class GpuInfoTest(jtu.JaxTestCase):
     ("NVIDIA H100 NVL", GpuVersion.H100),
     ("NVIDIA RTX 123", None),
     ("UNKNOWN", None),
-    ("gfx908", GpuVersion.GFX908),
-    ("gfx90a", GpuVersion.GFX90A),
-    ("gfx90a:sramecc+:xnack-", GpuVersion.GFX90A),
-    ("gfx942", GpuVersion.GFX942),
-    ("gfx942:sramecc+:xnack-", GpuVersion.GFX942),
-    ("gfx950", GpuVersion.GFX950),
-    ("gfx950:sramecc+:xnack-", GpuVersion.GFX950),
-    ("gfx1030", GpuVersion.GFX1030),
-    ("gfx1100", GpuVersion.GFX1100),
-    ("gfx1101", GpuVersion.GFX1101),
-    ("gfx1103", GpuVersion.GFX1103),
-    ("gfx1150", GpuVersion.GFX1150),
-    ("gfx1151", GpuVersion.GFX1151),
-    ("gfx1200", GpuVersion.GFX1200),
-    ("gfx1201", GpuVersion.GFX1201),
+    ("gfx908", None),
+    ("gfx90a:sramecc+:xnack-", None),
+    ("gfx942", None),
+    ("gfx950", None),
+    ("AMD Instinct MI355X", None),
   ])
   def test_gpu_version_from_device_kind(self, device_kind, expected):
     info = gpu_info.gpu_version_from_device_kind(device_kind)
     self.assertEqual(info, expected)
+
+  @parameterized.parameters([
+    "gfx942",
+    "gfx950",
+    "gfx950:sramecc+:xnack-",
+    "gfx1201",
+  ])
+  def test_gfx_device_kind_used_as_arch(self, device_kind):
+    abstract_device = jax.sharding.AbstractDevice(
+        device_kind=device_kind, num_cores=None, platform="gpu")
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (1,), ("x",), (jax.sharding.AxisType.Explicit,),
+        abstract_device=abstract_device)
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      info = plgpu.get_gpu_info()
+      self.assertIsNone(info.gpu_version)
+      self.assertEqual(info.arch_name, device_kind)
+      self.assertTrue(plgpu.is_gpu_device())
 
 
 if __name__ == "__main__":
