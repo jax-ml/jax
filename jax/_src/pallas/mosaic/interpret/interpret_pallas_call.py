@@ -1326,7 +1326,7 @@ def _interpret_jaxpr(
         impl_jaxpr = jax.make_jaxpr(functools.partial(impl, **eqn.params))(
             *invals)
         token, out = _interpret_jaxpr(
-            impl_jaxpr.jaxpr, *impl_jaxpr.consts, *invals, ctx=ctx, token=token
+            impl_jaxpr, *impl_jaxpr.consts, *invals, ctx=ctx, token=token
         )
         if not prim.multiple_results:
           out = out[0]
@@ -1407,7 +1407,7 @@ def _interpret_jaxpr(
         invals = deferred_invals()
         token, out = lax.switch(
             invals[0],
-            [_make_branch(branch_jaxpr.jaxpr)
+            [_make_branch(branch_jaxpr)
              for branch_jaxpr in eqn.params['branches']],
             token, *invals[1:])
 
@@ -1418,7 +1418,7 @@ def _interpret_jaxpr(
         def _scan_body(c, a):
           token, c = c
           token, ret = _interpret(
-              eqn.params['jaxpr'].jaxpr, *consts, *c, *a, token=token)
+              eqn.params['jaxpr'], *consts, *c, *a, token=token)
           c, b = (list(g) for g in eqn.params['ft_out'].update(ret).unpack())
           return (token, c), b
         (token, carry), out = lax.scan(
@@ -1431,21 +1431,21 @@ def _interpret_jaxpr(
             deferred_invals(),
             [eqn.params['cond_nconsts'], eqn.params['body_nconsts']],
         )
-        token, first_cond = _interpret(eqn.params['cond_jaxpr'].jaxpr,
+        token, first_cond = _interpret(eqn.params['cond_jaxpr'],
                                        *cond_consts, *init_val, token=token)
         def _body(val):
           token, val, _ = val
           token, val = _interpret(
-              eqn.params['body_jaxpr'].jaxpr, *body_consts, *val, token=token)
+              eqn.params['body_jaxpr'], *body_consts, *val, token=token)
           token, cond = _interpret(
-              eqn.params['cond_jaxpr'].jaxpr, *cond_consts, *val, token=token)
+              eqn.params['cond_jaxpr'], *cond_consts, *val, token=token)
           return token, val, cond[0]
         token, out, _ = lax.while_loop(
             lambda args: args[2], _body, (token, init_val, first_cond[0]))
 
       elif prim is pjit.jit_p:
         invals = deferred_invals()
-        token, out = _interpret(eqn.params['jaxpr'].jaxpr,
+        token, out = _interpret(eqn.params['jaxpr'],
                                 *eqn.params['jaxpr'].consts,
                                 *invals, token=token)
 
@@ -1712,7 +1712,7 @@ def _interpret_jaxpr(
 def _compute_start_indices(block_mapping, loop_idx, *args, ctx, token):
   jaxpr = block_mapping.index_map_jaxpr
   token, block_indices = _interpret_jaxpr(
-      jaxpr.jaxpr,
+      jaxpr,
       *jaxpr.consts,
       *loop_idx,
       *args,

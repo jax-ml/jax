@@ -761,7 +761,7 @@ class BlockMapping:
   # After all, it's just indexing out singleton dimensions.
   block_shape: tuple[BlockDim, ...]
   transformed_block_aval: state.AbstractRef
-  index_map_jaxpr: jax_core.ClosedJaxpr
+  index_map_jaxpr: jax_core.Jaxpr
   index_map_out_tree: tree_util.PyTreeDef
   array_aval: jax_core.ShapedArray  # The whole array
   origin: OriginStr
@@ -841,7 +841,7 @@ class BlockMapping:
     for b, s in zip(self.block_shape, self.array_aval.shape):
       if _get_block_dim_size(b) != s:
         return False
-    for atom in self.index_map_jaxpr.jaxpr.outvars:
+    for atom in self.index_map_jaxpr.outvars:
       if not (isinstance(atom, jax_core.Literal) and atom.val == 0):
         return False
     return True
@@ -1506,7 +1506,7 @@ def _core_map_is_high(*avals, jaxpr, **params):
 core_map_p.is_high = _core_map_is_high
 
 def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
-  closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
+  closed_hi_jaxpr = jaxpr.with_consts(consts)
   with (
       tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
       jax_core.extend_axis_env_nd(mesh.shape.items()),
@@ -1515,7 +1515,7 @@ def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
   assert not closed_lo_jaxpr.is_high
   return core_map_p.bind(
       *closed_lo_jaxpr.consts,
-      jaxpr=closed_lo_jaxpr.jaxpr,
+      jaxpr=closed_lo_jaxpr,
       mesh=mesh,
       **params,
   )
@@ -1578,11 +1578,11 @@ def core_map(
           f" return None. It returns a PyTree: {out_avals.tree}."
       )
     if debug:
-      print(f"core_map jaxpr: {jaxpr.jaxpr}")
+      print(f"core_map jaxpr: {jaxpr}")
 
     out = core_map_p.bind(
         *jaxpr.consts,
-        jaxpr=jaxpr.jaxpr,
+        jaxpr=jaxpr,
         debug_info=debug_info,
         mesh=mesh,
         compiler_params=compiler_params,

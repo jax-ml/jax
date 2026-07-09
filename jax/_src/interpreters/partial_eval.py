@@ -38,7 +38,7 @@ from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.core import (
     Trace, Tracer, TraceTag, Jaxpr, Literal, AbstractValue,
-    ClosedJaxpr, new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
+    new_jaxpr_eqn, Var, DropVar, Atom, JaxprEqn, Primitive,
     get_referent, JaxprEqnContext, typeof)
 from jax._src.lib import _jax
 from jax._src.source_info_util import SourceInfo
@@ -257,8 +257,6 @@ class JaxprTrace(Trace):
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
     num_new_args = len(res_tracers) + len(env_tracers)
     new_jaxpr = convert_constvars_jaxpr(jaxpr)
-    if isinstance(primitive, core.ClosedCallPrimitive):
-      new_jaxpr = close_jaxpr(new_jaxpr)
     staged_params = dict(params, call_jaxpr=new_jaxpr)
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
@@ -309,7 +307,7 @@ class JaxprTrace(Trace):
     env_tracers = map(self.to_jaxpr_tracer, env)
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
-    closed_jaxpr = close_jaxpr(convert_constvars_jaxpr(jaxpr))
+    closed_jaxpr = convert_constvars_jaxpr(jaxpr)
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
@@ -709,9 +707,9 @@ def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
   return jaxpr.replace(constvars=constvars, invars=[*envvars, *jaxpr.invars])
 
 @weakref_lru_cache
-def separate_consts(jaxpr: ClosedJaxpr) -> tuple[ClosedJaxpr, list[Any]]:
+def separate_consts(jaxpr: Jaxpr) -> tuple[Jaxpr, list[Any]]:
   """Moves the constvars to the start of invars and returns the consts explicitly."""
-  return close_jaxpr(convert_constvars_jaxpr(jaxpr.jaxpr)), jaxpr.consts
+  return convert_constvars_jaxpr(jaxpr), jaxpr.consts
 
 @weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
@@ -746,9 +744,9 @@ def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
 
 
 def partial_eval_jaxpr_nounits(
-    jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
+    jaxpr: Jaxpr, unknowns: Sequence[bool],
     instantiate: bool | Sequence[bool],
-  ) -> tuple[ClosedJaxpr, ClosedJaxpr, list[bool], list[AbstractValue]]:
+  ) -> tuple[Jaxpr, Jaxpr, list[bool], list[AbstractValue]]:
   """Unzip a jaxpr in two by data dependence into 'known' and 'unknown' parts.
 
   That is, given a jaxpr and a sequence of booleans indicating which jaxpr
@@ -809,19 +807,19 @@ def partial_eval_jaxpr_nounits(
   return _partial_eval_jaxpr_nounits(jaxpr, tuple(unknowns), instantiate, False)[:-1]
 
 def partial_eval_jaxpr_nounits_fwd(
-    jaxpr: ClosedJaxpr, unknowns: Sequence[bool],
+    jaxpr: Jaxpr, unknowns: Sequence[bool],
     instantiate: bool | Sequence[bool],
     fwd: bool | Sequence[bool] = True,
-) -> tuple[ClosedJaxpr, ClosedJaxpr, list[bool], list[AbstractValue], list[int | None]]:
+) -> tuple[Jaxpr, Jaxpr, list[bool], list[AbstractValue], list[int | None]]:
   instantiate = tuple(instantiate) if isinstance(instantiate, list) else instantiate
   fwd = tuple(fwd) if isinstance(fwd, list) else fwd
   return _partial_eval_jaxpr_nounits(jaxpr, tuple(unknowns), instantiate, fwd)
 
 @weakref_lru_cache
 def _partial_eval_jaxpr_nounits(
-    jaxpr: ClosedJaxpr, in_unknowns: Sequence[bool],
+    jaxpr: Jaxpr, in_unknowns: Sequence[bool],
     instantiate: bool | Sequence[bool], fwd: bool | Sequence[bool]):
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info)
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.debug_info)
 
   cell = []
   def fun(*known_vals_in):
@@ -831,7 +829,7 @@ def _partial_eval_jaxpr_nounits(
                 else PartialVal.known(next(known_vals_in_)) for uk in in_unknowns]
     assert next(known_vals_in_, None) is next(unknown_avals, None) is None
     jaxpr_unknown_, (fwds, out_pvals, residuals, ()) = trace_to_subjaxpr_nounits_fwd(
-        f, TraceTag(), jaxpr.jaxpr.debug_info, instantiate).call_wrapped(in_pvals)
+        f, TraceTag(), jaxpr.debug_info, instantiate).call_wrapped(in_pvals)
     jaxpr_unknown = convert_constvars_jaxpr(jaxpr_unknown_)
     out_unknowns = [not pval.is_known() for pval in out_pvals]
     if type(fwd) is bool and not fwd:
@@ -863,8 +861,8 @@ def _partial_eval_jaxpr_nounits(
     core.check_jaxpr(jaxpr_known)
     core.check_jaxpr(jaxpr_unknown)
 
-  closed_jaxpr_known = ClosedJaxpr(jaxpr_known, consts_known)
-  closed_jaxpr_unknown = ClosedJaxpr(jaxpr_unknown, ())
+  closed_jaxpr_known = jaxpr_known.with_consts(consts_known)
+  closed_jaxpr_unknown = jaxpr_unknown
   return closed_jaxpr_known, closed_jaxpr_unknown, out_unknowns, res_avals, fwds
 
 def _include_consts_in_fwds(consts, fwds, residuals):
@@ -1199,9 +1197,9 @@ def closed_call_partial_eval_custom_rule(
       core.eqn_effects(jaxpr_staged, [*res_val_vars, *res_ref_binders, *ins_staged]),
       eqn.source_info, eqn.ctx)
   assert len(eqn_staged.invars) == len(jaxpr_staged.in_avals)
-  assert len(ins_known) + len(res_ref_binders) == len(jaxpr_known.jaxpr.invars)
-  assert len(ins_staged) + len(res_ref_binders) + len(res_val_vars) == len(jaxpr_staged.jaxpr.invars)
-  assert len(out_binders_known) + len(res_val_binders) == len(jaxpr_known.jaxpr.outvars)
+  assert len(ins_known) + len(res_ref_binders) == len(jaxpr_known.invars)
+  assert len(ins_staged) + len(res_ref_binders) + len(res_val_vars) == len(jaxpr_staged.invars)
+  assert len(out_binders_known) + len(res_val_binders) == len(jaxpr_known.outvars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is Var and not inst]
   new_vars = [*new_inst, *res_val_vars, *res_ref_binders]
@@ -1209,14 +1207,14 @@ def closed_call_partial_eval_custom_rule(
 
 @weakref_lru_cache
 def _closed_jaxpr_partial_eval_custom_cached(
-    jaxpr: ClosedJaxpr, unks_in: tuple[bool, ...], inst_in: tuple[bool, ...],
+    jaxpr: Jaxpr, unks_in: tuple[bool, ...], inst_in: tuple[bool, ...],
     disallowed_input_forwards: tuple[bool, ...],
     disallowed_output_forwards: tuple[bool, ...],
     saveable: Callable
-    ) -> tuple[ClosedJaxpr, ClosedJaxpr, Sequence[bool], Sequence[bool],
+    ) -> tuple[Jaxpr, Jaxpr, Sequence[bool], Sequence[bool],
                int, int, Sequence[int | None], Sequence[int | None]]:
   jaxpr_known_, jaxpr_staged_, unks_out, inst_out, num_res_val, num_res_ref = \
-      partial_eval_jaxpr_stateful(jaxpr.jaxpr, unks_in, inst_in,
+      partial_eval_jaxpr_stateful(jaxpr, unks_in, inst_in,
                                   False, False, saveable)
 
   num_out_primals = len(jaxpr_known_.outvars) - num_res_val
@@ -1238,9 +1236,8 @@ def _closed_jaxpr_partial_eval_custom_cached(
   keep = [f1 is f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
   jaxpr_known_ = prune_jaxpr_outputs(jaxpr_known_, [True] * num_out_primals + keep)
 
-  jaxpr_known = ClosedJaxpr(jaxpr_known_, jaxpr.consts)
-  jaxpr_staged = ClosedJaxpr(jaxpr_staged_, jaxpr.consts)
-  return jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res_ref, num_res_val, in_fwd, out_fwd
+  return (jaxpr_known_, jaxpr_staged_, unks_out, inst_out, num_res_ref,
+          num_res_val, in_fwd, out_fwd)
 
 partial_eval_jaxpr_custom_rules[core.call_p] = \
     partial(call_partial_eval_custom_rule, 'call_jaxpr',
@@ -1280,17 +1277,9 @@ def _prune_jaxpr_outputs(jaxpr: Jaxpr, used_outputs: tuple[bool, ...]) -> Jaxpr:
   return new_jaxpr
 _prune_jaxpr_outputs_cached = weakref_lru_cache(_prune_jaxpr_outputs)
 
-def prune_closed_jaxpr_outputs(
-    jaxpr: ClosedJaxpr, used_outputs: Sequence[bool]
-) -> ClosedJaxpr:
-  return _prune_closed_jaxpr_outputs(jaxpr, tuple(used_outputs))
-
-@partial(weakref_lru_cache, trace_context_in_key=False)
-def _prune_closed_jaxpr_outputs(
-    jaxpr: ClosedJaxpr, used_outputs: tuple[bool, ...]
-) -> ClosedJaxpr:
-  return ClosedJaxpr(_prune_jaxpr_outputs(jaxpr.jaxpr, used_outputs),
-                     jaxpr.consts)
+# Since the Jaxpr/Jaxpr merge this is the same as prune_jaxpr_outputs
+# (attached consts are preserved by Jaxpr.replace).
+prune_closed_jaxpr_outputs = prune_jaxpr_outputs
 
 
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
@@ -1324,6 +1313,9 @@ def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
   used_consts, used_inputs = split_list(used_inputs_, [len(jaxpr.constvars)])
   if sum(used_consts):
     new_jaxpr = convert_invars_to_constvars(new_jaxpr, sum(used_consts))
+    if jaxpr.consts:
+      new_jaxpr = new_jaxpr.with_consts(
+          [c for c, used in zip(jaxpr.consts, used_consts) if used])
   return new_jaxpr, used_consts, used_inputs
 
 
@@ -1425,10 +1417,9 @@ dce_rules[core.call_p] = dce_jaxpr_call_rule
 
 @weakref_lru_cache
 def _cached_closed_call_dce(jaxpr_, used_outputs: tuple[bool, ...]
-                            ) -> tuple[ClosedJaxpr, list[bool]]:
-  jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
-  new_jaxpr, used_inputs = dce_jaxpr(jaxpr, used_outputs)
-  return ClosedJaxpr(new_jaxpr, consts), used_inputs
+                            ) -> tuple[Jaxpr, list[bool]]:
+  # dce_jaxpr preserves attached consts (constvars are never pruned).
+  return dce_jaxpr(jaxpr_, used_outputs)
 
 def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
                                ) -> tuple[list[bool], JaxprEqn | None]:
@@ -1447,48 +1438,44 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
   return used_inputs, new_eqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
-def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
-  # Now that Jaxpr and ClosedJaxpr are merged, a jaxpr whose consts are all
+def close_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
+  # Now that Jaxpr and Jaxpr are merged, a jaxpr whose consts are all
   # attached (in particular one with no constvars) is already closed.
   assert len(jaxpr.consts) == len(jaxpr.constvars)
   return jaxpr
 
-def move_invars_right(jaxpr: ClosedJaxpr, to_move: Sequence[bool]):
+def move_invars_right(jaxpr: Jaxpr, to_move: Sequence[bool]):
   return _move_invars_right(jaxpr, tuple(to_move))
 
 @weakref_lru_cache
-def _move_invars_right(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]):
-  invars, rest = split_list(jaxpr.jaxpr.invars, [len(to_move)])
+def _move_invars_right(jaxpr: Jaxpr, to_move: tuple[bool, ...]):
+  invars, rest = split_list(jaxpr.invars, [len(to_move)])
   left_invars, right_invars = partition_list(to_move, invars)
   new_invars = [*left_invars, *right_invars, *rest]
-  new_jaxpr = jaxpr.jaxpr.replace(invars=new_invars)
-  return jaxpr.replace(jaxpr=new_jaxpr)
+  return jaxpr.replace(invars=new_invars)
 
-def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
-                          ) -> ClosedJaxpr:
+def move_binders_to_front(closed_jaxpr: Jaxpr, to_move: Sequence[bool]
+                          ) -> Jaxpr:
   return _move_binders_to_front(closed_jaxpr, tuple(to_move))
 
 @weakref_lru_cache
-def _move_binders_to_front(jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
-                           ) -> ClosedJaxpr:
+def _move_binders_to_front(jaxpr: Jaxpr, to_move: tuple[bool, ...]
+                           ) -> Jaxpr:
   assert len(jaxpr.in_avals) == len(to_move)
-  constvars, invars = jaxpr.jaxpr.constvars, jaxpr.jaxpr.invars
-  new_invars = _move_to_front(invars, to_move)
-  if jaxpr.jaxpr.debug_info.arg_names is None:
+  new_invars = _move_to_front(jaxpr.invars, to_move)
+  if jaxpr.debug_info.arg_names is None:
     new_arg_names = None
   else:
-    new_arg_names = tuple(_move_to_front(jaxpr.jaxpr.debug_info.arg_names, to_move))
-  dbg = jaxpr.jaxpr.debug_info._replace(arg_names=new_arg_names)
-  new_jaxpr = jaxpr.jaxpr.replace(
-      constvars=constvars, invars=new_invars, debug_info=dbg)
-  return ClosedJaxpr(new_jaxpr, jaxpr.consts)
+    new_arg_names = tuple(_move_to_front(jaxpr.debug_info.arg_names, to_move))
+  dbg = jaxpr.debug_info._replace(arg_names=new_arg_names)
+  return jaxpr.replace(invars=new_invars, debug_info=dbg)
 
 def _move_to_front(lst: Sequence, to_move: Sequence[bool]) -> Sequence:
   return ([elt for elt, move in zip(lst, to_move) if move] +
           [elt for elt, move in zip(lst, to_move) if not move])
 
-def move_binders_to_back(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
-                         ) -> ClosedJaxpr:
+def move_binders_to_back(closed_jaxpr: Jaxpr, to_move: Sequence[bool]
+                         ) -> Jaxpr:
   assert len(to_move) <= len(closed_jaxpr.invars)
   to_move = [*to_move] + [False] * (len(closed_jaxpr.invars) - len(to_move))
   return move_binders_to_front(closed_jaxpr, map(op.not_, to_move))
@@ -1985,8 +1972,6 @@ class DynamicJaxprTrace(core.Trace):
 
     new_jaxpr = convert_constvars_jaxpr(jaxpr)
     self.frame.is_high |= new_jaxpr.is_high
-    if isinstance(call_primitive, core.ClosedCallPrimitive):
-      new_jaxpr = close_jaxpr(new_jaxpr)
     new_params = dict(params, call_jaxpr=new_jaxpr)
     update_params = call_param_updaters.get(call_primitive)
     if update_params:
@@ -2017,7 +2002,7 @@ class DynamicJaxprTrace(core.Trace):
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
-    closed_fun_jaxpr = ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
+    closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
 
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
     @_memoize
@@ -2062,7 +2047,7 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
-    closed_fun_jaxpr = ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
+    closed_fun_jaxpr = convert_constvars_jaxpr(fun_jaxpr)
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
@@ -2268,7 +2253,7 @@ def trace_to_jaxpr_nocache(
     fun_takes_flat_tree_arg=False,
     fun_returns_flat_tree=False,
     requires_low=False,
-) -> tuple[ClosedJaxpr, ft.FlatTree]:
+) -> tuple[Jaxpr, ft.FlatTree]:
   if config.no_tracing.value:
     raise RuntimeError(f"re-tracing function {fun} for "
                        "`jit`, but 'no_tracing' is set")
@@ -2328,7 +2313,7 @@ def trace_to_jaxpr_nocache(
                                          source_info)
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
-  return ClosedJaxpr(jaxpr, consts), out_avals
+  return jaxpr.with_consts(consts), out_avals
 
 
 @weakref_lru_cache(maxsize=None, explain=explain)
@@ -2340,7 +2325,7 @@ def trace_to_jaxpr(
     fun_takes_flat_tree_arg=False,
     fun_returns_flat_tree=False,
     requires_low=False,
-) -> tuple[ClosedJaxpr, ft.FlatTree]:
+) -> tuple[Jaxpr, ft.FlatTree]:
   return trace_to_jaxpr_nocache(
       fun,
       in_avals,
@@ -2486,17 +2471,17 @@ def try_constant_folding(primitive, tracers, params, out_avals):
   return None
 
 @weakref_lru_cache
-def lower_jaxpr2(hi_jaxpr) -> ClosedJaxpr:
+def lower_jaxpr2(hi_jaxpr) -> Jaxpr:
   in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
   lo_jaxpr, _ = lower_jaxpr(hi_jaxpr, in_avals)
   return lo_jaxpr
 
 @weakref_lru_cache
-def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTree]:
+def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
   env: dict[Var, DynamicJaxprTracer | HTLV] = {}  # noqa # type:ignore
 
   parent_trace = core.trace_ctx.trace
-  trace = DynamicJaxprTrace(hi_jaxpr.jaxpr.debug_info.with_unknown_names(),
+  trace = DynamicJaxprTrace(hi_jaxpr.debug_info.with_unknown_names(),
                             parent_trace=parent_trace, lower=True)
 
   def read(src, x):
@@ -2584,27 +2569,26 @@ def lower_jaxpr(hi_jaxpr: ClosedJaxpr, lo_avals) -> tuple[ClosedJaxpr, ft.FlatTr
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   assert not any(v.aval.is_high for v in it.chain(jaxpr.constvars, jaxpr.invars))
-  return ClosedJaxpr(jaxpr, consts), out_avals
+  return jaxpr.with_consts(consts), out_avals
 
 @weakref_lru_cache
 def convert_const_himutables(jaxpr):
   move = [typeof(c).has_qdd for c in jaxpr.consts]
   constvals, in_mutables = partition_list(move, jaxpr.consts)
-  constvars, boxvars = partition_list(move, jaxpr.jaxpr.constvars)
-  invars = *boxvars, *jaxpr.jaxpr.invars
-  effects = make_jaxpr_effects(constvars, invars, jaxpr.jaxpr.outvars,
-                               jaxpr.jaxpr.eqns)
-  new_jaxpr = jaxpr.jaxpr.replace(constvars=constvars, invars=invars,
-                                  effects=effects)
-  return jaxpr.replace(jaxpr=new_jaxpr, consts=constvals), in_mutables
+  constvars, boxvars = partition_list(move, jaxpr.constvars)
+  invars = *boxvars, *jaxpr.invars
+  effects = make_jaxpr_effects(constvars, invars, jaxpr.outvars, jaxpr.eqns)
+  new_jaxpr = jaxpr.replace(constvars=constvars, invars=invars,
+                            effects=effects, consts=constvals)
+  return new_jaxpr, in_mutables
 
-def move_outvars_to_back(jaxpr: ClosedJaxpr, to_move: Sequence[bool]) -> ClosedJaxpr:
+def move_outvars_to_back(jaxpr: Jaxpr, to_move: Sequence[bool]) -> Jaxpr:
   return _move_outvars_to_back(jaxpr, tuple(to_move))
 
 @weakref_lru_cache
-def _move_outvars_to_back(jaxpr, to_move: tuple[bool, ...]) -> ClosedJaxpr:
-  new_outvars = _move_to_front(jaxpr.jaxpr.outvars, map(op.not_, to_move))
-  return ClosedJaxpr(jaxpr.jaxpr.replace(outvars=new_outvars), jaxpr.consts)
+def _move_outvars_to_back(jaxpr, to_move: tuple[bool, ...]) -> Jaxpr:
+  new_outvars = _move_to_front(jaxpr.outvars, map(op.not_, to_move))
+  return jaxpr.replace(outvars=new_outvars)
 
 # vestigial hijax helpers
 def raise_lo_outs(hi_avals, lo_outs):
@@ -2617,7 +2601,7 @@ def num_himuts_out(final_qdds):
   return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
 
 
-def _closed_call_to_lojax(*hi_args, call_jaxpr: ClosedJaxpr, **_):
+def _closed_call_to_lojax(*hi_args, call_jaxpr: Jaxpr, **_):
   from jax._src.custom_derivatives import _lower_and_eval  # pyrefly: ignore[missing-import]
 
   return _lower_and_eval("closed_call", call_jaxpr, hi_args)

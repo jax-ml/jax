@@ -166,9 +166,9 @@ def pattern_match_scan_to_fori_loop(
 
 
 def pattern_match_while_to_fori_loop(
-    cond_jaxpr: jax_core.ClosedJaxpr,
+    cond_jaxpr: jax_core.Jaxpr,
     cond_nconsts: int,
-    body_jaxpr: jax_core.ClosedJaxpr,
+    body_jaxpr: jax_core.Jaxpr,
     body_nconsts: int,
 ) -> tuple[jax_core.Jaxpr | None, str | None]:
   # Try to pattern match to fori loop.
@@ -176,7 +176,7 @@ def pattern_match_while_to_fori_loop(
   # component of the return tuple to capture information about the failure.
   if cond_nconsts:
     return (None, "Conditional jaxpr can't contain consts.")
-  _, cond_invars = split_list(cond_jaxpr.jaxpr.invars, [cond_nconsts])
+  _, cond_invars = split_list(cond_jaxpr.invars, [cond_nconsts])
   cond_in_avals = [v.aval for v in cond_invars]
   if len(cond_in_avals) < 2:
     return (None, "Conditional jaxpr have only two carry args.")
@@ -188,11 +188,11 @@ def pattern_match_while_to_fori_loop(
     return (None, "Second conditional jaxpr carry arg is not a scalar int.")
   # Check that the only eqn in the cond checks the loop index condition
   v1, v2 = cond_invars[:2]
-  outvar = cond_jaxpr.jaxpr.outvars[0]
+  outvar = cond_jaxpr.outvars[0]
   assert outvar.aval.dtype == jnp.bool_  # type: ignore
-  if len(cond_jaxpr.jaxpr.eqns) != 1:
+  if len(cond_jaxpr.eqns) != 1:
     return (None, "Non-trivial conditional jaxprs not supported.")
-  eqn = cond_jaxpr.jaxpr.eqns[0]
+  eqn = cond_jaxpr.eqns[0]
   if eqn.primitive != lax.lt_p:
     return (None, "Non-trivial conditional jaxprs not supported.")
   if eqn.outvars != [outvar]:
@@ -200,14 +200,14 @@ def pattern_match_while_to_fori_loop(
   if eqn.invars != [v1, v2]:
     return (None, "Non-trivial conditional jaxprs not supported.")
   # Check that the carry is updated in the body appropriately
-  _, body_invars = split_list(body_jaxpr.jaxpr.invars, [body_nconsts])
+  _, body_invars = split_list(body_jaxpr.invars, [body_nconsts])
   v1, v2 = body_invars[:2]
-  vo1, vo2 = body_jaxpr.jaxpr.outvars[:2]
+  vo1, vo2 = body_jaxpr.outvars[:2]
   # Upper bound should be constant
   if v2 is not vo2:
     return (None, "Loop upper bound is not constant.")
   # Check that we increment the loop index in the body
-  for i, eqn in enumerate(body_jaxpr.jaxpr.eqns):
+  for i, eqn in enumerate(body_jaxpr.eqns):
     if eqn.primitive is lax.add_p:
       if eqn.invars[0] is v1:
         if isinstance(eqn.invars[1], jax_core.Literal):
@@ -217,7 +217,7 @@ def pattern_match_while_to_fori_loop(
               break
   else:
     return (None, "Loop index not incremented in body.")
-  jaxpr = body_jaxpr.jaxpr
+  jaxpr = body_jaxpr
   new_invars = (
       *jaxpr.invars[:body_nconsts],
       jaxpr.invars[body_nconsts],

@@ -57,10 +57,9 @@ class Context:
   avals_out: Sequence[Any]
 
 def cost_estimate_jaxpr(
-    jaxpr: jax_core.ClosedJaxpr,
+    jaxpr: jax_core.Jaxpr,
 ) -> pallas_core.CostEstimate:
   """Returns the cost estimate for the given Jaxpr."""
-  jaxpr, _ = jaxpr.jaxpr, jaxpr.consts
   total_cost = CostEstimate(flops=0, transcendentals=0, bytes_accessed=0)
 
   for eqn in jaxpr.eqns:
@@ -100,7 +99,7 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
       math.prod(a.shape) * a.dtype.itemsize for a in in_avals_ft.vals)
   output_bytes = sum(
       math.prod(a.aval.shape) * a.aval.dtype.itemsize  # type: ignore
-      for a in jaxpr.jaxpr.outvars
+      for a in jaxpr.outvars
   )
   return pallas_core.CostEstimate(
       flops=estimate.flops,
@@ -230,7 +229,7 @@ def dot_general_cost_rule(ctx: Context,
 register_cost_rule(lax.dot_general_p, dot_general_cost_rule)
 
 # Higher-order primitives
-def _pjit_cost_rule(ctx, *, jaxpr: jax_core.ClosedJaxpr, **_):
+def _pjit_cost_rule(ctx, *, jaxpr: jax_core.Jaxpr, **_):
   del ctx
   inner_cost = cost_estimate_jaxpr(jaxpr)
   return CostEstimate(
@@ -240,7 +239,7 @@ def _pjit_cost_rule(ctx, *, jaxpr: jax_core.ClosedJaxpr, **_):
   )
 register_cost_rule(pjit.jit_p, _pjit_cost_rule)
 
-def _custom_vjp_rule(ctx, *, call_jaxpr: jax_core.ClosedJaxpr, **_):
+def _custom_vjp_rule(ctx, *, call_jaxpr: jax_core.Jaxpr, **_):
   del ctx
   inner_cost = cost_estimate_jaxpr(call_jaxpr)
   return CostEstimate(
@@ -251,7 +250,7 @@ def _custom_vjp_rule(ctx, *, call_jaxpr: jax_core.ClosedJaxpr, **_):
 register_cost_rule(custom_derivatives.custom_vjp_call_p, _custom_vjp_rule)
 
 def _run_state_rule(*_, jaxpr: jax_core.Jaxpr, **_2):
-  inner_cost = cost_estimate_jaxpr(pe.close_jaxpr(jaxpr))
+  inner_cost = cost_estimate_jaxpr(jaxpr)
   return CostEstimate(
       flops=inner_cost.flops,
       transcendentals=inner_cost.transcendentals,

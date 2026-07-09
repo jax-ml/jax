@@ -671,10 +671,10 @@ def _run_scoped_is_high(*avals, jaxpr, **params):
 run_scoped_p.is_high = _run_scoped_is_high
 
 def _run_scoped_to_lojax(*args, jaxpr, **params):
-  closed_hi_jaxpr = jax_core.ClosedJaxpr(jaxpr, args)
+  closed_hi_jaxpr = jaxpr.with_consts(args)
   closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
   consts = closed_lo_jaxpr.consts
-  return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr.jaxpr, **params)
+  return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr, **params)
 run_scoped_p.to_lojax = _run_scoped_to_lojax
 
 def run_scoped(
@@ -721,7 +721,7 @@ def run_scoped(
         avals,
         api_util.debug_info("pallas run_scoped", f, types, kw_types))
   out = run_scoped_p.bind(*jaxpr.consts,
-                          jaxpr=jaxpr.jaxpr,
+                          jaxpr=jaxpr,
                           collective_axes=collective_axes,
                           ref_transforms=ref_transforms)
   return tree_util.tree_unflatten(out_avals.tree, out)
@@ -765,10 +765,10 @@ def _run_scoped_discharge_rule(
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr_noconst, ()),
+      jaxpr_noconst,
       should_discharge=should_discharge + [False] * len(jaxpr.invars),
   )
-  discharged_body, new_consts = discharged_closed_body.jaxpr, discharged_closed_body.consts
+  discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
@@ -809,8 +809,8 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr_noconst, ()), should_discharge=True)
-  discharged_body, new_consts = discharged_closed_body.jaxpr, discharged_closed_body.consts
+      jaxpr_noconst, should_discharge=True)
+  discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
         "Cannot handle new consts created by state discharge.")
@@ -1391,9 +1391,9 @@ def _jaxpr_call_discharge(
   )
   should_discharge = [*map(any, flat_should_discharge)]
   discharged_closed_jaxpr = state_discharge.discharge_state(
-      jax_core.ClosedJaxpr(jaxpr, ()), should_discharge=should_discharge
+      jaxpr, should_discharge=should_discharge
   )
-  discharged_jaxpr, discharged_consts = discharged_closed_jaxpr.jaxpr, discharged_closed_jaxpr.consts
+  discharged_jaxpr, discharged_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
   assert not discharged_consts
   outs = jaxpr_call_p.bind(
       *flat_args,

@@ -135,7 +135,7 @@ def _run_python_pjit(p, args_flat, fun: Callable, args, kwargs):
 
   try:
     if (core.trace_state_clean() and not config.debug_key_reuse.value
-        and not p.params['jaxpr'].jaxpr.is_high):
+        and not p.params['jaxpr'].is_high):
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
@@ -539,11 +539,11 @@ def _trace_for_jit(
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pyrefly: ignore[missing-import]
-    check_key_reuse_jaxpr(jaxpr.jaxpr)
+    check_key_reuse_jaxpr(jaxpr)
 
   result_paths = tuple(f"result{lu._clean_keystr_arg_names(path)}"
                        for path in out_avals.paths)
-  jaxpr.jaxpr._debug_info = jaxpr.debug_info._replace(result_paths=result_paths)
+  jaxpr._debug_info = jaxpr.debug_info._replace(result_paths=result_paths)
 
   # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
   # off the C++ dispatch fast path for correctness. Ensure that happens.
@@ -560,7 +560,7 @@ def _trace_for_jit(
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
       ji.out_layouts_leaves, out_avals.tree,
-      tuple(out_avals), jaxpr.jaxpr._debug_info, device_or_backend_set)
+      tuple(out_avals), jaxpr._debug_info, device_or_backend_set)
 
   assert len(args_ft.vals) == len(in_shardings_flat) == len(in_layouts_flat)
 
@@ -633,7 +633,7 @@ def _infer_params(
     return entry.pjit_params, entry.pjit_params.consts + dynargs
 
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
-  if p.params['jaxpr'].jaxpr.is_high:
+  if p.params['jaxpr'].is_high:
     return p, p.consts + dynargs
   entry.pjit_params = p
   return p, p.consts + dynargs
@@ -893,7 +893,7 @@ jit_p.multiple_results = True
 jit_p.skip_canonicalization = True
 
 def _is_high(*_, jaxpr, **__) -> bool:
-  return jaxpr.jaxpr.is_high
+  return jaxpr.is_high
 jit_p.is_high = _is_high
 
 def _to_lojax(*hi_args, jaxpr, **params):
@@ -1093,7 +1093,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
 
 
 def _resolve_and_lower(
-    args, jaxpr: core.ClosedJaxpr, in_shardings, out_shardings, in_layouts,
+    args, jaxpr: core.Jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, donated_invars, ctx_mesh, name, keep_unused, inline,
     lowering_platforms, lowering_parameters, pgle_profiler,
     compiler_options_kvs) -> pxla.MeshComputation:
@@ -1149,7 +1149,7 @@ def convert_to_metaty(arg):
 
 def _pjit_call_impl_python(
     *args,
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     in_shardings, out_shardings, in_layouts, out_layouts,
     donated_invars, ctx_mesh, name, keep_unused, inline,
     compiler_options_kvs):
@@ -1217,7 +1217,7 @@ def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
   return lambda *args: core.jaxpr_as_fun(jaxpr())(*args)
 
 
-def _pjit_call_impl(*args, jaxpr: core.ClosedJaxpr,
+def _pjit_call_impl(*args, jaxpr: core.Jaxpr,
                     in_shardings, out_shardings, in_layouts, out_layouts,
                     donated_invars, ctx_mesh, name, keep_unused, inline,
                     compiler_options_kvs):
@@ -1259,7 +1259,7 @@ jit_p.def_impl(_pjit_call_impl)
 # This cache is important for python dispatch performance.
 @weakref_lru_cache
 def _pjit_lower(
-    jaxpr: core.ClosedJaxpr,
+    jaxpr: core.Jaxpr,
     in_shardings,
     out_shardings,
     in_layouts: pxla.MaybeLayout,
@@ -1300,7 +1300,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
       all(o is None for o in params["out_layouts"])):
     jaxpr = params["jaxpr"]
     out = pe.inline_jaxpr_into_trace(
-        trace, source_info, jaxpr.jaxpr, jaxpr.consts, *args)
+        trace, source_info, jaxpr, jaxpr.consts, *args)
     return [trace.to_jaxpr_tracer(x, source_info) for x in out]
 
   jaxpr = params['jaxpr']
@@ -1334,7 +1334,7 @@ pe.forwarding_rules[jit_p] = pjit_forwarding_rule
 
 def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
   return core._check_call(ctx_factory, jit_p, in_atoms,
-                          dict(params, call_jaxpr=jaxpr.jaxpr))
+                          dict(params, call_jaxpr=jaxpr))
 core.custom_typechecks[jit_p] = _pjit_typecheck
 
 
@@ -1355,11 +1355,11 @@ class PjitLoweringResult:
 
 
 def _pjit_lower_jaxpr_to_fun(
-    ctx: mlir.LoweringRuleContext, name: str, jaxpr: core.ClosedJaxpr,
+    ctx: mlir.LoweringRuleContext, name: str, jaxpr: core.Jaxpr,
     in_shardings, out_shardings,
     in_layouts, out_layouts) -> PjitLoweringResult:
   effects = tuple(effects_lib.ordered_effects.filter_in(jaxpr.effects))
-  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_arg_avals = util.unzip2(const_args_and_avals)
   in_avals = (*const_arg_avals, *jaxpr.in_avals)
   ca_shardings = const_args_shardings(const_args)
@@ -1395,7 +1395,7 @@ def _pjit_lower_jaxpr_to_fun(
 
 
 def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
-                   jaxpr: core.ClosedJaxpr, in_shardings,
+                   jaxpr: core.Jaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, donated_invars,
                    ctx_mesh, keep_unused, inline, compiler_options_kvs):
   mod_ctx = ctx.module_context
@@ -1469,7 +1469,7 @@ def const_args_layouts(
 
 def _pjit_batcher(axis_data, vals_in,
                   dims_in: tuple[int, ...],
-                  jaxpr: core.ClosedJaxpr,
+                  jaxpr: core.Jaxpr,
                   in_shardings, out_shardings, in_layouts, out_layouts,
                   donated_invars, ctx_mesh, name, keep_unused, inline,
                   compiler_options_kvs):
@@ -1579,8 +1579,8 @@ def _pjit_jvp(primals_in, tangents_in,
       inline=inline,
       compiler_options_kvs=compiler_options_kvs)
 
-  primals_out, tangents_out = split_list(outputs, [len(jaxpr.jaxpr.outvars)])
-  assert len(primals_out) == len(jaxpr.jaxpr.outvars)
+  primals_out, tangents_out = split_list(outputs, [len(jaxpr.outvars)])
+  assert len(primals_out) == len(jaxpr.outvars)
   tangents_out_it = iter(tangents_out)
   return primals_out, [next(tangents_out_it) if nz else ad.Zero(aval)
                        for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
@@ -1601,14 +1601,14 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
   primal_out_shardings = tuple(out_shardings) + (UNSPECIFIED,) * num_residuals_out
   primal_out_layouts = tuple(out_layouts) + (None,) * num_residuals_out
 
-  config.enable_checks.value and core.check_jaxpr(primal_jaxpr.jaxpr)
-  config.enable_checks.value and core.check_jaxpr(tangent_jaxpr.jaxpr)
+  config.enable_checks.value and core.check_jaxpr(primal_jaxpr)
+  config.enable_checks.value and core.check_jaxpr(tangent_jaxpr)
 
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
   # Input-to-output forwarding.
-  in_fwd = pe._jaxpr_forwarding(primal_jaxpr.jaxpr)
+  in_fwd = pe._jaxpr_forwarding(primal_jaxpr)
   in_fwd_primal, in_fwd_res_ = split_list(in_fwd, [num_primals_out])
   assert all(f is None for f in in_fwd_res_)
   in_fwd = [
@@ -1626,7 +1626,7 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
 
   # Output-to-output forwarding.
   num_primals_out = len(primal_jaxpr.out_avals) - num_kept_residuals
-  out_vars, res_vars = split_list(primal_jaxpr.jaxpr.outvars, [num_primals_out])
+  out_vars, res_vars = split_list(primal_jaxpr.outvars, [num_primals_out])
   idx_map = {id(v): i for i, v in enumerate(out_vars)}
   out_fwd = [None] * num_primals_out + [idx_map.get(id(v)) for v in res_vars]
   keep = [f is None for f in out_fwd]
@@ -1712,7 +1712,7 @@ def _add_res_to_params(num_res_out, num_res_in, in_shardings, out_shardings,
 
 def _pjit_partial_eval(trace: pe.JaxprTrace,
                        *in_tracers,
-                       jaxpr: core.ClosedJaxpr, in_shardings, out_shardings,
+                       jaxpr: core.Jaxpr, in_shardings, out_shardings,
                        in_layouts, out_layouts, donated_invars, ctx_mesh,
                        name, keep_unused, inline, compiler_options_kvs):
   in_pvals = [t.pval for t in in_tracers]
@@ -1734,7 +1734,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
 
   # Input-to-output forwarding: compute which outputs are just forwarded inputs.
   num_out_primals = len(known_jaxpr.out_avals) - len(res_out_avals)
-  in_fwd: list[int | None] = pe._jaxpr_forwarding(known_jaxpr.jaxpr)
+  in_fwd: list[int | None] = pe._jaxpr_forwarding(known_jaxpr)
   in_fwd_primal, in_fwd_res_ = split_list(in_fwd, [num_out_primals])
   assert all(f is None for f in in_fwd_res_)
   in_fwd = [
@@ -1755,7 +1755,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   del keep, kept_primals, kept_res
 
   # Output-to-output forwarding: compute which residuals are just primal outputs
-  out_vars, res_vars = split_list(known_jaxpr.jaxpr.outvars, [num_out_primals])
+  out_vars, res_vars = split_list(known_jaxpr.outvars, [num_out_primals])
   idx_map = {id(v): i for i, v in enumerate(out_vars)}
   out_fwd = [None] * num_out_primals + [idx_map.get(id(v)) for v in res_vars]
   # Prune jaxpr outputs and out_shardings by removing forwarded residuals.
@@ -1926,7 +1926,7 @@ def _pjit_transpose_fancy(
     print("Invalid nan value encountered in the backward pass of a jax.jit "
           "function. Calling the de-optimized backward pass.")
     try:
-      ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+      ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
     except (FloatingPointError, ZeroDivisionError) as e2:
       raise e2 from None  # great
     else:
@@ -1944,22 +1944,22 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+    ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
     cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
     return cts_out
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
+  dbg = jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
+  return trans_jaxpr.with_consts(consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.fancy_transposes[jit_p] = _pjit_transpose_fancy
 
 @weakref_lru_cache
 def _dce_jaxpr_pjit(
-    jaxpr: core.ClosedJaxpr, used_outputs: tuple[bool, ...]
-) -> tuple[core.ClosedJaxpr, list[bool]]:
-  new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr.jaxpr, used_outputs)
-  return core.ClosedJaxpr(new_jaxpr, jaxpr.consts), used_inputs
+    jaxpr: core.Jaxpr, used_outputs: tuple[bool, ...]
+) -> tuple[core.Jaxpr, list[bool]]:
+  # dce_jaxpr preserves attached consts (constvars are never pruned).
+  return pe.dce_jaxpr(jaxpr, used_outputs)
 
 
 def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
@@ -2019,9 +2019,9 @@ def _pjit_pp_rule(eqn: core.JaxprEqn,
   if not params['compiler_options_kvs']:
     del params['compiler_options_kvs']
 
-  if params['jaxpr'].jaxpr not in context.shared_jaxprs:
-    context.suggest_same_var_names(params['jaxpr'].jaxpr.invars, eqn.invars)
-    context.suggest_same_var_names(params['jaxpr'].jaxpr.outvars, eqn.outvars)
+  if params['jaxpr'] not in context.shared_jaxprs:
+    context.suggest_same_var_names(params['jaxpr'].invars, eqn.invars)
+    context.suggest_same_var_names(params['jaxpr'].outvars, eqn.outvars)
 
   # Move name= to the front to make the resulting equation easier to scan.
   del params["name"]

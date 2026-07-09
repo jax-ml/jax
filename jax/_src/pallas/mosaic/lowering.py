@@ -865,7 +865,7 @@ class MosaicGridMapping:
     nonlocal_axis_names.update(_get_nonlocal_axis_names(self.jaxpr))
     for bm in self.block_mappings:
       nonlocal_axis_names.update(
-          _get_nonlocal_axis_names(bm.index_map_jaxpr.jaxpr)
+          _get_nonlocal_axis_names(bm.index_map_jaxpr)
       )
     return bool(nonlocal_axis_names)
 
@@ -930,7 +930,7 @@ def _check_block_mappings(
               "has block shape "
               f"{physical_block_shape}, array shape {physical_array_shape}, "
               # TODO(necula): add index_map source location info
-              f"and index_map {bm.index_map_jaxpr.jaxpr}, in "
+              f"and index_map {bm.index_map_jaxpr}, in "
               f"memory space {bm.block_aval.memory_space!r}."
               "\nSee details at https://docs.jax.dev/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
     if rank < 1:
@@ -1161,7 +1161,7 @@ def lower_jaxpr_into_pipelined_module(
 
       with ir.InsertionPoint(module.body):
         mlir_func = lower_jaxpr_to_transform_func(
-            bm.index_map_jaxpr.jaxpr,
+            bm.index_map_jaxpr,
             bm.block_aval,
             name=func_name,
             mosaic_grid_mapping=mosaic_grid_mapping,
@@ -1663,7 +1663,7 @@ def lower_fun(
 
     if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr)
+    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr)
     sub_lowering_ctx = ctx.lowering_context.replace(
         block_shapes=sub_block_shapes
     )
@@ -4089,7 +4089,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
-    jaxpr: jax_core.ClosedJaxpr,
+    jaxpr: jax_core.Jaxpr,
     length: int,
     reverse: bool,
     unroll: int,
@@ -4101,7 +4101,7 @@ def _scan_lowering_rule(
   if reverse: raise NotImplementedError
   del reverse
 
-  jaxpr_body, jaxpr_consts = jaxpr.jaxpr, jaxpr.consts
+  jaxpr_body, jaxpr_consts = jaxpr, jaxpr.consts
   if jaxpr_consts: raise NotImplementedError
   del jaxpr_consts
 
@@ -4197,7 +4197,7 @@ def _while_lowering_rule(
         ctx.lowering_context.replace(
             block_shapes=[*cond_const_block_shapes, *carry_block_shapes]
         ),
-        cond_jaxpr.jaxpr,
+        cond_jaxpr,
         *cond_args,
     )
     scf.condition(cond, before_block.arguments)
@@ -4209,7 +4209,7 @@ def _while_lowering_rule(
         ctx.lowering_context.replace(
             block_shapes=[*body_const_block_shapes, *carry_block_shapes],
         ),
-        body_jaxpr.jaxpr,
+        body_jaxpr,
         *body_args,
     )
     if loop_out:
@@ -4224,7 +4224,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
 
   if constant_index is not None:
     return jaxpr_subcomp(
-        ctx.lowering_context.replace(block_shapes=ctx.block_shapes[1:]), branches[constant_index].jaxpr, *args
+        ctx.lowering_context.replace(block_shapes=ctx.block_shapes[1:]), branches[constant_index], *args
     )
   out_types = map(ctx.aval_to_ir_type, ctx.avals_out)
   pred = arith.cmpi(
@@ -4245,11 +4245,11 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
           branches=branches[1:],
       )
     else:
-      out = jaxpr_subcomp(lowering_context, branches[1].jaxpr, *args)
+      out = jaxpr_subcomp(lowering_context, branches[1], *args)
     scf.yield_(out)
   assert if_op.else_block is not None
   with ir.InsertionPoint(if_op.else_block):
-    out = jaxpr_subcomp(lowering_context, branches[0].jaxpr, *args)
+    out = jaxpr_subcomp(lowering_context, branches[0], *args)
     scf.yield_(out)
   return if_op.results
 
@@ -4257,7 +4257,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
 @register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.CoreType])
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
-  return jaxpr_subcomp(lowering_context, jaxpr.jaxpr, *args)
+  return jaxpr_subcomp(lowering_context, jaxpr, *args)
 
 
 @register_lowering_rule(pjit.reshard_p, kernel_types=[*tpu_core.CoreType])
@@ -4270,7 +4270,7 @@ def _reshard_lowering_rule(ctx: LoweringRuleContext, x, *, dst_sharding,
 def _custom_jvp_call_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
-    call_jaxpr: jax_core.ClosedJaxpr,
+    call_jaxpr: jax_core.Jaxpr,
     jvp_jaxpr_fun: lu.WrappedFun,
     num_consts: int,
     symbolic_zeros: bool,
@@ -4280,7 +4280,7 @@ def _custom_jvp_call_lowering_rule(
   if num_consts: raise NotImplementedError
   if call_jaxpr.consts: raise NotImplementedError
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
-  return jaxpr_subcomp(lowering_context, call_jaxpr.jaxpr, *args)
+  return jaxpr_subcomp(lowering_context, call_jaxpr, *args)
 
 
 @register_lowering_rule(custom_derivatives.custom_vjp_call_p)
@@ -4296,7 +4296,7 @@ def _custom_vjp_call_lowering_rule(
 ):
   if num_consts: raise NotImplementedError
   lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
-  return jaxpr_subcomp(lowering_context, call_jaxpr.jaxpr, *args)
+  return jaxpr_subcomp(lowering_context, call_jaxpr, *args)
 
 
 @register_lowering_rule(debugging.debug_callback_p)

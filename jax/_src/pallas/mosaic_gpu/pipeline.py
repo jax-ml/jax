@@ -163,7 +163,7 @@ def _uses_arguments(
   closed_jaxpr, _ = pe.trace_to_jaxpr(
       index_map, in_avals_ft, debug_info=debug_info
   )
-  jaxpr = closed_jaxpr.jaxpr
+  jaxpr = closed_jaxpr
   _, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars))
   return used_inputs
 

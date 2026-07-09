@@ -1966,7 +1966,7 @@ def make_jaxpr(
     static_argnums: int | Sequence[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[False] = ...,
-) -> Callable[..., core.ClosedJaxpr]:
+) -> Callable[..., core.Jaxpr]:
   ...
 
 @overload
@@ -1975,7 +1975,7 @@ def make_jaxpr(
     static_argnums: int | Sequence[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: Literal[True] = ...,
-) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
+) -> Callable[..., tuple[core.Jaxpr, Any]]:
   ...
 
 @partial(api_boundary, repro_api_name="jax.make_japr")
@@ -1984,7 +1984,7 @@ def make_jaxpr(
     static_argnums: int | Sequence[int] = (),
     axis_env: Sequence[tuple[AxisName, int]] | None = None,
     return_shape: bool = False,
-) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
+) -> Callable[..., core.Jaxpr | tuple[core.Jaxpr, Any]]:
   """Create a function that returns the jaxpr of ``fun`` given example args.
 
   Args:
@@ -2000,16 +2000,16 @@ def make_jaxpr(
       applications of :py:func:`jax.pmap`.
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
       wrapped function returns a pair where the first element is the
-      ``ClosedJaxpr`` representation of ``fun`` and the second element is a
+      ``Jaxpr`` representation of ``fun`` and the second element is a
       pytree with the same structure as the output of ``fun`` and where the
       leaves are objects with ``shape`` and ``dtype`` attributes representing
       the corresponding types of the output leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
-    a ``ClosedJaxpr`` representation of ``fun`` on those arguments. If the
+    a ``Jaxpr`` representation of ``fun`` on those arguments. If the
     argument ``return_shape`` is ``True``, then the returned function instead
-    returns a pair where the first element is the ``ClosedJaxpr``
+    returns a pair where the first element is the ``Jaxpr``
     representation of ``fun`` and the second element is a pytree representing
     the structure, shape, dtypes, and named shapes of the output of ``fun``.
 
@@ -2056,8 +2056,8 @@ def make_jaxpr(
     # consts not to be converted.
     num_consts = traced._num_consts
     if num_consts:
-      jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr, num_consts)
-      jaxpr = core.ClosedJaxpr(jaxpr_, traced._consts)
+      jaxpr = pe.convert_invars_to_constvars(
+          traced.jaxpr, num_consts).with_consts(traced._consts)
     else:
       jaxpr = traced.jaxpr
     if return_shape:

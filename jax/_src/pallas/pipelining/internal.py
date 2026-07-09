@@ -52,7 +52,7 @@ class SchedulingProperties:
 @dataclasses.dataclass(frozen=True)
 class PipelineStage:
   """An internal representation of a pipeline stage."""
-  jaxpr: jax_core.ClosedJaxpr
+  jaxpr: jax_core.Jaxpr
   effects: set[RefEffect]
   properties: SchedulingProperties
   name: str

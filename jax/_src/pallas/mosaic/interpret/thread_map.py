@@ -119,5 +119,5 @@ def thread_map(
   jaxpr = jax.make_jaxpr(_f)(jnp.int32(0), *args)
 
   return _call_threadmap_callback(
-      token, device_id, jaxpr.jaxpr, num_threads, jaxpr.consts, args,
+      token, device_id, jaxpr, num_threads, jaxpr.consts, args,
       use_ordered_callback, on_exception)

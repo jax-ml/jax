@@ -257,6 +257,21 @@ class Jaxpr:
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
 
+  def with_consts(self, consts: Sequence[Any]) -> Jaxpr:
+    """Returns a copy of this jaxpr with `consts` attached as the values of
+    its constant inputs (see `is_closed`). Shares all other structure."""
+    assert len(consts) == self._num_consts
+    new = Jaxpr.__new__(Jaxpr)
+    new._all_invars = self._all_invars
+    new._num_consts = self._num_consts
+    new._outvars = self._outvars
+    new._eqns = self._eqns
+    new._effects = self._effects
+    new._debug_info = self._debug_info
+    new._is_high = self._is_high
+    new._consts = list(consts)
+    return new
+
   def map_jaxpr(self, f):
     # Legacy ClosedJaxpr method: apply f to the jaxpr, keeping consts.
     return Jaxpr(f(self), self.consts)
@@ -323,7 +338,7 @@ ClosedJaxpr = Jaxpr
 
 
 @curry
-def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
+def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
   # TODO(dougalm): remove this hack when we add contexts to jaxpr.
   # debug_nans is sometimes disabled locally at the traceable level by ops that
   # work with nans internally, like jnp.var. The right thing to do is to add
@@ -331,7 +346,7 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
   # context modifications. In the meantime, disabling the checks when we
   # round-trip prevents those ops producing spurious errors.
   with config.debug_nans(False):
-    return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
+    return eval_jaxpr(closed_jaxpr, closed_jaxpr.consts, *args)
 
 
 # This context manager is fairly hot, because it is frequently called for every
@@ -3365,9 +3380,9 @@ call_p.def_impl(call_impl)
 class ClosedCallPrimitive(CallPrimitive):
   def get_bind_params(self, params):
     new_params = dict(params)
-    jaxpr: ClosedJaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts),
-                          debug_info=jaxpr.jaxpr.debug_info)
+    jaxpr: Jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr, jaxpr.consts),
+                          debug_info=jaxpr.debug_info)
     new_params['subfuns'] = (subfun,)
     return new_params
 
@@ -3491,12 +3506,12 @@ def remove_named_axis_effects(
     return jaxpr
   return jaxpr.replace(effects=filter_named_axis_effects(jaxpr.effects, names))
 
-def replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: Effects):
+def replace_jaxpr_effects(jaxpr: Jaxpr, effects: Effects):
   return _replace_jaxpr_effects(jaxpr, frozenset(effects))
 
 @weakref_lru_cache
-def _replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: frozenset[Effect]):
-  return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(effects=set(effects)))
+def _replace_jaxpr_effects(jaxpr: Jaxpr, effects: frozenset[Effect]):
+  return jaxpr.replace(effects=set(effects))
 
 # ------------------- Jaxpr checking -------------------
 
@@ -3789,11 +3804,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(
         f"Call primitive {prim} missing 'call_jaxpr' parameter")
-  if isinstance(prim, ClosedCallPrimitive):
-    call_jaxpr = params["call_jaxpr"].jaxpr
-  else:
-    call_jaxpr = params["call_jaxpr"]
-
+  call_jaxpr = params["call_jaxpr"]
   if len(in_atoms) != len(call_jaxpr.invars):
     raise JaxprTypeError(f"Call primitive {prim} with {len(in_atoms)} "
                          f"operands cannot call jaxpr with "

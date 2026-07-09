@@ -501,7 +501,7 @@ def _trace_to_jaxpr(fun: Callable,
           "\n")
       e.args = msg,
     raise
-  return pe.convert_constvars_jaxpr(closed_jaxpr.jaxpr), closed_jaxpr.consts, out_avals.tree
+  return pe.convert_constvars_jaxpr(closed_jaxpr), closed_jaxpr.consts, out_avals.tree
 
 
 ### Utilities
@@ -519,7 +519,7 @@ def saved_residuals(f: Callable,
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
   jaxpr_, out_shape_ = out
-  jaxpr = jaxpr_.jaxpr
+  jaxpr = jaxpr_
   out_shape = out_shape_[1]
   num_res = tree_structure(out_shape).num_leaves
   jaxpr = jaxpr.replace(
@@ -612,9 +612,9 @@ def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
 def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   assert not jaxpr.constvars
   in_nonzeros = [type(t) is not ad_util.Zero for t in tangents]
-  jaxpr_jvp_, out_nz = ad.jvp_jaxpr(pe.close_jaxpr(jaxpr), in_nonzeros, False)
+  jaxpr_jvp_, out_nz = ad.jvp_jaxpr(jaxpr, in_nonzeros, False)
   nonzero_tangents = [t for t in tangents if type(t) is not ad_util.Zero]
-  jaxpr_jvp = pe.convert_constvars_jaxpr(jaxpr_jvp_.jaxpr)
+  jaxpr_jvp = pe.convert_constvars_jaxpr(jaxpr_jvp_)
   if isinstance(prevent_cse, tuple):
     prevent_cse += (True,) * len(nonzero_tangents)
   outs = remat_p.bind(
@@ -764,8 +764,8 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   in_linear = [ad.is_undefined_primal(x) for x in args_]
   out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
   transposed_jaxpr_, in_zeros = transpose_jaxpr(
-      pe.close_jaxpr(jaxpr), in_linear, out_zeros)
-  transposed_jaxpr, consts = transposed_jaxpr_.jaxpr, transposed_jaxpr_.consts
+      jaxpr, in_linear, out_zeros)
+  transposed_jaxpr, consts = transposed_jaxpr_, transposed_jaxpr_.consts
   transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
   flat_args, _ = tree_flatten((args_, out_cts))
   if isinstance(prevent_cse, tuple):
@@ -780,9 +780,9 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
 ad.fancy_transposes[remat_p] = remat_transpose
 
 # TODO(mattjj): move this to ad.py
-def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
+def transpose_jaxpr(jaxpr: core.Jaxpr, in_linear: bool | Sequence[bool],
                     out_zeros: bool | Sequence[bool],
-                    ) -> tuple[core.ClosedJaxpr, list[bool]]:
+                    ) -> tuple[core.Jaxpr, list[bool]]:
   if isinstance(in_linear, bool):
     in_linear = (in_linear,) * len(jaxpr.in_avals)
   if isinstance(out_zeros, bool):
@@ -790,7 +790,7 @@ def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
   return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros))
 
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
+def _transpose_jaxpr(jaxpr: core.Jaxpr,
                      in_lin: Sequence[bool],
                      out_zeros: Sequence[bool]):
   in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
@@ -816,7 +816,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     assert next(out_cts_iter, None) is None
     dummy_args = [ad.UndefinedPrimal(aval.to_ct_aval())
                   for aval in lin_jaxpr.in_avals[len(consts):]]
-    in_cts = ad.backward_pass(lin_jaxpr.jaxpr, False, lin_jaxpr.consts,
+    in_cts = ad.backward_pass(lin_jaxpr, False, lin_jaxpr.consts,
                               [*consts, *dummy_args], out_cts)
     in_cts = in_cts[len(consts):]
 
@@ -825,7 +825,7 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
+  dbg = jaxpr.debug_info.with_unknown_names()
   in_avals_flat_tree = ft.flatten((tuple(in_avals), {}))
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
       transposed, in_avals_flat_tree, dbg)
@@ -834,9 +834,9 @@ def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
   jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
-      pe.close_jaxpr(jaxpr), axis_data, dims,
+      jaxpr, axis_data, dims,
       [batching.zero_if_mapped] * len(jaxpr.outvars))
-  jaxpr_batched, consts = jaxpr_batched_.jaxpr, jaxpr_batched_.consts
+  jaxpr_batched, consts = jaxpr_batched_, jaxpr_batched_.consts
   if consts:
     jaxpr_batched = pe.convert_constvars_jaxpr(jaxpr_batched)
   out_dims = [0 if b else None for b in out_batched]
@@ -909,11 +909,11 @@ remat_p.is_high = _remat_is_high
 
 
 def _remat_to_lojax(*hi_args, jaxpr, **kwds):
-  closed_lo_jaxpr = pe.lower_jaxpr2(pe.close_jaxpr(jaxpr))
+  closed_lo_jaxpr = pe.lower_jaxpr2(jaxpr)
   lo_args = [lo_val for aval, x in zip(jaxpr.in_aval_qdds, hi_args)
              for lo_val in (aval.read_loval(x) if aval.has_qdd
                             else aval.lower_val(x))]
-  lo_jaxpr = pe.convert_constvars_jaxpr(closed_lo_jaxpr.jaxpr)
+  lo_jaxpr = pe.convert_constvars_jaxpr(closed_lo_jaxpr)
   lo_args = (*closed_lo_jaxpr.consts, *lo_args)
   return remat_p.bind(*lo_args, jaxpr=lo_jaxpr, **kwds)
 remat_p.to_lojax = _remat_to_lojax
@@ -983,11 +983,11 @@ batching.primitive_batchers[name_p] = name_batcher
 @discharge.register_discharge_rule(remat_p)
 def _remat_state_discharge_rule(
     in_avals, out_avals, *args, jaxpr, **params):
-  discharged_jaxpr = discharge.discharge_state(core.ClosedJaxpr(jaxpr, []))
+  discharged_jaxpr = discharge.discharge_state(jaxpr)
   if discharged_jaxpr.consts:
     raise NotImplementedError
   out_vals_ref_vals = remat_p.bind(
-      *args, jaxpr=discharged_jaxpr.jaxpr, **params
+      *args, jaxpr=discharged_jaxpr, **params
   )
   out_vals, ref_vals = split_list(out_vals_ref_vals, [len(jaxpr.outvars)])
   ref_vals_ = iter(ref_vals)
@@ -1021,29 +1021,26 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
   ``checkpoint_name``-tagged intermediates) cannot be marked saveable by the
   checkpoint ``policy`` there; they are always recomputed.
   """
-  kwargs = dict(policy=policy, static_argnums=static_argnums,
-                static_argnames=static_argnames)
-  if f is None: return lambda g: _remat3(g, **kwargs)
-  return _remat3(f, **kwargs)
+  if f is None:
+    return partial(partial, _remat3, policy, static_argnums, static_argnames)
+  else:
+    return partial(_remat3, policy, static_argnums, static_argnames, f)
 
-def _remat3(f, *, policy, static_argnums, static_argnames):
-  @wraps(f)
-  def decorator(*args, **kwargs):
-    args_ft = ft.flatten_static_argnums_argnames(
-        args, kwargs, static_argnums, static_argnames)
-    avals_ft = args_ft.map(typeof)
-    dbg = api_util.debug_info(
-        'remat3', f, args, kwargs, static_argnums=static_argnums,
-        static_argnames=static_argnames)
-    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
-    jaxpr, consts = pe.separate_consts(jaxpr_)
-    out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
-    return out_avals_ft.update(out_flat).unflatten()
-  return decorator
+def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
+  args_ft = ft.flatten_static_argnums_argnames(
+      args, kwargs, static_argnums, static_argnames)
+  avals_ft = args_ft.map(typeof)
+  dbg = api_util.debug_info(
+      'remat3', f, args, kwargs, static_argnums=static_argnums,
+      static_argnames=static_argnames)
+  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+  jaxpr, consts = pe.separate_consts(jaxpr_)
+  out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
+  return out_avals_ft.update(out_flat).unflatten()
 
 def dce(traced, policy):
-  jaxpr_, used = pe.dce_jaxpr(traced.jaxpr.jaxpr, True)
-  jaxpr = core.ClosedJaxpr(jaxpr_, traced.jaxpr.consts)
+  # dce_jaxpr preserves attached consts (constvars are never pruned).
+  jaxpr, used = pe.dce_jaxpr(traced.jaxpr, True)
   used_res, used_primals = split_list(used, [traced._num_consts])
   res = [r for r, u in zip(traced._consts, used_res) if u]
   return used_primals, Partial(partial(_dced, jaxpr, traced.out_tree, policy), res)
@@ -1054,7 +1051,7 @@ def _dced(jaxpr, out_tree, policy, res, *args):
   return tree_unflatten(out_tree, out_flat)
 
 class RematTraced(VJPHiPrimitive):
-  jaxpr: core.ClosedJaxpr
+  jaxpr: core.Jaxpr
   policy: Any
 
   def __init__(self, jaxpr, policy):
@@ -1219,7 +1216,7 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   return call
 
 class CustomRemat(VJPHiPrimitive):
-  jaxpr: core.ClosedJaxpr
+  jaxpr: core.Jaxpr
   f1: Callable
   f2_fbwd: Callable
 

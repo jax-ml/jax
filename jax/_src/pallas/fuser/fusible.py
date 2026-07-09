@@ -69,7 +69,7 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
       out = fusible_p.bind(
           *jaxpr.consts,
           *args_ft.vals,
-          jaxpr=jaxpr.jaxpr,
+          jaxpr=jaxpr,
           num_consts=len(jaxpr.consts),
           in_tree=args_ft.tree,
           out_tree=out_avals_ft.tree,
@@ -126,10 +126,10 @@ def _fusible_to_lojax(*hi_args, jaxpr, num_consts, **_):
       for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
   ]
 
-  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, lo_args[:num_lo_consts])
+  closed_jaxpr = jaxpr.with_consts(lo_args[:num_lo_consts])
 
   lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
-  all_outs = fusible_p.bind(*lo_args, jaxpr=lo_jaxpr.jaxpr, num_consts=num_lo_consts)
+  all_outs = fusible_p.bind(*lo_args, jaxpr=lo_jaxpr, num_consts=num_lo_consts)
 
   out_mut, lo_outs = util.split_list(all_outs, [pe.num_himuts_out(jaxpr.final_aval_qdds)])
   for a, x, us in zip(jaxpr.final_aval_qdds, hi_args, out_mut):

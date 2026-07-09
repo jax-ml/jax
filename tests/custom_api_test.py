@@ -1348,7 +1348,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     def dce_jaxpr_as_fun(jaxpr, used_outs):
       jaxpr_, _ = pe.dce_jaxpr(jaxpr, used_outs)
-      fun = core.jaxpr_as_fun(pe.close_jaxpr(jaxpr_))
+      fun = core.jaxpr_as_fun(jaxpr_)
       return lambda *args: fun(*args)[0]
 
     f0 = dce_jaxpr_as_fun(jaxpr, [True, False])
@@ -3318,7 +3318,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     def dce_jaxpr_as_fun(jaxpr, used_outs):
       jaxpr_, _ = pe.dce_jaxpr(jaxpr, used_outs)
-      fun = core.jaxpr_as_fun(pe.close_jaxpr(jaxpr_))
+      fun = core.jaxpr_as_fun(jaxpr_)
       return lambda *args: fun(*args)[0]
 
     f0 = dce_jaxpr_as_fun(jaxpr, [True, False])

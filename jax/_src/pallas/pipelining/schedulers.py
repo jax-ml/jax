@@ -315,7 +315,7 @@ def eval_stage(ctx: PipelineContext, stage: internal.PipelineStage, args
   flat_ctx = jax.tree.leaves(ctx)
   state_tree = jax.tree.structure(ctx.pipeline_state)
   next_state = jax_core.eval_jaxpr(
-      stage.jaxpr.jaxpr, stage.jaxpr.consts, *flat_ctx, *args
+      stage.jaxpr, stage.jaxpr.consts, *flat_ctx, *args
   )
   if next_state:
     return jax.tree.unflatten(state_tree, next_state)

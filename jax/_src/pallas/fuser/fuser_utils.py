@@ -37,7 +37,7 @@ def make_jaxpr(f, *args, **kwargs):
   closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr_nocache(
       f, in_avals_ft, debug_info
   )
-  return closed_jaxpr.jaxpr, closed_jaxpr.consts, in_avals_ft.tree, out_avals_ft.tree
+  return closed_jaxpr, closed_jaxpr.consts, in_avals_ft.tree, out_avals_ft.tree
 
 
 # symbolic jaxpr comparison (for index map comparisons)
@@ -48,7 +48,7 @@ def make_jaxpr(f, *args, **kwargs):
 
 
 def _make_hashable(val):
-  if isinstance(val, (core.Jaxpr, core.ClosedJaxpr)):
+  if isinstance(val, core.Jaxpr):
     return _jaxpr_signature(val)
   elif isinstance(val, (list, tuple)):
     return tuple(_make_hashable(v) for v in val)
@@ -175,13 +175,13 @@ def discharge_state(
 
   jaxpr_no_consts = pe.convert_constvars_jaxpr(jaxpr)
   closed_discharged_jaxpr = state_discharge.discharge_state(
-      core.ClosedJaxpr(jaxpr_no_consts, ()),
+      jaxpr_no_consts,
       should_discharge=should_discharge,
       lower=False,
   )
   assert not closed_discharged_jaxpr.consts, (
-      closed_discharged_jaxpr.jaxpr, closed_discharged_jaxpr.consts)
-  discharged_jaxpr = closed_discharged_jaxpr.jaxpr
+      closed_discharged_jaxpr, closed_discharged_jaxpr.consts)
+  discharged_jaxpr = closed_discharged_jaxpr
 
   # ref_input_idxs[i] is the index, for the i-th new output, of the input Ref
   # that it corresponds to.

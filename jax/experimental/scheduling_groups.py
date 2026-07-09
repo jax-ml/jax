@@ -70,7 +70,7 @@ def attr_get(x):
     raise NotImplementedError(f'mlir attr handler for {type(x)=}')
 
 def _xla_metadata_call_lowering(ctx, *args, jaxpr, **meta):
-  const_args_and_avals = core.jaxpr_const_args(jaxpr.jaxpr)
+  const_args_and_avals = core.jaxpr_const_args(jaxpr)
   const_args, const_avals = unzip2(const_args_and_avals)
   in_avals = (*const_avals, *jaxpr.in_avals)
   func_op, output_types, effects = mlir.lower_called_computation(
@@ -155,14 +155,14 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
     nonlocal out_tree
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr.jaxpr, False, jaxpr.consts, args, cts_in)
+    ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
     cts_out, out_tree = tree_flatten(cts_out)
     return cts_out
-  dbg = jaxpr.jaxpr.debug_info.with_unknown_names()
+  dbg = jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return core.ClosedJaxpr(trans_jaxpr, consts), out_tree
+  return trans_jaxpr.with_consts(consts), out_tree
 
 
 def _xla_metadata_call_transpose(cts_in, *args, jaxpr, **meta):
