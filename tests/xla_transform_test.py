@@ -35,8 +35,10 @@ class XlaTransformTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if jax.devices()[0].platform != "cpu":
-      self.skipTest("Skipping test for non-CPU devices")
+    if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      self.skipTest(
+          "XLA transforms are not part of the persistent cache key"
+      )
     self._registered_transforms = []
 
   def tearDown(self):
@@ -69,6 +71,11 @@ class XlaTransformTest(jtu.JaxTestCase):
       if not changed:
         return None
 
+      sched = module.schedule()
+      if sched is not None:
+        sched.update()
+        module.set_schedule(sched)
+
       return module.as_serialized_hlo_module_proto()
 
     name = f"sin_to_cos_{stage.name}_test"
@@ -88,8 +95,8 @@ class XlaTransformTest(jtu.JaxTestCase):
     expected = jnp.cos(x)
     self.assertAllClose(result, expected, atol=1e-5)
 
+  @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):
-    """Register a pass for tpu only, compiling on cpu should not apply it."""
 
     def sin_to_cos(serialized_hlo: bytes) -> bytes | None:
       module = _hlo.HloModule.from_serialized_hlo_module_proto(serialized_hlo)
@@ -110,15 +117,15 @@ class XlaTransformTest(jtu.JaxTestCase):
 
       return module.as_serialized_hlo_module_proto()
 
-    # Registering for "tpu" only. Since our test runs on "cpu", this pass
-    # should NOT be executed.
-    name = "sin_to_cos_tpu_only_test"
+    # Register for "cpu" only. Since this test only runs on non-cpu backends,
+    # the pass should NOT be applied.
+    name = "sin_to_cos_cpu_only_test"
     stage = jex_xla.PipelineStage.PRE_SCHEDULER
     jex_xla.register_hlo_module_transformation(
         sin_to_cos,
         name=name,
         stage=stage,
-        platforms="tpu",
+        platforms="cpu",
     )
     self._registered_transforms.append((name, stage))
 
@@ -128,7 +135,7 @@ class XlaTransformTest(jtu.JaxTestCase):
 
     x = jnp.array([0.0, 1.0, 2.0])
     result = f(x)
-    # Since it's compiled on CPU, it should still return sin(x), not cos(x).
+    # Since it's not compiled on CPU, it should still return sin(x), not cos(x).
     expected = jnp.sin(x)
     self.assertAllClose(result, expected, atol=1e-5)
 
@@ -151,6 +158,11 @@ class XlaTransformTest(jtu.JaxTestCase):
 
       if not changed:
         return None
+
+      sched = module.schedule()
+      if sched is not None:
+        sched.update()
+        module.set_schedule(sched)
 
       return module.as_serialized_hlo_module_proto()
 
