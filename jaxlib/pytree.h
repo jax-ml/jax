@@ -348,6 +348,12 @@ class PyTreeDef {
     // objects that make python gc sweep slow.
     std::vector<nanobind::object> sorted_dict_keys;
 
+    // Original insertion order of dict keys. Used to reconstruct the dict
+    // in the same order as the input during unflatten. This is separate from
+    // sorted_dict_keys to maintain deterministic traversal/equality while
+    // preserving user-visible key order.
+    std::vector<nanobind::object> original_dict_keys;
+
     // Custom type registration. Must be null for non-custom types.
     const PyTreeRegistry::Registration* custom = nullptr;
 

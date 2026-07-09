@@ -503,6 +503,32 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(out, (((1, [3]), (2, None)),
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
+  def testTreeMapDictKeyOrder(self):
+    # Identity map preserves insertion order.
+    d = {"c": 3, "a": 1, "b": 2}
+    out = tree_util.tree_map(lambda x: x, d)
+    self.assertEqual(list(out.keys()), ["c", "a", "b"])
+
+    # Non-identity map preserves insertion order.
+    out = tree_util.tree_map(lambda x: x * 10, d)
+    self.assertEqual(list(out.keys()), ["c", "a", "b"])
+    self.assertEqual(out, {"c": 30, "a": 10, "b": 20})
+
+    # Empty dict.
+    out = tree_util.tree_map(lambda x: x, {})
+    self.assertEqual(list(out.keys()), [])
+
+    # Single key.
+    d2 = {"z": 42}
+    out = tree_util.tree_map(lambda x: x, d2)
+    self.assertEqual(list(out.keys()), ["z"])
+
+    # Dict with many keys (stress test).
+    n = 100
+    d3 = {str(i): i for i in range(n)}
+    out = tree_util.tree_map(lambda x: x, d3)
+    self.assertEqual(list(out.keys()), list(d3.keys()))
+
   def testTreeMapWithIsLeafArgument(self):
     x = ((1, 2), [3, 4, 5])
     y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))

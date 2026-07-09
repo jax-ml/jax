@@ -22,6 +22,10 @@ message PyTreeNodeDefProto {
   PyTreeNodeType type = 2;
   // Only set when type == DICT.
   DictKeysProto dict_keys = 3;
+  // Original insertion order of dict keys (only set when type == DICT).
+  // The sorted keys in dict_keys are used for deterministic traversal;
+  // this field preserves the original key order for reconstruction.
+  DictKeysProto original_dict_keys = 4;
 }
 
 // A Pytree.

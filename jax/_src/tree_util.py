@@ -25,7 +25,6 @@ from typing import Any, TypeVar
 from jax._src import traceback_util
 from jax._src.lib import pytree
 from jax._src.util import safe_zip, set_module
-from jax._src.util import unzip2
 
 
 export = set_module('jax.tree_util')
@@ -428,8 +427,12 @@ _RegistryEntry = collections.namedtuple("_RegistryEntry", ["to_iter", "from_iter
 _registry: dict[type[Any], _RegistryEntry] = {
     tuple: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: tuple(xs)),
     list: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: list(xs)),
-    dict: _RegistryEntry(lambda xs: unzip2(sorted(xs.items()))[::-1],
-                         lambda keys, xs: dict(zip(keys, xs))),
+    dict: _RegistryEntry(
+        lambda xs: (tuple(xs[k] for k in sorted(xs)), tuple(xs.keys())),
+        lambda keys, xs: (
+            lambda idx: dict(zip(keys, (xs[idx[k]] for k in keys)))
+        )({k: i for i, k in enumerate(sorted(keys))}),
+    ),
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
 

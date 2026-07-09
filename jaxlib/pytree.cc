@@ -649,6 +649,15 @@ void PyTreeDef::FlattenImpl(nb::handle handle, T& leaves,
       case PyTreeKind::kDict: {
         nb::dict dict = nb::borrow<nb::dict>(handle);
 
+        // Capture original insertion order for reconstruction.
+        {
+          PyObject* orig_key;
+          Py_ssize_t orig_pos = 0;
+          while (PyDict_Next(dict.ptr(), &orig_pos, &orig_key, /*value=*/nullptr)) {
+            node.original_dict_keys.push_back(nb::borrow<nb::object>(orig_key));
+          }
+        }
+
         std::vector<nb::object> keys = GetSortedPyDictKeys(dict.ptr());
         for (nb::object& key : keys) {
           if (keypath.has_value()) {
@@ -918,8 +927,24 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
 
     case PyTreeKind::kDict: {
       nb::dict dict;
-      for (int i = 0; i < node.arity; ++i) {
-        dict[node.sorted_dict_keys[i]] = std::move(children[i]);
+      if (node.original_dict_keys.empty()) {
+        // Backward compatibility: use sorted key order when original
+        // keys are not available (e.g., older serialized pytrees).
+        for (int i = 0; i < node.arity; ++i) {
+          dict[node.sorted_dict_keys[i]] = std::move(children[i]);
+        }
+      } else {
+        // Reconstruct dict in original insertion order.
+        // Build a sorted-key to child-index map for O(1) lookup.
+        nb::dict key_to_idx;
+        for (int i = 0; i < node.arity; ++i) {
+          key_to_idx[node.sorted_dict_keys[i]] = nb::int_(i);
+        }
+        for (int i = 0; i < node.arity; ++i) {
+          nb::object& orig_key = node.original_dict_keys[i];
+          int child_idx = nb::cast<int>(key_to_idx[orig_key]);
+          dict[orig_key] = std::move(children[child_idx]);
+        }
       }
       return std::move(dict);
       break;
@@ -1385,17 +1410,19 @@ nb::object PyTreeDef::ToPickle() const {
   nb::list traversal;
   for (const auto& node : traversal_) {
     nb::object node_data = node.node_data;
+    nb::object extra = nb::none();
     if (node.kind == PyTreeKind::kDict) {
       // Convert to a nb::list for pickling to avoid having to pickle a vector.
       // Pickle should be a rare operation so this conversion cost is hopefully
       // on non-critical path.
       node_data = nb::cast(node.sorted_dict_keys);
+      extra = nb::cast(node.original_dict_keys);
     }
     traversal.append(
         nb::make_tuple(static_cast<int>(node.kind), node.arity,
                        node_data ? node_data : nb::none(),
                        node.custom != nullptr ? node.custom->type : nb::none(),
-                       node.num_leaves, node.num_nodes));
+                       node.num_leaves, node.num_nodes, extra));
   }
   return nb::make_tuple(nb::cast(registry_ref_), traversal);
 }
@@ -1403,7 +1430,7 @@ nb::object PyTreeDef::ToPickle() const {
 void PyTreeDef::FromPickle(nb::object pickle) {
   for (const auto& item : nb::cast<nb::list>(pickle)) {
     auto t = nb::cast<nb::tuple>(item);
-    if (t.size() != 6) {
+    if (t.size() < 6 || t.size() > 7) {
       throw xla::XlaRuntimeError("Malformed pickled PyTreeDef");
     }
     Node& node = traversal_.emplace_back();
@@ -1415,6 +1442,9 @@ void PyTreeDef::FromPickle(nb::object pickle) {
         break;
       case PyTreeKind::kDict:
         node.sorted_dict_keys = nb::cast<std::vector<nb::object>>(t[2]);
+        if (t.size() == 7 && !t[6].is_none()) {
+          node.original_dict_keys = nb::cast<std::vector<nb::object>>(t[6]);
+        }
         break;
       case PyTreeKind::kCustom:
       case PyTreeKind::kDataclass:
@@ -1500,6 +1530,17 @@ void PyTreeDef::SerializeTo(PyTreeDefProto& result) const {
           node_data->mutable_dict_keys()->add_str_id(
               intern_str(nb::cast<std::string>(key)));
         }
+        if (!node.original_dict_keys.empty()) {
+          for (auto& key : node.original_dict_keys) {
+            if (!nb::isinstance<nb::str>(key)) {
+              throw std::invalid_argument(
+                  "Only string keys are supported in proto pytree "
+                  "serialization.");
+            }
+            node_data->mutable_original_dict_keys()->add_str_id(
+                intern_str(nb::cast<std::string>(key)));
+          }
+        }
         break;
       default:
         throw std::invalid_argument(
@@ -1546,6 +1587,13 @@ nb_class_ptr<PyTreeDef> PyTreeDef::DeserializeFrom(
                 "Malformed pytree proto (dict_key out of range).");
           }
           node.sorted_dict_keys.push_back(interned_strings.at(str_id));
+        }
+        for (uint32_t str_id : node_proto.original_dict_keys().str_id()) {
+          if (str_id >= interned_strings.size()) {
+            throw std::invalid_argument(
+                "Malformed pytree proto (original_dict_key out of range).");
+          }
+          node.original_dict_keys.push_back(interned_strings.at(str_id));
         }
         break;
       default:
@@ -1644,6 +1692,9 @@ nb_class_ptr<PyTreeDef> PyTreeDef::FromNodeDataAndChildren(
 int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
   Py_VISIT(node_data.ptr());
   for (const auto& key : sorted_dict_keys) {
+    Py_VISIT(key.ptr());
+  }
+  for (const auto& key : original_dict_keys) {
     Py_VISIT(key.ptr());
   }
   return 0;
