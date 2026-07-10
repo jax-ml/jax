@@ -204,14 +204,14 @@ def iota_tensor(m, n, dtype, layout=mgpu.WGMMA_LAYOUT):
 
 class TestCase(parameterized.TestCase):
 
-  def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS):
+  def setUp(self, *, artificial_shared_memory_limit=jtu._SMEM_SIZE_BOUND_FOR_TESTS, min_compute_capability="9.0"):
     if jtu.test_device_matches(["rocm"]):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
     if (not jtu.test_device_matches(["cuda"]) or
-        not jtu.is_cuda_compute_capability_at_least("9.0")):
-      self.skipTest("Only works on GPU with capability >= sm90")
+        not jtu.is_cuda_compute_capability_at_least(min_compute_capability)):
+      self.skipTest(f"Only works on GPU with capability >= sm{min_compute_capability.replace('.', '')}")
     super().setUp()
     self.prng = np.random.default_rng(1234)
     self.context = mlir.make_ir_context()
@@ -3624,6 +3624,33 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     out = np.sort(out)
     out_ref = np.array([-1] * (num_sms - 1) + [num_sms])
     np.testing.assert_array_equal(out, out_ref)
+
+
+class Sm80Test(TestCase):
+
+  def setUp(self):
+    super().setUp(min_compute_capability="8.0")
+
+  def test_barrier_arrive_wait(self):
+    i32 = ir.IntegerType.get_signless(32)
+
+    def kernel(ctx, dst, barrier):
+      del ctx
+      barrier.arrive()
+      barrier.wait()
+      with mgpu.single_thread(scope=mgpu.ThreadSubset.BLOCK):
+        memref.store(arith.constant(i32, 1), dst, [])
+
+    out_shape = jax.ShapeDtypeStruct((), jnp.int32)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        (),
+        out_shape,
+        mgpu.Barrier(arrival_count=128),
+    )()
+    np.testing.assert_array_equal(y, np.array(1, dtype=np.int32))
 
 
 class BarrierTest(TestCase):

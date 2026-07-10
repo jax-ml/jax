@@ -723,7 +723,8 @@ def _launch(
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
-      nvvm.fence_mbarrier_init()
+      if utils.get_arch().major >= 9:
+        nvvm.fence_mbarrier_init()
       if math.prod(cluster) != 1:
         nvvm.cluster_arrive_relaxed(aligned=True)
         nvvm.cluster_wait(aligned=True)

@@ -423,6 +423,8 @@ def _warp_bcast(val, lane_idx=0):
 
 
 def warp_idx(sync=True):
+  if get_arch().major < 9:  # Unlikely to have any benefit.
+    sync = False
   i32 = ir.IntegerType.get_signless(32)
   warp_idx = arith.shrui(thread_idx(), c(5, i32))
   # Performing a warp broadcast improves performance as compiler understands
@@ -431,6 +433,8 @@ def warp_idx(sync=True):
 
 
 def warpgroup_idx(sync=True):
+  if get_arch().major < 9:  # Unlikely to have any benefit.
+    sync = False
   i32 = ir.IntegerType.get_signless(32)
   wg_idx = arith.shrui(thread_idx(), c(7, i32))
   # Performing a warp broadcast improves performance as compiler understands
@@ -456,6 +460,16 @@ def single_thread_predicate(scope: ThreadSubset = ThreadSubset.BLOCK):
       example, if the scope is BLOCK, only one thread per block will be
       selected.
   """
+  if get_arch().major < 9:
+    tidx = thread_idx()
+    match scope:
+      case ThreadSubset.WARP:
+        tidx = arith.remui(tidx, c(WARP_SIZE, tidx.type))
+      case ThreadSubset.WARPGROUP:
+        tidx = arith.remui(tidx, c(WARPGROUP_SIZE, tidx.type))
+      case ThreadSubset.BLOCK:
+        pass
+    return arith.cmpi(arith.CmpIPredicate.eq, tidx, c(0, tidx.type))
   elected = nvvm.elect_sync()
   if scope == ThreadSubset.WARP:
     return elected
@@ -1084,9 +1098,22 @@ class BarrierRef:
     if self._ptx_scope != "cta":
       raise ValueError("Can only await on CTA-local barriers")
     i32 = ir.IntegerType.get_signless(32)
-    ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
-    nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
+    if get_arch().major < 9:
+      # TODO(apaszke): consider using a single lane + barrier for waiting
+      i1 = ir.IntegerType.get_signless(1)
+      while_op = scf.WhileOp([], [])
+      before_block = while_op.before.blocks.append()
+      with ir.InsertionPoint.at_block_begin(before_block):
+        wait_complete = nvvm.mbarrier_test_wait(self.get_ptr(), parity)
+        wait_incomplete = arith.xori(wait_complete, c(1, i1))
+        scf.condition(wait_incomplete, [])
+      after_block = while_op.after.blocks.append()
+      with ir.InsertionPoint.at_block_begin(after_block):
+        scf.yield_([])
+    else:
+      ticks = arith.constant(i32, 10000000)
+      nvvm.mbarrier_try_wait_parity(self.get_ptr(), parity, ticks)
     if orders_tensor_core:
       nvvm.tcgen05_fence(nvvm.Tcgen05FenceKind.AFTER_THREAD_SYNC)
 
@@ -1130,11 +1157,17 @@ class BarrierRef:
       if predicate is not None:
         pred_ptx = "@$2"
         pred_constraint = ",b"
+      count_ptx = f", {arrival_count}"
+      if get_arch().major < 9:
+        if arrival_count != 1:
+          raise ValueError(
+              "Only single-thread arrival is supported on pre-Hopper hardware"
+          )
+        count_ptx = ""
       llvm.inline_asm(
           ir.IntegerType.get_signless(64),
           [self.get_ptr()] + ([predicate] if predicate is not None else []),
-          f"{pred_ptx} mbarrier.arrive.release.{ptx_scope}.shared::{ptx_scope}.b64 $0, [$1],"
-          f" {arrival_count};",
+          f"{pred_ptx} mbarrier.arrive.release.{ptx_scope}.shared::{ptx_scope}.b64 $0, [$1]{count_ptx};",
           "=l,r" + pred_constraint,
           has_side_effects=True,
       )
@@ -1149,6 +1182,8 @@ class BarrierRef:
   def arrive_expect_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
   ):
+    if get_arch().major < 9:
+      raise NotImplementedError("arrive_expect_tx is only supported on Hopper+ hardware")
     if isinstance(bytes, int):
       bytes = c(bytes, ir.IntegerType.get_signless(32))
     elif isinstance(bytes.type, ir.IndexType):
@@ -1161,6 +1196,8 @@ class BarrierRef:
   def complete_tx(
       self, bytes: int | ir.Value, predicate: ir.Value | None = None
   ):
+    if get_arch().major < 9:
+      raise NotImplementedError("complete_tx is only supported on Hopper+ hardware")
     if isinstance(bytes, int):
       bytes = c(bytes, ir.IntegerType.get_signless(32))
     elif isinstance(bytes.type, ir.IndexType):
