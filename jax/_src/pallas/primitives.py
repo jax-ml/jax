@@ -671,10 +671,8 @@ def _run_scoped_is_high(*avals, jaxpr, **params):
 run_scoped_p.is_high = _run_scoped_is_high
 
 def _run_scoped_to_lojax(*args, jaxpr, **params):
-  # `args` are the current values of the jaxpr's consts; rebind them.
-  hi_jaxpr, _ = jaxpr.separate_consts()
-  closed_hi_jaxpr = hi_jaxpr.with_consts(args)
-  closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
+  jaxpr = jaxpr.replace(consts=args)
+  closed_lo_jaxpr = pe.lower_jaxpr2(jaxpr)
   consts = closed_lo_jaxpr.consts
   return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr, **params)
 run_scoped_p.to_lojax = _run_scoped_to_lojax
@@ -762,14 +760,9 @@ def _run_scoped_discharge_rule(
         "run_scoped discharge does not support collective_axes yet."
     )
   num_consts = len(args_flat)
-  # discharge_state only discharges invars, not consts, so in order to
-  # discharge the requested refs we need to move them to the invar set.
-  jaxpr_noconst, _consts = jaxpr.separate_consts()
-  assert not _consts, "REMOVE"
-  num_return_values = len(jaxpr_noconst.outvars)
+  num_return_values = len(jaxpr.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jaxpr_noconst,
-      should_discharge=should_discharge + [False] * len(jaxpr.invars),
+      jaxpr, should_discharge=should_discharge + [False] * len(jaxpr.invars),
   )
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
@@ -809,11 +802,9 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
         "run_scoped lowering outside of Pallas does not support"
         " collective_axes."
     )
-  jaxpr_noconst, _consts = jaxpr.separate_consts()
-  assert not _consts, "REMOVE"
-  num_return_values = len(jaxpr_noconst.outvars)
+  num_return_values = len(jaxpr.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jaxpr_noconst, should_discharge=True)
+      jaxpr, should_discharge=True)
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(

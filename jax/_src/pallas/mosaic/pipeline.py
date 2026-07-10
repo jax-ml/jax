@@ -2258,9 +2258,6 @@ def _pipeline_body_lowering_rule(
       user_grid_indices=(*ps.index, *user_grid_indices[len(ps.index) :]),
       block_shapes=(*ps_block_shapes, *body_const_shapes, *resolved_ref_shapes),
   )
-  # Lift the constants out of the jaxpr; their values arrive as operands.
-  jaxpr, _consts = jaxpr.separate_consts()
-  assert not _consts, "REMOVE"
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
   if _explicit_indices:
     return jaxpr_subcomp(

@@ -1937,10 +1937,8 @@ class DynamicJaxprTrace(core.Trace):
       return core.eval_jaxpr(jaxpr, (), *consts, *in_tracers,
                              propagate_source_info=False)
 
-    new_jaxpr, _consts = jaxpr.separate_consts()
-    assert not _consts, "REMOVE"
-    self.frame.is_high |= new_jaxpr.is_high
-    new_params = dict(params, call_jaxpr=new_jaxpr)
+    self.frame.is_high |= jaxpr.is_high
+    new_params = dict(params, call_jaxpr=jaxpr)
     update_params = call_param_updaters.get(call_primitive)
     if update_params:
       new_params = update_params(new_params, [True] * len(in_tracers),
@@ -1970,8 +1968,6 @@ class DynamicJaxprTrace(core.Trace):
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
-    closed_fun_jaxpr, _consts = fun_jaxpr.separate_consts()
-    assert not _consts, "REMOVE"
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
     @_memoize
     def jvp_jaxpr_thunk(*in_zeros):
@@ -1986,11 +1982,11 @@ class DynamicJaxprTrace(core.Trace):
     const_tracers = map(to_jaxpr_tracer, consts)
     return self.emit_eqn(
         [*const_tracers, *tracers], out_avals, prim,
-        dict(call_jaxpr=closed_fun_jaxpr,
+        dict(call_jaxpr=fun_jaxpr,
              jvp_jaxpr_fun=jvp_jaxpr_thunk,
              num_consts=len(consts),
              symbolic_zeros=symbolic_zeros),
-        core.positional_effects(closed_fun_jaxpr),
+        core.positional_effects(fun_jaxpr),
         source_info=source_info)
 
   def process_custom_vjp_call(self, prim: core.Primitive,
@@ -2015,8 +2011,6 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
-    closed_fun_jaxpr, _consts = fun_jaxpr.separate_consts()
-    assert not _consts, "REMOVE"
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
@@ -2034,12 +2028,12 @@ class DynamicJaxprTrace(core.Trace):
     const_tracers = map(to_jaxpr_tracer, consts)
     return self.emit_eqn(
         [*const_tracers, *tracers], out_avals, prim,
-        dict(call_jaxpr=closed_fun_jaxpr,
+        dict(call_jaxpr=fun_jaxpr,
              fwd_jaxpr_thunk=fwd_jaxpr_from_zeros,
              num_consts=num_consts,
              bwd=bwd, out_trees=out_trees_,
              symbolic_zeros=symbolic_zeros),
-        core.positional_effects(closed_fun_jaxpr),
+        core.positional_effects(fun_jaxpr),
         source_info=source_info)
 
   def to_jaxpr(self, out_tracers: Sequence[Tracer],

@@ -801,11 +801,9 @@ def _parallel_loop_lowering_rule(
     lowering_ctx = ctx.lowering_context.replace(
         block_shapes=[*consts_block_shapes, None] + [None] * len(carry),
     )
-    jaxpr_noconst, _consts = jaxpr.separate_consts()
-    assert not _consts, "REMOVE"
     carry_out = tc_lowering.jaxpr_subcomp(
         lowering_ctx,
-        jaxpr_noconst,
+        jaxpr,
         *consts,
         for_op.induction_variable,
         *for_op.inner_iter_args,

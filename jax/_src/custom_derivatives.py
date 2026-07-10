@@ -1490,9 +1490,6 @@ def linear_call(fun: Callable,
   res_avals = map(core.typeof, operands_res)
   lin_avals = map(core.typeof, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
-  f_jaxpr_closed, _consts = f_jaxpr.separate_consts()
-  assert not _consts, "REMOVE"
-  out_avals = f_jaxpr_closed.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
   t, t_out_tree = flatten_fun_nokwargs(
@@ -1506,7 +1503,7 @@ def linear_call(fun: Callable,
   @pe._memoize
   def transpose_thunk():
     t_jaxpr, t_consts = _initial_style_jaxpr(t.with_unknown_names(),
-                                             (*res_avals, *out_avals))
+                                             (*res_avals, *f_jaxpr.out_avals))
     if t_out_tree() != lin_tree:
       raise TypeError(
           'transpose output pytree structure must match that of linear inputs, '
@@ -1516,7 +1513,7 @@ def linear_call(fun: Callable,
     return t_jaxpr.separate_consts()
 
   out = linear_call_p.bind(*f_consts, *operands_res, *operands_lin,
-                           callee=f_jaxpr_closed,
+                           callee=f_jaxpr,
                            transpose_thunk=transpose_thunk,
                            num_callee_consts=len(f_consts),
                            num_res=len(operands_res))

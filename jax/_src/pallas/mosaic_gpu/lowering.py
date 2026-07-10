@@ -3641,16 +3641,10 @@ def _run_scoped_lowering_rule(
         should_discharge.append(False)
 
     if any(should_discharge):
-      # We convert consts to args, because we only have ir.Values and
-      # not JAX values during lowering. discharge_state() produces JAX
-      # valiues for the arguments but expects them to be provided for the
-      # consts. We also don't want to wrap the values in refs.
-      no_const_jaxpr, _consts = jaxpr.separate_consts()
-      assert not _consts, "REMOVE"
       should_discharge = [False] * len(consts) + should_discharge
       with config._check_vma(False):
         discharged_closed_jaxpr = discharge.discharge_state(
-            no_const_jaxpr,
+            jaxpr,
             should_discharge=should_discharge,
         )
         discharged_jaxpr, _ = discharged_closed_jaxpr, discharged_closed_jaxpr.consts

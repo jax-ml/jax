@@ -244,8 +244,6 @@ def pad_jaxpr_constvars(jaxpr: jax_core.Jaxpr,
   const_prefix = util.concatenate(unused_const_vars[:i])
   const_suffix = util.concatenate(unused_const_vars[i + 1:])
   num_own = len(jaxpr.constvars)
-  jaxpr, _consts = jaxpr.separate_consts()
-  assert not _consts, "REMOVE"
   own_vars, argvars = util.split_list(jaxpr.invars, [num_own])
   invars = [*const_prefix, *own_vars, *const_suffix, *argvars]
   effects = pe.make_jaxpr_effects((), invars, jaxpr.outvars, jaxpr.eqns)
