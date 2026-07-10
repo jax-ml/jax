@@ -175,11 +175,6 @@ def fragmented_array_to_ir(
       [ty], fragmented_array.registers.flatten().tolist()
   )
 
-  conversion_cast.attributes["registers_shape"] = ir.ArrayAttr.get([
-      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), s)
-      for s in fragmented_array.registers.shape
-  ])
-
   conversion_cast.attributes["layout"] = layouts_lib.to_layout_attr(
       fragmented_array.layout
   )
@@ -211,12 +206,7 @@ def _fragmented_array_from_ir(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
-  registers = np.array(list(original_inputs)).reshape(
-    [
-        attr.value  # pyrefly: ignore[missing-attribute]
-        for attr in ir.ArrayAttr(conversion_cast.attributes["registers_shape"])
-    ]
-  )
+  registers = np.array(list(original_inputs)).reshape(reg_shape)
 
   if isinstance(conversion_cast.outputs[0].type.element_type, ir.IntegerType):
     is_signed = False if is_signed is None else is_signed
