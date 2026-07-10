@@ -901,6 +901,28 @@ def TPU_MatmulPopOp : TPU_Op<"matmul_pop"> {
   }];
 }
 
+def TPU_MatmulLhsFifoOp : TPU_Op<"matmul_lhs_fifo"> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$lhs,
+    I32Attr:$mxu_index,
+    OptionalAttr<I32Attr>:$load_staged_rhs
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $lhs attr-dict `:` type($lhs)
+  }];
+}
+
+def TPU_MatmulPopFifoOp : TPU_Op<"matmul_pop_fifo"> {
+  let arguments = (ins
+    I32Attr:$mxu_index
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let assemblyFormat = [{
+    $mxu_index attr-dict `:` type($result)
+  }];
+}
+
 def TPU_ConcatenateOp : TPU_Op<"concatenate", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let arguments = (ins
     Variadic<AnyVectorOfNonZeroRank>:$sources,
