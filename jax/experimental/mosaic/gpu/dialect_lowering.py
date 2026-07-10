@@ -200,15 +200,15 @@ def _fragmented_array_from_ir(
   producer_layout = layouts_lib.from_layout_attr(producer_layout_attr)
   vector_ty = ir.VectorType(fragmented_array_as_ir.type)
   reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
-  reg_ty: ir.Type = producer_layout.registers_element_type(vector_ty.element_type)
+  reg_ty = producer_layout.registers_element_type(vector_ty.element_type)
 
-  conversion_cast, original_inputs = _undo_conversion_cast(
+  _, original_inputs = _undo_conversion_cast(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
   registers = np.array(list(original_inputs)).reshape(reg_shape)
 
-  if isinstance(conversion_cast.outputs[0].type.element_type, ir.IntegerType):
+  if isinstance(vector_ty.element_type, ir.IntegerType):
     is_signed = False if is_signed is None else is_signed
 
   return fa.FragmentedArray(
