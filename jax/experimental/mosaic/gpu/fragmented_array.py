@@ -3986,13 +3986,10 @@ class FragmentedArray:
         stores = self.transfer_tiled(
             ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True,
         )
-        for get, _update, _idx, ptr in stores:
-          reg = get(self.registers)
-          reg_ty = ir.VectorType(reg.type)
-          reg = utils.bitcast(reg, i32)
+        for gets, _updates, _idxs, ptr in stores:
           nvvm.stmatrix(
               ptr,
-              [reg],
+              [utils.bitcast(get(self.registers), i32) for get in gets],
               nvvm.MMALayout.row,
               ir.Attribute.parse("#nvvm.ld_st_matrix_shape<m=8, n=8>"),
               nvvm.LdStMatrixEltType.B16,
@@ -4028,6 +4025,7 @@ class FragmentedArray:
       _load_fun: Callable[[ir.VectorType, ir.Value], ir.Value] = llvm.load,
       _narrow_float_as_int: bool = True,
   ) -> FragmentedArray:
+    i32 = ir.IntegerType.get_signless(32)
     if not isinstance(layout, TiledLayout):
       raise NotImplementedError(layout)
     ref_ty = ir.MemRefType(ref.type)
@@ -4070,15 +4068,24 @@ class FragmentedArray:
           ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True
       )
       try:
-        for _get, update, _idx, ptr in loads:
-          loaded_reg = nvvm.ldmatrix(
+        for _gets, updates, _idxs, ptr in loads:
+          loaded_regs_value = nvvm.ldmatrix(
               ptr,
-              num=1,
+              num=len(updates),
               layout=nvvm.MMALayout.row,
               shape=ir.Attribute.parse("#nvvm.ld_st_matrix_shape<m=8, n=8>"),
               elt_type=nvvm.LdStMatrixEltType.B16,
           )
-          update(registers, utils.bitcast(loaded_reg, reg_ty))
+          # ldmatrix returns a single i32 or a struct of i32s.
+          if len(updates) == 1:
+            loaded_regs = [loaded_regs_value]
+          else:
+            loaded_regs = [
+                llvm.extractvalue(i32, loaded_regs_value, [i])
+                for i in range(len(updates))
+            ]
+          for loaded_reg, update in zip(loaded_regs, updates, strict=True):  # type: ignore
+            update(registers, utils.bitcast(loaded_reg, reg_ty))
         return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
       except TxMatrixIneligible:
         pass
@@ -4330,7 +4337,7 @@ class FragmentedArray:
     _as_consts = lambda consts: [c(const) for const in consts.tolist()]
     # This has bits set only for the offset bits that influence swizzling.
     swizzle_mask = swizzle_block_transfers - swizzle_tile_transfers
-    for tile_idx in np.ndindex(*tiles_shape):
+    def get_tile_transfer(tile_idx):
       indices = np.asarray([f(tile_idx) for f in plan.tile_index_transforms])
       const_offset = np.dot(indices, tiles_strides_transfer)
       # We split the offset into a part that interacts with swizzling and a
@@ -4387,7 +4394,57 @@ class FragmentedArray:
         if any(len(t) != 1 for t in tiled_nested_shape):
           raise NotImplementedError("Tiling too complicated")
         return tiling.untile_indices(indices.tolist()[0])
-      yield get_register, update_registers, get_base_index, reg_ptr
+      return get_register, update_registers, get_base_index, reg_ptr
+    if not use_txmatrix:
+      yield from map(get_tile_transfer, np.ndindex(*tiles_shape))
+      return
+    # TODO(apaszke): What we implement below is a pretty minimal partitioning
+    # scheme where we only consider a single dimension and fall back to num=1
+    # otherwise. Instead, we should use two properties of iteration spaces to
+    # harvest as many high-num transfers as we can. An nd-iteration space
+    # supports two operations:
+    # 1. Factorization, where e.g. we can take a 2x3 space and turn it into
+    #    2*(1x3) spaces.
+    # 2. Splitting, where e.g. the 2x3 space can be rewritten as 2x(2+1), which
+    #    is equivalent to taking a sum of two spaces: 2x2 + 2x1.
+    # So, given a 2x3 space, the best transfer we could probably derive is to
+    # first perform factorization to get 2*(1x3), then split that into
+    # 2*(1x2 + 1x1). Using distributivity we get 2*(1x2) + 2*(1x1) which can be
+    # further factored into 4*(1x1) + 2*(1x1). This gives us a good schedule of
+    # a single num=4 transfer and a single num=2 transfer, which is ideal given
+    # that we had 6 tiles overall.
+    # There are some complications here, too. If we use factors of 2 from
+    # two dims, then the lane_tile_offset becomes a 2D dot product, which is
+    # more expensive to compute. So we should prefer factoring or splitting a
+    # single dimension if possible...
+    num = 4
+    for quadrant_dim, d in enumerate(tiles_shape):
+      if d % num == 0:
+        break
+    else:
+      # Failed to partition, but we can still use num=1.
+      for tile_idx in np.ndindex(*tiles_shape):
+        xfer_details = get_tile_transfer(tile_idx)
+        yield (*([d] for d in xfer_details[:-1]), xfer_details[-1])
+      return
+    lane_quadrant = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 4)), c(4))
+    lane_tile_offset = arith.muli(lane_quadrant, c(tiles_strides_transfer[quadrant_dim]))
+    # Note that this will affect the call to get_tile_transfer below.
+    dyn_offset = arith.addi(dyn_offset, lane_tile_offset)
+    tiles_shape[quadrant_dim] //= num
+    for tile_group_idx in np.ndindex(*tiles_shape):
+      transfers = []
+      for i in range(num):
+        tile_idx = (
+            *tile_group_idx[:quadrant_dim],
+            num * tile_group_idx[quadrant_dim] + i,
+            *tile_group_idx[quadrant_dim + 1:]
+        )
+        transfers.append(get_tile_transfer(tile_idx))
+      transfers_t = list(zip(*transfers))
+      # The first address is the one our quadrant is responsible for providing.
+      yield (*transfers_t[:-1], transfers_t[-1][0])
+
 
   def tree_flatten(self):
     aux = self.layout, self.registers.shape, self.is_signed

@@ -3687,7 +3687,7 @@ class Sm80Test(TestCase):
           ),
       )(x)
       np.testing.assert_array_equal(y, x)
-    self.assertIn("ldmatrix.sync.aligned", ptx())
+    self.assertIn("ldmatrix.sync.aligned.m8n8.x4.shared", ptx())
     self.assertNotIn("ld.shared", ptx())
 
   @parameterized.product(
@@ -3712,7 +3712,7 @@ class Sm80Test(TestCase):
           jax.ShapeDtypeStruct(tile_shape(x.shape, (8, swizzle // 2)), dtype),
       )(x)
       np.testing.assert_array_equal(y, x)
-    self.assertIn("stmatrix.sync.aligned", ptx())
+    self.assertIn("stmatrix.sync.aligned.m8n8.x4.shared", ptx())
     self.assertNotIn("st.shared", ptx())
 
 
