@@ -1096,7 +1096,7 @@ def _custom_vjp_call_dce(
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
     dce_fwd_jaxpr, _ = _cached_closed_call_dce_instantiate(
         fwd_jaxpr, (True,) * num_res_out + tuple(used_outs))
-    return dce_fwd_jaxpr, dce_fwd_jaxpr.consts
+    return dce_fwd_jaxpr.separate_consts()
 
   def dce_bwd(*args):
     _, res_tree, _ = out_trees()
