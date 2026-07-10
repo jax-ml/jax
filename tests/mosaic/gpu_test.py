@@ -6528,6 +6528,45 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-1, 1, shape).astype(dtype)
     np.testing.assert_array_equal(kernel(x), x.T)
 
+  def test_layout_cast_convert_fuses_slice_after_layout_cast(self):
+    # When we emit fast converts for slice producers we can fuse these into
+    # the conversion routine itself. If we don't do this LLVM emits too many
+    # shifts.
+    # In this regression test we make sure we hit the fusion path.
+    shape = (128, 128)
+    in_dtype = jnp.int4
+    out_dtype = jnp.bfloat16
+
+    def body(ctx, src_ref, dst_ref, scratch):
+      del ctx, scratch
+      src_reg = mgpu_dialect.vector_load(src_ref)
+      src_layout_attr = layouts.to_layout_attr(fa.WGMMA_LAYOUT_UPCAST_2X)
+      src_reg = mgpu_dialect.layout_cast(src_reg, src_layout_attr)
+      dst_layout_attr = layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      dst_reg = mgpu_dialect.layout_cast(src_reg, dst_layout_attr)
+
+      bf16 = ir.BF16Type.get()
+      out_vec_ty = ir.VectorType.get(ir.VectorType(dst_reg.type).shape, bf16)
+      conv_reg = arith.sitofp(out_vec_ty, dst_reg)
+      mgpu_dialect.vector_store(conv_reg, dst_ref)
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax.ShapeDtypeStruct(shape, in_dtype),),
+        out_shape=jax.ShapeDtypeStruct(shape, out_dtype),
+        smem_scratch_shape=[],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+    x = self.prng.integers(-8, 7, shape).astype(in_dtype)
+    expected = jax.lax.convert_element_type(x, out_dtype)
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      np.testing.assert_array_equal(kernel(x), expected)
+
+    self.assertNotRegex(ptx(), r"bfe\.s32")
+
   def test_pointwise_kernel(self):
     def add(ctx, a, b, result, smem):
       del ctx, smem
