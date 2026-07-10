@@ -602,7 +602,7 @@ remat_p.bind = _remat_bind
 @remat_p.def_impl
 def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
   del prevent_cse, differentiated, policy  # Unused.
-  return core.eval_jaxpr(jaxpr, (), *args)
+  return core.eval_jaxpr(jaxpr, *args)
 
 @remat_p.def_effectful_abstract_eval
 def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):
@@ -659,7 +659,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   # Compute known outputs and residuals (hoisted out of remat primitive)
   _, in_consts_ = unzip2(t.pval for t in tracers if t.pval.is_known())
   _, in_consts = partition_list(in_used_known, in_consts_)
-  out_consts = core.eval_jaxpr(jaxpr_known_, (), *in_consts)
+  out_consts = core.eval_jaxpr(jaxpr_known_, *in_consts)
   out_knowns, residuals = split_list(out_consts, [len(out_consts)-num_res])
 
   # set up unknown outputs with a recipe to call remat

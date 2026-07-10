@@ -136,7 +136,7 @@ class Scan3(hijax.VJPHiPrimitive):
         else:
           return arg
       sliced_args = [slice_arg(e, a) for e, a in zip(self.extensives, args)]
-      y_tree = core.eval_jaxpr(self.jaxpr, [], *sliced_args)
+      y_tree = core.eval_jaxpr(self.jaxpr, *sliced_args)
       for out, y in zip(outs, y_tree):
         out[i] = y
       return i + 1
@@ -2103,12 +2103,12 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   if cond_ordered_effects:
     def cond(args):
       # Pred can be batched
-      pred = core.eval_jaxpr(cond_jaxpr, cond_jaxpr.consts, *args)[0]
+      pred = core.eval_jaxpr(cond_jaxpr, *args)[0]
       if batched:
         pred = lax.reduce_or(pred, tuple(range(len(pred_aval.shape))))
       return pred
     def body(args):
-      return core.eval_jaxpr(body_jaxpr, body_jaxpr.consts, *args)
+      return core.eval_jaxpr(body_jaxpr, *args)
     def new_cond(pred_args):
       pred, *_ = pred_args
       return pred
@@ -2322,10 +2322,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
       # in the cond jaxpr are persisted via the carry.
       cond_consts, body_consts = split_list(consts, [num_remaining_cond_consts])
       cond_consts_and_refs = merge_lists(cond_is_ref, cond_consts, cond_refs)
-      cond_carry_refs = core.eval_jaxpr(
-          discharged_cond_jaxpr,
-          discharged_cond_jaxpr.consts,
-          *cond_consts_and_refs,
+      cond_carry_refs = core.eval_jaxpr(discharged_cond_jaxpr, *cond_consts_and_refs,
           *carry,
       )
       # Note: in order to handle the same Ref being updated in both the cond
@@ -2339,10 +2336,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
       cond_refs_out = cond_refs
 
     body_consts_and_refs = merge_lists(body_is_ref, body_consts, body_refs)
-    body_carry_refs = core.eval_jaxpr(
-        discharged_body_jaxpr,
-        discharged_body_jaxpr.consts,
-        *body_consts_and_refs,
+    body_carry_refs = core.eval_jaxpr(discharged_body_jaxpr, *body_consts_and_refs,
         *carry,
     )
     carry, body_refs_out = split_list(body_carry_refs, [num_carry])
@@ -2366,10 +2360,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
     # We don't use them here!
     del body_refs
     cond_consts_and_refs = merge_lists(cond_is_ref, consts, cond_refs)
-    results = core.eval_jaxpr(
-        discharged_cond_jaxpr,
-        discharged_cond_jaxpr.consts,
-        *cond_consts_and_refs,
+    results = core.eval_jaxpr(discharged_cond_jaxpr, *cond_consts_and_refs,
         *carry,
     )
     predicate, refs_out = split_list(results, [1])

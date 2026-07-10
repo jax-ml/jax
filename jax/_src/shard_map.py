@@ -729,7 +729,7 @@ class ShardMapPrimitive(core.Primitive):
     assert isinstance(jaxpr, core.Jaxpr)
     axes = new_params.pop('out_specs')
     def eval_jaxpr(*args):
-      result = core.eval_jaxpr(jaxpr, (), *args)
+      result = core.eval_jaxpr(jaxpr, *args)
       return ft.flatten(result).with_aux(axes)
     new_params['subfuns'] = (eval_jaxpr,)
     new_params['debug_info'] = jaxpr.debug_info
@@ -1787,7 +1787,7 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
 
   # TODO(mattjj): avoid round-tripping the jaxpr through eval_jaxpr here
   def f_tangent(*args):
-    ans = core.eval_jaxpr(lin_jaxpr, (), *args)
+    ans = core.eval_jaxpr(lin_jaxpr, *args)
     return ft.flatten(ans).with_aux(tangent_out_specs)
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
@@ -1855,7 +1855,7 @@ def _shard_map_remat(trace, shard_map_p, f, tracers, mesh, in_specs, check_vma,
       debug_info=rem_jaxpr.debug_info)
 
   def f_rem(*args):
-    out = core.eval_jaxpr(rem_jaxpr, (), *args)
+    out = core.eval_jaxpr(rem_jaxpr, *args)
     return ft.flatten_list(out).with_aux(out_specs)
 
   args = (*residuals, *env, *in_vals2)
@@ -1874,7 +1874,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   def fun(*res_and_args):
     res, args = split_list(res_and_args, [len(which)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res, which)]
-    return core.eval_jaxpr(jaxpr, (), *res, *args)
+    return core.eval_jaxpr(jaxpr, *res, *args)
   resvars, argvars = split_list(jaxpr.invars, [len(which)])
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(resvars, which)]

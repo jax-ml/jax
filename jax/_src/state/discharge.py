@@ -698,15 +698,14 @@ def _run_state_impl(*args: Any, jaxpr: core.Jaxpr,
                     which_linear: tuple[bool, ...],
                     is_initialized: tuple[bool, ...]):
   del which_linear
-  discharged_closed_jaxpr = discharge_state(jaxpr)
-  discharged_jaxpr, consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
+  discharged_jaxpr = discharge_state(jaxpr)
   # Initialize the args that are not initialized.
   args_it = iter(args)
   args = tuple(
       next(args_it) if is_init else _default_initialization(var.aval)
       for is_init, var in zip(is_initialized, discharged_jaxpr.invars)
   )
-  return core.eval_jaxpr(discharged_jaxpr, consts, *args)
+  return core.eval_jaxpr(discharged_jaxpr, *args)
 run_state_p.def_impl(_run_state_impl)
 mlir.register_lowering(run_state_p, mlir.lower_fun(_run_state_impl))
 
@@ -848,8 +847,7 @@ def run_state_reference(f: Callable[..., None]):
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
     jaxpr = hoist_consts_to_refs(jaxpr_.with_consts(consts))
-    discharged_closed_jaxpr = discharge_state(jaxpr)
-    discharged_jaxpr, discharged_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
+    discharged_jaxpr = discharge_state(jaxpr)
 
     # Initialize any uninitialized values here in ref_args in the reference.
     ref_args = [
@@ -857,8 +855,7 @@ def run_state_reference(f: Callable[..., None]):
         for r, aval in zip(ref_args, ref_avals)
     ]
 
-    out_const_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,
-                                     *consts, *ref_args)
+    out_const_flat = core.eval_jaxpr(discharged_jaxpr, *consts, *ref_args)
     _, out_flat = split_list(out_const_flat, [len(consts)])
     return in_tree.unflatten(out_flat)
   return wrapped
@@ -913,9 +910,8 @@ def custom_vjp_call_discharge(in_avals, out_avals, *args, call_jaxpr,
                               num_consts):
   # Discharge happens after all AD is done, so we can discard the AD rules.
   del fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros, num_consts
-  dis_closed_jaxpr = discharge_state(call_jaxpr)
-  dis_jaxpr, dis_consts = dis_closed_jaxpr, dis_closed_jaxpr.consts
-  outs = _eval_jaxpr_ad_error(dis_jaxpr, dis_consts, args)
+  dis_jaxpr = discharge_state(call_jaxpr)
+  outs = _eval_jaxpr_ad_error(dis_jaxpr, args)
   out_vals, ref_vals = split_list(outs, [len(call_jaxpr.out_avals)])
   ref_vals_ = iter(ref_vals)
   new_invals = [next(ref_vals_) if isinstance(aval, AbstractRef) else None
@@ -924,8 +920,8 @@ def custom_vjp_call_discharge(in_avals, out_avals, *args, call_jaxpr,
   return new_invals, out_vals
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
-def _eval_jaxpr_ad_error(dis_jaxpr, consts, args):
-  return core.eval_jaxpr(dis_jaxpr, consts, *args)
+def _eval_jaxpr_ad_error(dis_jaxpr, args):
+  return core.eval_jaxpr(dis_jaxpr, *args)
 @_eval_jaxpr_ad_error.defjvp
 def _eval_jaxpr_ad_error_jvp(*_):
   raise Exception("should be unreachable, AD after discharge")

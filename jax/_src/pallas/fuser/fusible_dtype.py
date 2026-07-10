@@ -146,8 +146,7 @@ def physicalize(f):
         f, in_avals_ft, debug_info
     )
     new_jaxpr = physicalize_closed_jaxpr(closed_jaxpr)
-    out_flat = core.eval_jaxpr(
-        new_jaxpr, new_jaxpr.consts, *args_ft.vals
+    out_flat = core.eval_jaxpr(new_jaxpr, *args_ft.vals
     )
     return tree_util.tree_unflatten(out_avals_ft.tree, out_flat)
 

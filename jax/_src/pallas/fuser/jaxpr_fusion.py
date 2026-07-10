@@ -130,7 +130,7 @@ def construct_input_fusion(
   )
 
   def _fn():
-    out_flat = jax_core.eval_jaxpr(new_jaxpr, new_values)
+    out_flat = jax_core.eval_jaxpr(new_jaxpr)
     return tree_util.tree_unflatten(out_tree, out_flat)
 
   return fusion_lib.Fusion(_fn, in_type, out_type)
@@ -269,7 +269,8 @@ def _construct_output_fusions(
 
     def _fn(jaxpr, vals, *args, **kwargs):
       flat_args, _ = tree_util.tree_flatten((args, kwargs))
-      out_flat = jax_core.eval_jaxpr(jaxpr, vals, *flat_args)
+      jaxpr_no_consts, _ = jaxpr.separate_consts()
+      out_flat = jax_core.eval_jaxpr(jaxpr_no_consts, *vals, *flat_args)
       return tuple(out_flat)
 
     fn = functools.partial(_fn, jaxpr_out_for_group, values_for_jaxpr)
@@ -335,7 +336,8 @@ def fuse_jaxpr(
           ensure_out_inst=False,
           saveable=lambda *_, **__: False)
       assert not any(out_used)
-    return jax_core.eval_jaxpr(independent_jaxpr, candidate_values)
+    independent_jaxpr_no_consts, _ = independent_jaxpr.separate_consts()
+    return jax_core.eval_jaxpr(independent_jaxpr_no_consts, *candidate_values)
 
   # Construct fusions for non-constant inputs to the fusible.
   in_fusions_flat = [

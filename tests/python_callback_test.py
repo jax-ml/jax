@@ -616,7 +616,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda: jax.vmap(f)(
         jnp.zeros(100, dtype=jnp.float32)))()
     with jax.ensure_compile_time_eval():
-      jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts)  # doesn't crash
+      jax.core.eval_jaxpr(jaxpr)  # doesn't crash
 
   @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
   def test_subbyte_results(self, dtype: str):

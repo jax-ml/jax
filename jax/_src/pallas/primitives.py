@@ -816,7 +816,7 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
     init_vals = [
         uninitialized_value(aval.shape, aval.dtype) for aval in body_avals  # type: ignore
     ]
-    out = jax_core.eval_jaxpr(discharged_body, [], *lower_fun_args, *init_vals)
+    out = jax_core.eval_jaxpr(discharged_body, *lower_fun_args, *init_vals)
     return out[:num_return_values]
 
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)

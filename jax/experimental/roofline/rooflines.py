@@ -594,7 +594,7 @@ def _scatter_roofline(
 
   flops = 0
   if update_jaxpr:
-    update_fn = lambda *inputs: core.eval_jaxpr(update_jaxpr, [], *inputs)
+    update_fn = lambda *inputs: core.eval_jaxpr(update_jaxpr, *inputs)
     # Create dummy scalar inputs.
     dummy_inputs = [
         api.ShapeDtypeStruct((), updates.dtype) for _ in update_jaxpr.invars

@@ -10549,7 +10549,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         return x + y
 
     jaxpr = f.trace(arr1, arr2).jaxpr
-    jax.core.eval_jaxpr(jaxpr, (), arr1, arr2)  # doesn't crash
+    jax.core.eval_jaxpr(jaxpr, arr1, arr2)  # doesn't crash
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_top_level_ag_basic(self, mesh):

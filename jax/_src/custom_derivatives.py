@@ -438,7 +438,7 @@ def lift_jvp(num_consts: int, jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
     zeros = [type(t) is SymbolicZero for t in tangents]
     jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*zeros)
     nonzero_tangents = [t for t in tangents if type(t) is not SymbolicZero]
-    out = core.eval_jaxpr(jvp_jaxpr, (), *jvp_consts, *primals,
+    out = core.eval_jaxpr(jvp_jaxpr, *jvp_consts, *primals,
                           *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
     nz_out_tangents_ = iter(nz_out_tangents)
@@ -1049,7 +1049,7 @@ def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
     const_nonzeros, in_nonzeros = split_list(nonzeros, [num_consts])
     if any(const_nonzeros): raise ad.CustomVJPException()
     fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*in_nonzeros)
-    return core.eval_jaxpr(fwd_jaxpr, (), *fwd_consts, *primals)
+    return core.eval_jaxpr(fwd_jaxpr, *fwd_consts, *primals)
   return lu.wrap_init(fwd, debug_info=fwd_jaxpr_thunk.debug_info)
 
 @lu.transformation2
@@ -1234,7 +1234,7 @@ def custom_gradient(fun):
     jaxpr, in_tree, out_tree, consts = res
     cts_flat, out_tree_ = tree_flatten((cts,))
     if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
-    cts_out = core.eval_jaxpr(jaxpr, (), *consts, *cts_flat)
+    cts_out = core.eval_jaxpr(jaxpr, *consts, *cts_flat)
     cts_out = tree_unflatten(in_tree, cts_out)
     if treedef_is_leaf(in_tree):
       cts_out = (cts_out,)
@@ -1373,7 +1373,7 @@ def _closure_convert_for_avals(fun, in_tree, in_avals,
              f"closure_convert was called. Expected {in_tree}, but got "
              f"{in_tree2}")
       raise TypeError(msg)
-    out_flat = core.eval_jaxpr(jaxpr, (), *consts, *all_args)
+    out_flat = core.eval_jaxpr(jaxpr, *consts, *all_args)
     return tree_unflatten(out_tree, out_flat)
 
   return converted_fun, const_args
@@ -1523,7 +1523,7 @@ def linear_call(fun: Callable,
 def _linear_call_impl(*args, callee, transpose_thunk, num_callee_consts,
                       num_res):
   del transpose_thunk, num_callee_consts, num_res
-  return core.eval_jaxpr(callee, (), *args)
+  return core.eval_jaxpr(callee, *args)
 
 def _linear_call_jvp_rule(primals, tangents, callee, transpose_thunk,
                           num_callee_consts, num_res):

@@ -308,7 +308,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     def g(x):
       jaxpr = api.make_jaxpr(f)(x)
-      return core.eval_jaxpr(jaxpr.jaxpr, [], x)[0]
+      return core.eval_jaxpr(jaxpr.jaxpr, x)[0]
 
     v = api.vmap(lambda _, x: g(x), axis_name='foo', in_axes=(0, None),
         out_axes=None)(jnp.arange(4.), 2.)
@@ -2195,7 +2195,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     def g(x):
       jaxpr = api.make_jaxpr(f)(x)
-      return core.eval_jaxpr(jaxpr.jaxpr, [], x)[0]
+      return core.eval_jaxpr(jaxpr.jaxpr, x)[0]
 
     out = api.vmap(lambda _, x: g(x), axis_name='foo', in_axes=(0, None),
         out_axes=None)(jnp.arange(4.), 2.)

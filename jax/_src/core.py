@@ -295,7 +295,7 @@ def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
   # context modifications. In the meantime, disabling the checks when we
   # round-trip prevents those ops producing spurious errors.
   with config.debug_nans(False):
-    return eval_jaxpr(closed_jaxpr, closed_jaxpr.consts, *args)
+    return eval_jaxpr(closed_jaxpr, *args)
 
 
 # This context manager is fairly hot, because it is frequently called for every
@@ -745,7 +745,12 @@ def _generic_effectful_abstract_eval(abstract_eval, prim):
 
 # -------------------- lifting --------------------
 
-def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[Any]:
+def eval_jaxpr(jaxpr: Jaxpr, *args, propagate_source_info=True) -> list[Any]:
+  assert not (args and isinstance(args[0], (list, tuple))), (
+      "eval_jaxpr no longer takes a `consts` argument: the values of the "
+      "constvars come from the jaxpr's own consts. Pass only the values of "
+      "the jaxpr's invars (rebinding consts first via `Jaxpr.with_consts` if "
+      "needed).")
   def read(v: Atom) -> Any:
     return v.val if isinstance(v, Literal) else env[v]
 
@@ -755,7 +760,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     env[v] = val
 
   env: dict[Var, Any] = {}
-  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.constvars, jaxpr.consts)
   foreach(write, jaxpr.invars, args)
   lu = last_used(jaxpr)
   for eqn in jaxpr.eqns:
@@ -3330,7 +3335,7 @@ class ClosedCallPrimitive(CallPrimitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     jaxpr: Jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr, jaxpr.consts),
+    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr),
                           debug_info=jaxpr.debug_info)
     new_params['subfuns'] = (subfun,)
     return new_params

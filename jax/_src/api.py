@@ -1554,7 +1554,7 @@ def _lift_linearized(jaxpr, in_avals, out_avals, out_known, consts, *tangents):
           "the original primal values:\n"
           f"Got tangent aval {tangent_aval} for primal aval {primal_aval} "
           f"but expected {expected_tangent_aval}.{extra_msg}")
-  tangents_out = eval_jaxpr(jaxpr, (), *consts, *tangents_ft)
+  tangents_out = eval_jaxpr(jaxpr, *consts, *tangents_ft)
   tangents_out_ = iter(tangents_out)
   full_out = [a2tz(aval).instantiate() if known else next(tangents_out_)
               for aval, known in zip(out_avals, out_known)]

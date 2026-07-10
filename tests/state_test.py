@@ -569,7 +569,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     f_batched = jax.vmap(f, in_axes=(ref_bdim, *idx_bdims), out_axes=[out_bdim])
     jaxpr, _ = trace_to_jaxpr(f_batched, bat_ref_aval, *bat_idx_avals)
     jaxpr = discharge_state(jaxpr)
-    discharge_of_vmap_ans = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, a, *idxs)
+    discharge_of_vmap_ans = core.eval_jaxpr(jaxpr, a, *idxs)
 
     # vmap-of-discharge
     jaxpr, _ = trace_to_jaxpr(f, ref_aval, *idx_avals)
@@ -597,7 +597,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertLen(discharged_jaxpr.outvars, 2)
     self.assertEqual(discharged_jaxpr.eqns[0].primitive, lax.add_p)
     # Should be able to evaluate this jaxpr
-    self.assertListEqual(core.eval_jaxpr(discharged_jaxpr.jaxpr, discharged_jaxpr.consts,
+    self.assertListEqual(core.eval_jaxpr(discharged_jaxpr,
                                          jnp.float32(1.)), [2., 1.])
 
   def test_discharge_get_with_slice(self):
@@ -644,9 +644,9 @@ class StateDischargeTest(jtu.JaxTestCase):
     discharged_jaxpr = discharge_state(stateful_jaxpr)
     self.assertLen(discharged_jaxpr.invars, 2)
     self.assertLen(discharged_jaxpr.outvars, 1)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr.jaxpr, discharged_jaxpr.consts, jnp.float32(0.),
+    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, jnp.float32(0.),
                                      jnp.float32(1.))[0], 2.)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr.jaxpr, discharged_jaxpr.consts, jnp.float32(2.),
+    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, jnp.float32(2.),
                                      jnp.float32(1.))[0], 2.)
 
   def test_discharge_set_with_slice(self):
@@ -713,9 +713,9 @@ class StateDischargeTest(jtu.JaxTestCase):
     discharged_jaxpr = discharge_state(stateful_jaxpr)
     self.assertLen(discharged_jaxpr.invars, 2)
     self.assertLen(discharged_jaxpr.outvars, 1)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr.jaxpr, discharged_jaxpr.consts, jnp.float32(0.),
+    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, jnp.float32(0.),
                                      jnp.float32(1.))[0], 2.)
-    self.assertEqual(core.eval_jaxpr(discharged_jaxpr.jaxpr, discharged_jaxpr.consts, jnp.float32(2.),
+    self.assertEqual(core.eval_jaxpr(discharged_jaxpr, jnp.float32(2.),
                                      jnp.float32(1.))[0], 4.)
 
   def test_discharge_addupdate_with_slice(self):

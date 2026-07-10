@@ -236,7 +236,7 @@ def _linearize_jaxpr(
   in_primals = [t.primal for t in tracers]
 
   with core.set_current_trace(lin_trace, check_leaks=True):
-    ans = core.eval_jaxpr(jaxpr, jaxpr.consts, *tracers)
+    ans = core.eval_jaxpr(jaxpr, *tracers)
     out_primals, out_tangents = unzip2(map(lin_trace.to_primal_tangent_pair, ans))
     out_tangents = [instantiate_zeros(t) if inst else t
                     for t, inst in zip(out_tangents, instantiate)]
@@ -916,7 +916,7 @@ def _get_f_tangent(lin_jaxpr):
   # `lin_jaxpr` is const-free (see pe.move_envvars); the residuals are its
   # leading invars.
   def _f(*args):
-    return core.eval_jaxpr(lin_jaxpr, (), *args)
+    return core.eval_jaxpr(lin_jaxpr, *args)
   return _f
 
 
@@ -996,10 +996,13 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
         jaxpr, [True] * len(jaxpr.outvars),
         [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
     out_consts = [c for used, c in zip(used_consts, out_consts) if used]
+    # The jaxpr's consts are residual tracers of the finished trace; the
+    # residual values arrive when `linearized` is called.
+    jaxpr, _ = jaxpr.separate_consts()
 
     def linearized(residuals, *tangents):
       nz_tangents_in = [t for (t, nz) in zip(tangents, nonzeros) if nz]
-      nz_tangents_out = core.eval_jaxpr(jaxpr, residuals, *nz_tangents_in)
+      nz_tangents_out = core.eval_jaxpr(jaxpr, *residuals, *nz_tangents_in)
       nz_tangents_out_iter = iter(nz_tangents_out)
       all_out_tangents = [next(nz_tangents_out_iter) if nz else Zero(aval)
                           for (aval, nz) in zip(out_tangent_avals, out_nzs)]

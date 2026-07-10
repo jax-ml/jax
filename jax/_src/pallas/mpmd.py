@@ -194,8 +194,7 @@ def _mpmd_map_discharge_rule(
           args, [num_in, num_out_orig, num_out_new]
       )
       del new_out_refs
-      jax_core.eval_jaxpr(
-          jaxpr, (), *(in_refs + orig_out_refs + scratch_refs)
+      jax_core.eval_jaxpr(jaxpr, *(in_refs + orig_out_refs + scratch_refs)
       )
       return ()
 
@@ -752,7 +751,8 @@ def _dedup_consts_and_unify_jaxpr_signatures(
       mapped_consts = [c_map[id(c)] for c in original_consts]
 
       eval_args = in_args + out_args + scratch_args
-      jax_core.eval_jaxpr(original_jaxpr, mapped_consts, *eval_args)
+      original_jaxpr_no_consts, _ = original_jaxpr.separate_consts()
+      jax_core.eval_jaxpr(original_jaxpr_no_consts, *mapped_consts, *eval_args)
       return []
 
     return _rewritten_body

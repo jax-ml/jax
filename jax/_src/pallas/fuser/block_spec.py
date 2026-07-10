@@ -564,7 +564,7 @@ def _pull_block_transform(
         args = scalar_prefetch_handler(*_get_scalar_prefetch())
         # Load from SMEM
         args = [a[0] for a in args]
-        return core.eval_jaxpr(jaxpr, [], *args)
+        return core.eval_jaxpr(jaxpr, *args)
 
       scalar_prefetch_fn = functools.partial(
           _scalar_prefetch_fn, scalar_prefetch_jaxpr
@@ -828,7 +828,8 @@ def _get_fusion_values(
         is_scalar_prefetch, values, scalar_prefetch_values
     )
     flat_args, _ = tree_util.tree_flatten((args, kwargs))
-    out_flat = core.eval_jaxpr(jaxpr, values, *flat_args)
+    jaxpr_no_consts, _ = jaxpr.separate_consts()
+    out_flat = core.eval_jaxpr(jaxpr_no_consts, *values, *flat_args)
     if discharge_refs and len(out_flat) > out_tree.num_leaves:
       out_flat, extra_out = util.split_list(out_flat, [out_tree.num_leaves])
       out = tree_util.tree_unflatten(out_tree, out_flat)

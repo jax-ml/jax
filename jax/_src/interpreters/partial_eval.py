@@ -1934,7 +1934,7 @@ class DynamicJaxprTrace(core.Trace):
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
     jaxpr, out_avals, consts = _cached_trace_to_jaxpr(f, in_type)
     if params.get('inline', False):
-      return core.eval_jaxpr(jaxpr, (), *consts, *in_tracers,
+      return core.eval_jaxpr(jaxpr, *consts, *in_tracers,
                              propagate_source_info=False)
 
     self.frame.is_high |= jaxpr.is_high

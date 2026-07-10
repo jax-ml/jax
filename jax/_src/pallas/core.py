@@ -1782,7 +1782,8 @@ def default_mesh_discharge_rule(
     in_refs, _, scratch_refs = split_list(
         args, [len(in_avals), len(modified_idxs)]
     )
-    jax_core.eval_jaxpr(jaxpr, in_refs, *scratch_refs)
+    jaxpr_no_consts, _ = jaxpr.separate_consts()
+    jax_core.eval_jaxpr(jaxpr_no_consts, *in_refs, *scratch_refs)
 
   from jax._src.pallas import mpmd  # Avoid circular dependency.
 

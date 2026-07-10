@@ -28,7 +28,8 @@ NESTED_TOKEN_VALUE = 1337
 
 def _run_jaxpr(jaxpr, consts, *args):
   def _run(jaxpr, consts, *args):
-    jax_core.eval_jaxpr(jaxpr, consts, *args)
+    jaxpr_no_consts, _ = jaxpr.separate_consts()
+    jax_core.eval_jaxpr(jaxpr_no_consts, *consts, *args)
 
   traced = jax.jit(_run, static_argnums=(0,)).trace(jaxpr, consts, *args)
   traced.lower().compile()(consts, *args)

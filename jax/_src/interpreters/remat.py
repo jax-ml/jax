@@ -60,7 +60,7 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
     del trace, in_tracers, out_tracer_ft
   def f_rem(res, *args):
     args_flat = tree_leaves_checked(in_tree, args)
-    out_flat = core.eval_jaxpr(jaxpr, (), *res, *args_flat)
+    out_flat = core.eval_jaxpr(jaxpr, *res, *args_flat)
     return tree_unflatten(out_tree, out_flat)
   return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, res))
 
@@ -198,7 +198,7 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
 
   tracers = map(new_arg, jaxpr.in_aval_qdds)
   with core.set_current_trace(trace, check_leaks=True):
-    ans = core.eval_jaxpr(jaxpr, jaxpr.consts, *tracers)
+    ans = core.eval_jaxpr(jaxpr, *tracers)
     out_primals, out_rem = unzip2(map(trace.to_val_tracer_pair, ans))
     del trace, ans, new_arg, tracers
 

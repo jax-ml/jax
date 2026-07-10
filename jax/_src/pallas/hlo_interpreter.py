@@ -448,7 +448,7 @@ def pallas_call_hlo_interpret(
       )
 
       blocks = jax_core.eval_jaxpr(
-          discharged_jaxpr, discharged_consts, *scalars, *blocks, *scratch
+          discharged_jaxpr, *scalars, *blocks, *scratch
       )
 
     _, out_inout, out_scratch = split_list(
