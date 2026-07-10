@@ -35,18 +35,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
-  * {func}`jax.experimental.pallas.mosaic_gpu.wgmma` now supports mixing the
-    e4m3 and e5m2 FP8 types across its two operands.
-
-
-### Mosaic GPU
-
-* New features
-
   * Added support for Ampere matrix multiply-accumulate instructions via
     {func}`jax.experimental.pallas.mosaic_gpu.mma`.
   * Added support for `cp.async` to
     {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`.
+  * {func}`jax.experimental.pallas.mosaic_gpu.wgmma` now supports mixing the
+    e4m3 and e5m2 FP8 types across its two operands.
 
 * Deprecations
 
