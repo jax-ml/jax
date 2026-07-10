@@ -502,9 +502,11 @@ class TiledLayout:
       full_indices[d] = i
     return tuple(full_indices)
 
-  def lane_indices(self) -> tuple[ir.Value, ...]:
+  def lane_indices(self, lane_idx: ir.Value | None = None) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
-    lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
+    if lane_idx is None:
+      lane_idx = arith.remui(utils.thread_idx(), c(WARP_SIZE, i32))
+    assert lane_idx.type == i32
     return self._delinearize_index(lane_idx, self.lane_dims)
 
   def warp_indices(self) -> tuple[ir.Value, ...]:
@@ -3950,6 +3952,7 @@ class FragmentedArray:
       tiling_rank: int | None = None,
       atomic: Literal["add", "max", "min", "and", "or", "xor"] | None = None,
   ):
+    i32 = ir.IntegerType.get_signless(32)
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
@@ -3979,6 +3982,24 @@ class FragmentedArray:
       for get, _update, _idx, ptr in stores:
         utils.multimem_store(ptr, get(self.registers))
     else:
+      try:
+        stores = self.transfer_tiled(
+            ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True,
+        )
+        for get, _update, _idx, ptr in stores:
+          reg = get(self.registers)
+          reg_ty = ir.VectorType(reg.type)
+          reg = utils.bitcast(reg, i32)
+          nvvm.stmatrix(
+              ptr,
+              [reg],
+              nvvm.MMALayout.row,
+              ir.Attribute.parse("#nvvm.ld_st_matrix_shape<m=8, n=8>"),
+              nvvm.LdStMatrixEltType.B16,
+          )
+        return
+      except TxMatrixIneligible:
+        pass
       stores = self.transfer_tiled(
           ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
       )
@@ -4044,6 +4065,23 @@ class FragmentedArray:
         (layout.vector_length,),
         narrow_int if is_narrow_float and _narrow_float_as_int else dtype
     )
+    if _load_fun is llvm.load:
+      loads = cls.transfer_tiled(
+          ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True
+      )
+      try:
+        for _get, update, _idx, ptr in loads:
+          loaded_reg = nvvm.ldmatrix(
+              ptr,
+              num=1,
+              layout=nvvm.MMALayout.row,
+              shape=ir.Attribute.parse("#nvvm.ld_st_matrix_shape<m=8, n=8>"),
+              elt_type=nvvm.LdStMatrixEltType.B16,
+          )
+          update(registers, utils.bitcast(loaded_reg, reg_ty))
+        return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
+      except TxMatrixIneligible:
+        pass
     loads = cls.transfer_tiled(
         ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank
     )
@@ -4115,6 +4153,7 @@ class FragmentedArray:
       shape: tuple[int, ...],
       optimized: bool = True,
       ref_tiling_rank: int | None = None,
+      use_txmatrix: bool = False,
   ):
     """Generate a transfer schedule for a tiled layout.
 
@@ -4129,7 +4168,6 @@ class FragmentedArray:
       current address, and updates the register array with that register
     * the current address for load/store instructions
     """
-    # TODO(apaszke): Use ldmatrix/stmatrix when possible.
     c = lambda x: arith.constant(ir.IntegerType.get_signless(32), x)
     i32 = ir.IntegerType.get_signless(32)
     tiling = layout.tiling
@@ -4190,6 +4228,18 @@ class FragmentedArray:
 
     tiles_shape = list(tiled_nested_shape)
     tiles_strides = list(tiled_nested_strides)
+
+    minor_lane_dim = layout.lane_dims[-1]
+    # TODO(apaszke): Any 32-bit vector should just work. Bitwidth is irrelevant.
+    can_use_txmatrix = (
+        utils.bitwidth(dtype) == 16
+        and layout.vector_length == 2
+        and isinstance(minor_lane_dim, int)
+        and tiles_shape[minor_lane_dim][-1] % 4 == 0
+        and tiles_strides[minor_lane_dim][-1] == layout.vector_length
+    )
+    if use_txmatrix and not can_use_txmatrix:
+      raise TxMatrixIneligible("Cannot use txmatrix for this layout")
     for d in (*layout.partitioned_warp_dims, *layout.partitioned_lane_dims, layout.vector_dim):
       # We could avoid repeating the singleton dimensions, but it simplifies the
       # code below that computes the register index for a given tile.
@@ -4238,6 +4288,10 @@ class FragmentedArray:
       )
     else:
       plan = TrivialTransferPlan()
+    if use_txmatrix and not optimized:
+      raise TxMatrixIneligible("txmatrix only supported for optimized transfers")
+    if use_txmatrix and not isinstance(plan, TrivialTransferPlan):
+      raise TxMatrixIneligible("txmatrix only supported for trivial transfer plans")
 
     tiles_strides_transfer = [s // vector_length for s in tiles_strides]
     # Technically we should keep the vector_dim stride set to 1, but its shape
@@ -4266,7 +4320,10 @@ class FragmentedArray:
       assert len(new_idxs) == sum(map(len, tiled_nested_shape[-layout.tiled_tiling_rank :]))
       return new_idxs
     # All offsets are in units of transfer_dtype.
-    lane_offset = utils.dyn_dot(expand_nested_dims(layout.lane_indices()), dyn_tiled_strides)
+    offset_lane_idx = None
+    if use_txmatrix:
+      offset_lane_idx = arith.muli(arith.remui(utils.thread_idx(), c(8)), c(4))
+    lane_offset = utils.dyn_dot(expand_nested_dims(layout.lane_indices(offset_lane_idx)), dyn_tiled_strides)
     warp_offset = utils.dyn_dot(expand_nested_dims(layout.warp_indices()), dyn_tiled_strides)
     dyn_offset = arith.addi(lane_offset, warp_offset)
     ptr = utils.memref_ptr(ref)
@@ -4342,6 +4399,9 @@ class FragmentedArray:
     registers = np.asarray(flat_registers, dtype=object).reshape(reg_shape)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
+
+class TxMatrixIneligible(Exception):
+  pass
 
 IndexTransform: TypeAlias = Callable[[tuple[int, ...]], tuple[int, ...]]
 

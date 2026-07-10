@@ -3652,6 +3652,69 @@ class Sm80Test(TestCase):
     )()
     np.testing.assert_array_equal(y, np.array(1, dtype=np.int32))
 
+  @parameterized.product(
+      dtype=(jnp.int16,),
+  )
+  @jtu.thread_unsafe_test()
+  def test_ldmatrix(self, dtype):
+    m, k = 128, 128
+    dtype = jnp.dtype(dtype)
+    swizzle = 128
+    def kernel(ctx, a, out, smem):
+      a_smem, barrier = smem
+      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
+      ctx.async_copy(
+          src_ref=a,
+          dst_ref=a_smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform((8, swizzle // 2)),
+          barrier=barrier,
+          implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+      )
+      barrier.wait()
+      a_fa = mgpu.FragmentedArray.load_tiled(
+          a_smem, layout=mma_layouts.lhs, swizzle=swizzle, is_signed=True
+      )
+      a_fa.store_untiled(out, optimized=False)
+
+    x = self.prng.integers(-10000, 10000, (m, k)).astype(dtype)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x,
+          (
+              jax.ShapeDtypeStruct(tile_shape(x.shape, (8, swizzle // 2)), dtype),
+              mgpu.TMABarrier(1)
+          ),
+      )(x)
+      np.testing.assert_array_equal(y, x)
+    self.assertIn("ldmatrix.sync.aligned", ptx())
+    self.assertNotIn("ld.shared", ptx())
+
+  @parameterized.product(
+      dtype=(jnp.int16,),
+  )
+  @jtu.thread_unsafe_test()
+  def test_stmatrix(self, dtype):
+    m, k = 128, 128
+    dtype = jnp.dtype(dtype)
+    swizzle = 128
+    def kernel(ctx, x, out, x_smem):
+      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
+      x_fa = mgpu.FragmentedArray.load_untiled(x, layout=mma_layouts.lhs, is_signed=True, optimized=False)
+      x_fa.store_tiled(x_smem, swizzle=swizzle)
+      mgpu.warpgroup_barrier()
+      copy(x_smem, mgpu.TileTransform((8, swizzle // 2)).apply(out), swizzle)
+
+    x = self.prng.integers(-10000, 10000, (m, k)).astype(dtype)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x,
+          jax.ShapeDtypeStruct(tile_shape(x.shape, (8, swizzle // 2)), dtype),
+      )(x)
+      np.testing.assert_array_equal(y, x)
+    self.assertIn("stmatrix.sync.aligned", ptx())
+    self.assertNotIn("st.shared", ptx())
+
 
 class BarrierTest(TestCase):
 
