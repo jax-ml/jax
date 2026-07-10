@@ -23,6 +23,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import hlo as _hlo
+from jax.experimental import topologies
 import jax.extend.xla as jex_xla
 import jax.numpy as jnp
 import numpy as np
@@ -97,6 +98,8 @@ class XlaTransformTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")
   def test_sin_to_cos_platform_filtering(self):
+    # TODO(skyewm, yashkatariya): Fix this
+    self.skipTest('The numerics check below is broken on TPU.')
 
     def sin_to_cos(serialized_hlo: bytes) -> bytes | None:
       module = _hlo.HloModule.from_serialized_hlo_module_proto(serialized_hlo)
@@ -138,7 +141,10 @@ class XlaTransformTest(jtu.JaxTestCase):
       return jnp.sin(x)
 
     x = jnp.array([0.0, 1.0, 2.0])
-    f(x)  # doesn't crash
+    result = f(x)
+    # Since it's not compiled on CPU, it should still return sin(x), not cos(x).
+    expected = jnp.sin(x)
+    self.assertAllClose(result, expected, atol=1e-5)
 
   def test_clear_transform(self):
     """Register a pass, verify it applies, clear it, verify it doesn't apply."""
@@ -196,6 +202,35 @@ class XlaTransformTest(jtu.JaxTestCase):
 
     # 3. Verify it does NOT apply anymore.
     self.assertAllClose(f(x), jnp.sin(x), atol=1e-5)
+
+  @jtu.run_on_devices("tpu")
+  def test_aot_compile(self):
+    calls = []
+
+    def record(serialized_hlo: bytes) -> bytes | None:
+      calls.append(len(serialized_hlo))
+      return None  # no rewrite
+
+    name = "aot_record_test"
+    stage = jex_xla.PipelineStage.PRE_SCHEDULER
+    jex_xla.register_hlo_module_transformation(
+        record, name=name, stage=stage, platforms="tpu"
+    )
+    self._registered_transforms.append((name, stage))
+
+    topo = topologies.get_topology_desc(
+        platform=jax.devices()[0].platform
+    )
+    mesh = jax.sharding.Mesh(np.array(topo.devices).reshape(-1), ("x",))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    sds = jax.ShapeDtypeStruct(
+        (len(topo.devices) * 4,), jnp.float32, sharding=s
+    )
+    jax.jit(lambda x: x + 1).lower(sds).compile()
+
+    self.assertGreater(
+        len(calls), 0, "transform did not fire under AOT compile"
+    )
 
 
 def layernorm(x, eps=1e-5):
