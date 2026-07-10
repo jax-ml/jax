@@ -75,7 +75,6 @@ cc_library(
         "@llvm-project//mlir:SCFDialect",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:VectorDialect",
-        "@xla//xla:array",
         "@xla//xla:shape_util",
         "@xla//xla/tsl/platform:statusor",
     ],

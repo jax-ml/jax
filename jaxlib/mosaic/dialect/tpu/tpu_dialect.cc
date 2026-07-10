@@ -339,7 +339,7 @@ AffineMap TiledLayoutAttr::getAffineMap() const {
     SmallVector<AffineExpr, 8> new_exprs;
     auto dimensions = tile.dimensions();
     int64_t untiled_rank = exprs.size() - dimensions.size();
-    assert(untiled_rank >= 0);
+    CHECK_GE(untiled_rank, 0);
     for (int64_t i = 0; i < untiled_rank; ++i) {
       new_exprs.push_back(exprs[i]);
     }
@@ -354,7 +354,7 @@ AffineMap TiledLayoutAttr::getAffineMap() const {
   int64_t num_symbols = 0;
   AffineExpr result = getAffineConstantExpr(0, getContext());
   SmallVector<int64_t> strides = getExpandedStrides();
-  assert(strides.size() == exprs.size());
+  CHECK_EQ(strides.size(), exprs.size());
   for (int64_t i = 0; i < exprs.size(); ++i) {
     AffineExpr stride_expr =
         ShapedType::isDynamic(strides[i])
@@ -546,6 +546,10 @@ LogicalResult TiledLayoutAttr::verify(
   const int64_t rank = tile_strides.size();
   const xla::Tile& first_tile = tiles.front();
   const int64_t first_tile_rank = first_tile.dimensions().size();
+  if (first_tile_rank > rank) {
+    return emitError() << "First tile rank cannot exceed the length of strides "
+                          "(the memref rank)";
+  }
   // The interpretation of tile strides is unclear if there is nested tiling
   // across first tiles (e.g. T(8, 128)(2, 4, 64)), and this has no applications
   // anyway.
