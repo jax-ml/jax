@@ -553,6 +553,7 @@ def _pull_block_transform(
       assert not any(used_invars)
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
           constvars=[],
+          consts=[],
           invars=jaxpr.constvars,
           debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names(),
       )

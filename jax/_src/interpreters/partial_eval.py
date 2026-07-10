@@ -256,8 +256,9 @@ class JaxprTrace(Trace):
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
     num_new_args = len(res_tracers) + len(env_tracers)
-    new_jaxpr, _consts = jaxpr.separate_consts()
-    assert not _consts, "REMOVE"
+    # The discarded consts are the residual tracers of the (finished)
+    # inner trace; `res_tracers` above supplies their values at call time.
+    new_jaxpr, _ = jaxpr.separate_consts()
     staged_params = dict(params, call_jaxpr=new_jaxpr)
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
@@ -308,8 +309,9 @@ class JaxprTrace(Trace):
     env_tracers = map(self.to_jaxpr_tracer, env)
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
-    closed_jaxpr, _consts = jaxpr.separate_consts()
-    assert not _consts, "REMOVE"
+    # The discarded consts are the residual tracers of the (finished) inner
+    # trace; `res_tracers` above supplies their values at call time.
+    closed_jaxpr, _ = jaxpr.separate_consts()
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
@@ -707,7 +709,8 @@ def tracers_to_jaxpr(
 @weakref_lru_cache
 def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
   resvars, envvars = partition_list(which, jaxpr.constvars)
-  return jaxpr.replace(constvars=(), invars=[*resvars, *envvars, *jaxpr.invars])
+  return jaxpr.replace(constvars=(), consts=[],
+                       invars=[*resvars, *envvars, *jaxpr.invars])
 
 def partial_eval_jaxpr_nounits(
     jaxpr: Jaxpr, unknowns: Sequence[bool],
@@ -1931,7 +1934,7 @@ class DynamicJaxprTrace(core.Trace):
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
     jaxpr, out_avals, consts = _cached_trace_to_jaxpr(f, in_type)
     if params.get('inline', False):
-      return core.eval_jaxpr(jaxpr, consts, *in_tracers,
+      return core.eval_jaxpr(jaxpr, (), *consts, *in_tracers,
                              propagate_source_info=False)
 
     new_jaxpr, _consts = jaxpr.separate_consts()

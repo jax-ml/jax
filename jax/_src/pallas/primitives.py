@@ -671,7 +671,9 @@ def _run_scoped_is_high(*avals, jaxpr, **params):
 run_scoped_p.is_high = _run_scoped_is_high
 
 def _run_scoped_to_lojax(*args, jaxpr, **params):
-  closed_hi_jaxpr = jaxpr.with_consts(args)
+  # `args` are the current values of the jaxpr's consts; rebind them.
+  hi_jaxpr, _ = jaxpr.separate_consts()
+  closed_hi_jaxpr = hi_jaxpr.with_consts(args)
   closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
   consts = closed_lo_jaxpr.consts
   return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr, **params)

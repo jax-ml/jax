@@ -1073,7 +1073,8 @@ def lift_jvp(num_errs: int, num_consts: int,
     zeros = [type(t) is SymbolicZero for t in tangents]
     jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*zeros)
     nonzero_tangents = [t for t in tangents if type(t) is not SymbolicZero]
-    out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
+    out = core.eval_jaxpr(jvp_jaxpr, (), *jvp_consts, *primals,
+                          *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
     nz_out_tangents_ = iter(nz_out_tangents)
     out_tangents = [SymbolicZero(core.typeof(p).to_tangent_aval())
@@ -1105,7 +1106,7 @@ def custom_vjp_call_rule(in_err, enabled_errors, *in_vals,
     xs, zeros = xs[num_errs:], zeros[num_errs:]
     fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*zeros)
     xs_without_consts = xs[num_consts:]
-    return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *xs_without_consts)
+    return core.eval_jaxpr(fwd_jaxpr, (), *fwd_consts, *xs_without_consts)
 
   # TODO(necula): the fwd result_paths are not quite the same as fun_jaxpr
   checkified_fwd_wrapped = lu.wrap_init(checkified_fwd,

@@ -828,7 +828,9 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     # There may be some uninitialized values here in ref_args.
     jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
-    jaxpr = hoist_consts_to_refs(jaxpr_)
+    # The traced jaxpr comes back separated; re-close it so the consts become
+    # Ref inputs alongside the args.
+    jaxpr = hoist_consts_to_refs(jaxpr_.with_consts(consts))
     which_linear = (False,) * (len(consts) + len(ref_args))
     refs_is_initialized = tuple(r is not uninitialized for r in ref_args)
     init_args = tuple(r for r in ref_args if r is not uninitialized)
@@ -847,7 +849,9 @@ def run_state_reference(f: Callable[..., None]):
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
-    jaxpr = hoist_consts_to_refs(jaxpr_)
+    # The traced jaxpr comes back separated; re-close it so the consts become
+    # Ref inputs alongside the args.
+    jaxpr = hoist_consts_to_refs(jaxpr_.with_consts(consts))
     discharged_closed_jaxpr = discharge_state(jaxpr)
     discharged_jaxpr, discharged_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
 

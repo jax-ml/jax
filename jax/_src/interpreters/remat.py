@@ -150,12 +150,12 @@ def remat_subtrace(f: Callable, tag: core.TraceTag, policy,
       out_primals, out_rem = ans.map(trace.to_val_tracer_pair).unzip2()
       del trace, ans, tracers
   out_rem = map(partial(rem_trace.to_jaxpr_tracer, source_info=source_info), out_rem)
-  jaxpr, consts = rem_trace.to_jaxpr(out_rem, debug_info.with_unknown_names(),
-                                     source_info)
+  jaxpr = rem_trace.to_jaxpr(out_rem, debug_info.with_unknown_names(),
+                             source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
-                getattr(c._trace, 'tag', None) is tag) for c in consts]
+                getattr(c._trace, 'tag', None) is tag) for c in jaxpr.consts]
+  res, env = partition_list(which_env, jaxpr.consts)
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
-  res, env = partition_list(which_env, consts)
   residual_avals = map(typeof, res)
   id_map = {id(p): i for i, p in enumerate(args)}
   in_fwd: list[int | None] = [id_map.get(id(r)) for r in res]

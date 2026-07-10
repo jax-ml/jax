@@ -2286,8 +2286,9 @@ def _emit_pipeline_lowering_rule(
         all_args.all_index_map_consts, index_map_consts_counts)
     new_bms = []
     for i, bm in enumerate(grid_mapping.block_mappings):
-      bm = bm.replace(index_map_jaxpr=bm.index_map_jaxpr.with_consts(
-          index_map_consts[i]))
+      index_map_jaxpr, _ = bm.index_map_jaxpr.separate_consts()
+      bm = bm.replace(
+          index_map_jaxpr=index_map_jaxpr.with_consts(index_map_consts[i]))
       new_bms.append(bm)
     grid_mapping = dataclasses.replace(grid_mapping, block_mappings=new_bms)
 

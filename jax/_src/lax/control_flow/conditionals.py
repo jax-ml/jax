@@ -1112,10 +1112,8 @@ def _cond_state_discharge_rule(should_discharge, in_avals, out_avals, index, *ar
   all_outvars_fwd = [None] * len(out_avals) + forwarded_outvars
   new_branches = tuple(
       branch.replace(
-          jaxpr=branch.replace(
-              outvars=[v for v, fwd in zip(branch.outvars, all_outvars_fwd) if fwd is None]
-          )
-      )
+          outvars=[v for v, fwd in zip(branch.outvars, all_outvars_fwd)
+                   if fwd is None])
       for branch in discharged_branches
   )
   out_vals_no_fwd = cond_p.bind(index, *args, branches=new_branches,

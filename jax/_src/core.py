@@ -234,6 +234,8 @@ class Jaxpr:
   def with_consts(self, consts: Sequence[Any]) -> Jaxpr:
     consts = list(consts)
     num_consts = len(consts)
+    if num_consts == 0:
+      return self
     assert num_consts <= len(self.invars)
     return self.replace(
         invars=self.invars[num_consts:],
@@ -241,6 +243,10 @@ class Jaxpr:
         consts=self.consts+consts)
 
   def separate_consts(self) -> tuple[Jaxpr, list[Any]]:
+    # Returning `self` when const-free keeps the result identity-stable, which
+    # downstream identity-keyed caches (e.g. op-by-op dispatch) rely on.
+    if not self._consts:
+      return self, self._consts
     new_jaxpr = self.replace(
         invars=self.constvars + self.invars,
         constvars=[],

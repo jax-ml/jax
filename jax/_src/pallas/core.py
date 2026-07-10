@@ -1506,7 +1506,9 @@ def _core_map_is_high(*avals, jaxpr, **params):
 core_map_p.is_high = _core_map_is_high
 
 def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
-  closed_hi_jaxpr = jaxpr.with_consts(consts)
+  # `consts` are the current values of the jaxpr's consts; rebind them.
+  hi_jaxpr, _ = jaxpr.separate_consts()
+  closed_hi_jaxpr = hi_jaxpr.with_consts(consts)
   with (
       tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
       jax_core.extend_axis_env_nd(mesh.shape.items()),

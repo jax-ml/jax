@@ -114,8 +114,8 @@ def linearize_subtrace_2(f: Callable, is_vjp: bool,
   jaxpr = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is tag) for c in jaxpr.consts]
-  jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
   res, env = partition_list(which_env, jaxpr.consts)
+  jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
   residual_avals = map(typeof, res)
   # Which residuals are just forwarded inputs? Check object id.
   id_map = {id(p): i for i, p in enumerate(primals)}
@@ -155,8 +155,8 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
       out_tangents, debug_info.with_unknown_names(), source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
                 getattr(c._trace, 'tag', None) is _tag) for c in jaxpr.consts]
-  jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
   res, env = partition_list(which_env, jaxpr.consts)
+  jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
   residual_avals = map(typeof, res)
   # Which residuals are just forwarded inputs? Check object id.
   id_map = {id(p): i for i, p in enumerate(primals)}

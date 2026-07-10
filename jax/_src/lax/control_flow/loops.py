@@ -889,12 +889,11 @@ def _scan_known_hoisting(jaxpr_known, known_consts, num_res):
   others = _map(pe.PartialVal.unknown, jaxpr_known.in_avals[len(consts):])
   num_known_outs = len(jaxpr_known.out_avals) - num_res
   with source_info_util.reset_name_stack():
-    jaxpr_known_, pvals_out, new_known_consts = pe.trace_to_jaxpr_nounits(
+    jaxpr_known_, pvals_out, _ = pe.trace_to_jaxpr_nounits(
         lu.wrap_init(core.jaxpr_as_fun(jaxpr_known),
                      debug_info=jaxpr_known.debug_info),
         consts + others, instantiate=[True] * num_known_outs + [False] * num_res)
-  jaxpr_known, _consts = jaxpr_known_.separate_consts()
-  assert not _consts, "REMOVE"
+  jaxpr_known, new_known_consts = jaxpr_known_.separate_consts()
   res_pvals = pvals_out[num_known_outs:]
   which_hoisted = [pval.is_known() for pval in res_pvals]
   hoisted_res = [pval.get_known() for pval in res_pvals if pval.is_known()]
