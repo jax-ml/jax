@@ -168,6 +168,7 @@ class PullRuleContext:
   scalar_prefetch_handler: Any | None
   grid_len: int | None
   strict_mode: bool = True
+  invars: tuple[core.Atom, ...] | None = None
 
 
 @dataclasses.dataclass
@@ -519,6 +520,7 @@ def _pull_block_transform(
         scalar_prefetch_handler=scalar_prefetch_handler,
         grid_len=grid_len,
         strict_mode=strict_mode,
+        invars=tuple(eqn.invars),
     )
     if eqn.primitive.multiple_results:
       in_block_transforms = rule(ctx, eqn_out_block_transforms, **eqn.params)
@@ -1202,7 +1204,7 @@ def _offset_indexer(
     case pallas_core.BoundedSlice(block_size):
       assert isinstance(indexer, indexing.Slice)
       _maybe_static_check(
-          indexer.start % block_size == 0,
+          slice_start % block_size == 0,
           f'slice_start is not a multiple of block_size {block_size}',
       )
       _maybe_static_check(
@@ -1308,13 +1310,38 @@ def _dynamic_slice_rule(
     *,
     slice_sizes: tuple[int, ...],
 ):
+  operand_aval = ctx.avals_in[0]
+  operand_shape = operand_aval.shape
+
+  static_clamped_starts = None
 
   def new_block_index_transform(*idxs):
-    slice_starts = ctx.scalar_prefetch_fn()
-    if len(slice_starts) != len(block_transform.block_shape):
+    nonlocal static_clamped_starts
+    if ctx.scalar_prefetch_fn is not None:
+      slice_starts = ctx.scalar_prefetch_fn()
+      clamped_starts = tuple(
+          jnp.clip(start, 0, op_dim - size)
+          for start, op_dim, size in zip(
+              slice_starts, operand_shape, slice_sizes, strict=True
+          )
+      )
+    else:
+      if static_clamped_starts is None:
+        assert ctx.invars is not None
+        assert all(isinstance(v, core.Literal) for v in ctx.invars[1:])
+        slice_starts = tuple(v.val for v in ctx.invars[1:])
+        static_clamped_starts = tuple(
+            int(np.clip(np.asarray(start), 0, op_dim - size))
+            for start, op_dim, size in zip(
+                slice_starts, operand_shape, slice_sizes, strict=True
+            )
+        )
+      clamped_starts = static_clamped_starts
+
+    if len(clamped_starts) != len(block_transform.block_shape):
       raise ValueError(
           f'Expected {len(block_transform.block_shape)} slice starts, got'
-          f' {len(slice_starts)}'
+          f' {len(clamped_starts)}'
       )
     idx = block_transform.block_index_transform(*idxs)
     assert len(idx) == len(block_transform.block_shape)
@@ -1333,7 +1360,11 @@ def _dynamic_slice_rule(
     block_indices = tuple(
         _offset_indexer(s, i, start, size)
         for i, s, start, size in zip(
-            idx, block_transform.block_shape, slice_starts, slice_sizes, strict=True
+            idx,
+            block_transform.block_shape,
+            clamped_starts,
+            slice_sizes,
+            strict=True,
         )
     )
     return block_indices
@@ -1342,6 +1373,10 @@ def _dynamic_slice_rule(
       block_index_transform=new_block_index_transform,
   )
   return [new_block_transform] + [no_block_index_transform] * (len(ctx.avals_in) - 1)
+
+
+# TODO(ivyzheng): Add support for dynamic_slice_update when we have a valid use
+# case.
 
 
 @register_pull_block_spec_rule(lax.dot_general_p)

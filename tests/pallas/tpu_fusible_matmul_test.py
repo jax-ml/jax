@@ -596,6 +596,31 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         )
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
+  def test_matmul_dynamic_slice_clamped_start(self, dtype, impl):
+    """DS before the kernel: slices part of the matmul's LHS input."""
+    k0, k1 = jax.random.split(jax.random.key(0), 2)
+    x = jax.random.normal(k0, (512, 512), dtype)
+    y = jax.random.normal(k1, (512, 512), dtype)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_ds(x, y, i):
+      x_sliced = jax.lax.dynamic_slice(x, (0, i), (128, 512))
+      return fusible_matmul(x_sliced, y, impl=impl)
+
+    @jit_no_excess_precision
+    def matmul_ds_ref(x, y, i):
+      x_sliced = jax.lax.dynamic_slice(x, (0, i), (128, 512))
+      return mm_ref(x_sliced, y)
+
+    for i in [0, 128, 512]:
+      np.testing.assert_allclose(
+          matmul_ds(x, y, i),
+          matmul_ds_ref(x, y, i),
+          atol=5e-5,
+      )
+
+  @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_mixed_slices(self, dtype, impl):
     k0, k1 = jax.random.split(jax.random.key(0), 2)
     x = jax.random.normal(k0, (512, 512), dtype)
