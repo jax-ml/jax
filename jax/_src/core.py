@@ -120,8 +120,7 @@ class Jaxpr:
 
   @property
   def constvars(self) -> list[Var]:
-    # The constvars are the leading invars, paired 1:1 with `consts`.
-    return self._all_invars[: len(self._consts)]
+    return self._all_invars[:len(self._consts)]
 
   @property
   def consts(self) -> list[Any]:
@@ -133,17 +132,13 @@ class Jaxpr:
   def num_consts(self) -> int:
     return len(self._consts)
 
+  # deprecated. TODO: remove
   @property
-  def is_closed(self) -> bool:
-    # Every constant input has its value attached, by construction. Kept for
-    # compatibility from when unvalued constvars were representable.
-    return True
+  def is_closed(self) -> bool: return True
 
+  # deprecated. TODO: remove
   @property
-  def jaxpr(self) -> Jaxpr:
-    # Legacy accessor from the days of ClosedJaxpr, which wrapped a Jaxpr.
-    # TODO(dougalm): remove uses and delete.
-    return self
+  def jaxpr(self) -> Jaxpr: return self
 
   @property
   def invars(self) -> list[Var]:
@@ -255,41 +250,19 @@ class Jaxpr:
     return p.text(self.pretty_print(use_color=True))
 
   def with_consts(self, consts: Sequence[Any]) -> Jaxpr:
-    """Returns a copy of this jaxpr with `consts` bound as the values of its
-    leading invars (i.e. its constvars). The constvars/invars boundary moves
-    to len(consts); the binders themselves are unchanged and all structure is
-    shared. Binding fewer consts exposes the leftover constvars as ordinary
-    invars, to be supplied at call time; binding more consts captures leading
-    invars as constants."""
     consts = list(consts)
-    old_n, new_n = len(self._consts), len(consts)
-    assert new_n <= len(self._all_invars)
-    new = Jaxpr.__new__(Jaxpr)
-    new._all_invars = self._all_invars
-    new._outvars = self._outvars
-    new._eqns = self._eqns
-    new._effects = self._effects
-    new._is_high = self._is_high
-    new._consts = consts
-    # arg_names names the invars, so it must track the boundary.
-    arg_names = self._debug_info.arg_names
-    if new_n == old_n or arg_names is None:
-      new._debug_info = self._debug_info
-    elif new_n < old_n:
-      new._debug_info = self._debug_info._replace(
-          arg_names=('',) * (old_n - new_n) + tuple(arg_names))
-    else:
-      new._debug_info = self._debug_info._replace(
-          arg_names=tuple(arg_names[new_n - old_n:]))
-    return new
+    num_consts = len(consts)
+    return self.replace(
+        invars=self.invars[num_consts:],
+        constvars=self.constvars + self.invars[:num_consts],
+        consts=self.consts+consts)
 
   def separate_consts(self) -> tuple[Jaxpr, list[Any]]:
-    """Splits this jaxpr into a const-free jaxpr and its consts. The constvars
-    become ordinary leading invars of the result, to be supplied by the
-    caller; the values are returned rather than dropped."""
-    if not self._consts:
-      return self, self._consts
-    return self.with_consts(()), self._consts
+    new_jaxpr = self.replace(
+        invars=self.constvars + self.invars,
+        constvars=[],
+        consts=[]), self.consts
+    return new_jaxpr, self.consts
 
   def map_jaxpr(self, f):
     # Legacy ClosedJaxpr method: apply f to the jaxpr, keeping consts.

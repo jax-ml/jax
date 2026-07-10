@@ -1489,7 +1489,8 @@ def linear_call(fun: Callable,
   res_avals = map(core.typeof, operands_res)
   lin_avals = map(core.typeof, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
-  f_jaxpr_closed, _ = f_jaxpr.separate_consts()
+  f_jaxpr_closed, _consts = f_jaxpr.separate_consts()
+  assert not _consts, "REMOVE"
   out_avals = f_jaxpr_closed.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
@@ -1685,8 +1686,7 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.typeof(x) for x in args_flat]
-    fwd_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
-                                                in_avals)
+    fwd_jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(), in_avals)
     fwd_jaxpr, consts = fwd_jaxpr.separate_consts()
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
@@ -1789,7 +1789,8 @@ def _remat_opt_jvp(
   fwd_jaxpr_jvp_ = ad.rearrange_binders(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
-  fwd_jaxpr_jvp, _ = fwd_jaxpr_jvp_.separate_consts()
+  fwd_jaxpr_jvp, _consts = fwd_jaxpr_jvp_.separate_consts()
+  assert not _consts, "REMOVE"
 
   # @pe._memoize
   def fun_jvp_jaxpr_thunk():

@@ -256,7 +256,8 @@ class JaxprTrace(Trace):
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
     num_new_args = len(res_tracers) + len(env_tracers)
-    new_jaxpr, _ = jaxpr.separate_consts()
+    new_jaxpr, _consts = jaxpr.separate_consts()
+    assert not _consts, "REMOVE"
     staged_params = dict(params, call_jaxpr=new_jaxpr)
     staged_params = update_params(staged_params, map(op.not_, in_knowns),
                                   num_new_args)
@@ -307,7 +308,8 @@ class JaxprTrace(Trace):
     env_tracers = map(self.to_jaxpr_tracer, env)
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
-    closed_jaxpr, _ = jaxpr.separate_consts()
+    closed_jaxpr, _consts = jaxpr.separate_consts()
+    assert not _consts, "REMOVE"
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize
@@ -704,26 +706,8 @@ def tracers_to_jaxpr(
 
 @weakref_lru_cache
 def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
-  """Converts all constvars to invars, ordered [residuals, env, invars].
-
-  `which` marks which constvars are environment values (tracers of the
-  enclosing trace); the rest are residuals whose values are supplied by the
-  caller at call time, so neither group can stay as (valued) constvars.
-  """
   resvars, envvars = partition_list(which, jaxpr.constvars)
-  return jaxpr.replace(constvars=(),
-                       invars=[*resvars, *envvars, *jaxpr.invars])
-
-def separate_consts(jaxpr: Jaxpr) -> tuple[Jaxpr, list[Any]]:
-  """Splits a jaxpr into a const-free jaxpr and its consts. See
-  Jaxpr.separate_consts."""
-  return jaxpr.separate_consts()
-
-def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
-  # Legacy: use Jaxpr.separate_consts instead, which returns the const values
-  # rather than dropping them. TODO(dougalm): remove uses and delete.
-  return jaxpr.separate_consts()[0]
-
+  return jaxpr.replace(constvars=(), invars=[*resvars, *envvars, *jaxpr.invars])
 
 def partial_eval_jaxpr_nounits(
     jaxpr: Jaxpr, unknowns: Sequence[bool],
@@ -1951,7 +1935,8 @@ class DynamicJaxprTrace(core.Trace):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
 
-    new_jaxpr, _ = jaxpr.separate_consts()
+    new_jaxpr, _consts = jaxpr.separate_consts()
+    assert not _consts, "REMOVE"
     self.frame.is_high |= new_jaxpr.is_high
     new_params = dict(params, call_jaxpr=new_jaxpr)
     update_params = call_param_updaters.get(call_primitive)
@@ -1983,8 +1968,8 @@ class DynamicJaxprTrace(core.Trace):
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun, in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
-    closed_fun_jaxpr, _ = fun_jaxpr.separate_consts()
-
+    closed_fun_jaxpr, _consts = fun_jaxpr.separate_consts()
+    assert not _consts, "REMOVE"
     @partial(lu.wrap_init, debug_info=jvp.debug_info)
     @_memoize
     def jvp_jaxpr_thunk(*in_zeros):
@@ -2028,7 +2013,8 @@ class DynamicJaxprTrace(core.Trace):
     fun_jaxpr, out_avals, consts = trace_to_jaxpr_dynamic(fun.with_unknown_names(), in_avals, lower=self.requires_low)
     self.frame.is_high |= fun_jaxpr.is_high
     num_consts = len(consts)
-    closed_fun_jaxpr, _ = fun_jaxpr.separate_consts()
+    closed_fun_jaxpr, _consts = fun_jaxpr.separate_consts()
+    assert not _consts, "REMOVE"
 
     @partial(lu.wrap_init, debug_info=fwd.debug_info)
     @_memoize

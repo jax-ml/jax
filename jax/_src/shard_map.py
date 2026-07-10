@@ -1669,7 +1669,8 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
              for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
     # Residuals (constvars) become leading invars; their values are supplied
     # at call time (`res` below holds the pruned subset).
-    jaxpr, _ = jaxpr.separate_consts()
+    jaxpr, _consts = jaxpr.separate_consts()
+    assert not _consts, "REMOVE"
     jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
     res = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
            for x in res]
@@ -1872,8 +1873,6 @@ remat.RematTrace.process_shard_map = _shard_map_remat
 
 
 def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
-  # `jaxpr` is const-free with the residuals as its leading invars, one per
-  # entry of `which`.
   assert not jaxpr.constvars
   def fun(*res_and_args):
     res, args = split_list(res_and_args, [len(which)])
@@ -1884,7 +1883,8 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
                for v, w in zip(resvars, which)]
   in_avals = ft.flatten(((*res_avals, *[v.aval for v in argvars]), {}))
   closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
-  closed_jaxpr, _ = pe.separate_consts(closed_jaxpr)
+  closed_jaxpr, _consts = pe.separate_consts(closed_jaxpr)
+  assert not _consts, "REMOVE"
   return closed_jaxpr
 
 

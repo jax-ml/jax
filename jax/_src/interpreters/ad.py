@@ -326,8 +326,6 @@ def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
   jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
       jaxpr, [True] * len(jaxpr.outvars),
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
-  # The consts (residuals) are supplied by the caller at call time, so return
-  # a const-free jaxpr with the residuals as leading invars.
   del consts, used_consts
   jaxpr, consts = jaxpr.separate_consts()
   out_zeros = map(op.not_, out_nzs)

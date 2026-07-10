@@ -1419,14 +1419,13 @@ def _lower_fun(
         "mosaic_gpu lower_fun", fun, args, {},
         static_argnames=tuple(params.keys()),
     )
-    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+    jaxpr, out_avals_ft = pe.trace_to_jaxpr(
         fun, in_avals_ft, debug_info=debug_info, requires_low=True
     )
-    if closed_jaxpr.consts:
+    if jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = closed_jaxpr
     out = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, closed_jaxpr.consts
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, flat_args, jaxpr.consts
     )
     out_tree = out_avals_ft.tree
     return tree_util.tree_unflatten(out_tree, out)
@@ -3646,7 +3645,8 @@ def _run_scoped_lowering_rule(
       # not JAX values during lowering. discharge_state() produces JAX
       # valiues for the arguments but expects them to be provided for the
       # consts. We also don't want to wrap the values in refs.
-      no_const_jaxpr, _ = jaxpr.separate_consts()
+      no_const_jaxpr, _consts = jaxpr.separate_consts()
+      assert not _consts, "REMOVE"
       should_discharge = [False] * len(consts) + should_discharge
       with config._check_vma(False):
         discharged_closed_jaxpr = discharge.discharge_state(

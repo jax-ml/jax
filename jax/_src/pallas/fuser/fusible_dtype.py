@@ -197,8 +197,6 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
       _flat_jaxpr_eval, in_avals_ft, debug_info
   )
   assert not closed_jaxpr.consts
-  # The result is const-free, with the (physicalized) former constvars as its
-  # leading invars; callers attach values via Jaxpr.with_consts.
   return closed_jaxpr
 
 
