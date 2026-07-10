@@ -4002,6 +4002,51 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       np.testing.assert_allclose(res, ref, atol=1e-2, rtol=1e-2)
 
   @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_griddepcontrol_warp_mesh(self):
+    @jax.jit
+    def f(x):
+      def kernel_a(x_ref, out_ref):
+        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+        def _():
+          warp_id = lax.axis_index("warp")
+          out_ref[warp_id] = x_ref[warp_id] + 1.0
+          @pl.when(warp_id == 0)
+          def _():
+            plgpu.griddepcontrol_launch_dependents()
+
+      def kernel_b(in_ref, out_ref):
+        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+        def _():
+          warp_id = lax.axis_index("warp")
+          @pl.when(warp_id == 0)
+          def _():
+            plgpu.griddepcontrol_wait()
+          out_ref[warp_id] = in_ref[warp_id] * 2.0
+
+      intermediate = self.kernel(
+          kernel_a,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(x)
+      return self.kernel(
+          kernel_b,
+          out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )(intermediate)
+
+    x = jnp.arange(4).astype(jnp.float32)
+
+    with (
+        jtu.set_env(MOSAIC_GPU_DUMP_PTX="1", MOSAIC_GPU_DUMP_HOST_LLVM="1"),
+        self.capture_stdout() as output,
+    ):
+      out = jax.block_until_ready(f(x))
+
+    np.testing.assert_allclose(out, (x + 1.0) * 2.0)
+
+    stdout = output()
+    self.assertIn("griddepcontrol.wait;", stdout)
+    self.assertIn("griddepcontrol.launch_dependents;", stdout)
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
   def test_griddepcontrol_multi_kernel(self):
     # Tests that we can launch two kernels that communicate via griddepcontrol.
     @jax.jit

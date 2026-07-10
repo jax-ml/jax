@@ -3024,10 +3024,16 @@ def _griddepcontrol_wait_abstract_eval():
 
 
 @lowering.register_lowering_rule(
-    griddepcontrol_wait_p, mgpu.LoweringSemantics.Lane
+    griddepcontrol_wait_p, *gpu_core.LANExWG_SEMANTICS
 )
 @lowering.register_lowering_rule(
-    griddepcontrol_wait_p, mgpu.LoweringSemantics.Warpgroup
+    griddepcontrol_wait_p, *gpu_core.WGxWG_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    griddepcontrol_wait_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    griddepcontrol_wait_p, *gpu_core.WGxWARP_SEMANTICS
 )
 def _griddepcontrol_wait_lowering(ctx: lowering.LoweringRuleContext):
   void = ir.Type.parse("!llvm.void")
@@ -3055,10 +3061,16 @@ def _griddepcontrol_launch_dependents_abstract_eval():
 
 
 @lowering.register_lowering_rule(
-    griddepcontrol_launch_dependents_p, mgpu.LoweringSemantics.Lane
+    griddepcontrol_launch_dependents_p, *gpu_core.LANExWG_SEMANTICS
 )
 @lowering.register_lowering_rule(
-    griddepcontrol_launch_dependents_p, mgpu.LoweringSemantics.Warpgroup
+    griddepcontrol_launch_dependents_p, *gpu_core.WGxWG_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    griddepcontrol_launch_dependents_p, *gpu_core.LANExWARP_SEMANTICS
+)
+@lowering.register_lowering_rule(
+    griddepcontrol_launch_dependents_p, *gpu_core.WGxWARP_SEMANTICS
 )
 def _griddepcontrol_launch_dependents_lowering(
     ctx: lowering.LoweringRuleContext,
