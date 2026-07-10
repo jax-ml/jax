@@ -218,9 +218,7 @@ class Jaxpr:
       return
     assert invars is not None and outvars is not None and eqns is not None
     self._consts = [] if consts is None else list(consts)
-    assert len(self._consts) == len(constvars), (
-        "every constvar must have its value in consts; values bound at call "
-        "time must be invars instead")
+    assert len(self._consts) == len(constvars)
     self._all_invars = [*constvars, *invars]
     self._outvars = list(outvars)
     self._eqns = list(eqns)
@@ -252,6 +250,7 @@ class Jaxpr:
   def with_consts(self, consts: Sequence[Any]) -> Jaxpr:
     consts = list(consts)
     num_consts = len(consts)
+    assert num_consts <= len(self.invars)
     return self.replace(
         invars=self.invars[num_consts:],
         constvars=self.constvars + self.invars[:num_consts],
@@ -261,7 +260,7 @@ class Jaxpr:
     new_jaxpr = self.replace(
         invars=self.constvars + self.invars,
         constvars=[],
-        consts=[]), self.consts
+        consts=[])
     return new_jaxpr, self.consts
 
   def map_jaxpr(self, f):

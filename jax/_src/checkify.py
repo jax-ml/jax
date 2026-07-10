@@ -960,7 +960,7 @@ def call_hi_primitive_error_check(error, enabled_errors, *vals_in, _prim):
   in_avals = tuple(map(core.typeof, new_vals_in))
   checked_jaxpr_, out_tree, _ = jaxpr_to_checkify_jaxpr(
       _prim.jaxpr, enabled_errors, err_tree, *in_avals)
-  checked_jaxpr, consts = pe.separate_consts(checked_jaxpr_)
+  checked_jaxpr, consts = checked_jaxpr_.separate_consts()
   new_prim = ad_checkpoint.RematTraced(checked_jaxpr, _prim.policy)
   err_and_out = new_prim(*consts, *new_vals_in)
   return tree_unflatten(out_tree, err_and_out)
@@ -1233,7 +1233,7 @@ def checkify(f: Callable[..., Out],
     # stage:
     debug_info = api_util.debug_info("checkify", f, args, kwargs).with_unknown_names()
     jaxpr_, out_avals = pe.trace_to_jaxpr(closed_f, in_avals, debug_info)
-    jaxpr, consts = pe.separate_consts(jaxpr_)
+    jaxpr, consts = jaxpr_.separate_consts()
     # checkify:
     error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)
     return error, out_avals.update(out_flat).unflatten()

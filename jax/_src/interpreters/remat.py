@@ -54,9 +54,8 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
     src = source_info_util.current()
     out_tracer_ft = out_tracer_ft.map(partial(jaxpr_trace.to_jaxpr_tracer, source_info=src))
-    jaxpr, res = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, src)
-    jaxpr, _consts = jaxpr.separate_consts()
-    assert not _consts, "REMOVE"
+    jaxpr = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, src)
+    jaxpr, res = jaxpr.separate_consts()
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
   def f_rem(res, *args):
@@ -204,9 +203,8 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
     del trace, ans, new_arg, tracers
 
   out_rem = [rem_trace.to_jaxpr_tracer(x, source_info=src) for x in out_rem]
-  rem_jaxpr_, rem_consts = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
-  rem_jaxpr, _consts = rem_jaxpr_.separate_consts()
-  assert not _consts, "REMOVE"
+  rem_jaxpr = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
+  rem_jaxpr, rem_consts = rem_jaxpr.separate_consts()
   rem_trace.invalidate()
 
   # Residuals that are just primal outputs needn't be returned again by the
@@ -218,7 +216,7 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
 
   rem_consts = map(partial(fwd_trace.to_jaxpr_tracer, source_info=src), rem_consts)
   out_primals = [fwd_trace.to_jaxpr_tracer(x, source_info=src) for x in out_primals]
-  fwd_jaxpr_, fwd_consts = fwd_trace.to_jaxpr(
+  fwd_jaxpr_ = fwd_trace.to_jaxpr(
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
 

@@ -755,7 +755,7 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
     lo_jaxpr_, out_avals_ft = pe.lower_jaxpr(jaxpr, lo_avals_ft)
-    lo_jaxpr, consts = pe.separate_consts(lo_jaxpr_)
+    lo_jaxpr, consts = lo_jaxpr_.separate_consts()
   out_avals_ft = out_avals_ft.map2(
       lo_out_specs, lambda a, s: unshard_aval(mesh, check_vma, s, a))
   trace = core.trace_ctx.trace
@@ -811,7 +811,7 @@ def _shard_map_staging(
                for spec, aval in zip(out_specs, out_avals_ft)]
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    jaxpr, consts = pe.separate_consts(jaxpr)
+    jaxpr, consts = jaxpr.separate_consts()
   in_specs_staged = (*(_repspec(typeof(c)) for c in consts), *in_specs)
   if trace.requires_low:
     in_specs_staged = tuple(lo_spec for hi_spec in in_specs_staged

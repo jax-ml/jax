@@ -320,13 +320,13 @@ def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
   out_nz_tangents = map(partial(tangent_trace.to_jaxpr_tracer,
                                 source_info=source_info), out_nz_tangents)
   dbg = dbg.with_unknown_names()
-  jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)
+  jaxpr = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)
   tangent_trace.invalidate()
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
       jaxpr, [True] * len(jaxpr.outvars),
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
-  del consts, used_consts
+  del used_consts
   jaxpr, consts = jaxpr.separate_consts()
   out_zeros = map(op.not_, out_nzs)
   auxs = tuple(aux.unflatten() for aux in auxs)

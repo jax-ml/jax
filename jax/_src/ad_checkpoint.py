@@ -1032,7 +1032,7 @@ def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
       'remat3', f, args, kwargs, static_argnums=static_argnums,
       static_argnames=static_argnames)
   jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
-  jaxpr, consts = pe.separate_consts(jaxpr_)
+  jaxpr, consts = jaxpr_.separate_consts()
   out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
   return out_avals_ft.update(out_flat).unflatten()
 
@@ -1208,7 +1208,7 @@ def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
         'custom_remat', f, args, kwargs, static_argnums=static_argnums,
         static_argnames=static_argnames)
     jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
-    jaxpr, consts = pe.separate_consts(jaxpr_)
+    jaxpr, consts = jaxpr_.separate_consts()
     out_flat = CustomRemat(jaxpr, f1, helper, args_ft.tree, out_avals_ft.tree)(*consts, *args_ft)
     return out_avals_ft.update(out_flat).unflatten()
   return call

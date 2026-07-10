@@ -151,7 +151,7 @@ def _switch_internal(
 
   jaxprs_, out_avalss = zip(*[pe.trace_to_jaxpr(branch, avals, dbg)
                              for branch, dbg in zip(branches, dbgs)])
-  jaxprs_, all_consts = zip(*[pe.separate_consts(j) for j in jaxprs_])
+  jaxprs_, all_consts = zip(*[j.separate_consts() for j in jaxprs_])
   jaxprs, consts = _merge_common_consts(jaxprs_, all_consts)
 
   if config.mutable_array_checks.value:

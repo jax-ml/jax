@@ -548,7 +548,7 @@ def _trace_for_jit(
   # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
   # off the C++ dispatch fast path for correctness. Ensure that happens.
   if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in jaxpr.consts):
-    jaxpr, consts = pe.separate_consts(jaxpr)
+    jaxpr, consts = jaxpr.separate_consts()
   else:
     consts = []
 

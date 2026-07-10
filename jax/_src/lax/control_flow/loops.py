@@ -183,7 +183,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
   # TODO(dougalm): promote away all weak types
   args_avals = ft.pack(((x_avals,), {}))
   jaxpr, y_avals = pe.trace_to_jaxpr(f, args_avals, dbg_body)
-  jaxpr, consts = pe.separate_consts(jaxpr)
+  jaxpr, consts = jaxpr.separate_consts()
 
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg_body, consts, list(xs_flat))
@@ -379,7 +379,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   def _create_jaxpr(carry_avals):
     new_arg_avals = ft.pack(((carry_avals, x_avals), {}))
     jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
-    jaxpr, consts = pe.separate_consts(jaxpr)
+    jaxpr, consts = jaxpr.separate_consts()
     if not out_avals.unpackable or len(out_avals.unpack()) != 2:
       msg = "scan body output must be a pair, got {}."
       raise TypeError(msg.format(out_avals.unflatten()))
@@ -1700,8 +1700,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     init_aval = init_val_flat.map(core.typeof)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
 
-  cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
-  body_jaxpr, body_consts = pe.separate_consts(body_jaxpr)
+  cond_jaxpr, cond_consts = cond_jaxpr.separate_consts()
+  body_jaxpr, body_consts = body_jaxpr.separate_consts()
   _check_carry_type('while_loop body', body_fun, init_aval, body_out_avals)
 
   if not all(not v.aval.has_qdd or v.initial_qdd == v.final_qdd for v in

@@ -1644,9 +1644,8 @@ class JaxprStackFrame:
     all_vars = it.chain(constvars, self.invars, outvars)
     is_high = self.is_high or any(v.aval.is_high for v in all_vars)
 
-    jaxpr = Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info,
-                  is_high, consts=constvals)
-    return jaxpr, list(constvals)
+    return Jaxpr(constvars, self.invars, outvars, eqns, effs, debug_info,
+                 is_high, consts=constvals)
 
   def newvar(self, aval):
     if isinstance(aval, core.AvalQDD):
@@ -2276,11 +2275,11 @@ def trace_to_jaxpr_nocache(
                           for x in ans]
 
     _check_no_returned_refs(debug_info, list(flat_out_tracers))
-    jaxpr, consts = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
+    jaxpr = trace.frame.to_jaxpr(trace, list(flat_out_tracers), debug_info,
                                          source_info)
     del trace, fun, in_tracers, flat_out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
-  return jaxpr.with_consts(consts), out_avals
+  return jaxpr, out_avals
 
 
 @weakref_lru_cache(maxsize=None, explain=explain)
@@ -2330,8 +2329,8 @@ def trace_to_jaxpr_dynamic(
     ans = map(dtypes.canonicalize_value, ans)
     out_tracers = map(partial(trace.to_jaxpr_tracer, source_info=source_info), ans)
     _check_no_returned_refs(fun.debug_info, out_tracers)
-    jaxpr, consts = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info,
-                                         source_info)
+    jaxpr = trace.frame.to_jaxpr(trace, out_tracers, fun.debug_info, source_info)
+    jaxpr, consts = jaxpr.separate_consts()
     del trace, fun, in_tracers, out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts

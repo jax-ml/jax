@@ -45,7 +45,7 @@ def _xla_metadata_call(fun, **meta):
     in_avals = args_ft.map(core.shaped_abstractify)
     jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_avals, dbg)
     if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
-      jaxpr, consts = pe.separate_consts(jaxpr)
+      jaxpr, consts = jaxpr.separate_consts()
     else:
       consts = []
     outs_flat = xla_metadata_call_p.bind(*consts, *args_ft.vals, jaxpr=jaxpr,
