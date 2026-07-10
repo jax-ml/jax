@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import functools
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -470,6 +471,55 @@ class XlaTransformE2ETest(jtu.JaxTestCase):
     self.assertAllClose(output_sin, output_cos, atol=1e-5, rtol=1e-5)
     self.assertEqual(output_sin.sharding, in_sharding)
     self.assertEqual(output_cos.sharding, in_sharding)
+
+
+@jtu.thread_unsafe_test_class()
+class XlaTransformAotTest(jtu.JaxTestCase):
+  """Transforms registered for a plugin should fire under AOT compilation
+  (CompileOnlyPyClient via topologies.get_topology_desc), not just on a live
+  backend client.
+  """
+
+  def setUp(self):
+    super().setUp()
+    self._registered_transforms = []
+
+  def tearDown(self):
+    for name, stage in self._registered_transforms:
+      jex_xla.clear_hlo_module_transformation(name, stage=stage)
+    super().tearDown()
+
+  @jtu.run_on_devices("tpu")
+  def test_transform_fires_under_aot_compile(self):
+    from jax.experimental import topologies
+
+    if jtu.TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      raise unittest.SkipTest("Compilation caching not yet supported.")
+
+    calls = []
+
+    def record(serialized_hlo: bytes) -> bytes | None:
+      calls.append(len(serialized_hlo))
+      return None  # no rewrite
+
+    name = "aot_record_test"
+    stage = jex_xla.PipelineStage.PRE_SCHEDULER
+    jex_xla.register_hlo_module_transformation(
+        record, name=name, stage=stage, platforms="tpu"
+    )
+    self._registered_transforms.append((name, stage))
+
+    topo = topologies.get_topology_desc(
+        platform="tpu", topology_name="v5e:2x2"
+    )
+
+    mesh = jax.sharding.Mesh(np.array(topo.devices).reshape(-1), ("x",))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    sds = jax.ShapeDtypeStruct((len(topo.devices) * 4,), jnp.float32, sharding=s)
+    jax.jit(lambda x: x + 1).lower(sds).compile()
+
+    self.assertGreater(len(calls), 0,
+                       "transform did not fire under AOT compile")
 
 
 if __name__ == "__main__":

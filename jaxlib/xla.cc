@@ -168,6 +168,39 @@ void CApiTransformHloModuleCallback(PJRT_XlaTransform_Callbacks* callbacks,
   }
 }
 
+// Common body for the PJRT C-API registration overloads below.
+void RegisterTransformViaCApi(const PJRT_Api* c_api, std::string name,
+                              int stage, nb::object callback) {
+  PJRT_Xla_Transform_Extension* extension =
+      pjrt::FindExtension<PJRT_Xla_Transform_Extension>(
+          c_api, PJRT_Extension_Type::PJRT_Extension_Type_XlaTransform);
+  if (extension == nullptr) {
+    return;
+  }
+  auto* state = new CApiCallbackState();
+  state->py_callback = std::move(callback);
+  state->callbacks.version = PJRT_API_XLA_TRANSFORM_EXTENSION_VERSION;
+  state->callbacks.dtor = [](PJRT_XlaTransform_Callbacks* callbacks) {
+    auto* state = reinterpret_cast<CApiCallbackState*>(
+        reinterpret_cast<char*>(callbacks) -
+        offsetof(CApiCallbackState, callbacks));
+    delete state;
+  };
+  state->callbacks.transform_hlo_module = CApiTransformHloModuleCallback;
+  PJRT_Register_Xla_Transform_Args args;
+  args.struct_size = PJRT_Register_Xla_Transform_Args_STRUCT_SIZE;
+  args.name = name.c_str();
+  args.name_size = name.size();
+  args.stage = static_cast<PJRT_XlaTransform_PipelineStage>(stage);
+  args.callbacks = &state->callbacks;
+  PJRT_Error* error = extension->register_xla_transform(&args);
+  if (error != nullptr) {
+    delete state;
+    absl::Status status = pjrt::PjrtErrorToStatus(error);
+    throw std::runtime_error(status.ToString());
+  }
+}
+
 }  // namespace
 
 NB_MODULE(_xla, m) {
@@ -233,44 +266,29 @@ NB_MODULE(_xla, m) {
           // Client is not a PJRT C API client; skip silently.
           return;
         }
-        const PJRT_Api* c_api_value = c_api_client->pjrt_c_api();
-
-        PJRT_Xla_Transform_Extension* extension =
-            pjrt::FindExtension<PJRT_Xla_Transform_Extension>(
-                c_api_value,
-                PJRT_Extension_Type::PJRT_Extension_Type_XlaTransform);
-        if (extension == nullptr) {
-          // Extension not available for this client; skip silently.
-          return;
-        }
-
-        // Allocate callback state on the heap. Cleared via dtor if
-        // clear_xla_transform is called.
-        auto* state = new CApiCallbackState();
-        state->py_callback = std::move(callback);
-        state->callbacks.version = PJRT_API_XLA_TRANSFORM_EXTENSION_VERSION;
-        state->callbacks.dtor = [](PJRT_XlaTransform_Callbacks* callbacks) {
-          auto* state = reinterpret_cast<CApiCallbackState*>(
-              reinterpret_cast<char*>(callbacks) -
-              offsetof(CApiCallbackState, callbacks));
-          delete state;
-        };
-        state->callbacks.transform_hlo_module = CApiTransformHloModuleCallback;
-
-        PJRT_Register_Xla_Transform_Args args;
-        args.struct_size = PJRT_Register_Xla_Transform_Args_STRUCT_SIZE;
-        args.name = name.c_str();
-        args.name_size = name.size();
-        args.stage = static_cast<PJRT_XlaTransform_PipelineStage>(stage);
-        args.callbacks = &state->callbacks;
-
-        PJRT_Error* error = extension->register_xla_transform(&args);
-        if (error != nullptr) {
-          absl::Status status = pjrt::PjrtErrorToStatus(error);
-          throw std::runtime_error(status.ToString());
-        }
+        RegisterTransformViaCApi(c_api_client->pjrt_c_api(), std::move(name),
+                                 stage, std::move(callback));
       },
       nb::arg("client"), nb::arg("name"), nb::arg("stage"),
+      nb::arg("callback"));
+
+  // Register via plugin name instead of a client. The extension is keyed on
+  // PJRT_Api*, not a client instance, so a live client was never required —
+  // this lets transforms register under AOT compilation (CompileOnlyPyClient
+  // has no underlying PjRtCApiClient).
+  m.def(
+      "register_xla_transform_c_api_by_plugin",
+      [](std::string plugin_name, std::string name, int stage,
+         nb::object callback) {
+        absl::StatusOr<const PJRT_Api*> c_api = pjrt::PjrtApi(plugin_name);
+        if (!c_api.ok() || *c_api == nullptr) {
+          // Plugin not loaded; caller decides whether to warn.
+          return;
+        }
+        RegisterTransformViaCApi(*c_api, std::move(name), stage,
+                                 std::move(callback));
+      },
+      nb::arg("plugin_name"), nb::arg("name"), nb::arg("stage"),
       nb::arg("callback"));
 
   m.def(
