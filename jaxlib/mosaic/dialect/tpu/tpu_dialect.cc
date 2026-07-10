@@ -805,6 +805,8 @@ void analyzeCrossChipCommunication(mlir::Operation* op,
     state->has_communication |= dma.getDeviceId() != nullptr;
   } else if (auto signal = dyn_cast<tpu::SemaphoreSignalOp>(op)) {
     state->has_communication |= signal.getDeviceId() != nullptr;
+  } else if (auto arrive = dyn_cast<tpu::BarrierArriveOp>(op)) {
+    state->has_communication |= arrive.getDeviceId() != nullptr;
   } else if (auto barrier = dyn_cast<tpu::GetBarrierSemaphoreOp>(op)) {
     state->has_custom_barrier = true;
   }

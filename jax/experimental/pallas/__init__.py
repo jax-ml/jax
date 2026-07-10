@@ -54,6 +54,8 @@ from jax._src.pallas.helpers import when as when
 from jax._src.pallas.helpers import with_scoped as with_scoped
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
+from jax._src.pallas.primitives import barrier_arrive as barrier_arrive
+from jax._src.pallas.primitives import barrier_wait as barrier_wait
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import delay as delay
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
@@ -76,7 +78,6 @@ from jax._src.state.indexing import ds as ds
 from jax._src.state.indexing import dslice as dslice
 from jax._src.state.indexing import Slice as Slice
 from jax._src.state.primitives import broadcast_to as broadcast_to
-
 
 ANY = MemorySpace.ANY
 HOST = _jax_core.MemorySpace.Host
@@ -104,11 +105,13 @@ _deprecations = {
 }
 
 import typing
+
 if typing.TYPE_CHECKING:
   debug_checks_enabled = _deprecated_debug_checks_enabled
   dot = _deprecated_dot
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
