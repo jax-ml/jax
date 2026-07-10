@@ -641,6 +641,7 @@ def _lower_to_custom_call_config(
     needs_layout_passes: bool | None = None,
     tiling: Tiling | None = None,
     opt_level: OptLevel | None = None,
+    active_core_count: int | None = None,
     ctx: mlir.LoweringRuleContext | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
@@ -654,7 +655,8 @@ def _lower_to_custom_call_config(
       module,
       ir_version=ir_version,
   )
-  active_core_count = _get_active_core_count(module)
+  if active_core_count is None:
+    active_core_count = _get_active_core_count(module)
   return _lowered_to_custom_call_config(
       lowered_module_asm,
       lowered_module_asm_version=ir_version,
@@ -912,6 +914,7 @@ def as_tpu_kernel(
     tiling: Tiling | None = None,
     _ir_version: int | None = None,
     opt_level: OptLevel | None = None,
+    active_core_count: int | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
@@ -932,6 +935,7 @@ def as_tpu_kernel(
       ir_version=_ir_version,
       tiling=tiling,
       opt_level=opt_level,
+      active_core_count=active_core_count,
   )
   return _as_jax_callable(
       config,
