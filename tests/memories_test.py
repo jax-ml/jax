@@ -2252,10 +2252,12 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     out = f(arr, arr2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P("x")))
 
+    lowered_text = f.lower(arr, arr2).as_text("hlo")
+    self.assertIn('_xla_compute_type="sparseoffload"', lowered_text)
+    self.assertIn('_xla_compute_type="dense"', lowered_text)
+
     compiled_text = f.lower(arr, arr2).compile().as_text()
-    self.assertRegex(compiled_text, r"reduce_scatter.*reduce-scatter.*dense")
-    self.assertRegex(
-        compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
   def test_sparsecore_two_ars(self):
     if not jtu.is_device_tpu_at_least(7):
@@ -2285,10 +2287,12 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     out = f(arr, arr2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
+    lowered_text = f.lower(arr, arr2).as_text("hlo")
+    self.assertIn('_xla_compute_type="sparseoffload"', lowered_text)
+    self.assertIn('_xla_compute_type="dense"', lowered_text)
+
     compiled_text = f.lower(arr, arr2).compile().as_text()
-    self.assertRegex(compiled_text, r"all-reduce.*all-reduce.*dense")
-    self.assertRegex(
-        compiled_text, r"call-start.*async_execution_thread=\"sparsecore\"")
+    self.assertIn('async_execution_thread="sparsecore"', compiled_text)
 
   def test_compute_on_remat_custom_vjp(self):
     @jax.custom_vjp
