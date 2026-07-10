@@ -477,7 +477,8 @@ def pass_scalars_as_refs(
     new_consts = util.merge_lists(
         is_scalar_const, non_scalar_const_refs, scalar_const_values
     )
-    return jax_core.eval_jaxpr(jaxpr, new_consts, *args)
+    jaxpr_no_consts, _ = jaxpr.separate_consts()
+    return jax_core.eval_jaxpr(jaxpr_no_consts, *new_consts, *args)
 
   # TODO(sharadmv): Remove this once Mosaic support passing scalars as values.
   scalar_const_trace_avals = [
@@ -505,14 +506,12 @@ def pass_scalars_as_refs(
         ft.flatten_args(*new_trace_avals),
         jaxpr.debug_info.with_unknown_names(),
     )
-  jaxpr = new_jaxpr.replace(
-      constvars=new_jaxpr.invars[: len(jaxpr.constvars)],
-      invars=new_jaxpr.invars[len(jaxpr.constvars) :],
-  )
   args = [
       *[a[None] for a in scalar_consts],
       *non_scalar_consts,
   ]
+  assert not new_jaxpr.constvars
+  jaxpr = new_jaxpr.with_consts(list(args))
   in_avals, out_avals, _ = util.split_list(
       new_trace_avals, [len(in_avals), len(out_avals)]
   )

@@ -100,7 +100,8 @@ def _construct_fusion_jaxpr(
       outvars=flat_outvars,
       constvars=jaxpr.constvars + jaxpr.invars,
       invars=flat_invars,
-      debug_info=jaxpr.debug_info.with_unknown_names()
+      debug_info=jaxpr.debug_info.with_unknown_names(),
+      consts=candidate_values,
   )
   new_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
       new_jaxpr_no_dce,
@@ -129,7 +130,7 @@ def construct_input_fusion(
   )
 
   def _fn():
-    out_flat = jax_core.eval_jaxpr(new_jaxpr, new_values)
+    out_flat = jax_core.eval_jaxpr(new_jaxpr)
     return tree_util.tree_unflatten(out_tree, out_flat)
 
   return fusion_lib.Fusion(_fn, in_type, out_type)
@@ -268,7 +269,8 @@ def _construct_output_fusions(
 
     def _fn(jaxpr, vals, *args, **kwargs):
       flat_args, _ = tree_util.tree_flatten((args, kwargs))
-      out_flat = jax_core.eval_jaxpr(jaxpr, vals, *flat_args)
+      jaxpr_no_consts, _ = jaxpr.separate_consts()
+      out_flat = jax_core.eval_jaxpr(jaxpr_no_consts, *vals, *flat_args)
       return tuple(out_flat)
 
     fn = functools.partial(_fn, jaxpr_out_for_group, values_for_jaxpr)
@@ -312,7 +314,8 @@ def fuse_jaxpr(
                 + jaxpr.eqns[fusion_eqn_index + 1 :]),
       constvars=jaxpr.constvars + jaxpr.invars,
       invars=fusion_eqn.outvars,
-      debug_info=jaxpr.debug_info.with_unknown_names())
+      debug_info=jaxpr.debug_info.with_unknown_names(),
+      consts=candidate_values)
   discharged_jaxpr_without_fusible, *_ = (
       fuser_utils.discharge_state(jaxpr_without_fusible))
   independent_jaxpr, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
@@ -333,7 +336,8 @@ def fuse_jaxpr(
           ensure_out_inst=False,
           saveable=lambda *_, **__: False)
       assert not any(out_used)
-    return jax_core.eval_jaxpr(independent_jaxpr, candidate_values)
+    independent_jaxpr_no_consts, _ = independent_jaxpr.separate_consts()
+    return jax_core.eval_jaxpr(independent_jaxpr_no_consts, *candidate_values)
 
   # Construct fusions for non-constant inputs to the fusible.
   in_fusions_flat = [

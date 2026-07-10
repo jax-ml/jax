@@ -339,10 +339,7 @@ def _batch_block_mapping(
   def _block_map_function(new_idx, *args):
     drop_last_args = args
 
-    indices = jax_core.eval_jaxpr(
-        block_mapping.index_map_jaxpr,
-        block_mapping.index_map_jaxpr.consts,
-        *drop_last_args,
+    indices = jax_core.eval_jaxpr(block_mapping.index_map_jaxpr, *drop_last_args,
     )
     unflat_indices = tree_util.tree_unflatten(
         block_mapping.index_map_out_tree, indices)
@@ -1069,8 +1066,10 @@ def _pallas_call_state_discharge_rule(
     ref_out_args, out_args = split_list(out_args, [num_refs])
     # We don't care about ref_out_args because they are aliased to ref_in_args
     del ref_out_args
+    jaxpr_no_consts, _ = jaxpr.separate_consts()
     jax_core.eval_jaxpr(
-        jaxpr, ref_in_args, *index_args, *in_args, *out_args, *rest_args
+        jaxpr_no_consts, *ref_in_args, *index_args, *in_args, *out_args,
+        *rest_args
     )
     return []
   index_map_avals, jaxpr_in_avals, jaxpr_out_avals, jaxpr_rest_avals = (

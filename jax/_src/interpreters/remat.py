@@ -54,12 +54,13 @@ def remat_transform(policy, f, *args, custom_vjp_rules):
     out_ft, out_tracer_ft = ans_ft.map(trace.to_val_tracer_pair).unzip2()
     src = source_info_util.current()
     out_tracer_ft = out_tracer_ft.map(partial(jaxpr_trace.to_jaxpr_tracer, source_info=src))
-    jaxpr, res = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, src)
+    jaxpr = jaxpr_trace.to_jaxpr(list(out_tracer_ft), dbg, src)
+    jaxpr, res = jaxpr.separate_consts()
     in_tree, out_tree = args_ft.tree, out_ft.tree
     del trace, in_tracers, out_tracer_ft
   def f_rem(res, *args):
     args_flat = tree_leaves_checked(in_tree, args)
-    out_flat = core.eval_jaxpr(jaxpr, res, *args_flat)
+    out_flat = core.eval_jaxpr(jaxpr, *res, *args_flat)
     return tree_unflatten(out_tree, out_flat)
   return out_ft.unflatten(), Partial(f_rem, map(reduce_precision, res))
 
@@ -149,12 +150,12 @@ def remat_subtrace(f: Callable, tag: core.TraceTag, policy,
       out_primals, out_rem = ans.map(trace.to_val_tracer_pair).unzip2()
       del trace, ans, tracers
   out_rem = map(partial(rem_trace.to_jaxpr_tracer, source_info=source_info), out_rem)
-  jaxpr, consts = rem_trace.to_jaxpr(out_rem, debug_info.with_unknown_names(),
-                                     source_info)
+  jaxpr = rem_trace.to_jaxpr(out_rem, debug_info.with_unknown_names(),
+                             source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
-                getattr(c._trace, 'tag', None) is tag) for c in consts]
+                getattr(c._trace, 'tag', None) is tag) for c in jaxpr.consts]
+  res, env = partition_list(which_env, jaxpr.consts)
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
-  res, env = partition_list(which_env, consts)
   residual_avals = map(typeof, res)
   id_map = {id(p): i for i, p in enumerate(args)}
   in_fwd: list[int | None] = [id_map.get(id(r)) for r in res]
@@ -197,13 +198,13 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
 
   tracers = map(new_arg, jaxpr.in_aval_qdds)
   with core.set_current_trace(trace, check_leaks=True):
-    ans = core.eval_jaxpr(jaxpr, jaxpr.consts, *tracers)
+    ans = core.eval_jaxpr(jaxpr, *tracers)
     out_primals, out_rem = unzip2(map(trace.to_val_tracer_pair, ans))
     del trace, ans, new_arg, tracers
 
   out_rem = [rem_trace.to_jaxpr_tracer(x, source_info=src) for x in out_rem]
-  rem_jaxpr_, rem_consts = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
-  rem_jaxpr = pe.convert_constvars_jaxpr(rem_jaxpr_)
+  rem_jaxpr = rem_trace.to_jaxpr(out_rem, dbg.with_unknown_names(), src)
+  rem_jaxpr, rem_consts = rem_jaxpr.separate_consts()
   rem_trace.invalidate()
 
   # Residuals that are just primal outputs needn't be returned again by the
@@ -215,7 +216,7 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
 
   rem_consts = map(partial(fwd_trace.to_jaxpr_tracer, source_info=src), rem_consts)
   out_primals = [fwd_trace.to_jaxpr_tracer(x, source_info=src) for x in out_primals]
-  fwd_jaxpr_, fwd_consts = fwd_trace.to_jaxpr(
+  fwd_jaxpr_ = fwd_trace.to_jaxpr(
       [*out_primals, *rem_consts], dbg.with_unknown_names(), src)
   fwd_trace.invalidate()
 

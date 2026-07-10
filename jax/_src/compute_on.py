@@ -90,7 +90,7 @@ def _compute_on2(f, *, compute_type, out_memory_spaces, compiler_options):
     with extend_compute_type(compute_type):
       jaxpr, out_tree = _trace_to_jaxpr(f, in_avals, in_tree, dbg)
       if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
-        jaxpr, consts = pe.separate_consts(jaxpr)
+        jaxpr, consts = jaxpr.separate_consts()
       else:
         consts = []
     out_memory_spaces_flat = flatten_axes(

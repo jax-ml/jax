@@ -438,7 +438,8 @@ def lift_jvp(num_consts: int, jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
     zeros = [type(t) is SymbolicZero for t in tangents]
     jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*zeros)
     nonzero_tangents = [t for t in tangents if type(t) is not SymbolicZero]
-    out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
+    out = core.eval_jaxpr(jvp_jaxpr, *jvp_consts, *primals,
+                          *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
     nz_out_tangents_ = iter(nz_out_tangents)
     out_tangents = [SymbolicZero(core.typeof(p).to_tangent_aval())
@@ -1048,7 +1049,7 @@ def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
     const_nonzeros, in_nonzeros = split_list(nonzeros, [num_consts])
     if any(const_nonzeros): raise ad.CustomVJPException()
     fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*in_nonzeros)
-    return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *primals)
+    return core.eval_jaxpr(fwd_jaxpr, *fwd_consts, *primals)
   return lu.wrap_init(fwd, debug_info=fwd_jaxpr_thunk.debug_info)
 
 @lu.transformation2
@@ -1095,7 +1096,7 @@ def _custom_vjp_call_dce(
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
     dce_fwd_jaxpr, _ = _cached_closed_call_dce_instantiate(
         fwd_jaxpr, (True,) * num_res_out + tuple(used_outs))
-    return dce_fwd_jaxpr, dce_fwd_jaxpr.consts
+    return dce_fwd_jaxpr.separate_consts()
 
   def dce_bwd(*args):
     _, res_tree, _ = out_trees()
@@ -1233,7 +1234,7 @@ def custom_gradient(fun):
     jaxpr, in_tree, out_tree, consts = res
     cts_flat, out_tree_ = tree_flatten((cts,))
     if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
-    cts_out = core.eval_jaxpr(jaxpr, consts, *cts_flat)
+    cts_out = core.eval_jaxpr(jaxpr, *consts, *cts_flat)
     cts_out = tree_unflatten(in_tree, cts_out)
     if treedef_is_leaf(in_tree):
       cts_out = (cts_out,)
@@ -1372,7 +1373,7 @@ def _closure_convert_for_avals(fun, in_tree, in_avals,
              f"closure_convert was called. Expected {in_tree}, but got "
              f"{in_tree2}")
       raise TypeError(msg)
-    out_flat = core.eval_jaxpr(jaxpr, consts, *all_args)
+    out_flat = core.eval_jaxpr(jaxpr, *consts, *all_args)
     return tree_unflatten(out_tree, out_flat)
 
   return converted_fun, const_args
@@ -1489,8 +1490,6 @@ def linear_call(fun: Callable,
   res_avals = map(core.typeof, operands_res)
   lin_avals = map(core.typeof, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
-  f_jaxpr_closed = pe.convert_constvars_jaxpr(f_jaxpr)
-  out_avals = f_jaxpr_closed.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
   t, t_out_tree = flatten_fun_nokwargs(
@@ -1504,16 +1503,17 @@ def linear_call(fun: Callable,
   @pe._memoize
   def transpose_thunk():
     t_jaxpr, t_consts = _initial_style_jaxpr(t.with_unknown_names(),
-                                             (*res_avals, *out_avals))
+                                             (*res_avals, *f_jaxpr.out_avals))
     if t_out_tree() != lin_tree:
       raise TypeError(
           'transpose output pytree structure must match that of linear inputs, '
           f'got output structure {t_out_tree()} '
           f'and input structure {lin_tree}.')
-    return pe.convert_constvars_jaxpr(t_jaxpr), t_consts
+    del t_consts
+    return t_jaxpr.separate_consts()
 
   out = linear_call_p.bind(*f_consts, *operands_res, *operands_lin,
-                           callee=f_jaxpr_closed,
+                           callee=f_jaxpr,
                            transpose_thunk=transpose_thunk,
                            num_callee_consts=len(f_consts),
                            num_res=len(operands_res))
@@ -1523,7 +1523,7 @@ def linear_call(fun: Callable,
 def _linear_call_impl(*args, callee, transpose_thunk, num_callee_consts,
                       num_res):
   del transpose_thunk, num_callee_consts, num_res
-  return core.eval_jaxpr(callee, (), *args)
+  return core.eval_jaxpr(callee, *args)
 
 def _linear_call_jvp_rule(primals, tangents, callee, transpose_thunk,
                           num_callee_consts, num_res):
@@ -1684,9 +1684,8 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.typeof(x) for x in args_flat]
-    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fwd.with_unknown_names(),
-                                                     in_avals)
-    fwd_jaxpr = pe.convert_constvars_jaxpr(fwd_jaxpr)
+    fwd_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+        flat_fwd.with_unknown_names(), in_avals)
     prim_tree, res_tree, fwds = out_trees()
     num_res_out = res_tree.num_leaves - sum(f is not None for f in fwds)
 
@@ -1746,8 +1745,7 @@ def _remat_opt_vmap(
   in_batched = [d is not None for d in in_dims]
   batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
       fwd_jaxpr, axis_data, in_batched, False)
-  extra_consts = batched_fwd_jaxpr.consts
-  batched_fwd_jaxpr = pe.convert_constvars_jaxpr(batched_fwd_jaxpr)
+  batched_fwd_jaxpr, extra_consts = batched_fwd_jaxpr.separate_consts()
   out_dims = [0 if b else None for b in out_batched]
 
   _, prim_batched = split_list(in_batched, [num_consts])
@@ -1758,7 +1756,7 @@ def _remat_opt_vmap(
     fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
     batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
         fun_jaxpr, axis_data, prim_batched, False)
-    return batched_fun_jaxpr, batched_fun_jaxpr.consts
+    return batched_fun_jaxpr.separate_consts()
 
   batched_outs = remat_opt_p.bind(*extra_consts, *args,
                                   num_consts=num_consts + len(extra_consts),
@@ -1789,7 +1787,7 @@ def _remat_opt_jvp(
   fwd_jaxpr_jvp_ = ad.rearrange_binders(
       fwd_jaxpr_jvp_, [num_consts, len(primals)],
       [len(consts_dot), len(tangents)], [num_res, num_out], [num_res, num_out])
-  fwd_jaxpr_jvp = pe.convert_constvars_jaxpr(fwd_jaxpr_jvp_)
+  fwd_jaxpr_jvp, jvp_consts = fwd_jaxpr_jvp_.separate_consts()
 
   # @pe._memoize
   def fun_jvp_jaxpr_thunk():
@@ -1797,10 +1795,10 @@ def _remat_opt_jvp(
     fun_jaxpr = fun_jaxpr_.with_consts(fun_consts_)
     in_nz = [True] * len(primals)
     fun_jvp_jaxpr, _ = ad.jvp_jaxpr(fun_jaxpr, in_nz, True)
-    return fun_jvp_jaxpr, fun_jvp_jaxpr.consts
+    return fun_jvp_jaxpr.separate_consts()
 
-  new_num_consts = len(fwd_jaxpr_jvp_.consts) + num_consts + len(consts_dot)
-  outs = remat_opt_p.bind(*fwd_jaxpr_jvp_.consts, *consts, *consts_dot,
+  new_num_consts = len(jvp_consts) + num_consts + len(consts_dot)
+  outs = remat_opt_p.bind(*jvp_consts, *consts, *consts_dot,
                           *primals, *tangents, num_consts=new_num_consts,
                           num_res=2 * num_res, fwd_jaxpr=fwd_jaxpr_jvp,
                           fun_jaxpr_thunk=fun_jvp_jaxpr_thunk)
@@ -1851,9 +1849,8 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     # have different consts than fwd, we build a new JaxprEqn with a closed_call
     # primitive.
     fun_jaxpr, consts = eqn.params["fun_jaxpr_thunk"]()
-    new_jaxpr, used_consts, used_ins = pe.dce_jaxpr_consts(fun_jaxpr, used_prims)
-    consts = [c for used, c in zip(used_consts, consts) if used]
-    closed_jaxpr = new_jaxpr.with_consts(consts)
+    fun_jaxpr = fun_jaxpr.with_consts(consts)
+    closed_jaxpr, _, used_ins = pe.dce_jaxpr_consts(fun_jaxpr, used_prims)
     _, invars = split_list(eqn.invars, [eqn.params["num_consts"]])
     invars = [v for used, v in zip(used_ins, invars) if used]
     new_eqn = pe.new_jaxpr_eqn(

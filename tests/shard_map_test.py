@@ -1942,13 +1942,15 @@ class ShardMapTest(jtu.JaxTestCase):
     consts = [rand(v) for v in jaxpr.constvars]
     inputs = [rand(v) for v in jaxpr.invars   ]
     inputs_dce = [x for x, used in zip(inputs, used_inputs) if used]
-    full_outs = core.eval_jaxpr(jaxpr    , consts, *inputs)
+    jaxpr_nc, _ = jaxpr.separate_consts()
+    jaxpr_dce_nc, _ = jaxpr_dce.separate_consts()
+    full_outs = core.eval_jaxpr(jaxpr_nc, *consts, *inputs)
     expected_outs_dce = [y for y, used in zip(full_outs, used_outputs) if used]
-    outs = core.eval_jaxpr(jaxpr_dce, consts, *inputs_dce)
+    outs = core.eval_jaxpr(jaxpr_dce_nc, *consts, *inputs_dce)
     self.assertAllClose(outs, expected_outs_dce)
 
     if check_diff and expected_num_eqns != 0:
-      f = lambda *args: core.eval_jaxpr(jaxpr_dce, consts, *args)
+      f = lambda *args: core.eval_jaxpr(jaxpr_dce_nc, *consts, *args)
       jtu.check_grads(f, inputs_dce, order=2, modes=['rev'])
 
   def test_returned_out_sharding(self):

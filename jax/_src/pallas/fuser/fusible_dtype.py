@@ -146,8 +146,7 @@ def physicalize(f):
         f, in_avals_ft, debug_info
     )
     new_jaxpr = physicalize_closed_jaxpr(closed_jaxpr)
-    out_flat = core.eval_jaxpr(
-        new_jaxpr, new_jaxpr.consts, *args_ft.vals
+    out_flat = core.eval_jaxpr(new_jaxpr, *args_ft.vals
     )
     return tree_util.tree_unflatten(out_avals_ft.tree, out_flat)
 
@@ -197,10 +196,7 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
       _flat_jaxpr_eval, in_avals_ft, debug_info
   )
   assert not closed_jaxpr.consts
-  new_jaxpr = pe.convert_invars_to_constvars(
-      closed_jaxpr, len(tree_util.tree_leaves(const_avals))
-  )
-  return new_jaxpr
+  return closed_jaxpr
 
 
 @dataclasses.dataclass
@@ -387,6 +383,7 @@ def _core_map_rule(ctx: Context, *args, jaxpr, **params):
   assert not jaxpr.invars
   with core.extend_axis_env_nd(params["mesh"].shape.items()):
     jaxpr = physicalize_jaxpr(jaxpr)
+  jaxpr = jaxpr.with_consts(list(args))
   return pallas_core.core_map_p.bind(*args, jaxpr=jaxpr, **params)
 
 
@@ -417,6 +414,7 @@ def _run_scoped_rule(ctx: Context, *args, jaxpr, **params):
   _assert_no_fusion_types(ctx.avals_out)
   jaxpr = physicalize_jaxpr(jaxpr)
   flat_args = tree_util.tree_leaves(args)
+  jaxpr = jaxpr.with_consts(flat_args)
   assert len(flat_args) == len(
       jaxpr.constvars
   ), f"Length mismatch: {len(flat_args)=} != {len(jaxpr.constvars)=}"

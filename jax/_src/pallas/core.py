@@ -1506,12 +1506,12 @@ def _core_map_is_high(*avals, jaxpr, **params):
 core_map_p.is_high = _core_map_is_high
 
 def _core_map_to_lojax(*consts, jaxpr, mesh, **params):
-  closed_hi_jaxpr = jaxpr.with_consts(consts)
+  jaxpr = jaxpr.replace(consts=consts)
   with (
       tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
       jax_core.extend_axis_env_nd(mesh.shape.items()),
   ):
-    closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
+    closed_lo_jaxpr = pe.lower_jaxpr2(jaxpr)
   assert not closed_lo_jaxpr.is_high
   return core_map_p.bind(
       *closed_lo_jaxpr.consts,
@@ -1782,7 +1782,8 @@ def default_mesh_discharge_rule(
     in_refs, _, scratch_refs = split_list(
         args, [len(in_avals), len(modified_idxs)]
     )
-    jax_core.eval_jaxpr(jaxpr, in_refs, *scratch_refs)
+    jaxpr_no_consts, _ = jaxpr.separate_consts()
+    jax_core.eval_jaxpr(jaxpr_no_consts, *in_refs, *scratch_refs)
 
   from jax._src.pallas import mpmd  # Avoid circular dependency.
 

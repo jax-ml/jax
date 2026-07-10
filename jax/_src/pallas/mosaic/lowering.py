@@ -1663,7 +1663,7 @@ def lower_fun(
 
     if closed_jaxpr.consts:
       raise NotImplementedError("lower_fun should not capture constvars")
-    jaxpr = pe.convert_constvars_jaxpr(closed_jaxpr)
+    jaxpr = closed_jaxpr
     sub_lowering_ctx = ctx.lowering_context.replace(
         block_shapes=sub_block_shapes
     )
@@ -4613,7 +4613,7 @@ def _run_scoped_lowering_rule(
   region = tpu.RegionOp(map(ctx.aval_to_ir_type, ctx.avals_out))
   in_avals = [v.aval for v in jaxpr.invars]
   with ctx.lowering_context.grid_name_context():
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr, _ = jaxpr.separate_consts()
   with ir.InsertionPoint(region.body):
     args = map(lambda aval: _alloc_value(aval, ctx=ctx), in_avals)
     block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None

@@ -960,7 +960,7 @@ def call_hi_primitive_error_check(error, enabled_errors, *vals_in, _prim):
   in_avals = tuple(map(core.typeof, new_vals_in))
   checked_jaxpr_, out_tree, _ = jaxpr_to_checkify_jaxpr(
       _prim.jaxpr, enabled_errors, err_tree, *in_avals)
-  checked_jaxpr, consts = pe.separate_consts(checked_jaxpr_)
+  checked_jaxpr, consts = checked_jaxpr_.separate_consts()
   new_prim = ad_checkpoint.RematTraced(checked_jaxpr, _prim.policy)
   err_and_out = new_prim(*consts, *new_vals_in)
   return tree_unflatten(out_tree, err_and_out)
@@ -997,7 +997,7 @@ def shard_map_error_check(
   num_out_error_vals = out_tree.num_leaves - len(out_specs)
 
   def expand_errors_leading_dim(*xs):
-    outs = core.eval_jaxpr(checked_jaxpr, checked_jaxpr.consts, *xs)
+    outs = core.eval_jaxpr(checked_jaxpr, *xs)
     errs, outs = split_list(outs, [num_out_error_vals])
     errs = [lax.expand_dims(e, [0]) for e in errs]
     return *errs, *outs
@@ -1073,7 +1073,8 @@ def lift_jvp(num_errs: int, num_consts: int,
     zeros = [type(t) is SymbolicZero for t in tangents]
     jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*zeros)
     nonzero_tangents = [t for t in tangents if type(t) is not SymbolicZero]
-    out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
+    out = core.eval_jaxpr(jvp_jaxpr, *jvp_consts, *primals,
+                          *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
     nz_out_tangents_ = iter(nz_out_tangents)
     out_tangents = [SymbolicZero(core.typeof(p).to_tangent_aval())
@@ -1105,7 +1106,7 @@ def custom_vjp_call_rule(in_err, enabled_errors, *in_vals,
     xs, zeros = xs[num_errs:], zeros[num_errs:]
     fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk.call_wrapped(*zeros)
     xs_without_consts = xs[num_consts:]
-    return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *xs_without_consts)
+    return core.eval_jaxpr(fwd_jaxpr, *fwd_consts, *xs_without_consts)
 
   # TODO(necula): the fwd result_paths are not quite the same as fun_jaxpr
   checkified_fwd_wrapped = lu.wrap_init(checkified_fwd,
@@ -1233,7 +1234,7 @@ def checkify(f: Callable[..., Out],
     # stage:
     debug_info = api_util.debug_info("checkify", f, args, kwargs).with_unknown_names()
     jaxpr_, out_avals = pe.trace_to_jaxpr(closed_f, in_avals, debug_info)
-    jaxpr, consts = pe.separate_consts(jaxpr_)
+    jaxpr, consts = jaxpr_.separate_consts()
     # checkify:
     error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)
     return error, out_avals.update(out_flat).unflatten()

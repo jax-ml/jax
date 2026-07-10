@@ -532,8 +532,6 @@ class custom_partitioning:
     with core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     assert not len(consts)
-    closed_call = pe.convert_constvars_jaxpr(jaxpr)
-
     propagate_user_sharding = None
     infer_sharding_from_operands = None
     sharding_rule = None
@@ -554,7 +552,7 @@ class custom_partitioning:
     out_flat = custom_partitioning_p.bind(
         *consts,
         *args_flat,
-        call=closed_call,
+        call=jaxpr,
         partition=self.partition,
         propagate_user_sharding=propagate_user_sharding,
         infer_sharding_from_operands=infer_sharding_from_operands,

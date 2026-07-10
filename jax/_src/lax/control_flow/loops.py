@@ -136,7 +136,7 @@ class Scan3(hijax.VJPHiPrimitive):
         else:
           return arg
       sliced_args = [slice_arg(e, a) for e, a in zip(self.extensives, args)]
-      y_tree = core.eval_jaxpr(self.jaxpr, [], *sliced_args)
+      y_tree = core.eval_jaxpr(self.jaxpr, *sliced_args)
       for out, y in zip(outs, y_tree):
         out[i] = y
       return i + 1
@@ -183,7 +183,7 @@ def scan_nocarry(f: Callable[[Carry, X], tuple[Carry, Y]],
   # TODO(dougalm): promote away all weak types
   args_avals = ft.pack(((x_avals,), {}))
   jaxpr, y_avals = pe.trace_to_jaxpr(f, args_avals, dbg_body)
-  jaxpr, consts = pe.separate_consts(jaxpr)
+  jaxpr, consts = jaxpr.separate_consts()
 
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg_body, consts, list(xs_flat))
@@ -379,7 +379,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   def _create_jaxpr(carry_avals):
     new_arg_avals = ft.pack(((carry_avals, x_avals), {}))
     jaxpr, out_avals = pe.trace_to_jaxpr(f, new_arg_avals, dbg_body)
-    jaxpr, consts = pe.separate_consts(jaxpr)
+    jaxpr, consts = jaxpr.separate_consts()
     if not out_avals.unpackable or len(out_avals.unpack()) != 2:
       msg = "scan body output must be a pair, got {}."
       raise TypeError(msg.format(out_avals.unflatten()))
@@ -889,11 +889,11 @@ def _scan_known_hoisting(jaxpr_known, known_consts, num_res):
   others = _map(pe.PartialVal.unknown, jaxpr_known.in_avals[len(consts):])
   num_known_outs = len(jaxpr_known.out_avals) - num_res
   with source_info_util.reset_name_stack():
-    jaxpr_known_, pvals_out, new_known_consts = pe.trace_to_jaxpr_nounits(
+    jaxpr_known_, pvals_out, _ = pe.trace_to_jaxpr_nounits(
         lu.wrap_init(core.jaxpr_as_fun(jaxpr_known),
                      debug_info=jaxpr_known.debug_info),
         consts + others, instantiate=[True] * num_known_outs + [False] * num_res)
-  jaxpr_known = pe.convert_constvars_jaxpr(jaxpr_known_)
+  jaxpr_known, new_known_consts = jaxpr_known_.separate_consts()
   res_pvals = pvals_out[num_known_outs:]
   which_hoisted = [pval.is_known() for pval in res_pvals]
   hoisted_res = [pval.get_known() for pval in res_pvals if pval.is_known()]
@@ -1699,8 +1699,8 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     init_aval = init_val_flat.map(core.typeof)
     cond_jaxpr, body_jaxpr, body_out_avals = _create_jaxpr(init_aval)
 
-  cond_jaxpr, cond_consts = pe.separate_consts(cond_jaxpr)
-  body_jaxpr, body_consts = pe.separate_consts(body_jaxpr)
+  cond_jaxpr, cond_consts = cond_jaxpr.separate_consts()
+  body_jaxpr, body_consts = body_jaxpr.separate_consts()
   _check_carry_type('while_loop body', body_fun, init_aval, body_out_avals)
 
   if not all(not v.aval.has_qdd or v.initial_qdd == v.final_qdd for v in
@@ -1977,8 +1977,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   num_known_outs = len(carry_uk) - sum(carry_uk)
   # TODO(mattjj): use pe.dce_jaxpr to drop res computations and not just outputs
   body_jaxpr_known = body_jaxpr_known.replace(
-    jaxpr=body_jaxpr_known.replace(
-      outvars=body_jaxpr_known.outvars[:num_known_outs]))
+      outvars=body_jaxpr_known.outvars[:num_known_outs])
   out_known = while_p.bind(
       *in_consts, cond_nconsts=cond_nconsts_known, cond_jaxpr=cond_jaxpr_known,
       body_nconsts=body_nconsts_known, body_jaxpr=body_jaxpr_known)
@@ -2104,12 +2103,12 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   if cond_ordered_effects:
     def cond(args):
       # Pred can be batched
-      pred = core.eval_jaxpr(cond_jaxpr, cond_jaxpr.consts, *args)[0]
+      pred = core.eval_jaxpr(cond_jaxpr, *args)[0]
       if batched:
         pred = lax.reduce_or(pred, tuple(range(len(pred_aval.shape))))
       return pred
     def body(args):
-      return core.eval_jaxpr(body_jaxpr, body_jaxpr.consts, *args)
+      return core.eval_jaxpr(body_jaxpr, *args)
     def new_cond(pred_args):
       pred, *_ = pred_args
       return pred
@@ -2323,10 +2322,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
       # in the cond jaxpr are persisted via the carry.
       cond_consts, body_consts = split_list(consts, [num_remaining_cond_consts])
       cond_consts_and_refs = merge_lists(cond_is_ref, cond_consts, cond_refs)
-      cond_carry_refs = core.eval_jaxpr(
-          discharged_cond_jaxpr,
-          discharged_cond_jaxpr.consts,
-          *cond_consts_and_refs,
+      cond_carry_refs = core.eval_jaxpr(discharged_cond_jaxpr, *cond_consts_and_refs,
           *carry,
       )
       # Note: in order to handle the same Ref being updated in both the cond
@@ -2340,10 +2336,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
       cond_refs_out = cond_refs
 
     body_consts_and_refs = merge_lists(body_is_ref, body_consts, body_refs)
-    body_carry_refs = core.eval_jaxpr(
-        discharged_body_jaxpr,
-        discharged_body_jaxpr.consts,
-        *body_consts_and_refs,
+    body_carry_refs = core.eval_jaxpr(discharged_body_jaxpr, *body_consts_and_refs,
         *carry,
     )
     carry, body_refs_out = split_list(body_carry_refs, [num_carry])
@@ -2367,10 +2360,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args,
     # We don't use them here!
     del body_refs
     cond_consts_and_refs = merge_lists(cond_is_ref, consts, cond_refs)
-    results = core.eval_jaxpr(
-        discharged_cond_jaxpr,
-        discharged_cond_jaxpr.consts,
-        *cond_consts_and_refs,
+    results = core.eval_jaxpr(discharged_cond_jaxpr, *cond_consts_and_refs,
         *carry,
     )
     predicate, refs_out = split_list(results, [1])

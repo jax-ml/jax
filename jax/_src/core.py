@@ -95,11 +95,14 @@ DebugInfo = lu.DebugInfo
 InitialResultPaths = lu.InitialResultPaths
 initial_result_paths = lu.initial_result_paths
 
+# legacy. TODO: remove
+def ClosedJaxpr(jaxpr, consts):
+  return jaxpr.with_consts(consts)
+
 class Jaxpr:
   __slots__ = [
       "__weakref__",
       "_all_invars",
-      "_num_consts",
       "_outvars",
       "_eqns",
       "_effects",
@@ -108,7 +111,6 @@ class Jaxpr:
       "_consts",
   ]
   _all_invars: list[Var]
-  _num_consts: int
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
@@ -122,7 +124,7 @@ class Jaxpr:
 
   @property
   def constvars(self) -> list[Var]:
-    return self._all_invars[: self._num_consts]
+    return self._all_invars[:len(self._consts)]
 
   @property
   def consts(self) -> list[Any]:
@@ -132,23 +134,19 @@ class Jaxpr:
 
   @property
   def num_consts(self) -> int:
-    return self._num_consts
+    return len(self._consts)
 
+  # deprecated. TODO: remove
   @property
-  def is_closed(self) -> bool:
-    # True if the constant inputs have their values attached (in particular,
-    # if there are no constant inputs). Corresponds to the old ClosedJaxpr.
-    return len(self._consts) == self._num_consts
+  def is_closed(self) -> bool: return True
 
+  # deprecated. TODO: remove
   @property
-  def jaxpr(self) -> Jaxpr:
-    # Legacy accessor from the days of ClosedJaxpr, which wrapped a Jaxpr.
-    # TODO(dougalm): remove uses and delete.
-    return self
+  def jaxpr(self) -> Jaxpr: return self
 
   @property
   def invars(self) -> list[Var]:
-    num_consts = self._num_consts
+    num_consts = len(self._consts)
     return self._all_invars[num_consts:] if num_consts else self._all_invars
 
   @property
@@ -191,44 +189,20 @@ class Jaxpr:
 
   def __init__(
       self,
-      constvars: Sequence[Var] | Jaxpr,
-      invars: Sequence[Var] | Sequence[Any] | None = None,
-      outvars: Sequence[Atom] | None = None,
-      eqns: Sequence[JaxprEqn] | None = None,
+      constvars: Sequence[Var],
+      invars: Sequence[Var],
+      outvars: Sequence[Atom],
+      eqns: Sequence[JaxprEqn],
       effects: Effects = no_effects,
       # We want all calls to pass a DebugInfo object, but for backwards
       # compatibility we have to allow calls when the debug_info
       # is missing.
       debug_info: DebugInfo = None,  # pyrefly: ignore[bad-function-definition]
       is_high: bool = False,
-      consts: Sequence[Any] | None = None,
+      consts: Sequence[Any] = [],
   ):
-    if isinstance(constvars, Jaxpr):
-      # Legacy ClosedJaxpr(jaxpr, consts) construction: share `jaxpr`'s
-      # structure and attach `consts` as its constant argument values.
-      # TODO(dougalm): migrate callers and remove.
-      jaxpr = constvars
-      assert outvars is None and eqns is None and debug_info is None
-      if consts is None:
-        jaxpr, consts = constvars, invars
-      else:
-        assert invars is None
-      assert consts is not None and len(consts) == jaxpr._num_consts
-      self._all_invars = jaxpr._all_invars
-      self._num_consts = jaxpr._num_consts
-      self._outvars = jaxpr._outvars
-      self._eqns = jaxpr._eqns
-      self._effects = jaxpr._effects
-      self._debug_info = jaxpr._debug_info
-      self._is_high = jaxpr._is_high
-      self._consts = list(consts)
-      return
-    assert invars is not None and outvars is not None and eqns is not None
-    self._consts = [] if consts is None else list(consts)
-    self._num_consts = len(constvars)
-    assert (
-        not self._consts or len(self._consts) == self._num_consts
-    ), "consts, when attached, must pair with constvars"
+    self._consts = list(consts)
+    assert len(self._consts) == len(constvars)
     self._all_invars = [*constvars, *invars]
     self._outvars = list(outvars)
     self._eqns = list(eqns)
@@ -258,42 +232,26 @@ class Jaxpr:
     return p.text(self.pretty_print(use_color=True))
 
   def with_consts(self, consts: Sequence[Any]) -> Jaxpr:
-    """Returns a copy of this jaxpr with `consts` attached as the values of
-    its constant inputs (see `is_closed`). Shares all other structure."""
-    assert len(consts) == self._num_consts
-    new = Jaxpr.__new__(Jaxpr)
-    new._all_invars = self._all_invars
-    new._num_consts = self._num_consts
-    new._outvars = self._outvars
-    new._eqns = self._eqns
-    new._effects = self._effects
-    new._debug_info = self._debug_info
-    new._is_high = self._is_high
-    new._consts = list(consts)
-    return new
+    consts = list(consts)
+    num_consts = len(consts)
+    if num_consts == 0: return self  # preserve identity
+    assert num_consts <= len(self.invars)
+    return self.replace(
+        invars=self.invars[num_consts:],
+        constvars=self.constvars + self.invars[:num_consts],
+        consts=self.consts+consts)
 
-  def map_jaxpr(self, f):
-    # Legacy ClosedJaxpr method: apply f to the jaxpr, keeping consts.
-    return Jaxpr(f(self), self.consts)
+  def separate_consts(self) -> tuple[Jaxpr, list[Any]]:
+    if not self._consts: return self, self._consts  # preserve identity
+    return self.replace(
+        invars=self.constvars + self.invars,
+        constvars=[], consts=[]), self.consts
 
   def replace(self, **kwargs):
-    if "jaxpr" in kwargs:
-      # Legacy ClosedJaxpr.replace(jaxpr=..., consts=...) form.
-      # TODO(dougalm): migrate callers and remove.
-      jaxpr = kwargs.pop("jaxpr")
-      consts = kwargs.pop("consts", None)
-      if kwargs:
-        raise ValueError(f"Unknown keyword arguments: {kwargs}")
-      jaxpr = self if jaxpr is None else jaxpr
-      consts = self.consts if consts is None else consts
-      return Jaxpr(jaxpr, consts)
     debug_default = self.debug_info
     if (kwargs.get('invars', self.invars) != self.invars or
         kwargs.get('outvars', self.outvars) != self.outvars):
       debug_default = debug_default.with_unknown_names()
-    # Replacing constvars invalidates the consts pairing, so unless new consts
-    # are given explicitly the result has no consts attached.
-    consts_default = () if "constvars" in kwargs else self.consts
     jaxpr = Jaxpr(
         constvars=kwargs.pop("constvars", self.constvars),
         invars=kwargs.pop("invars", self.invars),
@@ -302,7 +260,7 @@ class Jaxpr:
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", debug_default),
         is_high=kwargs.pop("is_high", self.is_high),
-        consts=kwargs.pop("consts", consts_default),
+        consts=kwargs.pop("consts", self.consts),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -328,15 +286,6 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   for eqn in jaxpr.eqns:
     yield from jaxprs_in_params(eqn.params)
 
-
-# ClosedJaxpr and Jaxpr have been merged into a single class: a Jaxpr carries
-# a possibly-empty list of constant argument values, `consts`. The name
-# ClosedJaxpr remains as an alias for callers that construct closed jaxprs via
-# ClosedJaxpr(jaxpr, consts) or use it in isinstance checks and annotations.
-# TODO(dougalm): migrate users and remove the alias.
-ClosedJaxpr = Jaxpr
-
-
 @curry
 def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
   # TODO(dougalm): remove this hack when we add contexts to jaxpr.
@@ -346,7 +295,7 @@ def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):
   # context modifications. In the meantime, disabling the checks when we
   # round-trip prevents those ops producing spurious errors.
   with config.debug_nans(False):
-    return eval_jaxpr(closed_jaxpr, closed_jaxpr.consts, *args)
+    return eval_jaxpr(closed_jaxpr, *args)
 
 
 # This context manager is fairly hot, because it is frequently called for every
@@ -796,7 +745,12 @@ def _generic_effectful_abstract_eval(abstract_eval, prim):
 
 # -------------------- lifting --------------------
 
-def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[Any]:
+def eval_jaxpr(jaxpr: Jaxpr, *args, propagate_source_info=True) -> list[Any]:
+  assert not (args and isinstance(args[0], (list, tuple))), (
+      "eval_jaxpr no longer takes a `consts` argument: the values of the "
+      "constvars come from the jaxpr's own consts. Pass only the values of "
+      "the jaxpr's invars (rebinding consts first via `Jaxpr.with_consts` if "
+      "needed).")
   def read(v: Atom) -> Any:
     return v.val if isinstance(v, Literal) else env[v]
 
@@ -806,7 +760,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     env[v] = val
 
   env: dict[Var, Any] = {}
-  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.constvars, jaxpr.consts)
   foreach(write, jaxpr.invars, args)
   lu = last_used(jaxpr)
   for eqn in jaxpr.eqns:
@@ -3381,7 +3335,7 @@ class ClosedCallPrimitive(CallPrimitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     jaxpr: Jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr, jaxpr.consts),
+    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr),
                           debug_info=jaxpr.debug_info)
     new_params['subfuns'] = (subfun,)
     return new_params

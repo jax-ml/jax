@@ -803,7 +803,7 @@ def _parallel_loop_lowering_rule(
     )
     carry_out = tc_lowering.jaxpr_subcomp(
         lowering_ctx,
-        pe.convert_constvars_jaxpr(jaxpr),
+        jaxpr,
         *consts,
         for_op.induction_variable,
         *for_op.inner_iter_args,

@@ -62,6 +62,7 @@ def hoist_consts_to_refs(
   in_avals = [var.aval for var in jaxpr.invars]
   in_avals[index:index] = const_avals
 
+  jaxpr_no_consts, _ = jaxpr.separate_consts()
   def _hoist(*consts_args):
     args0, all_consts, args1 = split_list(
         consts_args, [index, len(const_avals)]
@@ -71,7 +72,7 @@ def hoist_consts_to_refs(
         c if is_ref else ref_get(c, ())
         for is_ref, c in zip(is_const_ref, all_consts)
     ]
-    return core.eval_jaxpr(jaxpr, all_consts, *args0, *args1)
+    return core.eval_jaxpr(jaxpr_no_consts, *all_consts, *args0, *args1)
 
   hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_hoist, debug_info=jaxpr.debug_info.with_unknown_names()),

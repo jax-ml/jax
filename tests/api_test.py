@@ -4707,7 +4707,7 @@ class APITest(jtu.JaxTestCase):
       return g(x)
 
     jaxpr = jax.make_jaxpr(h)(7)
-    core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+    core.eval_jaxpr(jaxpr, 7)
 
     b(8)  # don't crash
 
@@ -4729,7 +4729,7 @@ class APITest(jtu.JaxTestCase):
       return g(x)
 
     jaxpr = jax.make_jaxpr(h)(7)
-    core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+    core.eval_jaxpr(jaxpr, 7)
 
     b(8)  # don't crash
 

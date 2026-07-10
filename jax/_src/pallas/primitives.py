@@ -671,8 +671,8 @@ def _run_scoped_is_high(*avals, jaxpr, **params):
 run_scoped_p.is_high = _run_scoped_is_high
 
 def _run_scoped_to_lojax(*args, jaxpr, **params):
-  closed_hi_jaxpr = jaxpr.with_consts(args)
-  closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
+  jaxpr = jaxpr.replace(consts=args)
+  closed_lo_jaxpr = pe.lower_jaxpr2(jaxpr)
   consts = closed_lo_jaxpr.consts
   return run_scoped_p.bind(*consts, jaxpr=closed_lo_jaxpr, **params)
 run_scoped_p.to_lojax = _run_scoped_to_lojax
@@ -759,14 +759,9 @@ def _run_scoped_discharge_rule(
     raise NotImplementedError(
         "run_scoped discharge does not support collective_axes yet."
     )
-  num_consts = len(args_flat)
-  # discharge_state only discharges invars, not consts, so in order to
-  # discharge the requested refs we need to move them to the invar set.
-  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
-  num_return_values = len(jaxpr_noconst.outvars)
+  num_return_values = len(jaxpr.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jaxpr_noconst,
-      should_discharge=should_discharge + [False] * len(jaxpr.invars),
+      jaxpr, should_discharge=should_discharge + [False] * len(jaxpr.invars),
   )
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
@@ -774,7 +769,7 @@ def _run_scoped_discharge_rule(
         "Cannot handle new consts created by state discharge.")
 
   # Lowering expects that the jaxpr.consts to be the eqn.invals.
-  discharged_body = pe.convert_invars_to_constvars(discharged_body, num_consts)
+  discharged_body = discharged_body.with_consts(args_flat)
 
   # Run_scoped discharged the external variables but the scoped ones
   # are not discharged.
@@ -806,10 +801,9 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
         "run_scoped lowering outside of Pallas does not support"
         " collective_axes."
     )
-  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
-  num_return_values = len(jaxpr_noconst.outvars)
+  num_return_values = len(jaxpr.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jaxpr_noconst, should_discharge=True)
+      jaxpr, should_discharge=True)
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
@@ -822,7 +816,7 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
     init_vals = [
         uninitialized_value(aval.shape, aval.dtype) for aval in body_avals  # type: ignore
     ]
-    out = jax_core.eval_jaxpr(discharged_body, [], *lower_fun_args, *init_vals)
+    out = jax_core.eval_jaxpr(discharged_body, *lower_fun_args, *init_vals)
     return out[:num_return_values]
 
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)

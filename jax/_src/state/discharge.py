@@ -615,20 +615,20 @@ def _addupdate_discharge(x, val, idx, tree):
 
 
 @weakref_lru_cache
-def _cached_closed_jaxpr_discharge(closed_jaxpr: core.Jaxpr):
-  num_outs = len(closed_jaxpr.outvars)
-  discharged_closed_jaxpr = discharge_state(closed_jaxpr)
-  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr),
-                     debug_info=discharged_closed_jaxpr.debug_info)
-  return discharged_closed_jaxpr, num_outs, fun
+def _cached_jaxpr_discharge(jaxpr: core.Jaxpr):
+  num_outs = len(jaxpr.outvars)
+  discharged_jaxpr = discharge_state(jaxpr)
+  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_jaxpr),
+                     debug_info=discharged_jaxpr.debug_info)
+  return discharged_jaxpr, num_outs, fun
 
 @register_discharge_rule(core.closed_call_p)
 def _closed_call_discharge_rule(
     in_avals: Sequence[core.AbstractValue], _,*args,
     call_jaxpr: core.Jaxpr):
-  discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(call_jaxpr)
+  discharged_jaxpr, num_outs, fun = _cached_jaxpr_discharge(call_jaxpr)
   out_and_ref_vals = core.closed_call_p.bind(*args, subfuns=(fun,),
-                                             call_jaxpr=discharged_closed_jaxpr)
+                                             call_jaxpr=discharged_jaxpr)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
@@ -641,12 +641,8 @@ def _call_primitive_discharge_rule(
     prim: core.Primitive,
     in_avals: Sequence[core.AbstractValue], _,*args,
     call_jaxpr: core.Jaxpr, **kwargs):
-  closed_call_jaxpr = call_jaxpr
-  discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(
-      closed_call_jaxpr)
-  discharged_call_jaxpr = discharged_closed_jaxpr
-  discharged_consts = discharged_closed_jaxpr.consts
-  discharged_call_jaxpr = pe.convert_constvars_jaxpr(discharged_call_jaxpr)
+  discharged_jaxpr, num_outs, fun = _cached_jaxpr_discharge(call_jaxpr)
+  discharged_call_jaxpr, discharged_consts = discharged_jaxpr.separate_consts()
   out_and_ref_vals = prim.bind(
       *discharged_consts,
       *args,
@@ -702,15 +698,14 @@ def _run_state_impl(*args: Any, jaxpr: core.Jaxpr,
                     which_linear: tuple[bool, ...],
                     is_initialized: tuple[bool, ...]):
   del which_linear
-  discharged_closed_jaxpr = discharge_state(jaxpr)
-  discharged_jaxpr, consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
+  discharged_jaxpr = discharge_state(jaxpr)
   # Initialize the args that are not initialized.
   args_it = iter(args)
   args = tuple(
       next(args_it) if is_init else _default_initialization(var.aval)
       for is_init, var in zip(is_initialized, discharged_jaxpr.invars)
   )
-  return core.eval_jaxpr(discharged_jaxpr, consts, *args)
+  return core.eval_jaxpr(discharged_jaxpr, *args)
 run_state_p.def_impl(_run_state_impl)
 mlir.register_lowering(run_state_p, mlir.lower_fun(_run_state_impl))
 
@@ -832,7 +827,7 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     # There may be some uninitialized values here in ref_args.
     jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
-    jaxpr = hoist_consts_to_refs(jaxpr_)
+    jaxpr = hoist_consts_to_refs(jaxpr_.with_consts(consts))
     which_linear = (False,) * (len(consts) + len(ref_args))
     refs_is_initialized = tuple(r is not uninitialized for r in ref_args)
     init_args = tuple(r for r in ref_args if r is not uninitialized)
@@ -851,9 +846,8 @@ def run_state_reference(f: Callable[..., None]):
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
-    jaxpr = hoist_consts_to_refs(jaxpr_)
-    discharged_closed_jaxpr = discharge_state(jaxpr)
-    discharged_jaxpr, discharged_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
+    jaxpr = hoist_consts_to_refs(jaxpr_.with_consts(consts))
+    discharged_jaxpr = discharge_state(jaxpr)
 
     # Initialize any uninitialized values here in ref_args in the reference.
     ref_args = [
@@ -861,8 +855,7 @@ def run_state_reference(f: Callable[..., None]):
         for r, aval in zip(ref_args, ref_avals)
     ]
 
-    out_const_flat = core.eval_jaxpr(discharged_jaxpr, discharged_consts,
-                                     *consts, *ref_args)
+    out_const_flat = core.eval_jaxpr(discharged_jaxpr, *consts, *ref_args)
     _, out_flat = split_list(out_const_flat, [len(consts)])
     return in_tree.unflatten(out_flat)
   return wrapped
@@ -917,9 +910,8 @@ def custom_vjp_call_discharge(in_avals, out_avals, *args, call_jaxpr,
                               num_consts):
   # Discharge happens after all AD is done, so we can discard the AD rules.
   del fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros, num_consts
-  dis_closed_jaxpr = discharge_state(call_jaxpr)
-  dis_jaxpr, dis_consts = dis_closed_jaxpr, dis_closed_jaxpr.consts
-  outs = _eval_jaxpr_ad_error(dis_jaxpr, dis_consts, args)
+  dis_jaxpr = discharge_state(call_jaxpr)
+  outs = _eval_jaxpr_ad_error(dis_jaxpr, args)
   out_vals, ref_vals = split_list(outs, [len(call_jaxpr.out_avals)])
   ref_vals_ = iter(ref_vals)
   new_invals = [next(ref_vals_) if isinstance(aval, AbstractRef) else None
@@ -928,8 +920,8 @@ def custom_vjp_call_discharge(in_avals, out_avals, *args, call_jaxpr,
   return new_invals, out_vals
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
-def _eval_jaxpr_ad_error(dis_jaxpr, consts, args):
-  return core.eval_jaxpr(dis_jaxpr, consts, *args)
+def _eval_jaxpr_ad_error(dis_jaxpr, args):
+  return core.eval_jaxpr(dis_jaxpr, *args)
 @_eval_jaxpr_ad_error.defjvp
 def _eval_jaxpr_ad_error_jvp(*_):
   raise Exception("should be unreachable, AD after discharge")

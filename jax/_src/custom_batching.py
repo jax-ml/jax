@@ -158,8 +158,7 @@ class custom_vmap:
         lu.wrap_init(self.fun, debug_info=debug_fun),
         in_tree)
     in_avals = [core.typeof(x) for x in args_flat]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-    closed_call = pe.convert_constvars_jaxpr(jaxpr)
+    closed_call, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
     debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
