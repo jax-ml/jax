@@ -47,6 +47,7 @@ pytype_strict_library(
         ":gpu_callbacks",
         ":jaxpr_interpret",
         ":params",
+        ":shared_memory",
         "//jax",
         "//jax/_src:callback",
         "//jax/_src:core",
@@ -91,6 +92,7 @@ pytype_strict_library(
     deps = [
         ":gpu_callbacks",
         ":params",
+        ":shared_memory",
         "//jax",
         "//jax/_src:callback",
         "//jax/_src:core",

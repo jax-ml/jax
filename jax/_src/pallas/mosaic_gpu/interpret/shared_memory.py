@@ -23,6 +23,7 @@ from typing import Protocol, Literal, Self
 
 import jax
 from jax import numpy as jnp
+from jax._src import source_info_util
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
@@ -30,6 +31,169 @@ from jax._src.pallas.mosaic_gpu.interpret import params as params
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def _to_int(x):
+  """Normalizes a jax scalar array to a python int, passing through tracers
+
+  Useful for classes like MeshLocation that can be called in 3 contexts:
+  1. By the user at trace time with tuples of jax tracers
+  2. By io_callback at runtime with tuples of jax array scalars
+  3. By the user at runtime with python integer tuples
+  """
+  if isinstance(x, jax.core.Tracer):
+    return x
+  if isinstance(x, jax.Array):
+    return x.item()
+  if isinstance(x, int):
+    return x
+  raise ValueError(f"Unsupported type: {type(x)}")
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(init=False)
+class MeshLocation:
+  """A location in an MGPU mesh"""
+  # The location of a device within the mesh
+  device_coords: tuple[int, ...]
+  # The location of a cluster within the grid
+  cluster_coords: tuple[int, ...]
+  # The location of a block within the cluster
+  block_coords: tuple[int, ...]
+  # The ID of a thread within the block
+  thread_id: int
+  # The warp ID within the thread (warpgroup), if core-mapped over a WarpMesh
+  warp_id: None | int = None
+
+  def __init__(self,
+      device_coords: tuple[int, ...] | tuple[jax.Array, ...],
+      cluster_coords: tuple[int, ...] | tuple[jax.Array, ...],
+      block_coords: tuple[int, ...] | tuple[jax.Array, ...],
+      thread_id: int | jax.Array,
+      warp_id: None | int | jax.Array = None,
+  ):
+    self.device_coords = tuple(_to_int(x) for x in device_coords)
+    self.cluster_coords = tuple(_to_int(x) for x in cluster_coords)
+    self.block_coords = tuple(_to_int(x) for x in block_coords)
+    self.thread_id = _to_int(thread_id)
+    self.warp_id = _to_int(warp_id) if warp_id is not None else None
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(init=False)
+class Device:
+  """A device in an MGPU mesh."""
+  device_id: int
+
+  def __init__(self, device_id: int | jax.Array):
+    self.device_id = _to_int(device_id)
+
+  def __repr__(self) -> str:
+    return f"Device({self.device_id})"
+
+  def __hash__(self) -> int:
+    return hash((self.device_id,))
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(init=False)
+class Warpgroup(Device):
+  """
+  A physical warpgroup in GPU interpret mode with flattened IDs.
+
+  "physical" refers to the fact that this represents a group of threads that
+  will run concurrently on different CPU threads. Since we don't run multiple
+  clusters concurrently, cluster_id will always be 0.
+  """
+  cluster_id: int
+  block_id: int
+  warpgroup_id: int
+
+  def __init__(
+      self,
+      device_id: int | jax.Array,
+      cluster_id: int | jax.Array,
+      block_id: int | jax.Array,
+      warpgroup_id: int | jax.Array,
+  ):
+    super().__init__(device_id=device_id)
+    self.cluster_id = _to_int(cluster_id)
+    self.block_id = _to_int(block_id)
+    self.warpgroup_id = _to_int(warpgroup_id)
+
+  def __repr__(self) -> str:
+    return (
+        f"Warpgroup(device_id={self.device_id}, cluster_id={self.cluster_id},"
+        f" block_id={self.block_id}, warpgroup_id={self.warpgroup_id})"
+    )
+
+  def __hash__(self) -> int:
+    return hash((self.device_id, self.cluster_id, self.block_id, self.warpgroup_id))
+
+
+@jax.tree_util.register_dataclass
+@dataclasses.dataclass(init=False)
+class Warp(Warpgroup):
+  """A physical warp in GPU interpret mode with flattened IDs"""
+  warp_id: int
+
+  def __init__(
+      self,
+      device_id: int | jax.Array,
+      cluster_id: int | jax.Array,
+      block_id: int | jax.Array,
+      warpgroup_id: int | jax.Array,
+      warp_id: int | jax.Array,
+  ):
+    super().__init__(
+        device_id=device_id,
+        cluster_id=cluster_id,
+        block_id=block_id,
+        warpgroup_id=warpgroup_id,
+    )
+    self.warp_id = _to_int(warp_id)
+
+  def __repr__(self) -> str:
+    return (
+        f"Warp(device_id={self.device_id}, cluster_id={self.cluster_id},"
+        f" block_id={self.block_id}, warpgroup_id={self.warpgroup_id})"
+        f" warp_id={self.warp_id})"
+    )
+
+  def __hash__(self) -> int:
+    return hash((
+        self.device_id,
+        self.cluster_id,
+        self.block_id,
+        self.warpgroup_id,
+        self.warp_id,
+    ))
+
+
+Thread = Warpgroup | Warp
+
+
+class GPULoggingInfo(interpret_utils.LoggingInfo):
+  """Logging info for GPU interpret mode."""
+
+  # The absolute location of this thread in the mesh, if available.
+  mesh_location: MeshLocation | None
+  # The physical thread that this logical thread is running on.
+  thread: Thread | None
+
+  def __init__(
+      self,
+      mesh_location: MeshLocation | None,
+      thread: Thread | None,
+      source_info: source_info_util.SourceInfo | None = None,
+  ):
+    device_id = thread.device_id if thread is not None else -1
+    super().__init__(source_info=source_info, device_id=device_id)
+    self.mesh_location = mesh_location
+    self.thread = thread
+
+  def get_location_str(self) -> str:
+    return f"Mesh location: {self.mesh_location}, Thread: {self.thread}"
 
 
 class Barrier(memory.Allocation):
@@ -88,7 +252,7 @@ class Barrier(memory.Allocation):
     # participate in the barrier, and we don't know ahead of time which ones
     # will, so we lazily initialize this dict the first time a thread waits on
     # the barrier.
-    self.last_observed_phase_by_thread: dict[int, int] = (
+    self.last_observed_phase_by_thread: dict[Thread, int] = (
         {}
     )  # Protected by `self.cv`'s lock.
 
@@ -158,15 +322,10 @@ class Barrier(memory.Allocation):
   def arrive(
       self,
       *,
-      thread_id: int,
       clock: vc.VectorClock | None = None,
       smem_commit_clock: vc.VectorClock | None = None,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      logging_info: GPULoggingInfo | None = None,
   ):
-    # Unused; only needed so that `arrive` has the same signature as
-    # `ClusterBarrier.arrive`.
-    del thread_id
-
     with self.cv:
       self.arrivals_count += 1
       if self.arrivals_count == self.num_arrivals:
@@ -215,18 +374,13 @@ class Barrier(memory.Allocation):
 
   def wait(
       self,
-      *,
-      device_id: int,
-      thread_id: int,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      thread: Thread,
+      logging_info: GPULoggingInfo | None = None,
   ):
-    # `thread_id` is the flat ID of the thread in the cluster. We need to map it
-    # to an index that is within `[0, self.num_pallas_threads_per_block)`.
-    participating_thread_id = thread_id % self.num_pallas_threads_per_block
 
     with self.cv:
       last_observed_phase = self.last_observed_phase_by_thread.get(
-          participating_thread_id, None
+          thread, None
       )
 
       # Since not all threads in a block may use the barrier, we must lazily
@@ -235,7 +389,7 @@ class Barrier(memory.Allocation):
       if last_observed_phase is None:
         if self.phase > 1:
           raise ValueError(
-              f"Thread {thread_id} is waiting at barrier {id(self)} for"
+              f"Thread {thread} is waiting at barrier {id(self)} for"
               " the first time, but barrier is already at phase"
               f" {self.phase}. Any thread that participates in the barrier must"
               " do so in all phases."
@@ -247,7 +401,7 @@ class Barrier(memory.Allocation):
         # Case 1: the next phase to complete is `p+3` or more, meaning we missed
         # our chance to observe phase `p+1` and must raise an error.
         raise ValueError(
-            f"Thread {thread_id} is awaiting phase"
+            f"Thread {thread} is awaiting phase"
             f" {last_observed_phase + 1}, but barrier is already at phase"
             f" {self.phase}, which violates the invariant that threads must"
             " observe each barrier completion before any arrivals in the next"
@@ -274,7 +428,7 @@ class Barrier(memory.Allocation):
         if self.enable_logging and logging_info is not None:
           self._log(
               logging_info.format(
-                  f"Device {device_id}, thread {thread_id}: Finished"
+                  f"Thread {thread}: Finished"
                   f" waiting for phase {self.phase-1} of barrier {id(self)}.",
                   line_prefix="`wait`",
               )
@@ -285,9 +439,7 @@ class Barrier(memory.Allocation):
       else:
         assert False, "Unreachable"
 
-      self.last_observed_phase_by_thread[participating_thread_id] = (
-          last_observed_phase + 1
-      )
+      self.last_observed_phase_by_thread[thread] = last_observed_phase + 1
 
       # Read `self.clock` while still holding the lock on `self.cv`. (If race
       # detection is enabled, the clock is needed below to update a vector clock
@@ -304,10 +456,10 @@ class Barrier(memory.Allocation):
       assert smem_commit_clock is not None
       with self.shared_memory.lock:
         vc.update_vector_clock(
-            self.shared_memory.clocks[(device_id, thread_id)], clock
+            self.shared_memory.clocks[thread], clock
         )
         vc.update_vector_clock(
-            self.shared_memory.smem_commit_clocks[(device_id, thread_id)],
+            self.shared_memory.smem_commit_clocks[thread],
             smem_commit_clock,
         )
 
@@ -318,6 +470,7 @@ class HostAllocationRequest:
 
   memory_space_id: int
   device_id: int
+  block_id: int
   # Defaults to zero for `AllocationRequest`s that do not specify a thread ID.
   thread_id: int = 0
   # The reference count is needed only for allocations that are explicitly
@@ -335,6 +488,7 @@ class HostAllocationRequest:
     return iter((
         self.memory_space_id,
         self.device_id,
+        self.block_id,
         self.thread_id,
         self.initial_ref_count,
     ))
@@ -466,10 +620,11 @@ class ClusterBarrier(memory.Allocation):
   def arrive(
       self,
       *,
-      thread_id: int,
+      mesh_location: MeshLocation,
+      thread: Thread,
       clock: vc.VectorClock | None = None,
       smem_commit_clock: vc.VectorClock | None = None,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      logging_info: GPULoggingInfo | None = None,
   ):
     if self.enable_logging and logging_info is not None:
       with self.lock:
@@ -480,20 +635,14 @@ class ClusterBarrier(memory.Allocation):
             )
         )
 
-    block_index = thread_id // self.axes_dims[-1]
-    block_coords = [
-        int(x) for x in np.unravel_index(block_index, self.axes_dims[:-1])
-    ]
-
-    # Arrive at the barrier for the block that `thread_id` belongs to. Note that
+    # Arrive at the barrier for the block that `thread` belongs to. Note that
     # this is the barrier for the block whose coordinate do *not* differ (along
     # any collective axis) from `block_coords`.
     with self.lock:
-      barrier = self.barriers[block_index]
+      barrier = self.barriers[thread.block_id]
     barrier.arrive(
         clock=clock,
         smem_commit_clock=smem_commit_clock,
-        thread_id=thread_id,
         logging_info=logging_info,
     )
 
@@ -510,12 +659,12 @@ class ClusterBarrier(memory.Allocation):
         continue
 
       for j in range(axis_dim):
-        if j == block_coords[i]:
+        if j == mesh_location.block_coords[i]:
           # The barrier for the block with coordinates identical to
           # `block_coords` has already been arrived at above.
           continue
 
-        block_coords_to_arrive_at = list(block_coords)
+        block_coords_to_arrive_at = list(mesh_location.block_coords)
         # Note that (because of the `if ... continue` above) we have
         # `j != block_coords[i]` here.
         block_coords_to_arrive_at[i] = j
@@ -527,16 +676,13 @@ class ClusterBarrier(memory.Allocation):
         barrier.arrive(
             clock=clock,
             smem_commit_clock=smem_commit_clock,
-            thread_id=thread_id,
             logging_info=logging_info,
         )
 
   def wait(
       self,
-      *,
-      device_id: int,
-      thread_id: int,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      thread: Thread,
+      logging_info: GPULoggingInfo | None = None,
   ):
     if self.enable_logging and logging_info is not None:
       with self.lock:
@@ -547,15 +693,10 @@ class ClusterBarrier(memory.Allocation):
             )
         )
 
-    barrier_index = thread_id // self.axes_dims[-1]
     with self.lock:
-      barrier = self.barriers[barrier_index]
+      barrier = self.barriers[thread.block_id]
 
-    barrier.wait(
-        device_id=device_id,
-        thread_id=thread_id,
-        logging_info=logging_info,
-    )
+    barrier.wait(thread, logging_info)
 
   def deallocate(self):
     """Deallocates the `ClusterBarrier`."""
@@ -568,18 +709,20 @@ class ClusterBarrier(memory.Allocation):
         barrier.deallocate()
 
 
-@dataclasses.dataclass(init=False)
-class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, int]]):
+class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, Thread]):
 
   # TODO(paulbib): Is there a way to assert these match the base class?
   MemKey = HostAllocationKey
-  # (device_id, local_thread_id)
-  ThreadKey = tuple[int, int]
+  ThreadKey = Thread
 
-  num_concurrent_threads: int
-  num_tma_threads_per_device: int
+  # All Pallas threads that are concurrently executed by interpret mode.
+  all_concurrent_threads: frozenset[ThreadKey]
 
-  next_tma_thread_id_per_device: dict[int, int]
+  num_blocks_per_cluster: int
+
+  next_tma_thread_id: int
+
+  num_pallas_threads_per_block: int
 
   # thread -> next available REGS buffer ID.
   #
@@ -612,52 +755,38 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
       num_blocks_per_cluster: int,
       num_tma_threads_per_device: int,
   ):
-    # Entries in each vector clock are organized as follows:
-    #
-    #   0th GPU device: num_concurrent_threads
-    #   1st GPU device: num_concurrent_threads
-    #   ...
-    #   (num_devices - 1)th GPU device: num_concurrent_threads
-    #
-    #   0th GPU device: num_tma_threads_per_device
-    #   1st GPU device: num_tma_threads_per_device
-    #   ...
-    #   (num_devices - 1)th GPU device: num_tma_threads_per_device
-    #
-    # But since TMAs are not simulated by separate (CPU) threads, we only need
-    # vector clocks for the concurrent threads on each GPU device, i.e. we only
-    # allocate a total of
-    #
-    #   num_devices * num_concurrent_threads
-    #
-    # vector clocks.
-    #
-    # To motivate the above layout of entries in the vector clocks (i.e.
-    # concurrent kernel/Pallas threads first, then TMA threads) bear in mind
-    # that we frequently use code patterns like
-    #
-    #   vc.inc_vector_clock(self.clocks[thread_id], thread_id),
-    #
-    # where `thread_id` is the globally, i.e. across devices, unique ID of a
-    # concurrent kernel/Pallas thread, but *not* the ID of a TMA thread. (This
-    # pattern is used, in particular, in the `SharedMemory` class that the
-    # present class is derived from, and that was initially designed for
-    # simulating TPU kernels.)
-    self.num_concurrent_threads = (
-        num_threads_per_block * num_blocks_per_cluster
+    self.all_concurrent_threads = frozenset(
+        Warpgroup(device, cluster, block, warpgroup)
+        for device in range(num_devices)
+        for cluster in [0]
+        for block in range(num_blocks_per_cluster)
+        for warpgroup in range(num_threads_per_block)
     )
-    vector_clock_size = num_devices * (
-        self.num_concurrent_threads + num_tma_threads_per_device
-    )
-    clocks = {
-        (device_id, thread_id): vc.make_vector_clock(vector_clock_size)
-        for device_id in range(num_devices)
-        for thread_id in range(self.num_concurrent_threads)
+
+    self.num_tma_threads = num_devices * num_tma_threads_per_device
+
+    # For a hypothetical mesh with 2 devices, two blocks per cluster, and 3
+    # threads per block, entries in each vector clock are organized as follows:
+    #   d0b0t0, d0b0t1, d0b0t2
+    #   d0b1t0, d0b1t1, d0b1t2
+    #   d1b0t0, d1b0t1, d1b0t2
+    #   d1b1t0, d1b1t1, d1b1t2
+    #   tma0, tma1, tma2, ...
+    # Where dMbNtP denotes the P-th thread in the M-th block on the N-th device.
+    # and tmaX denotes the X-th TMA thread.
+    # TMA threads do not correspond to actual CPU threads, but they are used as
+    # pseudo-threads for async TMA ops. We allocate a finite number which are
+    # reused.
+    # Note that the cluster id does not appear since we do not execute multiple
+    # clusters concurrently.
+    vector_clock_size = len(self.all_concurrent_threads) + self.num_tma_threads
+    clocks: dict[Thread, np.ndarray] = {
+        thread: vc.make_vector_clock(vector_clock_size)
+        for thread in self.all_concurrent_threads
     }
     self.smem_commit_clocks = {
-        (device_id, thread_id): vc.make_vector_clock(vector_clock_size)
-        for device_id in range(num_devices)
-        for thread_id in range(self.num_concurrent_threads)
+        thread: vc.make_vector_clock(vector_clock_size)
+        for thread in self.all_concurrent_threads
     }
 
     super().__init__(
@@ -680,72 +809,56 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
           " interpreting GPU kernels."
       )
 
-    self.num_pallas_threads_per_block = num_threads_per_block
     self.num_blocks_per_cluster = num_blocks_per_cluster
-    self.num_tma_threads_per_device = num_tma_threads_per_device
-    self.next_tma_thread_id_per_device = {
-        device_id: 0 for device_id in range(self.num_devices)
-    }
+    self.next_tma_thread_id = 0
+    self.num_pallas_threads_per_block = num_threads_per_block
     self.next_regs_id = collections.defaultdict(lambda: -100)
     self.pending_smem_to_gmem_read_clocks = {
-        (device_id, thread_id): collections.deque()
-        for device_id in range(num_devices)
-        for thread_id in range(self.num_concurrent_threads)
+        thread: collections.deque()
+        for thread in self.all_concurrent_threads
     }
-
     self.pending_smem_to_gmem_write_clocks = {
-        (device_id, thread_id): collections.deque()
-        for device_id in range(num_devices)
-        for thread_id in range(self.num_concurrent_threads)
+        thread: collections.deque()
+        for thread in self.all_concurrent_threads
     }
-  @property
-  def num_total_threads_per_device(self) -> int:
-    return self.num_concurrent_threads + self.num_tma_threads_per_device
-
-  def get_global_thread_id(self, device_id: int, local_thread_id: int) -> int:
-    """Computes the global thread ID from the given device and local thread ID."""
-    return (
-        device_id * self.num_concurrent_threads
-        + local_thread_id
-    )
 
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
-    return self.get_global_thread_id(*thread)
+    if isinstance(thread, Warpgroup):
+      # see comment in __init__ for explanation of this mapping
+      return (
+          thread.device_id * self.num_blocks_per_cluster * self.num_pallas_threads_per_block
+          + thread.block_id * self.num_pallas_threads_per_block
+          + thread.warpgroup_id
+      )
+    elif isinstance(thread, Warp):
+      raise NotImplementedError(
+          "Warp-level thread keys are not supported for GPU kernel"
+          " interpretation yet."
+      )
+    else:
+      raise ValueError(f"Unsupported thread type: {type(thread)}")
 
-  def get_next_tma_thread_id(self, device_id: int) -> int:
+  def get_next_tma_thread_id(self) -> int:
     with self.lock:
       # TODO(nrink): Consider adding an option for selecting TMA thread IDs
       # randomly (similar to how 'virtual' device IDs are selected randomly for
       # DMAs in TPU kernel interpret mode).
-      next_tma_thread_id = self.next_tma_thread_id_per_device[device_id]
-      self.next_tma_thread_id_per_device[device_id] = (
-          next_tma_thread_id + 1
-      ) % self.num_tma_threads_per_device
-      return self.num_devices * self.num_concurrent_threads + next_tma_thread_id
+      next_tma_thread_id = self.next_tma_thread_id
+      self.next_tma_thread_id = (next_tma_thread_id + 1) % self.num_tma_threads
+      return len(self.all_concurrent_threads) + next_tma_thread_id
 
-  def get_next_wgmma_accumulator_id(
-      self, device_id: int, thread_id: int) -> int:
+  def get_next_wgmma_accumulator_id(self, thread: ThreadKey) -> int:
     with self.lock:
-      regs_id = self.next_regs_id[(device_id, thread_id)]
-      self.next_regs_id[(device_id, thread_id)] = regs_id - 1
+      regs_id = self.next_regs_id[thread]
+      self.next_regs_id[thread] = regs_id - 1
       return regs_id
-
-  # TODO(nrink): Is this method needed? If not, remove it.
-  def update_clock(self, vector_clock_idx, clock: vc.VectorClock):
-    with self.lock:
-      vc.update_vector_clock(self.clocks[vector_clock_idx], clock)
-
-  # TODO(nrink): Is this method needed? If not, remove it.
-  def get_clock(self, vector_clock_idx) -> vc.VectorClock | None:
-    with self.lock:
-      return vc.copy_vector_clock(self.clocks[vector_clock_idx])
 
   def allocate_barrier(
       self,
       key: MemKey,
       ref_count: int,
       num_arrivals: int,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      logging_info: GPULoggingInfo | None = None,
   ):
     """Allocates a barrier with the given key unless it already exists."""
     with self.lock:
@@ -772,12 +885,12 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
           )
 
   def get_barrier_and_increment_clock(
-        self, key: MemKey, device_id: int, thread_id: int
+        self, key: MemKey, thread: ThreadKey
   ) -> tuple[Barrier | ClusterBarrier, vc.VectorClock | None]:
     clock = None
     with self.lock:
       if self.detect_races:
-        clock = self.incr_clock((device_id, thread_id), take_lock=False)
+        clock = self.incr_clock(thread, take_lock=False)
 
       barrier = self.mem[key]
 
@@ -804,7 +917,7 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
   def deallocate_barrier(
       self,
       key: MemKey,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      logging_info: GPULoggingInfo | None = None,
   ):
     with self.lock:
       barrier = self.mem[key]
@@ -843,7 +956,7 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
       is_axis_collective: tuple[bool, ...],
       ref_count: int,
       num_arrivals: int,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      logging_info: GPULoggingInfo | None = None,
   ):
     """Allocates a cluster barrier with the given key unless it already exists."""
     with self.lock:
@@ -874,7 +987,7 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
   def deallocate_cluster_barrier(
       self,
       key: MemKey,
-      logging_info: interpret_utils.GPULoggingInfo | None = None,
+      logging_info: GPULoggingInfo | None = None,
   ):
     with self.lock:
       barrier = self.mem[key]
@@ -930,11 +1043,11 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
     with self.lock:
       return vc.copy_vector_clock(self.smem_commit_clocks[thread])
 
-  def execute_async_task(self, task: AsyncTask, device_id: int, thread_id: int):
+  def execute_async_task(self, task: AsyncTask, thread: ThreadKey):
     """Executes an async task immediately (intiated by the given thread)."""
-    self.incr_clock((device_id, thread_id))
+    self.incr_clock(thread)
 
-    tma_thread_id = self.get_next_tma_thread_id(device_id)
+    tma_thread_id = self.get_next_tma_thread_id()
     task(tma_thread_id)
 
   def add_copy_smem_to_gmem_clocks(
@@ -951,11 +1064,10 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
       )
 
   def wait_smem_to_gmem(
-      self, device_id: int, thread_id: int, n: int, wait_read_only: bool
+      self, thread: ThreadKey, n: int, wait_read_only: bool
   ):
     """Ensures no more than n SMEM to GMEM copies are outstanding."""
     # TODO(paulbib): if copies were actually async, they would be run here.
-    thread = (device_id, thread_id)
     with self.lock:
       self.incr_clock(thread, take_lock=False)
       while len(self.pending_smem_to_gmem_read_clocks[thread]) > n:
@@ -973,22 +1085,27 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, tuple[int, i
               ].popleft(),
           )
 
-  def kernel_thread_finished(self, device_id: int, thread_id: int):
+  def kernel_thread_finished(self, thread: ThreadKey):
     """Called when a thread completes execution of a kernel."""
     with self.lock:
       if self.detect_races:
         # The PTX docs are not explicit about this, but we believe that it is
         # necessary and sufficient to make sure the read side of any async
         # smem to gmem copies have completed before the kernel finishes.
-        if len(self.pending_smem_to_gmem_read_clocks[(device_id, thread_id)]) > 0:
+        if len(self.pending_smem_to_gmem_read_clocks[thread]) > 0:
           raise ValueError(
               "Not all copy_smem_to_gmem read-side operations completed before"
-              f" kernel finished on device {device_id} thread {thread_id}."
+              f" kernel finished on thread {thread}."
           )
 
-  def update_clocks_for_device_barrier(self, device_id):
-    """Synchronizes the vector clocks for the cores on the given device."""
-    threads = [
-        (device_id, core_id) for core_id in range(self.num_concurrent_threads)
+  def concurrent_threads(self, device: Device) -> list[Thread]:
+    """Returns all concurrent threads on the given device."""
+    return [
+        thread
+        for thread in self.all_concurrent_threads
+        if thread.device_id == device.device_id
     ]
-    self.update_clocks(threads)
+
+  def update_clocks_for_device_barrier(self, device: Device):
+    """Synchronizes the vector clocks for the cores on the given device."""
+    self.update_clocks(self.concurrent_threads(device))

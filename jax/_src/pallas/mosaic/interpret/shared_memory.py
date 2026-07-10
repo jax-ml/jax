@@ -482,6 +482,7 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
 
       buff.decrease_ref_count()
       if buff.has_zero_ref_count():
+        # TODO(paulbib): delete buffer from race detection state as well
         self.mem.pop(key)
         self.deallocated_bytes += buff.size
         del buff
@@ -504,7 +505,7 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
       self,
       key: MemKey,
       rnge: tuple[slice | int, ...],
-      thread: ThreadKey,
+      thread: ThreadKey | None,
       increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
   ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
@@ -526,7 +527,7 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
     """
     clock = None
     with self.lock:
-      if self.detect_races and increment_clock:
+      if self.detect_races and increment_clock and thread is not None:
         clock = self.incr_clock(thread, take_lock=False)
 
       buff = self.mem[key]

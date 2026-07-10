@@ -994,7 +994,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         Exception,
-        r'Thread 1 only observed barrier up to phase 0, but barrier'
+        r'Thread Warpgroup\(.+\) only observed barrier up to phase 0, but barrier'
         r' completed up to phase 1.',
     ):
       _kernel()
@@ -1035,7 +1035,7 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         Exception,
-        r'Thread 2 is waiting at barrier \w+ for the first time, but barrier is already at phase 2'
+        r'Thread Warpgroup\(.+\) is waiting at barrier \w+ for the first time, but barrier is already at phase 2'
     ):
       _kernel()
 
@@ -1531,6 +1531,25 @@ class InterpretTest(jtu.JaxTestCase):
     y = kernel(jnp.zeros(out_shape, jnp.int32))
     self.assertFalse(mosaic_interpret.get_races().races_found)
     np.testing.assert_array_equal(y, expected)
+
+  def test_different_blocks_dont_share_memory(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((2,), jnp.int32),
+        scratch_types=dict(
+          smem_ref=plgpu.SMEM((), jnp.int32),
+        ),
+        cluster=(2,),
+        cluster_names=('c',),
+        interpret=InterpretParams()
+    )
+    def _kernel(in_ref, out_ref, smem_ref):
+      smem_ref[...] = in_ref[jax.lax.axis_index('c')]
+      out_ref[jax.lax.axis_index('c')] = smem_ref[...]
+
+    x = jnp.arange(2, dtype=jnp.int32)
+    output = _kernel(x)
+    np.testing.assert_array_equal(output, x)
 
 
 @dataclasses.dataclass(frozen=True)

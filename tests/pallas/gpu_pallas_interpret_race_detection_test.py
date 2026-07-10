@@ -493,6 +493,96 @@ class InterpretTest(jtu.JaxTestCase):
 
     _kernel()
 
+  def test_race_in_async_copy_smem_to_gmem_in_cluster(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(smem_ref=plgpu.SMEM((), jnp.int32)),
+        cluster=(2,),
+        cluster_names=('c0',),
+        interpret=InterpretParams(detect_races=True)
+    )
+    def _kernel(out_ref, smem_ref):
+      plgpu.copy_smem_to_gmem(smem_ref, out_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    _kernel()
+    self.assertTrue(mosaic_interpret.get_races().races_found)
+
+  def test_no_race_in_async_copy_gmem_to_smem_in_cluster(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((), jnp.int32),
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        cluster=(2,),
+        cluster_names=('c0',),
+        interpret=InterpretParams(detect_races=True)
+    )
+    def _kernel(out_ref, smem_ref, barrier):
+      plgpu.copy_gmem_to_smem(out_ref, smem_ref, barrier)
+      plgpu.barrier_wait(barrier)
+
+    _kernel()
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  def test_race_in_sync_copy_smem_to_gmem_in_cluster(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(smem_ref=plgpu.SMEM((), jnp.int32)),
+        cluster=(2,),
+        cluster_names=('c0',),
+        interpret=InterpretParams(detect_races=True)
+    )
+    def _kernel(out_ref, smem_ref):
+      out_ref[...] = smem_ref[...]
+
+    _kernel()
+    self.assertTrue(mosaic_interpret.get_races().races_found)
+
+  def test_no_race_in_sync_copy_gmem_to_smem_in_cluster(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(smem_ref=plgpu.SMEM((), jnp.int32)),
+        cluster=(2,),
+        cluster_names=('c0',),
+        interpret=InterpretParams(detect_races=True)
+    )
+    def _kernel(in_ref, _out_ref, smem_ref):
+      smem_ref[...] = in_ref[...]
+
+    _kernel(jnp.int32(42))
+    self.assertFalse(mosaic_interpret.get_races().races_found)
+
+  def test_no_race_in_smem_across_clusters(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(smem_ref=plgpu.SMEM((), jnp.int32)),
+        cluster=(2,),
+        cluster_names=('c0',),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True)
+    )
+    def _kernel(_out_ref, smem_ref):
+      @pl.when(jax.lax.axis_index('c0') == 0)
+      def _():
+        @pl.when(jax.lax.axis_index('t') == 0)
+        def _():
+          smem_ref[...] = 42
+      @pl.when(jax.lax.axis_index('c0') == 1)
+      def _():
+        @pl.when(jax.lax.axis_index('t') == 1)
+        def _():
+          smem_ref[...] = 43
+
+    _kernel()
+    self.assertFalse(mosaic_interpret.get_races().races_found)
 
 
 if __name__ == '__main__':
