@@ -4418,45 +4418,60 @@ class FragmentedArray:
     # tiles overall.
     for quadrant_dim, d in enumerate(tiles_shape):
       if d % 4 == 0:
-        quadrant_dims = [(quadrant_dim, 4)]
+        factored_quadrant_dims = [(quadrant_dim, 4)]
         break
     else:
-      quadrant_dims = [
+      factored_quadrant_dims = [
           (quadrant_dim, 2)
           for quadrant_dim, d in enumerate(tiles_shape)
           if d % 2 == 0
       ][:2]
-      if not quadrant_dims:
-        # Failed to partition, but we can still use num=1.
-        for tile_idx in np.ndindex(*tiles_shape):
-          xfer_details = get_tile_transfer(tile_idx)
-          yield (*([d] for d in xfer_details[:-1]), xfer_details[-1])
-        return
-    num = math.prod(d[1] for d in quadrant_dims)
-    assert num in (1, 2, 4)
-    lane_quadrant = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 4)), c(4))
-    lane_quadrant_remaining = lane_quadrant
-    lane_tile_offset = arith.constant(i32, 0)
-    for dim, size in quadrant_dims[::-1]:
-      idx = arith.remui(lane_quadrant_remaining, c(size))
-      lane_tile_offset = arith.addi(lane_tile_offset, arith.muli(idx, c(tiles_strides_transfer[dim])))
-      lane_quadrant_remaining = arith.divui(lane_quadrant_remaining, c(size))
+
+    @dataclasses.dataclass(frozen=True)
+    class TxMatrixTransfer:
+      quadrant_dims: tuple[tuple[int, int], ...]
+      tile_groups_shape: tuple[int, ...]
+      tile_groups_offset: tuple[int, ...]
+
+      @property
+      def num(self) -> int:
+        return math.prod(d[1] for d in self.quadrant_dims)
+
+    for dim, size in factored_quadrant_dims:
       tiles_shape[dim] //= size
-    def get_tile_idx(tile_group_idx, num_i):
-      tile_group_idx = list(tile_group_idx)
-      for dim, size in quadrant_dims[::-1]:
-        tile_group_idx[dim] = size * tile_group_idx[dim] + (num_i % size)
-        num_i //= size
-      return tuple(tile_group_idx)
-    # Note that this will affect the call to get_tile_transfer below.
-    dyn_offset = arith.addi(dyn_offset, lane_tile_offset)
-    for tile_group_idx in np.ndindex(*tiles_shape):
-      transfers = []
-      for i in range(num):
-        transfers.append(get_tile_transfer(get_tile_idx(tile_group_idx, i)))
-      transfers_t = list(zip(*transfers))
-      # The first address is the one our quadrant is responsible for providing.
-      yield (*transfers_t[:-1], transfers_t[-1][0])
+    transfers = [
+        TxMatrixTransfer(
+            tuple(factored_quadrant_dims),
+            tuple(tiles_shape),
+            (0,) * len(tiles_shape)
+        )
+    ]
+
+    lane_quadrant = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 4)), c(4))
+    base_dyn_offset = dyn_offset
+    for tx in transfers:
+      assert tx.num in (1, 2, 4)
+      lane_quadrant_remaining = lane_quadrant
+      lane_tile_offset = arith.constant(i32, 0)
+      for dim, size in tx.quadrant_dims[::-1]:
+        idx = arith.remui(lane_quadrant_remaining, c(size))
+        lane_tile_offset = arith.addi(lane_tile_offset, arith.muli(idx, c(tiles_strides_transfer[dim])))
+        lane_quadrant_remaining = arith.divui(lane_quadrant_remaining, c(size))
+      def get_tile_idx(tile_group_idx, num_i):
+        tile_group_idx = list(tile_group_idx)
+        for dim, size in tx.quadrant_dims[::-1]:
+          tile_group_idx[dim] = size * tile_group_idx[dim] + (num_i % size)
+          num_i //= size
+        return tuple(i + o for i, o in zip(tile_group_idx, tx.tile_groups_offset))
+      # Note that this will affect the call to get_tile_transfer below.
+      dyn_offset = arith.addi(base_dyn_offset, lane_tile_offset)
+      for tile_group_idx in np.ndindex(*tx.tile_groups_shape):
+        reg_transfers = []
+        for i in range(tx.num):
+          reg_transfers.append(get_tile_transfer(get_tile_idx(tile_group_idx, i)))
+        transfers_t = list(zip(*reg_transfers))
+        # The first address is the one our quadrant is responsible for providing.
+        yield (*transfers_t[:-1], transfers_t[-1][0])
 
   def tree_flatten(self):
     aux = self.layout, self.registers.shape, self.is_signed
