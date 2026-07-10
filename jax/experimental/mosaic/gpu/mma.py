@@ -30,28 +30,34 @@ class MMALayouts:
   layouts for MMA operands based on warp configuration.
   """
 
-  def __init__(self, element_type: ir.Type):
+  def __init__(self, element_type: ir.Type, *, m_warps: int = 4):
+    if m_warps not in (1, 2, 4):
+      raise ValueError(f"m_warps must be 1, 2, or 4, but got {m_warps=}")
+    n_warps = 4 // m_warps
     elems_per_reg = 32 // utils.bitwidth(element_type)
     k = 8 * elems_per_reg
     sub_k = 4 * elems_per_reg
     self.lhs = fa.TiledLayout(
-        fa.Tiling(((64, k), (16, sub_k), (8, sub_k), (elems_per_reg,))),
-        warp_dims=(-7,),
+        fa.Tiling(((m_warps * 16, k), (16, sub_k), (8, sub_k), (elems_per_reg,))),
+        warp_dims=(-7, fa.Replicated(4 // m_warps)),
         lane_dims=(-3, -2),
         vector_dim=-1,
-    )
+        _check_canonical=False,
+    ).canonicalize()
     self.rhs = fa.TiledLayout(
-        fa.Tiling(((k, 8), (sub_k, 8), (elems_per_reg, 1))),
-        warp_dims=(fa.Replicated(4),),
+        fa.Tiling(((k, n_warps * 8), (sub_k, 8), (elems_per_reg, 1))),
+        warp_dims=(fa.Replicated(4 // n_warps), -5,),
         lane_dims=(-3, -4),
         vector_dim=-2,
-    )
+        _check_canonical=False,
+    ).canonicalize()
     self.acc = fa.TiledLayout(
-        fa.Tiling(((64, 8), (16, 8), (8, 8), (2,))),
-        warp_dims=(-7,),
+        fa.Tiling(((m_warps * 16, n_warps * 8), (16, 8), (8, 8), (2,))),
+        warp_dims=(-7, -6),
         lane_dims=(-3, -2),
         vector_dim=-1,
-    )
+        _check_canonical=False,
+    ).canonicalize()
 
 
 def _ptx_dtype_str(dtype: ir.Type, *, is_signed: bool | None = None) -> str:
@@ -74,9 +80,6 @@ def _mma_single_tile(
   i32 = ir.IntegerType.get_signless(32)
 
   k_tile = 256 // utils.bitwidth(a.mlir_dtype)
-  assert a.shape == (64, k_tile)
-  assert b.shape == (k_tile, 8)
-  assert acc.shape == (64, 8)
   assert a.mlir_dtype == b.mlir_dtype
   is_integer = isinstance(a.mlir_dtype, ir.IntegerType)
   assert acc.mlir_dtype == i32 if is_integer else ir.F32Type.get()
@@ -101,9 +104,9 @@ def _mma_single_tile(
   b_regs = [utils.bitcast(r, i32) for r in b.registers.flatten()]
 
   # Make sure we have the right number of registers for the instruction.
-  assert len(a_regs) == 4
-  assert len(acc_regs) == 4
-  assert len(b_regs) == 2
+  assert len(a_regs) == num_a_regs
+  assert len(acc_regs) == num_acc_regs
+  assert len(b_regs) == num_b_regs
 
   a_ptx_dtype = _ptx_dtype_str(a.mlir_dtype, is_signed=a.is_signed)
   b_ptx_dtype = _ptx_dtype_str(b.mlir_dtype, is_signed=b.is_signed)
@@ -208,7 +211,15 @@ def mma(
   elif acc.mlir_dtype != ir.F32Type.get():
     raise NotImplementedError("Only f32 accumulator supported for floating operands.")
 
-  layouts = MMALayouts(element_type)
+  can_infer_from_acc_layout = (
+      isinstance(acc.layout, fa.TiledLayout)
+      and len(acc.layout.base_tile_shape) == 2
+      and acc.layout.base_tile_shape[0] % 16 == 0
+  )
+  if not can_infer_from_acc_layout:
+    raise ValueError("Expected MMALayouts.acc for acc")
+  m_warps = acc.layout.base_tile_shape[0] // 16  # type: ignore
+  layouts = MMALayouts(element_type, m_warps=m_warps)
   if layouts.lhs != a.layout:
     raise ValueError("Expected MMALayouts.lhs layout for A")
   if layouts.rhs != b.layout:

@@ -5874,14 +5874,15 @@ class FragmentedArrayTest(TestCase):
   @parameterized.product(
       dtype=(jnp.bfloat16, jnp.float16, jnp.float8_e4m3fn, jnp.float8_e5m2,
              jnp.int8, jnp.uint8, jnp.int4, jnp.uint4),
+      m_warps=(1, 2, 4),
   )
-  def test_warp_mma(self, dtype):
+  def test_warp_mma(self, dtype, m_warps):
     m, n, k = 128, 128, 128
     dtype = jnp.dtype(dtype)
     is_integer = jnp.issubdtype(dtype, jnp.integer)
     acc_dtype = jnp.int32 if is_integer else jnp.float32
     def kernel(ctx, acc, a, b, out, _):
-      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
+      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype), m_warps=m_warps)
       ab_is_signed = utils.is_signed(dtype)
       a_fa = mgpu.FragmentedArray.load_untiled(
           a, layout=mma_layouts.lhs, is_signed=ab_is_signed, optimized=False)
