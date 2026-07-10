@@ -4398,17 +4398,17 @@ class FragmentedArray:
     if not use_txmatrix:
       yield from map(get_tile_transfer, np.ndindex(*tiles_shape))
       return
-    # TODO(apaszke): What we implement below is a pretty minimal partitioning
-    # scheme. We use two properties of iteration spaces to harvest as many
-    # high-num transfers as we can. An nd-iteration space supports two operations:
+    # Below we implement a partitoning scheme for the iteration space that
+    # allows us to use as many high-num transfers as possible.
+    # We use two properties of iteration spaces:
     # 1. Factorization, where e.g. we can take a 2x3 space and turn it into
     #    2*(1x3) spaces.
     # 2. Splitting, where e.g. the 2x3 space can be rewritten as 2x(2+1), which
     #    is equivalent to taking a sum of two spaces: 2x2 + 2x1.
-    # At the moment we try to factorize the dims in the simplest way possible.
-    # If we get to a leading factor of 4, we're done. Otherwise, at the moment
-    # we try 2 and are happy if we find a dimension. However, we could still try
-    # using the splitting rule to use transfers with num=4.
+    # We factorize the grid, trying to harvest factors of 2 to get to 4 if
+    # possible. If we can't find enough, we try applying the splitting rule to
+    # split the iteration space into a large even part and a smaller remainder.
+    #
     # Consider a 2x3 space. The best transfer we could probably derive is to
     # first perform factorization to get 2*(1x3). At this point we can't
     # factorize any further, so we split that into 2*(1x2 + 1x1). Using
@@ -4439,13 +4439,44 @@ class FragmentedArray:
 
     for dim, size in factored_quadrant_dims:
       tiles_shape[dim] //= size
-    transfers = [
-        TxMatrixTransfer(
-            tuple(factored_quadrant_dims),
-            tuple(tiles_shape),
-            (0,) * len(tiles_shape)
-        )
-    ]
+    offsets = [0] * len(tiles_shape)
+    if (factored_num := math.prod(d[1] for d in factored_quadrant_dims)) == 4:
+      transfers = [
+          TxMatrixTransfer(
+              tuple(factored_quadrant_dims), tuple(tiles_shape), tuple(offsets)
+          )
+      ]
+    else:
+      transfers = []
+      missing_factors = (2,) if factored_num == 2 else (4, 2)
+      for factor in missing_factors:
+        for i, size in enumerate(tiles_shape):
+          if size > factor:
+            if any(d[0] == i for d in factored_quadrant_dims):
+              # More than 1 factor => we have num=4 and we wouldn't be here.
+              assert factored_quadrant_dims == [(i, 2)]
+              tx_quadrant_dims = ((i, 4),)
+              total_dim_factor = 4
+            else:
+              tx_quadrant_dims = (*factored_quadrant_dims, (i, factor))
+              total_dim_factor = factor
+            dim_steps = size // factor
+            transfers.append(
+                TxMatrixTransfer(
+                    tx_quadrant_dims,
+                    (*tiles_shape[:i], dim_steps, *tiles_shape[i + 1 :]),
+                    tuple(offsets),
+                )
+            )
+            offsets[i] += dim_steps * total_dim_factor
+            tiles_shape[i] %= factor
+      transfers.append(
+          TxMatrixTransfer(
+              tuple(factored_quadrant_dims),
+              tuple(tiles_shape),
+              tuple(offsets),
+          )
+      )
 
     lane_quadrant = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 4)), c(4))
     base_dyn_offset = dyn_offset

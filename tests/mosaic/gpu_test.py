@@ -3654,9 +3654,8 @@ class Sm80Test(TestCase):
 
   @parameterized.product(
       dtype=(jnp.int16,),
-      m_mult=(1, 2, 3, 4),
-      k_mult=(1, 2, 3, 4),
-
+      m_mult=(1, 2, 3, 4, 6, 7, 9),
+      k_mult=(1, 2, 3, 4, 6, 7, 9),
   )
   @jtu.thread_unsafe_test()
   def test_ldmatrix(self, dtype, m_mult, k_mult):
