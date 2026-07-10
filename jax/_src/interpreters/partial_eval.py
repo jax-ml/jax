@@ -1627,7 +1627,7 @@ class JaxprStackFrame:
       out_tracers: Sequence[Tracer],
       debug_info: core.DebugInfo,
       source_info: SourceInfo,
-    ) -> tuple[Jaxpr, list[Any]]:
+    ) -> Jaxpr:
     # We are careful to snapshot constvar_to_val before we call get_eqns(),
     # to avoid the following scenario:
     # * we call get_eqns(), snapshotting the equations.

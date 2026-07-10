@@ -759,7 +759,6 @@ def _run_scoped_discharge_rule(
     raise NotImplementedError(
         "run_scoped discharge does not support collective_axes yet."
     )
-  num_consts = len(args_flat)
   num_return_values = len(jaxpr.outvars)
   discharged_closed_body = state_discharge.discharge_state(
       jaxpr, should_discharge=should_discharge + [False] * len(jaxpr.invars),

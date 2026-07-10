@@ -199,7 +199,7 @@ class Jaxpr:
       # is missing.
       debug_info: DebugInfo = None,  # pyrefly: ignore[bad-function-definition]
       is_high: bool = False,
-      consts: Sequence[Any] | None = [],
+      consts: Sequence[Any] = [],
   ):
     self._consts = list(consts)
     assert len(self._consts) == len(constvars)

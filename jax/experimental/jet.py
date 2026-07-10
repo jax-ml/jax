@@ -742,8 +742,8 @@ jet_rules[lax.scatter_add_p] = _scatter_add_rule
 
 @weakref_lru_cache
 def _jet_jaxpr(
-    jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
-) -> tuple[core.ClosedJaxpr, Any]:
+    jaxpr: core.Jaxpr, order: int, primals_and_series_avals, in_tree_def
+) -> tuple[core.Jaxpr, Any]:
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
                    debug_info=jaxpr.debug_info.with_unknown_names())
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
