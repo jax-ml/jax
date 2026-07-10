@@ -142,12 +142,10 @@ def _undo_conversion_cast(
 ) -> tuple[builtin.UnrealizedConversionCastOp, Sequence[ir.Value]]:
   """Undoes the provided unrealized conversion cast.
 
-  The `ir_value` must be an unrealized conversion cast. This function will
-  create a new conversion cast that undoes the original one. The returned tuple
+  The `ir_value` must be an unrealized conversion cast. The returned tuple
   contains:
-  - The original unrealzied conversion cast (useful for extract attributes).
-  - The list of operands of the original conversion cast (which are the result
-    values of the undone conversion cast).
+  - The original unrealized conversion cast (useful for extract attributes).
+  - The list of operands of the original conversion cast.
 
   The function will verify that the returned values have types that match
   `expected_types`.
@@ -157,17 +155,13 @@ def _undo_conversion_cast(
   if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
 
-  cast_op = builtin.UnrealizedConversionCastOp(
-      [operand.type for operand in conversion_cast.operands],
-      conversion_cast.results,
-  )
-  converted_outputs: Sequence[ir.Value] = cast_op.results
+  original_inputs: Sequence[ir.Value] = conversion_cast.operands
 
-  for v, t in zip(converted_outputs, expected_types, strict=True):
+  for v, t in zip(original_inputs, expected_types, strict=True):
     if v.type != t:
       raise ValueError(f"Expected type {t} for value {v}")
 
-  return conversion_cast, converted_outputs
+  return conversion_cast, original_inputs
 
 
 def fragmented_array_to_ir(
@@ -213,15 +207,11 @@ def _fragmented_array_from_ir(
   reg_shape = producer_layout.registers_shape(tuple(vector_ty.shape))
   reg_ty: ir.Type = producer_layout.registers_element_type(vector_ty.element_type)
 
-  conversion_cast, converted_outputs = _undo_conversion_cast(
+  conversion_cast, original_inputs = _undo_conversion_cast(
       fragmented_array_as_ir, [reg_ty] * math.prod(reg_shape)
   )
 
-  reverse_conversion_cast = converted_outputs[0].owner.opview  # pyrefly: ignore[missing-attribute]
-  for attribute in conversion_cast.attributes:
-    reverse_conversion_cast.attributes[attribute] = conversion_cast.attributes[attribute]
-
-  registers = np.array(list(converted_outputs)).reshape(
+  registers = np.array(list(original_inputs)).reshape(
     [
         attr.value  # pyrefly: ignore[missing-attribute]
         for attr in ir.ArrayAttr(conversion_cast.attributes["registers_shape"])
