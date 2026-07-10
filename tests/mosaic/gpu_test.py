@@ -3654,15 +3654,23 @@ class Sm80Test(TestCase):
 
   @parameterized.product(
       dtype=(jnp.int16,),
+      m_mult=(1, 2, 3, 4),
+      k_mult=(1, 2, 3, 4),
+
   )
   @jtu.thread_unsafe_test()
-  def test_ldmatrix(self, dtype):
-    m, k = 128, 128
+  def test_ldmatrix(self, dtype, m_mult, k_mult):
+    m, k = 32 * m_mult, 8 * k_mult
     dtype = jnp.dtype(dtype)
-    swizzle = 128
+    swizzle = next(s for s in (128, 64, 32, 16) if (k * 2) % s == 0)
+    layout = fa.TiledLayout(
+        fa.Tiling(((32, 8), (8, 8), (2,))),
+        warp_dims=(-5,),
+        lane_dims=(-3, -2),
+        vector_dim=-1,
+    )
     def kernel(ctx, a, out, smem):
       a_smem, barrier = smem
-      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
       ctx.async_copy(
           src_ref=a,
           dst_ref=a_smem,
@@ -3673,7 +3681,7 @@ class Sm80Test(TestCase):
       )
       barrier.wait()
       a_fa = mgpu.FragmentedArray.load_tiled(
-          a_smem, layout=mma_layouts.lhs, swizzle=swizzle, is_signed=True
+          a_smem, layout=layout, swizzle=swizzle, is_signed=True
       )
       a_fa.store_untiled(out, optimized=False)
 
@@ -3687,7 +3695,8 @@ class Sm80Test(TestCase):
           ),
       )(x)
       np.testing.assert_array_equal(y, x)
-    self.assertIn("ldmatrix.sync.aligned.m8n8.x4.shared", ptx())
+    num = next(n for n in (4, 2, 1) if (m_mult * k_mult) % n == 0)
+    self.assertIn(f"ldmatrix.sync.aligned.m8n8.x{num}.shared", ptx())
     self.assertNotIn("ld.shared", ptx())
 
   @parameterized.product(

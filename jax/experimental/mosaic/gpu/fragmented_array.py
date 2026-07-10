@@ -4399,52 +4399,64 @@ class FragmentedArray:
       yield from map(get_tile_transfer, np.ndindex(*tiles_shape))
       return
     # TODO(apaszke): What we implement below is a pretty minimal partitioning
-    # scheme where we only consider a single dimension and fall back to num=1
-    # otherwise. Instead, we should use two properties of iteration spaces to
-    # harvest as many high-num transfers as we can. An nd-iteration space
-    # supports two operations:
+    # scheme. We use two properties of iteration spaces to harvest as many
+    # high-num transfers as we can. An nd-iteration space supports two operations:
     # 1. Factorization, where e.g. we can take a 2x3 space and turn it into
     #    2*(1x3) spaces.
     # 2. Splitting, where e.g. the 2x3 space can be rewritten as 2x(2+1), which
     #    is equivalent to taking a sum of two spaces: 2x2 + 2x1.
-    # So, given a 2x3 space, the best transfer we could probably derive is to
-    # first perform factorization to get 2*(1x3), then split that into
-    # 2*(1x2 + 1x1). Using distributivity we get 2*(1x2) + 2*(1x1) which can be
-    # further factored into 4*(1x1) + 2*(1x1). This gives us a good schedule of
-    # a single num=4 transfer and a single num=2 transfer, which is ideal given
-    # that we had 6 tiles overall.
-    # There are some complications here, too. If we use factors of 2 from
-    # two dims, then the lane_tile_offset becomes a 2D dot product, which is
-    # more expensive to compute. So we should prefer factoring or splitting a
-    # single dimension if possible...
-    num = 4
+    # At the moment we try to factorize the dims in the simplest way possible.
+    # If we get to a leading factor of 4, we're done. Otherwise, at the moment
+    # we try 2 and are happy if we find a dimension. However, we could still try
+    # using the splitting rule to use transfers with num=4.
+    # Consider a 2x3 space. The best transfer we could probably derive is to
+    # first perform factorization to get 2*(1x3). At this point we can't
+    # factorize any further, so we split that into 2*(1x2 + 1x1). Using
+    # distributivity we get 2*(1x2) + 2*(1x1) which can be further factored
+    # into 4*(1x1) + 2*(1x1). This gives us a good schedule of a single num=4
+    # transfer and a single num=2 transfer, which is ideal given that we had 6
+    # tiles overall.
     for quadrant_dim, d in enumerate(tiles_shape):
-      if d % num == 0:
+      if d % 4 == 0:
+        quadrant_dims = [(quadrant_dim, 4)]
         break
     else:
-      # Failed to partition, but we can still use num=1.
-      for tile_idx in np.ndindex(*tiles_shape):
-        xfer_details = get_tile_transfer(tile_idx)
-        yield (*([d] for d in xfer_details[:-1]), xfer_details[-1])
-      return
+      quadrant_dims = [
+          (quadrant_dim, 2)
+          for quadrant_dim, d in enumerate(tiles_shape)
+          if d % 2 == 0
+      ][:2]
+      if not quadrant_dims:
+        # Failed to partition, but we can still use num=1.
+        for tile_idx in np.ndindex(*tiles_shape):
+          xfer_details = get_tile_transfer(tile_idx)
+          yield (*([d] for d in xfer_details[:-1]), xfer_details[-1])
+        return
+    num = math.prod(d[1] for d in quadrant_dims)
+    assert num in (1, 2, 4)
     lane_quadrant = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 4)), c(4))
-    lane_tile_offset = arith.muli(lane_quadrant, c(tiles_strides_transfer[quadrant_dim]))
+    lane_quadrant_remaining = lane_quadrant
+    lane_tile_offset = arith.constant(i32, 0)
+    for dim, size in quadrant_dims[::-1]:
+      idx = arith.remui(lane_quadrant_remaining, c(size))
+      lane_tile_offset = arith.addi(lane_tile_offset, arith.muli(idx, c(tiles_strides_transfer[dim])))
+      lane_quadrant_remaining = arith.divui(lane_quadrant_remaining, c(size))
+      tiles_shape[dim] //= size
+    def get_tile_idx(tile_group_idx, num_i):
+      tile_group_idx = list(tile_group_idx)
+      for dim, size in quadrant_dims[::-1]:
+        tile_group_idx[dim] = size * tile_group_idx[dim] + (num_i % size)
+        num_i //= size
+      return tuple(tile_group_idx)
     # Note that this will affect the call to get_tile_transfer below.
     dyn_offset = arith.addi(dyn_offset, lane_tile_offset)
-    tiles_shape[quadrant_dim] //= num
     for tile_group_idx in np.ndindex(*tiles_shape):
       transfers = []
       for i in range(num):
-        tile_idx = (
-            *tile_group_idx[:quadrant_dim],
-            num * tile_group_idx[quadrant_dim] + i,
-            *tile_group_idx[quadrant_dim + 1:]
-        )
-        transfers.append(get_tile_transfer(tile_idx))
+        transfers.append(get_tile_transfer(get_tile_idx(tile_group_idx, i)))
       transfers_t = list(zip(*transfers))
       # The first address is the one our quadrant is responsible for providing.
       yield (*transfers_t[:-1], transfers_t[-1][0])
-
 
   def tree_flatten(self):
     aux = self.layout, self.registers.shape, self.is_signed
