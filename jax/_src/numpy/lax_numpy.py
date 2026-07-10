@@ -1191,6 +1191,7 @@ def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
            [3, 6]], dtype=int32)
   """
   a = util.ensure_arraylike("permute_dims", a)
+  axes = util.canonicalize_axis_tuple(tuple(axes), a.ndim, allow_duplicate=False)
   return lax.transpose(a, axes)
 
 
