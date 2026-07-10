@@ -19,12 +19,4 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
-# Refer to https://bazel.build/configure/windows#clang for potential changes.
-platform(
-    name = "x64_windows-clang-cl",
-    constraint_values = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:windows",
-        "@bazel_tools//tools/cpp:clang-cl",
-    ],
-)
+# x64_windows-clang-cl platform rule removed as windows clang-cl toolchain constraint is not supported internally.
