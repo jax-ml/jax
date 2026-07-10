@@ -981,21 +981,21 @@ def copy_gmem_to_smem(
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
   When ``impl="tma"`` and ``collective_axes`` is specified, the copy involves
-  multiple blocks in the cluster. The value of ``leader_tracked`` determines
-  the behavior:
+  multiple CUDA blocks in the cluster. The value of ``leader_tracked``
+  determines the behavior:
 
-  * ``None`` (**multicast**): All blocks sharing the same index along the
+  * ``None`` (**multicast**): all CUDA blocks sharing the same index along the
     collective axes receive the same data from ``src``.
-  * ``CopyPartition.PARTITIONED(axis)``: Each block in the collective receives
-    a ``transfer_size // cluster_size`` tile of ``src``. E.g. for ``src`` of
-    shape ``(256, 256)`` with cluster size 2 along axis 0: block 0 gets
-    ``src[0:128, :]``, block 1 gets ``src[128:256, :]``.
-  * ``CopyPartition.REPLICATED``: All blocks in the collective load the same
+  * ``CopyPartition.PARTITIONED(axis)``: each CUDA block in the cluster
+    receives a ``transfer_size // cluster_size`` tile of ``src``. E.g. for
+    ``src`` of shape ``(256, 256)`` with cluster size 2 along axis 0: block 0
+    gets ``src[0:128, :]``, block 1 gets ``src[128:256, :]``.
+  * ``CopyPartition.REPLICATED``: all CUDA blocks in the cluster load the same
     data, but only the first block tracks progress via barrier arrivals.
 
   .. note::
 
-    For leader-tracked copies, only the first block in the collective arrives
+    For leader-tracked copies, only the first CUDA block in the cluster arrives
     on the barrier. If other blocks need to consume the copied data, an
     additional cluster barrier is necessary to ensure all blocks have
     finished the copy.
@@ -1006,14 +1006,14 @@ def copy_gmem_to_smem(
     barrier: The barrier to use for tracking completion of the copy.
     impl: The underlying copy implementation to use: ``"cp_async"`` or
       ``"tma"``. Defaults to ``"tma"``.
-    collective_axes: The collective axes to use for the copy. Only supported
-      when ``impl="tma"``.
+    collective_axes: The collective axes to use for the copy. Only a single
+      collective axis is supported when ``leader_tracked`` is specified (but
+      the axis can be composite). Only supported when ``impl="tma"``.
     leader_tracked: If specified, only the leader block in the cluster will
       observe the completion of the copy. If
       ``CopyPartition.PARTITIONED(axis)``, performs a partitioned collective
       copy along the given axis. If ``CopyPartition.REPLICATED``, all blocks
-      load the same data. Only
-      supported when ``impl="tma"``.
+      load the same data. Only supported when ``impl="tma"``.
     oob_mode: The optional out-of-bounds fill mode. Can be
       ``OOBFillMode.UNDEFINED``, ``OOBFillMode.PROMISE_IN_BOUNDS`` or
       ``OOBFillMode.ZEROS``. Only supported when ``impl="tma"``.
