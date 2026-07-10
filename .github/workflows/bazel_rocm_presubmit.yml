@@ -37,7 +37,7 @@ jobs:
           python: ["3.14"]
           runner: ["amd-do-linux.jax.gpu.gfx950.1"]
           jaxlib-version: ["head", "pypi_latest"]
-          enable-x64: [1]
+          enable-x64: [0]
           rocm-version: ["7"]
     name: "${{ matrix.runner && 'Test' }}"
 # End Presubmit Naming Check github-rocm-presubmits
