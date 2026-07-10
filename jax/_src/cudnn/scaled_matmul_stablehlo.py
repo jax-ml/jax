@@ -105,10 +105,10 @@ def _scaled_matmul_gpu_lowering(
   return [out.result]
 
 
-def _scaled_matmul_rocm_lowering(
+def _scaled_matmul_composite_lowering(
     ctx, a, b, a_scales, b_scales, preferred_element_type
   ):
-  # Lower `scaled_matmul` to `lax.scaled_dot` on ROCm so the backend can match
+  # Lower `scaled_matmul` to `lax.scaled_dot` so the backend can match
   # the `xla.scaled_dot` composite while preserving `scaled_matmul` semantics.
   def _scaled_dot_lowering_impl(lhs, rhs, lhs_scales, rhs_scales):
     return lax_internal.scaled_dot(
@@ -151,8 +151,20 @@ mlir.register_lowering(
 # `kScaledDot`, which ROCm can then fuse via Triton or hipBLASLt when possible.
 mlir.register_lowering(
     _scaled_matmul_p,
-    _scaled_matmul_rocm_lowering,
+    _scaled_matmul_composite_lowering,
     platform="rocm",
+)
+
+# TPU has no dedicated block-scaled custom call in the open XLA:TPU backend, so
+# route through the platform-agnostic `xla.scaled_dot` composite. XLA:TPU emits
+# the composite's fallback (dequantize -> bf16 dot) today; if/when the TPU
+# backend gains a block-scaling rewriter for the `xla.scaled_dot` composite
+# (cf. xla/backends/gpu/transforms/block_scaling_rewriter.cc), the same JAX code
+# path will transparently pick up a native MXU lowering with no user changes.
+mlir.register_lowering(
+    _scaled_matmul_p,
+    _scaled_matmul_composite_lowering,
+    platform="tpu",
 )
 
 _scaled_matmul_p_wrapper = core.Primitive("scaled_matmul_wrapper")
