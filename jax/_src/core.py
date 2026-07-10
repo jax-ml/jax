@@ -95,6 +95,10 @@ DebugInfo = lu.DebugInfo
 InitialResultPaths = lu.InitialResultPaths
 initial_result_paths = lu.initial_result_paths
 
+# legacy. TODO: remove
+def ClosedJaxpr(jaxpr, consts):
+  return jaxpr.with_consts(consts)
+
 class Jaxpr:
   __slots__ = [
       "__weakref__",
@@ -185,39 +189,19 @@ class Jaxpr:
 
   def __init__(
       self,
-      constvars: Sequence[Var] | Jaxpr,
-      invars: Sequence[Var] | Sequence[Any] | None = None,
-      outvars: Sequence[Atom] | None = None,
-      eqns: Sequence[JaxprEqn] | None = None,
+      constvars: Sequence[Var],
+      invars: Sequence[Var],
+      outvars: Sequence[Atom],
+      eqns: Sequence[JaxprEqn],
       effects: Effects = no_effects,
       # We want all calls to pass a DebugInfo object, but for backwards
       # compatibility we have to allow calls when the debug_info
       # is missing.
       debug_info: DebugInfo = None,  # pyrefly: ignore[bad-function-definition]
       is_high: bool = False,
-      consts: Sequence[Any] | None = None,
+      consts: Sequence[Any] | None = [],
   ):
-    if isinstance(constvars, Jaxpr):
-      # Legacy ClosedJaxpr(jaxpr, consts) construction: share `jaxpr`'s
-      # structure and rebind `consts` as its constant argument values.
-      # TODO(dougalm): migrate callers and remove.
-      jaxpr = constvars
-      assert outvars is None and eqns is None and debug_info is None
-      if consts is None:
-        jaxpr, consts = constvars, invars
-      else:
-        assert invars is None
-      assert consts is not None and len(consts) == len(jaxpr._consts)
-      self._all_invars = jaxpr._all_invars
-      self._outvars = jaxpr._outvars
-      self._eqns = jaxpr._eqns
-      self._effects = jaxpr._effects
-      self._debug_info = jaxpr._debug_info
-      self._is_high = jaxpr._is_high
-      self._consts = list(consts)
-      return
-    assert invars is not None and outvars is not None and eqns is not None
-    self._consts = [] if consts is None else list(consts)
+    self._consts = list(consts)
     assert len(self._consts) == len(constvars)
     self._all_invars = [*constvars, *invars]
     self._outvars = list(outvars)
@@ -268,23 +252,10 @@ class Jaxpr:
     return Jaxpr(f(self), self.consts)
 
   def replace(self, **kwargs):
-    if "jaxpr" in kwargs:
-      # Legacy ClosedJaxpr.replace(jaxpr=..., consts=...) form.
-      # TODO(dougalm): migrate callers and remove.
-      jaxpr = kwargs.pop("jaxpr")
-      consts = kwargs.pop("consts", None)
-      if kwargs:
-        raise ValueError(f"Unknown keyword arguments: {kwargs}")
-      jaxpr = self if jaxpr is None else jaxpr
-      consts = self.consts if consts is None else consts
-      return Jaxpr(jaxpr, consts)
     debug_default = self.debug_info
     if (kwargs.get('invars', self.invars) != self.invars or
         kwargs.get('outvars', self.outvars) != self.outvars):
       debug_default = debug_default.with_unknown_names()
-    # Replacing constvars invalidates the consts pairing, so unless new consts
-    # are given explicitly the result has no consts attached.
-    consts_default = () if "constvars" in kwargs else self.consts
     jaxpr = Jaxpr(
         constvars=kwargs.pop("constvars", self.constvars),
         invars=kwargs.pop("invars", self.invars),
@@ -293,7 +264,7 @@ class Jaxpr:
         effects=kwargs.pop("effects", self.effects),
         debug_info=kwargs.pop("debug_info", debug_default),
         is_high=kwargs.pop("is_high", self.is_high),
-        consts=kwargs.pop("consts", consts_default),
+        consts=kwargs.pop("consts", self.consts),
     )
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
@@ -318,15 +289,6 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
   """
   for eqn in jaxpr.eqns:
     yield from jaxprs_in_params(eqn.params)
-
-
-# ClosedJaxpr and Jaxpr have been merged into a single class: a Jaxpr carries
-# a possibly-empty list of constant argument values, `consts`. The name
-# ClosedJaxpr remains as an alias for callers that construct closed jaxprs via
-# ClosedJaxpr(jaxpr, consts) or use it in isinstance checks and annotations.
-# TODO(dougalm): migrate users and remove the alias.
-ClosedJaxpr = Jaxpr
-
 
 @curry
 def jaxpr_as_fun(closed_jaxpr: Jaxpr, *args):

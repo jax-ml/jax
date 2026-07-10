@@ -1882,10 +1882,8 @@ def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr, which: Sequence[bool]):
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(resvars, which)]
   in_avals = ft.flatten(((*res_avals, *[v.aval for v in argvars]), {}))
-  closed_jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
-  closed_jaxpr, _consts = pe.separate_consts(closed_jaxpr)
-  assert not _consts, "REMOVE"
-  return closed_jaxpr
+  jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals, debug_info=jaxpr.debug_info)
+  return jaxpr
 
 
 def _unmentioned2(mesh: Mesh, spec, manual_axes: frozenset[AxisName]

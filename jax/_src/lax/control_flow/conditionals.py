@@ -283,9 +283,9 @@ def cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   dbg_false = api_util.debug_info("cond", false_fun, operands, {})
 
   true_jaxpr_, out_avals = pe.trace_to_jaxpr(true_fun, avals, dbg_true)
-  true_jaxpr_, true_consts = pe.separate_consts(true_jaxpr_)
+  true_jaxpr_, true_consts = true_jaxpr_.separate_consts()
   false_jaxpr_, false_out_avals = pe.trace_to_jaxpr(false_fun, avals, dbg_false)
-  false_jaxpr_, false_consts = pe.separate_consts(false_jaxpr_)
+  false_jaxpr_, false_consts = false_jaxpr_.separate_consts()
   (true_jaxpr, false_jaxpr), consts = _merge_common_consts(
       (true_jaxpr_, false_jaxpr_), (true_consts, false_consts))
   if config.mutable_array_checks.value:

@@ -111,11 +111,11 @@ def linearize_subtrace_2(f: Callable, is_vjp: bool,
   nzs_out = tuple(type(t) is not Zero for t in out_tangents)
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
   out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info), out_tangents)
-  jaxpr, consts = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)
+  jaxpr = tangent_trace.to_jaxpr(out_tangents, debug_info.with_unknown_names(), source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
-                getattr(c._trace, 'tag', None) is tag) for c in consts]
+                getattr(c._trace, 'tag', None) is tag) for c in jaxpr.consts]
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
-  res, env = partition_list(which_env, consts)
+  res, env = partition_list(which_env, jaxpr.consts)
   residual_avals = map(typeof, res)
   # Which residuals are just forwarded inputs? Check object id.
   id_map = {id(p): i for i, p in enumerate(primals)}
@@ -151,12 +151,12 @@ def linearize_subtrace(_f: Callable, _store: lu.Store, _is_vjp: bool,
   out_tangents = tuple(t for t, nz in zip(out_tangents, nzs_out) if nz)
   out_tangents = map(partial(tangent_trace.to_jaxpr_tracer, source_info=source_info),
                      out_tangents)
-  jaxpr, consts = tangent_trace.to_jaxpr(
+  jaxpr = tangent_trace.to_jaxpr(
       out_tangents, debug_info.with_unknown_names(), source_info)
   which_env = [(isinstance(c, pe.DynamicJaxprTracer) and
-                getattr(c._trace, 'tag', None) is _tag) for c in consts]
+                getattr(c._trace, 'tag', None) is _tag) for c in jaxpr.consts]
   jaxpr = pe.move_envvars(jaxpr, tuple(which_env))
-  res, env = partition_list(which_env, consts)
+  res, env = partition_list(which_env, jaxpr.consts)
   residual_avals = map(typeof, res)
   # Which residuals are just forwarded inputs? Check object id.
   id_map = {id(p): i for i, p in enumerate(primals)}
@@ -246,10 +246,10 @@ def _linearize_jaxpr(
   nzs_out = [type(t) is not Zero for t in out_tangents]
   out_tangents = [tangent_trace.to_jaxpr_tracer(t, source_info)
                   for (nz, t) in zip(nzs_out, out_tangents) if nz]
-  tangent_jaxpr, tangent_consts = tangent_trace.to_jaxpr(
+  tangent_jaxpr = tangent_trace.to_jaxpr(
       out_tangents, dbg.with_unknown_names(), source_info)
   tangent_trace.invalidate()
-  tangent_jaxpr, _ = _dce_consts(tangent_jaxpr, tangent_consts)
+  tangent_jaxpr = _dce_consts(tangent_jaxpr)
   tangent_jaxpr, tangent_consts = tangent_jaxpr.separate_consts()
 
   fwd_inputs = (*jaxpr.consts, *in_primals)
@@ -262,21 +262,19 @@ def _linearize_jaxpr(
   primals_and_residuals = *out_primals, *tangent_consts
   primals_and_residuals = map(partial(primal_trace.to_jaxpr_tracer, source_info=source_info),
                               primals_and_residuals)
-  primal_jaxpr, primal_consts = primal_trace.to_jaxpr(
-      primals_and_residuals, dbg.with_unknown_names(),
-      source_info)
+  primal_jaxpr = primal_trace.to_jaxpr(
+      primals_and_residuals, dbg.with_unknown_names(), source_info)
   primal_trace.invalidate()
-  primal_jaxpr, primal_consts = _dce_consts(primal_jaxpr, primal_consts)
-  primal_jaxpr = primal_jaxpr.with_consts(primal_consts)
+  primal_jaxpr = _dce_consts(primal_jaxpr)
 
   num_residuals_out = len(tangent_consts)
   return primal_jaxpr, num_residuals_out, nzs_out, fwds, tangent_jaxpr
 
-def _dce_consts(jaxpr, consts):
-  jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
+def _dce_consts(jaxpr):
+  jaxpr, _, _ = pe.dce_jaxpr_consts(
       jaxpr, [True] * len(jaxpr.outvars),
       [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
-  return jaxpr, [c for c, used in zip(consts, used_consts) if used]
+  return jaxpr
 
 def _strip_tracer(tracer_type, tag, x):
    if isinstance(x, tracer_type) and x._trace.tag is tag:

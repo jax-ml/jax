@@ -2530,12 +2530,12 @@ def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
     out_tracers = ft.pack((tuple(out_mut), tuple(out_tracers)))
     out_avals = out_tracers.map(typeof)
     dbg = _lower_debug_info(hi_jaxpr, out_mut)
-    jaxpr, consts = trace.frame.to_jaxpr(trace, list(out_tracers), dbg, src)
+    jaxpr = trace.frame.to_jaxpr(trace, list(out_tracers), dbg, src)
     del trace, env, out_tracers, out_mut, tracer, read, outs, invals, eqns
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   assert not any(v.aval.is_high for v in it.chain(jaxpr.constvars, jaxpr.invars))
-  return jaxpr.with_consts(consts), out_avals
+  return jaxpr, out_avals
 
 @weakref_lru_cache
 def convert_const_himutables(jaxpr):
