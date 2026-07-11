@@ -8572,6 +8572,106 @@ class InputSavedVJPTest(jtu.JaxTestCase):
     ans, = vjp(1.0)
     self.assertIsInstance(ans, jax.Array)
 
+  def test_saveable_args_basic(self):
+    def f2(x, w):
+      x = 1. * x
+      x = x @ w
+      x = 2. * x
+      return x
+
+    x = jnp.ones((3, 4))
+    w = jnp.ones((4, 4))
+    y, f2_vjp = api.vjp(f2, x, w, saveable_args=(True, False))
+    self.assertIsInstance(f2_vjp.args_res[1], api.NotSaveable)
+    y_grad = jnp.ones_like(y)
+    with self.assertRaisesRegex(
+        ValueError, re.compile(r"not-saveable.*args\[1\]", re.DOTALL)):
+      f2_vjp(y_grad)
+    f2_vjp.args_res[1] = w
+    x_grad, w_grad = f2_vjp(y_grad)
+    self.assertAllClose(x_grad, 2. * y_grad @ w.T)
+    self.assertAllClose(w_grad, 2. * x.T @ y_grad)
+
+  def test_saveable_args_broadcasts(self):
+    def f(x, w):
+      return x @ w
+
+    x = jnp.ones((3, 4))
+    w = jnp.ones((4, 4))
+    _, f_vjp = api.vjp(f, x, w, saveable_args=False)
+    self.assertIsInstance(f_vjp.args_res[0], api.NotSaveable)
+    self.assertIsInstance(f_vjp.args_res[1], api.NotSaveable)
+    self.assertLen(jax.tree.leaves(f_vjp), 0)  # nothing saved at all
+    f_vjp.args_res = [x, w]
+    x_grad, w_grad = f_vjp(jnp.ones((3, 4)))
+    self.assertAllClose(x_grad, jnp.ones((3, 4)) @ w.T)
+    self.assertAllClose(w_grad, x.T @ jnp.ones((3, 4)))
+
+  def test_saveable_args_loose_prefix(self):
+    # a tuple entry in saveable_args can correspond to a dict argument
+    def f(d):
+      return d['bye'] @ d['hi']
+
+    d = {'hi': jnp.ones((4, 5)), 'bye': jnp.ones((3, 4))}
+    _, f_vjp = api.vjp(f, d, saveable_args=((True, False),))
+    bye_res, hi_res = f_vjp.args_res[0]  # tuple-tree, dict flatten order
+    self.assertAllClose(bye_res, d['bye'])
+    self.assertIsInstance(hi_res, api.NotSaveable)
+    with self.assertRaisesRegex(
+        ValueError,
+        re.compile(r"not-saveable.*args\[0\]\['hi'\]", re.DOTALL)):
+      f_vjp(jnp.ones((3, 5)))
+    f_vjp.args_res = [d]  # can restore with the original pytree structure
+    d_grad, = f_vjp(jnp.ones((3, 5)))
+    self.assertAllClose(d_grad['hi'], d['bye'].T @ jnp.ones((3, 5)))
+    self.assertAllClose(d_grad['bye'], jnp.ones((3, 5)) @ d['hi'].T)
+
+  def test_saveable_args_unused_arg_stays_not_needed(self):
+    _, f_vjp = api.vjp(jnp.sin, 3., saveable_args=False)
+    self.assertIsInstance(f_vjp.args_res[0], api.NotNeeded)
+    x_ct, = f_vjp(1.)  # nothing to restore
+    self.assertAllClose(x_ct, jnp.cos(3.))
+
+  def test_saveable_args_pass_through_jit(self):
+    def f2(x, w):
+      x = 1. * x
+      x = x @ w
+      x = 2. * x
+      return x
+
+    @jax.jit
+    def g(x, w):
+      return jax.vjp(f2, x, w, saveable_args=(True, False))
+
+    @jax.jit
+    def h(f2_vjp, w, ct):
+      f2_vjp.args_res[1] = w
+      return f2_vjp(ct)
+
+    x = jnp.ones((3, 4))
+    w = jnp.ones((4, 4))
+    y, f2_vjp = g(x, w)
+    self.assertIsInstance(f2_vjp.args_res[1], api.NotSaveable)
+    y_grad = jnp.ones_like(y)
+    with self.assertRaisesRegex(ValueError, "not-saveable"):
+      jax.jit(lambda f_vjp, ct: f_vjp(ct))(f2_vjp, y_grad)
+    x_grad, w_grad = h(f2_vjp, w, y_grad)
+    self.assertAllClose(x_grad, 2. * y_grad @ w.T)
+    self.assertAllClose(w_grad, 2. * x.T @ y_grad)
+
+  def test_saveable_args_structure_errors(self):
+    f = lambda x, w: x @ w
+    x = jnp.ones((3, 4))
+    w = jnp.ones((4, 4))
+    with self.assertRaisesRegex(ValueError, "number of children"):
+      api.vjp(f, x, w, saveable_args=(True,))
+    with self.assertRaisesRegex(ValueError, "leaf"):
+      api.vjp(f, x, w, saveable_args=(True, (True, True)))
+    with self.assertRaisesRegex(ValueError, "tuple-tree of bools"):
+      api.vjp(f, x, w, saveable_args=(1, True))
+    with self.assertRaisesRegex(ValueError, "tuple-tree of bools"):
+      api.vjp(f, x, w, saveable_args=[True, True])  # tuples only, not lists
+
 
 class TracebackTest(jtu.JaxTestCase):
   # These tests are to catch regressions in Python traceback sizes. Our
