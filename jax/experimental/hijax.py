@@ -26,6 +26,10 @@ from jax._src.core import (
     AvalMutableQDD as AvalMutableQDD,
 )
 from jax._src.interpreters.ad import (
+    GradAccum as GradAccum,
+    NullAccum as NullAccum,
+    RefAccum as RefAccum,
+    ValAccum as ValAccum,
     instantiate_zeros as instantiate_zeros,
     is_undefined_primal as is_undefined_primal,
 )
