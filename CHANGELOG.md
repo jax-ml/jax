@@ -38,6 +38,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     a boolean `mask`, whose gradient no caller can request. Bias gradients
     for an explicit `bias` or a non-boolean `mask` are unchanged
     ({jax-issue}`#34685`).
+  * {func}`jax.numpy.tri` now uses the default float dtype when `dtype` is
+    unspecified, matching NumPy and other array creation functions such as
+    {func}`jax.numpy.ones`. Previously the default was always `float32`; it
+    is now `float64` when `jax_enable_x64` is set.
 
 * Bug fixes
   * The batching rules of the cuDNN fused attention primitives (used by
