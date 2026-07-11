@@ -222,6 +222,9 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a, b):
       c = jnp.einsum('ab,bc->ac', a, b)
       self.assertEqual(c.aval.mat.varying, {'x', 'y'})
+      c = jax.lax.pcast(c, 'y', to='unreduced')
+      self.assertEqual(c.aval.mat.varying, {'x'})
+      self.assertEqual(c.aval.mat.unreduced, {'y'})
       return c
 
     out = f(arr1, arr2)
@@ -262,6 +265,8 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(a, b):
       c = jnp.dot(a, b)
       self.assertEqual(c.aval.mat.varying, {'x'})
+      c = jax.lax.pcast(c, 'x', to='unreduced')
+      self.assertEqual(c.aval.mat.unreduced, {'x'})
       return c
 
     out = f(arr1, arr2)
@@ -282,9 +287,7 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(c.aval.mat.varying, {'x'})
       return c
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "vary_unreduced_cast is a Varying->Unreduced collective"):
+    with self.assertRaisesRegex(ValueError, "out_specs passed to shard_map"):
       f(arr1, arr2)
 
   def test_matmul_reduce_scatter(self):
@@ -5075,7 +5078,7 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @shard_map(in_specs=P('x'), out_specs=P(unreduced={'x'}))
     def f(x):
-      return x
+      return jax.lax.pcast(x, 'x', to='unreduced')
 
     out = f(arr)
     self.assertTupleEqual(out.shape, (2,))
