@@ -1972,12 +1972,16 @@ class MeshExecutable(stages.Executable):
         in_shardings = [
             sharding_impls.physical_sharding(a, s)
             if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
-            else s
-            for s, a in zip(self._in_shardings, self.in_avals)
+            else s for s, a in zip(self._in_shardings, self.in_avals)
+        ]
+        out_shardings = [
+            sharding_impls.physical_sharding(a, s)
+            if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
+            else s for s, a in zip(self._out_shardings, self.out_avals)
         ]
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
-            self._out_shardings, out_avals, out_committed, kept_var_bitvec,
+            out_shardings, out_avals, out_committed, kept_var_bitvec,
             self._dispatch_in_layouts, params.const_args)
       else:
         fastpath_data = None

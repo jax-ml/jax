@@ -3866,7 +3866,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     base_array = jax.random.key_data(out)
     self.assertEqual(base_array.shape, (2, 2, 8, 2))
-    self.assertEqual(base_array.sharding, NamedSharding(mesh, P(None, 'y', 'x')))
+    self.assertEqual(base_array.sharding,
+                     NamedSharding(mesh, P(None, 'y', 'x', None)))
 
     lowered_text = make_keys.lower(seeds).as_text()
     if config.use_shardy_partitioner.value:

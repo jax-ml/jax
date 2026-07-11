@@ -215,12 +215,16 @@ def _get_fastpath_data(
   in_shardings = [
       sharding_impls.physical_sharding(a, s)
       if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
-      else s
-      for s, a in zip(executable._in_shardings, executable.in_avals)
+      else s for s, a in zip(executable._in_shardings, executable.in_avals)
+  ]
+  out_shardings = [
+      sharding_impls.physical_sharding(a, s)
+      if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
+      else s for s, a in zip(executable._out_shardings, executable.out_avals)
   ]
   return pxla.MeshExecutableFastpathData(
       executable.xla_executable, out_tree, in_shardings,
-      executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
+      out_shardings, out_avals, out_committed, kept_var_bitvec,
       executable._dispatch_in_layouts, const_args)
 
 def make_jit_cpp_cache(capacity):
