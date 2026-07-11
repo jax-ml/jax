@@ -614,6 +614,34 @@ Array(-0.91113025, dtype=float32)
 
 +++
 
+### `custom_vjp` functions can't be forward-differentiated
+
+One important limitation: defining a `custom_vjp` rule makes the function
+reverse-mode only. JAX has no way to derive a JVP rule from your VJP rules,
+so applying forward-mode autodiff — `jax.jvp` or `jax.jacfwd` — to a
+function that contains a `custom_vjp` function raises an error:
+
+```{code-cell}
+:tags: [raises-exception]
+
+from jax import jvp
+
+jvp(lambda x: clip_gradient(-1., 1., x), (3.,), (1.,))
+```
+
+Note that reverse mode *composes* fine: `jax.grad`-of-`grad`,
+`jax.hessian`, and forward-over-reverse Hessian-vector products all work on
+functions containing `custom_vjp`, because after one reverse-mode pass the
+remaining computation is built from your `fwd` and `bwd` rules, which are
+themselves differentiable. It's only forward mode applied to the
+`custom_vjp` function directly that fails — as in `jax.jacfwd` of your
+model, or `jax.jvp`-based sensitivity analysis. If you need both modes,
+define a `custom_jvp` instead (JAX derives reverse mode from it
+automatically), or use a hijax primitive ({doc}`custom-derivatives`), which
+can carry rules for both modes at once.
+
++++
+
 ## More features and details
 
 +++

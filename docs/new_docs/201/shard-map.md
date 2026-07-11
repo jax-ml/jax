@@ -454,7 +454,7 @@ varying over that mesh axis. That's what `jax.lax.pcast` does:
 def f(x):
   print(jax.typeof(x))  # f32[6]
   y = jax.lax.pcast(x, 'i', to='varying')
-  print(jax.typeof(y))  # f32[6]{i}
+  print(jax.typeof(y))  # f32[6]{V:i}
 
 x = jnp.arange(6.)
 f(x)
@@ -478,7 +478,7 @@ def f(x, y):
 
 x = jax.device_put(jnp.arange(6.), jax.P('i'))
 y = jnp.arange(3.)
-print(jax.make_jaxpr(f)(x, y))
+print(jax.jit(f).trace(x, y).jaxpr)
 ```
 
 In a jaxpr, the multiplication operation requires the varying bits of its
@@ -557,6 +557,63 @@ A few notes on the table:
 * Neither `pscatter` nor `all_gather_invariant` have user APIs at the time of
   writing, but they're described here for completeness.
 
+#### Two more manual types: `unreduced` and `reduced`
+
+The VMA types above track two states per mesh axis: varying and invarying.
+There are two more, mirroring the `unreduced` and `reduced` sharding states
+available in explicit mode. In brief, a value that is *unreduced* along a
+mesh axis is a sum waiting to happen: each function instance along the axis
+holds a full-shape partial sum, and the value's true meaning is the sum of
+those pieces (think of the state after local matmuls but before the `psum`
+when the contracting dimension is split). A value that is *reduced* holds
+the same data on each instance, just like an invarying value; the type
+differs only in how autodiff treats it. Both exist mainly for controlling
+communication in autodiff-generated backward passes — see
+{ref}`jax-301-sharding-ad` for that story. Here we just summarize how they
+appear inside a `shard_map`.
+
+Each manual type corresponds to a sharding type outside the `shard_map`,
+with `in_specs` and `out_specs` mediating the correspondence:
+
+| outside (explicit mode) | inside (manual mode)    | along mesh axis `'i'`, instances hold      |
+|-------------------------|-------------------------|--------------------------------------------|
+| sharded, `f32[8@i]`     | varying, `f32[4]{V:i}`  | different values                           |
+| replicated, `f32[4]`    | invarying, `f32[4]`     | the same value                             |
+| unreduced, `f32[4]{U:i}`| unreduced, `f32[4]{U:i}`| partial sums of the true value             |
+| reduced, `f32[4]{R:i}`  | reduced, `f32[4]{R:i}`  | the same value (autodiff treats specially) |
+
+(Notice that varying is not quite the same as sharded: a sharded type names
+the array axis that is split, as in `8@i`, while inside the `shard_map` the
+split has already happened, so varying is a fact about the mesh axis alone.)
+
+```{code-cell}
+mesh = jax.make_mesh((2,), ('i',))
+jax.set_mesh(mesh)
+
+x_sharded = jax.device_put(jnp.arange(8.), jax.P('i'))
+x_replicated = jnp.arange(4.)
+x_unreduced = jnp.einsum('i,i->', x_sharded, x_sharded,
+                         out_sharding=jax.P(unreduced={'i'}))
+x_reduced = jax.reshard(x_replicated, jax.P(reduced={'i'}))
+
+@jax.shard_map(in_specs=(jax.P('i'), jax.P(), jax.P(unreduced={'i'}),
+                         jax.P(reduced={'i'})),
+               out_specs=jax.P('i'))
+def f(a, b, c, d):
+  print(jax.typeof(a))  # f32[4]{V:i}
+  print(jax.typeof(b))  # f32[4]
+  print(jax.typeof(c))  # f32[]{U:i}
+  print(jax.typeof(d))  # f32[4]{R:i}
+  return a
+
+_ = f(x_sharded, x_replicated, x_unreduced, x_reduced)
+```
+
+The `jax.lax.pcast` casts among these types are all free, performing no
+communication: `to='varying'` works from invarying or reduced values,
+`to='unreduced'` from varying values, and `to='reduced'` from invarying
+values. To actually perform a pending reduction, `jax.lax.psum` and
+`jax.lax.psum_scatter` accept unreduced inputs.
 
 ## API Specification
 

@@ -68,42 +68,7 @@ W = random.normal(W_key, (3,))
 b = random.normal(b_key, ())
 ```
 
-## Gradients
-
-### Hessian-vector products with `grad`-of-`grad`
-
-One thing we can do with higher-order `grad` is build a Hessian-vector product function. (Later on we'll write an even more efficient implementation that mixes both forward- and reverse-mode, but this one will use pure reverse-mode.)
-
-A Hessian-vector product function can be useful in a [truncated Newton Conjugate-Gradient algorithm](https://en.wikipedia.org/wiki/Truncated_Newton_method) for minimizing smooth convex functions, or for studying the curvature of neural network training objectives (e.g. [1](https://arxiv.org/abs/1406.2572), [2](https://arxiv.org/abs/1811.07062), [3](https://arxiv.org/abs/1706.04454), [4](https://arxiv.org/abs/1802.03451)).
-
-For a scalar-valued function $f : \mathbb{R}^n \to \mathbb{R}$ with continuous second derivatives (so that the Hessian matrix is symmetric), the Hessian at a point $x \in \mathbb{R}^n$ is written as $\partial^2 f(x)$. A Hessian-vector product function is then able to evaluate
-
-$\qquad v \mapsto \partial^2 f(x) \cdot v$
-
-for any $v \in \mathbb{R}^n$.
-
-The trick is not to instantiate the full Hessian matrix: if $n$ is large, perhaps in the millions or billions in the context of neural networks, then that might be impossible to store.
-
-Luckily, `grad` already gives us a way to write an efficient Hessian-vector product function. We just have to use the identity
-
-$\qquad \partial^2 f (x) v = \partial [x \mapsto \partial f(x) \cdot v] = \partial g(x)$,
-
-where $g(x) = \partial f(x) \cdot v$ is a new scalar-valued function that dots the gradient of $f$ at $x$ with the vector $v$. Notice that we're only ever differentiating scalar-valued functions of vector-valued arguments, which is exactly where we know `grad` is efficient.
-
-In JAX code, we can just write this:
-
-```{code-cell}
-def hvp(f, x, v):
-    return grad(lambda x: jnp.vdot(grad(f)(x), v))(x)
-```
-
-This example shows that you can freely use lexical closure, and JAX will never get perturbed or confused.
-
-We'll check this implementation a few cells down, once we see how to compute dense Hessian matrices. We'll also write an even better version that uses both forward-mode and reverse-mode.
-
-+++
-
-### Jacobians and Hessians using `jacfwd` and `jacrev`
+## Jacobians and Hessians using `jacfwd` and `jacrev`
 
 +++
 
@@ -164,6 +129,59 @@ This shape makes sense: if we start with a function $f : \mathbb{R}^n \to \mathb
 and so on.
 
 To implement `hessian`, we could have used `jacfwd(jacrev(f))` or `jacrev(jacfwd(f))` or any other composition of the two. But forward-over-reverse is typically the most efficient. That's because in the inner Jacobian computation we're often differentiating a function wide Jacobian (maybe like a loss function $f : \mathbb{R}^n \to \mathbb{R}$), while in the outer Jacobian computation we're differentiating a function with a square Jacobian (since $\nabla f : \mathbb{R}^n \to \mathbb{R}^n$), which is where forward-mode wins out.
+
++++
+
+## Stopping gradients
+
+Sometimes you want autodiff to treat a value as a constant: use it as usual
+in the forward pass, but propagate no derivative through it. That's what
+`jax.lax.stop_gradient` does — it's the identity function, with a derivative
+that's identically zero.
+
+One classic use is optimizing against a target built from the same
+parameters you're differentiating. In TD(0) reinforcement-learning updates,
+for example, the value-function target depends on the parameters, but a
+correct update requires treating it as a constant:
+
+```{code-cell}
+from jax import lax
+
+def value_fn(theta, state):
+  return jnp.dot(theta, state)
+
+def td_loss(theta, s_prev, r, s):
+  v_prev = value_fn(theta, s_prev)
+  target = r + value_fn(theta, s)
+  return -0.5 * (lax.stop_gradient(target) - v_prev) ** 2
+
+theta = jnp.array([0.1, -0.1, 0.])
+s_prev, r, s = jnp.array([1., 2., -1.]), 1., jnp.array([2., 1., 0.])
+print(grad(td_loss)(theta, s_prev, r, s))
+```
+
+Without the `stop_gradient`, the gradient would include a second term
+flowing through `target` — a different (and here, unwanted) algorithm.
+
+Another classic is the *straight-through estimator*: apply a
+non-differentiable (or zero-derivative) function in the forward pass, but
+differentiate as if it were the identity. There's a well-known
+`stop_gradient` one-liner for it:
+
+```{code-cell}
+def straight_through_round(x):
+  return x + lax.stop_gradient(jnp.round(x) - x)
+
+print(straight_through_round(1.7))        # rounds like round
+print(grad(straight_through_round)(1.7))  # differentiates like the identity
+```
+
+In the forward pass the `x`s cancel, leaving `round(x)`; under
+differentiation the `stop_gradient` term contributes zero, leaving the
+derivative of the identity. (For more principled ways to attach this kind of
+custom derivative behavior to functions or types, see
+{doc}`custom-jvp-vjp` and the straight-through example in
+{ref}`jax-301-hijax-types`.)
 
 +++
 
@@ -295,9 +313,54 @@ where we use `CT a` to denote the type for the cotangent space for `a`. In words
 
 This is great because it lets us build Jacobian matrices one row at a time, and the FLOP cost for evaluating $(x, v) \mapsto (f(x), v^\mathsf{T} \partial f(x))$ is only about three times the cost of evaluating $f$. In particular, if we want the gradient of a function $f : \mathbb{R}^n \to \mathbb{R}$, we can do it in just one call. That's how `grad` is efficient for gradient-based optimization, even for objectives like neural network training loss functions on millions or billions of parameters.
 
-There's a cost, though: though the FLOPs are friendly, memory scales with the depth of the computation. Also, the implementation is traditionally more complex than that of forward-mode, though JAX has some tricks up its sleeve (that's a story for a future notebook!).
+There's a cost, though: though the FLOPs are friendly, memory scales with the depth of the computation. Also, the implementation is traditionally more complex than that of forward-mode, though JAX has a trick up its sleeve: as we'll see next, it builds reverse-mode out of forward-mode.
 
 For more on how reverse-mode works, see [this tutorial video from the Deep Learning Summer School in 2017](http://videolectures.net/deeplearning2017_johnson_automatic_differentiation/).
+
++++
+
+### `jax.linearize`: one forward pass, many JVPs
+
+Every call to `jvp(f, (x,), (v,))` redoes the forward pass: it evaluates $f(x)$ alongside $\partial f(x) v$. If you want Jacobian-vector products against many different vectors $v$ at the *same* point $x$, that's wasteful — the work that depends only on $x$ could be done once. That's what `jax.linearize` provides:
+
+```{code-cell}
+from jax import linearize
+
+f = lambda W: predict(W, b, inputs)
+
+y, f_jvp = linearize(f, W)
+print(y)
+```
+
+In terms of Haskell-like type signatures,
+
+```haskell
+linearize :: (a -> b) -> a -> (b, T a -> T b)
+```
+
+Like `vjp`, `linearize` returns the primal output paired with a function; but here the function is the *pushforward* $v \mapsto \partial f(x) v$, with the forward pass already done and the intermediates it needs saved. Each call to `f_jvp` costs roughly the linear part of the work alone:
+
+```{code-cell}
+key, k1, k2 = random.split(key, 3)
+v1, v2 = random.normal(k1, W.shape), random.normal(k2, W.shape)
+print(f_jvp(v1))
+print(f_jvp(v2))
+```
+
+Besides the efficiency, `linearize` gives us a clean way to think about reverse-mode. The function `f_jvp` is guaranteed to be *linear*, and a linear function can be transposed — JAX exposes that operation as `jax.linear_transpose`. Reverse-mode is literally the composition of the two: linearize the function at $x$, then transpose the resulting linear map:
+
+```{code-cell}
+from jax import linear_transpose, vjp
+
+f_vjp = linear_transpose(f_jvp, W)      # transpose of the linearization...
+
+y2, f_vjp_ref = vjp(f, W)               # ...is exactly what vjp computes
+
+u = jnp.ones_like(y)
+print(jnp.allclose(f_vjp(u)[0], f_vjp_ref(u)[0]))
+```
+
+This "linearize, then transpose" decomposition is worth remembering. It's how JAX implements `vjp` and `grad` internally, and it's vocabulary the rest of this documentation section leans on: when we say one operation "transposes to" another — as in {doc}`sharding-ad` and {doc}`custom-derivatives` — we mean precisely this transposition of the linearized computation.
 
 +++
 
@@ -319,14 +382,9 @@ print(vgrad(lambda x: 3*x**2, jnp.ones((2, 2))))
 
 +++
 
-In a previous section, we implemented a Hessian-vector product function just using reverse-mode (assuming continuous second derivatives):
+A Hessian-vector product function can be useful in a [truncated Newton Conjugate-Gradient algorithm](https://en.wikipedia.org/wiki/Truncated_Newton_method) for minimizing smooth convex functions, or for studying the curvature of neural network training objectives (e.g. [1](https://arxiv.org/abs/1406.2572), [2](https://arxiv.org/abs/1811.07062), [3](https://arxiv.org/abs/1706.04454), [4](https://arxiv.org/abs/1802.03451)). The trick is to evaluate products $v \mapsto \partial^2 f(x) \cdot v$ *without instantiating the Hessian matrix*: for a scalar loss on millions or billions of parameters, the full $n \times n$ Hessian is impossible to store, but a Hessian-vector product costs only a small constant multiple of evaluating $f$.
 
-```{code-cell}
-def hvp(f, x, v):
-    return grad(lambda x: jnp.vdot(grad(f)(x), v))(x)
-```
-
-That's efficient, but we can do even better and save some memory by using forward-mode together with reverse-mode.
+The most efficient recipe uses forward-over-reverse composition.
 
 Mathematically, given a function $f : \mathbb{R}^n \to \mathbb{R}$ to differentiate, a point $x \in \mathbb{R}^n$ at which to linearize the function, and a vector $v \in \mathbb{R}^n$, the Hessian-vector product function we want is
 
@@ -346,7 +404,7 @@ def hvp(f, primals, tangents):
   return jvp(grad(f), primals, tangents)[1]
 ```
 
-Even better, since we didn't have to call `jnp.dot` directly, this `hvp` function works with arrays of any shape and with arbitrary container types (like vectors stored as nested lists/dicts/tuples), and doesn't even have a dependence on `jax.numpy`.
+As a bonus, since we didn't have to call `jnp.dot` directly, this `hvp` function works with arrays of any shape and with arbitrary container types (like vectors stored as nested lists/dicts/tuples), and doesn't even have a dependence on `jax.numpy`.
 
 Here's an example of how to use it:
 
@@ -510,6 +568,74 @@ def f(x):
 
 y, f_vjp = vjp(f, 4.)
 print(jit(f_vjp)(1.))
+```
+
+## Splitting the forward and backward passes
+
+`jax.grad` and `jax.vjp` package the forward and backward passes together:
+under a `jax.jit`, they compile into a single program. Usually that's what
+you want. But sometimes it's useful to run the forward and backward passes
+as *separate* compiled functions — say, to interleave the forward and
+backward passes of different microbatches or pipeline stages on a schedule
+of your own, with each function compiled once and reused many times.
+
+You can build this out of `jax.vjp` directly:
+
+```{code-cell}
+import jax
+
+def fwd_and_bwd(f):
+  def fwd(*args):
+    return jax.vjp(f, *args)
+  def bwd(f_vjp, y_bar):
+    return f_vjp(y_bar)
+  return jit(fwd), jit(bwd)
+```
+
+The trick is that the callable returned by `jax.vjp` is itself a pytree: its
+leaves are the residual values saved by the forward pass, and its tree
+structure records the backward-pass computation. So it can be returned out
+of one jit-compiled function and passed into another, like any other data.
+Notice that there's nothing specific to `f` in `bwd` — it's just "apply".
+
+Each of `fwd` and `bwd` compiles once, and we can call them however many
+times and in whatever order we like:
+
+```{code-cell}
+def layer(W, x):
+  return jnp.tanh(x @ W)
+
+fwd, bwd = fwd_and_bwd(layer)
+
+W1, W2 = jnp.ones((3, 3)), 2. * jnp.ones((3, 3))
+x0 = jnp.ones((2, 3))
+
+# forward through two layers, then backward, on our own schedule:
+x1, res1 = fwd(W1, x0)
+x2, res2 = fwd(W2, x1)
+dW2, dx1 = bwd(res2, jnp.ones_like(x2))
+dW1, dx0 = bwd(res1, dx1)
+```
+
+That computes the same gradients that an end-to-end `jax.grad` would:
+
+```{code-cell}
+def two_layers(W1, W2, x):
+  return jnp.sum(layer(W2, layer(W1, x)))
+
+dW1_ref, dW2_ref = grad(two_layers, argnums=(0, 1))(W1, W2, x0)
+print(jnp.allclose(dW1, dW1_ref), jnp.allclose(dW2, dW2_ref))
+```
+
+JAX also provides this pattern prepackaged as `jax.fwd_and_bwd`, with an
+`argnums` argument selecting which inputs to produce cotangents for:
+
+```{code-cell}
+fwd, bwd = jax.fwd_and_bwd(layer, argnums=(0, 1))
+
+y, residuals = fwd(W1, x0)
+dW1, dx0 = bwd(residuals, jnp.ones_like(y))
+print(dW1.shape, dx0.shape)
 ```
 
 ## Complex numbers and differentiation
@@ -825,9 +951,8 @@ applications of automatic differentiation in JAX. We hope you now feel that
 taking derivatives in JAX is easy and powerful. The rest of this
 documentation section goes deeper:
 
-- {doc}`sharding-ad` — how autodiff interacts with explicit sharding: the
-  same cotangent-type reasoning as this page, extended to distributed
-  arrays.
+- {doc}`sharding-ad` — how autodiff interacts with sharding: the same
+  cotangent-type reasoning as this page, extended to distributed arrays.
 - {doc}`custom-derivatives` — defining your own derivative rules with hijax
   primitives (including efficient derivatives at fixed points), and
   {doc}`custom-jvp-vjp` for the classic decorator APIs.

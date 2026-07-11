@@ -5,16 +5,18 @@ JAX 301: advanced autodiff and extending JAX
 ============================================
 
 The 101 docs introduced :func:`jax.grad`; the pages here go as deep as you
-like: the machinery underneath (JVPs, VJPs, Jacobians, Hessians), defining
-your own derivative rules and even your own types, autodiff with mutable
-state, and controlling the memory/compute tradeoff of differentiation.
+like: the machinery underneath (JVPs, VJPs, Jacobians, Hessians), how
+autodiff interacts with sharding, defining your own derivative rules and
+even your own types, autodiff with mutable state, and controlling the
+memory/compute tradeoff of differentiation.
 
 1. :doc:`cookbook` — the autodiff cookbook: Hessian-vector products,
    Jacobians with ``jacfwd``/``jacrev``, the ``jvp``/``vjp`` machinery and
    how it's composed, and differentiation with complex numbers.
-2. :doc:`sharding-ad` — how autodiff interacts with explicit sharding:
-   cotangent shardings as a function of primal shardings, and controlling
-   backward-pass communication with ``unreduced`` and ``reduced``.
+2. :doc:`sharding-ad` — how autodiff interacts with sharding: cotangent
+   shardings as a function of primal shardings, and controlling
+   backward-pass communication with ``unreduced`` and ``reduced``, in both
+   explicit and manual (``shard_map``) modes.
 3. :doc:`custom-derivatives` — defining custom derivative rules with hijax
    primitives, the recommended approach: one primitive can carry rules for
    both modes, plus linearization, batching, and more.
