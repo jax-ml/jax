@@ -3053,8 +3053,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, axis=axis, num_sections=num_sections)
       for shape, axis, num_sections in [
-          ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((12, 4), 1, 2),
-          ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
+          ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((3,), 0, [-1]),
+          ((12, 4), 1, 2), ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3),
+          ((12, 4), 0, [2, -2])]
     ],
     dtype=default_dtypes,
   )
@@ -3071,7 +3072,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # All testcases split the specified axis unequally
       for shape, axis, num_sections in [
           ((3,), 0, 2), ((12,), 0, 5), ((12, 4), 0, 7), ((12, 4), 1, 3),
-          ((2, 3, 5), -1, 2), ((2, 4, 4), -2, 3), ((7, 2, 2), 0, 3)]
+          ((2, 3, 5), -1, 2), ((2, 4, 4), -2, 3), ((7, 2, 2), 0, 3),
+          ((12,), 0, [2, -1])]
     ],
     dtype=default_dtypes,
   )
@@ -3200,7 +3202,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     [dict(shape=shape, axis=axis, num_sections=num_sections)
       for shape, axis, num_sections in [
           ((12, 4), 0, 4), ((12,), 1, 2),
-          ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2)]],
+          ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2),
+          ((12, 4), 0, [1, -2]), ((12, 4), 1, [-1]), ((2, 3, 4), 2, [-2])]],
     dtype=default_dtypes,
   )
   def testHVDSplit(self, shape, num_sections, axis, dtype):
