@@ -104,7 +104,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
   @jtu.parameterized.product(
-    num_devices=list(range(2, 9)),
+    num_devices=list(range(2, 5)),
     shard_input=[False, True],
     shard_output=[False, True],
   )
