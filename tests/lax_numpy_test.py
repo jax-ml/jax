@@ -2144,6 +2144,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testTriDefaultDtype(self):
+    self.assertEqual(jnp.tri(3).dtype, dtypes.default_float_dtype())
+
   def test_tri_bug_22751(self):
     with self.assertRaisesRegex(
         TypeError,

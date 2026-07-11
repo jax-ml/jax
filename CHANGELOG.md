@@ -47,6 +47,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     they produced arrays initialized to zeros. To recover the previous behavior,
     use {func}`jax.numpy.zeros` or {func}`jax.numpy.zeros_like` instead.
 
+* Changes
+  * {func}`jax.numpy.tri` now uses the default float dtype when `dtype` is
+    unspecified, matching NumPy and other array creation functions such as
+    {func}`jax.numpy.ones`. Previously the default was always `float32`; it
+    is now `float64` when `jax_enable_x64` is set.
+
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
 
