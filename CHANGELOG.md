@@ -50,6 +50,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
 
+* Bug fixes
+  * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
+    infinity for singular matrices when `p` is `None` or `2`, matching NumPy
+    and the other norms.
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
