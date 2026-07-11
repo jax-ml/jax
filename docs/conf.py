@@ -252,6 +252,7 @@ nb_execution_excludepatterns = [
     'distributed_data_loading.*',
     'notebooks/host-offloading.*',
     'notebooks/cute_dsl_jax.*',
+    'new_docs/401/cute-dsl.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------

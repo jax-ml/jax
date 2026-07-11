@@ -149,7 +149,7 @@ that unintentionally invalidate JAX's caches.
 
 JAX can also use a persistent compilation cache for use across multiple
 JAX processes.
-See {doc}`/persistent_compilation_cache`.
+See {ref}`jax-501-compilation-cache`.
 
 ### Gotcha: Dynamically Recreating Function Objects
 

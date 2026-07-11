@@ -360,7 +360,7 @@ postmortem.
 
 ```{warning}
 These flags are best suited to single-process development, and don't work
-well in multi-controller (multi-process) JAX ({doc}`/multi_process`).
+well in multi-controller (multi-process) JAX ({ref}`jax-501-multiprocess`).
 Raising a Python error on one process but not the others — say, when only
 one process's shard produces a NaN under `jax_debug_nans` — breaks the
 assumption that every process runs the same program in lockstep, and the
