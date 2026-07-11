@@ -478,7 +478,8 @@ per-device:
 @jax.shard_map(in_specs=(jax.P(None, 'X'), jax.P('X', None)),
                out_specs=jax.P(None, None, unreduced={'X'}))
 def matmul_partial(a, b):
-  return a @ b   # a local matmul of this device's pieces: a partial sum
+  out = a @ b   # a local matmul of this device's pieces: a partial sum
+  return jax.lax.pcast(out, 'X', to='unreduced')
 
 c = matmul_partial(a, b)
 print(jax.typeof(c))
