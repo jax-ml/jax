@@ -2248,7 +2248,7 @@ def cond(x: ArrayLike, p=None):
     raise ValueError(f"jnp.linalg.cond: input array must not be empty; got {arr.shape=}")
   if p is None or p == 2:
     s = svdvals(x)
-    return s[..., 0] / s[..., -1]
+    r = s[..., 0] / s[..., -1]
   elif p == -2:
     s = svdvals(x)
     r = s[..., -1] / s[..., 0]
