@@ -1605,6 +1605,75 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(jax.grad(sin))(2.0), jnp.cos(2.0))
     self.assertAllClose(jax.grad(jax.grad(sin))(2.0), -jnp.sin(2.0))
 
+  def test_structured_residuals(self):
+    # `lin` and `vjp_fwd` may return a fourth element, structured residuals,
+    # in which case `linearized` and `vjp_bwd` receive them as an extra
+    # argument after the (unstructured) residuals.
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def lin(self, nzs_in, x):
+        return self(x), (), True, {'x1': x, 'x2': x}
+
+      def linearized(self, res, sres, t):
+        return t * 2.0 * sres['x2']
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), (), True, {'x1': x, 'x2': x}
+
+      def vjp_bwd(self, res, sres, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * sres['x1'])
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    self.assertAllClose(jax.grad(square)(3.0), 6.0)
+    y, f_lin = jax.linearize(square, 3.0)
+    self.assertAllClose(y, 9.0)
+    self.assertAllClose(f_lin(1.0), 6.0)
+
+    # the sres tree is user-visible, with duplicate positions re-duplicated
+    _, f_vjp = jax.vjp(square, 3.0)
+    leaves = jax.tree.leaves(f_vjp.structured_residuals)
+    self.assertLen(leaves, 2)
+    self.assertIs(leaves[0], leaves[1])
+
+    # under jit, both sres leaves are the input, so input forwarding plus
+    # de-duplication leave the fwd call returning only the primal
+    fj = jax.jit(square)
+    self.assertAllClose(jax.grad(fj)(3.0), 6.0)
+    jaxpr = jax.make_jaxpr(lambda x: jax.vjp(fj, x)[1](1.0))(3.0)
+    fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == 'jit')
+    self.assertLen(fwd_eqn.outvars, 1)
+
+  def test_structured_residuals_require_vjp_bwd_override(self):
+    class Bad(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), (), True, {'x': x}
+
+      def vjp_bwd_retval(self, res, t):
+        return (t,)
+
+    with self.assertRaisesRegex(TypeError, "structured residuals"):
+      jax.grad(lambda x: Bad(jax.typeof(x))(x))(3.0)
+
   def test_jvp_derived_from_lin(self):
     class RaiseToStaticPower(VJPHiPrimitive):
       def __init__(self, in_aval, *, power):

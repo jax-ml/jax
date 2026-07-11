@@ -28,7 +28,7 @@ from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.tree_util import tree_flatten, tree_unflatten
+from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list, subs_list)
 
@@ -364,8 +364,10 @@ ad.primitive_jvps[xla_metadata_call_p] = _xla_metadata_call_jvp
 
 def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
                            ad_metadata):
-  (primal_jaxpr, num_residuals_out, nzs_out, in_fwd_res,
-   tangent_jaxpr) = ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
+      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
+  _, ures_avals, sres_avals = out_tree.unpack()
+  num_residuals_out = len(ures_avals) + len(sres_avals)
 
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
   tangent_metadata = _resolve_ad_metadata(xla_metadata, ad_metadata)
@@ -373,11 +375,14 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
   def _filter_zeros(is_nz_l, l):
     return tuple(x for nz, x in zip(is_nz_l, l) if nz)
 
-  def tangent_fun(residuals, *tangents):
+  def tangent_fun(residuals, structured_residuals, *tangents):
     tangents_nz = _filter_zeros(nzs, tangents)
-    assert len(residuals) + len(tangents_nz) == len(tangent_jaxpr.invars), (
-        len(residuals), len(tangents_nz), len(tangent_jaxpr.invars))
-    nz_outs = xla_metadata_call_p.bind(*residuals, *tangents_nz,
+    sres_flat = tree_leaves(structured_residuals)
+    assert (len(residuals) + len(tangents_nz) + len(sres_flat)
+            == len(tangent_jaxpr.invars)), (
+        len(residuals), len(tangents_nz), len(sres_flat),
+        len(tangent_jaxpr.invars))
+    nz_outs = xla_metadata_call_p.bind(*residuals, *tangents_nz, *sres_flat,
                                        jaxpr=tangent_jaxpr,
                                        xla_metadata=tangent_metadata,
                                        ad_metadata='same')
@@ -391,8 +396,10 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
                                  xla_metadata=xla_metadata,
                                  ad_metadata=ad_metadata)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
-  residuals_ans = subs_list(in_fwd_res, [*jaxpr.consts, *primals], residuals_ans)
-  return primal_ans, nzs_out, residuals_ans, tangent_fun
+  ures, sres_flat = split_list(residuals_ans, [len(ures_avals)])
+  ures = subs_list(in_fwd_res, [*jaxpr.consts, *primals], ures)
+  sres = sres_avals.update(sres_flat).unflatten()
+  return primal_ans, nzs_out, ures, sres, tangent_fun
 ad.primitive_linearizations[xla_metadata_call_p] = _xla_metadata_call_lin
 
 

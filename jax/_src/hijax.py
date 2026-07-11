@@ -629,38 +629,51 @@ def _call_hi_primitive_batcher(axis_data, args_flat, dims_flat, _prim):
   return ans_flat, dims_flat
 batching.fancy_primitive_batchers[call_hi_primitive_p] = _call_hi_primitive_batcher
 
+# A `lin` or `vjp_fwd` rule may return (ans, res), (ans, res, nzs_out), or
+# (ans, res, nzs_out, sres). When it returns structured residuals, the paired
+# backward rule receives them explicitly: `linearized(res, sres, *tangents)`,
+# and `vjp_bwd(res, sres, outgrad, *arg_accums)` (which must be overridden).
 def _call_hi_primitive_linearize(is_vjp, nz_in_flat, *args_flat, _prim):
   args = tree_unflatten(_prim.in_tree, args_flat)
   nzs_in = tree_unflatten(_prim.in_tree, nz_in_flat)
   if is_vjp:
-    ans, residuals, *maybe_nzs_out = _prim.vjp_fwd(nzs_in, *args)
+    ans, residuals, *rest = _prim.vjp_fwd(nzs_in, *args)
     linearized = partial(fake_linear_op, _prim, nz_in_flat)
   else:
-    ans, residuals, *maybe_nzs_out = _prim.lin(nzs_in, *args)
+    ans, residuals, *rest = _prim.lin(nzs_in, *args)
     linearized = partial(flatten_user_linearized, _prim)
   ans_flat = tree_leaves_checked(_prim.out_tree, ans)
-  nzs_out = maybe_nzs_out[0] if maybe_nzs_out else True
+  nzs_out = rest[0] if rest else True
+  sres = rest[1] if len(rest) > 1 else None
+  if (sres is not None and is_vjp and
+      type(_prim).vjp_bwd is VJPHiPrimitive.vjp_bwd):
+    raise TypeError(
+        f"{type(_prim).__name__} returned structured residuals from `vjp_fwd`, "
+        "which requires overriding `vjp_bwd(res, sres, outgrad, *arg_accums)`")
   nzs_out_flat = broadcast_prefix(nzs_out, ans)
   linearized = partial(linearized, nzs_out_flat) if is_vjp else linearized
-  return ans_flat, nzs_out_flat, residuals, linearized
+  return ans_flat, nzs_out_flat, residuals, sres, linearized
 ad.primitive_linearizations[call_hi_primitive_p] = _call_hi_primitive_linearize
 
-def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, *tangents):
+def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, sres, *tangents):
+  rs = rs if sres is None else (rs, sres)  # unpacked in the transpose rule
   residuals_flat, residuals_tree = tree_flatten(rs)
   assert nz_in_flat == [not isinstance(t, ad_util.Zero) for t in tangents]
   nz_tangents = tree_leaves(tangents)
   out_nz = call_hi_primitive_linearized_p.bind(
       *residuals_flat, *nz_tangents, residuals_tree=residuals_tree, _prim=prim,
-      nz_in_flat=tuple(nz_in_flat), nz_out_flat=tuple(nz_out_flat))
+      nz_in_flat=tuple(nz_in_flat), nz_out_flat=tuple(nz_out_flat),
+      has_sres=sres is not None)
   out_nz_iter = iter(out_nz)
   out = [next(out_nz_iter) if nz else ad_util.Zero(a.to_tangent_aval())
          for a, nz in zip(prim.out_avals_flat, nz_out_flat)]
   assert next(out_nz_iter, sentinel := object()) is sentinel
   return out
 
-def flatten_user_linearized(prim, residuals, *tangents_flat):
+def flatten_user_linearized(prim, residuals, sres, *tangents_flat):
   tangents = tree_unflatten(prim.in_tree, tangents_flat)
-  tangents_out = prim.linearized(residuals, *tangents)
+  tangents_out = (prim.linearized(residuals, *tangents) if sres is None else
+                  prim.linearized(residuals, sres, *tangents))
   flat_vals, treedef_actual = tracing_registry.flatten(
       tangents_out, lambda x: isinstance(x, ad_util.Zero))
   if treedef_actual != prim.out_tree:
@@ -675,11 +688,11 @@ call_hi_primitive_linearized_p.multiple_results = True
 call_hi_primitive_linearized_p.is_high = lambda *args, _prim, **_: True
 @call_hi_primitive_linearized_p.def_abstract_eval
 def _call_hi_primitive_linearized_abstract_eval(
-    *_args, _prim, residuals_tree, nz_in_flat, nz_out_flat):
+    *_args, _prim, residuals_tree, nz_in_flat, nz_out_flat, has_sres):
   return [t.to_tangent_aval() for t, nz in zip(_prim.out_avals_flat, nz_out_flat) if nz]
 
 def _call_hi_primitive_linearized_transpose(
-    cts_flat_, *args, _prim, residuals_tree, nz_in_flat, nz_out_flat):
+    cts_flat_, *args, _prim, residuals_tree, nz_in_flat, nz_out_flat, has_sres):
   residuals_flat, accums_flat = split_list(args, [residuals_tree.num_leaves])
   residuals = tree_unflatten(residuals_tree, residuals_flat)
   accums_flat_ = iter(accums_flat)
@@ -692,13 +705,19 @@ def _call_hi_primitive_linearized_transpose(
               for a, nz in zip(_prim.out_avals_flat, nz_out_flat)]
   assert next(cts_flat_iter, sentinel := object()) is sentinel
   cts = tree_unflatten(_prim.out_tree, cts_flat)
-  none = _prim.vjp_bwd(residuals, cts, *accums)
+  if has_sres:
+    residuals, sres = residuals
+    none = _prim.vjp_bwd(residuals, sres, cts, *accums)
+  else:
+    none = _prim.vjp_bwd(residuals, cts, *accums)
   assert none is None
 ad.fancy_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_transpose
 
 def _call_hi_primitive_linearized_prettyprint(eqn, context, settings):
   params = dict(eqn.params, _prim=eqn.params['_prim'].__class__.__name__,
                 residuals_tree='...')
+  if not params['has_sres']:
+    del params['has_sres']
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 core.pp_eqn_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_prettyprint
 
@@ -788,7 +807,7 @@ def linearize_from_jvp(self, nzs_in, *primals):
     return out_primals_flat, out_tangents_flat
 
   dbg = debug_info('linearize_from_jvp', self.jvp, (primals, primals), {})
-  out_primals_flat, nzs_out_flat, consts, linearized = ad.linearize_from_jvp(
+  out_primals_flat, nzs_out_flat, consts, _, linearized = ad.linearize_from_jvp(
       lu.wrap_init(jvp_flat, debug_info=dbg), True, nzs_in_flat,
       False, False, primals_flat, {})
   out_primals = tree_unflatten(self.out_tree, out_primals_flat)
@@ -798,7 +817,7 @@ def linearize_from_jvp(self, nzs_in, *primals):
 def apply_derived_linearization(self, residuals, *tangents):
   """The `linearized` rule paired with `lin = linearize_from_jvp`."""
   tangents_flat = self.in_tree.flatten_up_to(tangents)
-  out_tangents_flat = residuals.apply(residuals.consts, *tangents_flat)
+  out_tangents_flat = residuals.apply(residuals.consts, None, *tangents_flat)
   return tree_unflatten(self.out_tree, out_tangents_flat)
 
 def jvp_from_lin(self, primals, tangents):
@@ -820,8 +839,9 @@ def jvp_from_lin(self, primals, tangents):
   tangents_flat = self.in_tree.flatten_up_to(tangents)
   nzs_in = tree_unflatten(
       self.in_tree, [not isinstance(t, ad_util.Zero) for t in tangents_flat])
-  out_primals, residuals, *_ = self.lin(nzs_in, *primals)
-  out_tangents = self.linearized(residuals, *tangents)
+  out_primals, residuals, *rest = self.lin(nzs_in, *primals)
+  out_tangents = (self.linearized(residuals, *tangents) if len(rest) < 2 else
+                  self.linearized(residuals, rest[1], *tangents))
   return out_primals, out_tangents
 
 def vjp_fwd_from_jvp(self, nzs_in, *primals):
@@ -957,7 +977,7 @@ class CustomVJPTraced(VJPHiPrimitive):
     nzs_out_flat = [True] * len(self.out_avals_flat)
     tangents_flat = tree_leaves_checked(self.in_tree, tangents)
     tangents_out_flat = fake_linear_op(self, nzs_in_flat, nzs_out_flat, residuals,
-                                       *tangents_flat)
+                                       None, *tangents_flat)
     tangents_out = tree_unflatten(self.out_tree, tangents_out_flat)
     return primals_out, tangents_out
 

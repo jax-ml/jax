@@ -5288,7 +5288,8 @@ class APITest(jtu.JaxTestCase):
   def test_deferred_primal_with_direct_linearize(self):
     def my_sin_lin(_is_vjp, nzs, x):
       nz, = nzs
-      return (my_sin_p.bind(x, accuracy=None), nz, x, lambda x, t: lax.mul(t, lax.cos(x)))
+      return (my_sin_p.bind(x, accuracy=None), nz, x, None,
+              lambda x, _, t: lax.mul(t, lax.cos(x)))
 
     my_sin_p = core.Primitive("my_sin_p")
     my_sin_p.def_impl(lax.sin)
@@ -5297,6 +5298,174 @@ class APITest(jtu.JaxTestCase):
 
     with config.use_direct_linearize(True):
       jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
+
+  def test_structured_residuals_deduped_by_jit(self):
+    # Structured residuals can refer to the same value in multiple tree
+    # positions. The jit fwd call should return one copy of each value, then
+    # re-duplicate to restore the tree structure.
+    def my_sin_lin(_is_vjp, nzs, x):
+      nz, = nzs
+      c = lax.cos(x)
+      return (my_sin_p.bind(x), nz, (), {'a': c, 'b': c},
+              lambda _, sres, t: lax.mul(t, sres['b']))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(my_sin_p,
+                           mlir.lower_fun(lax.sin, multiple_results=False))
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    f = jax.jit(my_sin_p.bind)
+    with config.use_direct_linearize(True):
+      y, f_vjp = jax.vjp(f, 1.0)
+      x_ct, = f_vjp(1.0)
+      self.assertAllClose(y, jnp.sin(1.0))
+      self.assertAllClose(x_ct, jnp.cos(1.0))
+      leaves = jax.tree.leaves(f_vjp.structured_residuals)
+      self.assertLen(leaves, 2)
+      self.assertIs(leaves[0], leaves[1])
+
+      jaxpr = jax.make_jaxpr(lambda x: jax.vjp(f, x)[1](1.0))(1.0)
+      fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == 'jit')
+      self.assertLen(fwd_eqn.outvars, 2)  # primal out and one copy of cos
+
+  def test_structured_residuals_deduped_by_scan(self):
+    # Like test_structured_residuals_deduped_by_jit, but for scan: one stacked
+    # copy of each residual comes out of the scan, then the tree structure is
+    # restored by re-duplication.
+    def my_sin_lin(_is_vjp, nzs, x):
+      nz, = nzs
+      c = lax.cos(x)
+      return (my_sin_p.bind(x), nz, (), {'a': c, 'b': c},
+              lambda _, sres, t: lax.mul(t, sres['b']))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(my_sin_p,
+                           mlir.lower_fun(lax.sin, multiple_results=False))
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    def f(xs):
+      def body(c, x):
+        y = my_sin_p.bind(x)
+        return c + y, y * 2.
+      c_out, ys = jax.lax.scan(body, 0., xs)
+      return c_out + ys.sum()
+
+    xs = jnp.arange(1., 4.)
+    with config.use_direct_linearize(True):
+      _, f_vjp = jax.vjp(f, xs)
+      x_ct, = f_vjp(1.0)
+      self.assertAllClose(x_ct, 3 * jnp.cos(xs))
+      leaves = jax.tree.leaves(f_vjp.structured_residuals)
+      self.assertLen(leaves, 2)
+      self.assertIs(leaves[0], leaves[1])
+      self.assertEqual(leaves[0].shape, xs.shape)  # stacked
+
+      jaxpr = jax.make_jaxpr(lambda xs: jax.vjp(f, xs)[1](1.0))(xs)
+      fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == 'scan')
+      self.assertLen(fwd_eqn.outvars, 3)  # carry, ys, one stacked copy of cos
+
+  def test_structured_residuals_deduped_by_shard_map(self):
+    # Like test_structured_residuals_deduped_by_jit, but for shard_map: an
+    # sres leaf can forward to a primal output (with the primal's out_spec), a
+    # ures output, or an earlier sres leaf.
+    def my_sin_lin(_is_vjp, nzs, x):
+      nz, = nzs
+      c = lax.cos(x)
+      return (my_sin_p.bind(x), nz, (), {'a': c, 'b': c},
+              lambda _, sres, t: lax.mul(t, sres['b']))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(my_sin_p,
+                           mlir.lower_fun(lax.sin, multiple_results=False))
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ('i',))
+    g = jax.shard_map(my_sin_p.bind, mesh=mesh, in_specs=P('i'),
+                      out_specs=P('i'))
+    f = lambda xs: g(xs).sum()
+
+    xs = jnp.arange(1., 5.)
+    with config.use_direct_linearize(True):
+      _, f_vjp = jax.vjp(f, xs)
+      x_ct, = f_vjp(1.0)
+      self.assertAllClose(x_ct, jnp.cos(xs))
+
+      # the sres tree structure propagates out of the shard_map, with the
+      # duplicated pair re-duplicated to the same object
+      leaves = jax.tree.leaves(f_vjp.structured_residuals)
+      self.assertLen(leaves, 2)
+      self.assertIs(leaves[0], leaves[1])
+
+      # the fwd shard_map returns the primal and one copy of cos
+      jaxpr = jax.make_jaxpr(lambda x: jax.vjp(f, x)[1](1.0))(xs)
+      fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == 'shard_map')
+      self.assertLen(fwd_eqn.outvars, 2)
+
+  def test_structured_residuals_input_forwarded_by_jit(self):
+    # An sres leaf that is a forwarded input shouldn't be returned from the
+    # jit fwd call; it's restored from the caller's argument.
+    def my_sin_lin(_is_vjp, nzs, x):
+      nz, = nzs
+      return (my_sin_p.bind(x), nz, (), {'x': x},
+              lambda _, sres, t: lax.mul(t, lax.cos(sres['x'])))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(my_sin_p,
+                           mlir.lower_fun(lax.sin, multiple_results=False))
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    f = jax.jit(my_sin_p.bind)
+    with config.use_direct_linearize(True):
+      _, f_vjp = jax.vjp(f, 1.0)
+      x_ct, = f_vjp(1.0)
+      self.assertAllClose(x_ct, jnp.cos(1.0))
+
+      jaxpr = jax.make_jaxpr(lambda x: jax.vjp(f, x)[1](1.0))(1.0)
+      fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == 'jit')
+      self.assertLen(fwd_eqn.outvars, 1)  # just the primal; x is forwarded
+
+  def test_structured_residuals_input_forwarded_by_scan(self):
+    # An sres leaf that is a forwarded xs element has stacked value equal to
+    # the whole xs argument, so the scan needn't return it; it's restored from
+    # the caller's argument. (Consts and carries can't be forwarded this way.)
+    def my_sin_lin(_is_vjp, nzs, x):
+      nz, = nzs
+      return (my_sin_p.bind(x), nz, (), {'x': x},
+              lambda _, sres, t: lax.mul(t, lax.cos(sres['x'])))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(my_sin_p,
+                           mlir.lower_fun(lax.sin, multiple_results=False))
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    def f(xs):
+      def body(c, x):
+        return c + my_sin_p.bind(x), c
+      c_out, ys = jax.lax.scan(body, 0., xs)
+      return c_out
+
+    xs = jnp.arange(1., 4.)
+    with config.use_direct_linearize(True):
+      _, f_vjp = jax.vjp(f, xs)
+      x_ct, = f_vjp(1.0)
+      self.assertAllClose(x_ct, jnp.cos(xs))
+      leaf, = jax.tree.leaves(f_vjp.structured_residuals)
+      self.assertIs(leaf, xs)  # the xs argument itself, not a stacked copy
+
+      jaxpr = jax.make_jaxpr(lambda x: jax.vjp(f, x)[1](1.0))(xs)
+      fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == 'scan')
+      # carry out and ys only; the stacked x residual is forwarded
+      self.assertLen(fwd_eqn.outvars, 2)
 
   def test_ensure_compile_time_eval_no_leaks(self):
     # https://github.com/jax-ml/jax/issues/25847
