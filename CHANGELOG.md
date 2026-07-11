@@ -38,6 +38,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     assumed symmetric), so results are unchanged while the transform is
     ~1.4x faster at typical sizes.
 
+* Bug fixes
+  * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
+    infinity for singular matrices when `p` is `None` or `2`, matching NumPy
+    and the other norms.
+
 ## JAX 0.11.1 (August 17, 2026)
 
 * New features
