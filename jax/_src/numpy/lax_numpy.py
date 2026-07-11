@@ -7088,7 +7088,9 @@ def fill_diagonal(a: ArrayLike, val: ArrayLike, wrap: bool = False, *,
       dimensions must be the same size.
     val: scalar or array with which to fill the diagonal. If an array, it will
       be flattened and repeated to fill the diagonal entries.
-    wrap: Not implemented by JAX. Only the default value of ``False`` is supported.
+    wrap: if True, the diagonal of a tall 2-dimensional array wraps around,
+      restarting every ``ncols + 1`` rows. Only affects arrays with
+      ``a.ndim == 2`` and more rows than columns. Default is False.
     inplace: must be set to False to indicate that the input is not modified
       in-place, but rather a modified copy is returned.
 
@@ -7128,6 +7130,16 @@ def fill_diagonal(a: ArrayLike, val: ArrayLike, wrap: bool = False, *,
            [0, 1, 0, 0, 0],
            [0, 0, 1, 0, 0]], dtype=int32)
 
+    With ``wrap=True``, the diagonal of a tall array wraps around:
+
+    >>> x = jnp.zeros((5, 3), dtype=int)
+    >>> jnp.fill_diagonal(x, 1, wrap=True, inplace=False)
+    Array([[1, 0, 0],
+           [0, 1, 0],
+           [0, 0, 1],
+           [0, 0, 0],
+           [1, 0, 0]], dtype=int32)
+
     And for square N-dimensional arrays, the N-dimensional diagonal is filled:
 
     >>> y = jnp.zeros((2, 2, 2))
@@ -7140,13 +7152,21 @@ def fill_diagonal(a: ArrayLike, val: ArrayLike, wrap: bool = False, *,
   """
   if inplace:
     raise NotImplementedError("JAX arrays are immutable, must use inplace=False")
-  if wrap:
-    raise NotImplementedError("wrap=True is not implemented, must use wrap=False")
   a, val = util.ensure_arraylike("fill_diagonal", a, val)
   if a.ndim < 2:
     raise ValueError("array must be at least 2-d")
   if a.ndim > 2 and not all(n == a.shape[0] for n in a.shape[1:]):
     raise ValueError("All dimensions of input must be of equal length")
+  if a.ndim == 2:
+    # As in np.fill_diagonal, fill entries at flat index k * (ncols + 1), where
+    # k is unbounded if wrap=True so that the diagonal wraps for tall matrices.
+    # The min() clips end for wide matrices, matching a.flat[:ncols**2:ncols+1];
+    # unlike slicing, arange does not clip out-of-range stops.
+    ncols = a.shape[1]
+    end = a.size if wrap else min(a.size, ncols * ncols)
+    idx = np.arange(0, end, ncols + 1)
+    return a.at[idx // ncols, idx % ncols].set(
+        val if val.ndim == 0 else _tile_to_size(val.ravel(), idx.size))
   n = min(a.shape)
   idx = diag_indices(n, a.ndim)
   return a.at[idx].set(val if val.ndim == 0 else _tile_to_size(val.ravel(), n))
