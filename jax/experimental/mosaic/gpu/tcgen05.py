@@ -27,6 +27,7 @@ from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
+from jaxlib.mlir.dialects import vector
 import numpy as np
 
 from . import fragmented_array as fa
@@ -1383,7 +1384,9 @@ class TMEMRef:
     lane = arith.remui(utils.thread_idx(), arith.constant(i32, utils.WARPGROUP_SIZE))
     for c in range(num_cols):
       ptr = _tmem_addr_to_ptr(arith.addi(self.address, arith.constant(i32, c)))
-      val = nvvm.tcgen05_ld(i32, nvvm.Tcgen05LdStShape.SHAPE_32X32B, ptr)
+      i32_vec = ir.VectorType.get((1,), i32)
+      vec_val = nvvm.tcgen05_ld(i32_vec, nvvm.Tcgen05LdStShape.SHAPE_32X32B, ptr)
+      val = vector.extract(vec_val, [], [0])
       dtype_bitwidth = utils.bitwidth(self.dtype)
       full_packing = 32 // dtype_bitwidth
       if self.packing == 1:
