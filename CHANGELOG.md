@@ -26,9 +26,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.custom_remat` to the top-level `jax` namespace, for
     per-function control of rematerialization under the new `jax_remat3`
     implementation.
-  * `jax.checkpoint_policies` is now a submodule rather than a namespace
-    object (so `from jax.checkpoint_policies import ...` now works; attribute
-    access is unchanged), and it additionally exposes the name-based policy
+  * `jax.checkpoint_policies` additionally exposes the name-based policy
     classes `SaveOnlyTheseNames`, `SaveAnyNamesButThese`, and
     `SaveAndOffloadOnlyTheseNames`.
 
