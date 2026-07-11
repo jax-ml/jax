@@ -100,7 +100,7 @@ class OffloadDotWithNoBatchDims:
   offload_src: str
   offload_dst: str
 
-  def __call__(self, prim, *_, **params):
+  def __call__(self, prim, *_, **params) -> Any:
     if prim is lax_internal.dot_general_p:
       (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
       if not lhs_b and not rhs_b:
@@ -155,7 +155,7 @@ class SaveAndOffloadOnlyTheseNames:
   offload_src: str
   offload_dst: str
 
-  def __call__(self, prim, *_, **params):
+  def __call__(self, prim, *_, **params) -> Any:
     if prim is name_p and params['name'] in self.names_which_can_be_saved:
       return pe.Saveable
     if prim is name_p and params['name'] in self.names_which_can_be_offloaded:
