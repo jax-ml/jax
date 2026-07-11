@@ -253,17 +253,6 @@ print(take_vjp_jaxpr())
 The backward pass boils down to `b[c:c+1] += j`, an in-place add-update of
 one element of the gradient ref, with no dense one-hot array in sight.
 
-How does this work? During transposition, each primitive's backward rule is
-handed a *gradient accumulator* for each input, and when a gradient ref is
-bound the accumulator is backed by that ref. Built-in primitives like
-`dynamic_slice` (which implements the indexing above) check for a ref-backed
-accumulator and perform an in-place add-update of just the entries they
-touched. If you define custom derivatives with hijax, you can make your own
-primitives do the same: implement the general `vjp_bwd` method (rather than
-the convenience wrapper `vjp_bwd_retval`) and handle the `RefAccum` case
-with an in-place update. See {ref}`jax-301-vjp-bwd-accums` for the full
-story and a worked example.
-
 ## `DontWant`: skipping unneeded gradients
 
 The VJP function returned by `jax.vjp` computes gradients for all the

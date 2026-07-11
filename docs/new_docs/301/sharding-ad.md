@@ -15,7 +15,7 @@ nosearch: true
 ---
 
 (jax-301-sharding-ad)=
-# Autodiff and sharding
+# Autodiff and explicit sharding
 
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
@@ -42,9 +42,6 @@ makes things interesting. Replication's dual under transposition is
 sum happens. Demanding efficient autodiff plus local reasoning in the
 presence of replication is what leads to the two new sharding states
 introduced below, `unreduced` and `reduced`.
-
-Most of this page works in explicit mode; the final section shows the same
-story playing out in manual mode, inside {func}`jax.shard_map`.
 
 We'll use two CPU devices and a one-axis mesh throughout:
 
@@ -442,107 +439,8 @@ premise 4 you could simulate it by tacking on an extra device-indexed axis;
 Unreduced is in effect that axis, tracked in the sharding instead of the
 shape.)
 
-## Manual mode: autodiff and `shard_map`
-
-In manual mode ({ref}`jax-201-shard-map`), you write per-device code and
-communication is explicit: an AllReduce isn't implied by an `out_sharding`
-or performed by a `reshard` — it's a `jax.lax.psum` you place yourself. All
-the machinery above has a manual-mode counterpart, run by the same rule:
-cotangent types are a function of primal types.
-
-Inside a `shard_map`, types track how each value relates to its counterparts
-on the other devices, along each mesh axis the map is manual over. There are
-four states per axis, mirroring the four sharding states outside (see
-{ref}`jax-201-shard-map` for a fuller introduction):
-
-| outside (explicit mode)  | inside (manual mode)    | along `X`, devices hold        |
-|--------------------------|-------------------------|--------------------------------|
-| sharded, `f32[8@X]`      | varying, `f32[4]{V:X}`  | different values               |
-| replicated, `f32[4]`     | invarying, `f32[4]`     | the same value                 |
-| unreduced, `f32[4]{U:X}` | unreduced, `f32[4]{U:X}`| partial sums of the true value |
-| reduced, `f32[4]{R:X}`   | reduced, `f32[4]{R:X}`  | the same value, with unreduced cotangents |
-
-The `in_specs` and `out_specs` mediate the correspondence: a `P('X')` input
-binds to a varying value inside, `P()` to an invarying one, and
-`P(unreduced={'X'})` / `P(reduced={'X'})` pass through as themselves. (One
-difference from the outside types: sharded names the array axis that is
-split, as in `8@X`, while inside the split has already happened, so varying
-is a fact about the mesh axis alone.) The cotangent map is the image of the
-one above: varying and invarying are each their own cotangent type, and
-unreduced and reduced swap.
-
-Here's the matmul from the unreduced section — same `a` and `b` — written
-per-device:
-
-```{code-cell}
-@jax.shard_map(in_specs=(jax.P(None, 'X'), jax.P('X', None)),
-               out_specs=jax.P(None, None, unreduced={'X'}))
-def matmul_partial(a, b):
-  return a @ b   # a local matmul of this device's pieces: a partial sum
-
-c = matmul_partial(a, b)
-print(jax.typeof(c))
-```
-
-Each device multiplies its column block of `a` with its row block of `b`, a
-computation whose result is *varying* over `X` — each device holds a
-different partial sum. Declaring `out_specs` unreduced makes `shard_map`
-insert a free varying-to-unreduced cast, and outside we get exactly the
-`float32[2,2]{U:X}` value we built with `out_sharding` before. The backward
-pass:
-
-```{code-cell}
-def matmul_loss(a, b):
-  return jnp.sum(jax.reshard(matmul_partial(a, b), jax.P(None, None)))
-
-print(jax.jit(jax.grad(matmul_loss, argnums=(0, 1))).trace(a, b).jaxpr)
-```
-
-Read the two `shard_map` equations. In the forward one, the body is a local
-`dot_general` on varying operands followed by the free
-`vary_unreduced_cast`. In the backward one, the cotangent of the unreduced
-output arrives with `in_specs=P(None, None, reduced={'X'})` — the boundary
-specs obey the cotangent map — and the body is `reduced_vary_cast` (the free
-transpose of the forward's free cast) followed by two local dots. Neither
-body contains any communication: the single AllReduce is the transposed
-outer `reshard`, exactly where explicit mode put it.
-
-More generally, in manual mode every type cast (`jax.lax.pcast`) is free and
-`psum` is the communication, and transposition pairs them up:
-
-| forward                          | type                 | transpose                        | type                  |
-|----------------------------------|----------------------|----------------------------------|-----------------------|
-| `jax.lax.psum`                   | varying → invarying  | `jax.lax.pcast(..., to='varying')` | invarying → varying |
-| `jax.lax.pcast(..., to='reduced')` | invarying → reduced | `jax.lax.psum` on an unreduced value | unreduced → invarying |
-| `jax.lax.pcast(..., to='unreduced')` | varying → unreduced | `jax.lax.pcast(..., to='varying')` | reduced → varying |
-
-The first row is the classic story (see the
-[shard_map transposition JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html)
-and the collectives table in {ref}`jax-201-shard-map`): summing transposes
-to marking-as-varying. The second row is the manual-mode version of this
-page's main trick: a free cast to reduced in the forward pass transposes to
-the `psum` that pays for it in the backward pass. And the third row is
-free in both directions, since declaring values to be partial sums moves no
-data either way. As in explicit mode, where you place free casts in your
-forward code determines where the backward-pass `psum`s run.
-
-That means the reduced-weights pattern carries over verbatim. Give the
-weights a reduced type on the way in, and gradients come out unreduced, with
-no `psum` anywhere in the backward pass:
-
-```{code-cell}
-w_r = jax.reshard(w, jax.P(None, None, reduced={'X'}))
-
-@jax.shard_map(in_specs=(jax.P('X', None), jax.P(None, None, reduced={'X'})),
-               out_specs=jax.P('X', None))
-def apply_layer(x, w):
-  return jnp.tanh(x @ w)
-
-dw = jax.grad(lambda w, x: jnp.sum(apply_layer(x, w) ** 2))(w_r, x)
-print(jax.typeof(dw))
-```
-
-So a model whose layers are written with `shard_map` accumulates unreduced
-gradients across microbatches with a single AllReduce per step, exactly like
-the capstone above. For the full menu of collectives and their transposes,
-see the tables in {ref}`jax-201-shard-map`.
+This page covered explicit sharding mode. In manual mode
+({ref}`jax-201-shard-map`), where you write per-device code with explicit
+collectives like `psum`, the same questions get answered differently — how
+forward-pass collectives transpose has its own story, planned for a future
+page.

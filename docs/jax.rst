@@ -101,7 +101,6 @@ Automatic differentiation
     linearize
     linear_transpose
     vjp
-    fwd_and_bwd
     custom_gradient
     closure_convert
     checkpoint

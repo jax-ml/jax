@@ -19,45 +19,39 @@ nosearch: true
 
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
-Sometimes you want to tell JAX how to differentiate something yourself.
-Maybe the rule-by-rule derivative that autodiff computes is numerically
-unstable, and you know a better formula for it as a whole. Maybe you're
-calling out to code JAX can't trace into, like an external solver or
-simulator. Or maybe the mathematically right derivative isn't the mechanical
-one — as with iterative fixed-point solvers, where implicit differentiation
-of the solution beats differentiating through the iterations. This page
-works examples of each.
+There have long been two ways to define differentiation rules in JAX:
 
-The recommended way to define custom derivatives is with a *hijax
-primitive*. A primitive is a unit of computation that JAX's transformations
-treat atomically: it appears as a single equation in jaxprs, and each
-transformation — differentiation, batching, and so on — applies whatever
-rule is attached to the primitive rather than looking inside it. A hijax
-primitive additionally carries a Python implementation, written in ordinary
-JAX operations, which is used for evaluation and lowering — so it runs under
-`jit` with no extra work, and you attach rules only for the transformations
-you actually use. One primitive can carry rules for both differentiation
-modes at once, and the same mechanism extends to custom rematerialization,
-custom types, and more.
+1. using `jax.custom_jvp` and `jax.custom_vjp` to define custom
+   differentiation rules for Python functions that are already
+   JAX-transformable, as described in [the custom derivatives
+   notebook](https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html);
+   and
+2. defining new `core.Primitive` instances along with all their
+   transformation rules, for example to call into functions from other
+   systems like solvers, simulators, or general numerical computing systems.
 
-This page assumes familiarity with `jax.jvp` and `jax.grad` and the
-mathematical meaning of JVPs and VJPs (see {doc}`cookbook`). Hijax
-primitives are still experimental — expect imports from
-`jax.experimental.hijax`, and expect the APIs to evolve. JAX's classic tools
-for this job, the `jax.custom_jvp` and `jax.custom_vjp` decorators, remain
-fully supported and are often more convenient for simple cases; they're
-covered in {doc}`custom-jvp-vjp`, and every example on this page translates
-directly to them.
+Hijax primitives unify these two. A hijax primitive is a real JAX primitive:
+it appears as a single unit in jaxprs, and you can attach a rule for each
+transformation. But like a `jax.custom_vjp`-decorated function, it also
+carries a Python implementation, written in terms of ordinary JAX operations,
+which is used for evaluation and lowering. So you don't need to write a
+lowering rule, and rules for the other transformations are only needed if you
+actually use those transformations.
 
-```{note}
-For readers who know JAX's history: there have long been two ways to define
-differentiation rules — the `jax.custom_jvp`/`jax.custom_vjp` decorators for
-JAX-traceable Python functions, and new `core.Primitive` instances with
-hand-written rules for every transformation (including lowering), typically
-for calling into external systems. Hijax primitives unify the two: they are
-real primitives, with the convenience of a traceable Python implementation
-standing in for most of the rules.
-```
+This document shows how to use hijax primitives to define custom derivative
+rules for JAX-transformable Python code. It's a hijax-flavored analogue of
+the {doc}`custom_jvp/custom_vjp guide <custom-jvp-vjp>`,
+and assumes familiarity with `jax.jvp` and `jax.grad`, and the mathematical
+meaning of JVPs and VJPs (see {doc}`cookbook`).
+
+Hijax primitives are the recommended way to define custom derivative rules
+going forward: a single primitive can carry rules for both differentiation
+modes (and for other transformations), and the same mechanism extends to
+custom rematerialization, custom types, and more. They are still
+experimental — expect imports from `jax.experimental.hijax`, and expect the
+APIs to evolve. The classic `jax.custom_jvp` and `jax.custom_vjp` decorators
+remain fully supported and can be more convenient for simple cases; they're
+covered in {doc}`custom-jvp-vjp`.
 
 ### TL;DR
 
@@ -111,9 +105,9 @@ print(y_dot)
 print(grad(f)(2., 3.))
 ```
 
-Note that a single hijax primitive can carry both forward- and reverse-mode
-rules. (With the classic `jax.custom_jvp` and `jax.custom_vjp` decorators,
-covered in {doc}`custom-jvp-vjp`, you must choose one mode per function.)
+Note that, unlike with `jax.custom_jvp` and `jax.custom_vjp` where you must
+choose one or the other, a single hijax primitive can carry both forward- and
+reverse-mode rules.
 
 ## Example problems
 
@@ -654,8 +648,7 @@ be derived automatically — see the helpers below.
 ### Custom VJPs with `vjp_fwd` and `vjp_bwd_retval`
 
 The pair `vjp_fwd`/`vjp_bwd_retval` works just like the `f_fwd`/`f_bwd` pair
-of `jax.custom_vjp` ({doc}`custom-jvp-vjp`). In Haskell-like type
-signatures:
+of `jax.custom_vjp`, in Haskell-like type signatures:
 
 ```haskell
 vjp_fwd :: (NonZeros, a) -> (b, c)
@@ -699,117 +692,6 @@ def mul(x, y):
 print(grad(mul)(2., 3.))
 print(grad(mul, 1)(2., 3.))
 ```
-
-(jax-301-vjp-bwd-accums)=
-
-### The general backward API: `vjp_bwd` and gradient accumulators
-
-`vjp_bwd_retval` is actually a convenience wrapper. The more general API is
-`vjp_bwd`, with signature `vjp_bwd(self, res, outgrad, *arg_accums)`.
-Instead of returning cotangent values, it receives one *gradient
-accumulator* per primal input (matching the pytree structure of each entry
-of `in_avals`) and pushes each cotangent contribution into the corresponding
-accumulator; it returns `None`. A subclass should override one of `vjp_bwd`
-or `vjp_bwd_retval`, not both.
-
-An accumulator is a `GradAccum` instance. It carries the expected cotangent
-type as `acc.aval` — determined by the corresponding primal input's type,
-since cotangent types are always a function of primal types — and accepts
-contributions via `acc.accum(ct)`. There are three subclasses, importable
-from `jax.experimental.hijax`, and which one your rule receives is decided
-by the caller of autodiff:
-
-* `ValAccum` holds a value and adds contributions to it functionally. This
-  is what you get in ordinary `jax.grad` or `jax.vjp` usage, where the
-  caller wants the gradient back as a value.
-* `RefAccum` wraps a mutable array `Ref` (see {doc}`refs`) as `acc.ref`, and
-  `accum` adds in place. You get one when the caller binds a gradient ref
-  with `.with_refs(...)`. Your rule can also update `acc.ref` directly —
-  including *indexed* updates that touch only part of the gradient buffer.
-* `NullAccum` discards everything: the gradient for this input isn't needed
-  (the input isn't being differentiated, or the caller passed
-  `jax.ad.DontWant()`). Your rule can check for it and skip the work.
-
-In fact, the base class's default `vjp_bwd` is just a few lines in terms of
-`vjp_bwd_retval`:
-
-```python
-def vjp_bwd(self, res, outgrad, /, *arg_accums):
-  args_grad = self.vjp_bwd_retval(res, outgrad)
-  maybe_accum = lambda acc, v: isinstance(acc, GradAccum) and acc.accum(v)
-  jax.tree.map(maybe_accum, arg_accums, args_grad)
-```
-
-So why override `vjp_bwd` directly? The main reason is in-place, sparse
-gradient accumulation. If your operation reads only a small piece of a large
-input, its cotangent is mostly zeros — and with `vjp_bwd_retval` you have no
-choice but to materialize that dense array of zeros, every time. With
-`vjp_bwd`, when you're handed a `RefAccum` you can instead add-update just
-the entries you touched:
-
-```{code-cell}
-from jax.experimental.hijax import ShapedArray, ValAccum, RefAccum, NullAccum
-
-class TakeElt(VJPHiPrimitive):
-  def __init__(self, x_aval, i):
-    self.in_avals = (x_aval,)
-    self.out_aval = ShapedArray((), x_aval.dtype)
-    self.params = dict(i=i)
-    super().__init__()
-
-  def expand(self, x):
-    return x[self.i]
-
-  def vjp_fwd(self, nzs_in, x):
-    return self(x), None
-
-  def vjp_bwd(self, res, g, x_acc):
-    if isinstance(x_acc, NullAccum):
-      return                              # gradient not wanted: skip the work
-    elif isinstance(x_acc, RefAccum):
-      x_acc.ref[self.i] += g              # sparse in-place update
-    else:
-      one_hot = jnp.zeros(x_acc.aval.shape, x_acc.aval.dtype).at[self.i].add(g)
-      x_acc.accum(one_hot)                # dense functional fallback
-
-def take_elt(x, i):
-  return TakeElt(jax.typeof(x), i)(x)
-```
-
-Under plain `jax.grad`, the rule sees a `ValAccum` and takes the dense path:
-
-```{code-cell}
-x = jnp.arange(10.)
-print(grad(lambda x: take_elt(x, 3))(x))
-```
-
-But when the caller binds a gradient ref, the rule sees a `RefAccum`, and
-each backward pass writes a single element in place — here accumulating
-gradients across several calls with no dense one-hot array in sight:
-
-```{code-cell}
-grad_ref = jax.new_ref(jnp.zeros(10))
-
-for i in [3, 5, 3]:
-  _, f_vjp = jax.vjp(lambda x: take_elt(x, i), x)
-  f_vjp.with_refs(grad_ref)(1.0)
-
-print(grad_ref)
-```
-
-```{code-cell}
-def bwd_jaxpr():
-  _, f_vjp = jax.vjp(lambda x: take_elt(x, 3), x)
-  f_vjp.with_refs(grad_ref)(1.0)
-
-print(jax.jit(bwd_jaxpr).trace().jaxpr)
-```
-
-The backward pass is a one-element read-add-write on the gradient ref.
-JAX's own primitives play the same game: for example, `dynamic_slice`'s
-transpose checks for a ref-backed accumulator and add-updates only the
-sliced window, which is what makes the sparse-gradient examples in
-{doc}`refs` work.
 
 ### Custom JVPs with `jvp`
 
