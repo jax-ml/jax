@@ -90,8 +90,7 @@ from jax._src.core import typeof as typeof
 from jax._src.api import effects_barrier as effects_barrier
 from jax._src.api import block_until_ready as block_until_ready
 from jax._src.ad_checkpoint import checkpoint as checkpoint
-from jax import checkpoint_policies as checkpoint_policies
-from jax._src.ad_checkpoint import custom_remat as custom_remat
+from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
 from jax._src.ad_checkpoint import remat as remat
 from jax._src.api import clear_caches as clear_caches
 from jax._src.api import copy_to_host_async as copy_to_host_async

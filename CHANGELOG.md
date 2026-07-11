@@ -23,14 +23,6 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     rules from a `jvp` or `lin` rule: `linearize_from_jvp` with
     `apply_derived_linearization`, `vjp_fwd_from_jvp` with `transpose_jvp`,
     `vjp_fwd_from_lin` with `transpose_linearized`, and `jvp_from_lin`.
-  * Added {func}`jax.custom_remat` to the top-level `jax` namespace, for
-    per-function control of rematerialization under the new `jax_remat3`
-    implementation.
-  * `jax.checkpoint_policies` is now a submodule rather than a namespace
-    object (so `from jax.checkpoint_policies import ...` now works; attribute
-    access is unchanged), and it additionally exposes the name-based policy
-    classes `SaveOnlyTheseNames`, `SaveAnyNamesButThese`, and
-    `SaveAndOffloadOnlyTheseNames`.
 
 * Breaking changes
   * The deprecated module jax.cloud_tpu_init was removed. This did nothing and

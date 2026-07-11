@@ -201,9 +201,6 @@ def save_from_both_policies(policy_1, policy_2):
 # Please update the file docs/gradient-checkpointing.md with any new
 # policies to keep the doc in sync.
 checkpoint_policies = types.SimpleNamespace(
-    SaveOnlyTheseNames=SaveOnlyTheseNames,
-    SaveAnyNamesButThese=SaveAnyNamesButThese,
-    SaveAndOffloadOnlyTheseNames=SaveAndOffloadOnlyTheseNames,
     everything_saveable=everything_saveable,
     nothing_saveable=nothing_saveable,
     dots_saveable=dots_saveable,
@@ -1201,42 +1198,10 @@ def primal_left_tangent_right(x, _x):
   return PrimalLeftTangentRight(typeof(x), typeof(_x))(x, _x)
 
 
-def custom_remat(f, f_fwd, f_rem, f_bwd, *, static_argnums=(),
-                 static_argnames=()):
-  """Wrap ``f`` with custom rematerialization behavior for reverse-mode AD.
-
-  Where :func:`jax.checkpoint` policies select saveable values by name, a
-  ``custom_remat``-wrapped function carries its own rematerialization rules,
-  which can depend on the ambient checkpoint policy. Requires the
-  ``jax_remat3`` implementation.
-
-  Args:
-    f: the function to wrap, called (or traced) for ordinary evaluation.
-    f_fwd: forward-pass rule under rematerialized differentiation, of
-      signature ``f_fwd(policy, *args) -> (out, res)``. It receives the
-      ambient checkpoint policy along with the arguments of ``f``, and
-      returns the primal output paired with residuals to save (which may be
-      ``None``, to save nothing).
-    f_rem: rematerialization rule, of signature
-      ``f_rem(res, *args) -> (out, res2)``. On the backward pass it receives
-      the residuals saved by ``f_fwd`` and the arguments of ``f``, and
-      recomputes the primal output paired with the residuals that ``f_bwd``
-      needs.
-    f_bwd: backward-pass rule, of signature
-      ``f_bwd(res2, out_ct) -> args_ct``, returning a tuple of cotangents
-      with one entry per argument of ``f``.
-    static_argnums: as in :func:`jax.jit`.
-    static_argnames: as in :func:`jax.jit`.
-
-  Returns:
-    A wrapped version of ``f`` with the same call behavior, but with the
-    given rules applied when it is differentiated in reverse mode under
-    rematerialization (e.g. under :func:`jax.checkpoint`). Forward-mode
-    differentiation falls back to differentiating ``f``.
-  """
-  # TODO reverse-mode only... use hijax instead of custom_vjp
+# TODO reverse-mode only... use hijax instead of custom_vjp
+def custom_remat(f, f1, f2, fbwd, *, static_argnums=(), static_argnames=()):
   helper = custom_derivatives.custom_vjp(lambda _, *args: f(*args))
-  helper.defvjp(f_rem, lambda res, g: (None, *f_bwd(res, g)))
+  helper.defvjp(f2, lambda res, g: (None, *fbwd(res, g)))
   def call(*args, **kwargs):
     args_ft = ft.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
@@ -1246,7 +1211,7 @@ def custom_remat(f, f_fwd, f_rem, f_bwd, *, static_argnums=(),
         static_argnames=static_argnames)
     jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
     jaxpr, consts = pe.separate_consts(jaxpr_)
-    out_flat = CustomRemat(jaxpr, f_fwd, helper, args_ft.tree, out_avals_ft.tree)(*consts, *args_ft)
+    out_flat = CustomRemat(jaxpr, f1, helper, args_ft.tree, out_avals_ft.tree)(*consts, *args_ft)
     return out_avals_ft.update(out_flat).unflatten()
   return call
 

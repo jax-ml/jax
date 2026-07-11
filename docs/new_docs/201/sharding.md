@@ -2,7 +2,6 @@
 jupytext:
   formats: md:myst
   main_language: python
-  notebook_metadata_filter: nosearch
   text_representation:
     extension: .md
     format_name: myst
@@ -12,7 +11,6 @@ kernelspec:
   display_name: Python 3
   language: python
   name: python3
-nosearch: true
 ---
 
 (jax-201-sharding)=
