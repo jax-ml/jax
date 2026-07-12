@@ -30,12 +30,38 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
+  check-paths:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.filter.outputs.any_changed == 'true' || github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          files: |
+            jax/**
+            jaxlib/**
+            third_party/**
+            BUILD
+            *.bzl
+            WORKSPACE*
+            .github/workflows/cloud-tpu-ci-presubmit.yml
+            .github/workflows/bazel_test_tpu.yml
+
   run-bazel-test-tpu:
+    needs: check-paths
     if: github.event.repository.fork == false && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_test_tpu.yml
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "Test"
     with:
+      should-run: ${{ needs.check-paths.outputs.should-run }}
       runner: "linux-x86-ct6e-180-8tpu"
       cores: "8"
       tpu-type: "v6e-8"

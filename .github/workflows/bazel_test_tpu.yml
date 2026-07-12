@@ -83,6 +83,11 @@ on:
         required: false
         default: 'false'
         type: string
+      should-run:
+        description: 'Whether this workflow should execute or skip.'
+        required: false
+        default: 'true'
+        type: string
 permissions: {}
 
 env:
@@ -94,7 +99,10 @@ jobs:
     defaults:
       run:
         shell: bash
-    runs-on: ${{ inputs.runner }}
+    # When should-run is false, route to ubuntu-latest instead of TPU runners. This ensures GitHub
+    # Actions instantiates this reusable workflow job and resolves its dynamic check run name for
+    # Copybara validation, while completely avoiding reserving TPU runner hardware.
+    runs-on: ${{ inputs.should-run != 'false' && inputs.runner || 'ubuntu-latest' }}
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ inputs.tpu-type }}, py${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}, jaxlib=${{ inputs.jaxlib-version }}"
@@ -111,11 +119,12 @@ jobs:
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        if: inputs.should-run != 'false'
         with:
           persist-credentials: false
       - name: Download JAX wheels
-        if: inputs.build_jaxlib == 'false'
+        if: inputs.build_jaxlib == 'false' && inputs.should-run != 'false'
         uses: ./.github/actions/download-jax-cpu-wheels
         with:
           runner: ${{ inputs.runner }}
@@ -124,6 +133,7 @@ jobs:
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
       - name: Download libtpu wheels
+        if: inputs.should-run != 'false'
         run: |
           mkdir -p "$(pwd)/dist"
           "$JAXCI_PYTHON" -m pip install --upgrade pip
@@ -156,17 +166,20 @@ jobs:
           INPUTS_LIBTPU_NIGHTLY_VERSION: ${{ inputs.libtpu-nightly-version }}
       # Halt for testing
       - name: Wait For Connection
+        if: inputs.should-run != 'false'
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Install portserver dependencies
+        if: inputs.should-run != 'false'
         run: |
           "$JAXCI_PYTHON" -m pip install psutil
       - name: Run Bazel TPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}
+        if: inputs.should-run != 'false'
         timeout-minutes: ${{ github.event_name == 'pull_request' && 20 || 210 }}
         run: ./ci/run_bazel_test_tpu.sh
       - name: Upload test artifacts
-        if: always()
+        if: always() && inputs.should-run != 'false'
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
         with:

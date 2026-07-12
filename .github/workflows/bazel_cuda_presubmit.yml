@@ -25,7 +25,33 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 permissions: {}
 jobs:
+  check-paths:
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.filter.outputs.any_changed == 'true' || github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          files: |
+            jax/**
+            jaxlib/**
+            third_party/**
+            BUILD
+            *.bzl
+            WORKSPACE*
+            .github/workflows/bazel_cuda_presubmit.yml
+            .github/workflows/build_artifacts.yml
+            .github/workflows/bazel_cuda.yml
+
   build-cuda-artifacts:
+    needs: check-paths
     if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
@@ -38,6 +64,7 @@ jobs:
           cuda-version: ["13"]
     name: "${{ matrix.runner && 'Build wheels' }}"
     with:
+      should-run: ${{ needs.check-paths.outputs.should-run }}
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
@@ -46,6 +73,7 @@ jobs:
       upload_artifacts_to_gcs: false
 
   run-tests:
+    needs: check-paths
     if: github.event.repository.fork == false && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cuda.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
@@ -82,6 +110,7 @@ jobs:
     name: "${{ matrix.runner && 'Test' }}"
 # End Presubmit Naming Check github-cuda-presubmits
     with:
+      should-run: ${{ needs.check-paths.outputs.should-run }}
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       download-jax-from-gcs: 0
