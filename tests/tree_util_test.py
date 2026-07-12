@@ -1418,7 +1418,31 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
   def test_different_num_children_print_key_diff(self):
     e, = prefix_errors({'a': 1}, {'a': 2, 'b': 3})
     expected = ("so the symmetric difference on key sets is\n"
-                "    b")
+                r"    \['b'\]")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_different_num_children_custom_node_with_keys(self):
+    # https://github.com/jax-ml/jax/issues/25659
+    @tree_util.register_pytree_with_keys_class
+    class Foo:
+      def __init__(self, fields):
+        self.fields = dict(fields)
+
+      def tree_flatten_with_keys(self):
+        return ([(tree_util.GetAttrKey(k), v) for k, v in self.fields.items()],
+                tuple(self.fields))
+
+      @classmethod
+      def tree_unflatten(cls, keys, children):
+        return cls(zip(keys, children))
+
+    e, = prefix_errors(Foo({'a': 1}), Foo({'a': 2, 'b': 3}))
+    expected = ("(?s)pytree structure error: different numbers of pytree "
+                "children at key path\n"
+                "    in_axes\n"
+                ".*so the symmetric difference on key sets is\n"
+                r"    \.b")
     with self.assertRaisesRegex(ValueError, expected):
       raise e('in_axes')
 
