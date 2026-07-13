@@ -1505,9 +1505,12 @@ absl::Status MosaicGpuInitialize(
               parameter_multimem_addresses.data(),
               param_to_multimem_addresses_size_bytes);
 
-  device_state.metadata_handle = se::DeviceAddressHandle{
-      collective_params->executor,
-      collective_params->executor->Allocate(metadata_size)};
+  if (device_state.metadata_handle.address().is_null()) {
+    VLOG(5) << "Allocating device memory for Mosaic GPU collective metadata";
+    device_state.metadata_handle = se::DeviceAddressHandle{
+        collective_params->executor,
+        collective_params->executor->Allocate(metadata_size)};
+  }
   // Copy metadata to the device.
   se::DeviceAddressBase metadata_address =
       device_state.metadata_handle.address();

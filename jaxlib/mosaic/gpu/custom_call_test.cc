@@ -234,6 +234,45 @@ TEST_F(CustomCallTest, KernelInitializationIsCached) {
   }
 }
 
+TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
+  std::string module_str = TestMGPUHloModule(
+      "uses_xla_collective_metadata = true, xla_replica_ids = \"0\"");
+  ASSERT_OK_AND_ASSIGN(auto module,
+                       xla::ParseAndReturnUnverifiedModule(module_str));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+
+  absl::SetVLogLevel("custom_call", 5);
+
+  std::unique_ptr<xla::PjRtLoadedExecutable> executable;
+  ASSERT_OK_AND_ASSIGN(executable, client->CompileAndLoad(
+                                        xla::XlaComputation(module->ToProto()),
+                                        /*options=*/{}));
+
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(
+        log, Log(absl::LogSeverity::kInfo, _,
+                 "Allocating device memory for Mosaic GPU collective metadata"))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+
+  {
+    // On the second execution (after warmup), metadata allocation should be
+    // skipped.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(
+        log, Log(absl::LogSeverity::kInfo, _,
+                 "Allocating device memory for Mosaic GPU collective metadata"))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+}
+
 // This property is desirable for forward compatibility.
 TEST_F(CustomCallTest, IgnoresUnknownAttributes) {
   std::string module_str = TestMGPUHloModule("unknown_attribute = 1");
