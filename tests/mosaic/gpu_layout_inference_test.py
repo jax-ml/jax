@@ -1199,6 +1199,29 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  @parameterized.named_parameters(
+      ("splat", lambda shape: fa.WGSplatFragLayout(shape)),
+      ("strided", lambda shape: fa.WGStridedFragLayout(shape, vec_size=1)),
+  )
+  def test_async_load_tmem_rejects_invalid_layouts(self, layout_factory):
+    f32 = ir.F32Type.get()
+    shape = (128, 128)
+    ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    in_layout = tcgen05.tmem_default_layout(packing=1)
+    in_layout = layouts.to_layout_attr(in_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      [ref] = undefs(ref_type)
+      ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
+      op = mgpu.dialect.AsyncLoadTmemOp(ref)
+      invalid_layout = layouts.to_layout_attr(layout_factory(shape))
+      mgpu.dialect.layout_cast(op.result, invalid_layout)
+
+    with self.assertRaisesRegex(
+        ValueError, "Failed to infer a possible set of layouts."
+    ):
+      mgpu.infer_layout(self.module)
+
   @parameterized.parameters(
       mtu.RegisterLayout.TCGEN05, mtu.RegisterLayout.TCGEN05_TMEM_NATIVE
   )

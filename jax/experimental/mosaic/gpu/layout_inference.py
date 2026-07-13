@@ -1738,7 +1738,16 @@ def _async_load_tmem_constraint_system(
       bitwidth=utils.bitwidth(op.source.type.element_type),
   )
   return (
-      cs.ConstraintSystem(constraints=[constraint]),
+      cs.ConstraintSystem(
+          constraints=[
+              constraint,
+              # The following `NotOfType` constraints are shortcuts, helping
+              # the layout inference system converge faster.
+              # They are implicitly rejected by `IsTransferableTmemRegisters`.
+              cs.NotOfType(destination_variable, fa.WGSplatFragLayout),
+              cs.NotOfType(destination_variable, fa.WGStridedFragLayout),
+          ]
+      ),
       {source_variable: [source], destination_variable: [destination]},
   )
 
