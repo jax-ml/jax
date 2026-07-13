@@ -46,7 +46,7 @@ from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
     tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
-    register_dataclass)
+    register_dataclass, treedef_is_strict_leaf)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -1571,18 +1571,21 @@ def _temporary_dtype_exception(a, a_) -> bool:
 def vjp(fun: Callable[..., T],
         *primals: Any,
         has_aux: Literal[False] = False,
-        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable]:
+        reduce_axes: Sequence[AxisName] = (),
+        saveable_args: Any = True) -> tuple[T, Callable]:
   ...
 
 @overload
 def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
-        reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
+        reduce_axes: Sequence[AxisName] = (),
+        saveable_args: Any = True) -> tuple[T, Callable, U]:
   ...
 
 @partial(api_boundary, repro_api_name="jax.vjp")
 def vjp(
-    fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
+    fun: Callable, *primals, has_aux: bool = False, reduce_axes=(),
+    saveable_args: Any = True,
   ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
@@ -1599,6 +1602,18 @@ def vjp(
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
+    saveable_args: Optional, a tuple-tree of bools (i.e. nested tuples with
+      bool leaves), by default the single bool ``True``. Indicates whether
+      each primal argument (or argument sub-pytree, or leaf) may be saved for
+      the backward pass. It must form a tree prefix of ``primals`` up to
+      pytree node types: tuples are matched against argument containers only
+      by their number of children, so e.g. a tuple entry can correspond to a
+      dict argument. Where a False entry applies, argument values that would have
+      been saved verbatim as residuals are instead replaced by ``NotSaveable``
+      sentinels in the ``args_res`` attribute of ``vjpfun``, and the caller
+      must restore them (e.g. by assigning to ``vjpfun.args_res``) before
+      applying ``vjpfun``. Only argument values saved verbatim are affected;
+      residuals computed from the arguments are saved as usual.
 
   Returns:
     If ``has_aux`` is ``False``, returns a ``(primals_out, vjpfun)`` pair, where
@@ -1630,6 +1645,7 @@ def vjp(
   canon = lambda x: x if isinstance(x, core.Tracer) else canonicalize_value(x)
   primals_ft = ft.flatten(primals).map(canon)
   primals_ft.map(dispatch.check_arg)
+  saveable = _saveable_args_flags(saveable_args, primals_ft.tree)
   out_primals_ft, out_known, jaxpr, residuals, *maybe_aux = ad.linearize(
       fun, primals_ft, is_vjp=True, has_aux=has_aux)
 
@@ -1638,8 +1654,8 @@ def vjp(
   spec = [used.add(id(r)) or RSpec(id_map[id(r)], True) if id(r) in id_map else
           RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)
           for r in residuals]
-  args_res = tuptree_map(lambda x: x if id(x) in used else NotNeeded(),
-                         primals_ft.tree, list(primals_ft))
+  keep = lambda x, s: ((x if s else NotSaveable()) if id(x) in used else NotNeeded())
+  args_res = tuptree_map(keep, primals_ft.tree, primals_ft, saveable)
   out_primal_avals = list(out_primals_ft.map(typeof))
   f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
               primals_ft.tree, out_primals_ft.tree, list(args_res), opaque_residuals)
@@ -1654,7 +1670,11 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
       _vjp_with_refs_tree_error(jaxpr, in_tree, in_tree_)
   else:
     maybe_ct_refs_flat = [GradValue()] * in_tree.num_leaves
-  args_res_ = tree_leaves(args_res, is_leaf=lambda x: isinstance(x, NotNeeded))
+  args_res_ = tree_leaves(
+      args_res, is_leaf=lambda x: isinstance(x, (NotNeeded, NotSaveable)))
+  if not_restored := [i.idx for i in spec if i.primal and
+                      isinstance(args_res_[i.idx], NotSaveable)]:
+    _vjp_not_saveable_error(jaxpr, in_tree, not_restored)
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
   maybe_accums = [_vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x)
                   for idx, (v, x) in enumerate(zip(jaxpr.invars, maybe_ct_refs_flat))]
@@ -1730,6 +1750,18 @@ But the tree structures differ:
                    in equality_errors_pytreedef(in_tree, refs_tree))
   raise ValueError(msg)
 
+def _vjp_not_saveable_error(jaxpr, in_tree, idxs):
+  msg = """the VJP function was applied before restoring its not-saveable residuals.
+
+Because `saveable_args` was passed to `jax.vjp`, some argument values that
+would have been saved for the backward pass were instead replaced with
+`NotSaveable()` sentinels. Before the VJP function can be applied, these
+values must be restored, e.g. by assigning to the VJP function's `args_res`
+attribute. The values not yet restored correspond to:
+"""
+  msg += '\n'.join(f"  * {_vjp_arg_name(jaxpr, in_tree, idx)};" for idx in idxs)
+  raise ValueError(msg)
+
 def check_accum(aval, acc):
   if not core.typecompat(acc.aval, aval):
     raise ValueError(f"Accumulator aval mismatch: expected {aval}, got {acc.aval}")
@@ -1755,8 +1787,40 @@ class RSpec:
   idx: int
   primal: bool
 
-def tuptree_map(f, treedef, x):
-  return treedef.walk(lambda xs, _: tuple(xs), f, x)
+def tuptree_map(f, treedef, *args):
+  return treedef.walk(lambda xs, _: tuple(xs), lambda xs: f(*xs), zip(*args))
+
+def _saveable_args_flags(saveable_args, treedef) -> list[bool]:
+  ret: list[bool] = []
+  _saveable_args_flags_rec(saveable_args, treedef, (), ret)
+  return ret
+
+def _saveable_args_flags_rec(prefix, td, path, ret):
+  if isinstance(prefix, bool):
+    ret.extend([prefix] * td.num_leaves)
+    return
+  where = 'saveable_args' + ''.join(f'[{i}]' for i in path)
+  if not isinstance(prefix, tuple):
+    raise ValueError(
+        "the saveable_args argument to jax.vjp must be a tuple-tree of bools "
+        f"(made of bools and tuples only), but {where} is {prefix!r} of type "
+        f"{type(prefix).__name__}")
+  if treedef_is_strict_leaf(td):
+    raise ValueError(
+        "the saveable_args argument to jax.vjp must form a tree prefix of "
+        f"the primal arguments (up to pytree node types), but {where} is a "
+        "tuple while the corresponding part of the arguments is a leaf; use "
+        "a single bool there instead")
+  td_children = td.children()
+  if len(prefix) != len(td_children):
+    raise ValueError(
+        "the saveable_args argument to jax.vjp must form a tree prefix of "
+        "the primal arguments (up to pytree node types, so containers need "
+        f"only match in their number of children), but {where} has "
+        f"{len(prefix)} children while the corresponding container in the "
+        f"arguments has {len(td_children)}")
+  for i, (p, td_) in enumerate(zip(prefix, td_children)):
+    _saveable_args_flags_rec(p, td_, (*path, i), ret)
 
 def _is_ref(x):
   from jax._src.state.types import AbstractRef
@@ -1831,6 +1895,11 @@ def _vjp_check_ct_avals(cts, primal_avals):
 class NotNeeded:
   pass
 
+@register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class NotSaveable:
+  pass
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class GradValue:
   pass
@@ -1869,6 +1938,8 @@ class VJP:
   def with_refs(self, *maybe_ct_refs):
     return self.fun(self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals, *maybe_ct_refs)
+
+  replace = dataclasses.replace
 
   # Only safe to put these in cache keys if residuals aren't mutated. Beware!
   __hash__ = object.__hash__
