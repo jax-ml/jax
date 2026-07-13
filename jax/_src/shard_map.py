@@ -1938,7 +1938,7 @@ def _unmentioned2(mesh: Mesh, spec, manual_axes: frozenset[AxisName]
 
 
 def _shard_map_transpose(out_cts, *args, jaxpr: core.Jaxpr, mesh, in_specs,
-                         out_specs, check_vma, newly_manual_axes):
+                              out_specs, check_vma, newly_manual_axes):
   mb_div = lambda x, y: x / y if y != 1 else x
   out_cts = [
       ad.Zero(shard_aval(mesh, newly_manual_axes, check_vma, sp.to_ct_spec(), x.aval))
@@ -1950,30 +1950,49 @@ def _shard_map_transpose(out_cts, *args, jaxpr: core.Jaxpr, mesh, in_specs,
           ad.UndefinedPrimal(shard_aval(mesh, newly_manual_axes, check_vma, sp.to_ct_spec(), x.aval))
           for sp, x in zip(in_specs, args)]
   all_args, in_tree = tree_flatten((out_cts, tuple(args)))
+  all_names = _all_newly_manual_mesh_names(mesh, newly_manual_axes)
 
   def fun_trans_callable(*right_flat):
     right_cts, primals_or_undefs = tree_unflatten(in_tree, right_flat)
-    left_cts = ad.backward_pass(jaxpr, False, (), primals_or_undefs, right_cts)
+    accums = [ad.ValAccum(x.aval) if type(x) is ad.UndefinedPrimal else x
+              for x in primals_or_undefs]
+    logs = ad.backward_pass3(jaxpr, False, (), accums, right_cts)
+    left_cts = [x.freeze() if isinstance(x, ad.ValAccum) else ad.p2cz(x)
+                for x in accums]
     left_cts = [x if type(x) is ad.Zero or check_vma
                 else lax_parallel.psum(x, tuple(_unmentioned2(mesh, sp.to_ct_spec(), newly_manual_axes)))
                 for sp, x in zip(in_specs, left_cts)]
     left_specs_nz = tuple(
         s.to_ct_spec() for ct, s in zip(left_cts, in_specs)
         if ct is not None and type(ct) is not ad.Zero)
-    return ft.flatten(left_cts).with_aux(left_specs_nz)
+    # Per-shard log values come out mesh-stacked along their leading axis
+    # (scalars are first promoted to shape (1,)).
+    logs = tree_map(lambda x: lax.broadcast(x, (1,))
+                    if getattr(x, 'shape', None) == () else x, logs)
+    log_specs = tuple(typeof(x).nospec(mesh, check_vma, all_names)
+                      for x in tree_leaves(logs))
+    return ft.flatten((left_cts, logs)).with_aux((*left_specs_nz, *log_specs))
 
   dbg = jaxpr.debug_info.with_unknown_names()
   new_in_specs = (
       [s.to_ct_spec() for s, x in zip(out_specs, out_cts) if type(x) is not ad.Zero] +
       [s for s, x in zip(in_specs, args) if type(x) is not ad.UndefinedPrimal])
 
-  left_ct = shard_map_p.bind(
+  outs = shard_map_p.bind(
       *all_args, subfuns=(fun_trans_callable,), mesh=mesh, in_specs=tuple(new_in_specs),
       check_vma=check_vma, newly_manual_axes=newly_manual_axes, debug_info=dbg)
-  left_cts = left_ct.unflatten()
-  return [ad.Zero(unshard_aval(mesh, check_vma, sp.to_ct_spec(), x.aval))
-          if type(x) is ad.Zero else x for sp, x in zip(in_specs, left_cts)]
-ad.primitive_transposes[shard_map_p] = _shard_map_transpose
+  left_cts, logs = outs.unflatten()
+  left_cts = [ad.Zero(unshard_aval(mesh, check_vma, sp.to_ct_spec(), x.aval))
+              if type(x) is ad.Zero else x for sp, x in zip(in_specs, left_cts)]
+  return left_cts, logs
+
+def _shard_map_transpose_fancy(out_cts, *args, **params):
+  up = lambda x: ad.UndefinedPrimal(x.aval) if isinstance(x, ad.GradAccum) else x
+  left_cts, logs = _shard_map_transpose(out_cts, *map(up, args), **params)
+  for x, ct in zip(args, left_cts):
+    if isinstance(x, ad.GradAccum): x.accum(ct)
+  return logs
+ad.fancy_transposes[shard_map_p] = _shard_map_transpose_fancy
 
 # Remat
 

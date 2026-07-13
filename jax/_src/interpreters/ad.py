@@ -360,9 +360,14 @@ def get_primitive_transpose(p):
 def backward_pass3(
     jaxpr: core.Jaxpr, transform_stack: bool,
     consts: Sequence[Array], primals_in: Sequence[Array | Ref | GradAccum],
-    cotangents_in: Sequence[Array]) -> None:
+    cotangents_in: Sequence[Array]) -> dict:
+  # Returns a dict of backward-pass log entries. A fancy transpose rule can
+  # contribute entries by returning a dict (None, which all accumulator-style
+  # rules return today, means the same as {}). Entries are merged in backward
+  # execution order with clobber semantics, so on a key collision the entry
+  # from the earlier-in-forward-order equation wins.
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
-    return
+    return {}
 
   env: dict = dict(zip((*jaxpr.constvars, *jaxpr.invars),
                        (*consts, *primals_in)))
@@ -397,6 +402,7 @@ def backward_pass3(
 
   ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
          else contextlib.nullcontext())
+  logs: dict = {}
   for acc, ct in zip(map(read, jaxpr.outvars), cotangents_in):
     if isinstance(acc, GradAccum):
       acc.accum(ct)  # jaxpr.outvars can have Literals, env can have inst zeros
@@ -416,7 +422,8 @@ def backward_pass3(
             cts_in, = cts_in
           if eqn.primitive in fancy_transposes:
             rule = fancy_transposes[eqn.primitive]
-            rule(cts_in, *map(read, eqn.invars), **eqn.params)
+            eqn_logs = rule(cts_in, *map(read, eqn.invars), **eqn.params)
+            logs = _merge_rule_logs(logs, eqn_logs, eqn.primitive)
           else:
             rule = get_primitive_transpose(eqn.primitive)
             primals = map(read, eqn.invars)
@@ -432,6 +439,17 @@ def backward_pass3(
             for x, ct in zip(primals, cts_out):
               if isinstance(x, GradAccum):
                 x.accum(ct)
+  return logs
+
+def _merge_rule_logs(logs: dict, eqn_logs, primitive) -> dict:
+  if eqn_logs is None:
+    return logs
+  if type(eqn_logs) is not dict:
+    raise TypeError(
+        f"the fancy transpose rule for '{primitive}' should return None or a "
+        "dict of backward-pass log entries (see VJP.with_logs), but it "
+        f"returned a {type(eqn_logs).__name__}")
+  return {**logs, **eqn_logs} if eqn_logs else logs
 
 def _name_stack_ctx(src_info):
   stack = source_info_util.current_name_stack() + src_info.name_stack
@@ -1205,10 +1223,10 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
   def transposed(*flat_args):
     primals_ctrefs, cts = tree_unflatten(treedef, flat_args)
     args = unproject_accums(specs, primals_ctrefs)
-    backward_pass3(call_jaxpr, False, (), args, cts)
+    logs = backward_pass3(call_jaxpr, False, (), args, cts)
     cts_out = [x.freeze() if isinstance(x, ValAccum) else None for x in args]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
-    return cts_out
+    outs, cell.out_tree = tree_flatten((cts_out, logs))  # pyrefly: ignore[missing-attribute]
+    return outs
 
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
@@ -1216,15 +1234,17 @@ def call_transpose_fancy(primitive, cts, *args, call_jaxpr, **params):
                            [type(x) is not Zero for x in cts])
 
   out_flat = primitive.bind(*flat_args, subfuns=(transposed,), **params)
-  for x, ct in zip(args, tree_unflatten(cell.out_tree, out_flat)):  # pyrefly: ignore[missing-attribute]
+  cts_out, logs = tree_unflatten(cell.out_tree, out_flat)  # pyrefly: ignore[missing-attribute]
+  for x, ct in zip(args, cts_out):
     if isinstance(x, ValAccum): x.accum(ct)
+  return logs
 fancy_transposes[core.call_p] = partial(call_transpose_fancy, call_p)
 
 def _closed_call_transpose(ct, *args, call_jaxpr, **params):
   jaxpr_, consts = call_jaxpr, call_jaxpr.consts
   jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
-  call_transpose_fancy(core.closed_call_p, ct, *consts, *args,
-                       call_jaxpr=jaxpr_, **params)
+  return call_transpose_fancy(core.closed_call_p, ct, *consts, *args,
+                              call_jaxpr=jaxpr_, **params)
 fancy_transposes[core.closed_call_p] = _closed_call_transpose
 
 def jvp_jaxpr(jaxpr: core.Jaxpr, nonzeros: Sequence[bool],

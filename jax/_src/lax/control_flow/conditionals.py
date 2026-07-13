@@ -15,8 +15,8 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Callable, Sequence
 import dataclasses
+from collections.abc import Callable, Sequence
 import functools
 from functools import partial
 import itertools
@@ -869,6 +869,7 @@ class CondSum:
   branches: list
 
 
+
 def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   assert not isinstance(index, ad.GradAccum)
   primals_ctrefs, specs = ad.project_accums(args)
@@ -876,28 +877,58 @@ def _cond_transpose_fancy(cts_in, index, *args, branches, **params):
   in_avals = tuple(core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
                    else a for x in in_flat)
   trans_branches, out_trees = unzip2(
-      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args))
+      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, (False,) * len(args),
+                             None, 0)
       for j in branches)
-  out_nzs = [[not isinstance(x, ad.Zero) for x in tree_unflatten(t, j.out_avals)]
-             for t, j in zip(out_trees, trans_branches)]
+  outs = [tree_unflatten(t, j.out_avals)
+          for t, j in zip(out_trees, trans_branches)]
+  branch_cts, branch_logs = unzip2(outs)
+  out_nzs = [[not isinstance(x, ad.Zero) for x in cts] for cts in branch_cts]
   out_nz = tuple(map(partial(functools.reduce, operator.or_), zip(*out_nzs)))
+  # Each key logged by any branch gets one slot per branch (see CondSum), so
+  # the branches needn't agree about keys or types.
+  log_spec = []
+  for k in sorted({k for logs in branch_logs for k in logs}):
+    branch_specs = []
+    for logs in branch_logs:
+      if k in logs:
+        avals, treedef = tree_flatten(logs[k])
+        branch_specs.append((treedef, tuple(avals)))
+      else:
+        branch_specs.append(None)  # type: ignore
+    log_spec.append((k, tuple(branch_specs)))
+  log_spec = tuple(log_spec)
   trans_branches, out_trees = unzip2(
-      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz) for j in branches)
+      _transpose_jaxpr_fancy(j, in_tree, in_avals, specs, out_nz, log_spec, b)
+      for b, j in enumerate(branches))
   out_tree, = set(out_trees)
-  cts_out = cond_p.bind(index, *in_flat, branches=(*trans_branches,), **params)
-  for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
+  outs = cond_p.bind(index, *in_flat, branches=(*trans_branches,), **params)
+  cts_out, logs = tree_unflatten(out_tree, outs)
+  for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum): x.accum(ct)
+  return {k: CondSum(index, slots) for k, slots in logs.items()}
 
 @util.weakref_lru_cache
-def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out):
+def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs, inst_out, log_spec,
+                           which_branch):
   maybe_inst = lambda x, inst: ad.instantiate_zeros(x) if inst else x
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
+    raw_logs = ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [maybe_inst(x.freeze(), inst) if isinstance(x, ad.ValAccum)
                else None for x, inst in zip(args, inst_out)]
-    return cts_out
+    if log_spec is None:
+      return cts_out, raw_logs
+    # If this jaxpr runs, this branch was the one taken: its slot holds its
+    # live values, other branches' slots hold zeros (or None for keys they
+    # don't log).
+    logs = {k: [raw_logs.get(k) if b == which_branch else
+                None if spec is None else
+                tree_unflatten(spec[0], map(ad_util.zeros_like_aval, spec[1]))
+                for b, spec in enumerate(branch_specs)]
+            for k, branch_specs in log_spec}
+    return cts_out, logs
   dbg = jaxpr.debug_info.with_unknown_names()
   closed_jaxpr, out_avals = pe.trace_to_jaxpr(
       transposed, ft.flatten_args(*in_avals), dbg

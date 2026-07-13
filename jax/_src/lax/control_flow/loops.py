@@ -69,7 +69,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
 from jax._src.tree_util import (
     keystr, tree_flatten, tree_map, tree_unflatten, tree_leaves,
-    treedef_is_leaf)
+    treedef_is_leaf, PyTreeDef)
 from jax._src.typing import Array
 from jax._src.util import (
     merge_lists, partition_list, safe_map, safe_zip, split_list,
@@ -1167,19 +1167,24 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
   trans_avals, ext_avals = split_list(_map(accum_typeof, trans_in), [num_consts+num_carry])
   trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, accum_typeof(x)) for x in immut_xs_dot)
-  jaxpr_trans = _transpose_scan_jaxpr_fancy(
+  jaxpr_trans, log_tree = _transpose_scan_jaxpr_fancy(
       jaxpr, trans_tree, tuple(trans_avals), lin_refs, xs_avals)
 
-  # run it
+  # run it; per-iteration log entries come out as extra ys outputs, stacked
+  # index-aligned with the forward scan's iterations
   outs = scan_p.bind(
       *trans_in, reverse=not reverse, length=length, jaxpr=jaxpr_trans,
       ft_in=ft.flatten(((ires, mut_consts_bar), (ct_immut_consts, ct_carry),
                         (mut_xs_bar, ct_ys, eres))).void(),
-      ft_out=ft.flatten(((ct_immut_consts, ct_carry), immut_xs_dot)).void(),
+      ft_out=ft.pack((ft.flatten((ct_immut_consts, ct_carry)).void(),
+                      ft.pack((ft.flatten(immut_xs_dot).void(),
+                               ft.nones(log_tree.num_leaves))))),
       unroll=unroll)
+  outs, log_leaves = split_list(outs, [len(outs) - log_tree.num_leaves])
 
   for a, x in zip([*immut_consts_dot, *carry_dot, *immut_xs_dot], outs):
     if isinstance(a, ad.GradAccum): a.accum(x)
+  return tree_unflatten(log_tree, log_leaves)
 
 # _transpose_scan_jaxpr_fancy converts the jaxpr signature:
 #  Before: [(ires,  T d_mut,  T d_pure), T c, ( T a_mut,  T a_pure, eres)] -> [T c, T b]
@@ -1193,7 +1198,9 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
 # only the pure tangents' cotangents appear as outputs.
 @weakref_lru_cache
 def _transpose_scan_jaxpr_fancy(
-    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals) -> core.Jaxpr:
+    jaxpr, trans_tree, trans_avals, lin_refs, immut_xs_avals
+  ) -> tuple[core.Jaxpr, PyTreeDef]:
+  cell = lambda: None
   def transposed(*args):
     args = [ad.RefAccum(typeof(x).inner_aval, x) if l else x
             for l, x in zip(lin_refs, args)]
@@ -1204,12 +1211,15 @@ def _transpose_scan_jaxpr_fancy(
     immut_xs_dot = [ad.ValAccum(a) for a in immut_xs_avals]
     primals = (ires + mut_consts_bar + immut_consts_dot + carry_dot + mut_xs_bar
                + immut_xs_dot + eres)
-    ad.backward_pass3(jaxpr, False, jaxpr.consts, primals, ct_carry + ct_ys)
-    return [ad.instantiate_zeros(x.freeze()) for x in primals
-            if isinstance(x, ad.ValAccum)]
+    logs = ad.backward_pass3(jaxpr, False, jaxpr.consts, primals, ct_carry + ct_ys)
+    cts_out = [ad.instantiate_zeros(x.freeze()) for x in primals
+               if isinstance(x, ad.ValAccum)]
+    log_leaves, cell.log_tree = tree_flatten(logs)  # pyrefly: ignore[missing-attribute]
+    return [*cts_out, *log_leaves]
 
   dbg = jaxpr.debug_info.with_unknown_names()
-  return _make_closed_jaxpr(transposed, trans_avals, dbg)
+  jaxpr_trans = _make_closed_jaxpr(transposed, trans_avals, dbg)
+  return jaxpr_trans, cell.log_tree  # pyrefly: ignore[missing-attribute]
 
 
 def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,

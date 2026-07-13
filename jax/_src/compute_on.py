@@ -344,34 +344,43 @@ pe.partial_eval_jaxpr_custom_rules[compute_on_p] = \
             _compute_on_partial_eval_custom_params_updater)
 
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr, in_avals, in_tree):
+@weakref_lru_cache
+def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
   cell = lambda: None
   def transposed(*in_flat):
-    primals_in, cts_in = tree_unflatten(in_tree, in_flat)
-    out = ad.backward_pass(jaxpr, False, jaxpr.consts, primals_in, cts_in)
-    out = [ct if not isinstance(ct, ad.Zero) else None for ct in out]
-    cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
-    return cts_out
+    primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
+    args = ad.unproject_accums(specs, primals_ctrefs)
+    logs = ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
+    cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
+    outs, cell.out_tree = tree_flatten((cts_out, logs))  # pyrefly: ignore[missing-attribute]
+    return outs
   dbg = jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
   return trans_jaxpr.with_consts(consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 
-def _compute_on_transpose(cts_in, *primals_in, jaxpr, compute_type,
+def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
                           out_memory_spaces, compiler_options_json):
-  in_flat, in_tree = tree_flatten((primals_in, cts_in))
+  primals_ctrefs, specs = ad.project_accums(args)
+  in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
   in_avals = tuple(core.typeof(x) for x in in_flat)
-  trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_avals, in_tree)
-  in_spaces = [x.aval.memory_space if isinstance(x, ad.UndefinedPrimal)
-               else core.typeof(x).memory_space for x in primals_in]
-  cts_out_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
-  trans_spaces = tuple(s for x, s in zip(cts_out_, in_spaces) if x)
-  cts_out = compute_on_p.bind(*in_flat, jaxpr=trans_jaxpr,
-                              compute_type=compute_type,
-                              out_memory_spaces=trans_spaces,
-                              compiler_options_json=compiler_options_json)
-  return tree_unflatten(out_tree, cts_out)
-ad.primitive_transposes[compute_on_p] = _compute_on_transpose
+  trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_tree, in_avals, specs)
+  cts_out_, logs_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
+  arg_spaces = [x.aval.memory_space if isinstance(x, ad.GradAccum)  # type: ignore
+                else core.typeof(x).memory_space for x in args]
+  trans_spaces = tuple(s for x, s in zip(cts_out_, arg_spaces)
+                       if isinstance(x, core.AbstractValue))
+  trans_spaces += tuple(a.memory_space for a in tree_leaves(logs_))
+  outs = compute_on_p.bind(*in_flat, jaxpr=trans_jaxpr,
+                           compute_type=compute_type,
+                           out_memory_spaces=trans_spaces,
+                           compiler_options_json=compiler_options_json)
+  cts_out, logs = tree_unflatten(out_tree, outs)
+  for x, ct in zip(args, cts_out):
+    if isinstance(x, ad.ValAccum):
+      x.accum(ct)
+  return logs
+ad.fancy_transposes[compute_on_p] = _compute_on_transpose
 
 def dce_jaxpr_compute_on_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
                               ) -> tuple[list[bool], pe.JaxprEqn | None]:

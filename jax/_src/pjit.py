@@ -1943,11 +1943,14 @@ def _pjit_transpose_fancy(
       [l for x, l in zip(args, in_layouts)
        if not isinstance(x, (ad.ValAccum, ad.NullAccum))] +
       [l for x, l in zip(cts_in, out_layouts) if not isinstance(x, ad.Zero)])
-  cts_out_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
+  cts_out_, logs_ = tree_unflatten(out_tree, trans_jaxpr.out_avals)
+  num_log_leaves = len(tree_leaves(logs_))
   trans_out_shardings = tuple(s for x, s in zip(cts_out_, in_shardings)
-                              if isinstance(x, core.AbstractValue))
+                              if isinstance(x, core.AbstractValue)
+                              ) + (UNSPECIFIED,) * num_log_leaves
   trans_out_layouts   = tuple(l for x, l in zip(cts_out_, in_layouts  )
-                              if isinstance(x, core.AbstractValue))
+                              if isinstance(x, core.AbstractValue)
+                              ) + (None,) * num_log_leaves
 
   try:
     cts_out = jit_p.bind(
@@ -1969,8 +1972,10 @@ def _pjit_transpose_fancy(
       api_util._raise_no_nan_in_deoptimized(e)
 
   # pyrefly: ignore[unbound-name]  # pyrefly#2219
-  for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
+  cts_out, logs = tree_unflatten(out_tree, cts_out)
+  for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum): x.accum(ct)
+  return logs
 
 @weakref_lru_cache
 def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
@@ -1978,10 +1983,10 @@ def _transpose_jaxpr_fancy(jaxpr, in_tree, in_avals, specs):
   def transposed(*in_flat):
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
+    logs = ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
-    cts_out, cell.out_tree = tree_flatten(cts_out)  # pyrefly: ignore[missing-attribute]
-    return cts_out
+    outs, cell.out_tree = tree_flatten((cts_out, logs))  # pyrefly: ignore[missing-attribute]
+    return outs
   dbg = jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)

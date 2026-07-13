@@ -1674,6 +1674,326 @@ class HijaxTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "structured residuals"):
       jax.grad(lambda x: Bad(jax.typeof(x))(x))(3.0)
 
+  def test_backward_pass_logging(self):
+    # A vjp_bwd rule can return a dict of pytrees to log out of the backward
+    # pass; f_vjp.with_logs(out_ct) returns (arg_cts, logs), where logs merges
+    # the rules' dicts with clobber semantics. Plain f_vjp(out_ct) drops them.
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval, tag):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(tag=tag)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {self.tag: {'x': res, 'ct_in': t}}
+
+    def square(x, tag='sq'):
+      return Square(jax.typeof(x), tag)(x)
+
+    _, f_vjp = jax.vjp(square, 3.0)
+    cts, logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(cts[0], 6.0)
+    self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 1.0}},
+                        check_dtypes=False)
+    self.assertAllClose(f_vjp(1.0)[0], 6.0)  # plain call drops the logs
+    self.assertAllClose(jax.grad(square)(3.0), 6.0)
+
+    # distinct keys are both present; a repeated key is clobbered, with the
+    # earlier-in-forward-order rule winning
+    f2 = lambda x: square(square(x, 'inner'), 'outer')
+    _, f2_vjp = jax.vjp(f2, 2.0)
+    _, logs2 = f2_vjp.with_logs(1.0)
+    self.assertEqual(set(logs2), {'inner', 'outer'})
+    self.assertAllClose(logs2['inner']['x'], 2.0)
+    self.assertAllClose(logs2['outer']['x'], 4.0)
+    _, f3_vjp = jax.vjp(lambda x: square(square(x)), 2.0)
+    _, logs3 = f3_vjp.with_logs(1.0)
+    self.assertAllClose(logs3['sq']['x'], 2.0)
+
+    # logs flow out of a transposed jit, and with_logs itself can be traced
+    fj = jax.jit(lambda x: square(x))
+    _, fj_vjp = jax.vjp(fj, 3.0)
+    ctsj, logsj = fj_vjp.with_logs(1.0)
+    self.assertAllClose(ctsj[0], 6.0)
+    self.assertAllClose(logsj['sq']['x'], 3.0)
+    ctsT, logsT = jax.jit(
+        lambda x, ct: jax.vjp(fj, x)[1].with_logs(ct))(3.0, 1.0)
+    self.assertAllClose(logsT['sq']['x'], 3.0)
+
+    # logs from a scan body are stacked leaf-wise, index-aligned with the
+    # forward iterations
+    def f_scan(xs):
+      c_out, ys = jax.lax.scan(lambda c, x: (c + square(x), square(x)), 0., xs)
+      return c_out + ys.sum()
+    xs = jnp.array([1., 2., 3.])
+    _, fs_vjp = jax.vjp(f_scan, xs)
+    ctss, logss = fs_vjp.with_logs(1.0)
+    self.assertAllClose(ctss[0], 4.0 * xs)
+    self.assertArraysEqual(logss['sq']['x'], xs)
+    self.assertEqual(logss['sq']['ct_in'].shape, xs.shape)
+
+  def test_backward_pass_logging_cond(self):
+    # A transposed cond logs a sum represented as a tagged product: each key
+    # logged by any branch maps to a CondSum holding the taken-branch index
+    # and one slot per branch (live value / zeros if untaken / None if the
+    # branch doesn't log the key). Branches needn't agree on keys or types.
+    from jax._src.lax.control_flow.conditionals import CondSum
+
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval, tag):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(tag=tag)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {self.tag: res}
+
+    def square(x, tag):
+      return Square(jax.typeof(x), tag)(x)
+
+    def f(x):
+      return jax.lax.cond(x > 0,
+                          lambda x: square(x, 'pos') * 1.0,
+                          lambda x: square(x, 'neg') * 2.0, x)
+
+    _, f_vjp = jax.vjp(f, 3.0)
+    cts, logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(cts[0], 6.0)
+    self.assertEqual(set(logs), {'pos', 'neg'})
+    self.assertIsInstance(logs['pos'], CondSum)
+    i = int(logs['pos'].index)
+    self.assertAllClose(logs['pos'].branches[i], 3.0)      # taken, live
+    self.assertIsNone(logs['pos'].branches[1 - i])         # doesn't log 'pos'
+    self.assertAllClose(logs['neg'].branches[1 - i], 0.0)  # untaken, zeros
+    self.assertIsNone(logs['neg'].branches[i])
+
+    _, f_vjp2 = jax.vjp(f, -3.0)
+    cts2, logs2 = f_vjp2.with_logs(1.0)
+    self.assertAllClose(cts2[0], -12.0)
+    i2 = int(logs2['neg'].index)
+    self.assertAllClose(logs2['neg'].branches[i2], -3.0)
+    self.assertAllClose(logs2['pos'].branches[1 - i2], 0.0)
+
+    def g(x):
+      return jax.lax.cond(
+          x > 0,
+          lambda x: square(x, 'both') * 1.0,
+          lambda x: square(jnp.stack([x, x]), 'both').sum() * 2.0, x)
+
+    _, g_vjp = jax.vjp(g, 3.0)
+    _, glogs = g_vjp.with_logs(1.0)
+    self.assertEqual(set(glogs), {'both'})
+    j = int(glogs['both'].index)
+    self.assertAllClose(glogs['both'].branches[j], 3.0)     # taken, live
+    self.assertAllClose(glogs['both'].branches[1 - j],
+                        jnp.zeros(2))                       # untaken, zeros
+
+    _, g_vjp2 = jax.vjp(g, -3.0)
+    _, glogs2 = g_vjp2.with_logs(1.0)
+    j2 = int(glogs2['both'].index)
+    self.assertAllClose(glogs2['both'].branches[j2], jnp.array([-3., -3.]))
+    self.assertAllClose(glogs2['both'].branches[1 - j2], 0.0)
+
+    # nested conds nest their CondSums
+    def nested(x):
+      inner = lambda x: jax.lax.cond(x > 1, lambda x: square(x, 'deep'),
+                                     lambda x: x * 5.0, x)
+      return jax.lax.cond(x > 0, inner, lambda x: x * 7.0, x)
+    _, n_vjp = jax.vjp(nested, 2.0)
+    _, nlogs = n_vjp.with_logs(1.0)
+    outer = nlogs['deep']
+    self.assertIsInstance(outer, CondSum)
+    inner_log = outer.branches[int(outer.index)]
+    self.assertIsInstance(inner_log, CondSum)
+    self.assertAllClose(inner_log.branches[int(inner_log.index)], 2.0)
+
+    # under jit, and plain grad unaffected
+    _, fj_vjp = jax.vjp(jax.jit(f), 3.0)
+    _, logsj = fj_vjp.with_logs(1.0)
+    self.assertAllClose(logsj['pos'].branches[int(logsj['pos'].index)], 3.0)
+    self.assertAllClose(jax.grad(f)(3.0), 6.0)
+
+  def test_backward_pass_logging_shard_map(self):
+    # Logs from inside a transposed shard_map come out mesh-stacked along
+    # their leading axis (per-shard scalars come out with shape (num_shards,)).
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {'x': res, 'norm2': (res ** 2).sum()}
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    mesh = jax.make_mesh((1,), ('i',), axis_types=(jax.sharding.AxisType.Auto,))
+    spec = jax.sharding.PartitionSpec('i')
+    sm = jax.shard_map(lambda x: square(x) * 2.0, mesh=mesh, in_specs=spec,
+                       out_specs=spec)
+    xs = jnp.arange(1., 5.)
+    f = lambda x: sm(x).sum()
+    _, f_vjp = jax.vjp(f, xs)
+    cts, logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(cts[0], 4.0 * xs)
+    self.assertArraysEqual(logs['x'], xs)
+    self.assertEqual(logs['norm2'].shape, (1,))  # one shard
+    self.assertAllClose(logs['norm2'][0], (xs ** 2).sum())
+    self.assertAllClose(jax.grad(f)(xs), 4.0 * xs)
+
+  def test_backward_pass_logging_bad_return(self):
+    class Bad(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return [t]  # not a dict
+
+    with self.assertRaisesRegex(TypeError, "backward-pass log"):
+      jax.vjp(lambda x: Bad(jax.typeof(x))(x), 3.0)[1](1.0)
+
+    bad_id_p = core.Primitive('bad_id')
+    bad_id_p.def_impl(lambda x: x)
+    bad_id_p.def_abstract_eval(lambda a: a)
+    ad.defjvp(bad_id_p, lambda g, x: bad_id_p.bind(g))
+    def bad_transpose(ct, x):
+      if isinstance(x, ad.ValAccum):
+        x.accum(ct)
+      return [ct]  # not a dict
+    ad.fancy_transposes[bad_id_p] = bad_transpose
+
+    with self.assertRaisesRegex(TypeError, "backward-pass log"):
+      jax.vjp(lambda x: bad_id_p.bind(x) * 2., 3.0)[1](1.0)
+
+  def test_backward_pass_logging_with_refs(self):
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {'sq': {'x': res, 'ct_in': t}}
+
+    def f(x, y):
+      return Square(jax.typeof(x))(x) * y
+
+    _, f_vjp = jax.vjp(f, 3.0, 2.0)
+    arg_cts, logs = f_vjp.with_logs.with_refs(
+        jax.ad.GradValue(), jax.ad.DontWant())(1.0)
+    x_ct, y_ct = arg_cts
+    self.assertAllClose(x_ct, 12.0)  # d(x**2 * y)/dx = 2xy
+    self.assertIsInstance(y_ct, jax.ad.DidntWant)
+    self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 2.0}},
+                        check_dtypes=False)
+
+    x_ct, y_ct = f_vjp.with_refs(jax.ad.GradValue(), jax.ad.DontWant())(1.0)
+    self.assertAllClose(x_ct, 12.0)
+    (x_ct, y_ct), logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(x_ct, 12.0)
+    self.assertAllClose(y_ct, 9.0)  # d(x**2 * y)/dy = x**2
+    self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 2.0}},
+                        check_dtypes=False)
+
+  def test_backward_pass_logging_vjp_pytree_roundtrip(self):
+    _, f_vjp = jax.vjp(jnp.sin, 1.0)
+
+    leaves, treedef = jax.tree.flatten(f_vjp)
+    (ct,) = jax.tree.unflatten(treedef, leaves)(1.0)
+    self.assertAllClose(ct, jnp.cos(1.0))
+
+    leaves, treedef = jax.tree.flatten(f_vjp.with_logs)
+    (ct,), logs = jax.tree.unflatten(treedef, leaves)(1.0)
+    self.assertAllClose(ct, jnp.cos(1.0))
+    self.assertEqual(logs, {})
+
+  def test_backward_pass_logging_call_primitives(self):
+    from jax._src import api_util
+    from jax._src import flattree as ft
+    from jax._src.compute_on import compute_on2
+    from jax._src.interpreters import mlir, partial_eval as pe
+    from jax._src.lax.eval_jaxpr import eval_jaxpr_p
+    from jax.experimental.scheduling_groups import scheduling_group
+
+    log_id_p = core.Primitive('log_id')
+    log_id_p.def_impl(lambda x: x)
+    log_id_p.def_abstract_eval(lambda a: a)
+    ad.defjvp(log_id_p, lambda g, x: log_id_p.bind(g))
+    mlir.register_lowering(log_id_p, lambda ctx, x: [x])
+    def _log_id_transpose(ct, x):
+      if isinstance(x, ad.ValAccum):
+        x.accum(ct)
+      return {'canary': ct}
+    ad.fancy_transposes[log_id_p] = _log_id_transpose
+
+    def f(x):
+      return log_id_p.bind(jnp.sin(x)) * 2.
+
+    dbg = api_util.debug_info('test', f, (1.0,), {})
+    args_ft = ft.flatten(((1.0,), {}))
+    jaxpr, _ = pe.trace_to_jaxpr(f, args_ft.map(core.shaped_abstractify), dbg)
+
+    fns = [scheduling_group('g')(f),
+           compute_on2(f, compute_type='device_host',
+                       out_memory_spaces=jax.memory.Space.Device),
+           lambda x: eval_jaxpr_p.bind(x, jaxpr=jaxpr)[0]]
+    for fn in fns:
+      _, f_vjp = jax.vjp(fn, 1.0)
+      cts, logs = f_vjp.with_logs(1.0)
+      self.assertAllClose(cts[0], 2 * jnp.cos(1.0))
+      self.assertAllClose(logs, {'canary': jnp.float32(2.0)},
+                          check_dtypes=False)
+      (ct,) = f_vjp(1.0)  # plain call drops the logs without error
+      self.assertAllClose(ct, 2 * jnp.cos(1.0))
+
   def test_jvp_derived_from_lin(self):
     class RaiseToStaticPower(VJPHiPrimitive):
       def __init__(self, in_aval, *, power):

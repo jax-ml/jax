@@ -1678,7 +1678,8 @@ def vjp(
   return out_primals_ft.unflatten(), f_vjp, *maybe_aux
 
 def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
-                   args_res, opaque_res, structured_res, *maybe_ct_refs):
+                   args_res, opaque_res, structured_res, want_logs,
+                   *maybe_ct_refs):
   explicit_refs = bool(maybe_ct_refs)
   if explicit_refs:
     maybe_ct_refs_flat, in_tree_ = tree_flatten(maybe_ct_refs)
@@ -1695,7 +1696,8 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
   maybe_accums = [_vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x)
                   for idx, (v, x) in enumerate(unsafe_zip(jaxpr.invars, maybe_ct_refs_flat))]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
-                         out_primal_avals), residuals, structured_res, maybe_accums)
+                         out_primal_avals, want_logs), residuals, structured_res,
+                 maybe_accums)
 
 def _vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x):
   if isinstance(x, ad.GradAccum):
@@ -1783,20 +1785,21 @@ def check_accum(aval, acc):
     raise ValueError(f"Accumulator aval mismatch: expected {aval}, got {acc.aval}")
   return acc
 
-def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, residuals,
-              structured_res, maybe_accums, out_ct):
+def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, want_logs,
+              residuals, structured_res, maybe_accums, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct, is_leaf=lambda x: isinstance(x, ad.Zero))
   if out_tree != out_tree_:
     _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
   cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
   primals_in = [*maybe_accums, *tree_leaves(structured_res)]
-  ad.backward_pass3(jaxpr, True, residuals, primals_in, cts_flat)
+  logs = ad.backward_pass3(jaxpr, True, residuals, primals_in, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else
              DidntWant() if isinstance(x, ad.NullAccum) else GradRef()
              for x in maybe_accums]
   arg_cts = map(ad.instantiate_zeros, arg_cts)
-  return tree_unflatten(in_tree, arg_cts)
+  arg_cts = tree_unflatten(in_tree, arg_cts)
+  return (arg_cts, logs) if want_logs else arg_cts
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1944,6 +1947,7 @@ class VJP:
   args_res: list[Any]
   opaque_residuals: list[Any]
   structured_residuals: list[Any]
+  want_logs: bool = False
   jaxpr = property(lambda self: self.fun.args[2])
 
   def __call__(self, out_ct, *extra_args):
@@ -1951,12 +1955,18 @@ class VJP:
       name, *_ = self.jaxpr.debug_info.func_src_info.split(' ')
       raise TypeError(_vjp_too_many_args(name, len(extra_args) + 1))
     return self.fun(self.in_tree, self.out_tree, self.args_res,
-                    self.opaque_residuals, self.structured_residuals)(out_ct)
+                    self.opaque_residuals, self.structured_residuals,
+                    self.want_logs)(out_ct)
+
+  # Like __call__, but returns a pair (arg_cts, logs), where logs is a dict
+  # merging (with clobber semantics, in backward execution order) the dicts
+  # logged by transpose/vjp_bwd rules. Plain __call__ drops the logs.
+  with_logs = property(lambda self: self.replace(want_logs=True))
 
   def with_refs(self, *maybe_ct_refs):
     return self.fun(self.in_tree, self.out_tree, self.args_res,
                     self.opaque_residuals, self.structured_residuals,
-                    *maybe_ct_refs)
+                    self.want_logs, *maybe_ct_refs)
 
   replace = dataclasses.replace
 
@@ -1967,8 +1977,8 @@ class VJP:
 register_pytree_node(
     VJP,
     lambda vjp: ((vjp.args_res, vjp.opaque_residuals, vjp.structured_residuals),
-                 (vjp.fun, vjp.in_tree, vjp.out_tree)),
-    lambda meta, args_res: VJP(*meta, *args_res))
+                 (vjp.fun, vjp.in_tree, vjp.out_tree, vjp.want_logs)),
+    lambda meta, args_res: VJP(*meta[:3], *args_res, meta[3]))  # type: ignore
 
 
 @partial(api_boundary, repro_api_name="jax.linear_transpose")

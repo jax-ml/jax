@@ -410,10 +410,10 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
     nonlocal out_tree
     primals_ctrefs, cts_in = tree_unflatten(in_tree, in_flat)
     args = ad.unproject_accums(specs, primals_ctrefs)
-    ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
+    logs = ad.backward_pass3(jaxpr, False, jaxpr.consts, args, cts_in)
     cts_out = [x.freeze() if isinstance(x, ad.ValAccum) else None for x in args]
-    cts_out, out_tree = tree_flatten(cts_out)
-    return cts_out
+    outs, out_tree = tree_flatten((cts_out, logs))
+    return outs
   dbg = jaxpr.debug_info.with_unknown_names()
   trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
@@ -427,14 +427,16 @@ def _xla_metadata_call_transpose(cts_in, *args, jaxpr, xla_metadata,
   in_avals = [core.typeof(x) for x in in_flat]
   trans_jaxpr, out_tree = _transpose_jaxpr(jaxpr, in_tree, (*in_avals,), specs)
 
-  cts_out = xla_metadata_call_p.bind(
+  outs = xla_metadata_call_p.bind(
       *in_flat, jaxpr=trans_jaxpr,
       xla_metadata=_resolve_ad_metadata(xla_metadata, ad_metadata),
       ad_metadata='same')
 
-  for x, ct in zip(args, tree_unflatten(out_tree, cts_out)):
+  cts_out, logs = tree_unflatten(out_tree, outs)
+  for x, ct in zip(args, cts_out):
     if isinstance(x, ad.ValAccum):
       x.accum(ct)
+  return logs
 
 
 ad.fancy_transposes[xla_metadata_call_p] = _xla_metadata_call_transpose
