@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ctypes
+import functools
+import mmap
 import unittest
 import warnings
+import weakref
 
 from absl.testing import absltest
 import jax
@@ -26,6 +30,27 @@ import jax.dlpack
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
+
+
+def alloc_and_map(c_type, np_dtype, size):
+  device = jax.devices("tpu")[0]
+  client = device.client
+
+  element_size = ctypes.sizeof(c_type)
+  requested_bytes = size * element_size
+  size_bytes = ((requested_bytes + 4095) // 4096) * 4096
+
+  buf = mmap.mmap(-1, size_bytes)
+
+  char_arr = (ctypes.c_char * size_bytes).from_buffer(buf)
+  addr = ctypes.addressof(char_arr)
+
+  client.dma_map(addr, size_bytes)
+
+  weakref.finalize(buf, client.dma_unmap, addr)
+
+  return np.frombuffer(buf, dtype=np_dtype, count=size)
+
 
 config.parse_flags_with_absl()
 
@@ -334,6 +359,66 @@ class DLPackTest(jtu.JaxTestCase):
     x_jax = jnp.array(rng(shape, dtype))
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
+
+  @jtu.run_on_devices("tpu")
+  @unittest.skipIf(jaxlib_extension_version < 474, "Requires jaxlib >= 474")
+  def testTpuHostBufferDmaMap(self):
+    from jax._src.typing import DLDeviceType
+
+    device = jax.devices("tpu")[0]
+
+    try:
+      np_array = alloc_and_map(ctypes.c_uint32, np.uint32, 1024)
+    except RuntimeError as e:
+      self.skipTest(str(e))
+
+    np_array[:] = 0
+
+    class DLPackWrapper:
+
+      def __init__(self, arr, device_type, device_id=0):
+        self.arr = arr
+        self.device_type = device_type
+        self.device_id = device_id
+
+      def __dlpack_device__(self):
+        return (self.device_type, self.device_id)
+
+      def __dlpack__(self, stream=None):
+        return self.arr.__dlpack__(stream=stream)
+
+    dev_id = device.local_hardware_id
+    if dev_id is None:
+      dev_id = 0
+
+    wrapper = DLPackWrapper(np_array, DLDeviceType.kDLTPUHost, dev_id)
+
+    jax_arr = jax.dlpack.from_dlpack(wrapper, device=device, copy=False)
+    jax.block_until_ready(jax_arr)
+
+    self.assertEqual(jax_arr.device, device)
+    self.assertEqual(jax_arr.sharding.memory_kind, "pinned_host")
+
+    # Fill data *after* import to verify zero-copy
+    np_array[:] = np.arange(1024, dtype=np.uint32)
+
+    host_sharding = jax.sharding.SingleDeviceSharding(
+        device, memory_kind="pinned_host"
+    )
+    device_sharding = jax.sharding.SingleDeviceSharding(
+        device, memory_kind="device"
+    )
+
+    @functools.partial(
+        jax.jit, in_shardings=host_sharding, out_shardings=device_sharding
+    )
+    def add_one(x):
+      return jax.device_put(x, device_sharding) + 1
+
+    result = add_one(jax_arr)
+    result_np = np.asarray(result)
+    expected = np.arange(1024, dtype=np.uint32) + 1
+    self.assertAllClose(result_np, expected)
 
 
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
