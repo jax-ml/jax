@@ -53,9 +53,11 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
+#include "jaxlib/py_device_list.h"
 #include "jaxlib/py_executable.h"
 #include "jaxlib/py_mpmd_loaded_executable.h"
 #include "jaxlib/py_user_context.h"
+#include "jaxlib/sharding.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/status_casters.h"  // IWYU pragma: keep; Needed for ValueOrThrow
 #include "xla/python/ifrt/device.h"
@@ -234,8 +236,35 @@ absl::StatusOr<std::unique_ptr<PyMpmdLoadedExecutable>> CompileMpmd(
       return absl::InternalError("Executable does not have output shardings.");
     }
     std::vector<nb::object> out_shardings_py;
+    out_shardings_py.reserve(exec_out_shardings->size());
     for (auto& op_sharding : *exec_out_shardings) {
-      out_shardings_py.push_back(nb::cast(std::move(op_sharding)));
+      nb::sequence target_devices = devices_py;
+      if (!op_sharding.tile_assignment_devices().empty()) {
+        nb::list sub_devs;
+        for (int64_t d : op_sharding.tile_assignment_devices()) {
+          if (d < nb::len(devices_py)) sub_devs.append(devices_py[d]);
+        }
+        if (nb::len(sub_devs) > 0) {
+          target_devices = nb::cast<nb::sequence>(sub_devs);
+          op_sharding.clear_tile_assignment_devices();
+          for (size_t j = 0; j < nb::len(sub_devs); ++j) {
+            op_sharding.add_tile_assignment_devices(j);
+          }
+        }
+      } else {
+        TF_ASSIGN_OR_RETURN(xla::HloSharding hlo,
+                            xla::HloSharding::FromProto(op_sharding));
+        if (!hlo.IsTuple() && !hlo.IsReplicated() && hlo.num_devices() > 0 &&
+            hlo.num_devices() < nb::len(devices_py)) {
+          nb::list sub_devs;
+          for (int64_t idx = 0; idx < hlo.num_devices(); ++idx)
+            sub_devs.append(devices_py[idx]);
+          target_devices = nb::cast<nb::sequence>(sub_devs);
+        }
+      }
+      out_shardings_py.push_back(
+          nb::cast(jax::GSPMDSharding(target_devices, std::move(op_sharding),
+                                      /*memory_kind=*/nb::none())));
     }
     return std::make_unique<PyMpmdLoadedExecutable>(
         backend,
@@ -274,8 +303,7 @@ NB_MODULE(_sdy_mpmd, m) {
                     std::optional<int>,
                     std::optional<mlir::mpmd::SplitFragmentType>,
                     const std::string&>(),
-           nb::arg("origins"),
-           nb::kw_only(),
+           nb::arg("origins"), nb::kw_only(),
            nb::arg("stage_id").none() = std::nullopt,
            nb::arg("call_counter").none() = std::nullopt,
            nb::arg("split_type").none() = std::nullopt, nb::arg("mesh_name"))
@@ -348,19 +376,21 @@ NB_MODULE(_sdy_mpmd, m) {
       nb::arg("partitioning_options").none() = std::nullopt,
       nb::arg("fragment_merge_rules"), nb::arg("fragment_schedule_rules"),
       nb::arg("phases"),
-      nb::sig(
-          "def apply_mpmd_partitioning(module: mlir.ir.Module, func_name: str, "
-          "named_meshes: collections.abc.Sequence[tuple[str, "
-          "collections.abc.Sequence[tuple[str, int]]]], assignment: "
-          "collections.abc.Mapping[str, str | tuple[str, int]], input_meshes: "
-          "collections.abc.Sequence[str | None], output_meshes: "
-          "collections.abc.Sequence[str | None], donate_argnums: "
-          "collections.abc.Sequence[int], *, partitioning_options: "
-          "collections.abc.Mapping[str, str | bool] | None = ..., "
-          "fragment_merge_rules: collections.abc.Sequence[FragmentMergeRule], "
-          "fragment_schedule_rules: "
-          "collections.abc.Sequence[FragmentScheduleRule], phases: "
-          "PartitioningPhase) -> PartitioningResult"));
+      nb::sig("def apply_mpmd_partitioning(module: mlir.ir.Module, "
+              "func_name: str, "
+              "named_meshes: collections.abc.Sequence[tuple[str, "
+              "collections.abc.Sequence[tuple[str, int]]]], assignment: "
+              "collections.abc.Mapping[str, str | tuple[str, int]], "
+              "input_meshes: "
+              "collections.abc.Sequence[str | None], output_meshes: "
+              "collections.abc.Sequence[str | None], donate_argnums: "
+              "collections.abc.Sequence[int], *, partitioning_options: "
+              "collections.abc.Mapping[str, str | bool] | None = ..., "
+              "fragment_merge_rules: "
+              "collections.abc.Sequence[FragmentMergeRule], "
+              "fragment_schedule_rules: "
+              "collections.abc.Sequence[FragmentScheduleRule], phases: "
+              "PartitioningPhase) -> PartitioningResult"));
 
   m.def(
       "get_fragment_info",
