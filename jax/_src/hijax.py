@@ -661,8 +661,14 @@ def fake_linear_op(prim, nz_in_flat, nz_out_flat, rs, *tangents):
 def flatten_user_linearized(prim, residuals, *tangents_flat):
   tangents = tree_unflatten(prim.in_tree, tangents_flat)
   tangents_out = prim.linearized(residuals, *tangents)
-  tangents_out_flat = tree_leaves_checked(prim.out_tree, tangents_out)
-  return tangents_out_flat
+  flat_vals, treedef_actual = tracing_registry.flatten(
+      tangents_out, lambda x: isinstance(x, ad_util.Zero))
+  if treedef_actual != prim.out_tree:
+    raise RuntimeError(
+        f"tree mismatch during linearization of {prim=}."
+        f" Expected: {prim.out_tree} got: {treedef_actual}"
+    )
+  return flat_vals
 
 call_hi_primitive_linearized_p = core.Primitive("call_hi_primitive_linearized")
 call_hi_primitive_linearized_p.multiple_results = True
