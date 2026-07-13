@@ -7711,6 +7711,30 @@ class Remat3Test(RematTest):
     f = jax.remat(lambda x: jax.jit(body)(x), policy=policy)
     self.assertAllClose(api.grad(f)(1.), jnp.cos(1.), check_dtypes=False)
 
+  def test_remat_of_jit_output_to_residual_forwarding(self):
+    # Like test_remat_output_to_residual_forwarding, but through the jit remat
+    # rule: the saved value is both a bwd residual (for y * y) and demanded by
+    # a consumer of the primal output (for a ** 2), so without forwarding the
+    # jit eqn in the traced vjp jaxpr would carry a duplicated live output.
+    policy = jax.checkpoint_policies.save_only_these_names('y')
+    @partial(jax.remat, policy=policy)
+    def f(x):
+      y = jax.jit(lambda: checkpoint_name(jnp.sin(x), 'y'))()
+      return y, y * y
+    def g(x):
+      a, b = f(x)
+      return a ** 2 + b
+
+    jaxpr = api.make_jaxpr(lambda x: api.vjp(g, x))(1.)
+    [jit_eqn] = [e for e in jaxpr.jaxpr.eqns if e.primitive.name == 'jit']
+    self.assertLen(jit_eqn.outvars, 1)
+
+    def g_ref(x):
+      a, b = jnp.sin(x), jnp.sin(x) * jnp.sin(x)
+      return a ** 2 + b
+    self.assertAllClose(api.grad(g)(1.), api.grad(g_ref)(1.),
+                        check_dtypes=False)
+
   # We don't support everything_saveable with remat3
   def test_remat_custom_policy_save_anything_new_remat(self): pass
   def test_remat_residual_logging(self): pass
