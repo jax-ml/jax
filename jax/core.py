@@ -204,14 +204,15 @@ _deprecations = {
     " and removed in JAX v0.11.0.",
     None,
   ),
+  "trace_ctx": (
+    "jax.core.trace_ctx was deprecated in JAX v0.10.0"
+    " and removed in JAX v0.11.0.",
+    None,
+  ),
   # Deprecated in JAX v0.10.0, TODO(jakevdp) finalize after v0.11.0
   "pytype_aval_mappings": (
     "jax.core.pytype_aval_mappings is deprecated.",
     _src_core.pytype_aval_mappings,
-  ),
-  "trace_ctx": (
-    "jax.core.trace_ctx is deprecated.",
-    _src_core.trace_ctx,
   ),
 }
 
