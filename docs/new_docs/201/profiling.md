@@ -532,7 +532,7 @@ that sharded computations execute. For multi-process programs, start a
 profiler server in each process; XProf's capture dialog accepts a
 comma-separated list of profiler-service addresses, so you can capture
 several hosts into one profile. (The multi-process programming story itself
-is covered in the systems docs; see {doc}`/multi_process`.)
+is covered in the systems docs; see {ref}`jax-501-multiprocess`.)
 
 ### Viewing program traces with Perfetto
 

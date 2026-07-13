@@ -229,7 +229,7 @@ Everything on this page generalizes to multiple processes: meshes can span
 hosts, can cover just a subset of the devices in a cluster, and
 `jax.device_put` can transfer between meshes across processes over
 high-speed interconnects. That story belongs to the multi-process systems
-docs — see {doc}`/multi_process` in the meantime.
+docs; see {ref}`jax-501-multiprocess`.
 
 ## Notes
 

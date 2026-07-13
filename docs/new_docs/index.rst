@@ -31,9 +31,9 @@ or jump to the level that matches what you're trying to do:
   TPU kernels with Pallas, and calling external code through the foreign
   function interface.
 
-One more level — JAX 501, on systems topics like multi-controller JAX,
-exporting and serialization, and fault tolerance — is planned but not yet
-written.
+* :doc:`JAX 501 <501/index>` — **systems topics**: multi-controller JAX
+  across many hosts, distributed data loading, fault tolerance, exporting
+  and serialization, the persistent compilation cache, and transfer guards.
 
 .. toctree::
    :hidden:
@@ -43,3 +43,4 @@ written.
    201/index
    301/index
    401/index
+   501/index

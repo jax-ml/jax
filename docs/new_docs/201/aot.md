@@ -84,7 +84,7 @@ Array(10, dtype=int32, weak_type=True)
 ```
 
 Note that the lowered objects can be used only in the same process
-in which they were lowered. For exporting use cases, see the {ref}`export` APIs.
+in which they were lowered. For exporting use cases, see the {ref}`jax-501-export` APIs.
 
 See the {mod}`jax.stages` documentation for more details on what functionality
 the lowering and compiled functions provide.
@@ -208,7 +208,7 @@ Array(25, dtype=int32)
 ```
 
 The results of `trace` and of `lower` are not safe to serialize directly for use
-in a different process. See {ref}`export` for additional APIs for this purpose.
+in a different process. See {ref}`jax-501-export` for additional APIs for this purpose.
 
 ## AOT-compiled functions cannot be transformed
 

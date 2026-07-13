@@ -323,7 +323,7 @@ For a lighter-weight signal, `jax_log_compiles` logs one line per
 compilation, without the diagnosis. When tracing or compilation time itself
 becomes the problem, {doc}`slow-compilation` is a field guide to diagnosing
 it; and the persistent compilation cache
-({doc}`/persistent_compilation_cache`) keeps compiled executables across
+({ref}`jax-501-compilation-cache`) keeps compiled executables across
 process restarts.
 
 ## Using `jit` with methods
