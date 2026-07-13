@@ -26,7 +26,11 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import tree_util
-from jax._src.hijax import VJPHiPrimitive
+from jax._src.hijax import (
+    VJPHiPrimitive,
+    apply_derived_linearization,
+    linearize_from_jvp,
+)
 from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.numpy import util
@@ -165,6 +169,9 @@ class SearchSorted(VJPHiPrimitive):
     return (ad_util.zeros_like_aval(self.in_avals[0]),
             ad_util.zeros_like_aval(self.in_avals[1]))
 
+  lin = linearize_from_jvp
+  linearized = apply_derived_linearization
+
 
 class Nonzero(VJPHiPrimitive):
   """HiJAX primitive for nonzero."""
@@ -245,6 +252,9 @@ class Nonzero(VJPHiPrimitive):
 
   def vjp_bwd_retval(self, res: Any, g: Any):
     return (ad_util.zeros_like_aval(self.in_avals[0]),)
+
+  lin = linearize_from_jvp
+  linearized = apply_derived_linearization
 
 
 def _nonzero_impl(a: ArrayLike, *, size: int, axes: tuple[int, ...], out_dtype: np.dtype) -> tuple[Array, ...]:
