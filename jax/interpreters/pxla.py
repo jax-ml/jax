@@ -96,6 +96,13 @@ _deprecations = {
         ),
         None,
     ),
+    "op_sharding_to_indices": (
+        (
+            "jax.interpreters.pxla.op_sharding_to_indices was deprecated in JAX"
+            " v0.8.2 and removed in JAX v0.11.0."
+        ),
+        None,
+    ),
     # Deprecated in JAX v0.8.2, TODO(jakevdp) finalize after v0.11.0
     "MeshComputation": (
         "jax.interpreters.pxla.MeshComputation is deprecated as of JAX v0.8.2.",
@@ -116,13 +123,6 @@ _deprecations = {
             " to get the current mesh."
         ),
         _deprecated_mesh.thread_resources,
-    ),
-    "op_sharding_to_indices": (
-        (
-            "jax.interpreters.pxla.op_sharding_to_indices is deprecated as of"
-            " JAX v0.8.2."
-        ),
-        _deprecated_op_shardings.op_sharding_to_indices,
     ),
 }
 
