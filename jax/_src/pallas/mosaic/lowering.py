@@ -3942,7 +3942,12 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       raise ValueError(
         "Cannot fully unroll loop with dynamic number of steps (unroll=0)")
 
-  if unroll > 1:
+  supports_late_unroll = (
+      not ctx.forward_compatible
+      and not is_cloud_tpu_older_than(2026, 7, 12, ctx.lowering_context.backend)
+  )
+  # TODO(apaszke): Remove forward_compatible check and associated code after 12.08.2026
+  if unroll > 1 and not supports_late_unroll:
     const_types = [val.type for val in consts]
     args_types = [val.type for val in args]
 
@@ -4011,8 +4016,21 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   remainder = 0
   main_range = 0
   ubd = lbd
+  unroll_attr = None
 
-  if is_static_steps:
+  # TODO(apaszke): Remove forward_compatible check after 12.08.2026
+  if unroll > 1 and supports_late_unroll:
+    num_steps_val = _ensure_mlir_value(
+        num_steps, pallas_core.index_map_grid_aval
+    )
+    main_ubd = ubd = arith.addi(lbd, num_steps_val)
+    unroll_attr = ir.IntegerAttr.get(ir.IntegerType.get_signless(32), unroll)
+    unroll = 1  # The attr takes over unrolling.
+
+    has_main = True
+    has_static_remainder = False
+    has_dynamic_remainder = False
+  elif is_static_steps:
     num_steps_int = cast(int, num_steps)
     main_steps = num_steps_int // unroll
     remainder = num_steps_int % unroll
@@ -4043,6 +4061,8 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   if has_main:
     step_val = ir_constant(unroll, mlir_type=_dtype_to_ir_type(jnp.int32))
     main_for_op = scf.ForOp(lbd, main_ubd, step_val, args)
+    if unroll_attr is not None:
+      main_for_op.attributes["tpu.late_unroll"] = unroll_attr
     with ir.InsertionPoint(main_for_op.body):
       iv = main_for_op.induction_variable
       inner_args = main_for_op.inner_iter_args
