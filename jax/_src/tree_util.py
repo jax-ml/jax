@@ -1330,13 +1330,13 @@ def _prefix_error(
         f"At that key path, the prefix pytree {name} has a subtree of type\n"
         f"    {type(prefix_tree)}\n"
         f"with {len(prefix_tree_children)} child keys\n"
-        f"    {' '.join(str(k.key) for k in prefix_tree_keys)}\n"
+        f"    {' '.join(str(k) for k in prefix_tree_keys)}\n"
         f"but at the same key path the full pytree has a subtree of the same "
         f"type but with {len(full_tree_children)} child keys\n"
-        f"    {' '.join(str(k.key) for k in full_tree_keys)}\n"
+        f"    {' '.join(str(k) for k in full_tree_keys)}\n"
         + ("" if diff is None else
            f"so the symmetric difference on key sets is\n"
-           f"    {' '.join(str(k.key) for k in diff)}"))
+           f"    {' '.join(str(k) for k in diff)}"))
       return  # don't look for more errors in this subtree
 
   # Or they may disagree if their roots have different pytree metadata:
