@@ -461,6 +461,29 @@ class ConstraintSystemTest(parameterized.TestCase):
         ),
     )
 
+  def test_canonicalize_strict_non_splat_relayouts_to_equals(self):
+    v0, v1, v2 = V(0), V(1), V(2)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+            cs.Relayout(v0, v1, bitwidth=32, strict=True),
+            cs.Relayout(v2, v1, bitwidth=32, strict=True),
+            cs.Relayout(v0, v1, bitwidth=32, strict=False),
+        ],
+    )
+
+    self.assertEqual(
+        cs.canonicalize_strict_non_splat_relayouts_to_equals(system),
+        cs.ConstraintSystem(
+            constraints=[
+                cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+                cs.Equals(v0, v1),
+                cs.Relayout(v2, v1, bitwidth=32, strict=True),
+                cs.Relayout(v0, v1, bitwidth=32, strict=False),
+            ],
+        ),
+    )
+
   @parameterized.parameters(
       # Should work for any tiled layout.
       mgpu.WGMMA_LAYOUT,

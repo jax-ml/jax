@@ -2655,6 +2655,11 @@ def infer_layout(
       global_constraint_system
   )
   assert not isinstance(global_constraint_system, cs.Unsatisfiable)
+  global_constraint_system = (
+      cs.canonicalize_strict_non_splat_relayouts_to_equals(
+          global_constraint_system
+      )
+  )
   global_constraint_system = cs.saturate_divides_constraints_for_equal_vars(
       global_constraint_system
   )

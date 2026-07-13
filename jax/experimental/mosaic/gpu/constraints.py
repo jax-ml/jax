@@ -1209,6 +1209,30 @@ def saturate_distinct_from_splat(
   return constraint_system & ConstraintSystem(constraints=new_constraints)
 
 
+def canonicalize_strict_non_splat_relayouts_to_equals(
+    constraint_system: ConstraintSystem,
+) -> ConstraintSystem:
+  """Replaces strict relayouts from non-splat sources with Equals constraints.
+
+  If we have `Relayout(source, target, strict=True)`, and `source` is known to
+  be non-splat, then the only valid strict relayout is the identity. Thus,
+  `source` must be equal to `target`.
+  """
+  non_splat = non_splat_variables(constraint_system.constraints)
+  new_constraints: list[Constraint] = []
+  for constraint in constraint_system.constraints:
+    match constraint:
+      case Relayout(
+          source=Variable() as source, target=target, strict=True
+      ) if source in non_splat:
+        new_constraints.append(Equals(source, target))
+      case _:
+        new_constraints.append(constraint)
+  return ConstraintSystem(
+      assignments=constraint_system.assignments, constraints=new_constraints
+  )
+
+
 def compute_transitively_equal_vars(
     system: ConstraintSystem,
 ) -> dict[Variable, list[Variable]]:
