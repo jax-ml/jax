@@ -541,6 +541,7 @@ def emit_pipeline_warp_specialized(
     wg_axis: str,
     num_compute_wgs: int,
     pipeline_state: jax.Array | PipelinePipeline | None = None,
+    manual_ready_barriers: bool = False,
     manual_consumed_barriers: bool = False,
     compute_context: ComputeContext | None = None,
     memory_thread_idx: int | None = None,
@@ -574,6 +575,9 @@ def emit_pipeline_warp_specialized(
       active concurrently. Defaults to 2.
     wg_axis: The axis name for the warp group axis.
     num_compute_wgs: The number of compute warpgroups
+    manual_ready_barriers: If True, ready barriers will be passed into the body
+      function after the output refs. There will be one barrier per input and
+      will be passed in the same order.
     manual_consumed_barriers: If True, consumed barriers will be
       passed into the body function after the output refs. There will be one
       barrier per input and will be passed in the same order.
@@ -717,27 +721,36 @@ def emit_pipeline_warp_specialized(
       )
     flat_in_smem_refs, flat_out_smem_refs = util.split_list(
         smem_allocs, [len(flat_in_specs)])
-    in_smem_barrier = gpu_core.Barrier(
-        num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps
-    )
-    flat_consumed_barriers: list[gpu_core.Barrier | gpu_core.ClusterBarrier]
-    flat_consumed_barriers = []
-    consumed_barrier_type: Any
+    if manual_ready_barriers:
+      flat_ready_barriers = [
+          gpu_core.Barrier(num_barriers=max_concurrent_steps)
+          for _ in flat_in_specs
+      ]
+    else:
+      flat_ready_barriers = [
+          gpu_core.Barrier(
+              num_arrivals=len(flat_in_specs), num_barriers=max_concurrent_steps
+          )
+      ]
+
     if collective_axes:
       consumed_barrier_type = functools.partial(
           gpu_core.ClusterBarrier, collective_axes=collective_axes
       )
     else:
       consumed_barrier_type = gpu_core.Barrier
-    for _ in flat_in_specs:
-      if manual_consumed_barriers:
+
+    flat_consumed_barriers: list[gpu_core.Barrier | gpu_core.ClusterBarrier]
+    if manual_consumed_barriers:
+      flat_consumed_barriers = []
+      for _ in flat_in_specs:
         flat_consumed_barriers.append(
             consumed_barrier_type(
                 num_arrivals=num_compute_wgs,
                 num_barriers=max_concurrent_steps,
             )
         )
-    if not manual_consumed_barriers:
+    else:
       # We only allocated one consumed barrier for all inputs when using
       # automatic consumed barriers.
       flat_consumed_barriers = [
@@ -749,7 +762,7 @@ def emit_pipeline_warp_specialized(
     return dict(
         flat_in_smem_refs=flat_in_smem_refs,
         flat_out_smem_refs=flat_out_smem_refs,
-        in_smem_barrier_ref=in_smem_barrier,
+        flat_ready_barrier_refs=flat_ready_barriers,
         flat_consumed_barrier_refs=flat_consumed_barriers,
     )
 
@@ -807,7 +820,7 @@ def emit_pipeline_warp_specialized(
       flat_out_gmem_refs,
       flat_in_smem_refs,
       flat_out_smem_refs,
-      in_smem_barrier_ref,
+      flat_ready_barrier_refs,
       flat_consumed_barrier_refs,
   ):
     flat_in_brefs: Sequence[BufferedRef] = [
@@ -852,8 +865,10 @@ def emit_pipeline_warp_specialized(
         indices, last_store_indices, prev_body_carry = carry
         slot = lax.rem(step, max_concurrent_steps)
         consumed_slot = lax.rem(step - delay_release, max_concurrent_steps)
-        # Wait for the current GMEM->SMEM copies to complete.
-        gpu_primitives.barrier_wait(in_smem_barrier_ref.at[_get_slot(slot, True)])
+        if not manual_ready_barriers:
+          # Wait for the current GMEM->SMEM copies to complete.
+          [barrier] = flat_ready_barrier_refs
+          gpu_primitives.barrier_wait(barrier.at[_get_slot(slot, True)])
 
         # Wait for the previous output SMEM->GMEM copy to complete.
         if copies_out_in_loop:
@@ -871,6 +886,12 @@ def emit_pipeline_warp_specialized(
             all_brefs,
         )
 
+        if manual_ready_barriers:
+          barriers = jax.tree.unflatten(
+              in_specs_treedef,
+              [barrier.at[slot] for barrier in flat_ready_barrier_refs],
+          )
+          body_args = (*body_args, *barriers)
         if manual_consumed_barriers:
           barriers = jax.tree.unflatten(
               in_specs_treedef,
@@ -1002,12 +1023,18 @@ def emit_pipeline_warp_specialized(
         else:
           prologue_steps = jnp.where(pipeline_state == PipelinePipeline.START, prologue_steps, 0)
 
+      if manual_ready_barriers:
+        ready_barriers_refs = flat_ready_barrier_refs
+      else:
+        [ready_barrier] = flat_ready_barrier_refs
+        ready_barriers_refs = [ready_barrier] * len(flat_in_brefs)
+
       # Begin initial copies.
       def _init_step(step, indices):
-        for bref in flat_in_brefs:
+        for bref, barrier in zip(flat_in_brefs, ready_barriers_refs):
           buf_slot = _get_slot(step, not bref.is_index_invariant)
           barrier_slot = _get_slot(step, True)
-          bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
+          bref.copy_in(buf_slot, indices, barrier, barrier_slot)
         return _inc_grid_by_1(indices, grid)
 
       indices = jax.lax.fori_loop(
@@ -1019,22 +1046,24 @@ def emit_pipeline_warp_specialized(
         slot = lax.rem(step, max_concurrent_steps)
         fetch_slot = slot  # (x + y) % y == x % y
 
-        if not manual_consumed_barriers:
+        if manual_consumed_barriers:
+          consumed_barriers_refs = flat_consumed_barrier_refs
+        else:
           # We only have one consumed barrier when using automatic consumed
           # barrier management.
           [consumed_barrier_ref] = flat_consumed_barrier_refs
           gpu_primitives.barrier_wait(consumed_barrier_ref.at[slot])
-          consumed_barrier_it = [None] * len(flat_in_brefs)
-        else:
-          consumed_barrier_it = flat_consumed_barrier_refs
+          consumed_barriers_refs = [None] * len(flat_in_brefs)
 
-        for bref, consumed_barrier in zip(flat_in_brefs, consumed_barrier_it):
+        for bref, barrier, consumed_barrier in zip(
+            flat_in_brefs, ready_barriers_refs, consumed_barriers_refs
+        ):
           if manual_consumed_barriers:
             assert consumed_barrier is not None
             gpu_primitives.barrier_wait(consumed_barrier.at[slot])
           buf_slot = _get_slot(fetch_slot, not bref.is_index_invariant)
           barrier_slot = _get_slot(fetch_slot, True)
-          bref.copy_in(buf_slot, indices, in_smem_barrier_ref, barrier_slot)
+          bref.copy_in(buf_slot, indices, barrier, barrier_slot)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
       lax.fori_loop(0, num_steps - prologue_steps, memory_loop_body, (indices,))
@@ -1059,8 +1088,10 @@ def emit_pipeline_warp_specialized(
         compute_block,
         memory_block
     )
+
   # Type checkers do not understand the get_allocations assignment above.
   return pipeline  # pyrefly: ignore[bad-return]
+
 
 def _compute_registers(memory_registers: int, num_compute_wgs: int) -> int:
   """Returns the max number of registers to use in compute threads.

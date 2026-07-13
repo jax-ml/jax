@@ -45,6 +45,8 @@ using Triton, switch to the official Triton bindings and `jax_triton`.
     {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`.
   * {func}`jax.experimental.pallas.mosaic_gpu.wgmma` now supports mixing the
     e4m3 and e5m2 FP8 types across its two operands.
+  * Added support for manual "ready" barriers to
+    {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline_warp_specialized`.
 
 * Deprecations
 

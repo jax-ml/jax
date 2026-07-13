@@ -7549,11 +7549,12 @@ class WarpSpecializedPipelineTest(PallasTest):
       n=[256, 64],
       num_compute_wgs=[1],  # TODO(apaszke): Use 2WGs once we add support for outputs.
       static=[False, True],
+      manual_ready_barriers=[False, True],
       manual_consumed_barriers=[False, True],
       in_tree_template=[(0, 1), ((0, (1,), None))],
   )
   def test_elementwise_add(self, m, n, num_compute_wgs, static,
-                           manual_consumed_barriers, in_tree_template):
+                           manual_ready_barriers, manual_consumed_barriers, in_tree_template):
     blk_m = blk_n = 64
     if m % (num_compute_wgs * blk_m):
       self.skipTest(f"{m=} must be divisible by {num_compute_wgs=} * {blk_m=}")
@@ -7566,13 +7567,17 @@ class WarpSpecializedPipelineTest(PallasTest):
 
     def tiled_add_kernel(_, *smems):
       flat_smems, _ = jax.tree.flatten(smems)
-      x_smem, y_smem, o_smem, *consumed_barriers = flat_smems
+      x_smem, y_smem, o_smem, *barriers = flat_smems
 
+      if manual_ready_barriers:
+        x_ready_barrier, y_ready_barrier, *barriers = barriers
+        plgpu.barrier_wait(x_ready_barrier)
+        plgpu.barrier_wait(y_ready_barrier)
       wg_idx = lax.axis_index("wg")
       m_slice = pl.ds(wg_idx * blk_m, blk_m)
       o_smem[m_slice] = x_smem[m_slice] + y_smem[m_slice]
       if manual_consumed_barriers:
-        [x_consumed_barrier, y_consumed_barrier] = consumed_barriers
+        x_consumed_barrier, y_consumed_barrier = barriers
         plgpu.barrier_arrive(x_consumed_barrier)
         plgpu.barrier_arrive(y_consumed_barrier)
 
@@ -7589,6 +7594,7 @@ class WarpSpecializedPipelineTest(PallasTest):
           wg_axis="wg",
           in_specs=in_specs,
           out_specs=[spec],
+          manual_ready_barriers=manual_ready_barriers,
           manual_consumed_barriers=manual_consumed_barriers,
       )(*gmem_refs)
 
