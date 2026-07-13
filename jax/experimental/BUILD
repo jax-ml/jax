@@ -513,6 +513,7 @@ pytype_strict_library(
         ":pallas_triton_users",
     ],
     deps = [
+        "//jax/_src:deprecations",
         "//jax/_src/pallas",
         "//jax/_src/pallas/triton:core",
         "//jax/_src/pallas/triton:gpu_info",

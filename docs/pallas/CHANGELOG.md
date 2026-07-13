@@ -21,6 +21,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ### Triton
 
+The Triton backend is deprecated and will be removed in a future version of JAX.
+To keep using Pallas on GPU, please migrate to the Mosaic GPU backend. To keep
+using Triton, switch to the official Triton bindings and `jax_triton`.
+
 * New features
 
   * Added {data}`jax.experimental.pallas.triton.CUSTOM_CALL_TARGET_NAME`, the

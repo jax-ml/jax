@@ -953,6 +953,14 @@ def _pallas_call_lowering(
               not config.jax_pallas_use_mosaic_gpu.value)
       ):
         backend = triton_backend
+        deprecations.warn(
+            "jax-pallas-triton",
+            "The Pallas Triton backend is deprecated and will be removed in"
+            " a future JAX version. To keep using Pallas on GPU, please migrate"
+            " to the Mosaic GPU backend. To keep using Triton, switch to"
+            " the official Triton bindings and jax_triton.",
+            stacklevel=2,
+        )
 
     if backend is None:
       raise _unsupported_lowering_error("gpu")

@@ -15,6 +15,7 @@
 import functools
 import sys
 import unittest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -53,6 +54,12 @@ class PallasBaseTest(jtu.JaxTestCase):
         self.skipTest("Only works on GPU with capability >= sm80")
       if plgpu is None:
         self.skipTest("plgpu not available on this platform")
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message="The Pallas Triton backend is deprecated",
+      )
     else:
       self.skipTest("Test only works on CPU and GPU")
 
