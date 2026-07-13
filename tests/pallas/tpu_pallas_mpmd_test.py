@@ -15,6 +15,7 @@
 
 import dataclasses
 import functools
+import math
 import re
 
 from absl.testing import absltest
@@ -821,6 +822,63 @@ class MpmdTest(PallasSCTest):
     o1, o2 = f(x1, x2)
     np.testing.assert_array_equal(o1, x1)
     np.testing.assert_array_equal(o2, x2)
+
+  @parameterized.parameters([False, True])
+  def test_scs_dma_to_vmem_shared(self, reverse):
+    num_cores = self.sc_info.num_cores
+    num_subcores = self.sc_info.num_subcores
+    v_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="s_core",
+        subcore_axis_name="subcore",
+        num_cores=num_cores,
+        num_subcores=num_subcores,
+    )
+    s_mesh = plsc.ScalarSubcoreMesh(
+        axis_name="s_core", num_cores=num_cores
+    )
+    shape = (num_cores, num_subcores, self.num_lanes)
+    x = jnp.arange(math.prod(shape), dtype=jnp.int32).reshape(shape)
+    scratch_shape = (num_subcores, self.num_lanes)
+
+    def vector_subcore_fn(x_ref, out_ref, scratch_vmem_shd, dma_sem, tec_sem, scs_sem):
+      core_id = jax.lax.axis_index("s_core")
+      subcore_id = jax.lax.axis_index("subcore")
+      if reverse:
+        del out_ref, dma_sem, tec_sem
+        pltpu.sync_copy(x_ref.at[core_id, subcore_id], scratch_vmem_shd.at[subcore_id])
+        pl.semaphore_signal(scs_sem, device_id={"s_core": core_id})
+      else:
+        del x_ref, dma_sem, scs_sem
+        pl.semaphore_wait(tec_sem, 1)
+        pltpu.sync_copy(scratch_vmem_shd.at[subcore_id], out_ref.at[core_id, subcore_id])
+
+    def scalar_subcore_fn(x_ref, out_ref, scratch_vmem_shd, dma_sem, tec_sem, scs_sem):
+      core_id = jax.lax.axis_index("s_core")
+      if reverse:
+        del x_ref, tec_sem
+        pl.semaphore_wait(scs_sem, num_subcores)
+        pltpu.async_copy(scratch_vmem_shd, out_ref.at[core_id], dma_sem).wait()
+      else:
+        del out_ref, scs_sem
+        pltpu.async_copy(x_ref.at[core_id], scratch_vmem_shd, dma_sem).wait()
+        for i in range(num_subcores):
+          pl.semaphore_signal(tec_sem, device_id={"s_core": core_id, "subcore": i})
+
+    @jax.jit
+    def f(x):
+      return pl.kernel(
+          body=[vector_subcore_fn, scalar_subcore_fn],
+          mesh=[v_mesh, s_mesh],
+          out_type=jax.ShapeDtypeStruct(shape, x.dtype),
+          scratch_types=[
+              pltpu.VMEM_SHARED(scratch_shape, x.dtype),
+              pltpu.SemaphoreType.DMA(()) @ s_mesh,
+              pltpu.SemaphoreType.REGULAR(()) @ v_mesh,
+              pltpu.SemaphoreType.REGULAR(()) @ s_mesh,
+          ],
+      )(x)
+
+    np.testing.assert_array_equal(f(x), x)
 
   def test_parallel_subkernels_semaphores_missing_subcore_axis(self):
     v_mesh = plsc.VectorSubcoreMesh(
