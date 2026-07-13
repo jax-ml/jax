@@ -498,6 +498,25 @@ def square(x):
   return Square(jax.typeof(x))(x)
 
 
+class NonDiffPrim(VJPHiPrimitive):
+  def __init__(self, in_aval):
+    self.in_avals = (in_aval,)
+    self.out_aval = in_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return x
+
+  def jvp(self, primals, tangents):
+    (x,), _ = primals, tangents
+    import numpy as np
+    return x, np.empty(x.shape, dtype=jax.dtypes.float0)
+
+  lin = linearize_from_jvp
+  linearized = apply_derived_linearization
+
+
 class HijaxTest(jtu.JaxTestCase):
 
   def test_closed_call(self):
@@ -1844,6 +1863,13 @@ class HijaxTest(jtu.JaxTestCase):
     debug_info = lowered._lowering.compile_args['all_args_info'].debug_info
     # QArrayTy.lo_ty() returns [int8[m,k], f32[m]], so 'x' is replicated twice
     self.assertEqual(debug_info.arg_names, ('x', 'x'))
+
+  def test_nondiff_linearize(self):
+    def f(x):
+      return NonDiffPrim(jax.typeof(x))(x)
+    _, f_lin = jax.linearize(f, jnp.ones((5,)))
+    out_tangent = f_lin(jnp.ones((5,)))
+    self.assertArraysEqual(out_tangent, jnp.zeros((5,)))
 
 
 class BoxTest(jtu.JaxTestCase):
