@@ -100,6 +100,21 @@ _deprecations = {
     " in JAX v0.11.0.  Use jax.extend.core.get_opaque_trace_state.",
     None,
   ),
+  "is_concrete": (
+    "jax.core.is_concrete was deprecated in JAX v0.10.0 and removed in JAX"
+    " v0.11.0.",
+    None,
+  ),
+  "is_constant_dim": (
+    "jax.core.is_constant_dim was deprecated in JAX v0.10.0 and removed in JAX"
+    " v0.11.0.",
+    None,
+  ),
+  "is_constant_shape": (
+    "jax.core.is_constant_shape was deprecated in JAX v0.10.0 and removed in JAX"
+    " v0.11.0.",
+    None,
+  ),
   "jaxprs_in_params": (
     "jax.core.jaxprs_in_params was deprecated in JAX v0.10.0 and removed in JAX"
     " v0.11.0. Use jax.extend.core.jaxprs_in_params.",
@@ -190,18 +205,6 @@ _deprecations = {
     None,
   ),
   # Deprecated in JAX v0.10.0, TODO(jakevdp) finalize after v0.11.0
-  "is_concrete": (
-    "jax.core.is_concrete is deprecated.",
-    _src_core.is_concrete,
-  ),
-  "is_constant_dim": (
-    "jax.core.is_constant_dim is deprecated.",
-    _src_core.is_constant_dim,
-  ),
-  "is_constant_shape": (
-    "jax.core.is_constant_shape is deprecated.",
-    _src_core.is_constant_shape,
-  ),
   "pytype_aval_mappings": (
     "jax.core.pytype_aval_mappings is deprecated.",
     _src_core.pytype_aval_mappings,
@@ -214,9 +217,6 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  is_concrete = _src_core.is_concrete
-  is_constant_dim = _src_core.is_constant_dim
-  is_constant_shape = _src_core.is_constant_shape
   pytype_aval_mappings = _src_core.pytype_aval_mappings
   trace_ctx = _src_core.trace_ctx
 else:
