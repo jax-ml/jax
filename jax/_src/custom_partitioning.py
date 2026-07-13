@@ -598,6 +598,16 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
+  if (not config.use_shardy_partitioner.value and
+      infer_sharding_from_operands is None):
+    function = call.jaxpr.debug_info.func_src_info
+    raise NotImplementedError(
+        f"Custom-partitioned function {function!r} does not support GSPMD "
+        "sharding propagation rules. GSPMD is deprecated; please upgrade "
+        "to and enable the Shardy partitioner "
+        "(jax_use_shardy_partitioner=True, which is the default)."
+    )
+
   def to_mesh_pspec_sharding(hlo_sharding: xc.HloSharding | None, ndim):
     if hlo_sharding is None:
       return hlo_sharding
