@@ -1519,8 +1519,8 @@ LogicalResult EnqueueDMAOp::verify() {
         "subcores");
   }
   if (isa<SemaphoreType>(target_sem_elem_type)) {
-    if (HasMemorySpace(source_ty, MemorySpace::kSmem) ||
-        HasMemorySpace(target_ty, MemorySpace::kSmem)) {
+    if (HasMemorySpace(source_ty, MemorySpace::kSmem, CoreType::kTc) ||
+        HasMemorySpace(target_ty, MemorySpace::kSmem, CoreType::kTc)) {
       return emitOpError(
           "Non-DMA semaphores are not supported for DMAs involving SMEM");
     }
