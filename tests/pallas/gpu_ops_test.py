@@ -164,7 +164,14 @@ class FusedAttentionTest(PallasBaseTest):
           segment_ids=segment_ids,
           interpret=self.INTERPRET,
       )
-    o = impl(q, k, v)
+
+    try:
+      o = impl(q, k, v)
+    except jax.errors.JaxRuntimeError as e:
+      if "RESOURCE_EXHAUSTED" in str(e):
+        self.skipTest(f"Skipped: block size configuration exceeds device "
+                      f"resources: {e}")
+      raise
     o_ref = attention.mha_reference(q, k, v, segment_ids, causal=causal)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
