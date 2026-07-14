@@ -48,20 +48,6 @@ class GpuVersion(enum.Enum):
   RTX_PRO_6000 = "NVIDIA RTX PRO 6000"
   THOR = "NVIDIA Thor"
 
-  # AMD GPUs
-  GFX908 = "gfx908"
-  GFX90A = "gfx90a"
-  GFX942 = "gfx942"
-  GFX950 = "gfx950"
-  GFX1030 = "gfx1030"
-  GFX1100 = "gfx1100"
-  GFX1101 = "gfx1101"
-  GFX1103 = "gfx1103"
-  GFX1150 = "gfx1150"
-  GFX1151 = "gfx1151"
-  GFX1200 = "gfx1200"
-  GFX1201 = "gfx1201"
-
   def __str__(self) -> str:
     return self.value
 
@@ -78,13 +64,15 @@ def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class GpuInfo:
   """GPU hardware information"""
-  gpu_version: GpuVersion
+  # None when device_kind does not map to a known GpuVersion but arch_name is
+  # still a valid backend target (e.g. a ROCm GPU with a marketing device_kind).
+  gpu_version: GpuVersion | None
   arch_name: str
   compute_capability: int
 
 
 def is_gpu_device() -> bool:
-  return gpu_version_from_device_kind(get_device_kind()) is not None
+  return get_device_platform() == "gpu"
 
 
 registry: dict[str, Callable[[], GpuInfo]] = {}
@@ -158,26 +146,6 @@ def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
           arch_name="11.0",
           compute_capability=110,
       )
-    # AMD GPUs. The enum value is already the gfx arch name.
-    case (
-        GpuVersion.GFX908
-        | GpuVersion.GFX90A
-        | GpuVersion.GFX942
-        | GpuVersion.GFX950
-        | GpuVersion.GFX1030
-        | GpuVersion.GFX1100
-        | GpuVersion.GFX1101
-        | GpuVersion.GFX1103
-        | GpuVersion.GFX1150
-        | GpuVersion.GFX1151
-        | GpuVersion.GFX1200
-        | GpuVersion.GFX1201
-    ):
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name=gpu_version.value,
-          compute_capability=0,
-      )
     case _:
       raise ValueError(f"Unsupported GPU version: {gpu_version}")
 
@@ -187,11 +155,16 @@ def get_gpu_info() -> GpuInfo:
   """Returns the GPU hardware info for the current device."""
   device_kind = get_device_kind()
   gpu_version = gpu_version_from_device_kind(device_kind)
-  if gpu_version is None:
-    if device_kind in registry:
-      return registry[device_kind]()
-    raise ValueError(f"Unsupported GPU device kind: {device_kind}")
-  return _get_gpu_info_impl(gpu_version)
+  if gpu_version is not None:
+    return _get_gpu_info_impl(gpu_version)
+
+  if get_device_platform() == "gpu" and device_kind.startswith("gfx"):
+    return GpuInfo(
+        gpu_version=None, arch_name=device_kind, compute_capability=0)
+
+  if device_kind in registry:
+    return registry[device_kind]()
+  raise ValueError(f"Unsupported GPU device kind: {device_kind}")
 
 
 @jax_util.cache(trace_context_in_key=True)
@@ -207,6 +180,23 @@ def get_gpu_info_from_version(
 
 
 def get_device_kind() -> str:
-  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+  device = pxla.get_default_device()
+  abstract_device = mesh_lib.get_abstract_mesh().abstract_device
+  if (abstract_device is not None
+      and abstract_device.device_kind != device.device_kind):
     return abstract_device.device_kind
-  return pxla.get_default_device().device_kind
+  cc = getattr(device, "compute_capability", None)
+  if isinstance(cc, str) and cc.startswith("gfx"):
+    return cc
+  return device.device_kind
+
+
+_GPU_PLATFORMS = ("gpu", "rocm", "cuda")
+
+
+def get_device_platform() -> str:
+  if abstract_device := mesh_lib.get_abstract_mesh().abstract_device:
+    platform = abstract_device.platform
+  else:
+    platform = pxla.get_default_device().platform
+  return "gpu" if platform in _GPU_PLATFORMS else platform
