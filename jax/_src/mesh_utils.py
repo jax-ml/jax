@@ -238,6 +238,7 @@ device_kind_handler_dict: dict[
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
     _TPU_V4_LITE: _v4i_v8i_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
+    _TPU_V5E: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
     _TPU_V6_LITE: _v5e_create_device_mesh,
     _TPU_7X: _7x_create_device_mesh,
