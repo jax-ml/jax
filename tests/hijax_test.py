@@ -20,6 +20,7 @@ from functools import partial
 import itertools as it
 from typing import Any
 import unittest
+import numpy as np
 
 from absl.testing import absltest, parameterized
 
@@ -767,6 +768,18 @@ class HijaxTest(jtu.JaxTestCase):
     a_grad, = f_vjp(b)
     self.assertIsInstance(a_grad, MyArray)
     self.assertAllClose(a_grad.arr, 2.0, check_dtypes=False)
+
+  def test_hijax_infer_params_cache_hit(self):
+    x = np.arange(4)
+
+    @jax.jit
+    def f(x):
+      return square(x)
+
+    with jtu.count_infer_params_cache_miss() as count:
+      f(x)
+      f(x)
+    self.assertEqual(count(), 1)
 
   def test_stages(self):
     @dataclass(frozen=True)

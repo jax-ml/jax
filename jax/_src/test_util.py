@@ -294,6 +294,7 @@ count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
 count_compilation_after_persistent_cache_miss = count_events("compile_after_persistent_compilation_miss")
 count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
+count_infer_params_cache_miss = count_events("infer_params_cache_miss")
 
 
 @contextmanager

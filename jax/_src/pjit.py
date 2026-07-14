@@ -484,6 +484,7 @@ class PjitParams(NamedTuple):
 def _trace_for_jit(
     fun: Callable, ji: PjitInfo, ctx_mesh: mesh_lib.Mesh,
     dbg: core.DebugInfo, avals, args, kwargs) -> PjitParams:
+  util.test_event("infer_params_cache_miss")
   args_ft, in_tree_nones, in_tree_filtered = ft.flatten_static_argnums_argnames_and_return_various_trees(
       args, kwargs, ji.static_argnums, ji.static_argnames)
   avals_ft = args_ft.update(avals)
@@ -649,7 +650,9 @@ def _infer_params(
     return entry.pjit_params, entry.pjit_params.consts + dynargs
 
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
-  if p.params['jaxpr'].is_high:
+  const_avals = _infer_input_type(fun, dbg_fn, p.consts)
+  # TODO(mattjj, yashkatariya): Remove this when Box and qdd are deleted.
+  if p.params['jaxpr'].is_high and any(a.has_qdd for a in const_avals + avals):
     return p, p.consts + dynargs
   entry.pjit_params = p
   return p, p.consts + dynargs
