@@ -1038,10 +1038,13 @@ def custom_jvp_call_rule(in_err: Error,
   # JVP rule, one must instead use checkify-of-jvp. Thus this implementation
   # just forwards the input error and code (and trivial tangents) to the output.
   err_vals, err_tree = jtu.tree_flatten(in_err)
+  dbg = call_jaxpr.debug_info
+  if dbg.arg_names is not None:
+    dbg = dbg._replace(arg_names=("",) * err_tree.num_leaves + dbg.arg_names)
   partial_checkify = lu.wrap_init(
       functools.partial(checkify_jaxpr_flat, call_jaxpr,
                         call_jaxpr.consts, enabled_errors, err_tree),
-      debug_info=call_jaxpr.debug_info)
+      debug_info=dbg)
   partial_checkify, f_metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
   jvp = lift_jvp(err_tree.num_leaves, num_consts, jvp_jaxpr_fun)
