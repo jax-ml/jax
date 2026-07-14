@@ -16,21 +16,14 @@ limitations under the License.
 #ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
 
-#include <array>
 #include <cstdint>
 #include <optional>
-#include <ostream>
 #include <sstream>
 #include <string>
-#include <type_traits>
-#include <utility>
 
 #include "absl/log/check.h"
-#include "absl/status/status.h"
-#include "absl/types/span.h"
 #include "llvm/Support/Compiler.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -39,7 +32,6 @@ limitations under the License.
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -88,32 +80,6 @@ limitations under the License.
     }                                \
   } while (false)
 
-template <typename Op>
-class StatusToDiagnosticAdapter {
- public:
-  // Returns an adapter that converts a non-OK absl::Status to an
-  // mlir::InFlightDiagnostic.
-  explicit StatusToDiagnosticAdapter(Op op) : op_(op) {}
-
-  // Converts a non-OK absl::Status to an mlir::InFlightDiagnostic.
-  mlir::InFlightDiagnostic operator()(const absl::Status& status) const {
-    return op_->emitOpError(status.ToString());
-  }
-
- private:
-  Op op_;
-};
-
-// Returns a callable adapter that converts a non-OK absl::Status to an
-// mlir::InFlightDiagnostic.
-//
-// Example usage:
-// ASSIGN_OR_RETURN(T result, DoSomething(), _.With(StatusToDiagnostic(&op)));
-template <typename Op>
-inline StatusToDiagnosticAdapter<Op> StatusToDiagnostic(Op op) {
-  return StatusToDiagnosticAdapter<Op>(op);
-}
-
 namespace mlir::tpu {
 
 // TPU_ASSERT_* macros should be understood as an assert, i.e. use it to check
@@ -152,17 +118,6 @@ namespace mlir::tpu {
 #define TPU_ASSERT_LE_LOC(loc, lhs, rhs) \
   TPU_ASSERT_CMP_LOC_IMPL(mlir::emitError(loc), lhs, rhs, <=)
 
-class Print {
- public:
-  explicit Print(Operation* t) : payload_(t) {}
-  Operation* payload_;
-
- private:
-  friend std::ostream& operator<<(std::ostream&, Print);
-};
-
-std::ostream& operator<<(std::ostream& os, Print p);
-
 template <bool adjust_bool = false>
 int8_t getTypeBitwidth(Type ty) {
   if (auto integer_ty = dyn_cast<IntegerType>(ty)) {
@@ -195,11 +150,6 @@ inline int8_t getElementTypeBitwidth(MemRefType ty) {
   return getElementTypeBitwidth<adjust_bool>(ty.getElementType());
 }
 
-template <typename T>
-ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
-  return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
-}
-
 // Debug only util.
 template <typename T>
 std::string shapeToString(const T& shape) {
@@ -215,67 +165,15 @@ std::string shapeToString(const T& shape) {
   return os.str();
 }
 
-SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
-                                        absl::Span<const int64_t> tiling);
-
-inline SmallVector<int64_t> ComputeTileStrides(
-    MemRefType memref_ty, absl::Span<const int64_t> tiling) {
-  absl::Span<const int64_t> shape(memref_ty.getShape().data(),
-                                  memref_ty.getShape().size());
-  return ComputeTileStrides(shape, tiling);
-}
-
 // Computes the dimensions that were squeezed from the source shape to match the
 // target shape. Returns the dimensions in increasing order.
 FailureOr<SmallVector<int>> computeSqueezedDimsChecked(
     Operation* op, ArrayRef<int64_t> source_shape,
     ArrayRef<int64_t> target_shape);
 
-// Assuming MKN matmul - This function must only be called after
-// canonicalization passes.
-//
-// Given a set of dimension numbers, Returns a pair of booleans, where the
-// first is true if the lhs is transposed
-// and the second is true if the rhs is transposed.
-std::optional<std::pair<bool, bool>> isTransposedMatmul(
-    DotDimensionNumbersAttr dim_numbers);
-
-// Returns true if a >=2D memref has a tiled layout and can be equivalently
-// considered as an untiled memref, except for potential padding in the
-// minormost dimension up to target_shape[1] (if allow_minormost_padding is
-// true).
-bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
-                                   const std::array<int64_t, 2>& target_shape,
-                                   bool allow_minormost_padding = false);
-
-// TODO(apaszke): Unify this with mlir::tpu::canReinterpretToUntiledMemref.
-// Returns true if a 1D memref has a tiled layout and can be equivalently
-// considered as an untiled memref and is contiguous.
-bool canReinterpretToUntiledContiguousMemref(MemRefType ty);
-
 // Determines whether the given MemRefType has the given memory space.
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space,
                     std::optional<tpu::CoreType> core_type = std::nullopt);
-
-bool layoutIsValidForValue(const Layout& l, const Value v,
-                           const std::array<int64_t, 2> target_shape);
-
-// Returns empty vector on null attribute
-FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr);
-
-FailureOr<SmallVector<Layout>> getOutLayouts(
-    Operation& op, const std::array<int64_t, 2> target_shape);
-
-FailureOr<SmallVector<Layout>> getInLayouts(
-    Operation& op, const std::array<int64_t, 2> target_shape);
-
-void setInLayout(Operation* op, ArrayRef<Layout> in);
-void setOutLayout(Operation* op, Layout out);
-void setOutLayout(Operation* op, ArrayRef<Layout> out);
-void setLayout(Operation* op, Layout in, Layout out);
-void setLayout(Operation* op, ArrayRef<Layout> in, Layout out);
-void setLayout(Operation* op, Layout in, ArrayRef<Layout> out);
-void setLayout(Operation* op, ArrayRef<Layout> in, ArrayRef<Layout> out);
 
 // Helper functions to create constants.
 inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder& builder,
@@ -283,31 +181,6 @@ inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder& builder,
   return arith::ConstantOp::create(builder, loc, builder.getIndexType(),
                                    builder.getIndexAttr(idx));
 }
-
-inline arith::ConstantOp I32Const(int32_t value, OpBuilder& builder,
-                                  Location loc) {
-  return arith::ConstantOp::create(builder, loc, builder.getI32Type(),
-                                   builder.getI32IntegerAttr(value));
-}
-
-inline arith::ConstantOp I32Const(int32_t value, ArrayRef<int64_t> shape,
-                                  OpBuilder& builder, Location loc) {
-  return arith::ConstantOp::create(
-      builder, loc,
-      DenseElementsAttr::get(
-          VectorType::get(shape, builder.getI32Type()),
-          builder.getIntegerAttr(builder.getI32Type(), value)));
-}
-
-std::optional<int64_t> getIntConst(Value v);
-
-// Recursively finds all non-trivial users of a given value, including those
-// accessed via `tpu.bitcast` or unary elementwise operations. However,
-// `tpu.bitcast` and unary element-wise operations are excluded from the
-// results.
-SmallVector<Operation*> getNontrivialTransitiveUsers(Value v);
-
-bool hasVectorOperandsOrResults(Operation& op);
 
 // Return a mod b for a, b > 0, but adjusted to return b when a mod b == 0 such
 // that the result is strictly positive.
