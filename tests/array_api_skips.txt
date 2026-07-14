@@ -48,7 +48,6 @@ array_api_tests/test_statistical_functions.py::test_cumulative_prod
 # TODO(jakevdp): fix the following failures:
 
 # Returns list rather than tuple
-array_api_tests/test_inspection_functions.py::TestInspection::test_devices
 array_api_tests/test_creation_functions.py::test_meshgrid
 array_api_tests/test_data_type_functions.py::test_broadcast_arrays
 

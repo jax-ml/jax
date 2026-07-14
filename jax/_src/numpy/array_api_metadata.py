@@ -74,11 +74,11 @@ class ArrayNamespaceInfo:
     # JAX is free to choose the most efficient device placement.
     return None
 
-  def devices(self) -> list[xc.Device | None]:
+  def devices(self) -> tuple[xc.Device | None, ...]:
     out: list[xc.Device | None] = [None]  # None indicates "uncommitted"
     for backend in xb.backends():
         out.extend(xb.devices(backend))
-    return out
+    return tuple(out)
 
   def capabilities(self):
     return self._capabilities
