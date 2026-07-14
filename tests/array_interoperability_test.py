@@ -249,6 +249,8 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu", "tpu")
   @unittest.skipIf(jaxlib_extension_version < 471, "Requires jaxlib >= 471")
   def testJaxPinnedHostRoundTrip(self):
+    if not jtu.is_libtpu_at_least("0.0.44"):
+      self.skipTest("Requires libtpu 0.0.44 or newer")
     device = jax.devices()[0]
     if device.platform not in ["gpu", "tpu"]:
       raise unittest.SkipTest("Test requires GPU or TPU")
@@ -363,6 +365,8 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.run_on_devices("tpu")
   @unittest.skipIf(jaxlib_extension_version < 474, "Requires jaxlib >= 474")
   def testTpuHostBufferDmaMap(self):
+    if not jtu.is_libtpu_at_least("0.0.44"):
+      self.skipTest("Requires libtpu 0.0.44 or newer")
     from jax._src.typing import DLDeviceType
 
     device = jax.devices("tpu")[0]
