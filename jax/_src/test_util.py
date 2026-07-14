@@ -22,6 +22,7 @@ import functools
 from functools import cached_property, partial
 import inspect
 
+import logging
 import math
 import os
 import platform
@@ -68,6 +69,8 @@ from jax._src.typing import ArrayLike, DTypeLike
 from jax._src.util import unzip2
 import numpy as np
 import numpy.random as npr
+
+logger = logging.getLogger(__name__)
 
 # When running tests, install the ABSL failure signal handler. This dumps a
 # C++ back trace on fatal signals, which is helpful for debugging.
@@ -453,13 +456,13 @@ def is_libtpu_at_least(version_str: str) -> bool:
     return True
 
   if tpu_library_path and tpu_library_path != libtpu.get_library_path():
-    warnings.warn(
+    logger.info(
         f"TPU_LIBRARY_PATH is set to {tpu_library_path}, which differs from "
-        f"the installed package default ({libtpu.get_library_path()}). "
-        "is_libtpu_at_least will check the installed package version, "
-        "which may not match the loaded library.",
-        stacklevel=2
+        f"the installed package default ({libtpu.get_library_path()}). Using "
+        f"the custom path set by TPU_LIBRARY_PATH and assuming the version of "
+        f"libtpu is head for version tests."
     )
+    return True
 
   # Parse unconditionally. If it throws ValueError, let it propagate.
   actual_version = parse_version(libtpu.__version__)
