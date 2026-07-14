@@ -61,6 +61,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
+        "//third_party/py/sglang_jax:__pkg__",
     ] + jax_test_util_visibility,
     deps = [
         ":api",
@@ -764,6 +765,10 @@ pytype_strict_library(
         "dtypes.py",
     ],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+        "//third_party/py/sglang_jax:__pkg__",
+    ],
     deps = [
         ":config",
         ":traceback_util",

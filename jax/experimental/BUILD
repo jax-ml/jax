@@ -513,6 +513,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     visibility = [
         ":pallas_triton_users",
+        "//third_party/py/sglang_jax:__pkg__",
     ],
     deps = [
         "//jax/_src:deprecations",
@@ -739,6 +740,7 @@ pytype_strict_library(
     visibility = [
         ":experimental_transfer_users",
         "//jax:internal",
+        "//third_party/py/sglang_jax:__pkg__",
     ],
     deps = [
         "//jax",

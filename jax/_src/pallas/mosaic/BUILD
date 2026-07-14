@@ -112,6 +112,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     visibility = [
         "//jax:internal",
+        "//third_party/py/sglang_jax:__pkg__",
     ] + jax_visibility("pallas/mosaic/lowering"),
     deps = [
         ":core",
@@ -251,6 +252,10 @@ pytype_strict_library(
     name = "helpers",
     srcs = ["helpers.py"],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+        "//third_party/py/sglang_jax:__pkg__",
+    ],
     deps = [
         ":core",
         ":primitives",
