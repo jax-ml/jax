@@ -834,6 +834,17 @@ LogicalResult verifyGather(Operation* op, ArrayRef<int64_t> operand_shape,
   //     Result shape  : [1, o, s0, ..., sm]
 
   uint64_t offsets_rank = offsets_shape.size();
+
+  // We require offsets shape and operand sample shape to be 1D or (1, N), and
+  // their ranks must match.
+  // Offsets shape : [o] or [1, o]
+  // Operand sample shape : [z] or [1, z]
+  if ((offsets_rank != 1 && offsets_rank != 2) ||
+      (offsets_rank == 2 && offsets_shape[0] != 1)) {
+    return op->emitOpError("Offsets shape must be 1D or (1, N), got (")
+           << absl::StrJoin(offsets_shape, ", ") << ")";
+  }
+
   uint64_t slice_rank = result_shape.size() - offsets_rank;
   if (operand_shape.size() <= slice_rank) {
     return op->emitOpError(
@@ -848,14 +859,6 @@ LogicalResult verifyGather(Operation* op, ArrayRef<int64_t> operand_shape,
   ArrayRef<int64_t> operand_sample_dims =
       operand_shape.take_front(operand_sample_rank);
 
-  // We require offsets shape and operand sample shape to be 1D or (1, N), and
-  // their ranks must match.
-  // Offsets shape : [o] or [1, o]
-  // Operand sample shape : [z] or [1, z]
-  if (offsets_rank > 2 || (offsets_rank == 2 && offsets_shape[0] != 1)) {
-    return op->emitOpError("Offsets shape must be 1D or (1, N), got (")
-           << absl::StrJoin(offsets_shape, ", ") << ")";
-  }
   if (operand_sample_rank > 2 ||
       (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
     return op->emitOpError("Source (gather operand) sample shape must be ")
@@ -916,6 +919,17 @@ LogicalResult verifyScatter(Operation* op, ArrayRef<int64_t> updates_shape,
   //     Updates shape : [1, o, s0, ..., sm]
 
   uint64_t offsets_rank = offsets_shape.size();
+
+  // We require offsets shape and operand sample shape to be 1D or (1, N), and
+  // their ranks must match.
+  // Offsets shape : [o] or [1, o]
+  // Operand sample shape : [z] or [1, z]
+  if ((offsets_rank != 1 && offsets_rank != 2) ||
+      (offsets_rank == 2 && offsets_shape[0] != 1)) {
+    return op->emitOpError("Offsets shape must be 1D or (1, N), got (")
+           << absl::StrJoin(offsets_shape, ", ") << ")";
+  }
+
   uint64_t slice_rank = updates_shape.size() - offsets_rank;
   if (operand_shape.size() <= slice_rank) {
     return op->emitOpError(
@@ -930,15 +944,6 @@ LogicalResult verifyScatter(Operation* op, ArrayRef<int64_t> updates_shape,
   ArrayRef<int64_t> operand_slice_dims = operand_shape.take_back(slice_rank);
   ArrayRef<int64_t> operand_sample_dims =
       operand_shape.take_front(operand_sample_rank);
-
-  // We require offsets shape and operand sample shape to be 1D or (1, N), and
-  // their ranks must match.
-  // Offsets shape : [o] or [1, o]
-  // Operand sample shape : [z] or [1, z]
-  if (offsets_rank > 2 || (offsets_rank == 2 && offsets_shape[0] != 1)) {
-    return op->emitOpError("Offsets shape must be 1D or (1, N), got (")
-           << absl::StrJoin(offsets_shape, ", ") << ")";
-  }
   if (operand_sample_rank > 2 ||
       (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
     return op->emitOpError("Target (scatter operand) sample shape must be ")

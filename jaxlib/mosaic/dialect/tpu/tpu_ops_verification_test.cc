@@ -1076,6 +1076,37 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, IndirectDma1DSemaphore) {
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaGatherZeroRankOffsetsInvalid) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({1024, 128}, MemorySpace::kHbm),
+      /*target=*/AllocaI32({16, 128}, MemorySpace::kVmem),
+      /*offsets=*/AllocaI32({}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*offset_filter=*/nullptr,
+      /*add=*/false);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("Offsets shape must be 1D or (1, N), got ()")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaGatherHighRankOffsetsInvalid) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({1024, 128}, MemorySpace::kHbm),
+      /*target=*/AllocaI32({1, 64, 32, 128}, MemorySpace::kVmem),
+      /*offsets=*/AllocaI32({1, 64, 32}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*offset_filter=*/nullptr,
+      /*add=*/false);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr(
+                      "Offsets shape must be 1D or (1, N), got (1, 64, 32)")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
        IndirectDmaGatherOffsetsShapeInvalid) {
   auto dma = Create<EnqueueIndirectDMAOp>(
       /*source=*/AllocaI32({1024, 128}, MemorySpace::kHbm),
