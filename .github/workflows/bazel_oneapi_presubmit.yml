@@ -1,0 +1,47 @@
+name: Bazel oneAPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: "Should this workflow run wait for a remote connection?"
+        type: choice
+        required: true
+        default: "no"
+        options:
+          - "yes"
+          - "no"
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - "release/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
+permissions: {}
+
+jobs:
+  build-oneapi-artifacts:
+    if: github.repository_owner == 'jax-ml'
+    uses: ./.github/workflows/build_oneapi_artifacts.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ["linux-x86-n4-16"]
+        artifact: ["jax-oneapi-plugin", "jax-oneapi-pjrt"]
+        python: ["3.14"]
+        oneapi-version: ["2025.1"]
+
+    name: "Build oneAPI wheels"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      oneapi-version: ${{ matrix.oneapi-version }}
+      clone_main_xla: 0
+      upload_artifacts_to_gcs: false
