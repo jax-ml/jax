@@ -23,6 +23,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import hlo as _hlo
+from jax._src.lib import ifrt_version
 from jax.experimental import topologies
 import jax.extend.xla as jex_xla
 import jax.numpy as jnp
@@ -298,6 +299,50 @@ class XlaTransformE2ETest(jtu.JaxTestCase):
     for name, stage in self._registered_transforms:
       jex_xla.clear_hlo_module_transformation(name, stage)
     super().tearDown()
+
+  def test_simple_transform_preserves_donation_and_aliasing(self):
+    """Register an simple pass and verify it preserves donation and aliasing."""
+    if ifrt_version < 56:
+      self.skipTest("Requires JAX_IFRT_VERSION >= 56")
+    if not jtu.is_libtpu_at_least("0.0.43"):
+      self.skipTest("Requires libtpu >= 0.0.43")
+
+    def simple_transform(serialized_hlo: bytes) -> bytes | None:
+      return serialized_hlo
+
+    name = "transform_preserve_donation_aliasing_test"
+    stage = jex_xla.PipelineStage.PRE_SCHEDULER
+    jex_xla.register_hlo_module_transformation(
+        simple_transform,
+        name=name,
+        stage=stage,
+    )
+    self._registered_transforms.append((name, stage))
+
+    @functools.partial(jax.jit, donate_argnums=(0,))
+    def f(x):
+      return x * 2
+
+    # 1. Verify aliasing via compilation memory analysis
+    x_spec = jax.ShapeDtypeStruct((10, 10), jnp.float32)
+    compiled = f.lower(x_spec).compile()
+
+    mem_analysis = compiled.memory_analysis()
+    self.assertIsNotNone(mem_analysis)
+
+    expected_num_bytes = 10 * 10 * 4
+    # If aliasing is preserved, the alias size should match the allocated argument size.
+    self.assertEqual(
+        mem_analysis.alias_size_in_bytes, mem_analysis.argument_size_in_bytes
+    )
+    self.assertGreaterEqual(
+        mem_analysis.alias_size_in_bytes, expected_num_bytes
+    )
+
+    # 2. Verify donation (input buffer is invalidated/deleted after run)
+    x = jax.device_put(jnp.ones((10, 10), dtype=jnp.float32))
+    _ = compiled(x)
+    self.assertTrue(x.is_deleted())
 
   # Pre-scheduler XLA transformation: replaces all sin ops with cos.
   def sin_to_cos(self, serialized_hlo: bytes) -> bytes | None:
