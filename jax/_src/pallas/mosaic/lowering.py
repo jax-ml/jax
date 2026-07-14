@@ -511,7 +511,11 @@ def _memory_space_to_mosaic_attribute(
       memory_space, kernel_type
   )
   match tpu_memory_space:
-    case pallas_core.MemorySpace.ANY:
+    # SREG represents scalar register allocations (S(6)), which live natively in physical
+    # registers rather than addressed hardware memory buffers (such as VMEM or HBM).
+    # Mapping SREG to `#tpu.memory_space<any>` in Mosaic MLIR avoids binding explicit
+    # buffer addresses, allowing XLA's Low-Level Optimizer to assign scalar registers directly.
+    case pallas_core.MemorySpace.ANY | tpu_core.MemorySpace.SREG:
       return ir.Attribute.parse("#tpu.memory_space<any>")
     case tpu_core.MemorySpace() as ms:
       return ir.Attribute.parse(f"#tpu.memory_space<{ms}>")
