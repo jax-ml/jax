@@ -28,7 +28,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.sharding import Sharding
 
 
-__array_api_version__ = '2024.12'
+__array_api_version__ = '2025.12'
 
 
 def __array_namespace__(self, *, api_version: None | str = None) -> ModuleType:

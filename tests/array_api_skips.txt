@@ -34,17 +34,23 @@ array_api_tests/test_indexing_functions.py::test_take_along_axis
 
 # Returns int32 when int64 is expected
 array_api_tests/test_searching_functions.py::test_searchsorted
+array_api_tests/test_searching_functions.py::test_searchsorted_with_scalars
 
 # clip out dtype has ambiguous semantics (https://github.com/numpy/numpy/issues/24976)
 array_api_tests/test_operators_and_elementwise_functions.py::test_clip
 
 # JAX raises a ValueError rather than the expected IndexError for out-of-bound axis
-array_api_tests/test_manipulation_functions.py::test_expand_dims
+array_api_tests/test_manipulation_functions.py::TestExpandDims::test_expand_dims
 
 # Doesn't promote to uint64
 array_api_tests/test_statistical_functions.py::test_cumulative_prod
 
 # TODO(jakevdp): fix the following failures:
+
+# Returns list rather than tuple
+array_api_tests/test_inspection_functions.py::TestInspection::test_devices
+array_api_tests/test_creation_functions.py::test_meshgrid
+array_api_tests/test_data_type_functions.py::test_broadcast_arrays
 
 # Returns NaN rather than inf
 array_api_tests/test_special_cases.py::test_binary[floor_divide(x1_i is +infinity and isfinite(x2_i) and x2_i < 0) -> -infinity]
@@ -78,6 +84,39 @@ array_api_tests/test_special_cases.py::test_binary[floor_divide(isfinite(x1_i) a
 array_api_tests/test_special_cases.py::test_iop[__ifloordiv__(isfinite(x1_i) and x1_i > 0 and x2_i is -infinity) -> -0]
 array_api_tests/test_special_cases.py::test_iop[__ifloordiv__(isfinite(x1_i) and x1_i < 0 and x2_i is +infinity) -> -0]
 
-# TODO(b/440163737): tanh(inf) not returning 1.0
-array_api_tests/test_special_cases.py::test_unary[tanh(x_i is -infinity) -> -1]
-array_api_tests/test_special_cases.py::test_unary[tanh(x_i is +infinity) -> +1]
+# Unary operations on complex values incorrect with NaN and/or inf
+array_api_tests/test_special_cases.py::test_unary[acos((real(x_i) is +0 or real(x_i) == -0) and imag(x_i) is NaN) -> \u03c0/2 + NaN j]
+array_api_tests/test_special_cases.py::test_unary[acosh(real(x_i) is +0 and imag(x_i) is NaN) -> NaN \xb1 \u03c0j/2]
+array_api_tests/test_special_cases.py::test_unary[asinh(real(x_i) is NaN and imag(x_i) is +0) -> NaN + 0j]
+array_api_tests/test_special_cases.py::test_unary[atanh(isfinite(real(x_i)) and real(x_i) != 0 and imag(x_i) is NaN) -> NaN + NaN j]
+array_api_tests/test_special_cases.py::test_unary[atanh(real(x_i) is +0 and imag(x_i) is NaN) -> +0 + NaN j]
+array_api_tests/test_special_cases.py::test_unary[atanh(real(x_i) is +infinity and imag(x_i) is NaN) -> +0 + NaN j]
+array_api_tests/test_special_cases.py::test_unary[atanh(real(x_i) is NaN and imag(x_i) is NaN) -> NaN + NaN j]
+array_api_tests/test_special_cases.py::test_unary[atanh(real(x_i) is NaN and isfinite(imag(x_i))) -> NaN + NaN j]
+array_api_tests/test_special_cases.py::test_unary[cosh(real(x_i) is +0 and imag(x_i) is +infinity) -> NaN + 0j]
+array_api_tests/test_special_cases.py::test_unary[cosh(real(x_i) is +0 and imag(x_i) is NaN) -> NaN + 0j]
+array_api_tests/test_special_cases.py::test_unary[cosh(real(x_i) is +infinity and imag(x_i) is +infinity) -> +infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[cosh(real(x_i) is +infinity and imag(x_i) is NaN) -> +infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[exp(real(x_i) is -infinity and imag(x_i) is +infinity) -> 0 + 0j]
+array_api_tests/test_special_cases.py::test_unary[exp(real(x_i) is -infinity and imag(x_i) is NaN) -> 0 + 0j]
+array_api_tests/test_special_cases.py::test_unary[exp(real(x_i) is +infinity and imag(x_i) is +infinity) -> infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[exp(real(x_i) is +infinity and imag(x_i) is NaN) -> infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[expm1(real(x_i) is -infinity and imag(x_i) is +infinity) -> -1 + 0j]
+array_api_tests/test_special_cases.py::test_unary[expm1(real(x_i) is -infinity and imag(x_i) is NaN) -> -1 + 0j]
+array_api_tests/test_special_cases.py::test_unary[expm1(real(x_i) is +infinity and imag(x_i) is +infinity) -> infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[log((real(x_i) is +infinity or real(x_i) == -infinity) and imag(x_i) is NaN) -> +infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[sign((real(x_i) is -0 or real(x_i) == +0) and (imag(x_i) is -0 or imag(x_i) == +0)) -> 0 + 0j]
+array_api_tests/test_special_cases.py::test_unary[sinh(real(x_i) is +0 and imag(x_i) is +infinity) -> 0 + NaN j]
+array_api_tests/test_special_cases.py::test_unary[sinh(real(x_i) is +0 and imag(x_i) is NaN) -> 0 + NaN j]
+array_api_tests/test_special_cases.py::test_unary[sinh(real(x_i) is +infinity and imag(x_i) is +infinity) -> infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[sinh(real(x_i) is +infinity and imag(x_i) is NaN) -> infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[sqrt(real(x_i) is -infinity and imag(x_i) is NaN) -> NaN + infinity j]
+array_api_tests/test_special_cases.py::test_unary[sqrt(real(x_i) is +infinity and imag(x_i) is NaN) -> +infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[tanh(real(x_i) is +0 and imag(x_i) is +infinity) -> +0 + NaN j]
+array_api_tests/test_special_cases.py::test_unary[tanh(real(x_i) is +0 and imag(x_i) is NaN) -> +0 + NaN j]
+array_api_tests/test_special_cases.py::test_unary[tanh(real(x_i) is +infinity and isfinite(imag(x_i)) and imag(x_i) > 0) -> 1 + 0j]
+array_api_tests/test_special_cases.py::test_unary[asinh(real(x_i) is NaN and isfinite(imag(x_i)) and imag(x_i) != 0) -> NaN + NaN j]
+array_api_tests/test_special_cases.py::test_unary[expm1(real(x_i) is +infinity and imag(x_i) is NaN) -> infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[log(real(x_i) is NaN and imag(x_i) is +infinity) -> +infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[log1p((real(x_i) is +infinity or real(x_i) == -infinity) and imag(x_i) is NaN) -> +infinity + NaN j]
+array_api_tests/test_special_cases.py::test_unary[log1p(real(x_i) is NaN and imag(x_i) is +infinity) -> +infinity + NaN j]
