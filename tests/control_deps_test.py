@@ -33,6 +33,8 @@ class ControlDepsTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("tpu", "cpu")
   def test_math(self):
+    if not jtu.is_libtpu_at_least("0.0.44"):
+      self.skipTest("Requires libtpu 0.0.44 or newer")
     @jax.jit
     def f_math(x, y, z):
       a = jnp.sin(x @ x)
@@ -48,6 +50,8 @@ class ControlDepsTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("tpu", "cpu")
   def test_fsdp(self):
+    if not jtu.is_libtpu_at_least("0.0.44"):
+      self.skipTest("Requires libtpu 0.0.44 or newer")
     k = 4
     n = jax.device_count()
     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
