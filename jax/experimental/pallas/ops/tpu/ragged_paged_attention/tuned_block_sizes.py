@@ -14,8 +14,11 @@
 
 """Auto-tuned block sizes for ragged paged attention."""
 
+import re
+
 import jax
 import jax.numpy as jnp
+
 
 # The page size is too small. We only have 32 SREGs in TC. If the pages
 # per seq is too large, SREGs will spill.
@@ -1423,14 +1426,9 @@ def simplify_key(key):
 def get_tpu_version() -> int:
   """Returns the numeric version of the TPU, or -1 if not on TPU."""
   kind = jax.devices()[0].device_kind
-  if 'TPU' not in kind:
-    return -1
-  if kind == 'TPU7x':
-    return 7
-  if kind.endswith(' lite'):
-    kind = kind[: -len(' lite')]
-  assert kind[:-1] == 'TPU v', kind
-  return int(kind[-1])
+  # Matches 'TPU' followed by optional spaces, optional 'v', and captures digits.
+  match = re.search(r'TPU\s*v?(\d+)', kind, re.IGNORECASE)
+  return int(match.group(1)) if match else -1
 
 
 def get_device_name(num_devices: int | None = None):
