@@ -26,8 +26,8 @@ import contextlib
 
 from jax._src.xla_metadata import (
     set_xla_metadata as set_xla_metadata,
+    xla_metadata_call as xla_metadata_call,
 )
-from jax.experimental.scheduling_groups import xla_metadata_call
 
 
 @contextlib.contextmanager
