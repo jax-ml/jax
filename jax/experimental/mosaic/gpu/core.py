@@ -609,7 +609,6 @@ def _launch(
     inout_buffers_ptr: ir.Value,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
-    device_collective_metadata: ir.Value | None = None,
     num_peers: int = 0,
     num_params: int = 0,
 ):
@@ -711,7 +710,6 @@ def _launch(
         cluster,
         inout_buffers_ptr,
         prof,
-        device_collective_metadata=device_collective_metadata,
         num_peers=num_peers,
         num_params=num_params,
         num_processes=jax.process_count(),
@@ -885,13 +883,9 @@ def _lower_as_gpu_kernel(
         )
         arg_refs.append(arg_memref)
 
-      collective_metadata = None
       num_peers = 0
       num_params = 0
 
-      # Collective metadata parameter is used to lower collective operations
-      # in a single-process setup or in multi-process when nvshmem is not
-      # available.
       if (
           jax_mesh is not None
           and jax_mesh.size > 1
@@ -902,15 +896,6 @@ def _lower_as_gpu_kernel(
       ):
         num_params = len(arg_refs) + len(inout_ref_tys)
         num_peers = jax_mesh.size
-        metadata_ptr = llvm.load(
-            ptr_ty, utils.getelementptr(buffers, [num_params], ptr_ty)
-        )
-
-        metadata_ty = ir.MemRefType.get(
-            (launch_context.get_collective_metadata_size(num_params, num_peers),),
-            ir.IntegerType.get_signless(64),
-        )
-        collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
@@ -925,7 +910,6 @@ def _lower_as_gpu_kernel(
           buffers,
           prof_spec,
           prof_buffer,
-          collective_metadata,
           num_peers,
           num_params,
       ) as (_launch_ctx, smem_refs):
