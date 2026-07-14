@@ -11460,6 +11460,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     jax.jit(f)(x)  # doesn't crash
 
   def test_device_put_unreduced_via_runtime_transfer(self):
+    if jax.device_count('cpu') < 2:
+      self.skipTest('Requires >=2 CPU devices')
+
     mesh = jtu.create_mesh((2,), 'x', axis_types=(AxisType.Explicit,))
     arr1 = jax.device_put(jnp.arange(8).reshape(2, 4),
                           NamedSharding(mesh, P(None, 'x')))
