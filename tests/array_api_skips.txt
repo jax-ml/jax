@@ -86,6 +86,7 @@ array_api_tests/test_special_cases.py::test_iop[__ifloordiv__(isfinite(x1_i) and
 # Unary operations on complex values incorrect with NaN and/or inf
 array_api_tests/test_special_cases.py::test_unary[acos((real(x_i) is +0 or real(x_i) == -0) and imag(x_i) is NaN) -> \u03c0/2 + NaN j]
 array_api_tests/test_special_cases.py::test_unary[acosh(real(x_i) is +0 and imag(x_i) is NaN) -> NaN \xb1 \u03c0j/2]
+array_api_tests/test_special_cases.py::test_unary[acosh(isfinite(real(x_i)) and real(x_i) != 0 and imag(x_i) is NaN) -> NaN + NaN j]
 array_api_tests/test_special_cases.py::test_unary[asinh(real(x_i) is NaN and imag(x_i) is +0) -> NaN + 0j]
 array_api_tests/test_special_cases.py::test_unary[atanh(isfinite(real(x_i)) and real(x_i) != 0 and imag(x_i) is NaN) -> NaN + NaN j]
 array_api_tests/test_special_cases.py::test_unary[atanh(real(x_i) is +0 and imag(x_i) is NaN) -> +0 + NaN j]
