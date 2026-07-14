@@ -3698,31 +3698,6 @@ class Sm80Test(TestCase):
     self.assertIn(f"ldmatrix.sync.aligned.m8n8.x{num}.shared", ptx())
     self.assertNotIn("ld.shared", ptx())
 
-  @parameterized.product(
-      dtype=(jnp.int16,),
-  )
-  @jtu.thread_unsafe_test()
-  def test_stmatrix(self, dtype):
-    m, k = 128, 128
-    dtype = jnp.dtype(dtype)
-    swizzle = 128
-    def kernel(ctx, x, out, x_smem):
-      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
-      x_fa = mgpu.FragmentedArray.load_untiled(x, layout=mma_layouts.lhs, is_signed=True, optimized=False)
-      x_fa.store_tiled(x_smem, swizzle=swizzle)
-      mgpu.warpgroup_barrier()
-      copy(x_smem, mgpu.TileTransform((8, swizzle // 2)).apply(out), swizzle)
-
-    x = self.prng.integers(-10000, 10000, (m, k)).astype(dtype)
-    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
-      y = mgpu.as_gpu_kernel(
-          kernel, (1, 1, 1), (128, 1, 1), x, x,
-          jax.ShapeDtypeStruct(tile_shape(x.shape, (8, swizzle // 2)), dtype),
-      )(x)
-      np.testing.assert_array_equal(y, x)
-    self.assertIn("stmatrix.sync.aligned.m8n8.x4.shared", ptx())
-    self.assertNotIn("st.shared", ptx())
-
 
 class BarrierTest(TestCase):
 
@@ -6050,6 +6025,31 @@ class FragmentedArrayTest(TestCase):
         _kernel, (1, 1, 1), (128, 1, 1), (x0, x1), out_shape, ()
     )
     np.testing.assert_array_equal(kernel(x0, x1), expected)
+
+  @parameterized.product(
+      dtype=(jnp.int16,),
+  )
+  @jtu.thread_unsafe_test()
+  def test_stmatrix(self, dtype):
+    m, k = 128, 128
+    dtype = jnp.dtype(dtype)
+    swizzle = 128
+    def kernel(ctx, x, out, x_smem):
+      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
+      x_fa = mgpu.FragmentedArray.load_untiled(x, layout=mma_layouts.lhs, is_signed=True, optimized=False)
+      x_fa.store_tiled(x_smem, swizzle=swizzle)
+      mgpu.warpgroup_barrier()
+      copy(x_smem, mgpu.TileTransform((8, swizzle // 2)).apply(out), swizzle)
+
+    x = self.prng.integers(-10000, 10000, (m, k)).astype(dtype)
+    with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
+      y = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x, x,
+          jax.ShapeDtypeStruct(tile_shape(x.shape, (8, swizzle // 2)), dtype),
+      )(x)
+      np.testing.assert_array_equal(y, x)
+    self.assertIn("stmatrix.sync.aligned.m8n8.x4.shared", ptx())
+    self.assertNotIn("st.shared", ptx())
 
 
 class ProfilerTest(TestCase, jtu.JaxTestCase):
