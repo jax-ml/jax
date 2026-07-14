@@ -730,10 +730,12 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "tpu_pallas_interpret_distributed_test",
+    size = "large",
     srcs = [
         "tpu_pallas_interpret_distributed_test.py",
     ],
     enable_backends = ["cpu"],
+    shard_count = 8,
     tags = [
         "noasan",  # Times out.
         "nomsan",
