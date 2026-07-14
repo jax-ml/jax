@@ -70,6 +70,8 @@ def _get_memory_space_from_aval(
       return tpu_custom_call.MemorySpace.VMEM
     case tpu_core.MemorySpace.SMEM:
       return tpu_custom_call.MemorySpace.SMEM
+    case tpu_core.MemorySpace.SREG:
+      return tpu_custom_call.MemorySpace.SREG
     case tpu_core.MemorySpace.SEMAPHORE:
       match kernel_type:
         case tpu_core.CoreType.SC_SCALAR_SUBCORE:
@@ -98,6 +100,8 @@ def _get_memory_space_from_aval(
           raise ValueError(
               f"Invalid core type for semaphore: {mesh.core_type}"
           )
+    case pallas_core.CoreMemorySpace(tpu_core.MemorySpace.SREG, _):
+      return tpu_custom_call.MemorySpace.SREG
     case _:
       pass
   return None
@@ -187,6 +191,7 @@ def _resolve_memory_spaces(
             tpu_custom_call.MemorySpace.HBM,
             tpu_custom_call.MemorySpace.VMEM,
             tpu_custom_call.MemorySpace.SMEM,
+            tpu_custom_call.MemorySpace.SREG,
         }
         else None
         for i in input_memory_spaces
