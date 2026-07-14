@@ -119,6 +119,7 @@ from jax._src.api import jacobian as jacobian
 from jax._src.api import jacfwd as jacfwd
 from jax._src.api import jacrev as jacrev
 from jax._src.api import jit as jit
+from jax._src.api import Inline as Inline
 from jax._src.api import jvp as jvp
 from jax._src.xla_bridge import local_device_count as local_device_count
 from jax._src.xla_bridge import local_devices as local_devices

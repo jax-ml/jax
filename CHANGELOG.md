@@ -31,6 +31,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     access is unchanged), and it additionally exposes the name-based policy
     classes `SaveOnlyTheseNames`, `SaveAnyNamesButThese`, and
     `SaveAndOffloadOnlyTheseNames`.
+  * Added {class}`jax.Inline` enum for specify inlining policies to
+    {func}`jax.jit`.
 
 * Breaking changes
   * The deprecated module jax.cloud_tpu_init was removed. This did nothing and

@@ -105,7 +105,17 @@ zip, unsafe_zip = safe_zip, zip
 ShapeDtypeStruct = core.ShapeDtypeStruct
 
 class Inline(enum.Enum):
+  """Enumeration specifying inlining behavior for nested jitted functions.
+
+  Values:
+    JAX_EARLY: Inlined during JAX tracing into enclosing JAXPRs.
+    JAX_LATE: Inlined during during JAX to MLIR lowering.
+    XLA_EARLY: Preserved in MLIR and marked for early inlining by the XLA compiler.
+    XLA_LATE: Preserved in MLIR and marked for late inlining by the XLA compiler.
+    AUTO: Automatic inlining policy determined by JAX and XLA.
+  """
   JAX_EARLY = "jax_early"
+  JAX_LATE = "jax_late"
   XLA_EARLY = "xla_early"
   XLA_LATE = "xla_late"
   AUTO = "auto"
@@ -301,8 +311,10 @@ def jit(
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
-    inline: Optional boolean. Specify whether this function should be inlined
-      into enclosing jaxprs. Default False.
+    inline: Optional boolean or :class:`jax.Inline` instance specifying
+      the inlining policy for nested jitted functions. Can be passed as a boolean
+      (``True`` for ``jax.Inline.JAX_EARLY``, ``False`` for ``jax.Inline.AUTO``)
+      or a :class:`jax.Inline` enum member. Default ``False`` (``jax.Inline.AUTO``).
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.

@@ -4432,28 +4432,35 @@ class APITest(jtu.JaxTestCase):
   def test_jit_inline_multistate(self):
     if not jtu.is_libtpu_at_least("0.0.43"):
       self.skipTest("Requires newer jaxlib or libtpu")
-    @api.jit(inline=api.Inline.AUTO)
+    @api.jit(inline=jax.Inline.AUTO)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
     self.assertIn("jit", str(jaxpr))
 
-    @api.jit(inline=api.Inline.JAX_EARLY)
+    @api.jit(inline=jax.Inline.JAX_EARLY)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
     self.assertNotIn("jit", str(jaxpr))
 
-    @api.jit(inline=api.Inline.XLA_EARLY)
+    @api.jit(inline=jax.Inline.JAX_LATE)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
     self.assertIn("jit", str(jaxpr))
 
-    @api.jit(inline=api.Inline.XLA_LATE)
+    @api.jit(inline=jax.Inline.XLA_EARLY)
+    def f(x):
+      return x * 2
+
+    jaxpr = api.make_jaxpr(f)(3)
+    self.assertIn("jit", str(jaxpr))
+
+    @api.jit(inline=jax.Inline.XLA_LATE)
     def f(x):
       return x * 2
 
@@ -4470,22 +4477,30 @@ class APITest(jtu.JaxTestCase):
     def sub(x):
       return x * 2
 
+    get_mlir = lambda inline_mode: api.jit(
+        lambda x: api.jit(sub, inline=inline_mode)(x) + 1.0
+    ).lower(1.0).as_text()
+
+    # For jax_late, we expect it to be inlined during MLIR lowering.
+    self.assertNotIn("call ", get_mlir(jax.Inline.JAX_LATE))
+    self.assertNotIn("call @", get_mlir(jax.Inline.JAX_LATE))
+
     get_hlo = lambda inline_mode: api.jit(
         lambda x: api.jit(sub, inline=inline_mode)(x) + 1.0
     ).lower(1.0).compile().as_text()
 
     # For jax_early, we expect it to be inlined by JAX.
-    self.assertNotIn("call(", get_hlo(api.Inline.JAX_EARLY))
+    self.assertNotIn("call(", get_hlo(jax.Inline.JAX_EARLY))
 
     # For xla_early and xla_late, we expect it not to be inlined by Jax.
     # For xla_early, we expect XLA to inline it early.
-    self.assertNotIn("call(", get_hlo(api.Inline.XLA_EARLY))
+    self.assertNotIn("call(", get_hlo(jax.Inline.XLA_EARLY))
     # For xla_late, we expect XLA to preserve the call on CPU/GPU, but it
     # will be inlined/flattened on TPU during TPU compilation.
     if jtu.device_under_test() == "tpu":
-      self.assertNotIn("call(", get_hlo(api.Inline.XLA_LATE))
+      self.assertNotIn("call(", get_hlo(jax.Inline.XLA_LATE))
     else:
-      self.assertIn("call(", get_hlo(api.Inline.XLA_LATE))
+      self.assertIn("call(", get_hlo(jax.Inline.XLA_LATE))
 
   # Repro for https://github.com/jax-ml/jax/issues/7229.
   def test_compute_with_large_transfer(self):

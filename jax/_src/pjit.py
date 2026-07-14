@@ -62,6 +62,7 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib import jaxlib_extension_version, ifrt_version
+from jax._src.lib import jax_mlir_ext
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding, IndivisibleError
 from jax._src.named_sharding import remove_size_one_mesh_axis
@@ -346,6 +347,15 @@ def _split_layout_and_sharding(entries):
   assert len(layouts) == len(shardings)
   return tree_unflatten(treedef, layouts), tree_unflatten(treedef, shardings)
 
+def _canonicalize_inline(inline: bool | api.Inline) -> api.Inline:
+  if isinstance(inline, api.Inline):
+    return inline
+  if inline is True:
+    return api.Inline.JAX_EARLY
+  if inline is False:
+    return api.Inline.AUTO
+  raise ValueError(f"Invalid inline option: {inline!r}")
+
 
 def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
                          out_shardings: Any,
@@ -363,6 +373,8 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
   ahead of time before the jit()-ed function is invoked.
   """
   check_callable(fun)
+
+  inline = _canonicalize_inline(inline)
 
   if backend is not None or device is not None:
     warnings.warn(
@@ -1297,7 +1309,7 @@ def pjit_staging_rule(trace, source_info, *args, **params):
         f' {source_info_util.summarize(source_info)}')
   # If we're inlining, no need to compute forwarding information; the inlined
   # computation will in effect forward things.
-  if ((params["inline"] is True or params["inline"] == api.Inline.JAX_EARLY) and
+  if (params["inline"] is api.Inline.JAX_EARLY and
       all(isinstance(i, UnspecifiedValue) for i in params["in_shardings"]) and
       all(isinstance(o, UnspecifiedValue) for o in params["out_shardings"]) and
       all(i is None for i in params["in_layouts"]) and
@@ -1435,14 +1447,18 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   with mlir.source_info_to_location(
       ctx.module_context, None,
       ctx.name_stack.extend(result.wrapped_name), ctx.traceback):
-    call = func_dialect.CallOp(
-        result.flat_output_types, result.symbol_ref, flat_args)
-    if (isinstance(inline, api.Inline) and inline is not api.Inline.AUTO and
-        jaxlib_extension_version >= 473 and ifrt_version >= 56):
-      dict_attr = {'inlineable': ir.StringAttr.get(inline.value)}
-      call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
-  mlir.wrap_compute_type_in_place(ctx, call.operation)
-  tokens, res = split_list(call.results, [len(effects)])
+    if inline is api.Inline.JAX_LATE:
+      results = jax_mlir_ext.inlined_func_call(result.func.operation, flat_args)
+    else:
+      call = func_dialect.CallOp(
+          result.flat_output_types, result.symbol_ref, flat_args)
+      if (inline is not api.Inline.AUTO and
+          jaxlib_extension_version >= 473 and ifrt_version >= 56):
+        dict_attr = {'inlineable': ir.StringAttr.get(inline.value)}
+        call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
+      mlir.wrap_compute_type_in_place(ctx, call.operation)
+      results = call.results
+  tokens, res = split_list(results, [len(effects)])
   res = tokens + [mlir.lower_with_sharding_in_types(ctx, o, a)
                   for o, a in zip(res, ctx.avals_out)]
   out_nodes = result.output_treedef.unflatten(res)
