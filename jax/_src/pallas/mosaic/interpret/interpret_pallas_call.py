@@ -1181,6 +1181,8 @@ def semaphore_signal(
     target_device_id = int(target_device_id)
   if target_local_core_id is None:
     target_local_core_id = 0
+  else:
+    target_local_core_id = int(target_local_core_id)
 
   (sem,), clock = shared_memory.get_semaphores_and_increment_clock(
       [sem_id], src_global_core_id
