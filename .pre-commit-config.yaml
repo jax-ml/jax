@@ -71,7 +71,7 @@ repos:
     entry: python3 build/check_copyright.py
     language: python
     additional_dependencies: [google-re2]
-    files: \.(py|cc|h|c|cu|bzl)$|BUILD
+    files: \.(py|cc|h|c|cu|bzl|sh)$|BUILD|CMakeLists\.txt|cmakelists\.txt
     exclude: ^(jax/_src/third_party/|tests/third_party/)
 
 - repo: https://github.com/rhysd/actionlint
