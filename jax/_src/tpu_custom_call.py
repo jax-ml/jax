@@ -111,6 +111,7 @@ class MemorySpace(enum.Enum):
   VMEM = enum.auto()
   SEMAPHORE_MEM = enum.auto()
   SMEM = enum.auto()
+  SREG = enum.auto()
   HOST = enum.auto()
   SC_SCALAR_SEMAPHORE_MEM = enum.auto()
   SC_VECTOR_SEMAPHORE_MEM = enum.auto()
@@ -129,6 +130,8 @@ class MemorySpace(enum.Enum):
       return 10
     elif self == MemorySpace.SMEM:
       return 4
+    elif self == MemorySpace.SREG:
+      return 6
     elif self == MemorySpace.HOST:
       return 5
     else:
@@ -311,9 +314,11 @@ class CustomCallBackendConfig:
             MemorySpace.HBM,
             MemorySpace.VMEM,
             MemorySpace.SMEM,
+            MemorySpace.SREG,
         ):
           raise NotImplementedError(
-              "input_memory_space_colors only supports HBM, VMEM and SMEM"
+              "input_memory_space_colors only supports HBM, VMEM, SMEM, and"
+              " SREG"
           )
         if comma:
           config.write(b",")

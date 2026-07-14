@@ -511,7 +511,7 @@ def _memory_space_to_mosaic_attribute(
       memory_space, kernel_type
   )
   match tpu_memory_space:
-    case pallas_core.MemorySpace.ANY:
+    case pallas_core.MemorySpace.ANY | tpu_core.MemorySpace.SREG:
       return ir.Attribute.parse("#tpu.memory_space<any>")
     case tpu_core.MemorySpace() as ms:
       return ir.Attribute.parse(f"#tpu.memory_space<{ms}>")
