@@ -37,6 +37,35 @@ on:
   schedule:
     - cron: "0 */3 * * *" # Run once every 3 hours
   workflow_dispatch: # allows triggering the workflow run manually
+    inputs:
+      halt-for-connection:
+        description: 'Jobs to wait for connection: none or comma-separated non-ROCm job IDs, e.g. run_bazel_test_cuda.'
+        type: string
+        required: true
+        default: 'none'
+      platforms:
+        description: 'Platforms to run: all, all-non-rocm, or comma-separated cpu,cuda,tpu,rocm. Custom XLA requires excluding rocm.'
+        type: string
+        required: true
+        default: 'all'
+      suites:
+        description: 'Suites to run: all or comma-separated pytest,bazel.'
+        type: string
+        required: true
+        default: 'all'
+      xla_track:
+        description: 'XLA revision for build/Bazel jobs. Use platforms=all-non-rocm for head/commit; pypi_latest legs use PyPI wheels.'
+        type: choice
+        required: true
+        default: 'pinned'
+        options:
+        - 'pinned'
+        - 'head'
+        - 'commit'
+      xla_commit:
+        description: 'XLA commit SHA used when xla_track is "commit".'
+        type: string
+        required: false
   pull_request:
     branches:
       - main
@@ -76,11 +105,17 @@ jobs:
 
           echo "run-pytest=false" >> "$GITHUB_OUTPUT"
 
-          # Define patterns that should trigger the build/bazel jobs.
-          # You can easily add new files or glob patterns here.
+          # PR runs only exercise build/Bazel jobs; pytest jobs are disabled for PRs.
           TRIGGER_PATTERNS=(
             "build/requirements_lock_*.txt"
             ".github/workflows/wheel_tests_continuous.yml"
+            ".github/workflows/scripts/select_continuous_wheel_test_jobs.py"
+            ".github/workflows/bazel_cpu.yml"
+            ".github/workflows/bazel_cuda.yml"
+            ".github/workflows/bazel_rocm.yml"
+            ".github/workflows/bazel_test_tpu.yml"
+            ".github/workflows/build_artifacts.yml"
+            ".github/workflows/build_rocm_artifacts.yml"
             ".github/actions/download-jax-*-wheels/action.yml"
           )
 
@@ -100,9 +135,43 @@ jobs:
 
           echo "run-build-bazel=$RUN_BUILD_BAZEL" >> "$GITHUB_OUTPUT"
 
-  build-jax-artifact:
+  select-jobs:
     needs: [check-trigger]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
+    if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
+    runs-on: ubuntu-latest
+    outputs:
+      selected_jobs: ${{ steps.select.outputs.selected_jobs }}
+      required_builds: ${{ steps.select.outputs.required_builds }}
+      halt_for_connection_jobs: ${{ steps.select.outputs.halt_for_connection_jobs }}
+      clone_main_xla: ${{ steps.select.outputs.clone_main_xla }}
+      xla_commit: ${{ steps.select.outputs.xla_commit }}
+    steps:
+      - name: Checkout selector script
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          sparse-checkout: .github/workflows/scripts
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Select jobs
+        id: select
+        env:
+          INPUT_PLATFORMS: ${{ github.event.inputs.platforms || 'all' }}
+          INPUT_SUITES: ${{ github.event.inputs.suites || 'all' }}
+          INPUT_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
+          INPUT_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
+          INPUT_HALT_FOR_CONNECTION: ${{ github.event.inputs['halt-for-connection'] || 'none' }}
+          INPUT_RUN_BUILD_BAZEL: ${{ needs.check-trigger.outputs.run-build-bazel }}
+          INPUT_RUN_PYTEST: ${{ needs.check-trigger.outputs.run-pytest }}
+        run: python3 .github/workflows/scripts/select_continuous_wheel_test_jobs.py
+
+  build-jax-artifact:
+    needs: [select-jobs]
+    if: >-
+      ${{
+          fromJSON(needs.select-jobs.outputs.required_builds || '{}').build_jax_artifact == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/build_artifacts.yml
     name: "Build jax artifact"
     with:
@@ -110,12 +179,18 @@ jobs:
         # matter. In addition, cloning main XLA also has no effect.
         runner: "linux-x86-n4-16"
         artifact: "jax"
+        clone_main_xla: 0
+        halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').build_jax_artifact || 'no' }}
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-jaxlib-artifact:
-    needs: [check-trigger]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs]
+    if: >-
+      ${{
+          fromJSON(needs.select-jobs.outputs.required_builds || '{}').build_jaxlib_artifact == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -132,13 +207,19 @@ jobs:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
         python: ${{ matrix.python }}
-        clone_main_xla: 0
+        clone_main_xla: ${{ needs.select-jobs.outputs.clone_main_xla }}
+        xla_commit: ${{ needs.select-jobs.outputs.xla_commit }}
+        halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').build_jaxlib_artifact || 'no' }}
         upload_artifacts_to_gcs: true
         gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-cuda-artifacts:
-    needs: [check-trigger]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs]
+    if: >-
+      ${{
+          fromJSON(needs.select-jobs.outputs.required_builds || '{}').build_cuda_artifacts == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -154,13 +235,22 @@ jobs:
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
-      clone_main_xla: 0
+      clone_main_xla: ${{ needs.select-jobs.outputs.clone_main_xla }}
+      xla_commit: ${{ needs.select-jobs.outputs.xla_commit }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').build_cuda_artifacts || 'no' }}
       upload_artifacts_to_gcs: true
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
+  # LINT.IfChange(run_pytest_cpu)
   run-pytest-cpu:
-    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact]
-    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs, build-jax-artifact, build-jaxlib-artifact]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_pytest_cpu)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_pytest_cpu == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -176,10 +266,18 @@ jobs:
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').run_pytest_cpu || 'no' }}
 
+  # LINT.IfChange(run_pytest_cuda)
   run-pytest-cuda:
-    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
-    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs, build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_pytest_cuda)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_pytest_cuda == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -217,10 +315,17 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').run_pytest_cuda || 'no' }}
 
+  # LINT.IfChange(run_bazel_test_cpu_py_import)
   run-bazel-test-cpu-py-import:
-    needs: [check-trigger]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_bazel_test_cpu_py_import)
+    if: >-
+      ${{
+          fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_bazel_test_cpu_py_import == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -235,11 +340,20 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: "wheel"
       build_jax: "wheel"
-      clone_main_xla: 0
+      clone_main_xla: ${{ needs.select-jobs.outputs.clone_main_xla }}
+      xla_commit: ${{ needs.select-jobs.outputs.xla_commit }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').run_bazel_test_cpu_py_import || 'no' }}
 
+  # LINT.IfChange(run_bazel_test_cuda)
   run-bazel-test-cuda:
-    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs, build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_bazel_test_cuda)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_bazel_test_cuda == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -264,11 +378,20 @@ jobs:
       write_to_bazel_remote_cache: 1
       run_tests_with_rbe: ${{ 'false' }}
       build_artifacts_with_rbe: ${{ 'false' }}
-      clone_main_xla: 0
+      clone_main_xla: ${{ needs.select-jobs.outputs.clone_main_xla }}
+      xla_commit: ${{ needs.select-jobs.outputs.xla_commit }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').run_bazel_test_cuda || 'no' }}
 
+  # LINT.IfChange(run_bazel_test_cuda_py_import)
   run-bazel-test-cuda-py-import:
-    needs: [check-trigger]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_bazel_test_cuda_py_import)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_bazel_test_cuda_py_import == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -290,11 +413,20 @@ jobs:
       write_to_bazel_remote_cache: 1
       run_tests_with_rbe: ${{ 'false' }}
       build_artifacts_with_rbe: ${{ 'true' }}
-      clone_main_xla: 0
+      clone_main_xla: ${{ needs.select-jobs.outputs.clone_main_xla }}
+      xla_commit: ${{ needs.select-jobs.outputs.xla_commit }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').run_bazel_test_cuda_py_import || 'no' }}
 
+  # LINT.IfChange(run_pytest_tpu)
   run-pytest-tpu:
-    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact]
-    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs, build-jax-artifact, build-jaxlib-artifact]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_pytest_tpu)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_pytest_tpu == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -316,10 +448,18 @@ jobs:
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').run_pytest_tpu || 'no' }}
 
+  # LINT.IfChange(run_bazel_test_tpu)
   run-bazel-test-tpu:
-    needs: [check-trigger, build-jaxlib-artifact]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && github.repository_owner == 'jax-ml' }}
+    needs: [select-jobs]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_bazel_test_tpu)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_bazel_test_tpu == true
+          && github.repository_owner == 'jax-ml'
+      }}
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -339,14 +479,19 @@ jobs:
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
-      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
       build_jaxlib: "wheel"
       build_jax: "wheel"
-      clone_main_xla: 0
+      clone_main_xla: ${{ needs.select-jobs.outputs.clone_main_xla }}
+      xla_commit: ${{ needs.select-jobs.outputs.xla_commit }}
+      halt-for-connection: ${{ fromJSON(needs.select-jobs.outputs.halt_for_connection_jobs || '{}').run_bazel_test_tpu || 'no' }}
 
   build-rocm-artifacts:
-    needs: [check-trigger]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    needs: [select-jobs]
+    if: >-
+      ${{
+          fromJSON(needs.select-jobs.outputs.required_builds || '{}').build_rocm_artifacts == true
+          && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm')
+      }}
     uses: ./.github/workflows/build_rocm_artifacts.yml
     permissions:
       id-token: write
@@ -375,12 +520,20 @@ jobs:
       rocm-release-version: ${{ matrix.rocm.release-version }}
       manylinux-image: ${{ matrix.rocm.manylinux-image }}
       clone_main_xla: 0
+      halt-for-connection: 'no'
       upload_artifacts_to_s3: true
       s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
 
+  # LINT.IfChange(run_pytest_rocm)
   run-pytest-rocm:
-    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
-    if: ${{ needs.check-trigger.outputs.run-pytest == 'true' && !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    needs: [select-jobs, build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_pytest_rocm)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_pytest_rocm == true
+          && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm')
+      }}
     uses: ./.github/workflows/pytest_rocm.yml
     permissions:
       id-token: write
@@ -404,10 +557,18 @@ jobs:
       jaxlib-version: "head"
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri || 'gs://jax-nightly-artifacts/latest' }}
       s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-continuous/${{ github.run_number }}/${{ github.run_attempt }}'
+      halt-for-connection: 'no'
 
+  # LINT.IfChange(run_bazel_test_rocm)
   run-bazel-test-rocm:
-    needs: [check-trigger, build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
-    if: ${{ needs.check-trigger.outputs.run-build-bazel == 'true' && !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    needs: [select-jobs, build-jax-artifact, build-jaxlib-artifact, build-rocm-artifacts]
+  # LINT.ThenChange(.github/workflows/scripts/select_continuous_wheel_test_jobs.py:run_bazel_test_rocm)
+    if: >-
+      ${{
+          !cancelled()
+          && fromJSON(needs.select-jobs.outputs.selected_jobs || '{}').run_bazel_test_rocm == true
+          && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm')
+      }}
     uses: ./.github/workflows/bazel_rocm.yml
     permissions:
       id-token: write
@@ -437,3 +598,5 @@ jobs:
       jaxlib-version: "head"
       run_multiaccelerator_tests: ${{ 'false' }}
       clone_main_xla: 0
+      xla_commit: ''
+      halt-for-connection: 'no'
