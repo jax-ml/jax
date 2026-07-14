@@ -199,6 +199,50 @@ class PallasCallRemoteDMATest(TestCase):
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
+  def test_remote_dma_dynamic_other_device_id(self):
+    # Regression test for device_collective_metadata being DCE'd under
+    # WG lowering.
+    #
+    # We use a dynamic device_id (loaded from a memref)
+    # which forces the lowering to use `device_collective_metadata` to resolve
+    # the remote address.
+    #
+    # The choice of `copy_smem_to_gmem` instead of simple store is deliberate as
+    # in the former case we do not handle remote ref GMEM transforms in Pallas
+    # lowering. As a consequence we do not call `launch_ctx.to_remote` leaving
+    # device collective metadata unused and prone to DCE.
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    @self.kernel(
+      out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      scratch_types=[
+          plgpu.SMEM((8, 128), jnp.float32),
+      ],
+    )
+    def kernel(x_ref, other_dev_id_ref, y_ref, x_smem):
+      x_smem[...] = x_ref[...]
+      other_dev_id = other_dev_id_ref[0]
+      remote_y_ref = plgpu.remote_ref(y_ref, other_dev_id)
+      plgpu.copy_smem_to_gmem(x_smem, remote_y_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
+    other_dev_ids = jnp.array([1, 0], dtype=jnp.int32)
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            kernel,
+            mesh=mesh,
+            in_specs=(P("x"), P("x")),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )(x, other_dev_ids)
+
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
   # Test verifies an execution of HLO with several slightly different mosaic
   # custom calls. The difference is needed to validate correct initialization
   # of the collective metadata before each kernel execution.

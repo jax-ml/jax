@@ -694,7 +694,6 @@ class LaunchContext:
   cluster_size: tuple[int, int, int]
   buffers: ir.Value
   profiler: OnDeviceProfiler | None = None
-  device_collective_metadata: ir.Value | None = None
   num_peers: int = 0
   num_params: int = 0
   num_processes: int = 1
@@ -711,6 +710,23 @@ class LaunchContext:
         yield
     else:
       yield
+
+  @functools.cached_property
+  def device_collective_metadata(self) -> ir.Value | None:
+    if self.num_peers <= 1:
+      return None
+    host_block = self.buffers.owner
+    assert isinstance(host_block, ir.Block)
+    with ir.InsertionPoint.at_block_begin(host_block):
+      ptr_ty = llvm.PointerType.get()
+      metadata_ptr = llvm.load(
+          ptr_ty, utils.getelementptr(self.buffers, [self.num_params], ptr_ty)
+      )
+      metadata_ty = ir.MemRefType.get(
+          (get_collective_metadata_size(self.num_params, self.num_peers),),
+          ir.IntegerType.get_signless(64),
+      )
+      return utils.ptr_as_memref(metadata_ptr, metadata_ty)
 
   @property
   def host_collective_metadata(self) -> ir.Value | None:
