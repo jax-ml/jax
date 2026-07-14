@@ -54,6 +54,11 @@ jax_multiplatform_test(
     srcs = ["custom_api_test.py"],
     backend_tags = {
         "cpu": ["notsan"],
+        "gpu": ["noasan"],  # Times out.
+        "tpu": [
+            "noasan",
+            "notsan",
+        ],  # Times out.
     },
     shard_count = {
         "cpu": select({
