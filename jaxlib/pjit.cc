@@ -1468,12 +1468,6 @@ class NumpyHandler : public ShardArgsHandler {
     }
     auto index_domains = std::move(*index_domains_or);
 
-    absl::flat_hash_map<xla::ifrt::IndexDomain, absl::InlinedVector<int64_t, 1>>
-        shards;
-    for (int i = 0; i < index_domains.size(); ++i) {
-      shards[index_domains[i]].push_back(i);
-    }
-
     xla::ifrt::Client::MakeArraysFromHostBufferShardsSpec spec = {
         .array_spec = {
             .dtype = ifrt_dtype,
@@ -1482,8 +1476,15 @@ class NumpyHandler : public ShardArgsHandler {
             .layout = nullptr,
         }};
 
-    spec.buffers.reserve(shards.size());
-    for (const auto& [index_domain, shard_indices] : shards) {
+    absl::flat_hash_map<xla::ifrt::IndexDomain, size_t> shards;
+    for (int i = 0; i < index_domains.size(); ++i) {
+      const auto& index_domain = index_domains[i];
+      auto [it, inserted] =
+          shards.try_emplace(index_domain, spec.buffers.size());
+      if (!inserted) {
+        spec.buffers[it->second].first.push_back(i);
+        continue;
+      }
       const char* base_ptr = reinterpret_cast<const char*>(ndarray.data());
       int64_t offset = 0;
       for (int d = 0; d < ndarray.ndim(); ++d) {
@@ -1509,7 +1510,7 @@ class NumpyHandler : public ShardArgsHandler {
           .byte_strides = std::move(byte_strides),
           .on_done = std::move(on_done),
       };
-      spec.buffers.push_back({shard_indices, std::move(host_buffer)});
+      spec.buffers.push_back({{i}, std::move(host_buffer)});
     }
 
     auto transfer_guard_status = ApplyTransferGuardToHostToDevice(
