@@ -1559,6 +1559,7 @@ pytype_strict_library(
     name = "flattree",
     srcs = ["flattree.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("flattree"),
     deps = [
         ":tree_util",
         ":util",
