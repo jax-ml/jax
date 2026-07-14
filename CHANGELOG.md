@@ -31,6 +31,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     access is unchanged), and it additionally exposes the name-based policy
     classes `SaveOnlyTheseNames`, `SaveAnyNamesButThese`, and
     `SaveAndOffloadOnlyTheseNames`.
+  * {func}`jax.numpy.fill_diagonal` now supports `wrap=True`, matching the
+    NumPy behavior of wrapping the diagonal for tall matrices.
 
 * Breaking changes
   * The deprecated module jax.cloud_tpu_init was removed. This did nothing and

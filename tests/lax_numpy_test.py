@@ -2224,18 +2224,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=default_dtypes,
-    a_shape=[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (2, 3), (2, 2, 2), (2, 2, 2, 2)],
+    a_shape=[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (2, 3), (5, 1), (5, 2), (7, 3), (2, 2, 2), (2, 2, 2, 2)],
     val_shape=[(), (1,), (2,), (1, 2), (3, 2)],
+    wrap=[True, False],
   )
-  def testFillDiagonal(self, dtype, a_shape, val_shape):
+  def testFillDiagonal(self, dtype, a_shape, val_shape, wrap):
     rng = jtu.rand_default(self.rng())
 
     def np_fun(a, val):
       a_copy = a.copy()
-      np.fill_diagonal(a_copy, val)
+      np.fill_diagonal(a_copy, val, wrap=wrap)
       return a_copy
 
-    jnp_fun = partial(jnp.fill_diagonal, inplace=False)
+    jnp_fun = partial(jnp.fill_diagonal, wrap=wrap, inplace=False)
     args_maker = lambda : [rng(a_shape, dtype), rng(val_shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
