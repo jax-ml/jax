@@ -24,6 +24,7 @@ from jax._src import test_util as jtu
 from jax._src.lax import lax
 from jax.experimental.xla_metadata import set_xla_metadata
 from jax.experimental.xla_metadata import xla_metadata_call
+from jax.experimental.xla_metadata import xla_metadata_call2
 import jax.numpy as jnp
 import numpy as np
 
@@ -476,6 +477,76 @@ class XlaMetadataTest(jtu.JaxTestCase):
     inputs = (jnp.array(0.0), jnp.arange(1, 4, dtype=jnp.float32))
     text = jax.jit(scan_fn).lower(*inputs).as_text("hlo")
     self._assert_metadata_appears_once_per_op(text, ["multiply"], metadata)
+
+  def test_xla_metadata_call_nonstring_values(self):
+    f = xla_metadata_call(lambda x: x + 1, flag=True, level=3, ratio=0.5)
+    text = jax.jit(f).lower(1.0).as_text()
+    self.assertIn('flag = "true"', text)
+    self.assertIn('level = "3"', text)
+    self.assertIn('ratio = "0.5"', text)
+
+  def test_xla_metadata_call_invalid_value(self):
+    with self.assertRaisesRegex(TypeError, "metadata values must be"):
+      xla_metadata_call(lambda x: x + 1, bad=object())
+
+  def test_xla_metadata_call_key_named_jaxpr(self):
+    f = xla_metadata_call(lambda x: x + 1, jaxpr="v", f="w")
+    self.assertIn('jaxpr = "v"', jax.jit(f).lower(1.0).as_text())
+
+  def test_xla_metadata_call_grad_metadata_on_backward_pass(self):
+    @xla_metadata_call(a="b")
+    def f(x):
+      return jnp.sin(x)
+
+    text = jax.jit(jax.grad(f)).lower(1.0).as_text()
+    self.assertEqual(text.count('mhlo.frontend_attributes = {a = "b"}'), 2)
+
+  def test_xla_metadata_call2_default_matches_sugar(self):
+    text1 = jax.jit(jax.grad(xla_metadata_call(jnp.sin, tag="x"))
+                    ).lower(1.0).as_text()
+    text2 = jax.jit(jax.grad(xla_metadata_call2(jnp.sin, {"tag": "x"}))
+                    ).lower(1.0).as_text()
+    self.assertEqual(text1, text2)
+
+  def test_xla_metadata_call2_ad_metadata_drop(self):
+    f = xla_metadata_call2(jnp.sin, {"tag": "x"}, ad_metadata='drop')
+    text = jax.jit(jax.value_and_grad(f)).lower(1.0).as_text()
+    self.assertEqual(text.count('tag = "x"'), 1)
+
+  def test_xla_metadata_call2_ad_metadata_retag(self):
+    f = xla_metadata_call2(jnp.sin, {"tag": "x"},
+                           ad_metadata={"tag": "x_bwd"})
+    text = jax.jit(jax.value_and_grad(f)).lower(1.0).as_text()
+    self.assertEqual(text.count('tag = "x"'), 1)
+    self.assertEqual(text.count('tag = "x_bwd"'), 1)
+
+  def test_xla_metadata_call2_jvp_keeps_primal_metadata(self):
+    f = xla_metadata_call2(jnp.sin, {"tag": "x"}, ad_metadata='drop')
+    text = jax.jit(lambda x, t: jax.jvp(f, (x,), (t,))
+                   ).lower(1.0, 1.0).as_text()
+    self.assertEqual(text.count('tag = "x"'), 1)
+
+  def test_xla_metadata_call2_decorator_forms(self):
+    @xla_metadata_call2({"tag": "deco"})
+    def f(x):
+      return x * 2
+
+    @xla_metadata_call2(metadata={"tag": "kw"}, ad_metadata='drop')
+    def g(x):
+      return x * 2
+
+    self.assertIn('tag = "deco"', jax.jit(f).lower(1.0).as_text())
+    self.assertIn('tag = "kw"', jax.jit(g).lower(1.0).as_text())
+
+  def test_xla_metadata_call2_invalid_args(self):
+    with self.assertRaisesRegex(TypeError, "ad_metadata must be"):
+      xla_metadata_call2(jnp.sin, {"a": "b"}, ad_metadata="typo")
+    with self.assertRaisesRegex(TypeError, "ad_metadata must be"):
+      xla_metadata_call2(jnp.sin, {"a": "b"}, ad_metadata=None)
+    with self.assertRaisesRegex(TypeError, "expected a callable"):
+      xla_metadata_call2(3, {"a": "b"})
+    with self.assertRaisesRegex(TypeError, "metadata must be a dict"):
+      xla_metadata_call2(jnp.sin, "notadict")
 
   def test_grad_xla_metadata_call_basic(self):
     @xla_metadata_call(inlineable="false")

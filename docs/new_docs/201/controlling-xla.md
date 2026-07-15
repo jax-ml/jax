@@ -5,7 +5,7 @@ nosearch: true
 (jax-201-controlling-xla)=
 # Controlling XLA from JAX
 
-<!--* freshness: { reviewed: '2026-07-10' } *-->
+<!--* freshness: { reviewed: '2026-07-15' } *-->
 
 JAX programs are compiled by [XLA](https://openxla.org/xla), and mostly you
 can leave the compiler alone. When you can't, JAX offers two levels of
@@ -84,159 +84,168 @@ with a complete list in [xla.proto](https://github.com/openxla/xla/blob/main/xla
 and XLA publishes a [guide to the key flags](https://openxla.org/xla/flags_guidance).
 
 (jax-201-xla-metadata)=
-## Attaching metadata to operations: `set_xla_metadata`
+## Attaching metadata to operations: `xla_metadata_call`
 
-**Summary:** `set_xla_metadata` allows you to attach metadata to operations in
-your JAX code. This metadata is passed down to the XLA compiler as
-`frontend_attributes` and can be used to enable compiler-level tooling, such
-as the XLA-TPU debugger.
+Each operation in a compiled XLA program can carry *metadata*: string-valued
+`frontend_attributes` that don't change what the operation computes, but that
+compiler-level tooling — the XLA-TPU debugger, fusion control, scheduling
+hints — can read. JAX's interface for attaching metadata is
+`jax.experimental.xla_metadata`, and the recommended entry point is
+`xla_metadata_call`.
 
-You can use it in three ways:
+These APIs are experimental, and subject to change.
 
-1. Tag an individual operation by wrapping its output value
-2. Tag a block of operations using a context manager
-3. Tag all operations in a function using a decorator
+### Tagging a function: `xla_metadata_call`
 
-**Warning:** `set_xla_metadata` is an experimental feature and its API is
-subject to change.
-
-### What is XLA Metadata?
-When JAX transforms and compiles your code, it ultimately generates an XLA (Accelerated Linear Algebra) computation graph. Each operation in this graph can have associated metadata, specifically `frontend_attributes`. This metadata doesn't change the numerical result of the operation, but it can be used to signal special behavior to the compiler or runtime.
-
-`set_xla_metadata` provides a way to attach this metadata directly from your JAX code. This is a powerful feature for low-level debugging and profiling.
-
-### Usage
-#### Tagging Individual Operations
-Tagging an individual operation gives you precise control over which parts of your computation you want to inspect. To do this, you wrap the output (value) of an operation with `set_xla_metadata`. When wrapping a function with multiple operations within, only the final operation of said function will be tagged.
+`xla_metadata_call` wraps a function so that the operations it performs carry
+the given metadata, passed as keyword arguments:
 
 ```python
 import jax
 import jax.numpy as jnp
+from jax.experimental.xla_metadata import xla_metadata_call
+
+@xla_metadata_call(tag="my_block")
+def block(x):
+  y = jnp.sin(x)
+  return y * jnp.cos(x)
+
+@jax.jit
+def f(x):
+  return block(x) + 1.
+
+print(f.lower(1.0).as_text("hlo"))
+```
+
+The wrapped function is staged out as its own subcomputation, and the call
+into it carries the metadata:
+
+```
+xla_metadata_call.1 {
+  Arg_0.1 = f32[] parameter(0)
+  sin.1 = f32[] sine(Arg_0.1)
+  cos.1 = f32[] cosine(Arg_0.1)
+  ROOT mul.1 = f32[] multiply(sin.1, cos.1)
+}
+
+ENTRY main.2 {
+  x.1 = f32[] parameter(0)
+  xla_metadata_call.1 = f32[] call(x.1), to_apply=xla_metadata_call.1, frontend_attributes={tag="my_block"}
+  constant.1 = f32[] constant(1)
+  ROOT add.1 = f32[] add(xla_metadata_call.1, constant.1)
+}
+```
+
+When XLA inlines the call during optimization, it propagates the attributes
+onto the inlined operations, so the metadata lands on each operation from the
+wrapped function.
+
+Metadata values may be strings, bools, ints, or floats; all are attached as
+strings, with bools rendered as `"true"`/`"false"`.
+
+### Metadata survives transformations
+
+Because the metadata is attached to a function rather than to ambient tracing
+state, JAX transformations preserve it. Under `jax.vmap` the batched
+operations carry it, and under `jax.grad` every computation derived from the
+function — forward pass and backward pass — carries it too:
+
+```python
+@xla_metadata_call(tag="my_block")
+def block(x):
+  return jnp.sin(x)
+
+print(jax.jit(jax.grad(block)).lower(1.0).as_text("hlo"))
+```
+
+```
+xla_metadata_call.1 {
+  Arg_0.1 = f32[] parameter(0)
+  ROOT cos.1 = f32[] cosine(Arg_0.1)
+}
+
+xla_metadata_call_0.2 {
+  Arg_1.1 = f32[] parameter(1)
+  Arg_0.3 = f32[] parameter(0)
+  ROOT mul.1 = f32[] multiply(Arg_1.1, Arg_0.3)
+}
+
+ENTRY main.3 {
+  x.1 = f32[] parameter(0)
+  xla_metadata_call.2 = f32[] call(x.1), to_apply=xla_metadata_call.1, frontend_attributes={tag="my_block"}
+  constant.1 = f32[] constant(1)
+  ROOT xla_metadata_call.3 = f32[] call(xla_metadata_call.2, constant.1), to_apply=xla_metadata_call_0.2, frontend_attributes={tag="my_block"}
+}
+```
+
+The forward-pass computation (here just the `cosine` residual saved for the
+backward pass) and the backward-pass computation are each staged out and
+tagged.
+
+To leave the backward pass untagged, or to tag it differently — say, with its
+own scheduling group — use `xla_metadata_call2`, which takes the metadata as a
+dict plus an `ad_metadata` option:
+
+```python
+from jax.experimental.xla_metadata import xla_metadata_call2
+
+f = xla_metadata_call2(jnp.sin, {"tag": "x"})                             # tag fwd + bwd (default)
+f = xla_metadata_call2(jnp.sin, {"tag": "x"}, ad_metadata='drop')         # tag fwd only
+f = xla_metadata_call2(jnp.sin, {"tag": "x"}, ad_metadata={"tag": "y"})   # retag bwd
+```
+
+`ad_metadata` governs the computations autodiff derives beyond the forward
+pass: the linearized (tangent) and transposed (backward-pass) computations.
+One caveat: under forward-mode `jax.jvp`, the primal and tangent operations
+are staged out as one fused computation, so they keep the forward metadata
+regardless of `ad_metadata`.
+
+One application built on this: `must_fuse_call` in
+`jax.experimental.xla_metadata` wraps a function so that XLA must place all of
+its operations in a single fusion.
+
+### Tagging one operation in place: `set_xla_metadata`
+
+There is also `set_xla_metadata`, with two modes. Wrapping a *value* tags just
+the operation that produced it:
+
+```python
 from jax.experimental.xla_metadata import set_xla_metadata
 
-### Tagging an individual operation
-def value_tagging(x):
+def g(x):
   y = jnp.sin(x)
   z = jnp.cos(x)
   return set_xla_metadata(y * z, breakpoint=True)
 
-print(jax.jit(value_tagging).lower(1.0).as_text("hlo"))
+print(jax.jit(g).lower(1.0).as_text("hlo"))
 ```
-Results in:
+
 ```
-ENTRY main.5 {
+ENTRY main.1 {
   x.1 = f32[] parameter(0)
-  sin.2 = f32[] sine(x.1)
-  cos.3 = f32[] cosine(x.1)
-  ROOT mul.4 = f32[] multiply(sin.2, cos.3), frontend_attributes={breakpoint="true"}
-}
-```
-#### Tagging a Block of Code with a Context Manager or Decorator
-If you want to apply the same metadata to a larger section of code, you can use `set_xla_metadata` as a context manager. All JAX operations within the `with` block will have the specified metadata attached.
-
-```python
-import jax
-import jax.numpy as jnp
-from jax.experimental.xla_metadata import set_xla_metadata
-
-### Tagging a block of code
-def context_tagging(x):
-  with set_xla_metadata(_xla_log=True):
-    y = jnp.sin(x)
-    z = jnp.cos(y)
-    return y * z
-
-print(jax.jit(context_tagging).lower(1.0).as_text("hlo"))
-```
-Results in:
-```
-ENTRY main.5 {
-  x.1 = f32[] parameter(0)
-  sin.2 = f32[] sine(x.1), frontend_attributes={_xla_log="true"}
-  cos.3 = f32[] cosine(sin.2), frontend_attributes={_xla_log="true"}
-  ROOT mul.4 = f32[] multiply(sin.2, cos.3), frontend_attributes={_xla_log="true"}
+  sin.1 = f32[] sine(x.1)
+  cos.1 = f32[] cosine(x.1)
+  ROOT mul.1 = f32[] multiply(sin.1, cos.1), frontend_attributes={breakpoint="true"}
 }
 ```
 
-If you want to tag all operations in a function, you can also use `set_xla_metadata` as a decorator:
+Called with no value, `set_xla_metadata(k="v")` instead acts as a context
+manager (or decorator) that tags every operation traced under it.
 
-```python
-import jax
-import jax.numpy as jnp
-from jax.experimental.xla_metadata import set_xla_metadata
+Both modes come with caveats that `xla_metadata_call` avoids:
 
-### Tagging with a decorator
-@set_xla_metadata(_xla_log=True)
-@jax.jit
-def decorator_tagging(x):
-  y = jnp.sin(x)
-  z = jnp.cos(y)
-  return y * z
+- The context manager works by setting ambient tracing state, which is part
+  of `jit`'s cache key. Any jit-compiled function called under it — including
+  library code that jits internally — is re-traced and re-compiled for each
+  distinct metadata context, rather than reusing its existing cache entries.
+- Value-tagging doesn't propagate through autodiff: differentiate `g` above
+  and the backward-pass operations come out untagged.
 
-print(decorator_tagging.lower(1.0).as_text("hlo"))
-```
-This will result in the same HLO as above.
+Prefer `xla_metadata_call` unless you need to tag exactly one operation in
+place.
 
-### Interaction with JAX Transformations
-`set_xla_metadata` utilizes either a `XlaMetadataContextManager` or JAX `primitive` depending on use-case and is compatible with JAX's transformations like `jit`, `vmap`, and `grad`.
-*   **`vmap`**: When you `vmap` a function containing `set_xla_metadata`, the metadata will be applied to all of the relevant batched operations.
-*   **`grad`**:
-    1. When tagging a block of operations with the **context manager** `with set_xla_metadata(...):`, the metadata is applied to both the forward pass and backward pass of the operations within it.
-    2. Tagging **individual ops** with `set_xla_metadata()` currently only applies to the forward pass of a function. To tag individual operations generated by the backward pass (i.e., the gradient computation), a simple `custom_vjp` can be used:
-        ```python
-        import jax
-        import jax.numpy as jnp
-        from jax.experimental.xla_metadata import set_xla_metadata
-
-        def fn(x):
-            y = jnp.sin(x)
-            z = jnp.cos(x)
-            return y * z
-
-        metadata = {"example": "grad_tagging"}
-
-        # --- Define Custom VJP to tag gradients ---
-        @jax.custom_vjp
-        def wrapped_fn(x):
-            return fn(x)
-
-        def fwd(*args):
-            primal_out, vjp_fn = jax.vjp(fn, *args)
-            return primal_out, vjp_fn
-
-        def bwd(vjp_fn, cts_in):
-            cts_out = vjp_fn(cts_in)
-            cts_out = set_xla_metadata(cts_out, **metadata)
-            return cts_out
-
-        wrapped_fn.defvjp(fwd, bwd)
-        # ------
-
-        print(jax.jit(jax.grad(wrapped_fn)).lower(jnp.array(3.0)).as_text("hlo"))
-        ```
-        Results in:
-        ```
-        ENTRY main.10 {
-          x.1 = f32[] parameter(0)
-          sin.2 = f32[] sine(x.1)
-          neg.6 = f32[] negate(sin.2)
-          sin.5 = f32[] sine(x.1)
-          mul.7 = f32[] multiply(neg.6, sin.5)
-          cos.4 = f32[] cosine(x.1)
-          cos.3 = f32[] cosine(x.1)
-          mul.8 = f32[] multiply(cos.4, cos.3)
-          ROOT add_any.9 = f32[] add(mul.7, mul.8), frontend_attributes={example="grad_tagging"}
-        }
-        ```
-##### Strengths and Limitations of `set_xla_metadata`
-
-###### Strengths
-*   **Variable Control:** Allows you to target individual operations or blocks of operations.
-*   **Non-Intrusive:** Does not change the numerical output or fusion behavior of your program.
-*   **Enables Powerful Tooling:** Unlocks the potential for sophisticated debugging and analysis at the compiler level.
-
-###### Limitations
-*   **Attributes may be lost:** While it's intended for XLA metadata to be maintained throughout transformations and HLO optimizations, certain edge-cases may result in the metadata being lost.
-*   **Forward-pass only:** Metadata is not currently automatically propagated to gradients <u>when tagging individual operations</u> in the backward pass. A `custom_vjp` must be used in order to tag gradients in this case. See above for an example.
-*   **Liable to change**: `set_xla_metadata` is an experimental feature and its API is subject to change.
+Finally, a caveat that applies to all of these APIs: XLA intends to preserve
+`frontend_attributes` through its optimization passes, but edge cases can
+drop them, so inspect the optimized HLO if a tool depends on the metadata
+surviving.
 
