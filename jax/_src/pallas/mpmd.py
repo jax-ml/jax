@@ -34,6 +34,7 @@ from jax._src import state
 from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
+from jax._src.mesh import get_abstract_mesh
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -126,6 +127,23 @@ def _mpmd_map_abstract_eval(
         continue
       if eff.name not in all_mesh_axis_names:
         effs.add(eff)
+
+  # TODO(mattjj,yashkatariya): if we hide vmapped away mesh axes, use this:
+  # if not (all(a.sharding.mesh.are_all_axes_manual for a in in_avals) and
+  #         all(a.sharding.mesh.are_all_axes_manual for a in out_avals) and
+  #         get_abstract_mesh().are_all_axes_manual):
+  #   raise ValueError("mpmd_map requires all mesh axes to be Manual, "
+  #                    f"got {get_abstract_mesh().axis_types}")
+
+  # NOTE(mattjj,yashkatariya): this doesn't catch auto-mode non-manual axes
+  if not (all(p is None for a in in_avals if isinstance(a, jax_core.ShapedArray)
+              for p in a.sharding.spec) and
+          all(p is None for a in out_avals if isinstance(a, jax_core.ShapedArray)
+              for p in a.sharding.spec)):
+    raise ValueError(
+        "mpmd_map requires all mesh axes to be Manual, got"
+        f" {get_abstract_mesh().axis_types}"
+    )
 
   # TODO(slebedev): Handle pinned buffers as in ``pallas_call``.
   outin_aliases = {
