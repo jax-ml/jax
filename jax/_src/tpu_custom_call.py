@@ -111,6 +111,7 @@ class MemorySpace(enum.Enum):
   VMEM = enum.auto()
   SEMAPHORE_MEM = enum.auto()
   SMEM = enum.auto()
+  SREG = enum.auto()
   HOST = enum.auto()
   SC_SCALAR_SEMAPHORE_MEM = enum.auto()
   SC_VECTOR_SEMAPHORE_MEM = enum.auto()
@@ -129,6 +130,8 @@ class MemorySpace(enum.Enum):
       return 10
     elif self == MemorySpace.SMEM:
       return 4
+    elif self == MemorySpace.SREG:
+      return 6
     elif self == MemorySpace.HOST:
       return 5
     else:
@@ -283,6 +286,14 @@ class CustomCallBackendConfig:
       for i, memory_space in enumerate(self.output_memory_spaces):
         if memory_space is None:
           continue
+        if memory_space not in (
+            MemorySpace.HBM,
+            MemorySpace.VMEM,
+            MemorySpace.SREG,
+        ):
+          raise NotImplementedError(
+              "output_memory_space_colors only supports HBM, VMEM and SREG"
+          )
         if comma:
           config.write(b",")
         else:
@@ -303,17 +314,13 @@ class CustomCallBackendConfig:
       for i, memory_space in enumerate(self.input_memory_spaces):
         if memory_space is None:
           continue
-        if memory_space is MemorySpace.SMEM:
-          # TODO(sharadmv): Add support for SMEM (though atm, XLA will not
-          # page out SMEM arrays).
-          continue
         if memory_space not in (
             MemorySpace.HBM,
             MemorySpace.VMEM,
-            MemorySpace.SMEM,
+            MemorySpace.SREG,
         ):
           raise NotImplementedError(
-              "input_memory_space_colors only supports HBM, VMEM and SMEM"
+              "input_memory_space_colors only supports HBM, VMEM and SREG"
           )
         if comma:
           config.write(b",")
