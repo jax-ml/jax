@@ -229,9 +229,9 @@ class CustomRootTest(jtu.JaxTestCase):
 
   def test_custom_root_with_xla_metadata_call(self):
     """Test that custom_root VJP works when f contains xla_metadata_call."""
-    from jax.experimental import scheduling_groups
+    from jax.experimental import xla_metadata
 
-    @scheduling_groups.xla_metadata_call(inlineable="false")
+    @xla_metadata.xla_metadata_call(inlineable="false")
     def cube(z):
       return z**3
 

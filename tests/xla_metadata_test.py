@@ -23,7 +23,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
 from jax.experimental.xla_metadata import set_xla_metadata
-from jax.experimental.scheduling_groups import xla_metadata_call
+from jax.experimental.xla_metadata import xla_metadata_call
 import jax.numpy as jnp
 import numpy as np
 
