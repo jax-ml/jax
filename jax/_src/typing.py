@@ -110,6 +110,7 @@ class DLDeviceType(enum.IntEnum):
   kDLROCM = 10
   kDLROCMHost = 11
   kDLTPUHost = 20
+  kDLOneAPI = 14
 
 AnyInt = int | np.integer
 StaticIndex = AnyInt | slice | EllipsisType
