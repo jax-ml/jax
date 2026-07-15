@@ -137,6 +137,8 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/target.h"
 #include "xla/backends/cpu/target_machine_options.h"
 #include "xla/backends/gpu/collectives/gpu_clique_key.h"
+#include "xla/backends/gpu/collectives/gpu_collectives.h"
+#include "xla/backends/gpu/collectives/gpu_communicator.h"
 #include "xla/backends/gpu/ffi.h"
 #include "xla/backends/gpu/runtime/collective_clique_requests.h"
 #include "xla/backends/gpu/runtime/collective_cliques.h"
@@ -908,19 +910,6 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
 // Structure stores data needed during the execution and filled during the
 // initialization.
 struct DeviceState {
-  // Memory used to store the current value of the cross-device barrier.
-  std::unique_ptr<se::MemoryAllocation> barrier_signal_value;
-
-  // Memory used to store the signal buffer for the cross-device barrier.
-  std::unique_ptr<se::MemoryAllocation> barrier_signal;
-
-  // Symmetrical memory representing barrier signal memory at the peer
-  // devices registered with NCCL. This is essentially a registered memory
-  // window, which can be used with NCCL collectives API to extract multimem
-  // memory address space and get peer pointers.
-  // The object's lifetime is bound to the custom call clique lifetime.
-  tsl::TiedRef<xla::SymmetricMemory> barrier_signal_symmetric_memory;
-
   // Serialized collective kernel metadata.
   // Structure has the following layout:
   // [CollectiveKernelMetadata][param_to_peers][multimem_addresses]
@@ -1200,71 +1189,6 @@ void* SubtractOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
 }
 
-// Allocate and zero dedicated buffer for cross-device barrier. This buffer
-// can't be a part of the output parameter used for collective metadata
-// because buffer assigner can use the same buffer for different ops and we
-// need to ensure that this buffer is zeroed on all devices for a given
-// operation. Barrier buffers are created and zeroed once during the first
-// custom call operation initialization. During reruns we can reuse the same
-// buffers for the same operation since multi-device barrier can be called
-// multiple times on the same buffers.
-absl::Status InitializeBarrier(
-    DeviceState& device_state, se::Stream* stream,
-    const xla::gpu::CollectiveParams* collective_params,
-    xla::gpu::CollectiveCliques* collective_cliques,
-    const xla::gpu::GpuCliqueKey& clique_key, xla::RankId rank) {
-  if (!device_state.barrier_signal ||
-      device_state.barrier_signal->address().is_null()) {
-    // Barrier signal buffer should be allocated within a collective memory
-    // space (kCollective) since it's going to be registered as collective
-    // memory with the NCCL library.
-    TF_ASSIGN_OR_RETURN(
-        std::unique_ptr<se::MemoryAllocator> collective_allocator,
-        collective_params->executor->CreateMemoryAllocator(
-            se::MemorySpace::kCollective));
-
-    if (!device_state.barrier_signal_value ||
-        device_state.barrier_signal_value->address().is_null()) {
-      TF_ASSIGN_OR_RETURN(device_state.barrier_signal_value,
-                          collective_allocator->Allocate(
-                              xla::gpu::GetMultiGpuBarrierSignalValueSize()));
-      se::DeviceAddressBase barrier_signal_value_buffer_address =
-          device_state.barrier_signal_value->address();
-      TF_RETURN_IF_ERROR(
-          stream->MemZero(&barrier_signal_value_buffer_address,
-                          barrier_signal_value_buffer_address.size()));
-    }
-
-    TF_ASSIGN_OR_RETURN(device_state.barrier_signal,
-                        collective_allocator->Allocate(
-                            xla::gpu::GetMultiGpuBarrierSignalBufferSize()));
-
-    se::DeviceAddressBase barrier_signal_buffer_address =
-        device_state.barrier_signal->address();
-    TF_RETURN_IF_ERROR(stream->MemZero(&barrier_signal_buffer_address,
-                                       barrier_signal_buffer_address.size()));
-  }
-
-  // It's important to zero the buffer synchronously to avoid the situation
-  // when peer barrier buffer is not zeroed before the first execution.
-  // XLA has a rendez-vous between Initialize and Execute stages, which
-  // guarantees that the buffer is zeroed on all devices before the first
-  // execution.
-  TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
-
-  if (device_state.barrier_signal_symmetric_memory.Expired()) {
-    TF_ASSIGN_OR_RETURN(auto* comm,
-                        collective_cliques->GetComm(clique_key, rank));
-    TF_ASSIGN_OR_RETURN(
-        auto symmetric_memory,
-        comm->CreateSymmetricMemory(device_state.barrier_signal->address()));
-
-    TF_ASSIGN_OR_RETURN(
-        device_state.barrier_signal_symmetric_memory,
-        collective_cliques->Tie(clique_key, std::move(symmetric_memory)));
-  }
-  return absl::OkStatus();
-}
 
 DeviceState& GetDeviceState(
     CustomCallResources* resources,
@@ -1322,7 +1246,12 @@ absl::Status MosaicGpuPrepare(
   TF_ASSIGN_OR_RETURN(
       std::vector<std::vector<xla::GlobalDeviceId>> device_groups,
       GetCliqueDeviceGroups(*collective_params, attributes));
-  TF_RETURN_IF_ERROR(clique_requests->RequestClique(clique_key, device_groups));
+  xla::gpu::CollectiveCliqueRequests::CliqueRequirements requirements;
+  requirements.barrier_reqs =
+      xla::gpu::CollectiveCliqueRequests::BarrierRequirements();
+  requirements.barrier_reqs->use_cross_device_barrier = true;
+  TF_RETURN_IF_ERROR(
+      clique_requests->RequestClique(clique_key, device_groups, requirements));
   TF_ASSIGN_OR_RETURN(
       std::vector<bool> collective_parameters,
       ParseCollectiveMemoryParameters(attributes, buffers.size()));
@@ -1482,8 +1411,6 @@ absl::Status MosaicGpuInitialize(
   }
 
   DeviceState& device_state = GetDeviceState(resources, collective_params);
-  TF_RETURN_IF_ERROR(InitializeBarrier(device_state, stream, collective_params,
-                                       collective_cliques, clique_key, rank));
 
   // Construct the collective kernel metadata information.
   CollectiveKernelMetadata metadata;
@@ -1532,10 +1459,6 @@ absl::Status MosaicGpuInitialize(
       << absl::StrJoin(param_to_peers, ", ", PtrFormatter{})
       << "), multimem address spaces: ("
       << absl::StrJoin(parameter_multimem_addresses, ", ", PtrFormatter{})
-      << "), barrier_signal_value: ("
-      << device_state.barrier_signal_value->address().opaque()
-      << "), barrier_signal_buffer: ("
-      << device_state.barrier_signal->address().opaque()
       << "), copied metadata to the device with address: "
       << metadata_address.opaque() << "}";
   return absl::OkStatus();
@@ -1543,6 +1466,7 @@ absl::Status MosaicGpuInitialize(
 
 absl::Status MosaicGpuExecute(
     se::Stream* stream, const xla::gpu::CollectiveParams* collective_params,
+    const xla::gpu::CollectiveCliques* collective_cliques,
     ffi::RemainingArgs inputs, ffi::RemainingRets results,
     CustomCallResources* resources, xla::ffi::Dictionary attributes) {
   std::vector<void*> buffer_ptrs;
@@ -1578,12 +1502,13 @@ absl::Status MosaicGpuExecute(
     buffer_ptrs.push_back(metadata_address.opaque());
     buffer_ptrs.push_back(device_state.metadata_bytes.data());
 
+    TF_ASSIGN_OR_RETURN(xla::gpu::GpuCommunicator * comm,
+                        collective_cliques->GetComm(clique_key, current_rank));
+
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "Starting multi-GPU barrier with key: " << clique_key;
-    TF_RETURN_IF_ERROR(xla::gpu::LaunchMultiGpuBarrierWithNccl(
-        stream, clique_key.num_devices(), current_rank,
-        device_state.barrier_signal_symmetric_memory.Lock().get(),
-        device_state.barrier_signal_value->address()));
+    xla::gpu::GpuCollectives::Executor executor(stream);
+    TF_RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "Finished multi-GPU barrier with key: " << clique_key;
   } else if (kernel->is_nvshmem_used) {
@@ -1655,6 +1580,7 @@ XLA_FFI_DEFINE_HANDLER(
     ffi::Ffi::BindExecute()
         .Ctx<ffi::Stream>()
         .Ctx<ffi::CollectiveParams>()
+        .Ctx<ffi::CollectiveCliques>()
         .RemainingArgs()
         .RemainingRets()
         .Ctx<xla::ffi::State<mosaic::gpu::CustomCallResources>>()
