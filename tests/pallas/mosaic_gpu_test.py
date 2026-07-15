@@ -7241,6 +7241,39 @@ class PipelineTest(PallasTest):
 
     np.testing.assert_allclose(kernel_fn(x), x.sum(0, keepdims=True), rtol=1e-6)
 
+  def test_pipeline_oob_mode(self):
+    # This test crashes with the default OOB fill mode of ZEROS because
+    # it can't copy large 1D arrays.
+
+    dtype = jnp.int8
+    block_size = 512
+
+    def kernel(x_gmem, o_gmem):
+      def pipeline_body(_, x_smem, o_smem):
+        o_smem[...] = x_smem[...]
+
+      plgpu.emit_pipeline(
+          pipeline_body,
+          grid=(1,),
+          in_specs=[
+              plgpu.BlockSpec(
+                  (block_size,),
+                  lambda i: (i,),
+                  oob_fill_mode=plgpu.OOBFillMode.UNDEFINED,
+              )
+          ],
+          out_specs=[plgpu.BlockSpec((block_size,), lambda i: (i,))],
+          max_concurrent_steps=1,
+      )(x_gmem, o_gmem)
+
+    kernel_fn = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((block_size,), dtype),
+    )
+
+    x = jnp.arange(block_size, dtype=dtype)
+    np.testing.assert_array_equal(kernel_fn(x), x)
+
   def test_emit_with_parallel_grid(self):
     num_steps1 = 4
     num_steps2 = 5

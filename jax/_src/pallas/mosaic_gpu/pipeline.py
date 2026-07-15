@@ -133,6 +133,7 @@ class BufferedRef:
         self.smem_ref.at[slot],
         barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
         collective_axes=getattr(self.spec, "collective_axes", ()),
+        oob_mode=getattr(self.spec, "oob_fill_mode", None),
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):

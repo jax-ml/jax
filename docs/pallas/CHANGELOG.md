@@ -47,6 +47,10 @@ using Triton, switch to the official Triton bindings and `jax_triton`.
     e4m3 and e5m2 FP8 types across its two operands.
   * Added support for manual "ready" barriers to
     {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline_warp_specialized`.
+  * Added ``oob_fill_mode`` to
+    {class}`jax.experimental.pallas.mosaic_gpu.BlockSpec`, which controls
+    the behavior for out-of-bounds accesses during pipelined GMEM-to-SMEM
+    copies.
 
 * Deprecations
 
