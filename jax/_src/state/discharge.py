@@ -788,12 +788,14 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
   return out_primals, out_tangents
 ad.primitive_jvps[run_state_p] = _run_state_jvp
 
-@register_discharge_rule(run_state_p)
-def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
+@register_partial_discharge_rule(run_state_p)
+def _run_state_discharge_rule(should_discharge: Sequence[bool],
+                              in_avals: Sequence[core.AbstractValue],
                               out_avals: Sequence[core.AbstractValue],
                               *args: Any, jaxpr: core.Jaxpr,
                               which_linear: Sequence[bool],
                               is_initialized: tuple[bool, ...]):
+  del in_avals
   if not all(is_initialized):
     raise NotImplementedError(
         "Uninitialized Refs are not supported in discharge."
@@ -802,8 +804,8 @@ def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
   out_vals = run_state_p.bind(*args, jaxpr=jaxpr, which_linear=which_linear,
                               is_initialized=is_initialized)
   new_invals = []
-  for aval, out_val in zip(in_avals, out_vals):
-    new_invals.append(out_val if isinstance(aval, AbstractRef) else None)
+  for discharge, out_val in zip(should_discharge, out_vals):
+    new_invals.append(out_val if discharge else None)
   return new_invals, out_vals
 
 def initial_style_jaxpr(

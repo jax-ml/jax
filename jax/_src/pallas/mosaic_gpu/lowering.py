@@ -3720,6 +3720,13 @@ def _run_state_lowering_rule(
 
   should_discharge = []
   new_input_vals = []
+  # `should_deref_acc` is used under lane lowering semantics, to figure out
+  # whether we need to return a `WGMMAAccumulator` or a `FragmentedArray` when
+  # encountering a `WGMMAAbstractAccumulatorRef` as input.
+  #
+  # We can't tell the difference under warpgroup lowering semantics, but we do
+  # not need to since we always return a `vector` anyway.
+  should_deref_acc = []
   for arg, v, out_aval in zip(args, jaxpr.invars, ctx.avals_out):
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
@@ -3728,7 +3735,12 @@ def _run_state_lowering_rule(
         nvvm_dialect.wgmma_fence_aligned()
         new_input_vals.append(arg)
       else:
-        new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
+        if isinstance(arg, mgpu.WGMMAAccumulator):
+          should_deref_acc.append(False)
+          new_input_vals.append(arg)  # pyrefly: ignore[bad-argument-type]
+        else:
+          should_deref_acc.append(True)
+          new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
       should_discharge.append(True)
       assert isinstance(out_aval, jax_core.ShapedArray)
     else:
@@ -3749,9 +3761,15 @@ def _run_state_lowering_rule(
       ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()  # pyrefly: ignore[bad-argument-type]
   )
   # Await the accumulators and extract their final values.
+  #
+  # Note: there may be accumulators that we have closed over and that should not
+  # technically not be dereferenced. That's not a big deal: since `run_state` is
+  # always used with at least one accumulator though, we need to await here
+  # anyway.
+  deref_acc = iter(should_deref_acc)
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
   outs = [
-      out.value if isinstance(out, mgpu.WGMMAAccumulator) else out
+      out.value if isinstance(out, mgpu.WGMMAAccumulator) and next(deref_acc) else out
       for out in outs
   ]
   # Blend the discharge results with refs we closed over. I don't fully

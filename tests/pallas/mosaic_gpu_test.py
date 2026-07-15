@@ -4835,6 +4835,45 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )(a, b, i)
     np.testing.assert_allclose(res, i + a @ b, rtol=2e-3)
 
+  def test_run_state_discharge_regression_test(self):
+    # This regression test voluntarily allocates an outer accumulator and a
+    # SMEM ref using `run_scoped``, and then uses them both inside of
+    # `run_state`. This used to trigger two bugs:
+    # 1. The SMEM ref would end up being unexpectedly discharged inside of
+    #    `run_state`;
+    # 2. The dereferencing of the outer accumulator would be improperly handled
+    #    in the results of `run_state`.
+    transforms = self.default_transforms(dtype=jnp.float16)
+
+    def kernel(a_ref, b_ref, o_ref, barrier_ref):
+      def outer_scope(b_smem, acc):
+        plgpu.copy_gmem_to_smem(b_ref, b_smem, barrier_ref)
+        plgpu.barrier_wait(barrier_ref)
+
+        def inner_scope(inner_acc):
+          del inner_acc
+          a_regs = plgpu.load(a_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+          plgpu.wgmma(acc, a_regs, b_smem)
+        # Use an inner accumulator because `run_state` lowering expects it.
+        pl.run_state(inner_scope)(plgpu.ACC.init(
+            plgpu.layout_cast(jnp.zeros((64, 64), jnp.float32), plgpu.Layout.WGMMA)))
+        o_ref[...] = acc[...]
+      pl.run_scoped(outer_scope,
+                    plgpu.SMEM(b_ref.shape, jnp.float16, transforms=transforms),
+                    plgpu.ACC((64, 192), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
+
+    res = self.kernel(
+        kernel,
+        scratch_types=[plgpu.Barrier()],
+        out_type=jax.ShapeDtypeStruct((64, 192), jnp.float32),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b, rtol=2e-3)
+
+
   def test_wgmma_registers_init_with_update(self):
     def kernel(a_ref, b_ref, i_ref, o_ref):
       def scope(acc_ref):
