@@ -284,6 +284,7 @@ py_library_providing_imports_info(
         "//jax/_src:stages",
         "//jax/_src:util",
         "//jax/_src/lib",
+        "//jax/_src/pallas/mosaic:error_handling",
         "//jax/extend:backend",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",

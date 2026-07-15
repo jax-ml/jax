@@ -38,6 +38,7 @@ from jax._src import sharding_impls
 from jax._src import util as jax_util
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
+from jax._src.pallas.mosaic import error_handling as error
 from jax.extend import backend as jex_backend
 from jaxlib.mlir import ir
 from jaxlib.mlir import passmanager
@@ -919,7 +920,10 @@ def _lower_as_gpu_kernel(
   sym_tab = ir.SymbolTable(module.operation)
   sym_tab.insert(main.func_op)
   sym_tab.insert(global_scratch)
-  module.operation.verify()
+  try:
+    module.operation.verify()
+  except ir.MLIRError as e:
+    raise error.mlir_error_to_verification_error(e) from e
 
   assert launch_ctx is not None
   return module, out_shape, unwrap_output_tuple, launch_ctx
@@ -943,6 +947,8 @@ def _run_serde_pass(
   try:
     pipeline.run(module.operation)
     module.operation.verify()
+  except ir.MLIRError as e:
+    raise error.mlir_error_to_verification_error(e) from e
   finally:
     module.context.allow_unregistered_dialects = allow_unregistered_dialects
   return module
@@ -1009,7 +1015,10 @@ def _kernel_to_module(
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)
 
   launch_ctx.scratch.finalize_size()
-  module.operation.verify()
+  try:
+    module.operation.verify()
+  except ir.MLIRError as e:
+    raise error.mlir_error_to_verification_error(e) from e
 
   return (
       module,
