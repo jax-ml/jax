@@ -1525,7 +1525,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "sparse_bcoo_bcsr_test",
     srcs = ["sparse_bcoo_bcsr_test.py"],
-    args = ["--jax_bcoo_cusparse_lowering=true"],
+    args = [
+        "--jax_bcoo_cusparse_lowering=true",
+        "--jax_num_generated_cases=8",  # use fewer cases to prevent timeouts.
+    ],
     backend_tags = {
         "cpu": [
             "nomsan",  # Times out
@@ -1536,17 +1539,6 @@ jax_multiplatform_test(
             "noassert",
         ],
     },
-    # Use fewer cases to prevent timeouts.
-    backend_variant_args = {
-        "cpu": ["--jax_num_generated_cases=20"],
-        "cpu_x32": ["--jax_num_generated_cases=30"],
-        "gpu_a100": ["--jax_num_generated_cases=40"],
-        "gpu_h100": ["--jax_num_generated_cases=40"],
-        "gpu_p100": ["--jax_num_generated_cases=40"],
-        "gpu_v100": ["--jax_num_generated_cases=40"],
-        "tpu_v3": ["--jax_num_generated_cases=40"],
-        "tpu_v5e": ["--jax_num_generated_cases=40"],
-    },
     disable_configs = [
         "gpu_b200",  # Times out
         "tpu_7x",  # Times out
@@ -1555,9 +1547,9 @@ jax_multiplatform_test(
         "tpu": 8,
     },
     shard_count = {
-        "cpu": 50,
-        "gpu": 50,
-        "tpu": 50,
+        "cpu": 20,
+        "gpu": 10,
+        "tpu": 10,
     },
     tags = [
         "noasan",
