@@ -283,7 +283,7 @@ class NDIndexer:
 
   def expand_scalar_bool_indices(self, sharding_spec: Any = None) -> tuple[NDIndexer, Any]:
     new_shape = list(self.shape)
-    new_sharding_spec = list((None for _ in self.shape) if sharding_spec is None else sharding_spec)
+    new_sharding_spec = list((None for _ in self.shape) if sharding_spec is None else sharding_spec.partitions)
     new_indices = list(self.indices)
     current_dim = 0
     for i, idx in enumerate(self.indices):

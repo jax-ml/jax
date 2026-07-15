@@ -2030,8 +2030,8 @@ def _gather_spec_computation(operand, indices, dimension_numbers, slice_sizes):
   start_indices_batching_dims = dimension_numbers.start_indices_batching_dims
   output_shape_rank = len(offset_dims) + indices.ndim - 1
 
-  operand_spec = operand.sharding.spec
-  indices_spec = list(indices.sharding.spec)
+  operand_spec = operand.sharding.spec.partitions
+  indices_spec = list(indices.sharding.spec.partitions)
 
   if (all(s is None for s in operand_spec) and
       all(s is None for s in indices_spec)):
