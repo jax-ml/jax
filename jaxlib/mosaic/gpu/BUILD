@@ -398,6 +398,7 @@ cc_library(
 cc_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
+    args = ["--heap_check="],  # TODO(b/452513034): Enable heapcheck once the bug is fixed.
     tags = ["requires-gpu-sm90"],
     deps = [
         ":mosaic_gpu_support",
