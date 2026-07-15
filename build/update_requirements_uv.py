@@ -36,7 +36,9 @@ COMMON_SRCS = [
     "build/nvidia-requirements.txt",
 ]
 
-def update_requirements(py_ver, nightly=False, upgrade=True, dry_run=False):
+def update_requirements(
+    py_ver, nightly=False, upgrade=True, upgrade_package=None, dry_run=False
+):
     if py_ver not in PYTHON_VERSIONS:
         print(f"Error: Unsupported Python version {py_ver}")
         sys.exit(1)
@@ -81,6 +83,9 @@ def update_requirements(py_ver, nightly=False, upgrade=True, dry_run=False):
         cmd.append("--generate-hashes")
         if upgrade:
             cmd.append("--upgrade")
+        elif upgrade_package:
+            for pkg in upgrade_package:
+                cmd.extend(["--upgrade-package", pkg])
 
     # Add a header to the output file indicating how it was generated
     cmd.extend([
@@ -114,6 +119,13 @@ def main():
         help="Do not upgrade packages; only re-resolve constraints.",
     )
     parser.add_argument(
+        "-P",
+        "--upgrade-package",
+        action="append",
+        dest="upgrade_package",
+        help="Upgrade specific package(s). Can be specified multiple times.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the command that would be run without executing it.",
@@ -142,7 +154,11 @@ def main():
     for ver in versions_to_update:
         print(f"\n--- Updating Python {ver} ---")
         update_requirements(
-            ver, nightly=args.nightly, upgrade=args.upgrade, dry_run=args.dry_run
+            ver,
+            nightly=args.nightly,
+            upgrade=args.upgrade,
+            upgrade_package=args.upgrade_package,
+            dry_run=args.dry_run,
         )
 
 if __name__ == "__main__":

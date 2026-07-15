@@ -460,8 +460,8 @@ class VectorSubcoreTest(PallasSCTest):
 
   @parameterized.product(major_dim=[2, 3, 4])
   def test_get_index(self, major_dim):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
+    if not jtu.is_libtpu_at_least("0.0.44"):
+      self.skipTest("Requires libtpu 0.0.44 or newer")
 
     @self.vector_subcore_kernel(
         out_shape=jax.ShapeDtypeStruct(shape=(self.num_lanes,), dtype=jnp.int32)

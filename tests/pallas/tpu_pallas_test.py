@@ -4090,8 +4090,8 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       axis: int,
       is_dynamic: bool,
   ):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      self.skipTest('Requires libtpu 0.0.43 or newer.')
+    if not jtu.is_libtpu_at_least("0.0.44"):
+      self.skipTest("Requires libtpu 0.0.44 or newer.")
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
@@ -5256,8 +5256,8 @@ class PallasHloNamesTest(ptu.PallasTPUTest):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      self.skipTest('Custom call naming requires libtpu 0.0.43 or newer.')
+    if not jtu.is_libtpu_at_least("0.0.44"):
+      self.skipTest("Custom call naming requires libtpu 0.0.44 or newer.")
 
   def test_custom_call_name(self):
     def kernel(x_ref, o_ref):
