@@ -23,18 +23,17 @@ import types
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
-import numpy as np
-
 import jax
 from jax import numpy as jnp
-from jax._src import earray
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import earray
 from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import ifrt_version, jaxlib_extension_version
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -1172,7 +1171,9 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
-    if dtype in fp6_dtypes:
+    if dtype in fp6_dtypes and (
+        jaxlib_extension_version < 476 or ifrt_version < 58
+    ):
       self.skipTest('XLA support for float6 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
@@ -1183,36 +1184,65 @@ class TestPromotionTables(jtu.JaxTestCase):
     if weak_type:
       expected = dtypes.default_types[
           'f'
-          if x.dtype in ['bfloat16', *fp8_dtypes, *fp4_dtypes]
+          if x.dtype
+          in [
+              'bfloat16',
+              *fp8_dtypes,
+              *fp4_dtypes,
+              *(
+                  fp6_dtypes
+                  if (jaxlib_extension_version >= 476 and ifrt_version >= 58)
+                  else []
+              ),
+          ]
           else x.dtype.kind
       ]()
     else:
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)
 
+  @parameterized.parameters(
+      [(dtype, 8) for dtype in fp8_dtypes]
+      + [(dtype, 4) for dtype in fp4_dtypes]
+      + [(dtype, 6) for dtype in fp6_dtypes]
+  )
   @jax.numpy_dtype_promotion('standard')
-  def testFloat8PromotionError(self):
-    for dtype in fp8_dtypes:
-      if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
-        # TPU does not support float8_e8m0fnu.
-        continue
-      x = jnp.array(1, dtype=dtype)
-      y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
-                                  ".*8-bit floats do not support implicit promotion"):
-        x + y
+  def testFloatPromotionError(self, dtype, bit_width):
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float8_e8m0fnu.')
+    if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float4_e2m1fn.')
+    if dtype in fp6_dtypes and (
+        jaxlib_extension_version < 476 or ifrt_version < 58
+    ):
+      self.skipTest(
+          'Requires jaxlib >= 476 and ifrt_version >= 58 for FP6 format'
+          ' support.'
+      )
+    x = jnp.array(1, dtype=dtype)
+    y = jnp.array(1, dtype='float32')
+    with self.assertRaisesRegex(
+        jax.dtypes.TypePromotionError,
+        f'.*{bit_width}-bit floats do not support implicit promotion',
+    ):
+      x + y
 
-  @jax.numpy_dtype_promotion('standard')
-  def testFloat4PromotionError(self):
-    for dtype in fp4_dtypes:
-      if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
-        # TPU does not support float4_e2m1fn.
-        continue
-      x = jnp.array(1, dtype=dtype)
-      y = jnp.array(1, dtype='float32')
-      with self.assertRaisesRegex(jax.dtypes.TypePromotionError,
-                                  ".*4-bit floats do not support implicit promotion"):
-        x + y
+  @parameterized.parameters(float_dtypes)
+  @config.explicit_x64_dtypes('allow')
+  def testFloatArrayCreation(self, dtype):
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float8_e8m0fnu.')
+    if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float4_e2m1fn.')
+    if dtype in fp6_dtypes and (
+        jaxlib_extension_version < 476 or ifrt_version < 58
+    ):
+      self.skipTest(
+          'Requires jaxlib >= 476 and ifrt_version >= 58 for FP6 format'
+          ' support.'
+      )
+    x = jnp.array([1.0, 2.0], dtype=dtype)
+    self.assertEqual(x.dtype, dtype)
 
   @jax.numpy_dtype_promotion('standard')
   @jtu.run_on_devices('tpu')
@@ -1273,7 +1303,9 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.skipTest('XLA support for int4 is incomplete.')
       if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
-    if dtype in fp6_dtypes:
+    if dtype in fp6_dtypes and (
+        jaxlib_extension_version < 476 or ifrt_version < 58
+    ):
       self.skipTest('XLA support for float6 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
