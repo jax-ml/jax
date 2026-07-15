@@ -2199,13 +2199,14 @@ def _gather_transpose_fancy(out_ct, operand, indices, *, dimension_numbers,
   if type(out_ct) is ad_util.Zero or isinstance(operand, ad.NullAccum):
     return
   operand_aval, = lax_utils.ensure_shaped(operand.aval)
-  if isinstance(operand, ad.RefAccum):
-    indexer = _gather_to_ref_indexer(indices, dimension_numbers, slice_sizes,
-                                     mode, operand_aval.shape)
-    if indexer is not None:
-      # in-place add-update at the gathered indices, no dense intermediates
-      operand.inst().ref.addupdate(out_ct, indexer)
-      return
+  op_shape = operand_aval.shape
+  if (isinstance(operand, ad.RefAccum) and
+      (indexer := _gather_to_ref_indexer(
+          indices, dimension_numbers, slice_sizes, mode, op_shape)) is not None):
+    # in-place add-update at the gathered indices, no dense intermediates
+    operand.inst().ref.addupdate(out_ct, indexer)
+    return
+
   scatter_dnums = ScatterDimensionNumbers(
       update_window_dims=dimension_numbers.offset_dims,
       inserted_window_dims=dimension_numbers.collapsed_slice_dims,
@@ -2222,7 +2223,7 @@ def _gather_transpose_fancy(out_ct, operand, indices, *, dimension_numbers,
   else:
     # use out_ct's dtype, not operand_aval's: cotangents can flow in a
     # different (e.g. higher-precision) dtype than the primal
-    zeros = lax.full(operand_aval.shape, 0, typeof(out_ct).dtype,
+    zeros = lax.full(op_shape, 0, typeof(out_ct).dtype,
                      sharding=operand_aval.sharding)
     zeros = core.pvary(zeros, tuple(operand_aval.mat.varying))
     operand.accum(scatter_add(zeros, indices, out_ct, scatter_dnums,
