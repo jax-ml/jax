@@ -11515,6 +11515,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         'The input part of spec in out_sharding should match the spec of `x`'):
       g(arr, P('x', None, None))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_slice_fully_replicated(self, mesh):
+    arr = jax.device_put(jnp.arange(8).reshape(4, 2), P('x', None))
+
+    @jax.jit
+    def f(x):
+      return x[0, 0]
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
