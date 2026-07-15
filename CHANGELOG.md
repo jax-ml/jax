@@ -51,6 +51,19 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 * Deprecations
   * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
+  * Several previously-deprecated APIs from {mod}`jax.core` have been removed, including
+    `CallPrimitive`, `DebugInfo`, `DropVar`, `Effect`, `Effects`, `InconclusiveDimensionOperation`,
+    `JaxprTypeError`, `abstract_token`, `check_jaxpr`, `concrete_or_error`, `find_top_trace`, `gensym`,
+    `get_opaque_trace_state`, `is_concrete`, `is_constant_dim`, `is_constant_shape`, `jaxprs_in_params`,
+    `new_jaxpr_eqn`, `no_effects`, `nonempty_axis_env_DO_NOT_USE`, `primal_dtype_to_tangent_dtype`,
+    `unsafe_am_i_under_a_jit_DO_NOT_USE`, `unsafe_am_i_under_a_vmap_DO_NOT_USE`,
+    `unsafe_get_axis_names_DO_NOT_USE`, `valid_jaxtype`, `JaxprPpContext`, `JaxprPpSettings`, `OutputType`,
+    `aval_mapping_handlers`, `call`, `concretization_function_error`, `custom_typechecks`,
+    `literalable_types`, `no_axis_name`, and `trace_ctx`.
+  * Several previously-deprecated APIs from {mod}`jax.interpreters.pxla` have been removed, including
+    `Index`, `MeshAxisName`, `MeshExecutable`, `global_aval_to_result_handler`, `global_result_handlers`,
+    `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
+    `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
 
 ## JAX 0.10.2 (June 17, 2026)
 
