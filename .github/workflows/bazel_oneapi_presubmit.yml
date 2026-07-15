@@ -27,7 +27,7 @@ permissions: {}
 
 jobs:
   build-oneapi-artifacts:
-    if: github.repository_owner == 'jax-ml'
+    if: github.repository_owner == 'ashahba'
     uses: ./.github/workflows/build_oneapi_artifacts.yml
     strategy:
       fail-fast: false
