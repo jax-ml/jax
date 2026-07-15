@@ -300,6 +300,8 @@ class EighTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   def testEighBatching(self, shape, dtype):
+    if platform.system() == "Windows":
+      self.skipTest("Crashes on Windows.")
     rng = jtu.rand_default(self.rng())
     shape = (10,) + shape
     args = rng(shape, dtype)
