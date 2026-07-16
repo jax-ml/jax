@@ -182,9 +182,13 @@ def get_gpu_info_from_version(
 def get_device_kind() -> str:
   device = pxla.get_default_device()
   abstract_device = mesh_lib.get_abstract_mesh().abstract_device
-  if (abstract_device is not None
-      and abstract_device.device_kind != device.device_kind):
-    return abstract_device.device_kind
+  if abstract_device is not None:
+    if abstract_device.device_kind.startswith("gfx"):
+      return abstract_device.device_kind
+    # A kind that differs from the concrete device is a deliberate AOT target;
+    # if it matches, the abstract mesh just mirrors the local device.
+    if abstract_device.device_kind != device.device_kind:
+      return abstract_device.device_kind
   cc = getattr(device, "compute_capability", None)
   if isinstance(cc, str) and cc.startswith("gfx"):
     return cc
