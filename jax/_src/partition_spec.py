@@ -22,8 +22,6 @@ from jax._src.lib import _jax
 AxisName = Any
 
 def _check(partitions, unreduced, reduced, unreduced_kind):
-  if not reduced and not unreduced:
-    return
   if None in unreduced:
     raise ValueError(
         "unreduced cannot contain None. All elements in unreduced should refer"
@@ -36,6 +34,10 @@ def _check(partitions, unreduced, reduced, unreduced_kind):
     raise ValueError(
         "`unreduced` and `reduced` argument to PartitionSpec cannot overlap. "
         f"Got unreduced: {unreduced} and reduced: {reduced}")
+  if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
+      raise TypeError(
+          "Expected unreduced_kind to be of type `jax.sharding.UnreducedKind`"
+          f" but got {type(unreduced_kind)}")
   if not unreduced and unreduced_kind is not None:
     raise ValueError(
         "`unreduced_kind` should be `None` when `unreduced` is an empty set."
@@ -75,6 +77,16 @@ class UnconstrainedSingleton:
 
 _UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
 _jax.set_pspec_unconstrained(_UNCONSTRAINED_PARTITION)  # type: ignore
+
+
+def _canonicalize_ur(name, val):
+  if not isinstance(val, frozenset):
+    if not isinstance(val, set):
+      raise TypeError(
+          f"{name} argument of PartitionSpec should "
+          f"of type `frozenset` or `set`. Got type {type(val)}")
+    val = frozenset(val)
+  return val
 
 
 class UnreducedKind(enum.Enum):
@@ -119,24 +131,10 @@ class P:
   def __new__(cls, *partitions, unreduced=frozenset(), reduced=frozenset(),
               unreduced_kind=None):
     partitions = _canonicalize_partitions(partitions)
-    if not isinstance(unreduced, frozenset):
-      if not isinstance(unreduced, set):
-        raise TypeError(
-            f"unreduced argument of PartitionSpec should "
-            f"of type `frozenset` or `set`. Got type {unreduced}")
-      unreduced = frozenset(unreduced)
-    if not isinstance(reduced, frozenset):
-      if not isinstance(reduced, set):
-        raise TypeError(
-            f"reduced argument of PartitionSpec should "
-            f"of type `frozenset` or `set`. Got type {reduced}")
-      reduced = frozenset(reduced)
+    unreduced = _canonicalize_ur('unreduced', unreduced)
+    reduced = _canonicalize_ur('reduced', reduced)
     if unreduced and unreduced_kind is None:
       unreduced_kind = UnreducedKind.sum
-    if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
-      raise TypeError(
-          "Expected unreduced_kind to be of type `jax.sharding.UnreducedKind`"
-          f" but got {type(unreduced_kind)}")
     return P._create(partitions, unreduced, reduced, unreduced_kind)  # type: ignore
 
   # No __eq__ or __hash__: interned classes use object identity.

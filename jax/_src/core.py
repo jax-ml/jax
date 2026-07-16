@@ -2365,6 +2365,36 @@ def get_memory_space(memory_space):
   return memory_space
 
 
+def _check_mat(varying, unreduced, reduced, unreduced_kind):
+  if varying & unreduced:
+    raise ValueError(
+        "varying and unreduced cannot have common mesh axes. Got"
+        f" varying={varying} and unreduced={unreduced}")
+  if varying & reduced:
+    raise ValueError(
+        "varying and reduced cannot have common mesh axes. Got"
+        f" varying={varying} and reduced={reduced}")
+  assert not (varying & unreduced & reduced)
+
+  if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
+    raise TypeError(
+        "Expected unreduced_kind to be of type `jax.sharding.UnreducedKind`"
+        f" but got {type(unreduced_kind)}")
+  if not unreduced and unreduced_kind is not None:
+    raise ValueError(
+        "`unreduced_kind` should be `None` when `unreduced` is an empty set."
+        f" Got {unreduced_kind=} and {unreduced=}")
+
+def _canonicalize_mat(name, val):
+  if not isinstance(val, frozenset):
+    if not isinstance(val, set):
+      raise TypeError(
+          f"{name} argument of ManualAxisType should "
+          f"of type `frozenset` or `set`. Got type {type(val)}")
+    val = frozenset(val)
+  return val
+
+
 @immutable
 class ManualAxisType:
   __slots__ = ('varying', 'unreduced', 'reduced', 'unreduced_kind',
@@ -2378,6 +2408,9 @@ class ManualAxisType:
   @staticmethod
   @weak_value_interner
   def _create(varying, unreduced, reduced, unreduced_kind):
+    # We cannot modify the arguments within the interned function, but we are
+    # free to throw an exception.
+    _check_mat(varying, unreduced, reduced, unreduced_kind)
     obj = object.__new__(ManualAxisType)
     object.__setattr__(obj, 'varying', varying)
     object.__setattr__(obj, 'unreduced', unreduced)
@@ -2387,27 +2420,12 @@ class ManualAxisType:
 
   def __new__(cls, *, varying=frozenset(), unreduced=frozenset(),
               reduced=frozenset(), unreduced_kind: UnreducedKind | None = None):
-    if varying & unreduced:
-      raise ValueError(
-          "varying and unreduced cannot have common mesh axes. Got"
-          f" varying={varying} and unreduced={unreduced}")
-    if varying & reduced:
-      raise ValueError(
-          "varying and reduced cannot have common mesh axes. Got"
-          f" varying={varying} and reduced={reduced}")
-    assert not (varying & unreduced & reduced)
+    varying = _canonicalize_mat('varying', varying)
+    unreduced = _canonicalize_mat('unreduced', unreduced)
+    reduced = _canonicalize_mat('reduced', reduced)
     if unreduced and unreduced_kind is None:
       unreduced_kind = UnreducedKind.sum
-    if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
-      raise TypeError(
-          "Expected unreduced_kind to be of type `jax.sharding.UnreducedKind`"
-          f" but got {type(unreduced_kind)}")
-    if not unreduced and unreduced_kind is not None:
-      raise ValueError(
-          "`unreduced_kind` should be `None` when `unreduced` is an empty set."
-          f" Got {unreduced_kind=} and {unreduced=}")
-    return cls._create(frozenset(varying), frozenset(unreduced),
-                       frozenset(reduced), unreduced_kind)
+    return cls._create(varying, unreduced, reduced, unreduced_kind)
 
   # No __eq__ or __hash__: interned classes use object identity.
 

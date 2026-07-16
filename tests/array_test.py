@@ -1574,6 +1574,16 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(s1 == s2)
     self.assertTrue(s1.is_equivalent_to(s2, 2))
 
+  def test_pspec_check(self):
+    def create_pspec(kind):
+      return P('x', unreduced={'y'}, unreduced_kind=kind)
+
+    create_pspec(None)
+    create_pspec(jax.sharding.UnreducedKind.min)
+    with self.assertRaisesRegex(
+        TypeError, "Expected unreduced_kind to be of type"):
+      create_pspec(frozenset())
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected

@@ -791,7 +791,6 @@ def _shard_map_staging(
     args: Sequence[Any], *, mesh: Mesh, in_specs, check_vma: bool,
     newly_manual_axes: frozenset, debug_info) -> ft.FlatTree:
   source_info = source_info_util.current()
-
   inner_mesh = _as_manual_mesh(mesh, newly_manual_axes)
   in_avals = [typeof(arg) for arg in args]
   in_avals_ = map(partial(shard_aval, mesh, newly_manual_axes, check_vma),

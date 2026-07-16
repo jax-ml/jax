@@ -262,11 +262,9 @@ toposort = partial(jaxlib_utils.topological_sort, "parents")
 def cache(max_size=4096, trace_context_in_key: bool | Callable = True, num_shards=64):
   def decorator(f):
     context_fn = (trace_context_in_key if callable(trace_context_in_key)
-                  else config.trace_context if trace_context_in_key
-                  else None)
+                  else config.trace_context if trace_context_in_key else None)
     cached_f = lib_weakref_lru_cache.strong_lru_cache(
-        f, context_fn, max_size,
-        num_shards=num_shards)
+        f, context_fn, max_size, num_shards=num_shards)
     register_cache(cached_f, str(f))
     return cached_f
   return decorator
