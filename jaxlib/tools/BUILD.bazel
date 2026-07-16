@@ -32,6 +32,10 @@ load(
     "verify_manylinux_compliance_test",
 )
 load(
+    "@xla//third_party/py:python_wheel.bzl",
+    "collect_data_files",
+)
+load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
     "compare_srcs_and_test_deps_test",
@@ -535,14 +539,35 @@ py_import(
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
+collect_data_files(
+    name = "rocm_libs_data",
+    deps = [
+        "@local_config_rocm//rocm:hip_runtime",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:hipfft",
+        "@local_config_rocm//rocm:hiprand",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rccl",
+        "@local_config_rocm//rocm:rocsolver",
+        "@local_config_rocm//rocm:miopen",
+        "@local_config_rocm//rocm:rocm_smi",
+    ],
+)
+
 py_import(
     name = "jax_rocm_plugin_py_import",
     wheel = ":jax_rocm_plugin_wheel",
+    wheel_deps = [
+        ":rocm_libs_data",
+    ],
 )
 
 py_import(
     name = "jax_rocm_pjrt_py_import",
     wheel = ":jax_rocm_pjrt_wheel",
+    wheel_deps = [
+        ":rocm_libs_data",
+    ],
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
