@@ -64,6 +64,7 @@ def call_kernel_3d(
                     for i in range(depth)], axis=0)
 
 
+@jax.jit(static_argnames=['total_size', 'block_size', 'tile_size'])
 def blocked_fold_in(block_index, key, total_size, block_size, tile_size):
   """Folds in block_index into global_key."""
   return blocked_sampler.blocked_fold_in(key,
