@@ -52,6 +52,7 @@ from jax._src.state import types as state_types
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as _plgpu
+from jax._src.pallas.mosaic.error_handling import VerificationError
 import jax.numpy as jnp
 import numpy as np
 
@@ -4099,6 +4100,55 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         r" @mosaic_gpu_launch_kernel\(.*?, i32 0, i32 1, ptr %\w+, ptr %\w+\)"
     )
     self.assertRegex(ptx_output, re.compile(kernel_b_pattern, re.DOTALL))
+
+  def test_mlir_error_includes_mlir_error_callsites(self):
+    class MockAttr:
+      def __init__(self, loc):
+        self.location = loc
+
+      def __str__(self):
+        return str(self.location)
+
+    class MockLoc:
+      def __init__(self, location):
+        self.attr = MockAttr(location)
+
+    class MockDiagnostic:
+      def __init__(self, message, loc):
+        self.message = message
+        self.location = MockLoc(loc)
+        self.notes = []
+
+    class MockMLIRError(ir.MLIRError):
+      def __init__(self, message, diagnostics):
+        super().__init__(message)
+        self._diagnostics = diagnostics
+
+      @property
+      def error_diagnostics(self):
+        return self._diagnostics
+
+    def mock_verify_fail(self) -> bool:
+      loc_str = 'loc("kernel"("fn1"("file1.py":10:20) at "fn2"("file2.py":30:40)))'
+      raise MockMLIRError("err", [MockDiagnostic("diagnostic", loc_str)])
+
+    with mock.patch.object(ir.Operation, "verify", mock_verify_fail):
+      try:
+        @self.kernel(out_type=jax.ShapeDtypeStruct((16,), jnp.bfloat16))
+        def kernel(out):
+          del out
+        jax.jit(kernel).lower()
+        self.fail("unreachable")
+      except VerificationError as e:
+        frames = traceback.extract_tb(e.__traceback__)
+        frame_caller = frames[-2]
+        self.assertEqual(frame_caller.filename, "file2.py")
+        self.assertEqual(frame_caller.lineno, 30)
+        self.assertEqual(frame_caller.name, "fn2")
+        frame_callee = frames[-1]
+        self.assertEqual(frame_callee.filename, "file1.py")
+        self.assertEqual(frame_callee.lineno, 10)
+        self.assertEqual(frame_callee.name, "fn1")
 
 
 class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
