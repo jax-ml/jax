@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.11.0 (July 16, 2026)
+
 * New features
   * Added a doc on defining custom derivative rules with the experimental
     hijax API ({ref}`hijax-custom-derivatives`), along with
