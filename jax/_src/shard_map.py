@@ -1094,8 +1094,9 @@ def _shard_map_lowering_shardy(
     tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(dict(zip(
         effects, manual_computation_op.results[:num_tokens]))))
     ctx.set_tokens_out(tokens_out)
-
-  return manual_computation_op.results[num_tokens:]
+  outs = manual_computation_op.results[num_tokens:]
+  return [mlir.lower_with_sharding_in_types(ctx, o, a)
+          for o, a in zip(outs, ctx.avals_out)]
 
 
 def _shard_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes,

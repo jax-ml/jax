@@ -3118,10 +3118,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(v * v, out, check_dtypes=False)
 
     if config.use_shardy_partitioner.value:
-      self.assertIn(
-          'sdy.sharding_constraint %1 <@mesh, [{}, {"j"}]>',
-          f.lower(v).as_text(),
-      )
+      self.assertIn('<@mesh, [{}, {"j"}]>', f.lower(v).as_text())
     else:
       self.assertIn(
           'mhlo.sharding = "{devices=[1,2,2]<=[2,2]T(1,0) last_tile_dims={manual}}"}',
