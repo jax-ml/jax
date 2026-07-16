@@ -648,6 +648,14 @@ std::optional<int64_t> getRemainder(Value value, int64_t divisor,
       return int_attr.getInt() % divisor;
     }
   }
+  if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
+    if (auto lhs_rem = getRemainder(add_op.getLhs(), divisor, fuel / 2)) {
+      if (auto rhs_rem =
+              getRemainder(add_op.getRhs(), divisor, (fuel + 1) / 2)) {
+        return (*lhs_rem + *rhs_rem) % divisor;
+      }
+    }
+  }
   if (isGuaranteedDivisible(value, divisor, fuel)) {
     return 0;
   }
