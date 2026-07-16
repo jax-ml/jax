@@ -183,7 +183,7 @@ class Nonzero(VJPHiPrimitive):
   def __init__(
       self,
       a_aval: core.ShapedArray,
-      *,
+      *fill_value_avals: core.ShapedArray,
       size: int,
       axes: tuple[int, ...],
       out_dtype: np.dtype):
@@ -196,11 +196,32 @@ class Nonzero(VJPHiPrimitive):
       raise ValueError(f"axes out of range for array with {a_aval.ndim} dimensions:  {axes=}")
     if len(axes) != len(set(axes)):
       raise ValueError(f"duplicate axes are not allowed: {axes=}")
-    self.in_avals = (a_aval,)
+    if fill_value_avals and len(fill_value_avals) != len(axes):
+      raise ValueError(f"Expected {len(axes)} fill values, got {len(fill_value_avals)}")
+    if any(fv.dtype != out_dtype for fv in fill_value_avals):
+      raise ValueError(f"Expected fill values to have dtype {out_dtype}, got {fill_value_avals}")
+    batch_shape = tuple(
+        s for i, s in enumerate(a_aval.shape) if i not in axes
+    )
+    for fv_aval in fill_value_avals:
+      try:
+        broadcasted = lax.broadcast_shapes(fv_aval.shape, batch_shape)
+      except ValueError as e:
+        raise ValueError(
+            f"fill_value shape {fv_aval.shape} is not broadcast-compatible with "
+            f"batch shape {batch_shape}"
+        ) from e
+      if broadcasted != batch_shape:
+        raise ValueError(
+            f"fill_value shape {fv_aval.shape} cannot be broadcast to "
+            f"batch shape {batch_shape} without expanding it."
+        )
+    self.in_avals = (a_aval, *fill_value_avals)
 
     # Evaluate shape to set out_aval
     self.out_aval = tree_util.tree_map(core.typeof, api.eval_shape(
-        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype), a_aval))
+        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype),
+        a_aval, *fill_value_avals))
 
     self.params = dict(
         size=size,
@@ -209,37 +230,66 @@ class Nonzero(VJPHiPrimitive):
     )
     super().__init__()
 
-  def expand(self, a: ArrayLike) -> tuple[Array, ...]:  # pyrefly: ignore[bad-override]
-    return _nonzero_impl(a, size=self.size, axes=self.axes, out_dtype=self.out_dtype)
+  def expand(self, a: ArrayLike, *fill_value: ArrayLike) -> tuple[Array, ...]:  # pyrefly: ignore[bad-override]
+    return _nonzero_impl(a, *fill_value, size=self.size, axes=self.axes, out_dtype=self.out_dtype)
 
   def batch(
       self,
       axis_data: Any,
-      args: tuple[Array],
-      dims: tuple[int | None]
+      args: tuple[Array, ...],
+      dims: tuple[int | None, ...]
   ) -> tuple[tuple[Array, ...], int | tuple[int, ...] | None]:
     del axis_data  # unused
-    a, = args
-    d, = dims
+    a, *fvs = args
+    d_a, *d_fvs = dims
 
-    if d is None:
-      return self(a), None
+    if d_a is None and all(d is None for d in d_fvs):
+      return self(*args), None
 
-    # Adjust axes for the inserted batch dimension d at the front/elsewhere
-    new_axes = tuple(ax + 1 if ax >= d else ax for ax in self.axes)
+    # If a is not batched but some fv is, we broadcast a to have the batch dimension.
+    if d_a is None:
+      B = None
+      for fv, d_fv in zip(fvs, d_fvs):
+        if d_fv is not None:
+          B = fv.shape[d_fv]
+          break
+      assert B is not None
+      # Broadcast a to (B, *a.shape)
+      a = lax.broadcast_in_dim(a, (B, *a.shape), tuple(range(1, a.ndim + 1)))
+      d_a = 0
+
+    # Move batch dim of a to 0
+    if d_a != 0:
+      a = jnp.moveaxis(a, d_a, 0)
+
+    # Since batch dim of a is at 0, all original axes are shifted by 1.
+    new_axes = tuple(ax + 1 for ax in self.axes)
+
+    # Reshape fvs
+    reshaped_fvs = []
+    for fv, d_fv in zip(fvs, d_fvs):
+      if d_fv is not None:
+        if d_fv != 0:
+          fv = jnp.moveaxis(fv, d_fv, 0)
+        B = fv.shape[0]
+        # Reshape to (B, 1, ..., 1)
+        # We need a.ndim - len(new_axes) - 1 ones.
+        num_ones = a.ndim - len(new_axes) - 1
+        shape = (B,) + (1,) * num_ones
+        reshaped_fvs.append(lax.reshape(fv, shape))
+      else:
+        reshaped_fvs.append(fv)
 
     batched_prim = Nonzero(
         core.typeof(a),
+        *(core.typeof(fv) for fv in reshaped_fvs),
         size=self.size,
         axes=new_axes,
         out_dtype=self.out_dtype,
     )
 
-    batch_axes = [ax for ax in range(a.ndim) if ax not in new_axes]
-    out_bdim = batch_axes.index(d)
-
-    out_dims = (out_bdim,) * len(new_axes)
-    return batched_prim(a), out_dims
+    out_dims = (0,) * len(new_axes)
+    return batched_prim(a, *reshaped_fvs), out_dims
 
   def jvp(self, primals: tuple[Array], tangents: Any) -> tuple[tuple[Array, ...], tuple[Array | np.ndarray, ...]]:
     del tangents  # unused
@@ -251,13 +301,13 @@ class Nonzero(VJPHiPrimitive):
     return (self(*args), None)
 
   def vjp_bwd_retval(self, res: Any, g: Any):
-    return (ad_util.zeros_like_aval(self.in_avals[0]),)
+    return tuple(ad_util.zeros_like_aval(aval) for aval in self.in_avals)
 
   lin = linearize_from_jvp
   linearized = apply_derived_linearization
 
 
-def _nonzero_impl(a: ArrayLike, *, size: int, axes: tuple[int, ...], out_dtype: np.dtype) -> tuple[Array, ...]:
+def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[int, ...], out_dtype: np.dtype) -> tuple[Array, ...]:
   """Main implementation of nonzero primitive."""
   a = jnp.asarray(a)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(out_dtype, "nonzero")
@@ -288,10 +338,15 @@ def _nonzero_impl(a: ArrayLike, *, size: int, axes: tuple[int, ...], out_dtype: 
   bincount = bincount.at[(*mesh_dims, cs_mask)].add(1, mode='drop')
   flat_indices = jnp.cumsum(bincount, axis=-1)
 
-  out = [(flat_indices // stride) % sz for stride, sz in zip(strides, sub_shape)]
+  out = [lax.convert_element_type((flat_indices // stride) % sz, out_dtype)
+         for stride, sz in zip(strides, sub_shape)]
   counts = mask.sum(axis=-1, keepdims=True)
   fill_mask = lax.expand_dims(jnp.arange(size), range(counts.ndim - 1)) >= counts
-  return tuple(lax.convert_element_type(jnp.where(fill_mask, 0, entry), out_dtype) for entry in out)
+  if fill_value:
+    return tuple(jnp.where(fill_mask, lax.expand_dims(fv, [np.ndim(fv)]), entry)
+                 for fv, entry in zip(fill_value, out))
+  else:
+    return tuple(jnp.where(fill_mask, 0, entry) for entry in out)
 
 
 def _searchsorted_impl(sorted_arr: ArrayLike, query: ArrayLike, *, dimension: int,
@@ -471,6 +526,7 @@ def nonzero(
     /,
     *,
     size: int,
+    fill_value: ArrayLike | tuple[ArrayLike, ...] | None = None,
     axes: tuple[int, ...] | None = None,
     dtype: DTypeLike = 'int32',
 ) -> tuple[Array, ...]:
@@ -482,6 +538,7 @@ def nonzero(
   Args:
     a: N-dimensional array.
     size: static integer specifying the number of nonzero entries to return.
+    fill_value: optional padding value when ``size`` is specified. Defaults to 0.
     axes: optional tuple of integers specifying the axes to compute the result over.
       Defaults to None (all axes).
     dtype: optional datatype for the returned indices. Defaults to int32.
@@ -492,10 +549,26 @@ def nonzero(
   a, = core.auto_insert_reshard(a)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "nonzero")
   axes = util.canonicalize_axis_tuple(axes, np.ndim(a))
+
+  if fill_value is not None:
+    if isinstance(fill_value, tuple):
+      if len(fill_value) != len(axes):
+        raise ValueError(f"fill_value tuple must have length equal to number of axes ({len(axes)}); got {len(fill_value)}")
+      fill_value_tup = fill_value
+    else:
+      fill_value_tup = (fill_value,) * len(axes)
+    fill_value_tup = tuple(jnp.asarray(fv, dtype=out_dtype) for fv in fill_value_tup)
+    for fv in fill_value_tup:
+      if fv.ndim != 0:
+        raise ValueError(f"fill_value must be a scalar or tuple of scalars; got {fill_value}")
+  else:
+    fill_value_tup = ()
+
   prim = Nonzero(
     core.typeof(a),
+    *[core.typeof(fv) for fv in fill_value_tup],
     size=size,
     axes=axes,
     out_dtype=out_dtype,
   )
-  return prim(a)
+  return prim(a, *fill_value_tup)

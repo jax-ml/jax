@@ -109,16 +109,19 @@ def searchsorted_reference(
 def nonzero_reference(
     a: np.ndarray,
     size: int, *,
+    fill_value: int | tuple[int, ...] | None = None,
     axes: tuple[int, ...] | None = None,
-    dtype: np.dtype | str = 'int32',
+    dtype: np.dtype | str = "int32",
 ) -> tuple[np.ndarray, ...]:
   """Reference implementation for hijax.nonzero in terms of np.nonzero.
 
   Args:
     a: n-dimensional array
     size: integer specifying size of output
+    fill_value: optional padding value. Defaults to 0.
     axes: optional set of axes over which to compute the indices.
       Defaults to range(a.ndim).
+    dtype: optional datatype for the returned indices. Defaults to int32.
 
   Returns:
     A tuple of indices corresponding to axes
@@ -128,6 +131,15 @@ def nonzero_reference(
     axes = tuple(range(a.ndim))
   else:
     axes = tuple(sorted(ax % a.ndim for ax in axes))
+
+  if fill_value is not None:
+    if isinstance(fill_value, tuple):
+      assert len(fill_value) == len(axes)
+      fill_value_tup = fill_value
+    else:
+      fill_value_tup = (fill_value,) * len(axes)
+  else:
+    fill_value_tup = (0,) * len(axes)
 
   batch_axes = [ax for ax in range(a.ndim) if ax not in axes]
   transposed_a = np.transpose(a, (*batch_axes, *axes))
@@ -140,12 +152,13 @@ def nonzero_reference(
 
     true_size = len(nz[0])
     nz_padded = []
-    for axis_nz in nz:
+    for axis_idx, axis_nz in enumerate(nz):
       if true_size >= size:
         nz_padded.append(axis_nz[:size])
       else:
-        # Pad with zeros
-        nz_padded.append(np.pad(axis_nz, (0, size - true_size), mode='constant'))
+        # Pad with fill_value
+        nz_padded.append(np.pad(axis_nz, (0, size - true_size), mode="constant",
+                                constant_values=fill_value_tup[axis_idx]))
     res.append(nz_padded)
 
   out = []
@@ -532,6 +545,109 @@ class NonzeroTest(jtu.JaxTestCase):
     _, f_vjp = jax.vjp(f, a)
     tangent_in = f_vjp(jax.numpy.ones_like(primal_out))
     self.assertArraysEqual(tangent_in[0], jax.numpy.zeros_like(a))
+
+  def test_1D_fill_value(self):
+    a = self.rng().randint(0, 2, size=(100,))
+    size = 150
+    fill_val = 99
+    expected = nonzero_reference(a, size=size, fill_value=fill_val)
+    actual = hijax.nonzero(a, size=size, fill_value=fill_val)
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  @jtu.sample_product(
+      axes=[None, (0,), (1,), (0, 1)],
+      fill_value=[99, (99, 98)],
+  )
+  def test_2D_fill_value(self, axes, fill_value):
+    a = self.rng().randint(0, 2, size=(10, 20))
+    size = 250
+    actual_axes = tuple(range(a.ndim)) if axes is None else axes
+    if isinstance(fill_value, tuple) and len(fill_value) != len(actual_axes):
+      self.skipTest("fill_value length must match number of axes")
+
+    expected = nonzero_reference(a, size=size, fill_value=fill_value, axes=axes)
+    actual = hijax.nonzero(a, size=size, fill_value=fill_value, axes=axes)
+
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_vmap_fill_value_batched(self):
+    a = self.rng().randint(0, 2, size=(3, 4, 5))
+    fill_val = jax.numpy.array([99, 98, 97])
+    size = 20
+
+    vmapped = jax.vmap(lambda x, fv: hijax.nonzero(x, size=size, fill_value=fv, axes=(1,))[0])(a, fill_val)
+
+    expected = []
+    for sub_a, fv in zip(a, fill_val):
+      expected.append(nonzero_reference(sub_a, size=size, fill_value=int(fv), axes=(1,))[0])
+    expected = np.array(expected)
+
+    self.assertArraysEqual(expected, vmapped)
+
+  def test_vmap_fill_value_unbatched(self):
+    a = self.rng().randint(0, 2, size=(3, 4, 5))
+    fill_val = 99
+    size = 20
+
+    vmapped = jax.vmap(lambda x: hijax.nonzero(x, size=size, fill_value=fill_val, axes=(1,))[0])(a)
+
+    expected = []
+    for sub_a in a:
+      expected.append(nonzero_reference(sub_a, size=size, fill_value=fill_val, axes=(1,))[0])
+    expected = np.array(expected)
+
+    self.assertArraysEqual(expected, vmapped)
+
+  def test_jit_fill_value(self):
+    a = self.rng().randint(0, 2, size=(100,))
+    size = 150
+    fill_val = 99
+
+    @jax.jit
+    def f(x, fv):
+      return hijax.nonzero(x, size=size, fill_value=fv)
+
+    actual = f(a, fill_val)
+    expected = nonzero_reference(a, size=size, fill_value=fill_val)
+
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_invalid_fill_value_shape(self):
+    a = self.rng().randint(0, 2, size=(10, 20))
+    size = 5
+    a_aval = jax.core.ShapedArray(a.shape, a.dtype)
+    fv_aval = jax.core.ShapedArray((size,), jax.numpy.int32)
+    with self.assertRaisesRegex(
+        ValueError, "fill_value shape .* is not broadcast-compatible with batch shape"
+    ):
+      hijax.Nonzero(
+          a_aval,
+          fv_aval,
+          size=size,
+          axes=(1,),
+          out_dtype=np.dtype("int32"),
+      )
+
+  def test_fill_value_shape_expands_batch_shape(self):
+    a = self.rng().randint(0, 2, size=(1, 20))
+    size = 5
+    a_aval = jax.core.ShapedArray(a.shape, a.dtype)
+    fv_aval = jax.core.ShapedArray((10,), jax.numpy.int32)
+    with self.assertRaisesRegex(
+        ValueError, "fill_value shape .* cannot be broadcast to batch shape .* without expanding it"
+    ):
+      hijax.Nonzero(
+          a_aval,
+          fv_aval,
+          size=size,
+          axes=(1,),
+          out_dtype=np.dtype("int32"),
+      )
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
