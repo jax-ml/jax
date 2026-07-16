@@ -1462,7 +1462,8 @@ def _scan_state_discharge_rule(
   # jaxpr: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys]
   # jaxpr_: [*consts, *pure_carry, *xs] -> [*pure_carry, *pure_ys, *ref_outs]
   discharged_jaxpr = state_discharge.discharge_state(
-      jaxpr, should_discharge=ctx.should_discharge)
+      jaxpr, should_discharge=ctx.should_discharge,
+      strip_memory_space=ctx.strip_memory_space)
 
   num_consts, num_carry, num_xs = _map(len, ft_in.unpack())
   is_ref = [isinstance(a, AbstractRef) and s for a, s in zip(jaxpr.in_avals, ctx.should_discharge)]
@@ -2339,7 +2340,9 @@ def _while_discharge_rule(ctx, *args,
                               "please open an issue at "
                               "https://github.com/jax-ml/jax/issues")
   discharged_cond_jaxpr = state_discharge.discharge_state(
-      cond_jaxpr, should_discharge=[*cond_consts_discharge, *carry_discharge]
+      cond_jaxpr,
+      should_discharge=[*cond_consts_discharge, *carry_discharge],
+      strip_memory_space=ctx.strip_memory_space,
   )
   if discharged_cond_jaxpr.consts:
     raise NotImplementedError
@@ -2350,7 +2353,9 @@ def _while_discharge_rule(ctx, *args,
   # Therefore we need to rewrite the jaxpr to shuffle around the `Ref`s so that
   # they are part of the carry.
   discharged_body_jaxpr = state_discharge.discharge_state(
-      body_jaxpr, should_discharge=[*body_consts_discharge, *carry_discharge]
+      body_jaxpr,
+      should_discharge=[*body_consts_discharge, *carry_discharge],
+      strip_memory_space=ctx.strip_memory_space,
   )
   if discharged_body_jaxpr.consts:
     raise NotImplementedError

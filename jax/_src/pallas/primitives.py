@@ -762,6 +762,7 @@ def _run_scoped_discharge_rule(
   discharged_closed_body = state_discharge.discharge_state(
       jaxpr_noconst,
       should_discharge=ctx.should_discharge + [False] * len(jaxpr.invars),
+      strip_memory_space=ctx.strip_memory_space,
   )
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
@@ -804,7 +805,7 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
-      jaxpr_noconst, should_discharge=True)
+      jaxpr_noconst, should_discharge=True, strip_memory_space=True)
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
     raise NotImplementedError(
@@ -1378,7 +1379,7 @@ def _jaxpr_call_discharge(
   )
   should_discharge = [*map(any, flat_should_discharge)]
   discharged_closed_jaxpr = state_discharge.discharge_state(
-      jaxpr, should_discharge=should_discharge
+      jaxpr, should_discharge=should_discharge, strip_memory_space=ctx.strip_memory_space,
   )
   discharged_jaxpr, discharged_consts = discharged_closed_jaxpr, discharged_closed_jaxpr.consts
   assert not discharged_consts

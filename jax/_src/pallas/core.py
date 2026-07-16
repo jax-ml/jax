@@ -818,7 +818,7 @@ class BlockMapping:
     return TransformedRef(self.transformed_block_aval, reverse_transforms)
 
   def compute_start_indices_interpret(self, loop_idx, *args):
-    jaxpr = state_discharge.discharge_state(self.index_map_jaxpr)
+    jaxpr = state_discharge.discharge_state(self.index_map_jaxpr, strip_memory_space=True)
     block_indices_and_rest = jax_core.jaxpr_as_fun(jaxpr)(*loop_idx, *args)
     # Since we're passing in `Ref`s potentially, we need to split out their
     # updated values since we only care about the return values.

@@ -242,7 +242,7 @@ def _mpmd_map_discharge_rule(
       state_discharge.discharged_aval(
           ctx.in_avals[i],
           discharge=True,
-          strip_memory_space=True,
+          strip_memory_space=ctx.strip_memory_space,
       )
       for i in write_indices
   ]

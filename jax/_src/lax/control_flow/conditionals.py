@@ -1153,7 +1153,8 @@ def _cond_state_discharge_rule(ctx, index, *args,
                                branches, **params):
   assert not ctx.should_discharge[0], "Can't discharge the index."
   discharged_branches = tuple(
-      discharge_state(branch, should_discharge=ctx.should_discharge[1:])
+      discharge_state(branch, should_discharge=ctx.should_discharge[1:],
+                      strip_memory_space=ctx.strip_memory_space)
       for branch in branches
   )
   # Don't thread the ref values through the cond if they never change.

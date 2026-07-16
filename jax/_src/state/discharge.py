@@ -98,7 +98,7 @@ def discharge_state(
     *,
     should_discharge: bool | Sequence[bool] = True,
     lower: bool = True,
-    strip_memory_space: bool = True,
+    strip_memory_space: bool = False,
 ) -> core.Jaxpr:
   """Converts a stateful jaxpr into a pure one.
 
