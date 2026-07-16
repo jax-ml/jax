@@ -2848,7 +2848,7 @@ def check_unreduced_constraint(op: ir.Value | ir.Operation, aval, name) -> None:
   if isinstance(op, ir.Value):
     op = op.owner.operation if isinstance(op.owner, ir.OpView) else op.owner  # type: ignore
   assert isinstance(op, ir.Operation)
-  if op.name in ("sdy.manual_computation", "mpmd.named_computation"):
+  if op.name == "mpmd.named_computation":
     return
   assert op.name == "sdy.sharding_constraint", (
       f"Expected last op to be sdy.sharding_constraint, but got: {op.name} and "

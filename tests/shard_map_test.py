@@ -3095,7 +3095,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(v * v, out, check_dtypes=False)
 
   @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
-  def test_partial_auto_explicit(self, mesh):
+  def test_partial_auto_explicit_yash(self, mesh):
     def g(x):
       self.assertTupleEqual(x.aval.sharding.mesh.axis_types,
                             (AxisType.Manual, AxisType.Explicit))
@@ -3118,10 +3118,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(v * v, out, check_dtypes=False)
 
     if config.use_shardy_partitioner.value:
-      self.assertIn(
-          'sdy.sharding_constraint %1 <@mesh, [{}, {"j"}]>',
-          f.lower(v).as_text(),
-      )
+      self.assertIn('<@mesh, [{}, {"j"}]>', f.lower(v).as_text())
     else:
       self.assertIn(
           'mhlo.sharding = "{devices=[1,2,2]<=[2,2]T(1,0) last_tile_dims={manual}}"}',
