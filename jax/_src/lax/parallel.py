@@ -252,15 +252,21 @@ def pmax(x, axis_name, *, axis_index_groups=None):
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce max along the axis ``axis_name``.
   """
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
   _validate_reduce_axis_index_groups(axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
-    leaf = insert_collective_pvary(axis_name, leaf)
-    return pmax_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
+    from_ = _get_from(core.typeof(leaf), axis_name, 'jax.lax.pmax')
+    if from_ == 'unreduced':
+      if axis_index_groups is not None:
+        raise NotImplementedError
+      return unreduced_pmax(leaf, axis_name)
+    else:
+      leaf = insert_collective_pvary(axis_name, leaf)
+      return pmax_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(bind, x)
 
 
@@ -283,15 +289,21 @@ def pmin(x, axis_name, *, axis_index_groups=None):
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce min along the axis ``axis_name``.
   """
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
   _validate_reduce_axis_index_groups(axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
-    leaf = insert_collective_pvary(axis_name, leaf)
-    return pmin_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
+    from_ = _get_from(core.typeof(leaf), axis_name, 'jax.lax.pmin')
+    if from_ == 'unreduced':
+      if axis_index_groups is not None:
+        raise NotImplementedError
+      return unreduced_pmin(leaf, axis_name)
+    else:
+      leaf = insert_collective_pvary(axis_name, leaf)
+      return pmin_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(bind, x)
 
 # TODO(mattjj): add a pargmin_p, or add named axis support to lax.argmin_p
@@ -2716,34 +2728,38 @@ def unreduced_psum(x, axis_name, is_async=False):
 
 unreduced_psum_p = core.Primitive('unreduced_psum')
 
-def _unreduced_psum_abstract_eval(aval, *, axes):
-  _check_axis_names(axes, 'psum')
+def _unreduced_psum_pmax_pmin_abstract_eval(name, out_u_kind, aval, *, axes):
+  _check_axis_names(axes, name)
   if not aval.mat.unreduced:
-    raise ValueError('unreduced_psum only accepts inputs that are'
-                      f' unreduced. Got {aval.str_short(True)}')
+    raise ValueError(f'{name} only accepts inputs that are'
+                     f' unreduced. Got {aval.str_short(True)}')
   # If intersection between x.unreduced & axis_name is empty, error
   if not (aval.mat.unreduced & frozenset(axes)):
     raise ValueError(
-        "unreduced_psum is a Unreduced -> Invariant collective. This"
-        f" means that the {axes=} passed to `unreduced_psum` must"
+        f"{name} is a Unreduced -> Invariant collective. This"
+        f" means that the {axes=} passed to `{name}` must"
         " be present in"
         f" jax.typeof(x).mat.unreduced={aval.mat.unreduced}")
   if aval.mat.varying & set(axes):
     raise ValueError(
-        "unreduced_psum's input cannot be varying across the "
+        f"{name}'s input cannot be varying across the "
         f" axis_name provided. Got x={aval.str_short(True)} and {axes=}")
 
   if any(isinstance(a, int) for a in axes):
-    raise ValueError('unreduced_psum does not accept integer axis_name.'
+    raise ValueError(f'{name} does not accept integer axis_name.'
                      f' Got axis_name={axes}')
 
-  core.check_avals_context_mesh([aval], 'unreduced_psum')
-  check_unreduced_kind('unreduced_psum', aval.mat, UnreducedKind.sum)
+  core.check_avals_context_mesh([aval], name)
+  check_unreduced_kind(name, aval.mat, out_u_kind)
   out_u = frozenset(u for u in aval.mat.unreduced if u not in axes)
-  kind = UnreducedKind.sum if out_u else None
+  kind = aval.mat.unreduced_kind if out_u else None
   out_mat = aval.mat.update(unreduced=out_u, unreduced_kind=kind)
   out_aval = aval.update(manual_axis_type=out_mat)
   return out_aval, {core.NamedAxisEffect(axis) for axis in axes}
+
+def _unreduced_psum_abstract_eval(aval, *, axes):
+  return _unreduced_psum_pmax_pmin_abstract_eval(
+      'unreduced_psum', UnreducedKind.sum, aval, axes=axes)
 unreduced_psum_p.def_effectful_abstract_eval(_unreduced_psum_abstract_eval)
 
 def _unreduced_psum_lowering(ctx, arg, *, axes):
@@ -2759,6 +2775,60 @@ def _unreduced_psum_transpose_rule(cts, arg, *, axes):
   assert ad.is_undefined_primal(arg)
   return (preduced(cts, axis_name=axes),)
 ad.deflinear2(unreduced_psum_p, _unreduced_psum_transpose_rule)
+
+############################## unreduced_pmax #################################
+
+# Unreduced -> Invariant pmax collective
+def unreduced_pmax(x, axis_name):
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
+  if not axis_name:
+    return x
+  return tree_util.tree_map(
+      lambda leaf: unreduced_pmax_p.bind(leaf, axes=axis_name), x)
+
+unreduced_pmax_p = core.Primitive('unreduced_pmax')
+
+def _unreduced_pmax_abstract_eval(aval, *, axes):
+  return _unreduced_psum_pmax_pmin_abstract_eval(
+      'unreduced_pmax', UnreducedKind.max, aval, axes=axes)
+unreduced_pmax_p.def_effectful_abstract_eval(_unreduced_pmax_abstract_eval)
+
+def _unreduced_pmax_lowering(ctx, arg, *, axes):
+  return _allreduce_lowering(lax.max_p, lax.reduce_max, ctx, arg, axes=axes,
+                             axis_index_groups=None)
+mlir.register_lowering(unreduced_pmax_p, _unreduced_pmax_lowering)
+
+def _unreduced_pmax_batcher(axis_data, vals_in, dims_in, axes):
+  raise NotImplementedError
+batching.fancy_primitive_batchers[unreduced_pmax_p] = _unreduced_pmax_batcher
+
+############################## unreduced_pmin #################################
+
+# Unreduced -> Invariant pmin collective
+def unreduced_pmin(x, axis_name):
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
+  if not axis_name:
+    return x
+  return tree_util.tree_map(
+      lambda leaf: unreduced_pmin_p.bind(leaf, axes=axis_name), x)
+
+unreduced_pmin_p = core.Primitive('unreduced_pmin')
+
+def _unreduced_pmin_abstract_eval(aval, *, axes):
+  return _unreduced_psum_pmax_pmin_abstract_eval(
+      'unreduced_pmin', UnreducedKind.min, aval, axes=axes)
+unreduced_pmin_p.def_effectful_abstract_eval(_unreduced_pmin_abstract_eval)
+
+def _unreduced_pmin_lowering(ctx, arg, *, axes):
+  return _allreduce_lowering(lax.min_p, lax.reduce_min, ctx, arg, axes=axes,
+                             axis_index_groups=None)
+mlir.register_lowering(unreduced_pmin_p, _unreduced_pmin_lowering)
+
+def _unreduced_pmin_batcher(axis_data, vals_in, dims_in, axes):
+  raise NotImplementedError
+batching.fancy_primitive_batchers[unreduced_pmin_p] = _unreduced_pmin_batcher
 
 ############################## preduced #################################
 

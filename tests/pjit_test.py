@@ -66,7 +66,7 @@ from jax._src.pjit import pjit, _pjit_lower, make_jit_cpp_cache
 from jax._src.layout import Format, Layout as DLL
 from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
-from jax._src.mesh import AxisType
+from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc, ifrt_version
 from jax._src.util import curry, unzip2
@@ -5725,7 +5725,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def g(x, y):
       self.assertTrue(x.aval.sharding.mesh.are_all_axes_manual)
       self.assertTrue(y.aval.sharding.mesh.are_all_axes_manual)
-      self.assertTrue(mesh_lib.get_abstract_mesh().are_all_axes_manual)
+      self.assertTrue(get_abstract_mesh().are_all_axes_manual)
       return x * y
 
     @jax.jit
@@ -5751,7 +5751,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def g(x, y):
       self.assertTrue(x.aval.sharding.mesh.are_all_axes_manual)
       self.assertTrue(y.aval.sharding.mesh.are_all_axes_manual)
-      self.assertTrue(mesh_lib.get_abstract_mesh().are_all_axes_manual)
+      self.assertTrue(get_abstract_mesh().are_all_axes_manual)
       allgatherd_y = jax.lax.all_gather(y, axis_name='x', axis=1, tiled=True)
       z = x @ allgatherd_y
       return jax.lax.psum(z, axis_name='y')
@@ -11573,6 +11573,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     reshard_out = jax.sharding.reshard(out, P())
     self.assertArraysEqual(reshard_out, jnp_op(arr, axis=(0,)))
+
+    ################### shard_map pmax/pmin reduction ##########################
+    @jax.jit
+    @jax.shard_map(out_specs=P())
+    def pmax_pmin(x):
+      self.assertIs(x.aval.mat.unreduced_kind, u_kind)
+      out = p_op(x, 'x')
+      self.assertEqual(out.aval.mat.unreduced, frozenset())
+      self.assertEqual(out.aval.mat.invarying(get_abstract_mesh()), {'x'})
+      return out
+
+    out2 = pmax_pmin(out)
+    self.assertArraysEqual(out2, jnp_op(arr, axis=(0,)))
 
     @jax.jit
     @jax.shard_map(out_specs=P())
