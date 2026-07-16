@@ -262,6 +262,16 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
       scipy_val = osp_special.erfcx(x)
       self.assertAllClose(jax_val, scipy_val, rtol=1e-12)
 
+  def testBetalnInfiniteArgs(self):
+    # https://github.com/jax-ml/jax/issues/39106: betaln(a, inf) for finite a > 0
+    # tends to -inf (B(a, inf) -> 0). The lgamma/algdiv path returned nan instead.
+    a = np.array([2., 0.5, 10.], dtype=np.float32)
+    inf = np.full_like(a, np.inf)
+    self.assertAllClose(
+        lsp_special.betaln(a, inf), osp_special.betaln(a, inf).astype(np.float32))
+    self.assertAllClose(
+        lsp_special.betaln(inf, a), osp_special.betaln(inf, a).astype(np.float32))
+
   def testWofzAccuracy(self):
     # Verify wofz agrees with scipy over the full complex plane (float32).
     rng = jtu.rand_default(np.random.RandomState(0))
