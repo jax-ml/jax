@@ -61,7 +61,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
-from jax._src.lib import jaxlib_extension_version, ifrt_version
 from jax._src.lib import jax_mlir_ext
 from jax._src.mesh import AbstractMesh
 from jax._src.sharding import Sharding, IndivisibleError
@@ -1455,8 +1454,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
     else:
       call = func_dialect.CallOp(
           result.flat_output_types, result.symbol_ref, flat_args)
-      if (inline is not api.Inline.AUTO and
-          jaxlib_extension_version >= 473 and ifrt_version >= 56):
+      if inline is not api.Inline.AUTO:
         dict_attr = {'inlineable': ir.StringAttr.get(inline.value)}
         call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
       mlir.wrap_compute_type_in_place(ctx, call.operation)

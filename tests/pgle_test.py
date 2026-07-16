@@ -26,7 +26,6 @@ import jax
 from jax._src import api
 from jax._src import compilation_cache as cc
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src import monitoring
 from jax._src import pjit
 from jax._src import profiler
@@ -170,10 +169,7 @@ class PgleTest(jtu.JaxTestCase):
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
         # One before optimization, one after SPMD partitioning, one before
         # config assignment, and one after optimization.
-        if jaxlib_extension_version >= 475:
-          self.assertLen(fdo_profiles_before_pgle, 4)
-        else:
-          self.assertLen(fdo_profiles_before_pgle, 3)
+        self.assertLen(fdo_profiles_before_pgle, 4)
         # The FDO profile file should be empty.
         self.assertEqual(
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
@@ -185,10 +181,7 @@ class PgleTest(jtu.JaxTestCase):
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
         # Four more: one before optimization, one after SPMD partitioning, one
         # before config assignment, and one after optimization.
-        if jaxlib_extension_version >= 475:
-          self.assertLen(fdo_profiles_after_pgle, 8)
-        else:
-          self.assertLen(fdo_profiles_after_pgle, 6)
+        self.assertLen(fdo_profiles_after_pgle, 8)
 
         for fdo_profile in fdo_profiles_after_pgle:
           if fdo_profile not in fdo_profiles_before_pgle:

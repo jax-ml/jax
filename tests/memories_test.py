@@ -1802,8 +1802,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 class SparsecoreOffloadTest(jtu.JaxTestCase):
 
   def test_sparsecore_supported_scatter2(self):
-    if not jtu.is_libtpu_at_least("0.0.44"):
-      self.skipTest("Requires libtpu 0.0.44 or newer")
     if not (
         jax.devices()[0].device_kind == "TPU v5"
         or jtu.is_device_tpu_at_least(6)
@@ -1973,8 +1971,6 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     self.assertIn("UNIMPLEMENTED", error_msg)
 
   def test_sparsecore_supported_gather2(self):
-    if not jtu.is_libtpu_at_least("0.0.44"):
-      self.skipTest("Requires libtpu 0.0.44 or newer")
     if not (jax.devices()[0].device_kind == "TPU v5"
             or jtu.is_device_tpu_at_least(6)):
       self.skipTest("Does not have a sparsecore present")

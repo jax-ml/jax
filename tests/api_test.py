@@ -4430,8 +4430,6 @@ class APITest(jtu.JaxTestCase):
     self.assertNotIn('jit', str(jaxpr))
 
   def test_jit_inline_multistate(self):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires newer jaxlib or libtpu")
     @api.jit(inline=jax.Inline.AUTO)
     def f(x):
       return x * 2
@@ -4468,12 +4466,6 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("jit", str(jaxpr))
 
   def test_inline_optimized_hlo(self):
-    if lib.jaxlib_extension_version < 473:
-      self.skipTest("Requires newer jaxlib")
-    if lib.ifrt_version < 56:
-      self.skipTest("Requires newer XLA (ifrt_version >= 56)")
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires newer libtpu")
     def sub(x):
       return x * 2
 

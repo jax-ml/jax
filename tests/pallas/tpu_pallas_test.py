@@ -4042,8 +4042,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       dtype: jnp.dtype,
       is_dynamic: bool,
   ):
-    if is_dynamic and not jtu.is_libtpu_at_least('0.0.43'):
-      self.skipTest('Requires libtpu 0.0.43 or newer')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
@@ -4090,8 +4088,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
       axis: int,
       is_dynamic: bool,
   ):
-    if not jtu.is_libtpu_at_least("0.0.44"):
-      self.skipTest("Requires libtpu 0.0.44 or newer.")
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
 
@@ -4126,8 +4122,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_roll_static_lane_shift_with_stride_and_aligned_shape(
       self, shape, shift, dtype, stride
   ):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      self.skipTest('Requires libtpu 0.0.43 or newer')
     # if stride is too large, the max shift on a row will exceed the column dim.
     if not jtu.is_device_tpu_at_least(5) or stride * shape[0] >= 128:
       self.skipTest('Requires TPU v5+ and not too large stride.')
@@ -4167,8 +4161,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_roll_with_major_stride(
       self, shape, shift, dtype, axis, stride, is_dynamic
   ):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      self.skipTest('Requires libtpu 0.0.43 or newer')
     if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
       self.skipTest('Requires TPU v4+.')
     bitwidth = jax.dtypes.itemsize_bits(dtype)
@@ -4529,12 +4521,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     if k % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
 
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-      ):
-        self.skipTest('Requires newer libtpu.')
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(y_ref.shape)
 
@@ -4571,12 +4557,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   ):
     if k % 128 != 0 and not jtu.is_device_tpu_at_least(5):
       self.skipTest('Operation not supported on this TPU version.')
-
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-      ):
-        self.skipTest('Requires newer libtpu.')
 
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(y_ref.shape)
@@ -4616,8 +4596,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     if not jtu.is_device_tpu_at_least(5):
       if output_minor_dims[-1] % 128 != 0:
         self.skipTest('Operation not supported on this TPU version.')
-      if len(output_minor_dims) > 2 and not jtu.is_libtpu_at_least('0.0.43'):
-        self.skipTest('Requires newer libtpu.')
 
     input_major_dims, output_major_dims = input_output_major_dims
     input_minor_dims = (math.prod(output_minor_dims),)
@@ -5002,12 +4980,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_unfold_leading_and_minor_dims_R2_to_R4(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-      ):
-        self.skipTest('Requires newer libtpu.')
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(q, m, n, k)
 
@@ -5033,11 +5005,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
   def test_reshape_fold_leading_dims_and_unfold_minor_dim(
       self, q, m, n, k, dtype
   ):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-      ):
-        self.skipTest('Requires newer libtpu.')
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...].reshape(q * m, n, k)
 
@@ -5096,11 +5063,6 @@ class MiscellaneousTest(ptu.PallasTPUTest):
 
   @parameterized.parameters([jnp.int8, jnp.bfloat16, jnp.float32])
   def test_reshape_shift_factor_from_minor_to_major(self, dtype):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      if (dtype == jnp.bfloat16 and not jtu.is_device_tpu_at_least(4)) or (
-          dtype == jnp.int8 and not jtu.is_device_tpu_at_least(5)
-      ):
-        self.skipTest('Requires newer libtpu.')
     q0, m0, n0 = 1, 3, 7680
     q1, m1, n1 = 3, 10, 768
     def kernel(x_ref, y_ref):
@@ -5253,11 +5215,6 @@ class EmitPipelineTest(ptu.PallasTPUTest):
 
 
 class PallasHloNamesTest(ptu.PallasTPUTest):
-
-  def setUp(self):
-    super().setUp()
-    if not jtu.is_libtpu_at_least("0.0.44"):
-      self.skipTest("Custom call naming requires libtpu 0.0.44 or newer.")
 
   def test_custom_call_name(self):
     def kernel(x_ref, o_ref):

@@ -57,7 +57,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
-from jax._src.lib import jaxlib_extension_version
 from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
 from jax._src.lax.utils import (
   input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
@@ -9019,12 +9018,9 @@ def _top_k_lower(ctx, operand, k, axis, is_stable):
 
   # Compute the top-k along the last dimension
   if core.is_constant_dim(k):
-    if jaxlib_extension_version >= 474:
-      results = chlo.top_k(
-          operand, mlir.i64_attr(k), is_stable=ir.BoolAttr.get(is_stable)
-      )
-    else:
-      results = chlo.top_k(operand, mlir.i64_attr(k))
+    results = chlo.top_k(
+        operand, mlir.i64_attr(k), is_stable=ir.BoolAttr.get(is_stable)
+    )
   else:
     k_value, = mlir.eval_dynamic_shape_as_vals(ctx, (k,))
     out_values_aval, out_indices_aval, = ctx.avals_out
@@ -9037,7 +9033,7 @@ def _top_k_lower(ctx, operand, k, axis, is_stable):
         result_types=flat_result_types,
         operands=[operand, k_value],
     )
-    if not is_stable and jaxlib_extension_version >= 474:
+    if not is_stable:
       custom_call_op.operation.attributes['is_stable'] = ir.BoolAttr.get(
           is_stable
       )

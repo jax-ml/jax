@@ -23,7 +23,6 @@ from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src.lib import hlo as _hlo
-from jax._src.lib import ifrt_version
 from jax.experimental import topologies
 import jax.extend.xla as jex_xla
 import jax.numpy as jnp
@@ -302,10 +301,6 @@ class XlaTransformE2ETest(jtu.JaxTestCase):
 
   def test_simple_transform_preserves_donation_and_aliasing(self):
     """Register an simple pass and verify it preserves donation and aliasing."""
-    if ifrt_version < 56:
-      self.skipTest("Requires JAX_IFRT_VERSION >= 56")
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu >= 0.0.43")
 
     def simple_transform(serialized_hlo: bytes) -> bytes | None:
       return serialized_hlo

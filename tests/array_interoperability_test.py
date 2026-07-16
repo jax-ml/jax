@@ -24,7 +24,6 @@ import jax
 from jax._src import config
 from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 from jax._src.util import cache
 import jax.dlpack
 import jax.numpy as jnp
@@ -247,10 +246,7 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(np.astype(x.dtype), z)
 
   @jtu.run_on_devices("gpu", "tpu")
-  @unittest.skipIf(jaxlib_extension_version < 471, "Requires jaxlib >= 471")
   def testJaxPinnedHostRoundTrip(self):
-    if not jtu.is_libtpu_at_least("0.0.44"):
-      self.skipTest("Requires libtpu 0.0.44 or newer")
     device = jax.devices()[0]
     if device.platform not in ["gpu", "tpu"]:
       raise unittest.SkipTest("Test requires GPU or TPU")
@@ -363,10 +359,7 @@ class DLPackTest(jtu.JaxTestCase):
     self.assertAllClose(x_np, x_jax)
 
   @jtu.run_on_devices("tpu")
-  @unittest.skipIf(jaxlib_extension_version < 474, "Requires jaxlib >= 474")
   def testTpuHostBufferDmaMap(self):
-    if not jtu.is_libtpu_at_least("0.0.44"):
-      self.skipTest("Requires libtpu 0.0.44 or newer")
     from jax._src.typing import DLDeviceType
 
     device = jax.devices("tpu")[0]

@@ -1163,9 +1163,6 @@ class OpsTest(ptu.PallasTPUTest):
       op=[lax.eq, lax.ne, lax.lt, lax.gt, lax.le, lax.ge],
   )
   def test_scalar_comparison(self, dtype, op):
-    if not jtu.is_libtpu_at_least("0.0.43"):
-      self.skipTest("Requires libtpu 0.0.43 or newer")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((1,), jnp.bool_),

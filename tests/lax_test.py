@@ -47,7 +47,6 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
-from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
@@ -4908,10 +4907,6 @@ class CompositeTest(jtu.JaxTestCase):
     self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
     self.assertIn('chlo.top_k(%arg0, k = 3) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
 
-  @unittest.skipIf(
-      jaxlib_extension_version < 474,
-      "TopK is_stable attribute requires jaxlib >= 474",
-  )
   def test_composite_with_attributes_unstable(self):
     # The static_argnames is required here since k is a constant that should
     # come out of a larger context, but we unit test one op (composite) here.

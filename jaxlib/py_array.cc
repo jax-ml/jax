@@ -1510,7 +1510,6 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
       }
     }
 
-#if JAX_IFRT_VERSION_NUMBER >= 57
     xla::ifrt::RemapPlan plan(
         /*input_specs=*/{xla::ifrt::ArraySpec{
             /*dtype=*/ifrt_array_ptr->dtype(),
@@ -1520,20 +1519,6 @@ absl::StatusOr<PyArray> PyArray::ReorderShards(
                               /*shape=*/ifrt_array_ptr->shape(),
                               /*sharding=*/std::move(dst_ifrt_sharding)}},
         /*mappings=*/std::move(mappings));
-#else
-    xla::ifrt::RemapPlan plan = {
-        /*input_specs=*/{xla::ifrt::ArraySpec{
-            /*dtype=*/ifrt_array_ptr->dtype(),
-            /*shape=*/ifrt_array_ptr->shape(),
-            /*sharding=*/ifrt_array_ptr->shared_ptr_sharding()}},
-        {xla::ifrt::ArraySpec{/*dtype=*/ifrt_array_ptr->dtype(),
-                              /*shape=*/ifrt_array_ptr->shape(),
-                              /*sharding=*/std::move(dst_ifrt_sharding)}},
-        /*mappings=*/
-        std::make_shared<std::vector<xla::ifrt::RemapPlan::Mapping>>(
-            std::move(mappings)),
-    };
-#endif
     DCHECK_OK(plan.Validate());
     std::vector<xla::ifrt::ArrayRef> input;
     input.push_back(tsl::FormRef(ifrt_array_ptr));

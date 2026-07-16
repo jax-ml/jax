@@ -22,7 +22,6 @@ import tempfile
 from absl.testing import parameterized
 import jax
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 import jax.numpy as jnp
@@ -87,10 +86,7 @@ class PgleTestMultiHost(jt_multiprocess.MultiProcessTest):
         # There should be 4 fdo profiles: before optimization, after
         # SPMD-partitioning, before config assignment and after optimization.
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
-        if jaxlib_extension_version >= 475:
-          self.assertLen(fdo_profiles_before_pgle, 4)
-        else:
-          self.assertLen(fdo_profiles_before_pgle, 3)
+        self.assertLen(fdo_profiles_before_pgle, 4)
         self.assertEqual(
             os.path.getsize(
                 os.path.join(dump_dir, fdo_profiles_before_pgle[0])
@@ -103,10 +99,7 @@ class PgleTestMultiHost(jt_multiprocess.MultiProcessTest):
 
         # Expect 4 additional non-empty fdo profiles.
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
-        if jaxlib_extension_version >= 475:
-          self.assertLen(fdo_profiles_after_pgle, 8)
-        else:
-          self.assertLen(fdo_profiles_after_pgle, 6)
+        self.assertLen(fdo_profiles_after_pgle, 8)
         for fdo_profile in fdo_profiles_after_pgle:
           if fdo_profile not in fdo_profiles_before_pgle:
             self.assertGreater(

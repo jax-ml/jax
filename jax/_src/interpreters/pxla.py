@@ -49,7 +49,7 @@ from jax._src.core import ShapedArray
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
-from jax._src.lib import _jax, jaxlib_extension_version
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
@@ -185,7 +185,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
     if layout is not None:
       results.append(api.device_put(x, Format(layout, sharding)))
     else:
-      if jaxlib_extension_version >= 475 and config.use_cpp_shard_args.value:
+      if config.use_cpp_shard_args.value:
         results.append(None)
         batch_xs.append(x)  # Accumulate arguments to `_jax.shard_args`
         batch_shardings.append(sharding)

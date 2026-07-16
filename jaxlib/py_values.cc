@@ -843,10 +843,8 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     (*p)[dtypes.np_uint32.ptr()] = HandleNumpyScalar<uint32_t>;
     (*p)[dtypes.np_uint64.ptr()] = HandleNumpyScalar<uint64_t, uint32_t>;
     (*p)[dtypes.np_float4_e2m1fn.ptr()] = HandleNumpyScalar<tsl::float4_e2m1fn>;
-#if JAX_IFRT_VERSION_NUMBER >= 58
     (*p)[dtypes.np_float6_e2m3fn.ptr()] = HandleNumpyScalar<tsl::float6_e2m3fn>;
     (*p)[dtypes.np_float6_e3m2fn.ptr()] = HandleNumpyScalar<tsl::float6_e3m2fn>;
-#endif
     (*p)[dtypes.np_float8_e3m4.ptr()] = HandleNumpyScalar<tsl::float8_e3m4>;
     (*p)[dtypes.np_float8_e4m3.ptr()] = HandleNumpyScalar<tsl::float8_e4m3>;
     (*p)[dtypes.np_float8_e4m3fn.ptr()] = HandleNumpyScalar<tsl::float8_e4m3fn>;
@@ -1256,10 +1254,8 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[dtypes.np_uint32.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint64.ptr()] = np_uint64_handler;
         (*p)[dtypes.np_float4_e2m1fn.ptr()] = numpy_array_handler;
-#if JAX_IFRT_VERSION_NUMBER >= 58
         (*p)[dtypes.np_float6_e2m3fn.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float6_e3m2fn.ptr()] = numpy_array_handler;
-#endif
         (*p)[dtypes.np_float8_e3m4.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3fn.ptr()] = numpy_array_handler;

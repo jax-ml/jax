@@ -32,7 +32,6 @@ import numpy as np
 from jax._src import config
 from jax._src.lib import pytree as lib_pytree
 from jax._src.lib import weakref_lru_cache as lib_weakref_lru_cache
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import utils as jaxlib_utils
 
 logger = logging.getLogger(__name__)
@@ -260,45 +259,17 @@ toposort: Callable[[Iterable[Any]], list[Any]]
 toposort = partial(jaxlib_utils.topological_sort, "parents")
 
 
-if TYPE_CHECKING or jaxlib_extension_version >= 471:
-  def cache(max_size=4096, trace_context_in_key: bool | Callable = True, num_shards=64):
-    def decorator(f):
-      context_fn = (trace_context_in_key if callable(trace_context_in_key)
-                    else config.trace_context if trace_context_in_key
-                    else None)
-      cached_f = lib_weakref_lru_cache.strong_lru_cache(
-          f, context_fn, max_size,
-          num_shards=num_shards)
-      register_cache(cached_f, str(f))
-      return cached_f
-    return decorator
-else:
-  def cache(max_size=4096, trace_context_in_key: bool | Callable = True, num_shards=64):
-    if trace_context_in_key:
-      trace_context = (trace_context_in_key if callable(trace_context_in_key)
-                       else config.trace_context)
-      def wrap(f):
-        @functools.lru_cache(max_size)
-        def cached(_, *args, **kwargs):
-          return f(*args, **kwargs)
-
-        @functools.wraps(f)
-        def wrapper(*args, **kwargs):
-          if config.check_tracer_leaks.value:
-            return f(*args, **kwargs)
-          return cached(trace_context(), *args, **kwargs)
-
-        wrapper = cast(Any, wrapper)  # avoids missing-attribute typing errors
-        wrapper.cache_clear = cached.cache_clear
-        wrapper.cache_info = cached.cache_info
-        register_cache(wrapper, str(f))
-        return wrapper
-    else:
-      def wrap(f):
-        wrapper = functools.lru_cache(max_size)(f)
-        register_cache(wrapper, str(f))
-        return wrapper
-    return wrap
+def cache(max_size=4096, trace_context_in_key: bool | Callable = True, num_shards=64):
+  def decorator(f):
+    context_fn = (trace_context_in_key if callable(trace_context_in_key)
+                  else config.trace_context if trace_context_in_key
+                  else None)
+    cached_f = lib_weakref_lru_cache.strong_lru_cache(
+        f, context_fn, max_size,
+        num_shards=num_shards)
+    register_cache(cached_f, str(f))
+    return cached_f
+  return decorator
 
 # Maps caches to the name of the callable they apply to. All caches in
 # this dictionary support `cache_clear()`.

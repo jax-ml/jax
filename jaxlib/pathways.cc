@@ -392,16 +392,8 @@ ExperimentalSplitByMeshAxis(
     input_ifrt_arrays.push_back(FormRef(array));
   }
 
-#if JAX_IFRT_VERSION_NUMBER >= 57
   RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
                        std::move(mappings));
-#else
-  RemapPlan remap_plan;
-  remap_plan.input_specs = std::move(input_specs);
-  remap_plan.output_specs = std::move(output_specs);
-  remap_plan.mappings =
-      std::make_shared<std::vector<RemapPlan::Mapping>>(std::move(mappings));
-#endif
   DCHECK_OK(remap_plan.Validate());
 
   std::vector<ArrayRef> result_ifrt_arrays;
@@ -579,16 +571,8 @@ absl::StatusOr<std::vector<nb::object>> ExperimentalConcatenateByMeshAxis(
   std::vector<ArrayRef> result_ifrt_arrays;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 57
     RemapPlan remap_plan(std::move(input_specs), std::move(output_specs),
                          std::move(mappings));
-#else
-    RemapPlan remap_plan;
-    remap_plan.input_specs = std::move(input_specs);
-    remap_plan.output_specs = std::move(output_specs);
-    remap_plan.mappings =
-        std::make_shared<std::vector<RemapPlan::Mapping>>(std::move(mappings));
-#endif
     DCHECK_OK(remap_plan.Validate());
 
     TF_ASSIGN_OR_RETURN(

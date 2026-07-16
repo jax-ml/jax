@@ -53,9 +53,6 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
 
   @parameterized.product(arg_type=[int, float])
   def test_debug_print_with_values(self, arg_type):
-    if not jtu.is_libtpu_at_least('0.0.43'):
-      self.skipTest('Requires libtpu 0.0.43 or newer')
-
     @jax.jit(compiler_options={'xla_tpu_enable_log_recorder': 'true'})
     @functools.partial(
         self.pallas_call,
@@ -100,12 +97,6 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       (jnp.float32, 42.0),
   )
   def test_debug_print_with_formatting(self, dtype, value):
-    if (
-        not jnp.issubdtype(dtype, jnp.signedinteger) and
-        not jtu.is_libtpu_at_least('0.0.43')
-    ):
-      self.skipTest('Requires libtpu 0.0.43 or newer')
-
     @jax.jit(compiler_options={'xla_tpu_enable_log_recorder': 'true'})
     @functools.partial(
         self.pallas_call,
