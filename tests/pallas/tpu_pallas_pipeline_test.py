@@ -1659,9 +1659,9 @@ class PipelineHijaxTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works on TPU v4+.')
 
-  def test_emit_pipeline_hijax(self):
-    if config.use_emit_pipeline_primitive.value:
-      self.skipTest("Hijax not yet supported by the emit_pipeline primitive.")
+  @parameterized.product(use_primitive=[True, False])
+  def test_emit_pipeline_hijax(self, use_primitive):
+    self.enter_context(config.use_emit_pipeline_primitive(use_primitive))
 
     @dataclasses.dataclass(frozen=True)
     class ArrayTuple:

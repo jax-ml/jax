@@ -2175,10 +2175,6 @@ def _emit_pipeline_effectful_abstract_eval(
 pipeline_body_p = core.Primitive("pipeline_body")
 pipeline_body_p.multiple_results = True
 
-# TODO(rdyro): This primitive requires both memory pipeline and core grid
-# information which the caching doesn't support yet.
-_uncacheable_primitives.add(pipeline_body_p)
-
 @pipeline_body_p.def_effectful_abstract_eval
 def _pipeline_body_effectful_abstract_eval(
     *avals, jaxpr, in_tree, num_inputs, _explicit_indices=False, **params
@@ -2224,6 +2220,11 @@ def _pipeline_body_effectful_abstract_eval(
       out_effects.add(e.replace(ref_idx))
   return (), frozenset(out_effects)
 
+
+# TODO(rdyro): Both primtives require both memory pipeline and core grid
+# information which the caching doesn't support yet.
+_uncacheable_primitives.add(pipeline_body_p)
+_uncacheable_primitives.add(emit_pipeline_p)
 
 @register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
 def _pipeline_body_lowering_rule(
@@ -2395,6 +2396,63 @@ def _emit_pipeline_lowering_rule(
                            if i not in grid_mapping.vmapped_dims)
   assert len(valid_grid_sizes) == len(lowering_context.grid_names)
   return jaxpr_subcomp(lowering_context, jaxpr, *args_flat)
+
+def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
+  all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(avals)
+  refs_avals = [jax.typeof(x) if not isinstance(x, core.AbstractValue) else x
+                for x in all_args.refs_flat]
+
+  # Check that the index_maps jaxpr or consts are not high.
+  if (any(bm.index_map_jaxpr.is_high for bm in grid_mapping.block_mappings)
+      or any(any(c.is_high for c in bm.index_map_jaxpr.consts)
+             for bm in grid_mapping.block_mappings)):
+    raise NotImplementedError("Grid mapping with hijax index maps are not"
+                              f" currently supported. Got {grid_mapping=}")
+
+  return (body_jaxpr.is_high
+          or any(aval.has_qdd for aval in refs_avals)
+          or any(bm.transformed_block_aval.inner_aval.is_high
+                 for bm in grid_mapping.block_mappings))
+
+emit_pipeline_p.is_high = _emit_pipeline_is_high
+
+
+def _emit_pipeline_to_lojax(
+    *args_flat, body_jaxpr, grid_mapping, args_tree, refs_tree, **params
+):
+  all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
+  closed_hi_jaxpr = core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
+  with grid_mapping.trace_env():
+    closed_lo_jaxpr = pe.lower_jaxpr2(closed_hi_jaxpr)
+
+  refs_avals = [jax.typeof(x) for x in all_args.refs_flat]
+  lo_flat_refs, new_refs_tree = tracing_registry.flatten(
+      refs_tree.unflatten(
+          [aval.read_loval(x) if aval.has_qdd else aval.lower_val(x)
+           for aval, x in zip(refs_avals, all_args.refs_flat)]
+      ),
+      is_transformed_ref,
+  )
+
+  new_prim_args = EmitPipelinePrimitiveArgs(
+      all_index_map_consts=all_args.all_index_map_consts,
+      dynamic_grid_spec=all_args.dynamic_grid_spec,
+      core_id=all_args.core_id,
+      body_consts=tuple(closed_lo_jaxpr.consts),
+      refs_flat=tuple(lo_flat_refs),
+  )
+  new_args_flat, new_args_tree = tracing_registry.flatten(new_prim_args)
+  return emit_pipeline_p.bind(
+      *new_args_flat,
+      body_jaxpr=closed_lo_jaxpr.jaxpr,
+      grid_mapping=grid_mapping.to_lojax(),
+      args_tree=new_args_tree,
+      refs_tree=new_refs_tree,
+      **params,
+  )
+
+emit_pipeline_p.to_lojax = _emit_pipeline_to_lojax
+
 
 def _emit_pipeline_batching_rule(
     axis_data, args_flat, dims, *, grid_mapping, dimension_semantics, args_tree,
