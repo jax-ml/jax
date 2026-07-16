@@ -30,6 +30,7 @@ import jax.numpy as jnp
 P = jax.sharding.PartitionSpec
 
 
+@jtu.skip_under_pytest("Test fails under pytest in CI")
 @jtu.with_config(jax_traceback_filtering="off")
 class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
