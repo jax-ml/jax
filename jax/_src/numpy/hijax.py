@@ -385,10 +385,9 @@ def _searchsorted_scan_impl(
   if sorted_arr.size == 0:
     return lax.full(query.shape, fill_value=0, dtype=dtype)
   if query.ndim > 0:
-    return api.vmap(
-        functools.partial(_searchsorted_scan_impl, side=side, dtype=dtype, unrolled=unrolled),
-        in_axes=(None, 0),
-    )(sorted_arr, query)
+    return api.vmap(functools.partial(_searchsorted_scan_impl, side=side,
+                                      dtype=dtype, unrolled=unrolled),
+                    in_axes=(None, 0))(sorted_arr, query)
 
   op = lax._sort_le_comparator if side == "left" else lax._sort_lt_comparator
   unsigned_dtype = np.uint64 if dtypes.iinfo(dtype).bits == 64 else np.uint32
@@ -398,8 +397,11 @@ def _searchsorted_scan_impl(
     go_left = op(query, sorted_arr[mid])
     return (lax.select(go_left, low, mid), lax.select(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(n + 1)))
-  vma = tuple(core.typeof(sorted_arr).mat.varying)
-  init = (core.pvary(unsigned_dtype(0), vma), core.pvary(unsigned_dtype(n), vma))
+  sa_aval = core.typeof(sorted_arr)
+  vma = tuple(sa_aval.mat.varying)
+  init = (jnp.array(0, dtype=unsigned_dtype, out_sharding=sa_aval.sharding),
+          jnp.array(n, dtype=unsigned_dtype, out_sharding=sa_aval.sharding))
+  init = tuple(core.pvary(i, vma) for i in init)
   carry, _ = control_flow.scan(body_fun, init, (), length=n_levels,
                                unroll=n_levels if unrolled else 1)
   return carry[1].astype(dtype)

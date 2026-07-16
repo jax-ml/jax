@@ -879,7 +879,8 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = array_creation.zeros(len(bin_edges), weights.dtype).at[bin_idx].add(weights)[1:]
+  counts = array_creation.zeros(len(bin_edges), weights.dtype
+                                ).at[bin_idx].add(weights)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()

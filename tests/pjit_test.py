@@ -7218,6 +7218,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P(out_spec, None, None)))
     self.assertArraysEqual(out, np_inp * 2)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_histogram_sharded_error(self, mesh):
+    arr = jax.device_put(jnp.arange(64, dtype=jnp.float32).reshape(16, 4),
+                         P('x', None))
+
+    @jax.jit
+    def f(x):
+      return jnp.histogram(x.flatten(), bins=4, range=(0, 8),
+                           weights=jnp.ones_like(x.flatten(), dtype=jnp.float32))
+
+    with self.assertRaises(core.ShardingTypeError):
+      f(arr)
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_unmapped_last_vmap(self, mesh):
     np_inp = np.arange(8)
