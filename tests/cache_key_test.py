@@ -136,6 +136,7 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key.get(computation, devices, compile_options_filled, backend),
     )
 
+  @jtu.thread_unsafe_test()
   def test_custom_hook(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     devices = np.array([[jax.local_devices()[0]]])
