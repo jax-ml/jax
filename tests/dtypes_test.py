@@ -1172,7 +1172,9 @@ class TestPromotionTables(jtu.JaxTestCase):
     if dtype in intn_dtypes:
       self.skipTest('XLA support for int1, int2 and int4 is incomplete.')
     if dtype in fp6_dtypes and (
-        jaxlib_extension_version < 476 or ifrt_version < 58
+        jaxlib_extension_version < 476
+        or ifrt_version < 58
+        or not jtu.is_libtpu_at_least('0.0.45')
     ):
       self.skipTest('XLA support for float6 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
@@ -1191,7 +1193,11 @@ class TestPromotionTables(jtu.JaxTestCase):
               *fp4_dtypes,
               *(
                   fp6_dtypes
-                  if (jaxlib_extension_version >= 476 and ifrt_version >= 58)
+                  if (
+                      jaxlib_extension_version >= 476
+                      and ifrt_version >= 58
+                      and jtu.is_libtpu_at_least('0.0.45')
+                  )
                   else []
               ),
           ]
@@ -1213,11 +1219,13 @@ class TestPromotionTables(jtu.JaxTestCase):
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float4_e2m1fn.')
     if dtype in fp6_dtypes and (
-        jaxlib_extension_version < 476 or ifrt_version < 58
+        jaxlib_extension_version < 476
+        or ifrt_version < 58
+        or not jtu.is_libtpu_at_least('0.0.45')
     ):
       self.skipTest(
-          'Requires jaxlib >= 476 and ifrt_version >= 58 for FP6 format'
-          ' support.'
+          'Requires jaxlib >= 476, ifrt >= 58, and libtpu >= 0.0.45 for FP6'
+          ' format support.'
       )
     x = jnp.array(1, dtype=dtype)
     y = jnp.array(1, dtype='float32')
@@ -1235,11 +1243,13 @@ class TestPromotionTables(jtu.JaxTestCase):
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float4_e2m1fn.')
     if dtype in fp6_dtypes and (
-        jaxlib_extension_version < 476 or ifrt_version < 58
+        jaxlib_extension_version < 476
+        or ifrt_version < 58
+        or not jtu.is_libtpu_at_least('0.0.45')
     ):
       self.skipTest(
-          'Requires jaxlib >= 476 and ifrt_version >= 58 for FP6 format'
-          ' support.'
+          'Requires jaxlib >= 476, ifrt >= 58, and libtpu >= 0.0.45 for FP6'
+          ' format support.'
       )
     x = jnp.array([1.0, 2.0], dtype=dtype)
     self.assertEqual(x.dtype, dtype)
@@ -1304,7 +1314,9 @@ class TestPromotionTables(jtu.JaxTestCase):
       if dtypes.iinfo(dtype).bits <= 2:
         self.skipTest('XLA support for int2 is incomplete.')
     if dtype in fp6_dtypes and (
-        jaxlib_extension_version < 476 or ifrt_version < 58
+        jaxlib_extension_version < 476
+        or ifrt_version < 58
+        or not jtu.is_libtpu_at_least('0.0.45')
     ):
       self.skipTest('XLA support for float6 is incomplete.')
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
