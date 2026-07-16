@@ -3115,7 +3115,12 @@ def _copysign_lowering_rule(ctx: LoweringRuleContext, x1, x2):
 
 @register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.sign_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.sign_p, *gpu_core.LANExWARP_SEMANTICS)
+@register_lowering_rule(lax.sign_p, *gpu_core.WGxWARP_SEMANTICS)
 def _sign_lowering_rule(ctx: LoweringRuleContext, x):
+  if (ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp and
+      ctx.avals_in[0].shape):
+    raise ValueError("Warp-level sign is not supported for non-scalar inputs.")
   def sign(x):
     if jnp.issubdtype(x.dtype, jnp.floating):
       ones = lax.full(x.shape, 1.0, dtype=x.dtype)
