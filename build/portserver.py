@@ -35,7 +35,6 @@ import os
 import signal
 import socket
 import sys
-import psutil
 
 log = None  # Initialized to a logging.Logger by _configure_logging().
 
@@ -43,17 +42,64 @@ _PROTOS = [(socket.SOCK_STREAM, socket.IPPROTO_TCP),
            (socket.SOCK_DGRAM, socket.IPPROTO_UDP)]
 
 
-def _get_process_command_line(pid):
+def _pid_exists(pid):
+    """Check for the existence of a process ID without requiring psutil."""
+    if pid <= 0:
+        return False
+    if pid == 0:
+        return True
     try:
-        return psutil.Process(pid).cmdline()
-    except psutil.NoSuchProcess:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+    # Check /proc/<pid>/status to verify it's a PID and not just a TID on Linux.
+    try:
+        with open(f'/proc/{pid}/status', 'rb') as f:
+            for line in f:
+                if line.startswith(b'Tgid:'):
+                    return int(line.split()[1]) == pid
+    except (OSError, ValueError, IndexError):
+        pass
+    return True
+
+
+def _get_process_command_line(pid):
+    """Read cmdline from /proc without requiring psutil."""
+    try:
+        with open(f'/proc/{pid}/cmdline', 'rb') as f:
+            data = f.read()
+            if not data:
+                return ''
+            sep = b'\x00' if data.endswith(b'\x00') else b' '
+            if data.endswith(sep):
+                data = data[:-1]
+            parts = data.split(sep)
+            return ' '.join(p.decode('utf-8', errors='replace') for p in parts if p)
+    except OSError:
         return ''
 
 
 def _get_process_start_time(pid):
+    """Read process start time without requiring psutil."""
     try:
-        return psutil.Process(pid).create_time()
-    except psutil.NoSuchProcess:
+        with open(f'/proc/{pid}/stat', 'r') as f:
+            stat = f.read()
+        rparen = stat.rfind(')')
+        if rparen != -1:
+            fields = stat[rparen + 2:].split()
+            starttime_ticks = float(fields[19])
+            clock_ticks = os.sysconf(os.sysconf_names['SC_CLK_TCK']) if hasattr(os, 'sysconf') else 100.0
+            return starttime_ticks / clock_ticks
+    except (OSError, ValueError, IndexError, KeyError, AttributeError):
+        pass
+    try:
+        return os.path.getmtime(f'/proc/{pid}')
+    except OSError:
         return 0.0
 
 
@@ -115,7 +161,7 @@ def _should_allocate_port(pid):
         log.info('Not allocating a port to init.')
         return False
 
-    if not psutil.pid_exists(pid):
+    if not _pid_exists(pid):
         log.info('Not allocating a port to a non-existent process')
         return False
     return True
