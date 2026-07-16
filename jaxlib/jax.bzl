@@ -287,6 +287,7 @@ def jax_multiplatform_test(
         shard_count = None,
         minimal_shard_count = None,
         deps = [],
+        backend_deps = {},
         data = [],
         enable_backends = None,
         backend_variant_args = {},
@@ -331,7 +332,7 @@ def jax_multiplatform_test(
         test_deps = _cpu_test_deps() + _get_jax_test_deps([
             "//jax",
             "//jax/_src:test_util",
-        ] + deps)
+        ] + deps + backend_deps.get(backend, []))
         if backend == "gpu":
             test_deps += _gpu_test_deps()
             test_tags += tf_cuda_tests_tags()

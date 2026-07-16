@@ -588,6 +588,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "image_test",
     srcs = ["image_test.py"],
+    backend_deps = {
+        "cpu": py_deps(["torch"]),
+    },
     shard_count = {
         "cpu": 10,
         "gpu": 10,
@@ -597,7 +600,6 @@ jax_multiplatform_test(
     deps = py_deps([
         "pil",
         "tensorflow_core",
-        "torch",
         "numpy",
         "absl/testing",
     ]),
