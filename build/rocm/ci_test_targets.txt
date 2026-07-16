@@ -13,6 +13,7 @@
 -//tests/pallas:pallas_shape_poly_test_gpu
 -//tests/pallas:pallas_vmap_test_gpu
 -//tests/pallas:triton_pallas_test_gpu
+-//tests/pallas:gpu_paged_attention_test_gpu
 -//tests:export_harnesses_multi_platform_test_gpu
 -//tests:jet_test_gpu
 -//tests:lax_autodiff_test_gpu
