@@ -4378,6 +4378,34 @@ class PallasCallWarpPrimitiveSemanticsTest(PallasTest):
         [jnp.ones((128,), jnp.int32) * i for i in range(10)], axis=0)
     np.testing.assert_array_equal(result, expected)
 
+  def test_nd_loop_under_warp(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((2, 32), jnp.int32),
+        scratch_types=[
+            plgpu.SMEM(
+                (32,), jnp.int32, transforms=(plgpu.SwizzleTransform(128),)
+            ),
+            plgpu.Barrier()
+        ],
+        grid=(2,),
+        grid_names=("sm",)
+    )
+    def kernel(in_ref, out_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(in_ref, scratch_ref, barrier_ref)
+      plgpu.barrier_wait(barrier_ref)
+      plgpu.commit_smem()
+      def _per_warp(warp_id):
+        def store(loop_info: plgpu.NDLoopInfo):
+          plgpu.copy_smem_to_gmem(scratch_ref, out_ref.at[loop_info.index])
+          plgpu.wait_smem_to_gmem(0)
+        pl.when(warp_id == 0)(
+            lambda: plgpu.nd_loop(grid=(2,), collective_axes=("sm",))(store)
+        )
+      plgpu.warp_map(_per_warp)
+
+    x = jnp.arange(32, dtype=jnp.int32)
+    np.testing.assert_array_equal(kernel(x), jnp.stack((x, x), axis=0))
+
   def test_debug_print(self):
 
     @self.kernel(

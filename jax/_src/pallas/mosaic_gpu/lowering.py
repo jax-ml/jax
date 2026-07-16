@@ -2387,6 +2387,7 @@ def _swap_lowering_rule_wg(
 @register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(pjit.jit_p, mgpu.LoweringSemantics.Warpgroup)
 @register_lowering_rule(pjit.jit_p, *gpu_core.LANExWARP_SEMANTICS)
+@register_lowering_rule(pjit.jit_p, *gpu_core.WGxWARP_SEMANTICS)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
   if jaxpr.consts:
     raise NotImplementedError
@@ -2440,6 +2441,7 @@ if hasattr(mgpu.dialect, "vector_concat"):
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
 @register_lowering_rule(lax.select_n_p, *gpu_core.LANExWARP_SEMANTICS)
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Warpgroup)
+@register_lowering_rule(lax.select_n_p, *gpu_core.WGxWARP_SEMANTICS)
 def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
   if len(cases) != 2:
     raise NotImplementedError(
@@ -3429,9 +3431,6 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
       w_idx = mgpu.warp_idx(sync=True)
       i32 = ir.IntegerType.get_signless(32)
       return arith_dialect.remui(w_idx, _ir_constant(4, i32))
-    raise ValueError(
-        "Named axes can only refer to the warp axis name inside of core_map."
-    )
   gpu_axis_names = ctx.module_ctx.axis_names
   jax_axis_names = getattr(ctx.module_ctx.mesh_info, "axis_names", ())
   if gpu_axis_names is None and not jax_axis_names:
