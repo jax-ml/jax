@@ -378,7 +378,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.12", "3.13", "3.13-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14-nogil"]
           cuda-version: [12, 13]
     container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
@@ -396,7 +396,7 @@ jobs:
 
           # Get the major and minor version of Python.
           # E.g if python=3.12, then python_major_minor=312
-          # E.g if python=3.13-nogil, then python_major_minor=313t
+          # E.g if python=3.14-nogil, then python_major_minor=314t
           python_major_minor='${{ matrix.python }}'
           python_major_minor="$(echo "${python_major_minor//-nogil/t}" | tr -d '.')"
           python_major_minor="cp${python_major_minor%t}-cp${python_major_minor}-"
