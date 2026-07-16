@@ -5442,6 +5442,65 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.int32],
+      reduction=["min", "max", "absmin", "absmax"],
+  )
+  def test_load_reduce_tmem_native(self, dtype, reduction):
+    self.skip_if_wg_semantics()
+    if not (
+        jtu.is_cuda_compute_capability_at_least("10.1")
+        and not jtu.is_cuda_compute_capability_at_least("12.0")
+    ):
+      self.skipTest("Requires compute capability between 10.1 or 12.0")
+    if not jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("Requires CUDA version 13.0 or higher")
+    shape = (128, 128)
+    if "abs" in reduction and dtype == jnp.int32:
+      reduction = reduction[-3:]
+      dtype = jnp.uint32
+
+    @self.kernel(
+        out_type=(
+            jax.ShapeDtypeStruct(shape, dtype),
+            jax.ShapeDtypeStruct((shape[0],), dtype),
+        ),
+        scratch_types=[plgpu.TMEM(shape, dtype)],
+    )
+    def kernel(x_ref, y_ref, red_y_ref, tmem_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.TCGEN05, optimized=False)
+      plgpu.async_store_tmem(tmem_ref, x_val)
+      plgpu.commit_tmem()
+      loaded, reduced = plgpu.async_load_tmem(
+          tmem_ref,
+          layout=plgpu.Layout.TCGEN05_TMEM_NATIVE,
+          reduce=reduction,
+      )
+      y_ref[...] = loaded
+      red_y_ref[...] = reduced
+
+    prng = np.random.default_rng(0)
+    if dtype == jnp.int32:
+      x = prng.integers(-100000, 100000, shape).astype(dtype)
+    elif dtype == jnp.uint32:
+      x = prng.integers(0, 1000000, shape).astype(dtype)
+    else:
+      x = prng.uniform(-1, 1, shape).astype(dtype)
+    y, red_y = jax.block_until_ready(kernel(x))
+    np.testing.assert_array_equal(y, x)
+    match reduction:
+      case "min":
+        expected = np.min(x, axis=1)
+      case "max":
+        expected = np.max(x, axis=1)
+      case "absmin":
+        expected = np.min(np.abs(x), axis=1)
+      case "absmax":
+        expected = np.max(np.abs(x), axis=1)
+      case _:
+        raise ValueError(f"Unsupported reduction: {reduction}")
+    np.testing.assert_array_equal(red_y, expected)
+
   @parameterized.parameters(
       plgpu.Layout.TCGEN05_M64_COLLECTIVE(160),
       plgpu.Layout.TCGEN05_M64_COLLECTIVE_NATIVE(160)

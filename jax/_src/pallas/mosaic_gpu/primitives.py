@@ -22,7 +22,7 @@ import dataclasses
 import enum
 import itertools
 import math
-from typing import Any, Literal, assert_never
+from typing import Any, Literal, assert_never, overload
 
 import jax
 from jax._src import api
@@ -3685,8 +3685,32 @@ def load(
 
 
 async_load_tmem_p = jax_core.Primitive("async_load")
+async_load_tmem_p.multiple_results = True
 
-def async_load_tmem(src: _Ref, *, layout: SomeLayout | None = None) -> jax.Array:
+
+@overload
+def async_load_tmem(
+    src: _Ref, *, layout: SomeLayout | None = ..., reduce: None = ...
+) -> jax.Array:
+  ...
+
+
+@overload
+def async_load_tmem(
+    src: _Ref,
+    *,
+    layout: SomeLayout | None = ...,
+    reduce: Literal["max", "min", "absmax", "absmin"] = ...,
+) -> tuple[jax.Array, jax.Array]:
+  ...
+
+
+def async_load_tmem(
+    src: _Ref,
+    *,
+    layout: SomeLayout | None = None,
+    reduce: Literal["max", "min", "absmax", "absmin"] | None = None,
+) -> jax.Array | tuple[jax.Array, jax.Array]:
   """Performs an asynchronous load from the TMEM array.
 
   The load operation is only partly asynchronous. The returned array can be used
@@ -3710,6 +3734,9 @@ def async_load_tmem(src: _Ref, *, layout: SomeLayout | None = None) -> jax.Array
   Args:
     src: The TMEM reference to load from.
     layout: The optional layout hint to use for the resulting array.
+    reduce: The optional reduction operation to perform on the loaded data. If
+      specified, the function returns an extra array, obtained by reducing the
+      loaded data along the last dimension.
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, None, "async_load_tmem"
@@ -3717,22 +3744,48 @@ def async_load_tmem(src: _Ref, *, layout: SomeLayout | None = None) -> jax.Array
   flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
       src_transforms
   )
-  result = async_load_tmem_p.bind(
-      src, *flat_src_transforms, tree=src_transforms_treedef
+  results = async_load_tmem_p.bind(
+      src, *flat_src_transforms, tree=src_transforms_treedef, reduce=reduce
   )
-  if layout is not None:
-    result = gpu_core.layout_cast(result, layout)
-  return result
+  if reduce is None:
+    [result] = results
+    if layout is not None:
+      result = gpu_core.layout_cast(result, layout)
+    return result
+  else:
+    result, reduced = results
+    if layout is not None:
+      result = gpu_core.layout_cast(result, layout)
+    return result, reduced
+
 
 @async_load_tmem_p.def_effectful_abstract_eval
-def _async_load_tmem_abstract_eval(src, *avals_flat, tree):
+def _async_load_tmem_abstract_eval(
+    src, *avals_flat, tree, reduce: tcgen05.LoadReduceOp | None = None
+):
   if src.memory_space != gpu_core.MemorySpace.TMEM:
     raise ValueError("Async load only supports TMEM refs")
-  return state_primitives._get_abstract_eval(src, *avals_flat, tree=tree)
+  val_aval, effects = state_primitives._get_abstract_eval(
+      src, *avals_flat, tree=tree
+  )
+  if reduce is None:
+    return (val_aval,), effects
+  if val_aval.dtype not in map(jnp.dtype, (jnp.float32, jnp.int32, jnp.uint32)):
+    raise ValueError(
+        f"Unsupported dtype for reduction: {val_aval.dtype}. Only float32, "
+        " int32 and uint32 are supported."
+    )
+  reduced_aval = jax_core.ShapedArray(val_aval.shape[:-1], val_aval.dtype)
+  return (val_aval, reduced_aval), effects
+
 
 @lowering.register_lowering_rule(async_load_tmem_p, mgpu.LoweringSemantics.Lane)
 def _async_load_tmem_lowering_rule(
-    ctx: lowering.LoweringRuleContext, x_ref, *leaves, tree
+    ctx: lowering.LoweringRuleContext,
+    x_ref,
+    *leaves,
+    tree,
+    reduce: Literal["max", "min", "absmax", "absmin"] | None = None,
 ):
   assert isinstance(x_ref, tcgen05.TMEMRef)
   x_aval = ctx.avals_in[0]
@@ -3752,15 +3805,24 @@ def _async_load_tmem_lowering_rule(
   if isinstance(ctx.out_layout_hint, mgpu.TiledLayout):
     layout_hint = ctx.out_layout_hint
   is_signed = mgpu_utils.is_signed(ctx.avals_out[0].dtype)
-  return x_tmem.load(layout=layout_hint, is_signed=is_signed)
+  res = x_tmem.load(layout=layout_hint, is_signed=is_signed, reduce=reduce)
+  return (res,) if reduce is None else res
 
 
 @lowering.register_lowering_rule(
     async_load_tmem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _async_load_tmem_lowering_rule_wg(
-    ctx: lowering.LoweringRuleContext, x_ref: ir.Value, *leaves, tree
+    ctx: lowering.LoweringRuleContext,
+    x_ref: ir.Value,
+    *leaves,
+    tree,
+    reduce: tcgen05.LoadReduceOp | None = None,
 ):
+  if reduce is not None:
+    raise NotImplementedError(
+        "Fused load-reduce is not supported in Warpgroup semantics"
+    )
   assert isinstance(x_ref, ir.Value)
   assert isinstance(x_ref.type, ir.MemRefType)
   x_aval = ctx.avals_in[0]
@@ -3783,7 +3845,7 @@ def _async_load_tmem_lowering_rule_wg(
     raise NotImplementedError(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
     )
-  return mgpu.dialect.async_load_tmem(x_tmem)
+  return (mgpu.dialect.async_load_tmem(x_tmem),)
 
 
 wait_load_tmem_p = jax_core.Primitive("wait_load_tmem")

@@ -842,8 +842,10 @@ class JaxprInterpreter:
 
   def _interpret_async_load_tmem_p(self, eqn, token: jax.Array, invals):
     assert eqn.primitive is gpu_primitives.async_load_tmem_p
+    if eqn.params.get("reduce") is not None:
+      raise NotImplementedError("Interpret mode does not support load reduce")
 
-    return callback.io_callback(
+    token, out = callback.io_callback(
         functools.partial(
             gpu_callbacks.async_load_tmem, source_info=eqn.source_info),
         (gpu_callbacks.TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
@@ -853,6 +855,7 @@ class JaxprInterpreter:
         src_allocation_key_as_array=invals[0],
         src_transforms=jax.tree.unflatten(eqn.params["tree"], invals[1:]),
     )
+    return token, [out]
 
   def _interpret_wait_smem_to_gmem_p(
       self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
