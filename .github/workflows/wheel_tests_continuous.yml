@@ -156,7 +156,7 @@ jobs:
       - name: Select jobs
         id: select
         env:
-          INPUT_PLATFORMS: ${{ github.event.inputs.platforms || 'all' }}
+          INPUT_PLATFORMS: ${{ github.event.inputs.platforms || (github.event_name == 'pull_request' && 'all-non-rocm') || 'all' }}
           INPUT_SUITES: ${{ github.event.inputs.suites || 'all' }}
           INPUT_XLA_TRACK: ${{ github.event.inputs.xla_track || 'pinned' }}
           INPUT_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
