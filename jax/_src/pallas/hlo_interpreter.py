@@ -24,34 +24,34 @@ are carried out in stages:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Iterable, Sequence
-from functools import reduce, partial
+from functools import partial, reduce
 import itertools
 from typing import Any
-from collections.abc import Callable
 
+import jax
+from jax._src import core as jax_core
+from jax._src import flattree as ft
+from jax._src import frozen_dict
+from jax._src import numpy as jnp
+from jax._src import source_info_util
+from jax._src import state
+from jax._src import typing as jax_typing
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax.control_flow import conditionals
 from jax._src.lax.control_flow import loops
-from jax._src import core as jax_core
-from jax._src import frozen_dict
-from jax._src import flattree as ft
-from jax._src import source_info_util
-from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
-from jax._src import state
 from jax._src.state import discharge as state_discharge
-from jax._src import typing as jax_typing
-
 from jax._src.util import (
     foreach,
     safe_map,
     safe_zip,
     split_list,
 )
-from jax._src import numpy as jnp
 import numpy as np
 
 map, unsafe_map = safe_map, map
@@ -170,7 +170,8 @@ def kernel_to_hlo_jaxpr(
     scratch_invars = phys_jaxpr.invars[grid_mapping.slice_scratch_ops]
     scratch_avals = [v.aval for v in scratch_invars]
     discharged_closed_jaxpr = state_discharge.discharge_state(
-        phys_jaxpr.with_consts(phys_consts))
+        phys_jaxpr.with_consts(phys_consts), strip_memory_space=True
+    )
   return discharged_closed_jaxpr, discharged_closed_jaxpr.consts, scratch_avals
 
 
@@ -217,6 +218,8 @@ def eval_jaxpr_recursive(
             recurse_hop_rule, *in_vals, **eqn.params)
       else:
         bind_params = eqn.primitive.get_bind_params(eqn.params)
+        if eqn.primitive.name == "new_ref":
+          bind_params = dict(bind_params, memory_space=None)
         ans = eqn.primitive.bind(*in_vals, **bind_params)
     if eqn.primitive.multiple_results:
       foreach(write, eqn.outvars, ans)
@@ -310,6 +313,32 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
   return closed_jaxpr, closed_jaxpr.consts
 
 
+def strip_grid_mapping_memory_spaces(
+    grid_mapping: pallas_core.GridMapping,
+) -> pallas_core.GridMapping:
+  new_block_mappings = []
+  with grid_mapping.trace_env():
+    for bm in grid_mapping.block_mappings:
+      if bm is None:
+        new_block_mappings.append(None)
+      else:
+        new_jaxpr, new_consts = resolve_physical_types(
+            bm.index_map_jaxpr.jaxpr, bm.index_map_jaxpr.consts
+        )
+        new_bm = bm.replace(
+            index_map_jaxpr=jax_core.ClosedJaxpr(new_jaxpr, new_consts)
+        )
+        new_block_mappings.append(new_bm)
+  new_index_map_avals = tuple(
+      _logical_aval_to_interpret_mode_aval(a)
+      for a in grid_mapping.index_map_avals
+  )
+  return grid_mapping.replace(
+      block_mappings=new_block_mappings,
+      index_map_avals=new_index_map_avals,
+  )
+
+
 def pallas_call_hlo_interpret(
     *args,
     jaxpr: jax_core.Jaxpr,
@@ -330,6 +359,13 @@ def pallas_call_hlo_interpret(
   dynamic_grid_args, args = split_list(
       args, [grid_mapping.num_dynamic_grid_bounds]
   )
+  args = tuple(
+      jax.device_put(x, jax_core.MemorySpace.Device)
+      if isinstance(x, jax_core.Tracer)
+      and getattr(x.aval, "memory_space", None) is not None
+      else x
+      for x in args
+  )
   dynamic_grid_args_iter = iter(dynamic_grid_args)
   grid = tuple(
       a if not isinstance(a, pallas_core.DynamicGridDim)
@@ -337,6 +373,7 @@ def pallas_call_hlo_interpret(
       for a in grid_mapping.grid
   )
   assert next(dynamic_grid_args_iter, None) is None
+  grid_mapping = strip_grid_mapping_memory_spaces(grid_mapping)
   discharged_jaxpr, discharged_consts, scratch_avals = kernel_to_hlo_jaxpr(
       jaxpr, (), grid_mapping)
   if debug:
@@ -414,26 +451,47 @@ def pallas_call_hlo_interpret(
           bm.compute_start_indices_interpret(loop_idx, *scalars)
           for bm in grid_mapping.block_mappings
       ]
-    blocks = map(_dynamic_slice, start_indices, block_shapes,
-                 carry_consts_ins, is_squeeze_dim)
+    in_blocks = map(
+        _dynamic_slice,
+        start_indices,
+        block_shapes,
+        carry_consts_ins,
+        is_squeeze_dim,
+    )
     with pallas_core.grid_env(local_grid_env):
-      assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
-          scratch_values
-      ), (
+      assert len(discharged_jaxpr.invars) == len(scalars) + len(
+          in_blocks
+      ) + len(scratch_values), (
           len(discharged_jaxpr.invars),
           len(scalars),
-          len(blocks),
+          len(in_blocks),
           len(scratch_values),
       )
 
-      blocks = jax_core.eval_jaxpr(
-          discharged_jaxpr, discharged_consts, *scalars, *blocks, *scratch
+      out_blocks = jax_core.eval_jaxpr(
+          discharged_jaxpr, discharged_consts, *scalars, *in_blocks, *scratch
       )
 
     _, out_inout, out_scratch = split_list(
-        blocks, [grid_mapping.num_index_operands, num_inout_blocks])
+        out_blocks, [grid_mapping.num_index_operands, num_inout_blocks]
+    )
     out_carry = map(_dynamic_update_slice, start_indices, block_shapes,
                     carry_consts_ins, out_inout, is_squeeze_dim)
+    # Synchronize array mutations across aliased input/output carry buffers so
+    # updates written to one aliased operand during this grid step are visible
+    # to both operands in subsequent grid iterations.
+    out_carry = list(out_carry)
+    for in_idx, out_idx in input_output_aliases:
+      in_idx_adj = in_idx - len(scalars)
+      out_idx_adj = len(block_args) + out_idx
+      input_modified = out_inout[in_idx_adj] is not in_blocks[in_idx_adj]
+      output_modified = out_inout[out_idx_adj] is not in_blocks[out_idx_adj]
+      if input_modified and not output_modified:
+        out_carry[out_idx_adj] = out_carry[in_idx_adj]
+      elif output_modified and not input_modified:
+        out_carry[in_idx_adj] = out_carry[out_idx_adj]
+      elif input_modified and output_modified:
+        out_carry[out_idx_adj] = out_carry[in_idx_adj]
     return (i + 1, _get_next_indices(grid, loop_idx),
             *out_carry, *out_scratch)
 
