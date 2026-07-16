@@ -5431,3 +5431,33 @@ def _matmul_pop_lowering_rule(
       acc_addr,
       mxu_index,
   )
+
+
+@register_lowering_rule(tpu_primitives.matmul_lhs_fifo_p)
+def _matmul_lhs_fifo_lowering_rule(
+    ctx: LoweringRuleContext,
+    lhs: ir.Value,
+    *,
+    mxu_index: int,
+    load_staged_rhs: int | None,
+):
+  del ctx
+  tpu.matmul_lhs_fifo(lhs, mxu_index, load_staged_rhs=load_staged_rhs)
+  return []
+
+
+@register_lowering_rule(tpu_primitives.matmul_pop_fifo_p)
+def _matmul_pop_fifo_lowering_rule(
+    ctx: LoweringRuleContext,
+    *,
+    mxu_index: int,
+    shape: tuple[int, int],
+    dtype: jax.typing.DTypeLike,
+):
+  return tpu.matmul_pop_fifo(
+      ir.VectorType.get(
+          ctx.lowering_context.dynamic_shape_replacement_fn(shape),
+          _dtype_to_ir_type(dtype),
+      ),
+      mxu_index,
+  )

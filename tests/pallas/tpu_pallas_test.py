@@ -5400,8 +5400,8 @@ class ExplicitMXUTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_tpu_at_least(7):
-      self.skipTest('TPU v7 required for this test.')
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('TPU v5p+ required for this test.')
 
   @parameterized.named_parameters(
       ('f32', jnp.float32, False),
@@ -5412,6 +5412,14 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('f32_transpose', jnp.float32, True),
   )
   def test_basic(self, dtype, transpose):
+    if not jtu.is_device_tpu_at_least(7):
+      expect_ctx = self.assertRaisesRegex(
+          error_handling.MosaicError,
+          'MatmulAccLhsOp not supported on TPU generations < 7',
+      )
+    else:
+      expect_ctx = contextlib.nullcontext()
+
     m = 128 + 64
     k = n = 256
     generator = np.random.default_rng(1234)
@@ -5442,15 +5450,234 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       o_ref[...] = jnp.matmul(
           x_ref[...], rhs, preferred_element_type=jnp.float32
       )
-    matmul_ref = pl.pallas_call(
-        matmul_ref_kernel, out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+
+    with expect_ctx:
+      matmul_ref = pl.pallas_call(
+          matmul_ref_kernel,
+          out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+      )
+
+      out = matmul(x, y).block_until_ready()
+      out_ref = matmul_ref(x, y).block_until_ready()
+      np.testing.assert_array_equal(out, out_ref)
+
+  @parameterized.named_parameters(
+      ('f32', jnp.float32, False),
+      ('bf16', jnp.bfloat16, False),
+      ('f8_e5m2', jnp.float8_e5m2, False),
+      ('bf16_transpose', jnp.bfloat16, True),
+      ('f32_transpose', jnp.float32, True),
+  )
+  def test_fifo(self, dtype, transpose):
+    if jtu.jaxlib_version() < (0, 11, 0):
+      self.skipTest('Test requires JAX v0.11.0 or newer.')
+
+    if jtu.is_device_tpu_at_least(7):
+      expect_ctx = self.assertRaisesRegex(
+          error_handling.MosaicError,
+          'MatmulLhsFifoOp not supported on TPU generations >= 7',
+      )
+    else:
+      expect_ctx = contextlib.nullcontext()
+
+    m, k, n = 256, 512, 512
+    w_m, w_n = 128, 256
+    m1 = m2 = pltpu.get_tpu_info().mxu_column_size
+    k_iters = k // m1
+    n_iters = w_n // m2
+    packing = 32 // jax.dtypes.itemsize_bits(dtype)
+    num_rows = 8 * packing
+
+    generator = np.random.default_rng(1234)
+    x = generator.normal(size=(m, k)).astype(dtype)
+    if transpose:
+      y = generator.normal(size=(n, k)).astype(dtype)
+    else:
+      y = generator.normal(size=(k, n)).astype(dtype)
+
+    def matmul_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref[...])
+      for i in range(n_iters):
+        for j in range(k_iters):
+          if transpose:
+            rhs = y_ref[i * m2 : (i + 1) * m2, j * m1 : (j + 1) * m1]
+          else:
+            rhs = y_ref[j * m1 : (j + 1) * m1, i * m2 : (i + 1) * m2]
+          pltpu.matmul_push_rhs(
+              rhs,
+              mxu_index=0,
+              staging_register=0,
+              transpose=transpose,
+          )
+          for l in range(w_m // num_rows):
+            load_staged_rhs = 0 if l == 0 else None
+            pltpu.matmul_lhs_fifo(
+                lhs=x_ref[
+                    l * num_rows : (l + 1) * num_rows, j * m1 : (j + 1) * m1
+                ],
+                mxu_index=0,
+                load_staged_rhs=load_staged_rhs,
+            )
+            o_ref[
+                l * num_rows : (l + 1) * num_rows, i * m2 : (i + 1) * m2
+            ] += pltpu.matmul_pop_fifo(
+                shape=(num_rows, m2), dtype=jnp.float32, mxu_index=0
+            )
+
+    matmul = pl.pallas_call(
+        matmul_kernel,
+        grid=(m // w_m, n // w_n),
+        in_specs=[
+            pl.BlockSpec((w_m, k), lambda i, j: (i, 0)),
+            pl.BlockSpec((w_n, k), lambda i, j: (j, 0))
+            if transpose
+            else pl.BlockSpec((k, w_n), lambda i, j: (0, j)),
+        ],
+        out_specs=pl.BlockSpec((w_m, w_n), lambda i, j: (i, j)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
     )
 
-    out = matmul(x, y).block_until_ready()
-    out_ref = matmul_ref(x, y).block_until_ready()
-    np.testing.assert_array_equal(out, out_ref)
+    with expect_ctx:
+      out = matmul(x, y).block_until_ready()
+
+      rhs = y.astype(jnp.float32)
+      if transpose:
+        rhs = rhs.T
+      out_ref = jnp.matmul(
+          x.astype(jnp.float32),
+          rhs,
+          preferred_element_type=jnp.float32,
+      )
+      np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
+
+  def test_fifo_underflow(self):
+    if jtu.jaxlib_version() < (0, 11, 0):
+      self.skipTest('Test requires JAX v0.11.0 or newer.')
+
+    if jtu.is_device_tpu_at_least(7):
+      self.skipTest('Test not relevant for TPU v7 and above.')
+
+    dtype = jnp.bfloat16
+    m, k, n = 256, 512, 512
+    w_m, w_k, w_n = 128, k, 256
+    m1 = m2 = pltpu.get_tpu_info().mxu_column_size
+    m_iters = w_m // 16
+    k_iters = w_k // m1
+    n_iters = w_n // m2
+
+    generator = np.random.default_rng(1234)
+    x = generator.normal(size=(m, k)).astype(dtype)
+    y = generator.normal(size=(k, n)).astype(dtype)
+
+    def matmul_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref[...])
+      for i in range(n_iters):
+        for j in range(k_iters):
+          pltpu.matmul_push_rhs(
+              y_ref[j * m1 : (j + 1) * m1, i * m2 : (i + 1) * m2],
+              mxu_index=0,
+              staging_register=0,
+              transpose=False,
+          )
+          for l in range(m_iters):
+            load_staged_rhs = 0 if l == 0 else None
+            pltpu.matmul_lhs_fifo(
+                lhs=x_ref[l * 16 : (l + 1) * 16, j * m1 : (j + 1) * m1],
+                mxu_index=0,
+                load_staged_rhs=load_staged_rhs,
+            )
+            # Simulate bug where too many entries are popped.
+            for _ in range(2):
+              o_ref[
+                  l * 16 : (l + 1) * 16, i * m2 : (i + 1) * m2
+              ] += pltpu.matmul_pop_fifo(
+                  shape=(16, m2), dtype=jnp.float32, mxu_index=0
+              )
+
+    matmul = pl.pallas_call(
+        matmul_kernel,
+        grid=(m // w_m, n // w_n),
+        in_specs=[
+            pl.BlockSpec((w_m, k), lambda i, j: (i, 0)),
+            pl.BlockSpec((k, w_n), lambda i, j: (0, j)),
+        ],
+        out_specs=pl.BlockSpec((w_m, w_n), lambda i, j: (i, j)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
+
+    expect_ctx = self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError,
+        'Cannot schedule FIFO pop instruction when the FIFO is empty',
+    )
+    with expect_ctx:
+      matmul(x, y).block_until_ready()
+
+  def test_fifo_overflow(self):
+    if jtu.jaxlib_version() < (0, 11, 0):
+      self.skipTest('Test requires JAX v0.11.0 or newer.')
+
+    if jtu.is_device_tpu_at_least(7):
+      self.skipTest('Test not relevant for TPU v7 and above.')
+
+    dtype = jnp.bfloat16
+    m, k, n = 512, 512, 512
+    w_m, w_k, w_n = 512, k, 256
+    m1 = m2 = pltpu.get_tpu_info().mxu_column_size
+    m_iters = w_m // 16
+    k_iters = w_k // m1
+    n_iters = w_n // m2
+
+    generator = np.random.default_rng(1234)
+    x = generator.normal(size=(m, k)).astype(dtype)
+    y = generator.normal(size=(k, n)).astype(dtype)
+
+    def matmul_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref[...])
+      for i in range(n_iters):
+        for j in range(k_iters):
+          pltpu.matmul_push_rhs(
+              y_ref[j * m1 : (j + 1) * m1, i * m2 : (i + 1) * m2],
+              mxu_index=0,
+              staging_register=0,
+              transpose=False,
+          )
+          # Do all of the pushes before any pops to cause an overflow.
+          for l in range(m_iters):
+            load_staged_rhs = 0 if l == 0 else None
+            pltpu.matmul_lhs_fifo(
+                lhs=x_ref[l * 16 : (l + 1) * 16, j * m1 : (j + 1) * m1],
+                mxu_index=0,
+                load_staged_rhs=load_staged_rhs,
+            )
+          for l in range(m_iters):
+            o_ref[
+                l * 16 : (l + 1) * 16, i * m2 : (i + 1) * m2
+            ] += pltpu.matmul_pop_fifo(
+                shape=(16, m2), dtype=jnp.float32, mxu_index=0
+            )
+
+    matmul = pl.pallas_call(
+        matmul_kernel,
+        grid=(m // w_m, n // w_n),
+        in_specs=[
+            pl.BlockSpec((w_m, k), lambda i, j: (i, 0)),
+            pl.BlockSpec((k, w_n), lambda i, j: (0, j)),
+        ],
+        out_specs=pl.BlockSpec((w_m, w_n), lambda i, j: (i, j)),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
+
+    expect_ctx = self.assertRaisesRegex(
+        jax.errors.JaxRuntimeError,
+        'Cannot schedule FIFO push instruction when the FIFO is full',
+    )
+    with expect_ctx:
+      matmul(x, y).block_until_ready()
 
   def test_two_mxus(self):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest('TPU generation too old')
+
     dtype = jnp.bfloat16
     m = k = n = 256
     generator = np.random.default_rng(1234)
@@ -5502,6 +5729,9 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out1, out1_ref, atol=1e-3, rtol=1e-3)
 
   def test_matmul_kernel(self):
+    if not jtu.is_device_tpu_at_least(7):
+      self.skipTest('TPU generation too old')
+
     dtype = jnp.bfloat16
     m = n = k = 4096
     generator = np.random.default_rng(1234)
