@@ -26,8 +26,17 @@ if [[ ! -f "build/portserver.py" ]]; then
 fi
 
 echo "::group::Start Portserver" >&2
-${PYTHON_BIN:-python3} build/portserver.py &
-SERVER_PID=$!
+PIDFILE="$(mktemp)"
+${PYTHON_BIN:-python3} build/portserver.py --daemon --pidfile="$PIDFILE"
+SERVER_PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+rm -f "$PIDFILE"
+
+if [[ -z "$SERVER_PID" ]]; then
+  echo "ERROR: Portserver daemon failed to start." >&2
+  echo "::endgroup::" >&2
+  exit 1
+fi
+
 cleanup_portserver() {
   kill "$SERVER_PID" 2>/dev/null || true
   wait "$SERVER_PID" 2>/dev/null || true

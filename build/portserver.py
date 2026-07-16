@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import collections
 import logging
+import os
 import signal
 import socket
 import sys
@@ -313,7 +314,18 @@ def _parse_command_line():
                         action='store_true',
                         default=False,
                         help='Enable full debug messages.')
-    return parser.parse_args(sys.argv[1:])
+    parser.add_argument('--daemon',
+                        action='store_true',
+                        default=False,
+                        help='Fork into daemon process after successfully binding socket.')
+    parser.add_argument('--pidfile',
+                        type=str,
+                        default=None,
+                        help='Path to file where the daemon PID will be written.')
+    args = parser.parse_args(sys.argv[1:])
+    if args.daemon and sys.platform == 'win32':
+        parser.error('--daemon option is not supported on Windows (win32).')
+    return args
 
 
 def _parse_port_ranges(pool_str):
@@ -349,6 +361,11 @@ def _configure_logging(verbose=False, debug=False):
     log.setLevel(logging.DEBUG if verbose else overall_level)
 
 
+def _write_pidfile(path, pid):
+    with open(path, 'w') as f:
+        f.write(str(pid))
+
+
 async def async_main(config):
     ports_to_serve = _parse_port_ranges(config.portserver_static_pool)
     if not ports_to_serve:
@@ -377,6 +394,14 @@ async def async_main(config):
         server = await asyncio.start_unix_server(
             request_handler.handle_port_request,
             path=config.portserver_address.replace('@', '\0', 1))
+
+    if config.daemon:
+        pid = os.fork()
+        if pid > 0:
+            sys.exit(0)
+        os.setsid()
+        if config.pidfile:
+            _write_pidfile(config.pidfile, os.getpid())
 
     log.info('Serving on %s', config.portserver_address)
 

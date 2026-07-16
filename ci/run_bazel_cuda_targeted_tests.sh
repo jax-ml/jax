@@ -129,7 +129,7 @@ if [[ ${#targets[@]} -eq 0 ]]; then
 fi
 echo "::endgroup::" >&2
 
-source ci/utilities/setup_portserver.sh
+PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
 
 echo "::group::Bazel CUDA targeted tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)

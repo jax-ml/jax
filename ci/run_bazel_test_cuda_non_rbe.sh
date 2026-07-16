@@ -149,7 +149,7 @@ TEST_ARTIFACTS_DIR="test-artifacts-single"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 echo "::endgroup::" >&2
 
-source ci/utilities/setup_portserver.sh
+PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
 
 echo "::group::Bazel CUDA single-accelerator tests" >&2
 INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
