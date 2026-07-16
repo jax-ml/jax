@@ -1595,7 +1595,12 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       loaded.store_untiled(output, optimized=False)
       reduced.store_untiled(red_output, optimized=False)
 
-    x = self.prng.uniform(-1, 1, shape).astype(dtype)
+    if dtype == jnp.int32:
+      x = self.prng.integers(-100000, 100000, shape).astype(dtype)
+    elif dtype == jnp.uint32:
+      x = self.prng.integers(0, 1000000, shape).astype(dtype)
+    else:
+      x = self.prng.uniform(-1, 1, shape).astype(dtype)
     red_shape = jax.ShapeDtypeStruct((shape[0],), dtype)
     y, red_y = mgpu.as_gpu_kernel(
         kernel,

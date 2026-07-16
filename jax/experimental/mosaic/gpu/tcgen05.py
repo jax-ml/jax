@@ -955,7 +955,7 @@ def _tmem_load(
     assert reduce in ("max", "min", "absmax", "absmin")
     has_abs = len(reduce) > 3
     if dtype == i32:
-      ptx_dtype = "s32" if has_abs else "u32"
+      ptx_dtype = "u32" if has_abs else "s32"
       red_mod = ""
     elif isinstance(dtype, ir.F32Type):
       ptx_dtype = "f32"
