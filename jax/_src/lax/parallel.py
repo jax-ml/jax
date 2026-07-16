@@ -254,6 +254,9 @@ def pmax(x, axis_name, *, axis_index_groups=None):
   """
   axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
                tuple(axis_name))
+  axis_name = _maybe_skip_one_sized_axes(axis_name)
+  if not axis_name:
+    return x
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
   _validate_reduce_axis_index_groups(axis_index_groups)
@@ -291,6 +294,9 @@ def pmin(x, axis_name, *, axis_index_groups=None):
   """
   axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
                tuple(axis_name))
+  axis_name = _maybe_skip_one_sized_axes(axis_name)
+  if not axis_name:
+    return x
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
   _validate_reduce_axis_index_groups(axis_index_groups)
