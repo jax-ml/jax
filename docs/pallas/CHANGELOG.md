@@ -52,6 +52,14 @@ using Triton, switch to the official Triton bindings and `jax_triton`.
     the behavior for out-of-bounds accesses during pipelined GMEM-to-SMEM
     copies.
 
+* Changes
+
+    * Turned on Warpgroup lowering by default. If this causes regression or
+    breakages, switch back to
+    {data}`jax.experimental.pallas.mosaic_gpu.LoweringSemantics.Lane` in your
+    kernel's {class}`jax.experimental.pallas.mosaic_gpu.CompilerParams` and file
+    a bug.
+
 * Deprecations
 
   * The `idx` parameter of {func}`jax.experimental.pallas.mosaic_gpu.load` is
