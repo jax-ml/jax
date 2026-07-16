@@ -29,7 +29,7 @@ config_setting(
 
 config_setting(
     name = "is_tsan",
-    values = {"copt": "-fsanitize=thread"},
+    values = {"features": "tsan"},
 )
 
 # RBE
