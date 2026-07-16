@@ -21,6 +21,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.pallas import einshape as einshape_lib
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec as block_spec_lib
 from jax._src.pallas.fuser import custom_fusion_lib
@@ -70,6 +71,146 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x),
         x,
     )
+
+  @parameterized.named_parameters(
+      ('transpose', 'ab->ba', (32, 32), (16, 16), {}, (16, 16)),
+      (
+          'bcnt_to_bn_ct',
+          'bcnt->(bn)(ct)',
+          (2, 4, 8, 16),
+          (8, 32),
+          {},
+          (1, 2, 8, 16),
+      ),
+      (
+          'split_dims',
+          '(ab)c->abc',
+          (32, 64),
+          (2, 8, 16),
+          {'a': 4, 'b': 8},
+          (16, 16),
+      ),
+      ('merge_dims', 'abc->(ab)c', (4, 8, 64), (16, 16), {}, (2, 8, 16)),
+      (
+          'split_transpose_merge',
+          'a(bc)->c(ba)',
+          (16, 32),
+          (8, 16),
+          {'b': 4, 'c': 8},
+          (16, 8),
+      ),
+      (
+          'multi_split_merge',
+          '(ab)(cd)->(ac)(bd)',
+          (8, 128),
+          (2, 64),
+          {'a': 2, 'b': 4, 'c': 8, 'd': 16},
+          (4, 32),
+      ),
+  )
+  def test_einshape_in_input_fusion(
+      self, equation, in_shape, out_block_shape, sizes, expected_in_block_shape
+  ):
+    def f(x):
+      return einshape_lib.einshape(equation, x, **sizes)
+
+    in_type = jax.ShapeDtypeStruct(in_shape, jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+
+    out_eval = jax.eval_shape(
+        lambda v: einshape_lib.einshape(equation, v, **sizes), in_type
+    )
+    grid = tuple(s // bs for s, bs in zip(out_eval.shape, out_block_shape))
+
+    block_spec = pl.BlockSpec(
+        block_shape=out_block_shape, index_map=lambda *pids: pids
+    )
+    _, (_, in_block_spec), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=len(grid),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+
+    self.assertEqual(in_block_spec.block_shape, expected_in_block_shape)
+
+  def test_einshape_in_input_fusion_non_contiguous_raises(self):
+    def f(x):
+      return einshape_lib.einshape('(ab)c->abc', x, a=4, b=8)
+
+    in_type = jax.ShapeDtypeStruct((32, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+
+    out_block_shape = (2, 4, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=out_block_shape, index_map=lambda *pids: pids
+    )
+    with self.assertRaisesRegex(
+        NotImplementedError, 'SplitDims slice .* is non-contiguous'
+    ):
+      block_spec_lib.pull_block_spec(
+          f2,
+          block_spec,
+          grid_len=3,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(new_values, in_type)
+
+  def test_einshape_in_input_fusion_unblocked_split(self):
+    def f(x):
+      return einshape_lib.einshape('(ab)c->abc', x, a=4, b=8)
+
+    in_type = jax.ShapeDtypeStruct((32, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    out_block_shape = (None, None, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=out_block_shape, index_map=lambda *pids: pids
+    )
+    _, (_, in_block_spec), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=1,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+
+    self.assertEqual(in_block_spec.block_shape, (None, 16))
+
+  def test_einshape_in_input_fusion_partial_unblocked_split(self):
+    def f(x):
+      return einshape_lib.einshape('(ab)c->abc', x, a=4, b=8)
+
+    in_type = jax.ShapeDtypeStruct((32, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    out_block_shape = (None, 8, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=out_block_shape, index_map=lambda *pids: pids
+    )
+    _, (_, in_block_spec), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid_len=1,
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values, in_type)
+
+    self.assertEqual(in_block_spec.block_shape, (32, 16))
+
+  def test_einshape_in_input_fusion_invalid_merge_block_size(self):
+    def f(x):
+      return einshape_lib.einshape('abc->(ab)c', x)
+
+    in_type = jax.ShapeDtypeStruct((4, 8, 64), jnp.float32)
+    f2, new_values, _ = block_spec_lib.get_fusion_values(f, in_type)
+    out_block_shape = (64, 16)
+    block_spec = pl.BlockSpec(
+        block_shape=out_block_shape, index_map=lambda *pids: pids
+    )
+    with self.assertRaises(NotImplementedError):
+      block_spec_lib.pull_block_spec(
+          f2,
+          block_spec,
+          grid_len=1,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(new_values, in_type)
+
 
   def test_const(self):
 

@@ -1208,6 +1208,73 @@ class FusibleMatmulTest(jtu.JaxTestCase):
         atol=0.4,
     )
 
+  @parameterized.named_parameters(
+      ('transpose', 'ab->ba', (512, 512), (128, 128), {}),
+      (
+          'bcnt_to_bn_ct',
+          'bcnt->(bn)(ct)',
+          (2, 4, 128, 128),
+          (128, 128),
+          {},
+      ),
+      (
+          'split_dims',
+          '(ab)c->a(bc)',
+          (128, 128),
+          (1, 128),
+          {'a': 1, 'b': 128},
+      ),
+      ('merge_dims', 'abc->(ab)c', (4, 128, 512), (128, 128), {}),
+      (
+          'split_transpose_merge',
+          'a(bc)->c(ba)',
+          (64, 256),
+          (128, 128),
+          {'b': 2, 'c': 128},
+      ),
+      (
+          'multi_split_merge',
+          '(ab)(cd)->(ac)(bd)',
+          (8, 1024),
+          (2, 512),
+          {'a': 2, 'b': 4, 'c': 8, 'd': 128},
+      ),
+  )
+  def test_einshape_in_input_fusion(
+      self, equation, in_shape, out_block_shape, sizes
+  ):
+    @jax.jit
+    @fuser.fuse
+    def fused_fn(x, w):
+      y = pltpu.einshape(equation, x, **sizes)
+      return fusible_matmul(
+          y, w, bm=out_block_shape[0], bk=out_block_shape[1], bn=128
+      )
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, in_shape, jnp.float32)
+    ref_y = pltpu.einshape(equation, x, **sizes)
+    w = jax.random.normal(k1, (ref_y.shape[1], 128), jnp.float32)
+
+    out = fused_fn(x, w)
+    ref_out = mm_ref(ref_y, w)
+    np.testing.assert_allclose(out, ref_out, atol=0.5, rtol=1e-2)
+
+  def test_einshape_in_input_fusion_non_contiguous_raises(self):
+    @jax.jit
+    @fuser.fuse
+    def fused_fn(x, w):
+      y = pltpu.einshape('(ab)c->a(bc)', x, a=128, b=4)
+      return fusible_matmul(y, w, bm=128, bk=128, bn=128)
+
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    w = jax.random.normal(k1, (2048, 128), jnp.float32)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, 'SplitDims slice .* is non-contiguous'
+    ):
+      fused_fn(x, w)
 
 def dot_ref(x, y, *, bm=128, bk=128, bn=128):
   # Meant to precisely mimic the numerics of the kernel
