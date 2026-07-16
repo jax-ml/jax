@@ -15,9 +15,9 @@ nosearch: true
 ---
 
 (jax-301-cookbook)=
-# The Autodiff Cookbook
+# The Autodiff Cookbook with JVP and VJP
 
-<!--* freshness: { reviewed: '2026-07-10' } *-->
+<!--* freshness: { reviewed: '2026-07-16' } *-->
 
 JAX has a pretty general automatic differentiation system. In this document
 we'll go through a whole bunch of neat autodiff ideas that you can cherry-pick
@@ -570,73 +570,11 @@ y, f_vjp = vjp(f, 4.)
 print(jit(f_vjp)(1.))
 ```
 
-## Splitting the forward and backward passes
-
-`jax.grad` and `jax.vjp` package the forward and backward passes together:
-under a `jax.jit`, they compile into a single program. Usually that's what
-you want. But sometimes it's useful to run the forward and backward passes
-as *separate* compiled functions — say, to interleave the forward and
-backward passes of different microbatches or pipeline stages on a schedule
-of your own, with each function compiled once and reused many times.
-
-You can build this out of `jax.vjp` directly:
-
-```{code-cell}
-import jax
-
-def fwd_and_bwd(f):
-  def fwd(*args):
-    return jax.vjp(f, *args)
-  def bwd(f_vjp, y_bar):
-    return f_vjp(y_bar)
-  return jit(fwd), jit(bwd)
-```
-
-The trick is that the callable returned by `jax.vjp` is itself a pytree: its
-leaves are the residual values saved by the forward pass, and its tree
-structure records the backward-pass computation. So it can be returned out
-of one jit-compiled function and passed into another, like any other data.
-Notice that there's nothing specific to `f` in `bwd` — it's just "apply".
-
-Each of `fwd` and `bwd` compiles once, and we can call them however many
-times and in whatever order we like:
-
-```{code-cell}
-def layer(W, x):
-  return jnp.tanh(x @ W)
-
-fwd, bwd = fwd_and_bwd(layer)
-
-W1, W2 = jnp.ones((3, 3)), 2. * jnp.ones((3, 3))
-x0 = jnp.ones((2, 3))
-
-# forward through two layers, then backward, on our own schedule:
-x1, res1 = fwd(W1, x0)
-x2, res2 = fwd(W2, x1)
-dW2, dx1 = bwd(res2, jnp.ones_like(x2))
-dW1, dx0 = bwd(res1, dx1)
-```
-
-That computes the same gradients that an end-to-end `jax.grad` would:
-
-```{code-cell}
-def two_layers(W1, W2, x):
-  return jnp.sum(layer(W2, layer(W1, x)))
-
-dW1_ref, dW2_ref = grad(two_layers, argnums=(0, 1))(W1, W2, x0)
-print(jnp.allclose(dW1, dW1_ref), jnp.allclose(dW2, dW2_ref))
-```
-
-JAX also provides this pattern prepackaged as `jax.fwd_and_bwd`, with an
-`argnums` argument selecting which inputs to produce cotangents for:
-
-```{code-cell}
-fwd, bwd = jax.fwd_and_bwd(layer, argnums=(0, 1))
-
-y, residuals = fwd(W1, x0)
-dW1, dx0 = bwd(residuals, jnp.ones_like(y))
-print(dW1.shape, dx0.shape)
-```
+In fact, the callable returned by `jax.vjp` is a first-class value in its
+own right — a pytree whose leaves are the saved residuals — which you can
+use to split the forward and backward passes into separately compiled
+functions, schedule them yourself, and control what gets saved. That's the
+subject of {doc}`vjp-objects`.
 
 ## Complex numbers and differentiation
 
