@@ -133,7 +133,7 @@ class CompilerParams:
   profile_space: int = 0
   profile_dir: str = ""
   profile_trace_scope: TraceScope = TraceScope.WARPGROUP
-  lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane
+  lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
 
   def __post_init__(self):
     if self.dimension_semantics is not None:
