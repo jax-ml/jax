@@ -2219,12 +2219,14 @@ def getu(aval, kind=UnreducedKind.sum):
   if aval.sharding.mesh.are_all_axes_manual:
     out_u = aval.mat.unreduced
     if out_u:
-      assert aval.mat.unreduced_kind is kind, (out_u, kind)
+      if (aval_k := aval.mat.unreduced_kind) is not kind:
+        raise ValueError(f'Expected unreduced_kind={kind} but got {aval_k}')
     return out_u
   if aval.sharding.mesh.are_all_axes_explicit:
     out_u = aval.sharding.spec.unreduced
     if out_u:
-      assert aval.sharding.spec.unreduced_kind is kind, (out_u, kind)
+      if (aval_k := aval.sharding.spec.unreduced_kind) is not kind:
+        raise ValueError(f'Expected unreduced_kind={kind} but got {aval_k}')
     return out_u
   # Revise this after partial manual unreduced is supported
   assert not aval.mat.unreduced
@@ -2247,8 +2249,8 @@ def _make_lengths_same(sharding, ndim):
     return sharding.update(spec=pspec._normalized_spec_for_aval(ndim))
   if ndim < len(pspec):
     assert all(s is None for s in pspec.partitions[ndim:]), (ndim, pspec)
-    return sharding.update(spec=P(*pspec.partitions[:ndim],
-                                  unreduced=pspec.unreduced, reduced=pspec.reduced))
+    return sharding.update(spec=sharding.spec.update(
+        partitions=pspec.partitions[:ndim]))
   assert False, "unreachable"
 
 def modify_spec_for_auto_manual(spec, mesh) -> P:
@@ -2266,7 +2268,9 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
                    if mesh._name_to_type[u] == AxisType.Explicit}
   new_reduced = {u for u in spec.reduced
                  if mesh._name_to_type[u] == AxisType.Explicit}
-  return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced)
+  u_kind = spec.unreduced_kind if new_unreduced else None
+  return P(*new_spec, unreduced=new_unreduced, reduced=new_reduced,
+           unreduced_kind=u_kind)
 
 
 def _maybe_modify_sharding(sharding, ndim):
@@ -2350,7 +2354,9 @@ def get_mat(mat, mesh):
                         if in_axis_env(i) or mesh.shape[i] != 1)
     unreduced = frozenset(u for u in mat.unreduced if mesh.shape[u] != 1)
     reduced = frozenset(r for r in mat.reduced if mesh.shape[r] != 1)
-    return mat.update(varying=varying, unreduced=unreduced, reduced=reduced)
+    u_kind = mat.unreduced_kind if unreduced else None
+    return mat.update(varying=varying, unreduced=unreduced, reduced=reduced,
+                      unreduced_kind=u_kind)
   return mat
 
 
@@ -2392,6 +2398,10 @@ class ManualAxisType:
     assert not (varying & unreduced & reduced)
     if unreduced and unreduced_kind is None:
       unreduced_kind = UnreducedKind.sum
+    if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
+      raise TypeError(
+          "Expected unreduced_kind to be of type `jax.sharding.UnreducedKind`"
+          f" but got {type(unreduced_kind)}")
     if not unreduced and unreduced_kind is not None:
       raise ValueError(
           "`unreduced_kind` should be `None` when `unreduced` is an empty set."
@@ -2596,8 +2606,10 @@ class ShapedArray(AbstractValue):
                 if check_vma else all_names)
     u_names = self.mat.unreduced if check_vma else frozenset()
     r_names = self.mat.reduced if check_vma else frozenset()
-    return (P(sh_names, unreduced=u_names, reduced=r_names) if sh_names else
-            P(unreduced=u_names, reduced=r_names))
+    u_kind = self.mat.unreduced_kind if check_vma else None
+    return (P(sh_names, unreduced=u_names, reduced=r_names, unreduced_kind=u_kind)
+            if sh_names else
+            P(unreduced=u_names, reduced=r_names, unreduced_kind=u_kind))
 
   _bool    = concretization_function_error(bool)
   _int     = concretization_function_error(int, True)
@@ -2635,7 +2647,8 @@ def str_short_aval(shape, dtype, mesh, spec, mat, memory_space,
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({_axis_types_dict(mesh)})' if mesh_axis_types else ''
-  vma_ur = _vma_ur_str(mat, spec.unreduced, spec.reduced, mesh)
+  vma_ur = _vma_ur_str(mat, spec.unreduced, spec.reduced, spec.unreduced_kind,
+                       mesh)
   ms_str = ("" if memory_space == MemorySpace.Device else
             f"<{memory_space.name.lower()}>")
   return f'{dt_str}{ms_str}[{shapestr}]{vma_ur}{mesh_axes}'
@@ -2648,7 +2661,7 @@ def _create_str(x, prefix):
 def order_wrt_mesh(mesh, x):
   return tuple(a for a in mesh.axis_names if a in x)
 
-def _vma_ur_str(mat, spec_unreduced, spec_reduced, mesh):
+def _vma_ur_str(mat, spec_unreduced, spec_reduced, u_kind, mesh):
   vma = mat.varying
   # TODO(yashkatariya): Diff between explicit unreduced and manual unreduced
   unreduced = mat.unreduced | spec_unreduced
@@ -2656,9 +2669,13 @@ def _vma_ur_str(mat, spec_unreduced, spec_reduced, mesh):
   if not vma and not unreduced and not reduced:
     return ''
   vma_str = _create_str(order_wrt_mesh(mesh, vma), 'V') if vma else ''
-  ur_str = _create_str(order_wrt_mesh(mesh, unreduced), 'U') if unreduced else ''
-  red_str = _create_str(order_wrt_mesh(mesh, reduced), 'R') if reduced else ''
-  m_str = f"{vma_str}{ur_str}{red_str}".rstrip(', ')
+  u_str = ''
+  if unreduced:
+    u_prefix = ('U' if u_kind is None or u_kind is UnreducedKind.sum else
+                f'U_{u_kind.name}')
+    u_str = _create_str(order_wrt_mesh(mesh, unreduced), u_prefix)
+  r_str = _create_str(order_wrt_mesh(mesh, reduced), 'R') if reduced else ''
+  m_str = f"{vma_str}{u_str}{r_str}".rstrip(', ')
   return f"{{{m_str}}}"
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
@@ -2722,8 +2739,11 @@ def check_unreduced_args(args, axes, name, kind=UnreducedKind.sum):
       raise ValueError(
           f"{name} cannot accept args which are unreduced. Got"
           f" {a.str_short(True)} and axes={axes}")
-    if a.mat.unreduced:
-      assert a.mat.unreduced_kind is kind
+    if a.mat.unreduced and a.mat.unreduced_kind is not kind:
+      raise ValueError(
+          f"{name} cannot accept args with"
+          f" unreduced_kind={a.mat.unreduced_kind}. Expected"
+          f" unreduced_kind={kind}")
     if a.mat.reduced & axes:
       raise ValueError(
           f"{name} cannot accept args which are reduced. Got"

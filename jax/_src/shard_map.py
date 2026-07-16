@@ -430,7 +430,7 @@ def _manual_spec(manual_axes, spec: P, mesh) -> P:
     else:
       out.append(s if s in manual_axes else None)
   _check_unreduced(SpecErrorType.input, mesh, manual_axes, spec)
-  return P(*out, unreduced=spec.unreduced, reduced=spec.reduced)
+  return spec.update(partitions=tuple(out))
 
 
 # Error checking and messages
@@ -853,6 +853,11 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
         f"in_specs containing unreduced {spec} passed to shard_map should be"
         " equal to the unreduced present on the in_aval"
         f" {aval.str_short(True)}")
+  if spec.unreduced_kind is not aval.sharding.spec.unreduced_kind:
+    raise ValueError(
+        f"in_specs containing unreduced_kind {spec} passed to shard_map should"
+        " be equal to the unreduced_kind present on the in_aval"
+        f" {aval.str_short(True)}")
   if spec.reduced != aval.sharding.spec.reduced:
     raise ValueError(
         f"in_specs containing reduced {spec} passed to shard_map should be"
@@ -867,7 +872,9 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
   vma = (_spec_to_vma(spec) if check_vma else frozenset()) | aval.mat.varying
   unreduced = aval.sharding.spec.unreduced if check_vma else frozenset()
   reduced = aval.sharding.spec.reduced if check_vma else frozenset()
-  mat = core.ManualAxisType(varying=vma, unreduced=unreduced, reduced=reduced)
+  u_kind = aval.sharding.spec.unreduced_kind if check_vma else None
+  mat = core.ManualAxisType(varying=vma, unreduced=unreduced, reduced=reduced,
+                            unreduced_kind=u_kind)
   return aval.update(shape=new_shape, sharding=new_sharding,
                      manual_axis_type=mat)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
@@ -880,6 +887,11 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
         "out_specs passed to shard_map should be equal to the unreduced"
         f" present on the out_aval. Got out_specs={spec} and"
         f" out_aval={aval.str_short(True)}")
+  if check_vma and spec.unreduced_kind is not aval.mat.unreduced_kind:
+    raise ValueError(
+        "out_specs passed to shard_map should be equal to the unreduced_kind"
+        f" present on the out_aval. Got out_specs={spec} and"
+        f" out_aval={aval.str_short(True)}")
   if check_vma and spec.reduced != aval.mat.reduced:
     raise ValueError(
         "out_specs passed to shard_map should be equal to the reduced present"
@@ -890,7 +902,8 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
                     for i, sz in enumerate(aval.shape))
   names_spec = spec._normalized_spec_for_aval(aval.ndim).partitions
   if aval.ndim == 0:
-    out_spec = P(unreduced=spec.unreduced, reduced=spec.reduced)
+    out_spec = P(unreduced=spec.unreduced, reduced=spec.reduced,
+                 unreduced_kind=spec.unreduced_kind)
   else:
     out_spec = []
     for name_s, aval_s in zip(names_spec, aval.sharding.spec.partitions):
@@ -905,8 +918,7 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
         name_s = name_s if isinstance(name_s, tuple) else (name_s,)
         aval_s = aval_s if isinstance(aval_s, tuple) else (aval_s,)
         out_spec.append(name_s + aval_s)
-    out_spec = PartitionSpec(*out_spec, unreduced=spec.unreduced,
-                             reduced=spec.reduced)
+    out_spec = spec.update(partitions=tuple(out_spec))
   new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
@@ -1193,11 +1205,12 @@ def _spec_to_vma(spec):
 
 def _mat_to_spec(mesh, mat):
   return P(order_wrt_mesh(mesh, mat.varying), unreduced=mat.unreduced,
-           reduced=mat.reduced)
+           reduced=mat.reduced, unreduced_kind=mat.unreduced_kind)
 
 def _spec_to_mat(spec) -> core.ManualAxisType:
   return core.ManualAxisType(varying=_spec_to_vma(spec),
-                             unreduced=spec.unreduced, reduced=spec.reduced)
+                             unreduced=spec.unreduced, reduced=spec.reduced,
+                             unreduced_kind=spec.unreduced_kind)
 
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_specs,
                     check_vma, newly_manual_axes, debug_info):
@@ -1283,7 +1296,7 @@ def _unmatch(mesh, check_vma, in_spec, manual_axes, x):
   if check_vma:
     used_axes = _spec_to_vma(in_spec)
     dst = P(order_wrt_mesh(mesh, used_axes), unreduced=in_spec.unreduced,
-            reduced=in_spec.reduced)
+            reduced=in_spec.reduced, unreduced_kind=in_spec.unreduced_kind)
   else:
     dst = P(mesh.axis_names)
     check_vma = False

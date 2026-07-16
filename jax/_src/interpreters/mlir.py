@@ -1818,8 +1818,7 @@ def lower_jaxpr_to_fun(
          for l, a, types in zip(result_layouts, output_avals, output_types)])
 
   # Populate arg_attrs
-  if (
-      replicated_args is not None
+  if (replicated_args is not None
       or ir_arg_shardings is not None
       or ir_arg_memory_kinds is not None
       or ir_arg_layouts is not None
@@ -1828,8 +1827,7 @@ def lower_jaxpr_to_fun(
       or arg_names is not None
       or num_tokens > 0
       or num_dim_vars > 0
-      or num_const_args > 0
-  ):
+      or num_const_args > 0):
     arg_attrs: list[dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
 

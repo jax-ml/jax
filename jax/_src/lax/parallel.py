@@ -57,6 +57,12 @@ unsafe_zip, zip = zip, safe_zip
 
 ### parallel traceables
 
+def check_unreduced_kind(name, mat, kind):
+  if mat.unreduced_kind is not kind:
+    raise ValueError(
+        f"{name} cannot accept args with unreduced_kind={mat.unreduced_kind}."
+        f" Expected unreduced_kind={kind}")
+
 def psum(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
 
@@ -2558,7 +2564,7 @@ def _all_gather_reduced_effectful_abstract_eval(
     new_shape.insert(all_gather_dimension, axis_size)
 
   if x_aval.mat.unreduced:
-    assert x_aval.mat.unreduced_kind is UnreducedKind.sum
+    check_unreduced_kind('all_gather_reduced', x_aval.mat, UnreducedKind.sum)
   new_reduced = x_aval.mat.reduced | frozenset(axis_name)
   out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, reduced=new_reduced)
@@ -2657,7 +2663,7 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
                        f"{axis_size}")
     del new_shape[scatter_dimension]
 
-  assert x_aval.mat.unreduced_kind is UnreducedKind.sum
+  check_unreduced_kind('unreduced_psum_scatter', x_aval.mat, UnreducedKind.sum)
   out_unreduced = frozenset(i for i in x_aval.mat.unreduced
                             if i not in axis_name)
   out_vma = x_aval.mat.varying | set(axis_name)
@@ -2732,7 +2738,7 @@ def _unreduced_psum_abstract_eval(aval, *, axes):
                      f' Got axis_name={axes}')
 
   core.check_avals_context_mesh([aval], 'unreduced_psum')
-  assert aval.mat.unreduced_kind is UnreducedKind.sum
+  check_unreduced_kind('unreduced_psum', aval.mat, UnreducedKind.sum)
   out_u = frozenset(u for u in aval.mat.unreduced if u not in axes)
   kind = UnreducedKind.sum if out_u else None
   out_mat = aval.mat.update(unreduced=out_u, unreduced_kind=kind)
@@ -2787,7 +2793,7 @@ def _preduced_abstract_eval(aval, *, axes):
         "preduced input cannot be reduced across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
   if aval.mat.unreduced:
-    assert aval.mat.unreduced_kind is UnreducedKind.sum
+    check_unreduced_kind('preduced', aval.mat, UnreducedKind.sum)
   return aval.update(manual_axis_type=aval.mat.update(
       reduced=aval.mat.reduced | frozenset(axes)))
 preduced_p.def_abstract_eval(_preduced_abstract_eval)
@@ -2883,7 +2889,7 @@ def _reduced_vary_cast_abstract_eval(aval, *, axes):
         "reduced_vary_cast input cannot be varying across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
   if aval.mat.unreduced:
-    assert aval.mat.unreduced_kind is UnreducedKind.sum
+    check_unreduced_kind('reduced_vary_cast', aval.mat, UnreducedKind.sum)
 
   new_reduced = frozenset(i for i in aval.mat.reduced if i not in axes)
   out_vma = aval.mat.varying | frozenset(axes)

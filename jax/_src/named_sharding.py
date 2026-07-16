@@ -372,7 +372,9 @@ class SdyArray:
            if self.replicated_axes else '')
     ur = (f', unreduced_axes={self.unreduced_axes}'
           if self.unreduced_axes else '')
-    return f"SdyArray([{dim_sharding_repr}]{device_id_repr}{rar}{ur})"
+    red_op = (f', reduction_op={self.reduction_op}'
+              if self.reduction_op is not None else '')
+    return f"SdyArray([{dim_sharding_repr}]{device_id_repr}{rar}{ur}{red_op})"
 
 
 def remove_size_one_mesh_axis(spec, mesh) -> PartitionSpec:
@@ -386,7 +388,9 @@ def remove_size_one_mesh_axis(spec, mesh) -> PartitionSpec:
       new_spec.append(None if mesh.shape[s] == 1 else s)
   unreduced = frozenset(u for u in spec.unreduced if mesh.shape[u] != 1)
   reduced = frozenset(r for r in spec.reduced if mesh.shape[r] != 1)
-  return PartitionSpec(*new_spec, unreduced=unreduced, reduced=reduced)
+  u_kind = spec.unreduced_kind if unreduced else None
+  return PartitionSpec(*new_spec, unreduced=unreduced, reduced=reduced,
+                       unreduced_kind=u_kind)
 
 
 def get_non_one_sized_mesh_spec(mesh, spec):

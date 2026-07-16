@@ -3293,7 +3293,9 @@ def _reduce_sum_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
 
 
 @register_lowering_rule(lax.reduce_max_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
+                                 out_sharding):
+  del out_sharding
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MAXIMUMF
@@ -3310,7 +3312,9 @@ def _reduce_max_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
 
 
 @register_lowering_rule(lax.reduce_min_p, mgpu.LoweringSemantics.Warpgroup)
-def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes):
+def _reduce_min_lowering_rule_wg(ctx: LoweringRuleContext, x, *, axes,
+                                 out_sharding):
+  del out_sharding
   [x_aval] = ctx.avals_in
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = vector_dialect.CombiningKind.MINIMUMF

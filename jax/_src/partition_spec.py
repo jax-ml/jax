@@ -133,6 +133,10 @@ class P:
       reduced = frozenset(reduced)
     if unreduced and unreduced_kind is None:
       unreduced_kind = UnreducedKind.sum
+    if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
+      raise TypeError(
+          "Expected unreduced_kind to be of type `jax.sharding.UnreducedKind`"
+          f" but got {type(unreduced_kind)}")
     return P._create(partitions, unreduced, reduced, unreduced_kind)  # type: ignore
 
   # No __eq__ or __hash__: interned classes use object identity.

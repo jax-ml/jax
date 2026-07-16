@@ -3392,7 +3392,8 @@ def reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
   """
   return reduce_prod_p.bind(operand, axes=tuple(axes))
 
-def reduce_max(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_max(operand: ArrayLike, axes: Sequence[int], *,
+               out_sharding=None) -> Array:
   """Compute the maximum of elements over one or more array axes.
 
   Args:
@@ -3411,9 +3412,11 @@ def reduce_max(operand: ArrayLike, axes: Sequence[int]) -> Array:
       :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_min`,
       :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
   """
-  return reduce_max_p.bind(operand, axes=tuple(axes))
+  out_sharding = canonicalize_sharding(out_sharding, 'reduce_max')
+  return reduce_max_p.bind(operand, axes=tuple(axes), out_sharding=out_sharding)
 
-def reduce_min(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_min(operand: ArrayLike, axes: Sequence[int], *,
+               out_sharding=None) -> Array:
   """Compute the minimum of elements over one or more array axes.
 
   Args:
@@ -3432,7 +3435,8 @@ def reduce_min(operand: ArrayLike, axes: Sequence[int]) -> Array:
       :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
       :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
   """
-  return reduce_min_p.bind(operand, axes=tuple(axes))
+  out_sharding = canonicalize_sharding(out_sharding, 'reduce_min')
+  return reduce_min_p.bind(operand, axes=tuple(axes), out_sharding=out_sharding)
 
 def reduce_or(operand: ArrayLike, axes: Sequence[int]) -> Array:
   """Compute the bitwise OR of elements over one or more array axes.
@@ -8455,7 +8459,7 @@ def _reduce_op_shape_rule(operand, *, axes, **_):
   axes = frozenset(axes)
   return tuple(d for i, d in enumerate(operand.shape) if i not in axes)
 
-def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
+def _reduce_op_sharding_rule_with_out_sharding(operand, *, axes, out_sharding):
   if out_sharding is not None:
     assert isinstance(out_sharding, NamedSharding)
     return out_sharding
@@ -8464,8 +8468,12 @@ def _reduce_sum_sharding_rule(operand, *, axes, out_sharding):
                       if i not in axes))
   return operand.sharding.update(spec=new_spec)
 
-def _reduce_sum_unreduced_rule(operand, axes, out_sharding):
+def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
   if out_sharding is not None and out_sharding.spec.unreduced:  # explicit mode
+    if out_sharding.spec.unreduced_kind is not out_kind:
+      raise core.ShardingTypeError(
+          f"{name} requires `out_sharding`'s unreduced_kind to be {out_kind}"
+          f' but got {out_sharding.spec}')
     axes = frozenset(axes)
     used_spec = frozenset(
         s for i, spec in enumerate(operand.sharding.spec.partitions)
@@ -8474,19 +8482,17 @@ def _reduce_sum_unreduced_rule(operand, axes, out_sharding):
     if not all(u in used_spec for u in out_sharding.spec.unreduced):
       raise core.ShardingTypeError(
           "out_sharding's unreduced axes should be in operand's specs that"
-          f' were summed over. Got {operand=}, {axes=},'
+          f' were {name} over. Got {operand=}, {axes=},'
           f' unreduced_spec={out_sharding.spec.unreduced}')
     out_u = out_sharding.spec.unreduced
-    if out_u and out_sharding.spec.unreduced_kind is not UnreducedKind.sum:
-      raise ValueError(
-          '`out_sharding` passed to `reduce_sum` can only contain'
-          f' unreduced of kind `sum`. Got {out_sharding=}')
   else:
+    # TODO(yashkatariya): For max/min, do getu(operand, out_kind) and add tests
     out_u = getu(operand)
-  return out_u, UnreducedKind.sum if out_u else None
+  return out_u, out_kind if out_u else None
 
 def _reduce_sum_ur_rule(operand, *, axes, out_sharding):
-  out_unreduced, kind = _reduce_sum_unreduced_rule(operand, axes, out_sharding)
+  out_unreduced, kind = _reduce_op_unreduced_rule(
+      operand, axes, out_sharding, UnreducedKind.sum, 'reduce_sum')
   return out_unreduced, getr(operand), kind
 
 def _reduce_sum_dtype_rule(operand, *, axes, **_):
@@ -8500,7 +8506,7 @@ def _reduce_sum_dtype_rule(operand, *, axes, **_):
 
 reduce_sum_p = standard_primitive(
   _reduce_op_shape_rule, _reduce_sum_dtype_rule,
-  'reduce_sum', sharding_rule=_reduce_sum_sharding_rule,
+  'reduce_sum', sharding_rule=_reduce_op_sharding_rule_with_out_sharding,
   vma_rule=partial(core.standard_vma_rule, 'reduce_sum'),
   ur_rule=_reduce_sum_ur_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
@@ -8525,7 +8531,7 @@ reduce_prod_p = standard_primitive(
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p)
 
-def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
+def _reduce_chooser_jvp_rule(g, ans, operand, *, axes, out_sharding):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
   # locations in a single pass (rather than comparing equality) and use a
   # gather, and/or even push along the chosen elements of g (b/112040122)
@@ -8535,19 +8541,34 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   counts = reduce_sum(location_indicators, axes)
   return div(reduce_sum(mul(g, location_indicators), axes), counts)
 
+def _reduce_max_ur_rule(operand, *, axes, out_sharding):
+  out_unreduced, kind = _reduce_op_unreduced_rule(
+      operand, axes, out_sharding, UnreducedKind.max, 'reduce_max')
+  if getr(operand):
+    raise NotImplementedError
+  return out_unreduced, frozenset(), kind
 
 reduce_max_p = standard_primitive(
     _reduce_op_shape_rule, input_dtype, 'reduce_max',
-    sharding_rule=_reduce_op_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'reduce_max'))
+    sharding_rule=_reduce_op_sharding_rule_with_out_sharding,
+    vma_rule=partial(core.standard_vma_rule, 'reduce_max'),
+    ur_rule=_reduce_max_ur_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p)
 
 
+def _reduce_min_ur_rule(operand, *, axes, out_sharding):
+  out_unreduced, kind = _reduce_op_unreduced_rule(
+      operand, axes, out_sharding, UnreducedKind.min, 'reduce_min')
+  if getr(operand):
+    raise NotImplementedError
+  return out_unreduced, frozenset(), kind
+
 reduce_min_p = standard_primitive(
     _reduce_op_shape_rule, input_dtype, 'reduce_min',
-    sharding_rule=_reduce_op_sharding_rule,
-    vma_rule=partial(core.standard_vma_rule, 'reduce_min'))
+    sharding_rule=_reduce_op_sharding_rule_with_out_sharding,
+    vma_rule=partial(core.standard_vma_rule, 'reduce_min'),
+    ur_rule=_reduce_min_ur_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p)
 

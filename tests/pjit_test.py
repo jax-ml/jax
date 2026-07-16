@@ -68,7 +68,7 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
-from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_client as xc, ifrt_version
 from jax._src.util import curry, unzip2
 from jax._src import tree_util
 
@@ -9384,7 +9384,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         "out_sharding's unreduced axes should be in operand's specs that were"
-        ' summed over'):
+        ' reduce_sum over'):
       g(arr)
 
     # Case 2
@@ -11485,6 +11485,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     for s, ex_s in zip(out.addressable_shards, [np.arange(4), np.zeros((4,))]):
       self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
 
+    with self.assertRaises(NotImplementedError):
+      jax.device_put(arr, P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
+
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_one_hot_out_sharding(self, mesh):
     np_inp = np.arange(4).reshape(2, 2)
@@ -11536,6 +11539,193 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "`out_sharding` passed to `dot_general`"):
       jnp.dot(x, y,
               out_sharding=P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
+
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, jax.lax.pmax,
+       UnreducedKind.max, [np.array([2, 3]), np.array([6, 7])]),
+      ('min', jax.lax.reduce_min, jnp.min, jax.lax.pmin,
+       UnreducedKind.min, [np.array([0, 1]), np.array([4, 5])]),
+  ])
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reduce_max_min_unreduced_basic(self, lax_op, jnp_op, p_op, u_kind,
+                                          unreduced_vals, mesh):
+    if ifrt_version < 59:
+      self.skipTest('Requires ifrt_version >= 59')
+    if not jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest("Requires libtpu 0.0.45 or newer.")
+
+    np_inp = np.arange(8.).reshape(4, 2)
+    arr = jax.device_put(np_inp, P('x', None))
+    out_spec = P(None, unreduced={'x'}, unreduced_kind=u_kind)
+
+    @jax.jit
+    def f(x):
+      out = lax_op(x, axes=(0,), out_sharding=out_spec)
+      self.assertEqual(out.aval.sharding.spec, out_spec)
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+
+    for s, ex_s in zip(out.addressable_shards, unreduced_vals):
+      self.assertEqual(s.data.shape, (2,))
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+
+    reshard_out = jax.sharding.reshard(out, P())
+    self.assertArraysEqual(reshard_out, jnp_op(arr, axis=(0,)))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P())
+    def psum(x):
+      return jax.lax.psum(x, 'x')
+
+    with self.assertRaisesRegex(
+        ValueError, "unreduced_psum cannot accept args with unreduced_kind"):
+      psum(out)
+
+  @parameterized.named_parameters([
+      ('max', jax.lax.reduce_max, jnp.max, UnreducedKind.max),
+      ('min', jax.lax.reduce_min, jnp.min, UnreducedKind.min)
+  ])
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduce_max_min_unreduced_complex(self, lax_op, jnp_op, u_kind, mesh):
+    if ifrt_version < 59:
+      self.skipTest('Requires ifrt_version >= 59')
+    if not jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest("Requires libtpu 0.0.45 or newer.")
+
+    np_inp = np.arange(16).reshape(4, 2, 2)
+    arr = jax.device_put(np_inp, P('x', 'y', None))
+    out_spec = P(None, unreduced={'x'}, unreduced_kind=u_kind)
+
+    @jax.jit
+    def f(x):
+      out = lax_op(x, axes=(0, 1), out_sharding=out_spec)
+      self.assertEqual(out.aval.sharding.spec, out_spec)
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
+    for s in out.addressable_shards:
+      self.assertEqual(s.data.shape, (2,))
+
+    reshard_out = jax.sharding.reshard(out, P(None))
+    self.assertArraysEqual(reshard_out, jnp_op(arr, axis=(0, 1)))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_reduce_max_unreduced_partial_reduction(self, mesh):
+    if ifrt_version < 59:
+      self.skipTest('Requires ifrt_version >= 59')
+    if not jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest("Requires libtpu 0.0.45 or newer.")
+
+    arr = jax.device_put(np.arange(8).reshape(4, 2), P('x', 'y'))
+
+    @jax.jit
+    def f(x):
+      y = jax.lax.reduce_max(
+          x, axes=[0, 1],
+          out_sharding=P(unreduced={'x', 'y'}, unreduced_kind=UnreducedKind.max))
+      return jax.reshard(y, P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
+
+    out = f(arr)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(unreduced={'x'},
+                                           unreduced_kind=UnreducedKind.max)))
+    for s, ex_s in zip(out.addressable_shards,
+                       [np.array(3), np.array(3), np.array(7), np.array(7)]):
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+    self.assertArraysEqual(reshard(out, P()), jnp.max(arr, axis=(0, 1)))
+
+    ############################################################################
+    @jax.jit
+    def f2(x):
+      y = jax.lax.reduce_max(
+          x, axes=[0, 1],
+          out_sharding=P(unreduced={'x', 'y'}, unreduced_kind=UnreducedKind.max))
+      return jax.reshard(y, P(unreduced={'x'}))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'The unreduced_kind of input and output sharding passed to'
+        ' `jax.reshard` should be the same'):
+      f2(arr)
+
+    ###########################################################################
+    @jax.jit
+    def g(x):
+      y = jax.lax.reduce_max(
+          x, axes=[0], out_sharding=P('y', unreduced={'x'},
+                                      unreduced_kind=UnreducedKind.max))
+      return y
+
+    out = g(arr)
+    for s, ex_s in zip(out.addressable_shards,
+                       [np.array([2]), np.array([3]),
+                        np.array([6]), np.array([7])]):
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+
+    resharded_out = reshard(out, P('y'))
+    for s, ex_s in zip(resharded_out.addressable_shards,
+                       [np.array([6]), np.array([7]),
+                        np.array([6]), np.array([7])]):
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+    self.assertArraysEqual(resharded_out, jnp.max(arr, axis=(0,)))
+
+    ############################################################################
+    @jax.jit
+    def h(x):
+      y = jax.lax.reduce_max(
+          x, axes=[1], out_sharding=P('x', unreduced={'y'},
+                                      unreduced_kind=UnreducedKind.max))
+      return y
+
+    out = h(arr)
+    for s, ex_s in zip(out.addressable_shards,
+                       [np.array([0, 2]), np.array([1, 3]),
+                        np.array([4, 6]), np.array([5, 7])]):
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+
+    resharded_out = reshard(out, P('x'))
+    for s, ex_s in zip(resharded_out.addressable_shards,
+                       [np.array([1, 3]), np.array([1, 3]),
+                        np.array([5, 7]), np.array([5, 7])]):
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+    self.assertArraysEqual(resharded_out, jnp.max(arr, axis=(1,)))
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_reduce_max_unreduced_reduce_scatter(self, mesh):
+    if ifrt_version < 59:
+      self.skipTest('Requires ifrt_version >= 59')
+    if not jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest("Requires libtpu 0.0.45 or newer.")
+
+    arr = jax.device_put(np.arange(8).reshape(4, 2), P('x'))
+
+    @jax.jit
+    def f(x):
+      y = jax.lax.reduce_max(
+          x, axes=[0],
+          out_sharding=P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
+      return jax.reshard(y, P('x'))
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    for s, ex_s in zip(out.addressable_shards, [np.array([6]), np.array([7])]):
+      self.assertArraysEqual(s.data, ex_s, check_dtypes=False)
+    self.assertArraysEqual(out, jnp.max(arr, axis=(0,)))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reshard_unreduced_max_error(self, mesh):
+    arr = jnp.arange(8)
+    with self.assertRaisesRegex(
+        ValueError, "out_sharding.*cannot be more unreduced than the input"):
+      jax.reshard(arr, P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
+
+    arr2 = jax.device_put(np.arange(8), P('x'))
+    with self.assertRaisesRegex(
+        ValueError, "out_sharding.*cannot be more unreduced than the input"):
+      jax.reshard(arr2, P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

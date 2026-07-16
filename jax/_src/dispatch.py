@@ -48,7 +48,7 @@ from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnreducedKind
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, make_single_device_sharding, GSPMDSharding)
@@ -456,6 +456,8 @@ def _device_put_sharding_impl(
       return x
 
     if isinstance(s, NamedSharding) and s.spec.unreduced:
+      if s.spec.unreduced_kind != UnreducedKind.sum:
+        raise NotImplementedError
       norm = lambda p: p._normalized_spec_for_aval(x.ndim)
       if (xb.process_count() == 1 and x_is_jax_array and
           isinstance(x_sharding, NamedSharding) and
