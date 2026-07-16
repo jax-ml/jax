@@ -162,35 +162,17 @@ def _parse_equation(equation: str) -> tuple[list[list[str]], list[list[str]]]:
   return _parse_side(lhs_str), _parse_side(rhs_str)
 
 
-def get_einshape_transforms(
-    equation: str,
-    input_shape: tuple[int, ...],
-    **sizes: int,
-) -> list[Transform]:
-  """Parses an einshape equation into a sequence of transforms.
-
-  Args:
-    equation: String of the form "ab(cd)->cabd".
-    input_shape: The shape of the input array.
-    **sizes: Integer sizes for dimensions that are split and cannot be inferred.
-
-  Returns:
-    A list of Split, Transpose, and Merge transforms.
-  """
-  lhs, rhs = _parse_equation(equation)
-
-  # Validate LHS against input shape
-  if len(lhs) != len(input_shape):
-    raise ValueError(
-        f"Equation LHS has {len(lhs)} groups but input has {len(input_shape)}"
-        f" dims. LHS: {lhs}, Input shape: {input_shape}"
-    )
-
+def _get_einshape_dims(
+    parsed_side: list[list[str]],
+    shape: tuple[int, ...],
+    sizes: dict[str, int],
+) -> dict[str, int]:
+  """Parses an einshape equation into a dictionary of dimension sizes."""
   dim_sizes: dict[str, int] = {}
 
   # Populate known sizes from input
-  for i, group in enumerate(lhs):
-    shape_val = input_shape[i]
+  for i, group in enumerate(parsed_side):
+    shape_val = shape[i]
     if len(group) == 1:
       name = group[0]
       if name in dim_sizes and dim_sizes[name] != shape_val:
@@ -229,6 +211,34 @@ def get_einshape_transforms(
             f"Ambiguous split for {group} with size {shape_val}. Unknowns:"
             f" {unknown_dims}. Provide sizes via kwargs."
         )
+  return dim_sizes
+
+
+def get_einshape_transforms(
+    equation: str,
+    input_shape: tuple[int, ...],
+    **sizes: int,
+) -> list[Transform]:
+  """Parses an einshape equation into a sequence of transforms.
+
+  Args:
+    equation: String of the form "ab(cd)->cabd".
+    input_shape: The shape of the input array.
+    **sizes: Integer sizes for dimensions that are split and cannot be inferred.
+
+  Returns:
+    A list of Split, Transpose, and Merge transforms.
+  """
+  lhs, rhs = _parse_equation(equation)
+
+  # Validate LHS against input shape
+  if len(lhs) != len(input_shape):
+    raise ValueError(
+        f"Equation LHS has {len(lhs)} groups but input has {len(input_shape)}"
+        f" dims. LHS: {lhs}, Input shape: {input_shape}"
+    )
+
+  dim_sizes = _get_einshape_dims(lhs, input_shape, sizes)
 
   # Check if all RHS dims are known
   flat_rhs = [name for group in rhs for name in group]
@@ -381,6 +391,24 @@ class Einshape(hijax.VJPHiPrimitive):
         assert_is_tile_preserving=assert_is_tile_preserving,
     )
     super().__init__()
+
+  def vjp_fwd(self, nzs_in, /, *args):
+    del nzs_in
+    return self(*args), None
+
+  def vjp_bwd_retval(self, res, outgrad, /):
+    del res
+    lhs, rhs = self.equation.split("->")
+    new_sizes = dict(self.sizes.items())
+    new_sizes |= _get_einshape_dims(
+        _parse_side(lhs), self.in_avals[0].shape, new_sizes)
+    out = einshape(
+        f"{rhs}->{lhs}",
+        outgrad,
+        assert_is_tile_preserving=self.assert_is_tile_preserving,
+        **new_sizes
+    )
+    return (out,)
 
   def expand(self, x: jax_typing.Array) -> jax_typing.Array:  # pyrefly: ignore[bad-override]
     return einshape_lo(
