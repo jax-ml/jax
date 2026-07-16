@@ -1566,6 +1566,59 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     )(x)
     np.testing.assert_array_equal(x, y)
 
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.int32],
+      reduction=["min", "max", "absmin", "absmax"],
+  )
+  def test_load_reduce_tmem_native(self, dtype, reduction):
+    if not (
+        jtu.is_cuda_compute_capability_at_least("10.1")
+        and not jtu.is_cuda_compute_capability_at_least("12.0")
+    ):
+      self.skipTest("Requires compute capability between 10.1 or 12.0")
+    if not jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("Requires CUDA version 13.0 or higher")
+    shape = (128, 128)
+    if "abs" in reduction and dtype == jnp.int32:
+      reduction = reduction[-3:]
+      dtype = jnp.uint32
+
+    def kernel(ctx, input_, output, red_output, tmem):
+      del ctx
+      reg_layout = tcgen05.tmem_default_layout(1).as_tiled_layout()
+      input_arr = fa.FragmentedArray.load_untiled(
+          input_, layout=reg_layout, optimized=False, is_signed=utils.is_signed(dtype)
+      )
+      tmem.store(input_arr)
+      tcgen05.commit_tmem()
+      loaded, reduced = tmem.load(tcgen05.TMEM_NATIVE_LAYOUT, reduce=reduction, is_signed=utils.is_signed(dtype))
+      loaded.store_untiled(output, optimized=False)
+      reduced.store_untiled(red_output, optimized=False)
+
+    x = self.prng.uniform(-1, 1, shape).astype(dtype)
+    red_shape = jax.ShapeDtypeStruct((shape[0],), dtype)
+    y, red_y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        (x, red_shape),
+        mgpu.TMEM(shape, dtype),
+    )(x)
+    np.testing.assert_array_equal(y, x)
+    match reduction:
+      case "min":
+        expected = np.min(x, axis=1)
+      case "max":
+        expected = np.max(x, axis=1)
+      case "absmin":
+        expected = np.min(np.abs(x), axis=1)
+      case "absmax":
+        expected = np.max(np.abs(x), axis=1)
+      case _:
+        raise ValueError(f"Unsupported reduction: {reduction}")
+    np.testing.assert_array_equal(red_y, expected)
+
   @parameterized.parameters(
       tcgen05.scales_layout(),
       tcgen05.b_scales_m64_collective_layout(),
