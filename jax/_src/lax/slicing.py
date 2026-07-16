@@ -45,7 +45,7 @@ from jax._src.lax.utils import (_argnum_weak_type, input_dtype,
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.named_sharding import NamedSharding
-from jax._src.partition_spec import PartitionSpec as P
+from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.typing import Array, ArrayLike, Shape
 from jax._src.state.indexing import ds
 from jax._src.util import safe_map, safe_zip
@@ -1406,7 +1406,9 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
   return operand.sharding
 
 def _slice_ur_rule(operand, *, start_indices, limit_indices, strides):
-  return core.getu(operand), core.getr(operand)
+  out_unreduced = core.getu(operand)
+  kind = UnreducedKind.sum if out_unreduced else None
+  return out_unreduced, core.getr(operand), kind
 
 def _slice_sharding_rule(operand, *, start_indices, limit_indices, strides):
   # TODO(yashkatariya): Once JAX supports uneven sharding at the top level,
@@ -1527,7 +1529,7 @@ def _dynamic_slice_ur_rule(operand, *starts_and_dyn_sizes, slice_sizes):
     raise NotImplementedError(
         'unreduced rule for dynamic_slice is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
-  return frozenset(), core.getr(operand)
+  return frozenset(), core.getr(operand), None
 
 def _dynamic_slice_dtype_rule(operand, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [operand.ndim])
@@ -1670,7 +1672,8 @@ def _dus_unreduced_rule(operand, update):
         " same axes. Got operand sharding"
         f" {operand.str_short(mesh_axis_types=True)} and update sharding"
         f" {update.str_short(mesh_axis_types=True)}.")
-  return core.getu(operand)
+  out_u = core.getu(operand)
+  return out_u, UnreducedKind.sum if out_u else None
 
 def _dus_reduced_rule(operand, update):
   if core.getr(operand) != core.getr(update):
@@ -1682,7 +1685,8 @@ def _dus_reduced_rule(operand, update):
   return core.getr(operand)
 
 def _dynamic_update_slice_ur_rule(operand, update, *start_indices):
-  return _dus_unreduced_rule(operand, update), _dus_reduced_rule(operand, update)
+  out_u, kind = _dus_unreduced_rule(operand, update)
+  return out_u, _dus_reduced_rule(operand, update), kind
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
   lax.check_same_dtypes("dynamic_update_slice", operand, update)

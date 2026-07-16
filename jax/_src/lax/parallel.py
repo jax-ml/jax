@@ -30,8 +30,9 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import tree_util
+from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
-                                     NamedSharding, PartitionSpec as P)
+                                     NamedSharding)
 from jax._src.core import AxisName, ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -2556,6 +2557,8 @@ def _all_gather_reduced_effectful_abstract_eval(
   else:
     new_shape.insert(all_gather_dimension, axis_size)
 
+  if x_aval.mat.unreduced:
+    assert x_aval.mat.unreduced_kind is UnreducedKind.sum
   new_reduced = x_aval.mat.reduced | frozenset(axis_name)
   out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, reduced=new_reduced)
@@ -2610,11 +2613,8 @@ def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False,
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
-    prim = (
-        unreduced_reduce_scatter_start_p
-        if is_async
-        else unreduced_reduce_scatter_p
-    )
+    prim = (unreduced_reduce_scatter_start_p if is_async else
+            unreduced_reduce_scatter_p)
     return prim.bind(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_size=axis_size, tiled=tiled)
@@ -2657,10 +2657,13 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
                        f"{axis_size}")
     del new_shape[scatter_dimension]
 
+  assert x_aval.mat.unreduced_kind is UnreducedKind.sum
   out_unreduced = frozenset(i for i in x_aval.mat.unreduced
                             if i not in axis_name)
   out_vma = x_aval.mat.varying | set(axis_name)
-  out_mat = x_aval.mat.update(varying=out_vma, unreduced=out_unreduced)
+  kind = UnreducedKind.sum if out_unreduced else None
+  out_mat = x_aval.mat.update(varying=out_vma, unreduced=out_unreduced,
+                              unreduced_kind=kind)
   return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
           {*map(core.NamedAxisEffect, axis_name)})
 unreduced_reduce_scatter_p.def_effectful_abstract_eval(
@@ -2729,8 +2732,10 @@ def _unreduced_psum_abstract_eval(aval, *, axes):
                      f' Got axis_name={axes}')
 
   core.check_avals_context_mesh([aval], 'unreduced_psum')
-  out_mat = aval.mat.update(unreduced=frozenset(u for u in aval.mat.unreduced
-                                                if u not in axes))
+  assert aval.mat.unreduced_kind is UnreducedKind.sum
+  out_u = frozenset(u for u in aval.mat.unreduced if u not in axes)
+  kind = UnreducedKind.sum if out_u else None
+  out_mat = aval.mat.update(unreduced=out_u, unreduced_kind=kind)
   out_aval = aval.update(manual_axis_type=out_mat)
   return out_aval, {core.NamedAxisEffect(axis) for axis in axes}
 unreduced_psum_p.def_effectful_abstract_eval(_unreduced_psum_abstract_eval)
@@ -2781,6 +2786,8 @@ def _preduced_abstract_eval(aval, *, axes):
     raise ValueError(
         "preduced input cannot be reduced across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
+  if aval.mat.unreduced:
+    assert aval.mat.unreduced_kind is UnreducedKind.sum
   return aval.update(manual_axis_type=aval.mat.update(
       reduced=aval.mat.reduced | frozenset(axes)))
 preduced_p.def_abstract_eval(_preduced_abstract_eval)
@@ -2875,6 +2882,8 @@ def _reduced_vary_cast_abstract_eval(aval, *, axes):
     raise ValueError(
         "reduced_vary_cast input cannot be varying across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
+  if aval.mat.unreduced:
+    assert aval.mat.unreduced_kind is UnreducedKind.sum
 
   new_reduced = frozenset(i for i in aval.mat.reduced if i not in axes)
   out_vma = aval.mat.varying | frozenset(axes)

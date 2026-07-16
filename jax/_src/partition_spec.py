@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from __future__ import annotations
+import enum
 from typing import Any
 
 from jax._src.util import weak_value_interner, immutable
@@ -20,7 +21,7 @@ from jax._src.lib import _jax
 
 AxisName = Any
 
-def _check(partitions, unreduced, reduced):
+def _check(partitions, unreduced, reduced, unreduced_kind):
   if not reduced and not unreduced:
     return
   if None in unreduced:
@@ -35,6 +36,10 @@ def _check(partitions, unreduced, reduced):
     raise ValueError(
         "`unreduced` and `reduced` argument to PartitionSpec cannot overlap. "
         f"Got unreduced: {unreduced} and reduced: {reduced}")
+  if not unreduced and unreduced_kind is not None:
+    raise ValueError(
+        "`unreduced_kind` should be `None` when `unreduced` is an empty set."
+        f" Got {unreduced_kind=} and {unreduced=}")
 
   for partition in partitions:
     partition = partition if isinstance(partition, tuple) else (partition,)
@@ -71,6 +76,13 @@ class UnconstrainedSingleton:
 _UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
 _jax.set_pspec_unconstrained(_UNCONSTRAINED_PARTITION)  # type: ignore
 
+
+class UnreducedKind(enum.Enum):
+  sum = enum.auto()
+  max = enum.auto()
+  min = enum.auto()
+
+
 @immutable
 class P:
   """Tuple describing how to partition an array across a mesh of devices.
@@ -81,27 +93,31 @@ class P:
   This class exists so JAX's pytree utilities can distinguish a partition
   specifications from tuples that should be treated as pytrees.
   """
-  __slots__ = ("_partitions", "unreduced", "reduced", "__weakref__")
+  __slots__ = ("_partitions", "unreduced", "reduced", "unreduced_kind",
+               "__weakref__")
   _partitions: tuple[AxisName]
   unreduced: frozenset[AxisName]
   reduced: frozenset[AxisName]
+  unreduced_kind: UnreducedKind | None
 
   # A sentinel value representing a dim is unconstrained.
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
   @staticmethod
   @weak_value_interner
-  def _create(partitions, unreduced, reduced):
+  def _create(partitions, unreduced, reduced, unreduced_kind):
     # We cannot modify the arguments within the interned function, but we are
     # free to throw an exception.
-    _check(partitions, unreduced, reduced)
+    _check(partitions, unreduced, reduced, unreduced_kind)
     obj = object.__new__(P)
     object.__setattr__(obj, '_partitions', partitions)
     object.__setattr__(obj, 'unreduced', unreduced)
     object.__setattr__(obj, 'reduced', reduced)
+    object.__setattr__(obj, 'unreduced_kind', unreduced_kind)
     return obj
 
-  def __new__(cls, *partitions, unreduced=frozenset(), reduced=frozenset()):
+  def __new__(cls, *partitions, unreduced=frozenset(), reduced=frozenset(),
+              unreduced_kind=None):
     partitions = _canonicalize_partitions(partitions)
     if not isinstance(unreduced, frozenset):
       if not isinstance(unreduced, set):
@@ -115,7 +131,9 @@ class P:
             f"reduced argument of PartitionSpec should "
             f"of type `frozenset` or `set`. Got type {reduced}")
       reduced = frozenset(reduced)
-    return P._create(partitions, unreduced, reduced)  # type: ignore
+    if unreduced and unreduced_kind is None:
+      unreduced_kind = UnreducedKind.sum
+    return P._create(partitions, unreduced, reduced, unreduced_kind)  # type: ignore
 
   # No __eq__ or __hash__: interned classes use object identity.
 
@@ -132,11 +150,14 @@ class P:
       return f"P({pr})"
     ur_str = _get_ur_str(self.unreduced, self.reduced)
     pr = '' if not pr else f"{pr} " if pr.endswith(',') else f"{pr}, "
-    return (f"P({pr}{ur_str})")
+    uk = (f", unreduced_kind={self.unreduced_kind.name}" if self.unreduced_kind
+          else "")
+    return f"P({pr}{ur_str}{uk})"
 
   def __getnewargs_ex__(self):
     return (self._partitions,
-            {'unreduced': self.unreduced, 'reduced': self.reduced})
+            {'unreduced': self.unreduced, 'reduced': self.reduced,
+             'unreduced_kind': self.unreduced_kind})
 
   def __getitem__(self, i):
     if self.reduced or self.unreduced:
@@ -157,9 +178,14 @@ class P:
 
   def __add__(self, other):
     if isinstance(other, P):
+      if self.unreduced_kind != other.unreduced_kind:
+        raise TypeError(
+            "PartitionSpec can't be added if the unreduced_kind differs in self"
+            f" and other. Got {self=} and {other=}")
       return P(*self.partitions, *other.partitions,
                unreduced={*self.unreduced, *other.unreduced},
-               reduced={*self.reduced, *other.reduced})
+               reduced={*self.reduced, *other.reduced},
+               unreduced_kind=self.unreduced_kind)
     elif isinstance(other, tuple):
       if self.unreduced:
         raise TypeError(
@@ -193,11 +219,13 @@ class P:
   def count(self, value):
     return self._partitions.count(_canonicalize_partition(value))
 
-  def update(self, partitions=None, unreduced=None, reduced=None):
+  def update(self, partitions=None, unreduced=None, reduced=None, **kwargs):
     p = self._partitions if partitions is None else partitions
     ur = self.unreduced if unreduced is None else unreduced
     r = self.reduced if reduced is None else reduced
-    return P(*p, unreduced=ur, reduced=r)
+    if 'unreduced_kind' not in kwargs:
+      kwargs['unreduced_kind'] = self.unreduced_kind
+    return P(*p, unreduced=ur, reduced=r, **kwargs)
 
   def to_lo(self):
     return [self]
@@ -206,7 +234,10 @@ class P:
     return self
 
   def to_ct_spec(self):
-    return self.update(unreduced=self.reduced, reduced=self.unreduced)
+    assert self.unreduced_kind is None or self.unreduced_kind is UnreducedKind.sum
+    kind = UnreducedKind.sum if self.reduced else None
+    return self.update(unreduced=self.reduced, reduced=self.unreduced,
+                       unreduced_kind=kind)
 
   def _normalized_spec_for_aval(self, ndim: int) -> P:
     out = [None if p is _UNCONSTRAINED_PARTITION else p

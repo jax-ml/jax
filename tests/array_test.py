@@ -1444,11 +1444,11 @@ class ShardingTest(jtu.JaxTestCase):
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
     self.assertEqual(
         repr(pspec),
-        "P('a', 'b', None, unreduced={'c'}, reduced={'d'})")
+        "P('a', 'b', None, unreduced={'c'}, reduced={'d'}, unreduced_kind=sum)")
 
     pspec1 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(repr(pspec1),
-                     "P('a', 'b', None, unreduced={'c'})")
+                     "P('a', 'b', None, unreduced={'c'}, unreduced_kind=sum)")
 
     pspec2 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(pspec1, pspec2)
@@ -1461,17 +1461,17 @@ class ShardingTest(jtu.JaxTestCase):
 
     pspec4 = P('x', unreduced={'y'})
     self.assertEqual(repr(pspec4),
-                     "P('x', unreduced={'y'})")
+                     "P('x', unreduced={'y'}, unreduced_kind=sum)")
 
     pspec5 = P(None, None, unreduced={'x'})
     self.assertEqual(repr(pspec5),
-                     "P(None, None, unreduced={'x'})")
+                     "P(None, None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec6 = P(None, unreduced={'x'})
-    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'})")
+    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec7 = P(unreduced={'x'})
-    self.assertEqual(repr(pspec7), "P(unreduced={'x'})")
+    self.assertEqual(repr(pspec7), "P(unreduced={'x'}, unreduced_kind=sum)")
 
     with self.assertRaisesRegex(
         TypeError, 'unreduced in `__add__` of PartitionSpec'):

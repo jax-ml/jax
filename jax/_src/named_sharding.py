@@ -25,9 +25,10 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnreducedKind
 from jax._src import sharding as jsharding
 import numpy as np
+from jax._src.lib import jaxlib_extension_version
 
 Shape = tuple[int, ...]
 Device = xc.Device
@@ -325,6 +326,7 @@ class SdyArray:
   logical_device_ids: tuple[int, ...] | None = None
   replicated_axes: frozenset[str] = frozenset()
   unreduced_axes: frozenset[str] = frozenset()
+  reduction_op: Any = None
 
   replace = dataclasses.replace
 
@@ -345,11 +347,19 @@ class SdyArray:
 
     replicated_axes = _get_axes(self.replicated_axes, self.mesh_shape)
     unreduced_axes = _get_axes(self.unreduced_axes, self.mesh_shape)
-    attr = sdy.TensorShardingAttr.get(
-        mesh_attr,
-        [dim_sharding.build() for dim_sharding in self.dim_shardings],
-        replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes],
-        unreduced_axes=[sdy.AxisRefAttr.get(axis) for axis in unreduced_axes])
+    if jaxlib_extension_version >= 477:
+      attr = sdy.TensorShardingAttr.get(
+          mesh_attr,
+          [dim_sharding.build() for dim_sharding in self.dim_shardings],
+          replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes],
+          unreduced_axes=[sdy.AxisRefAttr.get(axis) for axis in unreduced_axes],
+          reduction_op=self.reduction_op)  # type: ignore
+    else:
+      attr = sdy.TensorShardingAttr.get(
+          mesh_attr,
+          [dim_sharding.build() for dim_sharding in self.dim_shardings],
+          replicated_axes=[sdy.AxisRefAttr.get(axis) for axis in replicated_axes],
+          unreduced_axes=[sdy.AxisRefAttr.get(axis) for axis in unreduced_axes])
     attr_cache[self] = attr
     return attr
 
@@ -462,6 +472,11 @@ def named_sharding_to_xla_hlo_sharding(
         .reshape(dims).reshape(reshape_dims).transpose(mesh_permutation)
         .reshape(dims), subgroup_types=last_tile_dims)
 
+if jaxlib_extension_version >= 477:
+  uk_map = {UnreducedKind.sum: sdy.ReductionOp.SUM,
+            UnreducedKind.max: sdy.ReductionOp.MAX,
+            UnreducedKind.min: sdy.ReductionOp.MIN}
+
 
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_sdy_sharding(self, num_dimensions: int,
@@ -484,11 +499,16 @@ def named_sharding_to_sdy_sharding(self, num_dimensions: int,
         r for r in self.replicated_axes
         if self.mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
 
+  if jaxlib_extension_version >= 477:
+    reduction_op = uk_map.get(self.spec.unreduced_kind, None)
+  else:
+    reduction_op = None
   return SdyArray(mesh_shape=self.mesh.shape_tuple,
                   dim_shardings=tuple(dim_shardings),
                   logical_device_ids=self._logical_device_ids,
                   replicated_axes=explicit_replicated_axes,
-                  unreduced_axes=self.spec.unreduced)
+                  unreduced_axes=self.spec.unreduced,
+                  reduction_op=reduction_op)
 
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):

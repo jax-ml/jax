@@ -86,8 +86,8 @@ def call_ur_rule(prim, ur_rule, out_s, num_out, *avals, **kwargs):
     raise NotImplementedError(
         f'unreduced/reduced rule for {prim.name} is not implemented. Please'
         ' file an issue at https://github.com/jax-ml/jax/issues')
-  return ((frozenset(), frozenset()) if num_out is None else
-          ([frozenset()] * num_out, [frozenset()] * num_out))
+  return ((frozenset(), frozenset(), None) if num_out is None else
+          ([frozenset()] * num_out, [frozenset()] * num_out, [None] * num_out))
 
 def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
   cur_mesh = mesh_lib.get_abstract_mesh()
@@ -104,11 +104,12 @@ def call_sharding_rule(prim, sh_rule, ur_rule, num_out, *avals, **kwargs):
         ' this error by dropping that operation into full auto sharding'
         ' mode via: `jax.sharding.auto_axes(fun, out_shardings=...)`')
   out_s = sh_rule(*avals, **kwargs)
-  unreduced, reduced = call_ur_rule(prim, ur_rule, out_s, num_out, *avals,
-                                    **kwargs)
-  up = lambda sh, u, r: sh.update(spec=sh.spec.update(unreduced=u, reduced=r))
-  return (up(out_s, unreduced, reduced) if num_out is None else
-          [up(s, u, r) for s, u, r in zip(out_s, unreduced, reduced)])
+  unreduced, reduced, u_kind = call_ur_rule(
+      prim, ur_rule, out_s, num_out, *avals, **kwargs)
+  up = lambda sh, u, r, k: sh.update(spec=sh.spec.update(unreduced=u, reduced=r,
+                                                         unreduced_kind=k))
+  return (up(out_s, unreduced, reduced, u_kind) if num_out is None else
+          [up(s, u, r, k) for s, u, r, k in zip(out_s, unreduced, reduced, u_kind)])
 
 def call_shape_dtype_sharding_rule(
     prim, shape_rule, dtype_rule, sharding_rule, ur_rule, multi_out, *avals,
@@ -158,19 +159,19 @@ def manual_rule(prim, vma_rule, ur_rule, multi_out, *avals, **kwargs):
   num_out = len(out_vma) if multi_out else None
   if mesh_lib.get_abstract_mesh().are_all_axes_manual:
     out_s = None if num_out is None else [None] * num_out
-    out_unreduced, out_reduced = call_ur_rule(
+    out_unreduced, out_reduced, u_kind = call_ur_rule(
         prim, ur_rule, out_s, num_out, *avals, **kwargs)
   else:
     # TODO(yashkatariya): Handle partial manual unreduced/reduced.
-    out_unreduced, out_reduced = (
-        (frozenset(), frozenset()) if num_out is None else
-        ([frozenset()] * num_out, [frozenset()] * num_out))
+    out_unreduced, out_reduced, u_kind = (
+        (frozenset(), frozenset(), None) if num_out is None else
+        ([frozenset()] * num_out, [frozenset()] * num_out, [None] * num_out))
   if num_out is None:
     return core.ManualAxisType(varying=out_vma, unreduced=out_unreduced,
-                               reduced=out_reduced)
+                               reduced=out_reduced, unreduced_kind=u_kind)  # type: ignore
   else:
-    return [core.ManualAxisType(varying=v, unreduced=u, reduced=r)
-            for v, u, r in zip(out_vma, out_unreduced, out_reduced)]
+    return [core.ManualAxisType(varying=v, unreduced=u, reduced=r, unreduced_kind=k)
+            for v, u, r, k in zip(out_vma, out_unreduced, out_reduced, u_kind)]  # type: ignore
 
 
 def standard_abstract_eval(

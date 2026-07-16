@@ -42,7 +42,7 @@ from jax._src import effects
 from jax._src.frozen_dict import FrozenDict
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
-from jax._src.partition_spec import PartitionSpec as P
+from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -2215,11 +2215,17 @@ def get_cur_mesh_sharding(spec=None):
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
-def getu(aval):
+def getu(aval, kind=UnreducedKind.sum):
   if aval.sharding.mesh.are_all_axes_manual:
-    return aval.mat.unreduced
+    out_u = aval.mat.unreduced
+    if out_u:
+      assert aval.mat.unreduced_kind is kind, (out_u, kind)
+    return out_u
   if aval.sharding.mesh.are_all_axes_explicit:
-    return aval.sharding.spec.unreduced
+    out_u = aval.sharding.spec.unreduced
+    if out_u:
+      assert aval.sharding.spec.unreduced_kind is kind, (out_u, kind)
+    return out_u
   # Revise this after partial manual unreduced is supported
   assert not aval.mat.unreduced
   assert not aval.sharding.spec.unreduced
@@ -2355,23 +2361,26 @@ def get_memory_space(memory_space):
 
 @immutable
 class ManualAxisType:
-  __slots__ = ('varying', 'unreduced', 'reduced', '__weakref__')
+  __slots__ = ('varying', 'unreduced', 'reduced', 'unreduced_kind',
+               '__weakref__')
 
   varying: frozenset
   unreduced: frozenset
   reduced: frozenset
+  unreduced_kind: UnreducedKind | None
 
   @staticmethod
   @weak_value_interner
-  def _create(varying, unreduced, reduced):
+  def _create(varying, unreduced, reduced, unreduced_kind):
     obj = object.__new__(ManualAxisType)
     object.__setattr__(obj, 'varying', varying)
     object.__setattr__(obj, 'unreduced', unreduced)
     object.__setattr__(obj, 'reduced', reduced)
+    object.__setattr__(obj, 'unreduced_kind', unreduced_kind)
     return obj
 
   def __new__(cls, *, varying=frozenset(), unreduced=frozenset(),
-              reduced=frozenset()):
+              reduced=frozenset(), unreduced_kind: UnreducedKind | None = None):
     if varying & unreduced:
       raise ValueError(
           "varying and unreduced cannot have common mesh axes. Got"
@@ -2381,18 +2390,25 @@ class ManualAxisType:
           "varying and reduced cannot have common mesh axes. Got"
           f" varying={varying} and reduced={reduced}")
     assert not (varying & unreduced & reduced)
+    if unreduced and unreduced_kind is None:
+      unreduced_kind = UnreducedKind.sum
+    if not unreduced and unreduced_kind is not None:
+      raise ValueError(
+          "`unreduced_kind` should be `None` when `unreduced` is an empty set."
+          f" Got {unreduced_kind=} and {unreduced=}")
     return cls._create(frozenset(varying), frozenset(unreduced),
-                       frozenset(reduced))
+                       frozenset(reduced), unreduced_kind)
 
   # No __eq__ or __hash__: interned classes use object identity.
 
   def __repr__(self):
     return (f"ManualAxisType(varying={self.varying}, "
-            f"unreduced={self.unreduced}, reduced={self.reduced})")
+            f"unreduced={self.unreduced}, reduced={self.reduced}), "
+            f"unreduced_kind={self.unreduced_kind}")
 
   def __getnewargs_ex__(self):
     return (), {'varying': self.varying, 'unreduced': self.unreduced,
-                'reduced': self.reduced}
+                'reduced': self.reduced, 'unreduced_kind': self.unreduced_kind}
 
   def update(self, **kwargs):
     if 'varying' not in kwargs:
@@ -2401,10 +2417,15 @@ class ManualAxisType:
       kwargs['unreduced'] = self.unreduced
     if 'reduced' not in kwargs:
       kwargs['reduced'] = self.reduced
+    if 'unreduced_kind' not in kwargs:
+      kwargs['unreduced_kind'] = self.unreduced_kind
     return ManualAxisType(**kwargs)
 
   def to_ct_mat(self):
-    return self.update(unreduced=self.reduced, reduced=self.unreduced)
+    assert self.unreduced_kind is None or self.unreduced_kind is UnreducedKind.sum
+    kind = UnreducedKind.sum if self.reduced else None
+    return self.update(unreduced=self.reduced, reduced=self.unreduced,
+                       unreduced_kind=kind)
 
   @property
   def empty(self):
@@ -2693,7 +2714,7 @@ reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
 
 #######################################################################
 
-def check_unreduced_args(args, axes, name):
+def check_unreduced_args(args, axes, name, kind=UnreducedKind.sum):
   axes = axes if isinstance(axes, (tuple, list)) else (axes,)
   axes = set(axes)
   for a in args:
@@ -2701,6 +2722,8 @@ def check_unreduced_args(args, axes, name):
       raise ValueError(
           f"{name} cannot accept args which are unreduced. Got"
           f" {a.str_short(True)} and axes={axes}")
+    if a.mat.unreduced:
+      assert a.mat.unreduced_kind is kind
     if a.mat.reduced & axes:
       raise ValueError(
           f"{name} cannot accept args which are reduced. Got"

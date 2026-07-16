@@ -48,7 +48,7 @@ from jax._src.random import prng
 from jax._src.random import threefry2x32
 from jax._src.random import rbg
 from jax.sharding import (PartitionSpec as P, Mesh, auto_axes, explicit_axes,
-                          AbstractDevice)
+                          AbstractDevice, UnreducedKind)
 from jax.experimental import multihost_utils
 from jax._src.shard_map import shard_map, top_level_all_gather
 from jax._src.compilation_cache import is_persistent_cache_enabled
@@ -11525,6 +11525,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_dot_unreduced_max_error(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    x = jax.device_put(np_inp, P(None, 'x'))
+    y = jax.device_put(np_inp.T, P('x', None))
+
+    with self.assertRaisesRegex(
+        ValueError, "`out_sharding` passed to `dot_general`"):
+      jnp.dot(x, y,
+              out_sharding=P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
