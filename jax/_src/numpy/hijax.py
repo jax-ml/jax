@@ -187,9 +187,12 @@ class Nonzero(VJPHiPrimitive):
       size: int,
       axes: tuple[int, ...],
       out_dtype: np.dtype):
-    size = operator.index(size)
-    if size < 0:
-      raise ValueError(f"size must be a positive integer; got {size=}")
+    if core.is_symbolic_dim(size):
+      pass
+    else:
+      size = operator.index(size)
+      if size < 0:
+        raise ValueError(f"size must be a positive integer; got {size=}")
     if not dtypes.issubdtype(out_dtype, np.integer):
       raise ValueError(f"out_dtype must be integer typed; got {out_dtype=}")
     if not all(0 <= ax < a_aval.ndim for ax in axes):
@@ -238,13 +241,13 @@ class Nonzero(VJPHiPrimitive):
       axis_data: Any,
       args: tuple[Array, ...],
       dims: tuple[int | None, ...]
-  ) -> tuple[tuple[Array, ...], int | tuple[int, ...] | None]:
+  ) -> tuple[tuple[Array, ...], int | None | tuple[int | None, ...]]:
     del axis_data  # unused
     a, *fvs = args
     d_a, *d_fvs = dims
 
     if d_a is None and all(d is None for d in d_fvs):
-      return self(*args), None
+      return self(*args), (None,) * len(self.axes)
 
     # If a is not batched but some fv is, we broadcast a to have the batch dimension.
     if d_a is None:
@@ -317,13 +320,12 @@ def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[i
     return ()
 
   batch_axes = [ax for ax in range(a.ndim) if ax not in axes]
+  batch_shape = tuple(a.shape[ax] for ax in batch_axes)
   if a.size == 0 or size == 0:
-    return tuple(jnp.empty((*batch_axes, size), dtype=out_dtype)
+    return tuple(jnp.empty((*batch_shape, size), dtype=out_dtype)
                  for _ in axes)
 
   transposed_a = jnp.transpose(a, (*batch_axes, *axes))
-
-  batch_shape = transposed_a.shape[:len(batch_axes)]
   sub_shape = transposed_a.shape[len(batch_axes):]
   strides = np.cumprod(sub_shape[::-1])[::-1] // sub_shape
   strides = tuple(strides.tolist())
