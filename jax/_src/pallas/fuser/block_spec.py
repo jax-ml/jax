@@ -1824,6 +1824,47 @@ def _unstack_pull_rule(
   return [new_block_transform]
 
 
+@register_pull_block_spec_rule(lax.split_p)
+def _split_pull_rule(
+    ctx: PullRuleContext,
+    out_block_transforms: tuple[BlockIndexTransform, ...],
+    *,
+    sizes: Sequence[int],
+    axis: int,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  assert all(isinstance(aval, core.ShapedArray) for aval in ctx.avals_out)
+
+  n = sum(sizes)
+  if n != aval_in.shape[axis]:
+    raise NotImplementedError(
+        f'Sum of sizes {n} must be equal to dimension {axis} of the operand '
+        f'shape {list(aval_in.shape)}.'
+    )
+  valid_transforms = [
+      bt for bt in out_block_transforms if bt is not no_block_index_transform
+  ]
+  if not valid_transforms:
+    return [no_block_index_transform]
+
+  block_transform = valid_transforms[0]
+
+  new_block_shape = list(block_transform.block_shape)
+  new_block_shape[axis] = pallas_core.Blocked(n)
+
+  def new_block_index_transform(*idxs):
+    idx = list(block_transform.block_index_transform(*idxs))
+    idx[axis] = 0
+    return tuple(idx)
+
+  new_block_transform = block_transform.replace(
+      block_shape=tuple(new_block_shape),
+      block_index_transform=new_block_index_transform,
+  )
+  return [new_block_transform]
+
+
 @register_usage_rule(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_usage_rule(ctx, used_out: set[Usage], **params):
   del params
@@ -1938,6 +1979,14 @@ def _transpose_pull_rule(
   return [block_transform.replace(
       block_shape=new_shape,
       block_index_transform=new_block_index_transform)]
+
+
+@register_eval_rule(lax.split_p)
+def _split_eval_rule(
+    eval_ctx: KernelEvalContext, x, sizes: Sequence[int], axis: int
+):
+  del eval_ctx
+  return lax.split(x, sizes=sizes, axis=axis)
 
 
 @register_eval_rule(lax.tile_p)
@@ -3140,3 +3189,34 @@ def _unstack_push_rule(
 
   out_block_spec = pallas_core.BlockSpec(tuple(new_block_shape), _new_index_map)
   return [out_block_spec] * n
+
+
+@register_push_block_spec_rule(lax.split_p)
+def _split_push_rule(
+    ctx: PushRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    *,
+    sizes: Sequence[int],
+    axis: int,
+):
+  aval_in = ctx.avals_in[0]
+  assert isinstance(aval_in, core.ShapedArray)
+  block_shape = pallas_core._canonicalize_block_shape(block_spec.block_shape)
+
+  if aval_in.shape[axis] != sum(sizes):
+    raise ValueError(
+        f'Sum of sizes {sum(sizes)} must be equal to dimension {axis} of the '
+        f'operand shape {list(aval_in.shape)}.'
+    )
+  if aval_in.shape[axis] != pallas_core.get_block_size(block_shape[axis]):
+    raise NotImplementedError(
+        f'split over partial blocks not supported yet: {aval_in.shape=},'
+        f' {block_shape=}, {sizes=} {axis=}'
+    )
+
+  return [
+      block_spec.replace(
+          block_shape=(*block_shape[:axis], size, *block_shape[axis + 1:])
+      )
+      for size in sizes
+  ]

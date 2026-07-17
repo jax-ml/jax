@@ -1651,6 +1651,37 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         jax.lax.clamp(l, x, u),
     )
 
+  def test_split_pull(self):
+    sizes = (8, 8, 16)
+    x = jnp.arange(32 * 256, dtype=jnp.float32).reshape((32, 256))
+
+    def f(x):
+      splits = jax.lax.split(x, axis=0, sizes=sizes)
+      return splits[1]
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, x
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((8, 128), lambda i: (0, i))
+    scalar_prefetch_handler = block_spec_lib.make_scalar_prefetch_handler()
+    kernel_fn, (value_block_specs, in_block_spec), _ = (
+        block_spec_lib.pull_block_spec(
+            f2,
+            block_spec,
+            grid_len=1,
+            scalar_prefetch_handler=scalar_prefetch_handler,
+        )(new_values, x)
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertEqual(in_block_spec.block_shape, (pl.Blocked(32), 128))
+    self.assertEqual(in_block_spec.index_map(1), (0, 1))
+    y = x[:, 128:256]
+    out = kernel_fn((1,), scalar_prefetch_values, new_values, y)
+    np.testing.assert_array_equal(out, jax.lax.split(y, axis=0, sizes=sizes)[1])
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 
@@ -2034,6 +2065,19 @@ class PushBlockSpecTest(parameterized.TestCase):
     )(x_type, x_type, x_type)
     self.assertEqual(out_block_spec.block_shape, (128,))
     self.assertEqual(out_block_spec.index_map(0), (0,))
+
+  def test_split_push(self):
+    sizes = (2, 8, 2)
+
+    def f(x):
+      return jax.lax.split(x, axis=0, sizes=sizes)
+
+    x_type = jax.ShapeDtypeStruct((12, 512), jnp.float32)
+    block_spec = pl.BlockSpec((12, 128), lambda i: (0, i))
+    out_block_specs = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    for size, out_block_spec in zip(sizes, out_block_specs):
+      self.assertEqual(out_block_spec.block_shape, (size, pl.Blocked(128)))
+      self.assertEqual(out_block_spec.index_map(1), (0, 1))
 
 
 if __name__ == '__main__':
