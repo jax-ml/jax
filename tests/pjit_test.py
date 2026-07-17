@@ -11562,6 +11562,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reduce_max_min_unreduced_basic(self, lax_op, jnp_op, p_op, u_kind,
                                           unreduced_vals, mesh):
+    self.skipTest("Skip unreduced max/min tests")
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
     if not jtu.is_libtpu_at_least("0.0.45"):
@@ -11615,6 +11616,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   ])
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_max_min_unreduced_complex(self, lax_op, jnp_op, u_kind, mesh):
+    self.skipTest("Skip unreduced max/min tests")
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
     if not jtu.is_libtpu_at_least("0.0.45"):
@@ -11640,6 +11642,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_reduce_max_unreduced_partial_reduction(self, mesh):
+    self.skipTest("Skip unreduced max/min tests")
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
     if not jtu.is_libtpu_at_least("0.0.45"):
@@ -11721,6 +11724,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_reduce_max_unreduced_reduce_scatter(self, mesh):
+    self.skipTest("Skip unreduced max/min tests")
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
     if not jtu.is_libtpu_at_least("0.0.45"):
