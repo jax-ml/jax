@@ -12035,11 +12035,16 @@ class PJitErrorTest(jtu.JaxTestCase):
 class UtilTest(jtu.JaxTestCase):
 
   def testOpShardingRoundTrip(self):
-    FakeDevice = namedtuple('FakeDevice', ['id'])
+    @dataclasses.dataclass(frozen=True)
+    class FakeDevice:
+      id: int
+      platform: str
+      device_kind: str
+
     mesh_named_shape = OrderedDict([('a', 2), ('b', 3), ('c', 4), ('d', 7), ('e', 4)])
     mesh_axes, mesh_shape = unzip2(mesh_named_shape.items())
-    devices = [FakeDevice(i) for i in range(math.prod(mesh_shape))]
-    mesh = pxla.Mesh(np.array(devices).reshape(*mesh_shape), tuple(mesh_axes))
+    devices = [FakeDevice(i, 'cpu', 'cpu') for i in range(math.prod(mesh_shape))]
+    mesh = Mesh(np.array(devices).reshape(*mesh_shape), tuple(mesh_axes))
 
     dims = 5
     aval = core.ShapedArray((len(devices),) * dims, jnp.float32)

@@ -423,13 +423,6 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
         self.axis_sizes, self.axis_names, axis_types=self.axis_types,
         abstract_device=abstract_device)
 
-  @functools.cached_property
-  def _abstract_mesh_no_ad(self):
-    if len(self.axis_names) == 0:
-      return empty_abstract_mesh
-    return AbstractMesh(self.axis_sizes, self.axis_names,
-                        axis_types=self.axis_types)
-
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
@@ -544,10 +537,6 @@ class AbstractMesh(BaseMesh):
   @property
   def abstract_mesh(self):
     return self
-
-  @functools.cached_property
-  def _abstract_mesh_no_ad(self):
-    return self.update(abstract_device=None)
 
   def update_axis_types(self, name_to_type: dict[MeshAxisName, AxisType]):
     new_axis_types = tuple(name_to_type[n] if n in name_to_type else a

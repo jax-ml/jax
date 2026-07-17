@@ -245,9 +245,8 @@ class NamedSharding(jsharding.Sharding):
     return jsharding.common_is_equivalent_to(self, other, ndim)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    # TODO(yashkatariya): Use `self.mesh.abstract_mesh`
     return named_sharding_to_xla_hlo_sharding(
-        self.mesh._abstract_mesh_no_ad, self.spec, self._logical_device_ids,
+        self.mesh.abstract_mesh, self.spec, self._logical_device_ids,
         num_dimensions)
 
   def _to_sdy_sharding(self, num_dimensions: int,
