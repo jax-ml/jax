@@ -22,7 +22,7 @@ import itertools
 import json
 import math
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -5339,6 +5339,30 @@ class PallasHloNamesTest(ptu.PallasTPUTest):
     # The computed operand should have exactly one .x_ref suffix, instead
     # of a repeated suffix like .x_ref.x_ref.
     self.assertRegex(hlo, r'%add[.\d]*\.x_ref[.\d]* = .* add')
+
+  def test_parameter_names_pytree(self):
+    if not jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest('Requires libtpu 0.0.45 or newer')
+
+    class Foo(NamedTuple):
+      bar: dict[str, Any]
+
+    def kernel(foo_ref, o_ref):
+      o_ref[...] = foo_ref.bar['y'][...]
+
+    x = jnp.zeros((8, 128), dtype=jnp.float32)
+
+    @jax.jit
+    def f(x):
+      foo = Foo(bar={'y': x + x})
+      a = self.pallas_call(kernel, out_shape=jax.typeof(x))(foo)
+      b = self.pallas_call(kernel, out_shape=jax.typeof(x))(foo)
+      return a + b
+
+    hlo = f.lower(x).compile().as_text()
+    self.assertRegex(
+        hlo, r'%add[.\d]*\.foo_ref_bar__y__[.\d]* = .* add'
+    )
 
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
