@@ -2104,9 +2104,6 @@ def emit_pipeline(
 
 emit_pipeline_p = core.Primitive("emit_pipeline")
 emit_pipeline_p.multiple_results = True
-# TODO(rdyro): This primitive requires both memory pipeline and core grid
-# information which the caching doesn't support yet.
-_uncacheable_primitives.add(emit_pipeline_p)
 
 @emit_pipeline_p.def_effectful_abstract_eval
 def _emit_pipeline_effectful_abstract_eval(
@@ -2225,6 +2222,40 @@ def _pipeline_body_effectful_abstract_eval(
 # information which the caching doesn't support yet.
 _uncacheable_primitives.add(pipeline_body_p)
 _uncacheable_primitives.add(emit_pipeline_p)
+
+def _emit_pipeline_physicalize_rule(
+    ctx, *args_flat, body_jaxpr: core.Jaxpr, args_tree, grid_mapping, refs_tree,
+    **params
+):
+  from jax._src.pallas.fuser.fusible_dtype import physicalize_closed_jaxpr  # pyrefly: ignore[missing-import]
+  del ctx
+  all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(args_flat)
+  with grid_mapping.trace_env():
+    new_closed = physicalize_closed_jaxpr(
+        core.ClosedJaxpr(body_jaxpr, all_args.body_consts)
+    )
+  new_args = EmitPipelinePrimitiveArgs(
+      all_index_map_consts=all_args.all_index_map_consts,
+      dynamic_grid_spec=all_args.dynamic_grid_spec,
+      core_id=all_args.core_id,
+      body_consts=tuple(new_closed.consts),
+      refs_flat=all_args.refs_flat,
+  )
+  new_args_flat, new_args_tree = tracing_registry.flatten(new_args)
+  return emit_pipeline_p.bind(*new_args_flat,
+                              body_jaxpr=new_closed.jaxpr,
+                              grid_mapping=grid_mapping,
+                              args_tree=new_args_tree,
+                              refs_tree=refs_tree,
+                              **params)
+
+try:
+  from jax._src.pallas.fuser import fusible_dtype  # pyrefly: ignore[missing-import]
+  fusible_dtype._physicalize_rules[emit_pipeline_p] = (
+      _emit_pipeline_physicalize_rule)
+except ImportError:
+  pass
+
 
 @register_lowering_rule(pipeline_body_p, kernel_types=[*tpu_core.CoreType])
 def _pipeline_body_lowering_rule(

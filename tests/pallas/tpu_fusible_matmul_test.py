@@ -21,6 +21,7 @@ from typing import Any
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import fuser
@@ -1503,6 +1504,13 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     )
     out = jax.jit(impl)(x, y)
     self.assertArraysEqual(out, out_ref)
+
+
+class FusibleMatmulPrimitiveTest(FusibleMatmulTest):
+
+  def setUp(self):
+    super().setUp()
+    self.enter_context(config.use_emit_pipeline_primitive(True))
 
 
 if __name__ == '__main__':
