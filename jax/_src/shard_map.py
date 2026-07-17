@@ -46,7 +46,7 @@ from jax._src.sharding_impls import (NamedSharding, PartitionSpec,
                                      canonicalize_sharding)
 from jax._src.util import (HashablePartial, unzip2, partition_list, merge_lists,
                            split_list, subs_list2, fun_name as util_fun_name)
-from jax._src.named_sharding import remove_size_one_mesh_axis
+from jax._src.named_sharding import remove_size_one_mesh_axis_from_spec
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
 from jax._src.lax.eval_jaxpr import eval_jaxpr_p
@@ -291,7 +291,7 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
         arg_aval = typeof(a)
         s = s._normalized_spec_for_aval(arg_aval.ndim)
         if config.remove_size_one_mesh_axis_from_type.value:
-          s = remove_size_one_mesh_axis(s, mesh)
+          s = remove_size_one_mesh_axis_from_spec(s, mesh)
         if arg_aval.sharding.spec != s:
           raise ValueError(
               f"in_specs passed to shard_map: {s} does not match the specs of"
@@ -2161,7 +2161,7 @@ def _top_level_ag(x, aval, out_sh_, multi_dim):
   in_spec = aval.sharding.spec
   out_spec = out_sh.spec._normalized_spec_for_aval(len(in_spec))
   if config.remove_size_one_mesh_axis_from_type.value:
-    out_spec = remove_size_one_mesh_axis(out_spec, out_sh.mesh)
+    out_spec = remove_size_one_mesh_axis_from_spec(out_spec, out_sh.mesh)
 
   def f_shmap(x):
     # Maybe this can just be 1 AG where we gather in a new dim and then do

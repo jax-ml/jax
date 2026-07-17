@@ -2282,7 +2282,7 @@ def _maybe_modify_sharding(sharding, ndim):
     out = sharding.update(spec=modify_spec_for_auto_manual(
         sharding.spec, sharding.mesh))
   if config.remove_size_one_mesh_axis_from_type.value:
-    out = out.update(spec=ns.remove_size_one_mesh_axis(out.spec, out.mesh))
+    out = out.update(spec=ns.remove_size_one_mesh_axis_from_spec(out.spec, out.mesh))
   if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
   return out
