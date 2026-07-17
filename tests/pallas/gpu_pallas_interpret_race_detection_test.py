@@ -25,6 +25,34 @@ import jax.numpy as jnp
 jax.config.parse_flags_with_absl()
 
 
+class WarpSpecializeHelper:
+  """
+  Helper for making multi-threaded kernels generic over whether they're
+  warp-specialized or not.
+  """
+  WARP_AXIS_NAME = 'warp'
+
+  def __init__(self, warp_specialize: bool):
+    self.warp_specialize = warp_specialize
+
+  def thread_count(self, n):
+    if n > 4:
+      raise ValueError(f'A warp only has 4 threads, but got {n}')
+    return 1 if self.warp_specialize else n
+
+  def maybe_warp_specialize(self):
+    if self.warp_specialize:
+      return pl.core_map(plgpu.WarpMesh(axis_name=self.WARP_AXIS_NAME))
+    else:
+      return pl.when(True)
+
+  def axis_index(self, axis_name):
+    if self.warp_specialize:
+      return jax.lax.axis_index(self.WARP_AXIS_NAME)
+    else:
+      return jax.lax.axis_index(axis_name)
+
+
 @jtu.thread_unsafe_test_class()
 class InterpretTest(jtu.JaxTestCase):
 
@@ -129,8 +157,8 @@ class InterpretTest(jtu.JaxTestCase):
       self.assertEqual(out, 42)
     self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
 
-
   @jtu.parameterized.product(
+      warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
       a=[False, True],
       b=[False, True],
       c=[False, True],
@@ -138,7 +166,7 @@ class InterpretTest(jtu.JaxTestCase):
       e=[False, True],
       f=[False, True],
   )
-  def test_finds_races_in_multi_thread_gmem_to_smem_copy(self, a, b, c, d, e, f):
+  def test_finds_races_in_multi_thread_gmem_to_smem_copy(self, warp_specialize, a, b, c, d, e, f):
     @functools.partial(
         plgpu.kernel,
         out_type=jax.ShapeDtypeStruct((), jnp.int32),
@@ -148,27 +176,29 @@ class InterpretTest(jtu.JaxTestCase):
             copy_barrier=plgpu.Barrier(num_arrivals=1),
             ),
         interpret=InterpretParams(detect_races=True),
-        num_threads=2,
+        num_threads=warp_specialize.thread_count(2),
         thread_name='t',
     )
     def _kernel(in_ref, out_ref, smem_ref, thread_barrier, copy_barrier):
-      @pl.when(jax.lax.axis_index('t') == 0)
+      @warp_specialize.maybe_warp_specialize()
       def _():
-        if a: plgpu.commit_smem()
-        smem_ref[...] = 100
-        if b: plgpu.commit_smem()
-        plgpu.copy_gmem_to_smem(in_ref, smem_ref, copy_barrier)
-        if c: plgpu.commit_smem()
-        plgpu.barrier_arrive(thread_barrier)
+        @pl.when(warp_specialize.axis_index('t') == 0)
+        def _():
+          if a: plgpu.commit_smem()
+          smem_ref[...] = 100
+          if b: plgpu.commit_smem()
+          plgpu.copy_gmem_to_smem(in_ref, smem_ref, copy_barrier)
+          if c: plgpu.commit_smem()
+          plgpu.barrier_arrive(thread_barrier)
 
-      @pl.when(jax.lax.axis_index('t') == 1)
-      def _():
-        if d: plgpu.commit_smem()
-        plgpu.barrier_wait(thread_barrier)
-        if e: plgpu.commit_smem()
-        plgpu.barrier_wait(copy_barrier)
-        if f: plgpu.commit_smem()
-        out_ref[...] = smem_ref[...]
+        @pl.when(warp_specialize.axis_index('t') == 1)
+        def _():
+          if d: plgpu.commit_smem()
+          plgpu.barrier_wait(thread_barrier)
+          if e: plgpu.commit_smem()
+          plgpu.barrier_wait(copy_barrier)
+          if f: plgpu.commit_smem()
+          out_ref[...] = smem_ref[...]
 
     correct = b
     out = _kernel(jnp.int32(42))
@@ -177,6 +207,7 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
 
   @jtu.parameterized.product(
+      warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
       a=[False, True],
       b=[False, True],
       c=[False, True],
@@ -184,7 +215,7 @@ class InterpretTest(jtu.JaxTestCase):
       e=[False, True],
       f=[False, True],
   )
-  def test_finds_races_in_cross_thread_gmem_to_smem_copy(self, a, b, c, d, e, f):
+  def test_finds_races_in_cross_thread_gmem_to_smem_copy(self, warp_specialize, a, b, c, d, e, f):
     @functools.partial(
         plgpu.kernel,
         out_type=jax.ShapeDtypeStruct((), jnp.int32),
@@ -194,27 +225,29 @@ class InterpretTest(jtu.JaxTestCase):
             copy_barrier=plgpu.Barrier(num_arrivals=1),
             ),
         interpret=InterpretParams(detect_races=True),
-        num_threads=2,
+        num_threads=warp_specialize.thread_count(2),
         thread_name='t',
     )
     def _kernel(in_ref, out_ref, smem_ref, thread_barrier, copy_barrier):
-      @pl.when(jax.lax.axis_index('t') == 0)
+      @warp_specialize.maybe_warp_specialize()
       def _():
-        if a: plgpu.commit_smem()
-        smem_ref[...] = 100
-        if b: plgpu.commit_smem()
-        plgpu.barrier_arrive(thread_barrier)
+        @pl.when(warp_specialize.axis_index('t') == 0)
+        def _():
+          if a: plgpu.commit_smem()
+          smem_ref[...] = 100
+          if b: plgpu.commit_smem()
+          plgpu.barrier_arrive(thread_barrier)
 
-      @pl.when(jax.lax.axis_index('t') == 1)
-      def _():
-        if c: plgpu.commit_smem()
-        plgpu.barrier_wait(thread_barrier)
-        if d: plgpu.commit_smem()
-        plgpu.copy_gmem_to_smem(in_ref, smem_ref, copy_barrier)
-        if e: plgpu.commit_smem()
-        plgpu.barrier_wait(copy_barrier)
-        if f: plgpu.commit_smem()
-        out_ref[...] = smem_ref[...]
+        @pl.when(warp_specialize.axis_index('t') == 1)
+        def _():
+          if c: plgpu.commit_smem()
+          plgpu.barrier_wait(thread_barrier)
+          if d: plgpu.commit_smem()
+          plgpu.copy_gmem_to_smem(in_ref, smem_ref, copy_barrier)
+          if e: plgpu.commit_smem()
+          plgpu.barrier_wait(copy_barrier)
+          if f: plgpu.commit_smem()
+          out_ref[...] = smem_ref[...]
 
     correct = b or d
     out = _kernel(jnp.int32(42))
@@ -349,9 +382,10 @@ class InterpretTest(jtu.JaxTestCase):
 
 
   @jtu.parameterized.product(
+      warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
       check_read=[False, True],
   )
-  def test_wait_smem_to_gmem_isolated_per_thread(self, check_read):
+  def test_wait_smem_to_gmem_isolated_per_thread(self, warp_specialize, check_read):
     @functools.partial(
         plgpu.kernel,
         out_type=jax.ShapeDtypeStruct((), jnp.int32),
@@ -361,33 +395,36 @@ class InterpretTest(jtu.JaxTestCase):
             cleanup_barrier=plgpu.Barrier(num_arrivals=1),
             ),
         interpret=InterpretParams(detect_races=True),
-        num_threads=2,
+        num_threads=warp_specialize.thread_count(2),
         thread_name='t',
     )
     def _kernel(out_ref, smem, barrier, cleanup_barrier):
-      tid = jax.lax.axis_index('t')
-      @pl.when(tid == 0)
+      @warp_specialize.maybe_warp_specialize()
       def _():
-        plgpu.copy_smem_to_gmem(smem, out_ref)
-        plgpu.barrier_arrive(barrier)
-        plgpu.barrier_wait(cleanup_barrier)
-        plgpu.wait_smem_to_gmem(0)
+        @pl.when(warp_specialize.axis_index('t') == 0)
+        def _():
+          plgpu.copy_smem_to_gmem(smem, out_ref)
+          plgpu.barrier_arrive(barrier)
+          plgpu.barrier_wait(cleanup_barrier)
+          plgpu.wait_smem_to_gmem(0)
 
-      @pl.when(tid == 1)
-      def _():
-        plgpu.barrier_wait(barrier)
-        plgpu.wait_smem_to_gmem(0)
-        if check_read:
-          smem[...] = 43
-        else:
-          out_ref[...] = 43
-        plgpu.barrier_arrive(cleanup_barrier)
+        @pl.when(warp_specialize.axis_index('t') == 1)
+        def _():
+          plgpu.barrier_wait(barrier)
+          plgpu.wait_smem_to_gmem(0)
+          if check_read:
+            smem[...] = 43
+          else:
+            out_ref[...] = 43
+          plgpu.barrier_arrive(cleanup_barrier)
 
     _kernel()
     self.assertTrue(mosaic_interpret.get_races().races_found)
 
-
-  def properly_waited_smem_to_gmem_visible_across_threads(self):
+  @jtu.parameterized.product(
+      warp_specialize=[WarpSpecializeHelper(False), WarpSpecializeHelper(True)],
+  )
+  def properly_waited_smem_to_gmem_visible_across_threads(self, warp_specialize):
     @functools.partial(
         plgpu.kernel,
         out_type=jax.ShapeDtypeStruct((), jnp.int32),
@@ -397,27 +434,27 @@ class InterpretTest(jtu.JaxTestCase):
             barrier=plgpu.Barrier(num_arrivals=1),
             ),
         interpret=InterpretParams(detect_races=True),
-        num_threads=2,
+        num_threads=warp_specialize.thread_count(2),
         thread_name='t',
     )
     def _kernel(out_ref, smem_ref, gmem_ref, barrier):
-      tid = jax.lax.axis_index('t')
-      @pl.when(tid == 0)
+      @warp_specialize.maybe_warp_specialize()
       def _():
-        smem_ref[...] = 42
-        plgpu.commit_smem()
-        plgpu.copy_smem_to_gmem(smem_ref, gmem_ref)
-        plgpu.wait_smem_to_gmem(0)
-        plgpu.barrier_arrive(barrier)
-      @pl.when(tid == 1)
-      def _():
-        plgpu.barrier_wait(barrier)
-        out_ref[...] = gmem_ref[...]
+        @pl.when(warp_specialize.axis_index('t') == 0)
+        def _():
+          smem_ref[...] = 42
+          plgpu.commit_smem()
+          plgpu.copy_smem_to_gmem(smem_ref, gmem_ref)
+          plgpu.wait_smem_to_gmem(0)
+          plgpu.barrier_arrive(barrier)
+        @pl.when(warp_specialize.axis_index('t') == 1)
+        def _():
+          plgpu.barrier_wait(barrier)
+          out_ref[...] = gmem_ref[...]
 
     out = _kernel()
     self.assertFalse(mosaic_interpret.get_races().races_found)
     self.assertEqual(out, 42)
-
 
   def test_finds_race_in_double_gmem_to_smem(self):
     @functools.partial(

@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import collections
 import dataclasses
+import itertools
 import logging
 import math
 import threading
-from typing import Protocol, Literal, Self
+from typing import Literal, Protocol, Self
 
 import jax
 from jax import numpy as jnp
@@ -28,6 +29,7 @@ from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic_gpu.interpret import params as params
+from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -97,7 +99,7 @@ class Device:
 
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(init=False)
-class Warpgroup(Device):
+class Warpgroup:
   """
   A physical warpgroup in GPU interpret mode with flattened IDs.
 
@@ -105,6 +107,7 @@ class Warpgroup(Device):
   will run concurrently on different CPU threads. Since we don't run multiple
   clusters concurrently, cluster_id will always be 0.
   """
+  device_id: int
   cluster_id: int
   block_id: int
   warpgroup_id: int
@@ -116,10 +119,19 @@ class Warpgroup(Device):
       block_id: int | jax.Array,
       warpgroup_id: int | jax.Array,
   ):
-    super().__init__(device_id=device_id)
+    self.device_id = _to_int(device_id)
     self.cluster_id = _to_int(cluster_id)
     self.block_id = _to_int(block_id)
     self.warpgroup_id = _to_int(warpgroup_id)
+
+  def warp(self, warp_id: int) -> Warp:
+    return Warp(
+        device_id=self.device_id,
+        cluster_id=self.cluster_id,
+        block_id=self.block_id,
+        warpgroup_id=self.warpgroup_id,
+        warp_id=warp_id,
+    )
 
   def __repr__(self) -> str:
     return (
@@ -133,8 +145,12 @@ class Warpgroup(Device):
 
 @jax.tree_util.register_dataclass
 @dataclasses.dataclass(init=False)
-class Warp(Warpgroup):
+class Warp:
   """A physical warp in GPU interpret mode with flattened IDs"""
+  device_id: int
+  cluster_id: int
+  block_id: int
+  warpgroup_id: int
   warp_id: int
 
   def __init__(
@@ -145,18 +161,24 @@ class Warp(Warpgroup):
       warpgroup_id: int | jax.Array,
       warp_id: int | jax.Array,
   ):
-    super().__init__(
-        device_id=device_id,
-        cluster_id=cluster_id,
-        block_id=block_id,
-        warpgroup_id=warpgroup_id,
-    )
+    self.device_id = _to_int(device_id)
+    self.cluster_id = _to_int(cluster_id)
+    self.block_id = _to_int(block_id)
+    self.warpgroup_id = _to_int(warpgroup_id)
     self.warp_id = _to_int(warp_id)
+
+  def warpgroup(self) -> Warpgroup:
+    return Warpgroup(
+        device_id=self.device_id,
+        cluster_id=self.cluster_id,
+        block_id=self.block_id,
+        warpgroup_id=self.warpgroup_id,
+    )
 
   def __repr__(self) -> str:
     return (
         f"Warp(device_id={self.device_id}, cluster_id={self.cluster_id},"
-        f" block_id={self.block_id}, warpgroup_id={self.warpgroup_id})"
+        f" block_id={self.block_id}, warpgroup_id={self.warpgroup_id}"
         f" warp_id={self.warp_id})"
     )
 
@@ -315,8 +337,9 @@ class Barrier(memory.Allocation):
       for tid, x in self.last_observed_phase_by_thread.items():
         if x != self.phase:
           raise ValueError(
-              f"Thread {tid} only observed barrier up to phase {x-1}, but"
-              f" barrier completed up to phase {self.phase - 1}."
+              f"When barrier {id(self)} was deallocated, thread {tid} had only"
+              f" observed barrier up to phase {x-1}, but barrier completed"
+              f" up to phase {self.phase - 1}."
           )
 
   def arrive(
@@ -382,6 +405,11 @@ class Barrier(memory.Allocation):
       last_observed_phase = self.last_observed_phase_by_thread.get(
           thread, None
       )
+      if isinstance(thread, Warp) and last_observed_phase is None:
+        # warps inherit phase observations from their parent warpgroup
+        last_observed_phase = self.last_observed_phase_by_thread.get(
+            thread.warpgroup(), None
+        )
 
       # Since not all threads in a block may use the barrier, we must lazily
       # initialize the `last_observed_phase_by_thread` array the first time each
@@ -395,6 +423,31 @@ class Barrier(memory.Allocation):
               " do so in all phases."
           )
         last_observed_phase = 0
+
+      if isinstance(thread, Warpgroup):
+        active_warps = [
+            (i, self.last_observed_phase_by_thread[thread.warp(i)])
+            for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP)
+            if thread.warp(i) in self.last_observed_phase_by_thread
+        ]
+        if len(active_warps) != 0:
+          if len(active_warps) != plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP:
+            raise ValueError(
+                f"Warpgroup-thread {thread} is waiting at barrier {id(self)},"
+                f" but only {len(active_warps)} of its constituent warps have"
+                " participated in the barrier previously. If a"
+                " warpgroup-thread participates in the barrier, either all or"
+                " none of its constituent warps must have participated"
+                " previously."
+            )
+
+          observed_phases = [phase for _, phase in active_warps]
+          if not all(x == observed_phases[0] for x in observed_phases):
+            raise ValueError(
+                f"Warpgroup-thread {thread} is waiting at barrier {id(self)},"
+                " but its constituent warps have previously observed different"
+                f" phases: {observed_phases}."
+            )
 
       # Suppose our last observed phase was phase `p`...
       if last_observed_phase <= self.phase - 2:
@@ -439,7 +492,25 @@ class Barrier(memory.Allocation):
       else:
         assert False, "Unreachable"
 
+      # We need to update this thread's observed phase, as well as
+      # 1) its constituent warps, if a warpgroup thread
+      # 2) its parent warpgroup, if a warp thread
       self.last_observed_phase_by_thread[thread] = last_observed_phase + 1
+      if isinstance(thread, Warpgroup):
+        for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+          self.last_observed_phase_by_thread[thread.warp(i)] = (
+              last_observed_phase + 1
+          )
+      if isinstance(thread, Warp):
+        warpgroup = thread.warpgroup()
+        warp_observed_phases = [
+            self.last_observed_phase_by_thread[warpgroup.warp(i)]
+            for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP)
+            if warpgroup.warp(i) in self.last_observed_phase_by_thread
+        ]
+        if len(warp_observed_phases) == plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP:
+          observed_phase = min(warp_observed_phases)
+          self.last_observed_phase_by_thread[warpgroup] = observed_phase
 
       # Read `self.clock` while still holding the lock on `self.cv`. (If race
       # detection is enabled, the clock is needed below to update a vector clock
@@ -715,8 +786,12 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, Thread]):
   MemKey = HostAllocationKey
   ThreadKey = Thread
 
-  # All Pallas threads that are concurrently executed by interpret mode.
-  all_concurrent_threads: frozenset[ThreadKey]
+  # All Pallas threads that are concurrently executed by interpret mode, mapped
+  # to their position in the vector clock.
+  # Note that this includes both warpgroup-level threads, and their 4 warp-level
+  # thread counterparts, even though only the warpgroup- or warp-version of a
+  # thread can be executed at once.
+  all_concurrent_threads: dict[ThreadKey, int]
 
   num_blocks_per_cluster: int
 
@@ -755,13 +830,23 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, Thread]):
       num_blocks_per_cluster: int,
       num_tma_threads_per_device: int,
   ):
-    self.all_concurrent_threads = frozenset(
-        Warpgroup(device, cluster, block, warpgroup)
-        for device in range(num_devices)
-        for cluster in [0]
-        for block in range(num_blocks_per_cluster)
-        for warpgroup in range(num_threads_per_block)
-    )
+    # The insertion order here doesn't matter besides determining how we map
+    # each thread to a vector clock position.
+    all_concurrent_threads: list[self.ThreadKey] = []
+    for device, block, warpgroup in itertools.product(
+        range(num_devices),
+        range(num_blocks_per_cluster),
+        range(num_threads_per_block),
+    ):
+      all_concurrent_threads.append(Warpgroup(device, 0, block, warpgroup))
+      # Insert the warp-level version of a thread (for core_map with a WarpMesh)
+      # alongside the warpgroup-level version.
+      for warp in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+        all_concurrent_threads.append(Warp(device, 0, block, warpgroup, warp))
+    self.all_concurrent_threads = {
+        thread: i for i, thread in enumerate(all_concurrent_threads)
+    }
+    del all_concurrent_threads
 
     self.num_tma_threads = num_devices * num_tma_threads_per_device
 
@@ -823,20 +908,7 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, Thread]):
     }
 
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
-    if isinstance(thread, Warpgroup):
-      # see comment in __init__ for explanation of this mapping
-      return (
-          thread.device_id * self.num_blocks_per_cluster * self.num_pallas_threads_per_block
-          + thread.block_id * self.num_pallas_threads_per_block
-          + thread.warpgroup_id
-      )
-    elif isinstance(thread, Warp):
-      raise NotImplementedError(
-          "Warp-level thread keys are not supported for GPU kernel"
-          " interpretation yet."
-      )
-    else:
-      raise ValueError(f"Unsupported thread type: {type(thread)}")
+    return self.all_concurrent_threads[thread]
 
   def get_next_tma_thread_id(self) -> int:
     with self.lock:
@@ -1109,3 +1181,14 @@ class GPUSharedMemory(memory.GenericSharedMemory[HostAllocationKey, Thread]):
   def update_clocks_for_device_barrier(self, device: Device):
     """Synchronizes the vector clocks for the cores on the given device."""
     self.update_clocks(self.concurrent_threads(device))
+    # TODO(paulbib): This needs to also synchronize commit_smem clocks
+
+  def update_clock(self, source: ThreadKey, dest: ThreadKey):
+    """Joins the source and dest clocks, and assigns the result to dest."""
+    if not self.detect_races:
+      return
+    with self.lock:
+      vc.update_vector_clock(self.clocks[dest], self.clocks[source])
+      vc.update_vector_clock(
+          self.smem_commit_clocks[dest], self.smem_commit_clocks[source]
+      )

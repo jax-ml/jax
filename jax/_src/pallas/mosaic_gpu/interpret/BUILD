@@ -80,6 +80,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
         "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/experimental:mosaic_gpu",
+        "//jax/experimental:pallas_mosaic_gpu",
     ] + py_deps([
         "numpy",
     ]),
@@ -100,6 +101,7 @@ pytype_strict_library(
         "//jax/_src:source_info_util",
         "//jax/_src:util",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic/interpret:thread_map",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/_src/pallas/mosaic_gpu:primitives",
@@ -118,6 +120,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic/interpret:shared_memory",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
+        "//jax/experimental:pallas_mosaic_gpu",
     ] + py_deps([
         "numpy",
     ]),

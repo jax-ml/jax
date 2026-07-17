@@ -994,8 +994,9 @@ class InterpretTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         Exception,
-        r'Thread Warpgroup\(.+\) only observed barrier up to phase 0, but barrier'
-        r' completed up to phase 1.',
+        r'When barrier \d+ was deallocated, thread Warpgroup\(.+\)'
+        r' had only observed barrier up to phase 0, but barrier completed up to'
+        r' phase 1.',
     ):
       _kernel()
 
@@ -1551,6 +1552,242 @@ class InterpretTest(jtu.JaxTestCase):
     output = _kernel(x)
     np.testing.assert_array_equal(output, x)
 
+  def test_warp_specialize(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((5,), jnp.int32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(in_ref, out_ref):
+      out_ref[...] = jnp.zeros((5,), jnp.int32)
+
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        warp_id = jax.lax.axis_index('warp')
+
+        @pl.when(warp_id == 0)
+        def _():
+          out_ref[0] = in_ref[0]
+
+        @pl.when(warp_id == 1)
+        def _():
+          out_ref[1] = in_ref[1]
+
+        @pl.when(warp_id == 2)
+        def _():
+          out_ref[2] = in_ref[2]
+
+        @pl.when(warp_id == 3)
+        def _():
+          out_ref[3] = in_ref[3]
+
+        # this should never be reached
+        @pl.when(warp_id == 4)
+        def _():
+          out_ref[4] = in_ref[4]
+
+    x = jnp.arange(5, dtype=jnp.int32)
+    expected = x.at[4].set(0)
+    output = _kernel(x)
+    np.testing.assert_array_equal(output, expected)
+
+  def test_warps_share_shared_memory(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((), jnp.int32),
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref, smem_ref, barrier):
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        warp_id = jax.lax.axis_index('warp')
+
+        @pl.when(warp_id == 0)
+        def _():
+          smem_ref[...] = 1
+          plgpu.barrier_arrive(barrier)
+
+        @pl.when(warp_id == 1)
+        def _():
+          plgpu.barrier_wait(barrier)
+          out_ref[...] = smem_ref[...]
+
+    out = _kernel()
+    self.assertEqual(out, 1)
+
+  def test_cant_warp_specialize_twice(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref):
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp0'))
+      def _per_warp():
+        @pl.core_map(plgpu.WarpMesh(axis_name='warp1'))
+        def _():
+          out_ref[...] = 42
+
+    with self.assertRaisesRegex(
+        Exception, r'Cannot core_map over WarpMesh while already core_mapped'
+    ):
+      _kernel()
+
+  def test_all_warps_must_wait_on_barrier(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(_out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+
+      # only three warps wait on barrier
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 0)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+      # now the whole warpgroup waits on the barrier
+      plgpu.barrier_wait(barrier)
+
+    with self.assertRaisesRegex(
+        Exception,
+        r'Warpgroup-thread Warpgroup\(.+\) is waiting at barrier \d+, but only'
+        r' 3 of its constituent warps have participated in the barrier',
+    ):
+      _kernel()
+
+  def test_warps_must_wait_on_barrier_evenly(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(_out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 3)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+      plgpu.barrier_arrive(barrier)
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 0)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+    with self.assertRaisesRegex(
+        Exception,
+        r'Thread Warp\(.+\) is waiting at barrier \d+ for the first time, but'
+        r' barrier is already at phase 2.'
+    ):
+      _kernel()
+
+  def test_warps_of_warpgroup_must_wait_on_barrier_evenly(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(_out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+
+      # all four warps wait on the barrier
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      plgpu.barrier_arrive(barrier)
+
+      # only three warps wait on barrier
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 0)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+      # now the whole warpgroup waits on the barrier
+      plgpu.barrier_wait(barrier)
+
+    with self.assertRaisesRegex(
+        Exception,
+        r'Warpgroup-thread Warpgroup\(.+\) is waiting at barrier \d+, but its'
+        r' constituent warps have previously observed different phases',
+    ):
+      _kernel()
+
+  def test_warps_get_parent_warpgroups_barrier_phase(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      plgpu.barrier_arrive(barrier)
+
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      out_ref[...] = 42
+
+    out = _kernel()
+    self.assertEqual(out, 42)
+
+  def test_warpgroup_gets_warps_barrier_phase(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      plgpu.barrier_arrive(barrier)
+
+      @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      # warpgroup can wait, since its consituent warps observed prior phases
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      out_ref[...] = 42
+
+    out = _kernel()
+    self.assertEqual(out, 42)
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
@@ -1639,6 +1876,264 @@ def matmul0(a, b, config: TuningConfig):
   return f(a, b)
 
 
+def matmul1(a, b, config: TuningConfig):
+  dtype = a.dtype
+  m, k = a.shape
+  _, n = b.shape
+  tile_m, tile_n, tile_k = config.tile_m, config.tile_n, config.tile_k
+  swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
+  swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+  transforms = (
+      plgpu.TilingTransform((8, swizzle_elems)),
+      plgpu.SwizzleTransform(swizzle),
+  )
+  if m % tile_m != 0:
+    raise ValueError(f'{m=} must be divisible by {tile_m=}')
+  if n % tile_n != 0:
+    raise ValueError(f'{n=} must be divisible by {tile_n=}')
+  if k % tile_k != 0:
+    raise ValueError(f'{k=} must be divisible by {tile_k=}')
+  m_iters = m // tile_m
+  n_iters = n // tile_n
+  k_iters = k // tile_k
+  max_concurrent_steps = config.max_concurrent_steps
+
+  def kernel(
+      a_gmem,
+      b_gmem,
+      out_gmem,
+      a_smem,
+      b_smem,
+      acc_tmem,
+      acc_smem,
+      load_barriers,
+      consumed_barriers,
+      mma_done_barrier,
+  ):
+    m_index = jax.lax.axis_index('m')
+    n_index = jax.lax.axis_index('n')
+    m_slice = pl.ds(m_index * tile_m, tile_m)
+    n_slice = pl.ds(n_index * tile_n, tile_n)
+
+    @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+    def _per_warp():
+      warp_id = jax.lax.axis_index('warp')
+
+      @pl.when(warp_id == 0)
+      def _memory():
+        def _loop_body(ki, _):
+          slot = jax.lax.rem(ki, max_concurrent_steps)
+
+          @pl.when(ki >= max_concurrent_steps)
+          def _():  # Make sure the data has been consumed before overwriting.
+            plgpu.barrier_wait(consumed_barriers.at[slot])
+
+          k_slice = pl.ds(ki * tile_k, tile_k)
+          plgpu.copy_gmem_to_smem(
+              a_gmem.at[m_slice, k_slice],
+              a_smem.at[slot],
+              load_barriers.at[slot],
+          )
+          plgpu.copy_gmem_to_smem(
+              b_gmem.at[k_slice, n_slice],
+              b_smem.at[slot],
+              load_barriers.at[slot],
+          )
+
+        jax.lax.fori_loop(0, k_iters, _loop_body, None)
+
+      @pl.when(warp_id == 1)
+      def _compute():
+        def _loop_body(ki, _):
+          slot = jax.lax.rem(ki, max_concurrent_steps)
+          plgpu.barrier_wait(load_barriers.at[slot])  # Wait for data to arrive.
+          plgpu.tcgen05_mma(
+              acc_tmem,
+              a_smem.at[slot],
+              b_smem.at[slot],
+              consumed_barriers.at[slot],
+              accumulate=(ki > 0),
+          )
+
+        jax.lax.fori_loop(0, k_iters, _loop_body, None)
+        # TODO(paubib): re-enable this once implemented. (it's a no-op besides race-checking)
+        # plgpu.tcgen05_commit_arrive(mma_done_barrier)
+        plgpu.barrier_arrive(mma_done_barrier)
+
+    plgpu.barrier_wait(mma_done_barrier)
+    acc_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
+    plgpu.commit_smem()
+    plgpu.copy_smem_to_gmem(acc_smem, out_gmem.at[m_slice, n_slice])
+    plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+  f = plgpu.kernel(
+      kernel,
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
+      grid=(m_iters, n_iters),
+      grid_names=('m', 'n'),
+      scratch_types=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k),
+              dtype,
+              transforms=transforms,
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n),
+              dtype,
+              transforms=transforms,
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
+          acc_smem=plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(
+              num_arrivals=2, num_barriers=max_concurrent_steps
+          ),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(
+              num_arrivals=1, num_barriers=1, orders_tensor_core=True
+          ),
+      ),
+  )
+  return f(a, b)
+
+
+def matmul2(a, b, config: TuningConfig):
+  dtype = a.dtype
+  m, k = a.shape
+  _, n = b.shape
+  tile_m, tile_n, tile_k = config.tile_m, config.tile_n, config.tile_k
+  swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
+  swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+  transforms = (
+      plgpu.TilingTransform((8, swizzle_elems)),
+      plgpu.SwizzleTransform(swizzle),
+  )
+  if m % tile_m != 0:
+    raise ValueError(f'{m=} must be divisible by {tile_m=}')
+  if n % tile_n != 0:
+    raise ValueError(f'{n=} must be divisible by {tile_n=}')
+  if k % tile_k != 0:
+    raise ValueError(f'{k=} must be divisible by {tile_k=}')
+  m_iters = m // tile_m
+  n_iters = n // tile_n
+  k_iters = k // tile_k
+  max_concurrent_steps = config.max_concurrent_steps
+
+  def kernel(
+      a_gmem,
+      b_gmem,
+      out_gmem,
+      a_smem,
+      b_smem,
+      acc_tmem,
+      acc_smem,
+      load_barriers,
+      consumed_barriers,
+      mma_done_barrier,
+  ):
+    m_index = jax.lax.axis_index('m')
+    n_index = jax.lax.axis_index('n')
+    m_slice = pl.ds(m_index * tile_m, tile_m)
+    n_slice = pl.ds(n_index * tile_n, tile_n)
+
+    @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
+    def _per_warp():
+      warp_id = jax.lax.axis_index('warp')
+
+      @pl.when(warp_id == 0)
+      def _memory():
+        def _loop_body(ki, _):
+          slot = jax.lax.rem(ki, max_concurrent_steps)
+
+          @pl.when(ki >= max_concurrent_steps)
+          def _():  # Make sure the data has been consumed before overwriting.
+            plgpu.barrier_wait(consumed_barriers.at[slot])
+
+          k_slice = pl.ds(ki * tile_k, tile_k)
+          plgpu.copy_gmem_to_smem(
+              a_gmem.at[m_slice, k_slice],
+              a_smem.at[slot],
+              load_barriers.at[slot],
+          )
+          plgpu.copy_gmem_to_smem(
+              b_gmem.at[k_slice, n_slice],
+              b_smem.at[slot],
+              load_barriers.at[slot],
+          )
+
+        jax.lax.fori_loop(0, k_iters, _loop_body, None)
+
+      @pl.when(warp_id == 1)
+      def _compute():
+        def _loop_body(ki, _):
+          slot = jax.lax.rem(ki, max_concurrent_steps)
+          plgpu.barrier_wait(load_barriers.at[slot])  # Wait for data to arrive.
+          plgpu.tcgen05_mma(
+              acc_tmem,
+              a_smem.at[slot],
+              b_smem.at[slot],
+              consumed_barriers.at[slot],
+              accumulate=(ki > 0),
+          )
+
+        jax.lax.fori_loop(0, k_iters, _loop_body, None)
+        # TODO(paubib): re-enable this once implemented. (it's a no-op besides race-checking)
+        # plgpu.tcgen05_commit_arrive(mma_done_barrier)
+        plgpu.barrier_arrive(mma_done_barrier)
+
+    plgpu.barrier_wait(mma_done_barrier)
+    out_gmem_window = out_gmem.at[m_slice, n_slice]
+    for ni in range(tile_n // config.epilogue_tile_n):
+      acc_smem_ni = acc_smem.at[ni % 2]
+      ni_slice = pl.ds(ni * config.epilogue_tile_n, config.epilogue_tile_n)
+      # Make sure that previous copy is done before we overwrite.
+      plgpu.wait_smem_to_gmem(1, wait_read_only=True)
+      acc_smem_ni[...] = plgpu.async_load_tmem(acc_tmem.at[:, ni_slice]).astype(
+          dtype
+      )
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(acc_smem_ni, out_gmem_window.at[:, ni_slice])
+    plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+  f = plgpu.kernel(
+      kernel,
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
+      grid=(m_iters, n_iters),
+      grid_names=('m', 'n'),
+      scratch_types=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k),
+              dtype,
+              transforms=transforms,
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n),
+              dtype,
+              transforms=transforms,
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, tile_n), jnp.float32),
+          acc_smem=plgpu.SMEM(
+              (2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms
+          ),
+          load_barriers=plgpu.Barrier(
+              num_arrivals=2, num_barriers=max_concurrent_steps
+          ),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(
+              num_arrivals=1, num_barriers=1, orders_tensor_core=True
+          ),
+      ),
+  )
+  return f(a, b)
+
+
 # TODO(nrink): Figure out how to safely run different instance of GPU
 # interpret mode in parallel, and then remove this decorator.
 @jtu.thread_unsafe_test_class()
@@ -1669,6 +2164,64 @@ class BlackwellExampleMatmulTest(jtu.JaxTestCase):
         force_gpu_interpret_mode(InterpretParams()),
     ):
       res = matmul0(a, b, example_config).block_until_ready()
+
+    expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
+    np.testing.assert_allclose(res, expected, rtol=1e-3)
+
+  @jtu.run_on_devices('cpu')
+  def test_matmul1(self):
+    example_config = TuningConfig(
+        tile_m=128,
+        tile_n=128,
+        tile_k=64,
+        max_concurrent_steps=4,
+    )
+    m, n, k = 256, 256, 256
+    k1, k2 = jax.random.split(jax.random.key(0))
+    a = jax.random.uniform(k1, (m, k), jnp.float16)
+    b = jax.random.uniform(k2, (k, n), jnp.float16)
+
+    device = jax.sharding.AbstractDevice(
+        device_kind='NVIDIA B200',
+        platform='gpu',
+        num_cores=8,
+    )
+    with (
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=device)
+        ),
+        force_gpu_interpret_mode(InterpretParams(detect_races=False)),
+    ):
+      res = matmul1(a, b, example_config).block_until_ready()
+
+    expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
+    np.testing.assert_allclose(res, expected, rtol=1e-3)
+
+  @jtu.run_on_devices('cpu')
+  def test_matmul2(self):
+    example_config = TuningConfig(
+        tile_m=128,
+        tile_n=128,
+        tile_k=64,
+        max_concurrent_steps=4,
+    )
+    m, n, k = 256, 256, 256
+    k1, k2 = jax.random.split(jax.random.key(0))
+    a = jax.random.uniform(k1, (m, k), jnp.float16)
+    b = jax.random.uniform(k2, (k, n), jnp.float16)
+
+    device = jax.sharding.AbstractDevice(
+        device_kind='NVIDIA B200',
+        platform='gpu',
+        num_cores=8,
+    )
+    with (
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=device)
+        ),
+        force_gpu_interpret_mode(InterpretParams(detect_races=False)),
+    ):
+      res = matmul2(a, b, example_config).block_until_ready()
 
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
     np.testing.assert_allclose(res, expected, rtol=1e-3)

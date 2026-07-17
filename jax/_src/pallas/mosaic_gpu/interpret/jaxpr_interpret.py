@@ -23,7 +23,9 @@ from jax import lax
 from jax._src import callback
 from jax._src import core as jax_core
 from jax._src import source_info_util
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
+from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
@@ -216,11 +218,13 @@ class JaxprInterpreter:
   # The (flattened) thread within the mesh that this interpreter instance is
   # executing. We only execute one cluster in parallel across all devices, so
   # the cluster ID is always 0.
-  thread: memory.Warpgroup
+  thread: memory.Thread
 
   cluster_dims: tuple[int, ...]
 
   mesh: plgpu.Mesh | None
+  # Only present if this interpreter is created by a core_map with a WarpMesh.
+  warp_mesh: plgpu.WarpMesh | None = dataclasses.field(default=None)
   device_info: DeviceInfo
   compiler_params: Mapping[str, Any]
   interpret_params: InterpretGPUParams
@@ -301,6 +305,9 @@ class JaxprInterpreter:
         return jnp.int32(
             self.mesh_location.cluster_coords[self.mesh.grid_names.index(axis_name)]
         )
+    if self.warp_mesh is not None:
+      if axis_name == self.warp_mesh.axis_name:
+        return jnp.int32(self.mesh_location.warp_id)
 
     if axis_name in self.device_info.axis_indices:
       return jnp.int32(self.device_info.axis_indices[axis_name])
@@ -539,6 +546,53 @@ class JaxprInterpreter:
       token = _deallocate_for_aval(token, a, v.aval)
 
     return token, out
+
+  def _interpret_core_map_p(
+      self, eqn, token, get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is pallas_core.core_map_p
+    mesh = eqn.params["mesh"]
+    if not isinstance(mesh, plgpu.WarpMesh):
+      raise ValueError(
+          "Only core_map over WarpMesh is supported in an MGPU kernel."
+      )
+    if isinstance(self.thread, memory.Warp):
+      raise ValueError(
+          "Cannot core_map over WarpMesh while already core_mapped."
+      )
+
+    def f(i: int, token: jax.Array):
+      jaxpr_interpreter = JaxprInterpreter(
+          mesh_location=dataclasses.replace(self.mesh_location, warp_id=i),
+          thread=self.thread.warp(i),
+          cluster_dims=self.cluster_dims,
+          mesh=self.mesh,
+          warp_mesh=mesh,
+          device_info=self.device_info,
+          compiler_params=self.compiler_params,
+          interpret_params=self.interpret_params,
+      )
+      token, _out = jaxpr_interpreter.interpret(
+          eqn.params["jaxpr"], token, *get_invals()
+      )
+      return token
+
+    token = callback.io_callback(
+        gpu_callbacks.sync_warps_with_warpgroup,
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        warpgroup=self.thread,
+    )
+    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+
+    token = callback.io_callback(
+        gpu_callbacks.sync_warpgroup_with_warps,
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        warpgroup=self.thread,
+    )
+
+    return token, []
 
   def _interpret_cond_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
@@ -929,6 +983,8 @@ class JaxprInterpreter:
           case primitives.run_scoped_p:
             token, out = self._interpret_run_scoped_p(
                 eqn, token, deferred_invals)
+          case pallas_core.core_map_p:
+            token, out = self._interpret_core_map_p(eqn, token, deferred_invals)
           case lax.cond_p:
             token, out = self._interpret_cond_p(eqn, token, deferred_invals)
           case lax.scan_p:
