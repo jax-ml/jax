@@ -107,6 +107,7 @@ class PallasSCTest(jtu.JaxTestCase):
       in_specs=None,
       out_specs=None,
       compiler_params=pltpu.CompilerParams(),
+      mesh=None,
       debug=False,
   ):
     if compiler_params.dimension_semantics is not None:
@@ -117,11 +118,12 @@ class PallasSCTest(jtu.JaxTestCase):
     compiler_params = compiler_params.replace(
         use_tc_tiling_on_sc=self.USE_TC_TILING,
     )
-    mesh = plsc.VectorSubcoreMesh(
-        core_axis_name="core",
-        subcore_axis_name="subcore",
-        num_cores=1,
-    )
+    if mesh is None:
+      mesh = plsc.VectorSubcoreMesh(
+          core_axis_name="core",
+          subcore_axis_name="subcore",
+          num_cores=1,
+      )
 
     num_scratch = 0
     if isinstance(scratch_shapes, Sequence):
@@ -221,7 +223,10 @@ class NamedLocationsTest(PallasSCTest):
     self.assertIn("%o_hbm_ref", get_output())
 
 
-@jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")
+@jtu.skip_under_pytest(
+    "Requires pytest -s (no capture) to pass, which is not enabled in CI"
+)
+@jtu.thread_unsafe_test_class()  # Overrides stderr.
 class DebugPrintTest(PallasSCTest):
 
   def setUp(self):
@@ -374,6 +379,35 @@ class DebugPrintTest(PallasSCTest):
 
     self.assertIn("From TEC", get_output())
     self.assertIn("From SCS", get_output())
+
+  @parameterized.parameters(1, 2, 4)
+  def test_subcore_parallel_logging(self, num_subcores):
+    nl = self.num_lanes
+    x = jnp.arange(num_subcores * nl, dtype=jnp.int32).reshape(-1, nl)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core",
+            subcore_axis_name="subcore",
+            num_cores=1,
+            num_subcores=num_subcores,
+        ),
+    )
+    def kernel(in_ref, out_ref):
+      del in_ref, out_ref  # Unused.
+      pl.debug_print("Executing subcore")
+
+    compiled_kernel = jax.jit(
+        kernel,
+        compiler_options={
+            "xla_tpu_enable_sc_log_recorder": "true",
+        },
+    )
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(x))
+
+    self.assertEqual(get_output().count("Executing subcore"), num_subcores)
 
 
 class VectorSubcoreTest(PallasSCTest):
@@ -1601,8 +1635,6 @@ class VectorSubcoreTest(PallasSCTest):
         ),
     )
     def kernel(x_ref, o_ref):
-      # This is a smoke test, since it does not in fact check that the kernel
-      # is executed in parallel over the subcores.
       subcore_id = lax.axis_index("subcore")
       pltpu.sync_copy(x_ref.at[subcore_id], o_ref.at[subcore_id])
 
