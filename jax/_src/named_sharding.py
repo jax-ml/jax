@@ -397,7 +397,30 @@ def get_non_one_sized_mesh_spec(mesh, spec):
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
-  mesh, spec = get_non_one_sized_mesh_spec(self.mesh, self.spec)
+  return _named_sharding_to_xla_hlo_sharding_uncached(self, num_dimensions)
+
+@cache(max_size=4096, trace_context_in_key=False)
+def _get_abstract_mesh(mesh: mesh_lib.Mesh) -> mesh_lib.AbstractMesh:
+  return mesh_lib.AbstractMesh(
+      mesh.axis_sizes, mesh.axis_names, mesh.axis_types
+  )
+
+def _named_sharding_to_xla_hlo_sharding_uncached(
+    self, num_dimensions: int) -> xc.HloSharding:
+  mesh = self.mesh
+  # Abstractify the concrete mesh to improve the hit ratio for the cache of
+  # `_named_sharding_to_xla_hlo_sharding_with_abstract_mesh`.
+  if isinstance(mesh, mesh_lib.Mesh):
+    mesh = _get_abstract_mesh(self.mesh)
+  return _named_sharding_to_xla_hlo_sharding_with_abstract_mesh(
+      mesh, self.spec, self._logical_device_ids, num_dimensions
+  )
+
+@cache(max_size=4096, trace_context_in_key=False)
+def _named_sharding_to_xla_hlo_sharding_with_abstract_mesh(
+    mesh, spec, logical_device_ids, num_dimensions: int
+) -> xc.HloSharding:
+  mesh, spec = get_non_one_sized_mesh_spec(mesh, spec)
   mesh_shape = mesh.shape
   array_mapping = get_array_mapping(spec)
   mesh_axis_pos = {name: i for i, name in enumerate(mesh.axis_names)}
@@ -459,18 +482,18 @@ def named_sharding_to_xla_hlo_sharding(
   #     subgroup_types = [xc.OpSharding.Type.REPLICATED]
   dims = new_mesh_shape
   reshape_dims = mesh.axis_sizes
-  if self._logical_device_ids is None:
+  if logical_device_ids is None:
     sharding = xc.HloSharding.iota_tile(
         dims=dims, reshape_dims=reshape_dims, transpose_perm=mesh_permutation,
         subgroup_types=last_tile_dims)
   else:
     sharding = xc.HloSharding.subgroup_with_device_ordering(
-        np.asarray(self._logical_device_ids)
+        np.asarray(logical_device_ids)
         .reshape(dims).reshape(reshape_dims).transpose(mesh_permutation)
         .reshape(dims), subgroup_types=last_tile_dims)
 
   if jaxlib_extension_version >= 478 and ifrt_version >= 61:
-    reduction_op = uk_map.get(self.spec.unreduced_kind, None)
+    reduction_op = uk_map.get(spec.unreduced_kind, None)
     if reduction_op is not None:
       sharding.set_reduction_op(reduction_op.value)  # type: ignore[attr-defined]
   return sharding
