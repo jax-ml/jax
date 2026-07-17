@@ -923,6 +923,12 @@ def _lower_as_gpu_kernel(
   try:
     module.operation.verify()
   except ir.MLIRError as e:
+    try:
+      new_error = error.mlir_error_to_verification_error(e)
+    except:
+      new_error = None
+    if new_error is None:
+      raise
     raise error.mlir_error_to_verification_error(e) from e
 
   assert launch_ctx is not None
