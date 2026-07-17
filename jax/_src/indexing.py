@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import overload
 
 from jax._src import core
 from jax._src import tree_util
@@ -70,6 +71,24 @@ class Slice:
     if step < 1:
       raise ValueError(f"slice must have a step >= 1 (found: {step})")
     return cls(start, size, step)
+
+
+@overload
+def dslice(
+    start: int | Array,
+    size: int | Array | None = ...,
+    stride: int | None = ...,
+) -> Slice:
+  ...
+
+
+@overload
+def dslice(
+    start: None,
+    size: int | Array | None = ...,
+    stride: int | None = ...,
+) -> slice:
+  ...
 
 
 def dslice(
