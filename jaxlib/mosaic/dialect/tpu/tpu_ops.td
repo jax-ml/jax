@@ -895,7 +895,7 @@ def TPU_MatmulPopOp : TPU_Op<"matmul_pop"> {
     I32Attr:$acc,
     I32Attr:$mxu_index
   );
-  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let results = (outs VectorOfRank<[2]>:$result);
   let assemblyFormat = [{
     $acc attr-dict `:` type($result)
   }];
@@ -917,7 +917,7 @@ def TPU_MatmulPopFifoOp : TPU_Op<"matmul_pop_fifo"> {
   let arguments = (ins
     I32Attr:$mxu_index
   );
-  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let results = (outs VectorOfRank<[2]>:$result);
   let assemblyFormat = [{
     $mxu_index attr-dict `:` type($result)
   }];
