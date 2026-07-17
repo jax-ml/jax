@@ -28,6 +28,7 @@ from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec, UnreducedKind
 from jax._src import sharding as jsharding
 import numpy as np
+from jax._src.lib import ifrt_version, jaxlib_extension_version
 
 Shape = tuple[int, ...]
 Device = xc.Device
@@ -459,19 +460,24 @@ def named_sharding_to_xla_hlo_sharding(
   dims = new_mesh_shape
   reshape_dims = mesh.axis_sizes
   if self._logical_device_ids is None:
-    return xc.HloSharding.iota_tile(
+    sharding = xc.HloSharding.iota_tile(
         dims=dims, reshape_dims=reshape_dims, transpose_perm=mesh_permutation,
         subgroup_types=last_tile_dims)
   else:
-    return xc.HloSharding.subgroup_with_device_ordering(
+    sharding = xc.HloSharding.subgroup_with_device_ordering(
         np.asarray(self._logical_device_ids)
         .reshape(dims).reshape(reshape_dims).transpose(mesh_permutation)
         .reshape(dims), subgroup_types=last_tile_dims)
 
+  if jaxlib_extension_version >= 478 and ifrt_version >= 61:
+    reduction_op = uk_map.get(self.spec.unreduced_kind, None)
+    if reduction_op is not None:
+      sharding.set_reduction_op(reduction_op.value)  # type: ignore[attr-defined]
+  return sharding
+
 uk_map = {UnreducedKind.sum: sdy.ReductionOp.SUM,
           UnreducedKind.max: sdy.ReductionOp.MAX,
           UnreducedKind.min: sdy.ReductionOp.MIN}
-
 
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_sdy_sharding(self, num_dimensions: int,
