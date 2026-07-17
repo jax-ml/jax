@@ -17,6 +17,7 @@ bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_python", version = "1.8.5")
 bazel_dep(name = "zlib", version = "1.3.2")
 
+# TODO: update to newer commit
 # TODO: use a released version when available
 bazel_dep(name = "rules_ml_toolchain")
 archive_override(
