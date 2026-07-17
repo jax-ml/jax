@@ -264,7 +264,7 @@ class TpuInfo:
         # Large 2nd minor tiling is enabled for other types.
         return self.num_sublanes * (32 // bitwidth)
     # XLA allows large 2nd minor tiling by default starting with TPU7x.
-    if self.generation == 7:
+    if self.generation == 7 or self.generation == 8:
       return self.num_sublanes * (32 // bitwidth)
     raise NotImplementedError("TPU generation is not supported")
 
