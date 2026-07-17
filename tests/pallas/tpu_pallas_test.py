@@ -5322,6 +5322,24 @@ class PallasHloNamesTest(ptu.PallasTPUTest):
     self.assertRegex(hlo, r'%add[.\d]*\.x_ref[.\d]* = .* add')
     self.assertRegex(hlo, r'%add[.\d]*\.y_ref[.\d]* = .* add')
 
+  def test_parameter_names_shared(self):
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.zeros((8, 128), dtype=jnp.float32)
+
+    @jax.jit
+    def f(x):
+      computed = x + x
+      a = self.pallas_call(kernel, out_shape=jax.typeof(x))(computed)
+      b = self.pallas_call(kernel, out_shape=jax.typeof(x))(computed)
+      return a + b
+
+    hlo = f.lower(x).compile().as_text()
+    # The computed operand should have exactly one .x_ref suffix, instead
+    # of a repeated suffix like .x_ref.x_ref.
+    self.assertRegex(hlo, r'%add[.\d]*\.x_ref[.\d]* = .* add')
+
 
 class PallasKernelMetadataTest(ptu.PallasTPUTest):
 
