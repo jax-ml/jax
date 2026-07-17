@@ -5475,7 +5475,6 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       reduction=["min", "max", "absmin", "absmax"],
   )
   def test_load_reduce_tmem_native(self, dtype, reduction):
-    self.skip_if_wg_semantics()
     if not (
         jtu.is_cuda_compute_capability_at_least("10.1")
         and not jtu.is_cuda_compute_capability_at_least("12.0")
@@ -5483,6 +5482,9 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       self.skipTest("Requires compute capability between 10.1 or 12.0")
     if not jtu.is_cuda_version_at_least(13, 0):
       self.skipTest("Requires CUDA version 13.0 or higher")
+    # TODO(apaszke): Remove this once minimum jaxlib version is 0.11.0.
+    if jtu.jaxlib_version() < (0, 11, 1):
+      self.skipTest("Requires jaxlib version 0.11.1 or higher")
     shape = (128, 128)
     if "abs" in reduction and dtype == jnp.int32:
       reduction = reduction[-3:]

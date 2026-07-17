@@ -1222,6 +1222,29 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
+  def test_async_load_tmem_reduce(self):
+    f32 = ir.F32Type.get()
+    shape = (128, 128)
+    ref_type = ir.MemRefType.get(shape, f32, memory_space=mgpu.utils.tmem())
+    in_layout = tcgen05.tmem_default_layout(packing=1)
+    in_layout = layouts.to_layout_attr(in_layout)
+    out_layout = layouts.to_layout_attr(tcgen05.TMEM_NATIVE_LAYOUT)
+
+    with ir.InsertionPoint(self.module.body):
+      [ref] = undefs(ref_type)
+      ref = mgpu.dialect.tmem_layout_cast(ref, in_layout)
+      op = mgpu.dialect.AsyncLoadTmemOp(
+          ref, reduce=mgpu.dialect.TMEMLoadReduction.Min
+      )
+      mgpu.dialect.layout_cast(op.results[0], out_layout)
+
+    mgpu.infer_layout(self.module)
+    self.checkInTmemLayouts(op, [in_layout])
+    expected_reduced_layout = layouts.to_layout_attr(
+        tcgen05.TMEM_NATIVE_LAYOUT.reduce((1,))
+    )
+    self.checkOutLayouts(op, [out_layout, expected_reduced_layout])
+
   @parameterized.parameters(
       mtu.RegisterLayout.TCGEN05, mtu.RegisterLayout.TCGEN05_TMEM_NATIVE
   )

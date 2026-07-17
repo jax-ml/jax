@@ -2507,9 +2507,26 @@ def _async_load_tmem_op_lowering_rule(
   out_layout_attr = inference_utils.out_layouts(op)[0]
   out_layout = layouts_lib.from_layout_attr(out_layout_attr)
   assert isinstance(out_layout, fa.TiledLayout)
-  is_signed = _default_is_signed(ir.MemRefType(op.source.type).element_type)
-  arr = tmem_ref.load(out_layout, is_signed)
-  return [fragmented_array_to_ir(arr, op.result.type)]
+  element_type = ir.MemRefType(op.source.type).element_type
+  # TODO(apaszke): Remove once 0.11.1 is the minimum jaxlib version.
+  if getattr(op, "reduce", None) is not None:
+    reduce_str = cast(
+        tcgen05.LoadReduceOp, str(mgpu.TMEMLoadReduction(op.reduce.value))  # pyrefly: ignore[missing-attribute]
+    )
+    if isinstance(element_type, ir.IntegerType):
+      is_signed = not reduce_str.startswith("abs")
+      reduce_str = reduce_str[-3:]
+    else:
+      is_signed = None
+    loaded, reduced = tmem_ref.load(out_layout, is_signed, reduce=reduce_str)
+    return [
+        fragmented_array_to_ir(loaded, op.results[0].type),
+        fragmented_array_to_ir(reduced, op.results[1].type),
+    ]
+  else:
+    is_signed = _default_is_signed(element_type)
+    arr = tmem_ref.load(out_layout, is_signed)
+    return [fragmented_array_to_ir(arr, op.results[0].type)]
 
 
 @_register_lowering(mgpu.AsyncStoreTmemOp)

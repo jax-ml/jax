@@ -3819,10 +3819,6 @@ def _async_load_tmem_lowering_rule_wg(
     tree,
     reduce: tcgen05.LoadReduceOp | None = None,
 ):
-  if reduce is not None:
-    raise NotImplementedError(
-        "Fused load-reduce is not supported in Warpgroup semantics"
-    )
   assert isinstance(x_ref, ir.Value)
   assert isinstance(x_ref.type, ir.MemRefType)
   x_aval = ctx.avals_in[0]
@@ -3845,6 +3841,24 @@ def _async_load_tmem_lowering_rule_wg(
     raise NotImplementedError(
         f"Unimplemented transforms for TMEM refs. {transforms=}"
     )
+  if reduce is not None:
+    orig_reduce = reduce
+    # Make sure we will interpret the reduction as unsigned, since we erase
+    # signedness.
+    if isinstance(x_aval.dtype, jnp.unsignedinteger) and "abs" not in reduce:
+      reduce = "abs" + reduce  # type: ignore
+    match reduce:
+      case "min":
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.Min  # pyrefly: ignore[missing-attribute]
+      case "max":
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.Max  # pyrefly: ignore[missing-attribute]
+      case "absmin":
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMin  # pyrefly: ignore[missing-attribute]
+      case "absmax":
+        reduce_attr = mgpu.dialect.TMEMLoadReduction.AbsMax  # pyrefly: ignore[missing-attribute]
+      case _:
+        raise ValueError(f"Unsupported load reduce operation: {orig_reduce}")
+    return tuple(mgpu.dialect.async_load_tmem(x_tmem, reduce=reduce_attr))  # type: ignore
   return (mgpu.dialect.async_load_tmem(x_tmem),)
 
 

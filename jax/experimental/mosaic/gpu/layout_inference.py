@@ -1737,18 +1737,36 @@ def _async_load_tmem_constraint_system(
       tuple(ir.ShapedType(op.source.type).shape),
       bitwidth=utils.bitwidth(op.source.type.element_type),
   )
+  constraints: list[cs.Constraint] = [
+      constraint,
+      # The following `NotOfType` constraints are shortcuts, helping
+      # the layout inference system converge faster.
+      # They are implicitly rejected by `IsTransferableTmemRegisters`.
+      cs.NotOfType(destination_variable, fa.WGSplatFragLayout),
+      cs.NotOfType(destination_variable, fa.WGStridedFragLayout),
+  ]
+  operands_for_variable = {
+      source_variable: [source],
+      destination_variable: [destination],
+  }
+  # TODO(apaszke): Remove once 0.11.1 is the minimum jaxlib version.
+  if getattr(op, "reduce", None) is not None:
+    reduced = ValueSite(op, VariableType.RESULT, 1)
+    reduced_variable = cs.Variable(reduced)
+    operands_for_variable[reduced_variable] = [reduced]
+    source_rank = len(ir.MemRefType(op.source.type).shape)
+    assert source_rank == 2
+    constraints.append(
+        cs.Equals(
+            reduced_variable,
+            cs.Reduce(
+                destination_variable, axes=(1,), rank=source_rank, keep_dims=False
+            ),
+        )
+    )
   return (
-      cs.ConstraintSystem(
-          constraints=[
-              constraint,
-              # The following `NotOfType` constraints are shortcuts, helping
-              # the layout inference system converge faster.
-              # They are implicitly rejected by `IsTransferableTmemRegisters`.
-              cs.NotOfType(destination_variable, fa.WGSplatFragLayout),
-              cs.NotOfType(destination_variable, fa.WGStridedFragLayout),
-          ]
-      ),
-      {source_variable: [source], destination_variable: [destination]},
+      cs.ConstraintSystem(constraints=constraints),
+      operands_for_variable,
   )
 
 

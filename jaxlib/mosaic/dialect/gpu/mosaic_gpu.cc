@@ -1051,21 +1051,44 @@ llvm::LogicalResult AsyncLoadTmemOp::inferReturnTypes(
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
     mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  AsyncLoadTmemOpAdaptor adaptor(operands, attributes, properties, regions);
   mlir::MemRefType memref_type =
       mlir::cast<mlir::MemRefType>(operands[0].getType());
   auto vector_type = mlir::VectorType::get(memref_type.getShape(),
                                            memref_type.getElementType());
   inferredReturnTypes.assign({vector_type});
+  if (adaptor.getReduce().has_value()) {
+    auto reduced_vector_type = mlir::VectorType::get(
+        memref_type.getShape().drop_back(), memref_type.getElementType());
+    inferredReturnTypes.push_back(reduced_vector_type);
+  }
   return mlir::success();
 }
 
 llvm::LogicalResult AsyncLoadTmemOp::verify() {
-  if (getSource().getType().getElementType() !=
-      getResult().getType().getElementType()) {
+  if (getNumResults() < 1) {
+    return emitOpError() << "expected at least 1 result, got "
+                         << getNumResults();
+  }
+  if (!llvm::all_of(getResults(), [](mlir::Value result) {
+        return llvm::isa<mlir::VectorType>(result.getType());
+      })) {
+    return emitOpError() << "expected all results to be vector types";
+  }
+  mlir::VectorType result_type =
+      mlir::cast<mlir::VectorType>(getResult(0).getType());
+  if (getSource().getType().getElementType() != result_type.getElementType()) {
     return emitOpError() << "The `source` and `result` must have "
                             "the same element type.";
   }
-  if (getSource().getType().getShape() != getResult().getType().getShape()) {
+  if (getReduce().has_value()) {
+    if (!result_type.getElementType().isF32() &&
+        !result_type.getElementType().isSignlessInteger(32)) {
+      return emitOpError()
+             << "Reductions only supported for f32 and i32 loads.";
+    }
+  }
+  if (getSource().getType().getShape() != result_type.getShape()) {
     return emitOpError()
            << "The `source` and `result` must have the same shape.";
   }

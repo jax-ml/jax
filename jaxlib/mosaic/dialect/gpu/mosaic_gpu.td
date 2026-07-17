@@ -269,6 +269,17 @@ def MosaicGPU_TMAReduction : I32EnumAttr<"TMAReduction",
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_TMEMLoadReduction : I32EnumAttr<"TMEMLoadReduction",
+    "Reduction operation for load reduce.",
+    [
+      I32EnumAttrCase<"Min", 0, "min">,
+      I32EnumAttrCase<"Max", 1, "max">,
+      I32EnumAttrCase<"AbsMin", 2, "absmin">,
+      I32EnumAttrCase<"AbsMax", 3, "absmax">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
   let parameters = (ins "::mlir::DenseI32ArrayAttr":$tiling);
   let summary = "Specifies a transform that tiles suffix dimensions of a memref in SMEM.";
@@ -1048,8 +1059,11 @@ def MosaicGPU_AsyncLoadTmemOp : Op<MosaicGPU_Dialect, "async_load_tmem",
     [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Copies TMEM to registers asynchronously.";
 
-  let arguments = (ins MemRefRankOf<[AnyType], [2]>:$source);
-  let results = (outs VectorOfRank<[2]>);
+  let arguments = (ins
+    MemRefRankOf<[AnyType], [2]>:$source,
+    OptionalAttr<MosaicGPU_TMEMLoadReduction>:$reduce
+  );
+  let results = (outs Variadic<AnyFixedVectorOfNonZeroRank>);
 
   let hasVerifier = 1;
 }
