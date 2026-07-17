@@ -11564,8 +11564,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                                           unreduced_vals, mesh):
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
+    if not jtu.is_device_tpu() or not jtu.is_libtpu_at_least('0.0.45'):
+      self.skipTest('Requires TPU and libtpu 0.0.45 or newer.')
 
     np_inp = np.arange(8.).reshape(4, 2)
     arr = jax.device_put(np_inp, P('x', None))
@@ -11617,8 +11617,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_reduce_max_min_unreduced_complex(self, lax_op, jnp_op, u_kind, mesh):
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
+    if not jtu.is_device_tpu() or not jtu.is_libtpu_at_least('0.0.45'):
+      self.skipTest('Requires TPU and libtpu 0.0.45 or newer.')
 
     np_inp = np.arange(16).reshape(4, 2, 2)
     arr = jax.device_put(np_inp, P('x', 'y', None))
@@ -11642,8 +11642,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_reduce_max_unreduced_partial_reduction(self, mesh):
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
+    if not jtu.is_device_tpu() or not jtu.is_libtpu_at_least('0.0.45'):
+      self.skipTest('Requires TPU and libtpu 0.0.45 or newer.')
 
     arr = jax.device_put(np.arange(8).reshape(4, 2), P('x', 'y'))
 
@@ -11723,8 +11723,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_reduce_max_unreduced_reduce_scatter(self, mesh):
     if ifrt_version < 59:
       self.skipTest('Requires ifrt_version >= 59')
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45 or newer.")
+    if not jtu.is_device_tpu() or not jtu.is_libtpu_at_least('0.0.45'):
+      self.skipTest('Requires TPU and libtpu 0.0.45 or newer.')
 
     arr = jax.device_put(np.arange(8).reshape(4, 2), P('x'))
 
