@@ -206,6 +206,41 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     out = kernel(x, y, z)
     np.testing.assert_allclose(out, x + y + 2 * z.reshape((8 * 8, 128)))
 
+  def test_emit_pipeline_correct_dma_effects(self):
+    def pipeline_body(x_ref, y_ref, o_ref, scratch_ref):
+      # make_async_remote_copy with src=x_ref (in_spec) and dst=scratch_ref.
+      # Calling wait_send() on this descriptor swaps src and dst when lowering
+      # to dma_wait_p. The emit_pipeline primitive checks that write effects
+      # haven't been attached to the input buffer.
+      @functools.partial(pl.run_scoped, sem=pltpu.SemaphoreType.DMA)
+      def _(sem):
+        desc = pltpu.make_async_remote_copy(
+            x_ref, scratch_ref, send_sem=sem, recv_sem=sem, device_id=0
+        )
+        desc.wait_send()
+      o_ref[...] = x_ref[...] + y_ref[...]
+
+    @pl.kernel(
+        out_type=jax.ShapeDtypeStruct((8 * 8, 128), jnp.float32),
+        mesh=pltpu.TensorCoreMesh(axis_name='core'),
+        scratch_types=[pltpu.VMEM((8, 128), jnp.float32)],
+    )
+    def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref, scratch_ref):
+      pltpu.emit_pipeline(
+          functools.partial(pipeline_body, scratch_ref=scratch_ref),
+          grid=(8,),
+          in_specs=[
+              pl.BlockSpec((8, 128), lambda i: (i, 0)),
+              pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          ],
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+      )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+
+    x = jnp.zeros((8 * 8, 128), dtype=jnp.float32)
+    y = jnp.zeros((8 * 8, 128), dtype=jnp.float32)
+    # This will fail if a write effect is incorrectly attached to x_hbm_ref.
+    jax.jit(kernel).trace(x, y)
+
   def test_trivial_windowing_elides_double_buffering(self):
     def pipeline_body(x_ref, y_ref, o_ref):
       o_ref[...] = x_ref[...] + y_ref[...]

@@ -4891,7 +4891,9 @@ def _dma_start_lowering_rule(
 @register_lowering_rule(tpu_primitives.dma_wait_p)
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: primitives.DeviceIdType,
-                            insert_dummy_device: bool):
+                            insert_dummy_device: bool,
+                            is_wait_send: bool = False):
+  del is_wait_send
   src, dst, sem, _, device_id = _dma_unflatten(tree, args)
   src_aval, dst_aval, sem_aval, _, device_id_aval = _dma_unflatten(
       tree, ctx.avals_in

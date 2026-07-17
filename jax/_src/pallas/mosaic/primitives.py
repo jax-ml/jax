@@ -230,7 +230,7 @@ class AsyncCopyDescriptor:
     flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
-        insert_dummy_device=False,
+        insert_dummy_device=False, is_wait_send=False
     )
 
   def wait_send(self):
@@ -238,14 +238,15 @@ class AsyncCopyDescriptor:
     if not self.is_remote:
       raise ValueError("Cannot `wait_send` on a local copy.")
     # We swap src and dst since by default dma_wait_p waits on the dst_sem
-    # As a clean up, maybe we could modify the primitive to have a
-    # `wait_on_send` bool.
+    # TODO(rdyro): Update the lowering to use `is_wait_send` instead of
+    # swapping src and dst.
     flat_args, tree = self._get_args_and_tree(
         swap_src_and_dst=True,
     )
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
         insert_dummy_device=self.is_remote,
+        is_wait_send=True,
     )
 
 
@@ -269,14 +270,25 @@ def _get_dma_effects(
     src_sem_aval,
     device_id_aval,
     device_id_type,
+    *,
+    is_wait_send: bool = False,
 ):
   n_src_transforms = len(_dma_tree_leaves(src_ref_aval))
   n_dst_transforms = len(_dma_tree_leaves(dst_ref_aval))
   n_dst_sem_transforms = len(_dma_tree_leaves(dst_sem_aval))
   dst_sem_index = n_src_transforms + n_dst_transforms
+  # TODO(rdyro): We swap read vs write effects when dma_wait is bound via
+  # `wait_send`. `wait_send` swaps the src and dst args when binding dma_wait_p.
+  # Consider handling this in a cleaner way.
+  if is_wait_send:
+    src_ref_effect = state.WriteEffect(0)
+    dst_ref_effect = state.ReadEffect(n_src_transforms)
+  else:
+    src_ref_effect = state.ReadEffect(0)
+    dst_ref_effect = state.WriteEffect(n_src_transforms)
   effs: set[jax_core.Effect] = {
-      state.ReadEffect(0),  # Read from src ref
-      state.WriteEffect(n_src_transforms),  # Write to dst ref
+      src_ref_effect,
+      dst_ref_effect,
       state.WriteEffect(dst_sem_index),  # Write to dst sem
   }
   if src_sem_aval is not None:
@@ -555,8 +567,9 @@ dma_wait_p.multiple_results = True
 
 dma_wait_p.is_high = _dma_is_high
 
-def _dma_wait_to_lojax(*args, tree, device_id_type, insert_dummy_device: bool):
-  del insert_dummy_device
+def _dma_wait_to_lojax(*args, tree, device_id_type, insert_dummy_device: bool,
+                       is_wait_send: bool):
+  del insert_dummy_device, is_wait_send
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_ref_aval = jax_core.typeof(_get_ref(src_ref))
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
@@ -581,7 +594,9 @@ def _dma_wait_to_lojax(*args, tree, device_id_type, insert_dummy_device: bool):
 dma_wait_p.to_lojax = _dma_wait_to_lojax
 
 @dma_wait_p.def_effectful_abstract_eval
-def _dma_wait_abstract_eval(*args, tree, device_id_type, insert_dummy_device: bool):
+def _dma_wait_abstract_eval(
+    *args, tree, device_id_type, insert_dummy_device: bool, is_wait_send: bool
+):
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, args)
   )
@@ -605,6 +620,7 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type, insert_dummy_device: bo
       src_sem_aval,
       device_id_aval,
       device_id_type,
+      is_wait_send=is_wait_send,
   )
 
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -633,9 +649,10 @@ def dma_wait_partial_discharge_rule(
     tree,
     device_id_type,
     insert_dummy_device: bool,
+    is_wait_send: bool = False,
 ):
   # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
-  del out_avals, device_id_type, insert_dummy_device
+  del out_avals, device_id_type, insert_dummy_device, is_wait_send
   _, dst_ref, dst_sem, _, _ = _dma_unflatten(tree, args)
   dst_ref, dst_ref_transforms = _get_ref_and_transforms(dst_ref)
   dst_sem, dst_sem_transforms = _get_ref_and_transforms(dst_sem)
