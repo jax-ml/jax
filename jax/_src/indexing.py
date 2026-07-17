@@ -105,6 +105,10 @@ def dslice(
     Array([4, 5], dtype=int32)
   """
   if start is None:
+    if size is not None or stride is not None:
+      raise NotImplementedError(
+          "Only `size/stride == None` implemented when `start` is `None`"
+      )
     return slice(None)
   if stride is None:
     stride = 1
