@@ -705,12 +705,18 @@ def _call_hi_primitive_linearized_transpose(
               for a, nz in zip(_prim.out_avals_flat, nz_out_flat)]
   assert next(cts_flat_iter, sentinel := object()) is sentinel
   cts = tree_unflatten(_prim.out_tree, cts_flat)
+  # A vjp_bwd rule may return a dict of pytrees to log out of the backward
+  # pass (see VJP.with_logs), or None (the usual case) to log nothing.
   if has_sres:
     residuals, sres = residuals
-    none = _prim.vjp_bwd(residuals, sres, cts, *accums)
+    log = _prim.vjp_bwd(residuals, sres, cts, *accums)
   else:
-    none = _prim.vjp_bwd(residuals, cts, *accums)
-  assert none is None
+    log = _prim.vjp_bwd(residuals, cts, *accums)
+  if log is not None and type(log) is not dict:
+    raise TypeError(
+        f"{type(_prim).__name__}.vjp_bwd should return None or a dict of "
+        f"backward-pass log entries, got {type(log).__name__}")
+  return log
 ad.fancy_transposes[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_transpose
 
 def _call_hi_primitive_linearized_prettyprint(eqn, context, settings):
@@ -733,8 +739,12 @@ ad.primitive_jvps[call_hi_primitive_p] = _call_hi_primitive_jvp
 def _call_hi_primitive_transpose(cts_flat, *primals_flat, _prim):
   cts = tree_unflatten(_prim.out_tree, cts_flat)
   primals = tree_unflatten(_prim.in_tree, primals_flat)
-  none = _prim.transpose(cts, *primals)
-  assert none is None
+  log = _prim.transpose(cts, *primals)  # a returned dict logs entries
+  if log is not None and type(log) is not dict:
+    raise TypeError(
+        f"{type(_prim).__name__}.transpose should return None or a dict of "
+        f"backward-pass log entries, got {type(log).__name__}")
+  return log
 ad.fancy_transposes[call_hi_primitive_p] = _call_hi_primitive_transpose
 
 def _call_hi_primitive_dce(used_outs_flat, eqn):

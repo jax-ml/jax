@@ -97,6 +97,6 @@ ad.primitive_linearizations[eval_jaxpr_p] = _eval_jaxpr_linearize
 def _eval_jaxpr_transpose(ct, *args, jaxpr):
   jaxpr_, consts = jaxpr, jaxpr.consts
   jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
-  ad.call_transpose_fancy(core.closed_call_p, ct, *consts, *args,
-                          call_jaxpr=jaxpr_)
+  return ad.call_transpose_fancy(core.closed_call_p, ct, *consts, *args,
+                                 call_jaxpr=jaxpr_)
 ad.fancy_transposes[eval_jaxpr_p] = _eval_jaxpr_transpose
