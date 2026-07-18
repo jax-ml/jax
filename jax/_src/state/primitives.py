@@ -906,6 +906,8 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
     if ref_is_batched and not val_is_batched:
       val = batching.broadcast(val, axis_data.size, ref_dim,
                                axis_data.explicit_mesh_axis)
+    else:
+      val = batching.moveaxis(val, val_dim, ref_dim)
     return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")

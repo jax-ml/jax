@@ -331,6 +331,15 @@ class MutableArrayTest(jtu.JaxTestCase):
     ys = f(xs)
     self.assertAllClose(ys, xs ** 2, check_dtypes=False)
 
+  def test_vmap_axes_basic(self):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r, x):
+      r[...] = x
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    jax.vmap(f, in_axes=(1, 0))(ref, jnp.ones((3, 2)))  # don't crash
+    self.assertAllClose(ref[...], jnp.ones((2, 3)), check_dtypes=False)
+
   def test_vmap_extensive_inputs(self):
     def f(x_ref, val):
       x_ref[...] += val
