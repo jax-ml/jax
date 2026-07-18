@@ -4627,8 +4627,8 @@ def _sin_lowering(ctx, x, accuracy):
 
 def _sin_lin(_is_vjp, nzs, x, accuracy):
   nz, = nzs
-  return (sin_p.bind(x, accuracy=accuracy), nz, cos(x),
-          lambda cos_x, t: mul(t, cos_x))
+  return (sin_p.bind(x, accuracy=accuracy), nz, cos(x), None,
+          lambda cos_x, _, t: mul(t, cos_x))
 
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x, accuracy: mul(g, cos(x, accuracy=accuracy)))
@@ -8673,7 +8673,7 @@ def _reduce_or_lin(_is_vjp, nzs, x, *, axes):
   nz, = nzs
   y = reduce_or_p.bind(x, axes=axes)
   aval = typeof(y).to_tangent_aval()
-  return y, False, (), lambda _, t: ad_util.Zero(aval)
+  return y, False, (), None, lambda _, __, t: ad_util.Zero(aval)
 
 reduce_or_p = standard_primitive(
     _reduce_logical_shape_rule, input_dtype, 'reduce_or',
