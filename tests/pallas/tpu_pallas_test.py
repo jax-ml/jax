@@ -5118,6 +5118,53 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     compiled_kernel = jax.jit(wrapper_dynamic).lower(n).compile()
     np.testing.assert_array_equal(compiled_kernel(n), n)
 
+  @parameterized.product(
+      dtype=[jnp.int4, jnp.int8, jnp.uint8, jnp.int16, jnp.uint16],
+      shift_amount=[-1, 0, 1, 2, 5, 8, 9, 16, 17, 100],
+      shape=[(11, 200), (32, 256)],
+  )
+  def test_packed_shifts(self, dtype, shift_amount, shape):
+    if not jtu.is_libtpu_at_least('0.0.45'):
+      self.skipTest('Requires libtpu 0.0.45 or newer')
+    if dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Requires TPU >= 4')
+    if shift_amount < 0 and dtype in (jnp.uint8, jnp.uint16):
+      self.skipTest(
+          'Negative shift amount for unsigned int types is undefined.'
+      )
+
+    def kernel(x_ref, shl_ref, shr_ref):
+      x = x_ref[...]
+      shl_ref[...] = x << shift_amount
+      shr_ref[...] = x >> shift_amount
+
+    rng = np.random.default_rng(1234)
+    info = jnp.iinfo(dtype)
+    if shift_amount > info.max or shift_amount < info.min:
+      self.skipTest('Shift amount out of range for dtype.')
+    inp = rng.integers(info.min, info.max + 1, size=shape, dtype=np.int32)
+    inp = inp.astype(dtype)
+
+    shl_out, shr_out = self.pallas_call(
+        kernel,
+        out_shape=(
+            jax.ShapeDtypeStruct(shape, dtype),
+            jax.ShapeDtypeStruct(shape, dtype),
+        ),
+    )(inp)
+
+    if dtype == jnp.int4:
+      expected_shl = inp.astype(np.int32) << shift_amount
+      expected_shr = inp.astype(np.int32) >> shift_amount
+      expected_shl = ((expected_shl << 28) >> 28).astype(dtype)
+      expected_shr = ((expected_shr << 28) >> 28).astype(dtype)
+    else:
+      expected_shl = inp << shift_amount
+      expected_shr = inp >> shift_amount
+
+    np.testing.assert_array_equal(shl_out, expected_shl)
+    np.testing.assert_array_equal(shr_out, expected_shr)
+
   @parameterized.parameters(
       (r // m, m)
       for m in (1, 2, 4, 8, 16)
