@@ -1,0 +1,120 @@
+# CI - Build JAX oneAPI Wheels
+#
+# This reusable workflow builds the JAX oneAPI plugin and PJRT wheels.
+# It can be triggered manually or called from another workflow.
+
+name: CI - Build JAX oneAPI Wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: choice
+        default: "linux-x86-n4-16"
+        options:
+          - "linux-x86-n4-16"
+
+      artifact:
+        description: "Which JAX oneAPI wheel should be built?"
+        type: choice
+        default: "jax-oneapi-plugin"
+        options:
+          - "jax-oneapi-plugin"
+          - "jax-oneapi-pjrt"
+
+      python:
+        description: "Which Python version should the wheel be built for?"
+        type: choice
+        default: "3.12"
+        options:
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
+      clone_main_xla:
+        description: "Should the latest XLA main branch be used?"
+        type: choice
+        default: "0"
+        options:
+          - "1"
+          - "0"
+
+      halt-for-connection:
+        description: "Should this workflow wait for a remote connection?"
+        type: choice
+        default: "no"
+        options:
+          - "yes"
+          - "no"
+
+  workflow_call:
+    inputs:
+      runner:
+        description: "Which runner should the workflow run on?"
+        type: string
+        default: "linux-x86-n4-16"
+
+      artifact:
+        description: "Which JAX oneAPI wheel should be built?"
+        type: string
+        default: "jax-oneapi-plugin"
+
+      python:
+        description: "Which Python version should the wheel be built for?"
+        type: string
+        default: "3.12"
+
+      clone_main_xla:
+        description: "Should the latest XLA main branch be used?"
+        type: string
+        default: "0"
+
+      halt-for-connection:
+        description: "Should this workflow wait for a remote connection?"
+        type: string
+        default: "no"
+
+permissions:
+  contents: read
+
+jobs:
+  build-oneapi-wheel:
+    name: >-
+      Build ${{ inputs.artifact }},
+      Python ${{ inputs.python }},
+      clone main XLA=${{ inputs.clone_main_xla }}
+
+    runs-on: ${{ inputs.runner }}
+
+    container:
+      image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
+      JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_BUILD_ARTIFACT_WITH_RBE: "1"
+
+    steps:
+      - name: Check out JAX
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Wait for connection
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+
+      - name: Build ${{ inputs.artifact }} wheel
+        timeout-minutes: 60
+        run: ./ci/build_oneapi_artifacts.sh "${{ inputs.artifact }}"
+
+      - name: List generated wheels
+        run: |
+          echo "Generated wheel artifacts:"
+          ls -lh dist/*.whl
