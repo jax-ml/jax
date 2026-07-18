@@ -368,6 +368,15 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
       ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
   _, ures_avals, sres_avals = out_tree.unpack()
   num_residuals_out = len(ures_avals) + len(sres_avals)
+  num_primals_out = len(primal_jaxpr.out_avals) - num_residuals_out
+
+  _, in_fwd_ures, in_fwd_sres = split_list(
+      pe._jaxpr_forwarding(primal_jaxpr), [num_primals_out, len(ures_avals)])
+  assert all(f is None for f in in_fwd_ures)
+  in_fwd = [None] * (num_primals_out + len(ures_avals)) + in_fwd_sres
+  primal_jaxpr = pe.prune_closed_jaxpr_outputs(
+      primal_jaxpr, [f is None for f in in_fwd])
+  primal_jaxpr, out_fwd = pe.dedup_jaxpr_outputs(primal_jaxpr, num_primals_out)
 
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
   tangent_metadata = _resolve_ad_metadata(xla_metadata, ad_metadata)
@@ -395,6 +404,8 @@ def _xla_metadata_call_lin(is_vjp, nzs, *primals, jaxpr, xla_metadata,
   ans = xla_metadata_call_p.bind(*primals, jaxpr=primal_jaxpr,
                                  xla_metadata=xla_metadata,
                                  ad_metadata=ad_metadata)
+  ans = subs_list(out_fwd, ans, ans)
+  ans = subs_list(in_fwd, primals, ans)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_residuals_out])
   ures, sres_flat = split_list(residuals_ans, [len(ures_avals)])
   ures = subs_list(in_fwd_res, [*jaxpr.consts, *primals], ures)
@@ -440,6 +451,28 @@ def _xla_metadata_call_transpose(cts_in, *args, jaxpr, xla_metadata,
 
 
 ad.fancy_transposes[xla_metadata_call_p] = _xla_metadata_call_transpose
+
+
+def _xla_metadata_call_to_lojax(*hi_args, jaxpr, xla_metadata, ad_metadata):
+  _check_no_qdd(jaxpr, 'xla_metadata_call')
+  lo_args_lol = [a.lower_val(x) for a, x in zip(jaxpr.in_avals, hi_args)]
+  lo_args = [x for xs in lo_args_lol for x in xs]
+  in_avals = ft.flatten(([[core.typeof(x) for x in xs] for xs in lo_args_lol],
+                         {}))
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
+  all_outs = xla_metadata_call_p.bind(*lo_args, jaxpr=lo_jaxpr,
+                                      xla_metadata=xla_metadata,
+                                      ad_metadata=ad_metadata)
+  _, lo_outs = out_avals.update(all_outs).unpack()
+  return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
+xla_metadata_call_p.to_lojax = _xla_metadata_call_to_lojax
+
+def _check_no_qdd(jaxpr, name):
+  if (any(a.has_qdd for a in jaxpr.in_avals) or
+      any(core.typeof(c).has_qdd for c in jaxpr.consts)):
+    raise NotImplementedError(
+        f"hijax values with quasi-dynamic data (e.g. Boxes) are not "
+        f"supported in {name} bodies")
 
 
 def _xla_metadata_call_partial_eval_custom_params_updater(

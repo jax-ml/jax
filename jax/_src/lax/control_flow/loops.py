@@ -868,19 +868,10 @@ def _scan_linearize(is_vjp, nzs, *primals_in, reverse: bool, length: int,
   # stacked primal ys output or an earlier residual (but not a carry output,
   # which is the final rather than the stacked value), so return one copy of
   # each from the scan and re-duplicate after the bind below.
-  prim_out_vars, res_out_vars = split_list(primal_jaxpr.outvars, [num_primals_out])
-  idx_map = {id(v): i for i, v in enumerate(prim_out_vars[num_carry:], num_carry)}
-  res_fwd: list[int | None] = [None] * num_primals_out
-  num_kept = num_primals_out
-  for v in res_out_vars:
-    fwd = idx_map.get(id(v))
-    res_fwd.append(fwd)
-    if fwd is None:
-      idx_map[id(v)] = num_kept  # index into the pruned outputs
-      num_kept += 1
-  primal_jaxpr = pe.prune_closed_jaxpr_outputs(
-      primal_jaxpr, [f is None for f in res_fwd])
-  num_kept_res = num_kept - num_primals_out
+  primal_jaxpr, res_fwd = pe.dedup_jaxpr_outputs(
+      primal_jaxpr, num_primals_out,
+      [False] * num_carry + [True] * (num_primals_out - num_carry))
+  num_kept_res = sum(f is None for f in res_fwd) - num_primals_out
 
   # Run the primal scan (if it has any outputs or effects).
   if not primal_jaxpr.out_avals and not primal_jaxpr.effects:

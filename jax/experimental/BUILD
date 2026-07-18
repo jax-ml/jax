@@ -643,6 +643,7 @@ pytype_strict_library(
         "//jax/_src:api_util",
         "//jax/_src:batching",
         "//jax/_src:core",
+        "//jax/_src:flattree",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",

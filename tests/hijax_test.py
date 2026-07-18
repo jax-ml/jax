@@ -1955,6 +1955,75 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(ct, jnp.cos(1.0))
     self.assertEqual(logs, {})
 
+  @jtu.run_on_devices("cpu")  # TODO(mattjj): debug xla failures
+  def test_hijax_inside_call_primitives(self):
+    from jax._src.compute_on import compute_on2
+    from jax.experimental.fused import fused
+    from jax.experimental.scheduling_groups import scheduling_group
+
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def lin(self, nzs_in, x):
+        c = x * 2.0
+        return self(x), (), True, {'x1': x, 'x2': x, 'c1': c, 'c2': c}
+
+      def linearized(self, res, sres, t):
+        return t * sres['c2']
+
+      def vjp_fwd(self, nzs_in, x):
+        c = x * 2.0
+        return self(x), (), True, {'x1': x, 'x2': x, 'c1': c, 'c2': c}
+
+      def vjp_bwd(self, res, sres, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * sres['c1'])
+        return {'sq': sres['x1']}
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    co = lambda f: compute_on2(f, compute_type='device_host',
+                               out_memory_spaces=jax.memory.Space.Device)
+    for wrap, prim_name in [(scheduling_group('g'), 'xla_metadata_call'),
+                            (co, 'compute_on')]:
+      f = wrap(square)
+      self.assertAllClose(f(3.0), 9.0)
+      self.assertAllClose(jax.grad(f)(3.0), 6.0)
+      self.assertAllClose(jax.grad(jax.jit(f))(3.0), 6.0)
+      _, f_vjp = jax.vjp(f, 3.0)
+      cts, logs = f_vjp.with_logs(1.0)
+      self.assertAllClose(cts[0], 6.0)
+      self.assertAllClose(logs['sq'], 3.0)
+      leaves = jax.tree.leaves(f_vjp.structured_residuals)
+      self.assertLen(leaves, 4)
+      self.assertIs(leaves[0], leaves[1])  # c pair, deduped
+      self.assertIs(leaves[2], leaves[3])  # x pair, input-forwarded
+      jaxpr = jax.make_jaxpr(lambda x: jax.vjp(f, x)[1](1.0))(3.0)
+      fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == prim_name)
+      self.assertLen(fwd_eqn.outvars, 2)
+
+    ff = fused(out_spaces=(jax.memory.Space.Device,))(square)
+    lo = jax.jit(ff).trace(3.0).lojax.jaxpr
+    eqn = next(e for e in lo.jaxpr.eqns if e.primitive.name == 'fused_call')
+    self.assertFalse(eqn.params['jaxpr'].is_high)
+    self.assertEqual(eqn.params['out_spaces'], (jax.memory.Space.Device,))
+
+    box = new_box()
+    box_set(box, 0.0)
+    def g(x):
+      box_set(box, x * 2.0)
+      return x * 3.0
+    with self.assertRaisesRegex(NotImplementedError, "quasi-dynamic"):
+      scheduling_group('g')(g)(1.0)
+
   def test_backward_pass_logging_call_primitives(self):
     from jax._src import api_util
     from jax._src import flattree as ft

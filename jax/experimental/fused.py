@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from jax._src import core
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import dispatch
 from jax._src.core import typeof
@@ -157,3 +158,18 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals):
       lu.wrap_init(transposed, debug_info=dbg), in_avals)
   return trans_jaxpr.with_consts(consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.primitive_transposes[fused_p] = _fused_transpose
+
+
+def _fused_to_lojax(*hi_args, jaxpr, out_spaces):
+  from jax._src.xla_metadata import _check_no_qdd  # pyrefly: ignore[missing-import]
+  _check_no_qdd(jaxpr, 'fused')
+  lo_args_lol = [a.lower_val(x) for a, x in zip(jaxpr.in_avals, hi_args)]
+  lo_args = [x for xs in lo_args_lol for x in xs]
+  in_avals = ft.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
+  _, out_lol = out_avals.unpack()
+  lo_spaces = tuple(s for l, s in zip(out_lol.unpack(), out_spaces) for _ in l)
+  all_outs = fused_p.bind(*lo_args, jaxpr=lo_jaxpr, out_spaces=lo_spaces)
+  _, lo_outs = out_avals.update(all_outs).unpack()
+  return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
+fused_p.to_lojax = _fused_to_lojax

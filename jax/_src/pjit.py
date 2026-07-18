@@ -1650,17 +1650,8 @@ def _pjit_linearize(is_vjp, nzs, *primals_in, jaxpr, in_shardings, out_shardings
   # multiple tree positions), so return one copy of each and re-duplicate
   # after the bind below.
   num_primals_out = len(fwd_jaxpr.out_avals) - num_kept_residuals
-  out_vars, res_vars = split_list(fwd_jaxpr.outvars, [num_primals_out])
-  idx_map = {id(v): i for i, v in enumerate(out_vars)}
-  num_kept = num_primals_out
-  out_fwd: list[int | None] = [None] * num_primals_out
-  for v in res_vars:
-    if (fwd := idx_map.get(id(v))) is None:
-      idx_map[id(v)] = num_kept
-      num_kept += 1
-    out_fwd.append(fwd)
+  fwd_jaxpr, out_fwd = pe.dedup_jaxpr_outputs(fwd_jaxpr, num_primals_out)
   keep = [f is None for f in out_fwd]
-  fwd_jaxpr = pe.prune_closed_jaxpr_outputs(fwd_jaxpr, keep)
   primal_out_shardings = keep_where(primal_out_shardings, keep)
   primal_out_layouts = keep_where(primal_out_layouts, keep)
   del keep

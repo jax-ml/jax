@@ -1346,11 +1346,13 @@ pytype_strict_library(
         ":config",
         ":core",
         ":effects",
+        ":flattree",
         ":mlir",
         ":partial_eval",
         ":source_info_util",
         ":tree_util",
         ":util",
+        ":xla_metadata",
         "//jax/_src/lib",
     ],
 )
