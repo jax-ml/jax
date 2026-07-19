@@ -1755,11 +1755,7 @@ def _shard_map_linearize(trace, shard_map_p, f: Callable,
       f, trace.is_vjp, trace.tag, nzs_in, debug_info, primals)
     primals_out, out_specs = ans_aux.unpack_aux()
     ures, sres = res.unpack()
-    # De-duplicate structured residuals by object id: an sres leaf that is
-    # already a primal output, a ures output, or an earlier sres leaf isn't
-    # returned again. Each leaf records an index into the flat outputs
-    # [*primals_out, *ures, *kept_sres]; re-duplication happens outside the
-    # bind below.
+    # De-duplicate structured residuals by object id:
     idx_map = {id(x): i for i, x in enumerate((*primals_out, *ures))}
     n_out = len(primals_out) + len(ures)
     kept, keep, sres_fwd = [], [], []
