@@ -2080,5 +2080,35 @@ class PushBlockSpecTest(parameterized.TestCase):
       self.assertEqual(out_block_spec.index_map(1), (0, 1))
 
 
+  def test_concatenate(self):
+    def f(x, y):
+      return jnp.concatenate([x, y], axis=0)
+
+    x_type = jax.ShapeDtypeStruct((512, 128), jnp.float32)
+    y_type = jax.ShapeDtypeStruct((256, 128), jnp.float32)
+    x_block_spec = pl.BlockSpec((512, 128), lambda i, j: (i, j))
+    y_block_spec = pl.BlockSpec((256, 128), lambda i, j: (i, j))
+
+    out_block_spec = block_spec_lib.push_block_spec(
+        f, x_block_spec, y_block_spec
+    )(x_type, y_type)
+    self.assertEqual(out_block_spec.block_shape, (768, 128))
+    self.assertEqual(out_block_spec.index_map(1, 2), (0, 2))
+
+  def test_concatenate_not_fully_contiguous(self):
+    def f(x, y):
+      return jnp.concatenate([x, y], axis=0)
+
+    x_type = jax.ShapeDtypeStruct((512, 128), jnp.float32)
+    y_type = jax.ShapeDtypeStruct((256, 128), jnp.float32)
+    x_block_spec = pl.BlockSpec((256, 128), lambda i, j: (i, j))
+    y_block_spec = pl.BlockSpec((256, 128), lambda i, j: (i, j))
+
+    with self.assertRaises(ValueError):
+      block_spec_lib.push_block_spec(f, x_block_spec, y_block_spec)(
+          x_type, y_type
+      )
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
