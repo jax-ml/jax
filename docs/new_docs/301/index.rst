@@ -23,8 +23,8 @@ memory/compute tradeoff of differentiation.
    explicit and manual (``shard_map``) modes.
 4. :doc:`custom-derivatives` — defining custom derivative rules with hijax
    primitives, the recommended approach: one primitive can carry rules for
-   both modes, plus linearization, batching, logging data out of the
-   backward pass, and more.
+   both modes, plus linearization, batching, producing structured
+   residuals, logging data out of the backward pass, and more.
 5. :doc:`custom-jvp-vjp` — the classic decorators, customizing one
    differentiation mode at a time: still fully supported, and often the most
    convenient tool for simple cases.

@@ -103,11 +103,11 @@ print(dW1.shape, dx0.shape)
 
 ## What the VJP object saves
 
-The VJP object exposes its saved state in two attributes: `args_res` holds
+The VJP object exposes its saved state in three attributes: `args_res` holds
 argument values that the backward pass needs *verbatim*, arranged to mirror
-the arguments, and `opaque_residuals` holds values computed during the
-forward pass. For `layer`, the backward pass of `x @ W` needs both `x` and
-`W` as they were:
+the arguments; `opaque_residuals` holds values computed during the forward
+pass; and `structured_residuals` is a third channel, described below. For
+`layer`, the backward pass of `x @ W` needs both `x` and `W` as they were:
 
 ```{code-cell}
 y, f_vjp = jax.vjp(layer, W1, x0)
@@ -123,6 +123,16 @@ before applying their backward passes — or serializing or offloading each
 VJP object — every one of them duplicates the weights, which are typically
 the biggest thing in the saved state and which we already have. Only the
 activations vary per microbatch.
+
+The third attribute, `structured_residuals`, holds residuals that keep a
+user-meaningful structure instead of being flattened into the opaque list:
+custom derivative rules can save named pytrees of residuals there, carried
+through transformations with structure intact — `scan` stacks entries
+across iterations, `cond` records a tagged sum marking which branch ran,
+and `shard_map` stacks per-shard entries along a leading mesh axis. JAX
+can also deduplicate what's saved, storing a value that appears
+under several names just once (an optimization, not a guarantee). For typical programs it's empty; populating it is up to hijax
+primitives' rules, covered in {ref}`jax-301-structured-residuals`.
 
 ## Marking arguments not saveable: `saveable_args`
 

@@ -31,7 +31,7 @@ works examples of each.
 The recommended way to define custom derivatives is with a *hijax primitive*. A
 hijax primitive is a unit of computation treated atomically by JAX's
 higher-level transformations, namely autodiff and batching. Being atomic, a
-primitive needs a rule defining how it behaves under each transformation.  But
+primitive needs a rule defining how it behaves under each transformation. But
 instead of carrying rules for lower-level transformations, like evaluation or
 translation to HLO or Mosaic, hijax primitives carry a Python implementation
 written with ordinary JAX operations and using ordinary JAX types. After
@@ -43,7 +43,7 @@ transformations of your own operations. This page assumes familiarity with
 `jax.jvp` and `jax.grad` and the mathematical meaning of JVPs and VJPs (see
 {doc}`cookbook`).
 
-Hijax primitives are still experimental -- expect imports from
+Hijax primitives are still experimental — expect imports from
 `jax.experimental.hijax`, and expect the APIs to evolve. JAX's classic tools
 for this job, the `jax.custom_jvp` and `jax.custom_vjp` decorators, remain
 fully supported and can be more convenient for simple cases; they're covered
@@ -640,8 +640,8 @@ is optional, and is only needed if you use the corresponding transformation:
 
 If you apply a transformation without having defined the corresponding
 method, you get a `NotImplementedError` telling you what to implement.
-Some rules can be defined generically in terms of others; see the helpers
-below.
+Some rules can be defined generically in terms of others; see
+{ref}`jax-301-derived-rules` below.
 
 ### Custom VJPs with `vjp_fwd` and `vjp_bwd_retval`
 
@@ -703,7 +703,9 @@ accumulator* per primal input (matching the pytree structure of each entry
 of `in_avals`) and pushes each cotangent contribution into the corresponding
 accumulator; it returns `None` (or a dict of backward-pass logs, covered in
 {ref}`jax-301-bwd-logging`). A subclass should override one of `vjp_bwd`
-or `vjp_bwd_retval`, not both.
+or `vjp_bwd_retval`, not both. (When the forward rule saves structured
+residuals, `vjp_bwd` also receives them as an extra argument — see
+{ref}`jax-301-structured-residuals`.)
 
 An accumulator is a `GradAccum` instance. It carries the expected cotangent
 type as `acc.aval` — determined by the corresponding primal input's type,
@@ -961,8 +963,7 @@ equation in jaxprs:
 jit(mul).trace(2., 3.).jaxpr
 ```
 
-That's true under `jit` too. It's only at lowering time that `expand` is
-traced and inlined. In an eager context, each call to the primitive calls
+It's only at lowering time that `expand` is traced and inlined. In an eager context, each call to the primitive calls
 `expand` again (so, like any JAX function, it's best to keep `expand` free of
 side effects, though harmless ones like `print` can be instructive):
 
@@ -1194,6 +1195,15 @@ print(grad(mul2, 1)(2., 3.))  # nzs_in == (False, True), saves only x
 Notice that the backward rule can return `None` for an input whose cotangent
 isn't needed.
 
+The input-side report also has an output-side counterpart: `vjp_fwd` (and
+likewise `lin`) can return an optional *third* element, `nzs_out`, declaring
+symbolically which outputs have nonzero tangents. It's a pytree of booleans
+matching the output structure, or a prefix of one — like the default `True`,
+which broadcasts to mean "all of them". Declaring an output `False` marks
+its tangent as a symbolic zero, as for an output that isn't differentiable
+(an integer-valued output, say) or doesn't depend on the differentiated
+inputs; the backward rule then always sees a symbolic-zero cotangent for it.
+
 Symbolic zeros appear on the forward-mode side too: the tangents passed to a
 `jvp` rule can be `Zero`s, for example when a primitive is applied to a mix
 of differentiated inputs and constants. That's true whether the rule is
@@ -1201,12 +1211,101 @@ invoked directly by `jax.jvp` or partially evaluated by
 `linearize_from_jvp`. As with cotangents, a rule can handle them explicitly
 to exploit the sparsity, or clean them up with `instantiate_zeros`.
 
+(jax-301-structured-residuals)=
+
+### Structured residuals
+
+The residuals a rule saves are normally flattened into an opaque list on
+the VJP object (`f_vjp.opaque_residuals` — see {doc}`vjp-objects`). A rule
+can instead direct residuals into a *structured* channel, where they remain
+a pytree of your choosing: visible on the VJP object as
+`f_vjp.structured_residuals`, and carried through transformations
+with structure intact — `scan` stacks entries across iterations, `cond`
+wraps its branches' entries in a tagged `CondSum` recording which branch
+ran (the same shape backward-pass logs take, below), and `shard_map`
+stacks per-shard entries along a leading mesh axis.
+
+To opt in, return *four* values from `vjp_fwd`: the primal output, the
+ordinary residuals, `nzs_out` (usually just `True`; see the symbolic zeros
+section above), and the structured residuals. The backward rule must then
+be `vjp_bwd`, which receives the structured residuals as an extra argument
+after the ordinary ones; `vjp_bwd_retval` can't be used with structured
+residuals:
+
+```{code-cell}
+class Square(VJPHiPrimitive):
+  def __init__(self, x_aval):
+    self.in_avals = (x_aval,)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return x ** 2
+
+  def vjp_fwd(self, nzs_in, x):
+    return self(x), (), True, {'x': x}  # sres in the fourth slot
+
+  def vjp_bwd(self, res, sres, g, x_acc):
+    x_acc.accum(2. * sres['x'] * g)
+
+class Cube(VJPHiPrimitive):
+  def __init__(self, x_aval):
+    self.in_avals = (x_aval,)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return x ** 3
+
+  def vjp_fwd(self, nzs_in, x):
+    return self(x), (), True, {'x': x}
+
+  def vjp_bwd(self, res, sres, g, x_acc):
+    x_acc.accum(3. * sres['x'] ** 2 * g)
+
+def square(x):
+  return Square(jax.typeof(x))(x)
+
+def cube(x):
+  return Cube(jax.typeof(x))(x)
+
+def f(x):
+  return square(x) + cube(x)
+
+print(grad(f)(3.))
+
+_, f_vjp = jax.vjp(f, 3.)
+print(f_vjp.structured_residuals)
+```
+
+Each equation of the forward computation contributes an entry: the two
+rules' dicts, plus an empty entry for the `add`.
+
+Both rules saved the same value — the argument they were both applied to —
+and JAX deduplicates the saved values, so it's stored just once. (That's an
+optimization JAX can apply, not a guarantee.)
+
+```{code-cell}
+x1, x2 = jax.tree.leaves(f_vjp.structured_residuals)
+print(x1 is x2)
+```
+
+Under `jit` the same optimization can go further: structured residuals
+that are just forwarded inputs (like `x` here) need not be materialized as
+extra outputs of the compiled forward pass at all.
+
+The same fourth slot works for linearization: `lin` may return `(ans, res,
+nzs_out, sres)`, in which case `linearized` receives the structured
+residuals after the ordinary ones, as `linearized(res, sres, *tangents)`.
+
 (jax-301-bwd-logging)=
 
 ### Logging data out of the backward pass
 
-A `vjp_bwd` rule can also *return* something: a dict of named pytrees to
-log out of the backward pass. To receive the logs, apply the VJP function
+Backward rules get an output channel of their own: a `vjp_bwd` rule can
+return a dict of named pytrees to log out of the backward pass. To receive the logs, apply the VJP function
 via its `with_logs` method: `f_vjp.with_logs(out_ct)` returns a pair
 `(arg_cts, logs)`, where `logs` merges the dicts returned by all the rules
 that ran. Logging is drop-by-default: a plain `f_vjp(out_ct)` call ignores
