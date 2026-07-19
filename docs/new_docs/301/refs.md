@@ -73,7 +73,9 @@ gradient for a ref must itself live in a ref. Instead, use `jax.vjp` and
 `with_refs`, described below.
 
 You can combine plumbing refs with {func}`~jax.custom_vjp` to plumb data out of the
-backward pass of a differentiated function:
+backward pass of a differentiated function. (For a purely functional,
+drop-by-default alternative, see backward-pass logging with hijax
+primitives, {ref}`jax-301-bwd-logging`.)
 
 ```{code-cell}
 # First, define the helper `stash_grads`:
