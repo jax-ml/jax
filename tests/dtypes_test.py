@@ -513,6 +513,20 @@ class DtypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Invalid argument to dtype"):
       dtypes.dtype(None)
 
+  def testExplicitX64ErrorMessageIncludesCanonicalDtype(self):
+    # Regression test: in ERROR mode the ValueError message must name the
+    # canonical (fallback) dtype so the user knows what they would get.
+    # Previously the format string had only two placeholders but was called
+    # with three arguments, silently dropping canonical_dtype.name.
+    x64_dtype = np.dtype('float64')
+    canonical = np.dtype('float32')
+    with config.explicit_x64_dtypes(config.ExplicitX64Mode.ERROR):
+      if config.enable_x64.value:
+        self.skipTest("x64 is enabled; ERROR path is not triggered")
+      with self.assertRaisesRegex(ValueError,
+                                  rf"would be truncated to dtype {canonical.name}"):
+        dtypes.dtype(x64_dtype)
+
   def testDefaultDtypes(self):
     self.assertEqual(dtypes.bool_, np.bool_)
     self.assertEqual(dtypes.int_, np.int64)
