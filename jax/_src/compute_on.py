@@ -26,7 +26,9 @@ from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
+from jax._src import flattree as ft
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
+from jax._src.xla_metadata import _check_no_qdd
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list, subs_list, merge_lists)
 from jax._src.api_util import debug_info, flatten_fun_nokwargs, flatten_axes
@@ -222,6 +224,16 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
       ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
   _, ures_avals, sres_avals = out_tree.unpack()
   num_res_out = len(ures_avals) + len(sres_avals)
+  num_primals_out = len(primal_jaxpr.out_avals) - num_res_out
+
+  _, in_fwd_ures, in_fwd_sres = split_list(
+      pe._jaxpr_forwarding(primal_jaxpr), [num_primals_out, len(ures_avals)])
+  assert all(f is None for f in in_fwd_ures)
+  in_fwd = [None] * (num_primals_out + len(ures_avals)) + in_fwd_sres
+  primal_jaxpr = pe.prune_closed_jaxpr_outputs(
+      primal_jaxpr, [f is None for f in in_fwd])
+  primal_jaxpr, out_fwd = pe.dedup_jaxpr_outputs(primal_jaxpr, num_primals_out)
+  num_kept_res = sum(f is None for f in out_fwd) - num_primals_out
 
   tangent_avals_out = [a.to_tangent_aval() for a in jaxpr.out_avals]
   def _filter_zeros(is_nz_l, l):
@@ -245,10 +257,12 @@ def _compute_on_lin(is_vjp, nzs, *primals, jaxpr, compute_type,
     assert next(nz_outs_, None) is None
     return outs
 
-  primal_out_mem_spaces = out_memory_spaces + (core.MemorySpace.Device,) * num_res_out
+  primal_out_mem_spaces = out_memory_spaces + (core.MemorySpace.Device,) * num_kept_res
   ans = compute_on_p.bind(*primals, jaxpr=primal_jaxpr, compute_type=compute_type,
                           out_memory_spaces=primal_out_mem_spaces,
                           compiler_options_json=compiler_options_json)
+  ans = subs_list(out_fwd, ans, ans)
+  ans = subs_list(in_fwd, primals, ans)
   primal_ans, residuals_ans = split_list(ans, [len(ans) - num_res_out])
   ures, sres_flat = split_list(residuals_ans, [len(ures_avals)])
   ures = subs_list(in_fwd_res, [*jaxpr.consts, *primals], ures)
@@ -381,6 +395,26 @@ def _compute_on_transpose(cts_in, *args, jaxpr, compute_type,
       x.accum(ct)
   return logs
 ad.fancy_transposes[compute_on_p] = _compute_on_transpose
+
+
+def _compute_on_to_lojax(*hi_args, jaxpr, compute_type, out_memory_spaces,
+                         compiler_options_json):
+  _check_no_qdd(jaxpr, 'compute_on')
+  lo_args_lol = [a.lower_val(x) for a, x in zip(jaxpr.in_avals, hi_args)]
+  lo_args = [x for xs in lo_args_lol for x in xs]
+  in_avals = ft.flatten(([[core.typeof(x) for x in xs] for xs in lo_args_lol],
+                         {}))
+  lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
+  _, out_lol = out_avals.unpack()
+  lo_spaces = tuple(s for l, s in zip(out_lol.unpack(), out_memory_spaces)
+                    for _ in l)
+  all_outs = compute_on_p.bind(*lo_args, jaxpr=lo_jaxpr,
+                               compute_type=compute_type,
+                               out_memory_spaces=lo_spaces,
+                               compiler_options_json=compiler_options_json)
+  _, lo_outs = out_avals.update(all_outs).unpack()
+  return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
+compute_on_p.to_lojax = _compute_on_to_lojax
 
 def dce_jaxpr_compute_on_rule(used_outputs: list[bool], eqn: pe.JaxprEqn
                               ) -> tuple[list[bool], pe.JaxprEqn | None]:

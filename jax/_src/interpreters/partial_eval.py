@@ -1281,6 +1281,25 @@ _prune_jaxpr_outputs_cached = weakref_lru_cache(_prune_jaxpr_outputs)
 # (attached consts are preserved by Jaxpr.replace).
 prune_closed_jaxpr_outputs = prune_jaxpr_outputs
 
+def dedup_jaxpr_outputs(jaxpr: Jaxpr, num_kept_prefix: int,
+                        fwdable_prefix: Sequence[bool] | None = None,
+                        ) -> tuple[Jaxpr, list[int | None]]:
+  """Prune duplicated outputs, for callers to restore after evaluation."""
+  prefix_vars, rest_vars = split_list(jaxpr.outvars, [num_kept_prefix])
+  fwdable = ([True] * num_kept_prefix if fwdable_prefix is None
+             else fwdable_prefix)
+  idx_map = {id(v): i for i, (v, f) in enumerate(zip(prefix_vars, fwdable))
+             if f}
+  num_kept = num_kept_prefix
+  out_fwd: list[int | None] = [None] * num_kept_prefix
+  for v in rest_vars:
+    if (fwd := idx_map.get(id(v))) is None:
+      idx_map[id(v)] = num_kept
+      num_kept += 1
+    out_fwd.append(fwd)
+  jaxpr = prune_jaxpr_outputs(jaxpr, [f is None for f in out_fwd])
+  return jaxpr, out_fwd
+
 
 def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
               instantiate: bool | Sequence[bool] = False,
