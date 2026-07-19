@@ -45,9 +45,8 @@ from jax._src.hijax import (
     HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
     register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HiPspec, Log)
 from jax.experimental.hijax import (
-    VJPHiPrimitive, Zero, apply_derived_linearization, instantiate_zeros,
-    jvp_from_lin, linearize_from_jvp, transpose_jvp, transpose_linearized,
-    vjp_fwd_from_jvp, vjp_fwd_from_lin)
+    VJPHiPrimitive, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
+    vjp_from_jvp, vjp_from_lin)
 
 jtu.request_cpu_devices(8)
 
@@ -514,8 +513,7 @@ class NonDiffPrim(VJPHiPrimitive):
     import numpy as np
     return x, np.empty(x.shape, dtype=jax.dtypes.float0)
 
-  lin = linearize_from_jvp
-  linearized = apply_derived_linearization
+  lin, linearized = linearize_from_jvp
 
 
 class HijaxTest(jtu.JaxTestCase):
@@ -1472,10 +1470,8 @@ class HijaxTest(jtu.JaxTestCase):
         (x,), (x_dot,) = primals, tangents
         return self(x), jnp.cos(x) * x_dot
 
-      lin = linearize_from_jvp
-      linearized = apply_derived_linearization
-      vjp_fwd = vjp_fwd_from_jvp
-      vjp_bwd_retval = transpose_jvp
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
       def batch_dim_rule(self, _axis_data, in_dims):
         return in_dims[0]
@@ -1520,10 +1516,8 @@ class HijaxTest(jtu.JaxTestCase):
         x_dot, y_dot = instantiate_zeros(x_dot), instantiate_zeros(y_dot)
         return self(x, y), x_dot * y + x * y_dot
 
-      lin = linearize_from_jvp
-      linearized = apply_derived_linearization
-      vjp_fwd = vjp_fwd_from_jvp
-      vjp_bwd_retval = transpose_jvp
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
     def mul(x, y):
       return Mul(jax.typeof(x), jax.typeof(y))(x, y)
@@ -1560,8 +1554,7 @@ class HijaxTest(jtu.JaxTestCase):
       def linearized(self, x, t):
         return t * self.power * raise_to_static_power(x, self.power-1)
 
-      vjp_fwd = vjp_fwd_from_lin
-      vjp_bwd_retval = transpose_linearized
+      vjp_fwd, vjp_bwd_retval = vjp_from_lin
 
     def raise_to_static_power(x, power):
       return RaiseToStaticPower(jax.typeof(x), power=power)(x)
@@ -1593,10 +1586,8 @@ class HijaxTest(jtu.JaxTestCase):
         (x,), (x_dot,) = primals, tangents
         return self(x), jnp.cos(x) * x_dot
 
-      lin = linearize_from_jvp
-      linearized = apply_derived_linearization
-      vjp_fwd = vjp_fwd_from_lin
-      vjp_bwd_retval = transpose_linearized
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_lin
 
     def sin(x):
       return Sin(jax.typeof(x))(x)
@@ -2012,8 +2003,7 @@ class HijaxTest(jtu.JaxTestCase):
         return t * self.power * raise_to_static_power(x, self.power-1)
 
       jvp = jvp_from_lin
-      vjp_fwd = vjp_fwd_from_lin
-      vjp_bwd_retval = transpose_linearized
+      vjp_fwd, vjp_bwd_retval = vjp_from_lin
 
       def batch_dim_rule(self, _axis_data, in_dims):
         return in_dims[0]
@@ -2040,8 +2030,7 @@ class HijaxTest(jtu.JaxTestCase):
         return jnp.sin(x)
 
       jvp = jvp_from_lin
-      lin = linearize_from_jvp
-      linearized = apply_derived_linearization
+      lin, linearized = linearize_from_jvp
 
     def sin(x):
       return Sin(jax.typeof(x))(x)
@@ -2064,10 +2053,8 @@ class HijaxTest(jtu.JaxTestCase):
         (x,), (t,) = primals, tangents
         return self(x), self.scale * jax.jvp(self.f, (x,), (t,))[1]
 
-      lin = linearize_from_jvp
-      linearized = apply_derived_linearization
-      vjp_fwd = vjp_fwd_from_jvp
-      vjp_bwd_retval = transpose_jvp
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
 
     def apply_and_scale(f, scale, x):
       return ApplyAndScale(jax.typeof(x), f=f, scale=scale)(x)
@@ -2097,7 +2084,7 @@ class HijaxTest(jtu.JaxTestCase):
     def sin(x):
       return Sin(jax.typeof(x))(x)
 
-    with self.assertRaisesRegex(NotImplementedError, 'vjp_fwd_from_jvp'):
+    with self.assertRaisesRegex(NotImplementedError, 'vjp_from_jvp'):
       jax.grad(sin)(2.0)
     with self.assertRaisesRegex(NotImplementedError, 'linearize_from_jvp'):
       jax.linearize(sin, 2.0)

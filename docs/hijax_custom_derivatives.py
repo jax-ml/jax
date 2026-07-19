@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# ruff: noqa: F811
+#
 # jupyter:
 #   jupytext:
 #     cell_metadata_filter: -all
@@ -734,24 +736,19 @@ print(y_dot)
 # `jax.custom_vjp`, you never have to choose between them.
 #
 # But you can also opt into `jax.custom_jvp`-style behavior, where everything
-# is derived from the JVP rule, by assigning helper functions as class
-# attributes. The helpers come in pairs: `lin = linearize_from_jvp` together
-# with `linearized = apply_derived_linearization` derives linearization
-# support by partially evaluating `jvp`, and `vjp_fwd = vjp_fwd_from_jvp`
-# together with `vjp_bwd_retval = transpose_jvp` derives reverse mode by
-# storing the primal inputs and then linearizing and transposing `jvp` on the
-# backward pass:
+# is derived from the JVP rule, by assigning helpers as class attributes. Each
+# helper is a pair that unpacks to the two methods it defines: `lin,
+# linearized = linearize_from_jvp` derives linearization support by partially
+# evaluating `jvp`, and `vjp_fwd, vjp_bwd_retval = vjp_from_lin` derives
+# reverse mode from that linearization, storing its residuals and transposing
+# `linearized` on the backward pass (just as `jax.custom_jvp` does):
 
 # +
-from jax.experimental.hijax import (
-    linearize_from_jvp, apply_derived_linearization,
-    vjp_fwd_from_jvp, transpose_jvp)
+from jax.experimental.hijax import linearize_from_jvp, vjp_from_lin
 
 class SinAD(Sin):
-  lin = linearize_from_jvp
-  linearized = apply_derived_linearization
-  vjp_fwd = vjp_fwd_from_jvp
-  vjp_bwd_retval = transpose_jvp
+  lin, linearized = linearize_from_jvp
+  vjp_fwd, vjp_bwd_retval = vjp_from_lin
 
 def sin(x):
   return SinAD(jax.typeof(x))(x)
@@ -765,14 +762,15 @@ print(grad(grad(sin))(3.))
 # As with `jax.custom_jvp`, for the derived transposition to work, the JVP
 # rule's output tangents must be linear as a function of the input tangents.
 #
-# A second pair, `vjp_fwd = vjp_fwd_from_lin` with `vjp_bwd_retval =
-# transpose_linearized`, instead derives reverse mode from the
-# `lin`/`linearized` rules (whether handwritten or themselves derived from
-# `jvp`): it stores the linearization's residuals rather than the primal
-# inputs, and transposes `linearized` on the backward pass. And `jvp =
-# jvp_from_lin` goes the other way, deriving forward mode from handwritten
-# `lin`/`linearized` rules. (Deriving in a circle, with `jvp = jvp_from_lin`
-# and `lin = linearize_from_jvp` on the same primitive, is an error.)
+# A second pair, `vjp_fwd, vjp_bwd_retval = vjp_from_jvp`, instead derives
+# reverse mode directly from the `jvp` rule: it stores the primal inputs
+# rather than the linearization's residuals, and linearizes and transposes
+# `jvp` on the backward pass — recomputing the rule's intermediates there,
+# remat-style. And `jvp = jvp_from_lin` goes the other way, deriving forward mode
+# from handwritten `lin`/`linearized` rules — a single function rather than a
+# pair, since it defines a single method. (Deriving in a circle, with `jvp =
+# jvp_from_lin` and `lin, linearized = linearize_from_jvp` on the same
+# primitive, is an error.)
 #
 # Both kinds of rules are also what make higher-order differentiation work:
 # `grad`-of-`grad` composes the VJP rules, while e.g. `jax.hessian`, which is
@@ -1055,8 +1053,8 @@ print(f_lin(1.))
 # -
 
 # (If you don't need to control the linearization itself, recall from above
-# that a primitive with a `jvp` rule can just set `lin = linearize_from_jvp`
-# and `linearized = apply_derived_linearization`.)
+# that a primitive with a `jvp` rule can just set `lin, linearized =
+# linearize_from_jvp`.)
 #
 # ### What we haven't covered
 #

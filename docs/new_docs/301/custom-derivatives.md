@@ -17,7 +17,7 @@ nosearch: true
 (jax-301-custom-derivatives)=
 # Custom derivative rules with hijax primitives
 
-<!--* freshness: { reviewed: '2026-07-10' } *-->
+<!--* freshness: { reviewed: '2026-07-19' } *-->
 
 Sometimes you want to tell JAX how to differentiate something yourself.
 Maybe the rule-by-rule derivative that autodiff computes is numerically
@@ -28,38 +28,30 @@ one — as with iterative fixed-point solvers, where implicit differentiation
 of the solution beats differentiating through the iterations. This page
 works examples of each.
 
-The recommended way to define custom derivatives is with a *hijax
-primitive*. A primitive is a unit of computation that JAX's transformations
-treat atomically: it appears as a single equation in jaxprs, and each
-transformation — differentiation, batching, and so on — applies whatever
-rule is attached to the primitive rather than looking inside it. A hijax
-primitive additionally carries a Python implementation, written in ordinary
-JAX operations, which is used for evaluation and lowering — so it runs under
-`jit` with no extra work, and you attach rules only for the transformations
-you actually use. One primitive can carry rules for both differentiation
-modes at once, and the same mechanism extends to custom rematerialization,
-custom types, and more.
+The recommended way to define custom derivatives is with a *hijax primitive*. A
+hijax primitive is a unit of computation treated atomically by JAX's
+higher-level transformations, namely autodiff and batching. Being atomic, a
+primitive needs a rule defining how it behaves under each transformation.  But
+instead of carrying rules for lower-level transformations, like evaluation or
+translation to HLO or Mosaic, hijax primitives carry a Python implementation
+written with ordinary JAX operations and using ordinary JAX types. After
+higher-level transformations are finished, a hijax primitive is expanded into
+that Python implementation.
 
-This page assumes familiarity with `jax.jvp` and `jax.grad` and the
-mathematical meaning of JVPs and VJPs (see {doc}`cookbook`). Hijax
-primitives are still experimental — expect imports from
+By reading this page, you'll learn how to control JAX's autodiff and batching
+transformations of your own operations. This page assumes familiarity with
+`jax.jvp` and `jax.grad` and the mathematical meaning of JVPs and VJPs (see
+{doc}`cookbook`).
+
+Hijax primitives are still experimental -- expect imports from
 `jax.experimental.hijax`, and expect the APIs to evolve. JAX's classic tools
 for this job, the `jax.custom_jvp` and `jax.custom_vjp` decorators, remain
-fully supported and are often more convenient for simple cases; they're
-covered in {doc}`custom-jvp-vjp`, and every example on this page translates
-directly to them.
+fully supported and can be more convenient for simple cases; they're covered
+in {doc}`custom-jvp-vjp`. But hijax primitives allow for customizing both modes
+at once, as well as controlling interactions with custom types and other
+advanced autodiff features.
 
-```{note}
-For readers who know JAX's history: there have long been two ways to define
-differentiation rules — the `jax.custom_jvp`/`jax.custom_vjp` decorators for
-JAX-traceable Python functions, and new `core.Primitive` instances with
-hand-written rules for every transformation (including lowering), typically
-for calling into external systems. Hijax primitives unify the two: they are
-real primitives, with the convenience of a traceable Python implementation
-standing in for most of the rules.
-```
-
-### TL;DR
+## TL;DR
 
 Subclass `VJPHiPrimitive`, declare the input and output types, and define an
 `expand` method giving the implementation. Then attach the derivative rules
@@ -597,7 +589,7 @@ closed-over variables with custom root-finding functions.
 ### Anatomy of a hijax primitive
 
 A hijax primitive is a subclass of `VJPHiPrimitive`. Its `__init__` must set
-three attributes before calling `super().__init__()`:
+three attributes and then call `super().__init__()`:
 
 * `in_avals`, a tuple with one entry per positional argument, giving each
   argument's type (each entry can also be a pytree of types);
@@ -647,9 +639,9 @@ is optional, and is only needed if you use the corresponding transformation:
 | `transpose` | transposition, for primitives linear in some inputs |
 
 If you apply a transformation without having defined the corresponding
-method, you get a `NotImplementedError` telling you what to implement. For a
-primitive with a `jvp` rule, the reverse-mode and linearize methods can also
-be derived automatically — see the helpers below.
+method, you get a `NotImplementedError` telling you what to implement.
+Some rules can be defined generically in terms of others; see the helpers
+below.
 
 ### Custom VJPs with `vjp_fwd` and `vjp_bwd_retval`
 
@@ -709,7 +701,8 @@ print(grad(mul, 1)(2., 3.))
 Instead of returning cotangent values, it receives one *gradient
 accumulator* per primal input (matching the pytree structure of each entry
 of `in_avals`) and pushes each cotangent contribution into the corresponding
-accumulator; it returns `None`. A subclass should override one of `vjp_bwd`
+accumulator; it returns `None` (or a dict of backward-pass logs, covered in
+{ref}`jax-301-bwd-logging`). A subclass should override one of `vjp_bwd`
 or `vjp_bwd_retval`, not both.
 
 An accumulator is a `GradAccum` instance. It carries the expected cotangent
@@ -728,7 +721,8 @@ by the caller of autodiff:
   including *indexed* updates that touch only part of the gradient buffer.
 * `NullAccum` discards everything: the gradient for this input isn't needed
   (the input isn't being differentiated, or the caller passed
-  `jax.ad.DontWant()`). Your rule can check for it and skip the work.
+  `jax.ad.DontWant()`). Its `accum` is a no-op, so accumulating
+  unconditionally is safe; your rule can also check for it and skip the work.
 
 In fact, the base class's default `vjp_bwd` is just a few lines in terms of
 `vjp_bwd_retval`:
@@ -846,30 +840,99 @@ derive reverse-mode differentiation from a hijax primitive's `jvp` rule, so
 applying `grad` to `sin` as defined above raises a `NotImplementedError`
 asking for `vjp_fwd`. You can define both sets of rules on the same primitive
 (as in the TL;DR example above); unlike with `jax.custom_jvp` and
-`jax.custom_vjp`, you never have to choose between them.
+`jax.custom_vjp`, you never have to choose between them. (Or you can derive
+the reverse-mode rules from the `jvp` rule — see
+{ref}`jax-301-derived-rules` below.)
 
-But you can also opt into `jax.custom_jvp`-style behavior, where everything
-is derived from the JVP rule, by assigning helper functions as class
-attributes. The helpers come in pairs: `lin = linearize_from_jvp` together
-with `linearized = apply_derived_linearization` derives linearization
-support by partially evaluating `jvp`, and `vjp_fwd = vjp_fwd_from_jvp`
-together with `vjp_bwd_retval = transpose_jvp` derives reverse mode by
-storing the primal inputs and then linearizing and transposing `jvp` on the
-backward pass:
+Both kinds of rules are also what make higher-order differentiation work:
+`grad`-of-`grad` composes the VJP rules, while e.g. `jax.hessian`, which is
+forward-over-reverse, needs the `jvp` rule as well.
+
+### Custom linearization with `lin` and `linearized`
+
+`jax.linearize` doesn't use the `jvp` or VJP rules; it has its own pair of
+methods. The `lin` method is like `vjp_fwd`: it takes `nzs_in` and the primal
+inputs, and returns the primal output paired with residuals. The `linearized`
+method is the linear map itself: it takes the residuals and the input
+tangents, and returns the output tangents:
 
 ```{code-cell}
-from jax.experimental.hijax import (
-    linearize_from_jvp, apply_derived_linearization,
-    vjp_fwd_from_jvp, transpose_jvp)
+class Sin(VJPHiPrimitive):
+  def __init__(self, x_aval):
+    self.in_avals = (x_aval,)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
 
-class SinAD(Sin):
-  lin = linearize_from_jvp
-  linearized = apply_derived_linearization
-  vjp_fwd = vjp_fwd_from_jvp
-  vjp_bwd_retval = transpose_jvp
+  def expand(self, x):
+    return jnp.sin(x)
+
+  def lin(self, nzs_in, x):
+    return self(x), jnp.cos(x)
+
+  def linearized(self, cos_x, x_dot):
+    return cos_x * x_dot
 
 def sin(x):
-  return SinAD(jax.typeof(x))(x)
+  return Sin(jax.typeof(x))(x)
+
+y, f_lin = jax.linearize(sin, 3.)
+print(y)
+print(f_lin(1.))
+```
+
+(If you don't need to control the linearization itself, a primitive with a
+`jvp` rule can derive these two methods instead — that's next.)
+
+(jax-301-derived-rules)=
+
+### Deriving rules from other rules
+
+You don't have to write every rule by hand: helpers in
+`jax.experimental.hijax` can derive some rules from others, giving
+`jax.custom_jvp`-style behavior where everything follows from one
+handwritten rule. Each helper name resolves to a pair that unpacks, right in
+the class body, to the two methods it defines:
+
+* `lin, linearized = linearize_from_jvp` derives linearization support by
+  partially evaluating the `jvp` rule;
+* `vjp_fwd, vjp_bwd_retval = vjp_from_lin` derives reverse mode from the
+  `lin`/`linearized` rules (whether handwritten or themselves derived from
+  `jvp`): it stores the linearization's residuals and transposes
+  `linearized` on the backward pass;
+* `vjp_fwd, vjp_bwd_retval = vjp_from_jvp` instead derives reverse mode
+  directly from the `jvp` rule: it stores the primal inputs as residuals
+  and, on the backward pass, linearizes and transposes the `jvp` rule —
+  recomputing the rule's primal-dependent intermediates there, remat-style;
+* `jvp = jvp_from_lin` goes the other way, deriving forward mode from
+  handwritten `lin`/`linearized` rules. (It's a single function rather than
+  a pair, since it defines a single method.)
+
+Here's a primitive with a handwritten `jvp` rule and everything else
+derived:
+
+```{code-cell}
+from jax.experimental.hijax import linearize_from_jvp, vjp_from_lin
+
+class Sin(VJPHiPrimitive):
+  def __init__(self, x_aval):
+    self.in_avals = (x_aval,)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return jnp.sin(x)
+
+  def jvp(self, primals, tangents):
+    (x,), (x_dot,) = primals, tangents
+    return self(x), jnp.cos(x) * x_dot
+
+  lin, linearized = linearize_from_jvp
+  vjp_fwd, vjp_bwd_retval = vjp_from_lin
+
+def sin(x):
+  return Sin(jax.typeof(x))(x)
 
 print(grad(sin)(3.))
 y, sin_lin = jax.linearize(sin, 3.)
@@ -877,27 +940,17 @@ print(sin_lin(1.))
 print(grad(grad(sin))(3.))
 ```
 
+This combination — partially evaluate the `jvp` rule once in the forward
+pass, save the linearization's residuals, and transpose the linear
+remainder in the backward pass — is exactly how `jax.custom_jvp` implements
+reverse mode. (`vjp_from_jvp` computes the same values with a different
+memory/compute tradeoff, saving only the primal inputs and redoing the
+linearization work in the backward pass.)
+
 As with `jax.custom_jvp`, for the derived transposition to work, the JVP
 rule's output tangents must be linear as a function of the input tangents.
-
-A second pair, `vjp_fwd = vjp_fwd_from_lin` with `vjp_bwd_retval =
-transpose_linearized`, instead derives reverse mode from the
-`lin`/`linearized` rules (whether handwritten or themselves derived from
-`jvp`): it stores the linearization's residuals rather than the primal
-inputs, and transposes `linearized` on the backward pass. And `jvp =
-jvp_from_lin` goes the other way, deriving forward mode from handwritten
-`lin`/`linearized` rules. (Deriving in a circle, with `jvp = jvp_from_lin`
-and `lin = linearize_from_jvp` on the same primitive, is an error.)
-
-Both kinds of rules are also what make higher-order differentiation work:
-`grad`-of-`grad` composes the VJP rules, while e.g. `jax.hessian`, which is
-forward-over-reverse, needs the `jvp` rule as well. As with `jax.custom_jvp`
-and `jax.custom_vjp`, a rule applies at higher orders of differentiation only
-if it computes its primal output by binding the primitive itself, i.e. by
-calling `self(...)` rather than inlining the implementation. (This represents
-a kind of fundamental tradeoff, where we can't make use of intermediate
-values from the evaluation of `expand` in our rule *and also* have the rule
-apply in all orders of higher-order differentiation.)
+And deriving in a circle, with `jvp = jvp_from_lin` and `lin, linearized =
+linearize_from_jvp` on the same primitive, is an error.
 
 ### Hijax primitives in jaxprs
 
@@ -970,7 +1023,7 @@ print(grad(g)(1.))
 print(grad(g)(-1.))
 ```
 
-### `vmap` with `batch_dim_rule`
+### `vmap` with `batch_dim_rule` or `batch`
 
 For `vmap` support, the easiest option is to define `batch_dim_rule`, which
 takes axis metadata and the batch dimension of each argument (`None` for
@@ -994,8 +1047,54 @@ print(vmap(mul, in_axes=(0, None))(x, 2.))
 print(vmap(grad(mul))(x, y))
 ```
 
-(For full control over the batched computation itself, you can instead
-override the `batch` method.)
+For full control over the batched computation itself, override the `batch`
+method instead. It takes the axis metadata, the batched argument values, and
+their batch dimensions (`None` for unbatched arguments), and returns the
+batched output paired with its batch dimension — computed however you like,
+in ordinary JAX operations. The classic reason is a kernel with a dedicated
+batched variant: if `expand` calls a hand-written kernel (via Pallas,
+`jax.ffi`, ...), `vmap`-ing it may be impossible or inefficient, and a
+`batch` rule can instead dispatch to the batched kernel. But `batch` is the
+right tool whenever you don't want the batched computation to be "`vmap`
+the ops in `expand`" — it gives finer control over the batched program,
+down to subtle details like where the `reduce_sum`s that autodiff
+introduces for transposed broadcasts end up.
+
+Here's the shape of the dedicated-batched-kernel case, with stand-in
+"kernels" (and handling, for this example, only batching over the vector
+argument):
+
+```{code-cell}
+def matvec_kernel(A, x):          # stand-in for e.g. a Pallas or ffi call
+  return A @ x
+
+def batched_matvec_kernel(A, X):  # the kernel's dedicated batched variant
+  return X @ A.T
+
+class MatVec(VJPHiPrimitive):
+  def __init__(self, A_aval, x_aval):
+    self.in_avals = (A_aval, x_aval)
+    self.out_aval = ShapedArray((A_aval.shape[0],), A_aval.dtype)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, A, x):
+    return matvec_kernel(A, x)
+
+  def batch(self, axis_data, args, dims):
+    A, X = args
+    A_dim, x_dim = dims
+    assert A_dim is None
+    X = jnp.moveaxis(X, x_dim, 0)  # stack the batch of vectors along axis 0
+    return batched_matvec_kernel(A, X), 0
+
+def matvec(A, x):
+  return MatVec(jax.typeof(A), jax.typeof(x))(A, x)
+
+A = jnp.arange(6.).reshape(2, 3)
+xs = jnp.arange(12.).reshape(4, 3)  # batch of 4 vectors
+print(vmap(matvec, in_axes=(None, 0))(A, xs))
+```
 
 ## More features and details
 
@@ -1102,70 +1201,113 @@ invoked directly by `jax.jvp` or partially evaluated by
 `linearize_from_jvp`. As with cotangents, a rule can handle them explicitly
 to exploit the sparsity, or clean them up with `instantiate_zeros`.
 
-### In-place cotangent accumulation with `vjp_bwd`
+(jax-301-bwd-logging)=
 
-Instead of `vjp_bwd_retval`, which returns the input cotangents as values, a
-backward rule can be written as `vjp_bwd`, which receives one *accumulator*
-per primal input and adds each cotangent contribution in-place by calling
-`.accum(...)`:
+### Logging data out of the backward pass
+
+A `vjp_bwd` rule can also *return* something: a dict of named pytrees to
+log out of the backward pass. To receive the logs, apply the VJP function
+via its `with_logs` method: `f_vjp.with_logs(out_ct)` returns a pair
+`(arg_cts, logs)`, where `logs` merges the dicts returned by all the rules
+that ran. Logging is drop-by-default: a plain `f_vjp(out_ct)` call ignores
+the logs, and under `jit` the logging computation is dead-code-eliminated,
+so it costs nothing unless asked for. That makes it a lightweight way to
+observe a backward pass — cotangent values, their norms, where a `nan`
+first appears — without changing any function signatures:
 
 ```{code-cell}
-class Mul3(VJPHiPrimitive):
-  def __init__(self, x_aval, y_aval):
-    self.in_avals = (x_aval, y_aval)
+class Square(VJPHiPrimitive):
+  def __init__(self, x_aval, tag):
+    self.in_avals = (x_aval,)
     self.out_aval = x_aval
-    self.params = {}
+    self.params = dict(tag=tag)
     super().__init__()
 
-  def expand(self, x, y):
-    return x * y
+  def expand(self, x):
+    return x ** 2
 
-  def vjp_fwd(self, nzs_in, x, y):
-    return self(x, y), (x, y)
+  def vjp_fwd(self, nzs_in, x):
+    return self(x), x
 
-  def vjp_bwd(self, res, g, x_acc, y_acc):
-    x, y = res
-    x_acc.accum(g * y)
-    y_acc.accum(x * g)
+  def vjp_bwd(self, x, g, x_acc):
+    x_acc.accum(2. * x * g)
+    return {self.tag: {'x': x, 'ct_in': g}}  # logged out of the backward pass
 
-def mul3(x, y):
-  return Mul3(jax.typeof(x), jax.typeof(y))(x, y)
+def square(x, tag='sq'):
+  return Square(jax.typeof(x), tag)(x)
 
-print(grad(mul3)(2., 3.))
+y, f_vjp = jax.vjp(square, 3.)
+arg_cts, logs = f_vjp.with_logs(1.)
+print(arg_cts)
+print(logs)
 ```
 
-For inputs that aren't being differentiated, the accumulator is a `NullAccum`
-whose `accum` is a no-op, so it's safe to accumulate unconditionally. The
-accumulator form can save memory when gradients are accumulated across many
-contributions. Define either `vjp_bwd` or `vjp_bwd_retval`, not both.
-
-### Custom linearization with `lin` and `linearized`
-
-`jax.linearize` doesn't use the `jvp` or VJP rules; it has its own pair of
-methods. The `lin` method is like `vjp_fwd`: it takes `nzs_in` and the primal
-inputs, and returns the primal output paired with residuals. The `linearized`
-method is the linear map itself: it takes the residuals and the input
-tangents, and returns the output tangents:
+The rules' dicts are merged with clobber semantics: on a key collision, the
+entry logged earlier in forward order (that is, later in the backward pass)
+wins. Distinct keys keep entries separate — here the tag is a static
+parameter, so one primitive class can log under different names:
 
 ```{code-cell}
-class Sin2(Sin):
-  def lin(self, nzs_in, x):
-    return self(x), jnp.cos(x)
-
-  def linearized(self, cos_x, x_dot):
-    return cos_x * x_dot
-
-def sin2(x):
-  return Sin2(jax.typeof(x))(x)
-
-y, f_lin = jax.linearize(sin2, 3.)
-print(y)
-print(f_lin(1.))
+f = lambda x: square(square(x, 'inner'), 'outer')
+_, f_vjp = jax.vjp(f, 2.)
+_, logs = f_vjp.with_logs(1.)
+print(logs)
 ```
 
-(If you don't need to control the linearization itself, recall from above
-that a primitive with a `jvp` rule can just set `lin = linearize_from_jvp`
-and `linearized = apply_derived_linearization`.)
+Logs flow out through transposed control flow, taking a shape that reflects
+the forward computation:
+
+* out of a transposed `jit`, unchanged (and `with_logs` can itself be
+  traced, e.g. called under a `jit`);
+* out of a transposed `scan`, stacked leaf-wise along a leading axis,
+  index-aligned with the forward iterations;
+* out of a transposed `cond`, as a *sum*, represented as a tagged product:
+  each logged key maps to a `CondSum` recording which branch ran, with one
+  slot per branch (example below);
+* out of a transposed `shard_map`, stacked along a leading mesh axis (a
+  per-shard scalar becomes a vector of shape `(num_shards,)`).
+
+For example, with a `scan`:
+
+```{code-cell}
+def f(xs):
+  c, _ = jax.lax.scan(lambda c, x: (c + square(x), None), 0., xs)
+  return c
+
+xs = jnp.arange(1., 4.)
+_, f_vjp = jax.vjp(f, xs)
+_, logs = f_vjp.with_logs(1.)
+print(logs)
+```
+
+And with a `cond`, only one branch runs, so its logs form a sum type — this
+branch's logs *or* that branch's:
+
+```{code-cell}
+def g(x):
+  return jax.lax.cond(x > 0,
+                      lambda x: square(x, 'pos'),
+                      lambda x: 2. * square(x, 'neg'),
+                      x)
+
+_, g_vjp = jax.vjp(g, 3.)
+_, logs = g_vjp.with_logs(1.)
+print(logs['pos'])
+print(logs['neg'])
+```
+
+Each logged key gets its own `CondSum`: `index` records which branch ran
+(`cond`'s false branch is 0 and its true branch is 1), and `branches` has
+one slot per branch — the live value for the branch that ran, zeros for a
+branch that logs the key but wasn't taken (here `'neg'`), and `None` for a
+branch that doesn't log the key at all. Branches needn't agree on keys or
+types, and nested `cond`s nest their `CondSum`s.
+
+A rule's log return must be a dict (or `None`, meaning no logs). A few
+transposed contexts don't yet plumb logs through — `jax.remat`,
+`jax.custom_vjp` backward rules, and `lax.while_loop` — and logs inside
+them are silently dropped, consistent with drop-by-default. For plumbing
+data out of a backward pass with mutable refs instead, see {doc}`refs`.
 
 ### What we haven't covered
 
