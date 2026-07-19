@@ -16,6 +16,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Bug fixes:
+  * Fixed the prime factorization helper used by
+    `jax.experimental.mesh_utils.create_device_mesh` with
+    `allow_split_physical_axes=True`, which dropped all but the largest prime
+    factor for sizes such as 10 or 14 and made mesh construction fail with a
+    reshape error ({jax-issue}`#38286`).
+
 ## JAX 0.11.0 (July 16, 2026)
 
 * New features

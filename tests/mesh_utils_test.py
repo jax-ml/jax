@@ -16,6 +16,7 @@
 import collections
 from collections.abc import Sequence
 import dataclasses
+import math
 
 from absl import logging
 from absl.testing import absltest
@@ -728,6 +729,37 @@ class SplitAxesDeviceMeshCreationTest(test_util.JaxTestCase):
     self.assertEqual(mesh_utils._get_prime_factors(12), [2, 2, 3])
     self.assertEqual(mesh_utils._get_prime_factors(121), [11, 11])  # square
     self.assertEqual(mesh_utils._get_prime_factors(43), [43])  # prime
+    # https://github.com/jax-ml/jax/issues/38286: composites whose largest
+    # prime factor exceeds isqrt(x) + 1 used to drop the smaller factors.
+    self.assertEqual(mesh_utils._get_prime_factors(10), [2, 5])
+    self.assertEqual(mesh_utils._get_prime_factors(14), [2, 7])
+    self.assertEqual(mesh_utils._get_prime_factors(44), [2, 2, 11])
+    # The factorization must reconstruct the input, in sorted order.
+    for n in range(1, 1000):
+      factors = mesh_utils._get_prime_factors(n)
+      self.assertEqual(math.prod(factors), n)
+      self.assertEqual(factors, sorted(factors))
+
+  def test_create_device_mesh_splitting_axes_with_large_prime_factor(self):
+    # https://github.com/jax-ml/jax/issues/38286: constructing a logical mesh
+    # whose axis size has a prime factor larger than isqrt(size) + 1 used to
+    # fail with a reshape ValueError.
+    physical_mesh = get_int_mesh([2, 5])
+    logical_mesh, assignment = (
+        mesh_utils._create_device_mesh_for_nd_torus_splitting_axes(
+            physical_mesh, [10]
+        )
+    )
+    self.assertEqual(logical_mesh.shape, (10,))
+    self.assertArraysEqual(
+        np.sort(logical_mesh.ravel()), np.arange(10, dtype=np.int64)
+    )
+    self.assertArraysEqual(
+        np.prod(assignment, axis=0), np.array([10], dtype=np.int64)
+    )
+    self.assertArraysEqual(
+        np.prod(assignment, axis=1), np.array([2, 5], dtype=np.int64)
+    )
 
   @parameterized.named_parameters(
       (
