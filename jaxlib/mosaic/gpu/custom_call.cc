@@ -830,7 +830,47 @@ absl::StatusOr<CompiledKernel*> GetOrCreateKernel(
   return iter->second.get();
 }
 
-absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
+class KernelHandle {
+ public:
+  KernelHandle(CUmodule module, CUfunction function, CUcontext ctx)
+      : module_(module), function_(function), ctx_(ctx) {}
+  ~KernelHandle() {
+    if (auto s = Unload(module_, ctx_); !s.ok()) {
+      LOG(ERROR) << "Failed to unload GPU module: " << s;
+    } else {
+      VLOG(5) << "Successfully unloaded GPU module";
+    }
+  }
+
+  // KernelHandle is move-only.
+  KernelHandle(const KernelHandle&) = delete;
+  KernelHandle& operator=(const KernelHandle&) = delete;
+  KernelHandle(KernelHandle&&) noexcept = default;
+  KernelHandle& operator=(KernelHandle&&) noexcept = default;
+
+  CUmodule module() const { return module_; }
+  CUfunction function() const { return function_; }
+
+ private:
+  static absl::Status Unload(CUmodule module, CUcontext ctx) {
+    CUDA_RETURN_IF_ERROR(cuCtxPushCurrent(ctx));
+    CUDA_RETURN_IF_ERROR(cuModuleUnload(module));
+    CUcontext unused;
+    CUDA_RETURN_IF_ERROR(cuCtxPopCurrent(&unused));
+    return absl::OkStatus();
+  }
+
+  CUmodule module_;
+  CUfunction function_;
+  CUcontext ctx_;
+};
+
+struct InitResult {
+  CUmodule module;
+  CUfunction function;
+};
+
+absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   if (kernel.is_nvshmem_used &&
       !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
     return absl::InternalError(
@@ -871,16 +911,21 @@ absl::StatusOr<void*> InitKernel(const CompiledKernel& kernel) {
   void* kernel_ptr = nullptr;
   kernel.init(&module_ptr, &kernel_ptr);
   VLOG(5) << "Successfully initialized Mosaic GPU kernel";
-  return kernel_ptr;
+  return InitResult{
+      reinterpret_cast<CUmodule>(module_ptr),
+      reinterpret_cast<CUfunction>(kernel_ptr),
+  };
 }
 
 // Initializes the kernel in the current CUDA context and return a handle to the
 // kernel.
-absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
+absl::StatusOr<std::shared_ptr<KernelHandle>> CachedInit(
+    const CompiledKernel* absl_nonnull kernel) {
   using CacheKey = std::pair<const CompiledKernel*, uintptr_t>;
   struct Cache {
     absl::Mutex mutex;
-    absl::flat_hash_map<CacheKey, void*> contexts ABSL_GUARDED_BY(mutex);
+    absl::flat_hash_map<CacheKey, std::weak_ptr<KernelHandle>> handles
+        ABSL_GUARDED_BY(mutex);
   };
   static absl::NoDestructor<Cache> cache;
 
@@ -889,14 +934,16 @@ absl::StatusOr<void*> CachedInit(const CompiledKernel* absl_nonnull kernel) {
   CacheKey key(kernel, reinterpret_cast<uintptr_t>(ctx));
 
   absl::MutexLock lock(cache->mutex);
-  auto it = cache->contexts.find(key);
-  if (it != cache->contexts.end()) {
-    VLOG(5) << "Found Mosaic GPU kernel in cache";
-    return it->second;
+  if (auto it = cache->handles.find(key); it != cache->handles.end()) {
+    if (auto handle = it->second.lock()) {
+      VLOG(5) << "Found Mosaic GPU kernel in cache";
+      return handle;
+    }
   }
-  ASSIGN_OR_RETURN(void* context, InitKernel(*kernel));
-  cache->contexts.insert_or_assign(key, context);
-  return context;
+  ASSIGN_OR_RETURN(InitResult res, InitKernel(*kernel));
+  auto handle = std::make_shared<KernelHandle>(res.module, res.function, ctx);
+  cache->handles.insert_or_assign(key, handle);
+  return handle;
 }
 
 // Structure stores data needed during the execution and filled during the
@@ -913,8 +960,8 @@ struct DeviceState {
   // above.
   se::DeviceAddressHandle metadata_handle;
 
-  // Pointer (CUmodule) to the kernel loaded on the GPU.
-  void* kernel_handle = nullptr;
+  // Pointer (CUmodule + CUfunction) to the kernel loaded on the GPU.
+  std::shared_ptr<KernelHandle> kernel_handle;
 };
 
 constexpr int kMaxLocalDevices = 8;
@@ -1506,7 +1553,8 @@ absl::Status MosaicGpuExecute(
   }
 
   void** buffers_data = buffer_ptrs.data();
-  kernel->host_launch(device_state.kernel_handle, cuda_stream, buffers_data);
+  kernel->host_launch(device_state.kernel_handle->function(), cuda_stream,
+                      buffers_data);
   XLA_VLOG_DEVICE(5, device_ordinal) << "MosaicGpuExecute finished";
   return absl::OkStatus();
 }
@@ -1601,12 +1649,12 @@ __attribute__((visibility("default"))) void** MosaicGpuCompile(
   if (!kernel.ok()) {
     return nullptr;
   }
-  auto ctx = InitKernel(**kernel);
-  if (!ctx.ok()) {
+  absl::StatusOr<InitResult> init_res = InitKernel(**kernel);
+  if (!init_res.ok()) {
     return nullptr;
   }
   auto tuple_ptr = new void*[3];
-  tuple_ptr[0] = *ctx;
+  tuple_ptr[0] = init_res->function;
   tuple_ptr[1] = reinterpret_cast<void*>((*kernel)->host_launch);
   tuple_ptr[2] = (*kernel).release();
   return tuple_ptr;
@@ -1619,7 +1667,7 @@ __attribute__((visibility("default"))) void MosaicGpuUnload(void** tuple_ptr) {
 
 __attribute__((visibility("default"))) void MosaicGpuClearKernelCache() {
   auto& cache = GetKernelCache();
-  absl::MutexLock lock(&cache.mutex);
+  absl::MutexLock lock(cache.mutex);
   cache.kernels.clear();
 }
 

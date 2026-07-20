@@ -318,8 +318,8 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
                 Log(absl::LogSeverity::kInfo, _,
                     "Successfully compiled Mosaic GPU kernel to object file"))
         .Times(1);
-    log.StartCapturingLogs();
 
+    log.StartCapturingLogs();
     ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<xla::PjRtLoadedExecutable> executable,
         client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
@@ -328,6 +328,7 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
                          executable->GetExecutable()->SerializeExecutable());
   }
 
+  std::unique_ptr<xla::PjRtLoadedExecutable> executable1;
   {
     // Clear the cache to test deserialization.
     MosaicGpuClearKernelCache();
@@ -343,13 +344,10 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
     EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
                          "Successfully JIT-linked Mosaic GPU kernel"))
         .Times(1);
-
     log.StartCapturingLogs();
-
-    ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<xla::PjRtLoadedExecutable> executable,
-        client->LoadSerializedExecutable(serialized, std::nullopt, {}));
-    EXPECT_OK(ExecuteSync(executable.get()));
+    ASSERT_OK_AND_ASSIGN(executable1, client->LoadSerializedExecutable(
+                                          serialized, std::nullopt, {}));
+    EXPECT_OK(ExecuteSync(executable1.get()));
   }
 
   {
@@ -366,11 +364,127 @@ TEST_F(CustomCallTest, SerializationAndDeduplication) {
                          "Successfully JIT-linked Mosaic GPU kernel"))
         .Times(0);
     log.StartCapturingLogs();
-
     ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+        std::unique_ptr<xla::PjRtLoadedExecutable> executable2,
         client->LoadSerializedExecutable(serialized, std::nullopt, {}));
-    EXPECT_OK(ExecuteSync(executable.get()));
+    EXPECT_OK(ExecuteSync(executable2.get()));
+  }
+}
+
+TEST_F(CustomCallTest, UnloadGPUModule) {
+  ASSERT_OK_AND_ASSIGN(
+      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
+
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  absl::SetVLogLevel("custom_call", 5);
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully initialized Mosaic GPU kernel"))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+
+  {
+    // The second execution the compilation should be cached.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully initialized Mosaic GPU kernel"))
+        .Times(0);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+  }
+
+  {
+    // GPU module should be unloaded when the executable is destroyed.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(1);
+    log.StartCapturingLogs();
+    executable.reset();
+  }
+}
+
+TEST_F(CustomCallTest, GPUModuleIsOnlyUnloadedWhenAllExecutablesAreDestroyed) {
+  ASSERT_OK_AND_ASSIGN(
+      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable1,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable2,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  EXPECT_THAT(ExecuteSync(executable1.get()), IsOk());
+  EXPECT_THAT(ExecuteSync(executable2.get()), IsOk());
+
+  absl::SetVLogLevel("custom_call", 5);
+  {
+    // executable2 still holds a reference to the GPU module.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(0);
+    log.StartCapturingLogs();
+    executable1.reset();
+  }
+  EXPECT_THAT(ExecuteSync(executable2.get()), IsOk());
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(1);
+    log.StartCapturingLogs();
+    executable2.reset();
+  }
+}
+
+TEST_F(CustomCallTest, GPUModuleIsRecompiledAfterExpiration) {
+  ASSERT_OK_AND_ASSIGN(
+      auto module, xla::ParseAndReturnUnverifiedModule(TestMGPUHloModule()));
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<xla::PjRtClient> client,
+                       xla::GetXlaPjrtGpuClient(/*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<xla::PjRtLoadedExecutable> executable,
+      client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                             /*options=*/{}));
+
+  EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
+
+  {
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully unloaded GPU module"))
+        .Times(1);
+    log.StartCapturingLogs();
+    executable.reset();
+  }
+
+  ASSERT_OK_AND_ASSIGN(
+      executable, client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                                         /*options=*/{}));
+
+  {
+    // executable was destroyed and the module was unloaded. We re-compile the
+    // kernel.
+    absl::ScopedMockLog log;
+    EXPECT_CALL(log, Log(absl::LogSeverity::kInfo, _,
+                         "Successfully initialized Mosaic GPU kernel"))
+        .Times(1);
+    log.StartCapturingLogs();
+    EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
   }
 }
 
