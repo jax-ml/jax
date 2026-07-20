@@ -18,6 +18,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
+from jax._src import hypothesis_test_util as htu
 import jax.experimental.pallas.ops.tpu.megablox as mblx
 import jax.numpy as jnp
 import numpy as np
@@ -150,7 +151,7 @@ def tolerances(
 
 # TODO(tgale): Fix errors with strict dtype promotion.
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
-@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
+@jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class GroupedMatmulTest(jtu.JaxTestCase):
 
   def setUp(self):
