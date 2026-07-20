@@ -31,6 +31,7 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 
 
+@jtu.thread_unsafe_test_class()
 class RemoteDMATest(parameterized.TestCase):
 
   def setUp(self):
@@ -205,6 +206,7 @@ class RemoteDMATest(parameterized.TestCase):
     np.testing.assert_array_equal(actual, expected)
 
 
+@jtu.thread_unsafe_test_class()
 class DistributedMpmdTest(parameterized.TestCase):
 
   def setUp(self):
@@ -368,4 +370,4 @@ class DistributedMpmdTest(parameterized.TestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

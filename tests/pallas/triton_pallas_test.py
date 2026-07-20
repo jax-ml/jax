@@ -693,4 +693,4 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

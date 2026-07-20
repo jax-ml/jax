@@ -29,6 +29,7 @@ def empty_jaxpr():
   return jax.make_jaxpr(noop)
 
 
+@jtu.thread_unsafe_test_class()
 class SchedulersGoldenTest(parameterized.TestCase):
 
   def setUp(self):
@@ -490,4 +491,4 @@ class SchedulersGoldenTest(parameterized.TestCase):
     self.assertEqual(output, expected)
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

@@ -41,6 +41,7 @@ class MemoryRef:
     )
 
 
+@jtu.thread_unsafe_test_class()
 class ApiTest(absltest.TestCase):
 
   def setUp(self):
@@ -131,4 +132,4 @@ class ApiTest(absltest.TestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

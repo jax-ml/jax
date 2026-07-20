@@ -22,7 +22,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from jax._src import mesh as mesh_lib
 from jax._src import mesh_utils
-from jax._src import test_util
+from jax._src import test_util as jtu
 from jax._src.sharding_impls import NamedSharding, PartitionSpec, local_to_global_shape
 from jax.sharding import Mesh
 import numpy as np
@@ -221,7 +221,7 @@ _V7_MESH_TEST_CASES = (
 )
 
 
-class MeshUtilsTest(test_util.JaxTestCase):
+class MeshUtilsTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ('1x2x1_t', (1, 2, 1), True),
@@ -716,7 +716,7 @@ def get_int_mesh(shape: Sequence[int]) -> np.ndarray:
   return np.arange(np.prod(shape), dtype=np.int64).reshape(shape)
 
 
-class SplitAxesDeviceMeshCreationTest(test_util.JaxTestCase):
+class SplitAxesDeviceMeshCreationTest(jtu.JaxTestCase):
 
   def test_get_prime_factors(self):
     self.assertEqual(mesh_utils._get_prime_factors(1), [])  # 1 has no factor.
@@ -861,4 +861,4 @@ class SplitAxesDeviceMeshCreationTest(test_util.JaxTestCase):
 
 
 if __name__ == '__main__':
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

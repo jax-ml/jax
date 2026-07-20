@@ -98,6 +98,8 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
 class PallasTest(ptu.PallasTest):
 
   def setUp(self):
+    if type(self) is PallasTest:
+      self.skipTest("Base class for Pallas tests")
     if jtu.test_device_matches(["gpu"]):
       self.enter_context(warnings.catch_warnings())
       warnings.filterwarnings(
@@ -301,14 +303,12 @@ class PallasTest(ptu.PallasTest):
 
 class PallasTritonTest(PallasTest):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
-      raise absltest.SkipTest("Only works on a GPU with capability >= sm80")
+      self.skipTest("Only works on a GPU with capability >= sm80")
     if not pltriton:
-      raise absltest.SkipTest("Pallas Triton is not available")
-
-    super().setUpClass()
+      self.skipTest("Pallas Triton is not available")
+    super().setUp()
 
   def pallas_call(self, *args, **kwargs):
     assert "compiler_params" not in kwargs
@@ -335,28 +335,21 @@ class PallasTritonTest(PallasTest):
 
 class PallasTPUTest(PallasTest):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
-      raise absltest.SkipTest("Only works on TPU devices")
+      self.skipTest("Only works on TPU devices")
     if not pltpu:
-      raise absltest.SkipTest("Pallas TPU is not available")
-
-    super().setUpClass()
+      self.skipTest("Pallas TPU is not available")
+    super().setUp()
 
 
 class PallasMGPUTest(PallasTest):
 
-  @classmethod
-  def setUpClass(cls):
-    if not jtu.is_cuda_compute_capability_at_least("9.0"):
-      raise absltest.SkipTest("Only works on a GPU with capability >= sm90")
-    if not plmgpu:
-      raise absltest.SkipTest("Pallas Mosaic GPU is not available")
-
-    super().setUpClass()
-
   def setUp(self):
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Only works on a GPU with capability >= sm90")
+    if not plmgpu:
+      self.skipTest("Pallas Mosaic GPU is not available")
     super().setUp()
     self.enter_context(
         mgpu.core.artificial_shared_memory_limit(jtu._SMEM_SIZE_BOUND_FOR_TESTS)
@@ -391,12 +384,10 @@ class PallasMGPUTest(PallasTest):
 class PallasInterpretTest(PallasTest):
   INTERPRET = True
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
     if not jtu.test_device_matches(["cpu"]):
-      raise absltest.SkipTest("Only works on CPU devices")
-
-    super().setUpClass()
+      self.skipTest("Only works on CPU devices")
+    super().setUp()
 
 
 class PallasCallTest(ptu.PallasTest):
@@ -2898,4 +2889,4 @@ class PallasHiJaxTest(ptu.PallasTest):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

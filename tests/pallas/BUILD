@@ -120,9 +120,6 @@ jax_multiplatform_test(
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "0",
     },
-    minimal_shard_count = {
-        "tpu": 8,
-    },
     shard_count = {
         "cpu": 16,
         "gpu": 32,
