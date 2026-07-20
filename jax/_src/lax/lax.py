@@ -7759,7 +7759,9 @@ def _split_on_one_axis(op_shape, new_sizes):
   if len(new_sizes) <= len(op_shape):
     return False, []
 
-  i, j, count, out = 0, 0, 0, []
+  i, j, count = 0, 0, 0
+  out = []
+
   while j < len(new_sizes):
     if op_shape[i] == new_sizes[j]:
       out.append(op_shape[i])
@@ -7848,25 +7850,34 @@ def split_partitions(mesh, tup_sp, out, operand, new_sizes):
 def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
-  partitions = tuple(p for p, s in zip(operand.sharding.spec.partitions, operand.shape)
-                     if s != 1)
+  op_partitions, op_shape = operand.sharding.spec.partitions, operand.shape
+  partitions = tuple(p for p, s in zip(op_partitions, op_shape) if s != 1)
   for out, sp in zip(out_split, partitions):
     if isinstance(out, list):
       if sp is None:
         new_spec.extend([None] * len(out))
       elif dimensions is None:
         tup_sp = sp if isinstance(sp, tuple) else (sp,)
-        partitions = split_partitions(mesh, tup_sp, out, operand, new_sizes)
-        new_spec.extend(partitions)
+        new_partitions = split_partitions(mesh, tup_sp, out, operand, new_sizes)
+        new_spec.extend(new_partitions)
       else:
         raise_reshape_error(operand, new_sizes)
     else:
       new_spec.append(sp)
+
   new_spec_iter = iter(new_spec)
-  new_spec = [None if n == 1 else next(new_spec_iter) for n in new_sizes]
+  out_spec = []
+  for i, n in enumerate(new_sizes):
+    if n == 1:
+      if i < len(op_shape) and op_shape[i] == 1:
+        out_spec.append(op_partitions[i])
+      else:
+        out_spec.append(None)
+    else:
+      out_spec.append(next(new_spec_iter))
   assert next(new_spec_iter, None) is None
-  assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
-  return operand.sharding.update(spec=new_spec)
+  assert len(out_spec) == len(new_sizes), (out_spec, new_sizes)
+  return operand.sharding.update(spec=out_spec)
 
 def strip_trailing_nones(lst):
   while lst[-1] is None:
@@ -7877,9 +7888,9 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
                                  dimensions):
   new_spec = []
   mesh = operand.sharding.mesh
+  op_partitions, op_shape = operand.sharding.spec.partitions, operand.shape
   new_sizes = [n for n in orig_new_sizes if n != 1]
-  op_spec = tuple(p for p, s in zip(operand.sharding.spec.partitions, operand.shape)
-                  if s != 1)
+  op_spec = tuple(p for p, s in zip(op_partitions, op_shape) if s != 1)
   op_spec_iter = iter(op_spec)
   for ns, op_merge in zip(new_sizes, operand_merge):
     if isinstance(op_merge, list):
@@ -7899,10 +7910,18 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, orig_new_sizes,
   assert next(op_spec_iter, None) is None
 
   new_spec_iter = iter(new_spec)
-  new_spec = [None if n == 1 else next(new_spec_iter) for n in orig_new_sizes]
+  out_spec = []
+  for i, n in enumerate(orig_new_sizes):
+    if n == 1:
+      if op_shape[i] == 1:
+        out_spec.append(op_partitions[i])
+      else:
+        out_spec.append(None)
+    else:
+      out_spec.append(next(new_spec_iter))
   assert next(new_spec_iter, None) is None
-  assert len(new_spec) == len(orig_new_sizes), (new_spec, orig_new_sizes)
-  return operand.sharding.update(spec=new_spec)
+  assert len(out_spec) == len(orig_new_sizes), (out_spec, orig_new_sizes)
+  return operand.sharding.update(spec=out_spec)
 
 
 def _reshape_unreduced_rule(operand, *, new_sizes, dimensions, sharding):

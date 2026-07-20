@@ -11753,6 +11753,33 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, "out_sharding.*cannot be more unreduced than the input"):
       jax.reshard(arr2, P(unreduced={'x'}, unreduced_kind=UnreducedKind.max))
 
+  @jtu.with_explicit_mesh((1, 2), ('x', 'y'))
+  def test_reshape_preserve_singleton_dim_spec(self, mesh):
+    # https://github.com/jax-ml/jax/issues/39309
+    arr = jax.device_put(np.ones((1, 512)), P('x', 'y'))
+
+    @jax.jit
+    def f(x):
+      y = x.reshape(1, 4, 128)
+      self.assertEqual(y.aval.sharding.spec, P('x', 'y', None))
+      z = y[..., :0]
+      self.assertEqual(z.aval.sharding.spec, P('x', 'y', None))
+      out = jnp.concatenate([y, z], axis=-1)
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y', None))
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', None)))
+
+    @jax.jit
+    def merge(x):
+      out = x.reshape(1, 512)
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
+      return out
+
+    out2 = merge(out)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', 'y')))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
