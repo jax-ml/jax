@@ -959,6 +959,9 @@ CustomCallResources::Deserialize(absl::string_view data) {
   if (!kernel_proto.ParseFromString(data)) {
     return absl::InternalError("Failed to parse MosaicGpuKernel proto");
   }
+  if (kernel_proto.is_nvshmem_used()) {
+    return absl::UnimplementedError("NVSHMEM is not supported in XLA.");
+  }
   auto resources = std::make_unique<CustomCallResources>();
   if (kernel_proto.kernel_hash().size() != sizeof(KernelHash)) {
     return absl::InternalError("Invalid kernel hash size in proto");
@@ -1025,6 +1028,9 @@ absl::StatusOr<std::unique_ptr<CustomCallResources>> InstantiateResources(
             return Compile(module, *cc->cuda_compute_capability(),
                            *cpu_target_machine_options);
           }));
+  if (kernel->is_nvshmem_used) {
+    return absl::UnimplementedError("NVSHMEM is not supported in XLA.");
+  }
   return std::make_unique<CustomCallResources>(
       CustomCallResources{.kernel = kernel, .hash = hash});
 }
@@ -1497,8 +1503,6 @@ absl::Status MosaicGpuExecute(
     RETURN_IF_ERROR(comm->LaunchMultiGpuBarrier(executor));
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "Finished multi-GPU barrier with key: " << clique_key;
-  } else if (kernel->is_nvshmem_used) {
-    NvshmemApi::Default().barrier_all_on_stream(cuda_stream);
   }
 
   void** buffers_data = buffer_ptrs.data();
