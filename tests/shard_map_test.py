@@ -680,6 +680,38 @@ class ShardMapTest(jtu.JaxTestCase):
           a.addressable_data(i), d.addressable_data(4 * (i // 4) + (i + 1) % 4)
       )
 
+  def test_collective_permute_with_reordered_axis_names(self):
+    # perm indices follow the axis_name tuple order (matching axis_index),
+    # not mesh declaration order: ('z', 'x') reverses the declared order.
+    mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
+    a = jax.device_put(
+        jnp.arange(2 * 16).reshape((2, 16)),
+        jax.sharding.NamedSharding(mesh, P('y', ('z', 'x'))),
+    )
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(P('y', ('z', 'x')),),
+        out_specs=P('y', ('z', 'x')),
+    )
+    def fwd(a):
+      zx_size = lax.axis_size(('z', 'x'))
+      perm = [(j, (j + 1) % zx_size) for j in range(zx_size)]
+      return lax.ppermute(a, ('z', 'x'), perm=perm)
+
+    c = fwd(a)
+    for x in range(2):
+      for y in range(2):
+        for z in range(2):
+          dst = 4 * x + 2 * y + z  # linear device id, mesh order (x, y, z)
+          t = 2 * z + x  # flat index of dst in ('z', 'x') tuple order
+          t_src = (t - 1) % 4  # ring shift by one: dst receives from t - 1
+          z_s, x_s = divmod(t_src, 2)
+          src = 4 * x_s + 2 * y + z_s
+          self.assertAllClose(c.addressable_data(dst), a.addressable_data(src))
+
   @parameterized.named_parameters(
       dict(
           testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=8)

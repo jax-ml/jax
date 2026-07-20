@@ -390,14 +390,16 @@ def ppermute(x, axis_name, perm):
     x: array(s) with a mapped axis named ``axis_name``.
     axis_name: hashable Python object used to name a pmapped axis (see the
       :func:`jax.pmap` documentation for more details).
-    perm: list of pairs of ints, representing
-      ``(source_index, destination_index)``
-      pairs that encode how the mapped axis named ``axis_name`` should be
-      shuffled. The integer values are treated as indices into the mapped axis
-      ``axis_name``. Any two pairs should not have the same source index or the
-      same destination index. For each index of the axis ``axis_name`` that does
-      not correspond to a destination index in ``perm``, the corresponding
-      values in the result are filled with zeros of the appropriate type.
+    perm: list of pairs of ints, representing ``(source_index,
+      destination_index)`` pairs that encode how the mapped axis named
+      ``axis_name`` should be shuffled. The integer values are treated as
+      indices into the mapped axis ``axis_name``. When ``axis_name`` is a tuple
+      of names, indices compose the axes in tuple order (first name major),
+      matching ``jax.lax.axis_index(axis_name)``. Any two pairs should not have
+      the same source index or the same destination index. For each index of the
+      axis ``axis_name`` that does not correspond to a destination index in
+      ``perm``, the corresponding values in the result are filled with zeros of
+      the appropriate type.
 
   Returns:
     Array(s) with the same shape as ``x`` with slices along the axis
@@ -1141,9 +1143,11 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
     msg = f"{op_name} sources and destinations must be unique, got {{}}."
     raise ValueError(msg.format(perm))
 
+  # perm indices follow the axis_groups enumeration (axis_name tuple order,
+  # matching axis_index). Do not re-sort the group: sorting rebinds them to
+  # mesh declaration order.
   full_perm = np.zeros((len(replica_groups), len(perm), 2), np.int64)
   for i, grp in enumerate(replica_groups):
-    grp = sorted(grp)
     for j, (src, dst) in enumerate(perm):
       full_perm[i, j, 0] = grp[src]
       full_perm[i, j, 1] = grp[dst]
