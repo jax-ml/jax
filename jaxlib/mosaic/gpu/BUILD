@@ -285,9 +285,11 @@ cc_library(
             "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
         ],
     ),
+    local_defines = [
+        "ABSL_DEFINE_UNQUALIFIED_STATUS_MACROS=1",
+    ],
     deps = [
         ":dump",
-        ":library_paths",  # buildcleaner: keep
         ":mosaic_gpu_cc_proto",
         ":nvshmem",
         ":passes",
@@ -306,6 +308,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -369,7 +372,6 @@ cc_library(
         "@xla//xla/backends/gpu/runtime:collective_clique_requests",
         "@xla//xla/backends/gpu/runtime:collective_cliques",
         "@xla//xla/backends/gpu/runtime:collective_execution",
-        "@xla//xla/backends/gpu/runtime:collective_kernel_api",
         "@xla//xla/backends/gpu/runtime:collective_memory",
         "@xla//xla/backends/gpu/runtime:collective_memory_requests",
         "@xla//xla/backends/gpu/runtime:collective_params",
@@ -381,16 +383,9 @@ cc_library(
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor:device_address_handle",
         "@xla//xla/stream_executor:device_description",
-        "@xla//xla/stream_executor:memory_allocation",
-        "@xla//xla/stream_executor:memory_allocator",
-        "@xla//xla/stream_executor:memory_space",
         "@xla//xla/stream_executor/cuda:compilation_provider",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
         "@xla//xla/stream_executor/gpu:collective_kernel_metadata",
-        "@xla//xla/tsl/platform:errors",
-        "@xla//xla/tsl/platform:logging",
-        "@xla//xla/tsl/platform:statusor",
-        "@xla//xla/tsl/util:tied_ref",
     ],
     alwayslink = True,
 )
@@ -399,6 +394,9 @@ cc_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
     args = ["--heap_check="],  # TODO(b/452513034): Enable heapcheck once the bug is fixed.
+    local_defines = [
+        "ABSL_DEFINE_UNQUALIFIED_STATUS_MACROS=1",
+    ],
     tags = ["requires-gpu-sm90"],
     deps = [
         ":mosaic_gpu_support",
@@ -406,6 +404,7 @@ cc_test(
         "@com_google_absl//absl/log:globals",
         "@com_google_absl//absl/log:scoped_mock_log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
@@ -419,7 +418,6 @@ cc_test(
         "@xla//xla/stream_executor/cuda:all_runtime",
         "@xla//xla/stream_executor/cuda:cuda_platform",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:statusor",
     ],
 )
 

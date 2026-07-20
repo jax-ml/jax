@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/log/globals.h"
 #include "absl/log/scoped_mock_log.h"
 #include "absl/status/status.h"
+#include "absl/status/status_macros.h"
 #include "absl/status/status_matchers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_gpu/xla_gpu_pjrt_client.h"
 #include "xla/stream_executor/cuda/cuda_platform.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace {
 
@@ -46,8 +46,8 @@ using ::testing::_;
 
 absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   std::vector<xla::PjRtBuffer*> no_buffers;
-  TF_ASSIGN_OR_RETURN(auto result,
-                      executable->Execute({no_buffers}, /*options=*/{}));
+  ASSIGN_OR_RETURN(auto result,
+                   executable->Execute({no_buffers}, /*options=*/{}));
   return result[0][0]->GetReadyFuture().Await();
 }
 
