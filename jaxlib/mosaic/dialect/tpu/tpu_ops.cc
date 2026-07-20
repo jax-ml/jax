@@ -2327,12 +2327,11 @@ OpFoldResult ReshapeOp::fold(FoldAdaptor adaptor) {
 
 LogicalResult StochasticConvertElementwiseOp::verify() {
   auto dst_ty = getDstType();
-  if (!dst_ty.isBF16() &&
-      !llvm::isa<mlir::Float8E5M2Type, mlir::Float8E4M3FNType,
-                 mlir::Float8E4M3B11FNUZType>(dst_ty)) {
-    return emitOpError(
-        "Only bf16, f8e5m2, f8e4m3fn, and f8e4m3b11fnuz are supported as "
-        "destination types.");
+  if (!llvm::isa<mlir::BFloat16Type, mlir::Float8E5M2Type,
+                 mlir::Float8E4M3FNType, mlir::Float8E4M3B11FNUZType,
+                 mlir::Float4E2M1FNType>(dst_ty) &&
+      !dst_ty.isSignlessInteger(4)) {
+    return emitOpError("Unsupported destination type: ") << dst_ty;
   }
   return success();
 }

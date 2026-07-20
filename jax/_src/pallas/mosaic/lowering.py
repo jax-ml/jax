@@ -4504,11 +4504,10 @@ def _stochastic_round_lowering_rule(
       jnp.float8_e5m2,
       jnp.float8_e4m3fn,
       jnp.float8_e4m3b11fnuz,
+      jnp.float4_e2m1fn,
+      jnp.int4,
   ]:
-    raise ValueError(
-        "Only bfloat16, float8_e5m2, float8_e4m3fn, and float8_e4m3b11fnuz "
-        "are supported as target dtypes."
-    )
+    raise ValueError(f"Unsupported target dtype: {target_dtype}")
   (_, in_aval,) = ctx.avals_in
   out_type = ir.VectorType.get(
       ctx.lowering_context.dynamic_shape_replacement_fn(in_aval.shape),
