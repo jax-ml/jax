@@ -412,7 +412,7 @@ def _write_pidfile(path, pid):
         f.write(str(pid))
 
 
-async def async_main(config):
+async def async_main(config, sock):
     ports_to_serve = _parse_port_ranges(config.portserver_static_pool)
     if not ports_to_serve:
         log.error('No ports.  Invalid port ranges in --portserver_static_pool?')
@@ -439,15 +439,7 @@ async def async_main(config):
 
         server = await asyncio.start_unix_server(
             request_handler.handle_port_request,
-            path=config.portserver_address.replace('@', '\0', 1))
-
-    if config.daemon:
-        pid = os.fork()
-        if pid > 0:
-            sys.exit(0)
-        os.setsid()
-        if config.pidfile:
-            _write_pidfile(config.pidfile, os.getpid())
+            sock=sock)
 
     log.info('Serving on %s', config.portserver_address)
 
@@ -464,8 +456,24 @@ async def async_main(config):
 def main():
     config = _parse_command_line()
     _configure_logging(verbose=config.verbose, debug=config.debug)
+
+    sock = None
+    if sys.platform != 'win32':
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(config.portserver_address.replace('@', '\0', 1))
+
+    if config.daemon:
+        pid = os.fork()
+        if pid > 0:
+            if config.pidfile:
+                _write_pidfile(config.pidfile, pid)
+            sys.exit(0)
+        os.setsid()
+    elif config.pidfile:
+        _write_pidfile(config.pidfile, os.getpid())
+
     try:
-        asyncio.run(async_main(config))
+        asyncio.run(async_main(config, sock=sock))
     except KeyboardInterrupt:
         log.info('Stopping due to ^C.')
     log.info('Goodbye.')
