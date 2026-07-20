@@ -15,11 +15,11 @@
 """Custom fusible dtypes."""
 
 import abc
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import itertools as it
 from typing import Any, TypeVar
-from collections.abc import Callable, Sequence
 
 import jax
 from jax._src import api_util
@@ -27,6 +27,7 @@ from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import dtypes
 from jax._src import flattree as ft
+from jax._src import hijax
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import state
@@ -39,7 +40,6 @@ from jax._src.pallas import mpmd
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec
-from jax._src.pallas.fuser.fusible import fusible_p
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
 from jax._src.util import foreach
@@ -569,20 +569,12 @@ def _unpack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args):
   return aval_in.dtype.unpack_eval_rule(ctx, *args)  # pyrefly: ignore[missing-attribute]
 
 
-def _fusible_physicalize_rule(
-    _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func, **params
-):
-  consts, _ = util.split_list(consts_and_args, [num_consts])
-  new_jaxpr = physicalize_closed_jaxpr(jaxpr.with_consts(consts))
-  return fusible_p.bind(
-      *consts_and_args,
-      jaxpr=new_jaxpr,
-      num_consts=num_consts,
-      in_tree=in_tree,
-      out_tree=out_tree,
-      func=func,
-      **params,
-  )
+def _call_hi_primitive_physicalize_rule(ctx, *args, _prim, **params):
+  if hasattr(_prim, "physicalize"):
+    return _prim.physicalize(ctx, *args, **params)
+  return hijax.call_hi_primitive_p.bind(*args, _prim=_prim, **params)
 
 
-_physicalize_rules[fusible_p] = _fusible_physicalize_rule
+_physicalize_rules[hijax.call_hi_primitive_p] = (
+    _call_hi_primitive_physicalize_rule
+)
