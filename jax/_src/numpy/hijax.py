@@ -13,12 +13,16 @@
 # limitations under the License.
 
 """NumPy function implementations as hijax primitives."""
+
+from collections.abc import Callable
 import functools
 import operator
+import string
 from typing import Any
-from collections.abc import Callable
 
 import numpy as np
+import opt_einsum
+from opt_einsum.parser import find_output_shape, parse_einsum_input
 
 from jax._src import ad_util
 from jax._src import api
@@ -27,12 +31,15 @@ from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import tree_util
 from jax._src.hijax import (
-    VJPHiPrimitive,
     linearize_from_jvp,
+    vjp_from_jvp,
+    VJPHiPrimitive,
 )
+from jax._src.interpreters import ad
 from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.numpy import util
+from jax._src.numpy.einsum import _einsum as einsum_impl, Unoptimized
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
@@ -307,6 +314,179 @@ class Nonzero(VJPHiPrimitive):
   lin, linearized = linearize_from_jvp
 
 
+class Einsum(VJPHiPrimitive):
+  """HiJAX primitive for einstein summation.
+
+  Parameters:
+    *operands_avals: Abstract values of the operands.
+    subscripts: The subscripts of the einsum. These will be normalized
+      via parse_einsum_input before being stored.
+    optimize: The optimization strategy of the einsum; defaults to "auto".
+    precision: Specify the precision of the computation.
+    preferred_element_type: Specify the accumulator and result dtype.
+  """
+  multiple_results = False
+
+  subscripts: str
+  optimize: str | bool | tuple[tuple[int, ...], ...]
+  precision: lax.PrecisionLike
+  preferred_element_type: DTypeLike | None
+
+  def __init__(
+      self,
+      *operands_avals: core.ShapedArray,
+      subscripts: str,
+      optimize: str | bool | tuple[tuple[int, ...], ...] = "auto",
+      precision: lax.PrecisionLike = None,
+      preferred_element_type: DTypeLike | None = None,
+  ):
+    # Normalize subscripts
+    in_subs, out_sub, _ = parse_einsum_input((subscripts, *operands_avals))
+    self.subscripts = f"{in_subs}->{out_sub}"
+    self.optimize = optimize
+    self.precision = precision
+    self.preferred_element_type = preferred_element_type
+    self.in_avals = operands_avals
+
+    inputs = in_subs.split(',')
+    shapes = [a.shape for a in operands_avals]
+    out_shape = find_output_shape(inputs, shapes, out_sub)
+    if preferred_element_type is None:
+      out_dtype = dtypes.result_type(*(a.dtype for a in operands_avals))
+    else:
+      out_dtype = dtypes.check_and_canonicalize_user_dtype(
+          preferred_element_type, 'einsum'
+      )
+    self.out_aval = core.ShapedArray(out_shape, out_dtype)
+
+    self.params = dict(
+        subscripts=self.subscripts,
+        optimize=optimize,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+    super().__init__()
+
+  def expand(self, *operands: ArrayLike) -> Array:
+    path_type = (
+        'optimal' if self.optimize is True else
+        Unoptimized() if self.optimize is False else
+        self.optimize
+    )
+    contract_path_args = (self.subscripts, *operands)
+    operands_out, contractions = opt_einsum.contract_path(  # pyrefly: ignore[no-matching-overload]
+        *contract_path_args, einsum_call=True, use_blas=True, optimize=path_type)
+    contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
+    return einsum_impl(
+        list(operands_out), contractions, precision=self.precision,
+        preferred_element_type=self.preferred_element_type)
+
+  def batch(
+      self,
+      axis_data: Any,
+      args: tuple[Array, ...],
+      dims: tuple[int | None, ...]
+  ) -> tuple[Array, int | None]:
+    del axis_data  # unused
+    if all(d is None for d in dims):
+      return self(*args), None
+    input_subs, output_sub = self.subscripts.split('->')
+    input_subs_list = input_subs.split(',')
+
+    used_chars = set(input_subs) | set(output_sub) | {',', '-', '>'}
+    available_chars = [c for c in string.ascii_letters if c not in used_chars]
+    if not available_chars:
+      raise ValueError("Run out of characters for batch dimension in einsum.")
+    batch_char = available_chars[0]
+
+    new_input_subs_list = []
+    for i, dim in enumerate(dims):
+      sub = input_subs_list[i]
+      if dim is not None:
+        sub_list = list(sub)
+        sub_list.insert(dim, batch_char)
+        new_sub = "".join(sub_list)
+      else:
+        new_sub = sub
+      new_input_subs_list.append(new_sub)
+
+    new_input_subs = ",".join(new_input_subs_list)
+    new_output_sub = batch_char + output_sub
+    new_subscripts = f"{new_input_subs}->{new_output_sub}"
+
+    batched_prim = Einsum(
+        *(core.typeof(arg) for arg in args),
+        subscripts=new_subscripts,
+        optimize=self.optimize,
+        precision=self.precision,
+        preferred_element_type=self.preferred_element_type,
+    )
+    return batched_prim(*args), 0
+
+  def jvp(self, primals: tuple[Array, ...], tangents: Any) -> tuple[Array, Array]:
+    primal_out = self(*primals)
+    tangent_outs = []
+    for i, t in enumerate(tangents):
+      if not isinstance(t, ad_util.Zero):
+        tangent_outs.append(self(*primals[:i], t, *primals[i+1:]))
+    if not tangent_outs:
+      return primal_out, ad_util.zeros_like_aval(self.out_aval)
+    return primal_out, functools.reduce(lax.add, tangent_outs)
+
+  def transpose(self, out_ct, *maybe_accums):
+    in_subs_list = self.subscripts.split('->')[0].split(',')
+    out_sub = self.subscripts.split('->')[1]
+
+    accums = [acc for acc in maybe_accums if isinstance(acc, ad.GradAccum)]
+    if len(accums) > 1:
+      raise NotImplementedError("Transpose of Einsum with multiple linear inputs is not supported.")
+
+    for i, accum in enumerate(maybe_accums):
+      if isinstance(accum, ad.GradAccum):
+        if isinstance(out_ct, ad_util.Zero):
+          accum.accum(ad_util.zeros_like_aval(self.in_avals[i]))
+          continue
+
+        orig_sub = in_subs_list[i]
+        orig_aval = self.in_avals[i]
+
+        all_ct_input_chars = set(out_sub)
+        for k, sub in enumerate(in_subs_list):
+          if k != i:
+            all_ct_input_chars.update(sub)
+
+        missing_chars = sorted(
+            set(orig_sub) - all_ct_input_chars, key=orig_sub.index
+        )
+
+        if missing_chars:
+          missing_sizes = tuple(
+              orig_aval.shape[orig_sub.index(c)] for c in missing_chars
+          )
+          expanded_out_ct = out_ct[(...,) + (None,) * len(missing_chars)]
+          curr_out_ct = jnp.broadcast_to(
+              expanded_out_ct, out_ct.shape + missing_sizes
+          )
+          curr_out_sub = out_sub + "".join(missing_chars)
+        else:
+          curr_out_ct = out_ct
+          curr_out_sub = out_sub
+
+        in_subs = ",".join([*in_subs_list[:i], curr_out_sub, *in_subs_list[i + 1:]])
+        ct_subscripts = f"{in_subs}->{orig_sub}"
+        ct_operands = (*maybe_accums[:i], curr_out_ct, *maybe_accums[i + 1:])
+        ct_val = einsum(
+            ct_subscripts,
+            *ct_operands,
+            optimize=self.optimize,
+            precision=self.precision,
+        )
+        accum.accum(ct_val)
+
+  lin, linearized = linearize_from_jvp
+  vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+
 def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[int, ...], out_dtype: np.dtype) -> tuple[Array, ...]:
   """Main implementation of nonzero primitive."""
   a = jnp.asarray(a)
@@ -573,3 +753,34 @@ def nonzero(
     out_dtype=out_dtype,
   )
   return prim(a, *fill_value_tup)
+
+
+def einsum(
+    subscripts: str,
+    /,
+    *operands: ArrayLike,
+    optimize: str | bool | tuple[tuple[int, ...], ...] = "auto",
+    precision: lax.PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+) -> Array:
+  """Einstein summation built on a HiJAX primitive.
+
+  Args:
+    subscripts: string containing axes names separated by commas.
+    *operands: sequence of one or more arrays corresponding to the subscripts.
+    optimize: specify how to optimize the order of computation.
+    precision: Specify the precision of the computation.
+    preferred_element_type: Specify the accumulator and result dtype.
+
+  Returns:
+    array containing the result of the einstein summation.
+  """
+  operands = core.auto_insert_reshard(*operands)
+  prim = Einsum(
+      *(core.typeof(op) for op in operands),
+      subscripts=subscripts,
+      optimize=tuple(optimize) if isinstance(optimize, list) else optimize,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+  return prim(*operands)
