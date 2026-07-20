@@ -1143,7 +1143,13 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
 
   full_perm = np.zeros((len(replica_groups), len(perm), 2), np.int64)
   for i, grp in enumerate(replica_groups):
-    grp = sorted(grp)
+    sorted_grp = tuple(sorted(grp))
+    if config.raise_on_ppermute_sort_diff.value and sorted_grp != grp:
+      raise RuntimeError(
+          "Make sure that the axis_name passed to jax.lax.ppermute is in the"
+          " same order as the axis_names declared on the mesh. If you want to"
+          " allow different order, you can disable the check via `with"
+          " jax.raise_on_ppermute_sort_diff(False):` context manager.")
     for j, (src, dst) in enumerate(perm):
       full_perm[i, j, 0] = grp[src]
       full_perm[i, j, 1] = grp[dst]

@@ -1212,6 +1212,18 @@ captured_constants_report_frames = int_state(
     )
 )
 
+raise_on_ppermute_sort_diff = bool_state(
+    name='jax_raise_on_ppermute_sort_diff',
+    default=True,
+    help=(
+        'Raises an error if ppermute axis_name are not in the same order as the'
+        ' mesh axis_names because it leads to wrong answers.'
+    ),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
+
 debug_leaked_clients_on_clear_backends = bool_state(
     name='jax_debug_leaked_clients_on_clear_backends',
     default=False,

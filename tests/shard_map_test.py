@@ -4145,6 +4145,20 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.jit(f)(arr)  # doesn't crash
 
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_ppermute_different_axis_order_error(self, mesh):
+    inp = jax.device_put(jnp.arange(4), P(('y', 'x')))
+
+    @jax.jit
+    @shard_map(mesh=mesh, in_specs=P(('y', 'x')), out_specs=P(('y', 'x')))
+    def f(x):
+      perm = [(0, 1), (1, 2), (2, 3), (3, 0)]
+      return lax.ppermute(x, axis_name=('y', 'x'), perm=perm)
+
+    with self.assertRaisesRegex(
+        RuntimeError, "Make sure that the axis_name passed to jax.lax.ppermute"):
+      f(inp)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
   def test_shmap_partial_manual_explicit(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, P('x', 'y'))
