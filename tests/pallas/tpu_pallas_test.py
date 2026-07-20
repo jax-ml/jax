@@ -1622,6 +1622,42 @@ class PallasCallDMATest(ptu.PallasTPUTest):
           out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
       )(x)
 
+  def test_unrolled_dma_with_regular_semaphore_raises(self):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest('Regular semaphores in DMAs require TPU v6+')
+    if not jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest('Regular semaphores in DMAs require libtpu >= 0.0.45')
+
+    def kernel(x_hbm_ref, y_hbm_ref):
+      def body(x_ref, sem):
+        pltpu.async_copy(
+            x_hbm_ref.at[:2, :2, :2, :2, :2, :],
+            x_ref,
+            sem,
+        )
+        pl.semaphore_wait(sem)
+
+      pl.run_scoped(
+          body,
+          pltpu.VMEM((2, 2, 2, 2, 2, 128), jnp.float32),
+          pltpu.SemaphoreType.REGULAR,
+      )
+
+    x = jnp.arange(2 * 3 * 3 * 3 * 3 * 128.0, dtype=jnp.float32).reshape(
+        (2, 3, 3, 3, 3, 128)
+    )
+    with self.assertRaisesRegex(
+        Exception,
+        'Not implemented: Non-DMA semaphores in transfers that require'
+        ' unrolling.',
+    ):
+      self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          out_shape=jax.ShapeDtypeStruct((2, 3, 3, 3, 3, 128), jnp.float32),
+      )(x)
+
   def test_hbm_smem_dma(self):
     def kernel(x_hbm_ref, y_ref):
       def body(x_ref, sem):
