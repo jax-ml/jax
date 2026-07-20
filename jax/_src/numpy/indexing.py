@@ -1375,7 +1375,7 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
          not advanced_axes_are_contiguous and idx_pos == 0)):
       advanced_index_arrs = util._broadcast_arrays(*advanced_indexes)
       shape = advanced_index_arrs[0].shape
-      aia_spec = core.typeof(advanced_index_arrs[0]).sharding.spec
+      aia_spec = core.typeof(advanced_index_arrs[0]).sharding.spec.partitions
       ndim = len(shape)
 
       start_dim = len(gather_indices_shape)
@@ -1474,8 +1474,9 @@ def _index_to_gather(indexer: NDIndexer, *, x_sharding: NamedSharding | Any,
     collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
     start_index_map = tuple(start_index_map)
   )
-  slice_sharding = canonicalize_sharding(x_sharding.update(spec=slice_spec),
-                                         "index_to_gather")
+  slice_sharding = canonicalize_sharding(
+      x_sharding.update(spec=x_sharding.spec.update(partitions=slice_spec)),
+      "index_to_gather")
   return _GatherIndexer(
     slice_shape=slice_shape,
     newaxis_dims=tuple(newaxis_dims),
