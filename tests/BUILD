@@ -952,6 +952,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_vmap_test",
     srcs = ["lax_vmap_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
