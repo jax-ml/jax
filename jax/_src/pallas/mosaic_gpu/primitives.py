@@ -159,7 +159,26 @@ copy_smem_to_gmem_p.multiple_results = True
 def _copy_smem_to_gmem_abstract_eval(src, dst, *args, **params):
   _check_ref(src, "src", gpu_core.SMEM)
   _check_ref(dst, "dst", gpu_core.GMEM)
-  del args, params  # Unused.
+  src_transforms_treedef = params["src_transforms_treedef"]
+  dst_transforms_treedef = params["dst_transforms_treedef"]
+  flat_src_transforms, flat_dst_transforms = util.split_list(
+      args,
+      [
+          src_transforms_treedef.num_leaves,
+          dst_transforms_treedef.num_leaves,
+      ],
+  )[:2]
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+
+  src_ref = pallas_core.TransformedRef(src, src_transforms)
+  dst_ref = pallas_core.TransformedRef(dst, dst_transforms)
+
+  if src_ref.dtype != dst_ref.dtype:
+    raise ValueError(
+        "Expected dtypes to match but src had type "
+        f"{src_ref.dtype} and dst had type {dst_ref.dtype}"
+    )
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
@@ -687,10 +706,29 @@ copy_gmem_to_smem_p.multiple_results = True
 
 @copy_gmem_to_smem_p.def_effectful_abstract_eval
 def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
-  del args, params  # Unused.
   _check_ref(src, "src", gpu_core.GMEM)
   _check_ref(dst, "dst", gpu_core.SMEM)
   _check_ref(barrier, "barrier", gpu_core.SMEM)
+  src_transforms_treedef = params["src_transforms_treedef"]
+  dst_transforms_treedef = params["dst_transforms_treedef"]
+  flat_src_transforms, flat_dst_transforms = util.split_list(
+      args,
+      [
+          src_transforms_treedef.num_leaves,
+          dst_transforms_treedef.num_leaves,
+      ],
+  )[:2]
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+
+  src_ref = pallas_core.TransformedRef(src, src_transforms)
+  dst_ref = pallas_core.TransformedRef(dst, dst_transforms)
+
+  if src_ref.dtype != dst_ref.dtype:
+    raise ValueError(
+        "Expected dtypes to match but src had type "
+        f"{src_ref.dtype} and dst had type {dst_ref.dtype}"
+    )
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
