@@ -99,7 +99,6 @@ class Jaxpr:
   __slots__ = [
       "__weakref__",
       "_all_invars",
-      "_num_consts",
       "_outvars",
       "_eqns",
       "_effects",
@@ -108,7 +107,6 @@ class Jaxpr:
       "_consts",
   ]
   _all_invars: list[Var]
-  _num_consts: int
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
@@ -122,7 +120,9 @@ class Jaxpr:
 
   @property
   def constvars(self) -> list[Var]:
-    return self._all_invars[: self._num_consts]
+    # The constant inputs are exactly those with values attached; an input
+    # without an attached value is a plain invar.
+    return self._all_invars[: len(self._consts)]
 
   @property
   def consts(self) -> list[Any]:
@@ -132,13 +132,7 @@ class Jaxpr:
 
   @property
   def num_consts(self) -> int:
-    return self._num_consts
-
-  @property
-  def is_closed(self) -> bool:
-    # True if the constant inputs have their values attached (in particular,
-    # if there are no constant inputs). Corresponds to the old ClosedJaxpr.
-    return len(self._consts) == self._num_consts
+    return len(self._consts)
 
   @property
   def jaxpr(self) -> Jaxpr:
@@ -148,7 +142,7 @@ class Jaxpr:
 
   @property
   def invars(self) -> list[Var]:
-    num_consts = self._num_consts
+    num_consts = len(self._consts)
     return self._all_invars[num_consts:] if num_consts else self._all_invars
 
   @property
@@ -213,21 +207,20 @@ class Jaxpr:
         jaxpr, consts = constvars, invars
       else:
         assert invars is None
-      assert consts is not None and len(consts) == jaxpr._num_consts
+      assert consts is not None and len(consts) <= len(jaxpr._all_invars)
       self._all_invars = jaxpr._all_invars
-      self._num_consts = jaxpr._num_consts
       self._outvars = jaxpr._outvars
       self._eqns = jaxpr._eqns
       self._effects = jaxpr._effects
-      self._debug_info = jaxpr._debug_info
+      self._debug_info = _shift_arg_names(jaxpr._debug_info,
+                                          len(jaxpr._consts) - len(consts))
       self._is_high = jaxpr._is_high
       self._consts = list(consts)
       return
     assert invars is not None and outvars is not None and eqns is not None
     self._consts = [] if consts is None else list(consts)
-    self._num_consts = len(constvars)
     assert (
-        not self._consts or len(self._consts) == self._num_consts
+        not self._consts or len(self._consts) == len(constvars)
     ), "consts, when attached, must pair with constvars"
     self._all_invars = [*constvars, *invars]
     self._outvars = list(outvars)
@@ -235,8 +228,12 @@ class Jaxpr:
     self._effects = effects
     # TODO(https://github.com/jax-ml/jax/issues/26480)
     debug_info = debug_info or lu._missing_debug_info("core.Jaxpr")
-    self._debug_info = debug_info.resolve_result_paths()
-    config.enable_checks.value and self._debug_info.assert_arg_names(len(invars))
+    debug_info = debug_info.resolve_result_paths()
+    if constvars and not self._consts:
+      # Constvars without attached values are plain leading invars.
+      debug_info = _shift_arg_names(debug_info, len(constvars))
+    self._debug_info = debug_info
+    config.enable_checks.value and self._debug_info.assert_arg_names(len(self.invars))
     config.enable_checks.value and self._debug_info.assert_result_paths(len(outvars))
     self._is_high = is_high
 
@@ -259,17 +256,19 @@ class Jaxpr:
 
   def with_consts(self, consts: Sequence[Any]) -> Jaxpr:
     """Returns a copy of this jaxpr with `consts` attached as the values of
-    its constant inputs (see `is_closed`). Shares all other structure."""
-    assert len(consts) == self._num_consts
+    its first `len(consts)` inputs, which thereby become its constvars.
+    Shares all other structure."""
+    consts = list(consts)
+    assert len(consts) <= len(self._all_invars)
     new = Jaxpr.__new__(Jaxpr)
     new._all_invars = self._all_invars
-    new._num_consts = self._num_consts
     new._outvars = self._outvars
     new._eqns = self._eqns
     new._effects = self._effects
-    new._debug_info = self._debug_info
+    new._debug_info = _shift_arg_names(self._debug_info,
+                                       len(self._consts) - len(consts))
     new._is_high = self._is_high
-    new._consts = list(consts)
+    new._consts = consts
     return new
 
   def map_jaxpr(self, f):
@@ -309,6 +308,16 @@ class Jaxpr:
     return jaxpr
 
 weakref_cache_key_types.add(Jaxpr)
+
+def _shift_arg_names(dbg: DebugInfo, delta: int) -> DebugInfo:
+  # Keep debug arg_names aligned with `invars` as the const/invar boundary
+  # moves: delta > 0 exposes that many constvars as invars (pad with unnamed
+  # entries), delta < 0 turns that many leading invars into constvars.
+  if not delta or dbg.arg_names is None:
+    return dbg
+  if delta > 0:
+    return dbg._replace(arg_names=("",) * delta + tuple(dbg.arg_names))
+  return dbg._replace(arg_names=tuple(dbg.arg_names[-delta:]))
 
 def join_effects(*effects: Effects) -> Effects:
   return set().union(*effects) if effects else no_effects
@@ -806,8 +815,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     env[v] = val
 
   env: dict[Var, Any] = {}
-  foreach(write, jaxpr.constvars, consts)
-  foreach(write, jaxpr.invars, args)
+  foreach(write, jaxpr.all_invars, [*consts, *args])
   lu = last_used(jaxpr)
   for eqn in jaxpr.eqns:
     bind_params = eqn.primitive.get_bind_params(eqn.params)
@@ -1838,6 +1846,12 @@ class AbstractValue:
 
   def lo_ty_qdd(self, qdd):
     raise NotImplementedError("avals with qdd must override")
+
+  def lower_val(self, val):
+    return [val]
+
+  def raise_val(self, val):
+    return val
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str(self)

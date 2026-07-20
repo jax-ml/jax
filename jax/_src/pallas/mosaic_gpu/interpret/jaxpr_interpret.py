@@ -706,9 +706,6 @@ class JaxprInterpreter:
       return out
     else:
       bind_params = eqn.primitive.get_bind_params(eqn.params)
-      for v in bind_params.values():
-        if isinstance(v, jax_core.Jaxpr) and not v.is_closed:
-          raise NotImplementedError(f"Higher-order primitive {eqn.primitive}")
       return eqn.primitive.bind(*get_invals(), **bind_params)
 
   def _interpret_copy_gmem_to_smem_p(

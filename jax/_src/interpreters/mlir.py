@@ -2646,11 +2646,11 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
     jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
         wrapped_fun, ctx.avals_in, lower=True)
+    jaxpr = jaxpr.with_consts(consts_for_constvars)
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
       from jax._src.interpreters import pxla  # pyrefly: ignore[missing-module-attribute]
-      jaxpr = pxla._discharge_internal_refs(
-          jaxpr.with_consts(consts_for_constvars))
+      jaxpr = pxla._discharge_internal_refs(jaxpr)
       consts_for_constvars = jaxpr.consts
 
     # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?

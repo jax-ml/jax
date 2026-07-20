@@ -1679,7 +1679,8 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
           f, trace.tag, debug_info.with_unknown_names(), False, in_pvals)
     (in_fwds, out_fwds, out_pvals, res, env) = fwd_data
     which = [f1 is None and f2 is None and not v.aval.shape
-             for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
+             for f1, f2, v in zip(in_fwds, out_fwds,
+                                   jaxpr.invars[:len(in_fwds)])]
     jaxpr = _promote_scalar_residuals_jaxpr(jaxpr, which)
     res = [lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
            for x in res]

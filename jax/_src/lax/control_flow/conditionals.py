@@ -947,7 +947,7 @@ def _cond_typecheck(bind_time, *in_atoms, branches, **params):
       'branches',
       'tuple of closed Jaxpr',
       type(branches) is tuple
-      and all(type(x) is core.Jaxpr and x.is_closed for x in branches),
+      and all(type(x) is core.Jaxpr for x in branches),
   )
 
   if len(branches) == 0:

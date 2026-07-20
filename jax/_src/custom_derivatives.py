@@ -1851,9 +1851,8 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     # have different consts than fwd, we build a new JaxprEqn with a closed_call
     # primitive.
     fun_jaxpr, consts = eqn.params["fun_jaxpr_thunk"]()
-    new_jaxpr, used_consts, used_ins = pe.dce_jaxpr_consts(fun_jaxpr, used_prims)
-    consts = [c for used, c in zip(used_consts, consts) if used]
-    closed_jaxpr = new_jaxpr.with_consts(consts)
+    closed_jaxpr, _, used_ins = pe.dce_jaxpr_consts(
+        fun_jaxpr.with_consts(consts), used_prims)
     _, invars = split_list(eqn.invars, [eqn.params["num_consts"]])
     invars = [v for used, v in zip(used_ins, invars) if used]
     new_eqn = pe.new_jaxpr_eqn(

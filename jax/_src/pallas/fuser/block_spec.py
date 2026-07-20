@@ -547,13 +547,12 @@ def _pull_block_transform(
           jaxpr.eqns[: jaxpr.eqns.index(eqn)],
           debug_info=jaxpr.debug_info._replace(result_paths=None),
       )
-      scalar_prefetch_jaxpr, _, used_invars = pe.dce_jaxpr_consts(
+      scalar_prefetch_jaxpr, used_inputs = pe.dce_jaxpr(
           scalar_prefetch_jaxpr_no_dce,
           [True] * len(scalar_prefetch_jaxpr_no_dce.outvars),
       )
-      assert not any(used_invars)
+      assert not any(used_inputs[len(jaxpr.constvars):])
       scalar_prefetch_jaxpr = scalar_prefetch_jaxpr.replace(
-          constvars=[],
           invars=jaxpr.constvars,
           debug_info=scalar_prefetch_jaxpr.debug_info.with_unknown_names(),
       )
