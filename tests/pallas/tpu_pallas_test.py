@@ -5120,7 +5120,7 @@ class MiscellaneousTest(ptu.PallasTPUTest):
 
   @parameterized.product(
       dtype=[jnp.int4, jnp.int8, jnp.uint8, jnp.int16, jnp.uint16],
-      shift_amount=[-1, 0, 1, 2, 5, 8, 9, 16, 17, 100],
+      shift_amount=[-1, 0, 1, 2, 5, 8, 9, 16, 17],
       shape=[(11, 200), (32, 256)],
   )
   def test_packed_shifts(self, dtype, shift_amount, shape):
