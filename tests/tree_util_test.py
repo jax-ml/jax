@@ -992,6 +992,12 @@ class TreeTest(jtu.JaxTestCase):
                                        (SequenceKey(1), tree1["sub"][1])])
     self.assertIsNone(meta)
 
+    # Namedtuple
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"][1])
+    self.assertEqual(list(children), [(GetAttrKey("foo"), ()),
+                                       (GetAttrKey("bar"), [None])])
+    self.assertIs(meta, ATuple)
+
     # Custom object with keys
     children, meta = tree_util.flatten_one_level_with_keys(tree1["obj"])
     self.assertEqual(list(children), [("x", EmptyTuple()), ("y", 0)])
