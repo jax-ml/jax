@@ -842,11 +842,9 @@ class KernelHandle {
     }
   }
 
-  // KernelHandle is move-only.
+  // KernelHandle is neither copyable nor movable.
   KernelHandle(const KernelHandle&) = delete;
   KernelHandle& operator=(const KernelHandle&) = delete;
-  KernelHandle(KernelHandle&&) noexcept = default;
-  KernelHandle& operator=(KernelHandle&&) noexcept = default;
 
   CUmodule module() const { return module_; }
   CUfunction function() const { return function_; }
