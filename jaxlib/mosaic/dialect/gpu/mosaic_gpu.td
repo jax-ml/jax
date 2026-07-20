@@ -737,6 +737,23 @@ def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", [Pure]> {
   let results = (outs AnyMemRef);
 }
 
+def MosaicGPU_MemRefReshapeOp : Op<MosaicGPU_Dialect, "memref_reshape",
+    [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Reshapes a memref to a new shape.";
+  let description = [{
+    Reshapes `source` to the target `shape`.
+  }];
+  let arguments = (ins
+    AnyStaticShapeMemRef:$source,
+    DenseI64ArrayAttr:$shape
+  );
+  let results = (outs AnyStaticShapeMemRef:$result);
+  let assemblyFormat = [{
+    $source attr-dict `:` type($source) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_WGMMASupportedABType : AnyTypeOf<[F16, BF16, TF32, F32, F8E4M3FN, F8E5M2, I8],
     "A type supported by the `a` and `b` operands of the `wgmma.mma_async` instruction">;
 

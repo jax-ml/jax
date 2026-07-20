@@ -43,6 +43,7 @@ limitations under the License.
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
@@ -52,7 +53,6 @@ limitations under the License.
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
@@ -1371,6 +1371,44 @@ struct HoistReinterpretCastOutOfWarpMap
   }
 };
 }  // namespace
+
+llvm::LogicalResult MemRefReshapeOp::inferReturnTypes(
+    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::ValueRange operands, mlir::DictionaryAttr attributes,
+    mlir::PropertyRef properties, mlir::RegionRange regions,
+    llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
+  MemRefReshapeOp::Adaptor adaptor(operands, attributes, properties);
+  mlir::MemRefType source_type =
+      mlir::cast<mlir::MemRefType>(adaptor.getSource().getType());
+  llvm::ArrayRef<int64_t> shape = adaptor.getShape();
+  mlir::MemRefLayoutAttrInterface layout;
+  if (auto strided = mlir::dyn_cast_if_present<mlir::StridedLayoutAttr>(
+          source_type.getLayout())) {
+    llvm::SmallVector<int64_t> strides = mlir::computeStrides(shape);
+    layout = mlir::StridedLayoutAttr::get(source_type.getContext(),
+                                          strided.getOffset(), strides);
+  }
+  inferredReturnTypes.assign(
+      {mlir::MemRefType::get(shape, source_type.getElementType(), layout,
+                             source_type.getMemorySpace())});
+  return mlir::success();
+}
+
+llvm::LogicalResult MemRefReshapeOp::verify() {
+  auto source_type = getSource().getType();
+  auto result_type = getResult().getType();
+  if (!mlir::memref::isStaticShapeAndContiguousRowMajor(source_type)) {
+    return emitOpError(
+        "memref_reshape requires source memref to have contiguous strides");
+  }
+  if (source_type.getNumElements() != result_type.getNumElements()) {
+    return emitOpError(llvm::formatv(
+        "The total number of elements in `source` ({0}) must match the total "
+        "number of elements in `result` ({1}).",
+        source_type.getNumElements(), result_type.getNumElements()));
+  }
+  return llvm::success();
+}
 
 void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,
                                             mlir::MLIRContext* context) {

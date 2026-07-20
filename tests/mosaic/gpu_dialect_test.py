@@ -2021,6 +2021,61 @@ ir.MLIRError,
     [reinterpret_cast_op] = self.find_ops(mgpu.dialect.ReinterpretCastOp)
     self.assertEqual(reinterpret_cast_op.result.type, ty2)
 
+  def test_memref_reshape_infer_return_types_contiguous_default_layout(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      smem = mgpu_utils.smem()
+      ref_ty = ir.MemRefType.get((128,), f32, memory_space=smem)
+      ref, = undefs(ref_ty)
+      res = mgpu.dialect.memref_reshape(ref, (2, 16, 4))
+      res_ty = ir.MemRefType.get((2, 16, 4), f32, memory_space=smem)
+      self.assertEqual(res.type, res_ty)
+
+  def test_memref_reshape_infer_return_types_contiguous_strided_layout(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get(
+          (128,),
+          f32,
+          layout=ir.StridedLayoutAttr.get(42, [1]),
+      )
+      ref, = undefs(ref_ty)
+      res = mgpu.dialect.memref_reshape(ref, (2, 16, 4))
+      res_ty = ir.MemRefType.get(
+          (2, 16, 4),
+          f32,
+          layout=ir.StridedLayoutAttr.get(42, [64, 4, 1]),
+      )
+      self.assertEqual(res.type, res_ty)
+
+  def test_memref_reshape_infer_return_types_non_contiguous_fails(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get(
+          (64, 128),
+          f32,
+          layout=ir.StridedLayoutAttr.get(0, [256, 1]),
+      )
+      [ref] = undefs(ref_ty)
+      mgpu.dialect.memref_reshape(ref, (8, 16, 64))
+      with self.assertRaisesRegex(
+          ir.MLIRError,
+          "memref_reshape requires source memref to have contiguous strides",
+      ):
+        self.module.operation.verify()
+
+  def test_memref_reshape_shape_mismatch(self):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get((128,), f32)
+      [ref] = undefs(ref_ty)
+      mgpu.dialect.memref_reshape(ref, (3, 64))
+      with self.assertRaisesRegex(
+          ir.MLIRError,
+          "The total number of elements in `source`",
+      ):
+        self.module.operation.verify()
+
 
 class DialectLoweringTest(MosaicGpuTest):
 
