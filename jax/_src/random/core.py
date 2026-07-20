@@ -2153,8 +2153,8 @@ def _gumbel(key, shape, dtype, mode) -> Array:
                          shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
     # we should be able to add safely with the right addition operation.
-    x = jnp.where(high >= 0.5, high,
-        high + 2 ** -(info.nmant) * low + info.tiny)
+    x = jnp.where(high >= 0.5, high, high + 2 ** -(info.nmant) * low + max(
+        2 ** -(2 * info.nmant + 1), info.tiny))
     return -jnp.log(-jnp.log1p(-x))
   else:
     return -jnp.log(-jnp.log(
