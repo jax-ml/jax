@@ -703,44 +703,22 @@ def tracers_to_jaxpr(
 
 @weakref_lru_cache
 def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
-  constvars, envvars = partition_list(which, jaxpr.constvars)
-  return jaxpr.replace(constvars=constvars, invars=[*envvars, *jaxpr.invars])
+  """Move the leading invars selected by `which` after the unselected ones."""
+  assert not jaxpr.consts
+  keep, env = partition_list(which, jaxpr.invars[:len(which)])
+  return jaxpr.replace(invars=[*keep, *env, *jaxpr.invars[len(which):]])
 
-@weakref_lru_cache
 def separate_consts(jaxpr: Jaxpr) -> tuple[Jaxpr, list[Any]]:
-  """Moves the constvars to the start of invars and returns the consts explicitly."""
+  """Detaches the consts and returns them explicitly."""
   return convert_constvars_jaxpr(jaxpr), jaxpr.consts
 
-@weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
-  """Moves the constvars to the start of invars."""
-  config.enable_checks.value and core.check_jaxpr(jaxpr)
-  if jaxpr.debug_info.arg_names is None:
-    arg_names = None
-  else:
-    arg_names = ("",) * len(jaxpr.constvars) + (*jaxpr.debug_info.arg_names,)
-  dbg = jaxpr.debug_info._replace(arg_names=arg_names)
-  lifted_jaxpr = jaxpr.replace(
-      constvars=(), invars=jaxpr.constvars + jaxpr.invars, debug_info=dbg)
-  config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
-  return lifted_jaxpr
+  """Detaches the consts, exposing the constant inputs as leading invars."""
+  return _detach_consts(jaxpr) if jaxpr.consts else jaxpr
 
 @weakref_lru_cache
-def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
-  """Move n invars to constvars. Like an inverse of convert_constvars_jaxpr."""
-  if n == 0:
-    return jaxpr.replace()  # 'return jaxpr' would create cache reference cycle
-  config.enable_checks.value and core.check_jaxpr(jaxpr)
-  constvars, invars = split_list(jaxpr.invars, [n])
-  if jaxpr.debug_info.arg_names is None:
-    dbg = jaxpr.debug_info
-  else:
-    dbg = jaxpr.debug_info._replace(
-        arg_names=jaxpr.debug_info.arg_names[n:])
-  lifted_jaxpr = jaxpr.replace(constvars=tuple(constvars), invars=invars,
-                               debug_info=dbg)
-  config.enable_checks.value and core.check_jaxpr(lifted_jaxpr)
-  return lifted_jaxpr
+def _detach_consts(jaxpr: Jaxpr) -> Jaxpr:
+  return jaxpr.with_consts(())
 
 
 def partial_eval_jaxpr_nounits(
@@ -1327,14 +1305,11 @@ def dce_jaxpr(jaxpr: Jaxpr, used_outputs: bool | Sequence[bool],
 def dce_jaxpr_consts(jaxpr: Jaxpr, used_outputs: Sequence[bool],
                      instantiate: bool | Sequence[bool] = False,
                      ) -> tuple[Jaxpr, list[bool], list[bool]]:
-  jaxpr_ = convert_constvars_jaxpr(jaxpr)
-  new_jaxpr, used_inputs_ = dce_jaxpr(jaxpr_, used_outputs, instantiate)
+  new_jaxpr, used_inputs_ = dce_jaxpr(convert_constvars_jaxpr(jaxpr),
+                                      used_outputs, instantiate)
   used_consts, used_inputs = split_list(used_inputs_, [len(jaxpr.constvars)])
-  if sum(used_consts):
-    new_jaxpr = convert_invars_to_constvars(new_jaxpr, sum(used_consts))
-    if jaxpr.consts:
-      new_jaxpr = new_jaxpr.with_consts(
-          [c for c, used in zip(jaxpr.consts, used_consts) if used])
+  new_jaxpr = new_jaxpr.with_consts(
+      [c for c, used in zip(jaxpr.consts, used_consts) if used])
   return new_jaxpr, used_consts, used_inputs
 
 
@@ -1458,9 +1433,8 @@ def dce_jaxpr_closed_call_rule(used_outputs: list[bool], eqn: JaxprEqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
 def close_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
-  # Now that Jaxpr and Jaxpr are merged, a jaxpr whose consts are all
-  # attached (in particular one with no constvars) is already closed.
-  assert len(jaxpr.consts) == len(jaxpr.constvars)
+  # Now that Jaxpr and ClosedJaxpr are merged, every jaxpr is closed: the
+  # constvars are exactly the inputs with attached const values.
   return jaxpr
 
 def move_invars_right(jaxpr: Jaxpr, to_move: Sequence[bool]):

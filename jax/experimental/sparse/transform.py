@@ -420,8 +420,8 @@ def eval_sparse(
     assert a is not None
     env[var] = a
 
-  safe_map(write_buffer, jaxpr.constvars, consts)
-  safe_map(write, jaxpr.invars, spvalues)
+  safe_map(write_buffer, jaxpr.all_invars[:len(consts)], consts)
+  safe_map(write, jaxpr.all_invars[len(consts):], spvalues)
 
   for eqn in jaxpr.eqns:
     prim = eqn.primitive
