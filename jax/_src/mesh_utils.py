@@ -461,7 +461,7 @@ def _get_prime_factors(x: int) -> list[int]:
     if x == 1:
       return factors
   else:
-    return [x]  # x is a prime number.
+    return factors + [x]  # the remaining part is prime; keep the factors found so far
 
 
 def _enumerate_feasible_logical_axis_assignments(
