@@ -5190,13 +5190,22 @@ class MiscellaneousTest(ptu.PallasTPUTest):
     )(inp)
 
     if dtype == jnp.int4:
+      shift_amount = min(shift_amount, 4)
       expected_shl = inp.astype(np.int32) << shift_amount
       expected_shr = inp.astype(np.int32) >> shift_amount
       expected_shl = ((expected_shl << 28) >> 28).astype(dtype)
       expected_shr = ((expected_shr << 28) >> 28).astype(dtype)
     else:
-      expected_shl = inp << shift_amount
-      expected_shr = inp >> shift_amount
+      shift_clamped = min(shift_amount, info.bits - 1)
+      if jnp.issubdtype(dtype, jnp.signedinteger):
+        expected_shr = inp >> shift_clamped
+      else:
+        expected_shr = np.where(
+            shift_amount >= info.bits, np.zeros_like(inp), inp >> shift_clamped
+        )
+      expected_shl = np.where(
+          shift_amount >= info.bits, np.zeros_like(inp), inp << shift_clamped
+      )
 
     np.testing.assert_array_equal(shl_out, expected_shl)
     np.testing.assert_array_equal(shr_out, expected_shr)
