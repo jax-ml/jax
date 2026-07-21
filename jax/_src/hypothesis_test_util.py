@@ -26,7 +26,8 @@ from hypothesis.internal import reflection
 from hypothesis.strategies._internal import core as hps_internal_core
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.test_loader import JaxTestLoader
+from jax._src.test_loader import JaxTestLoader, TEST_NUM_THREADS
+
 
 HYPOTHESIS_PROFILE = config.string_flag(
     "hypothesis_profile",
@@ -52,19 +53,25 @@ def hypothesis_inner_test_shard(inner_test, args, kwargs, total_shards):
 def _shard_aware_hypothesis_inner_test(inner_test):
   @functools.wraps(inner_test)
   def shard_aware_inner_test_fn(*args, **kwargs):
-    if _TEST_TOTAL_SHARDS == 1:
+    self = kwargs["self"] if "self" in kwargs else args[0]
+    proc_shards = _TEST_TOTAL_SHARDS
+    proc_idx = _TEST_SHARD_INDEX
+    thread_shards = self._thread_total_shards
+    thread_idx = self._thread_shard_index
+
+    total_shards = proc_shards * thread_shards
+    global_shard_idx = proc_idx * thread_shards + thread_idx
+
+    if total_shards == 1:
       return inner_test(*args, **kwargs)
 
     # If we have already encountered a failure in this test case execution,
     # assume we are in shrinking/explain phase, which won't work with sharding.
-    self = kwargs["self"] if "self" in kwargs else args[0]
     if getattr(self, "_hypothesis_failed", False):
       return inner_test(*args, **kwargs)
 
-    mod = hypothesis_inner_test_shard(
-        inner_test, args, kwargs, _TEST_TOTAL_SHARDS
-    )
-    if mod != _TEST_SHARD_INDEX:
+    mod = hypothesis_inner_test_shard(inner_test, args, kwargs, total_shards)
+    if mod != global_shard_idx:
       # We don't call `googletest.skip` here because skipping within hypothesis
       # will skip the *entire* test, not just the current example.
       return None
@@ -129,8 +136,9 @@ def _apply_sharding_to_tests(test_runner):
         # If the tests are not hypothesis tests (or we are not sharding
         # hypothesis tests), we can just assign them to shards in a round-robin
         # fashion.
-        shard_index = next(shards_index_iter)
-        setattr(test_runner, name, _shard_aware_test(test, shard_index))
+        if _TEST_TOTAL_SHARDS > 1:
+          shard_index = next(shards_index_iter)
+          setattr(test_runner, name, _shard_aware_test(test, shard_index))
 
 
 class HypothesisShardedTestCase(jtu.JaxTestCase):
@@ -152,9 +160,12 @@ class HypothesisShardedTestCase(jtu.JaxTestCase):
   Must be combined with `HypothesisShardedTestLoader`.
   """
 
+  _thread_shard_index: int = 0
+  _thread_total_shards: int = 1
+
   def __init_subclass__(cls, **kwargs):
     super().__init_subclass__(**kwargs)
-    if _TEST_TOTAL_SHARDS > 1:
+    if _TEST_TOTAL_SHARDS > 1 or TEST_NUM_THREADS.value > 1:
       _apply_sharding_to_tests(cls)
 
 
@@ -173,6 +184,28 @@ class HypothesisShardedTestLoader(JaxTestLoader):
     if issubclass(self._current_test_class, HypothesisShardedTestCase):
       return ordered_names
     return super().shardTestCaseNames(iterator, ordered_names, shard_index)
+
+  def loadTestsFromTestCase(self, testCaseClass):
+    num_threads = TEST_NUM_THREADS.value
+    if (
+        issubclass(testCaseClass, HypothesisShardedTestCase)
+        and num_threads > 1
+    ):
+      cases: list[unittest.TestCase] = []
+      for name in self.getTestCaseNames(testCaseClass):
+        test_method = getattr(testCaseClass, name, None)
+        if test_method is not None and detection.is_hypothesis_test(test_method):
+          for thread_idx in range(num_threads):
+            thread_name = f"{name}__thread_{thread_idx}"
+            setattr(testCaseClass, thread_name, test_method)
+            case = testCaseClass(thread_name)
+            case._thread_shard_index = thread_idx
+            case._thread_total_shards = num_threads
+            cases.append(case)
+        else:
+          cases.append(testCaseClass(name))
+      return self.suiteClass(cases)
+    return super().loadTestsFromTestCase(testCaseClass)
 
 
 def hypothesis_is_thread_safe() -> bool:
