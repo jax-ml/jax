@@ -30,8 +30,9 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import tree_util
+from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
-                                     NamedSharding, PartitionSpec as P)
+                                     NamedSharding)
 from jax._src.core import AxisName, ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -45,7 +46,6 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib import xla_client as xc
 from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
@@ -56,6 +56,12 @@ unsafe_zip, zip = zip, safe_zip
 
 
 ### parallel traceables
+
+def check_unreduced_kind(name, mat, kind):
+  if mat.unreduced_kind is not kind:
+    raise ValueError(
+        f"{name} cannot accept args with unreduced_kind={mat.unreduced_kind}."
+        f" Expected unreduced_kind={kind}")
 
 def psum(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce sum on ``x`` over the pmapped axis ``axis_name``.
@@ -246,15 +252,24 @@ def pmax(x, axis_name, *, axis_index_groups=None):
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce max along the axis ``axis_name``.
   """
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
+  axis_name = _maybe_skip_one_sized_axes(axis_name)
+  if not axis_name:
+    return x
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
   _validate_reduce_axis_index_groups(axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
-    leaf = insert_collective_pvary(axis_name, leaf)
-    return pmax_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
+    from_ = _get_from(core.typeof(leaf), axis_name, 'jax.lax.pmax')
+    if from_ == 'unreduced':
+      if axis_index_groups is not None:
+        raise NotImplementedError
+      return unreduced_pmax(leaf, axis_name)
+    else:
+      leaf = insert_collective_pvary(axis_name, leaf)
+      return pmax_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(bind, x)
 
 
@@ -277,15 +292,24 @@ def pmin(x, axis_name, *, axis_index_groups=None):
     Array(s) with the same shape as ``x`` representing the result of an
     all-reduce min along the axis ``axis_name``.
   """
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
+  axis_name = _maybe_skip_one_sized_axes(axis_name)
+  if not axis_name:
+    return x
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
   _validate_reduce_axis_index_groups(axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
-    leaf = insert_collective_pvary(axis_name, leaf)
-    return pmin_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
+    from_ = _get_from(core.typeof(leaf), axis_name, 'jax.lax.pmin')
+    if from_ == 'unreduced':
+      if axis_index_groups is not None:
+        raise NotImplementedError
+      return unreduced_pmin(leaf, axis_name)
+    else:
+      leaf = insert_collective_pvary(axis_name, leaf)
+      return pmin_p.bind(leaf, axes=axis_name, axis_index_groups=axis_index_groups)
   return tree_util.tree_map(bind, x)
 
 # TODO(mattjj): add a pargmin_p, or add named axis support to lax.argmin_p
@@ -324,12 +348,12 @@ def _canonicalize_axis_index_groups(axis_index_groups):
 def pbroadcast(x, axis_name, source):
   """Perform a collective broadcast and replicate from ``source``.
 
-  This is equivalent to
-  ```
-  def pbroadcast(x, axis_name, source):
-    masked = jnp.where(axis_index(axis_name) == source, x, zeros_like(x))
-    return psum(masked, axis_name)
-  ```
+  This is equivalent to::
+
+    def pbroadcast(x, axis_name, source):
+      masked = jnp.where(axis_index(axis_name) == source, x, zeros_like(x))
+      return psum(masked, axis_name)
+
   but implemented in a hardware optimized way.
 
   If ``x`` is a pytree then the result is equivalent to mapping this function to
@@ -570,6 +594,8 @@ def _all_to_all_is_async(x, axis_name, split_axis, concat_axis, *,
                          axis_index_groups=None, tiled=False, is_async=False):
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(x, split_axis=split_axis, concat_axis=concat_axis):
+    split_axis = canonicalize_axis(split_axis, np.ndim(x))
+    concat_axis = canonicalize_axis(concat_axis, np.ndim(x))
     group_size = _axis_size(axis_name, axis_index_groups)
     if tiled:
       if x.shape[split_axis] % group_size != 0:
@@ -861,8 +887,8 @@ def _reduction_with_positional_batcher(
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
                               "Please open a feature request!")
-  v = v if d is batching.not_mapped or d == 0 else _moveaxis(d, 0, v)
-  if d is batching.not_mapped:
+  v = v if d is None or d == 0 else _moveaxis(d, 0, v)
+  if d is None:
     unmapped_axes, unmapped_vals_in = transform_unmapped(0, v)
     return (prim.bind(unmapped_vals_in, axes=unmapped_axes)
             if prim is psum_invariant_p else
@@ -886,7 +912,7 @@ def _reduction_batcher(prim, v, d, *, axes, axis_index_groups):
                           for axis in axes),
                     v))
   # _reduction_with_positional_batcher moves all map dims to 0
-  return val_out, d if d is batching.not_mapped else 0
+  return val_out, d if d is None else 0
 
 def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
                                   dims_in, axes, axis_index_groups):
@@ -919,22 +945,54 @@ def _batched_reduction_collective(prim, if_unmapped, axis_data, vals_in,
       lambda d, v: (tuple(axis + (axis >= d) if isinstance(axis, int) else axis
                           if axis != axis_data.name else d for axis in axes),
                     v))
-  return val_out, batching.not_mapped
+  return val_out, None
 
-def _replica_groups(axis_env, axis_name, axis_index_groups):
-  replica_groups = pxla.axis_groups(axis_env, axis_name)
+def _replica_groups(axis_ctx, axis_name, axis_index_groups):
+  replica_groups = pxla.axis_groups(axis_ctx, axis_name)
   if axis_index_groups is not None:
     replica_groups = [[axis_group[i] for i in axis_index_group]
                       for axis_group in replica_groups
                       for axis_index_group in axis_index_groups]
   return replica_groups
 
-def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
-                        ) -> ir.DenseElementsAttr:
+
+def _device_list_replica_groups_hlo(
+    replica_groups: Sequence[Sequence[int]],
+) -> ir.DenseElementsAttr:
   # Uneven replica groups are padded with -1.
   groups = np.array(list(itertools.zip_longest(*replica_groups, fillvalue=-1)),
                     dtype=np.int64).T
   return ir.DenseIntElementsAttr.get(np.ascontiguousarray(groups))
+
+
+def _try_mesh_axes_replica_group(ctx, axis_names, axis_index_groups):
+  axis_ctx = ctx.module_context.axis_context
+  if (config.use_rgv3.value
+      and config.use_shardy_partitioner.value
+      and axis_index_groups is None
+      and isinstance(axis_ctx, SPMDAxisContext)
+      and axis_ctx.mesh.size > 1):
+    # Emit #stablehlo.replica_group_mesh_axes with inlined mesh if possible.
+    mesh_axis_attrs = [
+      hlo.MeshAxisAttr.get(str(name), size)
+      for name, size in axis_ctx.mesh.shape.items()
+    ]
+    mesh_attr = hlo.MeshAttr.get(ir.ArrayAttr.get(mesh_axis_attrs))
+    flat_axes = (
+      axis_names if isinstance(axis_names, (tuple, list)) else (axis_names,)
+    )
+    axes = ir.ArrayAttr.get(
+        [hlo.AxisRefAttr.get(str(name)) for name in flat_axes]
+    )
+    return hlo.ReplicaGroupMeshAxesAttr.get(mesh_attr, axes)
+
+  # Fallback to the dense repr if mesh-axes based is not applicable.
+  return _device_list_replica_groups_hlo(
+      _replica_groups(
+          ctx.module_context.axis_context, axis_names, axis_index_groups
+      )
+  )
+
 
 def _allreduce_impl(prim, pos_reducer, arg, *, axes, axis_index_groups):
   assert axis_index_groups is None
@@ -998,9 +1056,9 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
   if not named_axes:
     return [arg]
 
-  replica_groups = _replica_groups_hlo(
-      _replica_groups(ctx.module_context.axis_env, named_axes,
-                      axis_index_groups))
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, named_axes, axis_index_groups
+  )
   axis_context = ctx.module_context.axis_context
   is_spmd = isinstance(axis_context, (SPMDAxisContext, ShardingContext))
 
@@ -1017,14 +1075,15 @@ def _allreduce_lowering(prim, pos_fn, ctx, arg, *, axes, axis_index_groups):
         [x.type], [x], replica_groups=replica_groups, **other_args)
     scalar_aval = core.ShapedArray(
         (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
-    scalar_type = mlir.aval_to_ir_type(scalar_aval)
+    scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer_block):
       lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
       reducer_ctx = ctx.replace(primitive=None,
                                 avals_in=[scalar_aval] * 2, avals_out=[scalar_aval])
       out_nodes = lower_reducer(reducer_ctx, *reducer_block.arguments)
-      hlo.return_(mlir.flatten_ir_values(out_nodes))
+      flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
+      hlo.return_(flat_out_nodes)
     return op.result
   return [all_reduce(aval_in, arg)]
 
@@ -1075,7 +1134,7 @@ batching.fancy_primitive_batchers[pmin_p] = \
 
 
 def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name, None)
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
@@ -1084,7 +1143,13 @@ def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
 
   full_perm = np.zeros((len(replica_groups), len(perm), 2), np.int64)
   for i, grp in enumerate(replica_groups):
-    grp = sorted(grp)
+    sorted_grp = tuple(sorted(grp))
+    if config.raise_on_ppermute_sort_diff.value and sorted_grp != grp:
+      raise RuntimeError(
+          "Make sure that the axis_name passed to jax.lax.ppermute is in the"
+          " same order as the axis_names declared on the mesh. If you want to"
+          " allow different order, you can disable the check via `with"
+          " jax.raise_on_ppermute_sort_diff(False):` context manager.")
     for j, (src, dst) in enumerate(perm):
       full_perm[i, j, 0] = grp[src]
       full_perm[i, j, 1] = grp[dst]
@@ -1133,7 +1198,7 @@ def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
     return ppermute_p.bind(v, perm=perm, axis_name=remaining_axes), d
   assert axis_name[0] == frame_name, "ppermute batcher called with a wrong axis!"
   assert len(perm) == axis_size, "Permutation doesn't match the axis size!"
-  if d is batching.not_mapped:
+  if d is None:
     return v, d
   perm_indices = np.zeros(axis_size, dtype=int)
   for src, dst in perm:
@@ -1153,7 +1218,7 @@ mlir.register_lowering(ppermute_p, _ppermute_lowering)
 batching.fancy_primitive_batchers[ppermute_p] = _ppermute_batcher
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SingleSideCollectiveEffect(core.Effect):
   __str__ = lambda _: "one-sided communication"
   def __hash__(self):
@@ -1184,9 +1249,6 @@ def _psend_lowering_gpu(ctx, x, *, axis_name, perm):
   if not isinstance(axis_ctx, SPMDAxisContext):
     raise NotImplementedError("psend currently only supports manual sharding")
 
-  sharding = xc.OpSharding()
-  sharding.type = xc.OpSharding.Type.MANUAL
-  mlir.set_sharding(ctx.module_context, send_op, sharding)
   return send_op.results
 
 
@@ -1217,7 +1279,7 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
   full_perm, other_args = _pcollectives_lowering_common(
       ctx, axis_name=axis_name, perm=perm, op_name="precv"
   )
-  out_type = mlir.aval_to_ir_type(out_shape)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, out_shape)
   recv_op = hlo.RecvOp(
       [out_type, token.type],
       token,
@@ -1227,10 +1289,6 @@ def _precv_lowering_gpu(ctx, token, *, out_shape, axis_name, perm):
   axis_ctx = ctx.module_context.axis_context
   if not isinstance(axis_ctx, SPMDAxisContext):
     raise NotImplementedError("precv currently only supports manual sharding")
-
-  sharding = xc.OpSharding()
-  sharding.type = xc.OpSharding.Type.MANUAL
-  mlir.set_sharding(ctx.module_context, recv_op, sharding)
 
   # recv_op should return an array of [RankedTensorType, StableHlo.token]; we
   # only need the tensor.
@@ -1275,12 +1333,12 @@ def _pbroadcast_batcher(axis_data, vals_in, dims_in, axis_name, source):
   assert source >= 0 and source < axis_size, "collective broadcast doesn't fit in the axis size!"
   if axis_size == 1 and remaining_axes:
     return pbroadcast_p.bind(v, source=source, axis_name=remaining_axes), d
-  if d is batching.not_mapped:
+  if d is None:
     return v, d
   return v.take([source] * axis_size, d), d
 
 def _pbroadcast_lowering(ctx, x, *, axis_name, source):
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name, None)
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name, None)
   def source_to_front(group):
     return [group[source]] + list(group[:source]) + list(group[source + 1:])
   replica_groups = [source_to_front(group) for group in replica_groups]
@@ -1298,7 +1356,9 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
   else:
     other_args = {}
   return hlo.CollectiveBroadcastOp(
-      x, replica_groups=_replica_groups_hlo(replica_groups), **other_args
+      x,
+      replica_groups=_device_list_replica_groups_hlo(replica_groups),
+      **other_args,
   ).results
 
 pbroadcast_p = core.Primitive('pbroadcast')
@@ -1325,13 +1385,16 @@ def _foldaxis(axis, x):
   return x.reshape(new_shape)
 
 def _all_to_all_lowering(
-    ctx, x, *, split_axis, concat_axis, axis_name, axis_index_groups, tiled
+    ctx, x, *, split_axis, concat_axis, axis_name, axis_index_groups, tiled,
+    is_async=False
 ):
   del tiled  # expand_dims and squeeze is done in `all_to_all` if `True`
   # Workaround for AllToAll not being implemented on CPU.
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
                                    axis_index_groups)
-  if len(replica_groups[0]) == 1:
+  if not is_async and len(replica_groups[0]) == 1:
+    # TODO(mwhittaker): This optimization doesn't play well with async
+    # collectives. Support it; or optimize it in XLA.
     return [x]
   split_count = len(replica_groups[0])
   if not all(split_count == len(g) for g in replica_groups):
@@ -1349,13 +1412,39 @@ def _all_to_all_lowering(
     other_args: dict[str, Any] = dict(channel_handle=channel_handle)
   else:
     other_args = {}
-  return hlo.AllToAllOp(
-    [x],
-    split_dimension=mlir.i64_attr(split_axis),
-    concat_dimension=mlir.i64_attr(concat_axis),
-    split_count=mlir.i64_attr(split_count),
-    replica_groups=_replica_groups_hlo(replica_groups),
-    **other_args).results
+
+  replica_groups_attr = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
+
+  if not is_async:
+    return hlo.AllToAllOp(
+        [x],
+        split_dimension=mlir.i64_attr(split_axis),
+        concat_dimension=mlir.i64_attr(concat_axis),
+        split_count=mlir.i64_attr(split_count),
+        replica_groups=replica_groups_attr,
+        **other_args,
+    ).results
+
+  (out_aval,) = ctx.avals_out
+  out_aval = out_aval.inner_aval
+  # pyrefly: ignore[missing-attribute]
+  future_type = hlo.FutureType.get([mlir.aval_to_ir_type(ctx.module_context, out_aval)])
+  async_start = hlo.AsyncStartOp(future_type, [x])
+  block = async_start.regions[0].blocks.append(x.type)
+  with ir.InsertionPoint(block):
+    results = hlo.AllToAllOp(
+        [block.arguments[0]],
+        split_dimension=mlir.i64_attr(split_axis),
+        concat_dimension=mlir.i64_attr(concat_axis),
+        split_count=mlir.i64_attr(split_count),
+        replica_groups=replica_groups_attr,
+        **other_args,
+    ).results
+    hlo.return_(results)
+  return async_start.results
+
 
 def _all_to_all_transpose_rule(
     cts, x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
@@ -1401,7 +1490,7 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
       vals_in, dims_in, axis_name=axis_name, split_axis=split_axis,
       concat_axis=concat_axis, axis_index_groups=axis_index_groups, tiled=tiled)
 
-  if d is batching.not_mapped:
+  if d is None:
     # TODO(sharadmv,apaszke): Remove this broadcast that comes from
     # all_gather_transpose and instead avoid using all_to_all in
     # all_gather_transpose.
@@ -1496,7 +1585,7 @@ def _ragged_all_to_all_lowering(
     ctx, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
     *, axis_name, axis_index_groups
 ):
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+  replica_groups = _replica_groups(ctx.module_context.axis_context, axis_name,
                                    axis_index_groups)
 
   # Assumes all groups are the same size
@@ -1505,7 +1594,7 @@ def _ragged_all_to_all_lowering(
     raise ValueError('Replica groups must be equally sized')
 
   ragged_all_to_all_attrs: dict[str, ir.Attribute] = {
-      "replica_groups": _replica_groups_hlo(replica_groups)
+      "replica_groups": _device_list_replica_groups_hlo(replica_groups)
   }
   is_spmd = isinstance(
       ctx.module_context.axis_context, (SPMDAxisContext, ShardingContext))
@@ -1640,9 +1729,8 @@ batching.fancy_primitive_batchers[ragged_all_to_all_p] = _ragged_all_to_all_batc
 
 
 def insert_collective_pvary(axis_name, x):
-  if not config._check_vma.value:
+  if not config.auto_pcast.value or not config._check_vma.value:
     return x
-
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   aval = core.typeof(x)
   names_union = set(axis_name) | aval.mat.varying
@@ -1777,10 +1865,11 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     new_shape.insert(all_gather_dimension, 1)
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
-        mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
+        mlir.aval_to_ir_type(ctx.module_context, x_aval.update(shape=new_shape)), x,
         mlir.dense_int_array(broadcast_dimensions))
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
-                                    axis_index_groups)
+  replica_groups_attr = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
   if is_spmd:
     # We want to emit the all-gather with global device IDs and a
     # channel ID, as otherwise it interprets the devices as replicas instead
@@ -1792,13 +1881,15 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   else:
     other_args = {}
 
-  out_type = mlir.aval_to_ir_type(out_aval)
+  out_type = mlir.aval_to_ir_type(ctx.module_context, out_aval)
   if not is_async:
     return hlo.AllGatherOp(
         [out_type],
-        [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=_replica_groups_hlo(replica_groups),
-        **other_args).results
+        [x],
+        all_gather_dim=mlir.i64_attr(all_gather_dimension),
+        replica_groups=replica_groups_attr,
+        **other_args,
+    ).results
 
   future_type = hlo.FutureType.get([out_type])
   async_start = hlo.AsyncStartOp(future_type, [x])
@@ -1808,7 +1899,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         [out_type],
         [block.arguments[0]],
         all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=_replica_groups_hlo(replica_groups),
+        replica_groups=replica_groups_attr,
         **other_args,
     ).results
     hlo.return_(results)
@@ -1855,7 +1946,7 @@ def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name,
 def _all_gather_batcher(prim, vals_in, dims_in, *, all_gather_dimension, axis_name,
                         axis_index_groups, axis_size, tiled):
   (x,), (d,) = vals_in, dims_in
-  if d is not batching.not_mapped:
+  if d is not None:
     if d <= all_gather_dimension:
       all_gather_dimension += 1
     elif not tiled:  # Tiled all-gather doesn't modify the set of dimensions
@@ -1897,7 +1988,7 @@ def _all_gather_batched_collective(prim, axis_data, vals_in, dims_in,
   if len(axis_name) > 1:
     raise NotImplementedError("Please open a feature request!")
   assert axis_name == (frame_name,), "batcher called with wrong axis name"
-  if d is batching.not_mapped:
+  if d is None:
     out_shape = list(np.shape(x))
     out_shape.insert(all_gather_dimension, axis_size)
     broadcast_dims = [i for i in range(len(out_shape)) if i != all_gather_dimension]
@@ -1906,7 +1997,7 @@ def _all_gather_batched_collective(prim, axis_data, vals_in, dims_in,
     y = _moveaxis(d, all_gather_dimension, x)
   if tiled:
     y = _foldaxis(all_gather_dimension, y)
-  return y, batching.not_mapped
+  return y, None
 
 all_gather_p = core.Primitive('all_gather')
 all_gather_p.def_effectful_abstract_eval(_all_gather_effectful_abstract_eval)
@@ -1946,7 +2037,7 @@ def all_gather_invariant(x, axis_name, *, axis: int = 0, tiled: bool = False):
   axes_ = frozenset(axis_name)
   def bind(leaf):
     in_vma = core.typeof(leaf).mat.varying
-    if vary_names := axes_ - in_vma:
+    if config.auto_pcast.value and (vary_names := axes_ - in_vma):
       leaf = pvary(leaf, tuple(vary_names))
     return all_gather_invariant_p.bind(
         leaf,
@@ -2020,8 +2111,9 @@ def _reduce_scatter_lowering(
   x_aval, = ctx.avals_in
   aval_out, = ctx.avals_out
   scalar_aval = x_aval.update(shape=())
-  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
-                                   axis_index_groups)
+  replica_groups = _try_mesh_axes_replica_group(
+      ctx, axis_name, axis_index_groups
+  )
   scatter_out_shape = list(x_aval.shape)
   scatter_out_shape[scatter_dimension] //= axis_size
   axis_context = ctx.module_context.axis_context
@@ -2040,12 +2132,15 @@ def _reduce_scatter_lowering(
   else:
     other_args = {}
   op = hlo.ReduceScatterOp(
-      mlir.aval_to_ir_type(x_aval.update(shape=scatter_out_shape)),
+      mlir.aval_to_ir_type(
+          ctx.module_context, x_aval.update(shape=scatter_out_shape)
+      ),
       x,
       scatter_dimension=mlir.i64_attr(scatter_dimension),
-      replica_groups=_replica_groups_hlo(replica_groups),
-      **other_args)
-  scalar_type = mlir.aval_to_ir_type(scalar_aval)
+      replica_groups=replica_groups,
+      **other_args,
+  )
+  scalar_type = mlir.aval_to_ir_type(ctx.module_context, scalar_aval)
   reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_block):
     lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
@@ -2053,12 +2148,13 @@ def _reduce_scatter_lowering(
                               avals_in=[scalar_aval] * 2,
                               avals_out=[scalar_aval])
     out_nodes = lower_reducer(reducer_ctx, *reducer_block.arguments)
-    hlo.return_(mlir.flatten_ir_values(out_nodes))
+    flat_out_nodes, _ = mlir.ir_tree_registry.flatten(out_nodes)
+    hlo.return_(flat_out_nodes)
 
   if tiled:
     return op.results
   else:
-    out_type = mlir.aval_to_ir_type(aval_out)
+    out_type = mlir.aval_to_ir_type(ctx.module_context, aval_out)
     return [hlo.reshape(out_type, op.result)]
 
 
@@ -2137,7 +2233,7 @@ def _reduce_scatter_collective(axis_data, vals_in, dims_in,
   if len(axis_name) > 1:
     raise NotImplementedError("Please open a feature request!")
   assert axis_name == (frame_name,), "batcher called with wrong axis name"
-  if d is batching.not_mapped:
+  if d is None:
     y, dy = x * axis_size, scatter_dimension
   else:
     y, dy = lax.reduce(x, 0., lax.add, (d,)), scatter_dimension
@@ -2271,45 +2367,54 @@ def _psum_scatter(x, axis_name, *, scatter_dimension, axis_index_groups, tiled,
     leaf = insert_collective_pvary(axis_name, leaf)
     prim = reduce_scatter_start_p if is_async else reduce_scatter_p
     return prim.bind(
-        leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
+        leaf, axis_name=axis_name,
+        scatter_dimension=canonicalize_axis(scatter_dimension, np.ndim(leaf)),
         axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
 
-def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
+def _build_axis_index_lowering_hlo(ctx, axis_name, axis_ctx):
   from jax._src.shard_map import shard_map  # pyrefly: ignore[missing-import]
 
   if isinstance(axis_name, tuple):
     assert axis_name, 'empty axis name'
     if len(axis_name) > 1:
       raise NotImplementedError(
-          '`axis_index` translation rule does not support multiple axis names.')
+          '`axis_index` lowering rule does not support multiple axis names.')
     axis_name, = axis_name
-  if axis_name not in axis_env.names:
+
+  if isinstance(axis_ctx, SPMDAxisContext):
+    size = axis_ctx.mesh.size
+    axis_names = axis_ctx.mesh.axis_names
+    axis_sizes = axis_ctx.mesh.axis_sizes
+  else:
+    assert isinstance(axis_ctx, ShardingContext)
+    size, axis_names, axis_sizes = 1, (), ()
+
+  if axis_name not in axis_names:
     raise NameError(f"unbound axis name: {axis_name}")
-  axis_context = ctx.module_context.axis_context
-  axis_pos = list(axis_env.names).index(axis_name)
+  axis_pos = list(axis_names).index(axis_name)
 
   # For partial auto, enter into a fully manual shard_map.
-  if (isinstance(axis_context, SPMDAxisContext) and
-      axis_context.manual_axes and
-      axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
-    if axis_env.sizes[axis_pos] == 1:
+  if (isinstance(axis_ctx, SPMDAxisContext) and
+      axis_ctx.manual_axes and
+      axis_ctx.manual_axes != frozenset(axis_ctx.mesh.axis_names)):
+    if axis_sizes[axis_pos] == 1:
       return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))
     def f():
       return axis_index_p.bind(axis_name=axis_name)
-    return mlir.lower_fun(
-        lambda: [shard_map(f, check_vma=False, in_specs=(),
-                           out_specs=P())()])(ctx)[0]
+    return mlir.lower_fun(lambda: [shard_map(f, check_vma=False, in_specs=(),
+                                             out_specs=P())()]
+                          )(ctx)[0]
 
-  nreplicas = axis_env.nreps // math.prod(axis_env.sizes)
+  nreplicas = size // math.prod(axis_sizes)
   div = mlir.ir_constant(
       np.array(
-          nreplicas * math.prod(axis_env.sizes[axis_pos + 1 :]), dtype=np.uint32
+          nreplicas * math.prod(axis_sizes[axis_pos + 1 :]), dtype=np.uint32
       )
   )
-  mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
-  if isinstance(axis_context, (ShardingContext, SPMDAxisContext)):
+  mod = mlir.ir_constant(np.array(axis_sizes[axis_pos], dtype=np.uint32))
+  if isinstance(axis_ctx, (ShardingContext, SPMDAxisContext)):
     device_id = hlo.partition_id()
   else:
     device_id = hlo.replica_id()
@@ -2320,7 +2425,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
 
 def _axis_index_lowering(ctx, *, axis_name):
   return [_build_axis_index_lowering_hlo(ctx, axis_name,
-                                         ctx.module_context.axis_env)]
+                                         ctx.module_context.axis_context)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
   effect = {core.NamedAxisEffect(axis_name)}
@@ -2351,12 +2456,11 @@ batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
 def bind_psum_invariant(leaf, *, axes, axis_index_groups, is_async):
   if axis_index_groups is not None:
     raise NotImplementedError
-  axes_ = frozenset(axes)
-  in_vma = core.typeof(leaf).mat.varying
-  arg = (pvary(leaf, tuple(pbroadcast_names))
-         if (pbroadcast_names := axes_ - in_vma) else leaf)
+  if (config.auto_pcast.value and
+      (names := set(axes) - core.typeof(leaf).mat.varying)):
+    leaf = pvary(leaf, tuple(names))
   prim = psum_invariant_start_p if is_async else psum_invariant_p
-  return prim.bind(arg, axes=axes)
+  return prim.bind(leaf, axes=axes)
 
 psum_invariant_p = core.Primitive('psum_invariant')
 
@@ -2441,7 +2545,8 @@ batching.primitive_batchers[core.pvary_p] = _pvary_batcher
 ####################### all_gather_reduced ###########################
 
 # Varying -> Reduced collective
-def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False, is_async: bool = False):
+def all_gather_reduced(x, axis_name, *, axis: int = 0, tiled: bool = False,
+                       is_async: bool = False):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
@@ -2482,6 +2587,8 @@ def _all_gather_reduced_effectful_abstract_eval(
   else:
     new_shape.insert(all_gather_dimension, axis_size)
 
+  if x_aval.mat.unreduced:
+    check_unreduced_kind('all_gather_reduced', x_aval.mat, UnreducedKind.sum)
   new_reduced = x_aval.mat.reduced | frozenset(axis_name)
   out_vma = frozenset(v for v in x_aval.mat.varying if v not in axis_name)
   out_mat = x_aval.mat.update(varying=out_vma, reduced=new_reduced)
@@ -2536,11 +2643,8 @@ def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False,
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
-    prim = (
-        unreduced_reduce_scatter_start_p
-        if is_async
-        else unreduced_reduce_scatter_p
-    )
+    prim = (unreduced_reduce_scatter_start_p if is_async else
+            unreduced_reduce_scatter_p)
     return prim.bind(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_size=axis_size, tiled=tiled)
@@ -2583,10 +2687,13 @@ def _unreduced_reduce_scatter_effectful_abstract_eval(
                        f"{axis_size}")
     del new_shape[scatter_dimension]
 
+  check_unreduced_kind('unreduced_psum_scatter', x_aval.mat, UnreducedKind.sum)
   out_unreduced = frozenset(i for i in x_aval.mat.unreduced
                             if i not in axis_name)
   out_vma = x_aval.mat.varying | set(axis_name)
-  out_mat = x_aval.mat.update(varying=out_vma, unreduced=out_unreduced)
+  kind = UnreducedKind.sum if out_unreduced else None
+  out_mat = x_aval.mat.update(varying=out_vma, unreduced=out_unreduced,
+                              unreduced_kind=kind)
   return (x_aval.update(shape=new_shape, manual_axis_type=out_mat),
           {*map(core.NamedAxisEffect, axis_name)})
 unreduced_reduce_scatter_p.def_effectful_abstract_eval(
@@ -2633,32 +2740,38 @@ def unreduced_psum(x, axis_name, is_async=False):
 
 unreduced_psum_p = core.Primitive('unreduced_psum')
 
-def _unreduced_psum_abstract_eval(aval, *, axes):
-  _check_axis_names(axes, 'psum')
+def _unreduced_psum_pmax_pmin_abstract_eval(name, out_u_kind, aval, *, axes):
+  _check_axis_names(axes, name)
   if not aval.mat.unreduced:
-    raise ValueError('unreduced_psum only accepts inputs that are'
-                      f' unreduced. Got {aval.str_short(True)}')
+    raise ValueError(f'{name} only accepts inputs that are'
+                     f' unreduced. Got {aval.str_short(True)}')
   # If intersection between x.unreduced & axis_name is empty, error
   if not (aval.mat.unreduced & frozenset(axes)):
     raise ValueError(
-        "unreduced_psum is a Unreduced -> Invariant collective. This"
-        f" means that the {axes=} passed to `unreduced_psum` must"
+        f"{name} is a Unreduced -> Invariant collective. This"
+        f" means that the {axes=} passed to `{name}` must"
         " be present in"
         f" jax.typeof(x).mat.unreduced={aval.mat.unreduced}")
   if aval.mat.varying & set(axes):
     raise ValueError(
-        "unreduced_psum's input cannot be varying across the "
+        f"{name}'s input cannot be varying across the "
         f" axis_name provided. Got x={aval.str_short(True)} and {axes=}")
 
   if any(isinstance(a, int) for a in axes):
-    raise ValueError('unreduced_psum does not accept integer axis_name.'
+    raise ValueError(f'{name} does not accept integer axis_name.'
                      f' Got axis_name={axes}')
 
-  core.check_avals_context_mesh([aval], 'unreduced_psum')
-  out_mat = aval.mat.update(unreduced=frozenset(u for u in aval.mat.unreduced
-                                                if u not in axes))
+  core.check_avals_context_mesh([aval], name)
+  check_unreduced_kind(name, aval.mat, out_u_kind)
+  out_u = frozenset(u for u in aval.mat.unreduced if u not in axes)
+  kind = aval.mat.unreduced_kind if out_u else None
+  out_mat = aval.mat.update(unreduced=out_u, unreduced_kind=kind)
   out_aval = aval.update(manual_axis_type=out_mat)
   return out_aval, {core.NamedAxisEffect(axis) for axis in axes}
+
+def _unreduced_psum_abstract_eval(aval, *, axes):
+  return _unreduced_psum_pmax_pmin_abstract_eval(
+      'unreduced_psum', UnreducedKind.sum, aval, axes=axes)
 unreduced_psum_p.def_effectful_abstract_eval(_unreduced_psum_abstract_eval)
 
 def _unreduced_psum_lowering(ctx, arg, *, axes):
@@ -2674,6 +2787,60 @@ def _unreduced_psum_transpose_rule(cts, arg, *, axes):
   assert ad.is_undefined_primal(arg)
   return (preduced(cts, axis_name=axes),)
 ad.deflinear2(unreduced_psum_p, _unreduced_psum_transpose_rule)
+
+############################## unreduced_pmax #################################
+
+# Unreduced -> Invariant pmax collective
+def unreduced_pmax(x, axis_name):
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
+  if not axis_name:
+    return x
+  return tree_util.tree_map(
+      lambda leaf: unreduced_pmax_p.bind(leaf, axes=axis_name), x)
+
+unreduced_pmax_p = core.Primitive('unreduced_pmax')
+
+def _unreduced_pmax_abstract_eval(aval, *, axes):
+  return _unreduced_psum_pmax_pmin_abstract_eval(
+      'unreduced_pmax', UnreducedKind.max, aval, axes=axes)
+unreduced_pmax_p.def_effectful_abstract_eval(_unreduced_pmax_abstract_eval)
+
+def _unreduced_pmax_lowering(ctx, arg, *, axes):
+  return _allreduce_lowering(lax.max_p, lax.reduce_max, ctx, arg, axes=axes,
+                             axis_index_groups=None)
+mlir.register_lowering(unreduced_pmax_p, _unreduced_pmax_lowering)
+
+def _unreduced_pmax_batcher(axis_data, vals_in, dims_in, axes):
+  raise NotImplementedError
+batching.fancy_primitive_batchers[unreduced_pmax_p] = _unreduced_pmax_batcher
+
+############################## unreduced_pmin #################################
+
+# Unreduced -> Invariant pmin collective
+def unreduced_pmin(x, axis_name):
+  axis_name = ((axis_name,) if not isinstance(axis_name, (tuple, list)) else
+               tuple(axis_name))
+  if not axis_name:
+    return x
+  return tree_util.tree_map(
+      lambda leaf: unreduced_pmin_p.bind(leaf, axes=axis_name), x)
+
+unreduced_pmin_p = core.Primitive('unreduced_pmin')
+
+def _unreduced_pmin_abstract_eval(aval, *, axes):
+  return _unreduced_psum_pmax_pmin_abstract_eval(
+      'unreduced_pmin', UnreducedKind.min, aval, axes=axes)
+unreduced_pmin_p.def_effectful_abstract_eval(_unreduced_pmin_abstract_eval)
+
+def _unreduced_pmin_lowering(ctx, arg, *, axes):
+  return _allreduce_lowering(lax.min_p, lax.reduce_min, ctx, arg, axes=axes,
+                             axis_index_groups=None)
+mlir.register_lowering(unreduced_pmin_p, _unreduced_pmin_lowering)
+
+def _unreduced_pmin_batcher(axis_data, vals_in, dims_in, axes):
+  raise NotImplementedError
+batching.fancy_primitive_batchers[unreduced_pmin_p] = _unreduced_pmin_batcher
 
 ############################## preduced #################################
 
@@ -2707,6 +2874,8 @@ def _preduced_abstract_eval(aval, *, axes):
     raise ValueError(
         "preduced input cannot be reduced across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
+  if aval.mat.unreduced:
+    check_unreduced_kind('preduced', aval.mat, UnreducedKind.sum)
   return aval.update(manual_axis_type=aval.mat.update(
       reduced=aval.mat.reduced | frozenset(axes)))
 preduced_p.def_abstract_eval(_preduced_abstract_eval)
@@ -2801,6 +2970,8 @@ def _reduced_vary_cast_abstract_eval(aval, *, axes):
     raise ValueError(
         "reduced_vary_cast input cannot be varying across the axis_name"
         f" provided. Got x={aval.str_short(True)} and axis_name={axes}")
+  if aval.mat.unreduced:
+    check_unreduced_kind('reduced_vary_cast', aval.mat, UnreducedKind.sum)
 
   new_reduced = frozenset(i for i in aval.mat.reduced if i not in axes)
   out_vma = aval.mat.varying | frozenset(axes)
@@ -2883,70 +3054,66 @@ all_to_all_start_p = core.Primitive("all_to_all_start")
 pbroadcast_start_p = core.Primitive("pbroadcast_start")
 ppermute_start_p = core.Primitive("ppermute_start")
 
+# Asynchronous done primitives.
+all_gather_done_p = core.Primitive("all_gather_done")
+psum_done_p = core.Primitive("psum_done")
+reduce_scatter_done_p = core.Primitive("reduce_scatter_done")
+all_to_all_done_p = core.Primitive("all_to_all_done")
+pbroadcast_done_p = core.Primitive("pbroadcast_done")
+ppermute_done_p = core.Primitive("ppermute_done")
+
+
 # Asynchronous start functions.
-class Todo:
-
-  def __init__(self, x, done_fun):
-    self.x = x
-    self.done_fun = done_fun
-
-  def done(self):
-    return self.done_fun(self.x)
-
-
 def all_gather_start(*args, **kwargs):
-  x = _all_gather_is_async(*args, **kwargs, is_async=True)
-  return Todo(x, all_gather_done_p.bind)
-
+  return _all_gather_is_async(*args, **kwargs, is_async=True)
 
 def psum_start(*args, **kwargs):
-  x = _psum_is_async(*args, **kwargs, is_async=True)
-  return Todo(x, psum_done_p.bind)
-
+  return _psum_is_async(*args, **kwargs, is_async=True)
 
 def psum_scatter_start(*args, **kwargs):
-  x = _psum_scatter_is_async(*args, **kwargs, is_async=True)
-  return Todo(x, reduce_scatter_done_p.bind)
-
+  return _psum_scatter_is_async(*args, **kwargs, is_async=True)
 
 def all_to_all_start(*args, **kwargs):
-  x = _all_to_all_is_async(*args, **kwargs, is_async=True)
-  return Todo(x, all_to_all_done_p.bind)
-
+  return _all_to_all_is_async(*args, **kwargs, is_async=True)
 
 def pbroadcast_start(*args, **kwargs):
-  x = _pbroadcast_is_async(*args, **kwargs, is_async=True)
-  return Todo(x, pbroadcast_done_p.bind)
-
+  return _pbroadcast_is_async(*args, **kwargs, is_async=True)
 
 def ppermute_start(*args, **kwargs):
-  x = _ppermute_is_async(*args, **kwargs, is_async=True)
-  return Todo(x, ppermute_done_p.bind)
-
+  return _ppermute_is_async(*args, **kwargs, is_async=True)
 
 # Asynchronous start abstract eval.
-def _start_abstract_eval(q):
-  def f(*args, **kwargs):
-    aval, effs = q.abstract_eval(*args, **kwargs)
-    return core.AbstractTodo(aval), effs
-  return f
+def _async_start_abstract_eval(sync_prim, done_fun, *args, **kwargs):
+  aval, effs = sync_prim.abstract_eval(*args, **kwargs)
+  return core.AbstractFuture(aval, done_fun), effs
 
-for p, q in [
-    (all_gather_start_p, all_gather_p),
-    (all_gather_reduced_start_p, all_gather_reduced_p),
-    (psum_start_p, psum_p),
-    (psum_invariant_start_p, psum_invariant_p),
-    (unreduced_psum_start_p, unreduced_psum_p),
-    (reduce_scatter_start_p, reduce_scatter_p),
-    (unreduced_reduce_scatter_start_p, unreduced_reduce_scatter_p),
-    (all_to_all_start_p, all_to_all_p),
-    (pbroadcast_start_p, pbroadcast_p),
-    (ppermute_start_p, ppermute_p),
+for async_prim, sync_prim, done_p in [
+    (all_gather_start_p, all_gather_p, all_gather_done_p),
+    (all_gather_reduced_start_p, all_gather_reduced_p, all_gather_done_p),
+    (psum_start_p, psum_p, psum_done_p),
+    (psum_invariant_start_p, psum_invariant_p, psum_done_p),
+    (unreduced_psum_start_p, unreduced_psum_p, psum_done_p),
+    (reduce_scatter_start_p, reduce_scatter_p, reduce_scatter_done_p),
+    (unreduced_reduce_scatter_start_p, unreduced_reduce_scatter_p, reduce_scatter_done_p),
+    (all_to_all_start_p, all_to_all_p, all_to_all_done_p),
+    (pbroadcast_start_p, pbroadcast_p, pbroadcast_done_p),
+    (ppermute_start_p, ppermute_p, ppermute_done_p),
 ]:
-  p.def_effectful_abstract_eval(_start_abstract_eval(q))
+  async_prim.def_effectful_abstract_eval(
+      partial(_async_start_abstract_eval, sync_prim, done_p.bind))
 
-# Asynchronous start lowering.
-def _start_lowering(sync_lower):
+def _async_done_abstract_eval(aval):
+  if not isinstance(aval, core.AbstractFuture):
+    raise TypeError(f"async done op got {aval}, want core.AbstractFuture")
+  return aval.inner_aval
+
+for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
+          all_to_all_done_p, pbroadcast_done_p, ppermute_done_p]:
+  p.def_abstract_eval(_async_done_abstract_eval)
+  mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])
+
+
+def _async_start_lowering(sync_lower, ctx, x, **kwargs):
   """Returns an async start lowering function given a synchronous lowering.
 
   An async StableHLO collective looks like this:
@@ -2965,25 +3132,21 @@ def _start_lowering(sync_lower):
   synchronous collective and transforms it into a lowering function for the
   async collective by wrapping everything in an async_start.
   """
-
-  def f(ctx, x, **kwargs):
-    (x_aval,) = ctx.avals_in  # e.g., f32[2, 2]
-    (out_aval,) = ctx.avals_out  # e.g., # AbstractTodo[f32[4, 2]]
-    inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
-    inner_type = mlir.aval_to_ir_type(inner_aval)  # e.g., <tensor<4x2xf32>
-    # e.g., !stablehlo.future<tensor<4x2xf32>>
-    future_type = hlo.FutureType.get([inner_type])
-    async_start = hlo.AsyncStartOp(future_type, [x])
-    block = async_start.regions[0].blocks.append(x.type)
-    with ir.InsertionPoint(block):
-      inner_ctx = ctx.replace(
-          primitive=None, avals_in=[x_aval], avals_out=[inner_aval]
-      )
-      results = sync_lower(inner_ctx, block.arguments[0], **kwargs)
-      hlo.return_(results)
-    return async_start.results
-
-  return f
+  (x_aval,) = ctx.avals_in  # e.g., f32[2, 2]
+  (out_aval,) = ctx.avals_out  # e.g., # AbstractFuture[f32[4, 2]]
+  inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
+  inner_type = mlir.aval_to_ir_type(ctx.module_context, inner_aval)  # e.g., <tensor<4x2xf32>
+  # e.g., !stablehlo.future<tensor<4x2xf32>>
+  future_type = hlo.FutureType.get([inner_type])
+  async_start = hlo.AsyncStartOp(future_type, [x])
+  block = async_start.regions[0].blocks.append(x.type)
+  with ir.InsertionPoint(block):
+    inner_ctx = ctx.replace(
+        primitive=None, avals_in=[x_aval], avals_out=[inner_aval]
+    )
+    results = sync_lower(inner_ctx, block.arguments[0], **kwargs)
+    hlo.return_(results)
+  return async_start.results
 
 
 def _reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
@@ -2992,19 +3155,17 @@ def _reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
     # lowered to two operations: a reduce_scatter and a reshape. Lowering the
     # async version of this is tricky because we need to reshape after the
     # future is resolved.
-    raise NotImplementedError("lowering reduce_scatter_start with tiled=False unimplemented")
+    raise NotImplementedError
   lower = partial(_reduce_scatter_lowering, lax.add_p)
-  return _start_lowering(lower)(ctx, x, tiled=tiled, **kwargs)
+  return _async_start_lowering(lower, ctx, x, tiled=tiled, **kwargs)
 
 
 def _unreduced_reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
   if not tiled:
-    msg = (
-        "lowering unreduced_reduce_scatter_start with tiled=False unimplemented"
-    )
-    raise NotImplementedError(msg)
+    # Same reason as _reduce_scatter_start_lowering
+    raise NotImplementedError
   lower = partial(_unreduced_reduce_scatter_lowering, lax.add_p)
-  return _start_lowering(lower)(ctx, x, tiled=tiled, **kwargs)
+  return _async_start_lowering(lower, ctx, x, tiled=tiled, **kwargs)
 
 
 mlir.register_lowering(
@@ -3028,49 +3189,22 @@ for p in ("cuda", "rocm", "tpu"):
   )
 mlir.register_lowering(
     psum_start_p,
-    _start_lowering(partial(_allreduce_lowering, lax.add_p, lax.reduce_sum)),
+    partial(_async_start_lowering, partial(_allreduce_lowering, lax.add_p, lax.reduce_sum)),
 )
 mlir.register_lowering(
-    psum_invariant_start_p, _start_lowering(_psum_invariant_lowering_rule)
+    psum_invariant_start_p, partial(_async_start_lowering, _psum_invariant_lowering_rule)
 )
 mlir.register_lowering(
-    unreduced_psum_start_p, _start_lowering(_unreduced_psum_lowering)
+    unreduced_psum_start_p, partial(_async_start_lowering, _unreduced_psum_lowering)
 )
 mlir.register_lowering(reduce_scatter_start_p, _reduce_scatter_start_lowering)
 mlir.register_lowering(
     unreduced_reduce_scatter_start_p, _unreduced_reduce_scatter_start_lowering
 )
 mlir.register_lowering(
-    all_to_all_start_p, _start_lowering(_all_to_all_lowering)
+    all_to_all_start_p, partial(_all_to_all_lowering, is_async=True)
 )
 mlir.register_lowering(
-    pbroadcast_start_p, _start_lowering(_pbroadcast_lowering), platform="gpu"
-)
-mlir.register_lowering(ppermute_start_p, _start_lowering(_ppermute_lowering))
-
-# Asynchronous done primitives.
-all_gather_done_p = core.Primitive("all_gather_done")
-psum_done_p = core.Primitive("psum_done")
-reduce_scatter_done_p = core.Primitive("reduce_scatter_done")
-all_to_all_done_p = core.Primitive("all_to_all_done")
-pbroadcast_done_p = core.Primitive("pbroadcast_done")
-ppermute_done_p = core.Primitive("ppermute_done")
-
-_dones_p = [
-    all_gather_done_p,
-    psum_done_p,
-    reduce_scatter_done_p,
-    all_to_all_done_p,
-    pbroadcast_done_p,
-    ppermute_done_p,
-]
-
-# Asynchronous done abstract eval and lowering.
-def _done_abstract_eval(aval):
-  if not isinstance(aval, core.AbstractTodo):
-    raise TypeError(f"async done op got {aval}, want core.AbstractTodo")
-  return aval.inner_aval
-
-for p in _dones_p:
-  p.def_abstract_eval(_done_abstract_eval)
-  mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])
+    pbroadcast_start_p, partial(_async_start_lowering, _pbroadcast_lowering),
+    platform="gpu")
+mlir.register_lowering(ppermute_start_p, partial(_async_start_lowering, _ppermute_lowering))

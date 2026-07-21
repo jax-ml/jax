@@ -25,7 +25,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src.api_util import check_no_transformed_refs_args
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -343,12 +343,21 @@ def _scatter_lowering_rule(
 ):
   ref, transforms, indices, x, mask = jax.tree.unflatten(tree, flat_args)
   ref_aval, *_ = tree.unflatten(ctx.avals_in)
-  if ref_aval.memory_space not in (
+  if isinstance(ref_aval.memory_space, pallas_core.CoreMemorySpace):
+    if not isinstance(ref_aval.memory_space.mesh, sc_core.VectorSubcoreMesh):
+      raise ValueError(
+          "Scatter only supports VectorSubcoreMesh, got"
+          f" {type(ref_aval.memory_space.mesh)}"
+      )
+    memory_space = ref_aval.memory_space.memory_space
+  else:
+    memory_space = ref_aval.memory_space
+  if memory_space not in (
       tpu_core.MemorySpace.VMEM,
       pallas_core.MemorySpace.DEFAULT,
   ):
     raise ValueError(
-        f"Scatter only supports storing to VMEM, got {ref_aval.memory_space}"
+        f"Scatter only supports storing to VMEM, got {memory_space}"
     )
   if transforms:
     ref_block_shape, *_ = ctx.block_shapes
@@ -473,14 +482,8 @@ def _barrier_lowering_rule(ctx: sc_lowering.LoweringRuleContext):
 def subcore_barrier():
   """Blocks until all subcores on the same core reach this instruction.
 
-  The barrier must be used with the vector subcore, either via
-  :class:jax.experimental.pallas.tpu_sc.VectorSubcoreMesh or by passing::
-
-      pltpu.CompilerParams(
-          kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
-          dimension_semantics[..., "subcore_parallel", ...])
-
-  to ``pallas_call``.
+  The barrier must be used with
+  :class:jax.experimental.pallas.tpu_sc.VectorSubcoreMesh.
   """
   barrier_p.bind()
 
@@ -765,11 +768,11 @@ def _parallel_loop_abstract_eval(*args, jaxpr, tree, **params):
   if any(isinstance(c, (Ref, TransformedRef)) for c in carries):
     raise TypeError(f"Carried values may not be refs, but got: {carries}")
   updated_effects = set()
-  for eff in jaxpr.effects:
+  for eff in jax_core.positional_effects(jaxpr):
     if isinstance(eff, effects.JaxprInputEffect):
       # Offset for the parallel_loop eqn to account for start, stop, and step
       # args passed to parallel_loop_p.bind.
-      eff = eff.replace(input_index=eff.input_index + 3)
+      eff = eff.replace(eff.input + 3)
     updated_effects.add(eff)
   return carries, updated_effects
 
@@ -917,8 +920,9 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
     ]
     debug_info = api_util.debug_info("parallel_loop", body, flat_avals, {})
     check_no_transformed_refs_args(lambda: debug_info, flat_carries)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(wrapped, debug_info=debug_info), flat_avals
+    in_avals_ft = ft.flatten_args(*flat_avals)
+    jaxpr, _ = pe.trace_to_jaxpr_nocache(
+        wrapped, in_avals_ft, debug_info=debug_info
     )
     carry_tree.unflatten(jaxpr.outvars)  # Verify same structure.
     disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(
@@ -929,7 +933,7 @@ def parallel_loop(lower, upper, step=1, *, unroll=1, carry=None):
           f"Effects not supported in parallel_loop: {disallowed_effects}"
       )
     flat_args, tree = jax.tree.flatten(
-        (lower, upper, step, consts, flat_carries)
+        (lower, upper, step, jaxpr.consts, flat_carries)
     )
     flat_result = parallel_loop_p.bind(
         *flat_args, tree=tree, unroll=unroll, jaxpr=jaxpr

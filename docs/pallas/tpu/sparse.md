@@ -33,7 +33,6 @@ executionInfo:
 id: ibeIs_6QFMAM
 outputId: d72edb91-4529-4650-c9e9-b96788608635
 ---
-import functools
 import timeit
 import numpy as np
 import jax
@@ -118,7 +117,7 @@ def dynamic_slice_kernel(indices, x_ref, o_ref):
   o_ref[...] = x_ref[...]
 
 @checkify.checkify
-@functools.partial(jax.jit, static_argnums=(2,))
+@jax.jit(static_argnums=(2,))
 def block_dynamic_slice(x, starts, sizes):
   grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=1,

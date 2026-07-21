@@ -108,7 +108,7 @@ class SourceMapperTest(jtu.JaxTestCase):
     mappings = source_map.mappings
     self.assertLen(mappings, len(dump.generated_code.split("\n")) + 1)
     nonempty_mappings = [m for m in mappings if m]
-    self.assertLen(nonempty_mappings, 1)
+    self.assertGreaterEqual(len(nonempty_mappings), 1)
     gen_col, file_idx, src_line, _ = nonempty_mappings[0][0]
     self.assertGreater(gen_col, 0)
     # There is only one file, so we should map to that

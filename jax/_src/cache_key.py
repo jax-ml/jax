@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import copy
-import enum
 import hashlib
 import io
+import json
 import logging
 import os
 import sys
 from typing import cast as type_cast
 
 from jax._src import config
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import _jax
 from jax._src.lib import xla_client
@@ -64,22 +64,13 @@ def custom_hook() -> str:
   return ""
 
 
-class IgnoreCallbacks(enum.IntEnum):
-  # Do not remove any callback pointers from precompiled IR.
-  NO = enum.auto()
-  # Remove all callback pointers from precompiled IR.
-  ALL = enum.auto()
-  # Remove only custom_partitioning callback pointer from precompiled IR.
-  CUSTOM_PARTITIONING = enum.auto()
-
-
 def get(
     module: ir.Module,
     devices: np.ndarray,
     compile_options: xla_client.CompileOptions,
     backend: xla_client.Client,
     compression_algorithm: str = "zstandard",
-    ignore_callbacks: IgnoreCallbacks = IgnoreCallbacks.NO,
+    ignore_custom_partitioning: bool = False,
 ) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
@@ -93,8 +84,8 @@ def get(
     backend: description of the platform (e.g., TPU version)
     compression_algorithm: a string representing the compression algorithm used
       for the executable before persisting in the cache
-    ignore_callbacks: whether to remove the all callback pointer from the
-      computation.
+    ignore_custom_partitioning: whether to remove custom_partitioning callback
+      pointers from the computation.
 
   Typical return value example:
    'jit__psum-14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
@@ -103,7 +94,7 @@ def get(
       (
           "computation",
           lambda hash_obj: _hash_computation(
-              hash_obj, module, ignore_callbacks
+              hash_obj, module, ignore_custom_partitioning
           ),
       ),
       (
@@ -168,8 +159,8 @@ def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
     )
 
 
-def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
-  """Removes callback pointers from precompiled IR.
+def _remove_custom_partitioning_callbacks(m: ir.Module):
+  """Removes custom_partitioning callback pointers from precompiled IR.
 
   Python function pointers are not deterministic across executions.
   """
@@ -178,35 +169,69 @@ def _remove_callbacks(m: ir.Module, ignore_callbacks: IgnoreCallbacks):
       return ir.WalkResult.ADVANCE
     call_target_name = op.attributes["call_target_name"]
     assert isinstance(call_target_name, ir.StringAttr)
-    if op.name == "stablehlo.custom_call" and (
-        (
-            ignore_callbacks == IgnoreCallbacks.ALL
-            and call_target_name.value.endswith("callback")
-        )
-        or call_target_name.value == "CustomSPMDPartitioning"
+    if (
+        op.name == "stablehlo.custom_call"
+        and call_target_name.value == "CustomSPMDPartitioning"
     ):
       op.attributes["backend_config"] = ir.StringAttr.get("REMOVED")
     return ir.WalkResult.ADVANCE
-
-  if ignore_callbacks == IgnoreCallbacks.NO:
-    return m
 
   m.operation.walk(_update_bc_attribute)
   return m
 
 
-def _serialize_ir(m: ir.Module, ignore_callbacks: IgnoreCallbacks) -> bytes:
+def _strip_mosaic_debug_info(m: ir.Module) -> None:
+  """Strips debug info from Mosaic kernel bytecode in tpu_custom_call ops.
+
+  The top-level strip-debuginfo pass does not reach into the serialized kernel
+  MLIR embedded in backend_config, so source file paths leak into the cache key.
+  """
+  try:
+    from jax._src.lib import tpu  # pylint: disable=g-import-not-at-top
+  except ImportError:
+    return
+
+  def _strip_kernel(op: ir.Operation) -> ir.WalkResult:
+    if (op.name != "stablehlo.custom_call"
+        or op.attributes["call_target_name"].value != "tpu_custom_call"):  # type: ignore
+      return ir.WalkResult.ADVANCE
+    bc = json.loads(op.attributes["backend_config"].value)  # type: ignore
+    body = bc.get("custom_call_config", {}).get("body")
+    if not body:
+      return ir.WalkResult.ADVANCE
+    ctx = m.context
+    tpu.register_dialect(ctx)
+    ctx.allow_unregistered_dialects = True
+    with ctx:
+      try:
+        kernel = ir.Module.parse(base64.b64decode(body), context=ctx)
+      except ir.MLIRError:
+        return ir.WalkResult.ADVANCE
+      pm.PassManager.parse("builtin.module(strip-debuginfo)").run(
+          kernel.operation)
+      out = io.BytesIO()
+      kernel.operation.write_bytecode(out)
+    bc["custom_call_config"]["body"] = base64.b64encode(
+        out.getvalue()).decode()
+    op.attributes["backend_config"] = ir.StringAttr.get(
+        json.dumps(bc, separators=(",", ":")))
+    return ir.WalkResult.ADVANCE
+
+  m.operation.walk(_strip_kernel)
+
+
+def _serialize_ir(m: ir.Module, ignore_custom_partitioning: bool) -> bytes:
   output = io.BytesIO()
-  if ignore_callbacks != IgnoreCallbacks.NO:
-    m = _remove_callbacks(
-        type_cast(ir.Module, m.operation.clone()), ignore_callbacks
+  if ignore_custom_partitioning:
+    m = _remove_custom_partitioning_callbacks(
+        type_cast(ir.Module, m.operation.clone())
     )
   m.operation.write_bytecode(file=output)
   return output.getvalue()
 
 
 def _canonicalize_ir(
-    m_original: ir.Module, ignore_callbacks: IgnoreCallbacks
+    m_original: ir.Module, ignore_custom_partitioning: bool
 ) -> bytes:
   with m_original.context:
     m = type_cast(ir.Module, m_original.operation.clone())
@@ -214,14 +239,15 @@ def _canonicalize_ir(
         "builtin.module(strip-debuginfo)"
     )
     passes.run(m.operation)
-    return _serialize_ir(m, ignore_callbacks)
+    _strip_mosaic_debug_info(m)
+    return _serialize_ir(m, ignore_custom_partitioning)
 
 
-def _hash_computation(hash_obj, module, ignore_callbacks: IgnoreCallbacks):
+def _hash_computation(hash_obj, module, ignore_custom_partitioning: bool):
   if config.compilation_cache_include_metadata_in_key.value:
-    canonical_ir = _serialize_ir(module, ignore_callbacks)
+    canonical_ir = _serialize_ir(module, ignore_custom_partitioning)
   else:
-    canonical_ir = _canonicalize_ir(module, ignore_callbacks)
+    canonical_ir = _canonicalize_ir(module, ignore_custom_partitioning)
   hash_obj.update(canonical_ir)
 
 
@@ -236,11 +262,7 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
     accelerator_devices.append(accelerator)
   try:
     topology = xla_client.get_topology_for_devices(accelerator_devices)
-    hash_obj.update(
-        topology.fingerprint().to_bytes(8, byteorder="big")
-        if jaxlib_extension_version >= 423
-        else topology.serialize()  # pyrefly: ignore[not-callable]
-    )
+    hash_obj.update(topology.fingerprint().to_bytes(8, byteorder="big"))
   except _jax.JaxRuntimeError as ex:
     # Fall back for those backends that do not support serialized
     # PjRtTopologyDescription as yet.
@@ -275,6 +297,7 @@ xla_flags_to_exclude_from_cache_key = [
     "--xla_tpu_sdc_checker_no_logging_if_callbacks_are_present",
     "--xla_gpu_cuda_data_dir",
     "--xla_gpu_experimental_autotune_cache_mode",
+    "--xla_gpu_per_fusion_autotune_cache_dir",
 ]
 
 env_override_flags_to_exclude_from_cache_key = {
@@ -322,6 +345,7 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
   # path changes across runs despite being the same version, so we clear it
   # here.
   debug_options.xla_gpu_cuda_data_dir = ""
+  debug_options.xla_gpu_per_fusion_autotune_cache_dir = ""
   # LINT.ThenChange(:xla_flags)
 
   compile_options_copy.env_option_overrides = [

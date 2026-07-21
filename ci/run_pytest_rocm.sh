@@ -36,6 +36,17 @@ echo "Installed packages:"
 
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
+# TheRock (pip) ROCm images are intentionally /opt/rocm-less, so ROCm CLI tools
+# (rocminfo, rocm-smi, ...) live in the SDK bin dir rather than on PATH. Put
+# them on PATH via rocm-sdk. apt-ROCm images lack rocm-sdk and already have
+# these tools on PATH, so the gate leaves them untouched.
+if command -v rocm-sdk >/dev/null 2>&1; then
+  sdk_bin="$(rocm-sdk path --bin)"
+  if [[ -n "$sdk_bin" ]]; then
+    export PATH="$sdk_bin:$PATH"
+  fi
+fi
+
 rocm-smi
 
 # ==============================================================================
@@ -99,7 +110,7 @@ fi
 echo "Final number of processes to run: $num_processes"
 
 export JAX_ENABLE_ROCM_XDIST="$gpu_count"
-export XLA_PYTHON_CLIENT_ALLOCATOR=platform
+export XLA_PYTHON_CLIENT_ALLOCATOR=address
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_force_compilation_parallelism=1 --xla_gpu_enable_nccl_comm_splitting=false --xla_gpu_enable_command_buffer="
 
@@ -124,7 +135,6 @@ set +e
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short \
 --json-report --json-report-file=${LOGS_DIR}/pytest_results_single.json \
 --junitxml=test-artifacts/junit-single.xml \
---dist=loadfile \
 -m "not multiaccelerator" \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
 --deselect=tests/multiprocess_gpu_test.py::MultiProcessGpuTest::test_distributed_jax_visible_devices \

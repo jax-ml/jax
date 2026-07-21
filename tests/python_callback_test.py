@@ -28,10 +28,11 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax.experimental import io_callback
-from jax.experimental import pjit
+from jax._src.lib import xla_client
 from jax._src.shard_map import shard_map
 from jax._src.sharding_impls import make_single_device_sharding
+from jax.experimental import io_callback
+from jax.experimental import pjit
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np
@@ -649,7 +650,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       return jax.pure_callback(
-          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
+          callback, jax.ShapeDtypeStruct.like(x), x
       )
 
     result = f(x)
@@ -663,7 +664,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       return jax.pure_callback(
-          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
+          callback, jax.ShapeDtypeStruct.like(x), x
       )
 
     result = f(x)
@@ -1068,7 +1069,7 @@ class PureCallbackTest(jtu.JaxTestCase):
       return np.asarray(2 * jnp.log(y))
 
     x = jnp.array([1.0, 2.0, 3.0, 4.0])
-    out = jax.pure_callback(f, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+    out = jax.pure_callback(f, jax.ShapeDtypeStruct.like(x), x)
     np.testing.assert_allclose(out, 2 * jnp.log(x + 1))
 
   def test_vmap_method_raise(self):
@@ -1117,7 +1118,7 @@ class PureCallbackTest(jtu.JaxTestCase):
       self.assertEqual(x.dtype, jnp.complex64)
       out_type = (
           jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
-          jax.ShapeDtypeStruct(x.shape, x.dtype),
+          jax.ShapeDtypeStruct.like(x),
       )
       return jax.pure_callback(callback, out_type, x)
 
@@ -1324,6 +1325,27 @@ class IOCallbackTest(jtu.JaxTestCase):
     else:
       self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
+  def test_ordered_io_callback_maximal_token(self):
+    devices = jax.devices()
+    mesh = Mesh(np.array(devices), ["x"])
+
+    def cb(x):
+      return x + 1.0
+
+    @functools.partial(
+        jax.jit,
+        in_shardings=jax.NamedSharding(mesh, jax.P("x")),
+        out_shardings=jax.NamedSharding(mesh, jax.P()),
+    )
+    def f(x):
+      return io_callback(
+          cb, jax.ShapeDtypeStruct(x.shape, x.dtype), x, ordered=True)
+
+    with mesh:
+      x = jnp.arange(mesh.size, dtype=jnp.float32)
+      res = f(x)
+      self.assertAllClose(res, x + 1.0)
+
   @jtu.ignore_warning(message='.*Please use `jax.jit` instead.*',
                       category=DeprecationWarning)
   def test_sequence_pjit_io_callback_ordered(self):
@@ -1454,6 +1476,10 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.vmap(f)(jnp.arange(3.))  # don't crash
     jax.effects_barrier()
 
+  def test_create_hlo_output_callback(self):
+    client = xla_client.make_cpu_client(asynchronous=False)
+    capsule = client.create_hlo_output_callback(123, 2, lambda *_args: None)
+    self.assertIsNotNone(capsule)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

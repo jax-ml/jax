@@ -34,6 +34,7 @@ jax.config.parse_flags_with_absl()
 htu.setup_hypothesis()
 
 
+@functools.partial(jax.custom_vjp, nondiff_argnums=(1, 2))
 @jax.jit(static_argnames=["equation", "sizes"])
 def _einshape_kernel(x, equation, sizes):
   sizes = dict(sizes)
@@ -41,7 +42,7 @@ def _einshape_kernel(x, equation, sizes):
   fn = functools.partial(pltpu.einshape, equation, **sizes)
   out_ref = jax.new_ref(jnp.empty_like(jax.eval_shape(fn, x)))
 
-  @pl.core_map(mesh=pltpu.create_tensorcore_mesh(num_cores=1, axis_name="x"))
+  @pl.core_map(mesh=pltpu.TensorCoreMesh(axis_name="x", num_cores=1))
   def _():
     @pl.with_scoped(
         pltpu.VMEM(x_ref.shape, x_ref.dtype),
@@ -54,6 +55,46 @@ def _einshape_kernel(x, equation, sizes):
     inner()
 
   return out_ref[...]
+
+
+def _einshape_kernel_fwd(x, equation, sizes):
+  return _einshape_kernel(x, equation, sizes), (x,)
+
+
+@jax.jit(static_argnames=["equation", "sizes"])
+def _einshape_bwd_kernel(x, g, equation, sizes):
+  sizes_dict = dict(sizes)
+  x_ref = jax.new_ref(x)
+  g_ref = jax.new_ref(g)
+  out_ref = jax.new_ref(jnp.empty_like(x))
+
+  @pl.core_map(mesh=pltpu.TensorCoreMesh(axis_name="x", num_cores=1))
+  def _():
+    @pl.with_scoped(
+        pltpu.VMEM(x_ref.shape, x_ref.dtype),
+        pltpu.VMEM(g_ref.shape, g_ref.dtype),
+        pltpu.VMEM(out_ref.shape, out_ref.dtype),
+    )
+    def inner(x_vmem_ref, g_vmem_ref, out_vmem_ref):
+      pltpu.sync_copy(x_ref, x_vmem_ref)
+      pltpu.sync_copy(g_ref, g_vmem_ref)
+      _, vjp_fn = jax.vjp(
+          lambda arr: pltpu.einshape(equation, arr, **sizes_dict),
+          x_vmem_ref[...],
+      )
+      out_vmem_ref[...] = vjp_fn(g_vmem_ref[...])[0]
+      pltpu.sync_copy(out_vmem_ref, out_ref)
+    inner()
+
+  return out_ref[...]
+
+
+def _einshape_kernel_bwd(equation, sizes, res, g):
+  x, = res
+  return (_einshape_bwd_kernel(x, g, equation, sizes),)
+
+
+_einshape_kernel.defvjp(_einshape_kernel_fwd, _einshape_kernel_bwd)
 
 
 @st.composite
@@ -216,6 +257,28 @@ class EinshapeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Cannot split size"):
       self.impl("a(bc)->abc", x, b=3)
 
+  @parameterized.product(
+      einshape=[
+          ("ab(cd)->cabd", (2, 4, 128 * 4), {"c": 4}),
+          ("abcd->ab(cd)", (2, 3, 4, 128), {}),
+          ("abc->a(bc)", (8, 2, 128), {}),
+          ("a(bc)->abc", (10, 128 * 4), {"b": 4}),
+          ("a(bc)->abc", (10, 128 * 2), {"c": 128}),
+          ("a(bc)->abc", (10, 128 * 2), {"b": 2}),
+          ("a(bc)->b(ac)", (8, 256), {"c": 128}),
+          ("(ab)(cd)->(ac)(bd)", (8, 32), {"a": 2, "c": 4}),
+      ]
+  )
+  def test_einshape_vjp(self, einshape):
+    if jtu.is_device_tpu() and not jtu.is_device_tpu_at_least(5):
+      self.skipTest("Skipping test on TPUs older than v5e.")
+    equation, shape, sizes = einshape
+    x = jnp.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    f = functools.partial(self.impl, equation, **sizes)
+    out, vjp_fn = jax.vjp(f, x)
+    x_new, = vjp_fn(out)
+    np.testing.assert_array_equal(x, x_new)
+
   @hp.given(data=st.data(), dtype=st.sampled_from(["int32", "bfloat16"]))
   @hp.settings(max_examples=200)
   def test_hypothesis_einshape(self, data, dtype):
@@ -258,4 +321,4 @@ class EinshapeTPUKernelTest(EinshapeTest):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

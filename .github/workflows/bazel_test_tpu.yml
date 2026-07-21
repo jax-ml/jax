@@ -69,6 +69,10 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -87,6 +91,7 @@ permissions: {}
 
 env:
   PIP_INDEX_URL: "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple"
+  PIP_EXTRA_INDEX_URL: "https://pypi.org/simple"
 
 jobs:
   run-bazel-tests:
@@ -96,7 +101,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "${{ inputs.tpu-type }}, py ${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
+    name: "${{ inputs.tpu-type }}, py${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}, jaxlib=${{ inputs.jaxlib-version }}"
     # End Presubmit Naming Check github-tpu-presubmits
 
     env:
@@ -108,9 +113,10 @@ jobs:
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
+      JAXCI_XLA_COMMIT: "${{ inputs.xla_commit }}"
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Download JAX wheels
@@ -159,7 +165,7 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Bazel TPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}
-        timeout-minutes: ${{ github.event_name == 'pull_request' && 20 || 210 }}
+        timeout-minutes: ${{ github.event_name == 'pull_request' && (inputs.run-full-tpu-test-suite == '1' && 210 || 20) || 210 }}
         run: ./ci/run_bazel_test_tpu.sh
       - name: Upload test artifacts
         if: always()

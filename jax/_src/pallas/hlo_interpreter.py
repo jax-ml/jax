@@ -36,7 +36,7 @@ from jax._src.lax.control_flow import conditionals
 from jax._src.lax.control_flow import loops
 from jax._src import core as jax_core
 from jax._src import frozen_dict
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import source_info_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
@@ -44,7 +44,6 @@ from jax._src.pallas import primitives
 from jax._src import state
 from jax._src.state import discharge as state_discharge
 from jax._src import typing as jax_typing
-from jax._src import util
 
 from jax._src.util import (
     foreach,
@@ -170,9 +169,9 @@ def kernel_to_hlo_jaxpr(
     assert len(phys_jaxpr.invars) == len(jaxpr.invars)
     scratch_invars = phys_jaxpr.invars[grid_mapping.slice_scratch_ops]
     scratch_avals = [v.aval for v in scratch_invars]
-    discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
-        phys_jaxpr, phys_consts)
-  return discharged_jaxpr, discharged_consts, scratch_avals
+    discharged_closed_jaxpr = state_discharge.discharge_state(
+        phys_jaxpr.with_consts(phys_consts))
+  return discharged_closed_jaxpr, discharged_closed_jaxpr.consts, scratch_avals
 
 
 def eval_jaxpr_recursive(
@@ -229,27 +228,6 @@ def eval_jaxpr_recursive(
 # Higher-order primitive rules.
 _eval_jaxpr_hop_rules = {}
 
-def pad_jaxpr_constvars(jaxpr: jax_core.Jaxpr,
-                        i: int,
-                        all_const_avals: Sequence[Any]
-                        ) -> jax_core.ClosedJaxpr:
-  """Pads a Jaxpr with constvars from all branches.
-
-  For primitives that have multiple Jaxprs (e.g. cond_p), we need
-  to pad each Jaxpr with all consts from all branches so the
-  signatures match, but only use the consts for this branch.
-  """
-  unused_const_vars = [tuple(map(jax_core.Var, const_avals))
-                       for const_avals in all_const_avals]
-  const_prefix = util.concatenate(unused_const_vars[:i])
-  const_suffix = util.concatenate(unused_const_vars[i + 1:])
-  constvars = [*const_prefix, *jaxpr.constvars, *const_suffix]
-  jaxpr = jaxpr.replace(constvars=constvars)
-  effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
-                                  jaxpr.outvars, jaxpr.eqns)
-  jaxpr = jaxpr.replace(effects=effects)
-  return jax_core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-
 
 def make_hop_rule(primitive, *keys):
   """Makes a rule for higher-order ops by recursively applying the jaxpr pass.
@@ -263,38 +241,27 @@ def make_hop_rule(primitive, *keys):
     A primitive rule for the edtype Jaxpr pass. This should be registered
     using `register_edtype_rule`.
   """
-  def _resolve_jaxpr(interpreter,
-                     value: jax_core.Jaxpr | jax_core.ClosedJaxpr,
-                     mapped_idx=None):
+  def _resolve_jaxpr(interpreter, value: jax_core.Jaxpr, mapped_idx=None):
     extra_args = ()
-    if isinstance(value, jax_core.Jaxpr):
-      if len(value.constvars) > 0:
-        raise ValueError(f"Cannot physicalize a jaxpr with constvars: {value}")
-      physical_jaxpr, physical_consts = interpreter(value, ())
-      if physical_consts:
-        if mapped_idx is not None:
-          new_jaxpr = pad_jaxpr_constvars(physical_jaxpr,
-                                          mapped_idx,
-                                          physical_consts)
-          extra_args = tuple(physical_consts)
-        else:
-          new_jaxpr = pe.convert_constvars_jaxpr(physical_jaxpr)
-          extra_args = tuple(physical_consts)
-      else:
-        new_jaxpr = physical_jaxpr
-    elif isinstance(value, jax_core.ClosedJaxpr):
-      jaxpr, new_consts = interpreter(value.jaxpr, value.consts)
-      new_jaxpr = jax_core.ClosedJaxpr(jaxpr, new_consts)
-    else:
+    if not isinstance(value, jax_core.Jaxpr):
       raise ValueError(f"Parameter of type {type(value)} is not a Jaxpr.")
+    if len(value.consts) != len(value.constvars):
+      raise ValueError(
+          f"Cannot physicalize a jaxpr with unapplied constvars: {value}"
+      )
+    # All primitives registered via make_hop_rule take closed jaxpr params, so
+    # new consts introduced by the interpreter are re-attached to the jaxpr
+    # rather than passed as extra leading arguments.
+    del mapped_idx
+    jaxpr, new_consts = interpreter(value, value.consts)
+    new_jaxpr = jaxpr.with_consts(new_consts)
     return new_jaxpr, extra_args
 
   def rule(interpreter, *args, **params):
     new_params = {}
     for key in keys:
       value = params[key]
-      if isinstance(value, jax_core.Jaxpr) or isinstance(
-          value, jax_core.ClosedJaxpr):
+      if isinstance(value, jax_core.Jaxpr):
         new_jaxpr, extra_args = _resolve_jaxpr(interpreter, value)
         new_params[key] = new_jaxpr
         args = extra_args + args
@@ -315,30 +282,32 @@ _eval_jaxpr_hop_rules[loops.while_p] = make_hop_rule(
     loops.while_p, 'body_jaxpr', 'cond_jaxpr')
 _eval_jaxpr_hop_rules[conditionals.cond_p] = make_hop_rule(conditionals.cond_p, 'branches')
 def _run_scoped_physicalize_rule(
-    interpreter, *consts, jaxpr: jax_core.Jaxpr, collective_axes):
+    interpreter, *consts, jaxpr: jax_core.Jaxpr, collective_axes, **params):
   if collective_axes:
     raise NotImplementedError(
         "run_scoped interpret rule does not support collective axes"
     )
   physical_jaxpr, physical_consts = interpreter(jaxpr, consts)
   return primitives.run_scoped_p.bind(
-      *physical_consts, jaxpr=physical_jaxpr, collective_axes=collective_axes
+      *physical_consts, jaxpr=physical_jaxpr, collective_axes=collective_axes,
+      **params
   )
 _eval_jaxpr_hop_rules[primitives.run_scoped_p] = _run_scoped_physicalize_rule
 
 
 # TODO(justinfu): Replace this with a standardized physicalize pass.
 def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
-  kernel_avals = jax_core.ClosedJaxpr(jaxpr, consts).in_avals
+  kernel_avals = jaxpr.in_avals
   kernel_avals = tuple(map(_logical_aval_to_interpret_mode_aval,
                              kernel_avals))
   interp_fun = partial(
       eval_jaxpr_recursive, jaxpr, consts,
       recurse_hop_rule=resolve_physical_types)
-  wrapped = lu.wrap_init(interp_fun, debug_info=jaxpr.debug_info)
-  new_jaxpr, _, new_consts = pe.trace_to_jaxpr_dynamic(
-      wrapped, kernel_avals)
-  return new_jaxpr, new_consts
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      interp_fun, ft.flatten_args(*kernel_avals),
+      jaxpr.debug_info
+  )
+  return closed_jaxpr, closed_jaxpr.consts
 
 
 def pallas_call_hlo_interpret(

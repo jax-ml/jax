@@ -40,21 +40,6 @@ mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr);
 MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuTileTransformAttrGetTypeID();
 
 //===----------------------------------------------------------------------===//
-// TransposeTransformAttr
-//===----------------------------------------------------------------------===//
-
-MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsATransposeTransformAttr(
-    MlirAttribute attr);
-
-MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(
-    MlirContext ctx, MlirAttribute permutation);
-
-MLIR_CAPI_EXPORTED MlirAttribute
-mlirMosaicGpuTransposeTransformAttrGetPermutation(MlirAttribute attr);
-
-MLIR_CAPI_EXPORTED MlirTypeID mlirMosaicGpuTransposeTransformAttrGetTypeID();
-
-//===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
 

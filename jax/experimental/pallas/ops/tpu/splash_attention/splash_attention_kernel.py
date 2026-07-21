@@ -1607,7 +1607,7 @@ def _splash_attention_bwd_dq(
 
   out_shapes = [
       jax.ShapeDtypeStruct((bq, head_dim_qk), jnp.float32),
-      jax.ShapeDtypeStruct(q.shape, q.dtype),
+      jax.ShapeDtypeStruct.like(q),
   ]
   out_specs = [
       pl.BlockSpec((bq, head_dim_qk), lambda *_: (0, 0)),
@@ -2162,8 +2162,8 @@ def _splash_attention_bwd_dkv(
       jax.ShapeDtypeStruct((bkv, head_dim_qk), jnp.float32),
       jax.ShapeDtypeStruct((bkv, head_dim_v), jnp.float32),
       dq_shape,
-      jax.ShapeDtypeStruct(k.shape, k.dtype),
-      jax.ShapeDtypeStruct(v.shape, v.dtype),
+      jax.ShapeDtypeStruct.like(k),
+      jax.ShapeDtypeStruct.like(v),
   ]
   out_specs = [
       dq_scratch_spec,
@@ -2460,14 +2460,20 @@ class SplashAttentionKernel:
     self.dkv_mask_info = dkv_mask_info
 
   def __call__(self, *args, **kwargs) -> SplashCustomReturnType:
-    return _splash_attention(
-        self.fwd_mask_info,
-        self.dq_mask_info,
-        self.dkv_mask_info,
-        *args,
-        **kwargs,
-        **self.kwargs,
+    ctx = (
+        jax.named_scope("dynamic_sparsity_splash")
+        if self.fwd_mask_info.is_dynamic_mask
+        else jax.named_scope("static_sparsity_splash")
     )
+    with ctx:
+      return _splash_attention(
+          self.fwd_mask_info,
+          self.dq_mask_info,
+          self.dkv_mask_info,
+          *args,
+          **kwargs,
+          **self.kwargs,
+      )
 
   def manual_sharding_spec(self, sharding: jax.sharding.NamedSharding):
     """Returns a value that can be used as a shard_map partition spec for the kernel."""

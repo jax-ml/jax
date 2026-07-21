@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Generator
+from collections.abc import Callable, Generator, Iterator
 import contextlib
 import dataclasses
 import functools
@@ -24,7 +24,7 @@ import re
 import sysconfig
 import threading
 import types
-from typing import NamedTuple
+from typing import Any, NamedTuple, TypeVar, cast
 
 from jax._src.lib import xla_client
 
@@ -97,7 +97,7 @@ class Transform(NamedTuple):
       stack.append(f'{self.name}()')
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class NameStack:
   stack: tuple[Scope | Transform, ...] = ()
 
@@ -266,7 +266,10 @@ def current_name_stack() -> NameStack:
   return _source_info_context.context.name_stack
 
 
-class ExtendNameStackContextManager(contextlib.ContextDecorator):
+_F = TypeVar('_F', bound=Callable[..., Any])
+
+
+class ExtendNameStackContextManager:
   __slots__ = ['name', 'prev']
 
   def __init__(self, name: str):
@@ -281,10 +284,17 @@ class ExtendNameStackContextManager(contextlib.ContextDecorator):
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
+  def __call__(self, func: _F) -> _F:
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      with ExtendNameStackContextManager(self.name):
+        return func(*args, **kwargs)
+    return cast(_F, wrapper)
+
 extend_name_stack = ExtendNameStackContextManager
 
 
-class SetNameStackContextManager(contextlib.ContextDecorator):
+class SetNameStackContextManager:
   __slots__ = ['name_stack', 'prev']
 
   def __init__(self, name_stack: NameStack):
@@ -297,6 +307,13 @@ class SetNameStackContextManager(contextlib.ContextDecorator):
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
+  def __call__(self, func: _F) -> _F:
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      with SetNameStackContextManager(self.name_stack):
+        return func(*args, **kwargs)
+    return cast(_F, wrapper)
+
 
 set_name_stack = SetNameStackContextManager
 
@@ -306,12 +323,12 @@ set_name_stack = SetNameStackContextManager
 # the performance shouldn't matter. See blame commit message for repro.
 # reset_name_stack = lambda: SetNameStackContextManager(NameStack())
 @contextlib.contextmanager
-def reset_name_stack() -> Generator[None, None, None]:
+def reset_name_stack() -> Generator[None]:
   with set_name_stack(NameStack()):
     yield
 
 
-class TransformNameStackContextManager(contextlib.ContextDecorator):
+class TransformNameStackContextManager:
   __slots__ = ['name', 'prev']
 
   def __init__(self, name: str):
@@ -325,5 +342,12 @@ class TransformNameStackContextManager(contextlib.ContextDecorator):
 
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
+
+  def __call__(self, func: _F) -> _F:
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+      with TransformNameStackContextManager(self.name):
+        return func(*args, **kwargs)
+    return cast(_F, wrapper)
 
 transform_name_stack = TransformNameStackContextManager

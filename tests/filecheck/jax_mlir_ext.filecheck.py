@@ -17,7 +17,6 @@
 from absl import app
 import jax
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -71,8 +70,14 @@ def test_inlined_func_call():
 
     module = ir.Module.create(loc=ir.Location.unknown())
     ip = ir.InsertionPoint(module.body)
-    arg_types = [mlir.aval_to_ir_type(aval) for aval in arg_avals]
-    result_types = [mlir.aval_to_ir_type(aval) for aval in result_avals]
+    arg_types = [
+        ir.RankedTensorType.get(aval.shape, mlir.dtype_to_ir_type(aval.dtype))
+        for aval in arg_avals
+    ]
+    result_types = [
+        ir.RankedTensorType.get(aval.shape, mlir.dtype_to_ir_type(aval.dtype))
+        for aval in result_avals
+    ]
     ftype = ir.FunctionType.get(arg_types, result_types)
     callee = func_dialect.FuncOp("callee", ftype, ip=ip)
     callee.attributes["sym_visibility"] = ir.StringAttr.get("private")
@@ -90,11 +95,7 @@ def test_inlined_func_call():
     with ir.InsertionPoint(entry_block):
       x, y = entry_block.arguments
       with caller_loc:
-        if jaxlib_extension_version >= 443:
-          x, y = _jax_mlir_ext.inlined_func_call(callee.operation, [y, x])
-        else:
-          x, y = _jax_mlir_ext.inlined_func_call(
-            callee, [y, x], ir.InsertionPoint.current.block)
+        x, y = _jax_mlir_ext.inlined_func_call(callee.operation, [y, x])
       func_dialect.ReturnOp([x, y])
     module.operation.verify()
     pipeline = passmanager.PassManager.parse("builtin.module(symbol-dce)")

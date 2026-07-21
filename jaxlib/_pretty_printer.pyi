@@ -43,13 +43,21 @@ class Intensity(enum.Enum):
 
   BRIGHT = 1
 
+class OutputFormat(enum.Enum):
+  TEXT = 0
+
+  HTML = 1
+
 class Doc:
   def __repr__(self) -> str: ...
-  def __add__(self, arg: Doc, /) -> Doc: ...
+  def __add__(self, other: Doc) -> Doc: ...
   def _format(
       self,
       width: int,
+      *,
       use_color: bool,
+      output_format: OutputFormat,
+      separable_lines: bool,
       annotation_prefix: str,
       source_map: list | None,
   ) -> str: ...
@@ -72,16 +80,21 @@ class GroupDoc(Doc):
 class NestDoc(Doc):
   pass
 
-class ColorDoc(Doc):
+class SourceMapDoc(Doc):
   pass
 
-class SourceMapDoc(Doc):
+class ColorDoc(Doc):
   pass
 
 def nil() -> Doc:
   """An empty document."""
 
-def text(text: str, annotation: str | None = ...) -> Doc:
+def text(
+    text: str,
+    annotation: str | None = ...,
+    anchor: str | None = ...,
+    href: str | None = ...,
+) -> Doc:
   """Literal text."""
 
 def concat(children: Sequence[Doc]) -> Doc:
@@ -101,7 +114,7 @@ def group(arg: Doc, /) -> Doc:
   inside the group as printed as newlines.
   """
 
-def nest(arg0: int, arg1: Doc, /) -> Doc:
+def nest(n: int, child: Doc) -> Doc:
   """Increases the indentation level by `n`."""
 
 def color(

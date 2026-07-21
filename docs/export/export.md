@@ -66,6 +66,9 @@ Serialization is broken down into two stages:
      an alternative serialization to TensorFlow graph that can be used
      for interoperation with TensorFlow.
 
+**WARNING**: The serialized bytearray must be trusted input. If you execute it
+after deserialization, it may execute any custom call registered in the jaxlib.
+
 ## Support for reverse-mode AD
 
 Serialization can optionally support higher-order reverse-mode AD. This is done
@@ -175,8 +178,13 @@ during exporting.
 If you want to disable this safety check for a specific custom call,
 e.g., with target `my_target`, you can add
 `export.DisabledSafetyCheck.custom_call("my_target")` to the
-`disabled_checks` parameter of the `export` method,
-as in the following example:
+`disabled_checks` parameter of the `export` method.
+
+Alternatively, `export.DisabledSafetyCheck.custom_call("ALL")` can be used to
+disable the check for all custom calls, this should only be used when export
+compatibility is not needed.
+
+The following example shows how to disable the check for a specific custom call:
 
 ```python
 >>> import jax

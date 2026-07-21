@@ -63,6 +63,7 @@ operations.
    benchmarking
    profiling
    device_memory_profiling
+   debugging/slow_tracing_compilation
 
 .. toctree::
    :caption: Non-functional programming
@@ -81,6 +82,7 @@ operations.
    :maxdepth: 1
 
    ffi
+   notebooks/cute_dsl_jax
 
 .. toctree::
    :caption: Modeling workflows
@@ -106,3 +108,4 @@ operations.
    xla_flags
    jax-primitives
    jaxpr
+   hijax_types

@@ -27,6 +27,8 @@ from typing import Any, Protocol, Union
 
 from jaxlib import _jax as _xla
 
+from jaxlib import _hlo as hlo
+
 # Note this module does *not* depend on any Python protocol buffers. The XLA
 # Python bindings are currently packaged both as part of jaxlib and as part
 # of TensorFlow. If we use protocol buffers here, then importing both jaxlib
@@ -43,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 445  # fix weak_type handling for TypedNdArray
+_version = 478  # JAX UnreducedKind
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -190,10 +192,18 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   collective_memory_size = os.getenv(
       'XLA_PYTHON_CLIENT_COLLECTIVE_MEM_SIZE_MB', ''
   )
-  if allocator not in ('default', 'platform', 'bfc', 'cuda_async', 'vmm'):
+  allowed_allocators = (
+      'default',
+      'platform',
+      'bfc',
+      'cuda_async',
+      'vmm',
+      'address',
+  )
+  if allocator not in allowed_allocators:
     raise ValueError(
-        'XLA_PYTHON_CLIENT_ALLOCATOR env var must be "default", "platform", '
-        '"bfc", "cuda_async", or "vmm", got "%s"' % allocator
+        'XLA_PYTHON_CLIENT_ALLOCATOR env var must be one of %s, got "%s"'
+        % (', '.join(f'"{a}"' for a in allowed_allocators), allocator)
     )
   options['allocator'] = allocator
   if memory_fraction:
@@ -209,9 +219,9 @@ def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
   return options
 
 
-PrimitiveType = _xla.PrimitiveType
+PrimitiveType = hlo.PrimitiveType
 
-Shape = _xla.Shape
+Shape = hlo.Shape
 Shape.__doc__ = """
 A Shape is an object defined in C++ that duck types like the following class:
 
@@ -260,7 +270,7 @@ class Shape:
     "Returns 'shape' as a serialized proto."
 """
 
-ProgramShape = _xla.ProgramShape
+ProgramShape = hlo.ProgramShape
 ProgramShape.__doc__ = """
 A ProgramShape is a C++ object that duck types like the following class.
 
@@ -322,7 +332,7 @@ HostBufferSemantics = _xla.HostBufferSemantics
 # There are different implementations of Executable for different backends.
 
 
-XlaComputation = _xla.XlaComputation
+XlaComputation = hlo.XlaComputation
 Client = _xla.Client
 Memory = _xla.Memory
 Array = _xla.Array
@@ -330,8 +340,8 @@ ArrayImpl = _xla.ArrayImpl
 LoadedExecutable = _xla.LoadedExecutable
 Executable = _xla.Executable
 DeviceList = _xla.DeviceList
-OpSharding = _xla.OpSharding
-HloSharding = _xla.HloSharding
+OpSharding = hlo.OpSharding
+HloSharding = hlo.HloSharding
 Sharding = _xla.Sharding
 NamedSharding = _xla.NamedSharding
 SingleDeviceSharding = _xla.SingleDeviceSharding
@@ -549,6 +559,6 @@ batched_device_put = _xla.batched_device_put
 reorder_shards = _xla.reorder_shards
 batched_block_until_ready = _xla.batched_block_until_ready
 check_and_canonicalize_memory_kind = _xla.check_and_canonicalize_memory_kind
-Layout = _xla.Layout
+Layout = hlo.Layout
 custom_call_targets = _xla.custom_call_targets
 ArrayCopySemantics = _xla.ArrayCopySemantics

@@ -14,6 +14,7 @@
 
 """Auto-tuned block sizes for ragged paged attention."""
 
+import re
 import jax
 import jax.numpy as jnp
 
@@ -1427,14 +1428,15 @@ def get_tpu_version() -> int:
     return -1
   if kind == 'TPU7x':
     return 7
-  if kind.endswith(' lite'):
-    kind = kind[: -len(' lite')]
-  assert kind[:-1] == 'TPU v', kind
-  return int(kind[-1])
+  match = re.search(r'TPU\s*v?(\d+)', kind, re.IGNORECASE)
+  assert match is not None, kind
+  return int(match.group(1))
 
 
 def get_device_name(num_devices: int | None = None):
-  name = ' '.join(jax.devices()[0].device_kind.split()[:2])
+  kind = jax.devices()[0].device_kind
+  match = re.search(r'TPU\s*v?(\d+)', kind, re.IGNORECASE)
+  name = f'TPU v{match.group(1)}' if match else ' '.join(kind.split()[:2])
   if num_devices is not None:
     name += f'-{num_devices}'
   return name

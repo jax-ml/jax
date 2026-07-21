@@ -16,18 +16,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import os
 from functools import partial
+import os
 from typing import Any
 
 from jax._src import ad_util
-from jax._src import core
 from jax._src import config
-from jax._src import linear_util as lu
-from jax._src.util import weakref_lru_cache, safe_map
+from jax._src import core
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import (equality_errors_pytreedef, tree_map,
-                                tree_unflatten, keystr)
+from jax._src import flattree as ft
+from jax._src.tree_util import (
+    equality_errors_pytreedef,
+    keystr,
+    tree_map,
+    tree_unflatten,
+)
+from jax._src.util import safe_map, weakref_lru_cache
 
 map, unsafe_map = safe_map, map
 
@@ -46,9 +50,9 @@ def _typecheck_param(prim, param, name, msg_required, pred):
 # TODO(dougalm): this seems way too complicated. Why not allow different consts for each
 # branch of a switch?
 def _merge_common_consts(
-    jaxprs: Sequence[core.ClosedJaxpr],
+    jaxprs: Sequence[core.Jaxpr],
     all_consts: Sequence[Sequence[Any]]
-    ) -> tuple[Sequence[core.ClosedJaxpr], Sequence[Any]]:
+    ) -> tuple[Sequence[core.Jaxpr], Sequence[Any]]:
   # Jaxprs must share consts, so we concat consts and pad the jaxprs' constvars.
   lens = map(len, all_consts)
   consts = [c for cs in all_consts for c in cs]
@@ -64,16 +68,15 @@ def _merge_common_consts(
   return jaxprs, dd_consts
 
 @weakref_lru_cache
-def _pad_constvars(jaxpr: core.ClosedJaxpr, num_consts: int,
+def _pad_constvars(jaxpr: core.Jaxpr, num_consts: int,
                    left: tuple[core.AvalQDD, ...],
-                   right: tuple[core.AbstractValue, ...]) -> core.ClosedJaxpr:
+                   right: tuple[core.AbstractValue, ...]) -> core.Jaxpr:
   def make_var(aq):
     return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
   invars = [*map(make_var, left), *jaxpr.invars[:num_consts],
             *map(make_var, right), *jaxpr.invars[num_consts:]]
-  effs = pe._renumber_effects(invars, jaxpr.invars, jaxpr.effects)
-  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, effects=effs))
-  config.enable_checks.value and core.check_jaxpr(jaxpr.jaxpr)
+  jaxpr = jaxpr.replace(invars=invars)
+  config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr
 
 @weakref_lru_cache
@@ -82,15 +85,15 @@ def _dedup_consts(jaxpr, num_consts, const_ids):
   canonicalize = {v: newvars.setdefault(constid, v)
                   for constid, v in zip(const_ids, jaxpr.invars[:num_consts])}
   eqns = [e.replace(invars=[canonicalize.get(x, x) if isinstance(x, core.Var)
-                            else x for x in e.invars]) for e in jaxpr.eqns]
+                            else x for x in e.invars],
+                    effects=core.subst_input_effects(e.effects, canonicalize))
+          for e in jaxpr.eqns]
   outvars = [canonicalize.get(x, x) if isinstance(x, core.Var) else x
              for x in jaxpr.outvars]
   invars = [*list(newvars.values()), *jaxpr.invars[num_consts:]]
-  effs = pe._renumber_effects(invars,
-      [*map(canonicalize.get, jaxpr.invars[:num_consts]), *jaxpr.invars[num_consts:]],
-      jaxpr.effects)
-  jaxpr = jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(invars=invars, eqns=eqns, outvars=outvars,
-                        effects=effs))
+  effs = core.subst_input_effects(jaxpr.effects, canonicalize)
+  jaxpr = jaxpr.replace(invars=invars, eqns=eqns, outvars=outvars,
+                        effects=effs)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr
 
@@ -138,10 +141,16 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=Fa
 def _prune_zeros(ts):
   return [t for t in ts if type(t) is not ad_util.Zero]
 
-def _make_closed_jaxpr(traceable: lu.WrappedFun,
-                       in_avals: Sequence[core.AbstractValue]):
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
-  return core.ClosedJaxpr(jaxpr, consts)
+def _make_closed_jaxpr(
+    traceable,
+    in_avals: Sequence[core.AbstractValue],
+    debug_info: core.DebugInfo,
+):
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      traceable, ft.flatten_args(*in_avals), debug_info
+  )
+  return closed_jaxpr
+
 
 def _show_diff(array1, array2):
   if core.typematch(array1, array2):

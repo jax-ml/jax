@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 import inspect
 import operator
 from functools import partial, lru_cache
@@ -76,14 +76,6 @@ def flatten_fun(f: Callable, store: lu.Store,
   store.store(out_tree)
   return ans
 
-def apply_flat_fun(fun, io_tree, *py_args):
-  in_tree_expected, out_tree = io_tree
-  args, in_tree = tree_flatten((py_args, {}))
-  if in_tree != in_tree_expected:
-    raise TypeError(f"Expected {in_tree_expected}, got {in_tree}")
-  ans = fun(*args)
-  return tree_unflatten(out_tree, ans)
-
 @lu.transformation_with_aux2
 def flatten_fun_nokwargs(f: Callable, store: lu.Store,
                          in_tree: PyTreeDef, *args_flat):
@@ -92,27 +84,6 @@ def flatten_fun_nokwargs(f: Callable, store: lu.Store,
   ans, out_tree = tree_flatten(ans)
   store.store(out_tree)
   return ans
-
-def apply_flat_fun_nokwargs(fun, io_tree, py_args):
-  in_tree_expected, out_tree = io_tree
-  args, in_tree = tree_flatten(py_args)
-  if in_tree != in_tree_expected:
-    raise TypeError(f"Expected {in_tree_expected}, got {in_tree}")
-  ans = fun(*args)
-  return tree_unflatten(out_tree, ans)
-
-@lu.transformation_with_aux2
-def flatten_fun_nokwargs2(f, store, in_tree, *args_flat):
-  py_args = tree_unflatten(in_tree, args_flat)
-  pair = f(*py_args)
-  if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-    raise TypeError("expected function with aux output to return a two-element "
-                    f"tuple, but got type {type(pair)} with value {pair!r}")
-  ans, aux = pair
-  ans_flat, ans_tree = tree_flatten(ans)
-  aux_flat, aux_tree = tree_flatten(aux)
-  store.store((ans_tree, aux_tree))
-  return ans_flat, aux_flat
 
 class _HashableWithStrictTypeEquality:
   """Box object used when comparing static arguments as a jit key.
@@ -223,6 +194,25 @@ def argnums_partial(f: lu.WrappedFun, dyn_argnums: int | Sequence[int],
   dyn_args = tuple(args[i] for i in dyn_argnums)
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
+def argnums_partial2(f: Callable, dyn_argnums: int | Sequence[int],
+                     args: Sequence, kwargs: dict):
+  # like argnums_partial but works with callables instead of WrappedFun
+  dyn_argnums = _ensure_index_tuple(dyn_argnums)
+  dyn_argnums = _ensure_inbounds(False, len(args), dyn_argnums)
+  static_args = list(args)
+  dyn_args = []
+  for i in dyn_argnums:
+    x = static_args[i]
+    dyn_args.append(x)
+    static_args[i] = None
+
+  def f_wrapped(*dyn_args_):
+    args_ = list(static_args)
+    for i, x in zip(dyn_argnums, dyn_args_):
+      args_[i] = x
+    return f(*args_, **kwargs)
+
+  return f_wrapped, tuple(dyn_args)
 
 def prepend_static_args(f, static_args):
   return _prepend_static_args(f, tuple(Unhashable(arg) for arg in static_args))
@@ -606,7 +596,7 @@ def debug_info(
     traced_for: str,
     fun: Callable,
     args: Sequence[Any],
-    kwargs: dict[str, Any],
+    kwargs: Mapping[str, Any],
     *,
     static_argnums: Sequence[int] = (),
     static_argnames: Sequence[str] = (),
@@ -672,7 +662,7 @@ def fun_sourceinfo(fun: Callable) -> str:
 
 
 def _non_static_arg_names(fn_signature: inspect.Signature | None,
-                          args: Sequence[Any], kwargs: dict[str, Any],
+                          args: Sequence[Any], kwargs: Mapping[str, Any],
                           static_argnums: Sequence[int],
                           static_argnames: Sequence[str],
                           ) -> tuple[str, ...]:

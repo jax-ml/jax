@@ -18,6 +18,7 @@ limitations under the License.
 #include <Python.h>
 
 #include <exception>
+#include <functional>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -44,7 +45,7 @@ void WeakKeyWeakValueCache::OnWeakrefDestroyed(PyObject* weakref_obj) {
 }
 
 nb_class_ptr<WeakKeyWeakValueCache> WeakKeyWeakValueCache::Create(
-    nb::callable fn) {
+    std::function<nb::object(nb::handle)> fn) {
   auto self = make_nb_class<WeakKeyWeakValueCache>(std::move(fn));
   self->weakref_callback_ = nb::cast<nb::callable>(nb::cpp_function(
       [this_weak = nb::weakref(self)](nb::handle dying_weakref) {
@@ -55,6 +56,66 @@ nb_class_ptr<WeakKeyWeakValueCache> WeakKeyWeakValueCache::Create(
             dying_weakref.ptr());
       }));
   return self;
+}
+
+nb_class_ptr<WeakKeyWeakValueCache> WeakKeyWeakValueCache::Create(
+    nb::callable fn) {
+  nb::callable fn_copy = fn;
+  auto self = Create([fn = std::move(fn)](nb::handle x) -> nb::object {
+    return fn(x);
+  });
+  self->py_fn_ = std::move(fn_copy);
+  return self;
+}
+
+nanobind::object WeakKeyWeakValueCache::Call(nanobind::handle self_obj,
+                                             nanobind::handle x) {
+  {
+    nb::ft_object_guard lock(self_obj);
+    auto it = entries_.find(x.ptr());
+    if (it != entries_.end()) {
+      nb::object x_ref = it->second.first();
+      nb::object ans = it->second.second();
+      // Another thread might have freed one or both of the weakrefs, so
+      // check they are valid.
+      if (!ans.is_none() && x_ref.ptr() == x.ptr()) {
+        return ans;
+      }
+    }
+  }
+
+  nb::object result = fn_(x);
+  if (!result) return nb::object();
+
+  nb::weakref xref(x, weakref_callback_);
+  nb::weakref ansref(result, weakref_callback_);
+  {
+    nb::ft_object_guard lock(self_obj);
+    auto [it, inserted] =
+        entries_.try_emplace(x.ptr(), std::move(xref), std::move(ansref));
+    if (inserted) {
+      weakref_to_key_[it->second.first.ptr()] = x.ptr();
+      weakref_to_key_[it->second.second.ptr()] = x.ptr();
+    } else {
+      // Because we hold a strong reference to `x`, we know the entry we have
+      // found refers to our object.
+      nb::object existing_ans = it->second.second();
+      if (existing_ans.is_none()) {
+        // There is already an entry, but its value is dead. This can happen
+        // if the weakref has died but the weakref's callback has not yet
+        // run. Replace the old entry with our new one.
+        PyObject* old_ans_ptr = it->second.second.ptr();
+        weakref_to_key_.erase(old_ans_ptr);
+        it->second.second = std::move(ansref);
+        weakref_to_key_[it->second.second.ptr()] = x.ptr();
+      } else {
+        // Another thread has populated the cache for this key.
+        result = existing_ans;
+      }
+    }
+  }
+
+  return result;
 }
 
 PyObject* WeakKeyWeakValueCache::VectorCall(PyObject* self_obj,
@@ -70,43 +131,7 @@ PyObject* WeakKeyWeakValueCache::VectorCall(PyObject* self_obj,
       return nullptr;
     }
 
-    PyObject* x = args[0];
-
-    {
-      nb::ft_object_guard lock(self_obj);
-      auto it = self->entries_.find(x);
-      if (it != self->entries_.end()) {
-        nb::object x_ref = it->second.first();
-        nb::object ans = it->second.second();
-        // Another thread might have freed one of both of the weakrefs, so
-        // check they are valid.
-        if (!ans.is_none() && x_ref.ptr() == x) {
-          return ans.release().ptr();
-        }
-      }
-    }
-
-    nb::object result = nb::steal<nb::object>(
-        PyObject_Vectorcall(self->fn_.ptr(), args, 1, nullptr));
-    if (!result) return nullptr;
-
-    nb::weakref xref(nb::borrow<nb::object>(x), self->weakref_callback_);
-    nb::weakref ansref(result, self->weakref_callback_);
-    {
-      nb::ft_object_guard lock(self_obj);
-      auto [it, inserted] =
-          self->entries_.try_emplace(x, std::move(xref), std::move(ansref));
-      if (inserted) {
-        self->weakref_to_key_[it->second.first.ptr()] = x;
-        self->weakref_to_key_[it->second.second.ptr()] = x;
-      } else {
-        // If !inserted, another thread populated the cache. Because we hold a
-        // strong reference to `x`, we know the entry refers to our object.
-        result = it->second.second();
-      }
-    }
-
-    return result.release().ptr();
+    return self->Call(self_obj, args[0]).release().ptr();
   } catch (nb::python_error& e) {
     e.restore();
     return nullptr;
@@ -123,7 +148,7 @@ PyObject* WeakKeyWeakValueCache::VectorCall(PyObject* self_obj,
     return 0;
   }
   WeakKeyWeakValueCache* self = nb::inst_ptr<WeakKeyWeakValueCache>(self_obj);
-  Py_VISIT(self->fn_.ptr());
+  Py_VISIT(self->py_fn_.ptr());
   Py_VISIT(self->weakref_callback_.ptr());
   for (const auto& kv : self->entries_) {
     Py_VISIT(kv.second.first.ptr());
@@ -137,7 +162,8 @@ PyObject* WeakKeyWeakValueCache::VectorCall(PyObject* self_obj,
     return 0;
   }
   WeakKeyWeakValueCache* self = nb::inst_ptr<WeakKeyWeakValueCache>(self_obj);
-  self->fn_.reset();
+  self->fn_ = nullptr;
+  self->py_fn_.reset();
   self->weakref_callback_.reset();
   self->entries_.clear();
   self->weakref_to_key_.clear();

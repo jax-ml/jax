@@ -18,6 +18,7 @@ import functools
 
 from absl.testing import absltest
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from jax._src import config
@@ -109,16 +110,19 @@ def searchsorted_reference(
 def nonzero_reference(
     a: np.ndarray,
     size: int, *,
+    fill_value: int | tuple[int, ...] | None = None,
     axes: tuple[int, ...] | None = None,
-    dtype: np.dtype | str = 'int32',
+    dtype: np.dtype | str = "int32",
 ) -> tuple[np.ndarray, ...]:
   """Reference implementation for hijax.nonzero in terms of np.nonzero.
 
   Args:
     a: n-dimensional array
     size: integer specifying size of output
+    fill_value: optional padding value. Defaults to 0.
     axes: optional set of axes over which to compute the indices.
       Defaults to range(a.ndim).
+    dtype: optional datatype for the returned indices. Defaults to int32.
 
   Returns:
     A tuple of indices corresponding to axes
@@ -128,6 +132,15 @@ def nonzero_reference(
     axes = tuple(range(a.ndim))
   else:
     axes = tuple(sorted(ax % a.ndim for ax in axes))
+
+  if fill_value is not None:
+    if isinstance(fill_value, tuple):
+      assert len(fill_value) == len(axes)
+      fill_value_tup = fill_value
+    else:
+      fill_value_tup = (fill_value,) * len(axes)
+  else:
+    fill_value_tup = (0,) * len(axes)
 
   batch_axes = [ax for ax in range(a.ndim) if ax not in axes]
   transposed_a = np.transpose(a, (*batch_axes, *axes))
@@ -140,12 +153,13 @@ def nonzero_reference(
 
     true_size = len(nz[0])
     nz_padded = []
-    for axis_nz in nz:
+    for axis_idx, axis_nz in enumerate(nz):
       if true_size >= size:
         nz_padded.append(axis_nz[:size])
       else:
-        # Pad with zeros
-        nz_padded.append(np.pad(axis_nz, (0, size - true_size), mode='constant'))
+        # Pad with fill_value
+        nz_padded.append(np.pad(axis_nz, (0, size - true_size), mode="constant",
+                                constant_values=fill_value_tup[axis_idx]))
     res.append(nz_padded)
 
   out = []
@@ -532,6 +546,337 @@ class NonzeroTest(jtu.JaxTestCase):
     _, f_vjp = jax.vjp(f, a)
     tangent_in = f_vjp(jax.numpy.ones_like(primal_out))
     self.assertArraysEqual(tangent_in[0], jax.numpy.zeros_like(a))
+
+  def test_1D_fill_value(self):
+    a = self.rng().randint(0, 2, size=(100,))
+    size = 150
+    fill_val = 99
+    expected = nonzero_reference(a, size=size, fill_value=fill_val)
+    actual = hijax.nonzero(a, size=size, fill_value=fill_val)
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  @jtu.sample_product(
+      axes=[None, (0,), (1,), (0, 1)],
+      fill_value=[99, (99, 98)],
+  )
+  def test_2D_fill_value(self, axes, fill_value):
+    a = self.rng().randint(0, 2, size=(10, 20))
+    size = 250
+    actual_axes = tuple(range(a.ndim)) if axes is None else axes
+    if isinstance(fill_value, tuple) and len(fill_value) != len(actual_axes):
+      self.skipTest("fill_value length must match number of axes")
+
+    expected = nonzero_reference(a, size=size, fill_value=fill_value, axes=axes)
+    actual = hijax.nonzero(a, size=size, fill_value=fill_value, axes=axes)
+
+    self.assertEqual(len(expected), len(actual))
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_vmap_fill_value_batched(self):
+    a = self.rng().randint(0, 2, size=(3, 4, 5))
+    fill_val = jax.numpy.array([99, 98, 97])
+    size = 20
+
+    vmapped = jax.vmap(lambda x, fv: hijax.nonzero(x, size=size, fill_value=fv, axes=(1,))[0])(a, fill_val)
+
+    expected = []
+    for sub_a, fv in zip(a, fill_val):
+      expected.append(nonzero_reference(sub_a, size=size, fill_value=int(fv), axes=(1,))[0])
+    expected = np.array(expected)
+
+    self.assertArraysEqual(expected, vmapped)
+
+  def test_vmap_fill_value_unbatched(self):
+    a = self.rng().randint(0, 2, size=(3, 4, 5))
+    fill_val = 99
+    size = 20
+
+    vmapped = jax.vmap(lambda x: hijax.nonzero(x, size=size, fill_value=fill_val, axes=(1,))[0])(a)
+
+    expected = []
+    for sub_a in a:
+      expected.append(nonzero_reference(sub_a, size=size, fill_value=fill_val, axes=(1,))[0])
+    expected = np.array(expected)
+
+    self.assertArraysEqual(expected, vmapped)
+
+  def test_jit_fill_value(self):
+    a = self.rng().randint(0, 2, size=(100,))
+    size = 150
+    fill_val = 99
+
+    @jax.jit
+    def f(x, fv):
+      return hijax.nonzero(x, size=size, fill_value=fv)
+
+    actual = f(a, fill_val)
+    expected = nonzero_reference(a, size=size, fill_value=fill_val)
+
+    for e, a_i in zip(expected, actual):
+      self.assertArraysEqual(e, a_i)
+
+  def test_invalid_fill_value_shape(self):
+    a = self.rng().randint(0, 2, size=(10, 20))
+    size = 5
+    a_aval = jax.core.ShapedArray(a.shape, a.dtype)
+    fv_aval = jax.core.ShapedArray((size,), jax.numpy.int32)
+    with self.assertRaisesRegex(
+        ValueError, "fill_value shape .* is not broadcast-compatible with batch shape"
+    ):
+      hijax.Nonzero(
+          a_aval,
+          fv_aval,
+          size=size,
+          axes=(1,),
+          out_dtype=np.dtype("int32"),
+      )
+
+  def test_fill_value_shape_expands_batch_shape(self):
+    a = self.rng().randint(0, 2, size=(1, 20))
+    size = 5
+    a_aval = jax.core.ShapedArray(a.shape, a.dtype)
+    fv_aval = jax.core.ShapedArray((10,), jax.numpy.int32)
+    with self.assertRaisesRegex(
+        ValueError, "fill_value shape .* cannot be broadcast to batch shape .* without expanding it"
+    ):
+      hijax.Nonzero(
+          a_aval,
+          fv_aval,
+          size=size,
+          axes=(1,),
+          out_dtype=np.dtype("int32"),
+      )
+
+class EinsumTest(jtu.JaxTestCase):
+
+  def test_basic_against_numpy(self):
+    x = self.rng().uniform(size=(2, 3))
+    y = self.rng().uniform(size=(3, 4))
+
+    expected = jnp.einsum("ij,jk->ik", x, y)
+    actual = hijax.einsum("ij,jk->ik", x, y)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_jit(self):
+    x = self.rng().uniform(size=(2, 3))
+    y = self.rng().uniform(size=(3, 4))
+
+    @jax.jit
+    def f(a, b):
+      return hijax.einsum("ij,jk->ik", a, b)
+
+    expected = jnp.einsum("ij,jk->ik", x, y)
+    actual = f(x, y)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_vmap(self):
+    # Batching on first argument, axis 0
+    x = self.rng().uniform(size=(5, 2, 3))
+    y = self.rng().uniform(size=(3, 4))
+
+    @jax.vmap
+    def f(a):
+      return hijax.einsum("ij,jk->ik", a, y)
+
+    expected = jnp.stack([jnp.einsum("ij,jk->ik", a, y) for a in x])
+    actual = f(x)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+    # Batching on both
+    x = self.rng().uniform(size=(5, 2, 3))
+    y = self.rng().uniform(size=(5, 3, 4))
+
+    @jax.vmap
+    def g(a, b):
+      return hijax.einsum("ij,jk->ik", a, b)
+
+    expected = jnp.stack([jnp.einsum("ij,jk->ik", a, b) for a, b in zip(x, y)])
+    actual = g(x, y)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_autodiff(self):
+    x = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    y = jnp.array([[5.0, 6.0], [7.0, 8.0]])
+
+    def f(a, b):
+      return hijax.einsum("ij,jk->ik", a, b)
+
+    # JVP
+    tx = jnp.ones_like(x)
+    ty = jnp.ones_like(y)
+    primal_out, tangent_out = jax.jvp(f, (x, y), (tx, ty))
+
+    # Expected JVP: d(X@Y) = dX @ Y + X @ dY
+    expected_tangent = tx @ y + x @ ty
+    self.assertAllClose(expected_tangent, tangent_out, atol=1e-5, rtol=1e-5)
+
+    # VJP
+    primal_out, f_vjp = jax.vjp(f, x, y)
+    g = jnp.ones_like(primal_out)
+    grads = f_vjp(g)
+
+    # Expected VJP:
+    # dL/dX = g @ Y^T
+    # dL/dY = X^T @ g
+    expected_grad_x = g @ y.T
+    expected_grad_y = x.T @ g
+
+    self.assertAllClose(expected_grad_x, grads[0], atol=1e-5, rtol=1e-5)
+    self.assertAllClose(expected_grad_y, grads[1], atol=1e-5, rtol=1e-5)
+
+  def test_autodiff_contracted_dim(self):
+    x = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+
+    def f_hijax(a):
+      return hijax.einsum("ij->i", a)
+
+    def f_jnp(a):
+      return jnp.einsum("ij->i", a)
+
+    _, vjp_hijax = jax.vjp(f_hijax, x)
+    _, vjp_jnp = jax.vjp(f_jnp, x)
+
+    g = jnp.array([1.0, 2.0])
+    (grad_hijax,) = vjp_hijax(g)
+    (grad_jnp,) = vjp_jnp(g)
+
+    self.assertAllClose(grad_jnp, grad_hijax, atol=1e-5, rtol=1e-5)
+
+    def f_scalar_hijax(a):
+      return hijax.einsum("ij->", a)
+
+    def f_scalar_jnp(a):
+      return jnp.einsum("ij->", a)
+
+    _, vjp_scalar_hijax = jax.vjp(f_scalar_hijax, x)
+    _, vjp_scalar_jnp = jax.vjp(f_scalar_jnp, x)
+
+    (grad_scalar_hijax,) = vjp_scalar_hijax(jnp.array(1.0))
+    (grad_scalar_jnp,) = vjp_scalar_jnp(jnp.array(1.0))
+
+    self.assertAllClose(grad_scalar_jnp, grad_scalar_hijax, atol=1e-5, rtol=1e-5)
+
+
+  @jtu.sample_product(
+      optimize=['optimal', 'greedy', False, True, 'auto'],
+  )
+  def test_optimize(self, optimize):
+    x = self.rng().uniform(size=(2, 3))
+    y = self.rng().uniform(size=(3, 4))
+    z = self.rng().uniform(size=(4, 5))
+
+    # Multiple operands to test path optimization
+    expected = jnp.einsum("ij,jk,kl->il", x, y, z, optimize=optimize)
+    actual = hijax.einsum("ij,jk,kl->il", x, y, z, optimize=optimize)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_ellipsis(self):
+    # Test that Ellipsis works (via parse_einsum_input normalization)
+    x = self.rng().uniform(size=(2, 3, 4))
+    y = self.rng().uniform(size=(4, 5))
+
+    expected = jnp.einsum("...jk,kl->...jl", x, y)
+    actual = hijax.einsum("...jk,kl->...jl", x, y)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_vmap_ellipsis(self):
+    x = self.rng().uniform(size=(5, 2, 3, 4))
+    y = self.rng().uniform(size=(4, 5))
+
+    def f_raw(a, b):
+      return hijax.einsum("...jk,kl->...jl", a, b)
+    f = jax.vmap(f_raw, in_axes=(0, None))
+
+    def expected_fn(a, b):
+      return jnp.einsum("...jk,kl->...jl", a, b)
+    expected_fn_vmap = jax.vmap(expected_fn, in_axes=(0, None))
+    expected = expected_fn_vmap(x, y)
+
+    actual = f(x, y)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+    # Batching on non-zero axis
+    x2 = self.rng().uniform(size=(2, 5, 3, 4))
+    def g_raw(a, b):
+      return hijax.einsum("...jk,kl->...jl", a, b)
+    g = jax.vmap(g_raw, in_axes=(1, None))
+
+    g_expected = jax.vmap(expected_fn, in_axes=(1, None))
+    expected2 = g_expected(x2, y)
+
+    actual2 = g(x2, y)
+    self.assertAllClose(expected2, actual2, atol=1e-5, rtol=1e-5)
+
+  def test_linear_transpose(self):
+    x = self.rng().uniform(size=(2, 3))
+    y = self.rng().uniform(size=(3, 4))
+
+    def f(a):
+      return hijax.einsum("ij,jk->ik", a, y)
+
+    def f_ref(a):
+      return jnp.einsum("ij,jk->ik", a, y)
+
+    cotangent = jnp.ones((2, 4))
+
+    transposed_ref_fn = jax.linear_transpose(f_ref, x)
+    expected, = transposed_ref_fn(cotangent)
+
+    transposed_fn = jax.linear_transpose(f, x)
+    actual, = transposed_fn(cotangent)
+
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_precision(self):
+    x = self.rng().uniform(size=(2, 3))
+    y = self.rng().uniform(size=(3, 4))
+
+    for precision in [None, jax.lax.Precision.DEFAULT, jax.lax.Precision.HIGH, jax.lax.Precision.HIGHEST]:
+      expected = jnp.einsum("ij,jk->ik", x, y, precision=precision)
+      actual = hijax.einsum("ij,jk->ik", x, y, precision=precision)
+      self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_preferred_element_type(self):
+    x = self.rng().uniform(size=(2, 3)).astype(jnp.bfloat16)
+    y = self.rng().uniform(size=(3, 4)).astype(jnp.bfloat16)
+
+    # Preferred type is float32
+    expected = jnp.einsum("ij,jk->ik", x, y, preferred_element_type=np.float32)
+    actual = hijax.einsum("ij,jk->ik", x, y, preferred_element_type=np.float32)
+    self.assertEqual(actual.dtype, np.float32)
+    self.assertAllClose(expected, actual, atol=1e-3, rtol=1e-3)
+
+    # Preferred type is int32
+    x_f32 = x.astype(np.float32)
+    y_f32 = y.astype(np.float32)
+    expected_int = jnp.einsum("ij,jk->ik", x_f32, y_f32, preferred_element_type=np.int32)
+    actual_int = hijax.einsum("ij,jk->ik", x_f32, y_f32, preferred_element_type=np.int32)
+    self.assertEqual(actual_int.dtype, np.int32)
+    self.assertAllClose(expected_int, actual_int, atol=1e-5, rtol=1e-5)
+
+  def test_vmap_none(self):
+    x = self.rng().uniform(size=(2, 3))
+    y = self.rng().uniform(size=(3, 4))
+    f = jax.vmap(lambda a, b: hijax.einsum("ij,jk->ik", a, b), in_axes=(None, None), axis_size=5)
+    actual = f(x, y)
+    expected = jnp.stack([jnp.einsum("ij,jk->ik", x, y)] * 5)
+    self.assertAllClose(expected, actual, atol=1e-5, rtol=1e-5)
+
+  def test_jacobian(self):
+    x = self.rng().uniform(size=(3, 4))
+    y = self.rng().uniform(size=(4, 5))
+    def f(x, y):
+      return hijax.einsum("ij,jk->ik", x, y)
+    def f_ref(x, y):
+      return jnp.einsum("ij,jk->ik", x, y)
+
+    actual_jac = jax.jacobian(f)(x, y)
+    expected_jac = jax.jacobian(f_ref)(x, y)
+    self.assertAllClose(expected_jac, actual_jac, atol=1e-5, rtol=1e-5)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

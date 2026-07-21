@@ -26,6 +26,7 @@ from jax._src import api_util
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import dtypes
+from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import state
@@ -34,6 +35,7 @@ from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow import conditionals
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import mpmd
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec
@@ -137,35 +139,33 @@ def physicalize(f):
   def wrapper(*args, **kwargs):
     if kwargs:
       raise NotImplementedError()
-    flattened_args, treedef = jax.tree.flatten(args)
     debug_info = api_util.debug_info("physicalize", f, args, kwargs)
-    wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(f, debug_info=debug_info), treedef
+    args_ft = ft.flatten((args, kwargs))
+    in_avals_ft = args_ft.map(core.typeof)
+    closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+        f, in_avals_ft, debug_info
     )
-    avals = [core.typeof(a) for a in flattened_args]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
-    new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
+    new_jaxpr = physicalize_closed_jaxpr(closed_jaxpr)
     out_flat = core.eval_jaxpr(
-        new_jaxpr.jaxpr, new_jaxpr.consts, *flattened_args
+        new_jaxpr, new_jaxpr.consts, *args_ft.vals
     )
-    return tree_util.tree_unflatten(out_tree_thunk(), out_flat)
+    return tree_util.tree_unflatten(out_avals_ft.tree, out_flat)
 
   return wrapper
 
 
 @util.weakref_lru_cache
-def physicalize_closed_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
+def physicalize_closed_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
-  fun = functools.partial(physicalize_interp, jaxpr.jaxpr, jaxpr.consts)
+  fun = functools.partial(physicalize_interp, jaxpr, jaxpr.consts)
   in_avals = [_physical_aval(aval) for aval in jaxpr.in_avals]
-  flat_avals, treedef = tree_util.tree_flatten(in_avals)
+  in_avals_ft = ft.flatten_args(*in_avals)
   debug_info = api_util.debug_info("physicalize_closed_jaxpr", fun, (), {})
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info.with_unknown_names()), treedef
+  new_jaxpr, _ = pe.trace_to_jaxpr(
+      fun, in_avals_ft, debug_info.with_unknown_names()
   )
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
-  assert len(new_jaxpr.constvars) == len(consts), "Mismatched consts"
-  return core.ClosedJaxpr(new_jaxpr, consts)
+  assert len(new_jaxpr.constvars) == len(new_jaxpr.consts), "Mismatched consts"
+  return new_jaxpr
 
 
 def _physical_aval(aval):
@@ -189,16 +189,16 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
 
   in_avals = [_physical_aval(v.aval) for v in jaxpr.invars]
   const_avals = [_physical_aval(v.aval) for v in jaxpr.constvars]
-  flat_avals, treedef = jax.tree.flatten((const_avals, in_avals))
+  in_avals_ft = ft.flatten_args(const_avals, in_avals)
   debug_info = api_util.debug_info(
       "physicalize_jaxpr", _flat_jaxpr_eval, (const_avals, in_avals), {})
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(_flat_jaxpr_eval, debug_info=debug_info), treedef
+  # TODO: Use trace_to_jaxpr_nocache instead.
+  closed_jaxpr, _ = pe.trace_to_jaxpr(
+      _flat_jaxpr_eval, in_avals_ft, debug_info
   )
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, flat_avals)
-  assert not consts
+  assert not closed_jaxpr.consts
   new_jaxpr = pe.convert_invars_to_constvars(
-      new_jaxpr, len(tree_util.tree_leaves(const_avals))
+      closed_jaxpr, len(tree_util.tree_leaves(const_avals))
   )
   return new_jaxpr
 
@@ -302,16 +302,16 @@ def _pallas_call_physicalize_rule(
   _assert_no_fusion_types(ctx.avals_in)
   _assert_no_fusion_types(ctx.avals_out)
   with grid_mapping.trace_env():
-    new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, ()))
-  if diff := len(new_jaxpr.jaxpr.invars) - len(jaxpr.invars):
+    new_jaxpr = physicalize_closed_jaxpr(jaxpr)
+  if diff := len(new_jaxpr.invars) - len(jaxpr.invars):
     num_scratch_avals = len(grid_mapping.scratch_avals) + diff
     new_scratch_avals = tuple(v.aval for v in
-                              new_jaxpr.jaxpr.invars[-num_scratch_avals:])
+                              new_jaxpr.invars[-num_scratch_avals:])
     grid_mapping = grid_mapping.replace(
         scratch_avals=new_scratch_avals
     )
   return pallas_call.pallas_call_p.bind(
-      *args, jaxpr=new_jaxpr.jaxpr, grid_mapping=grid_mapping, **kwargs
+      *args, jaxpr=new_jaxpr, grid_mapping=grid_mapping, **kwargs
   )
 
 
@@ -355,7 +355,7 @@ def _custom_vjp_call_physicalize_rule(
   _assert_no_fusion_types(ctx.avals_out)
   new_jaxpr = physicalize_closed_jaxpr(call_jaxpr)
   fun = lu.wrap_init(core.jaxpr_as_fun(new_jaxpr),
-                     debug_info=call_jaxpr.jaxpr.debug_info)
+                     debug_info=call_jaxpr.debug_info)
   fwd = custom_derivatives.lift_fwd(num_consts, fwd_jaxpr_thunk)
   fwd_physicalized = _physicalize_transform(fwd)
   const_avals, _ = util.split_list(new_jaxpr.in_avals, [num_consts])
@@ -393,6 +393,26 @@ def _core_map_rule(ctx: Context, *args, jaxpr, **params):
 _physicalize_rules[pallas_core.core_map_p] = _core_map_rule
 
 
+def _mpmd_map_rule(ctx: Context, *args, jaxprs, meshes, external_meshes, **params):
+  _assert_no_fusion_types(ctx.avals_in)
+  _assert_no_fusion_types(ctx.avals_out)
+  all_meshes = meshes + external_meshes
+  new_jaxprs = []
+  for mesh, jaxpr in zip(meshes, jaxprs):
+    with mpmd.mpmd_map_tracing_context(mesh, all_meshes):
+      new_jaxprs.append(physicalize_jaxpr(jaxpr))
+  return mpmd.mpmd_map_p.bind(
+      *args,
+      jaxprs=tuple(new_jaxprs),
+      meshes=meshes,
+      external_meshes=external_meshes,
+      **params,
+  )
+
+
+_physicalize_rules[mpmd.mpmd_map_p] = _mpmd_map_rule
+
+
 def _run_scoped_rule(ctx: Context, *args, jaxpr, **params):
   _assert_no_fusion_types(ctx.avals_out)
   jaxpr = physicalize_jaxpr(jaxpr)
@@ -421,38 +441,38 @@ def _while_rule(
     cond_nconsts, **params
 ):
   _assert_no_fusion_types(ctx.avals_out)
-  cond_avals = [v.aval for v in cond_jaxpr.jaxpr.invars]
+  cond_avals = [v.aval for v in cond_jaxpr.invars]
   _, cond_in_avals = util.split_list(cond_avals, [cond_nconsts])
   _assert_no_fusion_types(cond_in_avals)
   new_cond_jaxpr = physicalize_closed_jaxpr(cond_jaxpr)
   new_num_cond_consts = (
       cond_nconsts
-      + len(new_cond_jaxpr.jaxpr.invars)
-      - len(cond_jaxpr.jaxpr.invars)
+      + len(new_cond_jaxpr.invars)
+      - len(cond_jaxpr.invars)
   )
 
-  body_avals = [v.aval for v in body_jaxpr.jaxpr.invars]
+  body_avals = [v.aval for v in body_jaxpr.invars]
   _, body_in_avals = util.split_list(body_avals, [body_nconsts])
   _assert_no_fusion_types(body_in_avals)
   new_body_jaxpr = physicalize_closed_jaxpr(body_jaxpr)
   new_num_body_consts = (
       body_nconsts
-      + len(new_body_jaxpr.jaxpr.invars)
-      - len(body_jaxpr.jaxpr.invars)
+      + len(new_body_jaxpr.invars)
+      - len(body_jaxpr.invars)
   )
   flat_args = tree_util.tree_leaves(args)
   cond_consts, body_consts, flat_args = util.split_list(
       flat_args, [new_num_cond_consts, new_num_body_consts]
   )
   assert len(flat_args) + len(body_consts) == len(
-      new_body_jaxpr.jaxpr.invars), (
+      new_body_jaxpr.invars), (
       f"Length mismatch: {len(flat_args) + len(body_consts)} !="
-      f" {len(new_body_jaxpr.jaxpr.invars)=}"
+      f" {len(new_body_jaxpr.invars)=}"
   )
   assert len(flat_args) + len(cond_consts) == len(
-      new_cond_jaxpr.jaxpr.invars), (
+      new_cond_jaxpr.invars), (
       f"Length mismatch: {len(flat_args) + len(cond_consts)} !="
-      f" {len(new_cond_jaxpr.jaxpr.invars)=}"
+      f" {len(new_cond_jaxpr.invars)=}"
   )
   return jax.lax.while_p.bind(
       *(cond_consts + body_consts + flat_args),
@@ -550,17 +570,18 @@ def _unpack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args):
 
 
 def _fusible_physicalize_rule(
-    _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func
+    _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func, **params
 ):
   consts, _ = util.split_list(consts_and_args, [num_consts])
-  new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
+  new_jaxpr = physicalize_closed_jaxpr(jaxpr.with_consts(consts))
   return fusible_p.bind(
       *consts_and_args,
-      jaxpr=new_jaxpr.jaxpr,
+      jaxpr=new_jaxpr,
       num_consts=num_consts,
       in_tree=in_tree,
       out_tree=out_tree,
       func=func,
+      **params,
   )
 
 

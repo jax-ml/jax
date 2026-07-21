@@ -14,7 +14,6 @@
 
 # Package for Mosaic-specific Pallas extensions
 
-load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
@@ -28,9 +27,10 @@ package(
     ],
 )
 
-py_library(
+pytype_strict_library(
     name = "mosaic_gpu",
     srcs = ["__init__.py"],
+    type_checking = "pyrefly",
     deps = [
         ":core",
         ":pallas_call_registration",
@@ -69,6 +69,7 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:debugging",
         "//jax/_src:dtypes",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:literals",
         "//jax/_src:mesh",
@@ -95,8 +96,11 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         "//jax",
+        "//jax/_src:api",
+        "//jax/_src:config",
         "//jax/_src:core",
         "//jax/_src:custom_batching",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:effects",
         "//jax/_src:frozen_dict",
@@ -120,8 +124,10 @@ pytype_strict_library(
         ":core",
         ":lowering",
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:debugging",
+        "//jax/_src:deprecations",
         "//jax/_src:dtypes",
         "//jax/_src:lax",
         "//jax/_src:literals",
@@ -144,6 +150,7 @@ pytype_strict_library(
         ":primitives",
         "//jax",
         "//jax/_src:core",
+        "//jax/_src:flattree",
         "//jax/_src:partial_eval",
         "//jax/_src:state_types",
         "//jax/_src:util",

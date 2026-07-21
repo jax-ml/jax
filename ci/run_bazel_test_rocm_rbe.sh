@@ -23,6 +23,7 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+echo "::group::Setup Environment" >&2
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
@@ -36,7 +37,7 @@ source "ci/utilities/setup_build_environment.sh"
 
 OVERRIDE_XLA_REPO=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+    OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
@@ -44,44 +45,10 @@ echo "Running RBE GPU tests..."
 
 TAG_FILTERS="jax_test_gpu,-config-cuda-only,-manual"
 
-TESTS_TO_IGNORE=(
-    -//tests/pallas:pallas_test_gpu
-    -//tests/pallas:ops_test_gpu
-    -//tests/pallas:ops_test_mgpu_gpu
-    -//tests/pallas:pallas_shape_poly_test_gpu
-    -//tests/pallas:pallas_vmap_test_gpu
-    -//tests/pallas:triton_pallas_test_gpu
-    -//tests:export_harnesses_multi_platform_test_gpu
-    -//tests:jet_test_gpu
-    -//tests:lax_autodiff_test_gpu
-    -//tests:lax_numpy_setops_test_gpu
-    -//tests:lax_numpy_test_gpu
-    -//tests:lax_test_gpu
-    -//tests:linalg_test_gpu
-    -//tests:logging_test_gpu
-    -//tests:random_lax_test_gpu
-    -//tests:scipy_signal_test_gpu
-    -//tests:stax_test_gpu
-    -//tests:ode_test_gpu
-    -//tests:lobpcg_test_gpu
-    -//tests:scipy_stats_test_gpu
-    -//tests:nn_test_gpu
-    -//tests:lax_scipy_sparse_test_gpu
-    -//tests:lax_scipy_spectral_dac_test_gpu
-    -//tests:lax_scipy_special_functions_test_gpu
-    -//tests:cholesky_update_test_gpu
-    -//tests:api_test_gpu
-    -//tests:ann_test_gpu
-    -//tests:experimental_rnn_test_gpu
-    -//tests:lax_vmap_test_gpu
-    -//tests:qdwh_test_gpu
-    -//tests:scaled_dot_test_gpu
-    -//tests:scipy_spatial_test_gpu
-    -//tests:shape_poly_test_gpu
-    -//tests:sparsify_test_gpu
-    -//tests:lax_numpy_reducers_test_gpu
-    -//tests:scipy_optimize_test_gpu
-)
+# JAXCI_GATE_TARGETS_FILE selects which Bazel target pattern file to use.
+# Defaults to the full CI suite; set to build/rocm/ci_blocking_test_targets.txt
+# for the PR blocking gate.
+TARGETS_FILE="${JAXCI_GATE_TARGETS_FILE:-build/rocm/ci_test_targets.txt}"
 
 for arg in "$@"; do
     if [[ "$arg" == "--config=multi_gpu" ]]; then
@@ -90,16 +57,16 @@ for arg in "$@"; do
     if [[ "$arg" == "--config=single_gpu" ]]; then
         TAG_FILTERS="${TAG_FILTERS},gpu,-multiaccelerator"
     fi
-    if [[ "$arg" == "--//jax:build_jaxlib=false" ]]; then
-        # tests to ignore for pre-built plugin wheels
-        TESTS_TO_IGNORE+=(
-            -//tests:buffer_callback_test_gpu
-        )
-    fi
 done
 
+TEST_ARTIFACTS_DIR="test-artifacts"
+mkdir -p "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
+
+echo "::group::Bazel ROCm RBE tests" >&2
 bazel --bazelrc=build/rocm/rocm.bazelrc test \
-    --config=rocm \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
+    --config=rocm_clang_hermetic \
     --config=rocm_rbe_dynamic \
     $OVERRIDE_XLA_REPO \
     --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -114,13 +81,10 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --color=yes \
     $@ \
     --spawn_strategy=local \
-    -- \
-    //tests:gpu_tests \
-    //tests:backend_independent_tests \
-    //tests/pallas:gpu_tests \
-    //tests/pallas:backend_independent_tests \
-    //jaxlib/tools:check_gpu_wheel_sources_test \
-    "${TESTS_TO_IGNORE[@]}"
+    --target_pattern_file="${TARGETS_FILE}" || bazel_retval=$?
+echo "::endgroup::" >&2
 
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+echo "::group::Cleanup" >&2
+ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
 exit "${bazel_retval:-0}"

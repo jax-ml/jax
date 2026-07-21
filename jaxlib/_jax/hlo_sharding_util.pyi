@@ -17,9 +17,10 @@
 """Utilities for manipulating HloSharding."""
 
 from collections.abc import Sequence
-
-from . import HloSharding as _HloSharding
+import jaxlib._hlo
 
 def PartiallyReplicateTiledShardingOnDims(
-    sharding: _HloSharding, dims: Sequence[int], /
-) -> _HloSharding: ...
+    sharding: jaxlib._hlo.HloSharding,
+    dims: Sequence[int],
+    /,
+) -> jaxlib._hlo.HloSharding: ...

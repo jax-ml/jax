@@ -86,6 +86,10 @@ on:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -108,14 +112,15 @@ jobs:
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
       JAXCI_BUILD_ARTIFACT_WITH_RBE: ${{ inputs.build_artifacts_with_rbe }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
         (contains(inputs.runner, 'linux-arm64') && 'linux arm64') ||
-        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, jaxlib=${{ inputs.jaxlib-version }}, CUDA=${{ inputs.cuda-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+        (contains(inputs.runner, 'windows-x86') && 'windows x86') }}, py${{ inputs.python }}, CUDA=${{ inputs.cuda-version }}, jaxlib=${{ inputs.jaxlib-version }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Download JAX CUDA wheels

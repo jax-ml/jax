@@ -18,9 +18,10 @@ from absl.testing import absltest
 
 import jax
 from jax._src import config
+from jax._src import dlpack as dlpack_src
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import xla_client
+from jax._src.lib import _jax
 import jax.dlpack
 import jax.numpy as jnp
 
@@ -63,7 +64,7 @@ class DLPackTest(jtu.JaxTestCase):
     regex_str = (r'UNIMPLEMENTED: Only DLPack tensors with trivial \(compact\) '
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
-      xla_client._xla.dlpack_managed_tensor_to_buffer(
+      _jax.dlpack_managed_tensor_to_buffer(
           y, client.devices()[0], None)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
@@ -164,6 +165,23 @@ class DLPackTest(jtu.JaxTestCase):
     # Verify the resulting value can be passed to a jit computation.
     z = jax.jit(lambda x: x + 1)(y)
     self.assertAllClose(x_np + dtype(1), z)
+
+  @jtu.run_on_devices("cuda")
+  def testPinnedTorchToJaxZeroCopy(self):
+    # A pinned CPU tensor advertises itself as kDLCUDAHost via
+    # __dlpack_device__(). Confirm that JAX imports it as a zero-copy view into
+    # the CUDA device's pinned_host memory space.
+    cuda_device = jax.devices("cuda")[0]
+    x = torch.arange(8, dtype=torch.float32).pin_memory()
+    self.assertEqual(
+        x.__dlpack_device__(),
+        (dlpack_src.DLDeviceType.kDLCUDAHost, 0))
+
+    arr = jax.dlpack.from_dlpack(x)
+    self.assertEqual(arr.sharding.memory_kind, "pinned_host")
+    self.assertEqual(arr.devices(), {cuda_device})
+    self.assertEqual(arr.unsafe_buffer_pointer(), x.data_ptr())
+    self.assertAllClose(arr, x.numpy())
 
 
 if __name__ == "__main__":

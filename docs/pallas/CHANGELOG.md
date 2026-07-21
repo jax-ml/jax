@@ -2,7 +2,7 @@
 
 # Pallas Changelog
 
-<!--* freshness: { reviewed: '2026-02-13' } *-->
+<!--* freshness: { reviewed: '2026-06-23' } *-->
 
 This is the list of changes specific to {class}`jax.experimental.pallas`.
 For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
@@ -13,17 +13,186 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Changes
+
+  * {func}`jax.experimental.pallas.kernel` now only aliases closed over or
+    passed in refs if the kernel writes to them. If you need aliasing without
+    an explicit write, use {func}`jax.experimental.pallas.tpu.touch`.
+
+### Triton
+
+The Triton backend is deprecated and will be removed in a future version of JAX.
+To keep using Pallas on GPU, please migrate to the Mosaic GPU backend. To keep
+using Triton, switch to the official Triton bindings and `jax_triton`.
+
+* New features
+
+  * Added {data}`jax.experimental.pallas.triton.CUSTOM_CALL_TARGET_NAME`, the
+    name of the custom call targeted by Pallas Triton. The exact value is not
+    guaranteed to be stable, but it is safe to assume that it is always aligned
+    with what the lowering emits. This is useful, for example, when exporting
+    a computation with Pallas Triton kernels via
+    {func}`jax.experimental.export.export`, since the corresponding custom call
+    is not considered export-stable and needs to be enabled explicitly.
+
 ### Mosaic GPU
 
 * New features
 
-  * Added `barrier_test` function; a non-blocking equivalent of `barrier_wait`.
+  * Added support for Ampere matrix multiply-accumulate instructions via
+    {func}`jax.experimental.pallas.mosaic_gpu.mma`.
+  * Added support for `cp.async` to
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem`.
+  * {func}`jax.experimental.pallas.mosaic_gpu.wgmma` now supports mixing the
+    e4m3 and e5m2 FP8 types across its two operands.
+  * Added support for manual "ready" barriers to
+    {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline_warp_specialized`.
+  * Added ``oob_fill_mode`` to
+    {class}`jax.experimental.pallas.mosaic_gpu.BlockSpec`, which controls
+    the behavior for out-of-bounds accesses during pipelined GMEM-to-SMEM
+    copies.
+
+* Changes
+
+    * Turned on Warpgroup lowering by default. If this causes regression or
+    breakages, switch back to
+    {data}`jax.experimental.pallas.mosaic_gpu.LoweringSemantics.Lane` in your
+    kernel's {class}`jax.experimental.pallas.mosaic_gpu.CompilerParams` and file
+    a bug.
+
+* Deprecations
+
+  * The `idx` parameter of {func}`jax.experimental.pallas.mosaic_gpu.load` is
+    deprecated. Index the ref explicitly via `ref.at[idx]` prior to loading
+    from it.
+
+## Released with JAX 0.10.2
+
+* New features
+
+  * Added {data}`jax.experimental.pallas.enable_poison_buffers` (config flag
+    `jax_pallas_poison_buffers`) to poison (initialize with NaNs or lowest
+    possible integers) any scratch buffers allocated by Pallas for debugging.
+
+* Deprecations
+
+  * `pl.debug_checks_enabled` is deprecated. Use `pl.enable_debug_checks.value`.
+  * `pl.dot` was moved into {mod}`jax.experimental.pallas.triton`.
+    Accessing it via {mod}`jax.experimental.pallas` is deprecated.
+    You can use {func}`jax.numpy.dot`, {func}`jax.numpy.einsum` or the `@`
+    operator instead in a TPU or MGPU kernel.
+
+### TPU
+
+* New features
+
+  * Added `jax_pallas_auto_assign_collective_ids` config flag to allow two new
+    custom semaphore barrier collective IDs modes: ('yes') assigning missing
+    collective IDs automatically or ('override') overridding all collective IDs
+    and assigning them automatically, both based on the serialized kernel hash.
+
+* Changes
+
+  * {class}`jax.experimental.pallas.tpu.CompilerParams` now defaults
+    ``needs_layout_passes`` to True. The layout passes are still a work in
+    progress. Please file a bug if you encounter a compilation error with
+    them enabled.
+  * {class}`jax.experimental.pallas.tpu.CompilerParams` now defaults
+    ``use_tc_tiling_on_sc`` to True for SparseCore kernels.
+
+* Removals
+
+  * Removed the previously deprecated
+    {class}`jax.experimental.pallas.tpu.KernelType` and
+    {func}`jax.experimental.pallas.tpu.repeat`.
+
+* Deprecations
+
+  * Deprecated `pltpu.HOST` and `pltpu.MemorySpace.HOST` in favor of `pl.HOST`.
+
+### Mosaic GPU
+
+* New features
+
+  * Support using {func}`jax.experimental.pallas.multiple_of` to specify
+    divisibility requirements on dynamic indices.
+  * Support allocating multidimensional `plgpu.Barrier`s and
+    `plgpu.ClusterBarrier`s, by providing a nD shape as the `num_barriers`
+    parameter.
+  * Support for TMEM references with batch dimensions. This includes indexing
+    over batch dimensions and `plgpu.async_store_tmem` support for TMEM
+    references with batch dimensions.
+  * Support TMA scatter.
+  * Rename `TMA_GATHER_INDICES_LAYOUT` to `TMA_INDICES_LAYOUT`.
+
+* Changes
+
+  * Breaking change: {func}`jax.experimental.pallas.program_id` and
+    {func}`jax.experimental.pallas.num_programs` no longer work inside
+    kernels defined via {func}`jax.experimental.pallas.mosaic_gpu.kernel`.
+    Use {func}`jax.lax.axis_index` and {func}`jax.lax.axis_size` instead.
+  * {func}`jax.experimental.pallas.mosaic_gpu.kernel` now has the same API as
+    {func}`jax.experimental.pallas.kernel`, meaning that it can be used as
+    a decorator and also uses ``out_type`` and ``scratch_types`` instead of
+    ``out_shape`` and ``scratch_shapes``.
+
+* Removals
+
+  * Deleted `plgpu.unswizzle_ref` and `plgpu.untile_ref`.
+
+* Deprecations
+
+  * Using {func}`jax.experimental.pallas.pallas_call` for Mosaic GPU kernels
+    is deprecated. Please migrate to
+    {func}`jax.experimental.pallas.mosaic_gpu.kernel` and
+    {func}`jax.experimental.pallas.mosaic_gpu.emit_pipeline`.
+
+## Released with JAX 0.10.1
+
+* Changes
+
+  * Added {func}`jax.experimental.pallas.align_to`, a utility that rounds a
+    value up to the nearest multiple of a given alignment.
+  * {func}`jax.experimental.pallas.pallas_call` no longer supports checkify.
+    We expect this change to affect few users, as in our experience most
+    kernels either perform no checking or use
+    {func}`jax.experimental.pallas.debug_check` for conditionally-enabled
+    runtime checks.
+  * {func}`jax.experimental.pallas.kernel` now always aliases Refs that are
+    passed in or closed-over.
+
+### TPU
+
+* Removals
+
+  * Removed the `kernel_type` field from
+    {class}`jax.experimental.pallas.tpu.CompilerParams`. It was only used for
+    writing SparseCore kernels via {func}`jax.experimental.pallas.pallas_call`,
+    which is now unsupported. The recommended API for SparseCore kernels is
+    {func}`jax.experimental.pallas.kernel`.
+
+
+### Mosaic GPU
+
+* New features
+
+  * Added {func}`jax.experimental.pallas.mosaic_gpu.barrier_test` function; a
+    non-blocking equivalent of
+    {func}`jax.experimental.pallas.mosaic_gpu.barrier_wait` only supported in
+    a warp context.
+
+* Changes
+
+  * Breaking change: removed `plgpu.TransposeTransform`.
 
 ## Released with JAX 0.10.0
 
 * Changes
 
-  * Breaking change: refactored `pl.kernel` to use `out_type` instead of `out_shape` and `scratch_types` instead of `scratch_shapes`. Existing usages calling `pl.kernel` with these keyword arguments must be updated.
+  * Breaking change: refactored `pl.kernel` to use `out_type` instead of
+    `out_shape` and `scratch_types` instead of `scratch_shapes`. Existing
+    usages calling {func}`jax.experimental.pallas.kernel` with these keyword
+    arguments must be updated.
 
 ### TPU
 

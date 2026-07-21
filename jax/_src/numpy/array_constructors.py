@@ -27,6 +27,7 @@ from jax._src import literals
 from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.lax import lax
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import util
 from jax._src.typing import Array, ArrayLike, DTypeLike
@@ -274,7 +275,7 @@ def array(object: Any, dtype: DTypeLike | None = None, *args, copy: bool = True,
         device_id = None
       else:
         device_id = gpu_plugin_extension.get_device_ordinal(cai["data"][0])
-      object = xc._xla.cuda_array_interface_to_buffer(
+      object = _jax.cuda_array_interface_to_buffer(
           cai=cai, gpu_backend=backend, device_id=device_id)
 
   # To handle nested lists & tuples, flatten the tree and process each leaf.

@@ -2328,6 +2328,10 @@ def absolute(x: ArrayLike, /) -> Array:
     with the same shape as ``x``. For complex valued input, :math:`a + ib`,
     the absolute value is :math:`\sqrt{a^2+b^2}`.
 
+  Note:
+    For complex inputs containing ``NaN`` in the real or imaginary part,
+    ``abs`` will always return ``NaN``.
+
   Examples:
     >>> x1 = jnp.array([5, -2, 0, 12])
     >>> jnp.absolute(x1)
@@ -2585,11 +2589,12 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
 def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   # see float_divmod in floatobject.c of CPython
   mod = lax.rem(x1, x2)
-  div = lax.div(lax.sub(x1, mod), x2)
+  x1_corrected = _where(x2 == 0, x1, lax.sub(x1, mod))
+  div = lax.div(x1_corrected, x2)
 
   ind = lax.bitwise_and(mod != 0, lax.sign(x2) != lax.sign(mod))
   mod = lax.select(ind, mod + x2, mod)
-  div = lax.select(ind, div - _constant_like(div, 1), div)
+  div = lax.select(ind, div - 1.0, div)
 
   return lax.round(div), mod
 
@@ -3300,7 +3305,7 @@ def rad2deg(x: ArrayLike, /) -> Array:
     >>> jnp.rad2deg(x)
     Array([ 45.     ,  90.     , 120.00001], dtype=float32)
     >>> x * 180 / pi
-    Array([ 45.,  90., 120.], dtype=float32)
+    Array([ 45.     ,  90.     , 119.99999], dtype=float32)
   """
   x, = promote_args_inexact("rad2deg", x)
   return lax.mul(x, _lax_const(x, 180 / np.pi))
@@ -3701,7 +3706,8 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_dtypes_inexact(x1, x2)
   zero = _lax_const(x1, 0)
   return _where(lax.lt(x1, zero), zero,
-                _where(lax.gt(x1, zero), _lax_const(x1, 1), x2))
+                _where(lax.gt(x1, zero), _lax_const(x1, 1),
+                       _where(lax._isnan(x1), x1, x2)))
 
 
 @export

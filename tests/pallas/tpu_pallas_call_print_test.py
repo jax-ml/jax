@@ -33,10 +33,12 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
+@jtu.skip_under_pytest("Requires pytest -s (no capture) to pass, which is not enabled in CI")
 @jtu.thread_unsafe_test_class()  # debug print test is not thread safe
 class PallasCallPrintTest(ptu.PallasTPUTest):
 
   def test_debug_print(self):
+    @jax.jit(compiler_options={'xla_tpu_enable_log_recorder': 'true'})
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -45,20 +47,35 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       pl.debug_print('It works!')
 
     x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({'xla_tpu_enable_log_recorder': 'true'})
-    )
     with jtu.capture_stderr() as get_output:
-      jax.block_until_ready(compiled_kernel(x))
+      jax.block_until_ready(kernel(x))
     self.assertIn('It works!', get_output())
+
+  @parameterized.product(arg_type=[int, float])
+  def test_debug_print_with_values(self, arg_type):
+    @jax.jit(compiler_options={'xla_tpu_enable_log_recorder': 'true'})
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    def kernel(o_ref):
+      del o_ref  # Unused.
+      pl.debug_print('DONE ', arg_type(123))
+
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(kernel())
+
+    if arg_type is int:
+      self.assertIn('DONE s32[] 123', get_output())
+    else:
+      self.assertIn('DONE f32[] 123', get_output())
 
   def test_debug_print_in_index_map(self):
     def index_map(i):
       pl.debug_print('It works!')
       return (i, 0)
 
+    @jax.jit(compiler_options={'xla_tpu_enable_log_recorder': 'true'})
     @functools.partial(
         self.pallas_call,
         grid=(1,),
@@ -69,45 +86,52 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       o_ref[...] = x_ref[...]
 
     x = jnp.arange(8 * 128, dtype=jnp.float32).reshape((8, 128))
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({'xla_tpu_enable_log_recorder': 'true'})
-    )
     with jtu.capture_stderr() as get_output:
-      jax.block_until_ready(compiled_kernel(x))
+      jax.block_until_ready(kernel(x))
     self.assertIn('It works!', get_output())
 
-  @parameterized.product(dtype=[jnp.int32, jnp.float32])
-  def test_debug_print_with_values(self, dtype):
+  @parameterized.parameters(
+      (jnp.int32, 42),
+      (jnp.uint32, 42),
+      (jnp.int32, -42),
+      (jnp.float32, 42.0),
+  )
+  def test_debug_print_with_formatting(self, dtype, value):
+    @jax.jit(compiler_options={'xla_tpu_enable_log_recorder': 'true'})
     @functools.partial(
         self.pallas_call,
         in_specs=(pl.BlockSpec(memory_space=pltpu.SMEM),),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )
     def kernel(x_ref, o_ref):
-      if dtype == jnp.int32:
-        pl.debug_print('BEGIN1 x[0] == {}', x_ref[0])
-        pl.debug_print(
-            'BEGIN2 x[0] == {} ; x[1] == {} ; END', x_ref[0], x_ref[1]
-        )
-      else:
-        pl.debug_print('BEGIN1 x[0] == ', x_ref[0])
+      del o_ref  # Only used for awaiting the result.
+      pl.debug_print('x[0] == {}', x_ref[0])
 
-    x = jnp.array([42, 24], dtype=dtype)
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({'xla_tpu_enable_log_recorder': 'true'})
-    )
+    x = jnp.array([value], dtype=dtype)
     with jtu.capture_stderr() as get_output:
-      jax.block_until_ready(compiled_kernel(x))
+      jax.block_until_ready(kernel(x))
     output = get_output()
-    if dtype == jnp.int32:
-      self.assertIn('BEGIN1 x[0] == 42', output)
-      self.assertIn('BEGIN2 x[0] == 42 ; x[1] == 24 ; END', output)
-    else:
-      self.assertIn('BEGIN1 x[0] == f32[] 42', output)
+    self.assertIn(f'x[0] == {value}', output)
+
+  @parameterized.parameters(
+      'x[0] == {} and x[1] == {}',
+      'x[0] == {} and x[1] == {} and trailing text',
+  )
+  def test_debug_print_multiple_with_formatting(self, fmt):
+    @jax.jit(compiler_options={'xla_tpu_enable_log_recorder': 'true'})
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+    )
+    def kernel(x_ref, o_ref):
+      del o_ref  # Only used for awaiting the result.
+      pl.debug_print(fmt, x_ref[0], x_ref[1])
+
+    x = jnp.array([1, 2], dtype=jnp.int32)
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(kernel(x))
+    output = get_output()
+    self.assertIn(fmt.format(x[0], x[1]), output)
 
   @parameterized.named_parameters(
       (f"{'_'.join(map(str, shape))}_{dtype.__name__}", shape, dtype)
@@ -122,6 +146,7 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
       for dtype in (jnp.int32, jnp.uint32, jnp.float32)
   )
   def test_debug_print_vector(self, shape, dtype):
+    @jax.jit(compiler_options={"xla_tpu_enable_log_recorder": "true"})
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, dtype),
@@ -132,13 +157,8 @@ class PallasCallPrintTest(ptu.PallasTPUTest):
 
     n = np.prod(shape)
     x = jnp.arange(n, dtype=dtype).reshape(shape)
-    compiled_kernel = (
-        jax.jit(kernel)
-        .lower(x)
-        .compile({"xla_tpu_enable_log_recorder": "true"})
-    )
     with jtu.capture_stderr() as get_output:
-      jax.block_until_ready(compiled_kernel(x))
+      jax.block_until_ready(kernel(x))
     output = get_output()
     numbers = [
         int(num)

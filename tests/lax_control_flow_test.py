@@ -408,7 +408,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return total
 
     cfun = jax.jit(sum_first_n)
-    x = self.rng().randn(10).astype(jnp.float_)
+    x = self.rng().randn(10).astype(float)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), np.sum(x[:num]),
@@ -666,7 +666,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return total
 
     cfun = jax.jit(sum_first_n)
-    x = self.rng().randn(10).astype(jnp.float_)
+    x = self.rng().randn(10).astype(float)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), np.sum(x[:num]),
@@ -686,7 +686,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return out_val['total']
 
     cfun = jax.jit(sum_first_n)
-    x = self.rng().randn(10).astype(jnp.float_)
+    x = self.rng().randn(10).astype(float)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), np.sum(x[:num]),
@@ -706,7 +706,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return tot
 
     cfun = jax.jit(sum_first_n)
-    x = self.rng().randn(10).astype(jnp.float_)
+    x = self.rng().randn(10).astype(float)
 
     for num in [0, 5, 10, 15]:
       self.assertAllClose(sum_first_n(x, num), np.sum(x[:num]),
@@ -1851,12 +1851,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     n_out = 1
     length = 3
 
-    W_trans = r.randn(n_hid, n_hid + n_in).astype(jnp.float_)
-    W_out = r.randn(n_out, n_hid + n_in).astype(jnp.float_)
+    W_trans = r.randn(n_hid, n_hid + n_in).astype(float)
+    W_out = r.randn(n_out, n_hid + n_in).astype(float)
     params = W_trans, W_out
 
-    inputs = r.randn(length, n_in).astype(jnp.float_)
-    targets = r.randn(length, n_out).astype(jnp.float_)
+    inputs = r.randn(length, n_in).astype(float)
+    targets = r.randn(length, n_out).astype(float)
 
     def step(params, state, input):
       W_trans, W_out = params
@@ -1900,8 +1900,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     # we can vmap to batch things
     batch_size = 7
-    batched_inputs = r.randn(batch_size, length, n_in).astype(jnp.float_)
-    batched_targets = r.randn(batch_size, length, n_out).astype(jnp.float_)
+    batched_inputs = r.randn(batch_size, length, n_in).astype(float)
+    batched_targets = r.randn(batch_size, length, n_out).astype(float)
     batched_loss = jax.vmap(lambda x, y: loss(params, x, y))
     losses = batched_loss(batched_inputs, batched_targets)
     expected = np.stack(list(map(lambda x, y: loss(params, x, y),
@@ -2671,11 +2671,11 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr, eqn = new_jaxpr()
-    eqn.params['num_consts'] = -3
+    eqn.params['ft_in'] = -3
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        re.escape('invalid scan param num_consts of type int, '
-                  'non-negative int required: -3'),
+        re.escape('invalid scan param ft_in of type int, '
+                  'FlatTree required: -3'),
         lambda: core.check_jaxpr(jaxpr))
 
   def test_cond_typecheck_param(self):
@@ -2689,9 +2689,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     eqn.params['branches'] = (4, 2)
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        re.escape('invalid cond param branches of type tuple, '
-                  'tuple of ClosedJaxpr required: (4, 2)'),
-        lambda: core.check_jaxpr(jaxpr))
+        re.escape(
+            "invalid cond param branches of type tuple, "
+            "tuple of closed Jaxpr required: (4, 2)"
+        ),
+        lambda: core.check_jaxpr(jaxpr),
+    )
 
   def test_cond_transformation_rule_with_consts(self):
     # https://github.com/jax-ml/jax/pull/9731

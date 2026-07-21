@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <functional>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"
@@ -36,12 +37,21 @@ class WeakKeyWeakValueCache {
  public:
   static void Register(nanobind::module_& m);
 
- private:
   // Factory function. Use this instead of the constructor since it populates
   // the weakref_callback_.
+  static nb_class_ptr<WeakKeyWeakValueCache> Create(
+      std::function<nanobind::object(nanobind::handle)> fn);
+
+  // Factory for Python callable (shims to C++ factory)
   static nb_class_ptr<WeakKeyWeakValueCache> Create(nanobind::callable fn);
 
-  explicit WeakKeyWeakValueCache(nanobind::callable fn) : fn_(std::move(fn)) {}
+  // Direct C++ call interface
+  nanobind::object Call(nanobind::handle self_obj, nanobind::handle x);
+
+ private:
+  explicit WeakKeyWeakValueCache(
+      std::function<nanobind::object(nanobind::handle)> fn)
+      : fn_(std::move(fn)) {}
   template <typename U, class... Args>
   friend nb_class_ptr<U> make_nb_class(Args&&... args);
 
@@ -56,7 +66,8 @@ class WeakKeyWeakValueCache {
   static int tp_clear(PyObject* self_obj);
   static PyType_Slot slots_[];
 
-  nanobind::callable fn_;
+  std::function<nanobind::object(nanobind::handle)> fn_;
+  nanobind::callable py_fn_;  // For GC traversal if created from Python
   nanobind::callable weakref_callback_;
 
   // Maps id(key) -> (weakref(key), weakref(value))

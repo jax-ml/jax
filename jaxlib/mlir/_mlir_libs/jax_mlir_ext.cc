@@ -306,7 +306,7 @@ NB_MODULE(_jax_mlir_ext, m) {
 
   m.def(
       "register_dialects",
-      [](PyDialectRegistry& registry) {
+      [](PyDialectRegistry& registry, bool register_pipelines) {
         MlirDialectRegistry c_registry = registry.get();
 #define REGISTER_DIALECT(name)                                           \
   MlirDialectHandle name##_dialect = mlirGetDialectHandle__##name##__(); \
@@ -330,17 +330,19 @@ NB_MODULE(_jax_mlir_ext, m) {
         REGISTER_DIALECT(llvm);
 #undef REGISTER_DIALECT
 
-        mlirMosaicGpuRegisterSerdePass();
-        mlirRegisterTransformsPasses();
-        // For Shardy
-        mlirRegisterAllSdyPassesAndPipelines();
-        mlirRegisterAllXlaSdyPassesAndPipelines();
-        // Transforms used by JAX.
-        mlirRegisterTransformsStripDebugInfoPass();
+        if (register_pipelines) {
+          mlirMosaicGpuRegisterSerdePass();
+          mlirRegisterTransformsPasses();
+          // For Shardy
+          mlirRegisterAllSdyPassesAndPipelines();
+          mlirRegisterAllXlaSdyPassesAndPipelines();
+          // Transforms used by JAX.
+          mlirRegisterTransformsStripDebugInfoPass();
+        }
       },
-      nb::arg("arg"),
-      nb::sig(
-          "def register_dialects(arg: mlir.ir.DialectRegistry, /) -> None"));
+      nb::arg("arg"), nb::arg("register_pipelines") = true,
+      nb::sig("def register_dialects(arg: mlir.ir.DialectRegistry, /, "
+              "register_pipelines: bool = True) -> None"));
 
   m.def(
       "enter_multi_threaded_execution",

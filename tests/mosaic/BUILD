@@ -40,7 +40,9 @@ jax_multiplatform_test(
     srcs = ["gpu_test.py"],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
         "gpu_h100",
+        "gpu_h100_x32",
         "gpu_b200",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
@@ -82,8 +84,8 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "gpu_test_multidevice",
-    srcs = ["gpu_test_multidevice.py"],
+    name = "gpu_multidevice_test",
+    srcs = ["gpu_multidevice_test.py"],
     enable_backends = [],
     enable_configs = [
         "gpu_h100x2",
@@ -100,8 +102,8 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "gpu_test_distributed",
-    srcs = ["gpu_test_distributed.py"],
+    name = "gpu_distributed_test",
+    srcs = ["gpu_distributed_test.py"],
     args = [
         "--num_processes=2",
         "--gpus_per_process=1",
@@ -111,7 +113,7 @@ jax_multiplatform_test(
         "gpu_h100x2",
         "gpu_b200x2",
     ],
-    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0 --xla_gpu_experimental_enable_nvshmem=true"},
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
     tags = ["multiaccelerator"],
     deps = [
         "//jax/_src:test_multiprocess",
@@ -172,7 +174,8 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_b200",
     ],
-    shard_count = 5,
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0 --xla_gpu_enable_triton_gemm=0"},
+    shard_count = 10,
     tags = [
         "noasan",
     ],

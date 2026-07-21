@@ -428,7 +428,7 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   Examples:
     >>> p = jnp.array([2, 5, 1])
     >>> jnp.polyval(p, 3)
-    Array(34., dtype=float32)
+    Array(34, dtype=int32)
 
     If ``x`` is a 2D array, ``polyval`` returns 2D-array with same shape as
     that of ``x``:
@@ -437,12 +437,12 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
     ...                [3, 4, 7],
     ...                [1, 3, 5]])
     >>> jnp.polyval(p, x)
-    Array([[ 19.,   8.,  76.],
-           [ 34.,  53., 134.],
-           [  8.,  34.,  76.]], dtype=float32)
+    Array([[ 19,   8,  76],
+           [ 34,  53, 134],
+           [  8,  34,  76]], dtype=int32)
   """
   p, x = ensure_arraylike("polyval", p, x)
-  p_arr, x_arr = promote_dtypes_inexact(p, x)
+  p_arr, x_arr = promote_dtypes(p, x)
   del p, x
   shape = lax.broadcast_shapes(p_arr.shape[1:], x_arr.shape)
   y = lax.full_like(x_arr, 0, shape=shape, dtype=x_arr.dtype)

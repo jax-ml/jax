@@ -69,7 +69,7 @@ def _linear_indices_and_weights(coordinate: Array) -> list[tuple[Array, ArrayLik
   return [(index, lower_weight), (index + 1, upper_weight)]
 
 
-@functools.partial(api.jit, static_argnums=(2, 3, 4))
+@api.jit(static_argnums=(2, 3, 4))
 def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
                      order: int, mode: str, cval: ArrayLike) -> Array:
   input_arr = jnp.asarray(input)

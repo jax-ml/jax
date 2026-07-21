@@ -1348,7 +1348,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     def dce_jaxpr_as_fun(jaxpr, used_outs):
       jaxpr_, _ = pe.dce_jaxpr(jaxpr, used_outs)
-      fun = core.jaxpr_as_fun(pe.close_jaxpr(jaxpr_))
+      fun = core.jaxpr_as_fun(jaxpr_)
       return lambda *args: fun(*args)[0]
 
     f0 = dce_jaxpr_as_fun(jaxpr, [True, False])
@@ -1785,6 +1785,33 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = (2., jnp.cos(1.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_nondiff_argnums_unhashable(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def f(lst, x):
+      return lst[0] * jnp.sin(x)
+    def f_fwd(lst, x):
+      return f(lst, x), jnp.cos(x)
+    def f_bwd(lst, cos_x, g):
+      return (lst[0] * cos_x * g,)
+    f.defvjp(f_fwd, f_bwd)
+
+    lst = [2.]  # unhashable
+
+    ans = f(lst, 3.)
+    expected = 2. * jnp.sin(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(f, argnums=1)(lst, 3.)
+    expected = 2. * jnp.cos(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = jax.jit(lambda x: api.grad(f, argnums=1)(lst, x))(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = jax.vmap(api.grad(lambda x: f(lst, x)))(jnp.arange(3.))
+    expected = 2. * jnp.cos(jnp.arange(3.))
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_nondiff_argnums_argnames(self):
     @partial(jax.custom_vjp, nondiff_argnums=(0,), nondiff_argnames=('g',))
     def app(f, g, x):
@@ -1896,6 +1923,27 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
       _ = g(2, 3.)
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
+      _ = api.grad(g, 1)(2., 3.)
+
+  def test_nondiff_arg_nested_tracer_error(self):
+    # Like test_nondiff_arg_tracer_error, but with the tracer hidden inside a
+    # container in the nondiff_argnums slot.
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def f(xs, y):
+      return xs[0] * y
+    def f_fwd(xs, y):
+      return f(xs, y), jnp.cos(y)
+    def f_rev(xs, cos_y, g):
+      return (cos_y * g,)
+    f.defvjp(f_fwd, f_rev)
+
+    @jit
+    def g(x, y):
+      return f((x,), y)
+
+    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
+      _ = g(2., 3.)
     with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
       _ = api.grad(g, 1)(2., 3.)
 
@@ -2271,6 +2319,68 @@ class CustomVJPTest(jtu.JaxTestCase):
     ans = api.grad(g)(2.)
     expected = 4. * api.grad(lambda x: jnp.sin(jnp.sin(x)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_pytree_arg(self):
+    @jax.custom_vjp
+    def f(xy):
+      return xy['a'] * xy['b']
+    def f_fwd(xy):
+      return f(xy), xy
+    def f_bwd(xy, g):
+      return ({'a': g * xy['b'], 'b': g * xy['a']},)
+    f.defvjp(f_fwd, f_bwd)
+
+    @jax.remat
+    def g(xy):
+      return jnp.sin(f(xy))
+
+    xy = {'a': 2., 'b': 3.}
+    ans = g(xy)
+    expected = np.sin(2. * 3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(g)(xy)
+    expected = {'a': np.cos(6.) * 3., 'b': np.cos(6.) * 2.}
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_remat_nondiff_argnums(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def f(k, x):
+      return jnp.sin(k * x)
+    def f_fwd(k, x):
+      return f(k, x), jnp.cos(k * x)
+    def f_bwd(k, cos_kx, g):
+      return (k * cos_kx * g,)
+    f.defvjp(f_fwd, f_bwd)
+
+    @jax.remat
+    def g(x):
+      return f(2., x) * 3.
+
+    ans = g(0.5)
+    expected = 3. * np.sin(2. * 0.5)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(g)(0.5)
+    expected = 3. * 2. * np.cos(2. * 0.5)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_symbolic_zeros_nondiff_argnums(self):
+    # With symbolic_zeros=True, fwd should receive nondiff args raw, and only
+    # diff args wrapped as CustomVJPPrimal (with a bool perturbed flag).
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    def f(k, x):
+      return k * x
+    def f_fwd(k, x):
+      self.assertIsInstance(k, float)
+      self.assertIsInstance(x.perturbed, bool)
+      return f(k, x.value), None
+    def f_bwd(k, _, g):
+      return (k * g,)
+    f.defvjp(f_fwd, f_bwd, symbolic_zeros=True)
+
+    ans = api.grad(lambda x: f(2., x))(3.)
+    self.assertAllClose(ans, 2., check_dtypes=False)
 
   def test_remat_higher_order(self):
     @jax.custom_vjp
@@ -3208,7 +3318,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     def dce_jaxpr_as_fun(jaxpr, used_outs):
       jaxpr_, _ = pe.dce_jaxpr(jaxpr, used_outs)
-      fun = core.jaxpr_as_fun(pe.close_jaxpr(jaxpr_))
+      fun = core.jaxpr_as_fun(jaxpr_)
       return lambda *args: fun(*args)[0]
 
     f0 = dce_jaxpr_as_fun(jaxpr, [True, False])
@@ -3310,8 +3420,58 @@ class CustomVJP3Test(CustomVJPTest):
   def test_symbolic_zero_custom_vjp_bwd_shape_error(self): pass
   def test_symbolic_zeros_remat(self): pass
   def test_dce(self): pass
-  def test_pretty_print(self): pass
-  def test_custom_lin_pretty_print(self): pass
+
+  def test_pretty_print(self):
+    @jax.custom_vjp
+    def f(x):
+      return x + 1
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(_, g):
+      return g
+    f.defvjp(f_fwd, f_bwd)
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(f)(x)
+    actual = jaxpr.pretty_print(use_color=False)
+    expected = textwrap.dedent(
+        """
+        { lambda ; a:f32[1]. let
+            b:f32[1] = call_hi_primitive[_prim=CustomVJPTraced] a
+          in (b,) }
+        """).strip()
+    self.assertEqual(actual, expected)
+
+  def test_custom_lin_pretty_print(self):
+    @jax.custom_vjp
+    def f(x):
+      return x + 1
+
+    def f_fwd(x):
+      return f(x), ()
+
+    def f_bwd(_, g):
+      return g
+    f.defvjp(f_fwd, f_bwd)
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(lambda x: jax.jvp(f, (x,), (x,)))(x)
+    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [False, True])
+    actual = jaxpr.pretty_print(use_color=False)
+    expected = textwrap.dedent(
+        """
+        { lambda ; a:f32[1]. let
+            b:f32[1] = call_hi_primitive_linearized[
+              _prim=CustomVJPTraced
+              nz_in_flat=(True,)
+              nz_out_flat=(True,)
+              residuals_tree=...
+            ] a
+          in (b,) }
+        """).strip()
+    self.assertEqual(actual, expected)
 
   # vmap closure: don't support anymore, but raise good errors
   def test_closed_over_vmap_tracer(self):
@@ -3374,6 +3534,23 @@ class CustomVJP3Test(CustomVJPTest):
 
     with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
       jtu.check_grads(h, (jnp.float32(3.14),), order=1, modes=['rev'])
+
+  # improved error message (classic raises "CustomVJPPrimal ... is not a valid
+  # JAX type" here instead)
+  def test_jvp_error_symbolic_zeros(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+    def f_fwd(x):
+      return f(x), jnp.cos(x)
+    def f_rev(cos_x, g):
+      return (2 * cos_x * g.value,)
+    f.defvjp(f_fwd, f_rev, symbolic_zeros=True)
+
+    self.assertRaisesRegex(
+        TypeError,
+        r"can't apply forward-mode autodiff \(jvp\) to a custom_vjp function.",
+        lambda: api.jvp(f, (3.,), (1.,)))
 
   # improved error message
   def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
@@ -4094,6 +4271,16 @@ class CustomApiTest(jtu.JaxTestCase):
       for methods in it.permutations(['defvjp', 'def_vmap']):
         for method in methods:
           self.assertIsInstance(getattr(f, method), Callable)
+
+
+@jtu.with_config(jax_remat3=True)
+class CustomJVPRemat3Test(CustomJVPTest):
+  ...
+
+
+@jtu.with_config(jax_remat3=True)
+class CustomVJP3Remat3Test(CustomVJP3Test):
+  ...
 
 
 if __name__ == '__main__':

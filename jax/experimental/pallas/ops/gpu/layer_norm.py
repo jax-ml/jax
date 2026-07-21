@@ -298,10 +298,8 @@ def layer_norm_backward(
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=[3, 4, 5, 6, 7])
-@functools.partial(jax.jit, static_argnames=["num_warps", "num_stages",
-                                             "num_stages", "eps",
-                                             "backward_pass_impl",
-                                             "interpret"])
+@jax.jit(static_argnames=["num_warps", "num_stages", "eps",
+                          "backward_pass_impl", "interpret"])
 def layer_norm(
     x, weight, bias,
     num_warps: int | None = None,
@@ -334,7 +332,7 @@ def layer_norm(
 layer_norm.defvjp(layer_norm_forward, layer_norm_backward)
 
 
-@functools.partial(jax.jit, static_argnames=["eps"])
+@jax.jit(static_argnames=["eps"])
 @functools.partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def layer_norm_reference(x, weight, bias, *, eps: float = 1e-5):
   mean = jnp.mean(x, axis=1)

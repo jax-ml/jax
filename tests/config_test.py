@@ -41,6 +41,7 @@ class InvalidBool:
     raise ValueError("invalid bool")
 
 
+@jtu.thread_unsafe_test_class()
 class ConfigTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": "_enum", "config_name": "jax_test_enum_config",
@@ -121,6 +122,25 @@ class ConfigTest(jtu.JaxTestCase):
     with jtu.global_config_context(jax_platforms='platform_A'):
       cloud_tpu_init()
       self.assertEqual(config.jax_platforms.value, 'platform_A')
+
+  def test_trace_context_names(self):
+    self.assertLen(config.trace_context_names(), len(config.trace_context()))
+
+  def test_config_decorator_reentrancy(self):
+    cfg = jax_test_bool_config
+    self.assertTrue(cfg.value)
+
+    @cfg(False)
+    def decorated_func(recurse):
+      if recurse:
+        decorated_func(False)
+
+    # Call it with recursion
+    decorated_func(True)
+
+    # Outside, it should be restored to True
+    self.assertTrue(cfg.value)
+
 
 
 if __name__ == '__main__':

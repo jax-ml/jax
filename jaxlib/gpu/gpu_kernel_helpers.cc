@@ -28,10 +28,8 @@ limitations under the License.
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
-namespace {
-std::string ErrorString(gpuError_t error) { return gpuGetErrorString(error); }
-
 #ifdef JAX_GPU_CUDA
+std::string ErrorString(cudaError_t error) { return cudaGetErrorString(error); }
 
 std::string ErrorString(CUresult error) {
   const char* str;
@@ -46,11 +44,11 @@ std::string ErrorString(CUresult error) {
       error);
 }
 
-std::string ErrorString(gpusparseStatus_t status) {
+std::string ErrorString(cusparseStatus_t status) {
   return cusparseGetErrorString(status);
 }
 
-std::string ErrorString(gpusolverStatus_t status) {
+std::string ErrorString(cusolverStatus_t status) {
   switch (status) {
     case CUSOLVER_STATUS_SUCCESS:
       return "cuSolver success.";
@@ -81,7 +79,7 @@ std::string ErrorString(gpusolverStatus_t status) {
   }
 }
 
-std::string ErrorString(gpublasStatus_t status) {
+std::string ErrorString(cublasStatus_t status) {
   switch (status) {
     case CUBLAS_STATUS_SUCCESS:
       return "cuBlas success";
@@ -158,6 +156,8 @@ std::string ErrorString(cufftResult status) {
 }
 
 #else
+
+std::string ErrorString(hipError_t error) { return hipGetErrorString(error); }
 
 std::string ErrorString(hipsparseStatus_t status) {
   // TODO(reza): check and see if we can use hipify
@@ -249,65 +249,7 @@ std::string ErrorString(hipblasStatus_t status) {
   }
 }
 
-#endif
 
-template <typename T>
-std::string ErrorString(T status, const char* file, std::int64_t line,
-                        const char* expr) {
-  return absl::StrFormat("%s:%d: operation %s failed: %s", file, line, expr,
-                         ErrorString(status));
-}
-}  // namespace
-
-absl::Status AsStatus(gpuError_t error, const char* file, std::int64_t line,
-                      const char* expr) {
-  if (ABSL_PREDICT_FALSE(error != gpuSuccess))
-    return absl::InternalError(ErrorString(error, file, line, expr));
-  return absl::OkStatus();
-}
-
-absl::Status AsStatus(gpusolverStatus_t status, const char* file,
-                      std::int64_t line, const char* expr) {
-  if (ABSL_PREDICT_FALSE(status != GPUSOLVER_STATUS_SUCCESS))
-    return absl::InternalError(ErrorString(status, file, line, expr));
-  return absl::OkStatus();
-}
-
-absl::Status AsStatus(gpusparseStatus_t status, const char* file,
-                      std::int64_t line, const char* expr) {
-  if (ABSL_PREDICT_FALSE(status != GPUSPARSE_STATUS_SUCCESS))
-    return absl::InternalError(ErrorString(status, file, line, expr));
-  return absl::OkStatus();
-}
-
-absl::Status AsStatus(gpublasStatus_t status, const char* file,
-                      std::int64_t line, const char* expr) {
-  if (ABSL_PREDICT_FALSE(status != GPUBLAS_STATUS_SUCCESS))
-    return absl::InternalError(ErrorString(status, file, line, expr));
-  return absl::OkStatus();
-}
-
-#ifdef JAX_GPU_CUDA
-absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
-                      const char* expr) {
-  if (ABSL_PREDICT_FALSE(error != CUDA_SUCCESS))
-    return absl::InternalError(ErrorString(error, file, line, expr));
-  return absl::OkStatus();
-}
-
-absl::Status AsStatus(CUptiResult error, const char* file, std::int64_t line,
-                      const char* expr) {
-  if (ABSL_PREDICT_FALSE(error != CUPTI_SUCCESS))
-    return absl::InternalError(ErrorString(error, file, line, expr));
-  return absl::OkStatus();
-}
-
-absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
-                      const char* expr) {
-  if (ABSL_PREDICT_FALSE(error != CUFFT_SUCCESS))
-    return absl::InternalError(ErrorString(error, file, line, expr));
-  return absl::OkStatus();
-}
 #endif
 
 }  // namespace JAX_GPU_NAMESPACE

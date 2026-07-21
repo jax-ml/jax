@@ -25,6 +25,7 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+echo "::group::Setup Environment" >&2
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
@@ -63,29 +64,77 @@ if [[ $host_memory_limit -lt $num_test_jobs ]]; then
 fi
 # End of test environment variables setup.
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
-OVERRIDE_XLA_REPO=""
+OVERRIDE_XLA_REPO=()
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+  OVERRIDE_XLA_REPO=(
+    "--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+    "--override_module=xla=${JAXCI_XLA_GIT_DIR}"
+  )
 fi
 
 # Get the CUDA major version only
 cuda_major_version="${JAXCI_CUDA_VERSION%%.*}"
 
 if [[ "$JAXCI_BUILD_ARTIFACT_WITH_RBE" == "true" ]]; then
-    TEST_CONFIG="rbe_linux_x86_64_cuda$cuda_major_version"
-    TEST_STRATEGY="--strategy=TestRunner=local"
-    CACHE_OPTION=""
+  TEST_CONFIG="rbe_linux_x86_64_cuda$cuda_major_version"
+  TEST_STRATEGY="--strategy=TestRunner=local"
+  CACHE_OPTION=""
 else
-    TEST_CONFIG="ci_linux_x86_64_cuda$cuda_major_version"
-    CACHE_OPTION="--config=ci_rbe_cache"
-    TEST_STRATEGY=""
+  TEST_CONFIG="ci_linux_x86_64_cuda$cuda_major_version"
+  CACHE_OPTION="--config=ci_rbe_cache"
+  TEST_STRATEGY=""
+fi
+
+common_bazel_test_args=(
+  test
+  "--config=$TEST_CONFIG"
+  "--repo_env=HERMETIC_PYTHON_VERSION=$JAXCI_HERMETIC_PYTHON_VERSION"
+  "--@rules_python//python/config_settings:py_freethreaded=$FREETHREADED_FLAG_VALUE"
+  "--repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1"
+  "--//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB"
+  "--//jax:build_jax=$JAXCI_BUILD_JAX"
+  "--test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver"
+  "--test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform"
+  "--test_env=TF_CPP_MIN_LOG_LEVEL=0"
+  "--test_env=JAX_SKIP_SLOW_TESTS=true"
+  "--action_env=JAX_ENABLE_X64=$JAXCI_ENABLE_X64"
+  "--action_env=NCCL_DEBUG=WARN"
+  --color=yes
+  --config=cuda_libraries_from_stubs
+  --config=hermetic_cuda_umd
+)
+if [[ -n "$CACHE_OPTION" ]]; then
+  common_bazel_test_args+=("$CACHE_OPTION")
+fi
+if [[ ${#OVERRIDE_XLA_REPO[@]} -gt 0 ]]; then
+  common_bazel_test_args+=("${OVERRIDE_XLA_REPO[@]}")
+fi
+if [[ -n "$TEST_STRATEGY" ]]; then
+  common_bazel_test_args+=("$TEST_STRATEGY")
+fi
+
+single_accelerator_bazel_test_args=("${common_bazel_test_args[@]}")
+single_accelerator_test_targets=(
+  //tests:gpu_tests
+  //tests:backend_independent_tests
+  //tests/pallas:gpu_tests
+  //tests/pallas:backend_independent_tests
+)
+if [[ "$JAXCI_BUILD_JAXLIB" == "false" || "$JAXCI_BUILD_JAX" == "false" ]]; then
+  expected_wheel_versions_json="$(
+    python3 ci/parse_wheel_metadata.py --wheel-dir=dist
+  )"
+  single_accelerator_bazel_test_args+=(
+    "--test_env=JAXCI_EXPECTED_WHEEL_VERSIONS_JSON=$expected_wheel_versions_json"
+  )
+  single_accelerator_test_targets+=(//tests:local_wheel_smoke_test_gpu)
 fi
 
 # Don't abort the script if one command fails to ensure we run both test
@@ -96,67 +145,58 @@ set +e
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
-bazel test --config=$TEST_CONFIG \
-      $CACHE_OPTION \
-      --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
-      $OVERRIDE_XLA_REPO \
-      --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
-      --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-      --//jax:build_jax=$JAXCI_BUILD_JAX \
-      --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-      --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
-      --test_output=errors \
-      --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
-      --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
-      $TEST_STRATEGY \
-      --local_test_jobs=$num_test_jobs \
-      --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
-      --test_tag_filters=-multiaccelerator \
-      --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
-      --test_env=JAX_SKIP_SLOW_TESTS=true \
-      --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
-      --action_env=NCCL_DEBUG=WARN \
-      --color=yes \
-      --config=cuda_libraries_from_stubs \
-      --config=hermetic_cuda_umd \
-      //tests:gpu_tests //tests:backend_independent_tests \
-      //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
+TEST_ARTIFACTS_DIR="test-artifacts-single"
+mkdir -p "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
+
+PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
+
+echo "::group::Bazel CUDA single-accelerator tests" >&2
+INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
+
+bazel "${single_accelerator_bazel_test_args[@]}" \
+  --invocation_id="$INVOCATION_ID_SINGLE" \
+  --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
+  --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+  --test_output=errors \
+  --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
+  --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
+  --local_test_jobs=$num_test_jobs \
+  --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
+  --test_tag_filters=-multiaccelerator \
+  "${single_accelerator_test_targets[@]}"
 
 # Store the return value of the first bazel command.
 first_bazel_cmd_retval=$?
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
+echo "::endgroup::" >&2
+python3 ci/utilities/report_resultstore_link.py "CUDA single-accelerator tests" "$INVOCATION_ID_SINGLE" "${first_bazel_cmd_retval:-0}"
+ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
-echo "Running multi-accelerator tests (without RBE)..."
-# Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
-bazel test --config=$TEST_CONFIG \
-      $CACHE_OPTION \
-      --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-      --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
-      --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2 \
-      $OVERRIDE_XLA_REPO \
-      --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
-      --//jax:build_jax=$JAXCI_BUILD_JAX \
-      --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-      --test_output=errors \
-      $TEST_STRATEGY \
-      --local_test_jobs=8 \
-      --test_tag_filters=multiaccelerator \
-      --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
-      --test_env=JAX_SKIP_SLOW_TESTS=true \
-      --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
-      --action_env=NCCL_DEBUG=WARN \
-      --color=yes \
-      --config=cuda_libraries_from_stubs \
-      --config=hermetic_cuda_umd \
-      //tests:gpu_tests //tests/pallas:gpu_tests \
-      //tests/multiprocess:gpu_tests
+# Runs multiaccelerator tests with all GPUs directly on the VM without RBE...
+TEST_ARTIFACTS_DIR="test-artifacts-multi"
+mkdir -p "$TEST_ARTIFACTS_DIR"
+
+echo "::group::Bazel CUDA multi-accelerator tests" >&2
+INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
+
+bazel "${common_bazel_test_args[@]}" \
+  --invocation_id="$INVOCATION_ID_MULTI" \
+  --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
+  --test_output=errors \
+  --local_test_jobs=8 \
+  --test_tag_filters=multiaccelerator \
+  //tests:gpu_tests //tests/pallas:gpu_tests \
+  //tests/multiprocess:gpu_tests
 
 # Store the return value of the second bazel command.
 second_bazel_cmd_retval=$?
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
+echo "::endgroup::" >&2
+python3 ci/utilities/report_resultstore_link.py "CUDA multi-accelerator tests" "$INVOCATION_ID_MULTI" "${second_bazel_cmd_retval:-0}"
+ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
+echo "::group::Cleanup" >&2
 # Merge results with prefixes to avoid overwriting
+{ set +x; } 2>/dev/null
 mkdir -p test-artifacts
 if [[ -d test-artifacts-single ]]; then
   for f in test-artifacts-single/*; do
@@ -170,12 +210,16 @@ if [[ -d test-artifacts-multi ]]; then
     cp "$f" "test-artifacts/multi_$(basename "$f")"
   done
 fi
+set -x
+echo "::endgroup::" >&2
 
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then
   exit $first_bazel_cmd_retval
-elif [[ $second_bazel_cmd_retval -ne 0 ]]; then
-  exit $second_bazel_cmd_retval
-else
-  exit 0
 fi
+
+if [[ $second_bazel_cmd_retval -ne 0 ]]; then
+  exit $second_bazel_cmd_retval
+fi
+
+exit 0

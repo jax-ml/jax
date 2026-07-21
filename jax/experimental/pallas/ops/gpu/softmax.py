@@ -49,7 +49,7 @@ def _vmappable_softmax_kernel(
   )
 
 
-@functools.partial(jax.jit, static_argnames=["axis", "num_warps", "interpret",
+@jax.jit(static_argnames=["axis", "num_warps", "interpret",
                                              "debug"])
 def softmax(
     x: jax.Array, *, axis: int = -1, num_warps: int = 4,

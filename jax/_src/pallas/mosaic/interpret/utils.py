@@ -136,16 +136,6 @@ class TPULoggingInfo(LoggingInfo):
     return f"Device {self.device_id}, core {self.local_core_id}"
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class GPULoggingInfo(LoggingInfo):
-  """Logging info for GPU interpret mode."""
-
-  pallas_thread_id: int
-
-  def get_location_str(self) -> str:
-    return f"Device {self.device_id}, (Pallas) thread {self.pallas_thread_id}"
-
-
 class Counter:
   """A simple counter that is thread-safe."""
 

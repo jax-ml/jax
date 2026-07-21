@@ -180,6 +180,21 @@ class OpsTest(ptu.PallasTPUTest):
     )(x, y)
     np.testing.assert_array_equal(out, inp.reshape(m * 2, n))
 
+  @parameterized.parameters(0, 1)
+  def test_bitcast_vmap(self, axis):
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jax.vmap(functools.partial(pltpu.bitcast, ty=jnp.uint8),
+                              in_axes=axis, out_axes=axis)(x_ref[...])
+    expected = np.random.randint(0, 255, size=(2, 16, 4, 128), dtype=np.uint8)
+    inp = np.ascontiguousarray(
+        expected.swapaxes(-1, -2)).view(np.uint32)[..., 0]
+    assert inp.shape == (2, 16, 128), inp.shape
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((2, 16 * 4, 128), jnp.uint8)
+    )(inp)
+    self.assertArraysEqual(out, expected.reshape(2, 16 * 4, 128))
+
   @parameterized.parameters([jnp.int32, jnp.int16, jnp.int8, jnp.int4])
   def test_row_broadcast(self, dtype):
     bitwidth = dtypes.itemsize_bits(dtype)
@@ -248,7 +263,10 @@ class OpsTest(ptu.PallasTPUTest):
       )(a, b, c, d)
 
     result_pallas = pallas_fn(a_val, b_val, c_val, d_val)
-    expected = jnp.dot(a_val, b_val) + jnp.dot(c_val, d_val)
+    expected = (
+        jnp.dot(a_val, b_val, precision=jax.lax.Precision.HIGHEST)
+        + jnp.dot(c_val, d_val, precision=jax.lax.Precision.HIGHEST)
+    )
     self.assertAllClose(result_pallas, expected, atol=1e-5, rtol=1e-5)
 
   @parameterized.product(from_dtype=_JAX_INT_DTYPES,
@@ -331,10 +349,6 @@ class OpsTest(ptu.PallasTPUTest):
     if dtype == jnp.int16:
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
-      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
-          2026, 4, 6
-      ):
-        self.skipTest("requires newer libTPU")
 
     shape = (128, 128)
 
@@ -499,10 +513,6 @@ class OpsTest(ptu.PallasTPUTest):
     if msk_dtype == jnp.int16:
       if jtu.get_tpu_version() < 4:
         self.skipTest("Requires TPUv4+")
-      if jtu.get_tpu_version() < 5 and not jtu.is_cloud_tpu_at_least(
-          2026, 4, 6
-      ):
-        self.skipTest("requires newer libTPU")
 
     shape = (1024,)
 
@@ -887,9 +897,13 @@ class OpsTest(ptu.PallasTPUTest):
           (jnp.int32, jnp.int16),
           (jnp.int32, jnp.int8),
           (jnp.int32, jnp.int4),
+          (jnp.int16, jnp.int8),
+          (jnp.int16, jnp.int4),
+          (jnp.int8, jnp.int4),
+          (jnp.int4, jnp.int2),
       ],
-      index=[0, 1, 3],
-      shape=[(8, 128), (2, 15, 300)],
+      index=[0, 1, 2, 3],
+      shape=[(8, 128), (2, 15, 300), (512, 256)],
   )
   def test_unpack_elementwise(self, config, index, shape):
     unpacked_dtype, packed_dtype = config
@@ -897,9 +911,17 @@ class OpsTest(ptu.PallasTPUTest):
         version=5
     ):
       self.skipTest("Requires TPU v5+")
+    if packed_dtype == jnp.int2:
+      if not jtu.is_device_tpu_at_least(version=5):
+        self.skipTest("Requires TPU v5+")
+      if (shape[-2] % (8 * 16)) or (shape[-1] % 128):
+        raise self.skipTest(
+            "int2 is only supported for shapes with vreg alignment"
+        )
 
-    bitwidth = dtypes.itemsize_bits(packed_dtype)
-    packing_factor = 32 // bitwidth
+    unpacked_bitwidth = dtypes.itemsize_bits(unpacked_dtype)
+    packed_bitwidth = dtypes.itemsize_bits(packed_dtype)
+    packing_factor = unpacked_bitwidth // packed_bitwidth
 
     if index >= packing_factor:
       self.skipTest(
@@ -986,7 +1008,7 @@ class OpsTest(ptu.PallasTPUTest):
 
     @functools.partial(
       self.pallas_call,
-      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      out_shape=jax.ShapeDtypeStruct.like(x),
     )
     def kernel(x_ref, out_ref):
       out_ref[...] = jax.scipy.special.erf(x_ref[...])
@@ -1001,7 +1023,7 @@ class OpsTest(ptu.PallasTPUTest):
     rhs = jnp.zeros((k, 128), dtype=dtype)
 
     def kernel(lhs_ref, rhs_ref, o_ref):
-      o_ref[...] = pl.dot(lhs_ref[...], rhs_ref[...])
+      o_ref[...] = lhs_ref[...] @ rhs_ref[...]
 
     out_shape = jax.ShapeDtypeStruct((8 * packing, 128), dtype)
     with self.assertRaisesRegex(
@@ -1104,6 +1126,68 @@ class OpsTest(ptu.PallasTPUTest):
         jnp.concatenate([x, y], axis=0),
     )
 
+  def test_fuse_transposed_lhs_in_matmul(self):
+
+    lhs_shape = (512, 128)
+    rhs_shape = (512, 256)
+
+    def kernel(lhs_ref, rhs_ref, o_ref):
+      o_ref[...] = jnp.einsum("km,kn->mn", lhs_ref[...], rhs_ref[...])
+
+    lhs_key, rhs_key = jax.random.split(jax.random.key(42), 2)
+    lhs = (
+        jax.random.normal(lhs_key, lhs_shape, dtype=jnp.float32)
+        .astype(jnp.bfloat16)
+        .astype(jnp.float32)
+    )
+    rhs = (
+        jax.random.normal(rhs_key, rhs_shape, dtype=jnp.float32)
+        .astype(jnp.bfloat16)
+        .astype(jnp.float32)
+    )
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(
+            (lhs_shape[1], rhs_shape[1]), jnp.float32
+        ),
+        compiler_params=pltpu.CompilerParams(
+            fuse_transposed_lhs_in_matmul=True
+        ),
+    )(lhs, rhs)
+    np.testing.assert_allclose(
+        result, jnp.einsum("km,kn->mn", lhs, rhs), atol=1e-5
+    )
+
+  @parameterized.product(
+      dtype=[jnp.int8, jnp.int16, jnp.uint8, jnp.uint16],
+      op=[lax.eq, lax.ne, lax.lt, lax.gt, lax.le, lax.ge],
+  )
+  def test_scalar_comparison(self, dtype, op):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.bool_),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+    )
+    def _kernel(x_ref, y_ref, o_ref):
+      o_ref[0] = op(x_ref[0].astype(jnp.int32), y_ref[0].astype(jnp.int32))
+
+    if jnp.issubdtype(dtype, jnp.signedinteger):
+      x_val = -1
+      y_val = 0
+    else:
+      x_val = 255 if dtype == jnp.uint8 else 65535
+      y_val = 0
+
+    x = jnp.array([x_val], dtype=dtype)
+    y = jnp.array([y_val], dtype=dtype)
+    out = _kernel(x, y)
+    expected = op(x, y)
+    self.assertAllClose(out, expected)
+
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

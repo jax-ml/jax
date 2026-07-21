@@ -287,7 +287,7 @@ if __name__ == '__main__':
     b = jax.random.normal(next(keys), (1, BLOCK, N_BLOCKS), dtype=jnp.float32)
     call = cjax.cutlass_call(
         launch_vector_add,
-        output_shape_dtype=jax.ShapeDtypeStruct(a.shape, a.dtype),
+        output_shape_dtype=jax.ShapeDtypeStruct.like(a),
         use_static_tensors=True,
     )
     c = jax.jit(call)(a, b)
@@ -300,7 +300,7 @@ if __name__ == '__main__':
     alpha = 2.5
     call = cjax.cutlass_call(
         launch_saxpy,
-        output_shape_dtype=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        output_shape_dtype=jax.ShapeDtypeStruct.like(x),
         use_static_tensors=True,
         alpha=alpha,
     )
@@ -313,7 +313,7 @@ if __name__ == '__main__':
     x = jax.random.normal(next(keys), (N_ELEM,), dtype=jnp.float32)
     call = cjax.cutlass_call(
         launch_relu,
-        output_shape_dtype=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        output_shape_dtype=jax.ShapeDtypeStruct.like(x),
         N=N_ELEM,
     )
     out = jax.jit(call)(x)
@@ -326,7 +326,7 @@ if __name__ == '__main__':
     bias = jax.random.normal(next(keys), (COLS,), dtype=jnp.float32)
     call = cjax.cutlass_call(
         launch_fused_bias_relu,
-        output_shape_dtype=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        output_shape_dtype=jax.ShapeDtypeStruct.like(x),
         N=ROWS * COLS, width=COLS,
     )
     out = jax.jit(call)(x, bias)
@@ -354,7 +354,7 @@ if __name__ == '__main__':
     b = jax.random.normal(next(keys), (M, N), dtype=jnp.float32)
     call = cjax.cutlass_call(
         launch_elementwise_add,
-        output_shape_dtype=jax.ShapeDtypeStruct(a.shape, a.dtype),
+        output_shape_dtype=jax.ShapeDtypeStruct.like(a),
     )
     c = jax.jit(call)(a, b)
     np.testing.assert_allclose(np.array(c), np.array(a + b), rtol=1e-5, atol=1e-5)

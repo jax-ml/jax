@@ -28,7 +28,9 @@ import sys
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -36,7 +38,7 @@ from jax.experimental.pallas import tpu_sc as plsc
 import jax.numpy as jnp
 
 
-jax.config.parse_flags_with_absl()
+config.parse_flags_with_absl()
 
 
 class DebugCheckTest(jtu.JaxTestCase):
@@ -78,17 +80,11 @@ class DebugCheckTest(jtu.JaxTestCase):
         out_type=x,
         mesh=plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1),
     )
-    def kernel(o_hbm_ref):
-      @functools.partial(
-          pl.run_scoped,
-          sem=pltpu.SemaphoreType.DMA,
-      )
-      def _(sem):
-        pltpu.async_copy(o_hbm_ref, o_hbm_ref, sem).wait()
-        pl.debug_check(True, "Check success!")
-        pl.debug_check(False, "Check failure!")
+    def kernel(_):
+      pl.debug_check(True, "Check success!")
+      pl.debug_check(False, "Check failure!")
 
-    with pl.enable_debug_checks(), self.assertRaises(
+    with config.jax_pallas_enable_debug_checks(True), self.assertRaises(
         jax.errors.JaxRuntimeError
     ) as error:
       jax.block_until_ready(kernel())
@@ -100,20 +96,18 @@ class DebugCheckTest(jtu.JaxTestCase):
     )
 
   def test_vector_debug_check(self):
-    x = jnp.arange(8)
-
     @functools.partial(
-        pl.pallas_call,
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(
-            kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE
+        pl.kernel,
+        out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
         ),
     )
     def kernel(_):
       pl.debug_check(True, "Check success!")
       pl.debug_check(False, "Check failure!")
 
-    with pl.enable_debug_checks(), self.assertRaises(
+    with config.jax_pallas_enable_debug_checks(True), self.assertRaises(
         jax.errors.JaxRuntimeError
     ) as error:
       jax.block_until_ready(kernel())
@@ -127,28 +121,45 @@ class DebugCheckTest(jtu.JaxTestCase):
           str(error.exception),
       )
 
-  def test_trigger_bounds_checker(self):
-
+  @parameterized.product(oob=[False, True])
+  def test_trigger_bounds_checker(self, oob):
     size = plsc.get_sparse_core_info().num_lanes
     x = jnp.arange(size, dtype=jnp.int32)
-    # Last index is out-of-bounds.
-    indices = jnp.append(jnp.arange(size - 1, dtype=jnp.int32), size)
+    indices = jnp.arange(size, dtype=jnp.int32) + jnp.astype(oob * 128, jnp.int32)
 
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(
-            kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE
+    @pl.kernel(
+        out_type=x,
+        mesh=plsc.VectorSubcoreMesh(
+            core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+        ),
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+        scratch_types=dict(
+            x_ref=pltpu.VMEM.like(x),
+            indices_ref=pltpu.VMEM.like(indices),
+            o_ref=pltpu.VMEM.like(x),
         ),
     )
-    def kernel(x_ref, indices_ref, o_ref):
+    def kernel(
+        x_hbm_ref, indices_hbm_ref, o_hbm_ref, *, x_ref, indices_ref, o_ref
+    ):
+      pltpu.sync_copy((x_hbm_ref, indices_hbm_ref), (x_ref, indices_ref))
       o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
+      pltpu.sync_copy(o_ref, o_hbm_ref)
 
     compiled_kernel = jax.jit(
         kernel, compiler_options=dict(xla_sc_assert_level="all-loads-stores")
     )
 
-    with pl.enable_debug_checks(), self.assertRaises(
+    if not oob:
+      # TODO(b/479427406): Remove this once the bug is fixed.
+      if jtu.is_device_tpu(7, "x"):
+        self.skipTest("Bounds checker fails on TPU v7x")
+
+      # No errors expected.
+      jax.block_until_ready(compiled_kernel(x, indices))
+      return
+
+    with config.jax_pallas_enable_debug_checks(True), self.assertRaises(
         jax.errors.JaxRuntimeError
     ) as error:
       jax.block_until_ready(compiled_kernel(x, indices))
@@ -161,29 +172,6 @@ class DebugCheckTest(jtu.JaxTestCase):
           " address.",
           str(error.exception),
       )
-
-  def test_no_out_of_bounds(self):
-    # TODO(b/479427406): Remove this once the bug is fixed.
-    if (jtu.is_cloud_tpu() and jtu.is_device_tpu_at_least(7)):
-      self.skipTest("Skip on v7+")
-    size = plsc.get_sparse_core_info().num_lanes
-    x = jnp.arange(size, dtype=jnp.int32)
-    indices = jnp.arange(size, dtype=jnp.int32)
-
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=x,
-        compiler_params=pltpu.CompilerParams(
-            kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE
-        ),
-    )
-    def kernel(x_ref, indices_ref, o_ref):
-      o_ref[...] = plsc.load_gather(x_ref, [indices_ref[...]])
-
-    compiled_kernel = jax.jit(
-        kernel, compiler_options=dict(xla_sc_assert_level="all-loads-stores")
-    )
-    jax.block_until_ready(compiled_kernel(x, indices))
 
 
 if __name__ == "__main__":

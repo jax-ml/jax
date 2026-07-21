@@ -15,12 +15,12 @@
 # NVIDIA CUDA kernels
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "cuda_library",
     "if_cuda_is_configured",
     "nanobind_extension",
+    "py_library",
 )
 
 licenses(["notice"])
@@ -181,7 +181,9 @@ cuda_library(
     srcs = ["//jaxlib/gpu:householder_kernels.cu.cc"],
     hdrs = ["//jaxlib/gpu:householder_kernels.h"],
     deps = [
+        ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
+        "@com_google_absl//absl/status",
         "@eigen_archive//:eigen3",
     ],
 )
@@ -318,6 +320,7 @@ cc_library(
         ":cuda_vendor",
         "//jaxlib:ffi_helpers",
         "//jaxlib:kernel_helpers",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/ffi/api:ffi",
@@ -332,6 +335,7 @@ cuda_library(
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "//jaxlib:tridiagonal_solve_perturbed",
+        "@com_google_absl//absl/status",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/ffi/api:ffi",
     ],
@@ -479,8 +483,22 @@ cc_library(
         ":cudnn_rnn_kernels",
         ":cusolver_kernels_ffi",
         ":cusparse_kernels",
-        ":triton_kernels",
+        ":triton_support",
         "//jaxlib/mosaic/gpu:mosaic_gpu_support",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "triton_support",
+    srcs = ["//jaxlib/gpu:triton_support.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cuda_vendor",
+        ":triton_kernels",
+        "//jaxlib:kernel_helpers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_target_registry",
@@ -503,6 +521,7 @@ cc_library(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
+        "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
@@ -642,6 +661,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "//jaxlib:ffi",
         "@com_google_absl//absl/algorithm:container",

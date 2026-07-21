@@ -18,6 +18,7 @@ import functools
 import math
 import os
 import sys
+import warnings
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -28,16 +29,11 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas import core
-from jax._src.pallas import pallas_call as pallas_call_lib
 if sys.platform != "win32":
   from jax.experimental.pallas import triton as plgpu
 else:
   plgpu = None
 
-try:
-  from jax._src.lib import triton
-except ImportError:
-  triton = None
 try:
   from jax.experimental.pallas import tpu as pltpu
 except ImportError:
@@ -65,7 +61,7 @@ def matmul_kernel(x_ref, y_ref, o_ref):
   o_ref[...] += x_ref[...] @ y_ref[...]
 
 
-@functools.partial(jax.jit, static_argnames=['block_shape'])
+@jax.jit(static_argnames=['block_shape'])
 def matmul(
     x: jax.Array,
     y: jax.Array,
@@ -105,9 +101,15 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     if plgpu is None:
       self.skipTest("Triton is not available on this platform")
     super().setUp()
+    self.enter_context(warnings.catch_warnings())
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        message="The Pallas Triton backend is deprecated",
+    )
     # TODO(bchetioui): Remove this for H100+ once tests are all compatible with
     # Pallas/Mosaic GPU.
-    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(False))
+    self.enter_context(config.jax_pallas_use_mosaic_gpu(False))
 
   def test_copy(self):
     # The blocks are static, but the input and the grid are of polymorphic
@@ -121,7 +123,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
               (x.shape[1] + 1) // block_shape[1])
       return pl.pallas_call(
           copy_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
           out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
           grid=grid,
@@ -163,7 +165,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
         o_ref[...] = x_ref[...]
       return pl.pallas_call(
           copy_one,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           interpret=eager and jtu.test_device_matches(["cpu"]))(x)
     shape1 = (128, 256)
     x1 = jnp.arange(math.prod(shape1), dtype=np.int32).reshape(shape1)
@@ -186,7 +188,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       block_shape = (x.shape[0] // grid[0], x.shape[1] // grid[1])
       return pl.pallas_call(
           copy_one,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           in_specs=[pl.BlockSpec(block_shape, lambda i, j: (i, j))],
           out_specs=pl.BlockSpec(block_shape, lambda i, j: (i, j)),
           grid=grid,
@@ -424,7 +426,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
       return pl.pallas_call(
           add_vectors_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid_spec=pltpu.PrefetchScalarGridSpec(
               grid=(1,),
               in_specs=[
@@ -458,7 +460,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       block_spec = pl.BlockSpec((block_size, block_size), lambda i, j: (i, j))
       return pl.pallas_call(
           add_vectors_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          out_shape=jax.ShapeDtypeStruct.like(x),
           grid=grid,
           in_specs=[block_spec, block_spec],
           out_specs=block_spec,
@@ -482,94 +484,6 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       x = y = jnp.ones((4, 192, 192))  # Not multiple of 128
       res = exp.call(x, y)
       self.assertAllClose(res, x + y)
-
-
-class ExportTestWithTriton(jtu.JaxTestCase):
-
-  def setUp(self):
-    if triton is None:
-      self.skipTest("Triton is not available on this platform")
-    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(False))
-    super().setUp()
-
-  def _check_cuda_export(self, exp):
-    self.assertRegex(
-        exp.mlir_module(),
-        r"stablehlo.custom_call"
-        r" @__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"",
-    )
-
-  def test_cross_platform(self):
-    # TODO: Add this test back once gfx arch string parsing is fixed.
-    if jtu.is_device_rocm():
-      self.skipTest("Skipped on ROCm due to gfx arch string parsing error.")
-    def add_vectors_kernel(x_ref, y_ref, o_ref):
-      x, y = x_ref[...], y_ref[...]
-      o_ref[...] = x + y
-
-    @jax.jit
-    def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
-      return pl.pallas_call(
-          add_vectors_kernel,
-          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
-          name="my_custom_kernel_name",
-      )(x, y)
-
-    platforms = ["tpu"]
-    # TODO(b/394629193): Remove True once the bug is fixed.
-    if True or (triton is not None and triton.has_compilation_handler("cuda")):
-      # Only include CUDA if GPU support is linked in.
-      platforms.append("cuda")
-
-    a = np.arange(8 * 16, dtype=np.int32).reshape((8, 16))
-    exp = export.export(
-        add_vectors,
-        platforms=platforms,
-        # The Pallas GPU custom call is not enabled for export by default.
-        disabled_checks=[
-            export.DisabledSafetyCheck.custom_call("triton_kernel_call"),
-            export.DisabledSafetyCheck.custom_call("__gpu$xla.gpu.triton"),
-        ],
-    )(a, a)
-
-    if jtu.device_under_test() == "tpu" or (
-        jtu.device_under_test() == "gpu"
-        and jtu.is_cuda_compute_capability_at_least("8.0")
-    ):
-      res = exp.call(a, a)
-      self.assertAllClose(res, a + a)
-
-    # Check that we use the proper kernels names
-    if "tpu" in platforms:
-      self.assertRegex(
-          exp.mlir_module(),
-          r"stablehlo.custom_call"
-          r" @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"",
-      )
-    if "cuda" in platforms:
-      self._check_cuda_export(exp)
-
-
-class ExportTestWithMosaicGpu(ExportTestWithTriton):
-
-  def setUp(self):
-    if jtu.test_device_matches(["rocm"]):
-      self.skipTest("Mosaic GPU is not supported on ROCm.")
-    # TODO(b/432678342): remove once this is fixed.
-    if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least(
-        "9.0"
-    ):
-      self.skipTest(
-          "LLVM seems to care about the compute capability if a GPU is present"
-      )
-    super().setUp()
-    self.enter_context(pallas_call_lib._PALLAS_USE_MOSAIC_GPU(True))
-
-  def _check_cuda_export(self, exp):
-    self.assertRegex(
-        exp.mlir_module(),
-        r"stablehlo.custom_call @mosaic_gpu_v2.*my_custom_kernel_name",
-    )
 
 
 if __name__ == "__main__":

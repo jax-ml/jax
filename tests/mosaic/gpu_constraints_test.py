@@ -140,6 +140,19 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
     self.assertLen(cs.reduce(system).constraints, 2)
 
+  def test_reduce_constraint_system_drops_always_true_constraints(self):
+    v0, v1 = V(0), V(1)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.AlwaysTrue(),
+            Eq(v0, v1),
+        ],
+    )
+    self.assertEqual(
+        cs.reduce(system),
+        cs.ConstraintSystem(constraints=[Eq(v0, v1)]),
+    )
+
   def test_reduce_constraint_system_of_simplified_system_is_noop(self):
     v0, v1 = V(0), V(1)
     system = cs.ConstraintSystem(constraints=[Eq(v0, v1)])
@@ -364,6 +377,20 @@ class ConstraintSystemTest(parameterized.TestCase):
     relayout = cs.Relayout(layout, V(0), 32, strict=True)
     self.assertEqual(cs.reduce_constraint(relayout, {}), relayout)
 
+  def test_reduce_relayout_same_source_and_target_returns_always_true(self):
+    v0 = V(0)
+    relayout = cs.Relayout(v0, v0, 32)
+    self.assertEqual(
+        cs.reduce_constraint(relayout, assignments={}), cs.AlwaysTrue()
+    )
+
+  def test_reduce_equals_same_lhs_and_rhs_returns_always_true(self):
+    v0 = V(0)
+    equals = Eq(v0, v0)
+    self.assertEqual(
+        cs.reduce_constraint(equals, assignments={}), cs.AlwaysTrue()
+    )
+
   def test_relayout_of_non_splat_to_splat_is_unsatisfiable_shortcut(
       self,
   ):
@@ -434,6 +461,29 @@ class ConstraintSystemTest(parameterized.TestCase):
         ),
     )
 
+  def test_canonicalize_strict_non_splat_relayouts_to_equals(self):
+    v0, v1, v2 = V(0), V(1), V(2)
+    system = cs.ConstraintSystem(
+        constraints=[
+            cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+            cs.Relayout(v0, v1, bitwidth=32, strict=True),
+            cs.Relayout(v2, v1, bitwidth=32, strict=True),
+            cs.Relayout(v0, v1, bitwidth=32, strict=False),
+        ],
+    )
+
+    self.assertEqual(
+        cs.canonicalize_strict_non_splat_relayouts_to_equals(system),
+        cs.ConstraintSystem(
+            constraints=[
+                cs.NotOfType(v0, mgpu.WGSplatFragLayout),
+                cs.Equals(v0, v1),
+                cs.Relayout(v2, v1, bitwidth=32, strict=True),
+                cs.Relayout(v0, v1, bitwidth=32, strict=False),
+            ],
+        ),
+    )
+
   @parameterized.parameters(
       # Should work for any tiled layout.
       mgpu.WGMMA_LAYOUT,
@@ -449,7 +499,7 @@ class ConstraintSystemTest(parameterized.TestCase):
   def test_tiled_contiguous_smem_is_transferable_holds_unoptimized(self, layout):
     holds = not isinstance(layout, (mgpu.WGStridedFragLayout, mgpu.WGSplatFragLayout))
     reg_layout = cs.RegisterLayout(layout)
-    smem_layout = cs.SMEMTiling(lc.TileTransform((64, 64)))
+    smem_layout = cs.SMEMTransforms(lc.TileTransform((64, 64)), None)
     strides = (128, 1)
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
@@ -473,7 +523,7 @@ class ConstraintSystemTest(parameterized.TestCase):
   )
   def test_tiled_non_contiguous_smem_is_transferable_holds_unoptimized(self, layout, holds):
     reg_layout = cs.RegisterLayout(layout)
-    smem_layout = cs.SMEMTiling(lc.TileTransform((64, 64)))
+    smem_layout = cs.SMEMTransforms(lc.TileTransform((64, 64)), None)
     strides = (1, 128)
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
@@ -500,7 +550,7 @@ class ConstraintSystemTest(parameterized.TestCase):
   )
   def test_untiled_contiguous_smem_is_transferable_holds_downgradable(self, layout):
     reg_layout = cs.RegisterLayout(layout)
-    smem_layout = cs.SMEMTiling(None)
+    smem_layout = cs.SMEMTransforms(None, None)
     strides = (128, 1)
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
@@ -528,7 +578,7 @@ class ConstraintSystemTest(parameterized.TestCase):
   )
   def test_untiled_contiguous_smem_is_transferable_holds_optimized(self, layout, holds):
     reg_layout = cs.RegisterLayout(layout)
-    smem_layout = cs.SMEMTiling(None)
+    smem_layout = cs.SMEMTransforms(None, None)
     strides = (128, 1)
     reg_to_smem = cs.IsTransferableSmemRegisters(
         reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
@@ -541,26 +591,59 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertEqual(reg_to_smem.holds(), holds)
     self.assertEqual(smem_to_reg.holds(), holds)
 
-  def test_transpose_expression(self):
-    def transpose(tiling):
-      transform = None if tiling is None else lc.TileTransform(tiling)
-      return cs.Transpose(cs.SMEMTiling(transform))
+  def test_untiled_swizzled_smem_is_not_transferable_for_strided_layout(self):
+    reg_layout = cs.RegisterLayout(mgpu.WGStridedFragLayout((128, 128), vec_size=4))
+    smem_layout = cs.SMEMTransforms(None, swizzle=128)
+    strides = (128, 1)
+    # Testing UNOPTIMIZED level, but constraints don't hold regardless of its value.
+    reg_to_smem = cs.IsTransferableSmemRegisters(
+        reg_layout, smem_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    smem_to_reg = cs.IsTransferableSmemRegisters(
+        smem_layout, reg_layout, (128, 128), strides, bitwidth=32,
+        optimized=cs.OptimizedTransferKind.UNOPTIMIZED,
+    )
+    self.assertFalse(reg_to_smem.holds())
+    self.assertFalse(smem_to_reg.holds())
 
-    self.assertEqual(
-        cs.reduce_expression(transpose(None), {}),
-        cs.SMEMTiling(None),
-    )
-    self.assertEqual(
-        cs.reduce_expression(transpose((2, 3)), {}),
-        cs.SMEMTiling(lc.TileTransform((3, 2))),
-    )
+  @parameterized.parameters(
+      (None, (), None),
+      ((2, 3), (1, 0), (3, 2)),
+      ((3,), (0,), (3,)),
+      ((2, 4, 8), (1, 0, 2), (4, 2, 8)),
+      ((2, 4, 8), (1, 2, 0), (4, 8, 2)),
+      ((2, 4, 8), (2, 1, 0), (8, 4, 2)),
+      ((2, 4), (1, 0, 3, 2), (4, 2)),
+      ((2, 4), (0, 1, 3, 2), (4, 2)),
+      ((2, 4), (0, 1, 2, 3), (2, 4)),
+  )
+  def test_transpose_expression(self, tiling, permutation, expected):
+    swizzle = 32
+    transform = None if tiling is None else lc.TileTransform(tiling)
+    expected_transform = None if expected is None else lc.TileTransform(expected)
+    expr = cs.Transpose(cs.SMEMTransforms(transform, swizzle), permutation)
+    self.assertEqual(cs.reduce_expression(expr, {}), cs.SMEMTransforms(expected_transform, swizzle))
+
+  @parameterized.parameters(
+      ((2, 32), (1, 0, 2)),
+      ((2, 32), (1, 2, 0)),
+      ((2, 32), (2, 0, 1)),
+      ((2, 32), (2, 1, 0)),
+      ((2, 4), (2, 3, 1, 0)),
+  )
+  def test_reduce_transpose_of_untiled_and_tiled_dimensions_is_unsatisfiable(
+      self, tiling, permutation
+  ):
+    expr = cs.Transpose(cs.SMEMTransforms(lc.TileTransform(tiling), None), permutation)
+    self.assertIsInstance(cs.reduce_expression(expr, {}), cs.Unsatisfiable)
 
   def test_divides_constraint_are_satisfied_by_empty_tiling(self):
-    self.assertTrue(cs.Divides(cs.SMEMTiling(None), (1, 2)).holds())
+    self.assertTrue(cs.Divides(cs.SMEMTransforms(None, None), (1, 2)).holds())
 
   def test_divides_constraints_are_satisfied_by_divisor_tiling(self):
-    with self.subTest("SMEMTiling"):
-      tiling = cs.SMEMTiling(lc.TileTransform((2, 2)))
+    with self.subTest("SMEMTransforms"):
+      tiling = cs.SMEMTransforms(lc.TileTransform((2, 2)), None)
       self.assertTrue(cs.Divides(tiling, (4, 6)).holds())
     with self.subTest("RegisterLayout"):
       tiling = cs.RegisterLayout(fa.WGMMA_LAYOUT)
@@ -571,8 +654,8 @@ class ConstraintSystemTest(parameterized.TestCase):
       self.assertTrue(cs.Divides(tiling, (0, 64)).holds())
 
   def test_divides_constraints_are_not_satisfied_by_non_divisor_tiling(self):
-    with self.subTest("SMEMTiling"):
-      tiling = cs.SMEMTiling(lc.TileTransform((2, 2)))
+    with self.subTest("SMEMTransforms"):
+      tiling = cs.SMEMTransforms(lc.TileTransform((2, 2)), None)
       self.assertFalse(cs.Divides(tiling, (4, 3)).holds())
     with self.subTest("RegisterLayout"):
       tiling = cs.RegisterLayout(fa.WGMMA_LAYOUT)
@@ -581,6 +664,16 @@ class ConstraintSystemTest(parameterized.TestCase):
       layout = tcgen05.tmem_default_layout(packing=1)
       tiling = cs.TMEMLayout(layout)
       self.assertFalse(cs.Divides(tiling, (3, 64)).holds())
+
+  @parameterized.parameters(
+      fa.WGSplatFragLayout((4, 32)),
+      fa.WGStridedFragLayout((4, 32), vec_size=1),
+  )
+  def test_divides_constraints_for_strided_and_splat_are_satisfied_for_any_tiling(
+      self, layout
+  ):
+    tiling = cs.RegisterLayout(layout)
+    self.assertTrue(cs.Divides(tiling, (2, 16)).holds())
 
   def test_reduce_merges_divides_constraints_on_same_variable(self):
     v0, v1 = cs.Variable(0), cs.Variable(1)
@@ -675,12 +768,12 @@ class ConstraintSystemTest(parameterized.TestCase):
   )
   def test_tiling_is_valid_mma_tiling_holds_for_valid_tiling(self, swizzle, bitwidth):
     swizzle_elems = swizzle * 8 // bitwidth
-    layout = cs.SMEMTiling(lc.TileTransform((8, swizzle_elems)))
+    layout = cs.SMEMTransforms(lc.TileTransform((8, swizzle_elems)), swizzle)
     self.assertTrue(cs.IsValidMmaTiling(layout, bitwidth).holds())
 
   @parameterized.parameters(False, True)
   def test_tiling_is_valid_mma_tiling_holds_for_unswizzled_tiling_only_if_allowed(self, allow_unswizzled):
-    layout = cs.SMEMTiling(lc.TileTransform((8, 8)))
+    layout = cs.SMEMTransforms(lc.TileTransform((8, 8)), None)
     self.assertEqual(cs.IsValidMmaTiling(layout, 16, allow_unswizzled).holds(), allow_unswizzled)
 
   @parameterized.named_parameters(
@@ -748,6 +841,93 @@ class ConstraintSystemTest(parameterized.TestCase):
         cs.IsSupportedBroadcast(RL(src), RL(dst), dims).holds(), holds
     )
 
+  @parameterized.parameters(
+      (cs.SMEMTransforms(lc.TileTransform((2, 8)), None), 4, True),
+      (cs.SMEMTransforms(lc.TileTransform((2, 8)), None), 3, False),
+      (cs.SMEMTransforms(lc.TileTransform(()), None), 4, True),
+      (cs.SMEMTransforms(None, None), 4, True),
+  )
+  def test_minor_dim_divisible_by_constraint_holds(self, tiling, divisor, expected):
+    self.assertEqual(cs.MinorDimDivisibleBy(tiling, divisor).holds(), expected)
+
+  def test_reduce_minor_dim_divisible_by_divisor_holds(self):
+    v0 = V(0)
+    tiling = cs.SMEMTransforms(lc.TileTransform((2, 8)), None)
+    system = cs.ConstraintSystem(
+        assignments={v0: tiling},
+        constraints=[cs.MinorDimDivisibleBy(v0, 4)],
+    )
+    reduced = cs.reduce(system)
+    self.assertEqual(reduced.constraints, [])
+
+  def test_reduce_minor_dim_divisible_by_nondivisible_divisor_returns_unsat(self):
+    v0 = V(0)
+    tiling = cs.SMEMTransforms(lc.TileTransform((2, 8)), None)
+    system = cs.ConstraintSystem(
+        assignments={v0: tiling},
+        constraints=[cs.MinorDimDivisibleBy(v0, 3)],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  @parameterized.named_parameters(
+      ("invalid_reassociation_empty_dims", (0,), "must contain at least one dimension"),
+      ("invalid_reassociation_wrong_rank", (2,), "equal to the rank of the source shape"),
+  )
+  def test_collapse_shape_invalid_reassociation_raises(self, reassociation, msg):
+    with self.assertRaisesRegex(ValueError, msg):
+      shape = (2, 4, 6)
+      cs.CollapseShape(cs.Variable(0), shape, reassociation)
+
+  @parameterized.named_parameters(
+      ("tiling_does_not_divide_shape", (2, 4, 8), (3, 4, 8), (1, 1, 1)),
+      ("multiple_non_unit_tiled_and_tiling_dimensions", (2, 4, 8), (4, 8, 16), (2, 1)),
+      ("collapsing_tiled_and_untiled_dimensions", (2, 4), (2, 4, 8), (2, 1)),
+      ("leading_full_dimensions", (4, 8), (4, 16), (2,)),
+      ("trailing_unit_dimensions", (4, 1), (16, 16), (2,))
+  )
+  def test_reduce_collapse_shape_is_unsatisfiable_(self, tiling, shape, reassociation):
+    expr = cs.CollapseShape(
+        cs.SMEMTransforms(lc.TileTransform(tiling), None), shape, reassociation
+    )
+    self.assertIsInstance(cs.reduce_expression(expr, assignments={}), cs.Unsatisfiable)
+
+  @parameterized.named_parameters(
+      ("leading_unit_dimensions", (1, 2, 8), (4, 4, 16), (2, 1), (2, 8)),
+      ("trailing_full_dimensions", (4, 8), (4, 8, 8), (1, 2), (32,)),
+      ("leading_unit_and_trailing_full_dimensions", (1, 4, 8), (4, 8, 8), (3,), (32,))
+  )
+  def test_reduce_collapse_shape_reduces_tiling_(
+      self, tiling, shape, reassociation, reassociated_tiling
+  ):
+    swizzle = 32
+    expr = cs.CollapseShape(
+        cs.SMEMTransforms(lc.TileTransform(tiling), swizzle), shape, reassociation
+    )
+    self.assertEqual(cs.reduce_expression(expr, assignments={}),
+                     cs.SMEMTransforms(lc.TileTransform(reassociated_tiling), swizzle))
+
+  @parameterized.parameters(
+      ((128, 128), (1, 128), fa.WGMMA_TRANSPOSED_LAYOUT, True),
+      ((128, 128, 128), (1, 128, 128 * 128), fa.WGMMA_TRANSPOSED_LAYOUT, False),
+      ((128, 128), (1, 128), fa.TCGEN05_TRANSPOSED_LAYOUT, True),
+      ((128, 128, 128), (1, 128, 128 * 128), fa.TCGEN05_TRANSPOSED_LAYOUT, False),
+  )
+  def test_is_transferable_untiled_smem_registers_holds_for_2d_transposed_layout(
+      self, shape, strides, reg_layout, expected_holds
+  ):
+    tiling = None
+    swizzle = 32
+    smem_layout = cs.SMEMTransforms(tiling, swizzle)
+    reg_layout_const = cs.RegisterLayout(reg_layout)
+    constraint = cs.IsTransferableSmemRegisters(
+        smem_layout,
+        reg_layout_const,
+        shape,
+        strides,
+        bitwidth=32,
+        optimized=cs.OptimizedTransferKind.OPTIMIZED,
+    )
+    self.assertEqual(constraint.holds(), expected_holds)
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

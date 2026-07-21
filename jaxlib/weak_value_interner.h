@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <utility>
@@ -114,14 +115,13 @@ class WeakValueInterner {
                               Py_ssize_t nargsf, PyObject* kwnames);
 
   // Called when an object referenced by a value's weakref is garbage collected.
-  void OnWeakrefDestroyed(PyObject* weakref_obj);
+  void OnWeakrefDestroyed(size_t shard_idx, PyObject* weakref_obj);
 
   static int tp_traverse(PyObject* self_obj, visitproc visit, void* arg);
   static int tp_clear(PyObject* self_obj);
   static PyType_Slot slots_[];
 
   nanobind::callable fn_;
-  nanobind::callable weakref_callback_;
 
   // The forward map from keys to entries.
   struct Entry {
@@ -134,11 +134,23 @@ class WeakValueInterner {
 
   using MapType =
       ReentrantHashMap<Key, std::shared_ptr<Entry>, KeyHash, KeyEqual>;
-  MapType entries_;
 
-  // Maps address of weakref object to Entry*, used to evict an entry when
-  // a weak reference expires.
-  absl::flat_hash_map<PyObject*, Entry*> reverse_index_;
+#ifdef NB_FREE_THREADED
+  static constexpr size_t kNumShards = 16;
+#else
+  static constexpr size_t kNumShards = 1;
+#endif
+
+  struct Shard {
+    nanobind::object lock;
+    nanobind::callable weakref_callback;
+    MapType entries;
+    // Maps address of weakref object to Entry*, used to evict an entry when
+    // a weak reference expires.
+    absl::flat_hash_map<PyObject*, Entry*> reverse_index;
+  };
+
+  std::array<Shard, kNumShards> shards_;
 };
 
 }  // namespace jax

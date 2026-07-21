@@ -19,17 +19,16 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        default: "linux-x86-64-4gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.4"
         options:
-          - "linux-x86-64-1gpu-amd"
-          - "linux-x86-64-4gpu-amd"
-          - "linux-x86-64-8gpu-amd"
+          - "amd-do-linux.jax.gpu.gfx950.1"
+          - "amd-do-linux.jax.gpu.gfx950.4"
+          - "amd-do-linux.jax.gpu.gfx950.8"
       python:
         description: "Which Python version to use?"
         type: choice
-        default: "3.11"
+        default: "3.12"
         options:
-          - "3.11"
           - "3.12"
       rocm-version:
         description: "Which ROCm version to test?"
@@ -41,6 +40,10 @@ on:
         description: "ROCm tag for container image (e.g., rocm720)"
         type: string
         default: "rocm720"
+      rocm-release-version:
+        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        type: string
+        default: ""
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: choice
@@ -72,11 +75,11 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-64-4gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.4"
       python:
         description: "Which Python version to use?"
         type: string
-        default: "3.11"
+        default: "3.12"
       rocm-version:
         description: "Which ROCm version to test?"
         type: string
@@ -85,6 +88,10 @@ on:
         description: "ROCm tag for container image (e.g., rocm720)"
         type: string
         default: "rocm720"
+      rocm-release-version:
+        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        type: string
+        default: ""
       jaxlib-version:
         description: "Which jaxlib version to use? (head/pypi_latest)"
         type: string
@@ -101,6 +108,10 @@ on:
         description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
         default: 'latest'
         type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: string
+        default: 'no'
 permissions:
   id-token: write
   contents: read
@@ -118,22 +129,27 @@ jobs:
     continue-on-error: true
     # Run in ROCm team's GHCR container with GPU access
     container:
-      image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest
+      image: ghcr.io/rocm/jax-base-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
-    name: "${{ (contains(inputs.runner, '1gpu') && '1gpu') ||
-        (contains(inputs.runner, '4gpu') && '4gpu') ||
-        (contains(inputs.runner, '8gpu') && '8gpu') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
+    name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950.1') ||
+        (contains(inputs.runner, 'gfx950.4') && 'gfx950.4') ||
+        (contains(inputs.runner, 'gfx950.8') && 'gfx950.8') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "0"
+      # Required on gfx950 with ROCm 7.13 to avoid HIP "invalid device function"
+      # failures during multi-accelerator collectives. RCCL emits an explicit
+      # warning when this is unset; the env var must be in place before HIP
+      # initialization, which happens at JAX import time.
+      HSA_NO_SCRATCH_RECLAIM: "1"
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Download JAX ROCm wheels
@@ -141,6 +157,7 @@ jobs:
         with:
           python: ${{ inputs.python }}
           rocm-version: ${{ inputs.rocm-version }}
+          rocm-release-version: ${{ inputs.rocm-release-version }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}

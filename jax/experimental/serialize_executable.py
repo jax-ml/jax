@@ -19,6 +19,7 @@ import pickle
 import io
 
 import jax
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from collections.abc import Sequence
 
@@ -50,7 +51,14 @@ def deserialize_and_load(serialized,
                          out_tree,
                          backend: str | xc.Client | None = None,
                          execution_devices: Sequence[xc.Device] | None = None):
-  """Constructs a jax.stages.Compiled from a serialized executable."""
+  """Constructs a :class:`jax.stages.Compiled` from a serialized executable.
+
+  .. warning::
+     It is not safe to call this API with untrusted inputs. Do not do this.
+     Calling this API loads a serialized executable. Even loading such an
+     executable may run arbitrary code on your machine. It is not safe to pass
+     untrusted data here and likely never will be.
+  """
 
   if backend is None or isinstance(backend, str):
     backend = jax.devices(backend)[0].client
@@ -85,7 +93,7 @@ class _JaxPjrtPickler(pickle.Pickler):
   def persistent_id(self, obj):
     if isinstance(obj, xc.LoadedExecutable):
       return ('exec', obj.client.serialize_executable(obj))
-    if isinstance(obj, xc._xla.Executable):
+    if isinstance(obj, _jax.Executable):
       return ('exec', obj.serialize())
     if isinstance(obj, self.device_types):
       return ('device', obj.id)

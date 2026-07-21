@@ -265,10 +265,8 @@ def rms_norm_backward(
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=[3, 4, 5, 6, 7])
-@functools.partial(jax.jit, static_argnames=["num_warps", "num_stages",
-                                             "num_stages", "eps",
-                                             "backward_pass_impl",
-                                             "interpret"])
+@jax.jit(static_argnames=["num_warps", "num_stages", "eps",
+                          "backward_pass_impl", "interpret"])
 def rms_norm(
     x, weight, bias,
     num_warps: int | None = None,
@@ -302,7 +300,7 @@ def rms_norm(
 rms_norm.defvjp(rms_norm_forward, rms_norm_backward)
 
 
-@functools.partial(jax.jit, static_argnames=["eps"])
+@jax.jit(static_argnames=["eps"])
 @functools.partial(jax.vmap, in_axes=(0, None, None), out_axes=0)
 def rms_norm_reference(x, weight, bias, *, eps: float = 1e-5):
   var = jnp.mean(jnp.square(x), axis=1)

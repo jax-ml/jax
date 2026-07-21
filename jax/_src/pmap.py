@@ -26,7 +26,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import pjit as pjit_lib
-from jax._src import prng
+from jax._src.random import prng
 from jax._src import sharding_impls
 from jax._src import stages
 from jax._src import traceback_util
@@ -282,8 +282,6 @@ def pmap(
   axis_name, static_broadcasted_tuple, donate_tuple = _prepare_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
       out_axes)
-  if isinstance(axis_name, core._TempAxisName):
-    axis_name = repr(axis_name)
   wrapped_fun = _pmap_wrap_init(fun, static_broadcasted_tuple)
   out_axes_flat, out_axes_tree = tree_flatten(out_axes)
   out_axes_flat = tuple(out_axes_flat)
@@ -349,7 +347,7 @@ def _prepare_pmap(fun, axis_name, static_broadcasted_argnums,
   # aggregate size (across all processes) size of the mapped axis must match the
   # given value.
   check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
+  axis_name = "_internal_pmap_axis_name" if axis_name is None else axis_name
   static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
   donate_tuple = rebase_donate_argnums(
       _ensure_index_tuple(donate_argnums), static_broadcasted_tuple)

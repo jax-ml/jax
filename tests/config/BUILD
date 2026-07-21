@@ -29,7 +29,7 @@ config_setting(
 
 config_setting(
     name = "is_tsan",
-    values = {"copt": "-fsanitize=thread"},
+    values = {"features": "tsan"},
 )
 
 # RBE
@@ -75,7 +75,6 @@ selects.config_setting_group(
 filegroup(
     name = "tsan_suppressions_txts",
     srcs = [
-        "tsan-suppressions_3.13.txt",
         "tsan-suppressions_3.14.txt",
     ],
 )

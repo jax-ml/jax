@@ -20,7 +20,7 @@ import json
 import math
 import os
 import tempfile
-from typing import Literal, ParamSpec, TypeVar, overload
+from typing import Literal, overload
 import warnings
 
 import jax
@@ -41,11 +41,6 @@ except ImportError:
   mosaic_gpu_lib = None
 
 # ruff: noqa: F405
-
-T = TypeVar("T")
-P = ParamSpec("P")
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class Cupti:
   """CUPTI-based profiler."""
@@ -100,7 +95,7 @@ class Cupti:
     return wrapper
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[True] = ...,
@@ -109,7 +104,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[False] = ...,
@@ -118,7 +113,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[True] = ...,
@@ -127,7 +122,7 @@ def measure(
   ...
 
 @overload
-def measure(
+def measure[T, **P](
     f: Callable[P, T],
     *,
     aggregate: Literal[False] = ...,
@@ -408,9 +403,8 @@ class OnDeviceProfiler:
         # offset += 2
         offset = memref.load(ctx.offset, [])
         base_ref = memref_slice(ctx.smem_buffer, offset)
-        base_ptr = memref_ptr(base_ref, memory_space=3)
         i64 = ir.IntegerType.get_signless(64)
-        base_addr = llvm.ptrtoint(i64, base_ptr)
+        base_addr = llvm.ptrtoint(i64, memref_ptr(base_ref))
         llvm.inline_asm(
             ir.Type.parse("!llvm.void"),
             [ctx.is_profiling_thread, base_addr, c(modifier | name_id, i32)],

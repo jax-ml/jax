@@ -344,6 +344,19 @@ nanobind::tuple TraceContext() {
   return result;
 }
 
+nanobind::tuple TraceContextNames() {
+  auto& instance = GlobalConfigState::Instance();
+  nb::tuple result = nb::steal<nb::tuple>(
+      PyTuple_New(instance.include_in_trace_context().size()));
+  int pos = 0;
+  for (int i : instance.include_in_trace_context()) {
+    PyTuple_SET_ITEM(result.ptr(), pos,
+                     nb::cast(instance.name(i)).release().ptr());
+    ++pos;
+  }
+  return result;
+}
+
 void BuildConfigSubmodule(nanobind::module_& m) {
   nb::module_ config_module = m.def_submodule("config", "Config library");
 
@@ -384,6 +397,7 @@ void BuildConfigSubmodule(nanobind::module_& m) {
              nb::sig("def set_global(self, value: Any | None) -> None"));
 
   config_module.def("trace_context", &TraceContext);
+  config_module.def("trace_context_names", &TraceContextNames);
 }
 
 }  // namespace jax

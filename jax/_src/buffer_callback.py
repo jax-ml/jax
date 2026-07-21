@@ -59,7 +59,7 @@ def buffer_callback(
     ...   np.asarray(out)[...] = np.asarray(x) + 1
     ...
     >>> x = jnp.array(41, dtype=jnp.int32)
-    >>> out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
+    >>> out_type = jax.ShapeDtypeStruct.like(x)
     >>> add_one = buffer_callback(py_add_one_inplace, out_type)
     >>> add_one(x)  # doctest: +SKIP
     Array(42, dtype=int32)

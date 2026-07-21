@@ -232,7 +232,7 @@ def ragged_dot(
   num_sms = 132
   kernel = plgpu.kernel(
       body,
-      out_shape=jax.ShapeDtypeStruct((m, n), lhs.dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), lhs.dtype),
       grid=(num_sms,),
       grid_names=("sm",),
       compiler_params=plgpu.CompilerParams(

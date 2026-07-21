@@ -43,5 +43,5 @@ def counter(index):
 
 def aliasing(x):
   return jax.ffi.ffi_call(
-      "aliasing", jax.ShapeDtypeStruct(x.shape, x.dtype),
+      "aliasing", jax.ShapeDtypeStruct.like(x),
       input_output_aliases={0: 0})(x)

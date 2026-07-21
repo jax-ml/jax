@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -29,6 +30,7 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -58,9 +60,11 @@ limitations under the License.
 #include "jaxlib/py_host_callback.h"
 #include "jaxlib/py_memory_space.h"
 #include "jaxlib/py_user_context.h"
+#include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
 #include "jaxlib/util.h"
 #include "xla/literal.h"
+#include "xla/pjrt/c_api_client/pjrt_c_api_client.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -86,6 +90,7 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
+#include "xla/python/pjrt_ifrt/pjrt_host_callback.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/types.h"
 #include "xla/python/version.h"
@@ -258,7 +263,7 @@ absl::Status PyClient::Defragment() {
           pjrt_buf_to_tmp_buffer.insert({pjrt_buf_ptr.get(), TmpBuffer()});
       if (inserted) {
         TF_ASSIGN_OR_RETURN(iter->second.host_copy,
-                            pjrt_buf_ptr->ToLiteralSync());
+                            pjrt_buf_ptr->ToLiteral().Await());
       }
       iter->second.pjrt_buffer_ptrs.push_back(&pjrt_buf_ptr);
     }
@@ -402,7 +407,6 @@ PyClient::CompileAndLoadIfrtProgram(
   absl::Status compile_status;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 47
     auto ifrt_loaded_executable_fut =
         client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
             std::move(ifrt_program), std::move(ifrt_options));
@@ -410,13 +414,6 @@ PyClient::CompileAndLoadIfrtProgram(
     BlockUntilReadyWithCancel(ready_future);
     TF_ASSIGN_OR_RETURN(ifrt_loaded_executable,
                         std::move(ifrt_loaded_executable_fut).Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_loaded_executable,
-        client->ifrt_client_->GetDefaultCompiler()->CompileAndLoad(
-            std::move(ifrt_program), std::move(ifrt_options)));
-    compile_status = ifrt_loaded_executable->GetReadyFuture().Await();
-#endif
     if (compile_status.ok()) {
       TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
     }
@@ -444,7 +441,6 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
   {
     auto xla_options =
         std::make_unique<ifrt::XlaCompileOptions>(options, std::move(devices));
-#if JAX_IFRT_VERSION_NUMBER >= 47
     TF_ASSIGN_OR_RETURN(
         ifrt_executable,
         client->ifrt_client()
@@ -452,13 +448,6 @@ static absl::StatusOr<nb_class_ptr<PyExecutable>> CompileWithTopology(
             ->Compile(std::make_unique<xla::ifrt::HloProgram>(std::move(clone)),
                       topology, std::move(xla_options))
             .Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_executable,
-        client->ifrt_client()->GetDefaultCompiler()->Compile(
-            std::make_unique<xla::ifrt::HloProgram>(std::move(clone)), topology,
-            std::move(xla_options)));
-#endif
   }
   return make_nb_class<PyExecutable>(ifrt_executable);
 }
@@ -556,7 +545,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 47
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
@@ -564,13 +552,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                 std::string_view(serialized.c_str(), serialized.size()),
                 std::move(ifrt_deserialize_options))
             .Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_loaded_executable,
-        client->ifrt_client_->GetDefaultCompiler()->DeserializeLoadedExecutable(
-            std::string_view(serialized.c_str(), serialized.size()),
-            std::move(ifrt_deserialize_options)));
-#endif
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
@@ -592,7 +573,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
-#if JAX_IFRT_VERSION_NUMBER >= 47
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
@@ -600,13 +580,6 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                 std::string_view(serialized.c_str(), serialized.size()),
                 std::move(ifrt_deserialize_options))
             .Await());
-#else
-    TF_ASSIGN_OR_RETURN(
-        ifrt_loaded_executable,
-        client->ifrt_client_->GetDefaultCompiler()->DeserializeLoadedExecutable(
-            std::string_view(serialized.c_str(), serialized.size()),
-            std::move(ifrt_deserialize_options)));
-#endif
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
@@ -757,6 +730,49 @@ absl::StatusOr<nb::object> PyClient::MakePythonCallbackUsingHostSendAndRecv(
   return callback_capsule;
 }
 
+absl::StatusOr<nb::object> PyClient::CreateHloOutputCallback(
+    int64_t callback_id, int64_t num_operands, nb::callable callable) {
+  auto xla_cb = std::make_unique<xla::HloOutputCallback>();
+  xla_cb->callback_id = callback_id;
+  xla_cb->num_operands = num_operands;
+
+  // Use `GlobalPyRefManager()->ManageReference` to ensure `callable` is
+  // destroyed safely on the main Python thread when `xla_cb` is destroyed by
+  // the XLA runtime on a background thread without the GIL.
+  std::shared_ptr<PythonRefManager::ManagedPyObjects> managed_callable =
+      GlobalPyRefManager()->ManageReference(callable);
+
+  xla_cb->callback =
+      [callable_ref = callable.ptr(),
+       managed_callable = std::move(managed_callable)](
+          int64_t replica_id, int64_t partition_id,
+          absl::Span<std::shared_ptr<const xla::Literal> const> literals) {
+        nb::gil_scoped_acquire acquire;
+        nb::callable callable = nb::borrow<nb::callable>(callable_ref);
+        nb::list py_list = nb::steal<nb::list>(PyList_New(literals.size()));
+        for (size_t i = 0; i < literals.size(); ++i) {
+          if (literals[i] != nullptr) {
+            absl::StatusOr<nb::object> nbobj = xla::LiteralToPython(
+                std::const_pointer_cast<xla::Literal>(literals[i]));
+            if (!nbobj.ok()) {
+              LOG(ERROR) << "LiteralToPython failed: " << nbobj.status();
+              return;
+            }
+            py_list[i] = std::move(*nbobj);
+          } else {
+            py_list[i] = nb::none();
+          }
+        }
+        callable(replica_id, partition_id, py_list);
+      };
+  tsl::RCReference<ifrt::PjRtHloOutputLoadedHostCallback> loaded_host_callback =
+      tsl::MakeRef<ifrt::PjRtHloOutputLoadedHostCallback>(ifrt_client(),
+                                                          std::move(xla_cb));
+  return nb::capsule(loaded_host_callback.release(), [](void* ptr) noexcept {
+    static_cast<ifrt::LoadedHostCallback*>(ptr)->DropRef();
+  });
+}
+
 /* static */ int PyClient::tp_traverse(PyObject* self, visitproc visit,
                                        void* arg) {
   Py_VISIT(Py_TYPE(self));
@@ -803,6 +819,22 @@ PyType_Slot PyClient::slots_[] = {
   py_local_client.def_prop_ro("platform", &PyClient::platform_name)
       .def_prop_ro("_raw_platform", &PyClient::raw_platform_name)
       .def_prop_ro("platform_version", &PyClient::platform_version)
+      .def_prop_ro(
+          "unsafe_client_pointer",
+          [](PyClient& self) -> std::uintptr_t {
+            if (auto* pjrt_comp =
+                    llvm::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
+                        self.ifrt_client())) {
+              if (auto* pjrt_client = pjrt_comp->pjrt_client()) {
+                if (auto* c_api_client =
+                        dynamic_cast<xla::PjRtCApiClient*>(pjrt_client)) {
+                  return reinterpret_cast<std::uintptr_t>(
+                      c_api_client->pjrt_c_client());
+                }
+              }
+            }
+            return 0;
+          })
       .def_prop_ro("runtime_type", &PyClient::runtime_type)
       .def("device_count", &PyClient::device_count)
       .def("local_device_count", &PyClient::addressable_device_count)
@@ -972,7 +1004,14 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("serialized"), nb::arg("executable_devices"),
           nb::arg("compile_options").none() = nb::none(),
-          nb::arg("host_callbacks") = std::vector<nb::capsule>())
+          nb::arg("host_callbacks") = std::vector<nb::capsule>(),
+          "Deserializes an executable.\n\n"
+          ".. warning::\n"
+          "   It is not safe to call this API with untrusted inputs. Do not\n"
+          "   do this. Calling this API loads a serialized executable. Even\n"
+          "   loading such an executable may run arbitrary code on your\n"
+          "   machine. It is not safe to pass untrusted data here and\n"
+          "   likely never will be.")
       .def(
           "deserialize_executable",
           [](nb_class_ptr<PyClient> client, nb::bytes serialized,
@@ -988,7 +1027,14 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("serialized"), nb::arg("executable_devices"),
           nb::arg("compile_options").none() = nb::none(),
-          nb::arg("host_callbacks") = std::vector<nb::callable>())
+          nb::arg("host_callbacks") = std::vector<nb::callable>(),
+          "Deserializes an executable.\n\n"
+          ".. warning::\n"
+          "   It is not safe to call this API with untrusted inputs. Do not\n"
+          "   do this. Calling this API loads a serialized executable. Even\n"
+          "   loading such an executable may run arbitrary code on your\n"
+          "   machine. It is not safe to pass untrusted data here and\n"
+          "   likely never will be.")
       // The following overload is for users of deprecated APIs who call
       // `deserialize_executable` but do not have visibility to `DeviceList`.
       .def(
@@ -1005,11 +1051,32 @@ PyType_Slot PyClient::slots_[] = {
                 std::vector<nb::capsule>()));
           },
           nb::arg("serialized"), nb::arg("executable_devices"),
-          nb::arg("compile_options").none() = nb::none())
+          nb::arg("compile_options").none() = nb::none(),
+          "Deserializes an executable.\n\n"
+          ".. warning::\n"
+          "   It is not safe to call this API with untrusted inputs. Do not\n"
+          "   do this. Calling this API loads a serialized executable. Even\n"
+          "   loading such an executable may run arbitrary code on your\n"
+          "   machine. It is not safe to pass untrusted data here and\n"
+          "   likely never will be.")
       .def("heap_profile", xla::ValueOrThrowWrapper(&PyClient::HeapProfile))
       // TODO(zhangqiaorjc): Experimental.
       .def("defragment",
            [](PyClient& self) { xla::ThrowIfError(self.Defragment()); })
+      .def(
+          "dma_map",
+          [](PyClient& self, std::uintptr_t address, size_t size) {
+            xla::ThrowIfError(self.pjrt_client()->DmaMap(
+                reinterpret_cast<void*>(address), size));
+          },
+          nb::arg("address"), nb::arg("size"))
+      .def(
+          "dma_unmap",
+          [](PyClient& self, std::uintptr_t address) {
+            xla::ThrowIfError(
+                self.pjrt_client()->DmaUnmap(reinterpret_cast<void*>(address)));
+          },
+          nb::arg("address"))
       .def("make_python_callback_from_host_send_and_recv",
            xla::ValueOrThrowWrapper(
                &PyClient::MakePythonCallbackUsingHostSendAndRecv),
@@ -1017,6 +1084,9 @@ PyType_Slot PyClient::slots_[] = {
            nb::arg("result_shapes"), nb::arg("send_channel_ids"),
            nb::arg("recv_channel_ids"),
            nb::arg("serializer").none() = nb::none())
+      .def("create_hlo_output_callback",
+           xla::ValueOrThrowWrapper(&PyClient::CreateHloOutputCallback),
+           nb::arg("callback_id"), nb::arg("num_operands"), nb::arg("callback"))
       .def(
           "get_default_layout",
           [](PyClient& self, xla::nb_dtype dtype, nb::sequence shard_shape,

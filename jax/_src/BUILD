@@ -42,6 +42,7 @@ pytype_strict_library(
         "interpreters/__init__.py",
     ],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("init"),
     deps = [":traceback_util"],
 )
 
@@ -175,7 +176,9 @@ pytype_strict_library(
     visibility = ["//jax:internal"],
     deps = if_building_jaxlib(
         if_building = [
+            ":cloud_tpu_init",
             ":config",
+            ":hardware_utils",
             ":test_util",
             ":xla_bridge",
             "//jax/_src/lib",
@@ -262,6 +265,7 @@ pytype_strict_library(
     deps = [
         ":abstract_arrays",
         ":ad",
+        ":ad_util",
         ":api_util",
         ":basearray",
         ":batching",
@@ -271,12 +275,14 @@ pytype_strict_library(
         ":deprecations",
         ":dtypes",
         ":effects",
+        ":flattree",
         ":jaxpr_util",
         ":layout",
         ":literals",
         ":mesh",
         ":mlir",
         ":monitoring",
+        ":named_sharding",
         ":op_shardings",
         ":partial_eval",
         ":partition_spec",
@@ -397,6 +403,8 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
+        ":flattree",
+        ":hijax",
         ":lax",
         ":mesh",
         ":mlir",
@@ -559,10 +567,14 @@ pytype_strict_library(
         "linear_util.py",
     ],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("core"),
     deps = [
         ":config",
         ":dtypes",
         ":effects",
+        ":flattree",
         ":frozen_dict",
         ":layout",
         ":mesh",
@@ -937,6 +949,7 @@ pytype_strict_library(
         ":config",
         ":core",
         ":path",
+        ":pretty_printer",
         ":source_info_util",
         ":util",
         "//jax/_src/lib",
@@ -959,12 +972,16 @@ pytype_strict_library(
     name = "ad",
     srcs = ["interpreters/ad.py"],
     type_checking = "pyrefly",
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("ad"),
     deps = [
         ":ad_util",
         ":api_util",
         ":config",
         ":core",
         ":dtypes",
+        ":flattree",
         ":mesh",
         ":partial_eval",
         ":source_info_util",
@@ -978,6 +995,7 @@ pytype_strict_library(
     name = "batching",
     srcs = ["interpreters/batching.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("batching"),
     deps = [
         ":ad_util",
         ":config",
@@ -997,6 +1015,7 @@ pytype_strict_library(
     name = "mlir",
     srcs = ["interpreters/mlir.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("mlir"),
     deps = [
         ":ad_util",
         ":api_util",
@@ -1085,6 +1104,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":flattree",
         ":profiler",
         ":source_info_util",
         ":state_types",
@@ -1103,6 +1123,7 @@ pytype_strict_library(
         ":api_util",
         ":config",
         ":core",
+        ":flattree",
         ":partial_eval",
         ":source_info_util",
         ":tree_util",
@@ -1244,11 +1265,14 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":flattree",
         ":lax",
         ":layout",
         ":mesh",
         ":mlir",
+        ":named_sharding",
         ":partial_eval",
+        ":remat",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",
@@ -1276,7 +1300,9 @@ pytype_strict_library(
         ":custom_derivatives",
         ":dtypes",
         ":effects",
+        ":flattree",
         ":partial_eval",
+        ":partition_spec",
         ":remat",
         ":state_types",
         ":traceback_util",
@@ -1293,7 +1319,9 @@ pytype_strict_library(
     deps = [
         ":config",
         ":core",
+        ":flattree",
         ":layout",
+        ":mesh",
         ":mlir",
         ":sharding",
         ":sharding_impls",
@@ -1317,10 +1345,14 @@ pytype_strict_library(
         ":batching",
         ":config",
         ":core",
+        ":effects",
+        ":flattree",
         ":mlir",
         ":partial_eval",
+        ":source_info_util",
         ":tree_util",
         ":util",
+        ":xla_metadata",
         "//jax/_src/lib",
     ],
 )
@@ -1332,11 +1364,15 @@ pytype_strict_library(
     deps = [
         ":ad",
         ":api",
+        ":api_util",
         ":batching",
         ":config",
         ":core",
+        ":flattree",
         ":mlir",
+        ":partial_eval",
         ":tree_util",
+        ":util",
         ":xla_metadata_lib",
         "//jax/_src/lib",
     ],
@@ -1434,6 +1470,9 @@ py_library_providing_imports_info(
         "numpy/**/*.py",
         "ops/**/*.py",
     ]),
+    visibility = [
+        "//jax:internal",
+    ] + jax_visibility("numpy"),
     deps = [
         ":api",
         ":api_util",
@@ -1523,6 +1562,18 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "flattree",
+    srcs = ["flattree.py"],
+    type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("flattree"),
+    deps = [
+        ":tree_util",
+        ":util",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
     name = "tree",
     srcs = ["tree.py"],
     type_checking = "pyrefly",
@@ -1566,7 +1617,7 @@ pytype_strict_library(
     name = "tpu_custom_call",
     srcs = ["tpu_custom_call.py"],
     type_checking = "pyrefly",
-    visibility = ["//jax:internal"],
+    visibility = ["//jax:internal"] + jax_visibility("tpu_custom_call"),
     deps = [
         ":api",
         ":batching",
@@ -1590,6 +1641,7 @@ pytype_strict_library(
     name = "util",
     srcs = ["util.py"],
     type_checking = "pyrefly",
+    visibility = ["//jax:internal"] + jax_visibility("util"),
     deps = [
         ":config",
         "//jax/_src/lib",
@@ -1658,8 +1710,14 @@ pytype_strict_library(
 pytype_strict_library(
     name = "random",
     srcs = [
-        "prng.py",
-        "random.py",
+        "random/__init__.py",
+        "random/core.py",
+        "random/philox2x32.py",
+        "random/philox4x32.py",
+        "random/prng.py",
+        "random/rbg.py",
+        "random/threefry2x32.py",
+        "random/threefry4x32.py",
     ],
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("random"),
@@ -1697,7 +1755,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "stateful_rng",
     srcs = [
-        "stateful_rng.py",
+        "random/stateful_rng.py",
     ],
     type_checking = "pyrefly",
     deps = [
@@ -1711,4 +1769,14 @@ pytype_strict_library(
         ":tree_util",
         ":typing",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "xla_transform",
+    srcs = ["xla_transform.py"],
+    type_checking = "pyrefly",
+    deps = [
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ],
 )

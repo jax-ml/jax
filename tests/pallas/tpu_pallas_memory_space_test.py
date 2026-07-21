@@ -15,9 +15,12 @@
 """Test TPU-specific uses of Pallas memory space APIs."""
 
 import functools
+import json
+import re
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import core as jax_core
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -28,6 +31,37 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 P = jax.sharding.PartitionSpec
 partial = functools.partial
+
+
+def _json_object_with_fields(fields):
+  return (
+      r'\{'
+      + ''.join(
+          '(?=[^{}]*' + _json_object_with_a_field(name, value) + ')'
+          for name, value in fields.items()
+      )
+      + r'[^{}]*\}'
+  )
+
+
+def _json_object_with_a_field(field_name, value):
+  return (
+      re.escape(json.dumps(field_name, separators=(',', ':')))
+      + r'\s*:\s*'
+      + _json_value_pattern(value)
+  )
+
+
+def _json_value_pattern(value):
+  if isinstance(value, dict):
+    return _json_object_with_fields(value)
+  if isinstance(value, list):
+    return (
+        r'\['
+        + ','.join(_json_value_pattern(entry) for entry in value)
+        + r'\]'
+    )
+  return re.escape(json.dumps(value, separators=(',', ':')))
 
 
 class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
@@ -66,13 +100,21 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     x = jnp.ones((8, 128), dtype=jnp.float32)
     y = f(x)
     np.testing.assert_array_equal(y, x)
-    hlo = jax.jit(f).lower(x).compile().as_text()
+    lowered = jax.jit(f).lower(x)
+    lowered.compile()
+    hlo = lowered.compiler_ir(dialect='hlo').as_hlo_text()
     if color is None or memory_space == pltpu.SMEM:
-      self.assertIn('"input_memory_space_colors":[]', hlo)
+      self.assertNotIn('input_memory_space_colors', hlo)
     else:
-      self.assertIn(
-          f'"input_memory_space_colors":[{{"operand_index":"0","color":"{color}","shape_index":[]}}]',
+      self.assertRegex(
           hlo,
+          _json_object_with_a_field(
+              'input_memory_space_colors',
+              [{
+                  'color': color,
+                  'operand_index': 0,
+              }],
+          ),
       )
 
   @parameterized.parameters(
@@ -80,12 +122,15 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
       (pltpu.SMEM, 4),
       (pltpu.HBM, 0),
       (pl.ANY, None),
-      (pltpu.HOST, 5),
+      (pl.HOST, 5),
   )
   def test_basic_output_memory_space_constraint(self, memory_space, color):
-    out_shape_ctor = memory_space
     if color is None:
       out_shape_ctor = jax.ShapeDtypeStruct
+    else:
+      out_shape_ctor = lambda shape, dtype: jax_core.ShapedArray(
+          shape, dtype, memory_space=memory_space
+      )
 
     def kernel(x_ref, y_ref):
       pltpu.sync_copy(x_ref, y_ref)
@@ -98,7 +143,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
           out_specs=pl.BlockSpec(memory_space=memory_space),
       )(x)
 
-    if memory_space == pltpu.HOST:
+    if memory_space == pl.HOST:
       if jax.device_count() > 1:
         self.skipTest('Test only works with a single device.')
       out_sharding = jax.sharding.NamedSharding(
@@ -109,7 +154,7 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     else:
       out_sharding = None
 
-    @functools.partial(jax.jit, out_shardings=out_sharding)
+    @jax.jit(out_shardings=out_sharding)
     def f(x):
       x = g(x)
       return x
@@ -117,13 +162,18 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     x = jnp.ones((8, 128), dtype=jnp.float32)
     y = f(x)
     np.testing.assert_array_equal(y, x)
-    hlo = jax.jit(f, out_shardings=out_sharding).lower(x).compile().as_text()
+    lowered = jax.jit(f, out_shardings=out_sharding).lower(x)
+    lowered.compile()
+    hlo = lowered.compiler_ir(dialect='hlo').as_hlo_text()
     if color is None:
-      self.assertIn('"output_memory_space_colors":[]', hlo)
+      self.assertNotIn('output_memory_space_colors', hlo)
     else:
-      self.assertIn(
-          f'"output_memory_space_colors":[{{"color":"{color}","shape_index":[]}}]',
+      self.assertRegex(
           hlo,
+          _json_object_with_a_field(
+              'output_memory_space_colors',
+              [{'color': color}],
+          ),
       )
 
   def test_tuple_output_memory_space_constraint(self):
@@ -157,10 +207,18 @@ class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
     y, z = f(x)
     np.testing.assert_array_equal(y, x)
     np.testing.assert_array_equal(z, x)
-    hlo = jax.jit(f).lower(x).compile().as_text()
-    self.assertIn(
-        f'"output_memory_space_colors":[{{"color":"{color}","shape_index":["0"]}},{{"color":"{color}","shape_index":["1"]}}]',
+    lowered = jax.jit(f).lower(x)
+    lowered.compile()
+    hlo = lowered.compiler_ir(dialect='hlo').as_hlo_text()
+    self.assertRegex(
         hlo,
+        _json_object_with_a_field(
+            'output_memory_space_colors',
+            [
+                {'color': color, 'shape_index': [0]},
+                {'color': color, 'shape_index': [1]},
+            ],
+        ),
     )
 
 
@@ -186,7 +244,7 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       self.assertEqual(jax.typeof(x_ref).memory_space, memory_space)
       self.assertEqual(jax.typeof(y_ref).memory_space, memory_space)
 
-      @pl.core_map(mesh=pltpu.create_tensorcore_mesh('core'))
+      @pl.core_map(mesh=pltpu.TensorCoreMesh(axis_name='core'))
       def _():
         if jax.typeof(x_ref).memory_space is pltpu.VMEM:
           y_ref[...] = x_ref[...]
@@ -207,20 +265,32 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
       return
     lowered = f.lower(x)
     compiled = lowered.compile()
-    hlo = compiled.as_text()
+    hlo = lowered.compiler_ir(dialect='hlo').as_hlo_text()
     if color is None or memory_space == pltpu.SMEM:
-      self.assertIn('"input_memory_space_colors":[]', hlo)
+      self.assertNotIn('input_memory_space_colors', hlo)
     else:
-      self.assertIn(
-          f'"input_memory_space_colors":[{{"operand_index":"0","color":"{color}","shape_index":[]}},{{"operand_index":"1","color":"{color}","shape_index":[]}}]',
+      self.assertRegex(
           hlo,
+          _json_object_with_a_field(
+              'input_memory_space_colors',
+              [
+                  {
+                      'color': color,
+                      'operand_index': 0,
+                  },
+                  {
+                      'color': color,
+                      'operand_index': 1,
+                  },
+              ],
+          ),
       )
     y = compiled(x)
     np.testing.assert_array_equal(y, x)
 
   def test_smem_copy(self):
-    mesh = pltpu.create_tensorcore_mesh('core')
-    if len(mesh.devices) > 1:
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+    if mesh.num_cores > 1:
       self.skipTest('Only one core is supported for this test.')
 
     kernel = pl.core_map(mesh=mesh)
@@ -244,8 +314,8 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(f(), np.arange(8) + 1)
 
   def test_smem_async_copy(self):
-    mesh = pltpu.create_tensorcore_mesh('core')
-    if len(mesh.devices) > 1:
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+    if mesh.num_cores > 1:
       self.skipTest('Only one core is supported for this test.')
 
     kernel = pl.core_map(mesh=mesh)
@@ -281,8 +351,8 @@ class TPUCoreMapMemorySpaceTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(f(), np.arange(8) + 1)
 
   def test_smem_async_copy_megacore(self):
-    mesh = pltpu.create_tensorcore_mesh('core')
-    num_cores = len(mesh.devices)
+    mesh = pltpu.TensorCoreMesh(axis_name='core')
+    num_cores = mesh.num_cores
     if num_cores == 1:
       self.skipTest('Only megacore is supported for this test.')
 

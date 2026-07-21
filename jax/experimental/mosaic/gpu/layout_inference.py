@@ -20,11 +20,11 @@ from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import enum
 import itertools
+import logging
 import math
 import re
 from typing import Any, assert_never, cast
 
-from absl import logging
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -32,6 +32,7 @@ from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax.experimental.mosaic.gpu.mma import MMALayouts
 import numpy as np
 
 from . import constraints as cs
@@ -42,6 +43,7 @@ from . import layouts as layouts_lib
 from . import tcgen05
 from . import utils
 
+logger = logging.getLogger(__name__)
 
 # This value was arrived at by looking at an existing kernel where layout
 # inference would never be able to complete successfully, and kernels where it
@@ -118,7 +120,7 @@ class ValueSite:
     assert isinstance(ty, ir.MemRefType)
     if utils.is_tmem_ref(ty):
       return cs.MemorySpace.TMEM
-    elif utils.is_smem_ref(ty):
+    elif utils.is_smem_ref(ty) or utils.is_cluster_smem_ref(ty):
       return cs.MemorySpace.SMEM
     raise ValueError(f"Unsupported memory space for: {ty}")
 
@@ -215,11 +217,11 @@ def _default_tmem_layout_for_variable(
 
 def _register_layouts_for_optimized_transfer_to_smem(
     shaped_type: ir.ShapedType,
-    smem_layout: cs.SMEMTiling,
+    smem_layout: cs.SMEMTransforms,
     arch: tuple[int, int],
 ) -> Iterator[fa.FragmentedLayout]:
   """Yields register layout candidates for optimized transfers to SMEM."""
-  if smem_layout.value is None:
+  if smem_layout.tiling is None:
     reg_layout = fa.WGStridedFragLayout.from_shaped_type(shaped_type)
     if reg_layout is not None:
       yield reg_layout
@@ -248,15 +250,18 @@ def _register_layouts_for_optimized_transfer_to_smem(
   yield from candidate_layouts
 
 
-def _conjure_tilings_for_smem_ref(
-    ref_ty: ir.MemRefType
-) -> Iterator[tuple[int, ...]]:
+def _conjure_transforms_for_smem_ref(
+    variable: cs.Variable,
+    divide_constraints_per_var: dict[cs.Variable, cs.Divides]
+) -> Iterator[tuple[tuple[int, ...], cs.Swizzle]]:
+  ref_ty = variable.key.value.type
   if len(ref_ty.shape) < 2:
     return
   bitwidth = utils.bitwidth(ref_ty.element_type)
   strides, _ = ref_ty.get_strides_and_offset()
   rank = len(strides)
   dim_order = np.argsort(strides)
+  divide_constraint = divide_constraints_per_var.get(variable)
 
   # We want to tile only the last two dimensions.
   if {dim_order[0], dim_order[1]} != {rank - 1, rank - 2}:
@@ -273,16 +278,27 @@ def _conjure_tilings_for_smem_ref(
   for swizzle in [128, 64, 32]:
     swizzle_elems = 8 * swizzle // bitwidth
     if minor_dim % swizzle_elems == 0:
-      yield (swizzle_elems, 8) if transposed else (8, swizzle_elems)
+      tiling = (swizzle_elems, 8) if transposed else (8, swizzle_elems)
+      if divide_constraint is not None:
+        tiling = cs.merge_divides_constraints(
+            divide_constraint, cs.Divides(variable, tiling)
+        ).tiling_multiple
+        constrained_swizzle_elems = tiling[0] if transposed else tiling[1]
+        constrained_swizzle = constrained_swizzle_elems * bitwidth // 8
+        if constrained_swizzle not in {128, 64, 32}:
+          continue
+        yield tiling, constrained_swizzle
+      else:
+        yield tiling, swizzle  # pyrefly: ignore[invalid-yield]
 
 
 def _extract_layout_candidates_from_tmem_registers_transfer(
     constraint: cs.IsTransferableTmemRegisters,
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   match constraint.source, constraint.target:
-    case cs.Variable() as src, cs.Constant() as tgt:
+    case cs.Variable() as src, tgt if isinstance(tgt, cs.Constant):
       variable, constant = src, tgt
-    case cs.Constant() as src, cs.Variable() as tgt:
+    case src, cs.Variable() as tgt if isinstance(src, cs.Constant):
       variable, constant = tgt, src
     case _:
       return
@@ -290,26 +306,29 @@ def _extract_layout_candidates_from_tmem_registers_transfer(
   columns = constraint.shape[1]
 
   if isinstance(constant, cs.TMEMLayout):
-    for candidate in (
-        fa.TCGEN05_LAYOUT,
-        constant.value.as_tiled_layout(),
-        fa.TMEM_NATIVE_LAYOUT,
-        fa.WGMMA_LAYOUT,
-        tcgen05.fa_m64_collective_layout(columns),
-    ):
-      if constraint.is_valid_tmem_transfer(constant.value, candidate):
-        yield variable, cs.RegisterLayout(candidate)
+    candidates = [
+      fa.TCGEN05_LAYOUT,
+      constant.value.as_tiled_layout(),
+      fa.TMEM_NATIVE_LAYOUT,
+      fa.WGMMA_LAYOUT,
+    ]
+    if columns % 16 == 0:
+      candidates.append(tcgen05.fa_m64_collective_layout(columns))
+    for candidate in candidates:
+     if constraint.is_valid_tmem_transfer(constant.value, candidate):
+       yield variable, cs.RegisterLayout(candidate)
     return
 
   assert isinstance(constant, cs.RegisterLayout)
   if not isinstance(constant.value, fa.TiledLayout):
     return
   for packing in dict.fromkeys([32 // constraint.bitwidth, 1]):
-    for candidate in (
-        tcgen05.tmem_default_layout(packing),
-        tcgen05.tmem_half_lane_layout(columns, packing),
-        tcgen05.tmem_m64_collective_layout(columns, packing),
-    ):
+    candidates = [tcgen05.tmem_default_layout(packing)]
+    if columns % 16 == 0 and packing <= columns // 2:
+      candidates.append(tcgen05.tmem_half_lane_layout(columns, packing))
+    if columns % 16 == 0 and packing <= 8:
+      candidates.append(tcgen05.tmem_m64_collective_layout(columns, packing))
+    for candidate in candidates:
       if constraint.is_valid_tmem_transfer(candidate, constant.value):
         yield variable, cs.TMEMLayout(candidate)
 
@@ -321,9 +340,9 @@ def _extract_layout_candidates_from_smem_registers_transfer(
 ) -> Iterator[tuple[cs.Variable, cs.Constant]]:
   src, tgt = constraint.source, constraint.target
   match src, tgt:
-    case cs.Variable(), cs.Constant():
+    case cs.Variable(), cst if isinstance(cst, cs.Constant):
       variable, constant = src, tgt
-    case cs.Constant(), cs.Variable():
+    case cst, cs.Variable() if isinstance(cst, cs.Constant):
       variable, constant = tgt, src
     case _:
       return
@@ -336,20 +355,17 @@ def _extract_layout_candidates_from_smem_registers_transfer(
       # Maintain a set of yielded tilings to avoid duplicates caused by existing
       # divides constraints.
       yielded = set()
-      divide_constraint = division_constraint_per_var.get(variable)
-      for tiling in _conjure_tilings_for_smem_ref(variable.key.value.type):
-        if divide_constraint is not None:
-          # Apply existing multiplicity constraints to the conjured tiling.
-          tiling = cs.merge_divides_constraints(
-              divide_constraint, cs.Divides(variable, tiling)
-          ).tiling_multiple
-        if tiling in yielded:
+      for transform in _conjure_transforms_for_smem_ref(
+          variable, division_constraint_per_var
+      ):
+        tiling, swizzle = transform
+        if transform in yielded:
           continue
-        yielded.add(tiling)
-        yield variable, cs.SMEMTiling(lc.TileTransform(tiling))
+        yielded.add(transform)
+        yield variable, cs.SMEMTransforms(lc.TileTransform(tiling), swizzle)
     return
 
-  assert isinstance(constant, cs.SMEMTiling)
+  assert isinstance(constant, cs.SMEMTransforms)
   assert variable.memory_space == cs.MemorySpace.REG
   for layout in _register_layouts_for_optimized_transfer_to_smem(
       variable.key.value.type, constant, arch
@@ -380,7 +396,7 @@ def _extract_layout_candidates_from_mma_tiling(
     tiling = (swizzle_elems, 8) if is_transposed else (8, swizzle_elems)
     if any(s % t for s, t in zip(tiled_dimensions, tiling)):
       continue
-    yield v, cs.SMEMTiling(lc.TileTransform(tiling))
+    yield v, cs.SMEMTransforms(lc.TileTransform(tiling), swizzle)
 
 
 def _divides_per_var(
@@ -493,7 +509,8 @@ def conjure_assignment(
         if layout is not None:
           yield variable, cs.RegisterLayout(layout)
       case cs.MemorySpace.SMEM:
-        yield variable, cs.SMEMTiling(None)
+        # TODO(olechwierowicz): Consider inferring a standalone swizzle here.
+        yield variable, cs.SMEMTransforms(None, None)
       case cs.MemorySpace.TMEM:
         layout = _default_tmem_layout_for_variable(variable)
         if layout is not None:
@@ -581,13 +598,6 @@ def find_assignments_for(
   return cs.Unsatisfiable(), fuel
 
 
-@dataclasses.dataclass(frozen=True)
-class _AliasKey:
-  source_ref: ir.Value | None
-  offset: int
-  alias_id: int
-
-
 @dataclasses.dataclass()
 class DerivationContext:
   """Holds context information used for deriving an constraint system."""
@@ -604,14 +614,16 @@ class DerivationContext:
   # used to disambiguate whether overlapping memory slices are independent or
   # related for the purposes of layout inference.
   #
-  # Concretely, if a memory slice op shares the same base address,
-  # `offset` and `alias_id` with another memory slice op, then they are
-  # considered to be the same ref and must have the same layout. Otherwise,
-  # they are independent.
-  slice_smem_aliases: dict[_AliasKey, cs.Variable] = dataclasses.field(
+  # Concretely, if a memory slice op shares the same `alias_id` with another
+  # memory slice op, then they are considered to be the same ref and must have
+  # the same layout. Otherwise, they are independent.
+  #
+  # It is incorrect to annotate non-overlapping refs or refs with incompatible
+  # result types with the same `alias_id`.
+  slice_smem_aliases: dict[int, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
   )
-  slice_tmem_aliases: dict[_AliasKey, cs.Variable] = dataclasses.field(
+  slice_tmem_aliases: dict[int, cs.Variable] = dataclasses.field(
       default_factory=dict, init=False
   )
 
@@ -672,7 +684,9 @@ def is_vector(v: ir.Value) -> bool:
 
 
 def _is_smem_ref(v: ir.Value) -> bool:
-  return isinstance(v.type, ir.MemRefType) and utils.is_smem_ref(v)
+  return isinstance(v.type, ir.MemRefType) and (
+      utils.is_smem_ref(v) or utils.is_cluster_smem_ref(v)
+  )
 
 
 def _is_tmem_ref(v: ir.Value) -> bool:
@@ -737,6 +751,10 @@ for _op in [
     mlir_math.RoundOp,
     mlir_math.RoundEvenOp,
     mlir_math.CopySignOp,
+    mlir_math.CountLeadingZerosOp,
+    arith.ShLIOp,
+    arith.ShRUIOp,
+    arith.ShRSIOp,
 ]:
   _add_constraint_system_derivation_rule(_op)(_pointwise_op_constraint_system)
 
@@ -759,7 +777,7 @@ def _vector_load_constraint_system(
     optimized = cs.OptimizedTransferKind.UNOPTIMIZED
 
   # SMEM
-  if utils.is_smem_ref(op.source):
+  if _is_smem_ref(op.source):
     source = ValueSite(op, VariableType.OPERAND, 0)
     source_var = ctx.producer_ref(source)
     value_sites_for_variable[source_var] = [source]
@@ -794,7 +812,7 @@ def _multimem_load_reduce_constraint_system(
 @_add_constraint_system_derivation_rule(mgpu.VectorStoreOp)
 def _vector_store_constraint_system(
     ctx: DerivationContext,
-    op: mgpu.VectorStoreOp,
+    op: Any,  # This is mgpu.VectorStoreOp | mgpu.AsyncStoreSmemOp
 ) -> ConstraintSystemDerivationRuleResult:
   # Registers
   value = ValueSite(op, VariableType.OPERAND, 0)
@@ -812,7 +830,7 @@ def _vector_store_constraint_system(
 
   # SMEM
   constraints = []
-  if utils.is_smem_ref(op.destination):
+  if _is_smem_ref(op.destination):
     dest = ValueSite(op, VariableType.OPERAND, 1)
     dest_var = ctx.producer_ref(dest)
     value_sites_for_variable[dest_var] = [dest]
@@ -829,6 +847,22 @@ def _vector_store_constraint_system(
 
   system = cs.ConstraintSystem(constraints=constraints)
   return system, value_sites_for_variable
+
+
+@_add_constraint_system_derivation_rule(mgpu.AsyncStoreSmemOp)
+def _async_store_smem_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.AsyncStoreSmemOp,
+) -> ConstraintSystemDerivationRuleResult:
+  system, value_sites_for_variable = _vector_store_constraint_system(ctx, op)
+  var = cs.Variable(ValueSite(op, VariableType.OPERAND, 0))
+  extra_constraints = cs.ConstraintSystem(
+      constraints=[
+          cs.NotOfType(var, fa.WGStridedFragLayout),
+          cs.NotOfType(var, fa.WGSplatFragLayout),
+      ]
+  )
+  return system & extra_constraints, value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(mgpu.DebugPrintOp)
@@ -1105,7 +1139,7 @@ def _wgmma_constraint_system(
   b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
   constraints: list[cs.Constraint]
   if b_is_transposed:
-    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), input_bitwidth)]
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var, (1, 0)), input_bitwidth)]
   else:
     constraints = [cs.IsValidMmaTiling(b_var, input_bitwidth)]
   value_sites_for_variable[b_var] = [b]
@@ -1119,7 +1153,7 @@ def _wgmma_constraint_system(
     # operands are transposed, we need to transpose the transform as well.
     a_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.a.type))
     if a_is_transposed != b_is_transposed:
-      constraints.append(cs.Equals(lhs=a_var, rhs=cs.Transpose(b_var)))
+      constraints.append(cs.Equals(lhs=a_var, rhs=cs.Transpose(b_var, (1, 0))))
     else:
       constraints.append(cs.Equals(lhs=a_var, rhs=b_var))
   else:
@@ -1138,6 +1172,55 @@ def _wgmma_constraint_system(
 
   value_sites_for_variable[a_var] = [a]
   return cs.ConstraintSystem(assignments, constraints), value_sites_for_variable
+
+
+@_add_constraint_system_derivation_rule(mgpu.MMAOp)
+def _mma_constraint_system(
+    ctx: DerivationContext, op: mgpu.MMAOp
+) -> ConstraintSystemDerivationRuleResult:
+  del ctx
+  element_type = op.a.type.element_type
+  layouts = MMALayouts(element_type)
+
+  assignments: dict[cs.Variable, cs.Constant] = {}
+  value_sites_for_variable: ValueSitesForVariable = {}
+
+  acc_out = ValueSite(op, VariableType.RESULT, 0)
+  acc_in = ValueSite(op, VariableType.OPERAND, 0)
+  acc_var = cs.Variable(acc_out)
+  acc_layout = cs.RegisterLayout(layouts.acc)
+  if not cs.is_valid_assignment(acc_var, acc_layout):
+    raise ValueError(
+        f"Cannot assign layout {acc_layout.value} to the accumulator of an mma"
+        " op: the layout is not compatible with the accumulator shape"
+        f" {acc_out.shape}."
+    )
+  assignments[acc_var] = acc_layout
+  value_sites_for_variable[acc_var] = [acc_in, acc_out]
+
+  a_site = ValueSite(op, VariableType.OPERAND, 1)
+  a_var = cs.Variable(a_site)
+  a_layout = cs.RegisterLayout(layouts.lhs)
+  if not cs.is_valid_assignment(a_var, a_layout):
+    raise ValueError(
+        f"Cannot assign layout {a_layout.value} to the 'a' operand of MMAOp: "
+        f"the layout is not compatible with the operand shape {a_site.shape}."
+    )
+  assignments[a_var] = a_layout
+  value_sites_for_variable[a_var] = [a_site]
+
+  b_site = ValueSite(op, VariableType.OPERAND, 2)
+  b_var = cs.Variable(b_site)
+  b_layout = cs.RegisterLayout(layouts.rhs)
+  if not cs.is_valid_assignment(b_var, b_layout):
+    raise ValueError(
+        f"Cannot assign layout {b_layout.value} to the 'b' operand of MMAOp: "
+        f"the layout is not compatible with the operand shape {b_site.shape}."
+    )
+  assignments[b_var] = b_layout
+  value_sites_for_variable[b_var] = [b_site]
+
+  return cs.ConstraintSystem(assignments, []), value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(vector.BroadcastOp)
@@ -1253,6 +1336,29 @@ def _broadcast_in_dim_constraint_system(
           dst_variable: [dst_variable.key],
       },
   )
+
+
+# TODO(allanrenucci): Remove guard after jaxlib v0.11.0 release.
+if hasattr(mgpu, "VectorConcatOp"):
+  @_add_constraint_system_derivation_rule(mgpu.VectorConcatOp)
+  def _vector_concat_constraint_system(
+      ctx: DerivationContext, op: mgpu.VectorConcatOp
+  ) -> ConstraintSystemDerivationRuleResult:
+    del ctx
+    result = ValueSite(op, VariableType.RESULT, 0)
+    result_var = cs.Variable(result)
+    value_sites_for_variable: ValueSitesForVariable = {result_var: [result]}
+    constraints: list[cs.Constraint] = [
+        # TODO(allanrenucci): Add support for strided layout.
+        cs.NotOfType(result_var, fa.WGSplatFragLayout),
+        cs.NotOfType(result_var, fa.WGStridedFragLayout),
+    ]
+    for i, _ in enumerate(op.operands):
+      operand_site = ValueSite(op, VariableType.OPERAND, i)
+      operand_var = cs.Variable(operand_site)
+      value_sites_for_variable[operand_var] = [operand_site]
+      constraints.append(cs.Equals(operand_var, result_var))
+    return cs.ConstraintSystem(constraints=constraints), value_sites_for_variable
 
 
 @_add_constraint_system_derivation_rule(vector.ShapeCastOp)
@@ -1415,8 +1521,7 @@ def _custom_primitive_constraint_system(
       variables.append(v)
       transforms = next(in_transforms)
       assert isinstance(transforms, ir.ArrayAttr)
-      ref_ty = cast(ir.MemRefType, value_site.value.type)
-      tiling = _extract_smem_tiling_from_custom_transform_attrs(ref_ty, transforms)
+      tiling = _extract_smem_transforms_from_custom_transform_attrs(transforms)
       assignments[v] = tiling
 
   out_layouts = iter(op.out_layouts)
@@ -1474,7 +1579,7 @@ def _tmem_alloc_constraint_system(
   in_smem = ValueSite(op, VariableType.OPERAND, 0)
   in_smem_var = cs.Variable(in_smem)
   assignments: dict[cs.Variable, cs.Constant] = {
-      in_smem_var: cs.SMEMTiling(None)
+      in_smem_var: cs.SMEMTransforms(None, None)
   }
   operands_for_variable = {result_var: [result], in_smem_var: [in_smem]}
   return cs.ConstraintSystem(assignments=assignments), operands_for_variable
@@ -1523,7 +1628,7 @@ def _tcgen05_mma_constraint_system(
   b_is_transposed = utils.is_memref_transposed(ir.MemRefType(op.b.type))
   constraints: list[cs.Constraint]
   if b_is_transposed:
-    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var), element_type_bitwidth)]
+    constraints = [cs.IsValidMmaTiling(cs.Transpose(b_var, (1, 0)), element_type_bitwidth)]
   else:
     constraints = [cs.IsValidMmaTiling(b_var, element_type_bitwidth)]
 
@@ -1568,7 +1673,7 @@ def _tcgen05_mma_constraint_system(
     a_var = ctx.producer_ref(a)
     operands_for_variable[a_var] = [a]
     if a_is_transposed:
-      constraints.append(cs.IsValidMmaTiling(cs.Transpose(a_var), element_type_bitwidth))
+      constraints.append(cs.IsValidMmaTiling(cs.Transpose(a_var, (1, 0)), element_type_bitwidth))
     else:
       constraints.append(cs.IsValidMmaTiling(a_var, element_type_bitwidth))
 
@@ -1632,9 +1737,36 @@ def _async_load_tmem_constraint_system(
       tuple(ir.ShapedType(op.source.type).shape),
       bitwidth=utils.bitwidth(op.source.type.element_type),
   )
+  constraints: list[cs.Constraint] = [
+      constraint,
+      # The following `NotOfType` constraints are shortcuts, helping
+      # the layout inference system converge faster.
+      # They are implicitly rejected by `IsTransferableTmemRegisters`.
+      cs.NotOfType(destination_variable, fa.WGSplatFragLayout),
+      cs.NotOfType(destination_variable, fa.WGStridedFragLayout),
+  ]
+  operands_for_variable = {
+      source_variable: [source],
+      destination_variable: [destination],
+  }
+  # TODO(apaszke): Remove once 0.11.1 is the minimum jaxlib version.
+  if getattr(op, "reduce", None) is not None:
+    reduced = ValueSite(op, VariableType.RESULT, 1)
+    reduced_variable = cs.Variable(reduced)
+    operands_for_variable[reduced_variable] = [reduced]
+    source_rank = len(ir.MemRefType(op.source.type).shape)
+    assert source_rank == 2
+    constraints.append(
+        cs.Equals(
+            reduced_variable,
+            cs.Reduce(
+                destination_variable, axes=(1,), rank=source_rank, keep_dims=False
+            ),
+        )
+    )
   return (
-      cs.ConstraintSystem(constraints=[constraint]),
-      {source_variable: [source], destination_variable: [destination]},
+      cs.ConstraintSystem(constraints=constraints),
+      operands_for_variable,
   )
 
 
@@ -1683,7 +1815,7 @@ def _async_store_sparse_metadata_smem_to_tmem_constraint_system(
               destination_variable: cs.TMEMLayout(
                   tcgen05.sparse_meta_layout()
               ),
-              source_variable: cs.SMEMTiling(None),
+              source_variable: cs.SMEMTransforms(None, None),
           },
       ),
       {source_variable: [source], destination_variable: [destination]},
@@ -1700,7 +1832,7 @@ def _async_store_scales_smem_to_tmem_constraint_system(
   destination_variable = ctx.producer_ref(destination)
 
   assignments: dict[cs.Variable, cs.Constant] = {
-      source_variable: cs.SMEMTiling(None)
+      source_variable: cs.SMEMTransforms(None, None)
   }
   k_tiles = destination.shape[1] // 4
   if source.shape == (1, k_tiles, 64, 16):
@@ -1724,14 +1856,15 @@ def _slice_tmem_constraint_system(
   operand_variable = ctx.producer_ref(operand)
   result = ValueSite(op, VariableType.RESULT, 0)
   # TODO(bchetioui): enforce that the parent is a TmemAllocOp.
+  # TODO(allanrenucci): Use alias_id directly from SliceTmemOp after jaxlib
+  # v0.10.3 release.
   if "alias_id" in op.attributes:
     alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
-    alias_key = _AliasKey(None, op.offset.value, alias_id)
-    if (cached_variable := ctx.slice_tmem_aliases.get(alias_key)) is not None:
+    if (cached_variable := ctx.slice_tmem_aliases.get(alias_id)) is not None:
       result_variable = cached_variable
     else:
       result_variable = cs.Variable(result)
-      ctx.slice_tmem_aliases[alias_key] = result_variable
+      ctx.slice_tmem_aliases[alias_id] = result_variable
   else:
     result_variable = cs.Variable(result)
   return (
@@ -1767,17 +1900,27 @@ def _slice_smem_constraint_system(
     op: mgpu.SliceSMEMOp,
 ) -> ConstraintSystemDerivationRuleResult:
   result = ValueSite(op, VariableType.RESULT, 0)
-  if "alias_id" in op.attributes:
-    alias_id = ir.IntegerAttr(op.attributes["alias_id"]).value
-    alias_key = _AliasKey(None, op.offset.value, alias_id)
-    if (cached_variable := ctx.slice_smem_aliases.get(alias_key)) is not None:
+  if op.alias_id is not None:
+    alias_id = op.alias_id.value
+    if (cached_variable := ctx.slice_smem_aliases.get(alias_id)) is not None:
       result_variable = cached_variable
     else:
       result_variable = cs.Variable(result)
-      ctx.slice_smem_aliases[alias_key] = result_variable
+      ctx.slice_smem_aliases[alias_id] = result_variable
   else:
     result_variable = cs.Variable(result)
   return cs.ConstraintSystem(), {result_variable: [result]}
+
+
+@_add_constraint_system_derivation_rule(mgpu.GetClusterRefOp)
+def _get_cluster_ref_constraint_system(
+    ctx: DerivationContext,
+    op: mgpu.GetClusterRefOp,
+) -> ConstraintSystemDerivationRuleResult:
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  var_source_dest = ctx.producer_ref(source)
+  dest = ValueSite(op, VariableType.RESULT, 0)
+  return cs.ConstraintSystem(), {var_source_dest: [source, dest]}
 
 
 @_add_constraint_system_derivation_rule(memref.SubViewOp)
@@ -1845,22 +1988,20 @@ def _memref_transpose_op_constraint_system(
     ctx: DerivationContext,
     op: memref.TransposeOp,
 ) -> ConstraintSystemDerivationRuleResult:
-  in_ty = ir.MemRefType(op.in_.type)
-  in_strides, _ = in_ty.get_strides_and_offset()
-  out_strides, _ = ir.MemRefType(op.result.type).get_strides_and_offset()
-  transpose = in_strides != out_strides
-
   source = ValueSite(op, VariableType.OPERAND, 0)
   dest = ValueSite(op, VariableType.RESULT, 0)
   source_var = ctx.producer_ref(source)
 
-  if not transpose:
-    return cs.ConstraintSystem(), {source_var: [source, dest]}
-
   dest_var = cs.Variable(dest)
+
+  permutation = tuple(
+      ir.AffineDimExpr(e).position for e in op.permutation.value.results
+  )
+  inv_permutation = tuple(permutation.index(i) for i in range(len(permutation)))
+
   constraints = [
-      cs.Equals(cs.Transpose(source_var), dest_var),
-      cs.Equals(source_var, cs.Transpose(dest_var)),
+      cs.Equals(cs.Transpose(source_var, permutation=permutation), dest_var),
+      cs.Equals(source_var, cs.Transpose(dest_var, permutation=inv_permutation)),
   ]
   system = cs.ConstraintSystem(constraints=constraints)
   return system, {source_var: [source], dest_var: [dest]}
@@ -1902,6 +2043,42 @@ def _memref_expand_shape_op_equation_system(
   }
 
 
+@_add_constraint_system_derivation_rule(memref.CollapseShapeOp)
+def _memref_collapse_shape_op_constraint_system(
+    ctx: DerivationContext,
+    op: memref.CollapseShapeOp,
+) -> ConstraintSystemDerivationRuleResult:
+  reassociation = tuple(len(ir.ArrayAttr(idx)) for idx in op.reassociation)
+  # This should only occur when going from a (1, ...) shape to an empty shape.
+  # We can handle it if needed, but right now `CollapseShape` will not deal with
+  # this case.
+  if not reassociation:
+    raise NotImplementedError(
+        "CollapseShapeOp with empty reassociation is not supported."
+    )
+
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  source_var = ctx.producer_ref(source)
+  dest = ValueSite(op, VariableType.RESULT, 0)
+  dest_var = cs.Variable(dest)
+
+  strides, _ = ir.MemRefType(source.value.type).get_strides_and_offset()
+  # In this case, we'd need additional checks to produce a correct constraint.
+  if strides != utils.get_contiguous_strides(source.shape):
+    raise NotImplementedError(
+        "CollapseShapeOp with non-contiguous strides is not supported."
+    )
+
+  # TODO(bchetioui): We could generate an inverse expression `ExpandShape` in
+  # order to allow inferring layouts bidirectionally. This would allow removing
+  # transforms from some kernels' BlockSpecs, but is not necessary at this time.
+  collapse_expr = cs.CollapseShape(source_var, source.shape, reassociation)
+  return cs.ConstraintSystem(constraints=[cs.Equals(dest_var, collapse_expr)]), {
+      source_var: [source],
+      dest_var: [dest],
+  }
+
+
 # `memref.load` and `memref.store` are used to load barrier phases which are
 # scalars---the rule needn't do anything interesting, but we need to have it.
 @_add_constraint_system_derivation_rule(memref.LoadOp)
@@ -1921,7 +2098,7 @@ def _memref_load_store_op_constraint_system(
   ref_op_index = 0 if isinstance(op, memref.LoadOp) else 1
   ref = ValueSite(op, VariableType.OPERAND, ref_op_index)
   var = cs.Variable(ref)
-  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTiling(None)}
+  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTransforms(None, None)}
   return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
 
 
@@ -1933,14 +2110,13 @@ def _cluster_launch_control_ops_constraint_system(
 ) -> ConstraintSystemDerivationRuleResult:
   ref = ValueSite(op, VariableType.OPERAND, 0)
   var = ctx.producer_ref(ref)
-  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTiling(None)}
+  assignments: dict[cs.Variable, cs.Constant] = {var: cs.SMEMTransforms(None, None)}
   return cs.ConstraintSystem(assignments=assignments), {var: [ref]}
 
 
-def _extract_smem_tiling_from_custom_transform_attrs(
-    ref_type: ir.MemRefType,
+def _extract_smem_transforms_from_custom_transform_attrs(
     transform_attrs: ir.ArrayAttr,
-) -> cs.SMEMTiling:
+) -> cs.SMEMTransforms:
   transforms = [layouts_lib.from_transform_attr(x) for x in transform_attrs]
   match transforms:
     case []:
@@ -1951,19 +2127,16 @@ def _extract_smem_tiling_from_custom_transform_attrs(
       swizzle = None
     case [lc.TileTransform() as t, mgpu.SwizzlingMode() as s]:
       tile_transform = t
-      swizzle = s
+      # TODO(olechwierowicz): We should eliminate `kNoSwizzle`, representing
+      # this state as None is enough.
+      swizzle = s.value if s != mgpu.SwizzlingMode.kNoSwizzle else None
+    case [mgpu.SwizzlingMode() as s]:
+      tile_transform = None
+      swizzle = s.value if s != mgpu.SwizzlingMode.kNoSwizzle else None
     case _:
       raise NotImplementedError(f"Unsupported transforms {transforms}")
 
-  if swizzle is not None:
-    computed_swizzle = _compute_swizzle(ref_type, tile_transform)
-    if computed_swizzle != swizzle:
-      raise NotImplementedError(
-          f"Cannot honor caller-provided swizzle {swizzle} that is different "
-          f"from the computed swizle {computed_swizzle} for type {ref_type}."
-      )
-
-  return cs.SMEMTiling(tile_transform)
+  return cs.SMEMTransforms(tile_transform, swizzle)
 
 
 @_add_constraint_system_derivation_rule(mgpu.WithTransformsOp)
@@ -1974,14 +2147,26 @@ def _with_transforms_constraint_system(
   source = ValueSite(op, VariableType.OPERAND, 0)
   dest = ValueSite(op, VariableType.RESULT, 0)
   var = ctx.producer_ref(source)
-  tiling = _extract_smem_tiling_from_custom_transform_attrs(op.ref.type, op.transforms)
-  if tiling.value is not None:
-    if not cs.is_valid_assignment(var, tiling):
-      raise ValueError(
-          f"Cannot apply tiling {tiling.value} to memref with shape"
-          f" shape {source.shape}."
-      )
-  assignments: dict[cs.Variable, cs.Constant] = {var: tiling}
+  smem_transforms = _extract_smem_transforms_from_custom_transform_attrs(
+      op.transforms
+  )
+
+  if not cs.is_valid_assignment(var, smem_transforms):
+    tiling_transform_str = (
+        f"tiling {smem_transforms.tiling}"
+        if smem_transforms.tiling
+        else "empty tiling"
+    )
+    swizzle_str = (
+        f"{smem_transforms.swizzle} swizzle"
+        if smem_transforms.swizzle
+        else "no swizzle"
+    )
+    raise ValueError(
+        f"Cannot apply {tiling_transform_str} with {swizzle_str} to memref with"
+        f" shape {source.shape}."
+    )
+  assignments: dict[cs.Variable, cs.Constant] = {var: smem_transforms}
   return cs.ConstraintSystem(assignments=assignments), {var: [source, dest]}
 
 
@@ -2003,7 +2188,17 @@ def _vector_value_sites_and_assignments_for_async_ops(
     if isinstance(idx.type, ir.VectorType):
       value_site = ValueSite(op, VariableType.OPERAND, base_operand_index + i)
       value_site_var = cs.Variable(value_site)
-      layout = cs.RegisterLayout(value=fa.TMA_GATHER_INDICES_LAYOUT)
+      shape = tuple(idx.type.shape)
+
+      # TODO(cperivol): Move this choice of layouts to the conjuring
+      # logic so we can backtrack in case of incompatibility with user
+      # annotations.
+      if shape[0] % 16 == 0:
+        layout = cs.RegisterLayout(value=fa.TMA_INDICES_LAYOUT)
+      elif shape[0] % 4 == 0:
+        layout = cs.RegisterLayout(value=fa.TMA_INDICES_4_LAYOUT)
+      else:
+        raise ValueError(f"Unsupported TMA index shape {shape}")
       values_sites[value_site_var] = [value_site]
       assignments[value_site_var] = layout
   return values_sites, assignments
@@ -2015,17 +2210,49 @@ def _async_load_store_constraint_system(
     ctx: DerivationContext,
     op: mgpu.AsyncLoadOp | mgpu.AsyncStoreOp,
 ) -> ConstraintSystemDerivationRuleResult:
+  # We only support 2D gathers/scatters along the leading dimension. Tiling
+  # either keeps the gather/scatter dimension leading or allows
+  # collapsing leading dimensions to maintain contiguity without
+  # transforming global memory.
   tiling_multiple = []
-  for size, index in zip(op.slice_lengths, op.indices, strict=True):
+  for i, (size, index) in enumerate(zip(op.slice_lengths, op.indices, strict=True)):
     if size == -1:
       # This dimension does not appear in the final smem memref shape.
+      continue
+    if isinstance(index.type, ir.VectorType):
+      if i != 0:
+        raise NotImplementedError("Only leading gather dimensions allowed.")
+      if isinstance(op, mgpu.AsyncStoreOp):
+        gmem_shape = ir.MemRefType(op.destination.type).shape
+      else:
+        gmem_shape = ir.MemRefType(op.source.type).shape
+      if len(gmem_shape) != 2:
+        raise NotImplementedError("Only 2D gathers/scatters for async load/store are supported.")
+      tiling_multiple.append(size)
       continue
     tiling_multiple.append(dynamic_gcd(size, index))
 
   operand_index = 1 if isinstance(op, mgpu.AsyncLoadOp) else 0
   operand = ValueSite(op, VariableType.OPERAND, operand_index)
   var = ctx.producer_ref(operand)
-  constraints = [cs.Divides(expr=var, tiling_multiple=tuple(tiling_multiple))]
+  constraints: list[cs.Divides | cs.MinorDimDivisibleBy] = [
+      cs.Divides(expr=var, tiling_multiple=tuple(tiling_multiple))
+  ]
+  if any(isinstance(idx.type, ir.VectorType) for idx in op.indices):
+    element_bitwidth = utils.bitwidth(op.source.type.element_type)
+    # This constraint enforces sufficient SMEM-alignment.
+    # The transfer chunk needs to be 1024 bit-aligned. For each write in the
+    # lowering we transfer 4 rows, so each row must be 256 bit-aligned.
+    divisor = (1024 // 4) // element_bitwidth
+    slice_lengths = [s for s in op.slice_lengths if s != -1]
+    if slice_lengths and (slice_lengths[-1] % divisor):
+      raise ValueError(
+          "Cannot assign layout to async load with gather indices since"
+          f" minor dim={slice_lengths[-1]} is not divisible by {divisor=}"
+          " bits."
+      )
+    constraints.append(cs.MinorDimDivisibleBy(expr=var, divisor=divisor))
+
   value_sites_for_variable = {var: [operand]}
   value_sites, assignments = _vector_value_sites_and_assignments_for_async_ops(op)
   value_sites_for_variable.update(value_sites)
@@ -2191,10 +2418,10 @@ def assign_layouts(solution: dict[ValueSite, cs.Constant]) -> None:
         if isinstance(tl.layout, cs.TMEMLayout)
     ]
     in_transforms = [
-        tl for tl in in_tls if isinstance(tl.layout, cs.SMEMTiling)
+        tl for tl in in_tls if isinstance(tl.layout, cs.SMEMTransforms)
     ]
     out_transforms = [
-        tl for tl in out_tls if isinstance(tl.layout, cs.SMEMTiling)
+        tl for tl in out_tls if isinstance(tl.layout, cs.SMEMTransforms)
     ]
 
     if inference_utils.should_have_in_layout(op):
@@ -2215,11 +2442,14 @@ def assign_layouts(solution: dict[ValueSite, cs.Constant]) -> None:
     ) -> list[ir.ArrayAttr]:
       all_attrs: list[ir.ArrayAttr] = []
       for tl in transforms:
-        assert isinstance(tl.layout, cs.SMEMTiling)
+        assert isinstance(tl.layout, cs.SMEMTransforms)
         attrs = []
-        if tl.layout.value is not None:
-          attrs.append(layouts_lib.to_transform_attr(tl.layout.value))
-          swizzle = _compute_swizzle(tl.type, tl.layout.value)
+        tiling_transform = tl.layout.tiling
+        swizzle_v = tl.layout.swizzle
+        if tiling_transform is not None:
+          attrs.append(layouts_lib.to_transform_attr(tiling_transform))
+        if swizzle_v is not None:
+          swizzle = mgpu.SwizzlingMode(swizzle_v)
           attrs.append(layouts_lib.to_transform_attr(swizzle))
         all_attrs.append(ir.ArrayAttr.get(attrs))
       return all_attrs
@@ -2452,6 +2682,11 @@ def infer_layout(
       global_constraint_system
   )
   assert not isinstance(global_constraint_system, cs.Unsatisfiable)
+  global_constraint_system = (
+      cs.canonicalize_strict_non_splat_relayouts_to_equals(
+          global_constraint_system
+      )
+  )
   global_constraint_system = cs.saturate_divides_constraints_for_equal_vars(
       global_constraint_system
   )
@@ -2464,7 +2699,7 @@ def infer_layout(
       arch=arch,
   )
 
-  if logging.vlog_is_on(1):
+  if logger.isEnabledFor(logging.DEBUG):
     print("Finding a solution (or exhausting the entire search space) "
           f"consumed {fuel - remaining_fuel}/{fuel} fuel.")
 

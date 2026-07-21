@@ -16,6 +16,73 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.11.0 (July 16, 2026)
+
+* New features
+  * Added a doc on defining custom derivative rules with the experimental
+    hijax API ({ref}`hijax-custom-derivatives`), along with
+    `jax.experimental.hijax` helpers for deriving `VJPHiPrimitive` autodiff
+    rules from a `jvp` or `lin` rule: `linearize_from_jvp` with
+    `apply_derived_linearization`, `vjp_fwd_from_jvp` with `transpose_jvp`,
+    `vjp_fwd_from_lin` with `transpose_linearized`, and `jvp_from_lin`.
+  * Added {func}`jax.custom_remat` to the top-level `jax` namespace, for
+    per-function control of rematerialization under the new `jax_remat3`
+    implementation.
+  * `jax.checkpoint_policies` is now a submodule rather than a namespace
+    object (so `from jax.checkpoint_policies import ...` now works; attribute
+    access is unchanged), and it additionally exposes the name-based policy
+    classes `SaveOnlyTheseNames`, `SaveAnyNamesButThese`, and
+    `SaveAndOffloadOnlyTheseNames`.
+  * Added {class}`jax.Inline` enum for specify inlining policies to
+    {func}`jax.jit`.
+
+* Breaking changes
+  * The deprecated module jax.cloud_tpu_init was removed. This did nothing and
+    references to it can be safely removed.
+  * Support for Python 3.11, NumPy 2.0, and SciPy 1.14 has been dropped, per the
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
+  * Support for Python 3.13 free-threaded (`3.13t`) has been dropped. Python
+    3.13 free-threaded was an experimental build needed to bootstrap free
+    threading support. Now that Python 3.14t is stable, it is time to drop the
+    experimental build. Other parts of the Python ecosystem (e.g.
+    `cibuildwheel`, `scipy`) are making similar moves.
+  * {func}`jax.numpy.empty` and {func}`jax.numpy.empty_like` now produce
+    uninitialized arrays, similar to their NumPy counterparts. Prior to v0.11.0,
+    they produced arrays initialized to zeros. To recover the previous behavior,
+    use {func}`jax.numpy.zeros` or {func}`jax.numpy.zeros_like` instead.
+
+* Deprecations
+  * Passing 2-dimensional arrays (or mixed 2D and 3D arrays) to {func}`jax.numpy.cross` is deprecated and will be removed in JAX 0.12.0, aligning with NumPy 2.5 behavior.
+  * Several previously-deprecated APIs from {mod}`jax.core` have been removed, including
+    `CallPrimitive`, `DebugInfo`, `DropVar`, `Effect`, `Effects`, `InconclusiveDimensionOperation`,
+    `JaxprTypeError`, `abstract_token`, `check_jaxpr`, `concrete_or_error`, `find_top_trace`, `gensym`,
+    `get_opaque_trace_state`, `is_concrete`, `is_constant_dim`, `is_constant_shape`, `jaxprs_in_params`,
+    `new_jaxpr_eqn`, `no_effects`, `nonempty_axis_env_DO_NOT_USE`, `primal_dtype_to_tangent_dtype`,
+    `unsafe_am_i_under_a_jit_DO_NOT_USE`, `unsafe_am_i_under_a_vmap_DO_NOT_USE`,
+    `unsafe_get_axis_names_DO_NOT_USE`, `valid_jaxtype`, `JaxprPpContext`, `JaxprPpSettings`, `OutputType`,
+    `aval_mapping_handlers`, `call`, `concretization_function_error`, `custom_typechecks`,
+    `literalable_types`, `no_axis_name`, and `trace_ctx`.
+  * Several previously-deprecated APIs from {mod}`jax.interpreters.pxla` have been removed, including
+    `Index`, `MeshAxisName`, `MeshExecutable`, `global_aval_to_result_handler`, `global_result_handlers`,
+    `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
+    `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
+
+## JAX 0.10.2 (June 17, 2026)
+
+* New features
+  * Added {func}`jax.scipy.linalg.invhilbert` for the closed-form inverse
+    of the Hilbert matrix ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.invpascal` for the inverse of the Pascal
+    matrix ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.fiedler_companion` for constructing the
+    pentadiagonal Fiedler companion matrix of a polynomial
+    ({jax-issue}`#10144`).
+  * Added {func}`jax.ShapeDtypeStruct.like` -- a shortcut for constructing a
+    {class}`jax.ShapeDtypeStruct` from an object with `shape` and `dtype`
+    attributes.
+
+## JAX 0.10.1 (May 20, 2026)
+
 * New features
   * Added `ResizeMethod.AREA` to {func}`jax.image.resize`, which matches
     TensorFlow's AREA resizing ({jax-issue}`#20098`).
@@ -23,6 +90,18 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     matrices ({jax-issue}`#10144`).
   * Added {func}`jax.scipy.linalg.circulant` for constructing circulant
     matrices ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.dft` for constructing discrete Fourier
+    transform matrices ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.leslie` for constructing Leslie matrices
+    ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.companion` for constructing companion
+    matrices from polynomial coefficients ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.fiedler` for constructing symmetric Fiedler
+    matrices ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.linalg.helmert` for constructing Helmert matrices
+    ({jax-issue}`#10144`).
+  * Added {func}`jax.scipy.special.boxcox` and
+    {func}`jax.scipy.special.boxcox1p` for the Box-Cox power transformation.
   * Moved RNG APIs from "implementations" to dtypes ({jax-issue}`#27854`):
     * Added `jax.random.key_dtype` to get the dtype corresponding to a PRNG
       implementation name.
@@ -36,6 +115,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Passing the `copy`, `order`, and `ndmin` arguments to
     {func}`jax.numpy.array` positionally is deprecated. Use keyword arguments
     instead. This matches the signature of `numpy.array`.
+  * Python `dict_values`, generators, zip return type and iterators generally
+    are deprecated by default when used as leaves in pytrees. In a future
+    version of JAX, this will become an error, if you depend on using them as
+    leaves, pass `is_leaf` to `jax.tree.*` methods.
 
 ## JAX 0.10.0 (April 16, 2026)
 

@@ -17,10 +17,10 @@ xla_workspace3()
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "f2c924e85a22ba2eaa0c08657e5f5467fedbc3d0506f9cc0c69dd97ed9fbaf28",
-    strip_prefix = "rules_ml_toolchain-99c43dfe995a0e81c767d5b6d686191992672fe6",
+    sha256 = "6b1b294cbecb98a08bcfe59641461f72e113db30fa91b44fcc49d98099b5ba65",
+    strip_prefix = "rules_ml_toolchain-b11745590f513ec55b32e2d126073576fde18c71",
     urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/99c43dfe995a0e81c767d5b6d686191992672fe6.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/b11745590f513ec55b32e2d126073576fde18c71.tar.gz",
     ),
 )
 
@@ -34,6 +34,10 @@ register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_cuda")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_sycl")
 
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_rocm")
+
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_aarch64")
+
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
@@ -41,7 +45,11 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 # Initialize hermetic Python
 load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
 
-python_init_rules()
+python_init_rules(
+    extra_patches = [
+        "@//third_party/py:rules_python_site_init_retry.patch",
+    ],
+)
 
 load("@rules_ml_toolchain//py:python_init_repositories.bzl", "python_init_repositories")
 
@@ -61,11 +69,9 @@ python_init_repositories(
     ],
     local_wheel_workspaces = ["//jaxlib:jax.bzl"],
     requirements = {
-        "3.11": "//build:requirements_lock_3_11.txt",
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",
         "3.14": "//build:requirements_lock_3_14.txt",
-        "3.13-ft": "//build:requirements_lock_3_13_ft.txt",
         "3.14-ft": "//build:requirements_lock_3_14_ft.txt",
     },
 )

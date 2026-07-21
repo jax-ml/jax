@@ -43,7 +43,7 @@ def pallas_kernel_duplicate(x_ref, y_ref):
 def stable_jit_func(x):
   return pallas.pallas_call(
       pallas_kernel,
-      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      out_shape=jax.ShapeDtypeStruct.like(x),
       name="stable_kernel_name",
   )(x)
 
@@ -52,7 +52,7 @@ def stable_jit_func(x):
 def stable_jit_func_duplicate(x):
   return pallas.pallas_call(
       pallas_kernel_duplicate,
-      out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      out_shape=jax.ShapeDtypeStruct.like(x),
       name="stable_kernel_name_duplicate",
   )(x)
 

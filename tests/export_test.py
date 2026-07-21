@@ -25,27 +25,25 @@ import unittest
 
 from absl.testing import absltest
 import jax
+from jax import export
 from jax import lax
 from jax import numpy as jnp
-from jax import export
-from jax._src.shard_map import shard_map
-from jax.sharding import (NamedSharding, Mesh, PartitionSpec as P,
-                          reshard)
-from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
 from jax import tree_util
-
-from jax._src import config
 from jax._src import compute_on
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import lib
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src import lib
 from jax._src.lib.mlir.dialects import hlo
-
+from jax._src.shard_map import shard_map
+from jax._src.sharding_impls import GSPMDSharding, make_single_device_sharding
+from jax.experimental.layout import Format, Layout, with_layout_constraint
+from jax.sharding import (Mesh, NamedSharding, PartitionSpec as P, reshard)
 import numpy as np
 
 # ruff: noqa: F401
@@ -218,7 +216,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     with self.subTest("static_argnames"):
 
-      @functools.partial(jax.jit, static_argnames=["c"])
+      @jax.jit(static_argnames=["c"])
       def f(x, *, c):
         return c * jnp.sin(x)
 
@@ -229,7 +227,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     with self.subTest("static_argnums"):
 
-      @functools.partial(jax.jit, static_argnums=[1])
+      @jax.jit(static_argnums=[1])
       def g(x, c):
         return c * jnp.sin(x)
 
@@ -450,6 +448,74 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
 
+  def test_pytree_custom_types_shape_dependent_metadata(self):
+    if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
+    test_instance = self
+
+    @tree_util.register_pytree_node_class
+    class CustomType2:
+      def __init__(
+          self, array: jax.Array, per_element_description: tuple[str, ...]):
+        # The per_element_description must match the number of elements in the
+        # array.
+        test_instance.assertLen(array.shape, 1)
+        test_instance.assertLen(per_element_description, array.shape[0])
+        self.array = array
+        self.per_element_description = per_element_description
+
+      def tree_flatten(self):
+        return (self.array,), self.per_element_description
+
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        per_element_description = aux_data
+        assert len(children) == 1
+        return cls(children[0], per_element_description)
+
+    export.register_pytree_node_serialization(
+      CustomType2,
+      serialized_name="CustomType2",
+      serialize_auxdata=lambda aux: "/".join(aux).encode("utf-8"),
+      deserialize_auxdata=lambda b: tuple(b.decode("utf-8").split("/")))
+
+    def get_custom_type(num_elements: int):
+      return CustomType2(
+          np.arange(num_elements, dtype=np.float32),
+          tuple(str(i) for i in range(num_elements))
+          )
+
+    # We put many of these in a complex structure, each with a different shape,
+    # to test that deserialization assigns metadata (per_element_description)
+    # to the correct flattened leaves.
+    x1 = collections.OrderedDict(
+        [("foo", get_custom_type(2)),
+         ("baz", get_custom_type(3)),
+         ("something", get_custom_type(4))])
+    x2 = ([get_custom_type(5),
+           get_custom_type(6)],
+          {"a": get_custom_type(7), "b": get_custom_type(8)},
+          {"b": get_custom_type(9), "a": get_custom_type(10)}
+          )
+
+    def f(x1, x2):
+      return (x1, x2, x1, x2)  # return 2 copies, to check that types are shared
+
+    exp = export.export(jax.jit(f))(x1, x2)
+    res = exp.call(x1, x2)
+    self.assertEqual(tree_util.tree_structure(res),
+                     tree_util.tree_structure((x1, x2, x1, x2)))
+    self.assertEqual(type(res[0]), type(x1))
+    self.assertEqual(type(res[1]), type(x2))
+    self.assertEqual(type(res[2]), type(x1))
+    self.assertEqual(type(res[3]), type(x2))
+    ser = exp.serialize()
+    exp2 = export.deserialize(ser)
+    self.assertEqual(exp2.in_tree, exp.in_tree)
+    self.assertEqual(exp2.out_tree, exp.out_tree)
+    res2 = exp2.call(x1, x2)
+    self.assertEqual(tree_util.tree_structure(res2),
+                     tree_util.tree_structure(res))
+
   @jtu.parameterized_filterable(
     kwargs=[dict(impl=p)
             for p in ("rbg", "unsafe_rbg", "threefry2x32")])
@@ -549,11 +615,17 @@ class JaxExportTest(jtu.JaxTestCase):
       )(a)
 
     # Now try again with the safety check disabled
-    exp = get_exported(
+    exp_explicit = get_exported(
       jax.jit(lambda a: a + test_primitive.bind(a)),
       disabled_checks=[export.DisabledSafetyCheck.custom_call("disallowed_call_target")]
     )(a)
-    self.assertIn("disallowed_call_target", exp.mlir_module())
+    self.assertIn("disallowed_call_target", exp_explicit.mlir_module())
+
+    exp_all = get_exported(
+      jax.jit(lambda a: a + test_primitive.bind(a)),
+      disabled_checks=[export.DisabledSafetyCheck.custom_call("ALL")]
+    )(a)
+    self.assertIn("disallowed_call_target", exp_all.mlir_module())
 
   def test_lowering_parameters_for_export(self):
     # Test that we propagate properly the LoweringParameters.for_export
@@ -1080,6 +1152,8 @@ class JaxExportTest(jtu.JaxTestCase):
         "float8_e4m3b11fnuz",
         "float8_e4m3fnuz",
         "float8_e5m2fnuz",
+        "float6_e2m3fn",
+        "float6_e3m2fn",
         "int1",
         "int2",
         "int4",
@@ -1343,7 +1417,7 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest("Need at least 2 devices")
 
     mesh_1 = Mesh(jax.local_devices()[:1], "i")
-    @functools.partial(jax.jit,
+    @jax.jit(
                        in_shardings=NamedSharding(mesh_1, P("i")))
     def f_with_sharding(x):
       return jnp.sum(x ** 2, axis=0)
@@ -1367,7 +1441,7 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest("Need at least 3 devices")
 
     mesh_1 = Mesh(jax.local_devices()[:2], "i")
-    @functools.partial(jax.jit,
+    @jax.jit(
                        in_shardings=NamedSharding(mesh_1, P("i")))
     def f_with_sharding(x):
       return jnp.sum(x ** 2, axis=0)
@@ -2002,11 +2076,13 @@ class JaxExportTest(jtu.JaxTestCase):
       res_exp = exp.call(a_device)
       self.assertArraysAllClose(res_native, res_exp)
 
+  @jtu.run_on_devices('tpu')
   def test_compute_on_host(self):
     operand = np.float32(0.)
 
     @jax.jit
-    @compute_on.compute_on("device_host")
+    @compute_on.compute_on2(compute_type="device_host",
+                            out_memory_spaces=jax.memory.Space.Device)
     def f_host(x):
       # Adds 1 on CPU, which should be the result on all platforms because
       # this code should always run on the host.
@@ -2244,9 +2320,9 @@ class JaxExportTest(jtu.JaxTestCase):
     res_native = f_jax(lhs, rhs, group_sizes)
 
     exp_f = get_exported(jax.jit(f_jax))(
-        jax.ShapeDtypeStruct(lhs.shape, dtype=lhs.dtype),
-        jax.ShapeDtypeStruct(rhs.shape, dtype=rhs.dtype),
-        jax.ShapeDtypeStruct(group_sizes.shape, dtype=group_sizes.dtype),
+        jax.ShapeDtypeStruct.like(lhs),
+        jax.ShapeDtypeStruct.like(rhs),
+        jax.ShapeDtypeStruct.like(group_sizes),
     )
     res_exported = exp_f.call(lhs, rhs, group_sizes)
     self.assertAllClose(res_native, res_exported)
@@ -2383,6 +2459,58 @@ class JaxExportTest(jtu.JaxTestCase):
                                                       in_shardings)
     out = exp.call(placed_inputs, placed_weights)
     self.assertAllClose(out, tuple(i @ w for i, w in zip(inputs, weights)))
+
+  def test_export_typed_prng_key(self):
+    mesh = jtu.create_mesh((1,), "x")
+    s = NamedSharding(mesh, P())
+
+    @jax.jit(in_shardings=s, out_shardings=s)
+    def split_key(key):
+      return jax.random.split(key, 2)
+
+    key = jax.random.key(42)
+    exp = get_exported(split_key)(key)
+    out = exp.call(key)
+    self.assertAllClose(jax.random.key_data(split_key(key)),
+                        jax.random.key_data(out))
+
+  def test_export_with_layout_constraint(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Only works for TPU")
+    mesh = jtu.create_mesh((2, 2), ("x", "y"))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P("x"))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = Layout(major_to_minor=arr.format.layout.major_to_minor[::-1])
+
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      y = with_layout_constraint(y, custom_dll)
+      return y * 2
+
+    f = jax.jit(f)
+    out = f(arr)
+    self.assertEqual(
+        out.format.layout.major_to_minor, custom_dll.major_to_minor
+    )
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn("LayoutConstraint", lowered_text)
+
+    # Test export for this layout constraint custom call. Should always work
+    # without "tiling" in the layout.
+    export.export(
+        f,
+        disabled_checks=[
+            export.DisabledSafetyCheck.custom_call("LayoutConstraint")
+        ],
+    )(arr)
 
 
 if __name__ == "__main__":

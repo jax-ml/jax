@@ -20,17 +20,25 @@ from typing import Any
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
-from jax._src import linear_util as lu
-from jax._src.traceback_util import api_boundary
+from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
+from jax._src.pallas.fuser import fuser_utils
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.pallas.fuser.fusible import fusible_p
+from jax._src.state import types as state_types
+from jax._src.traceback_util import api_boundary
 
 
 @functools.partial(api_boundary, repro_api_name="fuser.fuse")
-def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
+def fuse(
+    f=None,
+    *,
+    resolve_fusion_dtypes: bool = True,
+    debug: bool = False,
+    strict_mode: bool = True,
+):
   """Fuses a function into a single fusible.
 
   Args:
@@ -38,6 +46,8 @@ def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
     resolve_fusion_dtypes: (experimental) whether or not to resolve fusion
       dtypes (which don't correspond to physical dtypes)
     debug: Whether to print debug information.
+    strict_mode: Whether to verify block index map equality in collisions during
+      block spec propagations in output fusions.
 
   There should be a single call to a `fusible` inside the body of `f`. `fuse`
   returns a transformed function that will fuse the surrounding computation into
@@ -46,18 +56,27 @@ def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
 
   def decorator(f):
     def wrapper(*args, **kwargs):
-      flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+      flat_args, _ = tree_util.tree_flatten((args, kwargs))
       debug_info = api_util.debug_info("fuse", f, args, kwargs)
-      flat_fun, out_tree_thunk = api_util.flatten_fun(
-          lu.wrap_init(f, debug_info=debug_info), in_tree
+      ref_arg = next((v for v in flat_args if isinstance(v, jax.ref.Ref)), None)
+      if ref_arg is not None:
+        raise NotImplementedError(
+            f"Fused function {debug_info.func_src_info} was passed an argument "
+            f"of type {ref_arg}.  Fused functions cannot take Refs as "
+            "arguments -- they must close over such Refs, instead.")
+      in_ft = ft.flatten((args, kwargs))
+      in_avals_ft = in_ft.map(jax_core.typeof)
+      closed_jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+          f, in_avals_ft, debug_info
       )
-      flat_avals = [jax_core.typeof(x) for x in flat_args]
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+      jaxpr = closed_jaxpr
+      consts = closed_jaxpr.consts
       if debug:
         print("Jaxpr before fusion:")
         print(jaxpr)
-      out_tree = out_tree_thunk()
-      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args)
+      out_tree = out_avals_ft.tree
+      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args,
+                            strict_mode=strict_mode)
       return tree_util.tree_unflatten(out_tree, out_flat)
 
     if resolve_fusion_dtypes:
@@ -93,9 +112,8 @@ def _construct_fusion_jaxpr(
   new_values = tuple(
       c for used, c in zip(used_consts, candidate_values, strict=True) if used
   )
-  kernel_in_tree = tree_util.tree_structure((invars, kwargs))
   flat_in_type = [x.aval for x in flat_invars]
-  in_type = tree_util.tree_unflatten(kernel_in_tree, flat_in_type)
+  in_type = tree_util.tree_unflatten(in_tree, flat_in_type)
   out_type = tree_util.tree_unflatten(
       out_tree,
       [x.aval for x in flat_outvars],
@@ -123,14 +141,19 @@ def _find_downstream(
   # TODO(sharadmv): We use partial_eval to query downstream dependencies which
   # is not an officially sanctioned way to do so, since PE is really used for
   # AD. In the future, we should have a special Jaxpr API that queries this.
+  discharged_jaxpr, *_ = fuser_utils.discharge_state(jaxpr)
   _, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
-      jaxpr,
+      discharged_jaxpr,
       in_unknowns=in_used,
       in_inst=in_used,
       ensure_out_unknowns=False,
       ensure_out_inst=False,
       saveable=lambda *_, **__: False,
   )
+  # NOTE: out_used[:len(jaxpr.outvars)] reports whether or not the the original
+  # outputs depend on the inputs for which `in_used` is True.
+  # out_used[len(jaxpr.outvars):] reports whether or not the new outputs
+  # (updates for discharged Refs) depend on thse inputs.
   return tuple(out_used)
 
 
@@ -152,6 +175,8 @@ def _construct_output_fusions(
     fusion_eqn_outvars,  # Flat list of vars output by the fusible eqn
     fusion_eqn_out_tree,  # Tree structure of the fusible eqn outputs
     output_fusion_prefix,  # Pytree defining output groups
+    *,
+    strict_mode: bool = True,
 ):
   # 1. Create jaxpr_out: represents computation *after* the fusible
   #    Inputs: fusion_eqn_outvars
@@ -175,6 +200,11 @@ def _construct_output_fusions(
   partial_flat = jax.tree.structure(output_fusion_prefix).flatten_up_to(
       unflat_fusible_outvars
   )
+  if len(partial_flat) > 1:
+    if any(isinstance(e, (state_types.WriteEffect, state_types.AccumEffect))
+           for e in jaxpr_out.effects):
+      raise ValueError("Multiple output fusions are not currently supported "
+                       "for fusions that write to Refs.")
 
   # 3. Calculate dependencies and check disjointedness
   downstream_outputs_used_masks = []  # List of bool tuples, one per group
@@ -200,6 +230,13 @@ def _construct_output_fusions(
           )
         already_used_final_outputs.add(i)
     downstream_outputs_used_masks.append(downstream_used_mask)
+
+  for u in list(zip(*downstream_outputs_used_masks))[len(jaxpr_out.outvars):]:
+    if sum(u) == 0:
+      raise ValueError("A write to a Ref in a fusion must depend on "
+                       "an output of the fusible")
+  downstream_outputs_used_masks = [
+      used[:len(jaxpr_out.outvars)] for used in downstream_outputs_used_masks]
 
   # 4. Construct output permutation needed to restore original output order
   output_permutation = _construct_output_permutation(
@@ -241,6 +278,7 @@ def _construct_output_fusions(
         fn,
         (in_type, {}),
         out_type,
+        strict_mode=strict_mode,
     )
     output_fusions.append(fusion)
 
@@ -253,11 +291,11 @@ def _construct_output_fusions(
 
 
 def fuse_jaxpr(
-    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args
+    jaxpr: jax_core.Jaxpr, out_tree: tree_util.PyTreeDef, consts, *args,
+    strict_mode: bool = True,
 ):
-  fusion_eqn_index = None
-
   # Collect input fusions
+  fusion_eqn_index = None
   for i, eqn in enumerate(jaxpr.eqns):
     if eqn.primitive is fusible_p:
       fusion_eqn_index = i
@@ -269,13 +307,16 @@ def fuse_jaxpr(
   # Now let's check if we need to do any fusion at all, e.g. do the outputs of
   # the jaxpr have any dependence on the fusion at all?
   candidate_values = [*consts, *args]
-  independent_jaxpr, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
-      jaxpr.replace(
-          eqns=(jaxpr.eqns[:fusion_eqn_index]
+  jaxpr_without_fusible = jaxpr.replace(
+      eqns=(jaxpr.eqns[:fusion_eqn_index]
                 + jaxpr.eqns[fusion_eqn_index + 1 :]),
-          constvars=jaxpr.constvars + jaxpr.invars,
-          invars=fusion_eqn.outvars,
-          debug_info=jaxpr.debug_info.with_unknown_names()),
+      constvars=jaxpr.constvars + jaxpr.invars,
+      invars=fusion_eqn.outvars,
+      debug_info=jaxpr.debug_info.with_unknown_names())
+  discharged_jaxpr_without_fusible, *_ = (
+      fuser_utils.discharge_state(jaxpr_without_fusible))
+  independent_jaxpr, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
+      discharged_jaxpr_without_fusible,
       in_unknowns=[True] * len(fusion_eqn.outvars),
       in_inst=[True] * len(fusion_eqn.outvars),
       ensure_out_unknowns=False,
@@ -283,6 +324,15 @@ def fuse_jaxpr(
       saveable=lambda *_, **__: False)
   if not any(out_used):
     # Short circuit if there is no need to run the fusible at all.
+    if discharged_jaxpr_without_fusible is not jaxpr_without_fusible:
+      independent_jaxpr, _, out_used, *_ = pe.partial_eval_jaxpr_custom(
+          jaxpr_without_fusible,
+          in_unknowns=[True] * len(fusion_eqn.outvars),
+          in_inst=[True] * len(fusion_eqn.outvars),
+          ensure_out_unknowns=False,
+          ensure_out_inst=False,
+          saveable=lambda *_, **__: False)
+      assert not any(out_used)
     return jax_core.eval_jaxpr(independent_jaxpr, candidate_values)
 
   # Construct fusions for non-constant inputs to the fusible.
@@ -307,6 +357,7 @@ def fuse_jaxpr(
       fusion_eqn.outvars,
       fusion_eqn.params["out_tree"],
       fusion_eqn.params["output_fusion_prefix"],
+      strict_mode=strict_mode,
   )
   out = fusion_eqn.params["func"](*in_fusions, output_fusions)
   flat_out = jax.tree.leaves(out)

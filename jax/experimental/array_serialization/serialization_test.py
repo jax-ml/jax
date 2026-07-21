@@ -1057,8 +1057,7 @@ class UserPytreeAPITest(UserAPITestCase):
             7 * jnp.ones(())]
     tree_save(data, path)
     pytreedef = tree_load_pytreedef(path)
-    expected_pytreedef = jax.tree.map(
-        lambda x: jax.ShapeDtypeStruct(x.shape, x.dtype), data)
+    expected_pytreedef = jax.tree.map(jax.ShapeDtypeStruct.like, data)
     self.assertPyTreeEqual(pytreedef, expected_pytreedef)
 
   @parameterized.product(data=[

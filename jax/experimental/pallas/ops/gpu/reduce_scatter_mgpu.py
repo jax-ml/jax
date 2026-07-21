@@ -164,12 +164,16 @@ def reduce_scatter(
     plgpu.semaphore_signal_multicast(done_barrier, collective_axes=axis_name)
     pl.semaphore_wait(done_barrier, num_devices, decrement=False)
 
+  compiler_params = plgpu.CompilerParams(
+      lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+  )
   return plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
+      out_type=jax.ShapeDtypeStruct(output_shape, dtype),
       grid=(num_blocks,),
       grid_names=("blocks",),
-      scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+      scratch_types=[plgpu.SemaphoreType.REGULAR],
+      compiler_params=compiler_params,
   )(x)
 
 

@@ -162,8 +162,7 @@ class PRNGTest(jtu.JaxTestCase):
     rbg_key = jax_random.key(0, impl="rbg")
     key = pltpu.to_pallas_key(rbg_key)
     expected_key_data = jax.random.key_data(key)
-    o_shape = jax.ShapeDtypeStruct(expected_key_data.shape,
-                                   expected_key_data.dtype)
+    o_shape = jax.ShapeDtypeStruct.like(expected_key_data)
     result = pl.pallas_call(
         body,
         in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
@@ -220,7 +219,7 @@ class PRNGTest(jtu.JaxTestCase):
 
     def main(refs):
       key_hbm, o_ref = refs
-      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'))
       def _():
         @functools.partial(pl.run_scoped,
                           key_smem=pltpu.SMEM((), key_hbm.dtype),
@@ -242,6 +241,28 @@ class PRNGTest(jtu.JaxTestCase):
     y = f(key)
     self.assertGreaterEqual(jnp.max(y), jnp.min(y))
 
+  def test_output_physical_key(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("DMA not supported on TPU <= v3")
+
+    key = pltpu.to_pallas_key(jax_random.key(0, impl="threefry2x32"))
+
+    def body(x_ref, o_ref):
+      pltpu.sync_copy(x_ref, o_ref)
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct((), jax.typeof(x).dtype),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM)
+      )(x)
+
+    y = f(key)
+    np.testing.assert_array_equal(
+        jax.random.key_data(key), jax.random.key_data(y)
+    )
 
 class BlockInvarianceTest(jtu.JaxTestCase):
 

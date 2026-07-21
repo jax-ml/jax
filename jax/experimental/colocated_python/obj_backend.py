@@ -22,7 +22,7 @@ from typing import Any
 import weakref
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class _ConsumableRef:
   """Stores a strong ref initially, but switches to a weak ref once consumed.
 
@@ -36,12 +36,19 @@ class _ConsumableRef:
   will create an expired _ConsumableRef.
   """
 
-  strong_ref: Any | None = None
-  weak_ref: weakref.ref | None = None
-  _mutex = threading.Lock()
+  strong_ref: Any
+  weak_ref: weakref.ref | None
+  _mutex: threading.RLock
 
   def __init__(self, obj: Any) -> None:
     self.strong_ref = obj
+    self.weak_ref = None
+    # This must be reentrant because `__call__` may be called from
+    # `MethodCallerAtBackend.__del__`, which can be triggerred by garbage
+    # collection while we are already holding a lock on the same mutex. If this
+    # were a non-reentrant mutex, garbage collection can get blocked
+    # indefinitely when free threading is enabled.
+    self._mutex = threading.RLock()
 
   def __call__(self, *args, **kwargs):
     with self._mutex:
@@ -49,7 +56,8 @@ class _ConsumableRef:
         assert self.weak_ref is None
         result = self.strong_ref
         self.strong_ref = None
-        self.weak_ref = weakref.ref(result)
+        if result is not None:  # Handle reentrance gracefully.
+          self.weak_ref = weakref.ref(result)
         return result
       elif self.weak_ref is not None:
         return self.weak_ref()
@@ -66,7 +74,7 @@ class _ConsumableRef:
         return type(self), (None,)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _ObjectState:
   is_being_initialized: bool
   exc: Exception | None = None

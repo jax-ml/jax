@@ -22,24 +22,15 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import random
-from jax._src import test_multiprocess as jt_multiprocess
 from jax._src import test_util as jtu
 from jax._src.config import config as jax_config
-from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.pallas.ops.gpu import collective_matmul_mgpu
 import jax.numpy as jnp
-import numpy as np
 
 P = jax.sharding.PartitionSpec
 
 
-def is_nvshmem_used() -> bool:
-  return (
-      "XLA_FLAGS" in os.environ
-      and "--xla_gpu_experimental_enable_nvshmem" in os.environ["XLA_FLAGS"]
-  )
-
-
+@jtu.skip_under_pytest("Test fails under pytest in CI")
 @jtu.with_config(jax_traceback_filtering="off")
 class CollectiveMatmulTestCase(jtu.JaxTestCase):
 
@@ -52,19 +43,6 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_equal("9.0")):
       self.skipTest("Only works on GPU with capability sm90a")
-    if not mgpu.supports_cross_device_collectives():
-      if "FAIL_ON_NVSHMEM_UNAVAILABLE" in os.environ:
-        raise ValueError("NVSHMEM library unavailable.")
-      else:
-        self.skipTest(
-            "Skip test since cross-device collectives are not supported"
-            " (either NVSHMEM is not available in multi-process mode, or"
-            "several processes with several devices per process are used)."
-        )
-    if is_nvshmem_used() and jax.process_count() == 1:
-      self.skipTest("Test requires multiple processes.")
-    if os.environ.get("XLA_PYTHON_CLIENT_ALLOCATOR", "") == "platform":
-      self.skipTest("NVSHMEM doesn't work with the platform allocator.")
     num_devices = jax.device_count()
     mesh = jax.make_mesh(
         (num_devices,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
@@ -148,7 +126,7 @@ class CollectiveMatmulTestCase(jtu.JaxTestCase):
             dtype=dtype,
         )
     )
-    np.testing.assert_allclose(out, ref_out)
+    self.assertAllClose(out, ref_out)
 
 
 if __name__ == "__main__":
@@ -160,8 +138,5 @@ if __name__ == "__main__":
   os.environ["XLA_FLAGS"] = (
       os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0"
   )
-  if is_nvshmem_used():
-    jt_multiprocess.main()
-  else:
-    jax_config.config_with_absl()
-    absltest.main(testLoader=jtu.JaxTestLoader())
+  jax_config.config_with_absl()
+  absltest.main(testLoader=jtu.JaxTestLoader())

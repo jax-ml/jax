@@ -22,22 +22,22 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable
 import dataclasses
 import functools
 import types
-from typing import cast, overload, Any, Literal, Union
-from collections.abc import Callable
+from typing import Any, Literal, Union, cast, overload
 import warnings
 
 import ml_dtypes
 import numpy as np
 
 from jax._src import config
-
-from jax._src.typing import Array, DType, DTypeLike
-from jax._src.util import set_module, StrictABC
-
 from jax._src import traceback_util
+from jax._src.lib import _jax
+from jax._src.typing import Array, DType, DTypeLike
+from jax._src.util import StrictABC, set_module, cache
+
 traceback_util.register_exclusion(__file__)
 
 try:
@@ -110,6 +110,13 @@ _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
 
+# fp6 support
+float6_e2m3fn: type[np.generic] = ml_dtypes.float6_e2m3fn
+float6_e3m2fn: type[np.generic] = ml_dtypes.float6_e3m2fn
+
+_float6_e2m3fn_dtype: np.dtype = np.dtype(float6_e2m3fn)
+_float6_e3m2fn_dtype: np.dtype = np.dtype(float6_e3m2fn)
+
 # fp4 support
 float4_e2m1fn: type[np.generic] = ml_dtypes.float4_e2m1fn
 
@@ -128,6 +135,8 @@ _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 _custom_float_scalar_types = [
     float4_e2m1fn,
+    float6_e2m3fn,
+    float6_e3m2fn,
     float8_e3m4,
     float8_e4m3,
     float8_e8m0fnu,
@@ -140,6 +149,8 @@ _custom_float_scalar_types = [
 ]
 _custom_float_dtypes = [
     _float4_e2m1fn_dtype,
+    _float6_e2m3fn_dtype,
+    _float6_e3m2fn_dtype,
     _float8_e3m4_dtype,
     _float8_e4m3_dtype,
     _float8_e8m0fnu_dtype,
@@ -159,6 +170,11 @@ _float8_dtypes = [
     _float8_e4m3fnuz_dtype,
     _float8_e5m2_dtype,
     _float8_e5m2fnuz_dtype,
+]
+
+_float6_dtypes: list[np.dtype] = [
+    _float6_e2m3fn_dtype,
+    _float6_e3m2fn_dtype,
 ]
 
 _float4_dtypes: list[np.dtype] = [
@@ -369,31 +385,24 @@ def canonicalize_dtype(dtype: Any, allow_extended_dtype: bool = False) -> DType 
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   return _canonicalize_dtype(config.enable_x64.value, allow_extended_dtype, dtype)
 
-class InvalidInputException(Exception):
+class InvalidInputException(TypeError):
   pass
 
-canonicalize_value_handlers: dict[Any, Callable] = {}
+_jax.set_invalid_input_exception(InvalidInputException)
 
+register_canonicalize_value_handler = _jax.register_canonicalize_value_handler
+canonicalize_value = _jax.canonicalize_value
 
-# TODO(mattjj): try to remove this canonicalize_dtype stuff
-def canonicalize_value(x):
-  typ = type(x)
-  handler = canonicalize_value_handlers.get(typ)
-  if handler:
-    return handler(x)
-  for typ in typ.__mro__:
-    handler = canonicalize_value_handlers.get(typ)
-    if handler:
-      return handler(x)
-  if getattr(x, '__jax_array__', None) is not None:
-    raise ValueError(
-        'Triggering __jax_array__() during abstractification is no longer'
-        ' supported. To avoid this error, either explicitly convert your object'
-        ' using jax.numpy.array(), or register your object as a pytree.'
-    )
-  raise InvalidInputException(
-      f"Argument '{x}' of type {type(x)} is not a valid JAX type."
-  )
+# Backward compatibility shim.
+class _CanonicalizeValueHandlersDict:
+
+  def __getitem__(self, key):
+    return lambda x: canonicalize_value(np.asarray(x))
+
+  def __setitem__(self, key, value):
+    register_canonicalize_value_handler(key, value)
+
+canonicalize_value_handlers = _CanonicalizeValueHandlersDict()
 
 
 # The list of all known Python scalar types.
@@ -512,7 +521,7 @@ def issubdtype(a: DTypeLike | ExtendedDType | None,
   )
 
 
-@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
+@cache(max_size=512, trace_context_in_key=False)  # don't use util.memoize because there is no X64 dependence.
 def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
                        b: type | np.dtype | ExtendedDType) -> bool:
   # First handle extended dtypes, which require their own logic.
@@ -608,6 +617,8 @@ _jax_dtype_set = {
     *_float_types,
     *_complex_types,
 }
+
+_jax.set_valid_dtypes(_jax_dtype_set)
 
 _jax_types = (_bool_types + _int_types + _float_types + _complex_types)
 
@@ -831,6 +842,12 @@ def _least_upper_bound(jax_numpy_dtype_promotion: config.NumpyDtypePromotion,
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
         "promotion path. To avoid unintended promotion, 8-bit floats do not support "
+        "implicit promotion. If you'd like your inputs to be promoted to another type, "
+        "you can do so explicitly using e.g. x.astype('float32')")
+    elif any(n in _float6_dtypes for n in nodes):
+      msg = (
+        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
+        "promotion path. To avoid unintended promotion, 6-bit floats do not support "
         "implicit promotion. If you'd like your inputs to be promoted to another type, "
         "you can do so explicitly using e.g. x.astype('float32')")
     elif any(n in _float4_dtypes for n in nodes):
@@ -1147,7 +1164,7 @@ def safe_to_cast(input_dtype_or_value: Any,
 
 class primal_tangent_dtype_scalar(extended): ...
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class PrimalTangentDType(ExtendedDType):
   primal_dtype: Any
   tangent_dtype: Any

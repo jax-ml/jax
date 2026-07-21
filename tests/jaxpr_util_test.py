@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import base64
 import gzip
 import json
+import os
+import re
 
 from absl.testing import absltest
 
@@ -24,7 +26,7 @@ from jax import lax
 from jax._src import config
 from jax._src import jaxpr_util
 from jax._src import test_util as jtu
-from jax._src.lib import xla_client
+from jax._src.lib import _jax
 
 
 config.parse_flags_with_absl()
@@ -104,10 +106,10 @@ class JaxprStatsTest(jtu.JaxTestCase):
       return jnp.sin(s) + jnp.cos(y)
     profile_gz = jaxpr_util.pprof_equation_profile(make_jaxpr(f)(1., 1.).jaxpr)
     profile_proto = gzip.decompress(profile_gz)
-    json_str = xla_client._xla.pprof_profile_to_json(profile_proto)
+    json_str = _jax.pprof_profile_to_json(profile_proto)
     profile = json.loads(json_str)
     self.assertSetEqual(
-        {"sampleType", "sample", "stringTable", "location", "function"},
+        {'sampleType', 'sample', 'stringTable', 'location', 'function', 'comment'},
         set(profile.keys()))
 
   def test_all_eqns_with_traceback(self):
@@ -160,6 +162,45 @@ class JaxprStatsTest(jtu.JaxTestCase):
     # (should be > 1 due to the condition and branch eqns)
     self.assertEqual(jaxpr_util.count_eqns(jaxpr_nested), 5)
 
+  def test_jaxpr_to_html(self):
+    def f(x):
+      return x + 2
+    jaxpr = make_jaxpr(f)(42)
+
+    html_content = jaxpr_util.jaxpr_to_html(jaxpr.jaxpr)
+
+    self.assertIsInstance(html_content, str)
+    self.assertIn("<!DOCTYPE html>", html_content)
+    self.assertIn('<div id="jaxpr-container">', html_content)
+
+    # Extract base64 data
+    match = re.search(r'const base64Data = "([^"]+)";', html_content)
+    self.assertIsNotNone(match)
+    base64_data = match.group(1)
+
+    # Decode and decompress
+    compressed = base64.b64decode(base64_data)
+    decompressed = gzip.decompress(compressed).decode("utf-8")
+    data = json.loads(decompressed)
+
+    self.assertIn("lines", data)
+    self.assertIn("frames", data)
+    self.assertIn("dag", data)
+    self.assertIn("strings", data)
+    self.assertIn("string_to_lines", data)
+
+    string_to_lines = data["string_to_lines"]
+    self.assertIsInstance(string_to_lines, dict)
+    for k, v in string_to_lines.items():
+      self.assertTrue(k.isdigit())
+      self.assertIsInstance(v, list)
+      self.assertTrue(all(isinstance(i, int) for i in v))
+
+
+    # Verify that the pretty printed jaxpr lines are present
+    lines = data["lines"]
+    self.assertTrue(any("add" in line for line in lines))
+
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

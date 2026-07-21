@@ -21,7 +21,7 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 np = import_numpy()
 
-class PyTreeDefKind(object):
+class PyTreeDefKind:
     leaf = 0
     none = 1
     tuple = 2
@@ -30,12 +30,12 @@ class PyTreeDefKind(object):
     custom = 5
 
 
-class AbstractValueKind(object):
+class AbstractValueKind:
     shapedArray = 0
     abstractToken = 1
 
 
-class DType(object):
+class DType:
     bool = 0
     i8 = 1
     i16 = 2
@@ -68,33 +68,33 @@ class DType(object):
     key_unsafe_rbg = 29
 
 
-class MemorySpace(object):
+class MemorySpace:
     Missing = 0
     Device = 1
     Host = 2
     Any = 3
 
 
-class AxisType(object):
+class AxisType:
     Missing = 0
     Auto = 1
     Explicit = 2
     Manual = 3
 
 
-class ShardingKind(object):
+class ShardingKind:
     unspecified = 0
     hlo_sharding = 1
     named_sharding = 2
 
 
-class DisabledSafetyCheckKind(object):
+class DisabledSafetyCheckKind:
     platform = 0
     custom_call = 1
     shape_assertions = 2
 
 
-class PyTreeDef(object):
+class PyTreeDef:
     __slots__ = ['_tab']
 
     @classmethod
@@ -229,7 +229,7 @@ def PyTreeDefEnd(builder):
 
 
 
-class AbstractDevice(object):
+class AbstractDevice:
     __slots__ = ['_tab']
 
     @classmethod
@@ -261,8 +261,15 @@ class AbstractDevice(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return None
 
+    # AbstractDevice
+    def Platform(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
 def AbstractDeviceStart(builder):
-    builder.StartObject(2)
+    builder.StartObject(3)
 
 def AbstractDeviceAddDeviceKind(builder, deviceKind):
     builder.PrependUOffsetTRelativeSlot(0, flatbuffers.number_types.UOffsetTFlags.py_type(deviceKind), 0)
@@ -270,12 +277,15 @@ def AbstractDeviceAddDeviceKind(builder, deviceKind):
 def AbstractDeviceAddNumCores(builder, numCores):
     builder.PrependUint32Slot(1, numCores, None)
 
+def AbstractDeviceAddPlatform(builder, platform):
+    builder.PrependUOffsetTRelativeSlot(2, flatbuffers.number_types.UOffsetTFlags.py_type(platform), 0)
+
 def AbstractDeviceEnd(builder):
     return builder.EndObject()
 
 
 
-class AbstractMesh(object):
+class AbstractMesh:
     __slots__ = ['_tab']
 
     @classmethod
@@ -406,7 +416,7 @@ def AbstractMeshEnd(builder):
 
 
 
-class PartitionSpecOneAxis(object):
+class PartitionSpecOneAxis:
     __slots__ = ['_tab']
 
     @classmethod
@@ -458,7 +468,7 @@ def PartitionSpecOneAxisEnd(builder):
 
 
 
-class PartitionSpec(object):
+class PartitionSpec:
     __slots__ = ['_tab']
 
     @classmethod
@@ -566,7 +576,7 @@ def PartitionSpecEnd(builder):
 
 
 
-class NamedSharding(object):
+class NamedSharding:
     __slots__ = ['_tab']
 
     @classmethod
@@ -638,7 +648,7 @@ def NamedShardingEnd(builder):
 
 
 
-class AbstractValue(object):
+class AbstractValue:
     __slots__ = ['_tab']
 
     @classmethod
@@ -720,7 +730,7 @@ def AbstractValueEnd(builder):
 
 
 
-class Sharding(object):
+class Sharding:
     __slots__ = ['_tab']
 
     @classmethod
@@ -802,7 +812,7 @@ def ShardingEnd(builder):
 
 
 
-class Effect(object):
+class Effect:
     __slots__ = ['_tab']
 
     @classmethod
@@ -838,7 +848,7 @@ def EffectEnd(builder):
 
 
 
-class DisabledSafetyCheck(object):
+class DisabledSafetyCheck:
     __slots__ = ['_tab']
 
     @classmethod
@@ -884,7 +894,7 @@ def DisabledSafetyCheckEnd(builder):
 
 
 
-class Exported(object):
+class Exported:
     __slots__ = ['_tab']
 
     @classmethod

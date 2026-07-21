@@ -65,7 +65,7 @@ jobs:
                 inputs.use-nvidia-pip-wheels && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'}}
     name: "${{ (contains(inputs.runner, 'h100') && 'h100') ||
         (contains(inputs.runner, 'b200') && 'b200') ||
-        (contains(inputs.runner, 'l4') && 'l4') }}, CUDA ${{ inputs.cuda-version }}, py ${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
+        (contains(inputs.runner, 'l4') && 'l4') }}, CUDA ${{ inputs.cuda-version }}, py${{ inputs.python }}, x64=${{ inputs.enable-x64 }}"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
@@ -73,7 +73,7 @@ jobs:
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Download JAX CUDA wheels

@@ -915,7 +915,7 @@ class CompatTest(bctu.CompatTestBase):
     devices = jax.devices()[:2]
     mesh = Mesh(devices, axis_names=("a"))
 
-    @partial(jax.jit,
+    @jax.jit(
             in_shardings=(NS(mesh, P("a", None)),),
             out_shardings=NS(mesh, P("a", None)))
     @partial(shard_map, mesh=mesh,
@@ -954,7 +954,7 @@ class CompatTest(bctu.CompatTestBase):
     dev_sharding = NS(mesh, P("a"))
     host_sharding = NS(mesh, P("a"), memory_kind="pinned_host")
 
-    @partial(jax.jit,
+    @jax.jit(
              in_shardings=(dev_sharding, host_sharding),
              out_shardings=dev_sharding)
     def func(x, y):

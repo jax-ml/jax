@@ -301,7 +301,7 @@ def lstm(x: Array, h_0: Array, c_0: Array, weights: Array, seq_lengths: Array,
   return y, h_n, c_n
 
 
-@partial(jax.jit, static_argnums=(8, 9, 10, 11, 12))
+@jax.jit(static_argnums=(8, 9, 10, 11, 12))
 def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: dict[int, Array],
              W_hh: dict[int, Array], b_ih: dict[int, Array],
              b_hh: dict[int, Array], seq_lengths: Array, input_size: int,

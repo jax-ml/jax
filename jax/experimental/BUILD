@@ -21,8 +21,8 @@ load(
     "mosaic_gpu_internal_users",
     "mosaic_internal_users",
     "pallas_fuser_users",
-    "pallas_gpu_internal_users",
     "pallas_sc_internal_users",
+    "pallas_triton_internal_users",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_strict_library",
@@ -67,9 +67,9 @@ package_group(
 )
 
 package_group(
-    name = "pallas_gpu_users",
+    name = "pallas_triton_users",
     includes = ["//jax:internal"],
-    packages = pallas_gpu_internal_users,
+    packages = pallas_triton_internal_users,
 )
 
 package_group(
@@ -128,6 +128,8 @@ pytype_strict_library(
         "//jax/_src:api",
         "//jax/_src:api_util",
         "//jax/_src:config",
+        "//jax/_src:dtypes",
+        "//jax/_src:sharding_impls",
         "//jax/_src:traceback_util",
         "//jax/_src:tree_util",
         "//jax/_src:util",
@@ -157,6 +159,14 @@ pytype_strict_library(
     deps = [
         "//jax/_src:compute_on",
     ],
+)
+
+pytype_strict_library(
+    name = "control_deps",
+    srcs = ["control_deps.py"],
+    type_checking = "pyrefly",
+    visibility = ["//visibility:public"],
+    deps = ["//jax"],
 )
 
 pytype_strict_library(
@@ -274,6 +284,7 @@ py_library_providing_imports_info(
         "//jax/_src:stages",
         "//jax/_src:util",
         "//jax/_src/lib",
+        "//jax/_src/pallas/mosaic:error_handling",
         "//jax/extend:backend",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
@@ -358,6 +369,7 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         "//jax",
+        "//jax/_src:core",
         "//jax/_src:deprecations",
         "//jax/_src:lax",
         "//jax/_src:source_info_util",
@@ -387,26 +399,15 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "pallas_gpu",
-    visibility = [
-        ":pallas_gpu_users",
-    ],
-    deps = [
-        ":pallas_triton",
-        # TODO(slebedev): Add :pallas_mosaic_gpu once it is ready.
-    ],
-)
-
-pytype_strict_library(
     name = "pallas_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
     type_checking = "pyrefly",
     visibility = [
-        ":pallas_gpu_users",
+        ":pallas_triton_users",
     ],
     deps = [
         ":pallas",
-        ":pallas_gpu",
+        ":pallas_triton",
         "//jax",
         "//jax/_src:lax",
     ] + py_deps("numpy"),
@@ -457,6 +458,7 @@ pytype_strict_library(
     visibility = ["//visibility:public"],
     deps = [
         ":pallas",  # build_cleaner: keep
+        "//jax/_src:core",
         "//jax/_src:deprecations",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
@@ -509,12 +511,13 @@ pytype_strict_library(
     ],
     type_checking = "pyrefly",
     visibility = [
-        ":pallas_gpu_users",
+        ":pallas_triton_users",
     ],
     deps = [
         "//jax/_src:deprecations",
         "//jax/_src/pallas",
         "//jax/_src/pallas/triton:core",
+        "//jax/_src/pallas/triton:gpu_info",
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],
@@ -598,16 +601,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
-        "//jax/_src:ad",
-        "//jax/_src:api",
-        "//jax/_src:api_util",
-        "//jax/_src:batching",
-        "//jax/_src:core",
-        "//jax/_src:mlir",
-        "//jax/_src:partial_eval",
-        "//jax/_src:tree_util",
-        "//jax/_src:util",
-        "//jax/_src/lib",
+        "//jax/_src:xla_metadata",
     ],
 )
 
@@ -649,6 +643,7 @@ pytype_strict_library(
         "//jax/_src:api_util",
         "//jax/_src:batching",
         "//jax/_src:core",
+        "//jax/_src:flattree",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
         "//jax/_src:tree_util",
@@ -692,6 +687,7 @@ pytype_strict_library(
         "//jax/_src:custom_derivatives",
         "//jax/_src:dtypes",
         "//jax/_src:ffi",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:mlir",
         "//jax/_src:numpy",
@@ -756,6 +752,7 @@ pytype_strict_library(
     type_checking = "pyrefly",
     visibility = ["//visibility:public"],
     deps = [
+        "//jax",
         "//jax/_src:xla_metadata",
     ],
 )
@@ -792,6 +789,7 @@ filegroup(
         "pjit.py",
         "scheduling_groups.py",
         "shard_map.py",
+        "xla_metadata.py",
     ],
     visibility = ["//jax:internal"],
 )

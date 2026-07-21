@@ -15,7 +15,8 @@
 from collections.abc import Sequence
 import jax
 from jax import typing
-from jax._src import prng
+from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -200,7 +201,7 @@ def philox_fold_in(key, data):
 
 plphilox_prng_impl = prng.PRNGImpl(
     key_shape=(2,),
-    seed=prng.threefry_seed,
+    seed=threefry2x32.threefry_seed,
     split=philox_split,
     random_bits=philox_random_bits,
     fold_in=philox_fold_in,

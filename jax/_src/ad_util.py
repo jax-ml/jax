@@ -36,7 +36,7 @@ def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
   ty = typeof(x)
   if isinstance(ty, HiType):
     return ty.vspace_add(x, y)
-  x, y = core.standard_insert_pvary(x, y)
+  x, y = core.auto_insert_reshard(x, y)
   return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p = Primitive('add_any')
@@ -61,6 +61,13 @@ aval_zeros_likers: dict[type, Callable[[Any], Array]] = {}
 
 def zeros_like_jaxval(val):
   return zeros_like_aval(core.typeof(val))
+
+def empty_like_aval(aval):
+  from jax._src.hijax import HiType  # pyrefly: ignore[missing-import]
+  if isinstance(aval, HiType):
+    return aval.raise_val(*map(empty_like_aval, aval.lo_ty()))
+  return aval_empty_likers[type(aval)](aval)
+aval_empty_likers: dict[type, Callable[[Any], Array]] = {}
 
 def instantiate(z: Zero | Array) -> Array:
   if isinstance(z, Zero):

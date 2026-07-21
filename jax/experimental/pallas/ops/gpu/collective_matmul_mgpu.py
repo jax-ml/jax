@@ -157,9 +157,12 @@ def all_gather_lhs_matmul(
     # Make sure all copies are fully done.
     plgpu.wait_smem_to_gmem(0, wait_read_only=True)
 
+  compiler_params = plgpu.CompilerParams(
+      lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+  )
   result, _ = plgpu.kernel(
       kernel_body,
-      out_shape=[
+      out_type=[
           # The output, with its M dimension all-gathered.
           jax.ShapeDtypeStruct((axis_size * m_shard, n_shard), dtype),
           # The scratch buffer used for the all-gather.
@@ -171,6 +174,7 @@ def all_gather_lhs_matmul(
       thread_name="wg",
       cluster=(1,),
       cluster_names=("cluster",),
+      compiler_params=compiler_params,
   )(lhs, rhs)
   return result
 

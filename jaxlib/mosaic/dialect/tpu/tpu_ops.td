@@ -20,72 +20,21 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/IR/BuiltinTypeInterfaces.td"
-include "mlir/IR/EnumAttr.td"
 include "mlir/Pass/PassBase.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "jaxlib/mosaic/dialect/tpu/tpu.td"
+include "jaxlib/mosaic/dialect/tpu/tpu_enums.td"
+include "jaxlib/mosaic/dialect/tpu/tpu_types.td"
 
 def TPU_Vreg : Type<IsVectorOfNonZeroRankTypePred, "native-sized vreg", "::mlir::VectorType">;
 
 def TPU_Vmask : VectorOfRankAndType<[2, 3], [I1]>;
 
-def TPU_CoreType : I32EnumAttr<"CoreType", "Core type", [
-  I32EnumAttrCase<"kTc", 0, "tc">,
-  I32EnumAttrCase<"kScScalarSubcore", 1, "sc_scalar_subcore">,
-  I32EnumAttrCase<"kScVectorSubcore", 2, "sc_vector_subcore">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_CoreTypeEnum : EnumAttr<TPU_Dialect, TPU_CoreType, "core_type"> {
-    let assemblyFormat = "`<` $value `>`";
-}
-
-def TPU_PipelineMode : I32EnumAttr<"PipelineMode", "Pipeline mode", [
-  I32EnumAttrCase<"kSynchronous", 1, "synchronous">,
-  I32EnumAttrCase<"kDoubleBuffered", 2, "double_buffered">
-  ]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_PipelineModeEnum : EnumAttr<TPU_Dialect, TPU_PipelineMode, "pipeline_mode"> {
-    let assemblyFormat = "`<` $value `>`";
-}
-
-def TPU_RevisitMode : I32EnumAttr<"RevisitMode", "Revisit mode", [
-  I32EnumAttrCase<"kImmediate", 0, "immediate">,
-  I32EnumAttrCase<"kAny", 1, "any">
-  ]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_RevisitModeEnum : EnumAttr<TPU_Dialect, TPU_RevisitMode, "revisit_mode"> {
-    let assemblyFormat = "`<` $value `>`";
-}
-
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
-
-def TPU_DimensionSemantics : I32EnumAttr<"DimensionSemantics", "Dimension semantics", [
-  I32EnumAttrCase<"parallel", 0>,
-  I32EnumAttrCase<"arbitrary", 1>,
-  I32EnumAttrCase<"core_parallel", 2>,
-  I32EnumAttrCase<"subcore_parallel", 3>
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_DimensionSemanticsEnum
-    : EnumAttr<TPU_Dialect, TPU_DimensionSemantics, "dimension_semantics"> {
-    let assemblyFormat = "`<` $value `>`";
-}
 
 // All indices/sizes are in element-space.
 // Note that the implementation will require statically provable tile alignment.
@@ -97,37 +46,6 @@ def TPU_ElementWindowAttr : TPU_Attr<"ElementWindow", "element_window"> {
   );
   let assemblyFormat = "`<` `[` $pad_low `]` `,` `[` $pad_high `]` `>`";
 }
-
-def TPU_ContractPrecision : I32EnumAttr<"ContractPrecision", "Contraction precision", [
-  I32EnumAttrCase<"kBF16", 0, "bf16">,
-  I32EnumAttrCase<"kFP32", 1, "fp32">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_ContractPrecisionEnum
-    : EnumAttr<TPU_Dialect, TPU_ContractPrecision, "contract_precision"> {
-    let assemblyFormat = "`<` $value `>`";
-}
-
-def TPU_PackFormat : I32EnumAttr<"PackFormat", "Pack format", [
-  I32EnumAttrCase<"kCompressed", 0, "compressed">,
-  I32EnumAttrCase<"kInterleaved", 1, "interleaved">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_PackFormatEnum : EnumAttr<TPU_Dialect, TPU_PackFormat, "pack_format"> {
-    let assemblyFormat = "`<` $value `>`";
-}
-
-def TPU_TiledCase   : I32EnumAttrCase<"tiled", 0>;
-def TPU_LaneCase    : I32EnumAttrCase<"lanes", 1>;
-def TPU_SublaneCase : I32EnumAttrCase<"sublanes", 2>;
-def TPU_VectorLayoutDim : I32EnumAttr<
-  "VectorLayoutDim", "", [TPU_TiledCase, TPU_LaneCase, TPU_SublaneCase]>;
 
 def TPU_VectorLayoutAttr : TPU_Attr<"VectorLayout", "vpad"> {
   let description = [{TODO}];
@@ -172,6 +90,17 @@ def TPU_TiledLayoutAttr
       return getNumTrailingDimsWithContiguousTiles(shape) == getRank();
     }
 
+    // Returns the smallest tile that can be used to divide the first tile of
+    // `tiles` into contiguous subtiles.
+    // NOTE: For tiles (T1, T2, ..., Tn), let Ts be the subtile unit. Then,
+    //   (T1, T2, ..., Tn) is equivalent to (T1, Ts, T2, ..., Tn). Furthermore,
+    //   tiles (T2, ..., Tn) permute data within each Ts tile, but never across
+    //   Ts tiles.
+    static ::llvm::SmallVector<int64_t> getSubtileUnit(::llvm::ArrayRef<::xla::Tile> tiles);
+    ::llvm::SmallVector<int64_t> getSubtileUnit() const {
+      return getSubtileUnit(getTiles());
+    }
+
     int64_t getRank() const {
       return getTileStrides().size();
     }
@@ -183,20 +112,6 @@ def TPU_TiledLayoutAttr
 
   let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
-}
-
-def TPU_MemorySpace : I32EnumAttr<"MemorySpace", "Memory space", [
-  I32EnumAttrCase<"kAny", 4294967295, "any">,
-  I32EnumAttrCase<"kVmem", 0, "vmem">,
-  I32EnumAttrCase<"kSmem", 1, "smem">,
-  I32EnumAttrCase<"kHbm", 2, "hbm">,
-  I32EnumAttrCase<"kCmem", 3, "cmem">,
-  I32EnumAttrCase<"kSemaphoreMem", 4, "semaphore_mem">,
-  I32EnumAttrCase<"kVmemShared", 5, "vmem_shared">,
-  I32EnumAttrCase<"kHost", 6, "host">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
 }
 
 def TPU_MemorySpaceAttr : AttrDef<TPU_Dialect, "MemorySpace"> {
@@ -220,23 +135,6 @@ class TPU_Op<string mnemonic, list<Trait> traits = []> :
 
 def DefaultMemWrite : MemoryEffects<[MemWrite<DefaultResource>]>;
 def DefaultMemRead : MemoryEffects<[MemRead<DefaultResource>]>;
-
-def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
-  I32EnumAttrCase<"kSum", 0, "sum">,
-  I32EnumAttrCase<"kMax", 1, "max">,
-  I32EnumAttrCase<"kMin", 2, "min">,
-  I32EnumAttrCase<"kArgMax", 3, "arg_max">,
-  I32EnumAttrCase<"kArgMin", 4, "arg_min">,
-  I32EnumAttrCase<"kFindFirstSet", 5, "find_first_set">
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_ReductionKindAttr
-    : EnumAttr<TPU_Dialect, TPU_ReductionKind, "reduction_kind"> {
-    let assemblyFormat = "`<` $value `>`";
-}
 
 def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure]> {
   let arguments = (ins AnyVectorOfNonZeroRank:$input, I64Attr:$dim, TPU_ReductionKindAttr:$kind);
@@ -519,29 +417,6 @@ def TPU_VectorStoreIdxOp :TPU_Op<"vector_store_idx", [DefaultMemWrite, AttrSized
   let hasVerifier = 1;
 }
 
-// TODO(jevinjiang): deprecate to use dynamic_rotate.
-def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
-  let description = [{
-    Rotates the given vector by the given amount in the given dimension, i.e.,
-    for a 2D vector of shape (m, n), rotating dim 0 by `amount` will shift a row
-    at index `i` to index `(i + amount) % m`
-  }];
-  let arguments = (ins
-    AnyVectorOfNonZeroRank:$value,
-    SI32Attr:$amount,
-    SI32Attr:$dimension,
-    // When the stride is specified, the rotation amount for each index on the
-    // stride dimension will be (amount + stride * index).
-    OptionalAttr<SI32Attr>:$stride,
-    OptionalAttr<SI32Attr>:$stride_dimension
-  );
-  let results = (outs AnyVectorOfNonZeroRank:$result);
-  let assemblyFormat = [{
-    $value `by` $amount `dim` $dimension (`stride` $stride `stride_dim` $stride_dimension^)? attr-dict `:` type($value)
-  }];
-  let hasVerifier = 1;
-}
-
 def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure, AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$value,
@@ -712,7 +587,7 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 }
 
 // unsigned_integers applies to the result type (for the source type the sign
-// doesn't matter: integer-to-integer conversions truncate the high bits, 
+// doesn't matter: integer-to-integer conversions truncate the high bits,
 // floats are always signed).
 // Float to integer packing rounds to nearest even.
 // WARNING: pack(pack(a, b), pack(c, d)) == pack(a, b, c, d) only holds for
@@ -821,13 +696,24 @@ def TPU_UnpackElementwiseOp : TPU_Op<"unpack_elementwise", [Pure, ElementwiseMap
     The `index` selects which packed value to extract from each word of `source`.
     An `index` of 0 corresponds to the lowest bits. The extracted values are
     cast to the output element type.
+
+    NOTE: The op follows the *interleaved format* during unpacking.
+    See `TPU_UnpackSubelementsOp` for more details.
+
+    For example, if `source_type` is i4, result type is i8, and `source` is
+    packed i8 with x'y'z'w'm'n'i'j' in a word, where each character represents 4
+    bits:
+
+    When `index=0`, the result is a packed i8 with s_y'y's_w'w's_n'n's_j'j';
+    When `index=1`, the result is a packed i8 with s_x'x's_z'z's_m'm's_i'i'.
+    With `s_x` indicating the MSB of `x`, and so on.
   }];
   let arguments = (ins
-    VectorOfNonZeroRankOf<[I32]>:$source,
+    VectorOfNonZeroRankOf<[AnyInteger]>:$source,
     TypeAttr:$source_type,
     I32Attr:$index
   );
-  let results = (outs VectorOfNonZeroRankOf<[F32, I32]>:$output);
+  let results = (outs VectorOfNonZeroRankOf<[F32, AnyInteger]>:$output);
   let assemblyFormat = [{ $source `,` $index attr-dict `:` type($source) `->` type($output) }];
   let hasVerifier = 1;
 }
@@ -899,18 +785,6 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure, DeclareOpInterfaceMeth
   let hasVerifier = 1;
 }
 
-def TPU_RoundingMode : I32EnumAttr<"RoundingMode", "Rounding mode", [
-  I32EnumAttrCase<"kTowardsZero", 0, "towards_zero">,
-  I32EnumAttrCase<"kToNearestEven", 1, "to_nearest_even">,
-]> {
-    let genSpecializedAttr = 0;
-    let cppNamespace = "::mlir::tpu";
-}
-
-def TPU_RoundingModeEnum : EnumAttr<TPU_Dialect, TPU_RoundingMode, "rounding_mode"> {
-    let assemblyFormat = "`<` $value `>`";
-}
-
 def AnyFloatLike : AnyTypeOf<[AnyFloat, VectorOfAnyRankOf<[AnyFloat]>]>;
 def AnySignlessIntegerLike : AnyTypeOf<[AnySignlessInteger, VectorOfAnyRankOf<[AnySignlessInteger]>]>;
 
@@ -978,7 +852,9 @@ def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
     DefaultValuedAttr<BoolAttr, "false">:$transpose_rhs,
     OptionalAttr<TPU_ContractPrecisionEnum>:$precision,
     // NOTE: User-level optional, once canonicalized, always present.
-    OptionalAttr<TPU_DotDimensionNumbersAttr>:$dimension_numbers
+    OptionalAttr<TPU_DotDimensionNumbersAttr>:$dimension_numbers,
+    // Hint to compilers whether to fuse the transposed LHS in the matmul.
+    BoolAttr:$transpose_lhs_hint
   );
   let results = (outs AnyVectorOfNonZeroRank:$result);
   let assemblyFormat = [{
@@ -1019,9 +895,31 @@ def TPU_MatmulPopOp : TPU_Op<"matmul_pop"> {
     I32Attr:$acc,
     I32Attr:$mxu_index
   );
-  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let results = (outs VectorOfRank<[2]>:$result);
   let assemblyFormat = [{
     $acc attr-dict `:` type($result)
+  }];
+}
+
+def TPU_MatmulLhsFifoOp : TPU_Op<"matmul_lhs_fifo"> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$lhs,
+    I32Attr:$mxu_index,
+    OptionalAttr<I32Attr>:$load_staged_rhs
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $lhs attr-dict `:` type($lhs)
+  }];
+}
+
+def TPU_MatmulPopFifoOp : TPU_Op<"matmul_pop_fifo"> {
+  let arguments = (ins
+    I32Attr:$mxu_index
+  );
+  let results = (outs VectorOfRank<[2]>:$result);
+  let assemblyFormat = [{
+    $mxu_index attr-dict `:` type($result)
   }];
 }
 
@@ -1200,7 +1098,8 @@ def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]>
     attr-dict `:` type($mem_ref) `->` type($result)
   }];
   let extraClassDeclaration = [{
-    mlir::InFlightDiagnostic verifyOffsetAndSizeTileAlignment(
+    // Returns a message string on error, and nullopt on success.
+    std::optional<std::string> verifyOffsetAndSizeTileAlignment(
         std::array<int64_t, 2> tc_target_shape,
         MemRefType source_type_override = nullptr);
   }];
@@ -1247,12 +1146,24 @@ def TPU_MemRefBitcastOp : TPU_Op<"memref_bitcast", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
-def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
-  let arguments = (ins AnyMemRef:$input);
+def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure, AttrSizedOperandSegments]> {
+  let arguments = (ins
+    AnyMemRef:$input,
+    // Dynamic offset shifts the memref pointer by the specified number of
+    // elements of the output type.
+    // NOTE: The size of the shift must be a multiple of the memory space word
+    // size for lowering to succeed.
+    Optional<I32>:$dynamic_offset,
+    Variadic<I32>:$dynamic_sizes
+  );
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
-    $input attr-dict `:` type($input) `->` type($result)
+    $input ($dynamic_offset^)? (`<` $dynamic_sizes^ `>`)? attr-dict `:` type($input) `->` type($result)
   }];
+  let skipDefaultBuilders = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Type":$result_type, "::mlir::Value":$input, CArg<"::mlir::Value", "nullptr">:$dynamic_offset, CArg<"::mlir::ValueRange", "{}">:$dynamic_sizes)>
+  ];
   let hasVerifier = 1;
 }
 
@@ -1296,6 +1207,24 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
+// Returns the logical ID of the current core.
+// Querying Core ID is not supported in kernels that use dimension semantics.
+def TPU_CoreIdOp : TPU_Op<"core_id", [Pure]> {
+  let arguments = (ins);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+  let hasVerifier = 1;
+}
+
+// Returns the logical ID of the current subcore.
+// Querying Subcore ID is not supported in kernels that use dimension semantics.
+def TPU_SubcoreIdOp : TPU_Op<"subcore_id", [Pure]> {
+  let arguments = (ins);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+  let hasVerifier = 1;
+}
+
 def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
   let arguments = (ins MemRefOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>:$semaphore);
   let results = (outs I32:$result);
@@ -1330,15 +1259,20 @@ def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
     MemRefOf<[TPU_SemaphoreType]>:$semaphore,
     I32:$amount,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id
+    Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id
   );
 let assemblyFormat = [{
-    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? attr-dict `:` type($semaphore)
+    $semaphore `,` $amount (`device_id` $device_id^)? (`core_id` $core_id^)? (`subcore_id` $subcore_id^)? attr-dict `:` type($semaphore)
   }];
   let hasVerifier = 1;
   let extraClassDeclaration = [{
     mlir::tpu::CoreType getTargetCoreType();
   }];
+  let builders = [
+    // A backward-compatible builder that sets `subcore_id` to nullptr.
+    OpBuilder<(ins "Value":$semaphore, "Value":$amount, "Value":$device_id, "Value":$core_id)>,
+  ];
 }
 
 def TPU_BarrierOp : TPU_Op<"barrier"> {
@@ -1369,7 +1303,8 @@ def TPU_BarrierOp : TPU_Op<"barrier"> {
 // device_id         : The id of the device to copy to for remote DMAs.
 // core_id           : The id of the core to copy to for remote and cross-core
 //                     DMAs.
-// core_type         : The core type that is being targeted for remote DMAs.
+// subcore_id        : The id of the subcore to copy to for remote and cross-core
+//                     DMAs, if applicable.
 // priority          : The priority of the DMA.
 // strict_ordering   : True if the DMA requires strict ordering. If false, the
 //                     ordering is either strict or relaxed depending on the
@@ -1379,9 +1314,10 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     AnyMemRef:$source,
     Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$source_semaphore,
     AnyMemRef:$target,
-    MemRefOf<[TPU_SomeSemaphoreType]>:$target_semaphore,
+    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id,
     // Smaller number means higher priority. 0 is the highest and the default.
     DefaultValuedAttr<I32Attr, "0">:$priority,
     DefaultValuedAttr<BoolAttr, "false">:$strict_ordering
@@ -1390,15 +1326,20 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     `source` `(` $source `:` type($source) `)`
     `target` `(` $target `:` type($target) `)`
     (`source_semaphore` `(` $source_semaphore^ `:` type($source_semaphore) `)`)?
-    `target_semaphore` `(` $target_semaphore `:` type($target_semaphore) `)`
+    (`target_semaphore` `(` $target_semaphore^ `:` type($target_semaphore) `)`)?
     (`device_id` `(` $device_id^ `)`)?
     (`core_id` `(` $core_id^ `)`)?
+    (`subcore_id` `(` $subcore_id^ `)`)?
     attr-dict
   }];
   let hasVerifier = 1;
   let extraClassDeclaration = [{
     mlir::tpu::CoreType getTargetCoreType();
   }];
+  let builders = [
+    // A backward-compatible builder that sets `subcore_id` to nullptr.
+    OpBuilder<(ins "Value":$source, "Value":$source_semaphore, "Value":$target, "Value":$target_semaphore, "Value":$device_id, "Value":$core_id, CArg<"uint32_t", "0">:$priority, CArg<"bool", "false">:$strict_ordering)>,
+  ];
 }
 
 // A base class for all ops that need to differentiate between gather and
@@ -1454,14 +1395,7 @@ def TPU_EnqueueIndirectDMAOp : TPU_Op<"enqueue_indirect_dma">, IndirectDMAOp {
     attr-dict
   }];
   let hasVerifier = 1;
-  let extraClassDeclaration = extraBaseClassDeclaration # [{
-    LogicalResult verifyGather(MemRefType operand_ty,
-                               ArrayRef<int64_t> offsets_shape,
-                               MemRefType result_ty);
-    LogicalResult verifyScatter(MemRefType updates_ty,
-                                ArrayRef<int64_t> offsets_shape,
-                                MemRefType operand_ty);
-  }];
+  let extraClassDeclaration = extraBaseClassDeclaration;
 }
 
 // tpu.wait_dma2 waits for a DMA to complete.
@@ -1490,6 +1424,33 @@ def TPU_WaitDMA2Op : TPU_Op<"wait_dma2", [AttrSizedOperandSegments]> {
   let builders = [
     OpBuilder<(ins "Value":$semaphore, "Value":$src, "Value":$dst)>
   ];
+}
+
+// tpu.wait_dma waits for a DMA to complete.
+def TPU_WaitDMAOp : TPU_Op<"wait_dma", [AttrSizedOperandSegments]> {
+  let arguments = (ins
+    AnyMemRef:$source,
+    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$source_semaphore,
+    AnyMemRef:$target,
+    Optional<MemRefOf<[TPU_SomeSemaphoreType]>>:$target_semaphore,
+    Optional<I32>:$device_id, // For remote DMAs
+    Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id,
+    DefaultValuedAttr<I32Attr, "0">:$priority,
+    DefaultValuedAttr<BoolAttr, "false">:$strict_ordering,
+    BoolAttr:$wait_target
+  );
+  let assemblyFormat = [{
+    `source` `(` $source `:` type($source) `)`
+    `target` `(` $target `:` type($target) `)`
+    (`source_semaphore` `(` $source_semaphore^ `:` type($source_semaphore) `)`)?
+    (`target_semaphore` `(` $target_semaphore^ `:` type($target_semaphore) `)`)?
+    (`device_id` `(` $device_id^ `)`)?
+    (`core_id` `(` $core_id^ `)`)?
+    (`subcore_id` `(` $subcore_id^ `)`)?
+    attr-dict
+  }];
+  let hasVerifier = 1;
 }
 
 // Like tpu.wait_dma2, but for indirect DMAs.
@@ -1561,6 +1522,11 @@ def TPU_TraceValueOp : TPU_Op<"trace_value", []> {
 def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let arguments = (ins Variadic<AnyType>:$results);
   let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
+  // Allows building without results, just like scf.yield.
+  // https://github.com/llvm/llvm-project/blob/f348d964af441ec454e5fc12ab1b599cfc1e7d14/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td#L1238
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>
+  ];
 }
 
 def TPU_DelayOp : TPU_Op<"delay"> {
@@ -1695,8 +1661,7 @@ def TPU_FetchAndAddSyncOp : TPU_Op<"fetch_and_add_sync", [DefaultMemRead, Defaul
     `$indices` must match the rank of the `$base` memref. The `$base` memref
     must be in SMEM. The update is synchronous.
 
-    The `$core_type` and `$core_id` specify the core on which the increment is
-    performed.
+    The `$core_id` specify the core on which the increment is performed.
 
     Example:
 

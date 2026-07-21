@@ -122,6 +122,5 @@ class TestPolynomial(jtu.JaxTestCase):
     self.assertSetsAllClose(np_roots, jnp_roots)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -41,13 +41,15 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util as jtu
 from jax._src.ad_util import SymbolicZero
+from jax._src.hijax import call_hi_primitive_p
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.tree_util import tree_flatten
-from jax._src.tree_util import tree_map, FlatTree
+from jax._src import flattree as ft
+from jax._src.tree_util import tree_map
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
 from jax._src.util import (split_list, safe_map, safe_zip, unzip3,
@@ -100,7 +102,7 @@ class JaxException(Exception):
 
 
 @functools.total_ordering
-@dataclasses.dataclass(eq=True, frozen=True)
+@dataclasses.dataclass(eq=True, frozen=True, slots=True)
 class ErrorEffect(effects.Effect):
   error_type: type[JaxException]
   shape_dtypes: tuple[api.ShapeDtypeStruct, ...]
@@ -193,7 +195,7 @@ class FailedCheckError(JaxException):
     vals = jtu.tree_leaves((self.args, self.kwargs))
     return ErrorEffect(
         FailedCheckError,
-        tuple(api.ShapeDtypeStruct(x.shape, x.dtype) for x in vals))
+        tuple(api.ShapeDtypeStruct.like(x) for x in vals))
 
 @dataclasses.dataclass
 class BatchedError(JaxException):
@@ -212,7 +214,7 @@ class BatchedError(JaxException):
 # Error Value
 
 @jtu.register_pytree_node_class
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Error:
   _pred: dict[ErrorEffect, Bool]
   _code: dict[ErrorEffect, Int]
@@ -358,8 +360,8 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 
   # call_jaxpr handling
   call_jaxpr = params.pop('call_jaxpr')
-  if isinstance(call_jaxpr, core.ClosedJaxpr):  # handle closed_call_p
-    jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  if isinstance(call_jaxpr, core.Jaxpr):  # handle closed_call_p
+    jaxpr, consts = call_jaxpr, call_jaxpr.consts
   else:
     jaxpr, consts = call_jaxpr, ()
   consts_ = tuple(HashableWrapper(c) for c in consts)
@@ -376,10 +378,10 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
   error, out_vals = tree_unflatten(out_tree, all_vals)
   return error, out_vals
 
-def checkify_jaxpr(jaxpr: core.ClosedJaxpr, enabled_errors,
+def checkify_jaxpr(jaxpr: core.Jaxpr, enabled_errors,
                    error: Error, *args) -> tuple[Error, list[core.Value]]:
   err_vals, err_tree = jtu.tree_flatten(error)
-  return checkify_jaxpr_flat(jaxpr.jaxpr, jaxpr.consts,
+  return checkify_jaxpr_flat(jaxpr, jaxpr.consts,
                              enabled_errors, err_tree, *err_vals, *args)
 
 def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
@@ -536,7 +538,7 @@ mlir.register_lowering(check_p, check_lowering_rule,
 
 def check_batching_rule(batched_args, batch_dims, *, err_tree, debug):
   size = next(x.shape[dim] for x, dim in zip(batched_args, batch_dims)
-              if dim is not batching.not_mapped)
+              if dim is not None)
   batched_args = (batching.bdim_at_front(a, d, size)
                   for a, d in zip(batched_args, batch_dims))
   err = tree_unflatten(err_tree, batched_args)
@@ -737,17 +739,17 @@ class ErrorEffects:
 
 @weakref_lru_cache
 def jaxpr_to_checkify_jaxpr(
-    jaxpr: core.ClosedJaxpr, enabled_errors, err_tree: PyTreeDef,
-    *flat_err_and_in_vals) -> tuple[core.ClosedJaxpr, PyTreeDef, set[ErrorEffect]]:
+    jaxpr: core.Jaxpr, enabled_errors, err_tree: PyTreeDef,
+    *flat_err_and_in_vals) -> tuple[core.Jaxpr, PyTreeDef, set[ErrorEffect]]:
 
   def fun_wrapped(*invals):
     error, out = checkify_jaxpr_flat(
-        jaxpr.jaxpr, jaxpr.consts, enabled_errors, err_tree, *invals)
+        jaxpr, jaxpr.consts, enabled_errors, err_tree, *invals)
     error_effects = ErrorEffects(set(error._pred.keys()))
     return (error, out), error_effects
 
-  debug_info = jaxpr.jaxpr.debug_info.with_unknown_names()
-  args_avals = FlatTree.flatten((flat_err_and_in_vals, {}))
+  debug_info = jaxpr.debug_info.with_unknown_names()
+  args_avals = ft.flatten((flat_err_and_in_vals, {}))
   checked_jaxpr, full_out_avals = pe.trace_to_jaxpr(fun_wrapped, args_avals, debug_info)
   out_avals, error_effects = full_out_avals.unpack()
   error_effects = error_effects.unflatten().val
@@ -787,9 +789,9 @@ def cond_error_check(error: Error, enabled_errors, index, *ops,
 error_checks[lax.cond_p] = cond_error_check
 
 def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
-                     num_consts, num_carry, unroll):
+                     ft_in, ft_out, unroll):
 
-  consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
+  consts, carry, xs = map(list, ft_in.update(in_flat).unpack())
   xs_mapped = [core.mapped_aval(length, 0, core.typeof(val)) for val in xs]
   # Query body effects to create a merged error containing all effects (such
   # that in and out carried error are of the same type).
@@ -810,18 +812,21 @@ def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
             + [False] * (len(carry) + len(xs)))
   checked_jaxpr = pe.move_binders_to_front(checked_jaxpr_, tomove)
   new_in_flat = [*consts, *err_vals, *carry, *xs]
+  errs_g = ft.nones(len(err_vals))
+  consts_g, carry_g, xs_g = ft_in.unpack()
   err_and_out = lax.scan_p.bind(
       *new_in_flat, reverse=reverse, length=length, jaxpr=checked_jaxpr,
-      num_consts=len(consts), num_carry=len(carry)+len(err_vals), unroll=unroll)
+      ft_in=ft.pack((consts_g, (errs_g, carry_g), xs_g)),
+      ft_out=ft.pack(((errs_g, carry_g), ft_out.unpack()[1])), unroll=unroll)
   err, out = tree_unflatten(out_tree, err_and_out)
   return err, out
 
 error_checks[lax.scan_p] = scan_error_check
 
 def checkify_while_body_jaxpr(
-    cond_jaxpr: core.ClosedJaxpr, body_jaxpr: core.ClosedJaxpr,
+    cond_jaxpr: core.Jaxpr, body_jaxpr: core.Jaxpr,
     enabled_errors, error: Error,
-    c_consts_num: int) -> tuple[core.ClosedJaxpr, PyTreeDef, set[ErrorEffect]]:
+    c_consts_num: int) -> tuple[core.Jaxpr, PyTreeDef, set[ErrorEffect]]:
   cond_f = core.jaxpr_as_fun(cond_jaxpr)
   body_f = core.jaxpr_as_fun(body_jaxpr)
   def new_body_f(*c_consts_and_vals):
@@ -834,8 +839,8 @@ def checkify_while_body_jaxpr(
 
   jaxpr, _ = pe.trace_to_jaxpr(
       new_body_f,
-      FlatTree.flatten(((*c_consts_avals, *body_jaxpr.in_avals), {})),
-      debug_info=body_jaxpr.jaxpr.debug_info.with_unknown_names())
+      ft.flatten(((*c_consts_avals, *body_jaxpr.in_avals), {})),
+      debug_info=body_jaxpr.debug_info.with_unknown_names())
   err_vals, err_tree = jtu.tree_flatten(error)
   err_vals = map(core.typeof, err_vals)
   flat_err_and_in_vals = [*err_vals, *c_consts_avals, *body_jaxpr.in_avals]
@@ -847,10 +852,7 @@ def checkify_while_body_jaxpr(
 @weakref_lru_cache
 def ignore_error_output_jaxpr(jaxpr, num_error_vals: int):
   """Constructs a checked jaxpr which does not output its error value."""
-  consts = jaxpr.consts
-  jaxpr = jaxpr.jaxpr
-  new_jaxpr = jaxpr.replace(outvars=jaxpr.outvars[num_error_vals:])
-  return core.ClosedJaxpr(new_jaxpr, consts)
+  return jaxpr.replace(outvars=jaxpr.outvars[num_error_vals:])
 
 def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
                            cond_jaxpr, body_nconsts, body_jaxpr):
@@ -941,12 +943,28 @@ def remat_error_check(error, enabled_errors, *vals_in, jaxpr, **params):
   new_vals_in = [*err_vals, *vals_in]
   in_avals = tuple(map(core.typeof, new_vals_in))
   checked_jaxpr_, out_tree, _ = jaxpr_to_checkify_jaxpr(
-      pe.close_jaxpr(jaxpr), enabled_errors, err_tree, *in_avals)
-  checked_jaxpr, () = checked_jaxpr_.jaxpr, checked_jaxpr_.consts
+      jaxpr, enabled_errors, err_tree, *in_avals)
+  checked_jaxpr, () = checked_jaxpr_, checked_jaxpr_.consts
   err_and_out = ad_checkpoint.remat_p.bind(*new_vals_in, jaxpr=checked_jaxpr,
                                            **params)
   return tree_unflatten(out_tree, err_and_out)
 error_checks[ad_checkpoint.remat_p] = remat_error_check
+
+
+def call_hi_primitive_error_check(error, enabled_errors, *vals_in, _prim):
+  if not isinstance(_prim, ad_checkpoint.RematTraced):
+    return default_checkify_rule(call_hi_primitive_p, error, enabled_errors,
+                                 *vals_in, _prim=_prim)
+  err_vals, err_tree = jtu.tree_flatten(error)
+  new_vals_in = [*err_vals, *vals_in]
+  in_avals = tuple(map(core.typeof, new_vals_in))
+  checked_jaxpr_, out_tree, _ = jaxpr_to_checkify_jaxpr(
+      _prim.jaxpr, enabled_errors, err_tree, *in_avals)
+  checked_jaxpr, consts = pe.separate_consts(checked_jaxpr_)
+  new_prim = ad_checkpoint.RematTraced(checked_jaxpr, _prim.policy)
+  err_and_out = new_prim(*consts, *new_vals_in)
+  return tree_unflatten(out_tree, err_and_out)
+error_checks[call_hi_primitive_p] = call_hi_primitive_error_check
 
 
 def shard_map_error_check(
@@ -962,7 +980,7 @@ def shard_map_error_check(
   new_in_specs = (*([P()] * num_error_vals), *in_specs)
   new_vals_in = [*err_vals, *vals_in]
   in_avals = list(map(core.typeof, new_vals_in))
-  manual_axes = kwargs.get('manual_axes')
+  manual_axes = kwargs.get('newly_manual_axes')
   check_vma = kwargs.get('check_vma')
   for i, v in enumerate(in_avals):
     if not (sharder := core.shard_aval_handlers.get(type(v))):
@@ -974,12 +992,12 @@ def shard_map_error_check(
         config._check_vma(check_vma)):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
-        pe.close_jaxpr(jaxpr), enabled_errors, err_tree, *in_avals
+        jaxpr, enabled_errors, err_tree, *in_avals
     )
   num_out_error_vals = out_tree.num_leaves - len(out_specs)
 
   def expand_errors_leading_dim(*xs):
-    outs = core.eval_jaxpr(checked_jaxpr.jaxpr, checked_jaxpr.consts, *xs)
+    outs = core.eval_jaxpr(checked_jaxpr, checked_jaxpr.consts, *xs)
     errs, outs = split_list(outs, [num_out_error_vals])
     errs = [lax.expand_dims(e, [0]) for e in errs]
     return *errs, *outs
@@ -987,14 +1005,14 @@ def shard_map_error_check(
   with core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(check_vma):
     checked_jaxpr, _ = pe.trace_to_jaxpr(
         expand_errors_leading_dim,
-        FlatTree.flatten((tuple(checked_jaxpr.in_avals), {})),
-        debug_info=checked_jaxpr.jaxpr.debug_info)
+        ft.flatten((tuple(checked_jaxpr.in_avals), {})),
+        debug_info=checked_jaxpr.debug_info)
 
   # Update shard_map params to account for extra error values.
   # Use fully sharded partitioning for out errors.
   new_out_specs = (*([P(mesh.axis_names)] * num_out_error_vals), *out_specs)
   new_params = dict(
-      jaxpr=checked_jaxpr.jaxpr,
+      jaxpr=checked_jaxpr,
       in_specs=new_in_specs,
       out_specs=new_out_specs,
       **kwargs,
@@ -1009,7 +1027,7 @@ error_checks[jshmap.shard_map_p] = shard_map_error_check
 def custom_jvp_call_rule(in_err: Error,
                          enabled_errors: set, *in_vals, num_consts,
                          jvp_jaxpr_fun: lu.WrappedFun,
-                         call_jaxpr: core.ClosedJaxpr, **params):
+                         call_jaxpr: core.Jaxpr, **params):
   # The types to have in mind are:
   #   jvp : (a -> b) -> (a, T a) -> (b, T b)
   #   checkify : (a -> b) -> a -> Err b
@@ -1020,10 +1038,13 @@ def custom_jvp_call_rule(in_err: Error,
   # JVP rule, one must instead use checkify-of-jvp. Thus this implementation
   # just forwards the input error and code (and trivial tangents) to the output.
   err_vals, err_tree = jtu.tree_flatten(in_err)
+  dbg = call_jaxpr.debug_info
+  if dbg.arg_names is not None:
+    dbg = dbg._replace(arg_names=("",) * err_tree.num_leaves + dbg.arg_names)
   partial_checkify = lu.wrap_init(
-      functools.partial(checkify_jaxpr_flat, call_jaxpr.jaxpr,
+      functools.partial(checkify_jaxpr_flat, call_jaxpr,
                         call_jaxpr.consts, enabled_errors, err_tree),
-      debug_info=call_jaxpr.jaxpr.debug_info)
+      debug_info=dbg)
   partial_checkify, f_metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
   jvp = lift_jvp(err_tree.num_leaves, num_consts, jvp_jaxpr_fun)
@@ -1068,16 +1089,16 @@ def lift_jvp(num_errs: int, num_consts: int,
   return lu.wrap_init(jvp, debug_info=jvp_jaxpr_fun.debug_info)
 
 def custom_vjp_call_rule(in_err, enabled_errors, *in_vals,
-                         call_jaxpr: core.ClosedJaxpr,
+                         call_jaxpr: core.Jaxpr,
                          fwd_jaxpr_thunk, num_consts,
                          bwd: lu.WrappedFun, out_trees,
                          symbolic_zeros: bool):
   err_vals, err_tree = jtu.tree_flatten(in_err)
   num_errs = err_tree.num_leaves
   checkified_fun = lu.wrap_init(
-      functools.partial(checkify_jaxpr_flat, call_jaxpr.jaxpr,
+      functools.partial(checkify_jaxpr_flat, call_jaxpr,
                         call_jaxpr.consts, enabled_errors, err_tree),
-      debug_info=call_jaxpr.jaxpr.debug_info)
+      debug_info=call_jaxpr.debug_info)
   checkified_fun, fun_metadata = _flatten_and_get_error_metadata_thunk(
       checkified_fun)
 
@@ -1210,7 +1231,7 @@ def checkify(f: Callable[..., Out],
   @traceback_util.api_boundary
   def checked_fun(*args, **kwargs):
     # close over all arguments so they're not turned into abstract values.
-    in_avals = FlatTree.flatten(((), {}))
+    in_avals = ft.flatten(((), {}))
     closed_f = lambda: f(*args, **kwargs)
     # stage:
     debug_info = api_util.debug_info("checkify", f, args, kwargs).with_unknown_names()

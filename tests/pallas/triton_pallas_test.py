@@ -15,6 +15,7 @@
 import functools
 import sys
 import unittest
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -22,6 +23,7 @@ import jax
 from jax import lax
 from jax._src import config
 from jax._src import dtypes
+from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -52,6 +54,12 @@ class PallasBaseTest(jtu.JaxTestCase):
         self.skipTest("Only works on GPU with capability >= sm80")
       if plgpu is None:
         self.skipTest("plgpu not available on this platform")
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message="The Pallas Triton backend is deprecated",
+      )
     else:
       self.skipTest("Test only works on CPU and GPU")
 
@@ -98,6 +106,38 @@ class TritonPallasTest(PallasBaseTest):
     self.assertEqual(y.dtype, dst_dtype)
     self.assertArraysEqual(y, x.astype(dst_dtype))
 
+  def test_float32_stack(self):
+    # Triton stack only supports 2 arguments and last dimension.
+    x = jax.random.normal(jax.random.key(0), (64, 64), dtype=jnp.float32)
+    y = jax.random.normal(jax.random.key(1), (64, 64), dtype=jnp.float32)
+
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jnp.stack([x_ref[...], y_ref[...]], axis=-1)
+
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((64, 64, 2), jnp.float32),
+        grid=(1,),
+    )(x, y)
+    np.testing.assert_allclose(out, np.stack([x, y], axis=-1))
+
+  def test_float32_unstack(self):
+    # Triton unstack only supports size 2 and last dimension.
+    x = jax.random.normal(jax.random.key(0), (64, 64, 2), dtype=jnp.float32)
+
+    def kernel(x_ref, out1_ref, out2_ref):
+      out1, out2 = jnp.unstack(x_ref[...], axis=-1)
+      out1_ref[...] = out1
+      out2_ref[...] = out2
+
+    out1, out2 = self.pallas_call(
+        kernel,
+        out_shape=(jax.ShapeDtypeStruct((64, 64), jnp.float32),
+                   jax.ShapeDtypeStruct((64, 64), jnp.float32)),
+        grid=(1,),
+    )(x)
+    np.testing.assert_allclose(out1, x[..., 0])
+    np.testing.assert_allclose(out2, x[..., 1])
   @parameterized.named_parameters(
       ("add_i32", "atomic_add", np.array([1, 2, 3, 4], np.int32), np.sum),
       ("max_i32", "atomic_max", np.array([1, 2, 3, 4], np.int32), np.max),
@@ -473,13 +513,59 @@ class TritonPallasTest(PallasBaseTest):
         softmax(x), jax.nn.softmax(x, axis=-1), atol=1e-5, rtol=1e-5
     )
 
+  def test_deviceless_aot(self):
+    if jtu.is_device_rocm():
+      abstract_device = mesh_lib.AbstractDevice('gfx950', 1, 'rocm')
+    else:
+      abstract_device = mesh_lib.AbstractDevice('NVIDIA A100', 1, 'cuda')
+    abstract_mesh = mesh_lib.AbstractMesh(
+        (1,),
+        ('x',),
+        (mesh_lib.AxisType.Explicit,),
+        abstract_device=abstract_device,
+    )
+
+    batch_size = 2
+    size = 32
+    block_size = 64
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((batch_size, size), jnp.float32),
+        grid=batch_size,
+    )
+    def softmax(x_ref, o_ref):
+      row_idx = pl.program_id(0)
+      x_idx = jnp.arange(block_size)
+      row_idxs = (row_idx, x_idx)
+      mask = x_idx < x_ref.shape[1]
+      row = plgpu.load(x_ref.at[row_idxs], mask=mask, other=-float("inf"))
+      row_minus_max = row - jnp.max(row, axis=0)
+      numerator = jnp.exp(row_minus_max)
+      denominator = jnp.sum(numerator, axis=0)
+      softmax_output = numerator / denominator
+      plgpu.store(o_ref.at[row_idxs], softmax_output, mask=mask)
+
+    jitted = jax.jit(softmax)
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+        abstract_arr = jax.ShapeDtypeStruct((batch_size, size), jnp.float32)
+        traced = jitted.trace(abstract_arr)
+        lowered = traced.lower()
+
+    compiled = lowered.compile(device_assignment=tuple(jax.devices()))
+    key = jax.random.key(0)
+    x = jax.random.normal(key, [batch_size, size], dtype=jnp.float32)
+    output = compiled(x)
+    np.testing.assert_allclose(
+        output, jax.nn.softmax(x, axis=-1), atol=1e-5, rtol=1e-5
+    )
+
   def test_unsigned_integer_dot_raises(self):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((32, 64), jnp.int32),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+      o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
     x = jnp.ones((32, 128), dtype=jnp.uint8)
     y = jnp.ones((128, 64), dtype=jnp.uint8)
@@ -497,7 +583,7 @@ class TritonPallasTest(PallasBaseTest):
         compiler_params=plgpu.CompilerParams(num_warps=1),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+      o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
     x = jnp.ones((m, k), dtype=dtype)
     y = jnp.ones((k, n), dtype=dtype)
@@ -516,7 +602,7 @@ class TritonPallasTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((m, n), dtype), compiler_params=plgpu.CompilerParams(num_warps=1),
     )
     def dot_kernel(x_ref, y_ref, o_ref):
-      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+      o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
     x = jnp.arange(m * k).reshape(m, k).astype(dtype)
     y = jnp.arange(k * n).reshape(k, n).astype(dtype)
@@ -543,7 +629,7 @@ class TritonPallasTest(PallasBaseTest):
             compiler_params=plgpu.CompilerParams(num_warps=1),
         )
         def dot_kernel(x_ref, y_ref, o_ref):
-          o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+          o_ref[()] = plgpu.dot(x_ref[()], y_ref[()])
 
         x = jnp.arange(m * k).reshape(m, k).astype(dtype)
         y = jnp.arange(k * n).reshape(k, n).astype(dtype)
@@ -593,7 +679,7 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
           lax.broadcast_in_dim(idx_n, (bk, bn), (1,)),
       )
       x_block, y_block = x_ref[x_idx], y_ref[y_idx]
-      out = pl.dot(x_block, y_block)
+      out = plgpu.dot(x_block, y_block)
       return acc + out
 
     acc = lax.fori_loop(0, k // bk, body, acc).astype(o_ref.dtype)
@@ -607,4 +693,4 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

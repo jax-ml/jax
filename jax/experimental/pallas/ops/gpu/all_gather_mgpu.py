@@ -151,12 +151,16 @@ def all_gather(
     def _never():
       x_ref[(0,) * len(x_ref.shape)] = jnp.asarray(0, x_ref.dtype)
 
+  compiler_params = plgpu.CompilerParams(
+      lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+  )
   return plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
+      out_type=jax.ShapeDtypeStruct(output_shape, dtype),
       grid=(num_blocks,),
       grid_names=("blocks",),
-      scratch_shapes=[plgpu.SemaphoreType.REGULAR],
+      scratch_types=[plgpu.SemaphoreType.REGULAR],
+      compiler_params=compiler_params,
   )(x)
 
 

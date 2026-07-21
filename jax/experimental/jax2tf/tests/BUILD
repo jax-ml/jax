@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_binary", "py_library")
-load("//jaxlib:jax.bzl", "if_oss", "jax_generate_backend_suites", "jax_multiplatform_test", "jax_visibility", "py_deps")
+load("//jaxlib:jax.bzl", "if_oss", "jax_generate_backend_suites", "jax_multiplatform_test", "jax_visibility", "py_binary", "py_deps", "py_library")
 
 licenses(["notice"])
 
@@ -36,9 +35,9 @@ py_library(
     ],
     visibility = jax_visibility("jax2tf_limitations"),
     deps = [
+        "//jax/_src:dtypes",
         "//jax/_src:internal_test_harnesses",
-        "//jax/_src:test_util",
-    ],
+    ] + py_deps("numpy"),
 )
 
 py_library(
@@ -46,6 +45,7 @@ py_library(
     srcs = [
         "tf_test_util.py",
     ],
+    strict_deps = False,
     # //:wheel_additives needs visibility to this target
     visibility = jax_visibility("tf_test_util") + if_oss(["//:__pkg__"]),
     deps = [
@@ -64,9 +64,11 @@ py_library(
     ],
     deps = [
         "//jax",
+        "//jax/experimental/jax2tf",
         "//jax/experimental/jax2tf/tests/flax_models",
         "//third_party/py/jraph",
         "//third_party/py/numpy",
+        "//third_party/py/tensorflow",
         "//third_party/py/tensorflowjs",
     ],
 )
@@ -142,6 +144,7 @@ jax_multiplatform_test(
         "jax2tf",
     ],
     deps = [
+        ":jax2tf_limitations",
         ":tf_test_util",
         "//jax/_src:internal_test_harnesses",
         "//jax/experimental/jax2tf",
@@ -173,6 +176,7 @@ jax_multiplatform_test(
         "nodebug",  # Times out.
     ],
     deps = [
+        ":jax2tf_limitations",
         ":tf_test_util",
         "//jax/_src:internal_test_harnesses",
         "//jax/experimental/jax2tf",
@@ -291,10 +295,8 @@ py_binary(
     deps = [
         ":models_util",
         "//jax",
-        "//pyglib:resources",
+        "//jax/_src:dtypes",
         "//third_party/py/absl:app",
         "//third_party/py/absl/flags",
-        "//third_party/py/numpy",
-        "//third_party/py/tensorflow",
-    ],
+    ] + py_deps("numpy") + py_deps("tensorflow"),
 )

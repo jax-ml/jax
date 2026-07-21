@@ -212,16 +212,20 @@ def matmul_kernel(a, b, config: TuningConfig):
     store_done_barrier = plgpu.Barrier(
         num_arrivals=1, num_barriers=2, orders_tensor_core=True
     )
+  compiler_params = plgpu.CompilerParams(
+      lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+  )
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(m_iters * n_iters,),
       grid_names=("mn_linear",),
       num_threads=2,
       thread_name="wg",
       cluster_names=("x",),
       cluster=(1 + collective,),
-      scratch_shapes=dict(
+      compiler_params=compiler_params,
+      scratch_types=dict(
           a_smem=plgpu.SMEM(
               (max_concurrent_steps, block_tile_m, tile_k),
               dtype,

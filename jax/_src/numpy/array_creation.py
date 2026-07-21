@@ -27,7 +27,8 @@ from jax._src.numpy.array_constructors import asarray
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
+from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
+                                     SingleDeviceSharding)
 from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike
 from jax._src.util import canonicalize_axis, set_module
 
@@ -149,13 +150,9 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
           out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an empty array.
 
-  JAX implementation of :func:`numpy.empty`.
-
-  .. note::
-
-    For historical reasons, :func:`jax.numpy.empty` is currently equivalent to
-    :func:`jax.numpy.zeros`: i.e. it returns a buffer initialized with zeros.
-    To create a buffer of uninitialized values, please use :func:`jax.lax.empty`.
+  JAX implementation of :func:`numpy.empty`. Starting in JAX v0.11.0, this
+  returns an uninitialized array on platforms that support doing so. Prior to
+  v0.11.0, this function returned an array filled with zeros on all platforms.
 
   Args:
     shape: int or sequence of ints specifying the shape of the created array.
@@ -191,7 +188,14 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype, "empty")
-  return zeros(shape, dtype, device=device, out_sharding=out_sharding)
+  shape = canonicalize_shape(shape)
+  if device is not None and out_sharding is None:
+    # lax.empty does not accept SingleDeviceSharding, so we use api.device_put.
+    return api.device_put(lax.empty(shape, dtype), device)
+  else:
+    final_sharding = util.choose_device_or_out_sharding(
+        device, out_sharding, 'jnp.empty')
+    return lax.empty(shape, dtype, out_sharding=final_sharding)
 
 
 def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:
@@ -205,7 +209,8 @@ def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:
 @export
 def full(shape: Any, fill_value: ArrayLike,
          dtype: DTypeLike | None = None, *,
-         device: xc.Device | Sharding | None = None) -> Array:
+         device: xc.Device | Sharding | None = None,
+         out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of a specified value.
 
   JAX implementation of :func:`numpy.full`.
@@ -244,13 +249,18 @@ def full(shape: Any, fill_value: ArrayLike,
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full")
   util.check_arraylike("full", fill_value)
 
+  sharding = util.choose_device_or_out_sharding(device, out_sharding, 'full')
+
   if np.ndim(fill_value) == 0:
     shape = canonicalize_shape(shape)
-    return lax.full(shape, fill_value, dtype,
-                    sharding=util.canonicalize_device_to_sharding(device))
+    return lax.full(shape, fill_value, dtype, sharding=sharding)
   else:
-    return api.device_put(
-        util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
+    if isinstance(sharding, SingleDeviceSharding):
+      return api.device_put(
+          util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
+    else:
+      return util._broadcast_to(asarray(fill_value, dtype=dtype), shape,
+                                sharding=sharding)
 
 
 @export
@@ -360,14 +370,14 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
                device: xc.Device | Sharding | None = None) -> Array:
   """Create an empty array with the same shape and dtype as an array.
 
-  JAX implementation of :func:`numpy.empty_like`. Because XLA cannot create
-  an un-initialized array, :func:`jax.numpy.empty` will always return an
-  array full of zeros.
+  JAX implementation of :func:`numpy.empty_like`. Starting in JAX v0.11.0, this
+  returns an uninitialized array on platforms that support doing so. Prior to
+  v0.11.0, this function returned an array filled with zeros on all platforms.
 
   Args:
-    a: Array-like object with ``shape`` and ``dtype`` attributes.
-    shape: optionally override the shape of the created array.
+    prototype: Array-like object with ``shape`` and ``dtype`` attributes.
     dtype: optionally override the dtype of the created array.
+    shape: optionally override the shape of the created array.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
 
@@ -394,20 +404,21 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
     m = getattr(prototype, '__jax_array__', None)
     if m is not None:
       prototype = m()
-    util.check_arraylike("ones_like", prototype)
+    util.check_arraylike("empty_like", prototype)
   if dtype is not None:
-    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "ones_like")
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "empty_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(prototype, 0, dtype, shape,
-                       sharding=util.canonicalize_device_to_sharding(device))
+  return lax.empty_like(prototype, dtype=dtype, shape=shape,
+                        out_sharding=util.canonicalize_device_to_sharding(device))
 
 
 @export
 def full_like(a: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Any = None, *,
-              device: xc.Device | Sharding | None = None) -> Array:
+              device: xc.Device | Sharding | None = None,
+              out_sharding: NamedSharding | P | None = None) -> Array:
   """Create an array full of a specified value with the same shape and dtype as an array.
 
   JAX implementation of :func:`numpy.full_like`.
@@ -455,14 +466,19 @@ def full_like(a: ArrayLike | DuckTypedArray,
     dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "full_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
+  sharding = util.choose_device_or_out_sharding(
+      device, out_sharding, 'full_like')
   if np.ndim(fill_value) == 0:
-    return lax.full_like(a, fill_value, dtype, shape,
-                         sharding=util.canonicalize_device_to_sharding(device))
+    return lax.full_like(a, fill_value, dtype, shape, sharding=sharding)
   else:
     shape = np.shape(a) if shape is None else shape  # pyrefly: ignore[no-matching-overload]
     dtype = dtypes.result_type(a) if dtype is None else dtype
-    return api.device_put(
-        util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
+    if isinstance(sharding, SingleDeviceSharding):
+      return api.device_put(
+          util._broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
+    else:
+      return util._broadcast_to(asarray(fill_value, dtype=dtype), shape,
+                                sharding=sharding)
 
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,

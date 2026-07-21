@@ -117,7 +117,7 @@ def debug_batching_rule(args, dims, *, primitive, **params):
                    if i is not None)
   # TODO(sharadmv): implement in terms of rolled loop unstead of unrolled.
   def get_arg_at_dim(i, dim, arg):
-    if dim is batching.not_mapped:
+    if dim is None:
       # Broadcast unmapped argument
       return arg
     return lax.index_in_dim(arg, i, axis=dim, keepdims=False)
@@ -210,7 +210,8 @@ def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params)
     result, token, _ = cb.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
         has_side_effect=True, returns_token=True, partitioned=partitioned)
-    ctx.set_tokens_out(mlir.TokenSet({effect: token}))
+    ctx.set_tokens_out(
+        ctx.tokens_in.update_tokens(mlir.TokenSet({effect: token})))
   else:
     result, _, _ = cb.emit_python_callback(
         ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,

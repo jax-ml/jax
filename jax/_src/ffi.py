@@ -176,6 +176,10 @@ def include_dir() -> str:
 
 
 def _aval_shape(aval: core.AbstractValue) -> Shape:
+  if isinstance(aval, core.AbstractFuture):
+    # An AbstractFuture is a future of an array. While the array has a shape,
+    # the future itself acts more like a token, which has no shape.
+    return ()
   return () if aval is core.abstract_token else core.physical_aval(aval).shape  # pyrefly: ignore[missing-attribute]
 
 
@@ -246,7 +250,9 @@ def build_ffi_lowering_function(
             f"of at least 4; got api_version={kwargs['api_version']}.")
       kwargs["backend_config"] = backend_config
     if "result_types" not in kwargs:
-      kwargs["result_types"] = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, ctx.avals_out))
+      flat_res_types, _ = mlir.ir_tree_registry.flatten(
+          [mlir._aval_to_ir_types(ctx.module_context, a) for a in ctx.avals_out])
+      kwargs["result_types"] = flat_res_types
     if not skip_ffi_layout_processing:
       if operand_layouts is None:
         kwargs["operand_layouts"] = map(
@@ -269,7 +275,7 @@ def build_ffi_lowering_function(
     if "result_shapes" not in kwargs and not all(
         core.is_constant_shape(_aval_shape(aval)) for aval in ctx.avals_out):
       kwargs["result_shapes"] = [
-          mlir.shape_tensor(mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
+          mlir.shape_tensor(ctx.module_context, mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
           for aval in ctx.avals_out]
 
     return mlir.custom_call(call_target_name, operands=operands, **kwargs)
@@ -551,7 +557,7 @@ def ffi_call(
               "and an output with a different layout "
               f"{static_output_layouts[o_idx]}.")
         static_input_output_aliases.append((i_idx, o_idx))
-    args = core.standard_insert_pvary(*args)
+    args = core.auto_insert_reshard(*args)
     results = ffi_call_p.bind(
         *args,
         result_avals=result_avals,
@@ -610,7 +616,7 @@ def _unwrap_kwargs_hashable(kwargs: Sequence[tuple[str, Any]]) -> dict[str, Any]
   return unwrapped_kwargs
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class FfiEffect(effects.Effect):
   def __str__(self):
     return "FFI"
@@ -684,8 +690,8 @@ def ffi_batching_rule(
   from jax._src.lax import lax  # pyrefly: ignore[missing-import]
 
   axis_size, = {a.shape[d] for a, d in zip(args, dims)
-                if d is not batching.not_mapped}
-  new_args = [arg if dim is batching.not_mapped else
+                if d is not None}
+  new_args = [arg if dim is None else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   batched_result_avals = tuple(
       core.unmapped_aval(axis_size, 0, aval) for aval in result_avals)
@@ -705,7 +711,7 @@ def ffi_batching_rule(
     # when using `vectorized=True`.
     if kwargs.get("input_layouts") is not None:
       kwargs["input_layouts"] = tuple(
-          layout if d is batching.not_mapped else
+          layout if d is None else
           (None if layout is None else tuple(n + 1 for n in layout) + (0,))
           for layout, d in zip(kwargs["input_layouts"], dims))
     outvals = prim.bind(
@@ -717,7 +723,7 @@ def ffi_batching_rule(
   elif vmap_method == "expand_dims" or vmap_method == "broadcast_all":
     size = axis_size if vmap_method == "broadcast_all" else 1
     bcast_args = [
-        lax.broadcast(x, (size,)) if d is batching.not_mapped else x
+        lax.broadcast(x, (size,)) if d is None else x
         for x, d in zip(new_args, dims)]
     if kwargs.get("input_layouts") is not None:
       kwargs["input_layouts"] = tuple(
@@ -730,7 +736,7 @@ def ffi_batching_rule(
       **kwargs,
     )
   elif vmap_method == "sequential" or vmap_method == "sequential_unrolled":
-    is_batched = [d is not batching.not_mapped for d in dims]
+    is_batched = [d is not None for d in dims]
     unbatched_args, batched_args = util.partition_list(is_batched, new_args)
     def _batch_fun(batched_args):
       merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)

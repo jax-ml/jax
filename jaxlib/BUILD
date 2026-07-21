@@ -16,7 +16,6 @@
 
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_python//python:py_binary.bzl", "py_binary")
 load(
     "//jaxlib:jax.bzl",
     "cc_proto_library",
@@ -24,10 +23,12 @@ load(
     "jax_visibility",
     "nanobind_extension",
     "proto_library",
+    "py_binary",
     "py_deps",
-    "py_strict_test",
+    "py_test",
     "pytype_library",
     "pytype_strict_library",
+    "xla_python_packages",
 )
 load(
     "//jaxlib:pywrap.bzl",
@@ -49,6 +50,7 @@ package_group(
     includes = [
         "//jax:internal",
     ],
+    packages = xla_python_packages,
 )
 
 pytype_strict_library(
@@ -60,6 +62,7 @@ pytype_strict_library(
         ":_pathways",
         ":_pretty_printer",
         ":_sdy_mpmd",
+        ":_xla",
         ":cpu_feature_guard",
         ":jax",
         ":jaxlib_files",
@@ -94,6 +97,7 @@ pytype_strict_library(
         "//jaxlib/mosaic/python:gpu_dialect",
         "//jaxlib/mosaic/python:tpu_dialect",
         "//jaxlib/triton",
+        "@xla//xla/python:_hlo",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
     ],
@@ -123,6 +127,7 @@ pytype_library(
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:stablehlo_dialect",
+        "@xla//xla/python:_hlo",
     ] + py_deps(["numpy"]),
 )
 
@@ -163,6 +168,7 @@ pywrap_library(
         ":_pathways",
         ":_pretty_printer",
         ":_sdy_mpmd",
+        ":_xla",
         ":utils",
         ":weakref_lru_cache",
         "//jaxlib/mlir/_mlir_libs:_chlo",
@@ -181,6 +187,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_stablehlo",
         "//jaxlib/mlir/_mlir_libs:_tpu_ext",
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
+        "@xla//xla/python:_hlo",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
     ],
@@ -286,11 +293,30 @@ nanobind_pywrap_extension(
     ],
 )
 
+cc_library(
+    name = "weak_key_weak_value_cache",
+    srcs = ["weak_key_weak_value_cache.cc"],
+    hdrs = ["weak_key_weak_value_cache.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":nb_class_ptr",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+    ],
+)
+
 nanobind_pywrap_extension(
     name = "weakref_lru_cache",
     srcs = [
-        "weak_key_weak_value_cache.cc",
-        "weak_key_weak_value_cache.h",
+        "strong_lru_cache.cc",
+        "strong_lru_cache.h",
         "weak_value_interner.cc",
         "weak_value_interner.h",
         "weakref_lru_cache.cc",
@@ -301,6 +327,7 @@ nanobind_pywrap_extension(
         ":nb_class_ptr",
         ":pytree",
         ":reentrant_hash_map",
+        ":weak_key_weak_value_cache",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
@@ -317,7 +344,7 @@ nanobind_pywrap_extension(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "weakref_lru_cache_test",
     srcs = ["weakref_lru_cache_test.py"],
     deps = [
@@ -329,7 +356,7 @@ py_strict_test(
     ]),
 )
 
-py_strict_test(
+py_test(
     name = "weak_value_interner_test",
     srcs = ["weak_value_interner_test.py"],
     deps = [
@@ -368,9 +395,10 @@ nanobind_pywrap_extension(
     additional_stubgen_deps = [
         "//third_party/py/numpy",
         "//jaxlib/mlir:ir",
+        "@xla//xla/python:_hlo",
     ],
     postprocess_stubgen = "//jaxlib:backport_stubs",
-    pytype_deps = py_deps(["numpy"]),
+    pytype_deps = py_deps(["numpy"]) + ["@xla//xla/python:_hlo"],
     stub_replacement_patterns = {
         "jax.jaxlib._jax.Array$": "Array: Any",
         "jax.jaxlib._jax.ArrayImpl$": "ArrayImpl: Any",
@@ -484,6 +512,30 @@ nanobind_pywrap_extension(
 py_binary(
     name = "backport_stubs",
     srcs = ["backport_stubs.py"],
+)
+
+nanobind_pywrap_extension(
+    name = "_xla",
+    srcs = ["xla.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    pytype_srcs = ["_xla.pyi"],
+    deps = [
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@nanobind",
+        "@xla//xla/hlo/ir:hlo",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
+        "@xla//xla/pjrt/c:pjrt_c_api_xla_transform_extension_hdrs",
+        "@xla//xla/python:version",
+        "@xla//xla/service:hlo_proto_cc",
+        "@xla//xla/service:xla_transform",
+        "@xla//xla/tsl/lib/strings:proto_serialization",
+    ],
 )
 
 cc_library(
@@ -615,6 +667,7 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_custom_partitioner_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        "@xla//xla/pjrt/c:pjrt_c_api_status_utils",
         "@xla//xla/python:custom_call_batch_partitioner",
         "@xla//xla/python:custom_partition_callback",
         "@xla//xla/python:debug_callback_partitioner",
@@ -653,6 +706,7 @@ cc_library(
         "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
         "@xla//xla/pjrt:exceptions",
+        "@xla//xla/pjrt:host_memory_spaces",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_common",
         "@xla//xla/pjrt:pjrt_compiler",
@@ -732,6 +786,7 @@ nanobind_pywrap_extension(
     deps = [
         ":nb_class_ptr",
         ":py_client",
+        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/log:log_entry",
@@ -740,6 +795,7 @@ nanobind_pywrap_extension(
         "@com_google_absl//absl/time",
         "@nanobind",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:attribute_map",
         "@xla//xla/python/ifrt_proxy/client:grpc_client",
@@ -838,6 +894,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:vlog_is_on",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Support",
@@ -905,6 +962,7 @@ cc_library(
         ":py_user_context",
         ":python_ref_manager",
         ":pytree",
+        ":reentrant_hash_map",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -927,8 +985,10 @@ cc_library(
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:safe_static_init",
+        "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:user_context",
+        "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/platform:env",
         "@xla//xla/tsl/platform:errors",
@@ -990,6 +1050,7 @@ cc_library(
     deps = [
         ":cached_py_object",
         ":call_location",
+        ":config",
         ":guard_lib",
         ":hash_util",
         ":nb_class_ptr",
@@ -1000,9 +1061,11 @@ cc_library(
         ":python_ref_manager",
         ":traceback",
         ":util",
+        ":weak_key_weak_value_cache",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
@@ -1043,6 +1106,7 @@ cc_library(
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt:pjrt_layout",
         "@xla//xla/pjrt:status_casters",
+        "@xla//xla/pjrt/c_api_client:pjrt_c_api_client",
         "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python:nb_absl_span",
         "@xla//xla/python:nb_helpers",
@@ -1348,18 +1412,24 @@ nanobind_pywrap_extension(
     name = "_sdy_mpmd",
     srcs = ["sdy_mpmd.cc"],
     additional_stubgen_deps = [
+        "//third_party/py/numpy",
         "//jaxlib/mlir:ir",
+        "@xla//xla/python:_hlo",
+        ":_jax",
     ],
     pytype_deps = [
+        ":_jax",
         "//jaxlib/mlir:ir",
+        "//third_party/py/numpy",
+        "@xla//xla/python:_hlo",
     ],
     stub_replacement_patterns = {
-        "_sdy_mpmd.__prefix__": "from jax.jaxlib._jax import OpSharding, PjRtLayout",
         # TODO(slebedev): Remove all of these once we no longer need to support pytype.
         "PartitioningPhase._boundary_": "_boundary_: enum.FlagBoundary = ...",
         "_sdy_mpmd\\.(NONE|IMPORT|OPTIMIZE|PARTITION|ALL)": "\\1: PartitioningPhase = ...",
         "_sdy_mpmd\\.(KEEP_TRANSFERRED|DROP_TRANSFERRED)": "\\1: SplitFragmentType = ...",
     },
+    visibility = ["//jax:internal"] + jax_visibility("jaxlib/_sdy_mpmd"),
     deps = [
         ":nb_class_ptr",
         ":py_client",
@@ -1517,13 +1587,17 @@ pytype_strict_library(
     deps = py_deps([
         "numpy",
         "ml_dtypes",
-    ]) + [":_jax"],
+    ]) + [
+        ":_jax",
+        "@xla//xla/python:_hlo",
+    ],
 )
 
-py_strict_test(
+py_test(
     name = "pytree_test",
     srcs = ["pytree_test.py"],
     deps = [
+        ":_jax",
         ":xla_client",
     ] + py_deps([
         "absl/flags",
@@ -1532,10 +1606,11 @@ py_strict_test(
     ]),
 )
 
-py_strict_test(
+py_test(
     name = "config_test",
     srcs = ["config_test.py"],
     deps = [
+        ":_jax",
         ":xla_client",
     ] + py_deps([
         "absl/flags",
@@ -1612,12 +1687,13 @@ nanobind_pywrap_extension(
     ],
 )
 
-py_strict_test(
+py_test(
     name = "exception_test",
     srcs = ["exception_test.py"],
     deps = [
         ":_jax",
         ":test_exceptions",
+        "@xla//xla/python:_hlo",
     ] + py_deps([
         "absl/testing",
         "numpy",

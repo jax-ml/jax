@@ -20,7 +20,6 @@ from types import SimpleNamespace
 from jax._src import api
 from jax._src import core
 from jax._src import tree_util
-from jax._src import xla_bridge
 from jax._src.lax import lax
 from jax._src.lax.control_flow import loops
 from jax._src.numpy import array_creation
@@ -201,7 +200,7 @@ def _gpu_ragged_dot_kernel(
     loops.fori_loop(0, cdiv(size.m - last_offset, block.m), set_zero, None)
 
 
-@partial(api.jit, static_argnums=list(range(3, 14)))
+@api.jit(static_argnums=list(range(3, 14)))
 def gmm(
   x: Array,  # [m, k]
   A: Array,  # [g, k, n]
@@ -346,7 +345,7 @@ def _tgmm_ragged_dot_kernel(
                 mask=rmask[:, None] & cmask[None, :])
 
 
-@partial(api.jit, static_argnums=list(range(3, 13)))
+@api.jit(static_argnums=list(range(3, 13)))
 def tgmm(
   x: Array,  # [m, k]
   y: Array,  # [m, n]
@@ -437,9 +436,12 @@ def compose_vmap(fn, times: int):
   return fn
 
 
-def _backend_supports_triton() -> bool:
-  ds = list(xla_bridge.devices())
-  if not ds or ds[0].platform != "gpu":
+def _backend_supports_triton(ctx) -> bool:
+  backend = ctx.module_context.get_backend(optional=True)
+  if backend is None or backend.platform != "gpu":
+    return False
+  ds = list(backend.devices())
+  if not ds:
     return False
   return tuple(int(x) for x in ds[0].compute_capability.split(".")) >= (8, 0)
 

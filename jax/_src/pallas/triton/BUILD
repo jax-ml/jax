@@ -72,12 +72,14 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:custom_derivatives",
         "//jax/_src:debugging",
+        "//jax/_src:flattree",
         "//jax/_src:lax",
         "//jax/_src:literals",
         "//jax/_src:mlir",
         "//jax/_src:partial_eval",
         "//jax/_src:source_info_util",
         "//jax/_src:state_types",
+        "//jax/_src:tree_util",
         "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
@@ -90,12 +92,26 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":core",
+        ":gpu_info",
         ":lowering",
         "//jax",
+        "//jax/_src:api",
         "//jax/_src:core",
         "//jax/_src:frozen_dict",
+        "//jax/_src:mesh",
         "//jax/_src:mlir",
         "//jax/_src/lib",
         "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
+    name = "gpu_info",
+    srcs = ["gpu_info.py"],
+    type_checking = "pyrefly",
+    deps = [
+        "//jax/_src:api",
+        "//jax/_src:mesh",
+        "//jax/_src:util",
     ],
 )

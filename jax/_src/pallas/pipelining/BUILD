@@ -45,6 +45,7 @@ pytype_strict_library(
         "//jax",
         "//jax/_src:api_util",
         "//jax/_src:core",
+        "//jax/_src:flattree",
         "//jax/_src:partial_eval",
         "//jax/_src:state_types",
     ] + py_deps(["numpy"]),

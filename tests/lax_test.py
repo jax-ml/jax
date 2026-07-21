@@ -50,7 +50,6 @@ from jax._src.lax import utils as lax_utils
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
-from jax._src.lib import jaxlib_extension_version
 
 config.parse_flags_with_absl()
 
@@ -2730,15 +2729,28 @@ class LaxTest(jtu.JaxTestCase):
     dtype=[np.float32, np.int32, np.uint32],
     shape=[(20,), (8, 20), (2000,)],
     k=[1, 3, 8],
-    axis=[0, -1]
+    axis=[0, -1],
+    is_stable=[True, False]
   )
-  def testTopK(self, shape, dtype, k, axis):
+  def testTopK(self, shape, dtype, k, axis, is_stable):
     rng = jtu.rand_some_equal(self.rng())
     def args_maker():
       return [rng(shape, dtype)]
-    op = lambda vs: lax.top_k(vs, k=k, axis=axis)
-    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis)
-    self._CheckAgainstNumpy(op, ref_op, args_maker)
+    op = lambda vs: lax.top_k(vs, k=k, axis=axis, is_stable=is_stable)
+    ref_op = lambda vs: lax_reference.top_k(vs, k=k, axis=axis, is_stable=is_stable)
+    if is_stable:
+      self._CheckAgainstNumpy(op, ref_op, args_maker)
+    else:
+      # Unstable sort. Validate the values match
+      args = args_maker()[0]
+      ref_values, _ = ref_op(args)
+      xla_values, xla_indices = op(args)
+      self.assertAllClose(ref_values, xla_values)
+
+      # Validate the indices actually point to the correct top-k values
+      gathered_values = np.take_along_axis(args, xla_indices, axis=axis)
+      self.assertAllClose(ref_values, gathered_values)
+
     self._CompileAndCheck(op, args_maker)
 
   def testTopKOverflow(self):
@@ -3856,10 +3868,6 @@ class LaxTest(jtu.JaxTestCase):
       jax.jacobian(f)(x, y)
 
   def test_dce_sink_prevents_xla_dce(self):
-    if jaxlib_extension_version < 438:
-      self.skipTest("Requires jaxlib extension version >= 438")
-    if jtu.is_cloud_tpu_at_least(2026, 4, 17):
-      self.skipTest('Requires nightly libtpu')
 
     x = jnp.array(1.0)
 
@@ -3879,12 +3887,18 @@ class LaxTest(jtu.JaxTestCase):
     hlo = jax.jit(g).lower(x).compile().as_text()
     self.assertNotIn("add", hlo)
 
-  @unittest.skipIf(jaxlib_extension_version < 441, "requires jaxlib 0.10.1")
   def testStagePreservesWeakType(self):
     aval = core.ShapedArray((), np.float32, weak_type=True)
     x = literals.TypedNdArray(np.array(1.0, dtype=np.float32), aval=aval)
     y = lax_internal.stage(x)
     self.assertTrue(dtypes.is_weakly_typed(y))
+
+  def testIterUsesUnstack(self):
+    def f(x):
+      return list(x)
+    jaxpr = jax.make_jaxpr(f)(np.arange(3.))
+    primitives = [eqn.primitive for eqn in jaxpr.jaxpr.eqns]
+    self.assertIn(lax_internal.unstack_p, primitives)
 
 
 class LazyConstantTest(jtu.JaxTestCase):
@@ -4163,6 +4177,10 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
+
+dtypes.register_canonicalize_value_handler(FooArray, None)
+
+
 def shard_foo_array_handler(xs, shardings, layouts, copy_semantics):
   results = []
   for x, sharding in safe_zip(xs, shardings):
@@ -4204,7 +4222,6 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def setUp(self):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy(), sharding=None)
-    dtypes.canonicalize_value_handlers[FooArray] = lambda x: x
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
@@ -4216,7 +4233,6 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
   def tearDown(self):
     del core.pytype_aval_mappings[FooArray]
-    del dtypes.canonicalize_value_handlers[FooArray]
     del mlir._constant_handlers[FooArray]
     del mlir._lowerings[make_p]
     del mlir._lowerings[bake_p]
@@ -4371,8 +4387,8 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
     param_gradient_map = jaxpr_split_transpose.jaxpr.eqns[-1]
     self.assertEqual(param_gradient_map.primitive, jax.lax.scan_p)
-    self.assertEqual(param_gradient_map.params['num_consts'], 0)
-    self.assertEqual(param_gradient_map.params['num_carry'], 0)
+    consts_g, carry_g, _ = param_gradient_map.params['ft_in'].unpack()
+    self.assertEqual([len(consts_g), len(carry_g)], [0, 0])
 
     # Assert that parameter gradients come from the map.
     self.assertEqual(ct_ws, param_gradient_map.outvars[0])
@@ -4891,6 +4907,27 @@ class CompositeTest(jtu.JaxTestCase):
     self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
     self.assertIn('chlo.top_k(%arg0, k = 3) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
 
+  def test_composite_with_attributes_unstable(self):
+    # The static_argnames is required here since k is a constant that should
+    # come out of a larger context, but we unit test one op (composite) here.
+    @jax.jit(static_argnames=['k', 'is_stable'])
+    @partial(lax.composite, name="my.top_k")
+    def my_top_k(x, *, k, is_stable):
+      return lax.top_k(x, k, is_stable=is_stable)
+
+    x = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=jnp.float32)
+    output, indices = my_top_k(x, k=3, is_stable=False)
+    self.assertArraysEqual(output, jnp.array([5.0, 4.0, 3.0], dtype=jnp.float32))
+    self.assertArraysEqual(indices, jnp.array([4, 3, 2], dtype=jnp.int32))
+
+    mlir_module = my_top_k.lower(x, k=3, is_stable=False).as_text()
+    self.assertIn(
+        'stablehlo.composite "my.top_k" %arg0 '
+        '{composite_attributes = {is_stable = false, k = 3 : i64}, decomposition = @my.top_k} : '
+        '(tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+    self.assertIn('@my.top_k(%arg0: tensor<5xf32>) -> (tensor<3xf32>, tensor<3xi32>) {', mlir_module)
+    self.assertIn('chlo.top_k(%arg0, k = 3, is_stable = false) : tensor<5xf32> -> (tensor<3xf32>, tensor<3xi32>)', mlir_module)
+
   def test_composite_attribute_dtypes(self):
     @jax.jit
     def my_tangent_composite_with_attributes(x):
@@ -5124,13 +5161,10 @@ class RaggedTest(jtu.JaxTestCase):
             .as_text(dialect="stablehlo"),
         )
 
-  @unittest.skipIf(jaxlib_extension_version < 441,
-                   "Requires jaxlib_extension_version >= 441")
   def test_ragged_dot_general_preserves_named_scope(self):
     if not jtu.test_device_matches(["tpu"]):
       raise unittest.SkipTest("Test only runs on TPU")
-    if not jtu.is_cloud_tpu_at_least(2026, 4, 23):
-      raise unittest.SkipTest("Requires a newer libtpu")
+
 
 
     m, k, n = (8, 8, 8)

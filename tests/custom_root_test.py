@@ -227,6 +227,31 @@ class CustomRootTest(jtu.JaxTestCase):
 
     jtu.check_close(fwd_aux, jax.tree.map(jnp.zeros_like, fwd_aux))
 
+  def test_custom_root_with_xla_metadata_call(self):
+    """Test that custom_root VJP works when f contains xla_metadata_call."""
+    from jax.experimental import xla_metadata
+
+    @xla_metadata.xla_metadata_call(inlineable="false")
+    def cube(z):
+      return z**3
+
+    def f(x, a):
+      return cube(x + a) - 64.0
+
+    def tangent_solve(g, y):
+      return y / jax.jacobian(g)(y)
+
+    def solve_with_metadata(a):
+      return lax.custom_root(
+          lambda x: f(x, a), 1.0, binary_search, tangent_solve
+      )
+
+    # This triggers VJP of custom_root through xla_metadata_call
+    value, grad = jax.value_and_grad(solve_with_metadata)(1.0)
+    self.assertAllClose(value, 3.0, rtol=1e-5)
+    expected_grad = jax.grad(lambda a: 64.0 ** (1.0 / 3.0) - a)(1.0)
+    self.assertAllClose(grad, expected_grad, rtol=1e-4)
+
   def test_custom_root_errors(self):
     with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):
       lax.custom_root(lambda x: (x, x), 0.0, lambda f, x: x, lambda f, x: x)

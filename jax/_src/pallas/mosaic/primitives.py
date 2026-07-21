@@ -24,11 +24,13 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
-from jax._src import prng as jax_prng
+from jax._src.random import prng as jax_prng
 from jax._src import random as jax_random
 from jax._src import state
+from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
@@ -101,6 +103,13 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
 
 
 mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
+
+
+def _bitcast_batch_rule(batched_args, batch_axes, *, ty):
+  return bitcast(*batched_args, ty=ty), batch_axes[0]
+
+batching.primitive_batchers[bitcast_p] = _bitcast_batch_rule
+
 
 roll_p = jax_core.Primitive("roll")
 
@@ -221,7 +230,7 @@ class AsyncCopyDescriptor:
     flat_args, tree = self._get_args_and_tree()
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
-        insert_dummy_device=False,
+        insert_dummy_device=False, is_wait_send=False
     )
 
   def wait_send(self):
@@ -229,19 +238,20 @@ class AsyncCopyDescriptor:
     if not self.is_remote:
       raise ValueError("Cannot `wait_send` on a local copy.")
     # We swap src and dst since by default dma_wait_p waits on the dst_sem
-    # As a clean up, maybe we could modify the primitive to have a
-    # `wait_on_send` bool.
+    # TODO(rdyro): Update the lowering to use `is_wait_send` instead of
+    # swapping src and dst.
     flat_args, tree = self._get_args_and_tree(
         swap_src_and_dst=True,
     )
     dma_wait_p.bind(
         *flat_args, tree=tree, device_id_type=self.device_id_type,
         insert_dummy_device=self.is_remote,
+        is_wait_send=True,
     )
 
 
 def _dma_flatten(*args):
-  flat_tree = tree_util.FlatTree.flatten(args)
+  flat_tree = ft.flatten(args)
   return flat_tree.vals, flat_tree.tree
 
 
@@ -250,7 +260,7 @@ def _dma_unflatten(tree, flat_args):
 
 
 def _dma_tree_leaves(tree):
-  return tree_util.FlatTree.flatten(tree).vals
+  return ft.flatten(tree).vals
 
 
 def _get_dma_effects(
@@ -260,14 +270,25 @@ def _get_dma_effects(
     src_sem_aval,
     device_id_aval,
     device_id_type,
+    *,
+    is_wait_send: bool = False,
 ):
   n_src_transforms = len(_dma_tree_leaves(src_ref_aval))
   n_dst_transforms = len(_dma_tree_leaves(dst_ref_aval))
   n_dst_sem_transforms = len(_dma_tree_leaves(dst_sem_aval))
   dst_sem_index = n_src_transforms + n_dst_transforms
+  # TODO(rdyro): We swap read vs write effects when dma_wait is bound via
+  # `wait_send`. `wait_send` swaps the src and dst args when binding dma_wait_p.
+  # Consider handling this in a cleaner way.
+  if is_wait_send:
+    src_ref_effect = state.WriteEffect(0)
+    dst_ref_effect = state.ReadEffect(n_src_transforms)
+  else:
+    src_ref_effect = state.ReadEffect(0)
+    dst_ref_effect = state.WriteEffect(n_src_transforms)
   effs: set[jax_core.Effect] = {
-      state.ReadEffect(0),  # Read from src ref
-      state.WriteEffect(n_src_transforms),  # Write to dst ref
+      src_ref_effect,
+      dst_ref_effect,
       state.WriteEffect(dst_sem_index),  # Write to dst sem
   }
   if src_sem_aval is not None:
@@ -546,8 +567,9 @@ dma_wait_p.multiple_results = True
 
 dma_wait_p.is_high = _dma_is_high
 
-def _dma_wait_to_lojax(*args, tree, device_id_type, insert_dummy_device: bool):
-  del insert_dummy_device
+def _dma_wait_to_lojax(*args, tree, device_id_type, insert_dummy_device: bool,
+                       is_wait_send: bool):
+  del insert_dummy_device, is_wait_send
   src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
   src_ref_aval = jax_core.typeof(_get_ref(src_ref))
   dst_ref_aval = jax_core.typeof(_get_ref(dst_ref))
@@ -572,7 +594,9 @@ def _dma_wait_to_lojax(*args, tree, device_id_type, insert_dummy_device: bool):
 dma_wait_p.to_lojax = _dma_wait_to_lojax
 
 @dma_wait_p.def_effectful_abstract_eval
-def _dma_wait_abstract_eval(*args, tree, device_id_type, insert_dummy_device: bool):
+def _dma_wait_abstract_eval(
+    *args, tree, device_id_type, insert_dummy_device: bool, is_wait_send: bool
+):
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
       _dma_unflatten(tree, args)
   )
@@ -596,6 +620,7 @@ def _dma_wait_abstract_eval(*args, tree, device_id_type, insert_dummy_device: bo
       src_sem_aval,
       device_id_aval,
       device_id_type,
+      is_wait_send=is_wait_send,
   )
 
 def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
@@ -624,9 +649,10 @@ def dma_wait_partial_discharge_rule(
     tree,
     device_id_type,
     insert_dummy_device: bool,
+    is_wait_send: bool = False,
 ):
   # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
-  del out_avals, device_id_type, insert_dummy_device
+  del out_avals, device_id_type, insert_dummy_device, is_wait_send
   _, dst_ref, dst_sem, _, _ = _dma_unflatten(tree, args)
   dst_ref, dst_ref_transforms = _get_ref_and_transforms(dst_ref)
   dst_sem, dst_sem_transforms = _get_ref_and_transforms(dst_sem)
@@ -910,6 +936,27 @@ pack_elementwise_p = jax_core.Primitive("pack_elementwise")
 
 
 def pack_elementwise(xs, *, packed_dtype):
+  """Packs multiple arrays elementwise into a single array of a narrower dtype.
+
+  The number of `xs` must equal the packing factor, which is the ratio of
+  the element bitwidth of the `xs` to the element bitwidth of the
+  `packed_dtype`. Elements from the `xs` are interleaved and packed into
+  the `output`, ordered from lowest to highest bits, corresponding to their
+  order in the `xs`.  The `output` is then bitcasted to the signless
+  integer type of the same bitwidth as the `xs`.
+
+  Note that for integer packing, the bits in `xs` that exceed the
+  bitwidth of the `packed_type` are just truncated.
+  For example, given the `xs` are int8 xxxx'1001 and yyyy'0011,
+  `packed_type` is int4, the output will be 0011'1001.
+
+  Args:
+    xs: A list of arrays to pack.
+    packed_dtype: The dtype of the packed array.
+
+  Returns:
+    The packed array.
+  """
   return pack_elementwise_p.bind(*xs, packed_dtype=packed_dtype)
 
 
@@ -944,15 +991,56 @@ unpack_elementwise_p = jax_core.Primitive("unpack_elementwise")
 
 
 def unpack_elementwise(x, *, index, packed_dtype, unpacked_dtype):
+  """Unpacks an elementwise packed array.
+
+  The function follows the *interleaved format* during unpacking, and it's the
+  reverse of `pack_elementwise`.
+
+  For example, if `packed_dtype` is `int4`, `unpacked_dtype` is `int8`,
+  and `x` is packed `int8` with x'y'z'w'm'n'i'j' in a word, where each
+  character represents 4 bits:
+
+  When `index=0`, the result is a packed i8 with s_y'y's_w'w's_n'n's_j'j';
+  When `index=1`, the result is a packed i8 with s_x'x's_z'z's_m'm's_i'i'.
+  With `s_x` indicating the MSB of `x`, and so on.
+
+  For logical array, this unpacking results in a strided access pattern.
+  For example, if a 2D logical array `x` is packed as `int8` and unpacked to
+  `int16`, then
+
+  ```python
+  i8_x = pltpu.bitcast(i16_x, jnp.int8)
+  y = unpack_elementwise(
+      i16_x, index=0, packed_dtype=jnp.int8, unpacked_dtype=jnp.int16)
+  z = unpack_elementwise(
+      i16_x, index=1, packed_dtype=jnp.int8, unpacked_dtype=jnp.int16)
+  np.testing.assert_array_equal(y, i8_x[0::2, :].astype(jnp.int16))
+  np.testing.assert_array_equal(z, i8_x[1::2, :].astype(jnp.int16))
+  ```
+
+  Args:
+    x: The packed array.
+    index: The index of the element to unpack.
+    packed_dtype: Elements
+    unpacked_dtype: The dtype of the unpacked array.
+
+  Returns:
+    The unpacked array in `unpacked_dtype`.
+  """
   return unpack_elementwise_p.bind(
       x, index=index, packed_dtype=packed_dtype, unpacked_dtype=unpacked_dtype
   )
 
 
 @unpack_elementwise_p.def_abstract_eval
-def _unpack_elementwise_abstract_eval(x, *, index, packed_dtype, unpacked_dtype):
-  if x.dtype != jnp.uint32:
-    raise ValueError(f"Source must be uint32, got {x.dtype}")
+def _unpack_elementwise_abstract_eval(
+    x, *, index, packed_dtype, unpacked_dtype
+):
+  if dtypes.itemsize_bits(x.dtype) != dtypes.itemsize_bits(unpacked_dtype):
+    raise ValueError(
+        "The bitwidth of `x` must match the bitwidth of `unpacked_dtype` for "
+        f"unpack_elementwise, but got {x.dtype} and {unpacked_dtype}"
+    )
   packing_factor = _get_elementwise_packing_factor(unpacked_dtype, packed_dtype)
   if index < 0 or index >= packing_factor:
     raise ValueError(
@@ -986,9 +1074,10 @@ def with_memory_space_constraint(
       tpu_core.MemorySpace.HBM,
       tpu_core.MemorySpace.VMEM,
       tpu_core.MemorySpace.SMEM,
+      jax_core.MemorySpace.Host,
   }:
     raise NotImplementedError(
-        "with_memory_space_constraint only supports HBM, VMEM and SMEM."
+        "with_memory_space_constraint only supports HBM, VMEM, SMEM, and HOST."
     )
   return pl_core.with_memory_space_constraint_p.bind(
       x, memory_space=memory_space)
@@ -1040,6 +1129,15 @@ def touch(ref: jax.Array | state.TransformedRef) -> None:
 @touch_p.def_effectful_abstract_eval
 def _touch_abstract_eval(ref: jax.Array):
   return [], {state.ReadEffect(0), state.WriteEffect(0)}
+
+
+def _touch_batch_rule(args, dims):
+  del dims
+  touch_p.bind(*args)
+  return [], ()
+
+
+batching.primitive_batchers[touch_p] = _touch_batch_rule
 
 
 trace_value_p = jax_core.Primitive("trace_value")
@@ -1217,5 +1315,92 @@ def _matmul_pop_abstract_eval(*, shape, dtype, **_):
   if dtype not in map(jnp.dtype, [jnp.float32, jnp.int32]):
     raise ValueError(
         f"Only float32 and int32 accumulators are supported, got {dtype}"
+    )
+  return jax_core.ShapedArray(shape, dtype), {mxu_effect}
+
+
+matmul_lhs_fifo_p = jax_core.Primitive("matmul_lhs_fifo")
+matmul_lhs_fifo_p.multiple_results = True
+
+
+def matmul_lhs_fifo(
+    lhs: jax.Array,
+    mxu_index: int,
+    *,
+    load_staged_rhs: int | None = None,
+) -> None:
+  """Performs a matrix multiplication in the chosen MXU on platforms with a result FIFO.
+
+  If ``load_staged_rhs`` is not None, the previously pushed RHS will be loaded
+  from the given staging register _before_ the matrix multiplication begins.
+  The results of the multiplication are enqueued to the result FIFO.
+
+  ```.. warning::
+  This operation can result in a hardware error if the result FIFO is full.
+  In such a case, the `matmul_pop_fifo` op should be used to dequeue results
+  before additional `matmul_lhs_fifo` ops are issued. Additionally, the kernel
+  must not leave any data in the result FIFO upon exit.
+  ```
+
+  Args:
+    lhs: The left-hand side operand. Must be M x K for M divisible by the number
+      of sublanes multiplied by datatype packing and K divisible by
+      :data:`jax.experimental.pallas.tpu.TPUInfo.mxu_column_size` for the target
+      TPU (obtained from `get_tpu_info`).
+    mxu_index: The MXU to use.
+    load_staged_rhs: The index of the staging register to load the RHS from. If
+      None, the RHS is not loaded from staging and the matmul will reuse the
+      existing one.
+  """
+  if load_staged_rhs is not None and not isinstance(load_staged_rhs, int):
+    raise TypeError("load_staged_rhs must be an integer or None.")
+  matmul_lhs_fifo_p.bind(
+      lhs,
+      mxu_index=mxu_index,
+      load_staged_rhs=load_staged_rhs,
+  )
+
+
+@matmul_lhs_fifo_p.def_effectful_abstract_eval
+def _matmul_lhs_fifo_abstract_eval(lhs: jax.Array, **_):
+  del lhs  # Unused.
+  return [], {mxu_effect}
+
+
+matmul_pop_fifo_p = jax_core.Primitive("matmul_pop_fifo")
+
+
+def matmul_pop_fifo(
+    shape: tuple[int, int],
+    dtype: jax.typing.DTypeLike,
+    mxu_index: int,
+) -> jax.Array:
+  """Pops the result of a matrix multiplication from the result FIFO of the chosen MXU.
+
+  If the result is not ready yet (the MXU is still busy), the operation blocks.
+
+  ```.. warning::
+  This operation can result in a hardware error if the result FIFO is empty and
+  there are no `matmul_lhs_fifo` ops in-flight. The kernel must not leave any
+  data in the result FIFO upon exit.
+  ```
+
+  Args:
+    shape: The shape of the result.
+    dtype: The dtype of the result.
+    mxu_index: The MXU to use.
+  """
+  return matmul_pop_fifo_p.bind(
+      shape=shape,
+      mxu_index=mxu_index,
+      dtype=jnp.dtype(dtype),
+  )
+
+
+@matmul_pop_fifo_p.def_effectful_abstract_eval
+def _matmul_pop_fifo_abstract_eval(*, shape, dtype, **_):
+  if dtype != jnp.float32:
+    raise ValueError(
+        f"Only float32 results are supported, got {dtype}"
     )
   return jax_core.ShapedArray(shape, dtype), {mxu_effect}

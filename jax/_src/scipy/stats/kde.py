@@ -32,7 +32,7 @@ from jax._src.typing import Array
 BwMethod = None | str | Array | Callable[[Any], Array]
 
 @register_pytree_node_class
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True, init=False, slots=True)
 class gaussian_kde:
   """Gaussian Kernel Density Estimator
 
@@ -183,7 +183,7 @@ class gaussian_kde:
                       in_axes=1)(sm.dataset)
     return jnp.sum(result * sm.weights)
 
-  @partial(api.jit, static_argnames=("shape",))
+  @api.jit(static_argnames=("shape",))
   def resample(self, key, shape=()):
     r"""Randomly sample a dataset from the estimated pdf
 

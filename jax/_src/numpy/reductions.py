@@ -26,6 +26,7 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import literals
 from jax._src.numpy.util import (
     _broadcast_to, ensure_arraylike,
     promote_dtypes_inexact, promote_dtypes_numeric, _where)
@@ -35,6 +36,9 @@ from jax._src.lax import other as lax_other
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax import slicing as lax_slicing
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from jax._src.sharding_impls import (canonicalize_sharding, NamedSharding,
+                                     PartitionSpec as P)
+from jax._src.pjit import auto_axes
 from jax._src.util import canonicalize_axis, canonicalize_axis_tuple, maybe_named_axis, set_module
 from jax._src.numpy import indexing
 
@@ -182,20 +186,21 @@ def _reduction_dims(a: ArrayLike, axis: Axis):
 
 def _reduction_init_val(a: Array, init_val: Any) -> np.ndarray:
   # This function uses np.* functions because lax pattern matches against the
-  # specific concrete values of the reduction inputs.
+  # specific concrete values of the reduction inputs. TypedNdArray prevents
+  # canonicalization when explicit 64-bit dtypes are allowed.
   a_dtype = a.dtype
   if a_dtype == 'bool':
-    return np.array(init_val > 0, dtype=a_dtype)
+    return literals.TypedNdArray(np.array(init_val > 0, dtype=a_dtype))
   if (np.isinf(init_val) and dtypes.issubdtype(a_dtype, np.floating)
       and not dtypes.supports_inf(a_dtype)):
     init_val = np.array(dtypes.finfo(a_dtype).min if np.isneginf(init_val)
                         else dtypes.finfo(a_dtype).max, dtype=a_dtype)
   try:
-    return np.array(init_val, dtype=a_dtype)
+    return literals.TypedNdArray(np.array(init_val, dtype=a_dtype))
   except OverflowError:
     assert dtypes.issubdtype(a_dtype, np.integer)
     sign, info = np.sign(init_val), dtypes.iinfo(a_dtype)
-    return np.array(info.min if sign < 0 else info.max, dtype=a_dtype)
+    return literals.TypedNdArray(np.array(info.min if sign < 0 else info.max, dtype=a_dtype))
 
 def _cast_to_bool(operand: Array) -> Array:
   if dtypes.issubdtype(operand.dtype, np.complexfloating):
@@ -2051,27 +2056,29 @@ def _cumulative_reduction(
   if fill_nan:
     a = _where(lax._isnan(a), lax._const(a, fill_value), a)
 
-  a_type: DType = a.dtype
+  computation_type: DType
   result_type: DType
   if dtype is None:
-    result_type = a_type
-    if promote_integers or dtypes.issubdtype(result_type, np.bool_):
-      result_type = _promote_integer_dtype(result_type)
+    if promote_integers or a.dtype == np.bool_:
+      result_type = _promote_integer_dtype(a.dtype)
+    else:
+      result_type = a.dtype
+    computation_type = result_type
+  elif dtype == np.dtype('bool'):
+    # Explicit boolean output requires special handling
+    # - lax only supports numerical accumulation, so we can't work in bool directly.
+    # - we cannot use the original values of a, otherwise e.g. [-1, 1] may cancel.
+    result_type = np.dtype(dtype)
+    if a.dtype != result_type:
+      a = (a != 0)
+    computation_type = _promote_integer_dtype(result_type)
   else:
     result_type = dtypes.check_and_canonicalize_user_dtype(dtype, name)
-    if dtypes.issubdtype(result_type, np.bool_):
-      result_type = _promote_integer_dtype(result_type)
+    computation_type = result_type
 
-  if a_type != np.bool_ and dtype == np.bool_:
-    a = lax.asarray(a).astype(np.bool_)
-
-  a = lax.convert_element_type(a, result_type)
+  a = lax.convert_element_type(a, computation_type)
   result = reduction(a, axis)
-
-  # We downcast to boolean because we accumulate in integer types
-  if dtype is not None and dtypes.issubdtype(dtype, np.bool_):
-    result = lax.convert_element_type(result, np.bool_)
-  return result
+  return lax.convert_element_type(result, result_type)
 
 
 @export
@@ -2706,11 +2713,13 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
 
 @export
-@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method'))
+@api.jit(static_argnames=('axis', 'overwrite_input', 'keepdims', 'method',
+                          'out_sharding'))
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               keepdims: bool = False, *, weights: ArrayLike | None = None) -> Array:
+               keepdims: bool = False, *, weights: ArrayLike | None = None,
+               out_sharding: NamedSharding | P | None = None) -> Array:
   """Compute the percentile of the data along the specified axis.
 
   JAX implementation of :func:`numpy.percentile`.
@@ -2763,8 +2772,16 @@ def percentile(a: ArrayLike, q: ArrayLike,
   if weights is not None:
     weights = ensure_arraylike("percentile", weights)
   q, = promote_dtypes_inexact(q)
-  return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
-                  method=method, weights=weights, keepdims=keepdims)
+  def internal_quantile(x, y, w):
+    return quantile(x, y, axis=axis, out=out, overwrite_input=overwrite_input,
+                    method=method, keepdims=keepdims, weights=w)
+  if out_sharding is not None:
+    assert isinstance(out_sharding, (NamedSharding, P))
+    out_sharding = canonicalize_sharding(out_sharding, 'jnp.percentile')
+    return auto_axes(internal_quantile, out_sharding=out_sharding,
+                     axes=out_sharding.mesh.explicit_axes
+                     )(a, q / 100, weights)
+  return internal_quantile(a, q / 100, weights)
 
 
 @export

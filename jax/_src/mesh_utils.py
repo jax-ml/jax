@@ -35,6 +35,7 @@ _TPU_V5P = "TPU v5p"
 _TPU_V6_LITE = "TPU v6 lite"
 _TPU_7X = "TPU7x"
 _TPU_7 = "TPU7"
+_TPU_8I = "TPU8i"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -100,7 +101,7 @@ def _tpu_v2_v3_create_device_mesh(
 
 # TODO(b/303712469): Unit test these handler functions.
 # Creates a physical ring 0->1->3->2 if on v4i.
-def _v4i_create_device_mesh(
+def _v4i_v8i_create_device_mesh(
     mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
 ) -> np.ndarray | None:
   if len(devices) == 4:
@@ -235,12 +236,14 @@ device_kind_handler_dict: dict[
 ] = {
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
-    _TPU_V4_LITE: _v4i_create_device_mesh,
+    _TPU_V4_LITE: _v4i_v8i_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
+    _TPU_V5E: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
     _TPU_V6_LITE: _v5e_create_device_mesh,
     _TPU_7X: _7x_create_device_mesh,
     _TPU_7: _7x_create_device_mesh,
+    _TPU_8I: _v4i_v8i_create_device_mesh,
 }
 
 
@@ -483,21 +486,22 @@ def _get_prime_factors(x: int) -> list[int]:
   """Returns a sorted list of prime factors for the given number."""
   assert x > 0
   factors = []
-  for p in range(2, math.isqrt(x) + 2):
+  p = 2
+  while p * p <= x:
     while x % p == 0:
       factors.append(p)
       x //= p
-    if x == 1:
-      return factors
-  else:
-    return [x]  # x is a prime number.
+    p += 1
+  if x > 1:
+    factors.append(x)
+  return factors
 
 
 def _enumerate_feasible_logical_axis_assignments(
     physical_mesh_shape: Sequence[int],
     assignment: np.ndarray,
     logical_axis_size: int,
-) -> Generator[np.ndarray, None, None]:
+) -> Generator[np.ndarray]:
   """Yields feasible assignments for a single logical axis.
 
   For a physical mesh of shape [x_1, ..., x_n], and the product of all previous
@@ -735,7 +739,7 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
           coords[1] - min_coords[1],
           d.core_on_chip - min_cores_per_chip,
       ] = d
-  elif (device_kind in (_TPU_7X,_TPU_7) or
+  elif (device_kind in (_TPU_7X, _TPU_7, _TPU_8I) or
         (device_kind in (_TPU_V5P,) and cores_per_chip == 2)):
     out = np.empty(dims + (cores_per_chip,), dtype=object)
     for d in jax_devices:
@@ -887,6 +891,13 @@ def create_device_mesh(
         physical_axis_priority=physical_axis_priority,
     )
     return device_mesh
+  elif last_device.platform == 'gpu':
+    # The default jax.devices() order is not guaranteed to be performant, as it is
+    # based on process order rather than the topology-aware global numbering scheme
+    # assigned by XLA. If the device list is single-slice, this does not matter on
+    # modern systems, but the sort avoids a sharp edge if a multi-slice device list
+    # is passed.
+    return np.asarray(sorted(devices, key=lambda d: d.id)).reshape(new_mesh_shape)
   else:
     device_mesh = np.asarray(devices).reshape(new_mesh_shape)
     return device_mesh

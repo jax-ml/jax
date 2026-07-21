@@ -491,25 +491,47 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rhs_dtype=number_dtypes,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="Support for 2-dimensional vectors in jnp.cross is deprecated")
   def testCross(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     axisa, axisb, axisc, axis = axes
     jnp_fun = lambda a, b: jnp.cross(a, b, axisa, axisb, axisc, axis)
-    # Note: 2D inputs to jnp.cross are deprecated in numpy 2.0.
-    @jtu.ignore_warning(category=DeprecationWarning,
-                        message="Arrays of 2-dimensional vectors are deprecated.")
+
     def np_fun(a, b):
+      effective_axisa = axisa if axis is None else axis
+      effective_axisb = axisb if axis is None else axis
+      effective_axisc = axisc if axis is None else axis
+
       a = a.astype(np.float32) if lhs_dtype == jnp.bfloat16 else a
       b = b.astype(np.float32) if rhs_dtype == jnp.bfloat16 else b
-      out = np.cross(a, b, axisa, axisb, axisc, axis)
+
+      a_m = np.moveaxis(a, effective_axisa, -1)
+      b_m = np.moveaxis(b, effective_axisb, -1)
+
+      if a_m.shape[-1] == 2 and b_m.shape[-1] == 2:
+        out = a_m[..., 0] * b_m[..., 1] - a_m[..., 1] * b_m[..., 0]
+      else:
+        if a_m.shape[-1] == 2:
+          a_m = np.pad(a_m, [(0, 0)] * (a_m.ndim - 1) + [(0, 1)])
+        if b_m.shape[-1] == 2:
+          b_m = np.pad(b_m, [(0, 0)] * (b_m.ndim - 1) + [(0, 1)])
+        out = np.cross(a_m, b_m, axisc=effective_axisc)
+
       return out.astype(jnp.promote_types(lhs_dtype, rhs_dtype))
+
     tol_spec = {dtypes.bfloat16: 3e-1, np.float16: 0.15}
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
       self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
+
+  def testCrossDeprecationWarning(self):
+    with jtu.test_warning_util.record_warnings() as w:
+      jnp.cross(jnp.ones(2), jnp.ones(2))
+    self.assertTrue(any("Support for 2-dimensional vectors" in str(warn.message) for warn in w))
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
@@ -531,11 +553,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testDot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol = {np.float16: 1e-2, np.float32: 2e-5, np.float64: 1e-14,
-           np.complex128: 1e-14}
-    if (lhs_dtype in [np.float16, jnp.bfloat16] and
-        rhs_dtype in [np.float16, jnp.bfloat16]):
-      tol = 1e-2
+    tol = {np.float16: 1e-2, jnp.bfloat16: 1e-1, np.float32: 2e-5,
+           np.float64: 1e-14, np.complex128: 1e-14}
     def np_dot(x, y):
       x = x.astype(np.float32) if lhs_dtype == jnp.bfloat16 else x
       y = y.astype(np.float32) if rhs_dtype == jnp.bfloat16 else y
@@ -573,7 +592,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           ("matrix-tensor", (5, 2), (3, 2, 4)),
           ("tensor-matrix", (5, 2, 3), (3, 2)),
           ("tensor-tensor", (5, 3, 4), (5, 4, 1)),
-          ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1))]],
+          ("tensor-tensor-broadcast", (3, 1, 3, 4), (5, 4, 1)),
+          ("tensor-tensor-both-1", (1, 5, 4), (1, 4, 3))]],
     lhs_dtype=number_dtypes,
     rhs_dtype=number_dtypes,
   )
@@ -590,6 +610,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp.matmul, args_maker, tol=tol)
       self._CompileAndCheck(jnp.matmul, args_maker, atol=tol, rtol=tol)
+
+  def testMatmulBothSize1BatchDimsSqueezedJaxpr(self):
+    x = jax.ShapeDtypeStruct((1, 5, 4), jnp.float32)
+    y = jax.ShapeDtypeStruct((1, 4, 3), jnp.float32)
+    jaxpr = jax.make_jaxpr(jnp.matmul)(x, y)
+    [dot_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive == lax.dot_general_p)
+    self.assertEqual(dot_eqn.invars[0].aval.shape, (5, 4))
+    self.assertEqual(dot_eqn.invars[1].aval.shape, (4, 3))
+    self.assertEqual(dot_eqn.params['dimension_numbers'], (((1,), (0,)), ((), ())))
 
   @jtu.sample_product(
       lhs_batch=broadcast_compatible_shapes,
@@ -1317,7 +1346,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testPermuteDims(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
+
+    # Generate a permutation of axes, with some positive and some negative
     axes = self.rng().permutation(len(shape))
+    neg = self.rng().randint(0, 2, size=len(shape), dtype=bool)
+    axes = np.where(neg, axes - len(shape), axes)
+
     np_fun = partial(getattr(np, "permute_dims", np.transpose), axes=axes)
     jnp_fun = partial(jnp.permute_dims, axes=axes)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True)
@@ -1548,6 +1582,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = lambda condition, x: np.asarray(x).compress(condition, axis=axis)
     jnp_fun = lambda condition, x: jnp.asarray(x).compress(condition, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  def testCompressExtractJitErrorMessage(self):
+    # Without a static `size`, the output shape of compress/extract is
+    # data-dependent, so they cannot be used within transformations like jit.
+    # In that case we should raise a clear ConcretizationTypeError pointing the
+    # user at the `size` argument, rather than a confusing internal error.
+    # https://github.com/jax-ml/jax/issues/38603
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    msg = "The size argument of jnp.compress must be specified"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      jax.jit(jnp.compress)(x.ravel() > 0, x.ravel())
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      jax.jit(jnp.extract)(x > 0, x)
 
   @jtu.sample_product(
     [dict(base_shape=base_shape, axis=axis)
@@ -4588,7 +4635,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     )
     np_op = lambda x, i: np.take_along_axis(x, i, axis=axis)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
-    self._CheckAgainstNumpy(np_op, jnp_one_hot_op, args_maker)
+    self._CheckAgainstNumpy(np_op, jnp_one_hot_op, args_maker,
+                            atol=1e-2, rtol=1e-2)
     self._CompileAndCheck(jnp_op, args_maker)
     self._CompileAndCheck(jnp_one_hot_op, args_maker)
 
@@ -4598,6 +4646,58 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     q0 = jnp.take_along_axis(arr, indices, axis=-1)
     q1 = jnp.take_along_axis(arr, indices)
     np.testing.assert_array_equal(q0, q1)
+
+  def testTakeAlongAxisPromiseInBoundsNoWrappingRetainsDtype(self):
+    arr = jnp.arange(200, dtype=jnp.float32)
+    indices = jnp.array([1, 2, 3], dtype=jnp.int8)
+    jaxpr = jax.make_jaxpr(
+        lambda i: jnp.take_along_axis(
+            arr,
+            i,
+            axis=0,
+            mode='promise_in_bounds',
+            wrap_negative_indices=False,
+        )
+    )(indices)
+    [jit_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'jit')
+    nested_jaxpr = jit_eqn.params['jaxpr']
+    [gather_eqn] = (
+        eqn for eqn in nested_jaxpr.jaxpr.eqns if eqn.primitive == lax.gather_p
+    )
+    indices_var = gather_eqn.invars[1]
+    self.assertEqual(indices_var.aval.dtype, jnp.int8)
+
+  def testTakeAlongAxisPromiseInBoundsWrappingUpcastsDtype(self):
+    arr = jnp.arange(200, dtype=jnp.float32)
+    indices = jnp.array([1, 2, 3], dtype=jnp.int8)
+    jaxpr = jax.make_jaxpr(
+        lambda i: jnp.take_along_axis(
+            arr, i, axis=0, mode='promise_in_bounds', wrap_negative_indices=True
+        )
+    )(indices)
+    [jit_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'jit')
+    nested_jaxpr = jit_eqn.params['jaxpr']
+    [gather_eqn] = (
+        eqn for eqn in nested_jaxpr.jaxpr.eqns if eqn.primitive == lax.gather_p
+    )
+    indices_var = gather_eqn.invars[1]
+    self.assertEqual(indices_var.aval.dtype, jnp.int32)
+
+  def testTakeAlongAxisWithInt8Indices(self):
+    h = jtu.rand_default(self.rng())((256, 256, 100), np.float32)
+    g = jtu.rand_int(self.rng(), -100, 99)((256, 256, 1), np.int8)
+    q0 = jnp.take_along_axis(h, g, axis=-1)
+    q1 = np.take_along_axis(h, g, axis=-1)
+    np.testing.assert_equal(q0, q1)
+
+  def testTakeAlongAxisPromiseInBoundsWithInt8Indices(self):
+    h = jtu.rand_default(self.rng())((256, 256, 100), np.float32)
+    g = jtu.rand_int(self.rng(), -100, 99)((256, 256, 1), np.int8)
+    q0 = jnp.take_along_axis(
+        h, g, axis=-1, mode='promise_in_bounds', wrap_negative_indices=True
+    )
+    q1 = np.take_along_axis(h, g, axis=-1)
+    np.testing.assert_equal(q0, q1)
 
   def testTakeAlongAxisWithUint8IndicesDoesNotOverflow(self):
     # https://github.com/jax-ml/jax/issues/5088
@@ -4613,6 +4713,79 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     q0 = jnp.take_along_axis(h, g, axis=-2)
     q1 = np.take_along_axis( h, g, axis=-2)
     np.testing.assert_equal(q0, q1)
+
+  @parameterized.named_parameters(
+      ('default', None, None),
+      ('clip', 'clip', True),
+      ('promise_in_bounds', 'promise_in_bounds', True),
+  )
+  def testTakeAlongAxisWrapNegativeIndices(self, mode, wrap_negative_indices):
+    x = jnp.array([10, 20, 30])
+    idx = jnp.array([-1, -2])
+    kwargs = {}
+    if mode is not None:
+      kwargs['mode'] = mode
+    if wrap_negative_indices is not None:
+      kwargs['wrap_negative_indices'] = wrap_negative_indices
+    np.testing.assert_array_equal(
+        jnp.take_along_axis(x, idx, axis=0, **kwargs), np.array([30, 20])
+    )
+
+  def testTakeAlongAxisClipNoWrapNegativeIndices(self):
+    x = jnp.array([10, 20, 30])
+    idx = jnp.array([-1, -2])
+    np.testing.assert_array_equal(
+        jnp.take_along_axis(
+            x, idx, axis=0, mode='clip', wrap_negative_indices=False
+        ),
+        np.array([10, 10]),
+    )
+
+  def testTakeAlongAxisPromiseInBoundsNoWrapNegativeIndices(self):
+    x = jnp.array([10, 20, 30])
+    idx = jnp.array([-1, -2])
+    # Verify no jaxpr wrapping operations are generated.
+    jaxpr_wrap = jax.make_jaxpr(
+        lambda x, i: jnp.take_along_axis(
+            x, i, axis=0, mode='promise_in_bounds', wrap_negative_indices=True
+        )
+    )(x, idx)
+    jaxpr_no_wrap = jax.make_jaxpr(
+        lambda x, i: jnp.take_along_axis(
+            x, i, axis=0, mode='promise_in_bounds', wrap_negative_indices=False
+        )
+    )(x, idx)
+    jaxpr_default = jax.make_jaxpr(
+        lambda x, i: jnp.take_along_axis(
+            x, i, axis=0, mode='promise_in_bounds'  # should not wrap by default
+        )
+    )(x, idx)
+
+    def get_all_primitives(jaxpr):
+      prims = set()
+      for eqn in jaxpr.eqns:
+        prims.add(eqn.primitive.name)
+        if eqn.primitive.name == 'jit':
+          prims.update(get_all_primitives(eqn.params['jaxpr']))
+      return prims
+
+    wrap_prims = get_all_primitives(jaxpr_wrap.jaxpr)
+    no_wrap_prims = get_all_primitives(jaxpr_no_wrap.jaxpr)
+    default_prims = get_all_primitives(jaxpr_default.jaxpr)
+
+    self.assertTrue(
+        'select' in wrap_prims or 'lt' in wrap_prims or 'add' in wrap_prims
+    )
+    self.assertFalse(
+        'select' in no_wrap_prims
+        or 'lt' in no_wrap_prims
+        or 'add' in no_wrap_prims
+    )
+    self.assertFalse(
+        'select' in default_prims
+        or 'lt' in default_prims
+        or 'add' in default_prims
+    )
 
   def testTakeAlongAxisOutOfBounds(self):
     x = jnp.arange(10, dtype=jnp.float32)
@@ -5063,6 +5236,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     jnp_op = getattr(jnp, op)
     dtype = np.dtype(dtypes.canonicalize_dtype(dtype)).type
+
     for x in (np.nan, -np.inf, -100., -2., -1., 0., 1., 2., 100., np.inf,
               jnp.finfo(dtype).max, np.sqrt(jnp.finfo(dtype).max),
               np.sqrt(jnp.finfo(dtype).max) * 2.):
@@ -5096,6 +5270,31 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = partial(np.corrcoef, rowvar=rowvar)
     np_fun = jtu.ignore_warning(
       category=RuntimeWarning, message="invalid value encountered.*")(np_fun)
+    jnp_fun = partial(jnp.corrcoef, rowvar=rowvar)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @unittest.skipIf(numpy_version < (2, 2, 0), "test covers NumPy 2.2+ behavior.")
+  @jtu.sample_product(
+      shape=[(1, 3), (3, 1)],
+      rowvar=[True, False],
+  )
+  @jax.default_matmul_precision("float32")
+  def testCorrCoefTransposeBehavior(self, shape, rowvar):
+    # Regression test for https://github.com/jax-ml/jax/issues/29571. The
+    # NumPy 2.2 update to jnp.cov (see
+    # https://github.com/numpy/numpy/pull/27661) flows through to corrcoef
+    # for single-row design matrices with rowvar=False, so the output shape
+    # and NaN propagation should now match NumPy.
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.float32)]
+
+    @jtu.ignore_warning(category=RuntimeWarning, message="invalid value.*")
+    @jtu.ignore_warning(category=RuntimeWarning, message="Degrees of freedom.*")
+    @jtu.ignore_warning(category=RuntimeWarning, message="divide by zero.*")
+    def np_fun(x):
+      return np.corrcoef(x, rowvar=rowvar)
+
     jnp_fun = partial(jnp.corrcoef, rowvar=rowvar)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -5734,7 +5933,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         lambda: jax.jit(jnp.zeros)(2))
 
   def testTraceMethod(self):
-    x = self.rng().randn(3, 4).astype(jnp.float_)
+    x = self.rng().randn(3, 4).astype(float)
     self.assertAllClose(x.trace(), jnp.array(x).trace())
     self.assertAllClose(x.trace(), jax.jit(lambda y: y.trace())(x))
 

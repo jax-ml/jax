@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import sys
+import warnings
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
@@ -106,6 +107,14 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
+
+    if jtu.test_device_matches(["gpu"]):
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message="The Pallas Triton backend is deprecated",
+      )
 
 class PagedAttentionKernelTest(PallasBaseTest):
 

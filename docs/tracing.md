@@ -90,7 +90,7 @@ as *static* for the purposes of JIT compilation:
 ```{code-cell}
 from functools import partial
 
-@partial(jit, static_argnums=(1,))
+@jit(static_argnums=(1,))
 def f(x, neg):
   return -x if neg else x
 

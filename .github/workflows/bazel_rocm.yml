@@ -28,7 +28,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-64-1gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.1"
       python:
         description: "Which python version to test?"
         type: string
@@ -36,11 +36,15 @@ on:
       rocm-version:
         description: "Which ROCM version to test?"
         type: string
-        default: "7"
+        default: "7.2.0"
       rocm-tag:
         description: "ROCm tag for container image (e.g., rocm720)"
         type: string
         default: "rocm720"
+      rocm-release-version:
+        description: "Release version for S3 path resolution (e.g., 7.2.0 or therock-latest)"
+        type: string
+        default: ""
       enable-x64:
         description: "Should x64 mode be enabled?"
         type: string
@@ -79,10 +83,26 @@ on:
         required: false
         default: 'false'
         type: string
+      s3_download_uri:
+        description: "S3 URI for ROCm plugin/PJRT wheels (use 'latest' to resolve via LATEST pointer)"
+        default: 'latest'
+        type: string
+      gate-targets-file:
+        description: "Path to a file listing Bazel targets to run (one per line). If empty, runs the full default test suite."
+        type: string
+        default: ""
+      gpu-config:
+        description: "Bazel GPU config to use (e.g. single_gpu, rocm_gate)"
+        type: string
+        default: "single_gpu"
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
         required: true
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
@@ -95,7 +115,7 @@ jobs:
         shell: bash
     runs-on: ${{ inputs.runner }}
     container:
-      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest
+      image: ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}:latest  # zizmor: ignore[unpinned-images]
       volumes:
         - /data:/data
       options: >-
@@ -108,17 +128,32 @@ jobs:
 
     env:
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
+      JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
+      # Required on gfx950 with ROCm 7.13 to avoid HIP "invalid device function"
+      # failures during multi-accelerator collectives. RCCL emits an explicit
+      # warning when this is unset; the env var must be in place before HIP
+      # initialization, which happens at JAX import time.
+      HSA_NO_SCRATCH_RECLAIM: "1"
 
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "linux x86, jaxlib=${{ inputs.jaxlib-version }}, ROCM=${{ inputs.rocm-version }}, Python=${{ inputs.python }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
+    name: "linux x86, py${{ inputs.python }}, ROCM=${{ inputs.rocm-version }}, jaxlib=${{ inputs.jaxlib-version }}, x64=${{ inputs.enable-x64 }}, build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
 # End Presubmit Naming Check github-rocm-presubmits
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: ROCm Info
         run: |
+          # TheRock (pip) ROCm images are /opt/rocm-less; rocminfo lives in the
+          # SDK bin dir, so put it on PATH via rocm-sdk. apt-ROCm images lack
+          # rocm-sdk and already have rocminfo on PATH.
+          if command -v rocm-sdk >/dev/null 2>&1; then
+            sdk_bin="$(rocm-sdk path --bin)"
+            if [[ -n "$sdk_bin" ]]; then
+              export PATH="$sdk_bin:$PATH"
+            fi
+          fi
           rocminfo
       - name: Configure AWS Credentials
         if: inputs.build_jaxlib == 'false' && inputs.jaxlib-version == 'head'
@@ -134,10 +169,12 @@ jobs:
         with:
           python: ${{ inputs.python }}
           rocm-version: ${{ inputs.rocm-version }}
+          rocm-release-version: ${{ inputs.rocm-release-version }}
           download-jax-from-gcs: ${{ inputs.download-jax-from-gcs }}
           skip-download-jaxlib-and-plugins-from-gcs: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
           jaxlib-version: ${{ inputs.jaxlib-version }}
           gcs_download_uri: ${{ inputs.gcs_download_uri }}
+          s3_download_uri: ${{ inputs.s3_download_uri }}
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
@@ -145,9 +182,11 @@ jobs:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Resolve RBE container image digest
         id: rbe-image
+        env:
+          ROCM_TAG: ${{ inputs.rocm-tag }}
         run: |
-          IMAGE="ghcr.io/rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}"
-          REPO="rocm/jax-dev-ubu24.${{ inputs.rocm-tag }}"
+          IMAGE="ghcr.io/rocm/jax-dev-ubu24.${ROCM_TAG}"
+          REPO="rocm/jax-dev-ubu24.${ROCM_TAG}"
           TOKEN=$(curl -sf "https://ghcr.io/token?service=ghcr.io&scope=repository:${REPO}:pull" | \
             python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
           echo "::add-mask::${TOKEN}"
@@ -159,15 +198,23 @@ jobs:
           echo "rbe_image=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
       - name: "Bazel ROCm tests with build_jax=${{ inputs.build_jax }}, build_jaxlib=${{ inputs.build_jaxlib }}"
         timeout-minutes: 120
+        env:
+          BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
+          BUILD_JAX: ${{ inputs.build_jax }}
+          PYTHON: ${{ inputs.python }}
+          ENABLE_X64: ${{ inputs.enable-x64 }}
+          RBE_IMAGE: ${{ steps.rbe-image.outputs.rbe_image }}
+          JAXCI_GATE_TARGETS_FILE: ${{ inputs.gate-targets-file }}
+          GPU_CONFIG: ${{ inputs.gpu-config }}
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
-            --config=single_gpu \
+            --config="${GPU_CONFIG}" \
             --local_test_jobs=4 \
-            --//jax:build_jaxlib="${{ inputs.build_jaxlib }}" \
-            --//jax:build_jax="${{ inputs.build_jax }}" \
-            --repo_env=HERMETIC_PYTHON_VERSION="${{ inputs.python }}" \
-            --action_env=JAX_ENABLE_X64="${{ inputs.enable-x64 }}" \
-            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${{ steps.rbe-image.outputs.rbe_image }}" \
+            --//jax:build_jaxlib="${BUILD_JAXLIB}" \
+            --//jax:build_jax="${BUILD_JAX}" \
+            --repo_env=HERMETIC_PYTHON_VERSION="${PYTHON}" \
+            --action_env=JAX_ENABLE_X64="${ENABLE_X64}" \
+            --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${RBE_IMAGE}" \
             "${JAXCI_ROCM_LOCK_FLAG:-}"
       - name: Upload test artifacts
         if: always()

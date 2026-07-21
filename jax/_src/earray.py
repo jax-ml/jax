@@ -59,13 +59,13 @@ class EArray(basearray.Array):
     raise NotImplementedError
 
   # forward to aval
-  shape = property(lambda self: self.aval.shape)  # pyrefly: ignore[bad-override]
-  dtype = property(lambda self: self.aval.dtype)  # pyrefly: ignore[bad-override]
+  shape = property(lambda self: self.aval.shape)
+  dtype = property(lambda self: self.aval.dtype)
 
   # computed from shape and dtype
-  ndim = property(lambda self: len(self.aval.shape))  # pyrefly: ignore[bad-override]
-  size = property(lambda self: math.prod(self.aval.shape))  # pyrefly: ignore[bad-override]
-  itemsize = property(lambda self: self.aval.dtype.itemsize)  # pyrefly: ignore[bad-override]
+  ndim = property(lambda self: len(self.aval.shape))
+  size = property(lambda self: math.prod(self.aval.shape))
+  itemsize = property(lambda self: self.aval.dtype.itemsize)
   def __len__(self):
     if self.ndim == 0: raise TypeError('len() of unsized object')
     return self.shape[0]
@@ -73,8 +73,8 @@ class EArray(basearray.Array):
   # forward to self._data
   devices = property(lambda self: self._data.devices)  # pyrefly: ignore[bad-override]
   _committed = property(lambda self: self._data._committed)
-  is_fully_addressable = property(lambda self: self._data.is_fully_addressable)  # pyrefly: ignore[bad-override]
-  is_fully_replicated = property(lambda self: self._data.is_fully_replicated)  # pyrefly: ignore[bad-override]
+  is_fully_addressable = property(lambda self: self._data.is_fully_addressable)
+  is_fully_replicated = property(lambda self: self._data.is_fully_replicated)
   delete = property(lambda self: self._data.delete)  # pyrefly: ignore[bad-override]
   is_deleted = property(lambda self: self._data.is_deleted)  # pyrefly: ignore[bad-override]
   on_device_size_in_bytes = property(lambda self: self._data.on_device_size_in_bytes)  # pyrefly: ignore[bad-override]
@@ -120,6 +120,6 @@ def _earray_shard_arg_handler(xs, shardings, layouts, copy_semantics):
 pxla.shard_arg_handlers[EArray] = _earray_shard_arg_handler
 
 core.pytype_aval_mappings[EArray] = lambda x: x.aval
-dtypes.canonicalize_value_handlers[EArray] = lambda x: x
+dtypes.register_canonicalize_value_handler(EArray, None)
 tree_util.dispatch_registry.register_node(
     EArray, lambda x: ((x._data,), x.aval), lambda a, xs: EArray(a, xs[0]))

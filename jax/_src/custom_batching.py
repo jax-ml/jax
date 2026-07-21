@@ -30,7 +30,6 @@ from jax._src import util
 from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.interpreters.batching import not_mapped
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
@@ -160,7 +159,7 @@ class custom_vmap:
         in_tree)
     in_avals = [core.typeof(x) for x in args_flat]
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-    closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    closed_call = pe.convert_constvars_jaxpr(jaxpr)
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
     debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
@@ -218,7 +217,7 @@ def check_vmap_rule_trees(rule, original_out_tree, out_tree, out_batched_tree):
 
 # Like batching.bdim_at_front, but doesn't broadcast if not mapped
 def maybe_bdim_at_front(x, bdim):
-  if bdim is not_mapped:
+  if bdim is None:
     return x
   else:
     return util.moveaxis(x, bdim, 0)
@@ -246,7 +245,7 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
   del call
   axis_size, = {x.shape[d] for x, d in zip(args_flat, dims) if d is not None}
   args_flat = map(maybe_bdim_at_front, args_flat, dims)
-  flat_in_batched = [d is not not_mapped for d in dims]
+  flat_in_batched = [d is not None for d in dims]
 
   args = tree_unflatten(in_tree, args_flat)
   in_batched = tree_unflatten(in_tree, flat_in_batched)
@@ -254,7 +253,7 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
   flat_outs, tree1 = tree_flatten(out)
   flat_out_batched, tree2 = tree_flatten(out_batched)
   check_vmap_rule_trees(rule, out_tree, tree1, tree2)
-  flat_out_dims = [0 if b else not_mapped for b in flat_out_batched]
+  flat_out_dims = [0 if b else None for b in flat_out_batched]
   return flat_outs, flat_out_dims
 
 
@@ -264,7 +263,7 @@ def custom_vmap_abstract_eval(*in_avals, call, **_):
 
 
 def custom_vmap_jvp(primals, tangents, *,
-                    call: core.ClosedJaxpr,
+                    call: core.Jaxpr,
                     rule: ClosedRule,
                     in_tree: tree_util.PyTreeDef, out_tree: tree_util.PyTreeDef):
   def jvp_of_rule_rule(axis_size: int, in_batched, primals, tangents):
@@ -295,14 +294,14 @@ def custom_vmap_jvp(primals, tangents, *,
       out_mutually_batched.store(out_batched)
       return out
 
-    api_util.save_wrapped_fun_debug_info(to_jvp, call.jaxpr.debug_info)
+    api_util.save_wrapped_fun_debug_info(to_jvp, call.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
     to_vmap_over_extra_batched_dims_flat, out_tree2 = api_util.flatten_fun_nokwargs(
         lu.wrap_init(to_vmap_over_extra_batched_dims,
                      # TODO(necula): fix the debug_info calling convention
-                     debug_info=call.jaxpr.debug_info),
+                     debug_info=call.debug_info),
         tree_ps_ts)
 
     flat_out_ps_ts, flat_out_axes = vmap_unrestricted(
@@ -315,9 +314,9 @@ def custom_vmap_jvp(primals, tangents, *,
     flat_out_ps, flat_out_ts = flat_out_ps_ts[:n], flat_out_ps_ts[n:]
     flat_out_axes_p, flat_out_axes_t = flat_out_axes[:n], flat_out_axes[n:]
     flat_out_ps = map(maybe_bdim_at_front, flat_out_ps, flat_out_axes_p)
-    flat_out_extra_batched_ps = [d is not not_mapped for d in flat_out_axes_p]
+    flat_out_extra_batched_ps = [d is not None for d in flat_out_axes_p]
     flat_out_ts = map(maybe_bdim_at_front, flat_out_ts, flat_out_axes_t)
-    flat_out_extra_batched_ts = [d is not not_mapped for d in flat_out_axes_t]
+    flat_out_extra_batched_ts = [d is not None for d in flat_out_axes_t]
 
     out_ps, out_ts = tree_unflatten(
         out_tree2(), [*flat_out_ps, *flat_out_ts])
@@ -352,6 +351,7 @@ batching.primitive_batchers[custom_vmap_p] = custom_vmap_batching
 ad.primitive_jvps[custom_vmap_p] = custom_vmap_jvp
 mlir.register_lowering(custom_vmap_p, mlir.lower_fun(
     custom_vmap_impl, multiple_results=True))
+custom_vmap_p.to_lojax = custom_vmap_impl
 
 
 # -- custom vmap applications

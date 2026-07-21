@@ -229,7 +229,7 @@ class Slerp(typing.NamedTuple):
            [ 8.5309029e-01,  3.8711953e-01,  1.7768645e-01],
            [-2.3841858e-07,  7.8539824e-01,  0.0000000e+00],
            [-5.6668043e-02,  3.9213133e-01, -2.8347540e-01],
-           [ 0.0000000e+00,  0.0000000e+00, -5.2359891e-01]], dtype=float32)
+           [ 0.0000000e+00, -2.3841858e-07, -5.2359891e-01]], dtype=float32)
   """
 
   times: Array
@@ -346,7 +346,7 @@ def _compute_euler_from_quat(quat: Array, axes: Array, extrinsic: bool, degrees:
   b = jnp.where(symmetric, quat[i], quat[i] + quat[k] * sign)
   c = jnp.where(symmetric, quat[j], quat[j] + quat[3])
   d = jnp.where(symmetric, quat[k] * sign, quat[k] * sign - quat[i])
-  angles = jnp.empty(3, dtype=quat.dtype)
+  angles = jnp.zeros(3, dtype=quat.dtype)
   angles = angles.at[1].set(2 * jnp.arctan2(jnp.hypot(c, d), jnp.hypot(a, b)))
   case = jnp.where(jnp.abs(angles[1] - np.pi) <= eps, 2, 0)
   case = jnp.where(jnp.abs(angles[1]) <= eps, 1, case)

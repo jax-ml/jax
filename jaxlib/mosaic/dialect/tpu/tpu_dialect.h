@@ -30,6 +30,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/tpu/stringify_util.h"
@@ -75,6 +76,10 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
 #define GEN_PASS_DECL_MOSAICSERDEPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
+// Finds the first parent op that has the `tpu.core_type` annotation.
+// If no such annotation is found, returns nullptr.
+Operation* GetParentOpWithCoreType(Operation& op);
+
 // Determine the core type of the given op based on the `tpu.core_type`
 // annotation of its first parent op that has the annotation. If no such
 // annotation is found, returns kTc.
@@ -92,6 +97,11 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
 // vector ops. This functions inverts the layout erasure applied to the value.
 MemRefType getMemRefType(Value value);
 
+// Returns the remainder of the given value when divided by the given divisor.
+// Returns nullopt if the remainder is not known.
+std::optional<int64_t> getRemainder(Value val, int64_t divisor,
+                                    int64_t fuel = 128);
+
 // Returns true if `value` is guaranteed to be divisible by `divisor`, false if
 // value is known to not be divisible by `divisor`, and nullopt if the
 // divisibility is not known.
@@ -104,9 +114,20 @@ DotDimensionNumbersAttr defaultDimensionNumbers(Builder& builder,
                                                 bool transpose_lhs,
                                                 bool transpose_rhs);
 
-/// Returns true if `op` is a transfer from shared to local memory.
-FailureOr<bool> isGather(Operation& op, MemRefType source_ty,
-                         MemRefType target_ty);
+// True if source represents a shared memory space and target represents a local
+// memory space. TC VMEM is "shared" here but it is not shared between TCs.
+FailureOr<bool> isGather(Operation& op, MemorySpace source_memory_space,
+                         std::optional<CoreType> source_core_type,
+                         MemorySpace target_memory_space,
+                         std::optional<CoreType> target_core_type);
+
+LogicalResult verifyGather(Operation* op, ArrayRef<int64_t> operand_shape,
+                           ArrayRef<int64_t> offsets_shape,
+                           ArrayRef<int64_t> result_shape);
+
+LogicalResult verifyScatter(Operation* op, ArrayRef<int64_t> updates_shape,
+                            ArrayRef<int64_t> offsets_shape,
+                            ArrayRef<int64_t> operand_shape);
 
 #define GEN_PASS_REGISTRATION
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"

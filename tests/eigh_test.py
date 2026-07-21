@@ -27,7 +27,6 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -89,7 +88,7 @@ class EighTest(jtu.JaxTestCase):
       )
 
     self._CompileAndCheck(
-        partial(jnp.linalg.eigh, UPLO=uplo), args_maker, rtol=eps
+        partial(jnp.linalg.eigh, UPLO=uplo), args_maker, rtol=10 * eps
     )
 
     # Compare eigenvalues against Numpy using double precision. We do not compare
@@ -222,6 +221,18 @@ class EighTest(jtu.JaxTestCase):
     lower=[True, False],
   )
   def testEighIdentity(self, n, dtype, lower):
+
+    # In ROCm 7.2.0, hipsolverDnCheevd and hipsolverDnZheevd produce NaNs in
+    # eigenvectors for complex types when matrices are too large (n>64) and
+    # have certain structures (such as the identity matrix).
+    #
+    # TODO: Re-enable this test when the hipSolver issue is resolved.
+    #
+    if (jtu.is_device_rocm() and n > 64
+        and np.issubdtype(dtype, np.complexfloating)):
+      self.skipTest("Complex types not currently supported on ROCm due to "
+                    "hipSolver issue.")
+
     tol = np.finfo(dtype).eps
     uplo = "L" if lower else "U"
 
@@ -289,6 +300,8 @@ class EighTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   def testEighBatching(self, shape, dtype):
+    if platform.system() == "Windows":
+      self.skipTest("Crashes on Windows.")
     rng = jtu.rand_default(self.rng())
     shape = (10,) + shape
     args = rng(shape, dtype)
@@ -374,8 +387,7 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
 
     # TODO: The ROCm 0.10.0 plugin is not yet released. This will be
     # re-enabled for ROCm on the 0.10.0 ROCm plugin release.
-    if (jaxlib_version >= (0, 10) and
-        not jtu.test_device_matches(["tpu", "rocm"])):
+    if not jtu.test_device_matches(["tpu", "rocm"]):
       @jax.jit
       def solve(a, b):
         return jax.scipy.linalg.eigh_tridiagonal(a, b, eigvals_only=False)

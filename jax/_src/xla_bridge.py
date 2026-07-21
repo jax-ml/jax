@@ -173,7 +173,7 @@ _at_fork_handler_installed = False
 _NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
 
 def _make_transfer_server_factory(
-) -> xla_client._xla.TransferServerInterfaceFactory | None:
+) -> _jax.TransferServerInterfaceFactory | None:
   """Creates a transfer server interface factory."""
   if (not CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value or not
       hasattr(_jax, "make_transfer_server_interface_factory")):
@@ -250,7 +250,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
 BackendFactory = Callable[[], Union[xla_client.Client, None]]
 TopologyFactory = Callable[..., Union[xla_client.DeviceTopology, None]]
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class BackendRegistration:
   factory: BackendFactory
 
@@ -312,7 +312,7 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
 
 
 def make_cpu_client(
-    collectives: xla_client._xla.CpuCollectives | None = None,
+    collectives: _jax.CpuCollectives | None = None,
 ) -> xla_client.Client:
   """Creates a CPU client with the requested collectives implementation.
 
@@ -335,11 +335,11 @@ def make_cpu_client(
   if collectives is None and distributed.global_state.client is not None:
     collectives_impl = config.cpu_collectives_implementation.value
     if collectives_impl == 'gloo':
-      collectives = xla_client._xla.make_gloo_tcp_collectives(
+      collectives = _jax.make_gloo_tcp_collectives(
         distributed_client=distributed.global_state.client,
       )
     elif collectives_impl == 'mpi':
-      collectives = xla_client._xla.make_mpi_collectives()
+      collectives = _jax.make_mpi_collectives()
       collectives.Init()
       atexit.register(collectives.Finalize)
     else:

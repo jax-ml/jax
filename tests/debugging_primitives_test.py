@@ -43,9 +43,10 @@ def _format_multiline(text):
 
 
 class DummyDevice:
-  def __init__(self, platform, id):
+  def __init__(self, platform, id, device_kind):
     self.platform = platform
     self.id = id
+    self.device_kind = device_kind
 
 
 class DebugCallbackTest(jtu.JaxTestCase):
@@ -970,7 +971,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
 
   def _create_devices(self, shape):
     num_devices = np.prod(shape)
-    devices = [DummyDevice("CPU", i) for i in range(num_devices)]
+    devices = [DummyDevice("CPU", i, "CPU") for i in range(num_devices)]
     return np.array(devices).reshape(shape)
 
   def test_trivial_sharding(self):

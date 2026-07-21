@@ -10,9 +10,9 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: choice
-        default: "linux-x86-64-1gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.1"
         options:
-        - "linux-x86-64-1gpu-amd"
+        - "amd-do-linux.jax.gpu.gfx950.1"
       artifact:
         description: "Which ROCm artifact to build?"
         type: choice
@@ -25,7 +25,6 @@ on:
         type: choice
         default: "3.12"
         options:
-        - "3.11"
         - "3.12"
         - "3.13"
         - "3.14"
@@ -33,6 +32,14 @@ on:
         description: "Which ROCm version to build for?"
         type: string
         default: "7"
+      rocm-release-version:
+        description: "Full ROCm release version (e.g., 7.2.0) for container image and S3 paths"
+        type: string
+        default: "7.2.0"
+      manylinux-image:
+        description: "Override the manylinux container image (e.g., ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest)"
+        type: string
+        default: ""
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: choice
@@ -56,7 +63,7 @@ on:
       runner:
         description: "Which runner should the workflow run on?"
         type: string
-        default: "linux-x86-64-1gpu-amd"
+        default: "amd-do-linux.jax.gpu.gfx950.1"
       artifact:
         description: "Which ROCm artifact to build?"
         type: string
@@ -69,6 +76,14 @@ on:
         description: "Which ROCm version to build for?"
         type: string
         default: "7"
+      rocm-release-version:
+        description: "Full ROCm release version (e.g., 7.2.0) for container image and S3 paths"
+        type: string
+        default: "7.2.0"
+      manylinux-image:
+        description: "Override the manylinux container image (e.g., ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest)"
+        type: string
+        default: ""
       clone_main_xla:
         description: "Should latest XLA be used?"
         type: string
@@ -108,7 +123,7 @@ jobs:
     outputs:
       s3_upload_uri: ${{ steps.store-s3-upload-uri.outputs.s3_upload_uri }}
     container:
-      image: "ghcr.io/rocm/jax-manylinux_2_28-rocm-7.2.0:latest"
+      image: "${{ inputs.manylinux-image || format('ghcr.io/rocm/jax-manylinux_2_28-rocm-{0}:latest', inputs.rocm-release-version) }}"  # zizmor: ignore[unpinned-images]
       volumes:
         - /data:/data
       options: >-
@@ -126,7 +141,7 @@ jobs:
     name: "${{ inputs.artifact }}, py ${{ inputs.python }}, ROCm ${{ inputs.rocm-version }}"
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Install Bazelisk
@@ -134,7 +149,17 @@ jobs:
           curl -fSsL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64
           chmod +x /usr/local/bin/bazel
       - name: ROCm Info
-        run: rocminfo
+        run: |
+          # TheRock (pip) ROCm images are /opt/rocm-less; rocminfo lives in the
+          # SDK bin dir, so put it on PATH via rocm-sdk. apt-ROCm images lack
+          # rocm-sdk and already have rocminfo on PATH.
+          if command -v rocm-sdk >/dev/null 2>&1; then
+            sdk_bin="$(rocm-sdk path --bin)"
+            if [[ -n "$sdk_bin" ]]; then
+              export PATH="$sdk_bin:$PATH"
+            fi
+          fi
+          rocminfo
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
@@ -160,10 +185,12 @@ jobs:
           aws s3 cp --only-show-errors --recursive "$JAXCI_OUTPUT_DIR"/ "${INPUTS_S3_UPLOAD_URI}"/
           echo "Upload complete."
 
+          LATEST_KEY="rocm-wheels/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${INPUTS_ROCM_RELEASE_VERSION}/LATEST"
           echo "${INPUTS_S3_UPLOAD_URI}" | \
-            aws s3 cp --only-show-errors - "s3://jax-ci-amd/rocm-wheels/LATEST"
+            aws s3 cp --only-show-errors - "s3://jax-ci-amd/${LATEST_KEY}"
         env:
           INPUTS_S3_UPLOAD_URI: ${{ inputs.s3_upload_uri }}
+          INPUTS_ROCM_RELEASE_VERSION: ${{ inputs.rocm-release-version }}
       - name: Store the S3 upload URI as an output
         if: ${{ inputs.upload_artifacts_to_s3 }}
         id: store-s3-upload-uri

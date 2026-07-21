@@ -178,7 +178,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     op = partial(lax.dot, precision=lax.Precision.HIGHEST)
     self._CheckBatching(op, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
-                        rng, rtol={np.float16: 5e-2, np.float64: 5e-14})
+                        rng, rtol={np.float16: 5e-2, np.float64: 5e-14, jnp.bfloat16: 5e-2})
 
   @jtu.sample_product(
     [dict(bdims=bdims, lhs_shape=lhs_shape, rhs_shape=rhs_shape,
@@ -362,6 +362,22 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng,
                         multiple_results=True)
 
+  def testStack(self):
+    shape = (2, 3)
+    dtype = np.float32
+    rng = jtu.rand_default(self.rng())
+    op = lambda x, y: lax.stack([x, y], axis=0)
+    for bdims in lax_test_util.all_bdims(shape, shape):
+      self._CheckBatching(op, 5, bdims, (shape, shape), (dtype, dtype), rng)
+
+  def testUnstack(self):
+    shape = (2, 3)
+    dtype = np.float32
+    rng = jtu.rand_default(self.rng())
+    op = lambda x: lax.unstack(x, axis=0)
+    for bdims in lax_test_util.all_bdims(shape):
+      self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng,
+                          multiple_results=True)
   @jtu.sample_product(
     [dict(shape=shape, perm=perm, bdims=bdims)
       for shape, perm in [

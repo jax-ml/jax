@@ -44,6 +44,7 @@ limitations under the License.
 #include "jaxlib/util.h"
 #include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
+#include "xla/pjrt/host_memory_spaces.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -137,15 +138,33 @@ absl::StatusOr<DLDeviceType> DLDeviceTypeForDevice(
     return kDLCUDA;
   } else if (device.client()->platform_id() == xla::RocmId()) {
     return kDLROCM;
+  } else if (device.client()->platform_id() == xla::OneapiId()) {
+    return kDLOneAPI;
   }
   return xla::InvalidArgument("Device %s cannot be used as a DLPack device.",
                               device.DebugString());
 }
 
-absl::StatusOr<DLDevice> DLDeviceForDevice(const xla::PjRtDevice& device) {
+absl::StatusOr<DLDevice> DLDeviceForBuffer(const xla::PjRtBuffer& buffer) {
   DLDevice context;
-  TF_ASSIGN_OR_RETURN(context.device_type, DLDeviceTypeForDevice(device));
-  context.device_id = device.local_hardware_id().value();
+  const xla::PjRtMemorySpace* memory_space = buffer.memory_space();
+  if (memory_space != nullptr &&
+      memory_space->kind() == xla::PinnedHostMemorySpace::kKind &&
+      buffer.device()->client()->platform_id() == xla::CudaId()) {
+    context.device_type = kDLCUDAHost;
+  } else if (memory_space != nullptr &&
+             memory_space->kind() == xla::PinnedHostMemorySpace::kKind &&
+             buffer.device()->client()->platform_id() == xla::TpuId()) {
+    context.device_type = kDLTPUHost;
+  } else if (memory_space != nullptr &&
+             memory_space->kind() == xla::PinnedHostMemorySpace::kKind &&
+             buffer.device()->client()->platform_id() == xla::RocmId()) {
+    context.device_type = kDLROCMHost;
+  } else {
+    TF_ASSIGN_OR_RETURN(context.device_type,
+                        DLDeviceTypeForDevice(*buffer.device()));
+  }
+  context.device_id = buffer.device()->local_hardware_id().value();
   return context;
 }
 
@@ -185,7 +204,8 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
                const xla::Shape& shape, xla::PrimitiveType element_type,
                absl::Span<int64_t const> dimensions,
                std::optional<bool> copy = std::nullopt,
-               std::optional<std::intptr_t> stream = std::nullopt) {
+               std::optional<std::intptr_t> stream = std::nullopt,
+               std::optional<DLDeviceType> dl_device_type = std::nullopt) {
   std::function<void()> on_delete_callback;
   if (dlmt->deleter) {
     on_delete_callback = [dlmt]() { dlmt->deleter(dlmt); };
@@ -194,17 +214,37 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   void* data =
       static_cast<char*>(dlmt->dl_tensor.data) + dlmt->dl_tensor.byte_offset;
 
+  // DLPack producers advertise the tensor device type via __dlpack_device__()
+  // but the corresponding __dlpack__() call might return a capsule with a
+  // different device type. E.g. pinned PyTorch tensors on CUDA advertise
+  // kDLCUDAHost but store kDLCPU in the capsule. dl_device_type allows us to
+  // explicitly override the capsule's device type and pick the correct
+  // destination memory space, i.e. pinned_host in the above example.
+  DLDeviceType effective_device_type =
+      dl_device_type.value_or(dlmt->dl_tensor.device.device_type);
+  xla::PjRtMemorySpace* memory_space;
+  if (effective_device_type == kDLCUDAHost ||
+      effective_device_type == kDLROCMHost ||
+      effective_device_type == kDLTPUHost) {
+    TF_ASSIGN_OR_RETURN(memory_space, device.memory_space_by_kind(
+                                          xla::PinnedHostMemorySpace::kKind));
+  } else {
+    TF_ASSIGN_OR_RETURN(memory_space, device.default_memory_space());
+  }
+
   // On CPU, creating a view may fail because of unaligned data buffer
   // in which case we'll fallback to copy. On non-CPU, array-api copy
   // semantics is handled in dlpack._place_array function.
   bool fallback_to_copy =
-      !copy.has_value() && dlmt->dl_tensor.device.device_type == kDLCPU;
+      !copy.has_value() &&
+      (effective_device_type == kDLCPU ||
+       effective_device_type == kDLCUDAHost ||
+       effective_device_type == kDLROCMHost);
 
   // Create a view.
   if (!copy.value_or(false)) {
     auto result = device.client()->CreateViewOfDeviceBuffer(
-        data, shape, *device.default_memory_space(), on_delete_callback,
-        stream);
+        data, shape, memory_space, on_delete_callback, stream);
     if (!(result.status().code() == absl::StatusCode::kInvalidArgument &&
           fallback_to_copy)) {
       TF_RETURN_IF_ERROR(result.status());
@@ -217,8 +257,6 @@ MakePjrtBuffer(xla::PjRtDevice& device, ::DLManagedTensor* dlmt,
   if (dlmt->dl_tensor.strides) {
     TF_ASSIGN_OR_RETURN(byte_strides, GetByteStrides(dlmt->dl_tensor));
   }
-
-  TF_ASSIGN_OR_RETURN(auto* memory_space, device.default_memory_space());
 
   // Create a copy.
   TF_ASSIGN_OR_RETURN(
@@ -276,8 +314,7 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
   dt.data = pack->external_reference->OpaqueDeviceMemoryDataPointer();
   pack->tensor.manager_ctx = pack.get();
   pack->tensor.deleter = DLPackTensorDeleter;
-  TF_ASSIGN_OR_RETURN(dt.device, DLDeviceForDevice(*pjrt_buffer->device()));
-  dt.device.device_id = pjrt_buffer->device()->local_hardware_id().value();
+  TF_ASSIGN_OR_RETURN(dt.device, DLDeviceForBuffer(*pjrt_buffer));
   dt.ndim = pjrt_buffer->dimensions().size();
   TF_ASSIGN_OR_RETURN(dt.dtype,
                       PrimitiveTypeToDLDataType(pjrt_buffer->element_type()));
@@ -300,24 +337,15 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
   nb::capsule capsule = nb::steal<nb::capsule>(
       PyCapsule_New(&pack.release()->tensor, kDlTensorCapsuleName,
                     [](PyObject* obj) noexcept {
-#if PY_VERSION_HEX < 0x030C0000
-                      PyObject *type, *value, *traceback;
-                      PyErr_Fetch(&type, &value, &traceback);
-#else   // PY_VERSION_HEX < 0x030C0000
                       PyObject* exc = PyErr_GetRaisedException();
-#endif  // PY_VERSION_HEX < 0x030C0000
                       DLManagedTensor* dlmt = static_cast<DLManagedTensor*>(
                           PyCapsule_GetPointer(obj, kDlTensorCapsuleName));
                       if (dlmt) {
                         DLPackTensorDeleter(dlmt);
                       }
-    // PyCapsule_GetPointer may have raised. Restore the
-    // previous exception if there was one.
-#if PY_VERSION_HEX < 0x030C0000
-                      PyErr_Restore(type, value, traceback);
-#else   // PY_VERSION_HEX < 0x030C0000
+                      // PyCapsule_GetPointer may have raised. Restore the
+                      // previous exception if there was one.
                       PyErr_SetRaisedException(exc);
-#endif  // PY_VERSION_HEX < 0x030C0000
                     }));
   if (!capsule.ptr()) {
     throw nb::python_error();
@@ -328,7 +356,7 @@ absl::StatusOr<nb::capsule> BufferToDLPackManagedTensor(
 absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
     const nb::capsule& tensor, ifrt::Device* ifrt_device,
     nb_class_ptr<PyClient> client, std::optional<std::intptr_t> stream,
-    std::optional<bool> copy) {
+    std::optional<bool> copy, std::optional<DLDeviceType> dl_device_type) {
   ifrt::PjRtDevice* device =
       llvm::dyn_cast_or_null<ifrt::PjRtDevice>(ifrt_device);
   if (device == nullptr) {
@@ -372,9 +400,10 @@ absl::StatusOr<nb::object> DLPackManagedTensorToBuffer(
   xla::Shape shape = xla::ShapeUtil::MakeShapeWithDenseLayout(
       element_type, dimensions, minor_to_major);
 
-  TF_ASSIGN_OR_RETURN(auto pjrt_buffer_and_copied,
-                      MakePjrtBuffer(*device->pjrt_device(), dlmt, shape,
-                                     element_type, dimensions, copy, stream));
+  TF_ASSIGN_OR_RETURN(
+      auto pjrt_buffer_and_copied,
+      MakePjrtBuffer(*device->pjrt_device(), dlmt, shape, element_type,
+                     dimensions, copy, stream, dl_device_type));
   if (pjrt_buffer_and_copied.second) {
     // A PjRtBuffer uses a default layout if it has been created using copy.
     has_custom_layout = false;

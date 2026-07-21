@@ -64,6 +64,13 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betainc", 3, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
+        "boxcox", 2, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
+        "boxcox1p", 2, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=-0.5, high=5.0), True
+    ),
+    op_record(
         "gamma", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
@@ -76,6 +83,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "loggamma", 1, jtu.dtypes.complex, jtu.rand_default, False,
         test_name="loggamma_complex"
+    ),
+    op_record(
+        "dawsn", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
@@ -96,6 +106,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "erfc", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
+        "erfcx", 1, float_dtypes + jtu.dtypes.complex, jtu.rand_default, True
+    ),
+    op_record(
         "erfinv", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(
@@ -107,6 +120,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     # TODO: gammaln has slightly high error.
     op_record(
         "gammaln", 1, float_dtypes, jtu.rand_positive, False
+    ),
+    op_record(
+        "comb", 2, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
         "factorial", 1, float_dtypes, jtu.rand_default, True
@@ -167,6 +183,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
         "rel_entr", 2, float_dtypes, jtu.rand_positive, True,
     ),
+    op_record("owens_t", 2, float_dtypes, jtu.rand_default, True),
     op_record("poch", 2, float_dtypes, jtu.rand_positive, True),
     op_record(
         "hyp1f1", 3, float_dtypes,
@@ -178,6 +195,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
+    op_record("wofz", 1, jtu.dtypes.complex, jtu.rand_default, False),
 ]
 
 
@@ -231,6 +249,51 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
                       atol=.1 if jtu.test_device_matches(["tpu"]) else 1e-3,
                       rtol=.1, eps=1e-3)
 
+  def testErfcxLargeX(self):
+    # Verify no overflow and agreement with scipy in the asymptotic regime
+    # (float32: x > ~9.4, float64: x > ~26.6 — where exp(x^2) would overflow naively)
+    x = np.array([10., 20., 50., 100.], dtype=np.float32)
+    jax_val = lsp_special.erfcx(x)
+    scipy_val = osp_special.erfcx(x)
+    self.assertAllClose(jax_val, scipy_val, rtol=1e-5)
+    if jax.config.x64_enabled:
+      x = np.array([27., 50., 100., 500.], dtype=np.float64)
+      jax_val = lsp_special.erfcx(x)
+      scipy_val = osp_special.erfcx(x)
+      self.assertAllClose(jax_val, scipy_val, rtol=1e-12)
+
+  def testWofzAccuracy(self):
+    # Verify wofz agrees with scipy over the full complex plane (float32).
+    rng = jtu.rand_default(np.random.RandomState(0))
+    z = rng((50,), np.complex64)
+    jax_val = np.array(lsp_special.wofz(z))
+    scipy_val = osp_special.wofz(z.astype(np.complex128)).astype(np.complex64)
+    self.assertAllClose(jax_val, scipy_val, rtol=1e-5)
+
+  def testWofzLowerHalfPlane(self):
+    # The reflection formula w(-z) = 2*exp(-z^2) - w(z) must hold.
+    rng = jtu.rand_default(np.random.RandomState(1))
+    z = rng((20,), np.complex64)
+    z_lower = z.real - 1j * np.abs(z.imag) - 1j * 0.1  # ensure Im < 0
+    jax_w = np.array(lsp_special.wofz(z_lower))
+    scipy_w = osp_special.wofz(z_lower.astype(np.complex128)).astype(np.complex64)
+    self.assertAllClose(jax_w, scipy_w, rtol=1e-5)
+
+  def testWofzJvp(self):
+    # d/dz w(z) = -2z*w(z) + 2i/sqrt(pi) — test against numerical diff.
+    rng = jtu.rand_default(np.random.RandomState(2))
+    z = rng((10,), np.complex64) + 0.5j  # stay in upper half-plane
+    import jax
+    primals, tangents = jax.jvp(lsp_special.wofz, (z,), (np.ones_like(z),))
+    expected_tangents = -2 * z * primals + jnp.array(2j / np.sqrt(np.pi), dtype=z.dtype)
+    self.assertAllClose(tangents, expected_tangents, rtol=1e-4)
+
+  def testDawsnLargeX(self):
+    # Verify correctness in the large-x rational regime (region 2: [3.25, 6.25)
+    # and region 3: [6.25, inf)) and at the odd-symmetry boundaries.
+    x = np.array([-10., -6.25, -3.25, 0., 3.25, 6.25, 10., 100.], dtype=float)
+    self.assertAllClose(lsp_special.dawsn(x), osp_special.dawsn(x))
+
   @jtu.sample_product(
       n=[0, 1, 2, 3, 10, 50]
   )
@@ -241,6 +304,21 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     args_maker = lambda: []
     self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, atol=0, rtol=1E-5)
     self._CompileAndCheck(lax_op, args_maker, atol=0, rtol=1E-5)
+
+  @parameterized.parameters(
+      ([-1, -1, 5, 5], [0, 2, -1, 7], False),
+      ([0, 0], [0, 4], True),
+  )
+  def testCombBoundaryValues(self, N_samples, k_samples, repetition):
+    if repetition and jtu.parse_version(scipy.__version__) < (1, 17):
+      self.skipTest("comb with repetition=True boundary values require scipy 1.17 or newer")
+    dtype = dtypes.default_float_dtype()
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    args_maker = lambda: (np.array(N_samples, dtype=dtype), np.array(k_samples, dtype=dtype))
+    scipy_op = functools.partial(osp_special.comb, repetition=repetition)
+    lax_op = functools.partial(lsp_special.comb, repetition=repetition)
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker, rtol=rtol)
+    self._CompileAndCheck(lax_op, args_maker, rtol=rtol)
 
   def testGammaSign(self):
     dtype = jnp.zeros(0).dtype  # default float dtype.
@@ -322,17 +400,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     nan = float('nan')
     inf = float('inf')
     if jtu.parse_version(scipy.__version__) >= (1, 16):
-      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1, nan]
-      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1, inf]
+      a_samples = [0, 0, 0, 1, nan, 1, nan, 0, 1, 1, nan, inf, inf, inf, inf, inf]
+      x_samples = [0, 1, 2, 0, 1, nan, nan, inf, inf, -1, inf, 0, 1, inf, nan, -1]
     else:
       # disable samples that contradict with scipy/scipy#22441
-      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1]
-      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1]
+      a_samples = [0, 0, 0, 1, nan, 1, nan, 0, 1, 1, inf, inf, inf, inf]
+      x_samples = [0, 1, 2, 0, 1, nan, nan, inf, inf, -1, 0, 1, inf, -1]
 
     args_maker = lambda: (np.array(a_samples, dtype=dtype), np.array(x_samples, dtype=dtype))
 
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
-    self._CheckAgainstNumpy(lsp_special.gammainc, osp_special.gammainc, args_maker, rtol=rtol)
+    self._CheckAgainstNumpy(
+        osp_special.gammainc, lsp_special.gammainc, args_maker, rtol=rtol
+    )
     self._CompileAndCheck(lsp_special.gammainc, args_maker, rtol=rtol)
 
   def testGammaIncCBoundaryValues(self):
@@ -340,17 +420,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     nan = float('nan')
     inf = float('inf')
     if jtu.parse_version(scipy.__version__) >= (1, 16):
-      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1, nan]
-      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1, inf]
+      a_samples = [0, 0, 0, 1, nan, 1, nan, 0, 1, 1, nan, inf, inf, inf, inf, inf]
+      x_samples = [0, 1, 2, 0, 1, nan, nan, inf, inf, -1, inf, 0, 1, inf, nan, -1]
     else:
       # disable samples that contradict with scipy/scipy#22441
-      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1]
-      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1]
+      a_samples = [0, 0, 0, 1, nan, 1, nan, 0, 1, 1, inf, inf, inf, inf]
+      x_samples = [0, 1, 2, 0, 1, nan, nan, inf, inf, -1, 0, 1, inf, -1]
 
     args_maker = lambda: (np.array(a_samples, dtype=dtype), np.array(x_samples, dtype=dtype))
 
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
-    self._CheckAgainstNumpy(lsp_special.gammaincc, osp_special.gammaincc, args_maker, rtol=rtol)
+    self._CheckAgainstNumpy(
+        osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol
+    )
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
   def testBetaIncBoundaryValues(self):

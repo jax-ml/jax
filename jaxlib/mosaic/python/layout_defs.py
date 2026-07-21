@@ -46,7 +46,7 @@ class Replicated(enum.Enum):
   def __bool__(self):
     return False  # Useful because we can then say `offset or 0`
 REPLICATED = Replicated.REPLICATED
-Offset = int | Literal[REPLICATED]
+Offset = int | Literal[Replicated.REPLICATED]
 
 
 class ImplicitDim(enum.IntEnum):

@@ -1,4 +1,4 @@
-name: CI - Bazel ROCm tests
+name: Bazel ROCm
 
 on:
   workflow_dispatch:
@@ -14,6 +14,8 @@ on:
   pull_request:
     branches:
       - main
+      - 'rocm-jaxlib-v*'
+      - 'amd-main'
   push:
     branches:
       - main
@@ -26,18 +28,18 @@ concurrency:
 permissions: {}
 jobs:
   run-tests:
-    if: github.event.repository.fork == false
+    if: github.event_name == 'workflow_dispatch' || (github.event.repository.fork == false && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'))
     uses: ./.github/workflows/bazel_rocm.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           python: ["3.14"]
-          runner: ["linux-x86-64-1gpu-amd"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
           jaxlib-version: ["head", "pypi_latest"]
-          enable-x64: [1]
+          enable-x64: [0]
           rocm-version: ["7"]
-    name: "Bazel single accelerator ${{ format('{0}', 'ROCm tests') }}"
+    name: "${{ matrix.runner && 'Test' }}"
 # End Presubmit Naming Check github-rocm-presubmits
     with:
       runner: ${{ matrix.runner }}
@@ -50,5 +52,32 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && 'wheel') || 'false' }}
       build_jax: ${{ 'true' }}
+      gate-targets-file: "build/rocm/ci_test_targets.txt"
       run_multiaccelerator_tests: ${{ 'false' }}
-      clone_main_xla: 1
+      clone_main_xla: 0
+
+  blocking-gate:
+    if: github.event_name == 'workflow_dispatch' || (github.event.repository.fork == false && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'))
+    uses: ./.github/workflows/bazel_rocm.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+        runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
+    name: "ROCm blocking gate"
+# End Presubmit Naming Check github-rocm-blocking-presubmits
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      rocm-version: "7"
+      rocm-tag: "rocm720"
+      download-jax-from-gcs: 0
+      jaxlib-version: "head"
+      build_jaxlib: ${{ 'true' }}
+      build_jax: ${{ 'true' }}
+      halt-for-connection: ${{ inputs.halt-for-connection }}
+      gate-targets-file: "build/rocm/ci_blocking_test_targets.txt"
+      gpu-config: "single_gpu"
+      run_multiaccelerator_tests: ${{ 'false' }}
+      clone_main_xla: 0

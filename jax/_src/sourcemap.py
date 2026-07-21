@@ -34,7 +34,7 @@ Segment = Union[
 Mappings = Sequence[Sequence[Segment]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SourceMap:
   version: int
   # file: str

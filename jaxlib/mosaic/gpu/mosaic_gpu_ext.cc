@@ -25,7 +25,9 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/vendor.h"
+#include "jaxlib/mosaic/gpu/target.h"
 
 namespace jax::cuda {
 namespace {
@@ -111,14 +113,14 @@ void callback_complete(CUcontext context, uint32_t streamId, uint8_t* buffer,
 NB_MODULE(_mosaic_gpu_ext, m) {
   m.def("_sync_all_devices", []() {
     int devices = 0;
-    if (cudaGetDeviceCount(&devices) != gpuSuccess) {
+    if (cudaGetDeviceCount(&devices) != cudaSuccess) {
       throw std::runtime_error("Failed to get device count");
     }
     for (int i = 0; i < devices; ++i) {
-      if (cudaSetDevice(i) != gpuSuccess) {
+      if (cudaSetDevice(i) != cudaSuccess) {
         throw std::runtime_error("Failed to set device");
       }
-      if (cudaDeviceSynchronize() != gpuSuccess) {
+      if (cudaDeviceSynchronize() != cudaSuccess) {
         throw std::runtime_error("Failed to synchronize device");
       }
     }
@@ -161,6 +163,18 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         return profiler_state.timings;
       },
       nb::arg("finalize") = true);
+  m.def(
+      "_get_ptxas_isa_version",
+      []() -> int {
+        return jax::ValueOrThrow(
+            jax::ValueOrThrow(
+                mosaic::gpu::GetAssemblyToBinaryCompilationProvider())
+                ->GetLatestPtxIsaVersion());
+      },
+      "Returns the latest PTX ISA version supported by `ptxas`.\n\n"
+      "NOTE: This PTX ISA version may not be supported by the LLVM compiler. "
+      "LLVM's PTX ISA support should also be checked, unless using inline asm "
+      "(which bypasses LLVM).");
 }
 
 }  // namespace

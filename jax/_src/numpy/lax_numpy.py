@@ -879,7 +879,8 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
   bin_edges = histogram_bin_edges(a, bins, range, weights)
   bin_idx = searchsorted(bin_edges, a, side='right')
   bin_idx = where(a == bin_edges[-1], len(bin_edges) - 1, bin_idx)
-  counts = array_creation.zeros(len(bin_edges), weights.dtype).at[bin_idx].add(weights)[1:]
+  counts = array_creation.zeros(len(bin_edges), weights.dtype
+                                ).at[bin_idx].add(weights)[1:]
   if density:
     bin_widths = diff(bin_edges)
     counts = counts / bin_widths / counts.sum()
@@ -969,7 +970,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
 
   if N != 1 and N != 2:
     x_edges = y_edges = asarray(bins)
-    bins = [x_edges, y_edges]
+    bins = [x_edges, y_edges]  # pyrefly: ignore[bad-assignment]
 
   sample = transpose(asarray([x, y]))
   hist, edges = histogramdd(sample, bins, range, weights, density)
@@ -1191,6 +1192,7 @@ def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
            [3, 6]], dtype=int32)
   """
   a = util.ensure_arraylike("permute_dims", a)
+  axes = util.canonicalize_axis_tuple(tuple(axes), a.ndim, allow_duplicate=False)
   return lax.transpose(a, axes)
 
 
@@ -2716,10 +2718,12 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
 @overload
 def where(condition: ArrayLike, /, *, size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-          ) -> tuple[Array, ...]: ...
+          ) -> tuple[Array, ...]:
+  ...
 
 @overload
-def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, /) -> Array: ...
+def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, /) -> Array:
+  ...
 
 @export
 def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
@@ -2870,10 +2874,20 @@ def select(
   idx = argmax(conditions.astype(bool), axis=0)
   return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
+def is_replicated_or_unreduced(sharding: NamedSharding) -> bool:
+  if sharding.spec.partitions:
+    return False
+  if sharding.spec.reduced:
+    return False
+  if (sharding.spec.unreduced and
+      sharding.spec.unreduced != set(sharding.mesh.axis_names)):
+    return False
+  return True
 
 @export
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
-             minlength: int = 0, *, length: int | None = None
+             minlength: int = 0, *, length: int | None = None,
+             out_sharding: NamedSharding | P | None = None,
              ) -> Array:
   """Count the number of occurrences of each value in an integer array.
 
@@ -2898,6 +2912,9 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     minlength: the minimum length of the output counts array.
     length: the length of the output counts array. Must be specified statically for
       ``bincount`` to be used with :func:`jax.jit` and other JAX transformations.
+    out_sharding: (optional) :class:`~jax.NamedSharding` or :class:`~jax.P` to
+      which the created array will be committed. Use `out_sharding` argument,
+      if using explicit sharding (https://docs.jax.dev/en/latest/parallel.html).
 
   Returns:
     An array of counts or summed weights reflecting the number of occurrences of values
@@ -2941,28 +2958,48 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     raise TypeError(f"x argument to bincount must have an integer type; got {x.dtype}")
   if np.ndim(x) != 1:
     raise ValueError("only 1-dimensional input supported.")
-  minlength = core.concrete_or_error(operator.index, minlength,
+  minlength = core.concrete_or_error(
+      operator.index, minlength,
       "The error occurred because of argument 'minlength' of jnp.bincount.")
   if length is None:
-    x_arr = core.concrete_or_error(asarray, x,
-      "The error occurred because of argument 'x' of jnp.bincount. "
-      "To avoid this error, pass a static `length` argument.")
+    x_arr = core.concrete_or_error(
+        asarray, x,
+        "The error occurred because of argument 'x' of jnp.bincount. "
+        "To avoid this error, pass a static `length` argument.")
     length = max(minlength, x_arr.size and int(max(0, x_arr.max())) + 1)
   else:
-    length = core.concrete_dim_or_error(length,
+    length = core.concrete_dim_or_error(
+        length,
         "The error occurred because of argument 'length' of jnp.bincount.")
+
   if weights is None:
     weights = np.array(1, dtype=dtypes.int_)
-  elif np.shape(x) != np.shape(weights):
-    raise ValueError("shape of weights must match shape of x.")
-  return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights, mode='drop')
+  else:
+    xts = core.typeof(x).sharding
+    wts = core.typeof(weights).sharding
+    if (np.shape(x) != np.shape(weights) or
+        (not xts.mesh.empty and not wts.mesh.empty and xts != wts)):
+      raise ValueError(
+          "type of weights must match type of x. Got"
+          f" typeof(x)={core.typeof(x).str_short(True, True)} and"
+          f" typeof(weights)={core.typeof(weights).str_short(True, True)}")
+  out_sharding = canonicalize_sharding(out_sharding, 'jnp.bincount')
+  if out_sharding is not None and not is_replicated_or_unreduced(out_sharding):
+    raise core.ShardingTypeError(
+        "out_sharding passed to `jnp.bincount` can only be fully replicated"
+        " or fully unreduced along all mesh axes")
+  return array_creation.zeros(length, _dtype(weights)).at[clip(x, 0)].add(
+      weights, mode='drop', out_sharding=out_sharding)
+
 
 @overload
-def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
+def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]:
+  ...
 
 @overload
 def broadcast_shapes(*shapes: Sequence[int | core.Tracer]
-                     ) -> tuple[int | core.Tracer, ...]: ...
+                     ) -> tuple[int | core.Tracer, ...]:
+  ...
 
 @export
 def broadcast_shapes(*shapes):
@@ -4186,7 +4223,7 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
     mode: a string or callable. Supported pad modes are:
 
       - ``'constant'`` (default): pad with a constant value, which defaults to zero.
-      - ``'empty'``: pad with empty values (i.e. zero)
+      - ``'empty'``: pad with empty (i.e. uninitialized) values
       - ``'edge'``: pad with the edge values of the array.
       - ``'wrap'``: pad by wrapping the array.
       - ``'linear_ramp'``: pad with a linear ramp to specified ``end_values``.
@@ -4378,18 +4415,15 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
     return concatenate(expand_dims(arrays, axis + 1), axis=axis, dtype=dtype)
   else:
     arrays = util.ensure_arraylike_tuple("stack", arrays)
-    shape0 = np.shape(arrays[0])
-    axis = _canonicalize_axis(axis, len(shape0) + 1)
-    new_arrays = []
-    for a in arrays:
-      if np.shape(a) != shape0:
-        raise ValueError("All input arrays must have the same shape.")
-      new_arrays.append(expand_dims(a, axis))
-    return concatenate(new_arrays, axis=axis, dtype=dtype)
+    if dtype is not None:
+      arrays = [asarray(a, dtype=dtype) for a in arrays]
+    else:
+      arrays = util.promote_dtypes(*arrays)
+    return lax.stack(arrays, axis=axis)
 
 
 @export
-@api.jit(static_argnames="axis")
+@api.jit(static_argnames="axis", inline=True)
 def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
   """Unstack an array along an axis.
 
@@ -4421,16 +4455,7 @@ def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
            [4, 5, 6]], dtype=int32)
   """
   x = util.ensure_arraylike("unstack", x)
-  if x.ndim == 0:
-    raise ValueError(
-      "Unstack requires arrays with rank > 0, however a scalar array was "
-      "passed."
-    )
-  dimensions = (axis,)
-  return tuple(
-    lax.squeeze(t, dimensions)
-    for t in lax.split(x, (1,) * x.shape[axis], axis=axis)
-  )
+  return lax.unstack(x, axis=axis)
 
 
 @export
@@ -4552,14 +4577,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
     arrays_out = util.promote_dtypes(*arrays)
   else:
     arrays_out = [asarray(arr, dtype=dtype) for arr in arrays]
-  # lax.concatenate can be slow to compile for wide concatenations, so form a
-  # tree of concatenations as a workaround especially for op-by-op mode.
-  # (https://github.com/jax-ml/jax/issues/653).
-  k = 16
-  while len(arrays_out) > 1:
-    arrays_out = [lax.concatenate(arrays_out[i:i+k], axis)
-                  for i in range(0, len(arrays_out), k)]
-  return arrays_out[0]
+  return lax.concatenate(arrays_out, axis)
 
 
 @export
@@ -6176,13 +6194,19 @@ def ix_(*args: ArrayLike) -> tuple[Array, ...]:
 
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
-            sparse: Literal[False] = False) -> Array: ...
+            sparse: Literal[False] = False) -> Array:
+  ...
+
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
-            *, sparse: Literal[True]) -> tuple[Array, ...]: ...
+            *, sparse: Literal[True]) -> tuple[Array, ...]:
+  ...
+
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
-            sparse: bool = False) -> Array | tuple[Array, ...]: ...
+            sparse: bool = False) -> Array | tuple[Array, ...]:
+  ...
+
 @export
 def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]:
@@ -7418,6 +7442,9 @@ def trim_zeros(filt: ArrayLike, trim: str ='fb',
 
   JAX implementation of :func:`numpy.trim_zeros`.
 
+  Because the size of the output of ``trim_zeros`` is data-dependent, the function
+  is not compatible with :func:`jax.jit` and other JAX transformations.
+
   Args:
     filt: N-dimensional input array.
     trim: string, optional, default = ``fb``. Specifies from which end the input
@@ -7931,7 +7958,8 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
      c = a \times b
 
   In 3 dimensions, ``c`` is a length-3 array. In 2 dimensions, ``c`` is
-  a scalar.
+  a scalar. Note that 2-dimensional inputs are deprecated and will be
+  removed in JAX 0.12.0.
 
   Args:
     a: N-dimensional array. ``a.shape[axisa]`` indicates the dimension of
@@ -7954,13 +7982,6 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
       computing cross products over 3-vectors.
 
   Examples:
-    A 2-dimensional cross product returns a scalar:
-
-    >>> a = jnp.array([1, 2])
-    >>> b = jnp.array([3, 4])
-    >>> jnp.cross(a, b)
-    Array(-2, dtype=int32)
-
     A 3-dimensional cross product returns a length-3 vector:
 
     >>> a = jnp.array([1, 2, 3])
@@ -7979,20 +8000,7 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
     >>> jnp.cross(a, b)
     Array([[-5,  4, -1],
            [ 9, -6, -1]], dtype=int32)
-
-    Specifying axis=0 makes this a batched 2-dimensional cross product,
-    operating on the columns of the inputs:
-
-    >>> jnp.cross(a, b, axis=0)
-    Array([-2, -2, 12], dtype=int32)
-
-    Equivalently, we can independently specify the axis of the inputs ``a``
-    and ``b`` and the output ``c``:
-
-    >>> jnp.cross(a, b, axisa=0, axisb=0, axisc=0)
-    Array([-2, -2, 12], dtype=int32)
   """
-  # TODO(jakevdp): NumPy 2.0 deprecates 2D inputs. Follow suit here.
   util.check_arraylike("cross", a, b)
   if axis is not None:
     axisa = axis
@@ -8003,6 +8011,15 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
 
   if a.shape[-1] not in (2, 3) or b.shape[-1] not in (2, 3):
     raise ValueError("Dimension must be either 2 or 3 for cross product")
+
+  if a.shape[-1] == 2 or b.shape[-1] == 2:
+    deprecations.warn(
+        "jax-numpy-cross-2d-input",
+        "Support for 2-dimensional vectors in jnp.cross is deprecated and "
+        "will be removed in JAX 0.12.0. Use arrays of 3-dimensional "
+        "vectors instead.",
+        stacklevel=2,
+    )
 
   if a.shape[-1] == 2 and b.shape[-1] == 2:
     return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
@@ -8517,6 +8534,11 @@ def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
     return roll(arr.ravel(), shift, 0).reshape(arr.shape)
   axis = _ensure_index_tuple(axis)
   axis = tuple(_canonicalize_axis(ax, arr.ndim) for ax in axis)
+  arr_aval = core.typeof(arr)
+  if any(arr_aval.sharding.spec[i] is not None for i in axis):
+    raise core.ShardingTypeError(
+        "`a` cannot be sharded on the axis being rolled over. Got arr"
+        f" type={arr_aval.str_short(True)} and {axis=}")
   try:
     shift = _ensure_index_tuple(shift)
   except TypeError:
@@ -9016,7 +9038,12 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
   arr = arr[:condition_arr.shape[0]]
 
   if size is None:
-    if reductions.any(extra):
+    msg = ("The size argument of jnp.compress must be specified in order to use "
+           "jnp.compress within JAX transformations like jax.jit, jax.vmap, and "
+           "jax.grad. For more information, refer to the jnp.compress documentation.")
+    condition_arr = core.concrete_or_error(None, condition_arr, msg)
+    extra = core.concrete_or_error(None, extra, msg)
+    if extra.any():
       raise ValueError("condition contains entries that are out of bounds")
     result = arr[condition_arr]
   elif not 0 <= size <= arr.shape[0]:

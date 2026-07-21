@@ -956,6 +956,26 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "x must be positive")
 
+  def test_checkify_custom_jvp(self):
+    @jax.custom_jvp
+    def f(x):
+      return x * 2.0
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      dx, = tangents
+      return f(x), dx * 2.0
+
+    def body(x):
+      checkify.check(x > 0, "x must be positive")
+      return f(x)
+
+    checked_f = jax.jit(checkify.checkify(body))
+    err, res = checked_f(2.0)
+    self.assertIsNone(err.get())
+    self.assertAllClose(res, 4.0)
+
 
 @jtu.with_config(jax_check_tracer_leaks=True)
 class AssertPrimitiveTests(jtu.JaxTestCase):

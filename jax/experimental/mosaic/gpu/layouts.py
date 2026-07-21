@@ -150,8 +150,6 @@ def to_transform_attr(
 ) -> ir.Attribute:
   if isinstance(transform, launch_context.TileTransform):
     return mgpu.TileTransformAttr.get(transform.tiling)
-  elif isinstance(transform, launch_context.TransposeTransform):
-    return mgpu.TransposeTransformAttr.get(transform.permutation)
   elif isinstance(transform, mgpu.SwizzlingMode):
     return mgpu.SwizzleTransformAttr.get(transform)
   else:
@@ -164,10 +162,6 @@ def from_transform_attr(
   if isinstance(transform, mgpu.TileTransformAttr):
     return launch_context.TileTransform(
         tuple(mgpu.TileTransformAttr(transform).tiling)
-    )
-  elif isinstance(transform, mgpu.TransposeTransformAttr):
-    return launch_context.TransposeTransform(
-        tuple(mgpu.TransposeTransformAttr(transform).permutation)
     )
   elif isinstance(transform, mgpu.SwizzleTransformAttr):
     return mgpu.SwizzlingMode(mgpu.SwizzleTransformAttr(transform).swizzle)

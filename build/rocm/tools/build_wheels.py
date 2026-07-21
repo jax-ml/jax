@@ -123,6 +123,7 @@ def build_jaxlib_wheel(
 
     if xla_path:
         cmd.append("--bazel_options=--override_repository=xla=%s" % xla_path)
+        cmd.append("--bazel_options=--override_module=xla=%s" % xla_path)
 
     cpy = to_cpy_ver(python_version)
     py_bin = "/opt/python/%s-%s/bin" % (cpy, cpy)
@@ -251,7 +252,7 @@ def parse_args():
     )
     p.add_argument(
         "--python-versions",
-        default=["3.11.13,3.12"],
+        default=["3.12,3.13,3.14"],
         help="Comma separated CPython versions that wheels will be built and output for",
     )
     p.add_argument(

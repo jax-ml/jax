@@ -1,3 +1,4 @@
+(persistent-compilation-cache)=
 # Persistent compilation cache
 
 <!--* freshness: { reviewed: '2024-11-07' } *-->
@@ -11,6 +12,12 @@ Note: if the compilation cache is not on a local filesystem,
 
 ```python
 pip install etils
+```
+
+```{warning}
+The compilation cache is considered trusted. Do not share a compilation cache with users you do not trust. For example, if you put the
+compilation cache in a directory to which others may write, those users can trigger your JAX process to run arbitrary code. Sharing
+a compilation cache is equivalent to allowing anyone who can write to the cache directory to run code on your machine.
 ```
 
 ## Usage
@@ -259,11 +266,6 @@ jax.config.update("jax_explain_cache_misses", True)
 ```
 
 ## Pitfalls
-
-There are a couple of pitfalls that have currently been discovered:
-
-* Currently the persistent cache doesn't work with function that have host callbacks. In this situation, caching is completely avoided.
-  - This is because the HLO contains a pointer to the callback and changes from run to run even if the computation and compute infrastructure is exactly the same.
 
 * Currently the persistent cache doesn't work with a function that uses primitives that implement their own custom_partitioning.
   - The HLO of the function contains a pointer to the custom_partitioning callback, and leads to different cache keys for the same computation across runs.

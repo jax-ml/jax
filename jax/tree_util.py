@@ -49,6 +49,8 @@ from jax._src.tree_util import (
     SequenceKey as SequenceKey,
     all_leaves as all_leaves,
     default_registry as default_registry,
+    flatten_one_level as flatten_one_level,
+    flatten_one_level_with_keys as flatten_one_level_with_keys,
     is_tree_node as is_tree_node,
     keystr as keystr,
     register_dataclass as register_dataclass,

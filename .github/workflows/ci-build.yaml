@@ -1,4 +1,4 @@
-name: CI
+name: Pytest CPU
 
 on:
   # Trigger the workflow on push or pull request,
@@ -30,40 +30,10 @@ defaults:
     shell: bash
 
 jobs:
-  lint_and_typecheck:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      PYTHON_VERSION: '3.11'
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        id: setup_python
-        uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install lint dependencies
-        env:
-          PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
-        run: |
-          PKG_INSTALL_START_TIME=$(date +%s)
-          uv pip install --python "$PYTHON_BIN" pre-commit
-          echo "### lint_and_typecheck dependency install" >> "$GITHUB_STEP_SUMMARY"
-          echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
-      - id: get-date
-        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ steps.get-date.outputs.date }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
-      - run: $PYTHON_BIN -m pre_commit run --show-diff-on-failure --color=always --all-files
-
-  build:
+  tests:
     # Don't execute in fork due to runner type
     if: github.repository == 'jax-ml/jax'
-    name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-22.04, x64=${{ matrix.enable-x64}})"
+    name: "py${{ matrix.python-version }}, x64=${{ matrix.enable-x64 }}, ubuntu-22.04"
     runs-on: linux-x86-n4-32
     container:
       image: index.docker.io/library/ubuntu@sha256:4e0171b9275e12d375863f2b3ae9ce00a4c53ddda176bd55868df97ac6f21a6e # ratchet:ubuntu:22.04
@@ -72,8 +42,8 @@ jobs:
       matrix:
         # Test the oldest and newest supported Python versions here.
         include:
-          - name-prefix: "with 3.11"
-            python-version: "3.11"
+          - name-prefix: "with 3.12"
+            python-version: "3.12"
             enable-x64: 1
             prng-upgrade: 1
             num_generated_cases: 1
@@ -83,7 +53,7 @@ jobs:
             prng-upgrade: 0
             num_generated_cases: 1
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       with:
         persist-credentials: false
     - name: Set up Python ${{ matrix.python-version }}
@@ -119,90 +89,15 @@ jobs:
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
         $PYTHON_BIN -m pytest -n auto --tb=short --maxfail=20 tests examples
 
-
-  documentation:
-    name: Documentation - test code snippets
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      matrix:
-        python-version: ['3.12']
-    steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      with:
-        persist-credentials: false
-    - name: Set up Python ${{ matrix.python-version }}
-      id: setup_python
-      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      env:
-        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
-      run: |
-        PKG_INSTALL_START_TIME=$(date +%s)
-        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
-        echo "### documentation dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
-        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
-    - name: Test documentation
-      env:
-        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
-        XLA_FLAGS: "--xla_force_host_platform_device_count=8"
-        JAX_TRACEBACK_FILTERING: "off"
-        JAX_ARRAY: 1
-        PY_COLORS: 1
-      run: |
-        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
-        $PYTHON_BIN -m pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/triton.py --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib
-
-
-  documentation_render:
-    name: Documentation - render documentation
-    runs-on: linux-x86-n4-16
-    container:
-      image: index.docker.io/library/ubuntu@sha256:4e0171b9275e12d375863f2b3ae9ce00a4c53ddda176bd55868df97ac6f21a6e #  ratchet:ubuntu:22.04
-    timeout-minutes: 20
-    strategy:
-      matrix:
-        python-version: ['3.12']
-    steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      with:
-        persist-credentials: false
-    - name: Image Setup
-      run: |
-        apt update
-        apt install -y build-essential
-    - name: Set up Python ${{ matrix.python-version }}
-      id: setup_python
-      uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
-      env:
-        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
-      run: |
-        PKG_INSTALL_START_TIME=$(date +%s)
-        uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
-        echo "### documentation_render dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
-        echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
-    - name: Render documentation
-      env:
-        PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
-      run: |
-        $PYTHON_BIN build/portserver.py &
-        SERVER_PID=$!
-        PORTSERVER_ADDRESS=@unittest-portserver $PYTHON_BIN -m sphinx -j auto --color -W --keep-going -b html docs docs/build/html
-        kill $SERVER_PID
-
   ffi:
+    if: github.repository_owner == 'jax-ml'
     name: FFI example
     runs-on: linux-x86-g2-16-l4-1gpu
     container:
       image: index.docker.io/tensorflow/build:latest-python3.12@sha256:48e99608fe9434ada5b14e19fdfd8e64f4cfc83aacd328b9c2101b210e984295 # ratchet:index.docker.io/tensorflow/build:latest-python3.12
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       with:
         persist-credentials: false
     - name: Set up Python 3.12

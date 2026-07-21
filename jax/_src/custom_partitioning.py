@@ -190,14 +190,14 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
         "Mismatch in result shapes. %s vs %s"
         % (repr(closed_jaxpr.out_avals), repr(tiled_results))
     )
-  axis_context = sharding_impls.SPMDAxisContext(mesh)
+  axis_context = sharding_impls.SPMDAxisContext(mesh, frozenset(mesh.axis_names))
   with core.extend_axis_env_nd(mesh.shape.items()):
     module = mlir.build_mlir_module_helper(
         closed_jaxpr,
         name="tmp_xla_computation",
         platforms=module_context.platforms,
         backend=module_context.backend,
-        axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
+        axis_context=axis_context,
     )
   result_sharding = _pack_result_sharding(result_shape, result_shardings)
   return mlir.module_to_bytecode(module), arg_shardings, result_sharding
@@ -532,7 +532,7 @@ class custom_partitioning:
     with core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     assert not len(consts)
-    closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    closed_call = pe.convert_constvars_jaxpr(jaxpr)
 
     propagate_user_sharding = None
     infer_sharding_from_operands = None
@@ -598,6 +598,16 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return mlir.lower_fun(
         core.jaxpr_as_fun(call), multiple_results=True)(ctx, *values)
 
+  if (not config.use_shardy_partitioner.value and
+      infer_sharding_from_operands is None):
+    function = call.jaxpr.debug_info.func_src_info
+    raise NotImplementedError(
+        f"Custom-partitioned function {function!r} does not support GSPMD "
+        "sharding propagation rules. GSPMD is deprecated; please upgrade "
+        "to and enable the Shardy partitioner "
+        "(jax_use_shardy_partitioner=True, which is the default)."
+    )
+
   def to_mesh_pspec_sharding(hlo_sharding: xc.HloSharding | None, ndim):
     if hlo_sharding is None:
       return hlo_sharding
@@ -618,7 +628,8 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)
 
-  result_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, call.out_avals))
+  result_types, _ = mlir.ir_tree_registry.flatten(
+      [mlir.aval_to_ir_types(ctx.module_context, a) for a in call.out_avals])
   out = hlo.CustomCallOp(
       result_types,
       list(values),
@@ -630,7 +641,8 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       operand_layouts=None,
       result_layouts=None)
   if sharding_rule is not None:
-    value_types = mlir.flatten_ir_types(map(mlir.aval_to_ir_types, call.in_avals))
+    value_types, _ = mlir.ir_tree_registry.flatten(
+        [mlir.aval_to_ir_types(ctx.module_context, a) for a in call.in_avals])
     if callable(sharding_rule):
       sharding_rule = sharding_rule(*static_args, mesh, value_types, result_types)
       if isinstance(sharding_rule, (list, tuple)) and len(sharding_rule) == 2:

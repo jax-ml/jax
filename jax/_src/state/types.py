@@ -20,7 +20,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Protocol, Union
+from typing import Any, cast, Protocol, Union
 
 from jax._src import ad_util
 from jax._src import core
@@ -48,16 +48,16 @@ class RefEffect(effects.JaxprInputEffect):
   def __eq__(self, other):
     if not isinstance(other, self.__class__):
       return False
-    return self.input_index == other.input_index
+    return self.input == other.input
 
   def __hash__(self):
-    return hash((self.__class__, self.input_index))
+    return hash((self.__class__, self.input))
 
   def _pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
-    if isinstance(self.input_index, core.Var):
-      index_text = pp.text(core.pp_var(self.input_index, context))
+    if isinstance(self.input, core.Var):
+      index_text = core.pp_var(self.input, context)
     else:
-      index_text = pp.text(self.input_index)
+      index_text = pp.text(str(self.input))
     return pp.concat([
       pp.color(pp.text(self.name), foreground=_ref_effect_color),
       pp.text("<"),
@@ -65,7 +65,7 @@ class RefEffect(effects.JaxprInputEffect):
       pp.text(">")])
 
   def __str__(self):
-    return f"{self.name}<{self.input_index}>"
+    return f"{self.name}<{self.input}>"
 
 class ReadEffect(RefEffect):
   name: str = "Read"
@@ -100,8 +100,19 @@ class Transform(Protocol):
     return pp.text(f"{{{self}}}")
 
 
+class MultiRefTransform(Transform):
+
+  def transform_types(
+      self, xs: Sequence[core.AbstractValue]
+  ) -> core.AbstractValue:
+    raise NotImplementedError(type(self))
+
+  def getattr(self, name: str, xs: Sequence[core.AbstractValue]) -> Any:
+    raise NotImplementedError(type(self), name)
+
+
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class BitcastTransform(Transform):
   dtype: dtypes.DType = dataclasses.field(metadata=dict(static=True))
 
@@ -151,7 +162,7 @@ def _canonicalize_reshape(
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ReshapeTransform(Transform):
   shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
@@ -190,7 +201,7 @@ def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
 
 
 @tree_util.register_dataclass
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class TransposeTransform(Transform):
   permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
@@ -220,7 +231,42 @@ class TransposeTransform(Transform):
     return pp.text(f"{{transpose({list(self.permutation)})}}")
 
 
-@dataclasses.dataclass
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True, slots=True)
+class SelectTransform(MultiRefTransform):
+  idx: Array | int = dataclasses.field(metadata=dict(static=False))
+
+  def transform_types(self, xs):
+    def _type(ref):
+      match ref:
+        case AbstractRef():
+          return ref
+        case core.ShapedArray():
+          raise NotImplementedError
+        case _:
+          raise TypeError(f"Cannot select {ref}")
+
+    assert isinstance(xs, Sequence), f"Select expected sequence, got {xs}"
+    types = tuple(_type(ref) for ref in xs)
+    if any(types[0] != t for t in types[1:]):
+      raise TypeError(f"Cannot select from Refs of different types: {types}")
+    return types[0]
+
+  def undo(self, x: core.AbstractValue) -> Transform:
+    raise NotImplementedError(type(self))
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{select({self.idx=})}}")
+
+  def getattr(self, name: str, xs: Sequence[core.AbstractValue]) -> Any:
+    attrs = [getattr(x, name) for x in xs]
+    if any(attrs[0] != attr for attr in attrs[1:]):
+      raise TypeError(f"Cannot resolve attribute {name} from: {attrs}")
+    return attrs[0]
+
+
+@dataclasses.dataclass(slots=True)
 class RefIndexer:
   """An object temporarily generated when doing ``ref.at``."""
   ref_or_view: Any
@@ -228,9 +274,12 @@ class RefIndexer:
   def __getitem__(self, slc) -> TransformedRef:
     if not isinstance(slc, tuple):
       slc = (slc,)
-    from jax._src.state import indexing  # pyrefly: ignore[missing-import]
+    from jax._src.state import indexing
     indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
-    if isinstance(self.ref_or_view, TransformedRef):
+    if (
+        isinstance(self.ref_or_view, TransformedRef)
+        and not self.ref_or_view.multiref
+    ):
       view = self.ref_or_view
       return TransformedRef(view.ref, (*view.transforms, indexer))
     return TransformedRef(self.ref_or_view, (indexer,))
@@ -241,16 +290,40 @@ class TransformedRef:
   ref: Any
   transforms: tuple[Transform, ...]
 
+  def __post_init__(self):
+    if self.multiref and len(self.transforms) != 1:
+      raise ValueError(
+          f"Multi-ref TransformedRef requires a single transform: {self}"
+      )
+    if any(isinstance(t, MultiRefTransform) for t in self.transforms):
+      assert self.multiref and len(self.transforms) == 1
+
+  @property
+  def multiref(self) -> bool:
+    if isinstance(self.ref, Sequence):
+      if all(isinstance(x, int) for x in self.ref):
+        return False  # self.ref is an array's shape. This happens in lowering.
+      return True
+    return False
+
   @property
   def is_dynamic_size(self):
     return any(not isinstance(i, int) for i in self.shape)
 
   @functools.cached_property
   def type(self) -> core.AbstractValue:
-    if type(self.ref) in core.pytype_aval_mappings:
-      ref_ty = core.typeof(self.ref)
-    else:
-      ref_ty = self.ref
+    def _type(ref):
+      if isinstance(ref, TransformedRef):
+        return ref.type
+      elif type(ref) in core.pytype_aval_mappings:
+        return core.typeof(ref)
+      else:
+        return ref
+
+    if self.multiref:
+      ref_ty = tuple(_type(r) for r in self.ref)
+      return cast(MultiRefTransform, self.transforms[0]).transform_types(ref_ty)
+    ref_ty = _type(self.ref)
     for t in self.transforms:
       ref_ty = t.transform_type(ref_ty)
     return ref_ty
@@ -281,6 +354,8 @@ class TransformedRef:
           "Bitcast ref with dynamic size is not supported."
       )
     dtype = dtypes.dtype(dtype)
+    if self.multiref:
+      return TransformedRef(self, (BitcastTransform(dtype),))
     return TransformedRef(self.ref, (*self.transforms, BitcastTransform(dtype)))
 
   def reshape(self, *shape):
@@ -292,10 +367,16 @@ class TransformedRef:
       shape = shape[0]
     input_shape = tuple(operator.index(s) for s in self.shape)
     shape = _canonicalize_reshape(input_shape, shape)
+    if self.multiref:
+      return TransformedRef(self, (ReshapeTransform(shape),))
     return TransformedRef(self.ref, (*self.transforms, ReshapeTransform(shape)))
 
   def transpose(self, permutation: Sequence[int]):
+    if self.multiref:
+      raise NotImplementedError("Transpose with multiref is not supported.")
     transposer = TransposeTransform(tuple(permutation))
+    if self.multiref:
+      return TransformedRef(self, (transposer,))
     return TransformedRef(self.ref, (*self.transforms, transposer))
 
   def set(self, value, idx=()):
@@ -311,6 +392,8 @@ class TransformedRef:
     return ref_get(self, idx)
 
   def __getattr__(self, name):
+    if self.multiref:
+      return cast(MultiRefTransform, self.transforms[0]).getattr(name, self.ref)
     return getattr(self.ref, name)
 
   def __getitem__(self, slc):
@@ -559,13 +642,6 @@ def _unmap_ref(size, axis, explicit_mesh_axis, ref_aval):
 
 core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
 
-def get_ref_state_effects(
-    avals: Sequence[core.AbstractValue],
-    effects: core.Effects) -> list[set[StateEffect]]:
-  return [{eff for eff in effects
-           if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
-           and eff.input_index == i} for i, _ in enumerate(avals)]
-
 def shaped_array_ref(
     shape: tuple[int, ...], dtype, weak_type: bool = False) -> AbstractRef:
   return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type))
@@ -614,7 +690,7 @@ ad_util.aval_zeros_likers[AbstractRef] = zeros_like_abstract_ref  # pyrefly: ign
 
 # === pinned, chained LinearVals ===
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class AbstractLinVal(core.AbstractValue):
   inner_aval: core.AbstractValue
   memory_space: Any = None

@@ -242,16 +242,20 @@ def mixed_matmul_kernel(
   num_out_slots = min(2, (tile_m * tile_n) // (epi_tile_m * epi_tile_n))
   num_sms = backend.get_default_device().core_count
   cluster_size = 1 + (config.cluster_dimension is not None)
+  compiler_params = plgpu.CompilerParams(
+      lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+  )
   f = plgpu.kernel(
       kernel,
-      out_shape=jax.ShapeDtypeStruct((m, n), out_dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), out_dtype),
       grid=(num_sms // cluster_size,),
       grid_names=("cluster_grid",),
       cluster=(cluster_size,),
       cluster_names=("cluster",),
       num_threads=3,
       thread_name="wg",
-      scratch_shapes=dict(
+      compiler_params=compiler_params,
+      scratch_types=dict(
           out_smem=plgpu.SMEM(
               (2, num_out_slots, epi_tile_m, epi_tile_n),
               out_dtype,

@@ -63,9 +63,9 @@ def main(_):
   logging.info(keras_model.summary())
 
   train_ds = mnist_lib.load_mnist(
-      tfds.Split.TRAIN, batch_size=mnist_lib.train_batch_size)
+      tfds.Split("train"), batch_size=mnist_lib.train_batch_size)
   test_ds = mnist_lib.load_mnist(
-      tfds.Split.TEST, batch_size=mnist_lib.test_batch_size)
+      tfds.Split("test"), batch_size=mnist_lib.test_batch_size)
   keras_model.fit(train_ds, epochs=FLAGS.num_epochs, validation_data=test_ds)
 
   if saved_model_main.SHOW_IMAGES.value:

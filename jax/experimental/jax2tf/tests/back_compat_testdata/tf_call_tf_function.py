@@ -13,8 +13,7 @@
 # limitations under the License.
 
 import datetime
-from numpy import array, float32
-
+import numpy as np
 
 # Pasted from the test output (see back_compat_test.py module docstring)
 data_2023_07_29 = dict(
@@ -22,8 +21,8 @@ data_2023_07_29 = dict(
     platform='cpu',
     custom_call_targets=['tf.call_tf_function'],
     serialized_date=datetime.date(2023, 7, 29),
-    inputs=(array([0.5, 0.7], dtype=float32),),
-    expected_outputs=(array([0.88726   , 0.79956985], dtype=float32),),
+    inputs=(np.array([0.5, 0.7], dtype=np.float32),),
+    expected_outputs=(np.array([0.88726, 0.79956985], dtype=np.float32),),
     mlir_module_text=r"""
 # First the MLIR module:
 #loc = loc(unknown)

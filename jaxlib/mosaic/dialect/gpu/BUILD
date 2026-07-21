@@ -92,7 +92,6 @@ cc_library(
     deps = [
         ":mosaic_gpu_inc_gen",
         "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -100,6 +99,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowInterfaces",
+        "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:IR",
@@ -119,10 +119,10 @@ cc_test(
     srcs = ["mosaic_gpu_test.cc"],
     deps = [
         ":mosaic_gpu",
-        "//testing/base/public:gunit_main",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:BufferizationInterfaces",
         "@llvm-project//mlir:DataLayoutInterfaces",

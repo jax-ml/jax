@@ -355,6 +355,8 @@ deflinear(lax.convert_element_type_p)
 deflinear(lax.broadcast_in_dim_p)
 deflinear(lax.concatenate_p)
 deflinear(lax.split_p)
+deflinear(lax.stack_p)
+deflinear(lax.unstack_p)
 deflinear(lax.pad_p)
 deflinear(lax.reshape_p)
 deflinear(lax.squeeze_p)
@@ -743,11 +745,11 @@ def _jet_jaxpr(
     jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
 ) -> tuple[core.ClosedJaxpr, Any]:
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
-                   debug_info=jaxpr.jaxpr.debug_info.with_unknown_names())
+                   debug_info=jaxpr.debug_info.with_unknown_names())
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
   jaxpr_jet, _, consts = pe.trace_to_jaxpr_dynamic(
       f_jet, primals_and_series_avals)
-  return core.ClosedJaxpr(jaxpr_jet, consts), out_tree_def
+  return jaxpr_jet.with_consts(consts), out_tree_def
 
 
 def _pjit_jet_rule(primals_in, series_in, **params):

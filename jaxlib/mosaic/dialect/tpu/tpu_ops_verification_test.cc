@@ -1039,9 +1039,10 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, IndirectDmaWithoutLocalMem) {
       /*offset_filter=*/nullptr,
       /*add=*/false);
 
-  ASSERT_THAT(VerifyOp(dma),
-              StatusIs(_, HasSubstr("The transfer must be between HBM and "
-                                    "VMEM, or between VMEM_SHARED and VMEM")));
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("The transfer must be between HBM and VMEM, "
+                            "VMEM_SHARED and VMEM, or TC VMEM and VMEM")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest, IndirectDmaOffsetsNotInVmem) {
@@ -1072,6 +1073,37 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, IndirectDma1DSemaphore) {
 
   ASSERT_THAT(VerifyOp(dma),
               StatusIs(_, HasSubstr("Semaphore must be rank 0")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaGatherZeroRankOffsetsInvalid) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({1024, 128}, MemorySpace::kHbm),
+      /*target=*/AllocaI32({16, 128}, MemorySpace::kVmem),
+      /*offsets=*/AllocaI32({}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*offset_filter=*/nullptr,
+      /*add=*/false);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr("Offsets shape must be 1D or (1, N), got ()")));
+}
+
+TEST_F(TpuOpsVectorSubcoreVerificationTest,
+       IndirectDmaGatherHighRankOffsetsInvalid) {
+  auto dma = Create<EnqueueIndirectDMAOp>(
+      /*source=*/AllocaI32({1024, 128}, MemorySpace::kHbm),
+      /*target=*/AllocaI32({1, 64, 32, 128}, MemorySpace::kVmem),
+      /*offsets=*/AllocaI32({1, 64, 32}, MemorySpace::kVmem),
+      /*semaphore=*/AllocaSemaphore(),
+      /*offset_filter=*/nullptr,
+      /*add=*/false);
+
+  ASSERT_THAT(
+      VerifyOp(dma),
+      StatusIs(_, HasSubstr(
+                      "Offsets shape must be 1D or (1, N), got (1, 64, 32)")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,
@@ -1333,9 +1365,10 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest,
       /*src=*/AllocaI32({1024, 256, 128}, MemorySpace::kHbm),
       /*dst=*/AllocaI32({64, 256, 128}, MemorySpace::kHbm));
 
-  ASSERT_THAT(VerifyOp(wait),
-              StatusIs(_, HasSubstr("The transfer must be between HBM and "
-                                    "VMEM, or between VMEM_SHARED and VMEM")));
+  ASSERT_THAT(
+      VerifyOp(wait),
+      StatusIs(_, HasSubstr("The transfer must be between HBM and VMEM, "
+                            "VMEM_SHARED and VMEM, or TC VMEM and VMEM")));
 }
 
 TEST_F(TpuOpsVectorSubcoreVerificationTest,

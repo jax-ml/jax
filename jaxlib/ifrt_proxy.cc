@@ -18,10 +18,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/log/log_entry.h"
@@ -32,7 +32,6 @@
 #include "nanobind/stl/function.h"  // IWYU pragma: keep
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
-#include "nanobind/stl/unordered_map.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
@@ -40,6 +39,7 @@
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt_proxy/client/registry.h"
+#include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/tsl/platform/env.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -55,7 +55,7 @@ struct PyClientConnectionOptions {
   std::optional<std::function<void(std::string)>> on_connection_update;
   std::optional<int64_t> connection_timeout_in_seconds;
   std::optional<
-      std::unordered_map<std::string, std::variant<nb::bytes, bool, int64_t>>>
+      absl::flat_hash_map<std::string, std::variant<nb::bytes, bool, int64_t>>>
       initialization_data;
 };
 
@@ -152,12 +152,12 @@ NB_MODULE(_ifrt_proxy, m) {
   m.def("get_client", xla::ValueOrThrowWrapper(GetClient),
         nb::arg("proxy_server_address"), nb::arg("options"),
         nb::sig(
-          // clang-format: off
-          "def get_client("
-          "proxy_server_address: str, options: ClientConnectionOptions"
-          ") -> Client"
-          // clang-format: on
-          ));
+            // clang-format: off
+            "def get_client("
+            "proxy_server_address: str, options: ClientConnectionOptions"
+            ") -> Client"
+            // clang-format: on
+            ));
 }
 
 }  // namespace proxy

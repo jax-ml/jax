@@ -50,21 +50,6 @@ class TileTransformAttr(ir.Attribute):
   @property
   def tiling(self) -> ir.DenseI32ArrayAttr: ...
 
-class TransposeTransformAttr(ir.Attribute):
-  @staticmethod
-  def isinstance(other_attribute: ir.Attribute) -> bool: ...
-  def __repr__(self) -> str: ...
-  @staticmethod
-  def get_static_typeid() -> ir.TypeID: ...
-  @staticmethod
-  def get(
-      permutation: Sequence[int], context: ir.Context | None = None
-  ) -> TransposeTransformAttr:
-    """Creates a TransposeTransformAttr with the given permutation."""
-
-  @property
-  def permutation(self) -> ir.DenseI32ArrayAttr: ...
-
 class SwizzleTransformAttr(ir.Attribute):
   @staticmethod
   def isinstance(other_attribute: ir.Attribute) -> bool: ...

@@ -267,7 +267,7 @@ directly (the two commands are equivalent):
 bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12
 
 # Free-threaded Python
-bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.13-ft
+bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.14-ft
 ```
 
 Note, since it is still `pip` and `pip-compile` tools used under the hood, so
@@ -457,7 +457,6 @@ which one is selected by specifying `HERMETIC_PYTHON_VERSION`. For example in
 `WORKSPACE` file:
 ```
 requirements = {
-  "3.11": "//build:requirements_lock_3_11.txt",
   "3.12": "//build:requirements_lock_3_12.txt",
   "3.13": "//build:requirements_lock_3_13.txt",
   "3.13-scenario1": "//build:scenario1_requirements_lock_3_13.txt",

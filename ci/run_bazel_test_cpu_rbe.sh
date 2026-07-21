@@ -22,6 +22,7 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+echo "::group::Setup Environment" >&2
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
@@ -35,11 +36,7 @@ source "ci/utilities/setup_build_environment.sh"
 
 OVERRIDE_XLA_REPO=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
-    OVERRIDE_XLA_REPO="--override_repository=xla~=${JAXCI_XLA_GIT_DIR}"
-  else
-    OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
-  fi
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
 # Run Bazel CPU tests with RBE.
@@ -54,8 +51,8 @@ if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
 fi
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -96,8 +93,17 @@ else
     rbe_config=rbe_${os}_${arch}
 fi
 
+TEST_ARTIFACTS_DIR="test-artifacts"
+mkdir -p "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
+
+echo "::group::Bazel CPU RBE tests" >&2
+INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
+
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
+    --invocation_id="$INVOCATION_ID" \
     $BZLMOD_CONFIG \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --build_runfile_links=false \
     --config=$rbe_config \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
@@ -120,6 +126,10 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     //jax/experimental/jax2tf/tests/multiprocess:cpu_tests \
     //jaxlib/tools:check_cpu_wheel_sources_test \
     $IGNORE_TESTS || bazel_retval=$?
+echo "::endgroup::" >&2
+python3 ci/utilities/report_resultstore_link.py "CPU RBE tests" "$INVOCATION_ID" "${bazel_retval:-0}"
 
-ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+echo "::group::Cleanup" >&2
+ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
+echo "::endgroup::" >&2
 exit "${bazel_retval:-0}"

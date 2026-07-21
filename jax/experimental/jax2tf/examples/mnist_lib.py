@@ -207,23 +207,23 @@ class FlaxMNIST:
 
     @nn.compact
     def __call__(self, x, with_classifier=True):
-      x = nn.Conv(features=32, kernel_size=(3, 3))(x)
+      x = nn.Conv(features=32, kernel_size=(3, 3))(x)  # pyrefly: ignore[missing-argument]
       x = nn.relu(x)
       x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
-      x = nn.Conv(features=64, kernel_size=(3, 3))(x)
+      x = nn.Conv(features=64, kernel_size=(3, 3))(x)  # pyrefly: ignore[missing-argument]
       x = nn.relu(x)
       x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
       x = x.reshape((x.shape[0], -1))  # flatten
-      x = nn.Dense(features=256)(x)
+      x = nn.Dense(features=256)(x)  # pyrefly: ignore[missing-argument]
       x = nn.relu(x)
       if not with_classifier:
         return x
-      x = nn.Dense(features=10)(x)
+      x = nn.Dense(features=10)(x)  # pyrefly: ignore[missing-argument]
       x = nn.log_softmax(x)
       return x
 
   # Create the model and save it
-  model = Module()
+  model = Module()  # pyrefly: ignore[missing-argument]
 
   @staticmethod
   def predict(params, inputs, with_classifier=True):

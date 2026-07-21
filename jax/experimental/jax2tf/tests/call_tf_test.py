@@ -819,6 +819,8 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       for type_ in dlpack.SUPPORTED_DTYPES_SET
   )
   def test_avoid_copy_between_gpu_and_cpu(self, type_):
+    if dtypes.canonicalize_dtype(type_) != type_:
+      raise unittest.SkipTest(f"Dtype {type_} requires x64=1")
     try:
       gpu_devices = jax.devices("gpu")
     except RuntimeError:
@@ -1292,8 +1294,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
       return jax2tf.call_tf(tf.math.sin,
-          output_shape_dtype=(jax.ShapeDtypeStruct(x.shape, x.dtype),
-                              jax.ShapeDtypeStruct(x.shape, x.dtype)))(x)
+          output_shape_dtype=(jax.ShapeDtypeStruct.like(x),
+                              jax.ShapeDtypeStruct.like(x)))(x)
 
     fun_tf_rt = _maybe_tf_jit(with_jit,
         jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))

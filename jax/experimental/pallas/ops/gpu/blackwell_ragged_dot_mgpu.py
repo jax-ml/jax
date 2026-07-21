@@ -329,12 +329,14 @@ def ragged_dot_kernel(a, b, group_sizes, config: TuningConfig):
         )
 
   num_sms = jax.local_devices()[0].core_count
-  compiler_params = None
+  compiler_params = plgpu.CompilerParams(
+      lowering_semantics=plgpu.LoweringSemantics.Warpgroup
+  )
   f = plgpu.kernel(
       kernel,
       compiler_params=compiler_params,
       kernel_name=f"ragged_dot_kernel_{str(config)}",
-      out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
       grid=(num_sms//2,) if collective else (num_sms,),
       grid_names=("sm",),
       num_threads=2,
@@ -385,6 +387,7 @@ def main(_) -> None:
   peak_flops = 2.25e15  # f16 TensorCore peak = 2250 TFLOPS
   a = jax.random.uniform(jax.random.key(1), (M, K), jnp.float16)
   b = jax.random.uniform(jax.random.key(2), (num_groups, K, N), jnp.float16)
+  expected = ragged_dot_reference(a, b, group_sizes)
 
   tuning_it = itertools.product(
       (128,),  # tile_m
@@ -418,7 +421,6 @@ def main(_) -> None:
         print(e.args[0])
         continue
       raise
-    expected = ragged_dot_reference(a, b, group_sizes)
     np.testing.assert_allclose(out, expected)
 
     runtime_us = runtime_ms * 1e3

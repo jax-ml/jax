@@ -383,7 +383,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_lowering_that_sets_wrong_tokens_should_cause_error(self):
 
     def bad_effect_lowering(ctx, *, effect):
-      ctx.set_tokens_out(mlir.TokenSet(bar=ctx.tokens_in.get(foo_effect)))
+      ctx.set_tokens_out(mlir.TokenSet({"bar": ctx.tokens_in.get(foo_effect)}))
       return []
     mlir.register_lowering(effect_p, bad_effect_lowering)
 
@@ -914,81 +914,90 @@ input_effect_p.def_effectful_abstract_eval(_input_effect_abstract_eval)
 
 class JaxprInputEffectTest(jtu.JaxTestCase):
 
+  def assertInputEffect(self, jaxpr, index):
+    # An InputEffect on the index-th input (constvars + invars) of jaxpr.
+    if isinstance(jaxpr, core.ClosedJaxpr):
+      jaxpr = jaxpr.jaxpr
+    inputs = [*jaxpr.constvars, *jaxpr.invars]
+    self.assertIn(InputEffect(inputs[index]), jaxpr.effects)
+
   def test_simple_jaxpr_input_effect(self):
     def f(x, y):
       input_effect(x, y, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 0)
 
   def test_jaxpr_input_effect_is_tracked_by_index_properly(self):
     def f(x, y):
       input_effect(y, x, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 1)
 
     def f(x, y):
       input_effect(y, x, index=1)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 0)
 
   def test_jaxpr_input_effect_is_tracked_through_a_jit(self):
     @jax.jit
     def f(x, y):
       input_effect(y, x, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 1)
 
     @jax.jit
     def f(x, y):
       return jax.jit(lambda a, b: input_effect(b, a, index=1))(x, y)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(0), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 0)
 
     x = np.array([0, 1])
     @jax.jit
     def f(y):
       return input_effect(x, y, index=0)
     jaxpr = jax.make_jaxpr(f)(0)
-    if config.use_simplified_jaxpr_constants.value:
-      self.assertEmpty(jaxpr.effects)
-    else:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+    # The effect is on a const closed over by the inner jit jaxpr. It has no
+    # corresponding input at the call boundary, so it must be dropped there
+    # rather than misattributed to another input.
+    self.assertEmpty(jaxpr.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_partial_eval_custom(self):
     def f(_, y):
       input_effect(y, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 1)
 
     jaxpr_left, jaxpr_right, _, _, _ = pe.partial_eval_jaxpr_custom(
         jaxpr.jaxpr, [False, True], in_inst=[False, True],
         ensure_out_unknowns=[], ensure_out_inst=[],
         saveable=lambda *_, **__: True)
     self.assertEmpty(jaxpr_left.effects)
-    self.assertSetEqual({InputEffect(0)}, jaxpr_right.effects)
+    self.assertSetEqual({InputEffect(jaxpr_right.invars[0])},
+                        jaxpr_right.effects)
 
     jaxpr_left, jaxpr_right, _, _, _ = pe.partial_eval_jaxpr_custom(
         jaxpr.jaxpr, [True, False], in_inst=[True, False],
         ensure_out_unknowns=[], ensure_out_inst=[],
         saveable=lambda *_, **__: True)
     self.assertEmpty(jaxpr_right.effects)
-    self.assertSetEqual({InputEffect(0)}, jaxpr_left.effects)
+    self.assertSetEqual({InputEffect(jaxpr_left.invars[0])},
+                        jaxpr_left.effects)
 
   def test_jaxpr_input_effect_is_tracked_through_dce(self):
     def f(_, y):
       input_effect(y, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 1)
     jaxpr2, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False, False])
-    self.assertIn(InputEffect(0), jaxpr2.effects)
+    self.assertInputEffect(jaxpr2, 0)
 
     @jax.jit
     def f(_, y):
       input_effect(y, index=0)
     jaxpr = jax.make_jaxpr(f)(0, 1)
-    self.assertIn(InputEffect(1), jaxpr.effects)
+    self.assertInputEffect(jaxpr, 1)
     jaxpr2, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False, False])
-    self.assertIn(InputEffect(0), jaxpr2.effects)
+    self.assertInputEffect(jaxpr2, 0)
 
     x = np.ones(2, np.int32)
     def f(_):
@@ -997,12 +1006,12 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.effects)
     else:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
     jaxpr3, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False])
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr3.effects)
     else:
-      self.assertIn(InputEffect(0), jaxpr3.effects)
+      self.assertInputEffect(jaxpr3, 0)
 
   def test_jaxpr_input_effect_is_tracked_through_while_loop(self):
 
@@ -1017,15 +1026,15 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(0)
     if config.use_simplified_jaxpr_constants.value:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
     else:
-      self.assertIn(InputEffect(1), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 1)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(0)
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.effects)
     else:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
 
     def f(x):
       def body(y):
@@ -1036,7 +1045,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.effects)
     else:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
 
   def test_jaxpr_input_effect_is_tracked_through_scan(self):
     c = np.ones(2)
@@ -1049,21 +1058,21 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
     if config.use_simplified_jaxpr_constants.value:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
     else:
-      self.assertIn(InputEffect(1), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 1)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
     if config.use_simplified_jaxpr_constants.value:
-      self.assertIn(InputEffect(1), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 1)
     else:
-      self.assertIn(InputEffect(2), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 2)
 
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.effects)
     else:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
 
   def test_jaxpr_input_effect_is_tracked_through_scan_with_dce(self):
     c = np.ones(2)
@@ -1077,23 +1086,23 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
     if config.use_simplified_jaxpr_constants.value:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
     else:
-      self.assertIn(InputEffect(1), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 1)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
     if config.use_simplified_jaxpr_constants.value:
-      self.assertIn(InputEffect(1), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 1)
     else:
-      self.assertIn(InputEffect(2), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 2)
 
     jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
     jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [])
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.effects)
     else:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
 
   def test_jaxpr_input_effect_is_tracked_through_cond(self):
 
@@ -1111,15 +1120,108 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     # [c, pred, x]
     jaxpr = jax.make_jaxpr(make_fun(0))(0)
     if config.use_simplified_jaxpr_constants.value:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
     else:
-      self.assertIn(InputEffect(1), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 1)
 
     jaxpr = jax.make_jaxpr(make_fun(1))(0)
     if config.use_simplified_jaxpr_constants.value:
       self.assertEmpty(jaxpr.effects)
     else:
-      self.assertIn(InputEffect(0), jaxpr.effects)
+      self.assertInputEffect(jaxpr, 0)
+
+
+class TokenSetTest(jtu.JaxTestCase):
+
+  def test_init_and_len(self):
+    ts_empty = mlir.TokenSet()
+    self.assertLen(ts_empty, 0)
+
+    ts_empty_dict = mlir.TokenSet({})
+    self.assertLen(ts_empty_dict, 0)
+
+    effects = [OrderedEffect("eff1"), OrderedEffect("eff2")]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+    self.assertLen(ts, 2)
+
+  def test_get(self):
+    eff1 = OrderedEffect("eff1")
+    eff2 = OrderedEffect("eff2")
+    ts = mlir.TokenSet({eff1: "token1", eff2: "token2"})
+    self.assertEqual(ts.get(eff1), "token1")
+    self.assertEqual(ts.get(eff2), "token2")
+    with self.assertRaises(KeyError):
+      ts.get(OrderedEffect("eff3"))
+
+  def test_items(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+    items = ts.items()
+    self.assertLen(items, 5)
+    for i, (eff, token) in enumerate(items):
+      self.assertEqual(eff, effects[i])
+      self.assertEqual(token, f"token{i}")
+
+  def test_effects(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+    self.assertSetEqual(ts.effects(), set(effects))
+
+  def test_subset(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+
+    subset_effects = [effects[1], effects[3]]
+    sub_ts = ts.subset(subset_effects)
+    self.assertEqual(sub_ts.items(), (
+        (effects[1], "token1"),
+        (effects[3], "token3")
+    ))
+
+  def test_update_tokens(self):
+    effects = [OrderedEffect(f"eff{i}") for i in range(5)]
+    ts = mlir.TokenSet({eff: f"token{i}" for i, eff in enumerate(effects)})
+
+    # Empty update should return self
+    ts_no_change = ts.update_tokens(mlir.TokenSet())
+    self.assertIs(ts_no_change, ts)
+
+    # Update one token
+    ts_updated = ts.update_tokens(mlir.TokenSet({effects[2]: "token2_new"}))
+    self.assertEqual(ts_updated.items(), (
+        (effects[0], "token0"),
+        (effects[1], "token1"),
+        (effects[2], "token2_new"),
+        (effects[3], "token3"),
+        (effects[4], "token4")
+    ))
+
+    # Update multiple tokens
+    ts_updated_multi = ts.update_tokens(mlir.TokenSet({
+        effects[4]: "token4_new",
+        effects[1]: "token1_new"
+    }))
+    self.assertEqual(ts_updated_multi.items(), (
+        (effects[0], "token0"),
+        (effects[1], "token1_new"),
+        (effects[2], "token2"),
+        (effects[3], "token3"),
+        (effects[4], "token4_new")
+    ))
+
+  def test_create(self):
+    effects = [OrderedEffect("eff1"), OrderedEffect("eff2")]
+    with mlir.make_ir_context() as ctx, mlir.ir.Location.unknown(ctx):
+      module = mlir.ir.Module.create()
+      with mlir.ir.InsertionPoint(module.body):
+        ts = mlir.TokenSet.create(effects)
+        self.assertEqual(ts.items(), (
+            (effects[0], ts.get(effects[0])),
+            (effects[1], ts.get(effects[1]))
+        ))
+        for _, token in ts.items():
+          self.assertIsInstance(token, mlir.ir.Value)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

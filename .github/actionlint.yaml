@@ -1,6 +1,7 @@
 # Configuration related to self-hosted runner.
 self-hosted-runner:
   labels:
+    - "linux-x86-n4-4" # Linux X86 runner using the 4 vcpu n4-standard-4 machine.
     - "linux-x86-n4-16" # Linux X86 runner using the 16 vcpu n4-standard-16 machine.
     - "linux-x86-n4-32" # Linux X86 runner using the 32 vcpu n4-standard-32 machine.
     - "linux-x86-n4-64" # Linux X86 runner using the 64 vcpu n2-standard-64 machine.

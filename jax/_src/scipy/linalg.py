@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 import math
+import operator
 import textwrap
 from typing import overload, Any, Literal
 import warnings
@@ -34,6 +35,7 @@ from jax._src.numpy import vectorize as jnp_vectorize
 from jax._src.numpy.util import (
     check_arraylike, promote_dtypes, promote_dtypes_inexact,
     promote_dtypes_complex, promote_args_inexact)
+from jax._src.scipy.special import comb
 from jax._src.tpu.linalg import qdwh
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
@@ -2612,6 +2614,272 @@ def _circulant(c: Array) -> Array:
   return c[idx]
 
 
+def leslie(f: ArrayLike, s: ArrayLike) -> Array:
+  r"""Construct a Leslie matrix.
+
+  JAX implementation of :func:`scipy.linalg.leslie`.
+
+  Given fecundity coefficients ``f`` of shape ``(..., N)`` and survival
+  coefficients ``s`` of shape ``(..., N - 1)``, the Leslie matrix has ``f`` as
+  its first row, ``s`` along its first sub-diagonal, and zeros elsewhere.
+
+  Args:
+    f: array of shape ``(..., N)`` with ``N >= 2`` containing the fecundity
+      coefficients.
+    s: array of shape ``(..., N - 1)`` containing the survival coefficients.
+
+  Returns:
+    A Leslie matrix of shape ``(..., N, N)``.
+
+  Examples:
+    >>> jax.scipy.linalg.leslie(jnp.array([0.1, 2.0, 1.0, 0.1]),
+    ...                         jnp.array([0.2, 0.8, 0.7]))
+    Array([[0.1, 2. , 1. , 0.1],
+           [0.2, 0. , 0. , 0. ],
+           [0. , 0.8, 0. , 0. ],
+           [0. , 0. , 0.7, 0. ]], dtype=float32)
+  """
+  check_arraylike("leslie", f, s)
+  f_arr = jnp.atleast_1d(f)
+  s_arr = jnp.atleast_1d(s)
+  if f_arr.shape[-1] < 2:
+    raise ValueError(
+        "The length of f along the last axis must be at least 2; "
+        f"got shape {f_arr.shape}.")
+  if s_arr.shape[-1] != f_arr.shape[-1] - 1:
+    raise ValueError(
+        "Incorrect lengths for f and s. The length of s along the last axis "
+        f"must be one less than the length of f; got f shape {f_arr.shape} "
+        f"and s shape {s_arr.shape}.")
+  return _leslie(f_arr, s_arr)
+
+@partial(jnp_vectorize.vectorize, signature="(n),(m)->(n,n)")
+def _leslie(f: Array, s: Array) -> Array:
+  f, s = promote_dtypes(f, s)
+  return jnp.diag(s, k=-1).at[0].set(f)
+
+
+def companion(a: ArrayLike) -> Array:
+  r"""Construct a companion matrix.
+
+  JAX implementation of :func:`scipy.linalg.companion`.
+
+  Given polynomial coefficients :math:`a = [a_0, a_1, \ldots, a_{n-1}]` with
+  :math:`a_0 \neq 0`, the companion matrix is the :math:`(n-1) \times (n-1)`
+  matrix whose first row is :math:`-[a_1, a_2, \ldots, a_{n-1}] / a_0` and
+  whose first sub-diagonal is filled with ones.
+
+  Args:
+    a: array of shape ``(..., N)`` with ``N >= 2`` specifying the polynomial
+      coefficients.
+
+  Returns:
+    A companion matrix of shape ``(..., N - 1, N - 1)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.companion`, this function does not check at
+    runtime that ``a[..., 0]`` is non-zero; if the leading coefficient is
+    zero, the result will contain ``inf`` or ``nan`` entries.
+
+  Examples:
+    >>> jax.scipy.linalg.companion(jnp.array([1., -10., 31., -30.]))
+    Array([[ 10., -31.,  30.],
+           [  1.,   0.,   0.],
+           [  0.,   1.,   0.]], dtype=float32)
+  """
+  a, = promote_args_inexact("companion", a)
+  a = jnp.atleast_1d(a)
+  if a.shape[-1] < 2:
+    raise ValueError(
+        "The length of `a` along the last axis must be at least 2; "
+        f"got shape {a.shape}.")
+  return _companion(a)
+
+@partial(jnp_vectorize.vectorize, signature="(n)->(m,m)")
+def _companion(a: Array) -> Array:
+  first_row = -a[1:] / a[0]
+  m = a.shape[0] - 1
+  out = jnp.eye(m, m, k=-1, dtype=first_row.dtype)
+  return out.at[0].set(first_row)
+
+
+def fiedler(a: ArrayLike) -> Array:
+  r"""Construct a symmetric Fiedler matrix.
+
+  JAX implementation of :func:`scipy.linalg.fiedler`.
+
+  The Fiedler matrix has entries :math:`F_{ij} = |a_i - a_j|` for
+  :math:`0 \le i, j < n`, where ``a`` is the input vector. The result is
+  symmetric with a zero diagonal.
+
+  Args:
+    a: array of shape ``(..., N)``.
+
+  Returns:
+    A Fiedler matrix of shape ``(..., N, N)``.
+
+  Examples:
+    >>> jax.scipy.linalg.fiedler(jnp.array([1, 4, 12, 45, 77]))
+    Array([[ 0,  3, 11, 44, 76],
+           [ 3,  0,  8, 41, 73],
+           [11,  8,  0, 33, 65],
+           [44, 41, 33,  0, 32],
+           [76, 73, 65, 32,  0]], dtype=int32)
+  """
+  check_arraylike("fiedler", a)
+  arr = jnp.atleast_1d(a)
+  return jnp.abs(arr[..., None] - arr[..., None, :])
+
+
+def fiedler_companion(a: ArrayLike) -> Array:
+  r"""Construct a Fiedler companion matrix.
+
+  JAX implementation of :func:`scipy.linalg.fiedler_companion`.
+
+  Given polynomial coefficients :math:`a = [a_0, a_1, \ldots, a_{n}]` with
+  :math:`a_0 \neq 0`, this constructs a pentadiagonal matrix whose
+  eigenvalues coincide with the roots of the polynomial. The result is
+  similar to :func:`companion` but with a sparser, banded structure.
+
+  Args:
+    a: array of shape ``(..., N)`` specifying the polynomial coefficients in
+      descending order. The last axis must have nonzero length. For ``N == 1``
+      an empty ``(0, 0)`` matrix is returned along that slice.
+
+  Raises:
+    ValueError: if the last axis of ``a`` has length zero.
+
+  Returns:
+    A Fiedler companion matrix of shape ``(..., N - 1, N - 1)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.fiedler_companion`, this function does not
+    check at runtime that ``a[..., 0]`` is non-zero; if the leading
+    coefficient is zero, the result will contain ``inf`` or ``nan`` entries.
+
+  Examples:
+    >>> a = jnp.array([1., -16., 86., -176., 105.])
+    >>> jax.scipy.linalg.fiedler_companion(a)
+    Array([[ 16., -86.,   1.,   0.],
+           [  1.,   0.,   0.,   0.],
+           [  0., 176.,   0., -105.],
+           [  0.,   1.,   0.,   0.]], dtype=float32)
+  """
+  a, = promote_args_inexact("fiedler_companion", a)
+  a = jnp.atleast_1d(a)
+  if a.shape[-1] == 0:
+    raise ValueError(
+        "fiedler_companion requires the last axis of 'a' to have nonzero "
+        f"length, but got an array of shape {a.shape}.")
+  return _fiedler_companion(a)
+
+@partial(jnp_vectorize.vectorize, signature="(n)->(m,m)")
+def _fiedler_companion(a: Array) -> Array:
+  n = a.shape[0] - 1
+  if n == 0:
+    return jnp.empty_like(a, shape=(0, 0))
+  a = a / a[0]
+  if n == 1:
+    return -a[1:].reshape(1, 1)
+  # Build the matrix with full-grid masked assignments so static shapes are
+  # preserved under jit and vectorize. The pentadiagonal layout is:
+  #   c[0, 0]               = -a[1]            (first column top)
+  #   c[1, 0]               = 1                (first column second row)
+  #   c[i,   i+1]           = -a[i+2]          (super-diag, even i, i+1 < n)
+  #   c[i,   i+2]           = 1                (second super, even i, i+2 < n)
+  #   c[i,   i-1]           = -a[i+1]          (sub-diag, even i >= 2, < n)
+  #   c[i,   i-2]           = 1                (second sub, odd i >= 3, < n)
+  i = jnp.arange(n)[:, None]
+  j = jnp.arange(n)[None, :]
+  # Clip indices so out-of-range lookups are safe; masks below select valid
+  # cells.
+  super_val = -a[jnp.minimum(i + 2, n)]
+  sub_val = -a[jnp.minimum(i + 1, n)]
+  i_even = (i % 2 == 0)
+  i_odd = (i % 2 == 1)
+  one = jnp.array(1, dtype=a.dtype)
+  zero = jnp.array(0, dtype=a.dtype)
+  conditions = [
+      (i == 0) & (j == 0),
+      (i == 1) & (j == 0),
+      (j == i + 1) & i_even,
+      (j == i + 2) & i_even,
+      (j == i - 1) & i_even & (i >= 2),
+      (j == i - 2) & i_odd & (i >= 3),
+  ]
+  choices = [-a[1], one, super_val, one, sub_val, one]
+  return jnp.select(conditions, choices, default=zero)
+
+
+@jit(static_argnames=("n", "mode"))
+def convolution_matrix(a: ArrayLike, n: int, mode: str = 'full') -> Array:
+  r"""Construct a convolution matrix.
+
+  JAX implementation of :func:`scipy.linalg.convolution_matrix`.
+
+  Builds a Toeplitz matrix :math:`A` such that ``A @ v`` equals
+  ``jnp.convolve(a, v, mode)``. The returned array has ``n`` columns;
+  the row count :math:`k` depends on ``mode``:
+
+  - ``'full'``: :math:`k = m + n - 1`
+  - ``'same'``: :math:`k = \max(m, n)`
+  - ``'valid'``: :math:`k = \max(m, n) - \min(m, n) + 1`
+
+  where :math:`m` is the size of ``a`` along the last axis.
+
+  Args:
+    a: array of shape ``(..., m)`` to convolve. Must have ``m >= 1``.
+    n: number of columns in the output. Must be a positive integer.
+    mode: one of ``'full'``, ``'same'``, ``'valid'``. Defaults to ``'full'``.
+
+  Returns:
+    A convolution matrix of shape ``(..., k, n)``, where ``k`` depends on
+    ``mode`` as described above.
+
+  See also:
+    :func:`jax.scipy.linalg.toeplitz`
+
+  Examples:
+    >>> jax.scipy.linalg.convolution_matrix(jnp.array([-1, 4, -2]), 5, mode='same')
+    Array([[ 4, -1,  0,  0,  0],
+           [-2,  4, -1,  0,  0],
+           [ 0, -2,  4, -1,  0],
+           [ 0,  0, -2,  4, -1],
+           [ 0,  0,  0, -2,  4]], dtype=int32)
+  """
+  n = operator.index(n)
+  if n <= 0:
+    raise ValueError(f"n must be a positive integer; got {n}.")
+  check_arraylike("convolution_matrix", a)
+  a_arr = jnp.asarray(a)
+  if a_arr.ndim == 0:
+    raise ValueError(
+        "convolution_matrix: a must be at least 1-dimensional, got a scalar.")
+  m = a_arr.shape[-1]
+  if m < 1:
+    raise ValueError(f"len(a) must be at least 1; got shape {a_arr.shape}.")
+  if mode not in ('full', 'valid', 'same'):
+    raise ValueError(
+        f"mode must be one of 'full', 'valid', 'same'; got {mode!r}.")
+  pad_widths = [(0, 0)] * (a_arr.ndim - 1) + [(0, n - 1)]
+  az = jnp.pad(a_arr, pad_widths)
+  raz = jnp.pad(jnp.flip(a_arr, axis=-1), pad_widths)
+  L = m + n - 1
+  if mode == 'same':
+    trim = min(n, m) - 1
+    tb = trim // 2
+    te = trim - tb
+  elif mode == 'valid':
+    tb = min(n, m) - 1
+    te = tb
+  else:  # 'full'
+    tb = 0
+    te = 0
+  col0 = lax.slice_in_dim(az, tb, L - te, axis=-1)
+  row0 = lax.slice_in_dim(raz, L - n - tb, L - tb, axis=-1)
+  return toeplitz(col0, row0)
+
+
 @jit(static_argnames=("n",))
 def hilbert(n: int) -> Array:
   r"""Create a Hilbert matrix of order n.
@@ -2643,6 +2911,60 @@ def hilbert(n: int) -> Array:
   """
   a = lax.broadcasted_iota(float, (n, 1), 0)
   return 1/(a + a.T + 1)
+
+
+@jit(static_argnames=("n",))
+def invhilbert(n: int) -> Array:
+  r"""Compute the inverse of the Hilbert matrix of order n.
+
+  JAX implementation of :func:`scipy.linalg.invhilbert`.
+
+  The entries are given by a closed-form expression in terms of binomial
+  coefficients:
+
+  .. math::
+
+     H^{-1}_{ij} = (-1)^{i + j} (i + j + 1)
+                   \binom{n + i}{n - j - 1}
+                   \binom{n + j}{n - i - 1}
+                   \binom{i + j}{i}^2
+
+  for :math:`0 \le i, j < n`.
+
+  Args:
+    n: the size of the matrix to create.
+
+  Returns:
+    The inverse of the Hilbert matrix of shape ``(n, n)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.invhilbert`, this function does not support
+    ``exact=True``. The result is computed in floating point using
+    :func:`~jax.scipy.special.comb`; for large ``n`` the entries quickly
+    exceed the dynamic range of finite-precision floats.
+
+  See Also:
+    :func:`jax.scipy.linalg.hilbert`
+
+  Examples:
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   print(jax.scipy.linalg.invhilbert(2))
+    ...   print(jax.scipy.linalg.invhilbert(3))
+    [[ 4. -6.]
+     [-6. 12.]]
+    [[   9.  -36.   30.]
+     [ -36.  192. -180.]
+     [  30. -180.  180.]]
+  """
+  a = jnp.arange(n, dtype=dtypes.default_float_dtype())
+  i = a[:, None]
+  j = a[None, :]
+  s = i + j
+  return ((-1.0) ** s * (s + 1.0)
+          * comb(n + i, n - j - 1)
+          * comb(n + j, n - i - 1)
+          * comb(s, i) ** 2)
+
 
 @jit(static_argnames=("n", "kind",))
 def pascal(n: int, kind: str | None = None) -> Array:
@@ -2706,7 +3028,112 @@ def _binom(n, k):
   return lax.exp(a - b - c)
 
 
-@partial(jit, static_argnames=("n", "dtype"))
+@jit(static_argnames=("n", "kind",))
+def invpascal(n: int, kind: str | None = None) -> Array:
+  r"""Compute the inverse of the Pascal matrix of order n.
+
+  JAX implementation of :func:`scipy.linalg.invpascal`.
+
+  The inverses of the lower and upper Pascal matrices have a simple closed
+  form,
+
+  .. math::
+
+     L^{-1}_{ij} = (-1)^{i - j} \binom{i}{j}, \qquad U^{-1} = (L^{-1})^T,
+
+  and the symmetric inverse satisfies :math:`P_S^{-1} = U^{-1} L^{-1}`.
+
+  Args:
+    n: the size of the matrix to create.
+    kind: (optional) must be one of ``lower``, ``upper``, or ``symmetric``
+      (default).
+
+  Returns:
+    The inverse of the Pascal matrix of shape ``(n, n)``.
+
+  Note:
+    Unlike :func:`scipy.linalg.invpascal`, this function does not support
+    ``exact=True``. The entries are computed in floating point through
+    :func:`~jax.scipy.special.gammaln`-based binomial coefficients.
+
+  See Also:
+    :func:`jax.scipy.linalg.pascal`
+
+  Examples:
+    >>> with jnp.printoptions(precision=3, suppress=True):
+    ...   print(jax.scipy.linalg.invpascal(4, kind="lower"))
+    ...   print(jax.scipy.linalg.invpascal(5))
+    [[ 1. -0.  0. -0.]
+     [-1.  1. -0.  0.]
+     [ 1. -2.  1. -0.]
+     [-1.  3. -3.  1.]]
+    [[  5. -10.  10.  -5.   1.]
+     [-10.  30. -35.  19.  -4.]
+     [ 10. -35.  46. -27.   6.]
+     [ -5.  19. -27.  17.  -4.]
+     [  1.  -4.   6.  -4.   1.]]
+  """
+  if kind is None:
+    kind = "symmetric"
+
+  valid_kind = ["symmetric", "lower", "upper"]
+  if kind not in valid_kind:
+    raise ValueError(f"Expected kind to be one of: {valid_kind}; got {kind}")
+
+  a = jnp.arange(n, dtype=dtypes.default_float_dtype())
+  i = a[:, None]
+  j = a[None, :]
+  # Lower-triangular inverse: (-1)^(i-j) * binom(i, j).
+  L_inv = ((-1.0) ** (i - j)) * _binom(i, j)
+
+  if kind == "lower":
+    return L_inv
+  if kind == "upper":
+    return L_inv.T
+  return jnp.dot(L_inv.T, L_inv)
+
+
+@jit(static_argnames=("n", "full"))
+def helmert(n: int, full: bool = False) -> Array:
+  r"""Construct a Helmert matrix.
+
+  JAX implementation of :func:`scipy.linalg.helmert`.
+
+  The Helmert matrix has rows of orthonormal contrasts. For ``k = 1, ...,
+  n - 1``, row ``k - 1`` is :math:`(\underbrace{1, \ldots, 1}_{k}, -k, 0,
+  \ldots, 0) / \sqrt{k(k + 1)}`. If ``full`` is ``True``, a row of
+  :math:`1 / \sqrt{n}` is prepended.
+
+  Args:
+    n: size of the matrix. Must be a positive integer.
+    full: if ``True``, return the full ``(n, n)`` matrix; otherwise return
+      only the ``(n - 1, n)`` contrast block. Defaults to ``False``.
+
+  Returns:
+    A Helmert matrix of shape ``(n - 1, n)`` if ``full`` is ``False``, or
+    ``(n, n)`` if ``full`` is ``True``.
+
+  Examples:
+    >>> jax.scipy.linalg.helmert(2, full=True).round(3)
+    Array([[ 0.707,  0.707],
+           [ 0.707, -0.707]], dtype=float32)
+  """
+  if n < 1:
+    raise ValueError(f"n must be a positive integer; got {n}.")
+  i = jnp.arange(n - 1)[:, None]
+  j = jnp.arange(n)[None, :]
+  k = i + 1
+  k_f = k.astype(dtypes.default_float_dtype())
+  denom = jnp.sqrt(k_f * (k_f + 1))
+  H = jnp.where(j <= i, 1.0 / denom,
+                jnp.where(j == k, -k_f / denom, jnp.zeros_like(denom)))
+  if full:
+    first_row = jnp.full((1, n), 1.0 / jnp.sqrt(n), dtype=H.dtype)
+    H = jnp.concatenate([first_row, H], axis=0)
+  return H
+
+
+@jit(static_argnames=("n", "dtype"))
 def hadamard(n: int, dtype: DTypeLike = int) -> Array:
   r"""Construct an n-by-n Hadamard matrix.
 
@@ -2739,6 +3166,54 @@ def hadamard(n: int, dtype: DTypeLike = int) -> Array:
   for _ in range(lg2):
     H = jnp.block([[H, H], [H, -H]])
   return H
+
+
+@jit(static_argnames=("n", "scale", "dtype"))
+def dft(n: int, scale: str | None = None, *,
+        dtype: DTypeLike | None = None) -> Array:
+  r"""Construct an n-by-n discrete Fourier transform matrix.
+
+  JAX implementation of :func:`scipy.linalg.dft`.
+
+  The DFT matrix :math:`W_n` has entries :math:`W_{ij} = \omega^{ij}`, where
+  :math:`\omega = e^{-2\pi i / n}` is the primitive n-th root of unity, for
+  :math:`0 \le i, j < n`.
+
+  Args:
+    n: size of the matrix.
+    scale: (optional) ``None`` (default, unscaled), ``'sqrtn'`` (scale by
+      :math:`1/\sqrt{n}`, making the matrix unitary), or ``'n'`` (scale by
+      :math:`1/n`).
+    dtype: (optional) complex floating-point dtype for the output. Defaults to
+      JAX's default complex dtype.
+
+  Returns:
+    A DFT matrix of shape ``(n, n)``.
+
+  Examples:
+    >>> jax.scipy.linalg.dft(4).round(3)
+    Array([[ 1.+0.j,  1.+0.j,  1.+0.j,  1.+0.j],
+           [ 1.+0.j, -0.-1.j, -1.+0.j,  0.+1.j],
+           [ 1.+0.j, -1.+0.j,  1.-0.j, -1.+0.j],
+           [ 1.+0.j,  0.+1.j, -1.+0.j, -0.-1.j]], dtype=complex64)
+  """
+  if scale is not None and scale not in ('sqrtn', 'n'):
+    raise ValueError(
+        f"scale must be None, 'sqrtn', or 'n'; got {scale!r}.")
+  if dtype is None:
+    dtype = dtypes.default_complex_dtype()
+  else:
+    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "dft")
+    if not dtypes.issubdtype(dtype, np.complexfloating):
+      raise ValueError(
+          f"dtype must be a complex floating-point type; got {dtype}.")
+  a = jnp.arange(n, dtype=dtype)
+  omegas = jnp.exp(-2j * np.pi * a[:, None] * a[None, :] / n)
+  if scale == 'sqrtn':
+    omegas = omegas / jnp.sqrt(n)
+  elif scale == 'n':
+    omegas = omegas / n
+  return omegas
 
 
 def _solve_sylvester_triangular_scan(R: Array, S: Array, F: Array) -> Array:

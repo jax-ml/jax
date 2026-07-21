@@ -244,9 +244,9 @@ TEST(ReentrantHashSetTest, ConcurrentAccess) {
     absl::Mutex* mu;
     bool operator()(int a, int b) const ABSL_NO_THREAD_SAFETY_ANALYSIS {
       if ((a + b) % 10 == 0) {
-        mu->Unlock();
+        mu->unlock();
         tsl::Env::Default()->SleepForMicroseconds(1);
-        mu->Lock();
+        mu->lock();
       }
       return a == b;
     }
@@ -257,7 +257,7 @@ TEST(ReentrantHashSetTest, ConcurrentAccess) {
 
   auto worker = [&](int offset) {
     for (int i = 0; i < 1000; ++i) {
-      absl::MutexLock lock(&mu);
+      absl::MutexLock lock(mu);
       int key = (i + offset) % 100;
       if (i % 3 == 0) {
         map.insert(key, i);

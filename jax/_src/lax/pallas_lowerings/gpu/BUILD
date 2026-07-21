@@ -19,10 +19,7 @@ load(
     "pytype_strict_library",
 )
 
-package(
-    default_applicable_licenses = [],
-    default_visibility = ["//jax:internal"],
-)
+package(default_applicable_licenses = [])
 
 pytype_strict_library(
     name = "ragged_dot",

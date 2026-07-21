@@ -24,6 +24,7 @@
 # -o allexport: export all functions and variables to be available to subscripts
 set -exu -o history -o allexport
 
+echo "::group::Setup Environment" >&2
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
@@ -35,8 +36,8 @@ fi
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *"-nogil" ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
+  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
@@ -44,7 +45,7 @@ fi
 
 OVERRIDE_XLA_REPO=""
 if [[ "$JAXCI_CLONE_MAIN_XLA" == 1 ]]; then
-  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR}"
+  OVERRIDE_XLA_REPO="--override_repository=xla=${JAXCI_XLA_GIT_DIR} --override_module=xla=${JAXCI_XLA_GIT_DIR}"
 fi
 
 NB_TPUS=$JAXCI_TPU_CORES
@@ -53,7 +54,8 @@ J=$((NB_TPUS * JOBS_PER_ACC))
 
 # TODO(ybaturina): Bazel cache shouldn't be invalidated when
 # `VBAR_CONTROL_SERVICE_URL` changes.
-COMMON_TPU_TEST_ENV_VARS="--test_env=TPU_SKIP_MDS_QUERY=true \
+COMMON_TPU_TEST_ENV_VARS="--test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver \
+ --test_env=TPU_SKIP_MDS_QUERY=true \
  --test_env=TPU_TOPOLOGY \
  --test_env=TPU_WORKER_ID \
  --test_env=TPU_TOPOLOGY_WRAP \
@@ -76,6 +78,10 @@ set +e
 # TODO(emilyaf): Debug and re-enable this test.
 IGNORE_TESTS_MULTIACCELERATOR="-//tests/multiprocess:array_test_tpu"
 
+echo "::endgroup::" >&2
+
+PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
+
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
   # TPU does not guarantee anything about forward compatibility (unless
@@ -89,7 +95,15 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   fi
 
   # Run single-accelerator tests in parallel
+  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
+
+  echo "::group::Bazel TPU single-accelerator tests (full)" >&2
+  INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
+
   bazel test \
+    --invocation_id="$INVOCATION_ID_SINGLE" \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
@@ -119,10 +133,20 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
+  echo "::endgroup::" >&2
+  python3 ci/utilities/report_resultstore_link.py "TPU single-accelerator tests (full)" "$INVOCATION_ID_SINGLE" "${first_bazel_cmd_retval:-0}"
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run multi-accelerator across all chips
+  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
+
+  echo "::group::Bazel TPU multi-accelerator tests (full)" >&2
+  INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
+
   bazel test \
+    --invocation_id="$INVOCATION_ID_MULTI" \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
@@ -148,11 +172,21 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
+  echo "::endgroup::" >&2
+  python3 ci/utilities/report_resultstore_link.py "TPU multi-accelerator tests (full)" "$INVOCATION_ID_MULTI" "${second_bazel_cmd_retval:-0}"
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 else
 
   # Run single-accelerator tests in parallel
+  TEST_ARTIFACTS_DIR="test-artifacts-single"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
+
+  echo "::group::Bazel TPU single-accelerator tests" >&2
+  INVOCATION_ID_SINGLE=$(python3 ci/utilities/generate_invocation_id.py)
+
   bazel test \
+    --invocation_id="$INVOCATION_ID_SINGLE" \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     $OVERRIDE_XLA_REPO \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
@@ -197,10 +231,20 @@ else
 
   # Store the return value of the first bazel command.
   first_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-single
+  echo "::endgroup::" >&2
+  python3 ci/utilities/report_resultstore_link.py "TPU single-accelerator tests" "$INVOCATION_ID_SINGLE" "${first_bazel_cmd_retval:-0}"
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
   # Run multi-accelerator across all chips
+  TEST_ARTIFACTS_DIR="test-artifacts-multi"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
+
+  echo "::group::Bazel TPU multi-accelerator tests" >&2
+  INVOCATION_ID_MULTI=$(python3 ci/utilities/generate_invocation_id.py)
+
   bazel test \
+    --invocation_id="$INVOCATION_ID_MULTI" \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
     --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
     --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
     $OVERRIDE_XLA_REPO \
@@ -230,10 +274,14 @@ else
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
-  ci/utilities/collect_bazel_test_xmls.sh test-artifacts-multi
+  echo "::endgroup::" >&2
+  python3 ci/utilities/report_resultstore_link.py "TPU multi-accelerator tests" "$INVOCATION_ID_MULTI" "${second_bazel_cmd_retval:-0}"
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 fi
 
+echo "::group::Cleanup" >&2
 # Merge results with prefixes to avoid overwriting
+{ set +x; } 2>/dev/null
 mkdir -p test-artifacts
 if [[ -d test-artifacts-single ]]; then
   for f in test-artifacts-single/*; do
@@ -247,6 +295,8 @@ if [[ -d test-artifacts-multi ]]; then
     cp "$f" "test-artifacts/multi_$(basename "$f")"
   done
 fi
+set -x
+echo "::endgroup::" >&2
 
 # Exit with failure if either command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then

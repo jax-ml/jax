@@ -331,6 +331,15 @@ class MutableArrayTest(jtu.JaxTestCase):
     ys = f(xs)
     self.assertAllClose(ys, xs ** 2, check_dtypes=False)
 
+  def test_vmap_axes_basic(self):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r, x):
+      r[...] = x
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    jax.vmap(f, in_axes=(1, 0))(ref, jnp.ones((3, 2)))  # don't crash
+    self.assertAllClose(ref[...], jnp.ones((2, 3)), check_dtypes=False)
+
   def test_vmap_extensive_inputs(self):
     def f(x_ref, val):
       x_ref[...] += val
@@ -953,6 +962,144 @@ class MutableArrayTest(jtu.JaxTestCase):
     _, = f_vjp.with_refs(grad_accum)(1.)
     self.assertAllClose(grad_accum[...], jnp.arange(5.))
 
+  @parameterized.parameters([False, True])
+  def test_scan_vjp3_mixed_accum_kinds_xs(self, use_dontwant):
+    # https://github.com/jax-ml/jax/issues/32468
+    # A scan's tangent inputs can be a mix of grad-value, grad-ref, and
+    # dont-want accumulators; the transpose must not rely on their order.
+    def f(Ws, Vs, x):
+      def body(c, wv):
+        W, V = wv
+        return jnp.tanh(jnp.tanh(c @ W) @ V), None
+      c, _ = jax.lax.scan(body, x, (Ws, Vs))
+      return c.sum()
+
+    Ws = jnp.ones((3, 4, 5)) * 0.1
+    Vs = jnp.ones((3, 5, 4)) * 0.2
+    x = jnp.ones(4)
+    ws_bar, vs_bar, x_bar = jax.grad(f, argnums=(0, 1, 2))(Ws, Vs, x)
+
+    # grad ref for the second xs input only
+    _, f_vjp = jax.vjp(f, Ws, Vs, x)
+    vs_ref = jax.new_ref(jnp.zeros_like(Vs))
+    first = jax.ad.DontWant() if use_dontwant else jax.ad.GradValue()
+    ws_bar_, _, x_bar_ = f_vjp.with_refs(first, vs_ref, jax.ad.GradValue())(1.)
+    if not use_dontwant:
+      self.assertAllClose(ws_bar_, ws_bar)
+    self.assertAllClose(vs_ref[...], vs_bar)
+    self.assertAllClose(x_bar_, x_bar)
+
+  @parameterized.parameters([False, True])
+  def test_scan_vjp3_mixed_accum_kinds_consts(self, use_dontwant):
+    # https://github.com/jax-ml/jax/issues/32468
+    # Like test_scan_vjp3_mixed_accum_kinds_xs, but with the scan closing over
+    # the parameters so they become scan consts.
+    def f(W, V, x):
+      def body(c, _):
+        return jnp.tanh(jnp.tanh(c @ W) @ V), None
+      c, _ = jax.lax.scan(body, x, None, length=3)
+      return c.sum()
+
+    W = jnp.ones((4, 5)) * 0.1
+    V = jnp.ones((5, 4)) * 0.2
+    x = jnp.ones(4)
+    w_bar, v_bar, x_bar = jax.grad(f, argnums=(0, 1, 2))(W, V, x)
+
+    # grad ref for the second const input only
+    _, f_vjp = jax.vjp(f, W, V, x)
+    v_ref = jax.new_ref(jnp.zeros_like(V))
+    first = jax.ad.DontWant() if use_dontwant else jax.ad.GradValue()
+    w_bar_, _, x_bar_ = f_vjp.with_refs(first, v_ref, jax.ad.GradValue())(1.)
+    if not use_dontwant:
+      self.assertAllClose(w_bar_, w_bar)
+    self.assertAllClose(v_ref[...], v_bar)
+    self.assertAllClose(x_bar_, x_bar)
+
+  @jtu.sample_product(
+      seed=range(20),
+      num_params=[1, 2, 3, 4],
+      reverse=[False, True],
+  )
+  @jtu.run_on_devices("cpu")
+  def test_scan_vjp3_systematic_accum_kinds(self, seed, num_params, reverse):
+    # https://github.com/jax-ml/jax/issues/32468
+    # The vjp-with-refs of a scan must handle any mix of gradient accumulator
+    # kinds (GradValue, grad ref, DontWant) among the scan's tangent consts,
+    # carries, and xs, in any order, interleaved with residuals, zero-tangent
+    # int inputs, and differentiable consts captured from outside computations.
+    n, length = 3, 3
+    rng = np.random.RandomState(seed)
+    # bias roles toward const/xs: those groups are order-sensitive in the
+    # transpose, while carries are positional
+    roles = [rng.choice(['const', 'carry', 'xs'], p=[0.4, 0.2, 0.4])
+             for _ in range(num_params)]
+    kinds = [rng.choice(['val', 'ref', 'dont']) for _ in range(num_params)]
+    if num_params >= 2 and rng.rand() < 0.75:
+      # usually force a ref/non-ref mix, the order-sensitive combination
+      i, j = rng.choice(num_params, 2, replace=False)
+      kinds[i], kinds[j] = 'ref', rng.choice(['val', 'dont'])
+    use_perm = rng.permutation(num_params)  # scrambles body capture order
+    # capture the derived (ValAccum-tangent) const before or after the params
+    table_first = bool(rng.rand() < 0.5)
+    use_ys = bool(rng.rand() < 0.75)
+    body_const = jnp.array(rng.randn(n), 'float32')
+    # xs-role params are passed to the scan directly, so their top-level
+    # accumulators (e.g. RefAccums) appear directly in the scan's xs slots;
+    # likewise const-role params are closed over directly.
+    params = [jnp.array(rng.uniform(0.5, 1.5,
+                                    (length, n) if r == 'xs' else n), 'float32')
+              for r in roles]
+    xs_idx = {j: k for k, j in enumerate(
+        j for j, r in enumerate(roles) if r == 'xs')}
+    int_xs = jnp.arange(length, dtype='int32')  # zero-tangent xs
+
+    def f(*params):
+      carry_ps = [p for p, r in zip(params, roles) if r == 'carry']
+      init = jnp.tanh(sum(carry_ps) + body_const) if carry_ps else 0. * body_const
+      # a differentiable const captured from an outside computation, with a
+      # nonzero tangent no matter the roles (it depends on every param)
+      seed_vec = init + sum(jnp.sum(p) for p in params) / 10.
+      table = jnp.stack([jnp.cos(seed_vec) * (k + 1.) for k in range(length)])
+      xs_ps = tuple(p for p, r in zip(params, roles) if r == 'xs')
+
+      def body(carry, x):
+        c, i = carry
+        xps, idx = x
+        terms = [table[i]] if table_first else []
+        for j in use_perm:
+          p, r = params[j], roles[j]
+          if r == 'const':
+            terms.append(jnp.sin(p) * jnp.sum(jnp.cos(c)) + p * c)
+          elif r == 'xs':
+            xp = xps[xs_idx[j]]
+            terms.append(jnp.sin(xp) * jnp.sum(c) + xp * jnp.cos(c))
+        if not table_first:
+          terms.append(table[i])
+        new_c = jnp.tanh(c + sum(terms) + idx.astype(c.dtype))
+        return (new_c, i + 1), jnp.sum(new_c * new_c)
+
+      (c_final, _), ys = jax.lax.scan(body, (init, jnp.int32(0)),
+                                      (xs_ps, int_xs), reverse=reverse)
+      return jnp.sum(c_final) + (jnp.sum(ys) if use_ys else 0.)
+
+    expected = jax.grad(f, argnums=tuple(range(num_params)))(*params)
+
+    def run(*params):
+      out, f_vjp = jax.vjp(f, *params)
+      accums = [jax.new_ref(jnp.zeros_like(p)) if k == 'ref' else
+                jax.ad.DontWant() if k == 'dont' else jax.ad.GradValue()
+                for k, p in zip(kinds, params)]
+      cts = f_vjp.with_refs(*accums)(jnp.ones_like(out))
+      return [jax.freeze(a) if k == 'ref' else ct
+              for k, a, ct in zip(kinds, accums, cts)]
+
+    for runner in [run, jax.jit(run)]:
+      results = runner(*params)
+      for kind, result, expect in zip(kinds, results, expected):
+        if kind != 'dont':
+          self.assertAllClose(result, expect, rtol=1e-3, atol=1e-5,
+                              check_dtypes=False)
+
   def test_vmap_with_vjp3(self):
     # https://github.com/jax-ml/jax/issues/32479
     def grad_via_ref(f):
@@ -1005,6 +1152,37 @@ class MutableArrayTest(jtu.JaxTestCase):
     jaxpr = run()
     self.assertIn('+=', str(jaxpr))
     self.assertNotIn('0.0', str(jaxpr))
+
+  def test_static_slicing_with_vjp3(self):
+    # like test_slicing_with_vjp3, but not jitted, so that the static index
+    # hits slice_p rather than dynamic_slice_p
+    def f(x, i):
+      return x[i]
+
+    x = jnp.arange(10.)
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(f, x, 3)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(1.)
+    self.assertAllClose(grad_accum[...], jnp.zeros(10).at[3].set(1.),
+                        check_dtypes=False)
+
+    @jax.make_jaxpr
+    def run():
+      _, f_vjp = jax.vjp(f, x, 3)
+      f_vjp.with_refs(grad_accum, jax.ad.GradValue())(1.)
+
+    jaxpr = run()
+    self.assertIn('+=', str(jaxpr))
+    self.assertNotIn('0.0', str(jaxpr))
+
+    # strided slices take the sparse in-place path too
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(lambda x: x[::2], x)
+    f_vjp.with_refs(grad_accum)(jnp.arange(5.))
+    self.assertAllClose(grad_accum[...],
+                        jnp.zeros(10).at[::2].set(jnp.arange(5.)),
+                        check_dtypes=False)
 
   @absltest.skip("Not yet implemented")
   def test_none_index(self):
@@ -1173,6 +1351,30 @@ class MutableArrayTest(jtu.JaxTestCase):
     stable_hlo = f.lower(1, 2).as_text()
     self.assertNotIn("add", stable_hlo)
 
+  def test_grad_of_constant_ref_set(self):
+    # https://github.com/jax-ml/jax/issues/33987
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x)
+      ref[...] = 2.0
+      return jax.freeze(ref)
+    self.assertArraysEqual(jax.grad(f)(1.0), 0.0, check_dtypes=False)
+
+    def g(x):
+      ref = jax.new_ref(x)
+      y = ref[...]
+      ref[...] = 2.0
+      return y * jax.freeze(ref)
+    self.assertArraysEqual(jax.grad(g)(3.0), 2.0, check_dtypes=False)
+
+  def test_grad_of_constant_ref_set_indexed(self):
+    def f(x):
+      ref = jax.new_ref(x)
+      ref[0] = 2.0
+      return jax.freeze(ref).sum()
+    self.assertArraysEqual(jax.grad(f)(jnp.arange(3.)),
+                           jnp.array([0., 1., 1.]))
+
   def test_grad_get_transformed_ref(self):
     @jax.jit
     def f(x):
@@ -1182,6 +1384,77 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     x = jnp.array([1.0, 2.0, 3.0])
     jax.grad(f)(x)  # don't crash
+
+  def test_with_refs_basic(self):
+    def f(x_ref):
+      return x_ref[...] ** 2
+
+    x_ref = jax.new_ref(2.)
+    _, f_vjp = jax.vjp(f, x_ref)
+    x_grad_ref = jax.new_ref(0.)
+    f_vjp = f_vjp.with_refs(x_grad_ref)
+    f_vjp(1.0)
+    self.assertAllClose(x_grad_ref[...], 4., check_dtypes=False)
+
+  @parameterized.parameters([False, True])
+  def test_gather_with_vjp3(self, jit):
+    # reverse-mode of advanced indexing accumulates in-place into a bound
+    # gradient ref, without materializing dense one-hot cotangents
+    def f(x, i):
+      return x[i]
+    if jit:
+      f = jax.jit(f)
+
+    x = jnp.arange(10.)
+    idx = jnp.array([3, 5, 3])  # note the duplicate index
+    ct = jnp.arange(1., 4.)
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(f, x, idx)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(ct)
+    self.assertAllClose(grad_accum[...], jnp.zeros(10).at[idx].add(ct),
+                        check_dtypes=False)
+
+    @jax.make_jaxpr
+    def run():
+      _, f_vjp = jax.vjp(f, x, idx)
+      f_vjp.with_refs(grad_accum, jax.ad.GradValue())(ct)
+
+    jaxpr_str = str(run())
+    self.assertIn('+=', jaxpr_str)
+    self.assertNotIn('scatter-add', jaxpr_str)
+
+  def test_gather_with_vjp3_multidim(self):
+    def f(x, i):
+      return x[i, i]
+
+    x = jnp.arange(84.).reshape(7, 4, 3)
+    idx = jnp.array([3, 1, 3])
+
+    _, f_vjp = jax.vjp(f, x, idx)
+    expected, _ = f_vjp(jnp.ones((3, 3)))
+
+    grad_accum = jax.new_ref(jnp.zeros_like(x))
+    _, f_vjp = jax.vjp(f, x, idx)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(jnp.ones((3, 3)))
+    self.assertAllClose(grad_accum[...], expected, check_dtypes=False)
+
+  def test_gather_with_vjp3_general_fallback(self):
+    # gathers that don't look like NumPy-style indexing (e.g. clip mode)
+    # accumulate via scatter-add on the ref's value, matching the dense result
+    def f(x, i):
+      return x.at[i].get(mode='clip')
+
+    x = jnp.arange(10.)
+    idx = jnp.array([3, 100])  # out-of-bounds index clamps under clip mode
+
+    _, f_vjp = jax.vjp(f, x, idx)
+    expected, _ = f_vjp(jnp.ones(2))
+
+    grad_accum = jax.new_ref(jnp.zeros(10))
+    _, f_vjp = jax.vjp(f, x, idx)
+    f_vjp.with_refs(grad_accum, jax.ad.GradValue())(jnp.ones(2))
+    self.assertAllClose(grad_accum[...], expected, check_dtypes=False)
 
 
 @jtu.with_config(jax_mutable_array_checks=True)
@@ -1386,6 +1659,10 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         Exception, "Move the array reference"):
       jax.jvp(f, [1.], [1.])
+
+  def test_return_empty_ref_message(self):
+    with self.assertRaisesRegex( ValueError, "was created on line"):
+      jax.jit(lambda: jax.empty_ref(jax.typeof(3.)))()
 
 
 if __name__ == '__main__':

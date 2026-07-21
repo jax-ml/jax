@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "absl/base/optimization.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "jaxlib/gpu/vendor.h"
 
 #define JAX_AS_STATUS(expr) \
@@ -48,23 +49,43 @@ limitations under the License.
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
-// Used via JAX_AS_STATUS(expr) macro.
-absl::Status AsStatus(gpuError_t error, const char* file, std::int64_t line,
-                      const char* expr);
-absl::Status AsStatus(gpusolverStatus_t status, const char* file,
-                      std::int64_t line, const char* expr);
-absl::Status AsStatus(gpusparseStatus_t status, const char* file,
-                      std::int64_t line, const char* expr);
-absl::Status AsStatus(gpublasStatus_t status, const char* file,
-                      std::int64_t line, const char* expr);
-#ifdef JAX_GPU_CUDA
-absl::Status AsStatus(CUresult error, const char* file, std::int64_t line,
-                      const char* expr);
-absl::Status AsStatus(CUptiResult error, const char* file, std::int64_t line,
-                      const char* expr);
-absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
-                      const char* expr);
+#if defined(JAX_GPU_CUDA)
+std::string ErrorString(cudaError_t error);
+std::string ErrorString(cusolverStatus_t status);
+std::string ErrorString(cusparseStatus_t status);
+std::string ErrorString(cublasStatus_t status);
+std::string ErrorString(CUresult error);
+std::string ErrorString(CUptiResult error);
+std::string ErrorString(cufftResult error);
+std::string ErrorString(cudnnStatus_t status);
+#elif defined(JAX_GPU_HIP)
+std::string ErrorString(hipError_t error);
+std::string ErrorString(hipsolverStatus_t status);
+std::string ErrorString(hipsparseStatus_t status);
+std::string ErrorString(hipblasStatus_t status);
+std::string ErrorString(miopenStatus_t status);
 #endif
+
+template <typename T>
+absl::Status AsStatus(T error, const char* file, std::int64_t line,
+                      const char* expr) {
+  if (ABSL_PREDICT_FALSE(error != GpuErrorTraits<T>::kSuccess)) {
+    return absl::InternalError(absl::StrFormat("%s:%d: operation %s failed: %s",
+                                               file, line, expr,
+                                               ErrorString(error)));
+  }
+  return absl::OkStatus();
+}
+
+inline absl::Status AsStatus(const absl::Status& status, const char* file,
+                             std::int64_t line, const char* expr) {
+  if (ABSL_PREDICT_FALSE(!status.ok())) {
+    return absl::Status(status.code(),
+                        absl::StrFormat("%s:%d: operation %s failed: %s", file,
+                                        line, expr, status.message()));
+  }
+  return status;
+}
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

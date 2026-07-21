@@ -45,7 +45,6 @@ from jax._src.lib import cuda_versions
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
-from jax._src.lib import jaxlib_extension_version, version as jaxlib_version
 from jax._src.lib import lapack
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -123,7 +122,7 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
     A new upper-triangular matrix :math:`R` defining the Cholesky decomposition
     of :math:`A + w \, w^T`.
   """
-  r_matrix, w_vector = core.standard_insert_pvary(r_matrix, w_vector)
+  r_matrix, w_vector = core.auto_insert_reshard(r_matrix, w_vector)
   return cholesky_update_p.bind(r_matrix, w_vector)
 
 
@@ -323,7 +322,7 @@ def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
     A batch of orthogonal (unitary) matrices with the same shape as ``a``,
     containing the products of the elementary Householder reflectors.
   """
-  a, taus = core.standard_insert_pvary(a, taus)
+  a, taus = core.auto_insert_reshard(a, taus)
   return householder_product_p.bind(a, taus)
 
 
@@ -602,7 +601,7 @@ def symmetric_product(
     ``symmetrize_output`` is ``True``, the upper triangle is filled with the
     transpose of the lower triangle, and the whole matrix is valid.
   """
-  a_matrix, c_matrix = core.standard_insert_pvary(a_matrix, c_matrix)
+  a_matrix, c_matrix = core.auto_insert_reshard(a_matrix, c_matrix)
   result = symmetric_product_p.bind(a_matrix, c_matrix, alpha=alpha, beta=beta)
   if symmetrize_output:
     upper_half = lax.transpose(
@@ -660,7 +659,7 @@ def triangular_solve(
   singleton = np.ndim(b) == np.ndim(a) - 1
   if singleton:
     b = lax.expand_dims(b, (-1 if left_side else -2,))
-  a, b = core.standard_insert_pvary(a, b)
+  a, b = core.auto_insert_reshard(a, b)
   out = triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
@@ -730,9 +729,7 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array, *,
   Returns:
     Solution ``X`` of tridiagonal system.
   """
-  if perturb_singular and jaxlib_version < (0, 10):
-    raise RuntimeError("perturb_singular=True requires jaxlib >= 0.10.0.")
-  dl, d, du, b = core.standard_insert_pvary(dl, d, du, b)
+  dl, d, du, b = core.auto_insert_reshard(dl, d, du, b)
   return tridiagonal_solve_p.bind(
     dl, d, du, b, perturb_singular=perturb_singular)
 
@@ -799,16 +796,11 @@ def linalg_sharding_rule(
   if any(b != batch_spec for b in batch_specs[1:]):
     raise core.ShardingTypeError(
         f"All inputs to {name} must have the same batch sharding, but got "
-        f"{batch_specs}."
-    )
+        f"{batch_specs}.")
   sharding = avals[0].sharding
   if multiple_results:
-    return [
-        sharding.update(spec=
-            P(*(tuple(batch_spec) + (None,) * (len(s) - len(batch_spec))))
-        )
-        for s in output_shapes
-    ]
+    def p(s): return P(*batch_spec, *((None,) * (len(s) - len(batch_spec))))
+    return [sharding.update(spec=p(s)) for s in output_shapes]
   else:
     ndim = len(output_shapes) - len(batch_spec)
     return sharding.update(spec=P(*(tuple(batch_spec) + (None,) * ndim)))
@@ -823,18 +815,16 @@ def linalg_vma_rule(multiple_results, shape_rule, name, *avals, **kwargs):
 
 def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
                      multiple_results=False, supports_batching=True,
-                     require_same=True):
+                     require_same=True, sharding_rule=None):
   dtype_rule = partial(
       lax.naryop_dtype_rule, result_dtype, accepted_dtypes, name,
       require_same=require_same)
   shape_rule = partial(
       linalg_shape_rule, multiple_results, supports_batching, ranks,
       result_shape, name)
-  if supports_batching:
+  if sharding_rule is None and supports_batching:
     sharding_rule = partial(
         linalg_sharding_rule, multiple_results, shape_rule, ranks, name)
-  else:
-    sharding_rule = None
   vma_rule = partial(linalg_vma_rule, multiple_results, shape_rule, name)
   prim = core.Primitive(name)
   prim.multiple_results = multiple_results
@@ -1442,9 +1432,11 @@ def _householder_product_lowering(ctx, a, taus):
         mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)]
   else:
     result_shapes = None
+  flat_res_types, _ = mlir.ir_tree_registry.flatten(
+      mlir.aval_to_ir_types(ctx.module_context, aval_out))
   op = mlir.custom_call(
       "ProductOfElementaryHouseholderReflectors",
-      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(aval_out)),
+      result_types=flat_res_types,
       operands=[a, taus],
       api_version=1,
       result_shapes=result_shapes)
@@ -1518,7 +1510,7 @@ def ormqr(a: ArrayLike, taus: ArrayLike, c: ArrayLike, *,
     - :func:`jax.scipy.linalg.qr_multiply`: Higher-level API for computing
       Q @ C or C @ Q from a matrix ``a`` directly.
   """
-  a, taus, c = core.standard_insert_pvary(a, taus, c)
+  a, taus, c = core.auto_insert_reshard(a, taus, c)
   return ormqr_p.bind(a, taus, c, left=left, transpose=transpose)
 
 
@@ -1535,6 +1527,7 @@ def _ormqr_shape_rule(a_shape, taus_shape, c_shape, *, left, transpose):
   return c_shape
 
 
+@config.default_matmul_precision("highest")
 def _ormqr_lowering(a, taus, c, *, left, transpose):
   # Apply Householder reflectors H_i = I - tau_i * v_i * v_i^H directly to c
   # without materializing Q. Cost: O(k * m * c_cols) if left,
@@ -1599,8 +1592,7 @@ ormqr_p = standard_linalg_primitive(
     _ormqr_shape_rule, "ormqr")
 mlir.register_lowering(ormqr_p, mlir.lower_fun(
     _ormqr_lowering, multiple_results=False))
-if jaxlib_extension_version >= 422:
-  register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering)
+register_cpu_gpu_lowering(ormqr_p, _ormqr_cpu_gpu_lowering)
 
 
 # LU decomposition
@@ -1770,10 +1762,10 @@ def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
 
 
 def _lu_tpu_lowering_rule(ctx, operand):
-  result_types = mlir.flatten_ir_types([
-      mlir.aval_to_ir_types(ctx.avals_out[0]),
-      mlir.aval_to_ir_types(ctx.avals_out[1]),
-      mlir.aval_to_ir_types(ctx.avals_out[2]),
+  result_types, _ = mlir.ir_tree_registry.flatten([
+      mlir.aval_to_ir_types(ctx.module_context, ctx.avals_out[0]),
+      mlir.aval_to_ir_types(ctx.module_context, ctx.avals_out[1]),
+      mlir.aval_to_ir_types(ctx.module_context, ctx.avals_out[2]),
   ])
   if any(not is_constant_shape(a.shape) for a in ctx.avals_out):
     result_shapes = [
@@ -1912,7 +1904,7 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
   if m == 0 or k == 0:
     return permutation
   upper = np.array(k, np.int32) if is_constant_dim(k) else k
-  permutation, swaps = core.standard_insert_pvary(permutation, swaps)
+  permutation, swaps = core.auto_insert_reshard(permutation, swaps)
   result, _ = control_flow.fori_loop(np.array(0, np.int32), upper,
                                      _lu_pivots_body_fn, (permutation, swaps))
   return result
@@ -1974,8 +1966,8 @@ def _geqrf_dtype_rule(dtype):
   return dtype, dtype
 
 def _geqrf_lowering_rule(ctx, operand):
-  ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
-  r_type = mlir.aval_to_ir_type(ctx.avals_out[1])
+  ts_type = mlir.aval_to_ir_type(ctx.module_context, ctx.avals_out[0])
+  r_type = mlir.aval_to_ir_type(ctx.module_context, ctx.avals_out[1])
   result_types = [ts_type, r_type]
   if any(not is_constant_shape(aval_out.shape)
          for aval_out in ctx.avals_out):
@@ -2027,7 +2019,7 @@ def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
     elementary Householder reflectors, and ``jpvt`` is the column-pivot indices
     such that ``a[:, jpvt] = q @ r``.
   """
-  a, jpvt = core.standard_insert_pvary(a, jpvt)
+  a, jpvt = core.auto_insert_reshard(a, jpvt)
   a_out, jpvt_out, taus = geqp3_p.bind(a, jpvt, use_magma=use_magma)
   return a_out, jpvt_out, taus
 
@@ -2726,12 +2718,17 @@ def _triangular_solve_transpose_rule(
                                    unit_diagonal=unit_diagonal)
   return [None, cotangent_b]
 
-def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
-                                   lower, transpose_a, conjugate_a,
-                                   unit_diagonal):
+def _triangular_solve_batching_rule(
+    axis_data, batched_args, batch_dims, *, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
   x, y = batched_args
   bx, by = batch_dims
-  if bx is batching.not_mapped:
+  if bx is None and by is None:
+    out = triangular_solve(x, y, left_side=left_side, lower=lower,
+                           transpose_a=transpose_a, conjugate_a=conjugate_a,
+                           unit_diagonal=unit_diagonal)
+    return out, None
+  if bx is None:
     if left_side:
       y = batching.moveaxis(y, by, -1)
       y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
@@ -2746,10 +2743,8 @@ def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
         unit_diagonal=unit_diagonal)
     return out_flat.reshape(y.shape), bdim_out
   else:
-    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
-                if i is not None)
-    x = batching.bdim_at_front(x, bx, size)
-    y = batching.bdim_at_front(y, by, size)
+    x = batching.bdim_at_front(x, bx, axis_data.size, axis_data.explicit_mesh_axis)
+    y = batching.bdim_at_front(y, by, axis_data.size, axis_data.explicit_mesh_axis)
     return triangular_solve(x, y, left_side=left_side, lower=lower,
                             transpose_a=transpose_a, conjugate_a=conjugate_a,
                             unit_diagonal=unit_diagonal), 0
@@ -2806,14 +2801,36 @@ def _triangular_solve_cpu_lower(
                                  ir.BoolAttr.get(unit_diagonal),
                                  hlo.TransposeAttr.get(transpose))]
 
+def _tri_solve_sharding(a, b, *, left_side, lower, transpose_a, conjugate_a,
+                        unit_diagonal):
+  del lower, conjugate_a, unit_diagonal
+  batch_spec,  a_spec = a.sharding.spec[:-2], a.sharding.spec[-2:]
+  batch_spec_, b_spec = b.sharding.spec[:-2], b.sharding.spec[-2:]
+  if batch_spec != batch_spec_:
+    raise core.ShardingTypeError(
+        "All inputs to triangular_solve must have the same batch sharding, "
+        f"but got {batch_spec} and {batch_spec_}.")
+  if a_spec[left_side ^ transpose_a] is not None:
+    raise core.ShardingTypeError(
+        "triangular solve input `a` must be unsharded on the contracting axis, "
+        f"but got {a.sharding.spec} with {left_side=} and {transpose_a=}.")
+  if b_spec[not left_side] is not None:
+    raise core.ShardingTypeError(
+        "triangular solve input `b` must be unsharded on the contracting axis, "
+        f"but got {b.sharding.spec} with {left_side=} and {transpose_a=}.")
+  out_spec = ([a_spec[transpose_a], b_spec[1]] if left_side else
+              [b_spec[0], a_spec[not transpose_a]])
+  return a.sharding.update(spec=P(*batch_spec, *out_spec))
+
 triangular_solve_p = linalg_primitive(
     _triangular_solve_dtype_rule, (_float | _complex, _float | _complex),
-    (2, 2), _triangular_solve_shape_rule, "triangular_solve")
+    (2, 2), _triangular_solve_shape_rule, "triangular_solve",
+    sharding_rule=_tri_solve_sharding)
 ad.defjvp2(triangular_solve_p,
            _triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
 ad.primitive_transposes[triangular_solve_p] = _triangular_solve_transpose_rule
-batching.primitive_batchers[triangular_solve_p] = _triangular_solve_batching_rule
+batching.fancy_primitive_batchers[triangular_solve_p] = _triangular_solve_batching_rule
 mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform="cpu")
@@ -2953,9 +2970,9 @@ def _tridiagonal_solve_batching_rule(
     batched_args, batch_dims, *, perturb_singular):
   dl, d, du, b = batched_args
   bdl, bd, bdu, bb = batch_dims
-  if (bdl is batching.not_mapped and
-      bd is batching.not_mapped and
-      bdu is batching.not_mapped):
+  if (bdl is None and
+      bd is None and
+      bdu is None):
 
     b = batching.moveaxis(b, bb, -2)
     b_flat = b.reshape(b.shape[:-3]  + (b.shape[-3], b.shape[-2] * b.shape[-1]))
@@ -3152,17 +3169,19 @@ def _sdy_rule_for_aval(letters, num_batch_dims, aval):
   prefix = "... " if num_batch_dims and d >= 0 else ""
   return prefix + " ".join(next(letters) for _ in range(d))
 
-def _build_sdy_sharding_rule(num_batch_dims, avals_in, avals_out):
+def _build_sdy_sharding_rule(module_context, num_batch_dims, avals_in, avals_out):
   letters = iter(string.ascii_letters)
   lhs = ", ".join(
       _sdy_rule_for_aval(letters, num_batch_dims, a) for a in avals_in)
   rhs = ", ".join(
       _sdy_rule_for_aval(letters, num_batch_dims, a) for a in avals_out)
   sdy_sharding_rule = str_to_sdy_sharding_rule(f"{lhs} -> {rhs}")
+  flat_in_types, _ = mlir.ir_tree_registry.flatten([mlir.aval_to_ir_types(module_context, a) for a in avals_in])
+  flat_out_types, _ = mlir.ir_tree_registry.flatten([mlir.aval_to_ir_types(module_context, a) for a in avals_out])
   return sdy_sharding_rule_to_mlir(
       sdy_sharding_rule,
-      mlir.flatten_ir_types(map(mlir.aval_to_ir_types, avals_in)),
-      mlir.flatten_ir_types(map(mlir.aval_to_ir_types, avals_out)))
+      flat_in_types,
+      flat_out_types)
 
 def _linalg_ffi_lowering(target_name, avals_in=None, avals_out=None,
                          operand_output_aliases=None, column_major=True,
@@ -3195,7 +3214,7 @@ def _linalg_ffi_lowering(target_name, avals_in=None, avals_out=None,
       extra_attributes = {"mhlo.frontend_attributes": frontend_attrs}
       if config.use_shardy_partitioner.value:
         extra_attributes["sdy.sharding_rule"] = _build_sdy_sharding_rule(
-            num_batch_dims, avals_in_, avals_out_)
+            ctx.module_context, num_batch_dims, avals_in_, avals_out_)
     else:
       extra_attributes = None
     rule = ffi.ffi_lowering(target_name, operand_layouts=operand_layouts,

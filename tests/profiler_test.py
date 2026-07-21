@@ -17,6 +17,7 @@ from functools import partial
 import glob
 import gzip
 import os
+import pathlib
 import shutil
 import sys
 import tempfile
@@ -24,17 +25,16 @@ import threading
 import time
 import unittest
 import unittest.mock
-from absl.testing import absltest
-import pathlib
 
+from absl.testing import absltest
 import jax
+from jax import jit
+from jax._src import profiler
+import jax._src.test_util as jtu
 import jax.numpy as jnp
 import jax.profiler
-import jax._src.test_util as jtu
 
-from jax._src import profiler
-from jax import jit
-
+import multiprocessing as mp
 
 try:
   import portpicker
@@ -48,6 +48,24 @@ except ImportError:
   _pywrap_profiler_plugin = None
 
 jax.config.parse_flags_with_absl()
+
+
+# Worker function for subprocess profiling test.
+def _worker_func(port: int, started_queue):
+  try:
+    jax.profiler.start_server(port=port, requires_backend=False)
+    if started_queue is not None:
+      started_queue.put(True)
+    while True:
+      with jax.profiler.TraceAnnotation("worker_step"):
+        with jax.profiler.TraceAnnotation("work"):
+          time.sleep(0.1)
+  except Exception as e:
+    print(f"Worker failed: {e}")
+    if started_queue is not None:
+      started_queue.put(False)
+  finally:
+    jax.profiler.stop_server()
 
 
 # We do not allow multiple concurrent profiler sessions.
@@ -107,10 +125,10 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
   def testProgrammaticProfilingConcurrency(self):
     def work():
@@ -133,10 +151,50 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
+
+  @jtu.skip_under_pytest("subprocess profiling is not supported under pytest")
+  @unittest.skipIf(not portpicker, "Test requires portpicker")
+  def testSubprocessProfiling(self):
+    """Test that subprocess profiling works correctly and aggregates results."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+      port = portpicker.pick_unused_port()
+      ctx = mp.get_context(
+          "absl_spawn" if hasattr(mp, "handle_test_main") else "spawn"
+      )
+      sync_queue = ctx.Queue()
+      p = ctx.Process(target=_worker_func, args=(port, sync_queue), daemon=True)
+      p.start()
+      self.assertTrue(sync_queue.get())
+      unregister_fn = jax.profiler.register_subprocess(p.pid, port)
+      options = jax.profiler.ProfileOptions()
+      options.advanced_configuration = {
+          "profile_subprocesses": True,
+      }
+      jax.profiler.start_trace(tmpdir, profiler_options=options)
+      with jax.profiler.TraceAnnotation("main_step"):
+        with jax.profiler.TraceAnnotation("main"):
+          time.sleep(0.5)
+      jax.profiler.stop_trace()
+      unregister_fn()
+      p.terminate()
+      proto_path = glob.glob(
+          os.path.join(tmpdir, "**/*.xplane.pb"), recursive=True
+      )
+      self.assertEqual(len(proto_path), 1)
+      with open(proto_path[0], "rb") as f:
+        proto = f.read()
+      # Sanity check that serialized proto contains host and device traces
+      # without deserializing.
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
+      self.assertTrue(b"/host:CPU [" + str(p.pid).encode("utf-8") + b"]" in proto, "Expected worker process CPU trace in profile proto")
+      self.assertTrue(b"main_step" in proto, "Expected 'main_step' in profile proto")
+      self.assertTrue(b"main" in proto, "Expected 'main' in profile proto")
+      self.assertTrue(b"worker_step" in proto, "Expected 'worker_step' in profile proto")
+      self.assertTrue(b"work" in proto, "Expected 'work' in profile proto")
 
   def testProgrammaticProfilingWithOptions(self):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -158,10 +216,10 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Verify that the serialized proto contains host and device traces, and
       # does not contain Python traces.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertNotIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertFalse(b"pxla.py" in proto, "Expected 'pxla.py' to not be in profile proto")
 
   def testProgrammaticProfilingPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
@@ -178,10 +236,10 @@ class ProfilerTest(unittest.TestCase):
       proto = proto_path[0].read_bytes()
       # Sanity check that serialized proto contains host, device, and
       # Python traces without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
   def testProgrammaticProfilingWithOptionsPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:
@@ -201,22 +259,23 @@ class ProfilerTest(unittest.TestCase):
       proto = proto_path[0].read_bytes()
       # Verify that the serialized proto contains host traces and does not
       # contain TPU device traces.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertNotIn(b"/device:TPU", proto)
-      self.assertIn(b"pxla.py", proto)
+        self.assertFalse(b"/device:TPU" in proto, "Expected '/device:TPU' to not be in profile proto")
+      self.assertTrue(b"pxla.py" in proto, "Expected 'pxla.py' in profile proto")
 
   def testProfilerGetFDOProfile(self):
     # Tests stop_and_get_fod_profile could run.
     try:
       jax.profiler.start_trace("test")
-      jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
+      out = jax.pmap(lambda x: jax.lax.psum(x + 1, "i"), axis_name="i")(
           jnp.ones(jax.local_device_count())
       )
+      jax.block_until_ready(out)
     finally:
       fdo_profile = profiler.stop_and_get_fdo_profile()
     if jtu.test_device_matches(["gpu"]) and jtu.is_device_cuda():
-      self.assertIn(b"copy", fdo_profile)
+      self.assertTrue(b"copy" in fdo_profile, "Expected 'copy' in FDO profile")
 
   def testProgrammaticProfilingErrors(self):
     with self.assertRaisesRegex(RuntimeError, "No profile started"):
@@ -246,9 +305,9 @@ class ProfilerTest(unittest.TestCase):
         proto = f.read()
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
 
   @jtu.run_on_devices("gpu")
   @jtu.thread_unsafe_test()
@@ -269,7 +328,7 @@ class ProfilerTest(unittest.TestCase):
 
       proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
       proto_bytes = proto_path[0].read_bytes()
-      self.assertIn(b"/device:GPU", proto_bytes)
+      self.assertTrue(b"/device:GPU" in proto_bytes, "Expected '/device:GPU' in profile proto")
 
   @jtu.run_on_devices("gpu")
   @jtu.thread_unsafe_test()
@@ -296,7 +355,7 @@ class ProfilerTest(unittest.TestCase):
 
       proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
       proto_bytes = proto_path[0].read_bytes()
-      self.assertIn(b"/device:GPU", proto_bytes)
+      self.assertTrue(b"/device:GPU" in proto_bytes, "Expected '/device:GPU' in profile proto")
 
   # TODO: b/443121646 - Enable PM sampling test on JAX OSS once the Github CI
   # host machine has privileged access.
@@ -347,9 +406,9 @@ class ProfilerTest(unittest.TestCase):
       proto = proto_path[0].read_bytes()
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
-      self.assertIn(b"/host:CPU", proto)
+      self.assertTrue(b"/host:CPU" in proto, "Expected '/host:CPU' in profile proto")
       if jtu.test_device_matches(["tpu"]):
-        self.assertIn(b"/device:TPU", proto)
+        self.assertTrue(b"/device:TPU" in proto, "Expected '/device:TPU' in profile proto")
 
   def testTraceAnnotation(self):
     x = 3
@@ -470,7 +529,7 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 
-  @unittest.skip("Profiler takes >30s on Cloud TPUs")
+  @unittest.skip("Runs into 'Only one profiler server can be active' error")
   @unittest.skipIf(
       not (portpicker and _pywrap_profiler_plugin),
     "Test requires xprof and portpicker")
@@ -483,7 +542,13 @@ class ProfilerTest(unittest.TestCase):
     # Mock XProf call in collect_profile.
     _pywrap_profiler_plugin.trace = unittest.mock.MagicMock()
     def on_profile():
-      jax.collect_profile(port, 500, logdir, no_perfetto_link=True)
+      jax.collect_profile.collect_profile(
+          port=port,
+          duration_in_ms=500,
+          host="127.0.0.1",
+          log_dir=logdir,
+          no_perfetto_link=True,
+      )
       profile_done.set()
 
     thread_profiler = threading.Thread(
@@ -540,7 +605,7 @@ class ProfilerTest(unittest.TestCase):
       with open(proto_path[0], "rb") as f:
         proto = f.read()
       # Sanity check that serialized proto contains GPU traces
-      self.assertIn(b"/device:GPU", proto)
+      self.assertTrue(b"/device:GPU" in proto, "Expected '/device:GPU' in profile proto")
 
   @jtu.run_on_devices("rocm")
   @jtu.thread_unsafe_test()
@@ -562,8 +627,11 @@ class ProfilerTest(unittest.TestCase):
       with gzip.open(trace_files[0], "rt") as f:
         trace_content = f.read()
       # Sanity check that trace contains kernel_details
-      self.assertIn("kernel_details", trace_content)
+      self.assertTrue("kernel_details" in trace_content, "Expected 'kernel_details' in trace content")
 
 
 if __name__ == "__main__":
-  absltest.main(testLoader=jtu.JaxTestLoader())
+  if hasattr(mp, "handle_test_main"):
+    mp.handle_test_main(partial(absltest.main, testLoader=jtu.JaxTestLoader()))
+  else:
+    absltest.main(testLoader=jtu.JaxTestLoader())

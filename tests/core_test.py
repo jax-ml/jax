@@ -477,7 +477,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_check_jaxpr_cond_invalid(self):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].jaxpr._invars = ()
+    cond.params['branches'][0].jaxpr._all_invars = ()
     self.assertRaisesRegex(
         core.JaxprTypeError,
         'cond branch 0 takes 0 inputs, branch 1 takes 1',
@@ -512,7 +512,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.).jaxpr
 
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].jaxpr._invars = ()
+    cond.params['branches'][0].jaxpr._all_invars = ()
     msg = ''
     try:
       core.check_jaxpr(jaxpr)
@@ -561,40 +561,31 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         r"for let-binder of type f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin\ a",
         lambda: core.check_jaxpr(jaxpr))
 
-  def test_jaxpr_dropvar_from_jit_call(self):
-    def inner(x):
-      return x + 1, x + 2
 
-    def f(x):
-      _, y = jit(inner)(x)
-      return y + 3
+class JaxprPrettyPrintTest(jtu.JaxTestCase):
 
-    jaxpr = make_jaxpr(f)(1).jaxpr
-    assert isinstance(jaxpr.eqns[0].outvars[0], core.DropVar)
-    core.check_jaxpr(jaxpr)
+  def test_frozenset_pp_kv_pair(self):
+    context = core.JaxprPpContext()
+    settings = core.JaxprPpSettings()
 
-  def test_jaxpr_dropvar_from_loop(self):
-    def f(x):
-      _, y = lax.while_loop(lambda s: s[0] < 0.,
-                            lambda s: (jnp.sin(s[0]), jnp.cos(s[1])),
-                            (x, x))
-      return y + 1.
+    v = frozenset({'b', 'a', 'c'})
+    doc = core.pp_kv_pair('test', v, context, settings)
+    self.assertEqual(str(doc), "test=frozenset({'a', 'b', 'c'})")
 
-    jaxpr = make_jaxpr(f)(1.).jaxpr
-    assert isinstance(jaxpr.eqns[0].outvars[0], core.DropVar)
-    core.check_jaxpr(jaxpr)
+    v_empty = frozenset()
+    doc_empty = core.pp_kv_pair('test_empty', v_empty, context, settings)
+    self.assertEqual(str(doc_empty), "test_empty=frozenset({})")
 
-  def test_jaxpr_dropvar_from_cond(self):
-    def f(x):
-      _, y = lax.cond(x < 0.,
-                      lambda x: (jnp.sin(x), x + 1.),
-                      lambda x: (jnp.cos(x), x + 2.),
-                      x)
-      return y
 
-    jaxpr = make_jaxpr(f)(1.).jaxpr
-    assert isinstance(jaxpr.eqns[-1].outvars[0], core.DropVar)
-    core.check_jaxpr(jaxpr)
+  def test_function_pp_kv_pair(self):
+    context = core.JaxprPpContext()
+    settings = core.JaxprPpSettings()
+
+    def my_function():
+      pass
+
+    doc = core.pp_kv_pair('policy', my_function, context, settings)
+    self.assertRegex(str(doc), r"^policy=<function JaxprPrettyPrintTest\.test_function_pp_kv_pair\.<locals>\.my_function at 0xX+>$")
 
 
 class InternedTest(jtu.JaxTestCase):

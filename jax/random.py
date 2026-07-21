@@ -123,10 +123,17 @@ constructor, the implementation is determined by the global
 ``jax_default_prng_impl`` configuration flag. The string names of
 available implementations are:
 
--   ``"threefry2x32"`` (**default**):
-    A counter-based PRNG based on a variant of the Threefry hash function,
-    as described in `this paper by Salmon et al., 2011
-    <http://www.thesalmons.org/john/random123/papers/random123sc11.pdf>`_.
+-   ``"threefry2x32"`` (**default**) and ``"threefry4x32"``:
+    Counter-based PRNGs based on a variant of the Threefry hash function,
+    as described in `Salmon et al (2011)`_. ``threefry2x32`` has a 64-bit
+    key space and a 64-bit counter space, while ``threefry4x32`` has a
+    128-bit key space and a 128-bit counter space.
+
+-   ``"philox2x32"`` and ``"philox4x32"``:
+    Counter-based PRNGs based on a variant of the Philox hash function,
+    also described in `Salmon et al (2011)`_. ``philox2x32`` has a 32-bit
+    key space and a 64-bit counter space, while ``philox4x32`` has a
+    64-bit key space and a 128-bit counter space.
 
 -   ``"rbg"`` and ``"unsafe_rbg"`` (**experimental**): PRNGs built atop
     `XLA's Random Bit Generator (RBG) algorithm
@@ -186,25 +193,27 @@ https://github.com/jax-ml/jax/discussions/18480
 .. table::
    :widths: auto
 
-   =================================   ========  =========  ===  ==========  =====  ============
-   Property                            Threefry  Threefry*  rbg  unsafe_rbg  rbg**  unsafe_rbg**
-   =================================   ========  =========  ===  ==========  =====  ============
-   Fastest on TPU                                           ✅   ✅          ✅     ✅
-   efficiently shardable (w/ pjit)                ✅                         ✅     ✅
-   identical across shardings           ✅        ✅        ✅   ✅
-   identical across CPU/GPU/TPU         ✅        ✅
-   exact ``jax.vmap`` over keys         ✅        ✅
-   =================================   ========  =========  ===  ==========  =====  ============
+   =================================   ========  =========  ======  ===  ==========  =====  ============
+   Property                            Threefry  Threefry*  Philox  rbg  unsafe_rbg  rbg**  unsafe_rbg**
+   =================================   ========  =========  ======  ===  ==========  =====  ============
+   Fastest on TPU                                                   ✅   ✅          ✅     ✅
+   efficiently shardable (w/ pjit)                ✅        ✅                       ✅     ✅
+   identical across shardings           ✅        ✅        ✅      ✅   ✅
+   identical across CPU/GPU/TPU         ✅        ✅        ✅
+   exact ``jax.vmap`` over keys         ✅        ✅        ✅
+   =================================   ========  =========  ======  ===  ==========  =====  ============
 
 (*): with ``jax_threefry_partitionable=1`` set (default as of JAX v0.5.0)
 
 (**): with ``XLA_FLAGS=--xla_tpu_spmd_rng_bit_generator_unsafe=1`` set
+
+.. _Salmon et al (2011): https://dl.acm.org/doi/10.1145/2063384.2063405
 """
 
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-from jax._src.random import (
+from jax._src.random.core import (
   PRNGKey as PRNGKey,
   ball as ball,
   bernoulli as bernoulli,

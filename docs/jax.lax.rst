@@ -121,6 +121,7 @@ Operators
     max
     min
     mul
+    mulhi
     ne
     neg
     nextafter
@@ -175,6 +176,7 @@ Operators
     sqrt
     square
     squeeze
+    stack
     stage
     sub
     tan
@@ -182,6 +184,7 @@ Operators
     tile
     top_k
     transpose
+    unstack
     zeta
 
 .. _lax-control-flow:
@@ -234,6 +237,7 @@ Parallel operators
     axis_size
     psend
     precv
+    pbroadcast
 
 Sharding-related operators
 --------------------------

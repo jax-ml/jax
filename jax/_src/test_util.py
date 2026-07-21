@@ -18,11 +18,11 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
-import datetime
 import functools
 from functools import cached_property, partial
 import inspect
 
+import logging
 import math
 import os
 import platform
@@ -33,6 +33,7 @@ import textwrap
 import threading
 from typing import Any, TextIO
 import unittest
+import warnings
 import zlib
 
 from absl.testing import parameterized
@@ -68,6 +69,8 @@ from jax._src.typing import ArrayLike, DTypeLike
 from jax._src.util import unzip2
 import numpy as np
 import numpy.random as npr
+
+logger = logging.getLogger(__name__)
 
 # When running tests, install the ABSL failure signal handler. This dumps a
 # C++ back trace on fatal signals, which is helpful for debugging.
@@ -187,7 +190,7 @@ def check_eq(xs: Any, ys: Any, err_msg: str = '') -> None:
 
 
 @contextmanager
-def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
+def _capture_output(fp: TextIO) -> Generator[Callable[[], str]]:
   """Context manager to capture all output written to a given file object.
 
   Unlike ``contextlib.redirect_stdout``, this context manager works for
@@ -291,6 +294,7 @@ count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
 count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
 count_compilation_after_persistent_cache_miss = count_events("compile_after_persistent_compilation_miss")
 count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
+count_infer_params_cache_miss = count_events("infer_params_cache_miss")
 
 
 @contextmanager
@@ -320,15 +324,13 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
 
 @contextmanager
 def collect_lowered_jaxprs() -> Generator[
-    Sequence[tuple[core.ClosedJaxpr, mlir.ir.Module]],
-    None,
-    None,
+    Sequence[tuple[core.Jaxpr, mlir.ir.Module]],
 ]:
   """
   Collects all the pairs of (jaxpr, mlir_module) that are lowered.
   """
   assert thread_local_state.collect_lowered_jaxprs is None
-  collection: list[tuple[core.ClosedJaxpr, mlir.ir.Module]] = []
+  collection: list[tuple[core.Jaxpr, mlir.ir.Module]] = []
   thread_local_state.collect_lowered_jaxprs = collection
   try:
     yield collection
@@ -392,6 +394,9 @@ def is_device_rocm() -> bool:
 def is_device_cuda() -> bool:
   return 'cuda' in xla_bridge.get_backend().platform_version
 
+def is_device_oneapi() -> bool:
+  return 'oneapi' in xla_bridge.get_backend().platform_version
+
 def is_cloud_tpu() -> bool:
   return running_in_cloud_tpu_vm
 
@@ -419,24 +424,52 @@ def is_test_rbe() -> bool:
       os.getenv("IS_JAX_RBE_TESTING", "").lower() in {"true", "1", "yes", "y"}
       )
 
-# Returns True if it is not cloud TPU. If it is cloud TPU, returns True if it is
-# built at least `date``.
-# TODO(b/327203806): after libtpu adds a XLA version and the oldest support
-# libtpu contains the XLA version, remove using built time to skip tests.
-def is_cloud_tpu_at_least(year: int, month: int, day: int) -> bool:
-  date = datetime.date(year, month, day)
+def is_libtpu_at_least(version_str: str) -> bool:
+  """Returns True if not running on Cloud TPU.
+
+  If running on Cloud TPU, returns True if the installed libtpu version
+  is at least `version_str`.
+
+  Note: This checks the version of the installed `libtpu` Python package.
+  If `TPU_LIBRARY_PATH` is set to a different path than the installed
+  package's default, a warning will be issued as the loaded library
+  might not match the package version we are checking.
+  """
   if not is_cloud_tpu():
     return True
-  # The format of Cloud TPU platform_version is like:
-  # PJRT C API
-  # TFRT TPU v2
-  # Built on Oct 30 2023 03:04:42 (1698660263) cl/577737722
-  platform_version = xla_bridge.get_backend().platform_version.split('\n')[-1]
-  results = re.findall(r'\(.*?\)', platform_version)
-  if len(results) != 1:
+
+  tpu_library_path = os.environ.get('TPU_LIBRARY_PATH')
+  try:
+    import libtpu  # pyrefly: ignore[missing-import]
+  except ImportError:
+    if tpu_library_path:
+      warnings.warn(
+          f"libtpu Python package is not installed, but TPU_LIBRARY_PATH is set to {tpu_library_path}. "
+          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
+          stacklevel=2
+      )
+    else:
+      warnings.warn(
+          f"libtpu Python package is not installed, but we appear to be on a Cloud TPU VM. "
+          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
+          stacklevel=2
+      )
     return True
-  build_date = date.fromtimestamp(int(results[0][1:-1]))
-  return build_date >= date
+
+  if tpu_library_path and tpu_library_path != libtpu.get_library_path():
+    logger.info(
+        f"TPU_LIBRARY_PATH is set to {tpu_library_path}, which differs from "
+        f"the installed package default ({libtpu.get_library_path()}). Using "
+        f"the custom path set by TPU_LIBRARY_PATH and assuming the version of "
+        f"libtpu is head for version tests."
+    )
+    return True
+
+  # Parse unconditionally. If it throws ValueError, let it propagate.
+  actual_version = parse_version(libtpu.__version__)
+  required_version = parse_version(version_str)
+
+  return actual_version >= required_version
 
 def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
@@ -450,7 +483,7 @@ def stablehlo_version_at_least(required_version: str) -> bool:
     return True
   return hlo.get_smaller_version(
       ".".join(map(str, plugin_version)), required_version
-  ) == plugin_version
+  ) == required_version
 
 def get_tpu_version() -> int:
   if device_under_test() != "tpu":
@@ -570,6 +603,8 @@ def _get_device_tags():
     return {device_under_test(), "rocm"}
   elif is_device_cuda():
     return {device_under_test(), "cuda"}
+  elif is_device_oneapi():
+    return {device_under_test(), "oneapi"}
   else:
     return {device_under_test()}
 
@@ -1044,7 +1079,7 @@ def iter_eqns(jaxpr):
 
 def assert_dot_precision(expected_precision, fun, *args):
   jaxpr = api.make_jaxpr(fun)(*args)
-  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
+  precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
     msg = f"Unexpected precision: {expected_precision} != {precision}"
@@ -1056,7 +1091,7 @@ def assert_dot_precision(expected_precision, fun, *args):
 
 def assert_dot_preferred_element_type(expected, fun, *args, **kwargs):
   jaxpr = api.make_jaxpr(partial(fun, **kwargs))(*args)
-  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr.jaxpr)
+  pref_eltypes = [eqn.params['preferred_element_type'] for eqn in iter_eqns(jaxpr)
                    if eqn.primitive == lax.dot_general_p]
   for pref_eltype in pref_eltypes:
     msg = f"Unexpected preferred_element_type: {expected} != {pref_eltype}"
@@ -1531,7 +1566,7 @@ ignore_warning = test_warning_util.ignore_warning
 MeshSpec = list[tuple[str, int]]
 
 @contextmanager
-def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
+def with_mesh(named_shape: MeshSpec) -> Generator[None]:
   """Test utility for setting up meshes given mesh data from `schedules`."""
   # This is similar to the `with_mesh` function above, but isn't a decorator.
   axis_names, shape = unzip2(named_shape)

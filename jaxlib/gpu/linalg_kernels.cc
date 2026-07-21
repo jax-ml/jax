@@ -74,8 +74,8 @@ ffi::Error CholeskyUpdateFfiImpl(gpuStream_t stream, ffi::AnyBuffer matrix_in,
                        gpuMemcpyDeviceToDevice, stream)));
   }
   for (auto n = 0; n < batch; ++n) {
-    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(LaunchCholeskyUpdateFfiKernel(
-        stream, matrix, vector, size, is_single_precision)));
+    FFI_RETURN_IF_ERROR_STATUS(LaunchCholeskyUpdateFfiKernel(
+        stream, matrix, vector, size, is_single_precision));
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   }
   return ffi::Error::Success();

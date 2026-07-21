@@ -13,12 +13,16 @@
 # limitations under the License.
 
 """NumPy function implementations as hijax primitives."""
+
+from collections.abc import Callable
 import functools
 import operator
+import string
 from typing import Any
-from collections.abc import Callable
 
 import numpy as np
+import opt_einsum
+from opt_einsum.parser import find_output_shape, parse_einsum_input
 
 from jax._src import ad_util
 from jax._src import api
@@ -26,10 +30,16 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import numpy as jnp
 from jax._src import tree_util
-from jax._src.hijax import VJPHiPrimitive
+from jax._src.hijax import (
+    linearize_from_jvp,
+    vjp_from_jvp,
+    VJPHiPrimitive,
+)
+from jax._src.interpreters import ad
 from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.numpy import util
+from jax._src.numpy.einsum import _einsum as einsum_impl, Unoptimized
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
@@ -165,6 +175,8 @@ class SearchSorted(VJPHiPrimitive):
     return (ad_util.zeros_like_aval(self.in_avals[0]),
             ad_util.zeros_like_aval(self.in_avals[1]))
 
+  lin, linearized = linearize_from_jvp
+
 
 class Nonzero(VJPHiPrimitive):
   """HiJAX primitive for nonzero."""
@@ -176,24 +188,48 @@ class Nonzero(VJPHiPrimitive):
   def __init__(
       self,
       a_aval: core.ShapedArray,
-      *,
+      *fill_value_avals: core.ShapedArray,
       size: int,
       axes: tuple[int, ...],
       out_dtype: np.dtype):
-    size = operator.index(size)
-    if size < 0:
-      raise ValueError(f"size must be a positive integer; got {size=}")
+    if core.is_symbolic_dim(size):
+      pass
+    else:
+      size = operator.index(size)
+      if size < 0:
+        raise ValueError(f"size must be a positive integer; got {size=}")
     if not dtypes.issubdtype(out_dtype, np.integer):
       raise ValueError(f"out_dtype must be integer typed; got {out_dtype=}")
     if not all(0 <= ax < a_aval.ndim for ax in axes):
       raise ValueError(f"axes out of range for array with {a_aval.ndim} dimensions:  {axes=}")
     if len(axes) != len(set(axes)):
       raise ValueError(f"duplicate axes are not allowed: {axes=}")
-    self.in_avals = (a_aval,)
+    if fill_value_avals and len(fill_value_avals) != len(axes):
+      raise ValueError(f"Expected {len(axes)} fill values, got {len(fill_value_avals)}")
+    if any(fv.dtype != out_dtype for fv in fill_value_avals):
+      raise ValueError(f"Expected fill values to have dtype {out_dtype}, got {fill_value_avals}")
+    batch_shape = tuple(
+        s for i, s in enumerate(a_aval.shape) if i not in axes
+    )
+    for fv_aval in fill_value_avals:
+      try:
+        broadcasted = lax.broadcast_shapes(fv_aval.shape, batch_shape)
+      except ValueError as e:
+        raise ValueError(
+            f"fill_value shape {fv_aval.shape} is not broadcast-compatible with "
+            f"batch shape {batch_shape}"
+        ) from e
+      if broadcasted != batch_shape:
+        raise ValueError(
+            f"fill_value shape {fv_aval.shape} cannot be broadcast to "
+            f"batch shape {batch_shape} without expanding it."
+        )
+    self.in_avals = (a_aval, *fill_value_avals)
 
     # Evaluate shape to set out_aval
     self.out_aval = tree_util.tree_map(core.typeof, api.eval_shape(
-        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype), a_aval))
+        functools.partial(_nonzero_impl, size=size, axes=axes, out_dtype=out_dtype),
+        a_aval, *fill_value_avals))
 
     self.params = dict(
         size=size,
@@ -202,37 +238,66 @@ class Nonzero(VJPHiPrimitive):
     )
     super().__init__()
 
-  def expand(self, a: ArrayLike) -> tuple[Array, ...]:  # pyrefly: ignore[bad-override]
-    return _nonzero_impl(a, size=self.size, axes=self.axes, out_dtype=self.out_dtype)
+  def expand(self, a: ArrayLike, *fill_value: ArrayLike) -> tuple[Array, ...]:  # pyrefly: ignore[bad-override]
+    return _nonzero_impl(a, *fill_value, size=self.size, axes=self.axes, out_dtype=self.out_dtype)
 
   def batch(
       self,
       axis_data: Any,
-      args: tuple[Array],
-      dims: tuple[int | None]
-  ) -> tuple[tuple[Array, ...], int | tuple[int, ...] | None]:
+      args: tuple[Array, ...],
+      dims: tuple[int | None, ...]
+  ) -> tuple[tuple[Array, ...], int | None | tuple[int | None, ...]]:
     del axis_data  # unused
-    a, = args
-    d, = dims
+    a, *fvs = args
+    d_a, *d_fvs = dims
 
-    if d is None:
-      return self(a), None
+    if d_a is None and all(d is None for d in d_fvs):
+      return self(*args), (None,) * len(self.axes)
 
-    # Adjust axes for the inserted batch dimension d at the front/elsewhere
-    new_axes = tuple(ax + 1 if ax >= d else ax for ax in self.axes)
+    # If a is not batched but some fv is, we broadcast a to have the batch dimension.
+    if d_a is None:
+      B = None
+      for fv, d_fv in zip(fvs, d_fvs):
+        if d_fv is not None:
+          B = fv.shape[d_fv]
+          break
+      assert B is not None
+      # Broadcast a to (B, *a.shape)
+      a = lax.broadcast_in_dim(a, (B, *a.shape), tuple(range(1, a.ndim + 1)))
+      d_a = 0
+
+    # Move batch dim of a to 0
+    if d_a != 0:
+      a = jnp.moveaxis(a, d_a, 0)
+
+    # Since batch dim of a is at 0, all original axes are shifted by 1.
+    new_axes = tuple(ax + 1 for ax in self.axes)
+
+    # Reshape fvs
+    reshaped_fvs = []
+    for fv, d_fv in zip(fvs, d_fvs):
+      if d_fv is not None:
+        if d_fv != 0:
+          fv = jnp.moveaxis(fv, d_fv, 0)
+        B = fv.shape[0]
+        # Reshape to (B, 1, ..., 1)
+        # We need a.ndim - len(new_axes) - 1 ones.
+        num_ones = a.ndim - len(new_axes) - 1
+        shape = (B,) + (1,) * num_ones
+        reshaped_fvs.append(lax.reshape(fv, shape))
+      else:
+        reshaped_fvs.append(fv)
 
     batched_prim = Nonzero(
         core.typeof(a),
+        *(core.typeof(fv) for fv in reshaped_fvs),
         size=self.size,
         axes=new_axes,
         out_dtype=self.out_dtype,
     )
 
-    batch_axes = [ax for ax in range(a.ndim) if ax not in new_axes]
-    out_bdim = batch_axes.index(d)
-
-    out_dims = (out_bdim,) * len(new_axes)
-    return batched_prim(a), out_dims
+    out_dims = (0,) * len(new_axes)
+    return batched_prim(a, *reshaped_fvs), out_dims
 
   def jvp(self, primals: tuple[Array], tangents: Any) -> tuple[tuple[Array, ...], tuple[Array | np.ndarray, ...]]:
     del tangents  # unused
@@ -244,10 +309,185 @@ class Nonzero(VJPHiPrimitive):
     return (self(*args), None)
 
   def vjp_bwd_retval(self, res: Any, g: Any):
-    return (ad_util.zeros_like_aval(self.in_avals[0]),)
+    return tuple(ad_util.zeros_like_aval(aval) for aval in self.in_avals)
+
+  lin, linearized = linearize_from_jvp
 
 
-def _nonzero_impl(a: ArrayLike, *, size: int, axes: tuple[int, ...], out_dtype: np.dtype) -> tuple[Array, ...]:
+class Einsum(VJPHiPrimitive):
+  """HiJAX primitive for einstein summation.
+
+  Parameters:
+    *operands_avals: Abstract values of the operands.
+    subscripts: The subscripts of the einsum. These will be normalized
+      via parse_einsum_input before being stored.
+    optimize: The optimization strategy of the einsum; defaults to "auto".
+    precision: Specify the precision of the computation.
+    preferred_element_type: Specify the accumulator and result dtype.
+  """
+  multiple_results = False
+
+  subscripts: str
+  optimize: str | bool | tuple[tuple[int, ...], ...]
+  precision: lax.PrecisionLike
+  preferred_element_type: DTypeLike | None
+
+  def __init__(
+      self,
+      *operands_avals: core.ShapedArray,
+      subscripts: str,
+      optimize: str | bool | tuple[tuple[int, ...], ...] = "auto",
+      precision: lax.PrecisionLike = None,
+      preferred_element_type: DTypeLike | None = None,
+  ):
+    # Normalize subscripts
+    in_subs, out_sub, _ = parse_einsum_input((subscripts, *operands_avals))
+    self.subscripts = f"{in_subs}->{out_sub}"
+    self.optimize = optimize
+    self.precision = precision
+    self.preferred_element_type = preferred_element_type
+    self.in_avals = operands_avals
+
+    inputs = in_subs.split(',')
+    shapes = [a.shape for a in operands_avals]
+    out_shape = find_output_shape(inputs, shapes, out_sub)
+    if preferred_element_type is None:
+      out_dtype = dtypes.result_type(*(a.dtype for a in operands_avals))
+    else:
+      out_dtype = dtypes.check_and_canonicalize_user_dtype(
+          preferred_element_type, 'einsum'
+      )
+    self.out_aval = core.ShapedArray(out_shape, out_dtype)
+
+    self.params = dict(
+        subscripts=self.subscripts,
+        optimize=optimize,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+    super().__init__()
+
+  def expand(self, *operands: ArrayLike) -> Array:
+    path_type = (
+        'optimal' if self.optimize is True else
+        Unoptimized() if self.optimize is False else
+        self.optimize
+    )
+    contract_path_args = (self.subscripts, *operands)
+    operands_out, contractions = opt_einsum.contract_path(  # pyrefly: ignore[no-matching-overload]
+        *contract_path_args, einsum_call=True, use_blas=True, optimize=path_type)
+    contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
+    return einsum_impl(
+        list(operands_out), contractions, precision=self.precision,
+        preferred_element_type=self.preferred_element_type)
+
+  def batch(
+      self,
+      axis_data: Any,
+      args: tuple[Array, ...],
+      dims: tuple[int | None, ...]
+  ) -> tuple[Array, int | None]:
+    del axis_data  # unused
+    if all(d is None for d in dims):
+      return self(*args), None
+    input_subs, output_sub = self.subscripts.split('->')
+    input_subs_list = input_subs.split(',')
+
+    used_chars = set(input_subs) | set(output_sub) | {',', '-', '>'}
+    available_chars = [c for c in string.ascii_letters if c not in used_chars]
+    if not available_chars:
+      raise ValueError("Run out of characters for batch dimension in einsum.")
+    batch_char = available_chars[0]
+
+    new_input_subs_list = []
+    for i, dim in enumerate(dims):
+      sub = input_subs_list[i]
+      if dim is not None:
+        sub_list = list(sub)
+        sub_list.insert(dim, batch_char)
+        new_sub = "".join(sub_list)
+      else:
+        new_sub = sub
+      new_input_subs_list.append(new_sub)
+
+    new_input_subs = ",".join(new_input_subs_list)
+    new_output_sub = batch_char + output_sub
+    new_subscripts = f"{new_input_subs}->{new_output_sub}"
+
+    batched_prim = Einsum(
+        *(core.typeof(arg) for arg in args),
+        subscripts=new_subscripts,
+        optimize=self.optimize,
+        precision=self.precision,
+        preferred_element_type=self.preferred_element_type,
+    )
+    return batched_prim(*args), 0
+
+  def jvp(self, primals: tuple[Array, ...], tangents: Any) -> tuple[Array, Array]:
+    primal_out = self(*primals)
+    tangent_outs = []
+    for i, t in enumerate(tangents):
+      if not isinstance(t, ad_util.Zero):
+        tangent_outs.append(self(*primals[:i], t, *primals[i+1:]))
+    if not tangent_outs:
+      return primal_out, ad_util.zeros_like_aval(self.out_aval)
+    return primal_out, functools.reduce(lax.add, tangent_outs)
+
+  def transpose(self, out_ct, *maybe_accums):
+    in_subs_list = self.subscripts.split('->')[0].split(',')
+    out_sub = self.subscripts.split('->')[1]
+
+    accums = [acc for acc in maybe_accums if isinstance(acc, ad.GradAccum)]
+    if len(accums) > 1:
+      raise NotImplementedError("Transpose of Einsum with multiple linear inputs is not supported.")
+
+    for i, accum in enumerate(maybe_accums):
+      if isinstance(accum, ad.GradAccum):
+        if isinstance(out_ct, ad_util.Zero):
+          accum.accum(ad_util.zeros_like_aval(self.in_avals[i]))
+          continue
+
+        orig_sub = in_subs_list[i]
+        orig_aval = self.in_avals[i]
+
+        all_ct_input_chars = set(out_sub)
+        for k, sub in enumerate(in_subs_list):
+          if k != i:
+            all_ct_input_chars.update(sub)
+
+        missing_chars = sorted(
+            set(orig_sub) - all_ct_input_chars, key=orig_sub.index
+        )
+
+        if missing_chars:
+          missing_sizes = tuple(
+              orig_aval.shape[orig_sub.index(c)] for c in missing_chars
+          )
+          expanded_out_ct = out_ct[(...,) + (None,) * len(missing_chars)]
+          curr_out_ct = jnp.broadcast_to(
+              expanded_out_ct, out_ct.shape + missing_sizes
+          )
+          curr_out_sub = out_sub + "".join(missing_chars)
+        else:
+          curr_out_ct = out_ct
+          curr_out_sub = out_sub
+
+        in_subs = ",".join([*in_subs_list[:i], curr_out_sub, *in_subs_list[i + 1:]])
+        ct_subscripts = f"{in_subs}->{orig_sub}"
+        ct_operands = (*maybe_accums[:i], curr_out_ct, *maybe_accums[i + 1:])
+        ct_val = einsum(
+            ct_subscripts,
+            *ct_operands,
+            optimize=self.optimize,
+            precision=self.precision,
+        )
+        accum.accum(ct_val)
+
+  lin, linearized = linearize_from_jvp
+  vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+
+def _nonzero_impl(a: ArrayLike, *fill_value: ArrayLike, size: int, axes: tuple[int, ...], out_dtype: np.dtype) -> tuple[Array, ...]:
   """Main implementation of nonzero primitive."""
   a = jnp.asarray(a)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(out_dtype, "nonzero")
@@ -257,13 +497,12 @@ def _nonzero_impl(a: ArrayLike, *, size: int, axes: tuple[int, ...], out_dtype: 
     return ()
 
   batch_axes = [ax for ax in range(a.ndim) if ax not in axes]
+  batch_shape = tuple(a.shape[ax] for ax in batch_axes)
   if a.size == 0 or size == 0:
-    return tuple(jnp.empty((*batch_axes, size), dtype=out_dtype)
+    return tuple(jnp.empty((*batch_shape, size), dtype=out_dtype)
                  for _ in axes)
 
   transposed_a = jnp.transpose(a, (*batch_axes, *axes))
-
-  batch_shape = transposed_a.shape[:len(batch_axes)]
   sub_shape = transposed_a.shape[len(batch_axes):]
   strides = np.cumprod(sub_shape[::-1])[::-1] // sub_shape
   strides = tuple(strides.tolist())
@@ -278,10 +517,15 @@ def _nonzero_impl(a: ArrayLike, *, size: int, axes: tuple[int, ...], out_dtype: 
   bincount = bincount.at[(*mesh_dims, cs_mask)].add(1, mode='drop')
   flat_indices = jnp.cumsum(bincount, axis=-1)
 
-  out = [(flat_indices // stride) % sz for stride, sz in zip(strides, sub_shape)]
+  out = [lax.convert_element_type((flat_indices // stride) % sz, out_dtype)
+         for stride, sz in zip(strides, sub_shape)]
   counts = mask.sum(axis=-1, keepdims=True)
   fill_mask = lax.expand_dims(jnp.arange(size), range(counts.ndim - 1)) >= counts
-  return tuple(lax.convert_element_type(jnp.where(fill_mask, 0, entry), out_dtype) for entry in out)
+  if fill_value:
+    return tuple(jnp.where(fill_mask, lax.expand_dims(fv, [np.ndim(fv)]), entry)
+                 for fv, entry in zip(fill_value, out))
+  else:
+    return tuple(jnp.where(fill_mask, 0, entry) for entry in out)
 
 
 def _searchsorted_impl(sorted_arr: ArrayLike, query: ArrayLike, *, dimension: int,
@@ -309,7 +553,7 @@ def _searchsorted_impl(sorted_arr: ArrayLike, query: ArrayLike, *, dimension: in
   return fun(sorted_arr, query)
 
 
-@functools.partial(api.jit, static_argnames=["side", "dtype", "unrolled"])
+@api.jit(static_argnames=["side", "dtype", "unrolled"])
 def _searchsorted_scan_impl(
     sorted_arr: Array, query: Array, side: str, dtype: np.dtype, unrolled: bool
 ) -> Array:
@@ -320,10 +564,9 @@ def _searchsorted_scan_impl(
   if sorted_arr.size == 0:
     return lax.full(query.shape, fill_value=0, dtype=dtype)
   if query.ndim > 0:
-    return api.vmap(
-        functools.partial(_searchsorted_scan_impl, side=side, dtype=dtype, unrolled=unrolled),
-        in_axes=(None, 0),
-    )(sorted_arr, query)
+    return api.vmap(functools.partial(_searchsorted_scan_impl, side=side,
+                                      dtype=dtype, unrolled=unrolled),
+                    in_axes=(None, 0))(sorted_arr, query)
 
   op = lax._sort_le_comparator if side == "left" else lax._sort_lt_comparator
   unsigned_dtype = np.uint64 if dtypes.iinfo(dtype).bits == 64 else np.uint32
@@ -333,14 +576,17 @@ def _searchsorted_scan_impl(
     go_left = op(query, sorted_arr[mid])
     return (lax.select(go_left, low, mid), lax.select(go_left, mid, high)), ()
   n_levels = int(np.ceil(np.log2(n + 1)))
-  vma = tuple(core.typeof(sorted_arr).mat.varying)
-  init = (core.pvary(unsigned_dtype(0), vma), core.pvary(unsigned_dtype(n), vma))
+  sa_aval = core.typeof(sorted_arr)
+  vma = tuple(sa_aval.mat.varying)
+  init = (jnp.array(0, dtype=unsigned_dtype, out_sharding=sa_aval.sharding),
+          jnp.array(n, dtype=unsigned_dtype, out_sharding=sa_aval.sharding))
+  init = tuple(core.pvary(i, vma) for i in init)
   carry, _ = control_flow.scan(body_fun, init, (), length=n_levels,
                                unroll=n_levels if unrolled else 1)
   return carry[1].astype(dtype)
 
 
-@functools.partial(api.jit, static_argnames=["side", "dtype"])
+@api.jit(static_argnames=["side", "dtype"])
 def _searchsorted_sort_impl(
     sorted_arr: Array, query: Array, side: str, dtype: np.dtype
 ) -> Array:
@@ -368,7 +614,7 @@ def _searchsorted_sort_impl(
   ).astype(dtype)
 
 
-@functools.partial(api.jit, static_argnames=["side", "dtype"])
+@api.jit(static_argnames=["side", "dtype"])
 def _searchsorted_compare_all_impl(
     sorted_arr: Array, query: Array, side: str, dtype: np.dtype
 ) -> Array:
@@ -415,7 +661,7 @@ def searchsorted(
   Returns:
     An array specifying the insertion locations of `query` into `sorted_arr`.
   """
-  sorted_arr, query = core.standard_insert_pvary(sorted_arr, query)
+  sorted_arr, query = core.auto_insert_reshard(sorted_arr, query)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
   prim = SearchSorted(
     core.typeof(sorted_arr),
@@ -442,7 +688,7 @@ def searchsorted_via_expand(
     dtype: DTypeLike = "int32",
 ):
   """Compute searchsorted() without binding the hijax primitive."""
-  sorted_arr, query = core.standard_insert_pvary(sorted_arr, query)
+  sorted_arr, query = core.auto_insert_reshard(sorted_arr, query)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "searchsorted")
   prim = SearchSorted(
     core.typeof(sorted_arr),
@@ -461,6 +707,7 @@ def nonzero(
     /,
     *,
     size: int,
+    fill_value: ArrayLike | tuple[ArrayLike, ...] | None = None,
     axes: tuple[int, ...] | None = None,
     dtype: DTypeLike = 'int32',
 ) -> tuple[Array, ...]:
@@ -472,6 +719,7 @@ def nonzero(
   Args:
     a: N-dimensional array.
     size: static integer specifying the number of nonzero entries to return.
+    fill_value: optional padding value when ``size`` is specified. Defaults to 0.
     axes: optional tuple of integers specifying the axes to compute the result over.
       Defaults to None (all axes).
     dtype: optional datatype for the returned indices. Defaults to int32.
@@ -479,13 +727,60 @@ def nonzero(
   Returns:
     Tuple of length ``len(axes)`` containing the indices of each nonzero value.
   """
-  a, = core.standard_insert_pvary(a)
+  a, = core.auto_insert_reshard(a)
   out_dtype = dtypes._maybe_canonicalize_explicit_dtype(np.dtype(dtype), "nonzero")
   axes = util.canonicalize_axis_tuple(axes, np.ndim(a))
+
+  if fill_value is not None:
+    if isinstance(fill_value, tuple):
+      if len(fill_value) != len(axes):
+        raise ValueError(f"fill_value tuple must have length equal to number of axes ({len(axes)}); got {len(fill_value)}")
+      fill_value_tup = fill_value
+    else:
+      fill_value_tup = (fill_value,) * len(axes)
+    fill_value_tup = tuple(jnp.asarray(fv, dtype=out_dtype) for fv in fill_value_tup)
+    for fv in fill_value_tup:
+      if fv.ndim != 0:
+        raise ValueError(f"fill_value must be a scalar or tuple of scalars; got {fill_value}")
+  else:
+    fill_value_tup = ()
+
   prim = Nonzero(
     core.typeof(a),
+    *[core.typeof(fv) for fv in fill_value_tup],
     size=size,
     axes=axes,
     out_dtype=out_dtype,
   )
-  return prim(a)
+  return prim(a, *fill_value_tup)
+
+
+def einsum(
+    subscripts: str,
+    /,
+    *operands: ArrayLike,
+    optimize: str | bool | tuple[tuple[int, ...], ...] = "auto",
+    precision: lax.PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+) -> Array:
+  """Einstein summation built on a HiJAX primitive.
+
+  Args:
+    subscripts: string containing axes names separated by commas.
+    *operands: sequence of one or more arrays corresponding to the subscripts.
+    optimize: specify how to optimize the order of computation.
+    precision: Specify the precision of the computation.
+    preferred_element_type: Specify the accumulator and result dtype.
+
+  Returns:
+    array containing the result of the einstein summation.
+  """
+  operands = core.auto_insert_reshard(*operands)
+  prim = Einsum(
+      *(core.typeof(op) for op in operands),
+      subscripts=subscripts,
+      optimize=tuple(optimize) if isinstance(optimize, list) else optimize,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+  return prim(*operands)

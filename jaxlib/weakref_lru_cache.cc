@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <string>
@@ -44,6 +45,7 @@ limitations under the License.
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pytree.h"
 #include "jaxlib/reentrant_hash_map.h"
+#include "jaxlib/strong_lru_cache.h"
 
 namespace nb = nanobind;
 
@@ -139,6 +141,7 @@ struct WeakKey {
     // equal() may release locks, and per the contract of our hash map this may
     // invalidate references.
     bool operator()(WeakKey a, WeakKey b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       if (a.refs.size() != b.refs.size()) {
         return false;
       }
@@ -150,6 +153,7 @@ struct WeakKey {
       return true;
     }
     bool operator()(WeakKey a, PointerWeakKey b) const {
+      if (a.cached_hash != b.cached_hash) return false;
       if (a.refs.size() != b.refs.size()) {
         return false;
       }
@@ -176,203 +180,6 @@ struct WeakKey {
   };
 };
 
-// StrongKey is the key to the strong part of the table. It has three parts:
-// the user-provided context object, and the positional and keyword arguments.
-// We store the arguments as the concatenation of the positional arguments and
-// the keyword arguments, together with a vector of keyword names. This is
-// efficient to construct from the Python vectorcall protocol; we need never
-// build a dictionary.
-struct PointerStrongKey;
-
-// StrongKeyView is used for heterogeneous lookup in Call to avoid copies on
-// hits. It uses value comparison for context and args, which may release the
-// GIL.
-struct StrongKeyView {
-  nb::object context;
-  absl::Span<nb::object const> kwnames;
-  absl::Span<nb::object const> args;
-  const PyTreeDef* treedef;
-  size_t cached_hash;
-};
-
-class StrongKey {
- public:
-  StrongKey(nb::object context, absl::InlinedVector<nb::object, 2> kwnames,
-            absl::InlinedVector<nb::object, 4> args,
-            std::optional<PyTreeDef> treedef = std::nullopt)
-      : context_(std::move(context)),
-        kwnames_(std::move(kwnames)),
-        args_(std::move(args)),
-        treedef_(std::move(treedef)) {
-    cached_hash_ = absl::HashOf(*this);
-  }
-  explicit StrongKey(const StrongKeyView& lkey);
-
-  bool operator==(const StrongKey& other) const;
-
-  template <typename H>
-  friend H AbslHashValue(H h, const StrongKey& key) {
-    h = H::combine(std::move(h), nb::hash(key.context_));
-    for (const auto& kwname : key.kwnames_) {
-      h = H::combine(std::move(h), kwname.ptr());
-    }
-    for (const auto& arg : key.args_) {
-      h = H::combine(std::move(h), nb::hash(arg));
-    }
-    if (key.treedef_) {
-      h = H::combine(std::move(h), *key.treedef_);
-    }
-    return h;
-  }
-
-  struct SafeEqual {
-    // It is important that we take the keys by value not by reference because
-    // equal() may release locks, and per the contract of our hash map this may
-    // invalidate references.
-    bool operator()(StrongKey a, StrongKey b) const { return a == b; }
-    bool operator()(StrongKey a, const PointerStrongKey& b) const;
-    bool operator()(StrongKey a, const StrongKeyView& b) const;
-  };
-
-  struct CachedHash {
-    size_t operator()(StrongKey key) const { return key.cached_hash_; }
-    size_t operator()(const PointerStrongKey& key) const;
-    size_t operator()(const StrongKeyView& key) const {
-      return key.cached_hash;
-    }
-  };
-
-  nb::object context() const { return context_; }
-  absl::Span<const nb::object> kwnames() const { return kwnames_; }
-  absl::Span<const nb::object> args_span() const { return args_; }
-  const PyTreeDef* treedef() const { return treedef_ ? &*treedef_ : nullptr; }
-  size_t cached_hash() const { return cached_hash_; }
-
-  nb::object args() const;
-  nb::object kwargs() const;
-
-  int tp_traverse(visitproc visit, void* arg) const;
-
- private:
-  nb::object context_;
-
-  // Keyword argument names, interned and sorted by pointer.
-  absl::InlinedVector<nb::object, 2> kwnames_;
-
-  // Positional arguments followed by keyword arguments. The keyword arguments
-  // are stored in the order they appear in kwnames.
-  absl::InlinedVector<nb::object, 4> args_;
-
-  // The pytree definition of the arguments, if applicable.
-  std::optional<PyTreeDef> treedef_;
-
-  // The cached hash value. See the comment on WeakKey.
-  size_t cached_hash_;
-};
-
-bool StrongKey::operator==(const StrongKey& other) const {
-  if (treedef_ != other.treedef_) return false;
-  if (!context_.equal(other.context_)) return false;
-
-  if (kwnames_.size() != other.kwnames_.size()) return false;
-  for (size_t i = 0; i < kwnames_.size(); ++i) {
-    if (kwnames_[i].ptr() != other.kwnames_[i].ptr()) return false;
-  }
-
-  if (args_.size() != other.args_.size()) return false;
-  for (size_t i = 0; i < args_.size(); ++i) {
-    if (!args_[i].equal(other.args_[i])) return false;
-  }
-  return true;
-}
-
-nb::object StrongKey::args() const {
-  size_t num_kwargs = kwnames_.size();
-  size_t num_pos = args_.size() - num_kwargs;
-  nb::tuple t = nb::steal<nb::tuple>(PyTuple_New(num_pos));
-  for (size_t i = 0; i < num_pos; ++i) {
-    PyTuple_SET_ITEM(t.ptr(), i, args_[i].inc_ref().ptr());
-  }
-  return t;
-}
-
-nb::object StrongKey::kwargs() const {
-  nb::dict d;
-  size_t num_kwargs = kwnames_.size();
-  size_t num_pos = args_.size() - num_kwargs;
-  for (size_t i = 0; i < num_kwargs; ++i) {
-    d[kwnames_[i]] = args_[num_pos + i];
-  }
-  return d;
-}
-
-int StrongKey::tp_traverse(visitproc visit, void* arg) const {
-  Py_VISIT(context_.ptr());
-  for (const auto& kwname : kwnames_) {
-    Py_VISIT(kwname.ptr());
-  }
-  for (const auto& a : args_) {
-    Py_VISIT(a.ptr());
-  }
-  if (treedef_) {
-    int ret = treedef_->Traverse(visit, arg);
-    if (ret) return ret;
-  }
-  return 0;
-}
-
-struct PointerStrongKey {
-  nb::object context;
-  absl::Span<nb::object const> kwnames;
-  absl::Span<nb::object const> args;
-  const PyTreeDef* treedef;
-  size_t cached_hash;
-};
-
-StrongKey::StrongKey(const StrongKeyView& lkey)
-    : context_(lkey.context),
-      kwnames_(lkey.kwnames.begin(), lkey.kwnames.end()),
-      args_(lkey.args.begin(), lkey.args.end()),
-      treedef_(lkey.treedef ? std::optional<PyTreeDef>(*lkey.treedef)
-                            : std::nullopt),
-      cached_hash_(lkey.cached_hash) {}
-
-bool StrongKey::SafeEqual::operator()(StrongKey a,
-                                      const StrongKeyView& b) const {
-  if (a.treedef_.has_value() != (b.treedef != nullptr)) return false;
-  if (a.treedef_ && !(*a.treedef_ == *b.treedef)) return false;
-  if (!a.context_.equal(b.context)) return false;
-  if (a.kwnames_.size() != b.kwnames.size()) return false;
-  for (size_t i = 0; i < a.kwnames_.size(); ++i) {
-    if (a.kwnames_[i].ptr() != b.kwnames[i].ptr()) return false;
-  }
-  if (a.args_.size() != b.args.size()) return false;
-  for (size_t i = 0; i < a.args_.size(); ++i) {
-    if (!a.args_[i].equal(b.args[i])) return false;
-  }
-  return true;
-}
-
-bool StrongKey::SafeEqual::operator()(StrongKey a,
-                                      const PointerStrongKey& b) const {
-  if (a.treedef_.has_value() != (b.treedef != nullptr)) return false;
-  if (a.treedef_ && !(*a.treedef_ == *b.treedef)) return false;
-  if (a.context_.ptr() != b.context.ptr()) return false;
-  if (a.kwnames_.size() != b.kwnames.size()) return false;
-  for (size_t i = 0; i < a.kwnames_.size(); ++i) {
-    if (a.kwnames_[i].ptr() != b.kwnames[i].ptr()) return false;
-  }
-  if (a.args_.size() != b.args.size()) return false;
-  for (size_t i = 0; i < a.args_.size(); ++i) {
-    if (a.args_[i].ptr() != b.args[i].ptr()) return false;
-  }
-  return true;
-}
-
-size_t StrongKey::CachedHash::operator()(const PointerStrongKey& key) const {
-  return key.cached_hash;
-}
-
 // The LRU list has the following property:
 // The next pointers are not circular, and point to CacheEntrys.
 // The prev pointers are circular, and point to LRUNodes. This allows the head
@@ -394,10 +201,8 @@ struct CacheEntry {
 
   // The following two fields are only valid once completed is true.
 
-  // Did we compute a result, or raise an exception?
-  bool has_result = false;
-
-  // The result, if we computed one.
+  // The result, if we computed one. A valid (non-null) object indicates
+  // a successfully computed result. Only valid once completed is true.
   nb::object result;
 
   // The thread that is computing the entry. This is used to detect reentrant
@@ -779,6 +584,12 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
       } else {
         PushFront(entry.get());
       }
+      if (entry->completed.HasBeenNotified() && entry->result.is_valid()) {
+        PyObject* res = entry->result.inc_ref().ptr();
+        entry.reset();
+        cache_ptr.reset();
+        return res;
+      }
     }
   }
 
@@ -823,7 +634,6 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
       if (!result) return nullptr;
 
       entry->result = result;
-      entry->has_result = true;
     } else {
       if (entry->thread_id == std::this_thread::get_id()) {
         nb::object repr_obj = WeakrefKeyToPython(wrcache_key.refs);
@@ -837,7 +647,7 @@ PyObject* WeakrefLRUCacheBase::Call(PyObject* self_obj,
     }
   }
 
-  if (entry->has_result) {
+  if (entry->result.is_valid()) {
     return entry->result.inc_ref().ptr();
   } else {
     // There was an error when computing fn_, so give up on caching and rerun

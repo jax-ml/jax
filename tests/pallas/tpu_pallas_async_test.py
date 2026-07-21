@@ -48,7 +48,7 @@ def make_async_copy(target_memory_space=None):
     x, out, sem = pl.pallas_call(
         copy_start_kernel,
         out_shape=(
-            jax.ShapeDtypeStruct(x.shape, x.dtype),  # aliased x
+            jax.ShapeDtypeStruct.like(x),  # aliased x
             target_memory_space(x.shape, x.dtype),  # out
             pltpu.SemaphoreType.DMA(()),
         ),
@@ -104,7 +104,7 @@ def make_async_slice(index: int):
     x, out, sem = pl.pallas_call(
         async_slice_start_kernel,
         out_shape=(
-            jax.ShapeDtypeStruct(x.shape, x.dtype),  # aliased x
+            jax.ShapeDtypeStruct.like(x),  # aliased x
             jax.ShapeDtypeStruct(x.shape[1:], x.dtype),  # out
             pltpu.SemaphoreType.DMA(()),
         ),
@@ -157,7 +157,7 @@ def make_async_dynamic_slice(index: jax.Array):
     x, out, sem = pl.pallas_call(
         async_dslice_start_kernel,
         out_shape=(
-            jax.ShapeDtypeStruct(x.shape, x.dtype),  # aliased x
+            jax.ShapeDtypeStruct.like(x),  # aliased x
             jax.ShapeDtypeStruct(x.shape[1:], x.dtype),  # out
             pltpu.SemaphoreType.DMA(()),
         ),
@@ -467,7 +467,7 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
         axis_types=(jax.sharding.AxisType.Auto,),
     )
     ddim = jax.device_count()
-    tcmesh = pltpu.create_tensorcore_mesh('core')
+    tcmesh = pltpu.TensorCoreMesh(axis_name='core')
     pspec = P('device', None)
     sharding = jax.sharding.NamedSharding(mesh, pspec)
 
@@ -573,7 +573,7 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
     x, out, send_sem, recv_sem = pl.pallas_call(
         copy_start_kernel,
         out_shape=(
-            jax.ShapeDtypeStruct(x.shape, x.dtype),  # aliased x
+            jax.ShapeDtypeStruct.like(x),  # aliased x
             target_memory_space(x.shape, x.dtype),  # out
             pltpu.SemaphoreType.DMA(()),  # send_sem
             pltpu.SemaphoreType.DMA(()),  # recv_sem
@@ -604,7 +604,7 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
 
     x = pl.pallas_call(
         send_done_kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),  # out
+        out_shape=jax.ShapeDtypeStruct.like(x),  # out
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
@@ -674,7 +674,7 @@ def make_bidi_collective_permute(axis_name: str):
     x, out, left_sems, right_sems = pl.pallas_call(
         copy_start_kernel,
         out_shape=(
-            jax.ShapeDtypeStruct(x.shape, x.dtype),  # aliased x
+            jax.ShapeDtypeStruct.like(x),  # aliased x
             pl.ANY(x.shape, x.dtype),  # out
             (pltpu.SemaphoreType.DMA(()),) * 2,  # left_sems
             (pltpu.SemaphoreType.DMA(()),) * 2,  # right_sems
@@ -714,7 +714,7 @@ def make_bidi_collective_permute(axis_name: str):
 
     x = pl.pallas_call(
         send_done_kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),  # out
+        out_shape=jax.ShapeDtypeStruct.like(x),  # out
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
@@ -745,7 +745,7 @@ def make_bidi_collective_permute(axis_name: str):
 
     out = pl.pallas_call(
         recv_done_kernel,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),  # out
+        out_shape=jax.ShapeDtypeStruct.like(x),  # out
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
             pl.BlockSpec(memory_space=pl.ANY),

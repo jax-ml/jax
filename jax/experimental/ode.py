@@ -181,7 +181,8 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, hmax=jn
   converted, consts = custom_derivatives.closure_convert(func, y0, t[0], *args)
   return _odeint_wrapper(converted, rtol, atol, mxstep, hmax, y0, t, *args, *consts)
 
-@partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
+@jax.jit(static_argnums=(0, 1, 2, 3, 4))
+@jax.default_matmul_precision("highest")
 def _odeint_wrapper(func: Callable, rtol, atol, mxstep, hmax, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
   debug = api_util.debug_info("odeint", func, args, {})
@@ -190,6 +191,7 @@ def _odeint_wrapper(func: Callable, rtol, atol, mxstep, hmax, y0, ts, *args):
   return jax.vmap(unravel)(out)
 
 @partial(jax.custom_vjp, nondiff_argnums=(0, 1, 2, 3, 4))
+@jax.default_matmul_precision("highest")
 def _odeint(func, rtol, atol, mxstep, hmax, y0, ts, *args):
   func_ = lambda y, t: func(y, t, *args)
 
@@ -228,6 +230,7 @@ def _odeint_fwd(func, rtol, atol, mxstep, hmax, y0, ts, *args):
   ys = _odeint(func, rtol, atol, mxstep, hmax, y0, ts, *args)
   return ys, (ys, ts, args)
 
+@jax.default_matmul_precision("highest")
 def _odeint_rev(func, rtol, atol, mxstep, hmax, res, g):
   ys, ts, args = res
 

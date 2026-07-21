@@ -21,10 +21,15 @@ from jax._src.scipy.special import (
   beta as beta,
   betainc as betainc,
   betaln as betaln,
+  boxcox as boxcox,
+  boxcox1p as boxcox1p,
+  comb as comb,
+  dawsn as dawsn,
   digamma as digamma,
   entr as entr,
   erf as erf,
   erfc as erfc,
+  erfcx as erfcx,
   erfinv as erfinv,
   exp1 as exp1,
   expi as expi,
@@ -53,6 +58,7 @@ from jax._src.scipy.special import (
   multigammaln as multigammaln,
   ndtr as ndtr,
   ndtri as ndtri,
+  owens_t as owens_t,
   poch as poch,
   polygamma as polygamma,
   rel_entr as rel_entr,
@@ -60,6 +66,7 @@ from jax._src.scipy.special import (
   softmax as softmax,
   spence as spence,
   sph_harm_y as sph_harm_y,
+  wofz as wofz,
   xlog1py as xlog1py,
   xlogy as xlogy,
   zeta as zeta,
@@ -79,13 +86,6 @@ _deprecations = {
         "jax.scipy.special.lpmn_values is deprecated; no replacement is planned.",
         _deprecated_lpmn_values,
     ),
-    # Deprecated in v0.7.0, removed in v0.10.0.
-    # TODO(jakevdp): remove this entry in v0.11.0.
-    "sph_harm": (
-        "jax.scipy.special.sph_harm was deprecated in v0.7.0 and removed in"
-        " v0.10.0. Use jax.scipy.special.sph_harm_y instead.",
-        None
-    )
 }
 
 import typing as _typing

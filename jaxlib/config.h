@@ -71,10 +71,13 @@ class Config {
 // cache key.
 std::vector<nanobind::object> JitConfigs();
 
-// The corresponding config names, for debugging.
+// The config names corresponding to JitConfigs(), for debugging.
 std::vector<std::string> JitConfigNames();
 
 nanobind::tuple TraceContext();
+
+// The config names corresponding to TraceContext(), for debugging.
+nanobind::tuple TraceContextNames();
 
 void BuildConfigSubmodule(nanobind::module_& m);
 

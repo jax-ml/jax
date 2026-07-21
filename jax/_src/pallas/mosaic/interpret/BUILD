@@ -14,7 +14,6 @@
 
 # Package for Pallas TPU Interpret Mode
 
-load("@rules_python//python:defs.bzl", "py_library")
 load("//jaxlib:jax.bzl", "py_deps", "pytype_strict_library")
 
 package(
@@ -35,12 +34,13 @@ pytype_strict_library(
     ] + py_deps("numpy"),
 )
 
-py_library(
+pytype_strict_library(
     name = "interpret_pallas_call",
     srcs = [
         "__init__.py",
         "interpret_pallas_call.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":params",
         ":race_detection_state",
@@ -111,7 +111,7 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:callback",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

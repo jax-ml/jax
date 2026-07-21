@@ -96,7 +96,7 @@ class RaggedPagedAttentionKernelTest(jtu.JaxTestCase):
         )
       kv = jnp.pad(
           kv,
-          ((0, pl.cdiv(kv_len, page_size) * page_size - kv_len), (0, 0), (0, 0)),
+          ((0, pl.align_to(kv_len, page_size) - kv_len), (0, 0), (0, 0)),
           constant_values=jnp.nan,
       ).reshape(-1, page_size, num_kv_heads * 2, head_dim)
       indices = page_cnt + jnp.arange(kv.shape[0], dtype=jnp.int32)

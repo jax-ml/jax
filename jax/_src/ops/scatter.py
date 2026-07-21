@@ -35,14 +35,16 @@ from jax._src.numpy import indexing
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.pjit import auto_axes
-from jax._src.sharding_impls import NamedSharding
+from jax._src.sharding_impls import (NamedSharding, PartitionSpec as P,
+                                     canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, Index
 
 
 def _scatter_update(x: ArrayLike, idx: Index | tuple[Index, ...],
                     y: ArrayLike, scatter_op: Callable[..., Array],
                     indices_are_sorted: bool, unique_indices: bool,
-                    mode: slicing.GatherScatterMode | str | None = None, normalize_indices: bool = True,
+                    mode: slicing.GatherScatterMode | str | None = None,
+                    normalize_indices: bool = True,
                     out_sharding: NamedSharding | None = None):
   """Helper for indexed updates.
 
@@ -179,7 +181,8 @@ def _segment_update(name: str,
                     unique_indices: bool = False,
                     bucket_size: int | None = None,
                     reducer: Callable | None = None,
-                    mode: slicing.GatherScatterMode | str | None = None) -> Array:
+                    mode: slicing.GatherScatterMode | str | None = None,
+                    out_sharding: NamedSharding | None = None) -> Array:
   check_arraylike(name, data, segment_ids)
   mode = slicing.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
@@ -196,11 +199,14 @@ def _segment_update(name: str,
                    _get_identity(scatter_op, dtype), dtype=dtype)
     return _scatter_update(
       out, segment_ids, data, scatter_op, indices_are_sorted,
-      unique_indices, normalize_indices=False, mode=mode)
+      unique_indices, normalize_indices=False, mode=mode,
+      out_sharding=out_sharding)
 
   # Bucketize indices and perform segment_update on each bucket to improve
   # numerical stability for operations like product and sum.
   assert reducer is not None
+  if out_sharding is not None:
+    raise NotImplementedError
   num_buckets = util.ceil_of_ratio(segment_ids.size, bucket_size)
   out = jnp.full((num_buckets, num_segments) + data.shape[1:],
                  _get_identity(scatter_op, dtype), dtype=dtype)
@@ -218,7 +224,8 @@ def segment_sum(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: slicing.GatherScatterMode | str | None = None) -> Array:
+                mode: slicing.GatherScatterMode | str | None = None,
+                out_sharding: NamedSharding | P | None = None) -> Array:
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's `segment_sum
@@ -262,9 +269,11 @@ def segment_sum(data: ArrayLike,
     >>> jit(segment_sum, static_argnums=2)(data, segment_ids, 3)
     Array([1, 5, 4], dtype=int32)
   """
+  out_sharding = canonicalize_sharding(out_sharding, 'segment_sum')
   return _segment_update(
       "segment_sum", data, segment_ids, slicing.scatter_add, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, reductions.sum, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.sum, mode=mode,
+      out_sharding=out_sharding)
 
 
 def segment_prod(data: ArrayLike,
@@ -273,7 +282,8 @@ def segment_prod(data: ArrayLike,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
                  bucket_size: int | None = None,
-                 mode: slicing.GatherScatterMode | str | None = None) -> Array:
+                 mode: slicing.GatherScatterMode | str | None = None,
+                 out_sharding: NamedSharding | P | None = None) -> Array:
   """Computes the product within segments of an array.
 
   Similar to TensorFlow's `segment_prod
@@ -317,9 +327,13 @@ def segment_prod(data: ArrayLike,
     >>> jit(segment_prod, static_argnums=2)(data, segment_ids, 3)
     Array([ 0,  6, 20], dtype=int32)
   """
+  out_sharding = canonicalize_sharding(out_sharding, 'segment_prod')
+  if out_sharding is not None and out_sharding.spec.unreduced:
+    raise NotImplementedError('unreduced for prod is not yet supported.')
   return _segment_update(
       "segment_prod", data, segment_ids, slicing.scatter_mul, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, reductions.prod, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.prod,
+      mode=mode, out_sharding=out_sharding)
 
 
 def segment_max(data: ArrayLike,
@@ -328,7 +342,8 @@ def segment_max(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: slicing.GatherScatterMode | str | None = None) -> Array:
+                mode: slicing.GatherScatterMode | str | None = None,
+                out_sharding: NamedSharding | P | None = None) -> Array:
   """Computes the maximum within segments of an array.
 
   Similar to TensorFlow's `segment_max
@@ -371,9 +386,13 @@ def segment_max(data: ArrayLike,
     >>> jit(segment_max, static_argnums=2)(data, segment_ids, 3)
     Array([1, 3, 5], dtype=int32)
   """
+  out_sharding = canonicalize_sharding(out_sharding, 'segment_max')
+  if out_sharding is not None and out_sharding.spec.unreduced:
+    raise NotImplementedError('unreduced for max is not yet supported.')
   return _segment_update(
       "segment_max", data, segment_ids, slicing.scatter_max, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, reductions.max, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.max,
+      mode=mode, out_sharding=out_sharding)
 
 
 def segment_min(data: ArrayLike,
@@ -382,7 +401,8 @@ def segment_min(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: slicing.GatherScatterMode | str | None = None) -> Array:
+                mode: slicing.GatherScatterMode | str | None = None,
+                out_sharding: NamedSharding | P | None = None) -> Array:
   """Computes the minimum within segments of an array.
 
   Similar to TensorFlow's `segment_min
@@ -425,6 +445,10 @@ def segment_min(data: ArrayLike,
     >>> jit(segment_min, static_argnums=2)(data, segment_ids, 3)
     Array([0, 2, 4], dtype=int32)
   """
+  out_sharding = canonicalize_sharding(out_sharding, 'segment_min')
+  if out_sharding is not None and out_sharding.spec.unreduced:
+    raise NotImplementedError('unreduced for min is not yet supported.')
   return _segment_update(
       "segment_min", data, segment_ids, slicing.scatter_min, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, reductions.min, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.min,
+      mode=mode, out_sharding=out_sharding)

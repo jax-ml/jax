@@ -32,10 +32,8 @@ on:
         type: choice
         default: "3.12"
         options:
-        - "3.11"
         - "3.12"
         - "3.13"
-        - "3.13-ft"
         - "3.14"
         - "3.14-ft"
       cuda-version:
@@ -52,6 +50,10 @@ on:
         options:
         - "1"
         - "0"
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        required: false
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: choice
@@ -81,6 +83,10 @@ on:
         description: "Should latest XLA be used?"
         type: string
         default: "0"
+      xla_commit:
+        description: "XLA commit SHA to check out after cloning XLA."
+        type: string
+        default: ""
       upload_artifacts_to_gcs:
         description: "Should the artifacts be uploaded to a GCS bucket?"
         default: true
@@ -115,6 +121,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_CUDA_VERSION: "${{ inputs.cuda-version }}"
       JAXCI_CLONE_MAIN_XLA: "${{ inputs.clone_main_xla }}"
+      JAXCI_XLA_COMMIT: "${{ inputs.xla_commit }}"
 
     name: "${{ inputs.artifact }},
             ${{ (contains(inputs.runner, 'linux-x86') && 'linux x86') ||
@@ -126,7 +133,7 @@ jobs:
       gcs_upload_uri: ${{ steps.store-gcs-upload-uri.outputs.gcs_upload_uri }}
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Configure Build Environment
@@ -172,7 +179,7 @@ jobs:
       - name: Upload artifacts to a GCS bucket (Windows runs)
         if: >-
           ${{ inputs.upload_artifacts_to_gcs &&  contains(inputs.runner, 'windows-x86') }}
-        shell: cmd
+        shell: cmd  # zizmor: ignore[misfeature] allow the workflow to use cmd shell
         run:  gcloud storage cp -r "dist/*.whl" "%INPUTS_GCS_UPLOAD_URI%"/
         env:
           INPUTS_GCS_UPLOAD_URI: ${{ inputs.gcs_upload_uri }}

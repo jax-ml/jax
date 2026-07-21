@@ -252,7 +252,7 @@ def check_async_done(stage: internal.PipelineStage,
   can_run = True
   token_read_effs = internal.filter_tokens(
       internal.filter_read_effects(stage.effects))
-  read_tokens = {effect.input_index for effect in token_read_effs}
+  read_tokens = {effect.input for effect in token_read_effs}
   assert len(read_tokens) == 1, stage.effects
   read_token = tuple(read_tokens)[0]
   async_start_stage_idx = scoreboard.which_stage_writes[read_token]
@@ -284,7 +284,7 @@ def check_async_start(
       internal.filter_write_effects(stage.effects)
   )
   assert len(token_write_effs) == 1, stage.effects
-  token_write_idx = tuple(token_write_effs)[0].input_index
+  token_write_idx = tuple(token_write_effs)[0].input
   dependent_stages = scoreboard.which_stages_read[token_write_idx]
 
   dependents_ready = []
@@ -315,7 +315,7 @@ def eval_stage(ctx: PipelineContext, stage: internal.PipelineStage, args
   flat_ctx = jax.tree.leaves(ctx)
   state_tree = jax.tree.structure(ctx.pipeline_state)
   next_state = jax_core.eval_jaxpr(
-      stage.jaxpr.jaxpr, stage.jaxpr.consts, *flat_ctx, *args
+      stage.jaxpr, stage.jaxpr.consts, *flat_ctx, *args
   )
   if next_state:
     return jax.tree.unflatten(state_tree, next_state)

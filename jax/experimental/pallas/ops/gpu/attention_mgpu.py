@@ -322,7 +322,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
 
   out, lse = plgpu.kernel(
       entry,
-      out_shape=out_shape,
+      out_type=out_shape,
       grid=(num_q_heads, num_q_tiles, batch_size),
       grid_names=("heads", "q_seq", "batch"),
       num_threads=3,
@@ -337,7 +337,7 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
   return out
 
 @partial(jax.custom_vjp, nondiff_argnums=(3, 4))
-@partial(jax.jit, static_argnames=["config", "save_residuals"])
+@jax.jit(static_argnames=["config", "save_residuals"])
 def attention(q, k, v, config: TuningConfig, save_residuals: bool = False):
   return _attention_forward(q, k, v, config, save_residuals)
 
@@ -419,8 +419,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       for buffer in buffer_barriers:
         plgpu.barrier_wait(buffer.at[wg_idx])
 
-      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
-      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA.reduce(1))
+      delta = plgpu.load(delta_smem, layout=plgpu.Layout.WGMMA.reduce(1))
+      lse = plgpu.load(lse_smem, layout=plgpu.Layout.WGMMA.reduce(1))
       dq_acc: jax.Array = plgpu.layout_cast(
           jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
       )
@@ -539,7 +539,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       sT = pl.run_scoped(_compute_sT, plgpu.ACC((block_kv, block_q), jnp.float32))
       sT *= math.log2(math.e)
 
-      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA.reduce(0))
+      lse = plgpu.load(lse_smem, layout=plgpu.Layout.WGMMA.reduce(0))
       plgpu.barrier_arrive(lse_consumed_barrier)
       pT = jnp.exp2(sT - lax.broadcast_in_dim(lse, (block_kv, block_q), [1]))
 
@@ -556,7 +556,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       dv_acc, dpT = pl.run_state(_compute)((plgpu.ACC.init(dv_acc), plgpu.ACC.init(zeros)))
       plgpu.barrier_arrive(do_consumed_barrier)
 
-      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA.reduce(0))
+      delta = plgpu.load(delta_smem, layout=plgpu.Layout.WGMMA.reduce(0))
       plgpu.barrier_arrive(delta_consumed_barrier)
 
       dsT = pT * (dpT - lax.broadcast_in_dim(delta, (block_kv, block_q), [1]))  # jax-operator-types
@@ -605,8 +605,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   delta_scratch = plgpu.SMEM((compute_wgs, config.block_q_dq), jnp.float32)
   dq = plgpu.kernel(
       partial(kernel_dq, block_q=config.block_q_dq, block_kv=config.block_kv_dq),
-      out_shape=q,
-      scratch_shapes=[
+      out_type=q,
+      scratch_types=[
           (q_scratch, do_scratch, lse_scratch, delta_scratch),
           (plgpu.Barrier(num_barriers=compute_wgs),) * 4
       ],
@@ -626,8 +626,8 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
       (batch_size, kv_seq_len, num_q_heads, head_dim), dtype=jnp.float16)
   dk, dv = plgpu.kernel(
     partial(kernel_dkv, block_q=config.block_q_dkv, block_kv=config.block_kv_dkv),
-    out_shape=[out_shape_kv, out_shape_kv],
-    scratch_shapes=[
+    out_type=[out_shape_kv, out_shape_kv],
+    scratch_types=[
         (k_scratch, v_scratch),
         (plgpu.Barrier(num_barriers=compute_wgs),) * 2
   ],
@@ -647,7 +647,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
 
 attention.defvjp(_attention_fwd, _attention_bwd)
 
-@functools.partial(jax.jit, static_argnames=["config", "save_residuals"])
+@jax.jit(static_argnames=["config", "save_residuals"])
 def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residuals=False):
   if config.causal:
     raise NotImplementedError("Causal attention is not supported with the pipeline emitter yet.")
@@ -794,8 +794,8 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
       grid_names=("heads", "q_seq", "batch"),
       num_threads=3,
       thread_name="wg",
-            out_shape=out_shape,
-      scratch_shapes=(
+      out_type=out_shape,
+      scratch_types=(
           tuple(smem_scratch),
           plgpu.Barrier(num_barriers=compute_wgs),
           plgpu.Barrier(num_arrivals=compute_wgs),),
@@ -811,7 +811,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
   return out
 
 
-@functools.partial(jax.jit, static_argnames=["causal", "save_residuals"])
+@jax.jit(static_argnames=["causal", "save_residuals"])
 def attention_reference(q, k, v, causal=False, save_residuals=False):
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
   kv_seq_len, num_kv_heads = k.shape[1], k.shape[2]

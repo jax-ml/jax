@@ -26,6 +26,10 @@ from jax._src.core import (
     AvalMutableQDD as AvalMutableQDD,
 )
 from jax._src.interpreters.ad import (
+    GradAccum as GradAccum,
+    NullAccum as NullAccum,
+    RefAccum as RefAccum,
+    ValAccum as ValAccum,
     instantiate_zeros as instantiate_zeros,
     is_undefined_primal as is_undefined_primal,
 )
@@ -36,9 +40,14 @@ from jax._src.hijax import (
     HiPrimitive as HiPrimitive,
     HiPspec as HiPspec,
     HiType as HiType,
+    MappingSpec as MappingSpec,
     MutableHiType as MutableHiType,
     VJPHiPrimitive as VJPHiPrimitive,
+    jvp_from_lin as jvp_from_lin,
+    linearize_from_jvp as linearize_from_jvp,
     register_hitype as register_hitype,
+    vjp_from_jvp as vjp_from_jvp,
+    vjp_from_lin as vjp_from_lin,
 )
 from jax._src.state import (
     AbstractRef as AbstractRef,

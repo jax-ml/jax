@@ -66,7 +66,7 @@ static_assert(std::is_trivial_v<TracebackEntry> == true);
 
 struct TracebackObject {
   PyObject_VAR_HEAD;
-  TracebackEntry frames[];
+  TracebackEntry frames[];  // Innermost to outermost
 };
 
 template <typename H>
@@ -428,6 +428,7 @@ void Traceback::Register(nb::module_& m) {
       nb::is_method(), nb::arg("other"), "Concatenates two tracebacks.",
       nb::sig("def __add__(self, other: typing.Self) -> typing.Self"));
 
+  // Returns frames from innermost to outermost.
   type.attr("raw_frames") = nb::cpp_function(
       [](const Traceback& tb) -> nb::tuple {
         // We return a tuple of lists, rather than a list of tuples, because it

@@ -23,7 +23,7 @@ import jax
 from jax._src import sourcemap
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SourceMapDump:
   """A container for a source map and the paired generated code."""
   source_map: sourcemap.SourceMap
@@ -43,7 +43,7 @@ class GenerateDumpFn(Protocol):
     ...
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Pass:
   name: str
   compile_fn: CompileFn

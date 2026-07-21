@@ -24,9 +24,10 @@ from absl.testing import parameterized
 import jax
 from jax import flatten_util
 from jax import tree_util
+from jax._src import flattree as ft
 from jax._src import test_util as jtu
 from jax._src.tree_util import (
-    flatten_one_level, prefix_errors, broadcast_flattened_prefix_with_treedef,
+    prefix_errors, broadcast_flattened_prefix_with_treedef,
     default_registry, dispatch_registry)
 import jax.numpy as jnp
 
@@ -835,7 +836,7 @@ class TreeTest(jtu.JaxTestCase):
   def testFlattenWithPathWithIsLeafArgument(self):
     def is_empty(x):
       try:
-        children, _ = flatten_one_level(x)
+        children, _ = tree_util.flatten_one_level(x)
       except ValueError:
         return True  # Cannot flatten x; means it must be a leaf
       return len(children) == 0
@@ -961,16 +962,43 @@ class TreeTest(jtu.JaxTestCase):
     tree1 = {'a': 1,
              'sub': [jnp.array((1, 2)), ATuple(foo=(), bar=[None])],
              'obj': AnObject2(x=EmptyTuple(), y=0, z='constantdef')}
-    self.assertEqual(flatten_one_level(tree1["sub"])[0],
+    self.assertEqual(tree_util.flatten_one_level(tree1["sub"])[0],
                      tree1["sub"])
-    self.assertEqual(flatten_one_level(tree1["sub"][1])[0],
+    self.assertEqual(tree_util.flatten_one_level(tree1["sub"][1])[0],
                      [(), [None]])
-    self.assertEqual(flatten_one_level(tree1["obj"])[0],
+    self.assertEqual(tree_util.flatten_one_level(tree1["obj"])[0],
                      [EmptyTuple(), 0])
     with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
-      flatten_one_level(1)
+      tree_util.flatten_one_level(1)
     with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
-      flatten_one_level(jnp.array((1, 2)))
+      tree_util.flatten_one_level(jnp.array((1, 2)))
+
+  def testFlattenOneLevelWithKeys(self):
+    EmptyTuple = collections.namedtuple("EmptyTuple", ())
+    tree1 = {'a': 1,
+             'sub': [jnp.array((1, 2)), ATuple(foo=(), bar=[None])],
+             'obj': AnObject2(x=EmptyTuple(), y=0, z='constantdef')}
+
+    # Dict
+    children, meta = tree_util.flatten_one_level_with_keys(tree1)
+    self.assertEqual(list(children), [(DictKey('a'), 1),
+                                       (DictKey('obj'), tree1['obj']),
+                                       (DictKey('sub'), tree1['sub'])])
+    self.assertEqual(meta, ('a', 'obj', 'sub'))
+
+    # List
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["sub"])
+    self.assertEqual(list(children), [(SequenceKey(0), tree1["sub"][0]),
+                                       (SequenceKey(1), tree1["sub"][1])])
+    self.assertIsNone(meta)
+
+    # Custom object with keys
+    children, meta = tree_util.flatten_one_level_with_keys(tree1["obj"])
+    self.assertEqual(list(children), [("x", EmptyTuple()), ("y", 0)])
+    self.assertEqual(meta, 'constantdef')
+
+    with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
+      tree_util.flatten_one_level_with_keys(1)
 
   def testOptionalFlatten(self):
     @tree_util.register_pytree_with_keys_class
@@ -1390,7 +1418,31 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
   def test_different_num_children_print_key_diff(self):
     e, = prefix_errors({'a': 1}, {'a': 2, 'b': 3})
     expected = ("so the symmetric difference on key sets is\n"
-                "    b")
+                r"    \['b'\]")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_different_num_children_custom_node_with_keys(self):
+    # https://github.com/jax-ml/jax/issues/25659
+    @tree_util.register_pytree_with_keys_class
+    class Foo:
+      def __init__(self, fields):
+        self.fields = dict(fields)
+
+      def tree_flatten_with_keys(self):
+        return ([(tree_util.GetAttrKey(k), v) for k, v in self.fields.items()],
+                tuple(self.fields))
+
+      @classmethod
+      def tree_unflatten(cls, keys, children):
+        return cls(zip(keys, children))
+
+    e, = prefix_errors(Foo({'a': 1}), Foo({'a': 2, 'b': 3}))
+    expected = ("(?s)pytree structure error: different numbers of pytree "
+                "children at key path\n"
+                "    in_axes\n"
+                ".*so the symmetric difference on key sets is\n"
+                r"    \.b")
     with self.assertRaisesRegex(ValueError, expected):
       raise e('in_axes')
 
@@ -1793,6 +1845,22 @@ class RegistrationTest(jtu.JaxTestCase):
       static = jax.tree.static(metadata={"static": False})
       self.assertEqual(static.metadata, {"static": False})
 
+class FlatTreeTest(jtu.JaxTestCase):
+
+  def test_filter_and_tupling_commute(self):
+    xs = ft.flatten({'a': 0, 'b': 1})
+    ys = ft.flatten({'c': 2, 'd': 3, 'e': 4})
+    x_mask = [True, False]
+    y_mask = [False, True, True]
+    xs_f1 = xs.filter_with_mask(x_mask)
+    ys_f1 = ys.filter_with_mask(y_mask)
+
+    zs = ft.pack((xs, ys))
+    zs_f = zs.filter_with_mask(x_mask + y_mask)
+    xs_f2, ys_f2 = zs_f.unpack()
+    print(xs_f2)
+    print(ys_f2)
+    self.assertEqual((xs_f1, ys_f1), (xs_f2, ys_f2))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -69,7 +69,7 @@ class TorchTest(jtu.JaxTestCase):
   def test_simple_plgpu_kernel(self):
     @plgpu.as_torch_kernel
     @functools.partial(
-        plgpu.kernel, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+        plgpu.kernel, out_type=jax.ShapeDtypeStruct([128], jnp.int32)
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = x_ref[...] + y_ref[0]

@@ -221,8 +221,9 @@ class PyLoadedExecutable {
   // Takes args indexed by argid then deviceid, transposes them, and passes to
   // xla::ifrt::LoadedExecutable::Execute. The result is similarly transposed
   // back into the argid,deviceid format. args is [num_args x num_devices].
-  absl::StatusOr<PyExecuteResults> ExecuteSharded(std::vector<PyArray> args,
-                                                  bool with_tokens);
+  absl::StatusOr<PyExecuteResults> ExecuteSharded(
+      std::vector<PyArray> args, bool with_tokens,
+      std::optional<int32_t> launch_id = std::nullopt);
 
   absl::StatusOr<std::vector<std::shared_ptr<xla::HloModule>>> HloModules()
       const;

@@ -103,14 +103,15 @@ def create_mxfp8_configs_if_available():
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
+
   @parameterized.product(
       contract=[160, 96],
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
   )
   def testScaledMatmul(self, contract, lhs_non_contract, dtype):
-    if not jtu.test_device_matches(["gpu"]):
-      raise unittest.SkipTest("Test requires GPU.")
+    if not jtu.test_device_matches(["gpu", "cpu"]):
+      raise unittest.SkipTest("Test requires GPU or CPU.")
     if jtu.is_device_cuda() and not jtu.is_cuda_compute_capability_at_least("10.0"):
       raise unittest.SkipTest("Needs compute capability 10.0 or higher.")
     # TODO: Re-enable once scaled dot is implemented for ROCm in XLA.
@@ -334,6 +335,21 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
     self.assertAllClose(dV_ref, dV_ans, rtol=.01, atol=.01)
     self.assertAllClose(dbias_ref, dbias_ans, rtol=.02, atol=.02)
+
+  def testDotProductAttentionFloat64MaskDebugInfs(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37422
+    with jax.enable_x64():
+      T, S, K, N, H = 5, 7, 3, 6, 11
+      mask = jnp.arange(S) <= S // 2
+      with self.assertNoWarnings():
+        with jax.debug_infs(True):
+          out = nn.dot_product_attention(
+              jnp.zeros((T, N, H), dtype=jnp.float64),
+              jnp.zeros((S, K, H), dtype=jnp.float64),
+              jnp.zeros((S, K, H), dtype=jnp.float64),
+              mask=mask,
+          )
+          out.block_until_ready()
 
   @parameterized.product(
       batch_size=[1, 16],
@@ -663,6 +679,20 @@ class NNFunctionsTest(jtu.JaxTestCase):
     x = jnp.array([-11., -11., -11.]) + 3e-6
     result = jax.nn.standardize(x)
     self.assertFalse(jnp.any(jnp.isnan(result)))
+
+  def testStandardizeStableAlgorithm(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37281
+    # The stable algorithm should give consistent results regardless of
+    # compilation context.
+    x = jnp.array([1e6, 1e6 + 1, 1e6 + 2], dtype=jnp.float32)
+    result_eager = nn.standardize(x, algorithm="stable")
+    result_jit = jax.jit(lambda x: nn.standardize(x, algorithm="stable"))(x)
+    self.assertAllClose(result_eager, result_jit, atol=1e-5)
+    # Should be close to [-1, 0, 1] * scale
+    self.assertFalse(jnp.any(jnp.isnan(result_eager)))
+    # Fast algorithm should also work (backward compat)
+    result_fast = nn.standardize(x, algorithm="fast")
+    self.assertFalse(jnp.any(jnp.isnan(result_fast)))
 
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)

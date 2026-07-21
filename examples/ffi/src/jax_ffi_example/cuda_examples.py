@@ -40,7 +40,7 @@ def foo_fwd(a, b):
   assert a.shape == b.shape
   assert a.dtype == b.dtype
   n = np.prod(a.shape).astype(np.uint64)
-  out_type = jax.ShapeDtypeStruct(a.shape, a.dtype)
+  out_type = jax.ShapeDtypeStruct.like(a)
   c, b_plus_1 = jax.ffi.ffi_call("foo-fwd", (out_type, out_type))(a, b, n=n)
   return c, (a, b_plus_1)
 
@@ -53,7 +53,7 @@ def foo_bwd(res, c_grad):
   assert c_grad.dtype == a.dtype
   assert a.dtype == b_plus_1.dtype
   n = np.prod(a.shape).astype(np.uint64)
-  out_type = jax.ShapeDtypeStruct(a.shape, a.dtype)
+  out_type = jax.ShapeDtypeStruct.like(a)
   return jax.ffi.ffi_call("foo-bwd", (out_type, out_type))(c_grad, a, b_plus_1,
                           n=n)
 

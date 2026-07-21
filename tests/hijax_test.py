@@ -20,6 +20,7 @@ from functools import partial
 import itertools as it
 from typing import Any
 import unittest
+import numpy as np
 
 from absl.testing import absltest, parameterized
 
@@ -29,10 +30,11 @@ from jax import typeof
 
 from jax._src import config
 from jax._src import core
-from jax._src import dtypes
 from jax._src import state
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
+from jax._src.custom_derivatives import custom_jvp_call_p
+from jax._src.custom_derivatives import custom_vjp_call_p
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src import test_util as jtu
@@ -42,7 +44,9 @@ from jax._src.state.discharge import run_state
 from jax._src.hijax import (
     HiPrimitive, HiType, Box, new_box, box_set, box_get, box_effect,
     register_hitype, ShapedArray, Ty, custom_vjp3, MappingSpec, HiPspec, Log)
-from jax.experimental.hijax import VJPHiPrimitive
+from jax.experimental.hijax import (
+    VJPHiPrimitive, Zero, instantiate_zeros, jvp_from_lin, linearize_from_jvp,
+    vjp_from_jvp, vjp_from_lin)
 
 jtu.request_cpu_devices(8)
 
@@ -185,7 +189,7 @@ class TupTy(HiType):
     return hash(self.tys)
 
   def __eq__(self, other):
-    return self.tys == other.tys
+    return isinstance(other, TupTy) and self.tys == other.tys
 
   def lo_ty(self):
     return list(self.tys)
@@ -494,7 +498,107 @@ def square(x):
   return Square(jax.typeof(x))(x)
 
 
+class NonDiffPrim(VJPHiPrimitive):
+  def __init__(self, in_aval):
+    self.in_avals = (in_aval,)
+    self.out_aval = in_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return x
+
+  def jvp(self, primals, tangents):
+    (x,), _ = primals, tangents
+    import numpy as np
+    return x, np.empty(x.shape, dtype=jax.dtypes.float0)
+
+  lin, linearized = linearize_from_jvp
+
+
 class HijaxTest(jtu.JaxTestCase):
+
+  def test_closed_call(self):
+    from jax._src import api_util
+    from jax._src import linear_util as lu
+
+    qx = QArray(
+        arr=jnp.ones((2, 3), dtype=jnp.int8),
+        scale=jnp.array([1.5, 2.5], dtype=jnp.float32),
+    )
+
+    def f(q):
+      return q
+
+    @jax.jit
+    def test_fn(x):
+      flat_x, in_tree = jax.tree.flatten((x,))
+      dbg = api_util.debug_info('test_closed_call', f, flat_x, {})
+      flat_f, out_tree = api_util.flatten_fun_nokwargs(
+          lu.wrap_init(f, debug_info=dbg), in_tree
+      )
+      out = core.closed_call_p.bind(*flat_x, subfuns=(flat_f,))
+      return jax.tree.unflatten(out_tree(), out)
+
+    res = test_fn(qx)
+    self.assertIsInstance(res, QArray)
+    self.assertArraysEqual(res.arr, qx.arr)
+    self.assertArraysEqual(res.scale, qx.scale)
+
+    traced = test_fn.trace(qx)
+    self.assertTrue(
+        traced.jaxpr.is_high, 'Initial jaxpr should contain hi-primitives'
+    )
+    lojaxpr = traced.lojax.jaxpr
+    self.assertFalse(
+        lojaxpr.is_high, 'Lowered jaxpr should not contain hi-primitives'
+    )
+
+  def test_closed_call_low_io(self):
+    from jax._src import api_util
+    from jax._src import linear_util as lu
+
+    x = jnp.ones((2, 3), dtype=jnp.float32)
+
+    def f(arr):
+      q = to_qarray(arr)
+      arr2 = from_qarray(q)
+      return (arr2,)
+
+    @jax.jit
+    def test_fn(arr):
+      dbg = api_util.debug_info('test_closed_call_low_io', f, [arr], {})
+      f_wrapped = lu.wrap_init(f, debug_info=dbg)
+      (out,) = core.closed_call_p.bind(arr, subfuns=(f_wrapped,))
+      return out
+
+    res = test_fn(x)
+    self.assertArraysEqual(res, x)
+
+    traced = test_fn.trace(x)
+    self.assertTrue(
+        traced.jaxpr.is_high, 'Initial jaxpr should contain hi-primitives'
+    )
+    lojaxpr = traced.lojax.jaxpr
+    self.assertFalse(
+        lojaxpr.is_high, 'Lowered jaxpr should not contain hi-primitives'
+    )
+
+  def test_empty_ref_and_freeze(self):
+    qx = QArray(arr=jnp.ones((2, 3), dtype=jnp.int8),
+                scale=jnp.array([1.5, 2.5], dtype=jnp.float32))
+
+    def f():
+      q_ref = jax.empty_ref(jax.typeof(qx))
+      return jax.freeze(q_ref)
+
+    q_out = jax.jit(f)()
+    self.assertIsInstance(q_out, QArray)
+    self.assertEqual(q_out.arr.shape, (2, 3))
+    self.assertEqual(q_out.scale.shape, (2,))
+    self.assertEqual(q_out.arr.dtype, jnp.int8)
+    self.assertEqual(q_out.scale.dtype, jnp.float32)
+
   def test_basic_register(self):
     # older test that defines a slightly different QArray internally
     @dataclass(frozen=True)
@@ -553,8 +657,7 @@ class HijaxTest(jtu.JaxTestCase):
         return MyArray(jnp.zeros((), 'float32'))
       def vspace_add(self, x, y):
         return add(x, y)
-    core.pytype_aval_mappings[MyArray] = lambda _: MyTy()
-    dtypes.canonicalize_value_handlers[MyArray] = lambda x: x
+    register_hitype(MyArray, lambda _: MyTy())
 
     class ToMy(HiPrimitive):
       def is_high(self, _): return True
@@ -664,6 +767,18 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertIsInstance(a_grad, MyArray)
     self.assertAllClose(a_grad.arr, 2.0, check_dtypes=False)
 
+  def test_hijax_infer_params_cache_hit(self):
+    x = np.arange(4)
+
+    @jax.jit
+    def f(x):
+      return square(x)
+
+    with jtu.count_infer_params_cache_miss() as count:
+      f(x)
+      f(x)
+    self.assertEqual(count(), 1)
+
   def test_stages(self):
     @dataclass(frozen=True)
     class ArrayTuple:
@@ -732,12 +847,85 @@ class HijaxTest(jtu.JaxTestCase):
 
   def test_tuple_vmap(self):
     tup = make_tup(jnp.arange(3.), jnp.arange(3.))
-    jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+    out = jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)),
+                   out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+    self.assertAllClose(out.elts, tup.elts)
+
+  def test_tuple_vmap_of_jit(self):
+    # https://github.com/jax-ml/jax/issues/38125
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    out = jax.vmap(jax.jit(lambda x: x), in_axes=TupSpec((0, 0)),
+                   out_axes=TupSpec((0, 0)), axis_size=3)(tup)
+    self.assertAllClose(out.elts, tup.elts)
+
+  def test_tuple_vmap_int_in_axes_error(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    with self.assertRaisesRegex(ValueError, "non-array type"):
+      jax.vmap(lambda x: x, axis_size=3)(tup)
+
+  def test_tuple_device_put_error(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    with self.assertRaisesRegex(NotImplementedError,
+                                "device_put does not yet support"):
+      jax.device_put(tup, jax.devices()[0])
+
+  def test_missing_hitype_method_error(self):
+    @dataclass(frozen=True)
+    class Opaque:
+      val: Any
+
+    @dataclass(frozen=True)
+    class OpaqueTy(HiType):
+      pass
+
+    @dataclass(frozen=True)
+    class OpaqueSpec(MappingSpec):
+      pass
+
+    register_hitype(Opaque, lambda _: OpaqueTy())
+
+    with self.assertRaisesRegex(
+        NotImplementedError, r"vmap requires .*OpaqueTy.* to implement the "
+        r"`dec_rank` method"):
+      jax.vmap(lambda x: x, in_axes=OpaqueSpec(), out_axes=OpaqueSpec(),
+               axis_size=3)(Opaque(jnp.arange(3.)))
+
+  def test_tuple_vmap_internal(self):
+    @jax.vmap
+    def f(x):
+      tup = make_tup(x, 2 * x)
+      return get_tuple_element(tup, 0)
+    x = jnp.arange(3.)
+    self.assertAllClose(f(x), x)
+
+  def test_tuple_vmap_custom_vjp(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.) + 1)
+
+    @jax.custom_vjp
+    def inner(tup):
+      return get_tuple_element(tup, 1)
+    def fwd(tup):
+      assert False  # unused under vmap-of-primal
+    def bwd(*_):
+      assert False
+    inner.defvjp(fwd, bwd)
+
+    f = jax.jit(jax.vmap(inner, in_axes=TupSpec((0, 0)), axis_size=3))
+    self.assertAllClose(f(tup), jnp.arange(3.) + 1)
 
   def test_tuple_vmap_infer(self):
     tup = make_tup(jnp.arange(3.), jnp.arange(3.))
     jax.vmap(lambda _: make_tup(jnp.ones(3), jnp.ones(3)),
              in_axes=TupSpec((0, 0)), out_axes=batching.infer, axis_size=3)(tup)
+
+  def test_tuple_nested_vmap(self):
+    tup = make_tup(jnp.arange(12.).reshape((3, 4)), jnp.arange(12.).reshape((3, 4)))
+    map1 = jax.vmap(lambda x: x, in_axes=TupSpec((0, 0)), out_axes=TupSpec((0, 0)),
+                    axis_size=3)
+    map2 = jax.vmap(map1, in_axes=TupSpec((1, 1)), out_axes=TupSpec((1, 1)),
+                    axis_size=4)
+    out = map2(tup)
+    self.assertAllClose(out.elts, tup.elts)
 
   # def test_tuple_vmap_match(self):
   #   tup = make_tup(jnp.arange(3.), jnp.arange(3.))
@@ -750,6 +938,20 @@ class HijaxTest(jtu.JaxTestCase):
       a, b = get_tuple_element(tup, 0), get_tuple_element(tup, 1)
       return make_tup(b, a)
     jax.vmap(f, in_axes=TupSpec((0, None)), out_axes=TupSpec((None, 0)), axis_size=3)(tup)
+
+  def test_tuple_scan_mixed_length_inference(self):
+    # length is inferred from array xs even when hi-type xs are present
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    def body(c, arr_and_tup):
+      arr, tup = arr_and_tup
+      return c + arr + get_tuple_element(tup, 0), ()
+    c, () = jax.lax.scan(body, 0., (jnp.arange(3.), tup))
+    self.assertAllClose(c, 6.)
+
+  def test_tuple_scan_length_required_error(self):
+    tup = make_tup(jnp.arange(3.), jnp.arange(3.))
+    with self.assertRaisesRegex(ValueError, "must provide `length`"):
+      jax.lax.scan(lambda c, x: (c, ()), 0., tup)
 
   @parameterized.parameters([False, True])
   def test_tuple_scan(self, jit):
@@ -767,6 +969,20 @@ class HijaxTest(jtu.JaxTestCase):
     b = get_tuple_element(tup2, 1)
     self.assertAllClose(a, jnp.arange(3.) + 1)
     self.assertAllClose(b, jnp.arange(3. * 4).reshape(3, 4) * 2)
+
+  def test_tuple_jit_shardings_error(self):
+    # jit in_shardings/out_shardings must be unspecified for hi-type
+    # args/outputs; anything else raises rather than crashing or silently
+    # broadcasting one sharding across the lojax components
+    mesh = jtu.create_mesh((2,), ('i',))
+    tup = make_tup(jnp.arange(8., dtype='float32').reshape(4, 2),
+                   jnp.arange(4., dtype='float32'))
+    s = jax.NamedSharding(mesh, jax.P('i'))
+    with jax.set_mesh(mesh):
+      with self.assertRaisesRegex(NotImplementedError, "open an issue"):
+        jax.jit(lambda t: t, in_shardings=s)(tup)
+      with self.assertRaisesRegex(NotImplementedError, "open an issue"):
+        jax.jit(lambda t: t, out_shardings=s)(tup)
 
   @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
   def test_tuple_shit(self, mesh):
@@ -1006,6 +1222,43 @@ class HijaxTest(jtu.JaxTestCase):
     f = jax.vmap(mul, in_axes=(0, None))
     f = jax.vmap(f, in_axes=(2, None), out_axes=2)
     self.assertAllClose(f(x, y), x * y[None, :, None])
+
+  def test_newstyle_hiprimitive_vmap_jvp_symbolic_zero_tangent(self):
+
+    class Mul(VJPHiPrimitive):
+
+      def __init__(self, aval):
+        self.in_avals = (aval, aval)
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        return x * y
+
+      def jvp(self, primals, tangents):
+        (x, y), (x_dot, y_dot) = primals, tangents
+        x_dot, y_dot = map(instantiate_zeros, (x_dot, y_dot))
+        return mul(x, y), mul(x_dot, y) + mul(x, y_dot)
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        return in_dims[1] if in_dims[0] is None else in_dims[0]
+
+    def mul(x, y):
+      return Mul(typeof(x))(x, y)
+
+    # ys is closed over, so its tangent is a symbolic zero whose aval must be
+    # mapped before reaching the jvp rule under vmap
+    xs, ys = jnp.arange(3.0), jnp.full(3, 2.0)
+    primals_out, tangents_out = jax.jvp(
+        lambda x: jax.vmap(mul)(x, ys), (xs,), (jnp.ones(3),))
+    self.assertAllClose(primals_out, xs * ys)
+    self.assertAllClose(tangents_out, ys)
+
+    primals_out, tangents_out = jax.jvp(
+        lambda x: jax.vmap(mul, in_axes=(0, None))(x, 2.0), (xs,), (jnp.ones(3),))
+    self.assertAllClose(primals_out, 2.0 * xs)
+    self.assertAllClose(tangents_out, jnp.full(3, 2.0))
     x = jnp.arange(12.0).reshape(3, 4)
     y = jnp.arange(6.0).reshape(2, 3)
     f = jax.vmap(mul, in_axes=(None, 0))
@@ -1201,6 +1454,710 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertEqual(f(2.0), 8.0)
     self.assertEqual(jax.linearize(f, 2.0)[1](1.0), 12.0)
 
+  @parameterized.parameters([False, True])
+  def test_rules_derived_from_jvp(self, jit):
+    class Sin(VJPHiPrimitive):
+      def __init__(self, x_aval):
+        self.in_avals = (x_aval,)
+        self.out_aval = x_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return jnp.sin(x)
+
+      def jvp(self, primals, tangents):
+        (x,), (x_dot,) = primals, tangents
+        return self(x), jnp.cos(x) * x_dot
+
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+      def batch_dim_rule(self, _axis_data, in_dims):
+        return in_dims[0]
+
+    def sin(x):
+      return Sin(jax.typeof(x))(x)
+
+    f = jax.jit(sin) if jit else sin
+
+    self.assertAllClose(f(2.0), jnp.sin(2.0))
+    _, y_dot = jax.jvp(f, (2.0,), (1.0,))
+    self.assertAllClose(y_dot, jnp.cos(2.0))
+    y, f_lin = jax.linearize(f, 2.0)
+    self.assertAllClose(y, jnp.sin(2.0))
+    self.assertAllClose(f_lin(1.0), jnp.cos(2.0))
+    self.assertAllClose(jax.grad(f)(2.0), jnp.cos(2.0))
+    self.assertAllClose(jax.grad(jax.grad(f))(2.0), -jnp.sin(2.0))
+    xs = jnp.arange(3.0)
+    self.assertAllClose(jax.vmap(jax.grad(f))(xs), jnp.cos(xs))
+    # forward-over-reverse and one-pass jacobians, via the batch rule
+    self.assertAllClose(jax.hessian(f)(2.0), -jnp.sin(2.0))
+    self.assertAllClose(jax.jacfwd(f)(2.0), jnp.cos(2.0))
+    self.assertAllClose(jax.jacrev(f)(2.0), jnp.cos(2.0))
+
+  def test_rules_derived_from_jvp_multiple_args(self):
+    zero_tangents_seen = []
+
+    class Mul(VJPHiPrimitive):
+      def __init__(self, x_aval, y_aval):
+        self.in_avals = (x_aval, y_aval)
+        self.out_aval = x_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        return x * y
+
+      def jvp(self, primals, tangents):
+        (x, y), (x_dot, y_dot) = primals, tangents
+        zero_tangents_seen.append((isinstance(x_dot, Zero),
+                                   isinstance(y_dot, Zero)))
+        x_dot, y_dot = instantiate_zeros(x_dot), instantiate_zeros(y_dot)
+        return self(x, y), x_dot * y + x * y_dot
+
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+    def mul(x, y):
+      return Mul(jax.typeof(x), jax.typeof(y))(x, y)
+
+    gx, gy = jax.grad(mul, (0, 1))(2.0, 3.0)
+    self.assertAllClose(gx, 3.0, check_dtypes=False)
+    self.assertAllClose(gy, 2.0, check_dtypes=False)
+    # symbolically-zero tangent for one argument
+    self.assertAllClose(jax.grad(mul, 1)(2.0, 3.0), 2.0, check_dtypes=False)
+    _, f_lin = jax.linearize(mul, 2.0, 3.0)
+    self.assertAllClose(f_lin(1.0, 0.0), 3.0, check_dtypes=False)
+    self.assertAllClose(f_lin(0.0, 1.0), 2.0, check_dtypes=False)
+    # the jvp rule sees a symbolic Zero tangent for the constant argument
+    zero_tangents_seen.clear()
+    _, f_lin = jax.linearize(lambda x: mul(x, 3.0), 2.0)
+    self.assertAllClose(f_lin(1.0), 3.0, check_dtypes=False)
+    self.assertIn((False, True), zero_tangents_seen)
+
+  @parameterized.parameters([False, True])
+  def test_vjp_derived_from_user_lin(self, jit):
+    class RaiseToStaticPower(VJPHiPrimitive):
+      def __init__(self, in_aval, *, power):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(power=power)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** self.power
+
+      def lin(self, nzs_in, x):
+        return self(x), x
+
+      def linearized(self, x, t):
+        return t * self.power * raise_to_static_power(x, self.power-1)
+
+      vjp_fwd, vjp_bwd_retval = vjp_from_lin
+
+    def raise_to_static_power(x, power):
+      return RaiseToStaticPower(jax.typeof(x), power=power)(x)
+
+    def f(x):
+      return raise_to_static_power(x, 3)
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(2.0), 8.0)
+    self.assertEqual(jax.linearize(f, 2.0)[1](1.0), 12.0)
+    self.assertEqual(jax.grad(f)(2.0), 12.0)
+    self.assertEqual(jax.grad(jax.grad(f))(2.0), 12.0)
+
+  def test_vjp_derived_from_derived_lin(self):
+    # the whole chain: jvp -> derived lin -> derived vjp
+    class Sin(VJPHiPrimitive):
+      def __init__(self, x_aval):
+        self.in_avals = (x_aval,)
+        self.out_aval = x_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return jnp.sin(x)
+
+      def jvp(self, primals, tangents):
+        (x,), (x_dot,) = primals, tangents
+        return self(x), jnp.cos(x) * x_dot
+
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_lin
+
+    def sin(x):
+      return Sin(jax.typeof(x))(x)
+
+    self.assertAllClose(jax.grad(sin)(2.0), jnp.cos(2.0))
+    self.assertAllClose(jax.jit(jax.grad(sin))(2.0), jnp.cos(2.0))
+    self.assertAllClose(jax.grad(jax.grad(sin))(2.0), -jnp.sin(2.0))
+
+  def test_structured_residuals(self):
+    # `lin` and `vjp_fwd` may return a fourth element, structured residuals,
+    # in which case `linearized` and `vjp_bwd` receive them as an extra
+    # argument after the (unstructured) residuals.
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def lin(self, nzs_in, x):
+        return self(x), (), True, {'x1': x, 'x2': x}
+
+      def linearized(self, res, sres, t):
+        return t * 2.0 * sres['x2']
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), (), True, {'x1': x, 'x2': x}
+
+      def vjp_bwd(self, res, sres, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * sres['x1'])
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    self.assertAllClose(jax.grad(square)(3.0), 6.0)
+    y, f_lin = jax.linearize(square, 3.0)
+    self.assertAllClose(y, 9.0)
+    self.assertAllClose(f_lin(1.0), 6.0)
+
+    # the sres tree is user-visible, with duplicate positions re-duplicated
+    _, f_vjp = jax.vjp(square, 3.0)
+    leaves = jax.tree.leaves(f_vjp.structured_residuals)
+    self.assertLen(leaves, 2)
+    self.assertIs(leaves[0], leaves[1])
+
+    # under jit, both sres leaves are the input, so input forwarding plus
+    # de-duplication leave the fwd call returning only the primal
+    fj = jax.jit(square)
+    self.assertAllClose(jax.grad(fj)(3.0), 6.0)
+    jaxpr = jax.make_jaxpr(lambda x: jax.vjp(fj, x)[1](1.0))(3.0)
+    fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == 'jit')
+    self.assertLen(fwd_eqn.outvars, 1)
+
+  def test_structured_residuals_require_vjp_bwd_override(self):
+    class Bad(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), (), True, {'x': x}
+
+      def vjp_bwd_retval(self, res, t):
+        return (t,)
+
+    with self.assertRaisesRegex(TypeError, "structured residuals"):
+      jax.grad(lambda x: Bad(jax.typeof(x))(x))(3.0)
+
+  def test_backward_pass_logging(self):
+    # A vjp_bwd rule can return a dict of pytrees to log out of the backward
+    # pass; f_vjp.with_logs(out_ct) returns (arg_cts, logs), where logs merges
+    # the rules' dicts with clobber semantics. Plain f_vjp(out_ct) drops them.
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval, tag):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(tag=tag)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {self.tag: {'x': res, 'ct_in': t}}
+
+    def square(x, tag='sq'):
+      return Square(jax.typeof(x), tag)(x)
+
+    _, f_vjp = jax.vjp(square, 3.0)
+    cts, logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(cts[0], 6.0)
+    self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 1.0}},
+                        check_dtypes=False)
+    self.assertAllClose(f_vjp(1.0)[0], 6.0)  # plain call drops the logs
+    self.assertAllClose(jax.grad(square)(3.0), 6.0)
+
+    # distinct keys are both present; a repeated key is clobbered, with the
+    # earlier-in-forward-order rule winning
+    f2 = lambda x: square(square(x, 'inner'), 'outer')
+    _, f2_vjp = jax.vjp(f2, 2.0)
+    _, logs2 = f2_vjp.with_logs(1.0)
+    self.assertEqual(set(logs2), {'inner', 'outer'})
+    self.assertAllClose(logs2['inner']['x'], 2.0)
+    self.assertAllClose(logs2['outer']['x'], 4.0)
+    _, f3_vjp = jax.vjp(lambda x: square(square(x)), 2.0)
+    _, logs3 = f3_vjp.with_logs(1.0)
+    self.assertAllClose(logs3['sq']['x'], 2.0)
+
+    # logs flow out of a transposed jit, and with_logs itself can be traced
+    fj = jax.jit(lambda x: square(x))
+    _, fj_vjp = jax.vjp(fj, 3.0)
+    ctsj, logsj = fj_vjp.with_logs(1.0)
+    self.assertAllClose(ctsj[0], 6.0)
+    self.assertAllClose(logsj['sq']['x'], 3.0)
+    ctsT, logsT = jax.jit(
+        lambda x, ct: jax.vjp(fj, x)[1].with_logs(ct))(3.0, 1.0)
+    self.assertAllClose(logsT['sq']['x'], 3.0)
+
+    # logs from a scan body are stacked leaf-wise, index-aligned with the
+    # forward iterations
+    def f_scan(xs):
+      c_out, ys = jax.lax.scan(lambda c, x: (c + square(x), square(x)), 0., xs)
+      return c_out + ys.sum()
+    xs = jnp.array([1., 2., 3.])
+    _, fs_vjp = jax.vjp(f_scan, xs)
+    ctss, logss = fs_vjp.with_logs(1.0)
+    self.assertAllClose(ctss[0], 4.0 * xs)
+    self.assertArraysEqual(logss['sq']['x'], xs)
+    self.assertEqual(logss['sq']['ct_in'].shape, xs.shape)
+
+  def test_backward_pass_logging_cond(self):
+    # A transposed cond logs a sum represented as a tagged product: each key
+    # logged by any branch maps to a CondSum holding the taken-branch index
+    # and one slot per branch (live value / zeros if untaken / None if the
+    # branch doesn't log the key). Branches needn't agree on keys or types.
+    from jax._src.lax.control_flow.conditionals import CondSum
+
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval, tag):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(tag=tag)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {self.tag: res}
+
+    def square(x, tag):
+      return Square(jax.typeof(x), tag)(x)
+
+    def f(x):
+      return jax.lax.cond(x > 0,
+                          lambda x: square(x, 'pos') * 1.0,
+                          lambda x: square(x, 'neg') * 2.0, x)
+
+    _, f_vjp = jax.vjp(f, 3.0)
+    cts, logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(cts[0], 6.0)
+    self.assertEqual(set(logs), {'pos', 'neg'})
+    self.assertIsInstance(logs['pos'], CondSum)
+    i = int(logs['pos'].index)
+    self.assertAllClose(logs['pos'].branches[i], 3.0)      # taken, live
+    self.assertIsNone(logs['pos'].branches[1 - i])         # doesn't log 'pos'
+    self.assertAllClose(logs['neg'].branches[1 - i], 0.0)  # untaken, zeros
+    self.assertIsNone(logs['neg'].branches[i])
+
+    _, f_vjp2 = jax.vjp(f, -3.0)
+    cts2, logs2 = f_vjp2.with_logs(1.0)
+    self.assertAllClose(cts2[0], -12.0)
+    i2 = int(logs2['neg'].index)
+    self.assertAllClose(logs2['neg'].branches[i2], -3.0)
+    self.assertAllClose(logs2['pos'].branches[1 - i2], 0.0)
+
+    def g(x):
+      return jax.lax.cond(
+          x > 0,
+          lambda x: square(x, 'both') * 1.0,
+          lambda x: square(jnp.stack([x, x]), 'both').sum() * 2.0, x)
+
+    _, g_vjp = jax.vjp(g, 3.0)
+    _, glogs = g_vjp.with_logs(1.0)
+    self.assertEqual(set(glogs), {'both'})
+    j = int(glogs['both'].index)
+    self.assertAllClose(glogs['both'].branches[j], 3.0)     # taken, live
+    self.assertAllClose(glogs['both'].branches[1 - j],
+                        jnp.zeros(2))                       # untaken, zeros
+
+    _, g_vjp2 = jax.vjp(g, -3.0)
+    _, glogs2 = g_vjp2.with_logs(1.0)
+    j2 = int(glogs2['both'].index)
+    self.assertAllClose(glogs2['both'].branches[j2], jnp.array([-3., -3.]))
+    self.assertAllClose(glogs2['both'].branches[1 - j2], 0.0)
+
+    # nested conds nest their CondSums
+    def nested(x):
+      inner = lambda x: jax.lax.cond(x > 1, lambda x: square(x, 'deep'),
+                                     lambda x: x * 5.0, x)
+      return jax.lax.cond(x > 0, inner, lambda x: x * 7.0, x)
+    _, n_vjp = jax.vjp(nested, 2.0)
+    _, nlogs = n_vjp.with_logs(1.0)
+    outer = nlogs['deep']
+    self.assertIsInstance(outer, CondSum)
+    inner_log = outer.branches[int(outer.index)]
+    self.assertIsInstance(inner_log, CondSum)
+    self.assertAllClose(inner_log.branches[int(inner_log.index)], 2.0)
+
+    # under jit, and plain grad unaffected
+    _, fj_vjp = jax.vjp(jax.jit(f), 3.0)
+    _, logsj = fj_vjp.with_logs(1.0)
+    self.assertAllClose(logsj['pos'].branches[int(logsj['pos'].index)], 3.0)
+    self.assertAllClose(jax.grad(f)(3.0), 6.0)
+
+  def test_backward_pass_logging_shard_map(self):
+    # Logs from inside a transposed shard_map come out mesh-stacked along
+    # their leading axis (per-shard scalars come out with shape (num_shards,)).
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {'x': res, 'norm2': (res ** 2).sum()}
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    mesh = jax.make_mesh((1,), ('i',), axis_types=(jax.sharding.AxisType.Auto,))
+    spec = jax.sharding.PartitionSpec('i')
+    sm = jax.shard_map(lambda x: square(x) * 2.0, mesh=mesh, in_specs=spec,
+                       out_specs=spec)
+    xs = jnp.arange(1., 5.)
+    f = lambda x: sm(x).sum()
+    _, f_vjp = jax.vjp(f, xs)
+    cts, logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(cts[0], 4.0 * xs)
+    self.assertArraysEqual(logs['x'], xs)
+    self.assertEqual(logs['norm2'].shape, (1,))  # one shard
+    self.assertAllClose(logs['norm2'][0], (xs ** 2).sum())
+    self.assertAllClose(jax.grad(f)(xs), 4.0 * xs)
+
+  def test_backward_pass_logging_bad_return(self):
+    class Bad(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return [t]  # not a dict
+
+    with self.assertRaisesRegex(TypeError, "backward-pass log"):
+      jax.vjp(lambda x: Bad(jax.typeof(x))(x), 3.0)[1](1.0)
+
+    bad_id_p = core.Primitive('bad_id')
+    bad_id_p.def_impl(lambda x: x)
+    bad_id_p.def_abstract_eval(lambda a: a)
+    ad.defjvp(bad_id_p, lambda g, x: bad_id_p.bind(g))
+    def bad_transpose(ct, x):
+      if isinstance(x, ad.ValAccum):
+        x.accum(ct)
+      return [ct]  # not a dict
+    ad.fancy_transposes[bad_id_p] = bad_transpose
+
+    with self.assertRaisesRegex(TypeError, "backward-pass log"):
+      jax.vjp(lambda x: bad_id_p.bind(x) * 2., 3.0)[1](1.0)
+
+  def test_backward_pass_logging_with_refs(self):
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {'sq': {'x': res, 'ct_in': t}}
+
+    def f(x, y):
+      return Square(jax.typeof(x))(x) * y
+
+    _, f_vjp = jax.vjp(f, 3.0, 2.0)
+    arg_cts, logs = f_vjp.with_logs.with_refs(
+        jax.ad.GradValue(), jax.ad.DontWant())(1.0)
+    x_ct, y_ct = arg_cts
+    self.assertAllClose(x_ct, 12.0)  # d(x**2 * y)/dx = 2xy
+    self.assertIsInstance(y_ct, jax.ad.DidntWant)
+    self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 2.0}},
+                        check_dtypes=False)
+
+    x_ct, y_ct = f_vjp.with_refs(jax.ad.GradValue(), jax.ad.DontWant())(1.0)
+    self.assertAllClose(x_ct, 12.0)
+    (x_ct, y_ct), logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(x_ct, 12.0)
+    self.assertAllClose(y_ct, 9.0)  # d(x**2 * y)/dy = x**2
+    self.assertAllClose(logs, {'sq': {'x': 3.0, 'ct_in': 2.0}},
+                        check_dtypes=False)
+
+  def test_backward_pass_logging_vjp_pytree_roundtrip(self):
+    _, f_vjp = jax.vjp(jnp.sin, 1.0)
+
+    leaves, treedef = jax.tree.flatten(f_vjp)
+    (ct,) = jax.tree.unflatten(treedef, leaves)(1.0)
+    self.assertAllClose(ct, jnp.cos(1.0))
+
+    leaves, treedef = jax.tree.flatten(f_vjp.with_logs)
+    (ct,), logs = jax.tree.unflatten(treedef, leaves)(1.0)
+    self.assertAllClose(ct, jnp.cos(1.0))
+    self.assertEqual(logs, {})
+
+  @jtu.run_on_devices("cpu")  # TODO(mattjj): debug xla failures
+  def test_hijax_inside_call_primitives(self):
+    from jax._src.compute_on import compute_on2
+    from jax.experimental.fused import fused
+    from jax.experimental.scheduling_groups import scheduling_group
+
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def lin(self, nzs_in, x):
+        c = x * 2.0
+        return self(x), (), True, {'x1': x, 'x2': x, 'c1': c, 'c2': c}
+
+      def linearized(self, res, sres, t):
+        return t * sres['c2']
+
+      def vjp_fwd(self, nzs_in, x):
+        c = x * 2.0
+        return self(x), (), True, {'x1': x, 'x2': x, 'c1': c, 'c2': c}
+
+      def vjp_bwd(self, res, sres, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * sres['c1'])
+        return {'sq': sres['x1']}
+
+    def square(x):
+      return Square(jax.typeof(x))(x)
+
+    co = lambda f: compute_on2(f, compute_type='device_host',
+                               out_memory_spaces=jax.memory.Space.Device)
+    for wrap, prim_name in [(scheduling_group('g'), 'xla_metadata_call'),
+                            (co, 'compute_on')]:
+      f = wrap(square)
+      self.assertAllClose(f(3.0), 9.0)
+      self.assertAllClose(jax.grad(f)(3.0), 6.0)
+      self.assertAllClose(jax.grad(jax.jit(f))(3.0), 6.0)
+      _, f_vjp = jax.vjp(f, 3.0)
+      cts, logs = f_vjp.with_logs(1.0)
+      self.assertAllClose(cts[0], 6.0)
+      self.assertAllClose(logs['sq'], 3.0)
+      leaves = jax.tree.leaves(f_vjp.structured_residuals)
+      self.assertLen(leaves, 4)
+      self.assertIs(leaves[0], leaves[1])  # c pair, deduped
+      self.assertIs(leaves[2], leaves[3])  # x pair, input-forwarded
+      jaxpr = jax.make_jaxpr(lambda x: jax.vjp(f, x)[1](1.0))(3.0)
+      fwd_eqn = next(e for e in jaxpr.eqns if e.primitive.name == prim_name)
+      self.assertLen(fwd_eqn.outvars, 2)
+
+    ff = fused(out_spaces=(jax.memory.Space.Device,))(square)
+    lo = jax.jit(ff).trace(3.0).lojax.jaxpr
+    eqn = next(e for e in lo.jaxpr.eqns if e.primitive.name == 'fused_call')
+    self.assertFalse(eqn.params['jaxpr'].is_high)
+    self.assertEqual(eqn.params['out_spaces'], (jax.memory.Space.Device,))
+
+    box = new_box()
+    box_set(box, 0.0)
+    def g(x):
+      box_set(box, x * 2.0)
+      return x * 3.0
+    with self.assertRaisesRegex(NotImplementedError, "quasi-dynamic"):
+      scheduling_group('g')(g)(1.0)
+
+  def test_backward_pass_logging_call_primitives(self):
+    from jax._src import api_util
+    from jax._src import flattree as ft
+    from jax._src.compute_on import compute_on2
+    from jax._src.interpreters import mlir, partial_eval as pe
+    from jax._src.lax.eval_jaxpr import eval_jaxpr_p
+    from jax.experimental.scheduling_groups import scheduling_group
+
+    log_id_p = core.Primitive('log_id')
+    log_id_p.def_impl(lambda x: x)
+    log_id_p.def_abstract_eval(lambda a: a)
+    ad.defjvp(log_id_p, lambda g, x: log_id_p.bind(g))
+    mlir.register_lowering(log_id_p, lambda ctx, x: [x])
+    def _log_id_transpose(ct, x):
+      if isinstance(x, ad.ValAccum):
+        x.accum(ct)
+      return {'canary': ct}
+    ad.fancy_transposes[log_id_p] = _log_id_transpose
+
+    def f(x):
+      return log_id_p.bind(jnp.sin(x)) * 2.
+
+    dbg = api_util.debug_info('test', f, (1.0,), {})
+    args_ft = ft.flatten(((1.0,), {}))
+    jaxpr, _ = pe.trace_to_jaxpr(f, args_ft.map(core.shaped_abstractify), dbg)
+
+    fns = [scheduling_group('g')(f),
+           compute_on2(f, compute_type='device_host',
+                       out_memory_spaces=jax.memory.Space.Device),
+           lambda x: eval_jaxpr_p.bind(x, jaxpr=jaxpr)[0]]
+    for fn in fns:
+      _, f_vjp = jax.vjp(fn, 1.0)
+      cts, logs = f_vjp.with_logs(1.0)
+      self.assertAllClose(cts[0], 2 * jnp.cos(1.0))
+      self.assertAllClose(logs, {'canary': jnp.float32(2.0)},
+                          check_dtypes=False)
+      (ct,) = f_vjp(1.0)  # plain call drops the logs without error
+      self.assertAllClose(ct, 2 * jnp.cos(1.0))
+
+  def test_jvp_derived_from_lin(self):
+    class RaiseToStaticPower(VJPHiPrimitive):
+      def __init__(self, in_aval, *, power):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(power=power)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** self.power
+
+      def lin(self, nzs_in, x):
+        return self(x), x
+
+      def linearized(self, x, t):
+        return t * self.power * raise_to_static_power(x, self.power-1)
+
+      jvp = jvp_from_lin
+      vjp_fwd, vjp_bwd_retval = vjp_from_lin
+
+      def batch_dim_rule(self, _axis_data, in_dims):
+        return in_dims[0]
+
+    def raise_to_static_power(x, power):
+      return RaiseToStaticPower(jax.typeof(x), power=power)(x)
+
+    def f(x):
+      return raise_to_static_power(x, 3)
+
+    self.assertEqual(jax.jvp(f, (2.0,), (1.0,)), (8.0, 12.0))
+    self.assertEqual(jax.grad(f)(2.0), 12.0)
+    self.assertEqual(jax.hessian(f)(2.0), 12.0)
+
+  def test_jvp_from_lin_circular_error(self):
+    class Sin(VJPHiPrimitive):
+      def __init__(self, x_aval):
+        self.in_avals = (x_aval,)
+        self.out_aval = x_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return jnp.sin(x)
+
+      jvp = jvp_from_lin
+      lin, linearized = linearize_from_jvp
+
+    def sin(x):
+      return Sin(jax.typeof(x))(x)
+
+    with self.assertRaisesRegex(TypeError, 'jvp_from_lin'):
+      jax.jvp(sin, (2.0,), (1.0,))
+
+  def test_derived_rules_with_static_params(self):
+    class ApplyAndScale(VJPHiPrimitive):
+      def __init__(self, x_aval, *, f, scale):
+        self.in_avals = (x_aval,)
+        self.out_aval = x_aval
+        self.params = dict(f=f, scale=scale)
+        super().__init__()
+
+      def expand(self, x):
+        return self.scale * self.f(x)
+
+      def jvp(self, primals, tangents):
+        (x,), (t,) = primals, tangents
+        return self(x), self.scale * jax.jvp(self.f, (x,), (t,))[1]
+
+      lin, linearized = linearize_from_jvp
+      vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
+    def apply_and_scale(f, scale, x):
+      return ApplyAndScale(jax.typeof(x), f=f, scale=scale)(x)
+
+    f = lambda x: apply_and_scale(jnp.sin, 2.0, x)
+    self.assertAllClose(f(2.0), 2 * jnp.sin(2.0))
+    self.assertAllClose(jax.grad(f)(2.0), 2 * jnp.cos(2.0))
+    self.assertAllClose(jax.jit(jax.grad(f))(2.0), 2 * jnp.cos(2.0))
+    self.assertAllClose(jax.grad(jax.grad(f))(2.0), -2 * jnp.sin(2.0))
+    self.assertAllClose(jax.linearize(f, 2.0)[1](1.0), 2 * jnp.cos(2.0))
+
+  def test_rules_derived_from_jvp_error_messages(self):
+    class Sin(VJPHiPrimitive):
+      def __init__(self, x_aval):
+        self.in_avals = (x_aval,)
+        self.out_aval = x_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return jnp.sin(x)
+
+      def jvp(self, primals, tangents):
+        (x,), (x_dot,) = primals, tangents
+        return self(x), jnp.cos(x) * x_dot
+
+    def sin(x):
+      return Sin(jax.typeof(x))(x)
+
+    with self.assertRaisesRegex(NotImplementedError, 'vjp_from_jvp'):
+      jax.grad(sin)(2.0)
+    with self.assertRaisesRegex(NotImplementedError, 'linearize_from_jvp'):
+      jax.linearize(sin, 2.0)
+
   @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
   def test_grad_remat_hitype(self, mesh):
     x = jnp.ones(4)
@@ -1345,7 +2302,32 @@ class HijaxTest(jtu.JaxTestCase):
 
     f(0, x_ref)
     self.assertAllClose(x_ref[...], 4., check_dtypes=False)
-    self.assertEqual(jax.jit(f).trace(0, x_ref).jaxpr.effects, {state.WriteEffect(1)})
+    traced_jaxpr = jax.jit(f).trace(0, x_ref).jaxpr
+    self.assertEqual(traced_jaxpr.effects,
+                     {state.WriteEffect(traced_jaxpr.jaxpr.invars[1])})
+
+  def test_lower_preserves_arg_names_for_shaped_arrays(self):
+    x = jnp.array(1.0)
+    lowered = jax.jit(square).lower(x)
+    debug_info = lowered._lowering.compile_args['all_args_info'].debug_info
+    self.assertEqual(debug_info.arg_names, ('x',))
+
+  def test_lower_replicates_arg_names_for_hitypes(self):
+    def f(x):
+      return from_qarray(x)
+
+    q = to_qarray(jnp.ones((2, 2), 'float32'))
+    lowered = jax.jit(f).lower(q)
+    debug_info = lowered._lowering.compile_args['all_args_info'].debug_info
+    # QArrayTy.lo_ty() returns [int8[m,k], f32[m]], so 'x' is replicated twice
+    self.assertEqual(debug_info.arg_names, ('x', 'x'))
+
+  def test_nondiff_linearize(self):
+    def f(x):
+      return NonDiffPrim(jax.typeof(x))(x)
+    _, f_lin = jax.linearize(f, jnp.ones((5,)))
+    out_tangent = f_lin(jnp.ones((5,)))
+    self.assertArraysEqual(out_tangent, jnp.zeros((5,)))
 
 
 class BoxTest(jtu.JaxTestCase):
@@ -1729,7 +2711,6 @@ class BoxTest(jtu.JaxTestCase):
 
     self.assertAllClose(f(1.0), 2.0)
 
-
   # TODO error-checking tests from attrs_test.py
 
   ###
@@ -1830,7 +2811,7 @@ class BoxTest(jtu.JaxTestCase):
 
       def __eq__(self, other): return isinstance(other, MyTy)
 
-    core.pytype_aval_mappings[MyArray] = lambda _: MyTy()
+    register_hitype(MyArray, lambda _: MyTy())
 
     box = Box([MyArray(jnp.float32(1)),
                MyArray(jnp.float32(2))])
@@ -2147,6 +3128,121 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     jax.lax.scan(body, None, None, length=5)
     self.assertAllClose(box.get(), 8.0, check_dtypes=False)
 
+  def test_grad_custom_vjp_optimize_remat_with_hijax(self):
+
+    @jax.custom_vjp
+    def f(x):
+      return square(x)
+
+    def f_fwd(x):
+      y = square(x)
+      return y, x  # (primal_out, residuals)
+
+    def f_bwd(res, g):
+      x = res
+      return (g * 2.0 * x,)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+    x = jnp.float32(3.0)
+    result = jax.jit(jax.grad(f))(x)
+    self.assertAllClose(result, jnp.float32(6.0))
+
+  def test_custom_vjp_inlined_when_lower(self):
+
+    @jax.custom_vjp
+    def foo(x):
+      return square(x)
+    def foo_fwd(x):
+      return foo(x), x
+    def foo_bwd(res, g):
+      return (g * 2.0 * res,)
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    has_custom_vjp = any(
+        eqn.primitive is custom_vjp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_vjp,
+        "custom_vjp_call_p should be inlined when lower=True")
+
+  def test_custom_jvp_inlined_when_lower(self):
+
+    @jax.custom_jvp
+    def foo(x):
+      return square(x)
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      return square(x), t * 2.0 * x
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    has_custom_jvp = any(
+        eqn.primitive is custom_jvp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_jvp,
+        "custom_jvp_call_p should be inlined when lower=True")
+
+  def test_custom_vjp_with_hiprimitive_is_high(self):
+    @jax.custom_vjp
+    def foo(x):
+      return square(x)
+    def foo_fwd(x):
+      y = foo(x)
+      return y, x
+    def foo_bwd(res, g):
+      return (g * 2.0 * res,)
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    jaxpr = jax.make_jaxpr(foo)(jnp.float32(2.0))
+    # The call_jaxpr should contain hi-primitives (square)
+    self.assertTrue(jaxpr.jaxpr.is_high)
+
+  def test_custom_vjp_with_hiprimitive_lowered(self):
+
+    @jax.custom_vjp
+    def foo(x):
+      return square(x)
+    def foo_fwd(x):
+      y = foo(x)
+      return y, x
+    def foo_bwd(res, g):
+      return (g * 2.0 * res,)
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    # custom_vjp_call_p should be inlined (no custom_vjp_call eqns remain)
+    has_custom_vjp = any(
+        eqn.primitive is custom_vjp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_vjp,
+        "custom_vjp_call_p with hi-primitives should be inlined when "
+        "lower=True")
+    # The hi-primitive (square) should also be lowered
+    self.assertFalse(jaxpr.is_high,
+        "Lowered jaxpr should not contain hi-primitives")
+
+  def test_custom_jvp_with_hiprimitive_lowered(self):
+
+    @jax.custom_jvp
+    def foo(x):
+      return square(x)
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      return square(x), t * 2.0 * x
+
+    jaxpr = jax.jit(foo).trace(jnp.float32(0.0)).lojax.jaxpr
+
+    has_custom_jvp = any(
+        eqn.primitive is custom_jvp_call_p for eqn in jaxpr.eqns)
+    self.assertFalse(has_custom_jvp,
+        "custom_jvp_call_p with hi-primitives should be inlined when "
+        "lower=True")
+    self.assertFalse(jaxpr.is_high,
+        "Lowered jaxpr should not contain hi-primitives")
 
 class LogTest(jtu.JaxTestCase):
 

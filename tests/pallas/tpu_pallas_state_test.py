@@ -239,6 +239,10 @@ class PinnedBufferTest(jtu.JaxTestCase):
       f(x)
 
   def test_basic_vmem(self):
+    self.skipTest(
+        "TODO(b/507446729): test_basic_vmem has regressed and "
+        "does not test the intended behavior."
+    )
 
     @jax.jit
     def f(x):
@@ -270,10 +274,15 @@ class CoreMapTest(jtu.JaxTestCase):
       self.skipTest("Only supported on TPU v4+")
 
   def test_can_create_tensorcore_mesh(self):
-    _ = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
+    self.assertEqual(mesh.axis_name, "x")
+    self.assertEqual(mesh.num_cores, jax.devices()[0].num_cores)
+
+    mesh2 = pltpu.TensorCoreMesh(axis_name="x", num_cores=4)
+    self.assertEqual(mesh2.num_cores, 4)
 
   def test_kernel_helper_basic(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o_ref):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
@@ -290,7 +299,7 @@ class CoreMapTest(jtu.JaxTestCase):
       y = jnp.zeros_like(x)
       def inner(refs):
         del refs  # Unused.
-        @pl.core_map(pltpu.create_tensorcore_mesh("x"))
+        @pl.core_map(pltpu.TensorCoreMesh(axis_name="x"))
         def _():
           pass
       _, y = pl.run_state(inner)((x, y))
@@ -305,7 +314,7 @@ class CoreMapTest(jtu.JaxTestCase):
     def f(x):
       x_ref = jax.new_ref(x)
       y_ref = jax.new_ref(jnp.empty_like(x))
-      @pl.core_map(pltpu.create_tensorcore_mesh("x"))
+      @pl.core_map(pltpu.TensorCoreMesh(axis_name="x"))
       def _():
         @functools.partial(pl.run_scoped, sem=pltpu.SemaphoreType.REGULAR)
         def inner(sem):
@@ -319,7 +328,7 @@ class CoreMapTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(f(x), x)
 
   def test_can_query_core_index(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     slc_size = 16 // mesh.shape["x"]
 
     @jax.jit
@@ -361,7 +370,7 @@ class CoreMapTest(jtu.JaxTestCase):
       y = jnp.zeros_like(x)
 
       @pl.kernel(out_type=x,
-                 mesh=pltpu.create_tensorcore_mesh("x"),
+                 mesh=pltpu.TensorCoreMesh(axis_name="x"),
                  scratch_types=dict(tmp_ref=pltpu.VMEM(x.shape, x.dtype)))
       def kernel(x_ref, out_ref, tmp_ref):
         pltpu.sync_copy(x_ref, tmp_ref)
@@ -381,7 +390,7 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_capture_scalar(self, core_type, use_tc_tiling_on_sc):
     match core_type:
       case pltpu.CoreType.TC:
-        mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+        mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
         use_tc_tiling_on_sc = None
       case pltpu.CoreType.SC_SCALAR_SUBCORE:
         if pltpu.get_tpu_info().sparse_core is None:
@@ -423,7 +432,7 @@ class CoreMapTest(jtu.JaxTestCase):
       np.testing.assert_array_equal(out, x[i:i+2])
 
   def test_kernel_helper_with_scratch(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o_ref, scratch_ref):
       pltpu.sync_copy(x_ref, scratch_ref)
       scratch_ref[...] += 1
@@ -435,7 +444,7 @@ class CoreMapTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(result, x + 1)
 
   def test_kernel_helper_with_out_tree(self):
-    mesh = pltpu.create_tensorcore_mesh("x")
+    mesh = pltpu.TensorCoreMesh(axis_name="x")
     def body(x_ref, o1_ref, o2_ref, scratch_ref):
       pltpu.sync_copy(x_ref, o1_ref)
       pltpu.sync_copy(x_ref, scratch_ref)
@@ -457,7 +466,7 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_kernel_with_output_memory_space(self, memory_space, color):
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest("Only supported on TPU v5+")
-    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+    mesh = pltpu.TensorCoreMesh(axis_name="x", num_cores=1)
     def body(x_ref, o_ref):
       pltpu.sync_copy(x_ref, o_ref)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))

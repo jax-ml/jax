@@ -68,6 +68,7 @@ WHEEL_BUILD_TARGET_DICT = {
     "jax-rocm-plugin": "//jaxlib/tools:jax_rocm_plugin_wheel",
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
     "mosaic-gpu-cuda": "//jaxlib/tools:mosaic_gpu_wheel_cuda{cuda_major_version}",
+    "jax-oneapi-plugin": "//jaxlib/tools:jax_oneapi_plugin_wheel",
     "jax-oneapi-pjrt": "//jaxlib/tools:jax_oneapi_pjrt_wheel",
 }
 
@@ -151,7 +152,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
         --wheels="jaxlib,jax-cuda-plugin", etc.
         Valid options are: jaxlib, jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,
         jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt,
-        jax-oneapi-pjrt or oneapi-pjrt.
+        jax-oneapi-pjrt or oneapi-pjrt, jax-oneapi-plugin or oneapi-plugin.
         """,
   )
 
@@ -438,7 +439,6 @@ async def main():
   else:
     bazel_command_base.append("build")
 
-  freethreaded = False
   if args.python_version:
     # Do not add --repo_env=HERMETIC_PYTHON_VERSION with default args.python_version
     # if bazel_options override it
@@ -454,7 +454,6 @@ async def main():
     )
     # Let's interpret X.YY-ft version as free-threading python and set rules_python config flag:
     if args.python_version.endswith("-ft"):
-      freethreaded = True
       bazel_command_base.append(
         "--@rules_python//python/config_settings:py_freethreaded=\"yes\""
       )
@@ -464,25 +463,20 @@ async def main():
 
   # Requirements update subcommand execution
   if args.command == "requirements_update":
-    requirements_command = copy.deepcopy(bazel_command_base)
-    if args.bazel_options:
-      logging.debug(
-          "Using additional build options: %s", args.bazel_options
-      )
-      for option in args.bazel_options:
-        requirements_command.append(option)
+    uv_command = command.CommandBuilder(sys.executable)
+    uv_command.append("build/update_requirements_uv.py")
 
-    ft_suffix = "_ft" if freethreaded else ""
     if args.nightly_update:
-      logging.info(
-          "--nightly_update is set. Bazel will run"
-          " //build:requirements_nightly.update"
-      )
-      requirements_command.append(f"//build:requirements{ft_suffix}_nightly.update")
-    else:
-      requirements_command.append(f"//build:requirements{ft_suffix}.update")
+      uv_command.append("--nightly")
 
-    result = await executor.run(requirements_command.get_command_as_string(), args.dry_run, args.detailed_timestamped_log)
+    if args.dry_run:
+      uv_command.append("--dry-run")
+
+    result = await executor.run(
+        uv_command.get_command_as_string(),
+        args.dry_run,
+        args.detailed_timestamped_log,
+    )
     if result.return_code != 0:
       raise RuntimeError(f"Command failed with return code {result.return_code}")
     else:
@@ -514,7 +508,7 @@ async def main():
           " jax-cuda-plugin or cuda-plugin, jax-cuda-pjrt or cuda-pjrt,"
           " jax-rocm-plugin or rocm-plugin, jax-rocm-pjrt or rocm-pjrt,"
           " or mosaic-gpu",
-          " jax-oneapi-pjrt or oneapi-pjrt",
+          " jax-oneapi-plugin or oneapi-plugin, jax-oneapi-pjrt or oneapi-pjrt",
           wheel,
       )
       sys.exit(1)
@@ -534,6 +528,7 @@ async def main():
   if args.local_xla_path:
     logging.debug("Local XLA path: %s", args.local_xla_path)
     wheel_build_command_base.append(f"--override_repository=xla=\"{args.local_xla_path}\"")
+    wheel_build_command_base.append(f"--override_module=xla=\"{args.local_xla_path}\"")
 
   if args.target_cpu:
     logging.debug("Target CPU: %s", args.target_cpu)
@@ -666,7 +661,6 @@ async def main():
       )
 
   if "rocm" in args.wheels:
-    wheel_build_command_base.append("--config=rocm_base")
     wheel_build_command_base.append("--config=rocm")
     if clang_local:
       wheel_build_command_base.append(f"--action_env=CLANG_COMPILER_PATH=\"{clang_path}\"")
@@ -791,12 +785,7 @@ async def main():
         # For non-editable builds, use wildcard pattern to match any ROCm version in glob patterns
         wheel_dir = wheel.replace("rocm", "rocm*").replace("-", "_")
     elif "oneapi" in wheel:
-      if args.editable:
-        # For editable builds, use the actual oneAPI version since directory paths cannot contain wildcards
-        wheel_dir = wheel.replace("oneapi", f"oneapi{args.oneapi_version}").replace("-", "_")
-      else:
-        # For non-editable builds, use wildcard pattern to match any oneAPI version in glob patterns
-        wheel_dir = wheel.replace("oneapi", "oneapi*").replace("-", "_")
+      wheel_dir = wheel.replace("-", "_")
     else:
       wheel_dir = wheel
 

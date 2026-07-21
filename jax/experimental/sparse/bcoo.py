@@ -47,7 +47,8 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.lax import (
-  _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
+  _const, _unbroadcast, ranges_like, remaining, _dot_general_batch_dim_nums,
+  DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
 from jax._src.numpy.setops import _unique
 from jax._src.typing import Array, ArrayLike, DTypeLike
@@ -561,8 +562,8 @@ def _bcoo_transpose_impl(data, indices, *, permutation: Sequence[int], spinfo: S
 def _bcoo_transpose_abstract_eval(data, indices, *, permutation: Sequence[int], spinfo: SparseInfo):
   batch_perm, _, dense_perm = _validate_permutation(data, indices, permutation, spinfo.shape)
   n_batch = len(batch_perm)
-  indices_shape = np.array(indices.shape)[[*batch_perm, n_batch, n_batch + 1]]  # pyrefly: ignore[bad-index]
-  data_shape = np.array(data.shape)[[*batch_perm, n_batch, *(d + n_batch + 1 for d in dense_perm)]]  # pyrefly: ignore[bad-index]
+  indices_shape = np.array(indices.shape)[[*batch_perm, n_batch, n_batch + 1]]
+  data_shape = np.array(data.shape)[[*batch_perm, n_batch, *(d + n_batch + 1 for d in dense_perm)]]
   return core.ShapedArray(data_shape, data.dtype), core.ShapedArray(indices_shape, indices.dtype)
 
 def _bcoo_transpose_jvp(primals, tangents, *, permutation: Sequence[int], spinfo: SparseInfo):
@@ -895,6 +896,7 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
       out_dense_T = lax.dot_general(ct, rhs, dimension_numbers=dims)
       out_dense = lax.transpose(out_dense_T, out_axes)
       result = _bcoo_extract(lhs_indices, out_dense)
+    result = _unbroadcast(lhs_data.aval, result)
     return result, lhs_indices, rhs
   else:
     dims = ((lhs_kept, ans_lhs), (lhs_batch, ans_batch))

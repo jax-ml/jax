@@ -34,7 +34,7 @@ from typing import Any
 
 from jax._src import config
 from jax._src.lib import _pretty_printer as _pretty_printer
-from jax._src.util import use_cpp_class, use_cpp_method  # pyrefly: ignore[missing-import]
+from jax._src.util import use_cpp_class, use_cpp_method
 
 
 _PPRINT_USE_COLOR = config.bool_state(
@@ -64,6 +64,8 @@ CAN_USE_COLOR = _can_use_color()
 Color = _pretty_printer.Color
 Intensity = _pretty_printer.Intensity
 
+OutputFormat = _pretty_printer.OutputFormat
+
 
 @use_cpp_class(_pretty_printer.Doc)
 class Doc:
@@ -87,6 +89,8 @@ class Doc:
       use_color: bool,
       annotation_prefix: str,
       source_map: list[list[tuple[int, int, Any]]] | None,
+      separable_lines: bool = False,
+      output_format: OutputFormat | None = None,
   ) -> str:
     raise NotImplementedError
 
@@ -95,6 +99,8 @@ class Doc:
       width: int = 80,
       *,
       use_color: bool | None = None,
+      output_format: OutputFormat | None = None,
+      separable_lines: bool = False,
       annotation_prefix: str = " # ",
       source_map: list[list[tuple[int, int, Any]]] | None = None,
   ) -> str:
@@ -108,9 +114,14 @@ class Doc:
     """
     if use_color is None:
       use_color = CAN_USE_COLOR and _PPRINT_USE_COLOR.value
+
+    if output_format is None:
+      output_format = OutputFormat.TEXT
     return self._format(
         width,
         use_color=use_color,
+        output_format=output_format,
+        separable_lines=separable_lines,
         annotation_prefix=annotation_prefix,
         source_map=source_map,
     )
@@ -121,9 +132,23 @@ def nil() -> Doc:
   return _pretty_printer.nil()  # pyrefly: ignore[bad-return]
 
 
-def text(text: str, annotation: str | None = None) -> Doc:
-  """Literal text."""
-  return _pretty_printer.text(text, annotation)  # pyrefly: ignore[bad-return]
+def text(
+    text: str,
+    annotation: str | None = None,
+    anchor: str | None = None,
+    href: str | None = None,
+) -> Doc:
+  """Literal text.
+
+  Args:
+    text: The text content to be printed.
+    annotation: Optional annotation for the text.
+    anchor: Optional HTML anchor ID for this text. When formatted as HTML,
+      wraps the text in an <a id="..."> tag.
+    href: Optional HTML href for this text. When formatted as HTML,
+      wraps the text in an <a href="..."> tag.
+  """
+  return _pretty_printer.text(text, annotation, anchor, href)  # pyrefly: ignore[bad-return]
 
 
 def concat(children: Sequence[Doc]) -> Doc:

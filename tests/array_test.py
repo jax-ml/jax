@@ -31,11 +31,12 @@ from jax._src.util import safe_zip
 from jax._src.mesh import AxisType, AbstractMesh, Mesh
 from jax._src.sharding import common_devices_indices_map, IndivisibleError
 from jax._src.sharding_impls import (
-    NamedSharding, GSPMDSharding, make_single_device_sharding)
+    NamedSharding, GSPMDSharding, make_single_device_sharding,
+    SingleDeviceSharding)
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
-from jax._src import prng
+from jax._src.random import threefry2x32
 
 
 jax.config.parse_flags_with_absl()
@@ -895,6 +896,42 @@ class JaxArrayTest(jtu.JaxTestCase):
     with self.assertDeprecationWarnsOrRaises("jax-array-numpy-dtype", msg, error_class=TypeError):
       np.dtype(x)
 
+  def test_sds_like(self):
+    x = jnp.array(1.)
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertTrue(out.weak_type)
+    self.assertEqual(out.shape, ())
+    self.assertIsNone(out.sharding)  # uncommitted input
+
+    x = np.array(1.)
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertFalse(out.weak_type)
+    self.assertEqual(out.shape, ())
+
+    x = jnp.arange(8)
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertIsNone(out.sharding)  # uncommitted input
+
+    x = jax.device_put(jnp.arange(8), SingleDeviceSharding(jax.devices()[0]))
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
+
+    mesh = jtu.create_mesh((2,), 'x')
+    x = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))
+    out = jax.ShapeDtypeStruct.like(x)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(a):
+      sds = jax.ShapeDtypeStruct.like(a)
+      self.assertEqual(sds.sharding.spec, P('x'))
+      return jnp.ones(sds.shape, sds.dtype, out_sharding=sds.sharding)
+
+    mesh = jtu.create_mesh((2,), 'x', axis_types=(AxisType.Explicit,))
+    x = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))
+    with jax.set_mesh(mesh):
+      f(x)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
@@ -1038,7 +1075,10 @@ class ShardingTest(jtu.JaxTestCase):
   def test_pspec_tuple(self):
     pspec = P('x', 'y', 'z')
     self.assertEqual(pspec.index('z'), 2)
-    self.assertEqual(hash(P(None, 'x', 'y', 'z')), hash(P((), 'x', 'y', 'z')))
+    out1 = P(None, 'x', 'y', 'z')
+    out2 = P((), 'x', 'y', 'z')
+    self.assertEqual(hash(out1), hash(out2))
+    self.assertIs(out1, out2)
 
   @parameterized.named_parameters(
       ('sharded_dim_0', (4, 2), 0),
@@ -1404,11 +1444,11 @@ class ShardingTest(jtu.JaxTestCase):
     pspec = P('a', 'b', None, unreduced={'c'}, reduced={'d'})
     self.assertEqual(
         repr(pspec),
-        "P('a', 'b', None, unreduced={'c'}, reduced={'d'})")
+        "P('a', 'b', None, unreduced={'c'}, reduced={'d'}, unreduced_kind=sum)")
 
     pspec1 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(repr(pspec1),
-                     "P('a', 'b', None, unreduced={'c'})")
+                     "P('a', 'b', None, unreduced={'c'}, unreduced_kind=sum)")
 
     pspec2 = P('a', 'b', None, unreduced={'c'})
     self.assertEqual(pspec1, pspec2)
@@ -1421,17 +1461,17 @@ class ShardingTest(jtu.JaxTestCase):
 
     pspec4 = P('x', unreduced={'y'})
     self.assertEqual(repr(pspec4),
-                     "P('x', unreduced={'y'})")
+                     "P('x', unreduced={'y'}, unreduced_kind=sum)")
 
     pspec5 = P(None, None, unreduced={'x'})
     self.assertEqual(repr(pspec5),
-                     "P(None, None, unreduced={'x'})")
+                     "P(None, None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec6 = P(None, unreduced={'x'})
-    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'})")
+    self.assertEqual(repr(pspec6), "P(None, unreduced={'x'}, unreduced_kind=sum)")
 
     pspec7 = P(unreduced={'x'})
-    self.assertEqual(repr(pspec7), "P(unreduced={'x'})")
+    self.assertEqual(repr(pspec7), "P(unreduced={'x'}, unreduced_kind=sum)")
 
     with self.assertRaisesRegex(
         TypeError, 'unreduced in `__add__` of PartitionSpec'):
@@ -1523,7 +1563,7 @@ class ShardingTest(jtu.JaxTestCase):
       jax.P((('a', 'b'), 'c'))
 
   def test_pspec_subclass_error(self):
-    with self.assertRaisesRegex(TypeError, "prohibits subclassing"):
+    with self.assertRaisesRegex(TypeError, "Subclassing `jax.P` is prohibited"):
       class MyP(jax.P):
         pass
 
@@ -1534,6 +1574,16 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(s1 == s2)
     self.assertTrue(s1.is_equivalent_to(s2, 2))
 
+  def test_pspec_check(self):
+    def create_pspec(kind):
+      return P('x', unreduced={'y'}, unreduced_kind=kind)
+
+    create_pspec(None)
+    create_pspec(jax.sharding.UnreducedKind.min)
+    with self.assertRaisesRegex(
+        TypeError, "Expected unreduced_kind to be of type"):
+      create_pspec(frozenset())
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
@@ -1543,7 +1593,7 @@ class RngShardingTest(jtu.JaxTestCase):
   def test_random_bits_is_pure_map_1d(self, num_devices):
     @jax.jit
     def f(x):
-      bits = prng.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
+      bits = threefry2x32.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
                                        32, x.shape)
       return bits + x
 
@@ -1577,7 +1627,7 @@ class RngShardingTest(jtu.JaxTestCase):
   def test_random_bits_is_pure_map_2d(self, mesh_shape, pspec):
     @jax.jit
     def f(x):
-      bits = prng.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
+      bits = threefry2x32.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
                                        32, x.shape)
       return bits + x
 

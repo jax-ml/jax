@@ -1,3 +1,17 @@
+---
+jupytext:
+  formats: ipynb,md:myst
+  text_representation:
+    extension: .md
+    format_name: myst
+    format_version: 0.13
+    jupytext_version: 1.16.4
+kernelspec:
+  display_name: Python 3 (ipykernel)
+  language: python
+  name: python3
+---
+
 # SparseCore Kernel Writing
 
 [SparseCores](https://openxla.org/xla/sparsecore) specialize in sparse memory
@@ -54,16 +68,12 @@ A walkthrough on each of the components:
 
 Actual specs vary by TPU version. Here are some published TPU specs:
 
-| Attribute         | TPU v4 | TPU v5p | TPU v6e       | TPU 7x (Ironwood) |
-:                   :        :         : (Trillium)    :                   :
-| :---------------- | :----- | :------ | :------------ | :---------------- |
-| SparseCores /     | 4      | 4       | 2             | 2 (4 physical     |
-: Chip              :        :         :               : cores)            :
-| Vector subcores / | 16     | 16      | 16            | 16                |
-: SparseCore        :        :         :               :                   :
-| SIMD Width        | 8      | 8       | 8 (F32)<br>16 | 16                |
-:                   :        :         : (BF16)        : (F32)<br>32(BF16) :
-| HBM Capacity      | 32 GiB | 96 GiB  | 32 GiB        | 192 GB            |
+| Attribute | TPU v4 | TPU v5p | TPU v6e (Trillium) | TPU 7x (Ironwood) |
+| :-------- | :----- | :------ | :----------------- | :---------------- |
+| SparseCores / Chip | 4 | 4 | 2 | 2 (4 physical cores) |
+| Vector subcores / SparseCore | 16 | 16 | 16 | 16 |
+| SIMD Width | 8 | 8 | 8 (F32)<br>16 (BF16) | 16 (F32)<br>32 (BF16) |
+| HBM Capacity | 32 GB | 96 GB | 32 GB | 192 GB |
 
 You can also use `pltpu.get_tpu_info()` to quickly obtain specs for your current
 hardware.
@@ -291,52 +301,6 @@ def gather(x, indices):
 
 out = gather(x, indices)
 np.testing.assert_array_equal(out, jnp.take(x, indices, axis=0))
-
-```
-
-If you are doing indexed retrieval at the beginning of a kernel, you could use
-the `indexed_by` and `indexed_dim` argument of `plsc.BlockSpec` on the top-level
-`pl.pallas_call` to refer to another input as the indices of this input on this
-axis.
-
-This call will parallelize the DMA from HBM to VMEM and the gather operation
-that does the indexed lookup, resulting in 4 pipeline stages: indices copy-in,
-gather, kernel computation and output copy-out. This allows you to overlap
-gather and any further computation on gathered outputs.
-
-Note that the `plsc.BlockSpec` is experimental and subject to change.
-
-```python
-@jax.jit
-def gather_add_one(x, indices):
-  @partial(
-      pl.pallas_call,
-      out_shape=jax.ShapeDtypeStruct((num_indices, value_dim), x.dtype),
-      grid=(num_indices // gather_window_size,),
-      in_specs=(
-          plsc.BlockSpec((gather_window_size, value_dim),
-                         indexed_by=1, indexed_dim=0),
-          pl.BlockSpec((gather_window_size,), lambda i: i),
-      ),
-      out_specs=pl.BlockSpec((gather_window_size, value_dim), lambda i: (i, 0)),
-      compiler_params=pltpu.CompilerParams(
-          kernel_type=pltpu.CoreType.SC_VECTOR_SUBCORE,
-          dimension_semantics=(pltpu.PARALLEL,),
-      ),
-  )
-  def kernel(gathered_ref, _, o_ref):
-    # gathered_ref is the gathered content of x[indices]
-    @pl.loop(0, gather_window_size)
-    def _(c0):
-      @pl.loop(0, o_ref.shape[1], step=16)
-      def _(c1):
-        slc = (pl.ds(c0, 1), pl.ds(c1, 16))
-        o_ref.at[*slc][...] = gathered_ref.at[*slc][...] + 1
-
-  return kernel(x, indices)
-
-out = gather_add_one(x, indices)
-np.testing.assert_array_equal(out, jnp.take(x, indices, axis=0) + 1)
 
 ```
 

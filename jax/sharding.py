@@ -25,6 +25,7 @@ from jax._src.sharding_impls import (
 )
 from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
+    UnreducedKind as UnreducedKind,
 )
 from jax._src.mesh import (
     Mesh as Mesh,

@@ -182,7 +182,7 @@ def build_kernel(
       jax.ShapeDtypeStruct((stages, *tile_shape(block_tiling.kn, tma_tiling.kn)), rhs_dtype),
       wgmma_impl.smem_shape_extra(block_tiling, tma_tiling, lhs_dtype, rhs_dtype, rhs_transpose),
   )
-  epilogue_scratch_shape = jax.ShapeDtypeStruct(out_tile.shape, out_tile.dtype)
+  epilogue_scratch_shape = jax.ShapeDtypeStruct.like(out_tile)
   smem_shape = Union([compute_scratch_shape, epilogue_scratch_shape])
 
   def _main(ctx, a_device, b_device, c_device, smem):

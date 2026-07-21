@@ -142,6 +142,8 @@ from jax._src.lax.lax import (
   min_p as min_p,
   mul as mul,
   mul_p as mul_p,
+  mulhi as mulhi,
+  mulhi_p as mulhi_p,
   ne as ne,
   ne_p as ne_p,
   neg as neg,
@@ -225,6 +227,8 @@ from jax._src.lax.lax import (
   square_p as square_p,
   squeeze as squeeze,
   squeeze_p as squeeze_p,
+  stack as stack,
+  stack_p as stack_p,
   stop_gradient as stop_gradient,
   sub as sub,
   sub_p as sub_p,
@@ -238,6 +242,8 @@ from jax._src.lax.lax import (
   top_k_p as top_k_p,
   transpose as transpose,
   transpose_p as transpose_p,
+  unstack as unstack,
+  unstack_p as unstack_p,
   xor_p as xor_p,
   empty as empty,
 )
@@ -402,20 +408,3 @@ from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
 from jax._src.lax.scaled_dot import scaled_dot as scaled_dot
-
-_deprecations = {
-    # Deprecated in v0.8.2; finalized in v0.10.0.
-    # TODO(jakevdp) remove entry in v0.11.0.
-    "pvary": (
-        "jax.lax.pvary was deprecated in JAX v0.8.2 and removed in JAX v0.10.0;"
-        " use `jax.lax.pcast(..., to='varying')",
-        None,
-    ),
-}
-
-import typing as _typing
-if not _typing.TYPE_CHECKING:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del _typing

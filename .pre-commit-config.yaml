@@ -26,6 +26,9 @@ repos:
   - id: debug-statements
     # only include python files
     files: \.py$
+    # this doc deliberately demonstrates pdb.set_trace in a backward pass
+    exclude: ^docs/hijax_custom_derivatives\.py$
+    language_version: python3.12
   - id: trailing-whitespace
     # only include python files
     files: \.py$
@@ -36,7 +39,7 @@ repos:
   - id: ruff
 
 - repo: https://github.com/facebook/pyrefly-pre-commit
-  rev: 3a0d5b91af8c539860d7f7e40cc36b42ce7432a6  # frozen: v0.62.0
+  rev: 14025642291adc2db2f9d9fa398e98699ef3fafc  # frozen: v1.1.1
   hooks:
     - id: pyrefly-check
       name: Pyrefly (type checking)
@@ -68,7 +71,7 @@ repos:
     entry: python3 build/check_copyright.py
     language: python
     additional_dependencies: [google-re2]
-    files: \.(py|cc|h|c|cu|bzl)$|BUILD
+    files: \.(py|cc|h|c|cu|bzl|sh)$|BUILD|CMakeLists\.txt|cmakelists\.txt
     exclude: ^(jax/_src/third_party/|tests/third_party/)
 
 - repo: https://github.com/rhysd/actionlint

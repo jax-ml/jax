@@ -1,7 +1,7 @@
 # CI - Oldest Supported NumPy (presubmit)
 # This workflow tests the oldest supported NumPy and jaxlib versions.
 
-name: CI - Oldest Supported NumPy (presubmit)
+name: Oldest Supported NumPy
 
 on:
   pull_request:
@@ -21,25 +21,25 @@ env:
 
 jobs:
   test-oldest-supported-numpy:
-    if: ${{ github.event.repository.fork == false && !startsWith(github.head_ref, 'release/') }}
+    if: ${{ github.repository_owner == 'jax-ml' && github.event.repository.fork == false && !startsWith(github.head_ref, 'release/') }}
     defaults:
       run:
         shell: bash
     runs-on: "linux-x86-n4-64"
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
-    name: "CI - Oldest Supported NumPy (Python 3.11, x64=0)"
+    name: "Oldest supported numpy, py3.12, x64=0"
 # End Presubmit Naming Check github-oldest-supported-numpy-presubmit
 
     env:
-      JAXCI_PYTHON: "python3.11"
+      JAXCI_PYTHON: "python3.12"
       JAXCI_ENABLE_X64: 0
       JAX_NUM_GENERATED_CASES: 5
-      NUMPY_VERSION: "2.0.0"
-      SCIPY_VERSION: "1.13.0"
+      NUMPY_VERSION: "2.1.0"
+      SCIPY_VERSION: "1.15.0"
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Install Python dependencies

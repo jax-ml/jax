@@ -28,9 +28,9 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools
+import logging
 from typing import cast, Any
 
-from absl import logging
 import jax
 from jax import dlpack
 from jax import dtypes
@@ -41,17 +41,18 @@ from jax._src import core
 from jax._src import effects
 from jax._src import literals
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import roofline
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
-from jax._src.interpreters import mlir
 import ml_dtypes
 import numpy as np
 import tensorflow as tf
 
+logger = logging.getLogger(__name__)
 
 map = util.safe_map
 zip = util.safe_zip
@@ -320,7 +321,7 @@ def check_tf_result(idx: int, r_tf: TfVal, r_aval: core.ShapedArray | None) -> T
         f"r_tf = {r_tf}, r_aval = {r_aval}"
     )
     msg += str(e)
-    logging.warning(msg)
+    logger.warning(msg)
     return r_tf
   if (r_tf.dtype != r_aval_dtype_tf or
       len(r_tf.shape) != len(r_aval_shape_tf) or
@@ -389,7 +390,7 @@ def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.Conc
 
 
 # Mark the effectful instances of call_tf
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class CallTfEffect(effects.Effect):
   __str__ = lambda _: "CallTfEffect"
 
@@ -543,7 +544,7 @@ def _call_tf_lowering(
         "variables or tensors from the context. "
         "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion. "
         f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
-    logging.warning(msg)
+    logger.warning(msg)
     for inp in concrete_function_flat_tf.captured_inputs:
       if inp.dtype == tf.resource:  # A variable; lookup by handle
         inp_vars = [v for v in concrete_function_flat_tf.variables if inp is v.handle]
@@ -559,11 +560,10 @@ def _call_tf_lowering(
   # it is in TF graph mode. The `tf.init_scope()` lifts out of function-building
   # graph scopes, and allows us to read the values of the variables
   with tf.init_scope():
-    captured_ops = tuple(
-        mlir.flatten_ir_values(
-            mlir.ir_constant(np.asarray(inp)) for inp in captured_inputs
-        )
-    )
+    captured_ops, _ = mlir.ir_tree_registry.flatten([
+        mlir.ir_constant(np.asarray(inp)) for inp in captured_inputs
+    ])
+    captured_ops = tuple(captured_ops)
 
   if call_tf_graph:
     with jax2tf_internal.inside_call_tf():
@@ -636,7 +636,7 @@ def _call_tf_lowering(
     jax_res_dtype = dtypes.canonicalize_dtype(res_dtype)
     if res_dtype != jax_res_dtype:
       op = hlo.ConvertOp(
-          mlir.aval_to_ir_type(core.ShapedArray(res_type.shape, jax_res_dtype)),
+          mlir.aval_to_ir_type(ctx.module_context, core.ShapedArray(res_type.shape, jax_res_dtype)),
           op,
       ).result
     outputs.append(op)
@@ -684,9 +684,8 @@ def emit_tf_embedded_graph_custom_call(
   result_avals = ctx.avals_out if ctx.avals_out is not None else ()
 
   operands = list(operands)
-  result_types = list(
-      mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
-  )
+  flat_res_types, _ = mlir.ir_tree_registry.flatten([mlir.aval_to_ir_type(ctx.module_context, aval) for aval in result_avals])
+  result_types = list(flat_res_types)
   if ordered:
     operands.insert(0, ctx.tokens_in.get(call_tf_ordered_effect))
     result_types.insert(0, mlir.token_type())
@@ -708,7 +707,8 @@ def emit_tf_embedded_graph_custom_call(
   results = list(custom_call.results)
   if ordered:
     token = results.pop(0)
-    ctx.set_tokens_out(mlir.TokenSet({call_tf_ordered_effect: token}))
+    ctx.set_tokens_out(ctx.tokens_in.update_tokens(
+        mlir.TokenSet({call_tf_ordered_effect: token})))
 
   return results
 

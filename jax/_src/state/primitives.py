@@ -152,6 +152,10 @@ def ref_get(
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
+  if isinstance(ref, TransformedRef) and ref.multiref:
+    raise NotImplementedError(
+        "ref_get with multi-ref TransformedRef is not supported."
+    )
   ref, transforms = get_ref_and_transforms(ref, idx, "ref_get")
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return get_p.bind(ref, *flat_transforms, tree=tree)
@@ -244,6 +248,10 @@ def ref_swap(
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
+  if isinstance(ref, TransformedRef) and ref.multiref:
+    raise NotImplementedError(
+        "ref_swap with multi-ref TransformedRef is not supported."
+    )
   if hasattr(ref, 'dtype'):
     value = _maybe_implicit_cast(ref.dtype, value)
   ref, transforms = get_ref_and_transforms(ref, idx, _function_name)
@@ -497,9 +505,17 @@ def pp_ref_transforms(context: core.JaxprPpContext, ref, transforms=()):
   if isinstance(ref, TransformedRef):
     transforms = ref.transforms
     ref = ref.ref
+  if isinstance(ref, tuple):
+    ref_doc = pp.concat([
+        pp.text("("),
+        pp.join(pp.text(", "), [pp_ref_transforms(context, r) for r in ref]),
+        pp.text(")"),
+    ])
+  else:
+    ref_doc = core.pp_var(ref, context)
   return pp_ref_var(
       pp.concat([
-          pp.text(core.pp_var(ref, context)),
+          ref_doc,
           _pp_transforms(context, transforms),
       ])
   )
@@ -525,14 +541,13 @@ def _swap_pp_rule(eqn, context, settings) -> pp.Doc:
   transforms = tree_util.tree_unflatten(eqn.params["tree"], flat_idx)
   annotation = (source_info_util.summarize(eqn.source_info)
                 if settings.source_info else None)
-  if type(y) is core.DropVar:
-    # In the case of a set (ignored return value),
-    # pretty print `_ = swap x v i` as `x[i] <- v`
+  if context.var_names.get(y) == '_':
+    # In the case of a set (ignored return value), print as `x[i] <- v`
     del y
     return pp.concat([
         pp_ref_transforms(context, x, transforms),
         pp.text(" <- ", annotation=annotation),
-        pp.text(core.pp_var(v, context)),
+        core.pp_var(v, context),
     ])
   else:
     # pretty-print `y:T = swap x v i` as `y:T, x[i] <- x[i], v`
@@ -540,7 +555,7 @@ def _swap_pp_rule(eqn, context, settings) -> pp.Doc:
     y = core.pp_vars([y], context, print_shapes=settings.print_shapes)
     return pp.concat([y, pp.text(', '), x_i,
                       pp.text(' <- ', annotation=annotation), x_i,
-                      pp.text(', '), pp.text(core.pp_var(v, context))])
+                      pp.text(', '), core.pp_var(v, context)])
 core.pp_eqn_rules[swap_p] = _swap_pp_rule
 
 def _addupdate_pp_rule(eqn, context, settings) -> pp.Doc:
@@ -553,7 +568,7 @@ def _addupdate_pp_rule(eqn, context, settings) -> pp.Doc:
   return pp.concat([
       pp_ref_transforms(context, x, transforms),
       pp.text(" += ", annotation=annotation),
-      pp.text(core.pp_var(v, context)),
+      core.pp_var(v, context),
   ])
 core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
 
@@ -616,7 +631,8 @@ def _swap_transpose_fancy(g, ref_, x, *idx, **params):
     swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
   else:
     x_bar = swap_p.bind(ref_.inst().ref, ad_util.instantiate(g), *idx, **params)
-    x.accum(x_bar)
+    if isinstance(x, ad.GradAccum):
+      x.accum(x_bar)  # if x is a constant, drop x_bar, but still zero the ref ct
 ad.fancy_transposes[swap_p] = _swap_transpose_fancy
 
 def addupdate_transpose_fancy(cts_in, ref_, x, *idx, **params):
@@ -751,7 +767,7 @@ def _batch_indexer(
           new_indices.append(idx)
           continue
         dim = dim.start
-        if dim is batching.not_mapped:
+        if dim is None:
           # Broadcasting the slice is free (the start index stays the same)
           new_indices.append(idx)
         else:
@@ -763,7 +779,7 @@ def _batch_indexer(
         if not shapeof(idx):
           new_indices.append(idx)
         else:
-          if dim is batching.not_mapped:
+          if dim is None:
             bcast_dims = tuple(range(1, np.ndim(idx) + 1))
             idx = lax.broadcast_in_dim(idx, new_integer_indexer_shape,
                                        bcast_dims)
@@ -771,7 +787,7 @@ def _batch_indexer(
             idx = batching.moveaxis(idx, dim, 0)
           new_indices.append(idx)
     else:
-      if ref_dim is not batching.not_mapped:
+      if ref_dim is not None:
         if not isinstance(idx, indexing.Slice):
           if shapeof(idx):
             bcast_dims = tuple(range(1, core.typeof(idx).ndim + 1))
@@ -800,7 +816,7 @@ def shapeof(x):
 
 def _get_vmap(batched_args, batched_dims, *, tree):
   axis_size, = {x.shape[d] for x, d in zip(batched_args, batched_dims)
-                if d is not batching.not_mapped}
+                if d is not None}
   ref, *flat_idxs = batched_args
   ref_dim, *flat_idx_dims = batched_dims
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
@@ -808,7 +824,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
     return get_p.bind(ref, *flat_idxs, tree=tree), ref_dim
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
-  idx_is_batched = any(i_dim is not batching.not_mapped
+  idx_is_batched = any(i_dim is not None
                        for i_dim in flat_idx_dims)
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
@@ -850,7 +866,7 @@ def _get_vmap(batched_args, batched_dims, *, tree):
     out = lax.transpose(out, transpose_order)
     out_bdim = 0
   else:
-    if ref_dim is not batching.not_mapped:
+    if ref_dim is not None:
       if will_add_int_batcher:
         if not int_indexers_contiguous:
           # In this case the indexer is always moved to the front.
@@ -876,9 +892,9 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
-  ref_is_batched = ref_dim is not batching.not_mapped
-  val_is_batched = val_dim is not batching.not_mapped
-  idx_is_batched = any(i_dim is not batching.not_mapped
+  ref_is_batched = ref_dim is not None
+  val_is_batched = val_dim is not None
+  idx_is_batched = any(i_dim is not None
                        for i_dim in flat_idx_dims)
 
   if not ref_is_batched:
@@ -890,6 +906,8 @@ def _swap_vmap(axis_data, batched_args, batched_dims, *, tree):
     if ref_is_batched and not val_is_batched:
       val = batching.broadcast(val, axis_data.size, ref_dim,
                                axis_data.explicit_mesh_axis)
+    else:
+      val = batching.moveaxis(val, val_dim, ref_dim)
     return swap_p.bind(ref, val, *flat_idxs, tree=tree), ref_dim
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
@@ -967,9 +985,9 @@ def _addupdate_vmap(axis_data, batched_args, batched_dims, *, tree):
   indexers = tree_util.tree_unflatten(tree, flat_idxs)
   indexers_dims = tree_util.tree_unflatten(tree, flat_idx_dims)
 
-  ref_is_batched = ref_dim is not batching.not_mapped
-  val_is_batched = val_dim is not batching.not_mapped
-  idx_is_batched = any(i_dim is not batching.not_mapped
+  ref_is_batched = ref_dim is not None
+  val_is_batched = val_dim is not None
+  idx_is_batched = any(i_dim is not None
                        for i_dim in flat_idx_dims)
 
   if not ref_is_batched:
@@ -1098,13 +1116,13 @@ def _ref_jvp(primals, tangents, *, memory_space, kind):
 def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind):
   nz, = nzs
   x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
-  def mut_lin(_, x_dot):
+  def mut_lin(_, __, x_dot):
     if kind == 'no_grad_no_remat':
       aval = x_dot.aval if type(x_dot) is ad.Zero else core.typeof(x_dot)
       return ad.Zero(AbstractRef(aval))
     zero = ad_util.instantiate(x_dot)
     return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
-  return x_ref, kind != 'no_grad_no_remat', None, mut_lin
+  return x_ref, kind != 'no_grad_no_remat', None, None, mut_lin
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
 ad.primitive_linearizations[core.ref_p] = _ref_lin
@@ -1122,10 +1140,10 @@ ad.primitive_jvps[core.empty_ref_p] = _empty_ref_jvp
 
 def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space):
   primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space)
-  def lin(_):
+  def lin(_, __):
     return core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
                                  memory_space=memory_space)
-  return primal_ref, True, None, lin
+  return primal_ref, True, None, None, lin
 ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
 
 def _free_ref_jvp(primals, tangents):
@@ -1149,10 +1167,11 @@ def _create_linear_abstract_eval(*, ty, memory_space):
 
 def _lower_create_linear(ctx):
   out_aval, = ctx.avals_out
+  flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
       "CreateBuffer",
       operands=[],
-      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
+      result_types=flat_res_types,
   ).results
 mlir.register_lowering(create_linear_p, _lower_create_linear)
 
@@ -1184,10 +1203,12 @@ def _lower_pin(ctx, x_op, *, to):
   else:
     config = {}
   out_aval, = ctx.avals_out
+  flat_ops, _ = mlir.ir_tree_registry.flatten([x_op])
+  flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
       "Pin",
-      operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
+      operands=flat_ops,
+      result_types=flat_res_types,
       **config,
   ).results
 mlir.register_lowering(pin_p, _lower_pin)
@@ -1204,10 +1225,12 @@ def _unpin_abstract_eval(aval):
 
 def _lower_unpin(ctx, x_op):
   out_aval, = ctx.avals_out
+  flat_ops, _ = mlir.ir_tree_registry.flatten([x_op])
+  flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
       "Unpin",
-      operands=mlir.flatten_ir_values([x_op]),
-      result_types=mlir.flatten_ir_types(mlir.aval_to_ir_types(out_aval)),
+      operands=flat_ops,
+      result_types=flat_res_types,
   ).results
 mlir.register_lowering(unpin_p, _lower_unpin)
 

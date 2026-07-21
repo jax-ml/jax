@@ -68,20 +68,24 @@ import warnings
 from absl import app
 from absl import flags
 
+# https://github.com/google/differential-privacy
+import dp_accounting
+
+from examples import datasets
+
 from jax import grad
 from jax import jit
 from jax import random
 from jax import vmap
 from jax.example_libraries import optimizers
 from jax.example_libraries import stax
-from jax.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
-from examples import datasets
+from jax.tree_util import tree_flatten, tree_unflatten
+
 import numpy.random as npr
 
-# https://github.com/google/differential-privacy
-from dp_accounting import dp_event
-from dp_accounting import rdp
+dp_event = dp_accounting.dp_event
+rdp = dp_accounting.rdp
 
 
 _DPSGD = flags.DEFINE_boolean(

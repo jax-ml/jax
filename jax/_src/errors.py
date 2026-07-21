@@ -73,7 +73,7 @@ class ConcretizationTypeError(JAXTypeError):
 
     This can often be fixed by marking the problematic argument as static::
 
-        >>> @partial(jit, static_argnums=1)
+        >>> @jit(static_argnums=1)
         ... def func(x, axis):
         ...   return x.min(axis)
 
@@ -294,7 +294,7 @@ class TracerArrayConversionError(JAXTypeError):
     or by declaring the index as a static argument::
 
       >>> from functools import partial
-      >>> @partial(jit, static_argnums=(0,))
+      >>> @jit(static_argnums=(0,))
       ... def func(i):
       ...   return x[i]
 
@@ -341,7 +341,7 @@ class TracerIntegerConversionError(JAXTypeError):
     static::
 
       >>> from functools import partial
-      >>> @partial(jit, static_argnums=1)
+      >>> @jit(static_argnums=1)
       ... def func(x, axis):
       ...   return np.split(x, 2, axis)
 
@@ -392,7 +392,7 @@ class TracerIntegerConversionError(JAXTypeError):
     or by declaring the index as a static argument::
 
       >>> from functools import partial
-      >>> @partial(jit, static_argnums=0)
+      >>> @jit(static_argnums=0)
       ... def func(i):
       ...   return L[i]
 
@@ -476,7 +476,7 @@ class TracerBoolConversionError(ConcretizationTypeError):
     value as static::
 
       >>> from functools import partial
-      >>> @partial(jit, static_argnames=['normalize'])
+      >>> @jit(static_argnames=['normalize'])
       ... def func(x, normalize=True):
       ...   if normalize:
       ...     return x / x.sum()

@@ -14,7 +14,8 @@
 """Implementation of the Threefry PRNG as a Pallas kernel."""
 from collections.abc import Sequence
 import jax
-from jax._src import prng
+from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
@@ -69,7 +70,7 @@ def threefry_2x32_count(key,
     counts_hi = jnp.zeros_like(counts_lo)
     k1 = jnp.reshape(key_ref[0, 0], (1, 1))
     k2 = jnp.reshape(key_ref[0, 1], (1, 1))
-    o1, o2 = prng.threefry2x32_p.bind(
+    o1, o2 = threefry2x32.threefry2x32_p.bind(
         k1, k2, counts_hi, counts_lo)
     out_bits = o1 ^ o2
     out_ref[...] = out_bits.reshape(out_ref.shape)
@@ -110,10 +111,10 @@ def plthreefry_random_bits(key, bit_width: int, shape: Shape):
 
 plthreefry_prng_impl = prng.PRNGImpl(
     key_shape=(2,),
-    seed=prng.threefry_seed,
-    split=prng.threefry_split,
+    seed=threefry2x32.threefry_seed,
+    split=threefry2x32.threefry_split,
     random_bits=plthreefry_random_bits,
-    fold_in=prng.threefry_fold_in,
+    fold_in=threefry2x32.threefry_fold_in,
     name="pallas_threefry2x32",
     tag="plfry")
 

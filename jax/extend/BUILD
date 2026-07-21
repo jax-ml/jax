@@ -36,6 +36,7 @@ pytype_strict_library(
         ":random",
         ":sharding",
         ":source_info_util",
+        ":xla",
         "//jax/extend/mlir",
     ],
 )
@@ -129,4 +130,13 @@ pytype_strict_library(
     srcs = ["ifrt_programs.py"],
     type_checking = "pyrefly",
     deps = ["//jax/_src/lib"],
+)
+
+pytype_strict_library(
+    name = "xla",
+    srcs = ["xla.py"],
+    type_checking = "pyrefly",
+    deps = [
+        "//jax/_src:xla_transform",
+    ],
 )

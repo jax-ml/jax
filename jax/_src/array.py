@@ -439,15 +439,23 @@ class ArrayImpl(basearray.Array):
 
     from jax._src.dlpack import DLDeviceType  # pyrefly: ignore[missing-import]
 
-    if self.platform() == "cpu":  # pyrefly: ignore[missing-attribute]
+    if self.platform() == "cpu":
       return DLDeviceType.kDLCPU, 0
 
-    elif self.platform() == "gpu":  # pyrefly: ignore[missing-attribute]
+    elif self.platform() == "gpu":
       platform_version = _get_device(self).client.platform_version
       if "cuda" in platform_version:
-        dl_device_type = DLDeviceType.kDLCUDA
+        if self.sharding.memory_kind == "pinned_host":
+          dl_device_type = DLDeviceType.kDLCUDAHost
+        else:
+          dl_device_type = DLDeviceType.kDLCUDA
       elif "rocm" in platform_version:
-        dl_device_type = DLDeviceType.kDLROCM
+        if self.sharding.memory_kind == "pinned_host":
+          dl_device_type = DLDeviceType.kDLROCMHost
+        else:
+          dl_device_type = DLDeviceType.kDLROCM
+      elif "oneapi" in platform_version:
+        dl_device_type = DLDeviceType.kDLOneAPI
       else:
         raise BufferError("Unknown GPU platform for __dlpack__: "
                          f"{platform_version}")
@@ -458,10 +466,24 @@ class ArrayImpl(basearray.Array):
 
       return dl_device_type, local_hardware_id
 
+    elif self.platform() == "tpu":
+      if self.sharding.memory_kind == "pinned_host":
+        dl_device_type = DLDeviceType.kDLTPUHost
+      else:
+        raise BufferError(
+            "__dlpack__ device only supported for TPU pinned host memory"
+        )
+
+      local_hardware_id = _get_device(self).local_hardware_id
+      if local_hardware_id is None:
+        raise BufferError("Couldn't get local_hardware_id for __dlpack__")
+
+      return dl_device_type, local_hardware_id
+
     else:
       raise BufferError(
-          "__dlpack__ device only supported for CPU and GPU, got platform: "
-          f"{self.platform()}"  # pyrefly: ignore[missing-attribute]
+          "__dlpack__ device only supported for CPU, GPU and TPU pinned host,"
+          f" got platform: {self.platform()}"
       )
 
   def __reduce__(self):
@@ -511,12 +533,18 @@ class ArrayImpl(basearray.Array):
       return self._fully_replicated_shard()  # pyrefly: ignore[missing-attribute]
     return self._arrays[index]
 
-  @functools.cached_property
+  @property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
+    val = self.__dict__.get("addressable_shards", None)
+    if val is not None:
+      return val
     out = []
     for a in self._arrays:
       out.append(Shard(_get_device(a), self.sharding, self.shape, a))
+    if len(out) != 1:
+      # when len(out) == 1, out is just [Shard(self)] and it makes a cycle.
+      self.__dict__["addressable_shards"] = out
     return out
 
   @property
@@ -1087,7 +1115,7 @@ def make_array_from_single_device_arrays(
           f" arrays as input, but got types {set(map(type, arrays))}")
     raise
 
-dtypes.canonicalize_value_handlers[ArrayImpl] = lambda x: x
+dtypes.register_canonicalize_value_handler(ArrayImpl, None)
 
 def _get_aval_array(self):
   return core.update_aval_with_sharding(self.aval, self.sharding)

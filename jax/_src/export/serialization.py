@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 import dataclasses
 import itertools
 from functools import partial
@@ -71,10 +71,11 @@ SerT = TypeVar("SerT")
 #   This version is backwards compatible with Version 2 to 8.
 # Version 10, April 4th, 2026, optimizes serialization of duplicate shardings,
 #   abstract meshes and avals.
-_SERIALIZATION_VERSION = 10
+# Version 11, May 15th, 2026, add AbstractDevice.platform.
+_SERIALIZATION_VERSION = 11
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class _SerializedUniques:
   # Map unique objects to their index in the serialized data.
   unique_avals: list[core.AbstractValue]
@@ -141,7 +142,11 @@ def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
 
 
 def deserialize(ser: bytearray) -> _export.Exported:
-  """Deserializes an Exported."""
+  """Deserializes an Exported.
+
+  The serialized bytearray must be trusted input. If you deserialized it, when
+  you execute it, it may execute any custom call registered in the jaxlib.
+  """
   exp = ser_flatbuf.Exported.GetRootAsExported(ser)
   return _deserialize_exported(exp)
 
@@ -295,12 +300,6 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
                                                    unique_named_shardings)
 
   fun_name = exp.FunctionName().decode("utf-8")
-  _, in_tree = tree_util.tracing_registry.flatten(
-      _deserialize_pytreedef_to_pytree(exp.InTree())
-  )
-  _, out_tree = tree_util.tracing_registry.flatten(
-      _deserialize_pytreedef_to_pytree(exp.OutTree())
-  )
 
   # TODO(necula): remove the fallback to NrDevicesShort and mark
   # the field "deprecated" once we abandon the old
@@ -393,6 +392,9 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
     in_shardings = (None,) * len(in_shardings)
     out_shardings_hlo = cast(tuple[_export.HloSharding | None, ...], out_shardings)
     out_shardings = (None,) * len(out_shardings)
+
+  in_tree = _deserialize_pytreedef(exp.InTree(), in_avals)
+  out_tree = _deserialize_pytreedef(exp.OutTree(), out_avals)
 
   platforms = tuple(
       exp.Platforms(i).decode("utf-8")
@@ -512,17 +514,40 @@ def _serialize_pytreedef(
   return ser_flatbuf.PyTreeDefEnd(builder)
 
 
-def _deserialize_pytreedef_to_pytree(p: ser_flatbuf.PyTreeDef):
+def _deserialize_pytreedef(
+    p: ser_flatbuf.PyTreeDef,
+    py_tree_leaves: Sequence[Any] | None = None,
+) -> tree_util.PyTreeDef:
   # We construct a PyTree and later we'll flatten it to get the PyTreeDef.
-  # TODO: is there a more direct way to construct a PyTreeDef?
+  # In some cases the placeholder can cause issues when building the PyTree
+  # (e.g. if some custom objects in the tree expect array-like leaves with
+  # specific dims). To support these cases we allow passing the actual leaves.
+  # TODO: is there a more direct way to construct a PyTreeDef without having to
+  # construct the PyTree? (which would avoid the need for leaves).
+  if py_tree_leaves is not None:
+    leaf_iterator = iter(py_tree_leaves)
+  else:
+    # 0.0 placeholder if no leaves are provided.
+    leaf_iterator = itertools.repeat(0.0)
+  pytree = _deserialize_pytreedef_to_pytree(p, leaf_iterator)
+  if py_tree_leaves is not None:
+    assert not (list(leaf_iterator))  # Should be exhausted.
+  return tree_util.tree_structure(pytree)
+
+
+def _deserialize_pytreedef_to_pytree(
+    p: ser_flatbuf.PyTreeDef,
+    leaf_iterator: Iterator[Any],
+) -> tree_util.PyTree:
+  """Deserializes a PyTreeDef into a PyTree using an iterator over leaves."""
   kind = p.Kind()
   nr_children = p.ChildrenLength()
   children = [
-      _deserialize_pytreedef_to_pytree(p.Children(i))
+      _deserialize_pytreedef_to_pytree(p.Children(i), leaf_iterator)
       for i in range(nr_children)
   ]
   if kind == ser_flatbuf.PyTreeDefKind.leaf:
-    return 0.0
+    return next(leaf_iterator)
   elif kind == ser_flatbuf.PyTreeDefKind.none:
     return None
   elif kind == ser_flatbuf.PyTreeDefKind.tuple:
@@ -610,13 +635,26 @@ def _serialize_abstract_device(builder: flatbuffers.Builder,
   if device is None:
     return 0
   device_kind = builder.CreateString(device.device_kind)
+  platform = builder.CreateString(device.platform)
 
   ser_flatbuf.AbstractDeviceStart(builder)
   ser_flatbuf.AbstractDeviceAddDeviceKind(builder, device_kind)
   if device.num_cores is not None:
     ser_flatbuf.AbstractDeviceAddNumCores(builder, device.num_cores)
+  ser_flatbuf.AbstractDeviceAddPlatform(builder, platform)
   return ser_flatbuf.AbstractDeviceEnd(builder)
 
+# TODO(necula): remove 6 months after 5/15/2026
+def get_platform_from_device_kind(device_kind) -> str:
+  device_kind = device_kind.lower()
+  if 'cpu' in device_kind:
+    return 'cpu'
+  elif 'tpu' in device_kind:
+    return 'tpu'
+  elif any(x in device_kind for x in ['nvidia', 'tesla', 'amd']):
+    return 'gpu'
+  else:
+    raise ValueError(f'Got unexpected {device_kind=}')
 
 def _deserialize_abstract_device(
     ser_abs_device: ser_flatbuf.AbstractDevice | None
@@ -625,7 +663,11 @@ def _deserialize_abstract_device(
     return None
   device_kind = ser_abs_device.DeviceKind().decode("utf-8")
   num_cores: int | None = ser_abs_device.NumCores()
-  return mesh.AbstractDevice(device_kind, num_cores)
+  if (platform := ser_abs_device.Platform()):
+    platform = platform.decode("utf-8")
+  else:
+    platform = get_platform_from_device_kind(device_kind)
+  return mesh.AbstractDevice(device_kind, num_cores, platform)
 
 
 def _serialize_abstract_mesh(builder: flatbuffers.Builder,
@@ -696,7 +738,7 @@ def _deserialize_partition_spec_one_axis(
 def _serialize_partition_spec(builder: flatbuffers.Builder,
                               spec: partition_spec.PartitionSpec) -> int:
   partitions = _serialize_array(builder, _serialize_partition_spec_one_axis,
-                                spec._partitions)  # pyrefly: ignore[bad-argument-type]
+                                spec._partitions)
   reduced = _serialize_array(builder,
                              lambda builder, ps: builder.CreateString(ps),
                              spec.reduced)

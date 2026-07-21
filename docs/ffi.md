@@ -1,6 +1,6 @@
 ---
 jupytext:
-  formats: ipynb,md:myst
+  formats: ipynb,py:light,md:myst
   text_representation:
     extension: .md
     format_name: myst
@@ -12,11 +12,31 @@ kernelspec:
   name: python3
 ---
 
+```{raw-cell}
+
+---
+Copyright 2024 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+```
+
 (ffi-tutorial)=
 
 # Foreign function interface (FFI)
 
-_This tutorial requires JAX v0.4.31 or newer._
+_This tutorial requires JAX v0.4.31 or newer. The later sections that add custom transformation rules also use the experimental `jax.experimental.hijax` API, which requires a more recent version of JAX._
 
 While a wide range of numerical operations can be easily and efficiently implemented using JAX's built in `jax.numpy` and `jax.lax` interfaces, it can sometimes be useful to explicitly call out to external compiled libraries via a "foreign function interface" (FFI).
 This can be particularly useful when particular operations have been previously implemented in an optimized C or CUDA library, and it would be non-trivial to reimplement these computations directly using JAX, but it can also be useful for optimizing runtime or memory performance of JAX programs.
@@ -39,6 +59,7 @@ The end-to-end code for this example and some other more advanced use cases can 
 Because we demonstrate how FFI calls can be sharded at the end of this tutorial, let's first set up our environment to be treated by JAX as having multiple CPUs:
 
 ```{code-cell} ipython3
+# ruff: noqa
 import os
 
 os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
@@ -101,7 +122,7 @@ and, for our example, this is the function that we want to expose to JAX via the
 
 To expose our library function to JAX and XLA, we need to write a thin wrapper using the APIs provided by the header-only library in the [`xla/ffi/api`](https://github.com/openxla/xla/tree/main/xla/ffi/api) directory of the [XLA project](https://github.com/openxla/xla).
 For more information about this interface, take a look at [the XLA custom call documentation](https://openxla.org/xla/custom_call).
-The full source listing can be downloaded [here](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc), but the key implementation details are reproduced here:
+The full source listing can be downloaded [here](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc), but the key implementation details are reproduced here (simplified to support only the `float32` dtype; the full source instead uses `ffi::AnyBuffer` to support several dtypes, as discussed under Advanced topics below):
 
 ```c++
 #include <functional>
@@ -252,17 +273,13 @@ def rms_norm(x, eps=1e-5):
 
   call = jax.ffi.ffi_call(
     # The target name must be the same string as we used to register the target
-    # above in `register_custom_call_target`
+    # above with `jax.ffi.register_ffi_target`
     "rms_norm",
 
     # In this case, the output of our FFI function is just a single array with
     # the same shape and dtype as the input. We discuss a case with a more
     # interesting output type below.
-    jax.ShapeDtypeStruct(x.shape, x.dtype),
-
-    # The `vmap_method` parameter controls this function's behavior under `vmap`
-    # as discussed below.
-    vmap_method="broadcast_all",
+    jax.ShapeDtypeStruct.like(x),
   )
 
   # Note that here we're use `numpy` (not `jax.numpy`) to specify a dtype for
@@ -279,142 +296,256 @@ np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
 
 This code cell includes a lot of inline comments which should explain most of what is happening here, but there are a few points that are worth explicitly highlighting.
 Most of the heavy lifting here is done by the {func}`~jax.ffi.ffi_call` function, which tells JAX how to call the foreign function for a particular set of inputs.
-It's important to note that the first argument to {func}`~jax.ffi.ffi_call` must be a string that matches the target name that we used when calling `register_custom_call_target` above.
+It's important to note that the first argument to {func}`~jax.ffi.ffi_call` must be a string that matches the target name that we used when calling {func}`~jax.ffi.register_ffi_target` above.
 
 Any attributes (defined using `Attr` in the C++ wrapper above) should be passed as keyword arguments to {func}`~jax.ffi.ffi_call`.
 Note that we explicitly cast `eps` to `np.float32` because our FFI library expects a C `float`, and we can't use `jax.numpy` here, because these parameters must be static arguments.
 
-The `vmap_method` argument to {func}`~jax.ffi.ffi_call` defines how this FFI call interacts with {func}`~jax.vmap` as described next.
-
-```{tip}
-If you are familiar with the earlier "custom call" interface, you might be surprised that we're not passing the problem dimensions as parameters (batch size, etc.) to {func}`~jax.ffi.ffi_call`.
-In this earlier API, the backend had no mechanism for receiving metadata about the input arrays, but since the FFI includes dimension information with the `Buffer` objects, we no longer need to compute this using Python when lowering.
-One major perk of this change is {func}`~jax.ffi.ffi_call` can support some simple {func}`~jax.vmap` semantics out of the box, as discussed below.
-```
-
-(ffi-call-vmap)=
-### Batching with `vmap`
-
-{func}`~jax.ffi.ffi_call` supports some simple {func}`~jax.vmap` semantics out of the box using the `vmap_method` parameter.
-The docs for {func}`~jax.pure_callback` provide more details about the `vmap_method` parameter, and the same behavior applies to {func}`~jax.ffi.ffi_call`.
-
-The simplest `vmap_method` is `"sequential"`.
-In this case, when `vmap`ped, an `ffi_call` will be rewritten as a {func}`~jax.lax.scan` with the `ffi_call` in the body.
-This implementation is general purpose, but it doesn't parallelize very well.
-Many FFI calls provide more efficient batching behavior and, in some simple cases, the `"expand_dims"` or `"broadcast_all"` methods can be used to expose a better implementation.
-
-In this case, since we only have one input argument, `"expand_dims"` and `"broadcast_all"` actually have the same behavior.
-The specific assumption required to use these methods is that the foreign function knows how to handle batch dimensions.
-Another way of saying this is that the result of calling `ffi_call` on the batched inputs is assumed to be equal to stacking the repeated application of `ffi_call` to each element in the batched input, roughly:
-
-```python
-ffi_call(xs) == jnp.stack([ffi_call(x) for x in xs])
-```
-
-```{tip}
-Note that things get a bit more complicated when we have multiple input arguments.
-For simplicity, we will use the `"broadcast_all"` throughout this tutorial, which guarantees that all inputs will be broadcasted to have the same batch dimensions, but it would also be possible to implement a foreign function to handle the `"expand_dims"` method.
-The documentation for {func}`~jax.pure_callback` includes some examples of this
-```
-
-Our implementation of `rms_norm` has the appropriate semantics, and it supports `vmap` with `vmap_method="broadcast_all"` out of the box:
-
-```{code-cell} ipython3
-np.testing.assert_allclose(jax.vmap(rms_norm)(x), jax.vmap(rms_norm_ref)(x), rtol=1e-5)
-```
-
-We can inspect the [jaxpr](jax-internals-jaxpr) of the {func}`~jax.vmap` of `rms_norm` to confirm that it isn't being rewritten using {func}`~jax.lax.scan`:
-
-```{code-cell} ipython3
-jax.make_jaxpr(jax.vmap(rms_norm))(x)
-```
-
-Using `vmap_method="sequential"`, `vmap`ping a `ffi_call` will fall back on a {func}`jax.lax.scan` with the `ffi_call` in the body:
-
-```{code-cell} ipython3
-def rms_norm_sequential(x, eps=1e-5):
-  return jax.ffi.ffi_call(
-    "rms_norm",
-    jax.ShapeDtypeStruct(x.shape, x.dtype),
-    vmap_method="sequential",
-  )(x, eps=np.float32(eps))
-
-
-jax.make_jaxpr(jax.vmap(rms_norm_sequential))(x)
-```
-
-If your foreign function provides an efficient batching rule that isn't supported by this simple `vmap_method` parameter, it might also be possible to define more flexible custom `vmap` rules using the experimental `custom_vmap` interface, but it's worth also opening an issue describing your use case on [the JAX issue tracker](https://github.com/jax-ml/jax/issues).
-
 +++
 
-### Differentiation
+(ffi-call-vmap)=
 
-Unlike with batching, {func}`~jax.ffi.ffi_call` doesn't provide any default support for automatic differentiation (AD) of foreign functions.
-As far as JAX is concerned, the foreign function is a black box that can't be inspected to determine the appropriate behavior when differentiated.
-Therefore, it is the {func}`~jax.ffi.ffi_call` user's responsibility to define a custom derivative rule.
+## Supporting transformations like `vmap` and `grad`
 
-More details about custom derivative rules can be found in the [custom derivatives tutorial](https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html), but the most common pattern used for implementing differentiation for foreign functions is to define a {func}`~jax.custom_vjp` which itself calls a foreign function.
-In this case, we actually define two new FFI calls:
+The `rms_norm` function above works whenever we evaluate it directly, but as written it doesn't yet support JAX's function transformations.
+As far as JAX is concerned, an {func}`~jax.ffi.ffi_call` is an opaque black box: JAX can't look inside it to work out how it should behave under {func}`~jax.vmap`, or how to differentiate it.
+So, for example, trying to differentiate `rms_norm` as defined above would fail.
 
-1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are used in the backwards pass.
+To teach JAX how to transform our foreign function, we wrap it in a _HiJAX primitive_: a custom JAX operation defined by subclassing `VJPHiPrimitive` from the experimental `jax.experimental.hijax` module.
+On the primitive, we define a handful of methods:
+
+* `expand` implements the operation in terms of other ("lojax") JAX operations. Here, that's just a call to {func}`~jax.ffi.ffi_call`, and it is what runs when the primitive isn't being transformed.
+* `vjp_fwd` and `vjp_bwd_retval` together define the reverse-mode automatic differentiation rule (used by {func}`~jax.grad`, {func}`~jax.vjp`, and friends).
+* `jvp` defines the forward-mode rule (used by {func}`~jax.jvp`). Unlike {func}`~jax.custom_vjp`, a single HiJAX primitive can supply *both* forward- and reverse-mode AD rules.
+* `batch` defines the {func}`~jax.vmap` rule.
+
+```{note}
+HiJAX is a new and experimental API. The details of the interface may change in future releases of JAX.
+```
+
+To support differentiation, we use two additional FFI targets for the forward and backward passes:
+
+1. `rms_norm_fwd` returns two outputs: (a) the "primal" result, and (b) the "residuals" which are saved for use on the backwards pass, and
 2. `rms_norm_bwd` takes the residuals and the output co-tangents, and returns the input co-tangents.
 
 We won't get into the details of the RMS normalization backwards pass, but take a look at the [C++ source code](https://github.com/jax-ml/jax/blob/main/examples/ffi/src/jax_ffi_example/rms_norm.cc) to see how these functions are implemented on the back end.
-The main point to emphasize here is that the "residual" computed has a different shape than the primal output, therefore, in the {func}`~jax.ffi.ffi_call` to `res_norm_fwd`, the output type has two elements with different shapes.
 
-This custom derivative rule can be wired in as follows:
+Note that the residual computed by `rms_norm_fwd` has a different shape than the primal output (it stores one value per row), so its {func}`~jax.ffi.ffi_call` returns two outputs with different shapes.
+We'll access these two FFI targets through small helper functions, `rms_norm_fwd` and `rms_norm_bwd`, and call those from the primitive's AD rules:
 
 ```{code-cell} ipython3
+from jax.experimental.hijax import VJPHiPrimitive
+
 jax.ffi.register_ffi_target(
-  "rms_norm_fwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormFwd), platform="cpu"
-)
+  "rms_norm_fwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormFwd), platform="cpu")
 jax.ffi.register_ffi_target(
-  "rms_norm_bwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormBwd), platform="cpu"
-)
+  "rms_norm_bwd", jax.ffi.pycapsule(rms_norm_lib.RmsNormBwd), platform="cpu")
 
 
-def rms_norm_fwd(x, eps=1e-5):
-  y, res = jax.ffi.ffi_call(
-    "rms_norm_fwd",
-    (
-      jax.ShapeDtypeStruct(x.shape, x.dtype),
-      jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
-    ),
-    vmap_method="broadcast_all",
-  )(x, eps=np.float32(eps))
-  return y, (res, x)
+def rms_norm_fwd(x, eps):
+  # Returns the primal output `y` and the residual `res` (one value per row, so
+  # it has a different shape than `y`) that the backward pass needs.
+  out_type = (jax.typeof(x), jax.ShapeDtypeStruct(x.shape[:-1], x.dtype))
+  return jax.ffi.ffi_call("rms_norm_fwd", out_type)(x, eps=eps)
 
 
-def rms_norm_bwd(eps, res, ct):
-  del eps
-  res, x = res
-  assert res.shape == ct.shape[:-1]
-  assert x.shape == ct.shape
-  return (
-    jax.ffi.ffi_call(
-      "rms_norm_bwd",
-      jax.ShapeDtypeStruct(ct.shape, ct.dtype),
-      vmap_method="broadcast_all",
-    )(res, x, ct),
-  )
+def rms_norm_bwd(res, x, ct):
+  # Maps the output co-tangent `ct` back to the input co-tangent.
+  return jax.ffi.ffi_call("rms_norm_bwd", jax.typeof(x))(res, x, ct)
 
 
-rms_norm = jax.custom_vjp(rms_norm, nondiff_argnums=(1,))
-rms_norm.defvjp(rms_norm_fwd, rms_norm_bwd)
+class RMSNorm(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    if aval.dtype != jnp.float32:
+      raise ValueError("Only the float32 dtype is implemented by rms_norm")
+    self.in_avals = (aval,)
+    self.out_aval = aval
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
 
-# Check that this gives the right answer when compared to the reference version
-ct_y = jnp.ones_like(x)
-np.testing.assert_allclose(
-  jax.vjp(rms_norm, x)[1](ct_y), jax.vjp(rms_norm_ref, x)[1](ct_y), rtol=1e-5
-)
+  def expand(self, x):
+    # The plain implementation: a single FFI call, used when we aren't
+    # transforming.
+    return jax.ffi.ffi_call("rms_norm", self.out_aval)(x, eps=self.eps)
+
+  def vjp_fwd(self, nzs_in, x):
+    # `nzs_in` flags which inputs have nonzero tangents; we don't need it here.
+    y, res = rms_norm_fwd(x, self.eps)
+    return y, (res, x)
+
+  def vjp_bwd_retval(self, res, ct):
+    res, x = res
+    return (rms_norm_bwd(res, x, ct),)
+
+  def jvp(self, primals, tangents):
+    (x,), (dx,) = primals, tangents
+    y, res = rms_norm_fwd(x, self.eps)
+    # RMS normalization has a symmetric Jacobian, so the same `rms_norm_bwd`
+    # kernel serves both the reverse-mode and the forward-mode rules.
+    return y, rms_norm_bwd(res, x, dx)
+
+  def batch(self, axis_data, args, dims):
+    # Our handler treats all leading axes as batch dimensions, so to support
+    # `vmap` we move the mapped axis to the front and reapply `rms_norm`.
+    x, = args
+    bdim, = dims
+    return rms_norm(jnp.moveaxis(x, bdim, 0), eps=self.eps), 0
+
+
+def rms_norm(x, eps=1e-5):
+  return RMSNorm(jax.typeof(x), eps)(x)
 ```
 
-At this point, we can use our new `rms_norm` function transparently for many JAX applications, and it will transform appropriately under the standard JAX function transformations like {func}`~jax.vmap` and {func}`~jax.grad`.
-One thing that this example doesn't support is forward-mode AD ({func}`jax.jvp`, for example) since {func}`~jax.custom_vjp` is restricted to reverse-mode.
-JAX doesn't currently expose a public API for simultaneously customizing both forward-mode and reverse-mode AD, but such an API is on the roadmap, so please [open an issue](https://github.com/jax-ml/jax/issues) describing you use case if you hit this limitation in practice.
+Now `rms_norm` evaluates to the same values as before, but it also differentiates (in both forward and reverse mode) and batches:
 
-One other JAX feature that this example doesn't support is higher-order AD.
-It would be possible to work around this by wrapping the `res_norm_bwd` function above in a {func}`jax.custom_jvp` or {func}`jax.custom_vjp` decorator, but we won't go into the details of that advanced use case here.
+```{code-cell} ipython3
+x = jnp.linspace(-0.5, 0.5, 32).reshape((8, 4))
+np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
+np.testing.assert_allclose(jax.jit(rms_norm)(x), rms_norm_ref(x), rtol=1e-5)
+
+# Reverse-mode AD matches the reference implementation
+ct_y = jnp.ones_like(x)
+np.testing.assert_allclose(
+  jax.vjp(rms_norm, x)[1](ct_y), jax.vjp(rms_norm_ref, x)[1](ct_y), rtol=1e-5)
+
+# Forward-mode AD does too
+dx = jnp.ones_like(x)
+np.testing.assert_allclose(
+  jax.jvp(rms_norm, (x,), (dx,))[1],
+  jax.jvp(rms_norm_ref, (x,), (dx,))[1], rtol=1e-4, atol=1e-5)
+
+# As does `vmap`
+xs = jnp.linspace(-0.5, 0.5, 96).reshape((3, 8, 4))
+np.testing.assert_allclose(jax.vmap(rms_norm)(xs), jax.vmap(rms_norm_ref)(xs), rtol=1e-5)
+```
+
+### Composing transformations
+
+Each of {func}`~jax.grad`, {func}`~jax.jvp`, and {func}`~jax.vmap` works on its own, but _composing_ them doesn't work yet.
+For example, {func}`~jax.vmap` of {func}`~jax.grad` (a batched gradient) currently fails with an error like `Batching rule for 'ffi_call' not implemented`.
+
+The reason is that our AD rules call the `rms_norm_fwd` and `rms_norm_bwd` helpers, which call {func}`~jax.ffi.ffi_call` directly, and a raw {func}`~jax.ffi.ffi_call` has no batching rule of its own.
+So when {func}`~jax.vmap` tries to push through the differentiation rule, it eventually reaches an un-batchable {func}`~jax.ffi.ffi_call` and gives up.
+
+The fix is to give those FFI calls a `batch` rule, by wrapping each one in its own small HiJAX primitive (exactly as we did for `rms_norm`).
+Because `RMSNorm`'s rules already call the `rms_norm_fwd` and `rms_norm_bwd` helpers by name, we only need to replace those two helpers; `RMSNorm` itself doesn't change:
+
+```{code-cell} ipython3
+class RMSNormFwd(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    self.in_avals = (aval,)
+    self.out_aval = (aval, aval.update(shape=aval.shape[:-1]))  # y, res
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
+
+  def expand(self, x):
+    return jax.ffi.ffi_call("rms_norm_fwd", self.out_aval)(x, eps=self.eps)
+
+  def batch(self, axis_data, args, dims):
+    x, = args
+    bdim, = dims
+    return rms_norm_fwd(jnp.moveaxis(x, bdim, 0), self.eps), (0, 0)
+
+
+def rms_norm_fwd(x, eps):
+  return RMSNormFwd(jax.typeof(x), eps)(x)
+
+
+class RMSNormBwd(VJPHiPrimitive):
+  def __init__(self, res_aval, x_aval, ct_aval):
+    self.in_avals = (res_aval, x_aval, ct_aval)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, res, x, ct):
+    return jax.ffi.ffi_call("rms_norm_bwd", self.out_aval)(res, x, ct)
+
+  def batch(self, axis_data, args, dims):
+    # Move each mapped axis to the front; an unmapped (`None`) input is constant
+    # across the batch, so broadcast it along a new leading axis.
+    def to_front(a, d):
+      if d is None:
+        return jnp.broadcast_to(a, (axis_data.size, *a.shape))
+      return jnp.moveaxis(a, d, 0)
+    res, x, ct = (to_front(a, d) for a, d in zip(args, dims))
+    return rms_norm_bwd(res, x, ct), 0
+
+
+def rms_norm_bwd(res, x, ct):
+  return RMSNormBwd(jax.typeof(res), jax.typeof(x), jax.typeof(ct))(res, x, ct)
+```
+
+With the helpers now batchable, the transformations compose. Here are `vmap` of `grad` and `vmap` of `jvp`, neither of which worked above:
+
+```{code-cell} ipython3
+np.testing.assert_allclose(
+  jax.vmap(jax.grad(lambda x: rms_norm(x).sum()))(xs),
+  jax.vmap(jax.grad(lambda x: rms_norm_ref(x).sum()))(xs), rtol=1e-4, atol=1e-5)
+
+np.testing.assert_allclose(
+  jax.vmap(lambda x, t: jax.jvp(rms_norm, (x,), (t,))[1])(xs, jnp.ones_like(xs)),
+  jax.vmap(lambda x, t: jax.jvp(rms_norm_ref, (x,), (t,))[1])(xs, jnp.ones_like(xs)),
+  rtol=1e-4, atol=1e-5)
+```
+
+Note that this primitive supports only first-order AD. Higher-order AD (such as {func}`~jax.grad` of {func}`~jax.grad`) isn't available here, because the `rms_norm_bwd` primitive has no differentiation rule of its own (its `expand` is an opaque FFI call).
+
++++
+
+## Sharding
+
+Most large scale users of JAX use its APIs for distributed computation across multiple devices.
+As discussed in {ref}`parallel`, parallelism in JAX is controlled by sharding data across devices.
+The story is a little more complicated for FFI calls, though: since the internals of an FFI call are opaque to both JAX and XLA, an FFI call won't typically partition well when its inputs are sharded.
+
+To see why this matters, recall that our implementation treats all leading axes of the input as _batch_ dimensions, and normalizes along the last axis.
+If the data are sharded along a batch dimension (but replicated along the last axis), the normalization is embarrassingly parallel and no communication is required.
+XLA can take advantage of this for the pure-JAX `rms_norm_ref`, but it can't see inside our FFI call to do the same: if we naively shard the input, XLA will first gather the whole array onto every device with an `all-gather`, run the FFI call redundantly on the full data, and then slice out each device's portion.
+
+We can do better by handling the sharding _inside_ the primitive, in its `expand` rule.
+When using JAX's explicit sharding mode (see {ref}`parallel`), the output sharding of each operation is determined by the shardings of its inputs, and our primitive's `out_aval` carries that sharding.
+The idea is to use {func}`~jax.shard_map` to drop into manual ("per-device") mode inside `expand`, so that the FFI call only ever sees the local shard of the data.
+Because RMS normalization only reduces over the last (replicated) axis, running the FFI call on each shard independently computes exactly the right answer, with no communication.
+
+First, let's create a mesh and make it the active mesh:
+
+```{code-cell} ipython3
+assert len(jax.devices()) == 4  # Set using the XLA_FLAGS environment variable
+jax.set_mesh(jax.make_mesh((4,), ("x",)))
+```
+
+Then we redefine our primitive so that `expand` wraps the FFI call in a {func}`~jax.shard_map`.
+To keep the example focused on sharding we only show the forward pass here, but the same `shard_map` wrapping can be applied to the `vjp_fwd` and `vjp_bwd_retval` rules above to make the differentiated program partition well too.
+
+```{code-cell} ipython3
+class RMSNorm(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    if aval.dtype != jnp.float32:
+      raise ValueError("Only the float32 dtype is implemented by rms_norm")
+    self.in_avals = (aval,)
+    self.out_aval = aval
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
+
+  def expand(self, x):
+    body = lambda x: jax.ffi.ffi_call("rms_norm", jax.typeof(x))(x, eps=self.eps)
+    return jax.shard_map(body, out_specs=self.out_aval.sharding.spec)(x)
+
+
+def rms_norm(x, eps=1e-5):
+  return RMSNorm(jax.typeof(x), eps)(x)
+```
+
+Sharding the input along its batch dimension, the compiled program runs the FFI call directly on each shard, with no `all-gather`, `all-reduce`, or other collectives:
+
+```{code-cell} ipython3
+x_batch_shd = jax.device_put(x, jax.P("x"))
+np.testing.assert_allclose(rms_norm(x_batch_shd), rms_norm_ref(x), rtol=1e-5)
+
+hlo = jax.jit(rms_norm).lower(x_batch_shd).compile().as_text()
+assert "all-" not in hlo
+```
 
 ## FFI calls on a GPU
 
@@ -459,208 +590,83 @@ jax.ffi.register_ffi_target(
 )
 ```
 
++++
+
 ### Supporting multiple platforms
 
-To support running our `rms_norm` function on both GPU and CPU, we can combine our implementation above with the {func}`jax.lax.platform_dependent` function:
+Suppose we have registered both the CPU target `rms_norm` and the GPU target `rms_norm_cuda`.
+To support running our function on either platform, we can choose the FFI target inside `expand`, based on the platform that the computation will run on.
+In explicit sharding mode the active mesh carries an abstract description of the target device, whose `platform` we can query to pick the right target name. Note that this returns the lowercase XLA platform name (such as `"cuda"`), while the `platform` argument to {func}`~jax.ffi.register_ffi_target` is case-insensitive, so the `"CUDA"` registration above matches the `"cuda"` lookup here:
 
 ```{code-cell} ipython3
-def rms_norm_cross_platform(x, eps=1e-5):
-  assert x.dtype == jnp.float32
-  out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
+class RMSNorm(VJPHiPrimitive):
+  def __init__(self, aval, eps):
+    if aval.dtype != jnp.float32:
+      raise ValueError("Only the float32 dtype is implemented by rms_norm")
+    self.in_avals = (aval,)
+    self.out_aval = aval
+    self.params = dict(eps=np.float32(eps))
+    super().__init__()
 
-  def impl(target_name):
-    return lambda x: jax.ffi.ffi_call(
-      target_name,
-      out_type,
-      vmap_method="broadcast_all",
-    )(x, eps=np.float32(eps))
-
-  return jax.lax.platform_dependent(x, cpu=impl("rms_norm"), cuda=impl("rms_norm_cuda"))
+  def expand(self, x):
+    platform = jax.sharding.get_abstract_mesh().abstract_device.platform
+    name = {"cpu": "rms_norm", "cuda": "rms_norm_cuda"}[platform]
+    body = lambda x: jax.ffi.ffi_call(name, jax.typeof(x))(x, eps=self.eps)
+    return jax.shard_map(body, out_specs=self.out_aval.sharding.spec)(x)
 
 
-np.testing.assert_allclose(rms_norm_cross_platform(x), rms_norm_ref(x), rtol=1e-5)
+def rms_norm(x, eps=1e-5):
+  return RMSNorm(jax.typeof(x), eps)(x)
+
+
+# On this CPU-only machine, the `cpu` target is selected:
+np.testing.assert_allclose(rms_norm(x), rms_norm_ref(x), rtol=1e-5)
 ```
 
-This version of the function will call the appropriate FFI target depending on the runtime platform.
-
-As an aside, it may be interesting to note that while the jaxpr and lowered HLO both contain a reference to both FFI targets:
+Even without a GPU, we can confirm that the `cuda` target would be selected when lowering for a GPU.
+To do this, we lower (but don't compile or run) the function under an abstract mesh that stands in for a GPU device:
 
 ```{code-cell} ipython3
-jax.make_jaxpr(rms_norm_cross_platform)(x)
+gpu_device = jax.sharding.AbstractDevice("gpu", 1, "cuda")
+gpu_mesh = jax.sharding.AbstractMesh(
+  (4,), ("x",), (jax.sharding.AxisType.Explicit,), abstract_device=gpu_device)
+with jax.sharding.use_abstract_mesh(gpu_mesh):
+  hlo = jax.jit(rms_norm).lower(x).as_text()
+print(hlo)
 ```
 
-```{code-cell} ipython3
-print(jax.jit(rms_norm_cross_platform).lower(x).as_text().strip())
-```
-
-by the time the function is compiled, the appropriate FFI has been selected:
-
-```{code-cell} ipython3
-print(jax.jit(rms_norm_cross_platform).lower(x).as_text(dialect="hlo").strip())
-```
-
-and there will be no runtime overhead to using {func}`jax.lax.platform_dependent`, and the compiled program won't include any references to unavailable FFI targets.
+As you can see in the lowered program above, the FFI call now targets `rms_norm_cuda`, even though it was traced on a CPU-only machine.
 
 +++
 
-## Sharding
+## The deprecated `vmap_method` argument
 
-Most large scale users of JAX use its APIs for distributed computation across multiple devices.
-As discussed in {ref}`parallel`, parallelism in JAX is controlled by sharding data across devices, and most JAX operations can be used within any of the supported parallel programming paradigms (from automatic to fully manual).
-But, the story is a little bit more complicated for FFI calls.
-Since the internals of an FFI call are opaque to both JAX and XLA, FFI calls won't typically show optimal (or even good) performance when the data are sharded.
+The approach above, where {func}`~jax.vmap` support comes from a HiJAX primitive's `batch` rule, is the recommended way to make a foreign function batchable.
+But you may encounter older code that instead passes a `vmap_method` string argument directly to {func}`~jax.ffi.ffi_call`.
+This argument is deprecated in favor of the HiJAX primitive approach, but it's worth knowing what it does.
 
-Before getting into the FFI details, let's consider the behavior of our pure-JAX reference implementation of RMS normalization (the `rms_norm_ref` function defined at the top of this document) with a sharded input.
-As discussed above, our implementation treats all leading axes of the input as _batch_ dimensions, and the normalization is performed along the last axis.
-This means that if the data are sharded along any batch dimensions, but replicated on the last dimension, no communication is required.
-This can be seen by sharding our 2-dimensional test data from above along its first dimension and checking the compiled HLO for operations like `all-gather`, `all-reduce`, etc.:
+When `vmap_method` was specified, a bare {func}`~jax.ffi.ffi_call` could be mapped under {func}`~jax.vmap` without defining a custom primitive.
+For example, the batching behavior of our RMS normalization example used to be written like this:
 
-```{code-cell} ipython3
-from jax.sharding import PartitionSpec as P
-
-assert len(jax.devices()) == 4  # Set using the XLA_FLAGS environment variable
-mesh = jax.make_mesh((4,), ("x",))
-
-batch_shd = jax.NamedSharding(mesh, P("x", None))
-x_batch_shd = jax.device_put(x, batch_shd)
-hlo_batch = jax.jit(rms_norm_ref, out_shardings=batch_shd).lower(x_batch_shd).compile().as_text()
-assert "all-" not in hlo_batch
+```python
+def rms_norm(x, eps=1e-5):
+  return jax.ffi.ffi_call(
+    "rms_norm",
+    jax.ShapeDtypeStruct.like(x),
+    vmap_method="broadcast_all",
+  )(x, eps=np.float32(eps))
 ```
 
-However, if the data are sharded along the last axis, communication (in this case an `all-reduce`) is required to compute the sum in the normalization:
+The allowed values, which mirror those of {func}`~jax.pure_callback`, were:
 
-```{code-cell} ipython3
-data_shd = jax.NamedSharding(mesh, P(None, "x"))
-x_data_shd = jax.device_put(x, data_shd)
-hlo_data = jax.jit(rms_norm_ref, out_shardings=data_shd).lower(x_data_shd).compile().as_text()
-assert "all-reduce" in hlo_data
-```
+* `"sequential"`: apply the foreign function to one batch element at a time, in a loop (using {func}`~jax.lax.map`). This is the most general but slowest option.
+* `"sequential_unrolled"`: like `"sequential"`, but the loop is unrolled.
+* `"expand_dims"`: insert a new leading batch dimension and call the foreign function once; the handler is responsible for interpreting the extra dimension.
+* `"broadcast_all"`: broadcast all of the inputs to a common batch shape and call the foreign function once (appropriate here, since our handler already treats leading axes as batch dimensions).
+* `"legacy_vectorized"`: a legacy mode retained for backwards compatibility.
 
-Now, if we try to naively use our FFI version of the same model, it runs fine and gets the right answer:
-
-```{code-cell} ipython3
-output = jax.jit(rms_norm, out_shardings=batch_shd)(x_batch_shd)
-np.testing.assert_allclose(output, rms_norm_ref(x), rtol=1e-5)
-```
-
-But, if you look at the compiled HLO (omitting a helper functions for clarity), you'll see that
-
-1. the data are first fully replicated onto each device via an `all-gather` operation,
-2. the FFI call is executed on the full dataset on each device, and
-3. the output is sliced to discard the unused portions.
-
-```{code-cell} ipython3
-hlo = jax.jit(rms_norm, out_shardings=batch_shd).lower(x_batch_shd).compile().as_text().strip()
-print(hlo.split("\n\n")[-1])
-```
-
-This clearly (to us!) isn't the optimal partitioning of this function, but it's the best that JAX/XLA can do with the information given.
-
-To generate better partitioning logic, we can use {func}`~jax.shard_map` or {func}`~jax.experimental.custom_partitioning.custom_partitioning`, and we discuss both options here.
-That being said, it's not straightforward to generate _optimal_ partitioning for all inputs, because sometimes this would require algorithmic changes.
-Specifically, let's add support for "batch partitioning", which handles the case where the data are sharded on batch dimensions, but sharding on the last dimension will always require in re-sharding.
-
-### Using `shard_map`
-
-If you are using manual sharding control via {func}`~jax.shard_map`, any FFI calls in your program should already partition appropriately:
-
-```{code-cell} ipython3
-from functools import partial
-
-@partial(jax.shard_map, mesh=mesh, in_specs=P("x", None), out_specs=P("x", None))
-def rms_norm_shmap(x):
-  return rms_norm(x)
-
-np.testing.assert_allclose(rms_norm_shmap(x_batch_shd), rms_norm_ref(x), rtol=1e-5)
-print(jax.jit(rms_norm_shmap, out_shardings=batch_shd).lower(x_batch_shd).compile().as_text().strip())
-```
-
-As you can see in this program, if the input and output shardings match the `shard_map` specs, no communication is required and the FFI call is executed on the appropriately sharded subset of the data.
-
-You can also use inputs and outputs with shardings that don't match the `shard_map` specs, but (unrelated to the FFI) this will require re-sharding, as seen by the `all-to-all` operations in the compiled HLO:
-
-```{code-cell} ipython3
-x_data_shd = jax.device_put(x_data_shd, jax.NamedSharding(mesh, jax.P('x', None)))
-hlo_data_shmap = jax.jit(rms_norm_shmap, out_shardings=data_shd).lower(x_data_shd).compile().as_text()
-assert "all-to-all" in hlo_data_shmap
-```
-
-### Using `custom partitioning`
-
-If you can't use {func}`~jax.shard_map`, an alternative approach is to use {func}`~jax.experimental.custom_partitioning.custom_partitioning`, which supports automatic parallelization via {func}`jax.jit`.
-{func}`~jax.experimental.custom_partitioning.custom_partitioning` works by adding Python callbacks into the XLA compiler's partitioning pass, which allows very flexible logic, but also comes with some rough edges.
-We won't go into too much detail on the caveats here, but the main issues that you should be aware of are:
-
-1. `custom_partitioning` can cause unexpected cache misses when used with the JAX's [Persistent compilation cache](https://docs.jax.dev/en/latest/persistent_compilation_cache.html). This can be mitigated using the `jax_remove_custom_partitioning_ptr_from_cache_key` configuration flag, but that isn't always appropriate either.
-2. Debugging `custom_partitioning` logic can be tedious because Python errors don't always get propagated, instead causing your Python process to exit. That being said, any exceptions will show up in the process logs, so you should be able to track them down there.
-
-All that being said, here's how we can wrap our FFI implementation of `rms_norm` using {func}`~jax.experimental.custom_partitioning.custom_partitioning`:
-
-```{code-cell} ipython3
-from jax.experimental.custom_partitioning import custom_partitioning
-
-@partial(custom_partitioning, static_argnums=(1,))
-def rms_norm_partitioned(x, eps=1e-5):
-  return rms_norm(x, eps=eps)
-
-def replicate_sharding_on_last_dim(mesh, sharding, target_info):
-  # Our implementation supports trivial sharding on any batch dimensions, but the data
-  # must be replicated on the last (non-batch) dimension.
-  rank = len(target_info.shape)
-  num_batch_dims = min(len(sharding.spec), rank - 1)
-
-  # The Nones here indicate which dimensions should be replicated.
-  names = tuple(sharding.spec[:num_batch_dims]) + (None,) * (rank - num_batch_dims)
-  return jax.NamedSharding(mesh, P(*names))
-
-def rms_norm_infer_sharding_from_operands(eps, mesh, args_info, result_info):
-  del eps  # unused
-  arg_info, = args_info
-  result_sharding = replicate_sharding_on_last_dim(mesh, arg_info.sharding, result_info)
-
-  # In this case, we only have a single output, but the return value from this function
-  # must have the same pytree structure as the output from the underlying function
-  # (`rms_norm` in this case).
-  return result_sharding
-
-def rms_norm_partition(eps, mesh, args_info, result_info):
-  arg_info, = args_info
-  arg_sharding = replicate_sharding_on_last_dim(mesh, arg_info.sharding, arg_info)
-  result_sharding = replicate_sharding_on_last_dim(mesh, arg_info.sharding, result_info)
-
-  # This is the function that computes the partitioned model on the appropriate subset
-  # of the data.
-  def partitioned_rms_norm(x):
-    return rms_norm(x, eps=eps)
-
-  # Note that the third element of our returned tuple must be the shardings for the
-  # _outputs_ and its pytree structure must match the output of `rms_norm`. Similarly,
-  # the fourth element must have the same pytree structure as the _inputs_ to
-  # `rms_norm`. In this case, there is only one input, but it must be returned within
-  # a `tuple` anyways.
-  return mesh, partitioned_rms_norm, result_sharding, (arg_sharding,)
-
-rms_norm_partitioned.def_partition(
-    infer_sharding_from_operands=rms_norm_infer_sharding_from_operands,
-    partition=rms_norm_partition,
-    sharding_rule="... i -> ... j",
-)
-
-output = jax.jit(rms_norm_partitioned, out_shardings=batch_shd)(x_batch_shd)
-np.testing.assert_allclose(output, rms_norm_ref(x), rtol=1e-5)
-print(jax.jit(rms_norm_partitioned, out_shardings=batch_shd).lower(x_batch_shd).compile().as_text().strip())
-```
-
-As you can see from the compiled program above, this `custom_partitioning` logic produces exactly the same program as the `shard_map` version above when the input is sharded on the batch dimension.
-
-However, it's worth noting that the behavior is _different_ when the input is sharded along the data dimension.
-When used under `shard_map`, the data are resharded on the batch dimension, whereas with `custom_partitioning` the data are gathered onto each device.
-
-```{code-cell} ipython3
-hlo_data_partitioned = jax.jit(rms_norm_partitioned, out_shardings=data_shd).lower(x_data_shd).compile().as_text().strip()
-```
-
-To also support automatic parallelization of the backwards pass, we would also need to write (similar) {func}`~jax.experimental.custom_partitioning.custom_partitioning` rules for `rms_norm_fwd` and `rms_norm_bwd`, but we leave those as an exercise for the reader.
+See the {func}`~jax.pure_callback` documentation for more on the semantics of each method.
+If you have code that relies on `vmap_method`, the recommended migration is to wrap the {func}`~jax.ffi.ffi_call` in a HiJAX primitive and implement a `batch` rule, as described in {ref}`the transformations section <ffi-call-vmap>` above.
 
 +++
 

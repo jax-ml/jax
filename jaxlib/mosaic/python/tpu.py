@@ -90,3 +90,24 @@ def vector_store(
   return VectorStoreOp(
       value_to_store, base, indices, strides, mask=mask, add=add, loc=loc, ip=ip
   )
+
+
+def reinterpret_cast(
+    result,
+    input,
+    dynamic_sizes=None,
+    *,
+    dynamic_offset=None,
+    loc=None,
+    ip=None,
+):
+  if dynamic_sizes is None:
+    dynamic_sizes = []
+  return _tpu_ops_gen.ReinterpretCastOp(
+      result,
+      input,
+      dynamic_offset=dynamic_offset,
+      dynamic_sizes=dynamic_sizes,
+      loc=loc,
+      ip=ip,
+  ).result

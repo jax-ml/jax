@@ -34,6 +34,8 @@ from jax._src import test_util as jtu
 from jax._src.config import config
 from jax._src.lib import cuda_versions
 from jax._src.lib import _jax
+from jax._src import hardware_utils
+from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 try:
   import portpicker
@@ -107,7 +109,7 @@ _SHUTDOWN_TIMEOUT = absl.flags.DEFINE_integer(
 
 _BARRIER_TIMEOUT = absl.flags.DEFINE_integer(
     "barrier_timeout",
-    10,
+    60,
     "Barrier timeout in seconds. Set to a higher number when running under"
     " sanitizers.",
 )
@@ -153,6 +155,14 @@ def _main(argv, shard_main):
   # TODO(emilyaf): Enable multiprocess tests on Windows.
   if sys.platform == "win32":
     print("Multiprocess tests are not supported on Windows.")
+    return
+
+  _, tpu_version = hardware_utils.num_available_tpu_chips_and_device_id()
+  if running_in_cloud_tpu_vm and tpu_version in (
+      hardware_utils.TpuVersion.v4,
+      hardware_utils.TpuVersion.v5e,
+  ):
+    print(f"Skipping multiprocess tests on TPU {tpu_version.name} in Cloud.")
     return
   num_processes = NUM_PROCESSES.value
   if MULTIPROCESS_TEST_WORKER_ID.value >= 0:
@@ -228,8 +238,10 @@ def _main(argv, shard_main):
   if portpicker is None:
     slicebuilder_ports = [10000 + i for i in range(num_processes)]
   else:
+    portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
     slicebuilder_ports = [
-        portpicker.pick_unused_port() for _ in range(num_processes)
+        portpicker.pick_unused_port(portserver_address=portserver_address)
+        for _ in range(num_processes)
     ]
   slicebuilder_addresses = ",".join(
       f"localhost:{port}" for port in slicebuilder_ports
@@ -254,7 +266,8 @@ def _main(argv, shard_main):
   else:
     # TODO(emilyaf): Use a port server if there are flaky port collisions due
     # to pick_unused_port() racing among tests.
-    jax_port = portpicker.pick_unused_port()
+    portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
+    jax_port = portpicker.pick_unused_port(portserver_address=portserver_address)
   subprocesses = []
   output_filenames = []
   output_files = []
@@ -312,7 +325,10 @@ def _main(argv, shard_main):
       if portpicker is None:
         megascale_port = 9877
       else:
-        megascale_port = portpicker.pick_unused_port()
+        portserver_address = os.environ.get("JAX_PORTSERVER_ADDRESS")
+        megascale_port = portpicker.pick_unused_port(
+            portserver_address=portserver_address
+        )
       if megascale_coordinator_port is None:
         megascale_coordinator_port = megascale_port
       args += [

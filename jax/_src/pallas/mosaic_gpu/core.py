@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+import contextlib
 import dataclasses
 import enum
 import functools
@@ -26,8 +27,11 @@ import math
 from typing import Any, ClassVar, Literal, Union
 
 import jax
+from jax._src import api
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_batching
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import frozen_dict
@@ -37,14 +41,15 @@ from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas import utils as pallas_utils
-from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu.launch_context import OOBFillMode
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 
@@ -53,6 +58,8 @@ _Ref = state.AbstractRef | state_types.TransformedRef
 
 DimensionSemantics = Literal["parallel", "sequential"]
 TransposeTransform = state_types.TransposeTransform
+
+ScratchShapeTree = pallas_core.ScratchShapeTree
 
 # We align all our SMEM allocations to 1024 bytes. TMA and WGMMA are very
 # sensitive to alignment and while this is quite conservative, it gets the job
@@ -126,7 +133,7 @@ class CompilerParams:
   profile_space: int = 0
   profile_dir: str = ""
   profile_trace_scope: TraceScope = TraceScope.WARPGROUP
-  lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane
+  lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Warpgroup
 
   def __post_init__(self):
     if self.dimension_semantics is not None:
@@ -137,6 +144,8 @@ class CompilerParams:
       raise ValueError(
           "Either both profile_space and profile_dir must be set, or neither."
       )
+
+  replace = dataclasses.replace
 
 
 class MemorySpace(enum.Enum):
@@ -169,6 +178,8 @@ class MemorySpace(enum.Enum):
         raise ValueError("transforms are not supported for TMEM")
       if collective is None:
         collective = False
+      if len(shape) > 2:
+        transforms = (CollapseLeadingBatchDimensionsTransform(),)
       if layout is None:
         if packed is None:
           if dtypes.itemsize_bits(dtype) != 32:
@@ -177,8 +188,9 @@ class MemorySpace(enum.Enum):
                 " or an explicit TMEM layout"
             )
           packed = False
+        # Ignore batch dimensions for layout inference.
         mgpu_layout = infer_tmem_layout(
-            shape, dtype, packed=packed, collective=collective
+            shape[-2:], dtype, packed=packed, collective=collective
         )
       else:
         if packed is not None:
@@ -191,6 +203,9 @@ class MemorySpace(enum.Enum):
     return GPUMemoryRef(jax_core.ShapedArray(shape, dtype), memory_space=self,
                         transforms=transforms, layout=mgpu_layout,
                         collective=collective)
+
+  def like(self, shape_dtype_like):
+    return self(shape_dtype_like.shape, shape_dtype_like.dtype)
 
 
 class SemaphoreType(enum.Enum):
@@ -231,12 +246,13 @@ WGxWARP_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warp)
 
 
-# TODO(justinfu): Reconcile with pl.kernel.
 def kernel(
-    body: Callable[..., None],
-    out_shape: object,
+    body: Callable[..., None] | api.NotSpecified = api.NotSpecified(),
+    out_shape: object | api.NotSpecified = api.NotSpecified(),
     *,
-    scratch_shapes: pallas_core.ScratchShapeTree = (),
+    out_type: object | api.NotSpecified = api.NotSpecified(),
+    scratch_types: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
+    scratch_shapes: ScratchShapeTree | api.NotSpecified = api.NotSpecified(),
     compiler_params: pallas_core.CompilerParams | None = None,
     # Mesh kwargs
     grid: tuple[int, ...] = (),
@@ -246,20 +262,23 @@ def kernel(
     num_threads: int | None = None,
     thread_name: str | None = None,
     interpret: Any = None,
+    debug: bool = False,
     **mesh_kwargs: Any,
-):
-  """Entry point for defining a Mosaic GPU kernel.
+) -> Any:
+  r"""Entry point for defining a Mosaic GPU kernel.
 
   Args:
-    body: The kernel body, which should take as arguments the input, output,
-      and scratch Refs. The number of input Refs is determined by the number
-      of arguments passed into kernel returned by this function. The number of
+    body: The kernel body, which should take as arguments the input, output, and
+      scratch Refs. The number of input Refs is determined by the number of
+      arguments passed into kernel returned by this function. The number of
       output and scratch Refs are determined by `out_shape` and `scratch_shapes`
       respectively.
-    out_shape: a PyTree of :class:`jax.ShapeDtypeStruct` describing the shape
-      and dtypes of the outputs.
-    scratch_shapes: an iterable (may be nested) of GPUMemoryRef describing
-      scratch Refs to allocate for this kernel.
+    out_shape: A deprecated alias for ``out_type``.
+    out_type: The type of the output. Should be a PyTree of
+      ``jax.ShapeDtypeStruct`` or JAX types.
+    scratch_shapes: A deprecated alias for ``scratch_types``.
+    scratch_types: The types of the scratch ``Ref``\s to allocate. Should be a
+      PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: Additional compiler options. See the `CompilerParams`
       dataclass for more details.
     grid: A tuple of integers specifying the size of the kernel grid.
@@ -267,52 +286,115 @@ def kernel(
     cluster: A tuple of integers specifying the size of the kernel cluster.
     cluster_names: The axis names of the grid. Must be the same length as
       `cluster`.
-    num_threads: The number of threads to launch per block. Note that these
-      do not correspond to CUDA threads, but rather to warpgroups on Hopper
-      and Blackwell GPUs.
+    num_threads: The number of threads to launch per block. Note that these do
+      not correspond to CUDA threads, but rather to warpgroups on Hopper and
+      Blackwell GPUs.
     thread_name: The axis name used to query the thread index.
+    debug: Whether or not to output helpful debugging information.
     **mesh_kwargs: Additional mesh kwargs. See `Mesh` for more details.
 
   Returns:
-    A function that runs the kernel. It should take any number of input
-    operands and returns an output with the same PyTree structure as
-    `out_shape`.
-  """
-  if unwrap_out := not isinstance(out_shape, (tuple, list)):
-    out_shape = (out_shape,)
+    If ``body`` is provided, returns a function that runs the kernel. It should
+    take any number of input operands and returns an output with the same PyTree
+    structure as ``out_shape``.
 
+    If ``body`` is omitted, returns a decorator that can be used to annotate
+    a kernel body.
+  """
+  if isinstance(body, api.NotSpecified):
+    return lambda fun: kernel(
+        fun,
+        out_shape,
+        out_type=out_type,
+        scratch_shapes=scratch_shapes,
+        scratch_types=scratch_types,
+        compiler_params=compiler_params,
+        grid=grid,
+        grid_names=grid_names,
+        cluster=cluster,
+        cluster_names=cluster_names,
+        num_threads=num_threads,
+        thread_name=thread_name,
+        interpret=interpret,
+        debug=debug,
+        **mesh_kwargs,
+    )
+
+  if (
+      not isinstance(out_shape, api.NotSpecified)
+      or not isinstance(scratch_shapes, api.NotSpecified)
+  ):
+    deprecations.warn(
+        "jax-pallas-mgpu-shapes-types",
+        "The out_shape and scratch_shapes arguments to plgpu.kernel are"
+        " deprecated. Use out_type and scratch_types instead.",
+        stacklevel=2,
+    )
+
+  if not isinstance(out_shape, api.NotSpecified):
+    if not isinstance(out_type, api.NotSpecified):
+      raise ValueError(
+          "Cannot specify both out_shape and out_type. Use out_type."
+      )
+    out_type = out_shape
+  elif isinstance(out_type, api.NotSpecified):
+    out_type = ()
+
+  if not isinstance(scratch_shapes, api.NotSpecified):
+    if not isinstance(scratch_types, api.NotSpecified):
+      raise ValueError(
+          "Cannot specify both scratch_shapes and scratch_types. Use"
+          " scratch_types."
+      )
+    scratch_types = scratch_shapes
+  elif isinstance(scratch_types, api.NotSpecified):
+    scratch_types = ()
+
+  if unwrap_out := not isinstance(out_type, (tuple, list)):
+    out_type = (out_type,)
+
+  mesh = Mesh(
+      grid=grid,
+      grid_names=grid_names,
+      cluster=cluster,
+      cluster_names=cluster_names,
+      num_threads=num_threads,
+      thread_name=thread_name,
+      **mesh_kwargs,
+  )
+
+  # TODO(slebedev): Use mesh-specific batching rules in ``mpmd_map`` instead.
   @custom_batching.custom_vmap
   def wrapper(*operands):
-    def stateful(operand_and_out_refs):
-      operand_refs, out_refs = operand_and_out_refs
-      mesh = Mesh(
-          grid=grid,
-          grid_names=grid_names,
-          cluster=cluster,
-          cluster_names=cluster_names,
-          num_threads=num_threads,
-          thread_name=thread_name,
-          **mesh_kwargs)
-      _thread_name = mesh.thread_name if mesh.thread_name is not None else ()
-      def cmap_body():
-        pallas_primitives.run_scoped(
-            functools.partial(body, *operand_refs, *out_refs),
-            *(scratch_shapes if isinstance(scratch_shapes, Sequence) else ()),
-            collective_axes=_thread_name,
-            **(scratch_shapes if isinstance(scratch_shapes, Mapping) else {}),
-        )
-      name = (
-          getattr(body, "__name__", "anonymous")
-          if mesh.kernel_name is None
-          else mesh.kernel_name
+    thread_name = mesh.thread_name if mesh.thread_name is not None else ()
+
+    def kernel_body(*refs):
+      # NOTE: We cannot use the ``scratch_types=`` argument of ``pl.kernel``
+      # for these, because some scratch types return ``TransformedRef``s in
+      # ``get_ref_aval``, which is not yet supported by ``mpmd_map``.
+      pallas_primitives.run_scoped(
+          functools.partial(body, *refs),
+          *scratch_types if isinstance(scratch_types, Sequence) else (),
+          collective_axes=thread_name,
+          **scratch_types if isinstance(scratch_types, Mapping) else {},
       )
-      pallas_core.core_map(
-          mesh, compiler_params=compiler_params, interpret=interpret, name=name
-      )(cmap_body)
-    _, outs = state_discharge.run_state(stateful)((
-        operands,
-        jax.tree.map(lambda s: jax.lax.empty(s.shape, s.dtype), out_shape),
-    ))
+
+    name = (
+        getattr(body, "__name__", "anonymous")
+        if mesh.kernel_name is None
+        else mesh.kernel_name
+    )
+    # TODO(slebedev): This is only here for backward compatibility. Remove.
+    with config._check_vma(False):
+      outs = pallas_helpers.kernel(
+          kernel_body,
+          out_type=out_type,
+          mesh=mesh,
+          compiler_params=compiler_params,
+          interpret=interpret,
+          name=name,
+          debug=debug,
+      )(*operands)
     return outs[0] if unwrap_out else outs
 
   @wrapper.def_vmap
@@ -321,20 +403,20 @@ def kernel(
 
     def batched_body(*refs, **scratch_ref_kwargs):
       idx = lax.axis_index(axis_name)
-      lens = (len(args), len(out_shape))
+      lens = (len(args), len(out_type))
       operand_refs, out_refs, scratch_refs = util.split_list(refs, lens)
       slice_ref = lambda r, b=True: (r.at[idx] if b else r)
       operand_refs = tree_util.tree_map(slice_ref, operand_refs, in_batched)
       out_refs = tree_util.tree_map(slice_ref, out_refs)
       return body(*operand_refs, *out_refs, *scratch_refs, **scratch_ref_kwargs)
 
-    out_shape_ = out_shape[0] if unwrap_out else out_shape
+    out_type_ = out_type[0] if unwrap_out else out_type
     add_batch_dim = lambda x: x.update(shape=(axis_size, *x.shape))
     mesh_kwargs_ = dict(mesh_kwargs)
     out = kernel(
         batched_body,
-        out_shape=tree_util.tree_map(add_batch_dim, out_shape_),
-        scratch_shapes=scratch_shapes,
+        out_type=tree_util.tree_map(add_batch_dim, out_type_),
+        scratch_types=scratch_types,
         compiler_params=compiler_params,
         grid=(axis_size,) + grid,
         grid_names=(axis_name,) + grid_names,  # pyrefly: ignore[bad-argument-type]
@@ -343,9 +425,10 @@ def kernel(
         num_threads=num_threads,
         thread_name=thread_name,
         interpret=interpret,
+        debug=debug,
         **mesh_kwargs_,
     )(*args)
-    out_batched = tree_util.tree_map(lambda _: True, out_shape_)
+    out_batched = tree_util.tree_map(lambda _: True, out_type_)
     return out, out_batched
 
   return wrapper
@@ -362,17 +445,18 @@ class GPUMemoryRef(pallas_core.MemoryRef):
     is_tmem = self.memory_space == MemorySpace.TMEM
     assert (self.layout is not None) == is_tmem
     assert (self.collective is not None) == is_tmem
-    assert not (self.transforms and is_tmem)
 
   def get_ref_aval(self) -> _Ref:
     aval: Any = jax_core.ShapedArray(self.shape, self.dtype)
+    physical_aval = state_types.transform_type(self.transforms, aval)
     if self.memory_space == MemorySpace.TMEM:
       aval = AbstractTMEMRef(
           aval, self.memory_space, self.layout, self.collective
       )
-      physical_ref_aval = aval
+      physical_ref_aval = AbstractTMEMRef(
+          physical_aval, self.memory_space, self.layout, self.collective
+      )
     else:
-      physical_aval = state_types.transform_type(self.transforms, aval)
       aval = state.AbstractRef(aval, memory_space=self.memory_space)
       physical_ref_aval = state.AbstractRef(physical_aval, memory_space=self.memory_space)
     transforms: list[state_types.Transform] = pallas_core.undo_transforms(
@@ -545,6 +629,24 @@ class AbstractRefUnion(state.AbstractRef):
     first_ref = ref_leaves[0]
     assert all(ref.collective == first_ref.collective for ref in ref_leaves)
     return first_ref.collective
+
+  def __eq__(self, other):
+    return (
+        type(self) is type(other)
+        and self.inner_aval == other.inner_aval
+        and self.memory_space == other.memory_space
+        and self.refs == other.refs
+    )
+
+  def __hash__(self):
+    # `flatten_ref_union(self)` creates `TransformedRef`s that refer to `self`,
+    # so we extract the transforms from the `TransformedRef`s in order to avoid
+    # infinite recursion.
+    all_transforms = tuple(
+        ref.transforms if isinstance(ref, pallas_core.TransformedRef) else ()
+        for ref in flatten_ref_union(self)
+    )
+    return hash((self.inner_aval, self.memory_space, all_transforms))
 
 
 @dataclasses.dataclass(init=False, frozen=True)
@@ -739,6 +841,95 @@ class UntilingTransform(state_types.Transform):
         shape=(*leading_shape, *tiled_shape)
     )
     return new_indexer, self
+
+  def commute_reshape(
+      self, aval: jax_core.ShapedArray, transform: state_types.ReshapeTransform
+  ) -> tuple[state_types.ReshapeTransform, UntilingTransform]:
+    if not transform.shape:
+      raise NotImplementedError(
+          "Commuting a `UntilingTransform` with a `ReshapeTransform` is not "
+          "supported when the target shape has 0 dimensions"
+      )
+    if not self.tiling:
+      raise NotImplementedError(
+          "Commuting a `UntilingTransform` with a `ReshapeTransform` is not "
+          "supported when the tiling is empty"
+      )
+    untiled_aval = self.transform_type(aval)
+    assert isinstance(untiled_aval, jax_core.ShapedArray)
+    components = [[]]
+    # We assume that we support only folds here for the moment. Therefore, we
+    # can gather a number of consecutive dimensions such that their product
+    # equals the dimension currently being processed in the reshaped shape.
+    for d in untiled_aval.shape:
+      reshaped_dim_size = transform.shape[len(components) - 1]
+      components[-1].append(d)
+      component_size = math.prod(components[-1])
+      if component_size == reshaped_dim_size:
+        components.append([])
+      elif component_size > reshaped_dim_size:
+        raise NotImplementedError(
+            "Unfolding dimensions is not supported when commuting an "
+            " `UntilingTransform` with a `ReshapeTransform`"
+        )
+    assert not components[-1]
+    components.pop()
+    assert len(components) == len(transform.shape)
+
+    rev_tiling_to_process = list(self.tiling)[::-1]
+    rev_shape_to_process = untiled_aval.shape[-len(self.tiling):][::-1]
+    rev_new_tiling: list[int] = []
+    rev_new_tiled_dims: list[int] = []
+    for component in components[::-1]:
+      # The construction above should guarantee that there is never an empty
+      # component, which simplifies indexing below.
+      assert component
+      ndim = len(component)
+      if len(rev_tiling_to_process) < ndim:
+        raise NotImplementedError(
+            "Folding tiled dimensions into untiled dimensions is not supported"
+        )
+      rev_tiling_slice = rev_tiling_to_process[:ndim]
+      rev_shape_slice = rev_shape_to_process[:ndim]
+      new_tiling_dim = math.prod(rev_tiling_slice)
+      num_elems = math.prod(rev_shape_slice)
+      assert num_elems % new_tiling_dim == 0
+      new_tiled_dim = num_elems // new_tiling_dim
+      # If any other dimension than the minormost one has non-unit tiling, then
+      # we cannot commute the reshape and untile transforms.
+      #
+      # Note that we could also support the case where we are collapsing
+      # trailing tiled dimensions where the tile size is the dimension size
+      # (i.e. there is a single tile).
+      if any(t != 1 for t in rev_tiling_slice[1:]):
+        before = (
+            *[s // t for s, t in zip(rev_shape_slice, rev_tiling_slice)],
+            *rev_tiling_slice,
+        )
+        after = (new_tiled_dim, new_tiling_dim)
+        raise ValueError(
+            "Cannot commute `UntilingTransform` with `ReshapeTransform` when "
+            "any of the dimensions being collapsed other than the minormost "
+            "one has non-unit tiling. Attempted to reshape tiled slice of "
+            f"shape {before} into shape {after}"
+        )
+      rev_new_tiling.append(new_tiling_dim)
+      rev_new_tiled_dims.append(new_tiled_dim)
+      rev_tiling_to_process = rev_tiling_to_process[ndim:]
+      rev_shape_to_process = rev_shape_to_process[ndim:]
+      if not rev_tiling_to_process:
+        break
+    assert not rev_tiling_to_process
+    assert not rev_shape_to_process
+    new_tiling = tuple(rev_new_tiling[::-1])
+    new_tiled_dims = tuple(rev_new_tiled_dims[::-1])
+    new_shape = (
+        *transform.shape[:len(components) - len(rev_new_tiling)],
+        *new_tiled_dims,
+        *new_tiling,
+    )
+
+    return state_types.ReshapeTransform(new_shape), UntilingTransform(new_tiling)
 
   def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
     return pp.text(f"{{untile({list(self.tiling)})}}")
@@ -949,12 +1140,6 @@ def transpose_ref(
     raise ValueError("Can't transpose a TMEM reference.")
   return ref.transpose(permutation)
 
-def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
-  return transform_ref(ref, UntilingTransform(tiling))
-
-def unswizzle_ref(ref, swizzle: int) -> pallas_core.TransformedRef:
-  return transform_ref(ref, UnswizzleRef(swizzle))
-
 
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
@@ -1095,6 +1280,123 @@ class UnswizzleRef(state_types.Transform):
     return pp.text(f"{{unswizzle({self.swizzle})}}")
 
 
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class CollapseLeadingBatchDimensionsTransform(state_types.Transform):
+  """A transform that collapses leading batch dimensions into the minor dimension.
+
+  Specifically, it maps `(*batch_shape, m, n)` to `(m, math.prod(batch_shape) *
+  n)`.
+  """
+
+  def transform_type(
+      self, x: jax_core.AbstractValue
+  ) -> state_types.AbstractRef:
+    match x:
+      case jax_core.ShapedArray():
+        if x.ndim < 2:
+          raise ValueError(f"Unsupported ndim: {x.ndim}")
+        batch_size = math.prod(x.shape[:-2])
+        transformed_shape = (x.shape[-2], batch_size * x.shape[-1])
+        return x.update(shape=transformed_shape)
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case _:
+        raise TypeError(f"Unsupported type: {x}")
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    assert hasattr(x, "shape")
+    return ExpandLeadingBatchDimensionsTransform(x.shape[:-2])
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class ExpandLeadingBatchDimensionsTransform(state_types.Transform):
+  """The inverse of CollapseLeadingBatchDimensionsTransform.
+
+  Specifically, it maps `(m, math.prod(batch_shape) * n)` to `(*batch_shape, m,
+  n)`.
+  """
+
+  batch_shape: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
+
+  def transform_type(
+      self, x: jax_core.AbstractValue
+  ) -> state_types.AbstractRef:
+    match x:
+      case jax_core.ShapedArray():
+        if x.ndim != 2:
+          raise ValueError(f"Unsupported shape: {x.shape}")
+        batch_size = math.prod(self.batch_shape)
+        if x.shape[1] % batch_size != 0:
+          raise ValueError(
+              f"Second dimension {x.shape[1]} must be divisible by batch_size"
+              f" {batch_size}"
+          )
+        transformed_shape = self.batch_shape + (
+            x.shape[0],
+            x.shape[1] // batch_size,
+        )
+        return x.update(shape=transformed_shape)
+      case state_types.AbstractRef():
+        return x.update(inner_aval=self.transform_type(x.inner_aval))
+      case _:
+        raise TypeError(f"Unsupported type: {x}")
+
+  def commute_ndindexer(
+      self, aval: jax_core.AbstractValue, indexer: indexing.NDIndexer
+  ) -> tuple[indexing.NDIndexer, state_types.Transform]:
+    del aval
+    batch_shape = self.batch_shape
+    k = len(batch_shape)
+    if len(indexer.indices) != k + 2:
+      raise ValueError(
+          f"Expected indexer to have exactly {k + 2} dimensions, "
+          f"but got {len(indexer.indices)}."
+      )
+    batch_indices = indexer.indices[:-2]
+    row_idx = indexer.indices[-2]
+    col_idx = indexer.indices[-1]
+
+    for idx in batch_indices:
+      if isinstance(idx, indexing.Slice):
+        raise NotImplementedError("Slicing batch dimensions is not supported.")
+
+    batch_size = math.prod(batch_shape)
+    m, n = indexer.shape[-2], indexer.shape[-1]
+    physical_shape = (m, batch_size * n)
+
+    batch_idx = 0
+    for idx, size in zip(batch_indices, batch_shape):
+      assert isinstance(idx, indexing.IntIndexer)
+      batch_idx = batch_idx * size + idx
+
+    if isinstance(col_idx, indexing.Slice):
+      # We shift the column slice by batch_idx * n.
+      new_col_idx = indexing.Slice(
+          batch_idx * n + col_idx.start, col_idx.size, col_idx.stride
+      )
+    else:
+      new_col_idx = batch_idx * n + col_idx
+
+    new_indexer = indexing.NDIndexer.from_indices_shape(
+        (row_idx, new_col_idx), physical_shape
+    )
+    return new_indexer, IdentityTransform()
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class IdentityTransform(state_types.Transform):
+  """An identity transform."""
+
+  def transform_type(self, x: jax_core.AbstractValue) -> jax_core.AbstractValue:
+    return x
+
+  def undo(self, x: jax_core.AbstractValue) -> state_types.Transform:
+    return self
+
+
 @dataclasses.dataclass
 class BlockSpec(pallas_core.BlockSpec):
   r"""A GPU-specific ``BlockSpec``.
@@ -1110,10 +1412,13 @@ class BlockSpec(pallas_core.BlockSpec):
       return the same block from the index_map for this operand. This enables
       the pipelining helpers to use collective async copies, which can improve
       performance.
+    oob_fill_mode: Determines the behavior for out-of-bounds accesses during
+      pipelined GMEM-to-SMEM copies. Defaults to ``OOBFillMode.ZEROS``.
   """
   transforms: Sequence[state_types.Transform] = ()
   delay_release: int = 0
   collective_axes: tuple[Hashable, ...] = ()
+  oob_fill_mode: OOBFillMode = OOBFillMode.ZEROS
 
   def to_block_mapping(
       self,
@@ -1124,6 +1429,7 @@ class BlockSpec(pallas_core.BlockSpec):
       index_map_tree: tree_util.PyTreeDef,
       grid: pallas_core.GridMappingGrid,
       vmapped_dims: tuple[int, ...],
+      allow_captured_consts: bool = False,
       debug: bool = False,
   ) -> pallas_core.BlockMapping:
     if self.collective_axes:
@@ -1138,6 +1444,7 @@ class BlockSpec(pallas_core.BlockSpec):
         index_map_tree=index_map_tree,
         grid=grid,
         vmapped_dims=vmapped_dims,
+        allow_captured_consts=allow_captured_consts,
         debug=debug,
     )
     block_inner_aval = bm.block_aval.inner_aval
@@ -1331,7 +1638,7 @@ class AbstractTMEMRef(state.AbstractRef):
 _WARPGROUP_AXIS_NAME = object()
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class Mesh:
+class Mesh(pallas_core.Mesh):
   grid: Sequence[int] = ()
   grid_names: Sequence[str] = ()
   cluster: Sequence[int] = ()
@@ -1394,8 +1701,25 @@ class Mesh:
   def check_is_compatible_with(self, other_mesh):
     raise NotImplementedError()
 
+  @property
+  def core_type(self) -> str:
+    return "gpu"
+
+  @property
+  def supported_memory_spaces(self) -> Sequence[MemorySpace]:
+    return [*MemorySpace]
+
+  @contextlib.contextmanager
+  def tracing_context(self):
+    # This is needed to support program_id inside of plgpu kernels.
+    with pallas_core.tracing_grid_env(
+        tuple(self.shape.values()), mapped_dims=()
+    ):
+      yield
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class WarpMesh:
+class WarpMesh(pallas_core.Mesh):
   """Represents a mesh over individual warps within a warpgroup.
 
   When used in conjunction with `core_map`, the warp ID will be visible
@@ -1419,6 +1743,22 @@ class WarpMesh:
   def discharges_effect(self, effect: jax_core.Effect) -> Literal[False]:
     del effect
     return False
+
+  def check_is_compatible_with(self, other_mesh):
+    raise NotImplementedError()
+
+  @property
+  def core_type(self) -> str:
+    return "gpu"
+
+  @property
+  def supported_memory_spaces(self) -> Sequence[MemorySpace]:
+    return [GMEM, SMEM, TMEM]
+
+  @contextlib.contextmanager
+  def tracing_context(self):
+    yield
+
 
 def _gpu_mesh_discharge_rule(
     in_avals,
@@ -1481,6 +1821,22 @@ class _WGMMAPipelineEffect(effects.Effect):
 pallas_core.kernel_local_effects.add_type(_WGMMAPipelineEffect)
 effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 _wgmma_pipeline_effect = _WGMMAPipelineEffect()
+
+
+class PdlEffect(jax_core.Effect):
+  """Indicates that a kernel uses Programmatic Dependency Launch (PDL).
+
+  This effect is associated with primitives that perform grid-level
+  synchronization (e.g. waiting for dependent grids). Its presence in a
+  JAXPR instructs the compiler/runtime to enable programmatic stream
+  serialization, allowing the CUDA driver to launch dependent kernels
+  concurrently in the same stream.
+  """
+
+
+pallas_core.kernel_local_effects.add_type(PdlEffect)
+effects.control_flow_allowed_effects.add_type(PdlEffect)
+_pdl_effect = PdlEffect()
 
 
 # We define the layout_cast primitive here, because it needs to be available in
@@ -1560,10 +1916,15 @@ class Layout(SomeLayout, enum.Enum):
   TCGEN05_M64_COLLECTIVE_NATIVE = enum.auto()
 
   SMEM_GMEM_COPY = enum.auto()
-  TMA_GATHER_INDICES = enum.auto()
+  TMA_INDICES = enum.auto()
+  TMA_INDICES_4 = enum.auto()
 
   # TODO(b/435159109): Remove this once LLVM regression is addressed.
   _WGMMA_ACC_32BIT = enum.auto()  # Temporarily exposed to work around LLVM bugs
+
+  MMA_LHS = enum.auto()
+  MMA_RHS = enum.auto()
+  MMA_ACC = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
@@ -1621,8 +1982,22 @@ class Layout(SomeLayout, enum.Enum):
         return mgpu.fragmented_array.tiled_copy_smem_gmem_layout(
             row_tiles, col_tiles, swizzle, bitwidth
         )
-      case Layout.TMA_GATHER_INDICES:
-        return mgpu.TMA_GATHER_INDICES_LAYOUT
+      case Layout.TMA_INDICES:
+        return mgpu.TMA_INDICES_LAYOUT
+      case Layout.MMA_LHS:
+        (dtype,) = args
+        element_type = mgpu_utils.dtype_to_ir_type(dtype)
+        return mgpu.MMALayouts(element_type).lhs
+      case Layout.MMA_RHS:
+        (dtype,) = args
+        element_type = mgpu_utils.dtype_to_ir_type(dtype)
+        return mgpu.MMALayouts(element_type).rhs
+      case Layout.MMA_ACC:
+        (dtype,) = args
+        element_type = mgpu_utils.dtype_to_ir_type(dtype)
+        return mgpu.MMALayouts(element_type).acc
+      case Layout.TMA_INDICES_4:
+        return mgpu.TMA_INDICES_4_LAYOUT
 
 
 class TMEMLayout(enum.Enum):

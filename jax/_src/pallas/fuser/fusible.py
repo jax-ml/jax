@@ -19,8 +19,8 @@ from typing import Any
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
+from jax._src import flattree as ft
 from jax._src.interpreters import batching
-from jax._src import linear_util as lu
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src import util
@@ -58,25 +58,25 @@ def fusible(f=None, *, output_fusion_prefix: Any = True):
         )
         return f(*in_fusions, output_fusions)
 
-      flat_args, in_tree = tree_util.tree_flatten(args)
+      args_ft = ft.flatten(args)
       debug_info = api_util.debug_info('fusible', wrapped, args, {})
-      flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-          lu.wrap_init(wrapped, debug_info=debug_info), in_tree
+      args_avals = tree_util.tree_map(jax_core.typeof, args)
+      in_avals_ft = ft.flatten_args(*args_avals)
+      # TODO: Use trace_to_jaxpr_nocache instead.
+      jaxpr, out_avals_ft = pe.trace_to_jaxpr(
+          wrapped, in_avals_ft, debug_info
       )
-      flat_avals = [jax_core.typeof(x) for x in flat_args]
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
-      out_tree = out_tree_thunk()
       out = fusible_p.bind(
-          *consts,
-          *flat_args,
+          *jaxpr.consts,
+          *args_ft.vals,
           jaxpr=jaxpr,
-          num_consts=len(consts),
-          in_tree=in_tree,
-          out_tree=out_tree,
+          num_consts=len(jaxpr.consts),
+          in_tree=args_ft.tree,
+          out_tree=out_avals_ft.tree,
           func=f,
           output_fusion_prefix=output_fusion_prefix,
       )
-      return tree_util.tree_unflatten(out_tree, out)
+      return tree_util.tree_unflatten(out_avals_ft.tree, out)
 
     return wrapper
 
@@ -105,7 +105,7 @@ def _fusible_trivial_batching_rule(axis_data, args, dims, **kwargs):
     raise NotImplementedError('fusible does not support non-trivial batching')
 
   unbatched_args = tuple(
-      a if (d is batching.not_mapped or d is None) else a[d]
+      a if (d is None or d is None) else a[d]
       for a, d in zip(args, dims, strict=True)
   )
   out_unbatched = fusible_p.bind(*unbatched_args, **kwargs)
@@ -126,10 +126,10 @@ def _fusible_to_lojax(*hi_args, jaxpr, num_consts, **_):
       for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
   ]
 
-  closed_jaxpr = jax_core.ClosedJaxpr(jaxpr, lo_args[:num_lo_consts])
+  closed_jaxpr = jaxpr.with_consts(lo_args[:num_lo_consts])
 
   lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
-  all_outs = fusible_p.bind(*lo_args, jaxpr=lo_jaxpr.jaxpr, num_consts=num_lo_consts)
+  all_outs = fusible_p.bind(*lo_args, jaxpr=lo_jaxpr, num_consts=num_lo_consts)
 
   out_mut, lo_outs = util.split_list(all_outs, [pe.num_himuts_out(jaxpr.final_aval_qdds)])
   for a, x, us in zip(jaxpr.final_aval_qdds, hi_args, out_mut):

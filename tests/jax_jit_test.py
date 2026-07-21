@@ -25,7 +25,6 @@ from jax._src import lib as jaxlib
 from jax._src import literals
 from jax._src import test_util as jtu
 from jax._src.interpreters import pxla
-from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding_impls import make_single_device_sharding
 import numpy as np
 
@@ -165,15 +164,14 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertFalse(signature.weak_type)
 
     # 3. TypedNdArray
-    if jaxlib_extension_version >= 441:
-      for dtype in jtu.supported_dtypes():
-        for weak_type in [False, True]:
-          aval = core.ShapedArray((3, 4), dtype, weak_type=weak_type)
-          value = literals.TypedNdArray(np.zeros((3, 4), dtype=dtype), aval=aval)
-          signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
-          self.assertEqual(signature.dtype, dtype)
-          self.assertEqual(signature.shape, (3, 4))
-          self.assertEqual(signature.weak_type, weak_type)
+    for dtype in jtu.supported_dtypes():
+      for weak_type in [False, True]:
+        aval = core.ShapedArray((3, 4), dtype, weak_type=weak_type)
+        value = literals.TypedNdArray(np.zeros((3, 4), dtype=dtype), aval=aval)
+        signature = jaxlib.jax_jit._ArgSignatureOfValue(value, jax_enable_x64)
+        self.assertEqual(signature.dtype, dtype)
+        self.assertEqual(signature.shape, (3, 4))
+        self.assertEqual(signature.weak_type, weak_type)
 
     int_type = dtypes.default_int_dtype()
     float_type = dtypes.default_float_dtype()
@@ -252,8 +250,8 @@ class JaxJitTest(jtu.JaxTestCase):
 
   @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", True)
   def test_check_for_large_number_of_constants_old(self):
-    y = jnp.ones((128, 128))
-    x = jnp.zeros((128,))
+    y = jnp.ones((128, 128), dtype=np.float32)
+    x = jnp.zeros((128,), dtype=np.float32)
 
     def jit_maker(): # need to ensure we lower at each test
       def func(x):
@@ -274,8 +272,8 @@ class JaxJitTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_use_simplified_jaxpr_constants", False)
   def test_check_for_large_number_of_constants_new(self):
     self.enter_context(config.embedded_constants_max_bytes(4))
-    y = np.ones((128, 128))
-    x = jnp.zeros((128,))
+    y = np.ones((128, 128), dtype=np.float32)
+    x = jnp.zeros((128,), dtype=np.float32)
 
     def jit_maker(): # need to ensure we lower at each test
       def my_func(x):

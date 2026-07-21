@@ -199,6 +199,24 @@ absl::StatusOr<std::intptr_t> PyDevice::GetStreamForExternalReadyEvents()
   return device->pjrt_device()->GetStreamForExternalReadyEvents();
 }
 
+absl::StatusOr<bool> PyDevice::PoisonExecution(
+    int32_t launch_id, std::variant<std::string, nb::object> error) {
+  ifrt::PjRtDevice* device = llvm::dyn_cast<ifrt::PjRtDevice>(device_);
+  if (device == nullptr || !device->IsAddressable()) {
+    return xla::InvalidArgument(
+        "poison_execution is only supported for addressable PjRt devices.");
+  }
+  absl::Status status;
+  if (std::holds_alternative<std::string>(error)) {
+    status = absl::InternalError(std::get<std::string>(error));
+  } else {
+    nb::object error_obj = std::get<nb::object>(error);
+    nb::str error_str = nb::str(error_obj);
+    status = absl::InternalError(nb::cast<std::string>(error_str));
+  }
+  return device->pjrt_device()->PoisonExecution(launch_id, status);
+}
+
 /* static */ int PyDevice::tp_traverse(PyObject* self, visitproc visit,
                                        void* arg) {
   PyDevice* d = nb::inst_ptr<PyDevice>(self);
@@ -270,7 +288,10 @@ PyType_Slot PyDevice::slots_[] = {
           "usually available. Intended for diagnostic use.")
       .def(
           "get_stream_for_external_ready_events",
-          xla::ValueOrThrowWrapper(&PyDevice::GetStreamForExternalReadyEvents));
+          xla::ValueOrThrowWrapper(&PyDevice::GetStreamForExternalReadyEvents))
+      .def("poison_execution",
+           xla::ValueOrThrowWrapper(&PyDevice::PoisonExecution),
+           nb::arg("launch_id"), nb::arg("error"));
   static PyMethodDef get_attr_method = {
       "__getattr__",
       +[](PyObject* self, PyObject* args) -> PyObject* {

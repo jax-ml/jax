@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import math
-from functools import partial
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -481,7 +480,7 @@ class LayoutTest(jtu.JaxTestCase):
 
     custom_dll = Layout(major_to_minor=(0, 1))
 
-    @partial(jax.jit,
+    @jax.jit(
              in_shardings=Format(custom_dll, s),
              out_shardings=Format(Layout.AUTO))
     def f(x):
@@ -684,6 +683,44 @@ class LayoutTest(jtu.JaxTestCase):
     lowered_text = f.lower(arr).as_text()
     self.assertIn('LayoutConstraint', lowered_text)
 
+  def test_with_layout_constraint_with_tiling(self):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+
+    if not jtu.stablehlo_version_at_least('1.18.0'):
+      self.skipTest('Requires stablehlo 1.18.0 or higher')
+
+    shape = (64, 256)
+    np_inp = np.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
+    arr = jax.device_put(np_inp)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = Layout(
+        major_to_minor=arr.format.layout.major_to_minor[::-1],
+        tiling=((16, 128), (2, 1)),
+    )
+
+    @jax.jit
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      return with_layout_constraint(y, custom_dll) * 2
+
+    out = f(arr)
+    self.assertEqual(
+        out.format.layout.major_to_minor, custom_dll.major_to_minor
+    )
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
+    self.assertIn(
+        'result_tilings = [[dense<[16, 128]> : tensor<2xindex>, dense<[2, 1]> :'
+        ' tensor<2xindex>]]',
+        lowered_text,
+    )
+
   def test_with_layout_constraint_vmap(self):
     if not jtu.test_device_matches(['tpu']):
       self.skipTest('Only works for TPU')
@@ -777,6 +814,27 @@ class LayoutTest(jtu.JaxTestCase):
     canonical_tpu_array = jax.device_put(np.ones((128, 8)), dst_tpu_format)
     self.assertEqual(
         copied_tpu_array.format.layout, canonical_tpu_array.format.layout)
+
+  @jtu.run_on_devices('tpu')
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reshard_layout_constraint(self, mesh):
+    arr1 = jax.device_put(np.arange(128 * 256).reshape(128, 256), P(None, 'x'))
+    arr2 = jax.device_put(np.arange(128 * 256).reshape(256, 128), P('x', None))
+
+    @jax.jit
+    def f(x, y):
+      z = jnp.dot(x, y, out_sharding=P(unreduced={'x'}))
+      z = with_layout_constraint(z, Layout(major_to_minor=(1, 0)))
+      z = z + z
+      return with_layout_constraint(z, Layout(major_to_minor=(1, 0)))
+
+    out = f(arr1, arr2)
+    self.assertArraysEqual(jax.reshard(out, P()),
+                           jnp.dot(arr1, arr2, out_sharding=P()) * 2)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P(None, None, unreduced={'x'})))
+    self.assertEqual(out.format.layout.major_to_minor, (1, 0))
+    self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
 
 
 if __name__ == '__main__':

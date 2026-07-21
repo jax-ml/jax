@@ -35,7 +35,7 @@ from jax._src import pjit
 from jax._src import traceback_util
 from jax._src import util
 
-from jax._src import xla_bridge
+from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -44,16 +44,16 @@ from jax._src.interpreters import partial_eval
 from jax._src.interpreters import pxla
 from jax._src.api_util import InternalFloatingPointError
 from jax._src.layout import Layout, Format
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_scalar, record_event_duration_secs, record_event_time_span
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnreducedKind
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, make_single_device_sharding, GSPMDSharding)
 from jax._src.stages import SourceInfo
 import numpy as np
-from jax._src.lib import jaxlib_extension_version
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -62,9 +62,7 @@ BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
 traceback_util.register_exclusion(__file__)
 
-xe = xc._xla
-
-Backend = xe.Client
+Backend = _jax.Client
 Device = xc.Device
 ArrayCopySemantics = xc.ArrayCopySemantics
 
@@ -374,14 +372,14 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
   different_process_inds = (
       src_sharding._internal_device_list.process_indices !=
       dst_sharding._internal_device_list.process_indices)
-  backend = xla_bridge.get_backend()
+  backend = xb.get_backend()
   # If a cross-host device transfer is requested but the backend does not
   # support it, then the user must set the flags to enable DCN-based transfers.
   if (different_process_inds and
-      (xla_bridge.FORCE_DCN_CROSS_HOST_TRANSFERS.value
+      (xb.FORCE_DCN_CROSS_HOST_TRANSFERS.value
       or not getattr(backend, "supports_cross_host_transfers", False)) and
-      not xla_bridge.CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value):
-    if xla_bridge.FORCE_DCN_CROSS_HOST_TRANSFERS.value:
+      not xb.CROSS_HOST_TRANSFER_SOCKET_ADDRESS.value):
+    if xb.FORCE_DCN_CROSS_HOST_TRANSFERS.value:
       msg = ("DCN-based cross-host transfers were requested with the "
              "jax_force_dcn_cross_host_transfers flag.")
     else:
@@ -393,7 +391,7 @@ def _is_supported_cross_host_transfer(ndim, src_sharding, dst_sharding):
         "DCN-based cross host device transfers.")
   return different_process_inds
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _DeferredShardArg:
   """Deferred call to `pxla.shard_args`.
 
@@ -412,7 +410,7 @@ class _DeferredShardArg:
     return pxla.global_aval_to_result_handler(
         self.aval, self.s, self.committed)(shard_arg_result)
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _DeferredCrossHostTransferArg:
   """Deferred call to `xc.batched_copy_array_to_devices_with_sharding` for
   cross-host data transfers.
@@ -458,11 +456,16 @@ def _device_put_sharding_impl(
       return x
 
     if isinstance(s, NamedSharding) and s.spec.unreduced:
+      if s.spec.unreduced_kind != UnreducedKind.sum:
+        raise NotImplementedError
+      norm = lambda p: p._normalized_spec_for_aval(x.ndim)
+      if (xb.process_count() == 1 and x_is_jax_array and
+          isinstance(x_sharding, NamedSharding) and
+          norm(x_sharding.spec) == norm(s.spec) and
+          x_sharding.mesh.size == s.mesh.size):
+        return _DeferredShardArg(x, s, aval, True, copy)
       # TODO(mattjj,yashkatariya): handle donation
-      if jaxlib_extension_version >= 428:
-        return api.jit(_device_put_reshard, out_shardings=s)(x)
-      else:
-        return pjit.reshard(x, s)
+      return api.jit(_device_put_reshard, out_shardings=s)(x)
 
     if (not s_is_fully_addressable and
         x_is_jax_array and not x_is_fully_addressable and
@@ -477,7 +480,7 @@ def _device_put_sharding_impl(
       assert isinstance(s, NamedSharding), s
       return _different_device_order_reshard(x, s, copy)
 
-    if (x_is_jax_array and x._committed and xla_bridge.process_count() > 1
+    if (x_is_jax_array and x._committed and xb.process_count() > 1
         and _is_supported_cross_host_transfer(x.ndim, x_sharding, s)):
       return _DeferredCrossHostTransferArg(x, s, copy)
 
@@ -510,7 +513,7 @@ def _device_put_sharding_impl(
         # sharding do not transfer data) or (2) the sharding contains a
         # different subset of devices on each host. For (1), the input should be
         # the same on all hosts, but for (2) it need not be.
-        if xla_bridge.process_count() == len(s._internal_device_list.process_indices):
+        if xb.process_count() == len(s._internal_device_list.process_indices):
           multihost_utils.assert_equal(
               x, fail_message=(
                   f"{type(x)} passed to device_put is not the same on each"
@@ -694,7 +697,7 @@ def _device_put_transpose(cts, *args, devices, srcs, copy_semantics):
       cts, args, devices, srcs, copy_semantics)):
     if ad.is_undefined_primal(arg):
       if type(ct) is ad.Zero:
-        results[i] = ad.Zero(arg.aval.to_ct_aval())
+        results[i] = ad.Zero(arg.aval)
       else:
         dp_cts.append((i, ct, arg, device, src, cp))
 
@@ -724,7 +727,7 @@ ad.primitive_jvps[device_put_p] = partial(ad.linear_jvp, device_put_p)
 ad.primitive_transposes[device_put_p] = _device_put_transpose
 
 def _device_put_batcher(batched_args, batch_dims, **params):
-  mapped_batch_dims = [bd for bd in batch_dims if bd is not batching.not_mapped]
+  mapped_batch_dims = [bd for bd in batch_dims if bd is not None]
   assert not mapped_batch_dims or all(
       mapped_batch_dims[0] == bd for bd in mapped_batch_dims[1:]
   ), batch_dims
@@ -751,7 +754,7 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
       mem_kind = (core.mem_space_to_kind(device)
                   if isinstance(device, core.MemorySpace) else device.memory_kind)
       assert mem_kind is not None
-      x = mlir.wrap_with_memory_kind(x, mem_kind, out_aval)
+      x = mlir.wrap_with_memory_kind(ctx.module_context, x, mem_kind, out_aval)
       return x
     return x
   return list(map(lower, xs, devices, ctx.avals_in, ctx.avals_out))

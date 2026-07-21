@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import logging
 import threading
+from typing import Any
 import warnings
 import zlib
 
@@ -24,7 +26,7 @@ import numpy as np
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   # compression.zstd should be present in Python 3.14+
-  from compression import zstd  # pyrefly: ignore[missing-import]
+  from compression import zstd
 except ImportError:
   zstd = None
 
@@ -189,22 +191,40 @@ class VerificationCache(CacheInterface):
 
 
 def set_cache_dir(path) -> None:
-  """
-  Sets the persistent compilation cache directory.
+  """Sets the persistent compilation cache directory.
 
   After calling this, jit-compiled functions are saved to `path`, so they
   do not need be recompiled if the process is restarted or otherwise run again.
   This also tells Jax where to look for compiled functions before compiling.
+
+  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+
+  .. warning::
+     The compilation cache is considered trusted. Do not share a compilation
+     cache with users you do not trust. For example, if you put the compilation
+     cache in a directory to which others may write, those users can trigger
+     your JAX process to run arbitrary code. Sharing a compilation cache is
+     equivalent to allowing anyone who can write to the cache directory to run
+     code on your machine.
   """
   config.config.update("jax_compilation_cache_dir", path)
 
 
 def initialize_cache(path) -> None:
-  """
-  This API is deprecated; use set_cache_dir instead.
+  """This API is deprecated; use set_cache_dir instead.
 
   Set the path. To take effect, should be called prior to any calls to
   get_executable_and_time() and put_executable_and_time().
+
+  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+
+  .. warning::
+     The compilation cache is considered trusted. Do not share a compilation
+     cache with users you do not trust. For example, if you put the compilation
+     cache in a directory to which others may write, those users can trigger
+     your JAX process to run arbitrary code. Sharing a compilation cache is
+     equivalent to allowing anyone who can write to the cache directory to run
+     code on your machine.
   """
   config.config.update("jax_compilation_cache_dir", path)
 
@@ -304,7 +324,8 @@ def is_executable_in_cache(backend, cache_key: str) -> bool:
 
 
 def get_executable_and_time(
-    cache_key: str, compile_options, backend, executable_devices
+    cache_key: str, compile_options, backend, executable_devices,
+    host_callbacks: Sequence[Any] = (),
 ) -> tuple[xla_client.LoadedExecutable | None, int | None]:
   """Returns the cached executable and its compilation time if present, or None
   otherwise.
@@ -320,8 +341,17 @@ def get_executable_and_time(
   executable_and_time = decompress_executable(executable_and_time)
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
-  xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, executable_devices, compile_options)
+  if host_callbacks:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable,
+        executable_devices,
+        compile_options,
+        host_callbacks,
+    )
+  else:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable, executable_devices, compile_options
+    )
   return xla_executable_deserialized, compile_time
 
 
@@ -346,10 +376,7 @@ def put_executable_and_time(
                " since cache is disabled/not initialized", cache_key)
     return
 
-  if hasattr(executable, "serialize") or xla_client._version >= 389:
-    serialized_executable = executable.serialize()
-  else:
-    serialized_executable = backend.serialize_executable(executable)
+  serialized_executable = executable.serialize()
   executable_and_time = combine_executable_and_time(
       serialized_executable, compile_time)
   executable_and_time = compress_executable(executable_and_time)
@@ -386,7 +413,7 @@ def get_cache_key(
     devices: np.ndarray,
     compile_options,
     backend,
-    ignore_callbacks: cache_key.IgnoreCallbacks = cache_key.IgnoreCallbacks.NO,
+    ignore_custom_partitioning: bool = False,
 ) -> str:
   return cache_key.get(
       module,
@@ -394,7 +421,7 @@ def get_cache_key(
       compile_options,
       backend,
       "zstandard" if zstandard is not None else "zlib",
-      ignore_callbacks,
+      ignore_custom_partitioning,
   )
 
 
@@ -410,7 +437,10 @@ def is_initialized() -> bool:
 
 
 def reset_cache() -> None:
-  """Get back to pristine, uninitialized state."""
+  """Get back to pristine, uninitialized state.
+
+  For more information, see the :ref:`persistent compilation cache guide <persistent-compilation-cache>`.
+  """
   global _cache
   global _cache_initialized
   global _cache_checked

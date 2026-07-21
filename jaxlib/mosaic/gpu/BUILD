@@ -15,10 +15,9 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_python//python:defs.bzl", "py_library")
 # Placeholder: load proto_library
 
-load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension")
+load("//jaxlib:jax.bzl", "cc_proto_library", "if_oss", "nanobind_extension", "py_library")
 
 package(
     default_applicable_licenses = [],
@@ -55,12 +54,17 @@ cc_library(
     srcs = ["target.cc"],
     hdrs = ["target.h"],
     deps = [
+        "@com_google_absl//absl/base:no_destructor",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@llvm-project//llvm:MC",
         "@llvm-project//llvm:TargetParser",
+        "@xla//xla/stream_executor/cuda:assemble_compilation_provider",
+        "@xla//xla/stream_executor/cuda:compilation_provider",
+        "@xla//xla/stream_executor/cuda:compilation_provider_options",
+        "@xla//xla/stream_executor/cuda:ptx_compiler_support",
     ],
 )
 
@@ -91,7 +95,7 @@ cc_test(
     srcs = ["dump_test.cc"],
     deps = [
         ":dump",
-        "//testing/base/public:gunit_main",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//mlir:IR",
     ],
 )
@@ -102,8 +106,8 @@ cc_test(
     deps = [
         ":passes",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
-        "//testing/base/public:gunit_main",
         "@com_google_absl//absl/strings",
+        "@com_google_googletest//:gtest_main",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:BufferizationInterfaces",
@@ -281,9 +285,11 @@ cc_library(
             "-Wl,--export-dynamic-symbol='MosaicGpuUnload'",
         ],
     ),
+    local_defines = [
+        "ABSL_DEFINE_UNQUALIFIED_STATUS_MACROS=1",
+    ],
     deps = [
         ":dump",
-        ":library_paths",  # buildcleaner: keep
         ":mosaic_gpu_cc_proto",
         ":nvshmem",
         ":passes",
@@ -291,6 +297,7 @@ cc_library(
         ":target",
         "//jaxlib/cuda:cuda_vendor",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:no_destructor",
@@ -301,6 +308,7 @@ cc_library(
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
@@ -359,29 +367,25 @@ cc_library(
         "@xla//xla/backends/cpu:target_machine_options",
         "@xla//xla/backends/gpu:ffi",
         "@xla//xla/backends/gpu/collectives:gpu_clique_key",
+        "@xla//xla/backends/gpu/collectives:gpu_collectives",
+        "@xla//xla/backends/gpu/collectives:gpu_communicator",
         "@xla//xla/backends/gpu/runtime:collective_clique_requests",
         "@xla//xla/backends/gpu/runtime:collective_cliques",
         "@xla//xla/backends/gpu/runtime:collective_execution",
-        "@xla//xla/backends/gpu/runtime:collective_kernel_api",
         "@xla//xla/backends/gpu/runtime:collective_memory",
         "@xla//xla/backends/gpu/runtime:collective_memory_requests",
         "@xla//xla/backends/gpu/runtime:collective_params",
         "@xla//xla/core/collectives:rank_id",
+        "@xla//xla/core/collectives:symmetric_memory",
         "@xla//xla/ffi",
         "@xla//xla/ffi:type_registry",
         "@xla//xla/service/gpu/llvm_gpu_backend:nvptx_libdevice_path",
         "@xla//xla/service/llvm_ir:llvm_command_line_options",
         "@xla//xla/stream_executor:device_address_handle",
         "@xla//xla/stream_executor:device_description",
-        "@xla//xla/stream_executor/cuda:assemble_compilation_provider",
         "@xla//xla/stream_executor/cuda:compilation_provider",
-        "@xla//xla/stream_executor/cuda:compilation_provider_options",
         "@xla//xla/stream_executor/cuda:cuda_compute_capability",
-        "@xla//xla/stream_executor/cuda:ptx_compiler_support",
         "@xla//xla/stream_executor/gpu:collective_kernel_metadata",
-        "@xla//xla/tsl/platform:errors",
-        "@xla//xla/tsl/platform:logging",
-        "@xla//xla/tsl/platform:statusor",
     ],
     alwayslink = True,
 )
@@ -389,26 +393,31 @@ cc_library(
 cc_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
+    args = ["--heap_check="],  # TODO(b/452513034): Enable heapcheck once the bug is fixed.
+    local_defines = [
+        "ABSL_DEFINE_UNQUALIFIED_STATUS_MACROS=1",
+    ],
     tags = ["requires-gpu-sm90"],
     deps = [
         ":mosaic_gpu_support",
-        "//testing/base/public:gunit_main",
         "@com_google_absl//absl/base:log_severity",
         "@com_google_absl//absl/log:globals",
         "@com_google_absl//absl/log:scoped_mock_log",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_macros",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_googletest//:gtest_main",
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/parser:hlo_parser",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:pjrt_executable",
         "@xla//xla/pjrt/plugin/xla_gpu:xla_gpu_pjrt_client",
         "@xla//xla/service:gpu_plugin",
+        "@xla//xla/stream_executor/cuda:all_runtime",
         "@xla//xla/stream_executor/cuda:cuda_platform",
         "@xla//xla/tsl/platform:env",
-        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -421,8 +430,10 @@ nanobind_extension(
     ],
     pytype_srcs = ["_mosaic_gpu_ext.pyi"],
     deps = [
+        "//jaxlib:absl_status_casters",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
+        "//jaxlib/mosaic/gpu:target",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@nanobind",

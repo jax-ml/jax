@@ -69,6 +69,7 @@ Just-in-time compilation (:code:`jit`)
 
     jit
     disable_jit
+    Inline
     ensure_compile_time_eval
     make_jaxpr
     eval_shape
@@ -101,9 +102,11 @@ Automatic differentiation
     linearize
     linear_transpose
     vjp
+    fwd_and_bwd
     custom_gradient
     closure_convert
     checkpoint
+    custom_remat
 
 Vectorization
 -------------

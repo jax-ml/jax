@@ -18,19 +18,28 @@ from __future__ import annotations
 
 import io
 import json
+from typing import Final
 import zlib
 
-import jax
+from jax._src import core as jax_core
 from jax._src import frozen_dict
-import jax._src.core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import triton
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import core as triton_core
 from jax._src.pallas.triton import lowering
+from jax._src.pallas.triton import gpu_info as gpu_info_lib
+
+
+# TODO(b/526389887): Figure out how to flip this to True.
+USE_NEW_CUSTOM_CALL = False
+CUSTOM_CALL_TARGET_NAME: Final = (
+    "triton_kernel_call_ffi"
+    if USE_NEW_CUSTOM_CALL
+    else "__gpu$xla.gpu.triton"
+)
 
 
 def normalize_grid(grid: pallas_core.StaticGrid) -> tuple[int, int, int]:
@@ -93,24 +102,23 @@ def pallas_call_lowering(
     print(grid_mapping)
 
   try:
-    gpu_device, *_ = jax.local_devices(backend="gpu")
-  except RuntimeError:
-    # GPU device is not available. Fall back to the minimum CC supported by Triton.
-    # TODO(slebedev): Make the fallback CC configurable.
-    arch_name = "8.0"
-    compute_capability = 80
+    gpu_info = gpu_info_lib.get_gpu_info()
+  except ValueError:
+    raise RuntimeError(
+        "No supported GPU devices found, please specify an abstract GPU "
+        "device using AbstractDevice. See jax.sharding.use_abstract_mesh "
+        "method for example."
+    ) from None
   else:
-    arch_name = str(gpu_device.compute_capability)
-    if lowering_platform == "rocm":
-      compute_capability = 0
-    else:
-      compute_capability = int(arch_name.replace(".", ""))
+    arch_name = gpu_info.arch_name
+    compute_capability = gpu_info.compute_capability
 
   # Sanitize the name to conform to NVPTX requirements. We do this here
   # to avoid the need to fetch the new name from PTX post compilation.
   name = mlir.sanitize_name(debug_info.func_name)
   lowering_result = lowering.lower_jaxpr_to_triton_module(
-      jaxpr, grid_mapping, lowering_platform, compute_capability or None
+      jaxpr, grid_mapping, lowering_platform, compute_capability or None,
+      mlir_ctx=ctx.module_context
   )
   module_op = lowering_result.module.operation
   if debug:
@@ -125,13 +133,12 @@ def pallas_call_lowering(
   if metadata is not None:
     serialized_metadata = json.dumps(dict(metadata))
 
-  # TODO(b/394629193): Remove True once the bug is fixed.
-  if True:
-    # AOT Triton compilation is only available on jaxlib 0.5.1+.
+  if not USE_NEW_CUSTOM_CALL:
     out_types = [
-      ir.RankedTensorType.get(bm.array_aval.shape,
-                              mlir.dtype_to_ir_type(bm.array_aval.dtype))
-      for bm in grid_mapping.block_mappings_output
+        ir.RankedTensorType.get(
+            bm.array_aval.shape, mlir.dtype_to_ir_type(bm.array_aval.dtype)
+        )
+        for bm in grid_mapping.block_mappings_output
     ]
     backend_config = dict(
         name=ir.StringAttr.get(name),
@@ -168,7 +175,7 @@ def pallas_call_lowering(
       num_stages=num_stages,
   )
   kernel = triton_kernel_call_lib.TritonKernel(
-      debug_info.func_name,
+      name,
       num_warps,
       1,
       compilation_result.smem_bytes,
@@ -188,40 +195,28 @@ def pallas_call_lowering(
       [triton_kernel_call_lib.create_array_parameter(0, 16)]
       * (len(ctx.avals_in) + len(ctx.avals_out)),
   )
-  if jaxlib_extension_version >= 444:
-    return mlir.custom_call(
-        call_target_name="triton_kernel_call_ffi",
-        result_types=mlir.flatten_ir_types(
-            map(mlir.aval_to_ir_type, ctx.avals_out)
-        ),
-        operands=in_nodes,
-        backend_config={"opaque": ir.StringAttr.get(zlib.compress(
-            kernel_call.to_proto(
-                debug_info.func_name,
-                (serialized_metadata or "").encode(),
-            )
-        ))},
-        operand_layouts=avals_to_layouts(ctx.avals_in),
-        result_layouts=avals_to_layouts(ctx.avals_out),
-        operand_output_aliases=dict(input_output_aliases),
-    ).results
-  else:
-    return mlir.custom_call(
-        call_target_name="triton_kernel_call",
-        result_types=mlir.flatten_ir_types(
-            map(mlir.aval_to_ir_type, ctx.avals_out)
-        ),
-        operands=in_nodes,
-        backend_config=zlib.compress(
-            kernel_call.to_proto(
-                debug_info.func_name,
-                (serialized_metadata or "").encode(),
-            )
-        ),
-        operand_layouts=avals_to_layouts(ctx.avals_in),
-        result_layouts=avals_to_layouts(ctx.avals_out),
-        operand_output_aliases=dict(input_output_aliases),
-    ).results
+  result_types, _ = mlir.ir_tree_registry.flatten([
+      mlir.aval_to_ir_type(ctx.module_context, aval)
+      for aval in ctx.avals_out
+  ])
+  return mlir.custom_call(
+      call_target_name="triton_kernel_call_ffi",
+      result_types=result_types,
+      operands=in_nodes,
+      backend_config=dict(
+          name=ir.StringAttr.get(name),
+          opaque=ir.StringAttr.get(
+              zlib.compress(
+                  kernel_call.to_proto(
+                      name, (serialized_metadata or "").encode()
+                  )
+              )
+          ),
+      ),
+      operand_layouts=avals_to_layouts(ctx.avals_in),
+      result_layouts=avals_to_layouts(ctx.avals_out),
+      operand_output_aliases=dict(input_output_aliases),
+  ).results
 
 
 pallas_core.register_lowering_rule(triton_core.CompilerParams, pallas_call_lowering, "gpu")

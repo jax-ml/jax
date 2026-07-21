@@ -39,6 +39,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import SdyArray, SdyArrayList, SdyDim, SingleDeviceSharding
+from jax._src.sharding import Sharding
 from jax._src.typing import Array
 import numpy as np
 
@@ -53,7 +54,7 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True, weakref_slot=True)
 class _FlatCallback:
   """A Python function callable with flat arguments and results.
 
@@ -74,7 +75,7 @@ def pure_callback_impl(
     *args,
     result_avals,
     callback: _FlatCallback,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     vmap_method: str | None,
 ):
   del sharding, vmap_method, result_avals
@@ -104,7 +105,7 @@ def pure_callback_abstract_eval(
     *avals,
     callback: _FlatCallback,
     result_avals,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     vmap_method: str | None,
 ):
   del avals, callback, sharding, vmap_method
@@ -148,7 +149,7 @@ def _get_sdy_array_list_for_callbacks(avals: Sequence[core.ShapedArray]) -> SdyA
 
 
 def _callback_op_sharding(
-    axis_context, sharding: SingleDeviceSharding | None, avals_out
+    axis_context, sharding: Sharding | None, avals_out
 ):
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # If we have fully manual sharding during lowering, that means the JAX
@@ -218,7 +219,7 @@ def _callback_op_sharding(
 
 
 def pure_callback_lowering(
-    ctx, *args, callback: _FlatCallback, sharding: SingleDeviceSharding | None, **params
+    ctx, *args, callback: _FlatCallback, sharding: Sharding | None, **params
 ):
   def _callback(*flat_args):
     return tuple(
@@ -261,7 +262,7 @@ def pure_callback(
     callback: Callable[..., Any],
     result_shape_dtypes: Any,
     *args: Any,
-    sharding: SingleDeviceSharding | None = None,
+    sharding: Sharding | None = None,
     vmap_method: str | None = None,
     **kwargs: Any,
 ):
@@ -418,7 +419,7 @@ def io_callback_impl(
     *args,
     result_avals,
     callback: _FlatCallback,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     ordered: bool,
 ):
   del result_avals, sharding, ordered
@@ -448,7 +449,7 @@ def io_callback_abstract_eval(
     *avals,
     callback: _FlatCallback,
     result_avals,
-    sharding: SingleDeviceSharding | None,
+    sharding: Sharding | None,
     ordered: bool,
 ):
   del avals, sharding, callback
@@ -474,8 +475,8 @@ def io_callback_batching_rule(
   from jax._src.lax.control_flow.loops import map as lax_map  # pyrefly: ignore[missing-import]
   if ordered:
     raise ValueError("Cannot `vmap` ordered IO callback.")
-  is_batched = [d is not batching.not_mapped for d in dims]
-  new_args = [arg if dim is batching.not_mapped else
+  is_batched = [d is not None for d in dims]
+  new_args = [arg if dim is None else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   unbatched_args, batched_args = util.partition_list(is_batched, new_args)
   def _batch_fun(batched_args):
@@ -514,7 +515,8 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         returns_token=True,
         sharding=op_sharding,
     )
-    ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
+    ctx.set_tokens_out(
+        ctx.tokens_in.update_tokens(mlir.TokenSet({_OrderedIOEffect: token})))
   else:
     result, _, _ = emit_python_callback(
         ctx,
@@ -537,7 +539,7 @@ def io_callback(
     callback: Callable[..., Any],
     result_shape_dtypes: Any,
     *args: Any,
-    sharding: SingleDeviceSharding | None = None,
+    sharding: Sharding | None = None,
     ordered: bool = False,
     **kwargs: Any,
 ):
@@ -637,7 +639,7 @@ def receive_from_host(
     sharding: SdyArrayList | xc.OpSharding | None = None,
 ) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, mlir.RECV_FROM_HOST_TYPE)
-  out_type = mlir.aval_to_ir_type(out_aval)
+  out_type = mlir.aval_to_ir_type(ctx, out_aval)
   recv_op = hlo.RecvOp([out_type,
                         hlo.TokenType.get()], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
@@ -876,7 +878,8 @@ def emit_python_callback(
       # output. Otherwise, the single shardy annotation required of all ops
       # (even those without any results) can annotate the token.
       sharding = SdyArrayList((
-          SdyArray(mesh_shape=(), dim_shardings=(), logical_device_ids=()),
+          SdyArray(mesh_shape=(), dim_shardings=(),
+                   logical_device_ids=sharding.shardings[0].logical_device_ids),
           *sharding.shardings))
     ctx = dataclasses.replace(
         ctx,

@@ -13,17 +13,17 @@
 # limitations under the License.
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Protocol
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+import logging
+from typing import Any, Protocol
 import numpy as np
-from absl import logging
 
 import jax.numpy as jnp
 from jax.sharding import NamedSharding
 from jax._src import api
 from jax._src import core
-from jax._src import prng
+from jax._src.random import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -34,10 +34,11 @@ from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten, t
 from jax._src.util import foreach
 from jax._src.shard_map import shard_map, shard_map_p
 
-
 ShapeDtypeStructTree = Any
 Specs = Any
 ValidRooflineDtype = np.dtype | prng.KeyTy
+
+logger = logging.getLogger(__name__)
 
 map = util.safe_map
 
@@ -168,7 +169,6 @@ def _roofline_interpreter(
   def sum_bytes(shapes: Sequence[RooflineShape]) -> int:
     return sum(shape.bytes for shape in shapes)
 
-  jaxpr = jaxpr.jaxpr if isinstance(jaxpr, core.ClosedJaxpr) else jaxpr
   make_roofline_shape = lambda x: RooflineShape.from_aval(aval(x))
   foreach(
     write,
@@ -211,7 +211,7 @@ def _roofline_interpreter(
         for attr in dir(eqn):
           if not attr.startswith("_"):
             msg += f"\n{attr}: {getattr(eqn, attr)}"
-        logging.warning(msg)
+        logger.warning(msg)
       else:
         rule = _rooflines[eqn.primitive]
         result += rule(
@@ -296,8 +296,8 @@ def roofline(
       )
       out_shapes = tree_unflatten(treedef, flat_out_shapes)
 
-    used_outputs = (True,) * len(jaxpr.jaxpr.outvars)
-    jaxpr, _ = dce_jaxpr(jaxpr.jaxpr, used_outputs)
+    used_outputs = (True,) * len(jaxpr.outvars)
+    jaxpr, _ = dce_jaxpr(jaxpr, used_outputs)
     shard_map_eqns = [
         e for e in jaxpr.eqns if e.primitive == shard_map_p
     ]

@@ -41,9 +41,8 @@ echo "Installed packages:"
 "$JAXCI_PYTHON" -c 'import sys; print("python version:", sys.version)'
 "$JAXCI_PYTHON" -c 'import jax; print("jax version:", jax.__version__)'
 "$JAXCI_PYTHON" -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
-# Free-threaded builds use "-nogil" as the suffix for the binary and "t" for its
-# dist-packages path
-strings /usr/local/lib/"${JAXCI_PYTHON//-nogil/t}"/dist-packages/libtpu/libtpu.so | grep 'Built on'
+# Free-threaded builds use "t" as the suffix for the binary
+strings /usr/local/lib/"${JAXCI_PYTHON}"/dist-packages/libtpu/libtpu.so | grep 'Built on'
 "$JAXCI_PYTHON" -c 'import jax.extend; print("libtpu version:",jax.extend.backend.get_backend().platform_version)'
 
 # Set up all common test environment variables
@@ -72,8 +71,6 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --junitxml=test-artifacts/junit-single.xml \
-    --deselect=tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest \
-    --deselect=tests/pallas/tpu_sparsecore_pallas_test.py::DebugPrintTest \
     --deselect=tests/pallas/tpu_pallas_interpret_thread_map_test.py::InterpretThreadMapTest::test_thread_map \
     --dist=loadfile --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
 
@@ -115,22 +112,11 @@ else
   second_cmd_retval=$?
 fi
 
-# Run Pallas printing tests, which need to run with I/O capturing disabled.
-TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest \
-  --junitxml=test-artifacts/junit-print.xml \
-  -s tests/pallas/tpu_pallas_call_print_test.py::PallasCallPrintTest \
-  -s tests/pallas/tpu_sparsecore_pallas_test.py::DebugPrintTest
-
-# Store the return value of the third command.
-third_cmd_retval=$?
-
 # Exit with failure if either command fails.
 if [[ $first_cmd_retval -ne 0 ]]; then
   exit $first_cmd_retval
 elif [[ $second_cmd_retval -ne 0 ]]; then
   exit $second_cmd_retval
-elif [[ $third_cmd_retval -ne 0 ]]; then
-  exit $third_cmd_retval
 else
   exit 0
 fi

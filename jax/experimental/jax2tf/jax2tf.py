@@ -15,16 +15,16 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Sequence
 from functools import partial
-import contextlib
+import logging
 import math
 import os
 import threading
 from typing import Any, Union
 import warnings
 
-from absl import logging
 import numpy as np
 
 import jax
@@ -61,6 +61,7 @@ DType = Any
 
 DisabledSafetyCheck = export.DisabledSafetyCheck
 
+logger = logging.getLogger(__name__)
 
 map = util.safe_map
 zip = util.safe_zip
@@ -623,9 +624,9 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
         config.use_shardy_partitioner.value
     )
 
-  if logging.vlog_is_on(3):
+  if logger.isEnabledFor(logging.DEBUG):
     # We already logged the MLIR module when we exported it.
-    logging.vlog(3, "XlaCallModule %s", str(call_module_attrs))
+    logger.debug("XlaCallModule %s", str(call_module_attrs))
 
   call_module_attrs["module"] = exported.mlir_module_serialized
 

@@ -40,8 +40,8 @@ runs:
 
         # Get the major and minor version of Python.
         # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
-        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
-        python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
+        # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13t, then python_major_minor=313t
+        python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION}" | tr -d '.')
 
         echo "os=${os}" >> $GITHUB_OUTPUT
         echo "arch=${arch}" >> $GITHUB_OUTPUT
@@ -68,13 +68,14 @@ runs:
             gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
           elif [[ ${INPUTS_JAXLIB_VERSION} == "pypi_latest" ]]; then
             PYTHON=python${INPUTS_PYTHON}
-            $PYTHON -m pip download jaxlib --dest $(pwd)/dist/
+            $PYTHON -m pip download jaxlib --dest $(pwd)/dist/ --no-deps
           else
             echo "Invalid jaxlib version: ${INPUTS_JAXLIB_VERSION}"
             exit 1
           fi
         fi
       env:
+        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
         OS: ${{ steps.set-vars.outputs.os }}
         ARCH: ${{ steps.set-vars.outputs.arch }}
         PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}
@@ -102,6 +103,7 @@ runs:
           call gcloud storage cp -r "%INPUTS_GCS_DOWNLOAD_URI%/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
         )
       env:
+        CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
         OS: ${{ steps.set-vars.outputs.os }}
         ARCH: ${{ steps.set-vars.outputs.arch }}
         PYTHON_MAJOR_MINOR: ${{ steps.set-vars.outputs.python_major_minor }}

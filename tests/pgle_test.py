@@ -120,7 +120,7 @@ class PgleTest(jtu.JaxTestCase):
     pgle_profiler = profiler.PGLEProfiler(1, 90)
     with config.enable_pgle(False):
       with profiler.PGLEProfiler.trace(pgle_profiler):
-        f(x)
+        jax.block_until_ready(f(x))
     fdo_profile = pgle_profiler.consume_fdo_profile()
     self.assertEqual(fdo_profile.count(b'custom'), its)
 
@@ -167,9 +167,9 @@ class PgleTest(jtu.JaxTestCase):
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
-        # One for before optimizatiom, one after SPMD partitioning, and one
-        # after optimization.
-        self.assertLen(fdo_profiles_before_pgle, 3)
+        # One before optimization, one after SPMD partitioning, one before
+        # config assignment, and one after optimization.
+        self.assertLen(fdo_profiles_before_pgle, 4)
         # The FDO profile file should be empty.
         self.assertEqual(
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
@@ -179,9 +179,9 @@ class PgleTest(jtu.JaxTestCase):
           self.assertArraysEqual(f(x), expected)
         self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
-        # One more before optimizatiom, one more after SPMD partitioning, and
-        # one more after optimization.
-        self.assertLen(fdo_profiles_after_pgle, 6)
+        # Four more: one before optimization, one after SPMD partitioning, one
+        # before config assignment, and one after optimization.
+        self.assertLen(fdo_profiles_after_pgle, 8)
 
         for fdo_profile in fdo_profiles_after_pgle:
           if fdo_profile not in fdo_profiles_before_pgle:
@@ -349,7 +349,7 @@ class PgleTest(jtu.JaxTestCase):
 
     with tempfile.TemporaryDirectory() as cache_dir:
       jax.profiler.start_trace(cache_dir)
-      compiled(x, y)
+      jax.block_until_ready(compiled(x, y))
       jax.profiler.stop_trace()
       directories = glob.glob(os.path.join(cache_dir, 'plugins/profile/**/'))
       directories = [d for d in directories if os.path.isdir(d)]
@@ -521,12 +521,12 @@ class PgleTest(jtu.JaxTestCase):
       get_new_files.seen_files = set()
 
       # Run 1
-      self.assertArraysEqual(f(x), expected)
+      self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
       self.assertNotIn(
           'xla_gpu_enable_command_buffer: 1', get_new_files()
       )  # b/376647494 workaround
       # Run 2
-      self.assertArraysEqual(f(x), expected)
+      self.assertArraysEqual(jax.block_until_ready(f(x)), expected)
       self.assertIn(
           'xla_gpu_enable_command_buffer', get_new_files()
       )  # workaround disabled

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import time
 
 from jax import NamedSharding
@@ -50,7 +49,7 @@ def loss(params, batch):
   return -jnp.mean(jnp.sum(preds * targets, axis=1))
 
 
-@partial(jax.jit, donate_argnums=0)
+@jax.jit(donate_argnums=0)
 def train_step(params, batch):
   grads = grad(loss)(params, batch)
   return [

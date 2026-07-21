@@ -83,7 +83,7 @@ class Comparator(Enum):
   EQ = 1
   GEQ = 2
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class _SymbolicConstraint:
   # Either e1 == e2 if cmp == Comparator.EQ else e1 >= e2
   cmp: Comparator
@@ -211,7 +211,7 @@ class _DimFactor:
     return self._syntactic_cmp(other) >= 0
 
   def evaluate(self, env: DimVarEnv, scope: SymbolicScope):
-    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+    from jax._src.lax import lax
 
     if self.var is not None:
       try:
@@ -1227,7 +1227,7 @@ def is_symbolic_dim(p: DimSize) -> TypeGuard[_DimExpr]:
 
 dtypes.python_scalar_types.add(_DimExpr)
 dtypes.python_scalar_types_to_dtypes[_DimExpr] = dtypes.python_scalar_types_to_dtypes[int]
-dtypes.canonicalize_value_handlers[_DimExpr] = lambda x: x
+dtypes.register_canonicalize_value_handler(_DimExpr, None)
 
 def _einsum_contract_path(*operands, **kwargs):
   """Like opt_einsum.contract_path, with support for DimExpr shapes.
@@ -1344,7 +1344,7 @@ def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
                            dim):
   res, = mlir.eval_dynamic_shape(ctx, (dim,))
   assert isinstance(res, mlir.ir.Value)
-  out_type = mlir.aval_to_ir_type(ctx.avals_out[0])
+  out_type = mlir.aval_to_ir_type(ctx.module_context, ctx.avals_out[0])
   if out_type != res.type:
     return [mlir.hlo.convert(out_type, res)]
   else:
@@ -1738,7 +1738,7 @@ dimension_size_p.def_impl(_dimension_size_impl)
 
 def _dimension_size_lowering_rule(ctx, arg, *, dimension):
   dim_size = mlir.hlo.get_dimension_size(arg, dimension)
-  dim_type = mlir.aval_to_ir_type(core.dim_value_aval())
+  dim_type = mlir.aval_to_ir_type(ctx.module_context, core.dim_value_aval())
   if dim_size.type != dim_type:
     dim_size = mlir.hlo.convert(dim_type, dim_size)
   return [dim_size]
@@ -1767,7 +1767,7 @@ class ShapeEvaluator:
     return res
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ShapeConstraint:
 
   comp: Comparator
@@ -1787,7 +1787,7 @@ class ShapeConstraint:
         ok = (left >= right)
       else:
         assert False  # We are in a context where we know we can evaluate
-                      # all symbolic expressions to constants.
+        # all symbolic expressions to constants.
     except InconclusiveDimensionOperation as e:
       raise self.make_error(eval) from e
     if not ok:
@@ -1801,7 +1801,7 @@ class ShapeConstraint:
     resolved statically, returns a value representing if the
     constraint is satisfied.
     """
-    from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+    from jax._src.lax import lax
 
     left, right = eval.evaluate(self.left), eval.evaluate(self.right)
     # Try to evaluate the constraint statically.
@@ -1899,7 +1899,7 @@ class ShapeConstraints:
           is_ok, *error_message_inputs,
           error_message=error_message)
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class _DimEquation:
   # Encodes that `aval_dim_expr`, which is a symbolic expressions containing
   # unknown dimension variables from the abstract values, is the specification

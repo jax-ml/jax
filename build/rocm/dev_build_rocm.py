@@ -70,9 +70,10 @@ def clean_dist_directory():
 
 
 def build_jax_xla(xla_path, rocm_version, rocm_target, use_clang, clang_path):
-    bazel_options = (
+    bazel_options = [
         f"--bazel_options=--override_repository=xla={xla_path}" if xla_path else ""
-    )
+        f"--bazel_options=--override_module=xla={xla_path}" if xla_path else ""
+    ]
     clang_option = f"--clang_path={clang_path}" if clang_path else ""
     build_command = [
         "python3",
@@ -83,9 +84,8 @@ def build_jax_xla(xla_path, rocm_version, rocm_target, use_clang, clang_path):
         "--rocm_path=%/opt/rocm-{rocm_version}/",
         "--rocm_version=60",
         f"--rocm_amdgpu_targets={rocm_target}",
-        bazel_options,
         "--verbose"
-    ]
+    ] + bazel_options
 
     if clang_option:
         build_command.append(clang_option)

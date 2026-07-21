@@ -1,6 +1,6 @@
 # Profiling computation
 
-<!--* freshness: { reviewed: '2025-06-12' } *-->
+<!--* freshness: { reviewed: '2026-04-30' } *-->
 
 ## Viewing program traces with Perfetto
 
@@ -349,6 +349,14 @@ jax.profiler.stop_trace()
     each sparse core to trace on the TPU.
 4.  `tpu_num_chips_to_profile_per_task`: Specifies the number of TPU chips to
     profile per task.
+5.  `tpu_perf_counters`: Controls the collection of performance counters.
+    Defaults to `True`.
+
+```{note}
+For a complete list of advanced profiling flags, including power monitoring
+and periodic counter sampling, see the [Advanced Profiler Options](https://github.com/openxla/xprof/blob/master/docs/advanced_profiler_options.md)
+in the OpenXLA XProf repository.
+```
 
 ##### GPU options
 

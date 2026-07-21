@@ -1,0 +1,8 @@
+rules:
+  obfuscation:
+    # Disable because many workflows use expressions of this type in their names, e.g.:
+    # "Build ${{ format('{0}', 'jaxlib') }} artifacts"
+    disable: true
+  dangerous-triggers:
+    ignore:
+      - "upload_metadata.yml"

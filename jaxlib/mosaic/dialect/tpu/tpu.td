@@ -42,7 +42,8 @@ def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension
   let parameters = (ins
     ArrayRefParameter<"int64_t", "">:$lhs_contracting_dims,
     ArrayRefParameter<"int64_t", "">:$rhs_contracting_dims,
-    ArrayRefParameter<"int64_t", "">:$lhs_non_contracting_dims,
+    // Empty when lhs is a 1-D vector.
+    OptionalArrayRefParameter<"int64_t", "">:$lhs_non_contracting_dims,
     // Empty when rhs is a 1-D vector.
     OptionalArrayRefParameter<"int64_t", "">:$rhs_non_contracting_dims,
     // The contract is a flattened structure, wherein, each element is half of a
@@ -53,35 +54,11 @@ def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension
     OptionalArrayRefParameter<"int64_t", "">:$rhs_batch_dims
     );
     let assemblyFormat = "`<` `[` $lhs_contracting_dims `]` `,` `[` $rhs_contracting_dims `]` `,` "
-                     "`[` $lhs_non_contracting_dims `]` `,` `[` (`]`):($rhs_non_contracting_dims^ `]`)? `,` "
+                     "`[` (`]`):($lhs_non_contracting_dims^ `]`)? `,` `[` (`]`):($rhs_non_contracting_dims^ `]`)? `,` "
                      "`[` $output_dim_order `]` `,` "
                      "`[` (`]`):($lhs_batch_dims^ `]`)? `,` "
                      "`[` (`]`):($rhs_batch_dims^ `]`)? `>`";
     let constBuilderCall = "::mlir::tpu::DotDimensionNumbersAttr::get($_builder.getContext(), $0)";
-}
-
-class TPU_Type<string name, string mnemonic_, list<Trait> traits = [],
-               string baseCppType = "::mlir::Type">
-    : TypeDef<TPU_Dialect, name, traits, baseCppType> {
-  let mnemonic = mnemonic_;
-}
-
-def TPU_Float8EXMYType : TPU_Type<"Float8EXMY", "float8_exmy",
-                            [DeclareTypeInterfaceMethods<FloatTypeInterface, ["getFloatSemantics"]>]> {
-    let summary = "EXMY type in a 8 bit container";
-    let description = [{
-      EXMY type in a 8 bit container. Meaningful bits are aligned to LSB, and
-      bits higher than the underlying exmy type in the container are considered
-      as ignored. See https://arxiv.org/abs/2405.13938 for more details.
-    }];
-
-    let parameters = (ins
-      TypeParameter<"::mlir::FloatType", "Underlying EXMY type">:$underlying_type
-    );
-
-    let assemblyFormat = [{
-      `<` $underlying_type `>`
-    }];
 }
 
 #endif  // TPU_BASE

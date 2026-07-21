@@ -12,11 +12,12 @@ concurrency:
 
 jobs:
   build-jax-in-docker:
+    if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
     runs-on: linux-x86_64-cirrascale-64-8gpu-amd-mi250
     env:
       BASE_IMAGE: "ubuntu:22.04"
       TEST_IMAGE: ubuntu-jax-upstream-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
-      PYTHON_VERSION: "3.11"
+      PYTHON_VERSION: "3.12"
       ROCM_VERSION: "6.3.3"
       WORKSPACE_DIR: workdir_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
     steps:
@@ -31,7 +32,7 @@ jobs:
       - name: Print system info
         run: |
           rocm-smi
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           path: ${{ env.WORKSPACE_DIR }}
           persist-credentials: false

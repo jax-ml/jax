@@ -311,6 +311,9 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testWelchAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                             noverlap, nfft, detrend, return_onesided,
                             scaling, timeaxis, average):
+    # TODO(magaonka-amd): re-enable once issue is fixed.
+    if jtu.is_device_rocm():
+      self.skipTest("Skipping due to flakiness in infra nodes in ROCm 7.2.0.")
     if np.dtype(dtype).kind == 'c':
       return_onesided = False
       if detrend is not None:

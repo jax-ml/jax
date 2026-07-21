@@ -13,24 +13,23 @@
 # limitations under the License.
 """Pallas helper functions."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Hashable, Sequence
 import functools
 from typing import Any, TypeVar, cast, overload
-from collections.abc import Hashable
 
 from jax._src import api
-from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
+from jax._src import lax as lax
 from jax._src import numpy as jnp
 from jax._src import tree_util
 from jax._src import typing as jax_typing
-import jax._src.lax as lax
 from jax._src.lax.control_flow import conditionals
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import mpmd
 from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas import utils as pl_utils
+from jax._src.state import types as state_types
 
 
 empty = api.named_call(lax.empty)
@@ -154,62 +153,20 @@ def loop(
   return decorator
 
 
-_ENABLE_DEBUG_CHECKS = config.bool_state(
-    "jax_pallas_enable_debug_checks",
-    default=False,
-    help=(
-        "If set, ``pl.debug_check`` calls are checked at runtime. Otherwise,"
-        " they are a noop."
-    ),
-)
-
-
-enable_debug_checks = _ENABLE_DEBUG_CHECKS
-
-
-def debug_checks_enabled() -> bool:
-  """Returns runtime checks are enabled."""
-  return _ENABLE_DEBUG_CHECKS.value
-
-
-def debug_check(condition, message):
-  """Check the condition if
-  :func:`~jax.experimental.pallas.enable_debug_checks` is set, otherwise
-  do nothing.
-  """
-  return checkify.debug_check(condition, message)
-
-def _make_kernel(body,
-                 out_type: object,
-                 mesh: pl_core.Mesh,
-                 scratch_types: pl_core.ScratchShapeTree = (),
-                 name: str | None = None,
-                 **mesh_kwargs
-                 ):
-  def wrapper(*operands):
-    return mpmd.mpmd_map(
-        [(mesh, body)],
-        out_types=out_type,
-        scratch_types=scratch_types,
-        name=name,
-        **mesh_kwargs,
-    )(*operands)
-  return wrapper
-
-
-def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
-           out_type: object | None = (),
-           *,
-           mesh: pl_core.Mesh,
-           scratch_types: pl_core.ScratchShapeTree = (),
-           compiler_params: pl_core.CompilerParams | None = None,
-           interpret: bool = False,
-           cost_estimate: pl_core.CostEstimate | None = None,
-           debug: bool = False,
-           name: str | None = None,
-           metadata: dict[str, str] | None = None,
+def kernel(
+    body: Callable | Sequence[Callable] | api.NotSpecified = api.NotSpecified(),
+    out_type: object = (),
+    *,
+    mesh: pl_core.Mesh | Sequence[pl_core.Mesh],
+    scratch_types: pl_core.ScratchShapeTree = (),
+    compiler_params: pl_core.CompilerParams | None = None,
+    interpret: Any = False,
+    cost_estimate: pl_core.CostEstimate | None = None,
+    debug: bool = False,
+    name: str | None = None,
+    metadata: dict[str, str] | None = None,
 ):
-  """Entry point for creating a Pallas kernel.
+  r"""Entry point for creating a Pallas kernel.
 
   This is a convenience wrapper around ``mpmd_map`` for executing a kernel
   over a mesh.
@@ -220,27 +177,41 @@ def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
 
     def kernel_body(in_ref, out_ref):
       ...
-    kernel = pl.kernel(kernel_body, out_shape=...)
+    kernel = pl.kernel(kernel_body, out_type=...)
 
   If ``body`` is omitted, this function behaves as a decorator factory and
   will return a decorator that can be used to annotate a kernel body:
 
   .. code-block:: python
 
-    @pl.kernel(out_shape=...)
+    @pl.kernel(mesh=..., out_type=...)
     def kernel(in_ref, out_ref):
       ...
+
+  For MPMD kernels, you can pass parallel lists of bodies and meshes:
+
+  .. code-block:: python
+
+    my_kernel = pl.kernel(
+        body=[vector_fn, scalar_fn],
+        mesh=[v_mesh, s_mesh],
+        out_type=...
+    )
 
   Args:
     body: The body of the kernel. If provided, this function behaves as a
       decorator, and if omitted, this function behaves as a decorator factory.
-    out_shape: The shape of the output. Should be a PyTree of
-      ``jax.ShapeDtypeStruct`` or ``jax.Array`` s.
-    mesh: The mesh to run the kernel on.
-    scratch_shapes: The shapes of the scratch arrays.
+      Can also be a sequence of callables to be paired with a sequence of
+      meshes.
+    out_type: The type of the output. Should be a PyTree of
+      ``jax.ShapeDtypeStruct`` or JAX types.
+    mesh: The mesh to run the kernel on. Must be a sequence of meshes if
+      ``body`` is a sequence of callables.
+    scratch_types: The types of the scratch ``Ref``\s to allocate. Should be a
+      PyTree of ``jax.ShapeDtypeStruct`` or JAX types.
     compiler_params: The compiler parameters to pass to the backend.
     interpret: Whether to run the function in interpret mode.
-    debug: Whether or not to out helpful debugging information.
+    debug: Whether or not to output helpful debugging information.
     cost_estimate: The cost estimate of the function.
     name: The (optional) name of the kernel.
     metadata: Optional dictionary of information about the kernel that will be
@@ -249,26 +220,49 @@ def kernel(body: Callable | api.NotSpecified = api.NotSpecified(),
   Returns:
     If ``body`` is provided, returns a function that runs the kernel.
     It should take any number of input operands and returns an output with the
-    same PyTree structure as `out_shape`.
+    same PyTree structure as `out_type`.
     If ``body`` is omitted, returns a decorator that can be used to annotate
     a kernel body.
   """
   # Note we default out_shape to None to allow `body` to come before it
   # in the function signature, but `body` itself is optional.
-  kwds = dict(
-      out_type=out_type,
-      mesh=mesh,
+  make_kernel = functools.partial(
+      mpmd.mpmd_map,
+      out_types=out_type,
       scratch_types=scratch_types,
       compiler_params=compiler_params,
-      interpret=interpret,
+      interpret=(
+          config.pallas_tpu_interpret_mode_context_manager.value or interpret
+      ),
       cost_estimate=cost_estimate,
       debug=debug,
       name=name,
-      metadata=metadata)
+      metadata=metadata,
+  )
+
   if isinstance(body, api.NotSpecified):
-    return lambda fun: _make_kernel(fun, **kwds)
-  else:
-    return _make_kernel(body, **kwds)
+    # Decorator mode.
+    if isinstance(mesh, Sequence):
+      raise ValueError(
+          "mesh cannot be a sequence when using pl.kernel as a decorator."
+      )
+    return lambda fun: make_kernel([(mesh, fun)])
+  elif isinstance(body, Sequence):
+    # MPMD mode.
+    if not isinstance(mesh, Sequence):
+      raise ValueError(
+          "mesh must be a sequence when body is a sequence of callables."
+      )
+    if len(body) != len(mesh):
+      raise ValueError("body and mesh sequences must have the same length.")
+    meshes_and_fns = list(zip(mesh, body))
+    return make_kernel(meshes_and_fns)
+  # Single kernel.
+  if isinstance(mesh, Sequence):
+    raise ValueError(
+        "mesh cannot be a sequence when body is a single callable."
+    )
+  return make_kernel([(mesh, body)])
 
 
 def with_scoped(
@@ -311,3 +305,29 @@ def with_scoped(
       )
     return inner
   return decorator
+
+
+def select_ref(idx: jax_typing.Array, *refs) -> state_types.TransformedRef:
+  """Selects a ref from a list of refs based on the runtime value of a scalar index.
+
+  This is currently only supported for DMA operations and at the top level of a
+  ref. It can wrap other ref operations like `at` underneath.
+
+  Example::
+
+    x_ref = pl.select_ref(idx, x0_ref.at[...], x1_ref)
+    pltpu.async_copy(x_ref, y_ref, sem).wait()
+
+  Args:
+    idx: A scalar array specifying which ref to select.
+    *refs: A sequence of refs to select from.
+
+  Returns:
+    A TransformedRef that represents the selection.
+  """
+  if len(refs) <= 1:
+    raise ValueError("At least two refs are required for pl.select_ref.")
+  return state_types.TransformedRef(
+      ref=refs,
+      transforms=(state_types.SelectTransform(idx),),
+  )

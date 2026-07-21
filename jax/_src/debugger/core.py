@@ -68,7 +68,7 @@ def _safe_flatten_dict(dct: dict[Any, Any]
 
 
 @tree_util.register_pytree_node_class
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class DebuggerFrame:
   """Encapsulates Python frame information."""
   filename: str

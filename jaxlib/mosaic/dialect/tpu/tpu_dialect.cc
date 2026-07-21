@@ -17,15 +17,20 @@ limitations under the License.
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <numeric>
 #include <optional>
+#include <string>
 #include <utility>
 
+#include "absl/algorithm/container.h"
 #include "absl/hash/hash.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/str_join.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
@@ -196,15 +201,20 @@ void TPUDialect::getCanonicalizationPatterns(RewritePatternSet& results) const
   results.add<MemRefDimOfSlice, MemRefDimOfSqueeze>(getContext());
 }
 
-CoreType GetCoreTypeOfParentOp(Operation& op) {
+Operation* GetParentOpWithCoreType(Operation& op) {
   Operation* parent = &op;
   while ((parent = parent->getParentOp())) {
     if (auto core_type = TPUDialect::GetCoreTypeAttr(parent);
         core_type.has_value()) {
-      return *core_type;
+      return parent;
     }
   }
-  return CoreType::kTc;
+  return nullptr;
+}
+
+CoreType GetCoreTypeOfParentOp(Operation& op) {
+  Operation* parent = GetParentOpWithCoreType(op);
+  return parent ? *TPUDialect::GetCoreTypeAttr(parent) : CoreType::kTc;
 }
 
 absl::StatusOr<func::FuncOp> GetFuncWithCoreType(ModuleOp module,
@@ -329,7 +339,7 @@ AffineMap TiledLayoutAttr::getAffineMap() const {
     SmallVector<AffineExpr, 8> new_exprs;
     auto dimensions = tile.dimensions();
     int64_t untiled_rank = exprs.size() - dimensions.size();
-    assert(untiled_rank >= 0);
+    CHECK_GE(untiled_rank, 0);
     for (int64_t i = 0; i < untiled_rank; ++i) {
       new_exprs.push_back(exprs[i]);
     }
@@ -344,7 +354,7 @@ AffineMap TiledLayoutAttr::getAffineMap() const {
   int64_t num_symbols = 0;
   AffineExpr result = getAffineConstantExpr(0, getContext());
   SmallVector<int64_t> strides = getExpandedStrides();
-  assert(strides.size() == exprs.size());
+  CHECK_EQ(strides.size(), exprs.size());
   for (int64_t i = 0; i < exprs.size(); ++i) {
     AffineExpr stride_expr =
         ShapedType::isDynamic(strides[i])
@@ -501,6 +511,28 @@ SmallVector<int64_t> TiledLayoutAttr::getExpandedStrides() const {
   return strides;
 }
 
+SmallVector<int64_t> TiledLayoutAttr::getSubtileUnit(
+    const ArrayRef<xla::Tile> tiles) {
+  assert(!tiles.empty());
+  const int64_t first_tile_rank = tiles.front().dimensions().size();
+  SmallVector<int64_t> subtile_unit(first_tile_rank, 1);
+
+  size_t current_tiled_rank = first_tile_rank;
+  for (const xla::Tile& tile : tiles.drop_front()) {
+    const size_t tile_rank = tile.dimensions().size();
+    // Tiled layout verifier disallows tiles that tile past the first tile.
+    CHECK_LE(tile_rank, current_tiled_rank);
+    for (int64_t i = 0; i < tile_rank; ++i) {
+      const int64_t tiled_dim = current_tiled_rank - tile_rank + i;
+      if (tiled_dim < first_tile_rank) {
+        subtile_unit[tiled_dim] *= tile.dimension(i);
+      }
+    }
+    current_tiled_rank += tile_rank;
+  }
+  return subtile_unit;
+}
+
 LogicalResult TiledLayoutAttr::verify(
     function_ref<InFlightDiagnostic()> emitError,
     const llvm::ArrayRef<xla::Tile> tiles,
@@ -514,6 +546,10 @@ LogicalResult TiledLayoutAttr::verify(
   const int64_t rank = tile_strides.size();
   const xla::Tile& first_tile = tiles.front();
   const int64_t first_tile_rank = first_tile.dimensions().size();
+  if (first_tile_rank > rank) {
+    return emitError() << "First tile rank cannot exceed the length of strides "
+                          "(the memref rank)";
+  }
   // The interpretation of tile strides is unclear if there is nested tiling
   // across first tiles (e.g. T(8, 128)(2, 4, 64)), and this has no applications
   // anyway.
@@ -605,6 +641,27 @@ std::optional<bool> areAnyDivisible(Value lhs, Value rhs, int64_t divisor,
 }
 }  // namespace
 
+std::optional<int64_t> getRemainder(Value value, int64_t divisor,
+                                    int64_t fuel) {
+  if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
+    if (auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue())) {
+      return int_attr.getInt() % divisor;
+    }
+  }
+  if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
+    if (auto lhs_rem = getRemainder(add_op.getLhs(), divisor, fuel / 2)) {
+      if (auto rhs_rem =
+              getRemainder(add_op.getRhs(), divisor, (fuel + 1) / 2)) {
+        return (*lhs_rem + *rhs_rem) % divisor;
+      }
+    }
+  }
+  if (isGuaranteedDivisible(value, divisor, fuel)) {
+    return 0;
+  }
+  return std::nullopt;
+}
+
 std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (fuel <= 0) {
     return std::nullopt;
@@ -655,6 +712,11 @@ std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
     return isDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
   if (auto div_op = value.getDefiningOp<arith::DivUIOp>()) {
+    if (auto rhs_cst = mlir::getConstantIntValue(div_op.getRhs())) {
+      return isDivisible(div_op.getLhs(), divisor * *rhs_cst, fuel - 1);
+    }
+  }
+  if (auto div_op = value.getDefiningOp<arith::DivSIOp>()) {
     if (auto rhs_cst = mlir::getConstantIntValue(div_op.getRhs())) {
       return isDivisible(div_op.getLhs(), divisor * *rhs_cst, fuel - 1);
     }
@@ -761,6 +823,203 @@ std::pair<bool, bool> mightCommunicateBetweenChips(mlir::Operation* op) {
   CommsAnalysisState state;
   analyzeCrossChipCommunication(op, &state);
   return std::make_pair(state.has_communication, state.has_custom_barrier);
+}
+
+LogicalResult verifyGather(Operation* op, ArrayRef<int64_t> operand_shape,
+                           ArrayRef<int64_t> offsets_shape,
+                           ArrayRef<int64_t> result_shape) {
+  // Expected shapes:
+  //   Slice shape   : [s0, ..., sm]
+  //
+  //   1D offsets:
+  //     Operand shape : [z, s0, ..., sm]
+  //     Offsets shape : [o]
+  //     Result shape  : [o, s0, ..., sm]
+  //
+  //   2D offsets:
+  //     Operand shape : [1, z, s0, ..., sm]
+  //     Offsets shape : [1, o]
+  //     Result shape  : [1, o, s0, ..., sm]
+
+  uint64_t offsets_rank = offsets_shape.size();
+
+  // We require offsets shape and operand sample shape to be 1D or (1, N), and
+  // their ranks must match.
+  // Offsets shape : [o] or [1, o]
+  // Operand sample shape : [z] or [1, z]
+  if ((offsets_rank != 1 && offsets_rank != 2) ||
+      (offsets_rank == 2 && offsets_shape[0] != 1)) {
+    return op->emitOpError("Offsets shape must be 1D or (1, N), got (")
+           << absl::StrJoin(offsets_shape, ", ") << ")";
+  }
+
+  uint64_t slice_rank = result_shape.size() - offsets_rank;
+  if (operand_shape.size() <= slice_rank) {
+    return op->emitOpError(
+               "Source (gather operand) rank must be > slice rank, ")
+           << "got source rank: " << operand_shape.size()
+           << ", slice rank: " << slice_rank;
+  }
+  uint64_t operand_sample_rank = operand_shape.size() - slice_rank;
+  ArrayRef<int64_t> result_offset_dims = result_shape.take_front(offsets_rank);
+  ArrayRef<int64_t> result_slice_dims = result_shape.take_back(slice_rank);
+  ArrayRef<int64_t> operand_slice_dims = operand_shape.take_back(slice_rank);
+  ArrayRef<int64_t> operand_sample_dims =
+      operand_shape.take_front(operand_sample_rank);
+
+  if (operand_sample_rank > 2 ||
+      (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
+    return op->emitOpError("Source (gather operand) sample shape must be ")
+           << "1D or (1, N), got (" << absl::StrJoin(operand_sample_dims, ", ")
+           << ")";
+  }
+  if (operand_sample_rank != offsets_rank) {
+    return op->emitOpError("Source (gather operand) sample rank must match ")
+           << "offsets rank, got " << operand_sample_rank << " vs "
+           << offsets_rank;
+  }
+
+  const std::string result_shape_str = absl::StrJoin(result_shape, ", ");
+
+  // Make sure that there is one output slice per offset.
+  // Offsets shape : [o] or [1, o]
+  // Result shape  : [o'0, .., o'p, s0, .., sm]
+  // [o] or [1, o] == [o'0, .., o'p]
+  if (!absl::c_equal(offsets_shape, result_offset_dims)) {
+    return op->emitOpError("Offsets shape (")
+           << absl::StrJoin(offsets_shape, ", ")
+           << ") must match the majormost dimensions of the target (gather "
+              "result) shape ("
+           << result_shape_str << ")";
+  }
+
+  // At each offset, we are copying an ND slice of data. Make sure that the
+  // slice shape is the same in the operand and the output for the gather.
+  // Operand shape : [z, s0, .., sm] or [1, z, s0, .., sm]
+  // Result shape :  [o, s'0, .., s'm] or [1, o, s'0, .., s'm]
+  // [s0, .., sm] == [s'0, .., s'm]
+  if (!absl::c_equal(operand_slice_dims, result_slice_dims)) {
+    const std::string plural = slice_rank == 1 ? "" : "s";
+    return op->emitOpError(absl::StrFormat(
+        "%d minormost dimension%s of the source (gather operand) shape (%s) "
+        "must match the minormost dimension%s of the target (gather result) "
+        "shape (%s)",
+        slice_rank, plural, absl::StrJoin(operand_shape, ", "), plural,
+        result_shape_str));
+  }
+  return success();
+}
+
+LogicalResult verifyScatter(Operation* op, ArrayRef<int64_t> updates_shape,
+                            ArrayRef<int64_t> offsets_shape,
+                            ArrayRef<int64_t> operand_shape) {
+  // Expected shapes:
+  //   Slice shape   : [s0, ..., sm]
+  //
+  //   1D offsets:
+  //     Operand shape : [z, s0, ..., sm]
+  //     Offsets shape : [o]
+  //     Updates shape : [o, s0, ..., sm]
+  //
+  //   2D offsets:
+  //     Operand shape : [1, z, s0, ..., sm]
+  //     Offsets shape : [1, o]
+  //     Updates shape : [1, o, s0, ..., sm]
+
+  uint64_t offsets_rank = offsets_shape.size();
+
+  // We require offsets shape and operand sample shape to be 1D or (1, N), and
+  // their ranks must match.
+  // Offsets shape : [o] or [1, o]
+  // Operand sample shape : [z] or [1, z]
+  if ((offsets_rank != 1 && offsets_rank != 2) ||
+      (offsets_rank == 2 && offsets_shape[0] != 1)) {
+    return op->emitOpError("Offsets shape must be 1D or (1, N), got (")
+           << absl::StrJoin(offsets_shape, ", ") << ")";
+  }
+
+  uint64_t slice_rank = updates_shape.size() - offsets_rank;
+  if (operand_shape.size() <= slice_rank) {
+    return op->emitOpError(
+               "Target (scatter operand) rank must be > slice rank, ")
+           << "got target rank: " << operand_shape.size()
+           << ", slice rank: " << slice_rank;
+  }
+  uint64_t operand_sample_rank = operand_shape.size() - slice_rank;
+  ArrayRef<int64_t> updates_offset_dims =
+      updates_shape.take_front(offsets_rank);
+  ArrayRef<int64_t> updates_slice_dims = updates_shape.take_back(slice_rank);
+  ArrayRef<int64_t> operand_slice_dims = operand_shape.take_back(slice_rank);
+  ArrayRef<int64_t> operand_sample_dims =
+      operand_shape.take_front(operand_sample_rank);
+  if (operand_sample_rank > 2 ||
+      (operand_sample_rank == 2 && operand_sample_dims[0] != 1)) {
+    return op->emitOpError("Target (scatter operand) sample shape must be ")
+           << "1D or (1, N), got (" << absl::StrJoin(operand_sample_dims, ", ")
+           << ")";
+  }
+  if (operand_sample_rank != offsets_rank) {
+    return op->emitOpError("Target (scatter operand) sample rank must match ")
+           << "offsets rank, got " << operand_sample_rank << " vs "
+           << offsets_rank;
+  }
+
+  const std::string updates_shape_str = absl::StrJoin(updates_shape, ", ");
+
+  // Make sure that there is one slice of updates per offset.
+  // Offsets shape : [o] or [1, o]
+  // Updates shape : [o'0, .., o'p, s0, .., sm]
+  // [o] or [1, o] == [o'0, .., o'p]
+  if (!absl::c_equal(offsets_shape, updates_offset_dims)) {
+    return op->emitOpError("Offsets shape (")
+           << absl::StrJoin(offsets_shape, ", ")
+           << ") must match the majormost dimensions of the source "
+              "(scatter updates) shape ("
+           << updates_shape_str << ")";
+  }
+
+  // At each offset, we are copying an ND slice of data. Make sure that the
+  // slice shape is the same in the updates and the operand for the scatter.
+  // Updates shape : [o, s0, .., sm] or [1, o, s0, .., sm]
+  // Operand shape : [z, s'0, .., s'm] or [1, z, s'0, .., s'm]
+  // [s0, .., sm] == [s'0, .., s'm]
+  if (!absl::c_equal(operand_slice_dims, updates_slice_dims)) {
+    const std::string plural = slice_rank == 1 ? "" : "s";
+    return op->emitOpError(absl::StrFormat(
+        "%d minormost dimension%s of the source (scatter updates) shape (%s) "
+        "must match the minormost dimension%s of the target (scatter operand) "
+        "shape (%s)",
+        slice_rank, plural, updates_shape_str, plural,
+        absl::StrJoin(operand_shape, ", ")));
+  }
+  return success();
+}
+
+namespace {
+bool hasSharedMemorySpace(MemorySpace memory_space,
+                          std::optional<CoreType> core_type) {
+  return memory_space == MemorySpace::kHbm ||
+         (memory_space == MemorySpace::kVmem && core_type.has_value() &&
+          *core_type == CoreType::kTc) ||
+         memory_space == MemorySpace::kVmemShared;
+}
+}  // namespace
+
+FailureOr<bool> isGather(Operation& op, MemorySpace source_memory_space,
+                         std::optional<CoreType> source_core_type,
+                         MemorySpace target_memory_space,
+                         std::optional<CoreType> target_core_type) {
+  if (hasSharedMemorySpace(source_memory_space, source_core_type) &&
+      target_memory_space == MemorySpace::kVmem) {
+    return true;
+  }
+  if (source_memory_space == MemorySpace::kVmem &&
+      hasSharedMemorySpace(target_memory_space, target_core_type)) {
+    return false;
+  }
+  return op.emitOpError(
+      "The transfer must be between HBM and VMEM, VMEM_SHARED and VMEM, or TC "
+      "VMEM and VMEM");
 }
 
 }  // namespace mlir::tpu

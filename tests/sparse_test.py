@@ -16,8 +16,6 @@ import contextlib
 from functools import partial
 import itertools
 import math
-import os
-from pathlib import Path
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -40,15 +38,6 @@ import jax.numpy as jnp
 from jax._src.util import split_list
 import numpy as np
 import scipy.sparse
-
-def get_rocm_version():
-  rocm_path = os.environ.get("ROCM_PATH", "/opt/rocm")
-  version_path = Path(rocm_path) / ".info" / "version"
-  if not version_path.exists():
-    raise FileNotFoundError(f"Expected ROCm version file at {version_path}")
-  version_str = version_path.read_text().strip()
-  major, minor, *_ = version_str.split(".")
-  return int(major), int(minor)
 
 jax.config.parse_flags_with_absl()
 
@@ -245,14 +234,6 @@ class cuSparseTest(sptu.SparseTestCase):
       transpose=[True, False],
   )
   def test_csr_matmat(self, shape, dtype, transpose):
-    if (
-        jtu.is_device_rocm() and
-        get_rocm_version() < (6, 4) and
-        dtype in (jtu.dtypes.floating + jtu.dtypes.complex)
-    ):
-      # TODO: Remove this check when ROCm 6.4+ is the minimum supported version
-      self.skipTest("ROCm <6.4 bug: NaN propagation when beta==0 (fixed in ROCm 6.4.0)")
-
     op = lambda M: M.T if transpose else M
 
     B_rng = jtu.rand_default(self.rng())
@@ -639,6 +620,7 @@ class cuSparseTest(sptu.SparseTestCase):
 
 class SparseGradTest(sptu.SparseTestCase):
   @jtu.sample_product(has_aux=[True, False])
+  @jax.default_matmul_precision("highest")
   def test_sparse_value_and_grad(self, has_aux):
     rng_sparse = sptu.rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())
@@ -664,6 +646,7 @@ class SparseGradTest(sptu.SparseTestCase):
                           sparse.value_and_grad(f, argnums=1, has_aux=has_aux)(Xsp, y))
 
   @jtu.sample_product(has_aux=[True, False])
+  @jax.default_matmul_precision("highest")
   def test_sparse_grad(self, has_aux):
     rng_sparse = sptu.rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())
@@ -690,6 +673,42 @@ class SparseGradTest(sptu.SparseTestCase):
     with self.subTest("wrt dense"):
       self.assertAllClose(jax.grad(f, argnums=1, has_aux=has_aux)(X, y),
                           sparse.grad(f, argnums=1, has_aux=has_aux)(Xsp, y))
+
+  @jax.default_matmul_precision("highest")
+  def test_bcoo_dot_general_vmap_matvec_grad(self):
+    A_dense = jnp.array(
+        [[4.0, -1.0, 0.0, 0.0],
+         [-1.0, 4.0, -1.0, 0.0],
+         [0.0, -1.0, 4.0, -1.0],
+         [0.0, 0.0, -1.0, 4.0]],
+        dtype=jnp.float32)
+    A_bcoo = sparse.BCOO.fromdense(A_dense)
+    B = jnp.array(
+        [[1.0, 0.0, 2.0],
+         [0.0, 1.0, 1.0],
+         [1.0, 1.0, 0.0],
+         [0.0, 2.0, 1.0]],
+        dtype=jnp.float32)
+
+    def sparse_objective(data):
+      A = sparse.BCOO(
+          (data, A_bcoo.indices),
+          shape=A_bcoo.shape,
+          indices_sorted=A_bcoo.indices_sorted,
+          unique_indices=A_bcoo.unique_indices)
+      X = jax.vmap(lambda b: A @ b, in_axes=1, out_axes=1)(B)
+      return jnp.sum(X ** 2)
+
+    def dense_objective(A):
+      X = jax.vmap(lambda b: A @ b, in_axes=1, out_axes=1)(B)
+      return jnp.sum(X ** 2)
+
+    grad_bcoo_data = jax.grad(sparse_objective)(A_bcoo.data)
+    grad_dense = jax.grad(dense_objective)(A_dense)
+
+    self.assertEqual(grad_bcoo_data.shape, A_bcoo.data.shape)
+    self.assertAllClose(
+        grad_bcoo_data, sparse_bcoo._bcoo_extract(A_bcoo.indices, grad_dense))
 
   @jtu.sample_product(
     has_aux=[True, False],
@@ -731,6 +750,7 @@ class SparseGradTest(sptu.SparseTestCase):
                       deep=[True,False],
                       arg0=[True,False],
                       bias=[True,False])
+  @jax.default_matmul_precision("highest")
   def test_sparse_pytree_grad(self, has_aux, deep, arg0, bias):
     rng_sparse = sptu.rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())

@@ -104,7 +104,7 @@ def lobpcg_standard(
     return _lobpcg_standard_matrix(A, X, m, tol, debug=False)
   return _lobpcg_standard_callable(A, X, m, tol, debug=False)
 
-@functools.partial(jax.jit, static_argnames=['m', 'debug'])
+@jax.jit(static_argnames=['m', 'debug'])
 def _lobpcg_standard_matrix(
     A: jax.Array,
     X: jax.Array,
@@ -115,7 +115,7 @@ def _lobpcg_standard_matrix(
   return _lobpcg_standard_callable(
       functools.partial(_mm, A), X, m, tol, debug)
 
-@functools.partial(jax.jit, static_argnames=['A', 'm', 'debug'])
+@jax.jit(static_argnames=['A', 'm', 'debug'])
 def _lobpcg_standard_callable(
     A: Callable[[jax.Array], jax.Array],
     X: jax.Array,

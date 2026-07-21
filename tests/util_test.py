@@ -149,6 +149,7 @@ class UtilTest(jtu.JaxTestCase):
       example_cached_fn(stable_keys[i % len(stable_keys)])
       example_cached_fn(Key())
 
+
   def test_weakref_lru_cache_asan_problem(self):
 
     @weakref_lru_cache

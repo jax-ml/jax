@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Sequence
+import contextlib
 import dataclasses
-from typing import Any, TypeAlias
+from typing import Any
 
 import jax
 from jax._src import core as jax_core
-from jax._src import state
 from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
@@ -30,130 +30,16 @@ from jax._src.pallas.mosaic import tpu_info
 import jax.numpy as jnp
 
 
-Tiling: TypeAlias = Sequence[Sequence[int]]
-
-
-@dataclasses.dataclass(frozen=True)
-class MemoryRef(pallas_core.MemoryRef):
-  """A MemoryRef for SparseCore."""
-
-  tiling: Tiling | None = None
-
-  def __init__(
-      self,
-      shape: Sequence[int],
-      dtype: jax.typing.DTypeLike,
-      memory_space: tpu_core.MemorySpace,
-      tiling: Tiling | None = None,
-  ):
-    super().__init__(jax_core.ShapedArray(shape, dtype), memory_space)
-
-    for tile in tiling or ():
-      if len(tile) > len(shape):
-        raise ValueError(
-            f"Tile rank must not exceed shape rank: {tile=} vs {shape=}"
-        )
-
-    object.__setattr__(self, "tiling", tiling)
-
-  def get_ref_aval(self) -> state.TransformedRef | state.AbstractRef:
-    return AbstractRef(self.inner_aval, self.memory_space, tiling=self.tiling)
-
-
-class AbstractRef(state.AbstractRef):
-  """An AbstractRef for SparseCore."""
-
-  tiling: Tiling | None
-
-  def __init__(
-      self,
-      aval: jax_core.AbstractValue,
-      memory_space: tpu_core.MemorySpace,
-      *,
-      kind: Any | None = None,
-      tiling: Tiling | None = None,
-  ):
-    super().__init__(aval, memory_space, kind)
-
-    self.tiling = tiling
-
-  def update(
-      self,
-      inner_aval: Any | None = None,
-      memory_space: Any | None = None,
-      kind: Any | None = None,
-      tiling: Tiling | None = None,
-  ) -> AbstractRef:
-    return AbstractRef(
-        inner_aval if inner_aval is not None else self.inner_aval,
-        memory_space if memory_space is not None else self.memory_space,
-        kind=kind if kind is not None else self.kind,
-        tiling=tiling if tiling is not None else self.tiling,
-    )
-
-
-@dataclasses.dataclass
-class BlockSpec(pallas_core.BlockSpec):
-  """A BlockSpec for SparseCore.
-
-  Attributes:
-    indexed_by: The optional index of a parameter to use as the indexer. If set,
-      the pipeline emitter will issue and indirect stream indexing into the
-      value of this parameter as part of the pipeline.
-    indexed_dim: The dimension to index into. Optional unless ``indexed_by`` is
-      set.
-
-  See also:
-    :class:`jax.experimental.pallas.BlockSpec`
-  """
-
-  indexed_by: int | None = None
-  indexed_dim: int | None = None
-
-  def __post_init__(self):
-    if (self.indexed_by is None) != (self.indexed_dim is None):
-      raise ValueError(
-          "indexed_by and indexed_dim must both be set or both unset"
-      )
-
-  def to_block_mapping(
-      self,
-      origin: pallas_core.OriginStr,
-      array_aval: jax_core.ShapedArray,
-      *,
-      index_map_avals: Sequence[jax_core.AbstractValue],
-      index_map_tree: tree_util.PyTreeDef,
-      grid: pallas_core.GridMappingGrid,
-      vmapped_dims: tuple[int, ...],
-      debug: bool = False,
-  ) -> BlockMapping:
-    bm = super().to_block_mapping(
-        origin,
-        array_aval,
-        index_map_avals=index_map_avals,
-        index_map_tree=index_map_tree,
-        grid=grid,
-        vmapped_dims=vmapped_dims,
-        debug=debug,
-    )
-    return BlockMapping(
-        **{f.name: getattr(bm, f.name) for f in dataclasses.fields(bm)},
-        indexed_by=self.indexed_by,
-        indexed_dim=self.indexed_dim,
-    )
-
-
-@dataclasses.dataclass(frozen=True)
-class BlockMapping(pallas_core.BlockMapping):
-  indexed_by: int | None = None
-  indexed_dim: int | None = None
-
-
 def get_sparse_core_info() -> tpu_info.SparseCoreInfo:
-  """Returns the SparseCore information for the current device."""
-  return tpu_info.get_tpu_info().sparse_core or tpu_info.SparseCoreInfo(
-      num_cores=0, num_subcores=0, num_lanes=0, dma_granule_size_bytes=0,
-  )
+  """Returns the SparseCore information for the current device.
+
+  Raises:
+    RuntimeError: If the current TPU does not have SparseCores.
+  """
+  sc_info = tpu_info.get_tpu_info().sparse_core
+  if sc_info is None:
+    raise RuntimeError("The current TPU does not have SparseCores")
+  return sc_info
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -205,9 +91,7 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
       raise ValueError(f"{self} should have the same core axis name and number"
                        f" of cores as the VectorSubcoreMesh {other_mesh}.")
     elif isinstance(other_mesh, tpu_core.TensorCoreMesh):
-      assert len(other_mesh.axis_names) == 1
-      axis_name = other_mesh.axis_names[0]
-      if self.axis_name == axis_name:
+      if self.axis_name == other_mesh.axis_name:
         raise ValueError(
             f"{self} should have a different axis name from the TensorCoreMesh"
             f" {other_mesh}."
@@ -222,6 +106,10 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
         tpu_core.MemorySpace.SMEM,
         tpu_core.MemorySpace.SEMAPHORE,
     ]
+
+  @contextlib.contextmanager
+  def tracing_context(self):
+    yield
 
 
 def _scalar_subcore_mesh_discharge_rule(
@@ -338,7 +226,18 @@ class VectorSubcoreMesh(pallas_core.Mesh):
         return True
       raise ValueError(f"{self} should have the same core axis name and number"
                        f" of cores as the ScalarSubcoreMesh {other_mesh}.")
-    # TODO: Add support for mpmd with the TensorCore mesh.
+    elif isinstance(other_mesh, tpu_core.TensorCoreMesh):
+      if self.core_axis_name == other_mesh.axis_name:
+        raise ValueError(
+            f"{self} should have a different core axis name from the"
+            f" TensorCoreMesh {other_mesh}."
+        )
+      if self.subcore_axis_name == other_mesh.axis_name:
+        raise ValueError(
+            f"{self} should have a different subcore axis name from the"
+            f" TensorCoreMesh {other_mesh}."
+        )
+      return True
     return super().check_is_compatible_with(other_mesh)
 
   @property
@@ -350,6 +249,9 @@ class VectorSubcoreMesh(pallas_core.Mesh):
         tpu_core.MemorySpace.SEMAPHORE,
     ]
 
+  @contextlib.contextmanager
+  def tracing_context(self):
+    yield
 
 def _vector_subcore_mesh_discharge_rule(
     in_avals,
@@ -402,3 +304,27 @@ def supported_shapes(dtype: jax.typing.DTypeLike) -> Sequence[tuple[int, ...]]:
   if packing_factor == 1:
     return [(num_lanes,)]
   return [(num_lanes * packing_factor,), (packing_factor, num_lanes)]
+
+
+@tree_util.register_dataclass
+@dataclasses.dataclass(frozen=True)
+class Indices:
+  """Indices for a gather or a scatter on SparseCore.
+
+  Attributes:
+    values: The values of the indices. Can be an array or a ref.
+    ignored_value: If not None, the indices with this value will be ignored.
+  """
+
+  values: Any
+  ignored_value: int | None = dataclasses.field(
+      default=None, metadata=dict(static=True)
+  )
+
+  def pretty_print(
+      self, context: jax_core.JaxprPpContext, *, print_dtype: bool = True
+  ) -> str:
+    values = self.values.pretty_print(context, print_dtype=print_dtype)
+    if self.ignored_value is None:
+      return values
+    return f"{values}~{self.ignored_value}"

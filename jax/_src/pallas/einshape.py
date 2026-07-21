@@ -63,20 +63,23 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import math
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from jax._src import api
 from jax._src import core as jax_core
 from jax._src import dispatch
-from jax._src import typing as jax_typing
 from jax._src import hijax
+from jax._src import typing as jax_typing
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
-from jax._src.pallas.mosaic import lowering as tpu_lowering
-from jax._src.pallas.mosaic import tpu_info
+from jax._src.pallas import core as pallas_core
 import jax.numpy as jnp
 import numpy as np
+
+# TODO(slebedev): fix circular imports in the following:
+from jax._src.pallas.mosaic import lowering as tpu_lowering  # pyrefly: ignore[missing-import]
+from jax._src.pallas.mosaic import tpu_info  # pyrefly: ignore[missing-import]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -159,35 +162,17 @@ def _parse_equation(equation: str) -> tuple[list[list[str]], list[list[str]]]:
   return _parse_side(lhs_str), _parse_side(rhs_str)
 
 
-def get_einshape_transforms(
-    equation: str,
-    input_shape: tuple[int, ...],
-    **sizes: int,
-) -> list[Transform]:
-  """Parses an einshape equation into a sequence of transforms.
-
-  Args:
-    equation: String of the form "ab(cd)->cabd".
-    input_shape: The shape of the input array.
-    **sizes: Integer sizes for dimensions that are split and cannot be inferred.
-
-  Returns:
-    A list of Split, Transpose, and Merge transforms.
-  """
-  lhs, rhs = _parse_equation(equation)
-
-  # Validate LHS against input shape
-  if len(lhs) != len(input_shape):
-    raise ValueError(
-        f"Equation LHS has {len(lhs)} groups but input has {len(input_shape)}"
-        f" dims. LHS: {lhs}, Input shape: {input_shape}"
-    )
-
+def _get_einshape_dims(
+    parsed_side: list[list[str]],
+    shape: tuple[int, ...],
+    sizes: dict[str, int],
+) -> dict[str, int]:
+  """Parses an einshape equation into a dictionary of dimension sizes."""
   dim_sizes: dict[str, int] = {}
 
   # Populate known sizes from input
-  for i, group in enumerate(lhs):
-    shape_val = input_shape[i]
+  for i, group in enumerate(parsed_side):
+    shape_val = shape[i]
     if len(group) == 1:
       name = group[0]
       if name in dim_sizes and dim_sizes[name] != shape_val:
@@ -226,6 +211,34 @@ def get_einshape_transforms(
             f"Ambiguous split for {group} with size {shape_val}. Unknowns:"
             f" {unknown_dims}. Provide sizes via kwargs."
         )
+  return dim_sizes
+
+
+def get_einshape_transforms(
+    equation: str,
+    input_shape: tuple[int, ...],
+    **sizes: int,
+) -> list[Transform]:
+  """Parses an einshape equation into a sequence of transforms.
+
+  Args:
+    equation: String of the form "ab(cd)->cabd".
+    input_shape: The shape of the input array.
+    **sizes: Integer sizes for dimensions that are split and cannot be inferred.
+
+  Returns:
+    A list of Split, Transpose, and Merge transforms.
+  """
+  lhs, rhs = _parse_equation(equation)
+
+  # Validate LHS against input shape
+  if len(lhs) != len(input_shape):
+    raise ValueError(
+        f"Equation LHS has {len(lhs)} groups but input has {len(input_shape)}"
+        f" dims. LHS: {lhs}, Input shape: {input_shape}"
+    )
+
+  dim_sizes = _get_einshape_dims(lhs, input_shape, sizes)
 
   # Check if all RHS dims are known
   flat_rhs = [name for group in rhs for name in group]
@@ -379,6 +392,24 @@ class Einshape(hijax.VJPHiPrimitive):
     )
     super().__init__()
 
+  def vjp_fwd(self, nzs_in, /, *args):
+    del nzs_in
+    return self(*args), None
+
+  def vjp_bwd_retval(self, res, outgrad, /):
+    del res
+    lhs, rhs = self.equation.split("->")
+    new_sizes = dict(self.sizes.items())
+    new_sizes |= _get_einshape_dims(
+        _parse_side(lhs), self.in_avals[0].shape, new_sizes)
+    out = einshape(
+        f"{rhs}->{lhs}",
+        outgrad,
+        assert_is_tile_preserving=self.assert_is_tile_preserving,
+        **new_sizes
+    )
+    return (out,)
+
   def expand(self, x: jax_typing.Array) -> jax_typing.Array:  # pyrefly: ignore[bad-override]
     return einshape_lo(
         self.equation,
@@ -386,6 +417,258 @@ class Einshape(hijax.VJPHiPrimitive):
         assert_is_tile_preserving=self.assert_is_tile_preserving,
         **self.sizes,
     )
+
+  def pull_block_spec_rule(
+      self,
+      ctx,  # PullRuleContext
+      out_block_specs: tuple[Any, ...]
+  ) -> tuple[Any, ...]:
+    del ctx
+    if len(out_block_specs) != 1:
+      raise ValueError("Expected 1 output block spec")
+
+    block_transform = out_block_specs[0]
+    in_shape = self.in_avals[0].shape
+    transforms = get_einshape_transforms(self.equation, in_shape, **self.sizes)
+
+    shape = in_shape
+    shapes = [in_shape] + [
+      shape := t.transform_shape(shape) for t in transforms]
+
+    for t, shape in zip(reversed(transforms), reversed(shapes[:-1])):
+      block_transform = _inverse_block_transform(t, shape, block_transform)
+
+    return (block_transform,)
+
+  def block_eval_rule(self, ctx, x):
+    in_shape = self.in_avals[0].shape
+    transforms = get_einshape_transforms(
+        self.equation, in_shape, **self.sizes
+    )
+    shape = in_shape
+    shapes = [in_shape] + [
+        shape := t.transform_shape(shape) for t in transforms
+    ]
+
+    intermediate_block_shapes = None
+    if (
+        ctx is not None
+        and hasattr(ctx, "out_block_specs")
+        and ctx.out_block_specs is not None
+        and len(ctx.out_block_specs) > 0
+    ):
+      block_spec = ctx.out_block_specs[0]
+      if (
+          hasattr(block_spec, "block_shape")
+          and block_spec.block_shape is not None
+      ):
+        from jax._src.pallas.fuser import block_spec as fuser_block_spec  # pyrefly: ignore[missing-import]
+        curr = fuser_block_spec.BlockIndexTransform(
+            block_shape=block_spec.block_shape
+        )
+        block_shapes_rev = [curr.block_shape]
+        for t, s in zip(reversed(transforms), reversed(shapes[:-1])):
+          curr = _inverse_block_transform(t, s, curr)
+          block_shapes_rev.append(curr.block_shape)
+        block_shapes_rev.reverse()
+        intermediate_block_shapes = block_shapes_rev
+
+    full_shape = in_shape
+    for i, t in enumerate(transforms):
+      match t:
+        case Transpose(perm):
+          x = jnp.transpose(x, perm)
+          full_shape = tuple(full_shape[p] for p in perm)
+        case MergeDims(index, count):
+          new_full_shape = (
+              *full_shape[:index],
+              math.prod(full_shape[index : index + count]),
+              *full_shape[index + count :],
+          )
+          new_tile_shape = (
+              *x.shape[:index],
+              math.prod(x.shape[index : index + count]),
+              *x.shape[index + count :],
+          )
+          x = jnp.reshape(x, new_tile_shape)
+          full_shape = new_full_shape
+        case SplitDims(index, sizes):
+          # When ctx.out_block_specs is available, use the exact intermediate
+          # tile sizes propagated backwards from the compute kernel's target
+          # block shape to ensure synchronization with DMA slicing.
+          if intermediate_block_shapes is not None:
+            target_bds = intermediate_block_shapes[i + 1][  # pyrefly: ignore[unsupported-operation]
+                index : index + len(sizes)
+            ]
+            tile_sizes = tuple(
+                s if bd is None else pallas_core.get_block_size(bd)
+                for s, bd in zip(sizes, target_bds)
+            )
+          elif x.shape[index] == math.prod(sizes):
+            # Unpartitioned or full-size tile along this axis.
+            tile_sizes = sizes
+          elif x.shape[index] == 1:
+            # Unit tile along this axis splits into unit dimensions.
+            tile_sizes = (1,) * len(sizes)
+          else:
+            # Factoring a partial tile (1 < bs < math.prod(sizes)) across
+            # multiple split dimensions cannot be done uniquely without
+            # out_block_specs
+            raise NotImplementedError(
+                f"Cannot split tile dimension of size {x.shape[index]} into "
+                f"sizes {sizes} without out_block_specs in block_eval_rule."
+            )
+          new_full_shape = (
+              *full_shape[:index],
+              *sizes,
+              *full_shape[index + 1 :],
+          )
+          new_tile_shape = (
+              *x.shape[:index],
+              *tile_sizes,
+              *x.shape[index + 1 :],
+          )
+          x = jnp.reshape(x, new_tile_shape)
+          full_shape = new_full_shape
+    return (x,)
+
+def _inverse_block_transform(
+  t: Transform, shape: tuple[int, ...], block_transform: Any
+) -> Any:
+
+  match t:
+    case Transpose(perm):
+      inv_perm: list[int] = [0] * len(perm)
+      for j, p in enumerate(perm):
+        inv_perm[p] = j
+
+      curr_block_shape = block_transform.block_shape
+      prev_block_shape = tuple(curr_block_shape[i] for i in inv_perm)
+
+      def new_block_index_transform(*idxs: Any) -> tuple[Any, ...]:
+        output_offsets = block_transform.block_index_transform(*idxs)
+        return tuple(output_offsets[i] for i in inv_perm)
+
+      return block_transform.replace(
+          block_shape=prev_block_shape,
+          block_index_transform=new_block_index_transform
+      )
+
+    case SplitDims(index=idx, sizes=sizes):
+      k = len(sizes)
+      curr_block_shape = block_transform.block_shape
+      split_block_dims = curr_block_shape[idx : idx + k]
+
+      b_sizes = [
+          s if bd is None else pallas_core.get_block_size(bd)
+          for bd, s in zip(split_block_dims, sizes)
+      ]
+      first_non_unit = next((i for i, b in enumerate(b_sizes) if b > 1), None)
+      if first_non_unit is not None:
+        for j in range(first_non_unit + 1, k):
+          if b_sizes[j] != sizes[j]:
+            raise NotImplementedError(
+                f"SplitDims slice {b_sizes} is non-contiguous in un-split"
+                f" dimension of sizes {sizes}"
+            )
+
+      if all(bd is None for bd in split_block_dims):
+        prev_dim_block_size = None
+      else:
+        prev_dim_block_size = math.prod(
+            s if bd is None else pallas_core.get_block_size(bd)
+            for bd, s in zip(split_block_dims, sizes)
+        )
+      prev_block_shape = (
+          *curr_block_shape[:idx],
+          prev_dim_block_size,
+          *curr_block_shape[idx + k :],
+      )
+
+      split_block_counts = tuple(
+          s if bd is None else s // pallas_core.get_block_size(bd)
+          for s, bd in zip(sizes, split_block_dims)
+      )
+      block_strides = [
+          math.prod(split_block_counts[j + 1 :]) for j in range(k)
+      ]
+
+      def new_block_index_transform(*idxs: Any) -> tuple[Any, ...]:
+        output_offsets = block_transform.block_index_transform(*idxs)
+        split_offsets = output_offsets[idx : idx + k]
+        combined_offset = sum(
+            off * stride for off, stride in zip(split_offsets, block_strides)
+        )
+        return (
+            *output_offsets[:idx],
+            combined_offset,
+            *output_offsets[idx + k :],
+        )
+
+      return block_transform.replace(
+          block_shape=prev_block_shape,
+          block_index_transform=new_block_index_transform,
+      )
+
+    case MergeDims(index=idx, count=count):
+      curr_block_shape = block_transform.block_shape
+      b_merged = curr_block_shape[idx]
+      merged_sizes = shape[idx : idx + count]
+
+      if b_merged is None:
+        new_block_dims = [None] * count
+      else:
+        bs = pallas_core.get_block_size(b_merged)
+        new_block_dims = []
+        for md in reversed(merged_sizes):
+          if bs % md == 0:
+            new_block_dims.append(md)
+            bs //= md
+          elif md % bs == 0:
+            new_block_dims.append(bs)
+            bs = 1
+          else:
+            raise NotImplementedError(
+                f"Unsupported merge block size {b_merged} for dim sizes"
+                f" {merged_sizes}"
+            )
+        if bs != 1:
+          raise NotImplementedError(
+              f"Unsupported merge block size {b_merged} for dim sizes"
+              f" {merged_sizes}"
+          )
+        new_block_dims.reverse()
+
+      prev_block_shape = (
+          *curr_block_shape[:idx],
+          *new_block_dims,
+          *curr_block_shape[idx + 1 :],
+      )
+
+      merged_block_counts = tuple(
+          s if bd is None else s // pallas_core.get_block_size(bd)
+          for s, bd in zip(merged_sizes, new_block_dims)
+      )
+
+      def new_block_index_transform(*idxs: Any) -> tuple[Any, ...]:
+        output_offsets = block_transform.block_index_transform(*idxs)
+        merged_offset = output_offsets[idx]
+        unraveled_offsets = jnp.unravel_index(
+            merged_offset, merged_block_counts
+        )
+        return (
+            *output_offsets[:idx],
+            *unraveled_offsets,
+            *output_offsets[idx + 1 :],
+        )
+
+      return block_transform.replace(
+          block_shape=prev_block_shape,
+          block_index_transform=new_block_index_transform,
+      )
+
+    case _:
+      raise TypeError(f"Unknown transform {type(t)}")
 
 
 def einshape(

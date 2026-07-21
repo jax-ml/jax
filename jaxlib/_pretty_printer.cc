@@ -14,6 +14,8 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <cstddef>
+#include <new>
 #include <optional>
 #include <stack>
 #include <string>
@@ -24,16 +26,17 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/nb_class_ptr.h"
 
 namespace nb = nanobind;
 
 namespace jax {
+namespace {
 
 enum class Color {
   kBlack = 30,
@@ -87,6 +90,11 @@ std::string IntensityToString(Intensity intensity) {
   }
 }
 
+enum class OutputFormat {
+  kText,
+  kHtml,
+};
+
 struct FormatState;
 struct FormatAgendum;
 
@@ -108,8 +116,33 @@ class Doc {
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const = 0;
 
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
+
  private:
   int num_annotations_;
+};
+
+struct DocObject {
+  PyObject_HEAD;
+};
+
+Doc* GetDoc(nb::handle h) {
+  return std::launder(reinterpret_cast<Doc*>(reinterpret_cast<char*>(h.ptr()) +
+                                             sizeof(DocObject)));
+}
+
+class PyDoc : public nb::object {
+ public:
+  NB_OBJECT(PyDoc, nb::object, "Doc", Check);
+
+  static bool Check(nb::handle h) {
+    return Doc::type && PyObject_TypeCheck(h.ptr(), Doc::type);
+  }
+
+  Doc* operator->() const { return GetDoc(*this); }
+  Doc& operator*() const { return *GetDoc(*this); }
+  Doc* get() const { return ptr() ? GetDoc(*this) : nullptr; }
 };
 
 class NilDoc final : public Doc {
@@ -122,29 +155,39 @@ class NilDoc final : public Doc {
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 };
 
 class TextDoc final : public Doc {
  public:
-  TextDoc(std::string text, std::optional<std::string> annotation)
+  TextDoc(std::string text, std::optional<std::string> annotation,
+          std::optional<std::string> anchor = std::nullopt,
+          std::optional<std::string> href = std::nullopt)
       : Doc(annotation.has_value() ? 1 : 0),
         text_(std::move(text)),
-        annotation_(std::move(annotation)) {}
+        annotation_(std::move(annotation)),
+        anchor_(std::move(anchor)),
+        href_(std::move(href)) {}
   std::string Repr() const override;
   void Fits(std::stack<const Doc*>& agenda, int& width) const override;
   bool Sparse(std::stack<const Doc*>& agenda, int& num_annotations,
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 
  private:
   std::string text_;
   std::optional<std::string> annotation_;
+  std::optional<std::string> anchor_;
+  std::optional<std::string> href_;
 };
 
 class ConcatDoc final : public Doc {
  public:
-  explicit ConcatDoc(std::vector<nb_class_ptr<Doc>> children)
+  explicit ConcatDoc(std::vector<PyDoc> children)
       : Doc(TotalNumAnnotations(children)), children_(std::move(children)) {}
   std::string Repr() const override;
 
@@ -153,16 +196,18 @@ class ConcatDoc final : public Doc {
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 
  private:
-  static int TotalNumAnnotations(absl::Span<const nb_class_ptr<Doc>> children) {
+  static int TotalNumAnnotations(absl::Span<const PyDoc> children) {
     int total = 0;
     for (const auto& child : children) {
       total += child->num_annotations();
     }
     return total;
   }
-  std::vector<nb_class_ptr<Doc>> children_;
+  std::vector<PyDoc> children_;
 };
 
 class BreakDoc final : public Doc {
@@ -175,6 +220,8 @@ class BreakDoc final : public Doc {
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 
  private:
   std::string text_;
@@ -182,7 +229,7 @@ class BreakDoc final : public Doc {
 
 class GroupDoc final : public Doc {
  public:
-  explicit GroupDoc(nb_class_ptr<Doc> child)
+  explicit GroupDoc(PyDoc child)
       : Doc(/*num_annotations=*/child->num_annotations()),
         child_(std::move(child)) {}
   std::string Repr() const override;
@@ -191,14 +238,16 @@ class GroupDoc final : public Doc {
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 
  private:
-  nb_class_ptr<Doc> child_;
+  PyDoc child_;
 };
 
 class NestDoc final : public Doc {
  public:
-  explicit NestDoc(int n, nb_class_ptr<Doc> child)
+  explicit NestDoc(int n, PyDoc child)
       : Doc(child->num_annotations()), n_(n), child_(std::move(child)) {}
   std::string Repr() const override;
   void Fits(std::stack<const Doc*>& agenda, int& width) const override;
@@ -206,15 +255,17 @@ class NestDoc final : public Doc {
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 
  private:
   int n_;
-  nb_class_ptr<Doc> child_;
+  PyDoc child_;
 };
 
 class SourceMapDoc final : public Doc {
  public:
-  explicit SourceMapDoc(nb_class_ptr<Doc> child, nb::object source)
+  explicit SourceMapDoc(PyDoc child, nb::object source)
       : Doc(child->num_annotations()),
         child_(std::move(child)),
         source_(std::move(source)) {}
@@ -224,15 +275,17 @@ class SourceMapDoc final : public Doc {
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 
  private:
-  nb_class_ptr<Doc> child_;
+  PyDoc child_;
   nb::object source_;
 };
 
 class ColorDoc final : public Doc {
  public:
-  explicit ColorDoc(nb_class_ptr<Doc> child, std::optional<Color> foreground,
+  explicit ColorDoc(PyDoc child, std::optional<Color> foreground,
                     std::optional<Color> background,
                     std::optional<Intensity> intensity)
       : Doc(child->num_annotations()),
@@ -247,23 +300,114 @@ class ColorDoc final : public Doc {
               bool& seen_break) const override;
   virtual void Format(const FormatAgendum& agendum,
                       FormatState& state) const override;
+  static PyTypeObject* type;
+  static PyType_Slot tp_slots[];
 
  private:
-  nb_class_ptr<Doc> child_;
+  PyDoc child_;
   std::optional<Color> foreground_;
   std::optional<Color> background_;
   std::optional<Intensity> intensity_;
 };
 
+template <typename T>
+struct DocInstance {
+  DocObject base;
+  T doc;
+
+  static_assert(sizeof(DocObject) % alignof(T) == 0);
+};
+
+template <typename T>
+void Doc_tp_dealloc(PyObject* self) {
+  reinterpret_cast<DocInstance<T>*>(self)->doc.~T();
+  Py_TYPE(self)->tp_free(self);
+}
+
+template <typename T, typename... Args>
+PyDoc MakeDoc(Args&&... args) {
+  DocInstance<T>* self = PyObject_New(DocInstance<T>, T::type);
+  new (&self->doc) T(std::forward<Args>(args)...);
+  return nb::steal<PyDoc>(reinterpret_cast<PyObject*>(self));
+}
+
+PyTypeObject* Doc::type = nullptr;
+PyTypeObject* NilDoc::type = nullptr;
+PyTypeObject* TextDoc::type = nullptr;
+PyTypeObject* ConcatDoc::type = nullptr;
+PyTypeObject* BreakDoc::type = nullptr;
+PyTypeObject* GroupDoc::type = nullptr;
+PyTypeObject* NestDoc::type = nullptr;
+PyTypeObject* SourceMapDoc::type = nullptr;
+PyTypeObject* ColorDoc::type = nullptr;
+
+PyObject* Doc_tp_new(PyTypeObject* type, PyObject* args, PyObject* kwds) {
+  PyErr_SetString(PyExc_TypeError,
+                  "Doc is abstract and cannot be instantiated");
+  return nullptr;
+}
+
+PyType_Slot Doc::tp_slots[] = {
+    {Py_tp_new, reinterpret_cast<void*>(Doc_tp_new)},
+    {0, nullptr},
+};
+
+PyType_Slot NilDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<NilDoc>)},
+    {0, nullptr},
+};
+
+PyType_Slot TextDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<TextDoc>)},
+    {0, nullptr},
+};
+
+PyType_Slot ConcatDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<ConcatDoc>)},
+    {0, nullptr},
+};
+
+PyType_Slot BreakDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<BreakDoc>)},
+    {0, nullptr},
+};
+
+PyType_Slot GroupDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<GroupDoc>)},
+    {0, nullptr},
+};
+
+PyType_Slot NestDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<NestDoc>)},
+    {0, nullptr},
+};
+
+PyType_Slot SourceMapDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<SourceMapDoc>)},
+    {0, nullptr},
+};
+
+PyType_Slot ColorDoc::tp_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(&Doc_tp_dealloc<ColorDoc>)},
+    {0, nullptr},
+};
+
 std::string NilDoc::Repr() const { return "nil"; }
 
 std::string TextDoc::Repr() const {
+  std::string result = absl::StrFormat("text(\"%s\"", text_);
   if (annotation_.has_value()) {
-    return absl::StrFormat("text(\"%s\", annotation=\"%s\")", text_,
-                           *annotation_);
-  } else {
-    return absl::StrFormat("text(\"%s\")", text_);
+    absl::StrAppend(&result,
+                    absl::StrFormat(", annotation=\"%s\"", *annotation_));
   }
+  if (anchor_.has_value()) {
+    absl::StrAppend(&result, absl::StrFormat(", anchor=\"%s\"", *anchor_));
+  }
+  if (href_.has_value()) {
+    absl::StrAppend(&result, absl::StrFormat(", href=\"%s\"", *href_));
+  }
+  absl::StrAppend(&result, ")");
+  return result;
 }
 
 std::string ConcatDoc::Repr() const {
@@ -470,10 +614,62 @@ struct FormatState {
   int source_start;
   nb::object source;
   std::vector<Line> lines;
+  OutputFormat output_format = OutputFormat::kText;
+
+  // If true, color/style is reset to default at the end of each line and
+  // restored at the start of the next line. This makes each line in the output
+  // cleanly splittable (independent) of other lines.
+  bool separable_lines = false;
 };
 
-std::string UpdateColor(std::optional<ColorState>& state,
-                        const ColorState& update) {
+void EscapeHtml(std::string* out, absl::string_view data) {
+  out->reserve(out->size() + data.size());
+  for (size_t pos = 0; pos != data.size(); ++pos) {
+    switch (data[pos]) {
+      case '&':
+        out->append("&amp;");
+        break;
+      case '\"':
+        out->append("&quot;");
+        break;
+      case '\'':
+        out->append("&apos;");
+        break;
+      case '<':
+        out->append("&lt;");
+        break;
+      case '>':
+        out->append("&gt;");
+        break;
+      default:
+        out->append(&data[pos], 1);
+        break;
+    }
+  }
+}
+
+std::string GetHtmlSpanOpeningTag(const ColorState& state) {
+  if (state == kDefaultColors) return "";
+  std::string result = "<span class=\"";
+  absl::InlinedVector<std::string, 3> classes;
+  if (state.foreground != Color::kReset) {
+    classes.push_back(
+        absl::StrCat("ansi-fg-", static_cast<int>(state.foreground)));
+  }
+  if (state.background != Color::kReset) {
+    classes.push_back(
+        absl::StrCat("ansi-bg-", static_cast<int>(state.background) + 10));
+  }
+  if (state.intensity != Intensity::kNormal) {
+    classes.push_back(
+        absl::StrCat("ansi-intensity-", static_cast<int>(state.intensity)));
+  }
+  absl::StrAppend(&result, absl::StrJoin(classes, " "), "\">");
+  return result;
+}
+
+std::string UpdateColorAnsi(std::optional<ColorState>& state,
+                            const ColorState& update) {
   if (!state.has_value() || *state == update) {
     return "";
   }
@@ -493,11 +689,90 @@ std::string UpdateColor(std::optional<ColorState>& state,
   return result;
 }
 
+std::string UpdateColorHtml(std::optional<ColorState>& state,
+                            const ColorState& update) {
+  if (!state.has_value() || *state == update) {
+    return "";
+  }
+  std::string result;
+  if (*state != kDefaultColors) {
+    result.append("</span>");
+  }
+  if (update != kDefaultColors) {
+    result.append(GetHtmlSpanOpeningTag(update));
+  }
+  state = update;
+  return result;
+}
+
+std::string UpdateColor(std::optional<ColorState>& color, OutputFormat format,
+                        const ColorState& update) {
+  if (format == OutputFormat::kHtml) {
+    return UpdateColorHtml(color, update);
+  } else {
+    return UpdateColorAnsi(color, update);
+  }
+}
+
+void EndLine(FormatState& state, int next_indent) {
+  if (state.source_map.has_value()) {
+    // We want to ensure that source map boundaries do not fall in the middle
+    // of color regions so if we, e.g., wrap them in an HTML tag, then the tags
+    // are properly nested. Source map boundaries always end at line boundaries
+    // so we reset to the default color if ending a line.
+    absl::StrAppend(
+        &state.line_text,
+        UpdateColor(state.color, state.output_format, kDefaultColors));
+
+    int pos = state.line_text.size();
+    if (state.source_start != pos && state.source.ptr() != nullptr) {
+      state.line_source_map.append(
+          nb::make_tuple(state.source_start, pos, state.source));
+    }
+    state.source_map->append(state.line_source_map);
+    state.line_source_map = nb::list();
+    state.source_start = next_indent;
+  }
+
+  // Transition to default color at line ends if separable or if annotations
+  // exist.
+  if (state.separable_lines || !state.line_annotations.empty()) {
+    absl::StrAppend(
+        &state.line_text,
+        UpdateColor(state.color, state.output_format, kDefaultColors));
+  }
+
+  state.lines.push_back(Line{std::move(state.line_text), state.k,
+                             std::move(state.line_annotations)});
+}
+
 void NilDoc::Format(const FormatAgendum& agendum, FormatState& state) const {}
 
 void TextDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
-  absl::StrAppend(&state.line_text, UpdateColor(state.color, agendum.color),
-                  text_);
+  absl::StrAppend(&state.line_text,
+                  UpdateColor(state.color, state.output_format, agendum.color));
+  bool has_link = (anchor_.has_value() || href_.has_value()) &&
+                  state.output_format == OutputFormat::kHtml;
+  if (has_link) {
+    absl::StrAppend(&state.line_text, "<a");
+    if (anchor_.has_value()) {
+      absl::StrAppend(&state.line_text,
+                      absl::StrFormat(" id=\"%s\"", *anchor_));
+    }
+    if (href_.has_value()) {
+      absl::StrAppend(&state.line_text,
+                      absl::StrFormat(" href=\"%s\"", *href_));
+    }
+    absl::StrAppend(&state.line_text, ">");
+  }
+  if (state.output_format == OutputFormat::kHtml) {
+    EscapeHtml(&state.line_text, text_);
+  } else {
+    absl::StrAppend(&state.line_text, text_);
+  }
+  if (has_link) {
+    absl::StrAppend(&state.line_text, "</a>");
+  }
   if (annotation_.has_value()) {
     state.line_annotations.push_back(*annotation_);
   }
@@ -513,28 +788,20 @@ void ConcatDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
 
 void BreakDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
   if (agendum.mode == BreakMode::kBreak) {
-    if (!state.line_annotations.empty()) {
-      absl::StrAppend(&state.line_text,
-                      UpdateColor(state.color, kAnnotationColors));
-    }
-    if (state.source_map.has_value()) {
-      int pos = state.line_text.size();
-      if (state.source_start != pos && state.source.ptr() != nullptr) {
-        state.line_source_map.append(
-            nb::make_tuple(state.source_start, pos, state.source));
-      }
-      state.source_map->append(state.line_source_map);
-      state.line_source_map = nb::list();
-      state.source_start = agendum.indent;
-    }
-    state.lines.push_back(Line{std::move(state.line_text), state.k,
-                               std::move(state.line_annotations)});
+    EndLine(state, agendum.indent);
+
     state.line_text = std::string(agendum.indent, ' ');
     state.line_annotations.clear();
     state.k = agendum.indent;
   } else {
-    absl::StrAppend(&state.line_text, UpdateColor(state.color, agendum.color),
-                    text_);
+    absl::StrAppend(
+        &state.line_text,
+        UpdateColor(state.color, state.output_format, agendum.color));
+    if (state.output_format == OutputFormat::kHtml) {
+      EscapeHtml(&state.line_text, text_);
+    } else {
+      absl::StrAppend(&state.line_text, text_);
+    }
     state.k += text_.size();
   }
 }
@@ -576,15 +843,19 @@ void ColorDoc::Format(const FormatAgendum& agendum, FormatState& state) const {
 }
 
 std::string Format(const Doc* doc, int width, bool use_color,
+                   OutputFormat output_format, bool separable_lines,
                    std::string annotation_prefix,
                    std::optional<nb::list> source_map) {
   FormatState state;
   if (use_color) {
     state.color = kDefaultColors;
   }
+  state.output_format = output_format;
+  state.separable_lines = separable_lines;
   state.width = width;
   state.source_start = 0;
   state.source_map = source_map;
+
   state.agenda.push(
       FormatAgendum{0, BreakMode::kBreak, doc, kDefaultColors, nb::object()});
   state.k = 0;
@@ -592,6 +863,11 @@ std::string Format(const Doc* doc, int width, bool use_color,
     FormatAgendum agendum = state.agenda.top();
     state.agenda.pop();
     if (source_map.has_value() && agendum.source.ptr() != state.source.ptr()) {
+      // Transition back to default before recording pos.
+      absl::StrAppend(
+          &state.line_text,
+          UpdateColor(state.color, state.output_format, kDefaultColors));
+
       int pos = state.line_text.size();
       if (state.source_start != pos && state.source.ptr() != nullptr) {
         state.line_source_map.append(
@@ -602,42 +878,52 @@ std::string Format(const Doc* doc, int width, bool use_color,
     }
     agendum.doc->Format(agendum, state);
   }
-  if (!state.line_annotations.empty()) {
-    absl::StrAppend(&state.line_text,
-                    UpdateColor(state.color, kAnnotationColors));
-  }
-  if (state.source_map.has_value()) {
-    int pos = state.line_text.size();
-    if (state.source_start != pos && state.source.ptr() != nullptr) {
-      state.line_source_map.append(
-          nb::make_tuple(state.source_start, pos, state.source));
-    }
-    state.source_map->append(state.line_source_map);
-  }
-  state.lines.push_back(Line{std::move(state.line_text), state.k,
-                             std::move(state.line_annotations)});
+
+  // Handle the final line.
+  EndLine(state, 0);
 
   int max_width = 0;
   for (const auto& line : state.lines) {
     max_width = std::max(max_width, line.width);
   }
-  std::string out =
-      absl::StrJoin(state.lines, "\n", [&](std::string* out, const Line& line) {
-        if (line.annotations.empty()) {
-          absl::StrAppend(out, line.text);
-        } else {
-          absl::StrAppend(out, line.text,
-                          std::string(max_width - line.width, ' '),
-                          annotation_prefix, line.annotations[0]);
-          for (int i = 1; i < line.annotations.size(); ++i) {
-            absl::StrAppend(out, std::string(max_width, ' '), annotation_prefix,
-                            line.annotations[i]);
-          }
-        }
-      });
-  absl::StrAppend(&out, UpdateColor(state.color, kDefaultColors));
+
+  std::string out = "";
+
+  for (size_t i = 0; i < state.lines.size(); ++i) {
+    if (i > 0) {
+      absl::StrAppend(&out, "\n");
+    }
+
+    const Line& line = state.lines[i];
+
+    absl::StrAppend(&out, line.text);
+
+    for (size_t j = 0; j < line.annotations.size(); ++j) {
+      if (j > 0) {
+        absl::StrAppend(&out, "\n");
+      }
+
+      if (use_color) {
+        absl::StrAppend(&out, UpdateColor(state.color, state.output_format,
+                                          kAnnotationColors));
+      }
+      int padding = (j == 0) ? (max_width - line.width) : max_width;
+      absl::StrAppend(&out, std::string(padding, ' '), annotation_prefix,
+                      line.annotations[j]);
+      if (use_color) {
+        absl::StrAppend(&out, UpdateColor(state.color, state.output_format,
+                                          kDefaultColors));
+      }
+    }
+  }
+  if (use_color) {
+    absl::StrAppend(
+        &out, UpdateColor(state.color, state.output_format, kDefaultColors));
+  }
   return out;
 }
+
+}  // namespace
 
 NB_MODULE(_pretty_printer, m) {
   nb::enum_<Color>(m, "Color")
@@ -656,77 +942,158 @@ NB_MODULE(_pretty_printer, m) {
       .value("NORMAL", Intensity::kNormal)
       .value("BRIGHT", Intensity::kBright);
 
-  nb::class_<Doc>(m, "Doc")
-      .def("__repr__", &Doc::Repr)
-      .def("__add__",
-           [](nb_class_ptr<Doc> self,
-              nb_class_ptr<Doc> other) -> nb_class_ptr<Doc> {
-             return make_nb_class<ConcatDoc>(std::vector<nb_class_ptr<Doc>>{
-                 std::move(self), std::move(other)});
-           })
-      .def("_format", &Format, nb::arg("width"), nb::arg("use_color"),
-           nb::arg("annotation_prefix"), nb::arg("source_map").none());
+  nb::enum_<OutputFormat>(m, "OutputFormat")
+      .value("TEXT", OutputFormat::kText)
+      .value("HTML", OutputFormat::kHtml);
 
-  nb::class_<NilDoc, Doc>(m, "NilDoc");
-  nb::class_<TextDoc, Doc>(m, "TextDoc");
-  nb::class_<ConcatDoc, Doc>(m, "ConcatDoc");
-  nb::class_<BreakDoc, Doc>(m, "BreakDoc");
-  nb::class_<GroupDoc, Doc>(m, "GroupDoc");
-  nb::class_<NestDoc, Doc>(m, "NestDoc");
-  nb::class_<ColorDoc, Doc>(m, "ColorDoc");
-  nb::class_<SourceMapDoc, Doc>(m, "SourceMapDoc");
+  std::string doc_name =
+      absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".Doc");
+  PyType_Spec doc_spec = {
+      /*.name=*/doc_name.c_str(),
+      /*.basicsize=*/static_cast<int>(sizeof(DocObject)),
+      /*.itemsize=*/0,
+      /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+      /*.slots=*/Doc::tp_slots,
+  };
+  Doc::type = reinterpret_cast<PyTypeObject*>(PyType_FromSpec(&doc_spec));
+  if (!Doc::type) {
+    throw nb::python_error();
+  }
+  auto doc_type_obj = nb::borrow<nb::object>(Doc::type);
+  m.attr("Doc") = doc_type_obj;
 
+  doc_type_obj.attr("__repr__") = nb::cpp_function(
+      [](PyDoc self) { return self->Repr(); }, nb::is_method());
+
+  doc_type_obj.attr("__add__") = nb::cpp_function(
+      [](PyDoc self, PyDoc other) -> PyDoc {
+        return MakeDoc<ConcatDoc>(std::vector<PyDoc>{self, other});
+      },
+      nb::is_method(), nb::arg("other"));
+
+  doc_type_obj.attr("_format") = nb::cpp_function(
+      [](PyDoc self, int width, bool use_color, OutputFormat output_format,
+         bool separable_lines, std::string annotation_prefix,
+         std::optional<nb::list> source_map) {
+        return Format(self.get(), width, use_color, output_format,
+                      separable_lines, annotation_prefix, source_map);
+      },
+      nb::is_method(), nb::arg("width"), nb::kw_only(), nb::arg("use_color"),
+      nb::arg("output_format"), nb::arg("separable_lines"),
+      nb::arg("annotation_prefix"), nb::arg("source_map").none());
+
+  // Define subclasses
+  auto make_subclass = [&](const char* name_suffix, int size,
+                           PyType_Slot* slots) {
+    std::string name = absl::StrCat(nb::cast<std::string>(m.attr("__name__")),
+                                    ".", name_suffix);
+    PyType_Spec spec = {
+        /*.name=*/name.c_str(),
+        /*.basicsize=*/size,
+        /*.itemsize=*/0,
+        /*.flags=*/Py_TPFLAGS_DEFAULT,
+        /*.slots=*/slots,
+    };
+    PyObject* type =
+        PyType_FromSpecWithBases(&spec, reinterpret_cast<PyObject*>(Doc::type));
+    if (!type) {
+      throw nb::python_error();
+    }
+    return reinterpret_cast<PyTypeObject*>(type);
+  };
+
+  NilDoc::type =
+      make_subclass("NilDoc", sizeof(DocInstance<NilDoc>), NilDoc::tp_slots);
+  m.attr("NilDoc") = nb::borrow<nb::object>(NilDoc::type);
+
+  TextDoc::type =
+      make_subclass("TextDoc", sizeof(DocInstance<TextDoc>), TextDoc::tp_slots);
+  m.attr("TextDoc") = nb::borrow<nb::object>(TextDoc::type);
+
+  ConcatDoc::type = make_subclass("ConcatDoc", sizeof(DocInstance<ConcatDoc>),
+                                  ConcatDoc::tp_slots);
+  m.attr("ConcatDoc") = nb::borrow<nb::object>(ConcatDoc::type);
+
+  BreakDoc::type = make_subclass("BreakDoc", sizeof(DocInstance<BreakDoc>),
+                                 BreakDoc::tp_slots);
+  m.attr("BreakDoc") = nb::borrow<nb::object>(BreakDoc::type);
+
+  GroupDoc::type = make_subclass("GroupDoc", sizeof(DocInstance<GroupDoc>),
+                                 GroupDoc::tp_slots);
+  m.attr("GroupDoc") = nb::borrow<nb::object>(GroupDoc::type);
+
+  NestDoc::type =
+      make_subclass("NestDoc", sizeof(DocInstance<NestDoc>), NestDoc::tp_slots);
+  m.attr("NestDoc") = nb::borrow<nb::object>(NestDoc::type);
+
+  SourceMapDoc::type =
+      make_subclass("SourceMapDoc", sizeof(DocInstance<SourceMapDoc>),
+                    SourceMapDoc::tp_slots);
+  m.attr("SourceMapDoc") = nb::borrow<nb::object>(SourceMapDoc::type);
+
+  ColorDoc::type = make_subclass("ColorDoc", sizeof(DocInstance<ColorDoc>),
+                                 ColorDoc::tp_slots);
+  m.attr("ColorDoc") = nb::borrow<nb::object>(ColorDoc::type);
+
+  // Factory functions
   m.def(
-      "nil", []() -> nb_class_ptr<Doc> { return make_nb_class<NilDoc>(); },
-      "An empty document.");
+      "nil", []() -> PyDoc { return MakeDoc<NilDoc>(); }, "An empty document.");
+
   m.def(
       "text",
-      [](std::string text,
-         std::optional<std::string> annotation) -> nb_class_ptr<Doc> {
-        return make_nb_class<TextDoc>(std::move(text), std::move(annotation));
+      [](std::string text, std::optional<std::string> annotation,
+         std::optional<std::string> anchor,
+         std::optional<std::string> href) -> PyDoc {
+        return MakeDoc<TextDoc>(std::move(text), std::move(annotation),
+                                std::move(anchor), std::move(href));
       },
       nb::arg("text"), nb::arg("annotation").none() = std::nullopt,
-      "Literal text.");
+      nb::arg("anchor").none() = std::nullopt,
+      nb::arg("href").none() = std::nullopt, "Literal text.");
+
   m.def(
       "concat",
-      [](std::vector<nb_class_ptr<Doc>> children) -> nb_class_ptr<Doc> {
-        return make_nb_class<ConcatDoc>(std::move(children));
+      [](std::vector<PyDoc> children) -> PyDoc {
+        return MakeDoc<ConcatDoc>(std::move(children));
       },
       nb::arg("children"), "Concatenation of documents.");
+
   m.def(
       "brk",
-      [](std::string text) -> nb_class_ptr<Doc> {
-        return make_nb_class<BreakDoc>(text);
+      [](std::string text) -> PyDoc {
+        return MakeDoc<BreakDoc>(std::move(text));
       },
       nb::arg("text") = std::string(" "),
       R"(A break.
 
 Prints either as a newline or as `text`, depending on the enclosing group.
 )");
+
   m.def(
       "group",
-      [](nb_class_ptr<Doc> child) -> nb_class_ptr<Doc> {
-        return make_nb_class<GroupDoc>(std::move(child));
-      },
+      [](PyDoc child) -> PyDoc { return MakeDoc<GroupDoc>(std::move(child)); },
       R"(Layout alternative groups.
 
 Prints the group with its breaks as their text (typically spaces) if the
 entire group would fit on the line when printed that way. Otherwise, breaks
 inside the group as printed as newlines.
 )");
+
   m.def(
       "nest",
-      [](int n, nb_class_ptr<Doc> child) -> nb_class_ptr<Doc> {
-        return make_nb_class<NestDoc>(n, std::move(child));
+      [](int n, PyDoc child) -> PyDoc {
+        return MakeDoc<NestDoc>(n, std::move(child));
       },
+      nb::arg("n"), nb::arg("child"),
       "Increases the indentation level by `n`.");
+
   m.def(
       "color",
-      [](nb_class_ptr<Doc> child, std::optional<Color> foreground,
+      [](PyDoc child, std::optional<Color> foreground,
          std::optional<Color> background,
-         std::optional<Intensity> intensity) -> nb_class_ptr<Doc> {
-        return make_nb_class<ColorDoc>(std::move(child), foreground, background,
-                                       intensity);
+         std::optional<Intensity> intensity) -> PyDoc {
+        return MakeDoc<ColorDoc>(std::move(child), foreground, background,
+                                 intensity);
       },
       nb::arg("child"), nb::arg("foreground").none() = std::nullopt,
       nb::arg("background").none() = std::nullopt,
@@ -736,10 +1103,11 @@ inside the group as printed as newlines.
 Overrides the foreground/background/intensity of the text for the child doc.
 Requires use_colors=True to be set when printing; otherwise does nothing.
 )");
+
   m.def(
       "source_map",
-      [](nb_class_ptr<Doc> child, nb::object source) -> nb_class_ptr<Doc> {
-        return make_nb_class<SourceMapDoc>(std::move(child), std::move(source));
+      [](PyDoc child, nb::object source) -> PyDoc {
+        return MakeDoc<SourceMapDoc>(std::move(child), std::move(source));
       },
       nb::arg("doc"), nb::arg("source"),
       R"(Source mapping.

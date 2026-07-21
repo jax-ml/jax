@@ -164,12 +164,17 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
 
     try:
       # TODO(pobudzey): Replace with `jtu.check_grads` when it's fixed.
-      dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
       dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
+      dq_ref_host = np.array(dq_ref)
+      dk_ref_host = np.array(dk_ref)
+      dv_ref_host = np.array(dv_ref)
+      del dq_ref, dk_ref, dv_ref
 
-      self.assertAllClose(dq, dq_ref, atol=7e-2)
-      self.assertAllClose(dk, dk_ref, atol=7e-2)
-      self.assertAllClose(dv, dv_ref, atol=5e-2)
+      dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
+
+      self.assertAllClose(dq, dq_ref_host, atol=7e-2)
+      self.assertAllClose(dk, dk_ref_host, atol=7e-2)
+      self.assertAllClose(dv, dv_ref_host, atol=5e-2)
 
     except ValueError as e:
       if "exceeds available shared memory" in e.args[0]:

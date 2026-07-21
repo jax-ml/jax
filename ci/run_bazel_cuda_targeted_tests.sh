@@ -29,10 +29,11 @@
 #   JAXCI_ACCELERATOR_COUNT: value for JAX_ACCELERATOR_COUNT when run_under is enabled (default: 1)
 #   JAXCI_TESTS_PER_ACCELERATOR: value for JAX_TESTS_PER_ACCELERATOR when run_under is enabled (default: 8)
 #   JAXCI_HERMETIC_PYTHON_VERSION: Hermetic Python version (default: 3.14)
-#   JAXCI_XLA_TRACK: XLA source to use, "pinned" or "head" (default: pinned)
+#   JAXCI_XLA_TRACK: XLA source to use, "pinned", "head", or "commit" (default: pinned)
 
 set -euox pipefail
 
+echo "::group::Setup Environment" >&2
 source ci/envs/default.env
 
 if [[ -z "${JAXCI_BAZEL_TARGETS:-}" ]]; then
@@ -47,8 +48,8 @@ if [[ ! "${hermetic_python_version}" =~ ^3\.[0-9]+$ ]]; then
 fi
 
 xla_track="${JAXCI_XLA_TRACK:-pinned}"
-if [[ "${xla_track}" != 'pinned' && "${xla_track}" != 'head' ]]; then
-  echo "Invalid JAXCI_XLA_TRACK value: ${xla_track}. Expected 'pinned' or 'head'."
+if [[ "${xla_track}" != 'pinned' && "${xla_track}" != 'head' && "${xla_track}" != 'commit' ]]; then
+  echo "Invalid JAXCI_XLA_TRACK value: ${xla_track}. Expected 'pinned', 'head', or 'commit'."
   exit 1
 fi
 
@@ -74,7 +75,8 @@ bazel_args=(
   --config=hermetic_cuda_umd
   --repo_env=HERMETIC_PYTHON_VERSION="${hermetic_python_version}"
   --repo_env=HERMETIC_CUDNN_VERSION=9.11.0
-  --repo_env=HERMETIC_CUDA_UMD_VERSION=13.0.2
+  --repo_env=HERMETIC_CUDA_UMD_VERSION=13.1.1
+  --test_env=JAX_PORTSERVER_ADDRESS=@unittest-portserver
   --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
   --test_output=errors
   --strategy=TestRunner=local
@@ -87,12 +89,13 @@ bazel_args=(
   --color=yes
 )
 
-if [[ "${xla_track}" == 'head' ]]; then
+if [[ "${xla_track}" == 'head' || "${xla_track}" == 'commit' ]]; then
   if [[ -z "${JAXCI_XLA_GIT_DIR:-}" ]]; then
-    echo 'JAXCI_XLA_GIT_DIR is not set for XLA track "head".'
+    echo "JAXCI_XLA_GIT_DIR is not set for XLA track \"${xla_track}\"."
     exit 1
   fi
   bazel_args+=(--override_repository=xla="${JAXCI_XLA_GIT_DIR}")
+  bazel_args+=(--override_module=xla="${JAXCI_XLA_GIT_DIR}")
 fi
 
 if [[ -n "${JAXCI_TEST_TAG_FILTERS:-}" ]]; then
@@ -124,8 +127,18 @@ if [[ ${#targets[@]} -eq 0 ]]; then
   echo 'No Bazel targets were provided.'
   exit 1
 fi
+echo "::endgroup::" >&2
 
-bazel test "${bazel_args[@]}" "${targets[@]}" || bazel_retval=$?
+PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
 
+echo "::group::Bazel CUDA targeted tests" >&2
+INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
+
+bazel test --invocation_id="$INVOCATION_ID" "${bazel_args[@]}" "${targets[@]}" || bazel_retval=$?
+echo "::endgroup::" >&2
+python3 ci/utilities/report_resultstore_link.py "CUDA targeted tests" "$INVOCATION_ID" "${bazel_retval:-0}"
+
+echo "::group::Cleanup" >&2
 ci/utilities/collect_bazel_test_xmls.sh test-artifacts
+echo "::endgroup::" >&2
 exit "${bazel_retval:-0}"

@@ -326,8 +326,6 @@ The problem is that the first argument to the function is `self`, which has type
 The most straightforward approach is to create a helper function external to the class that can be JIT-decorated in the normal way. For example:
 
 ```{code-cell} ipython3
-from functools import partial
-
 class CustomClass:
   def __init__(self, x: jnp.ndarray, mul: bool):
     self.x = x
@@ -336,7 +334,7 @@ class CustomClass:
   def calc(self, y):
     return _calc(self.mul, self.x, y)
 
-@partial(jit, static_argnums=0)
+@jit(static_argnums=0)
 def _calc(mul, x, y):
   if mul:
     return x * y
@@ -365,7 +363,7 @@ class CustomClass:
     self.mul = mul
 
   # WARNING: this example is broken, as we'll see below. Don't copy & paste!
-  @partial(jit, static_argnums=0)
+  @jit(static_argnums=0)
   def calc(self, y):
     if self.mul:
       return self.x * y
@@ -396,7 +394,7 @@ class CustomClass:
     self.x = x
     self.mul = mul
 
-  @partial(jit, static_argnums=0)
+  @jit(static_argnums=0)
   def calc(self, y):
     if self.mul:
       return self.x * y

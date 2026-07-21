@@ -105,7 +105,8 @@ class PyClient {
     // we haven't yet updated JAX clients that expect "gpu". Migrate users and
     // remove this code.
     if (ifrt_client_->platform_name() == "cuda" ||
-        ifrt_client_->platform_name() == "rocm") {
+        ifrt_client_->platform_name() == "rocm" ||
+        ifrt_client_->platform_name() == "oneapi") {
       return "gpu";
     } else {
       return ifrt_client_->platform_name();
@@ -220,6 +221,17 @@ class PyClient {
       absl::Span<uint16_t const> recv_channel_ids,
       nanobind::callable serializer);
 
+  // `CreateHloOutputCallback` creates an XLA HLO output callback capsule from a
+  // Python callable `callable`. `callable` receives as arguments the replica
+  // ID, partition ID, and a list of NumPy arrays (or None for missing operands)
+  // corresponding to the reconstructed operands of the HLO output callback.
+  // It returns the host callback as an opaque capsule object whose reference
+  // will keep the Python callable alive. The host callback can be passed to
+  // `PyClient::CompileAndLoad` or `PyClient::DeserializeExecutable` via the
+  // `host_callbacks` argument.
+  absl::StatusOr<nanobind::object> CreateHloOutputCallback(
+      int64_t callback_id, int64_t num_operands, nanobind::callable callable);
+
   std::vector<PyArray> LiveArrays() const;
 
   static void Register(nanobind::module_& m);
@@ -246,7 +258,7 @@ class PyClient {
   // List guarded by executables_mutex_.
   PyLoadedExecutable* executables_ = nullptr;
 
-#ifdef NB_FREE_THREADING
+#ifdef NB_FREE_THREADED
   static constexpr size_t kNumArraysShards = 16;
 #else
   static constexpr size_t kNumArraysShards = 1;

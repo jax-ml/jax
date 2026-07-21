@@ -57,7 +57,7 @@ class DynamicDOMElement(DOMElement):
   def clear(self):
     pass
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class DynamicDiv(DynamicDOMElement):
   """A `div` that can be edited."""
   _uuid: str = dataclasses.field(init=False)
@@ -99,7 +99,7 @@ class DynamicDiv(DynamicDOMElement):
     self._rendered = False
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class StaticDOMElement(DOMElement):
   """An immutable DOM element."""
   _uuid: str = dataclasses.field(init=False)

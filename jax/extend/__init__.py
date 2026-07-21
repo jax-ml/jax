@@ -46,4 +46,5 @@ from jax.extend import (
     random as random,
     sharding as sharding,
     source_info_util as source_info_util,
+    xla as xla,
 )

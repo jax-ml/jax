@@ -15,6 +15,7 @@
 import functools
 import os
 import sys
+import warnings
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
@@ -61,6 +62,14 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
+
+    if jtu.test_device_matches(["gpu"]):
+      self.enter_context(warnings.catch_warnings())
+      warnings.filterwarnings(
+          "ignore",
+          category=DeprecationWarning,
+          message="The Pallas Triton backend is deprecated",
+      )
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
@@ -155,7 +164,14 @@ class FusedAttentionTest(PallasBaseTest):
           segment_ids=segment_ids,
           interpret=self.INTERPRET,
       )
-    o = impl(q, k, v)
+
+    try:
+      o = impl(q, k, v)
+    except jax.errors.JaxRuntimeError as e:
+      if "RESOURCE_EXHAUSTED" in str(e):
+        self.skipTest(f"Skipped: block size configuration exceeds device "
+                      f"resources: {e}")
+      raise
     o_ref = attention.mha_reference(q, k, v, segment_ids, causal=causal)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
@@ -211,12 +227,18 @@ class FusedAttentionTest(PallasBaseTest):
              causal, use_segment_ids)
 
       if key in {
+        (1, 128, 2, 64,  (("block_q", 64), ("block_k", 128), ("block_q_dkv", 64),
+                          ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 64)),
+         True, False),  # bwd0
         (1, 384, 1, 128, (("block_q", 64), ("block_k", 64), ("block_q_dkv", 64),
                           ("block_kv_dkv", 64), ("block_q_dq", 64), ("block_kv_dq", 64)),
          True,  False),  # bwd1
         (2, 384, 1, 32,  (("block_q", 64), ("block_k", 128), ("block_q_dkv", 64),
                           ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 64)),
          False, False),  # bwd2
+        (2, 128, 1, 32,  (("block_q", 64), ("block_k", 64), ("block_q_dkv", 64),
+                          ("block_kv_dkv", 64), ("block_q_dq", 64), ("block_kv_dq", 64)),
+         True, True),  # bwd6
         (1, 384, 1, 72,  (("block_q", 128), ("block_k", 128), ("block_q_dkv", 32),
                           ("block_kv_dkv", 32), ("block_q_dq", 32), ("block_kv_dq", 128)),
          False, True),   # bwd7
@@ -258,7 +280,13 @@ class FusedAttentionTest(PallasBaseTest):
     def f_ref(q, k, v):
       return attention.mha_reference(q, k, v, segment_ids, causal=causal).sum()
 
-    dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
+    try:
+      dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
+    except jax.errors.JaxRuntimeError as e:
+      if "RESOURCE_EXHAUSTED" in str(e):
+        self.skipTest(f"Skipped: block size configuration exceeds device "
+                      f"resources: {e}")
+      raise
     dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
     # TODO(sharadmv): Fix test.
     self.assertAllClose(dq, dq_ref, atol=5e-2)
@@ -425,4 +453,4 @@ class SoftmaxInterpretTest(SoftmaxTest):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

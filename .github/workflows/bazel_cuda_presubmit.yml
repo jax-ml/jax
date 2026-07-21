@@ -1,4 +1,4 @@
-name: CI - Bazel CUDA tests
+name: Bazel CUDA
 
 on:
   workflow_dispatch:
@@ -26,6 +26,7 @@ concurrency:
 permissions: {}
 jobs:
   build-cuda-artifacts:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -35,17 +36,17 @@ jobs:
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
           python: ["3.14",]
           cuda-version: ["13"]
-    name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
+    name: "${{ matrix.runner && 'Build wheels' }}"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
       python: ${{ matrix.python }}
       cuda-version: ${{ matrix.cuda-version }}
-      clone_main_xla: 1
+      clone_main_xla: 0
       upload_artifacts_to_gcs: false
 
   run-tests:
-    if: github.event.repository.fork == false
+    if: github.event.repository.fork == false && github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cuda.yml
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
@@ -53,7 +54,7 @@ jobs:
         matrix:
           # Note: For testing external dependencies updates, change the python values
           # add 3.13 and 3.13-nogil here when debugging.
-          python: ["3.11", "3.14"]
+          python: ["3.12", "3.14"]
           runner: ["linux-x86-n4-16"]
           jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
@@ -61,12 +62,12 @@ jobs:
           exclude:
             # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
             # coverage for one of each, we don't need to run both.
-            - python: "3.11"
+            - python: "3.12"
               enable-x64: 1
-            - python: "3.11"
+            - python: "3.12"
               enable-x64: 0
               jaxlib-version: "head"
-            - python: "3.11"
+            - python: "3.12"
               enable-x64: 0
               jaxlib-version: "pypi_latest"
               cuda-version: "13"
@@ -78,7 +79,7 @@ jobs:
             # Exclude CUDA 12 on jaxlib head because it's too slow.
             - cuda-version: "12"
               jaxlib-version: "head"
-    name: "Bazel single accelerator ${{ format('{0}', 'CUDA tests') }}"
+    name: "${{ matrix.runner && 'Test' }}"
 # End Presubmit Naming Check github-cuda-presubmits
     with:
       runner: ${{ matrix.runner }}
@@ -94,4 +95,4 @@ jobs:
       build_jax: ${{ 'true' }}
       run_tests_with_rbe: ${{ 'true' }}
       build_artifacts_with_rbe: ${{ 'true' }}
-      clone_main_xla: 1
+      clone_main_xla: 0

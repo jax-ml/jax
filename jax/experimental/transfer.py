@@ -15,7 +15,7 @@
 
 import jax
 from typing import Any, TYPE_CHECKING
-from jax._src.lib import xla_client as _xc
+from jax._src.lib import _jax
 from jax._src.util import use_cpp_class, use_cpp_method
 
 class TransferConnection:
@@ -49,7 +49,7 @@ class TransferConnection:
 
 
 if not TYPE_CHECKING:
-  TransferConnection = use_cpp_class(_xc._xla.TransferConnection)(TransferConnection)
+  TransferConnection = use_cpp_class(_jax.TransferConnection)(TransferConnection)
 
 
 class TransferServer:
@@ -77,11 +77,11 @@ class TransferServer:
 
 
 if not TYPE_CHECKING:
-  TransferServer = use_cpp_class(_xc._xla.TransferServer)(TransferServer)
+  TransferServer = use_cpp_class(_jax.TransferServer)(TransferServer)
 
-start_transfer_server = _xc._xla.start_transfer_server
-if hasattr(_xc._xla, "_make_error_array"):
+start_transfer_server = _jax.start_transfer_server
+if hasattr(_jax, "_make_error_array"):
 
   def make_error_array(aval, message):
     backend = next(iter(aval.sharding.device_set)).client
-    return _xc._xla._make_error_array(backend, aval, str(message))
+    return _jax._make_error_array(backend, aval, str(message))

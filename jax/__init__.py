@@ -75,7 +75,8 @@ from jax._src.config import (
   transfer_guard_device_to_host as transfer_guard_device_to_host,
   make_user_context as make_user_context,
   remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
-  thread_guard as thread_guard
+  thread_guard as thread_guard,
+  auto_pcast as auto_pcast,
 )
 
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
@@ -90,6 +91,7 @@ from jax._src.api import effects_barrier as effects_barrier
 from jax._src.api import block_until_ready as block_until_ready
 from jax._src.ad_checkpoint import checkpoint as checkpoint
 from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
+from jax._src.ad_checkpoint import custom_remat as custom_remat
 from jax._src.ad_checkpoint import remat as remat
 from jax._src.api import clear_caches as clear_caches
 from jax._src.api import copy_to_host_async as copy_to_host_async
@@ -117,6 +119,7 @@ from jax._src.api import jacobian as jacobian
 from jax._src.api import jacfwd as jacfwd
 from jax._src.api import jacrev as jacrev
 from jax._src.api import jit as jit
+from jax._src.api import Inline as Inline
 from jax._src.api import jvp as jvp
 from jax._src.xla_bridge import local_device_count as local_device_count
 from jax._src.xla_bridge import local_devices as local_devices

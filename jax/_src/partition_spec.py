@@ -13,17 +13,49 @@
 # limitations under the License.
 
 from __future__ import annotations
+import enum
 from typing import Any
 
+from jax._src.util import weak_value_interner, immutable
 from jax._src.lib import _jax
-from jax._src.util import use_cpp_class, use_cpp_method
 
-_UNCONSTRAINED_PARTITION = _jax.UNCONSTRAINED_PARTITION
-_canonicalize_partition = _jax.canonicalize_partition
+AxisName = Any
 
+def _check(partitions, unreduced, reduced, unreduced_kind):
+  if None in unreduced:
+    raise ValueError(
+        "unreduced cannot contain None. All elements in unreduced should refer"
+        " to the mesh axes.")
+  if None in reduced:
+    raise ValueError(
+        "reduced cannot contain None. All elements in reduced should refer"
+        " to the mesh axes.")
+  if unreduced & reduced:
+    raise ValueError(
+        "`unreduced` and `reduced` argument to PartitionSpec cannot overlap. "
+        f"Got unreduced: {unreduced} and reduced: {reduced}")
+  if unreduced_kind is not None and not isinstance(unreduced_kind, UnreducedKind):
+      raise TypeError(
+          "Expected unreduced_kind to be of type `jax.sharding.UnreducedKind`"
+          f" but got {type(unreduced_kind)}")
+  if not unreduced and unreduced_kind is not None:
+    raise ValueError(
+        "`unreduced_kind` should be `None` when `unreduced` is an empty set."
+        f" Got {unreduced_kind=} and {unreduced=}")
 
-def unpickle_pspec(partitions, unreduced, reduced):
-  return P(*partitions, unreduced=unreduced, reduced=reduced)
+  for partition in partitions:
+    partition = partition if isinstance(partition, tuple) else (partition,)
+    for p in partition:
+      if p in unreduced:
+        raise ValueError(
+            "partitions cannot overlap with unreduced axes passed to"
+            f" PartitionSpec. Got partitions: {partitions} and unreduced axes:"
+            f" {unreduced}")
+      if p in reduced:
+        raise ValueError(
+            "partitions cannot overlap with reduced axes passed to"
+            f" PartitionSpec. Got partitions: {partitions} and reduced axes:"
+            f" {reduced}")
 
 def _get_ur_str(unreduced, reduced):
   if unreduced and reduced:
@@ -34,9 +66,36 @@ def _get_ur_str(unreduced, reduced):
     return f"reduced={set(reduced)!r}"
   assert False  # unreachable
 
-AxisName = Any
+_canonicalize_partition = _jax.canonicalize_partition  # type: ignore
+_canonicalize_partitions = _jax.canonicalize_partitions  # type: ignore
 
-@use_cpp_class(_jax.PartitionSpec)
+def _get_default_unconstrained(): return _UNCONSTRAINED_PARTITION
+
+class UnconstrainedSingleton:
+  def __repr__(self): return "UNCONSTRAINED"
+  def __reduce__(self): return (_get_default_unconstrained, ())
+
+_UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
+_jax.set_pspec_unconstrained(_UNCONSTRAINED_PARTITION)  # type: ignore
+
+
+def _canonicalize_ur(name, val):
+  if not isinstance(val, frozenset):
+    if not isinstance(val, set):
+      raise TypeError(
+          f"{name} argument of PartitionSpec should "
+          f"of type `frozenset` or `set`. Got type {type(val)}")
+    val = frozenset(val)
+  return val
+
+
+class UnreducedKind(enum.Enum):
+  sum = enum.auto()
+  max = enum.auto()
+  min = enum.auto()
+
+
+@immutable
 class P:
   """Tuple describing how to partition an array across a mesh of devices.
 
@@ -46,27 +105,46 @@ class P:
   This class exists so JAX's pytree utilities can distinguish a partition
   specifications from tuples that should be treated as pytrees.
   """
-  __match_args__ = ("_partitions",)
+  __slots__ = ("_partitions", "unreduced", "reduced", "unreduced_kind",
+               "__weakref__")
+  _partitions: tuple[AxisName]
+  unreduced: frozenset[AxisName]
+  reduced: frozenset[AxisName]
+  unreduced_kind: UnreducedKind | None
 
   # A sentinel value representing a dim is unconstrained.
   UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
-  @use_cpp_method()
-  def __init__(self, *partitions, unreduced=frozenset(), reduced=frozenset()):
-    self._partitions = tuple(_canonicalize_partition(p) for p in partitions)
-    if not isinstance(unreduced, (set, frozenset)):
-      raise TypeError(
-          "`unreduced` argument of PartitionSpec should be of type"
-          f" `frozenset` or `set`. Got type {type(unreduced)}")
-    if not isinstance(reduced, (set, frozenset)):
-      raise TypeError(
-          "`reduced` argument of PartitionSpec should be of type"
-          f" `frozenset` or `set`. Got type {type(reduced)}")
-    self.unreduced = frozenset(unreduced)
-    # See the description of https://github.com/jax-ml/jax/pull/29381
-    self.reduced = frozenset(reduced)
-    # `__init__` is implemented in C++ so this check happens in C++
-    # _check(self._partitions, self.unreduced, self.reduced)
+  @staticmethod
+  @weak_value_interner
+  def _create(partitions, unreduced, reduced, unreduced_kind):
+    # We cannot modify the arguments within the interned function, but we are
+    # free to throw an exception.
+    _check(partitions, unreduced, reduced, unreduced_kind)
+    obj = object.__new__(P)
+    object.__setattr__(obj, '_partitions', partitions)
+    object.__setattr__(obj, 'unreduced', unreduced)
+    object.__setattr__(obj, 'reduced', reduced)
+    object.__setattr__(obj, 'unreduced_kind', unreduced_kind)
+    return obj
+
+  def __new__(cls, *partitions, unreduced=frozenset(), reduced=frozenset(),
+              unreduced_kind=None):
+    partitions = _canonicalize_partitions(partitions)
+    unreduced = _canonicalize_ur('unreduced', unreduced)
+    reduced = _canonicalize_ur('reduced', reduced)
+    if unreduced and unreduced_kind is None:
+      unreduced_kind = UnreducedKind.sum
+    return P._create(partitions, unreduced, reduced, unreduced_kind)  # type: ignore
+
+  # No __eq__ or __hash__: interned classes use object identity.
+
+  def __init_subclass__(cls, *args, **kwargs):
+    raise TypeError("Subclassing `jax.P` is prohibited.")
+
+  @property
+  def partitions(self):
+    return self._partitions
 
   def __repr__(self):
     pr = repr(self._partitions)[1:-1]
@@ -74,37 +152,42 @@ class P:
       return f"P({pr})"
     ur_str = _get_ur_str(self.unreduced, self.reduced)
     pr = '' if not pr else f"{pr} " if pr.endswith(',') else f"{pr}, "
-    return (f"P({pr}{ur_str})")
+    uk = (f", unreduced_kind={self.unreduced_kind.name}" if self.unreduced_kind
+          else "")
+    return f"P({pr}{ur_str}{uk})"
 
-  def __reduce__(self):
-    return (unpickle_pspec, (self._partitions, self.unreduced, self.reduced))
+  def __getnewargs_ex__(self):
+    return (self._partitions,
+            {'unreduced': self.unreduced, 'reduced': self.reduced,
+             'unreduced_kind': self.unreduced_kind})
 
   def __getitem__(self, i):
+    if self.reduced or self.unreduced:
+      raise ValueError(
+          "Using pspec[...] is dangerous when PartitionSpec has non-empty"
+          " unreduced/reduced set. Please use spec.partitions[...]")
     return self._partitions[i]
 
   def __iter__(self):
+    if self.reduced or self.unreduced:
+      raise ValueError(
+          "Using *pspec is dangerous when PartitionSpec has non-empty"
+          " unreduced/reduced set. Please use *spec.partitions")
     return iter(self._partitions)
 
   def __len__(self):
     return len(self._partitions)
 
-  @use_cpp_method()
-  def __eq__(self, other):
-    if isinstance(other, P):
-      return (self._partitions == other._partitions and
-              self.unreduced == other.unreduced and
-              self.reduced == other.reduced)
-    else:
-      return False
-
-  @use_cpp_method()
-  def __hash__(self):
-    return hash((self._partitions, self.unreduced, self.reduced))
-
   def __add__(self, other):
     if isinstance(other, P):
-      return P(*self, *other, unreduced={*self.unreduced, *other.unreduced},
-               reduced={*self.reduced, *other.reduced})
+      if self.unreduced_kind != other.unreduced_kind:
+        raise TypeError(
+            "PartitionSpec can't be added if the unreduced_kind differs in self"
+            f" and other. Got {self=} and {other=}")
+      return P(*self.partitions, *other.partitions,
+               unreduced={*self.unreduced, *other.unreduced},
+               reduced={*self.reduced, *other.reduced},
+               unreduced_kind=self.unreduced_kind)
     elif isinstance(other, tuple):
       if self.unreduced:
         raise TypeError(
@@ -138,10 +221,13 @@ class P:
   def count(self, value):
     return self._partitions.count(_canonicalize_partition(value))
 
-  def update(self, **kwargs):
-    return P(*kwargs.pop("partitions", self._partitions),
-             unreduced=kwargs.pop("unreduced", self.unreduced),
-             reduced=kwargs.pop("reduced", self.reduced))
+  def update(self, partitions=None, unreduced=None, reduced=None, **kwargs):
+    p = self._partitions if partitions is None else partitions
+    ur = self.unreduced if unreduced is None else unreduced
+    r = self.reduced if reduced is None else reduced
+    if 'unreduced_kind' not in kwargs:
+      kwargs['unreduced_kind'] = self.unreduced_kind
+    return P(*p, unreduced=ur, reduced=r, **kwargs)
 
   def to_lo(self):
     return [self]
@@ -150,11 +236,14 @@ class P:
     return self
 
   def to_ct_spec(self):
-    return self.update(unreduced=self.reduced, reduced=self.unreduced)
+    assert self.unreduced_kind is None or self.unreduced_kind is UnreducedKind.sum
+    kind = UnreducedKind.sum if self.reduced else None
+    return self.update(unreduced=self.reduced, reduced=self.unreduced,
+                       unreduced_kind=kind)
 
   def _normalized_spec_for_aval(self, ndim: int) -> P:
     out = [None if p is _UNCONSTRAINED_PARTITION else p
-           for p in self._partitions]
+          for p in self._partitions]
     if len(out) < ndim:
       out.extend([None] * (ndim - len(out)))
     return self.update(partitions=out)
@@ -162,12 +251,11 @@ class P:
   def _check_compatible_wrt_shape(self, shape):
     if len(shape) < len(self._partitions):
       extra_msg = (' For scalars the PartitionSpec should be P()'
-                   if len(shape) == 0 else '')
+                  if len(shape) == 0 else '')
       raise ValueError(
           f"PartitionSpec {self} is only valid for values of rank at least "
           f"{len(self._partitions)}, but was applied to a value of rank "
           f"{len(shape)}.{extra_msg}")
 
-P.__module__ = 'jax.sharding'
-
+P.__module__ = 'jax'
 PartitionSpec = P

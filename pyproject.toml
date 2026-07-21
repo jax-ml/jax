@@ -84,6 +84,9 @@ ignore-missing-imports = [
 ]
 untyped-def-behavior = "check-and-infer-return-any"
 
+[tool.pyrefly.errors]
+redefinition = "ignore"
+
 [tool.ruff]
 preview = true
 exclude = [
@@ -93,7 +96,7 @@ exclude = [
 ]
 line-length = 80
 indent-width = 2
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 ignore = [
@@ -144,5 +147,7 @@ max-complexity = 18
 "docs/notebooks/autodiff_cookbook.ipynb" = ["F811", "F821"]
 "docs/notebooks/autodiff_remat.ipynb" = ["F811", "F821"]
 "docs/notebooks/Custom_derivative_rules_for_Python_code.ipynb" = ["F811"]
+"docs/hijax_custom_derivatives.py" = ["F811"]
+"docs/hijax_custom_derivatives.ipynb" = ["F811"]
 "docs/jep/9407-type-promotion.ipynb" = ["F811"]
 "docs/autodidax.ipynb" = ["F811"]

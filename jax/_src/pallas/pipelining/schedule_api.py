@@ -23,8 +23,8 @@ from collections.abc import Sequence
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
-from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
+from jax._src import flattree as ft
 from jax._src.state import types as state_types
 from jax._src.pallas.pipelining import schedulers
 from jax._src.pallas.pipelining import internal
@@ -124,27 +124,26 @@ Stage = SyncStage | AsyncStage
 
 def trace_fun(
     fun, ref_avals, state_avals, grid
-) -> tuple[jax_core.ClosedJaxpr, Sequence[internal.RefEffect]]:
+) -> tuple[jax_core.Jaxpr, Sequence[internal.RefEffect]]:
   """Trace a stage body function to a Jaxpr."""
   ctx_aval = PipelineContext.aval_pytree(grid, state_avals)
   num_ctx_avals = len(jax.tree.leaves(ctx_aval))
-  flat_avals, in_tree = jax.tree.flatten((ctx_aval, *ref_avals))
-  debug_info = api_util.debug_info("trace_fun", fun, flat_avals, {})
-  flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun, debug_info=debug_info), in_tree
-  )
-  del out_tree_thunk
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fn, flat_avals)
+  in_avals_ft = ft.flatten_args(ctx_aval, *ref_avals)
+  debug_info = api_util.debug_info("trace_fun", fun, in_avals_ft.vals, {})
+  jaxpr, _ = pe.trace_to_jaxpr(fun, in_avals_ft, debug_info)
   ref_effects = [
-      eff for eff in jaxpr.effects if isinstance(eff, state_types.RefEffect)
+      eff for eff in jaxpr.effects
+      if isinstance(eff, state_types.RefEffect)
   ]
   # Subtract off the consts and state_avals, since this is variable per stage.
-  n_const = len(consts)
+  n_const = len(jaxpr.consts)
+  input_idx = {v: i for i, v in enumerate((*jaxpr.constvars,
+                                           *jaxpr.invars))}
   ref_effects = [
-      type(eff)(input_index=eff.input_index - n_const - num_ctx_avals)
+      type(eff)(input_idx[eff.input] - n_const - num_ctx_avals)
       for eff in ref_effects
   ]
-  return jax_core.ClosedJaxpr(jaxpr, consts), ref_effects
+  return jaxpr, ref_effects
 
 def apply_ref_filter(
     stages: Sequence[internal.PipelineStage],
@@ -158,7 +157,7 @@ def apply_ref_filter(
   num_ctx_avals = len(jax.tree.leaves(ctx_aval))
   new_stages = []
   for stage_ in stages:
-    jaxpr = stage_.jaxpr.jaxpr
+    jaxpr = stage_.jaxpr
     ref_effects = stage_.effects
     token_effects = list(internal.filter_tokens(ref_effects))
     refs_to_keep = {
@@ -167,7 +166,7 @@ def apply_ref_filter(
         if ref_filter(aval)
     }
     new_effects = [
-        eff for eff in ref_effects if eff.input_index in refs_to_keep
+        eff for eff in ref_effects if eff.input in refs_to_keep
     ] + token_effects
     new_stages.append(dataclasses.replace(stage_, effects=set(new_effects)))
   return new_stages
@@ -184,7 +183,7 @@ def convert_accum_effects_to_writes(stages: Sequence[internal.PipelineStage]
     new_read_effs = (
         eff
         for eff in read_effs
-        if state_types.WriteEffect(eff.input_index) not in write_effs
+        if state_types.WriteEffect(eff.input) not in write_effs
     )
     effs = (*new_read_effs, *write_effs)
     new_stages.append(dataclasses.replace(stage_, effects=set(effs)))
@@ -208,7 +207,7 @@ def remove_duplicate_writes_between_async_stages(
       write_token = internal.filter_tokens(start_write_effs)
       assert len(write_token) == 1, stage_.effects
       write_token = tuple(write_token)[0]
-      read_token = state_types.ReadEffect(write_token.input_index)
+      read_token = state_types.ReadEffect(write_token.input)
 
       done_stage = [
           x

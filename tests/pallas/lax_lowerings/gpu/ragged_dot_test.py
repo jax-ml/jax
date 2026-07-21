@@ -77,9 +77,10 @@ class RaggedDotGpuPallasTest(jtu.JaxTestCase):
           .as_text(dialect="stablehlo")
       )
       if use_instruction:
-        self.assertIn("pallas_triton_ragged_dot", stablehlo_text)
+        self.assertTrue("pallas_triton_ragged_dot" in stablehlo_text)
       else:
         self.assertNotIn("pallas_triton_ragged_dot", stablehlo_text)
+        self.assertNotIn("triton_kernel_call_ffi", stablehlo_text)
 
   @parameterized.named_parameters(
       dict(testcase_name="dlhs", grad_wrt="dlhs"),
@@ -143,4 +144,4 @@ class RaggedDotGpuPallasTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())

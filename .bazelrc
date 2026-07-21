@@ -6,9 +6,20 @@ common --noenable_bzlmod
 common:bzlmod --enable_bzlmod --noenable_workspace
 ## Make sure direct dependencies specified match the resolved version.
 common:bzlmod --check_direct_dependencies=warning
+## Canonical repo names become `@foo+` instead of `@foo~`
+## TODO: Remove after upgrading to Bazel 8
+common:bzlmod --incompatible_use_plus_in_repo_names
 
 # Make Bazel print out all options from rc files.
 common --announce_rc
+
+# Use a downloader config to mirror GitHub downloads.
+# We use the experimental_ name for better compatibility with different Bazel versions.
+build --experimental_downloader_config=bazel_downloader.cfg
+test --experimental_downloader_config=bazel_downloader.cfg
+fetch --experimental_downloader_config=bazel_downloader.cfg
+sync --experimental_downloader_config=bazel_downloader.cfg
+query --experimental_downloader_config=bazel_downloader.cfg
 
 # By default, execute all actions locally.
 common --spawn_strategy=local
@@ -21,6 +32,9 @@ common --experimental_cc_shared_library
 
 common --incompatible_enable_cc_toolchain_resolution
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
+
+# Increase the timeout scaling factor
+common --http_timeout_scaling=3
 
 # TODO: Migrate for https://github.com/bazelbuild/bazel/issues/7260
 common:clang_local --noincompatible_enable_cc_toolchain_resolution
@@ -129,10 +143,10 @@ common --action_env=PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=upb
 # See https://github.com/bazel-contrib/rules_python/issues/2445
 common --@rules_python//python/config_settings:precompile=force_disabled
 
-# Do not do this. If enabled protobuf's core internal target 
+# Do not do this. If enabled protobuf's core internal target
 # @com_google_protobuf//python:protobuf_python will start depending on a bunch
-# of cc_binary shared libraries artifacts, which will mess with how we link 
-# protobuf dependencies ourselves. By default this value is false, but some 
+# of cc_binary shared libraries artifacts, which will mess with how we link
+# protobuf dependencies ourselves. By default this value is false, but some
 # projects enable it, which we don't want here.
 # common --define=use_fast_cpp_protos=true
 
@@ -181,13 +195,13 @@ common:cuda_v12 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.9"
 common:cuda_v12 --repo_env=HERMETIC_NCCL_VERSION="2.29.7"
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
-common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
+common:cuda_v12 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,sm_101,compute_120"
 
 common:cuda_v13 --repo_env=HERMETIC_CUDA_VERSION="13.0.0"
 common:cuda_v13 --repo_env=HERMETIC_CUDNN_VERSION="9.12.0"
 common:cuda_v13 --repo_env=HERMETIC_NVSHMEM_VERSION="3.3.20"
 common:cuda_v13 --repo_env=HERMETIC_NCCL_VERSION="2.29.7"
-common:cuda_v13 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_75,sm_80,sm_90,sm_100,compute_120"
+common:cuda_v13 --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_75,sm_80,sm_90,sm_100,sm_110,compute_120"
 
 common:cuda_common --repo_env TF_NEED_CUDA=1
 common:cuda_common --repo_env TF_NCCL_USE_STUB=1
@@ -452,7 +466,7 @@ common:rbe_linux_x86_64 --config=ci_linux_x86_64
 common:rbe_linux_x86_64_cuda_common --config=rbe_linux_x86_64_base
 common:rbe_linux_x86_64_cuda_common --config=rbe_gpu_pool
 # Update UMD version when RBE CUDA driver is updated.
-common:rbe_linux_x86_64_cuda_common --repo_env=HERMETIC_CUDA_UMD_VERSION="13.0.2"
+common:rbe_linux_x86_64_cuda_common --repo_env=HERMETIC_CUDA_UMD_VERSION="13.1.1"
 
 common:rbe_linux_x86_64_cuda12 --config=rbe_linux_x86_64_cuda_common
 common:rbe_linux_x86_64_cuda12 --config=ci_linux_x86_64_cuda12
@@ -506,14 +520,12 @@ common:cross_compile_base --config=clang_local
 common:cross_compile_base --host_cpu=k8
 common:cross_compile_base --host_crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
 common:cross_compile_base --extra_execution_platforms=@xla//tools/toolchains/cross_compile/config:linux_x86_64
-
-# Linux Aarch64
-common:cross_compile_linux_aarch64 --config=cross_compile_base
+common:cross_compile_base --extra_toolchains=@xla//tools/toolchains/cross_compile/cc:linux_x86_toolchain
 
 # Set the target CPU to Aarch64
 common:cross_compile_linux_aarch64 --platforms=@xla//tools/toolchains/cross_compile/config:linux_aarch64
 common:cross_compile_linux_aarch64 --cpu=aarch64
-common:cross_compile_linux_aarch64 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
+common:cross_compile_linux_aarch64 --extra_execution_platforms=@xla//tools/toolchains/cross_compile/config:linux_x86_64
 
 common:rbe_cross_compile_base --config=rbe
 common:rbe_cross_compile_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance

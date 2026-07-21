@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass
 import functools
-import threading
 from functools import partial
 import itertools as it
 import logging
@@ -33,7 +33,6 @@ from jax._src import config
 from jax._src.lib import pytree as lib_pytree
 from jax._src.lib import weakref_lru_cache as lib_weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
-from jax._src.lib import jaxlib_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -197,8 +196,7 @@ def merge_lists(bs: Sequence[bool], l0: Sequence[T1], l1: Sequence[T2]
   assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)
   i0, i1 = iter(l0), iter(l1)
   out: list[T1 | T2] = [next(i1) if b else next(i0) for b in bs]
-  sentinel = object()
-  assert next(i0, sentinel) is next(i1, sentinel) is sentinel
+  assert next(i0, sentinel := object()) is next(i1, sentinel) is sentinel
   return out
 
 def subs_list(
@@ -206,8 +204,7 @@ def subs_list(
 ) -> list[T]:
   base_ = iter(base)
   out = [src[i] if i is not None else next(base_) for i in subs]
-  sentinel = object()
-  assert next(base_, sentinel) is sentinel
+  assert next(base_, sentinel := object()) is sentinel
   return out
 
 def subs_list2(
@@ -218,8 +215,7 @@ def subs_list2(
   base_ = iter(base)
   out = [src1[f1] if f1 is not None else src2[f2] if f2 is not None else
          next(base_) for f1, f2, in zip(subs1, subs2)]
-  sentinel = object()
-  assert next(base_, sentinel) is sentinel
+  assert next(base_, sentinel := object()) is sentinel
   return out
 
 def concatenate(xs: Iterable[Sequence[T]]) -> list[T]:
@@ -260,32 +256,15 @@ toposort: Callable[[Iterable[Any]], list[Any]]
 toposort = partial(jaxlib_utils.topological_sort, "parents")
 
 
-def cache(max_size=4096, trace_context_in_key: bool | Callable = True):
-  if trace_context_in_key:
-    trace_context = (trace_context_in_key if callable(trace_context_in_key)
-                     else config.trace_context)
-    def wrap(f):
-      @functools.lru_cache(max_size)
-      def cached(_, *args, **kwargs):
-        return f(*args, **kwargs)
-
-      @functools.wraps(f)
-      def wrapper(*args, **kwargs):
-        if config.check_tracer_leaks.value:
-          return f(*args, **kwargs)
-        return cached(trace_context(), *args, **kwargs)
-
-      wrapper = cast(Any, wrapper)  # avoids missing-attribute typing errors
-      wrapper.cache_clear = cached.cache_clear
-      wrapper.cache_info = cached.cache_info
-      register_cache(wrapper, str(f))
-      return wrapper
-  else:
-    def wrap(f):
-      wrapper = functools.lru_cache(max_size)(f)
-      register_cache(wrapper, str(f))
-      return wrapper
-  return wrap
+def cache(max_size=4096, trace_context_in_key: bool | Callable = True, num_shards=64):
+  def decorator(f):
+    context_fn = (trace_context_in_key if callable(trace_context_in_key)
+                  else config.trace_context if trace_context_in_key else None)
+    cached_f = lib_weakref_lru_cache.strong_lru_cache(
+        f, context_fn, max_size, num_shards=num_shards)
+    register_cache(cached_f, str(f))
+    return cached_f
+  return decorator
 
 # Maps caches to the name of the callable they apply to. All caches in
 # this dictionary support `cache_clear()`.
@@ -366,23 +345,7 @@ def _weakref_lru_cache(f, maxsize, trace_context_in_key, explain):
 # an arg or a kwarg, then the interner may store multiple entries for the same
 # logical call. If this troubles you canonicalize the arguments first, e.g.
 # via a wrapper function.
-if jaxlib_extension_version >= 433:
-  weak_value_interner = lib_weakref_lru_cache.weak_value_interner
-else:
-  def weak_value_interner(f):
-    cache = weakref.WeakValueDictionary()
-    lock = threading.Lock()
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-      key = (args, frozenset(kwargs.items()))
-      with lock:
-        result = cache.get(key)
-        if result is not None:
-          return result
-        result = f(*args, **kwargs)
-        cache[key] = result
-        return result
-    return wrapper
+weak_value_interner = lib_weakref_lru_cache.weak_value_interner
 
 
 def immutable(cls):
@@ -408,7 +371,6 @@ def immutable(cls):
     raise AttributeError(f"cannot delete field {name!r}")
   cls.__setattr__ = __setattr__
   cls.__delattr__ = __delattr__
-
   return cls
 
 
@@ -706,6 +668,67 @@ class HashableWrapper:
       return False
     return self.x == other.x if self.hash is not None else self.x is other.x
 
+@dataclass(frozen=True)
+class Either():
+  is_right : bool
+  val : Any
+
+  def from_left(self):
+    assert not self.is_right
+    return self.val
+
+  def from_right(self):
+    assert self.is_right
+    return self.val
+
+  @property
+  def is_left(self): return not self.is_right
+
+  @staticmethod
+  def left(x): return Either(False, x)
+
+  @staticmethod
+  def right(x): return Either(True, x)
+
+  def __repr__(self):
+    if self.is_left:
+      return f"Left({self.val})"
+    else:
+      return f"Right({self.val})"
+
+# A handy container for (args, kwargs) pairs that lets you map over it etc
+# with an API similar to FlatTree.
+# TODO: hashing, equality, printing etc
+class PyArgs:
+  def __init__(self, args, kwargs):
+    assert isinstance(args, tuple)
+    assert isinstance(kwargs, dict)
+    self.args = args
+    self.kwargs = kwargs
+
+  # True means keep
+  def filter_with_mask(self, mask):
+    assert len(mask) == len(self)
+    keeps = iter(mask)
+    return PyArgs(
+        tuple(x for x in self.args if next(keeps)),
+        {k: v for k, v in self.kwargs.items() if next(keeps)})
+
+  @property
+  def args_kwargs(self):
+    return (self.args, self.kwargs)
+
+  def map(self, f):
+    return PyArgs(
+        tuple(f(x) for x in self.args),
+        {k: f(x) for k, x in self.kwargs.items()})
+
+  def map2(self, ys, f):
+    ys_iter = iter(ys)
+    return self.map(lambda x: f(x, next(ys_iter)))
+
+  def __len__(self):
+    return len(self.args) + len(self.kwargs)
 
 def _original_func(f: Callable) -> Callable:
   if isinstance(f, property):

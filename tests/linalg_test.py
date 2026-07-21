@@ -96,13 +96,7 @@ def osp_linalg_toeplitz(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarra
     return np.vectorize(
       scipy.linalg.toeplitz, signature="(m),(n)->(m,n)", otypes=(np.result_type(c, r),))(c, r)
 
-def osp_linalg_circulant(c: np.ndarray) -> np.ndarray:
-  """Batched scipy circulant for testing."""
-  if scipy_version >= (1, 15):
-    return scipy.linalg.circulant(c)
-  c = np.atleast_1d(c)
-  return np.vectorize(
-      scipy.linalg.circulant, signature="(n)->(n,n)", otypes=(c.dtype,))(c)
+
 
 def osp_linalg_hankel(c: np.ndarray, r: np.ndarray | None = None) -> np.ndarray:
   """Batched scipy hankel for testing."""
@@ -1067,14 +1061,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message="invalid value", category=RuntimeWarning)
   def testPinv(self, shape, hermitian, dtype):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-
-    jnp_fn = partial(jnp.linalg.pinv, hermitian=hermitian)
-    def np_fn(a):
-      # Symmetrize the input matrix to match the jnp behavior.
+    def args_maker():
+      a = rng(shape, dtype)
       if hermitian:
         a = (a + T(a.conj())) / 2
-      return np.linalg.pinv(a, hermitian=hermitian)
+      return [a]
+
+    np_fn = partial(np.linalg.pinv, hermitian=hermitian)
+    jnp_fn = partial(jnp.linalg.pinv, hermitian=hermitian)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-5)
 
@@ -1127,17 +1121,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertArraysEqual(np_result, jnp_result)
 
   @jtu.sample_product(
-    shape=[(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),
-           (2, 3, 4, 5)],
+    [dict(shape=shape, hermitian=hermitian)
+     for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50), (3, 4, 5),
+                   (2, 3, 4, 5)]
+     for hermitian in ([False, True] if len(shape) >= 2 and shape[-1] == shape[-2] else [False])],
     dtype=float_types + complex_types,
   )
-  def testMatrixRank(self, shape, dtype):
+  def testMatrixRank(self, shape, dtype, hermitian):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape, dtype)]
-    a, = args_maker()
-    self._CheckAgainstNumpy(np.linalg.matrix_rank, jnp.linalg.matrix_rank,
+    def args_maker():
+      a = rng(shape, dtype)
+      if hermitian:
+        a = (a + T(a.conj())) / 2
+      return [a]
+
+    np_fn = partial(np.linalg.matrix_rank, hermitian=hermitian)
+    jnp_fn = partial(jnp.linalg.matrix_rank, hermitian=hermitian)
+    self._CheckAgainstNumpy(np_fn, jnp_fn,
                             args_maker, check_dtypes=False, tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.matrix_rank, args_maker,
+    self._CompileAndCheck(jnp_fn, args_maker,
                           check_dtypes=False, rtol=1e-3)
 
   def testMatrixRankTol(self):
@@ -2302,8 +2304,122 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testCirculantConstruction(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(osp_linalg_circulant, jsp.linalg.circulant, args_maker)
+    self._CheckAgainstNumpy(scipy.linalg.circulant, jsp.linalg.circulant, args_maker)
     self._CompileAndCheck(jsp.linalg.circulant, args_maker)
+
+  @jtu.sample_product(
+     n=[2, 3, 5, 8],
+     batch=[(), (2,), (1, 3)],
+     dtype=float_types + int_types,
+  )
+  def testLeslie(self, n, batch, dtype):
+    rng = jtu.rand_default(self.rng())
+    f_shape = batch + (n,)
+    s_shape = batch + (n - 1,)
+    args_maker = lambda: [rng(f_shape, dtype), rng(s_shape, dtype)]
+    self._CheckAgainstNumpy(scipy.linalg.leslie, jsp.linalg.leslie, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.leslie, args_maker)
+
+  def testLeslieInvalidLength(self):
+    with self.assertRaisesRegex(ValueError, "length of f along the last axis"):
+      jsp.linalg.leslie(jnp.array([1.0]), jnp.array([]))
+    with self.assertRaisesRegex(ValueError, "Incorrect lengths for f and s"):
+      jsp.linalg.leslie(jnp.array([1., 2., 3.]), jnp.array([0.5]))
+    with self.assertRaisesRegex(ValueError, "Incorrect lengths for f and s"):
+      jsp.linalg.leslie(jnp.array([1., 2.]), jnp.array([]))
+
+  @jtu.sample_product(
+     shape=[(2,), (3,), (5,), (8,), (2, 3), (1, 2, 4)],
+     dtype=float_types + complex_types + int_types,
+  )
+  def testCompanion(self, shape, dtype):
+    rng = jtu.rand_nonzero(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    tol = {np.complex64: 1e-5, np.float32: 1e-5}
+    self._CheckAgainstNumpy(scipy.linalg.companion, jsp.linalg.companion,
+                            args_maker, atol=tol, rtol=tol, check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.companion, args_maker)
+
+  @jtu.sample_product(shape=[(0,), (1,), (3, 0), (3, 1)])
+  def testCompanionInvalidLength(self, shape):
+    a = jnp.zeros(shape)
+    with self.assertRaisesRegex(ValueError, "length of `a` along the last axis"):
+      jsp.linalg.companion(a)
+
+  @jtu.sample_product(
+     shape=[(), (1,), (3,), (5,), (2, 3), (1, 2, 4)],
+     dtype=float_types + int_types,
+  )
+  def testFiedler(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(scipy.linalg.fiedler, jsp.linalg.fiedler, args_maker,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.fiedler, args_maker)
+
+  @jtu.sample_product(
+     shape=[(2,), (3,), (4,), (5,), (8,), (2, 3), (1, 2, 4)],
+     dtype=float_types,
+  )
+  def testFiedlerCompanion(self, shape, dtype):
+    rng = jtu.rand_nonzero(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    tol = {np.float32: 1e-5, np.float64: 1e-10}
+    self._CheckAgainstNumpy(scipy.linalg.fiedler_companion,
+                            jsp.linalg.fiedler_companion, args_maker,
+                            atol=tol, rtol=tol, check_dtypes=False)
+    self._CompileAndCheck(jsp.linalg.fiedler_companion, args_maker)
+
+  @jtu.sample_product(shape=[(1,), (3, 1)])
+  def testFiedlerCompanionShortInput(self, shape):
+    # A single coefficient along the last axis yields an empty (..., 0, 0)
+    # companion matrix rather than an error, per the docstring.
+    a = jnp.ones(shape)
+    result = jsp.linalg.fiedler_companion(a)
+    self.assertEqual(result.shape, shape[:-1] + (0, 0))
+
+  @jtu.sample_product(shape=[(0,), (3, 0)])
+  def testFiedlerCompanionEmptyInput(self, shape):
+    # A zero-length last axis raises a clear ValueError rather than an
+    # IndexError from the implementation.
+    a = jnp.ones(shape)
+    with self.assertRaisesRegex(ValueError, "nonzero"):
+      jsp.linalg.fiedler_companion(a)
+
+  @jtu.sample_product(
+     m=[1, 2, 3, 5],
+     n=[1, 2, 3, 5, 7],
+     mode=['full', 'valid', 'same'],
+     batch=[(), (2,), (1, 3)],
+     # Integer dtypes are skipped because the underlying Toeplitz lowers via
+     # an integer convolution that CuDNN only supports for s8 inputs with f32
+     # bias on GPU.
+     dtype=float_types + complex_types,
+  )
+  def testConvolutionMatrix(self, m, n, mode, batch, dtype):
+    rng = jtu.rand_default(self.rng())
+    shape = (*batch, m)
+    args_maker = lambda: [rng(shape, dtype)]
+    osp_fun = partial(scipy.linalg.convolution_matrix, n=n, mode=mode)
+    jsp_fun = partial(jsp.linalg.convolution_matrix, n=n, mode=mode)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testConvolutionMatrixInvalidArgs(self):
+    a = jnp.array([1., 2., 3.])
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.convolution_matrix(a, 0)
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.convolution_matrix(a, -1)
+    with self.assertRaisesRegex(ValueError, "mode must be one of"):
+      jsp.linalg.convolution_matrix(a, 3, mode='bad')
+    with self.assertRaisesRegex(ValueError, r"len\(a\) must be at least 1"):
+      jsp.linalg.convolution_matrix(jnp.zeros((0,)), 3)
+    with self.assertRaisesRegex(ValueError, r"len\(a\) must be at least 1"):
+      jsp.linalg.convolution_matrix(jnp.zeros((2, 0)), 3)
+    with self.assertRaisesRegex(ValueError, "must be at least 1-dimensional"):
+      jsp.linalg.convolution_matrix(jnp.array(5.0), 3)
 
   @jtu.sample_product(
     shape=[(2, 3), (4, 6), (50, 7), (100, 110)],
@@ -2612,6 +2728,19 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker)
 
   @jtu.sample_product(
+    n=[0, 1, 2, 3, 5, 8],
+    )
+  def testInvhilbert(self, n):
+    args_maker = lambda: []
+    osp_fun = lambda: osp.linalg.invhilbert(n, exact=False)
+    jsp_fun = partial(jsp.linalg.invhilbert, n=n)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            atol=1e-3,
+                            rtol=1e-2 if jtu.test_device_matches(['tpu']) else 1e-3,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
     n=[1, 2, 4, 8, 16],
     dtype=int_types + float_types,
   )
@@ -2626,6 +2755,48 @@ class LaxLinalgTest(jtu.JaxTestCase):
   def testHadamardInvalidN(self, n):
     with self.assertRaisesRegex(ValueError, "positive power of 2"):
       jsp.linalg.hadamard(n)
+
+  @jtu.sample_product(
+    n=[1, 2, 3, 4, 5, 8],
+    full=[False, True],
+  )
+  def testHelmert(self, n, full):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.helmert, n=n, full=full)
+    jsp_fun = partial(jsp.linalg.helmert, n=n, full=full)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            atol=1e-5, rtol=1e-5, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(n=[0, -1, -5])
+  def testHelmertInvalidN(self, n):
+    with self.assertRaisesRegex(ValueError, "n must be a positive integer"):
+      jsp.linalg.helmert(n)
+
+  @jtu.sample_product(
+    n=[0, 1, 2, 3, 5, 8, 16],
+    scale=[None, 'sqrtn', 'n'],
+  )
+  def testDft(self, n, scale):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.dft, n=n, scale=scale)
+    jsp_fun = partial(jsp.linalg.dft, n=n, scale=scale)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            atol=1e-5, rtol=1e-5, check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testDftInvalidScale(self):
+    with self.assertRaisesRegex(ValueError, "scale must be"):
+      jsp.linalg.dft(4, scale='bad')
+
+  @jtu.sample_product(dtype=complex_types)
+  def testDftDtype(self, dtype):
+    result = jsp.linalg.dft(4, dtype=dtype)
+    self.assertEqual(result.dtype, dtype)
+
+  def testDftInvalidDtype(self):
+    with self.assertRaisesRegex(ValueError, "dtype must be"):
+      jsp.linalg.dft(4, dtype=jnp.float32)
 
   @jtu.sample_product(
       shape=[(5, 1), (10, 4), (128, 12)],
@@ -2674,6 +2845,25 @@ class LaxLinalgTest(jtu.JaxTestCase):
                             rtol=1e-2 if jtu.test_device_matches(['tpu']) else 1e-3,
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker)
+
+  @jtu.sample_product(
+    n=[0, 1, 2, 5, 8],
+    kind=["symmetric", "lower", "upper"],
+  )
+  @jax.default_matmul_precision("float32")
+  def testInvpascal(self, n, kind):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.invpascal, n=n, kind=kind, exact=False)
+    jsp_fun = partial(jsp.linalg.invpascal, n=n, kind=kind)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker,
+                            atol=1e-3,
+                            rtol=1e-2 if jtu.test_device_matches(['tpu']) else 1e-3,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
+  def testInvpascalInvalidKind(self):
+    with self.assertRaisesRegex(ValueError, "Expected kind to be one of"):
+      jsp.linalg.invpascal(3, kind='bad')
 
 
 if __name__ == "__main__":

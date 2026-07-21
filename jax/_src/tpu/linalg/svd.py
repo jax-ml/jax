@@ -54,7 +54,7 @@ from jax._src.tpu.linalg import qdwh as tpu_qdwh
 from jax._src.typing import Array
 
 
-@functools.partial(api.jit, static_argnums=(1, 2, 3, 4))
+@api.jit(static_argnums=(1, 2, 3, 4))
 def _svd_tall_and_square_input(
     a: Any,
     hermitian: bool,
@@ -119,7 +119,7 @@ def _svd_tall_and_square_input(
   return (u_out, s_out, v_out)
 
 
-@functools.partial(api.jit, static_argnums=(1, 2, 3, 4, 5))
+@api.jit(static_argnums=(1, 2, 3, 4, 5))
 def svd(
     a: Any,
     full_matrices: bool,

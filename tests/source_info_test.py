@@ -242,6 +242,58 @@ class SourceInfoTest(jtu.JaxTestCase):
           f"Expected 'cond_test' in descending location: {loc_str}",
       )
 
+  def test_nested_call_traceback_in_mlir(self):
+    @jax.jit
+    def inner_jit(x):
+      return x * 2.0
+
+    @jax.jit
+    def outer_jit(x):
+      return inner_jit(x)
+
+    mlir_module = outer_jit.lower(1.0).compiler_ir()
+    call_op = find_operation(mlir_module, "func.func[sym_name='main'] func.call")
+
+    loc = call_op.location
+    # JIT call location should be NameLoc (name stack) wrapping CallSiteLoc
+    self.assertIsInstance(loc, ir.NameLoc)
+    self.assertIsInstance(loc.child_loc, ir.CallSiteLoc)
+
+    # Enclosing JIT frame (where inner_jit was called)
+    self.assertIsInstance(loc.child_loc.callee, ir.NameLoc)
+    self.assertEqual(
+        loc.child_loc.callee.name_str,
+        "SourceInfoTest.test_nested_call_traceback_in_mlir.<locals>.outer_jit",
+    )
+
+    # Caller of the outer JIT (the test method)
+    self.assertIsInstance(loc.child_loc.caller, ir.CallSiteLoc)
+    self.assertIsInstance(loc.child_loc.caller.callee, ir.NameLoc)
+    self.assertEqual(
+        loc.child_loc.caller.callee.name_str,
+        "SourceInfoTest.test_nested_call_traceback_in_mlir",
+    )
+
+  def test_function_body_location_in_mlir(self):
+    @jax.jit
+    def my_function(x):
+      return x
+
+    mlir_module = my_function.lower(1.0).compiler_ir()
+    return_op = find_operation(mlir_module, "func.return")
+
+    loc = return_op.location
+    # Return op location should be NameLoc (name stack) wrapping CallSiteLoc
+    self.assertIsInstance(loc, ir.NameLoc)
+    self.assertIsInstance(loc.child_loc, ir.CallSiteLoc)
+
+    # Caller of the JIT function (the test method)
+    self.assertIsInstance(loc.child_loc.callee, ir.NameLoc)
+    self.assertEqual(
+        loc.child_loc.callee.name_str,
+        "SourceInfoTest.test_function_body_location_in_mlir",
+    )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

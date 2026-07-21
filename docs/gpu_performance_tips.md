@@ -390,7 +390,7 @@ def while_body(carry, i):
   return carry, i
 
 
-@functools.partial(jax.jit, static_argnames=["mesh"])
+@jax.jit(static_argnames=["mesh"])
 def entry_computation(weights, input_buffer, mesh):
 
   # Init output buffer.
@@ -596,7 +596,7 @@ def entry_computation(
   # Start pipeline.
   dummy_slice_fwd = jax.lax.precv(
       jax.lax.create_token(),
-      jax.ShapeDtypeStruct(dummy_data.shape, dummy_data.dtype),
+      jax.ShapeDtypeStruct.like(dummy_data),
       axis_name="x",
       perm=[(0, 1), (1, 2), (2, 3)],
   )

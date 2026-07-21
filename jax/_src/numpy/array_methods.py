@@ -1017,10 +1017,6 @@ def _multi_slice(self: Array,
 
 # The next two functions are related to iter(array), implemented here to
 # avoid circular imports.
-@api.jit
-def _unstack(x: Array) -> list[Array]:
-  dims = (0,)
-  return [lax.squeeze(t, dims) for t in lax.split(x, (1,) * x.shape[0])]
 
 def _chunk_iter(x, size):
   if size > x.shape[0]:
@@ -1263,6 +1259,7 @@ class _IndexUpdateRef:
   def subtract(self, values: ArrayLike, *,
                indices_are_sorted: bool = False, unique_indices: bool = False,
                mode: str | lax_slicing.GatherScatterMode | None = None,
+               out_sharding: NamedSharding | PartitionSpec | None = None,
                wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] -= y``.
 
@@ -1271,16 +1268,21 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
-    return scatter._scatter_update(self.array, self.index, values,
-                                   lax_slicing.scatter_sub,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode,
-                                   normalize_indices=wrap_negative_indices)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, ".subtract")
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter_sub,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, out_sharding=out_sharding,
+        normalize_indices=wrap_negative_indices)
 
-  def multiply(self, values: ArrayLike, *,
-               indices_are_sorted: bool = False, unique_indices: bool = False,
-               mode: str | lax_slicing.GatherScatterMode | None = None,
-               wrap_negative_indices: bool = True) -> Array:
+  def multiply(
+      self, values: ArrayLike, *, indices_are_sorted: bool = False,
+      unique_indices: bool = False,
+      mode: str | lax_slicing.GatherScatterMode | None = None,
+      out_sharding: NamedSharding | PartitionSpec | None = None,
+      wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] *= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -1288,17 +1290,23 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
-    return scatter._scatter_update(self.array, self.index, values,
-                                   lax_slicing.scatter_mul,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices,
-                                   mode=mode, normalize_indices=wrap_negative_indices)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, ".multiply")
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter_mul,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, out_sharding=out_sharding,
+        normalize_indices=wrap_negative_indices)
+
   mul = multiply
 
-  def divide(self, values: ArrayLike, *,
-             indices_are_sorted: bool = False, unique_indices: bool = False,
-             mode: str | lax_slicing.GatherScatterMode | None = None,
-             wrap_negative_indices: bool = True) -> Array:
+  def divide(
+      self, values: ArrayLike, *, indices_are_sorted: bool = False,
+      unique_indices: bool = False,
+      mode: str | lax_slicing.GatherScatterMode | None = None,
+      out_sharding: NamedSharding | PartitionSpec | None = None,
+      wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] /= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -1306,18 +1314,24 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, ".divide")
     return ufuncs.divide(
-      self.array,
-      scatter._scatter_update(array_creation.ones_like(self.array), self.index, values,
-                              lax_slicing.scatter_mul,
-                              indices_are_sorted=indices_are_sorted,
-                              unique_indices=unique_indices, mode=mode,
-                              normalize_indices=wrap_negative_indices))
+        self.array,
+        scatter._scatter_update(
+            array_creation.ones_like(self.array), self.index,
+            values, lax_slicing.scatter_mul,
+            indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+            mode=mode, out_sharding=out_sharding,
+            normalize_indices=wrap_negative_indices))
 
-  def power(self, values: ArrayLike, *,
-            indices_are_sorted: bool = False, unique_indices: bool = False,
-            mode: str | lax_slicing.GatherScatterMode | None = None,
-            wrap_negative_indices: bool = True) -> Array:
+  def power(
+      self, values: ArrayLike, *, indices_are_sorted: bool = False,
+      unique_indices: bool = False,
+      mode: str | lax_slicing.GatherScatterMode | None = None,
+      out_sharding: NamedSharding | PartitionSpec | None = None,
+      wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] **= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -1325,18 +1339,25 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, ".power")
     return ufuncs.power(
-      self.array,
-      scatter._scatter_update(array_creation.ones_like(self.array), self.index, values,
-                              lax_slicing.scatter_mul,
-                              indices_are_sorted=indices_are_sorted,
-                              unique_indices=unique_indices, mode=mode,
-                              normalize_indices=wrap_negative_indices))
+        self.array,
+        scatter._scatter_update(
+            array_creation.ones_like(self.array),
+            self.index, values, lax_slicing.scatter_mul,
+            indices_are_sorted=indices_are_sorted,
+            unique_indices=unique_indices, mode=mode,
+            out_sharding=out_sharding,
+            normalize_indices=wrap_negative_indices))
 
-  def min(self, values: ArrayLike, *,
-          indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: str | lax_slicing.GatherScatterMode | None = None,
-          wrap_negative_indices: bool = True) -> Array:
+  def min(
+      self, values: ArrayLike, *, indices_are_sorted: bool = False,
+      unique_indices: bool = False,
+      mode: str | lax_slicing.GatherScatterMode | None = None,
+      out_sharding: NamedSharding | PartitionSpec | None = None,
+      wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -1345,16 +1366,21 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
-    return scatter._scatter_update(self.array, self.index, values,
-                                   lax_slicing.scatter_min,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode,
-                                   normalize_indices=wrap_negative_indices)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, ".min")
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter_min,
+        indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+        mode=mode, out_sharding=out_sharding,
+        normalize_indices=wrap_negative_indices)
 
-  def max(self, values: ArrayLike, *,
-          indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: str | lax_slicing.GatherScatterMode | None = None,
-          wrap_negative_indices: bool = True) -> Array:
+  def max(
+      self, values: ArrayLike, *, indices_are_sorted: bool = False,
+      unique_indices: bool = False,
+      mode: str | lax_slicing.GatherScatterMode | None = None,
+      out_sharding: NamedSharding | PartitionSpec | None = None,
+      wrap_negative_indices: bool = True) -> Array:
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -1363,11 +1389,16 @@ class _IndexUpdateRef:
 
     See :func:`jax.numpy.ndarray.at` for details.
     """
-    return scatter._scatter_update(self.array, self.index, values,
-                                   lax_slicing.scatter_max,
-                                   indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode,
-                                   normalize_indices=wrap_negative_indices)
+    if out_sharding is not None:
+      assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
+      out_sharding = canonicalize_sharding(out_sharding, ".max")
+    return scatter._scatter_update(
+        self.array, self.index, values, lax_slicing.scatter_max,
+        indices_are_sorted=indices_are_sorted,
+        unique_indices=unique_indices,
+        mode=mode, out_sharding=out_sharding,
+        normalize_indices=wrap_negative_indices)
+
 
 _array_operators: dict[str, Callable[..., Any]] = {
   "getitem": _getitem,
@@ -1468,7 +1499,7 @@ _array_methods = {
 
 _impl_only_array_methods = {
   "_chunk_iter": _chunk_iter,
-  "_unstack": _unstack,
+  "_unstack": lax.unstack,
 }
 
 _array_properties = {

@@ -286,6 +286,18 @@ To treat `None` as a leaf, you can use the `is_leaf` argument:
 jax.tree.leaves([None, None, None], is_leaf=lambda x: x is None)
 ```
 
+### Dictionary keys must be sortable
+
+`jax.tree_util` flattens a dictionary by its sorted keys, so the resulting pytree structure depends only on the *set* of keys and not on the insertion order. This keeps structure equality — and therefore JIT caching — predictable, but it means a dictionary's keys must be sortable relative to one another. Mixing key types that have no ordering between them, such as `int` and `str`, raises an error:
+
+```{code-cell}
+:tags: [raises-exception]
+
+jax.tree.map(lambda x: x + 1, {1: 7, "y": 42})
+```
+
+If you need a mapping whose keys can't be ordered, you can use `collections.OrderedDict`, which JAX flattens in insertion order without sorting the keys, or register a custom pytree node that defines its own flattening and unflattening (see {doc}`custom_pytrees`).
+
 (pytrees-common-pytree-patterns)=
 ## Common pytree patterns
 

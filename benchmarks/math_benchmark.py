@@ -14,17 +14,18 @@
 """Microbenchmarks for floating point operations."""
 
 import functools
+import os
+import sys
 
+from absl import app
+from absl import flags
 import google_benchmark as benchmark
 import jax
 import jax.numpy as jnp
 import numpy as np
-import os
-import sys
 
-from google_benchmark import Counter
-from absl import app
-from absl import flags
+
+Counter = benchmark.Counter
 
 
 _SET_ENV = flags.DEFINE_multi_string(

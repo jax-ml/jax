@@ -239,8 +239,8 @@ void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
                               uint32_t cluster_x, uint32_t cluster_y,
                               uint32_t cluster_z, uint32_t block_x,
                               uint32_t block_y, uint32_t block_z,
-                              uint32_t smem_bytes, CUstream stream,
-                              void** params) {
+                              uint32_t smem_bytes, int32_t uses_pdl,
+                              CUstream stream, void** params) {
   CUlaunchConfig config{
       .gridDimX = grid_x,
       .gridDimY = grid_y,
@@ -253,16 +253,25 @@ void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
       .attrs = nullptr,
       .numAttrs = 0,
   };
-  CUlaunchAttribute cluster_attr;
+  CUlaunchAttribute attrs[2];
+  int num_attrs = 0;
   if (cluster_x != 0) {
-    cluster_attr.id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
-    cluster_attr.value.clusterDim = {
+    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+    attrs[num_attrs].value.clusterDim = {
         .x = cluster_x,
         .y = cluster_y,
         .z = cluster_z,
     };
-    config.attrs = &cluster_attr;
-    config.numAttrs = 1;
+    num_attrs++;
+  }
+  if (uses_pdl) {
+    attrs[num_attrs].id = CU_LAUNCH_ATTRIBUTE_PROGRAMMATIC_STREAM_SERIALIZATION;
+    attrs[num_attrs].value.programmaticStreamSerializationAllowed = 1;
+    num_attrs++;
+  }
+  if (num_attrs > 0) {
+    config.attrs = attrs;
+    config.numAttrs = num_attrs;
   }
   CUresult result = cuLaunchKernelEx(&config, function, params, nullptr);
   if (result == CUDA_ERROR_INVALID_CLUSTER_SIZE) {

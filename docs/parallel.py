@@ -506,8 +506,6 @@ def f(arr1):
 
 x = jax.device_put(np.arange(16).reshape(4, 4), jax.P("X", "Y"))
 f(x)
-
-
 # -
 
 # It's a kind of dual to `auto_axes`, where you specify `in_shardings` rather
@@ -527,6 +525,8 @@ f(x)
 # with, but more specific than, the type-specified sharding. For example:
 
 # +
+jax.set_mesh(jax.make_mesh((4, 2), ('X', 'Y')))  # Explicit mode
+
 def compare_shardings(x):
   print(f"=== with mesh: {jax.sharding.get_abstract_mesh()} ===")
   print(f"Concrete value sharding: {x.sharding.spec}")

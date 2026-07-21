@@ -14,7 +14,6 @@
 
 # Package for Pallas GPU Interpret Mode
 
-load("@rules_python//python:defs.bzl", "py_library")
 load("//jaxlib:jax.bzl", "py_deps", "pytype_strict_library")
 
 package(
@@ -31,21 +30,26 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src:callback",
+        "//jax/_src:config",
         "//jax/_src:effects",
         "//jax/_src/pallas/mosaic/interpret:params",
     ] + py_deps("numpy"),
 )
 
-py_library(
+pytype_strict_library(
     name = "interpret_pallas_call",
     srcs = [
         "__init__.py",
         "interpret_pallas_call.py",
     ],
+    type_checking = "pyrefly",
     deps = [
         ":gpu_callbacks",
         ":jaxpr_interpret",
+        ":params",
+        ":shared_memory",
         "//jax",
+        "//jax/_src:callback",
         "//jax/_src:core",
         "//jax/_src:lax",
         "//jax/_src:typing",
@@ -54,7 +58,6 @@ py_library(
         "//jax/_src/pallas/mosaic/interpret:thread_map",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic_gpu:core",
-        "//jax/_src/pallas/mosaic_gpu/interpret:params",
         "//jax/experimental:pallas_mosaic_gpu",
     ],
 )
@@ -76,6 +79,8 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
         "//jax/_src/pallas/mosaic_gpu:core",
+        "//jax/experimental:mosaic_gpu",
+        "//jax/experimental:pallas_mosaic_gpu",
     ] + py_deps([
         "numpy",
     ]),
@@ -87,16 +92,19 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":gpu_callbacks",
+        ":params",
+        ":shared_memory",
         "//jax",
+        "//jax/_src:callback",
         "//jax/_src:core",
         "//jax/_src:lax",
         "//jax/_src:source_info_util",
         "//jax/_src:util",
         "//jax/_src/pallas",
+        "//jax/_src/pallas/mosaic/interpret:thread_map",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/_src/pallas/mosaic_gpu:primitives",
-        "//jax/_src/pallas/mosaic_gpu/interpret:params",
         "//jax/experimental:pallas_mosaic_gpu",
     ],
 )
@@ -107,9 +115,13 @@ pytype_strict_library(
     type_checking = "pyrefly",
     deps = [
         ":params",
+        "//jax",
         "//jax/_src:source_info_util",
         "//jax/_src/pallas/mosaic/interpret:shared_memory",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
-    ] + py_deps("absl/logging"),
+        "//jax/experimental:pallas_mosaic_gpu",
+    ] + py_deps([
+        "numpy",
+    ]),
 )

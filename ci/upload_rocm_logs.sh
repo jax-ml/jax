@@ -21,7 +21,7 @@
 #   - _SUCCESS: written last to indicate the upload set is complete
 #
 # S3 layout (deterministic + unique per run/attempt):
-#   <org>/<repo>/<branch>/<nightly|continuous>/<DATE>_<run_id>_<attempt>/<combo>/
+#   <org>/<repo>/<branch>/<nightly|continuous>/<version>/<DATE>_<run_id>_<attempt>/<combo>/
 set -euo pipefail
 
 : "${S3_BUCKET_NAME:?}"
@@ -47,9 +47,9 @@ RUN_STARTED_AT="$(
 DATE="${RUN_STARTED_AT%%T*}"
 [[ -n "${DATE}" ]] || DATE="$(date -u +%F)"
 
-# GPU count from runner name (e.g. linux-x86-64-8gpu-amd -> 8).
+# GPU count from runner name (e.g. amd-do-linux.jax.gpu.gfx950.8 -> 8).
 GPU_COUNT=""
-if [[ "${INPUT_RUNNER}" =~ ([0-9]+)gpu ]]; then
+if [[ "${INPUT_RUNNER}" =~ gfx[0-9a-fA-F]+\.([0-9]+) ]]; then
   GPU_COUNT="${BASH_REMATCH[1]}"
 fi
 
@@ -57,8 +57,8 @@ GPU_PART="${GPU_COUNT:+gpu_${GPU_COUNT}}"
 GPU_PART="${GPU_PART:-${INPUT_RUNNER}}"
 
 RUN_KEY="${DATE}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-COMBO="py$(norm "${INPUT_PYTHON}")-rocm$(norm "${INPUT_ROCM_VERSION}")-${GPU_PART}"
-PREFIX="${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${IS_NIGHTLY}/${RUN_KEY}/${COMBO}"
+COMBO="py$(norm "${INPUT_PYTHON}")-${GPU_PART}"
+PREFIX="${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/${IS_NIGHTLY}/${INPUT_ROCM_TAG}/${RUN_KEY}/${COMBO}"
 
 DEST="s3://${S3_BUCKET_NAME}/${TEST_LOGS_ROOT}/${PREFIX}"
 

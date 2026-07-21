@@ -297,7 +297,7 @@ def matmul_kernel(x_ref, y_ref, z_ref, acc_ref, *, nsteps):
     z_ref[...] = acc_ref[...].astype(z_ref.dtype)
 
 
-@functools.partial(jax.jit, static_argnames=['bm', 'bk', 'bn'])
+@jax.jit(static_argnames=['bm', 'bk', 'bn'])
 def matmul(
     x: jax.Array,
     y: jax.Array,
@@ -466,7 +466,7 @@ def matmul_kernel(x_ref, y_ref, z_ref, acc_ref, *, nsteps, transpose_rhs):
     z_ref[...] = acc_ref[...].astype(z_ref.dtype)
 
 
-@functools.partial(jax.jit, static_argnames=['bm', 'bk', 'bn', 'transpose_rhs'])
+@jax.jit(static_argnames=['bm', 'bk', 'bn', 'transpose_rhs'])
 def matmul(
     x: jax.Array,
     y: jax.Array,
@@ -584,7 +584,7 @@ def matmul_kernel(
     z_ref[...] = activation(acc_ref[...]).astype(z_ref.dtype)
 
 
-@functools.partial(jax.jit, static_argnames=['bm', 'bk', 'bn', 'activation'])
+@jax.jit(static_argnames=['bm', 'bk', 'bn', 'activation'])
 def matmul(
     x: jax.Array,
     y: jax.Array,

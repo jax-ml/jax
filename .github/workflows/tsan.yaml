@@ -21,6 +21,7 @@ env:
 
 jobs:
   tsan:
+    if: github.repository_owner == 'jax-ml'
     runs-on: linux-x86-n4-64
     container:
       image: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build@sha256:ea67e8453d8b09c2ba48853da5e79efef4b65804b4a48dfae4b4da89ffd38405 # ml-build container (based on Ubuntu 22.04)
@@ -30,7 +31,7 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           path: jax
           persist-credentials: false
@@ -49,6 +50,17 @@ jobs:
           echo "JAX_NUM_GENERATED_CASES=${JAX_NUM_GENERATED_CASES}"
           echo "JAX_ENABLE_X64=${JAX_ENABLE_X64}"
           echo "JAX_SKIP_SLOW_TESTS=${JAX_SKIP_SLOW_TESTS}"
+
+          cat << 'EOF' >> MODULE.bazel
+          python.override(minor_mapping = {"3.14": "3.14.3"})
+          python.single_version_platform_override(
+              platform = "x86_64-unknown-linux-gnu-freethreaded",
+              python_version = "3.14.3",
+              urls = ["https://storage.googleapis.com/ml-sysroot-testing/python/cpython-3.14.x-tsan-shared-linux-x86_64-llvm-18.1.8.tar.gz"],
+              sha256 = "19160bafba950761dea5a3e3f831212cf6aa0d5dc8a0fb13c1caf69c009e853e",
+              strip_prefix = "cpython-3.14.x-tsan-shared-linux-x86_64-llvm-18.1.8",
+          )
+          EOF
 
           # Build JAX and run tests
           bazel test \

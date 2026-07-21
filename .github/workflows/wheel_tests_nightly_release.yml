@@ -48,6 +48,7 @@ env:
 
 jobs:
   run-pytest-cpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -55,13 +56,11 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-n4-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
-          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14t"]
           enable-x64: [0]
           exclude:
             - runner: "windows-x86-n2-64"
-              python: "3.13-nogil"
-            - runner: "windows-x86-n2-64"
-              python: "3.14-nogil"
+              python: "3.14t"
     name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
@@ -75,6 +74,7 @@ jobs:
       max-processes: ${{ contains(matrix.runner, 'windows-x86') && '16' || '' }}
 
   run-bazel-test-cpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -82,7 +82,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-n4-64", "linux-arm64-t2a-48"]
-          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14t"]
           enable-x64: [0]
     name: "Bazel CPU tests with ${{ format('{0}', 'build_jaxlib=false') }}"
     with:
@@ -96,6 +96,7 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-cuda:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -103,7 +104,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu",  "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
-          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14t"]
           cuda: [
             {cuda-version: "12.1", use-nvidia-pip-wheels: false},
             {cuda-version: "12.9", use-nvidia-pip-wheels: true},
@@ -116,25 +117,17 @@ jobs:
               cuda:
                 cuda-version: "12.1"
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.12"
-            - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.13"
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.13-nogil"
-            - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.14-nogil"
+              python: "3.14t"
             # B200 runs only CUDA 12.9 and min and max Python versions.
             - runner: "linux-x86-a4-224-b200-1gpu"
               cuda:
                 cuda-version: "12.1"
             - runner: "linux-x86-a4-224-b200-1gpu"
-              python: "3.12"
-            - runner: "linux-x86-a4-224-b200-1gpu"
               python: "3.13"
             - runner: "linux-x86-a4-224-b200-1gpu"
-              python: "3.13-nogil"
-            - runner: "linux-x86-a4-224-b200-1gpu"
-              python: "3.14-nogil"
+              python: "3.14t"
     name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, CUDA Pip packages = ${{ matrix.cuda.use-nvidia-pip-wheels }})"
     with:
       runner: ${{ matrix.runner }}
@@ -147,6 +140,7 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-cuda:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -154,7 +148,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu"]
-          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14t"]
           cuda-version: [12, 13]
           enable-x64: [0]
     name: "Bazel CUDA Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
@@ -173,7 +167,42 @@ jobs:
       build_artifacts_with_rbe: ${{ 'false' }}
       clone_main_xla: 0
 
+  build-rocm-artifacts:
+    if: github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm'
+    uses: ./.github/workflows/build_rocm_artifacts.yml
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    strategy:
+        fail-fast: false
+        matrix:
+          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+          artifact: ["jax-rocm-plugin", "jax-rocm-pjrt"]
+          python: ["3.12", "3.13", "3.14"]
+          rocm: [
+            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", manylinux-image: ""},
+          ]
+          exclude:
+            - artifact: "jax-rocm-pjrt"
+              python: "3.13"
+            - artifact: "jax-rocm-pjrt"
+              python: "3.14"
+    name: "Build ROCm artifacts (${{ matrix.rocm.label }})"
+    with:
+      runner: ${{ matrix.runner }}
+      artifact: ${{ matrix.artifact }}
+      python: ${{ matrix.python }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      manylinux-image: ${{ matrix.rocm.manylinux-image }}
+      clone_main_xla: 0
+      upload_artifacts_to_s3: true
+      s3_upload_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
+
   run-pytest-rocm:
+    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    needs: [build-rocm-artifacts]
     permissions:
       id-token: write
       contents: read
@@ -182,22 +211,26 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          runner: ["linux-x86-64-1gpu-amd", "linux-x86-64-4gpu-amd", "linux-x86-64-8gpu-amd"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1", "amd-do-linux.jax.gpu.gfx950.4", "amd-do-linux.jax.gpu.gfx950.8"]
+          python: ["3.12", "3.13", "3.14"]
           rocm: [
-            {version: "7.2.0", tag: "rocm720"},
+            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
           ]
-    name: "Pytest ROCm (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+    name: "Pytest ROCm (${{ matrix.rocm.label }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
-      rocm-version: ${{ matrix.rocm.version }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
       rocm-tag: ${{ matrix.rocm.tag }}
       jaxlib-version: "head"
       skip-download-jaxlib-and-plugins-from-gcs: ${{inputs.skip-download-jaxlib-and-plugins-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-bazel-test-rocm:
+    if: ${{ !cancelled() && (github.repository_owner == 'jax-ml' || github.repository_owner == 'ROCm') }}
+    needs: [build-rocm-artifacts]
     permissions:
       id-token: write
       contents: read
@@ -205,20 +238,23 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
-          # that build the wheels.
-          runner: ["linux-x86-64-1gpu-amd"]
-          python: ["3.11", "3.12", "3.13", "3.14"]
-          rocm-version: [7]
+          runner: ["amd-do-linux.jax.gpu.gfx950.1"]
+          python: ["3.12", "3.13", "3.14"]
+          rocm: [
+            {label: "ROCm 7.2.0", wheel-version: "7", release-version: "7.2.0", tag: "rocm720"},
+          ]
           enable-x64: [0]
-    name: "Bazel ROCm Non-RBE with ${{ format('{0}', 'build_jaxlib=false') }}"
+    name: "Bazel ROCm (${{ matrix.rocm.label }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
-      rocm-version: ${{ matrix.rocm-version }}
+      rocm-version: ${{ matrix.rocm.wheel-version }}
+      rocm-release-version: ${{ matrix.rocm.release-version }}
+      rocm-tag: ${{ matrix.rocm.tag }}
       enable-x64:  ${{ matrix.enable-x64 }}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
       halt-for-connection: ${{inputs.halt-for-connection}}
+      s3_download_uri: 's3://jax-ci-amd/rocm-wheels/${{ github.repository }}/${{ github.ref_name }}/${{ matrix.rocm.release-version }}/wheel-tests-nightly/${{ github.run_number }}/${{ github.run_attempt }}'
       build_jaxlib: ${{ 'false' }}
       build_jax: ${{ 'false' }}
       jaxlib-version: "head"
@@ -227,56 +263,43 @@ jobs:
       clone_main_xla: 0
 
   run-pytest-tpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/pytest_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14t"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"},
             {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"}
           ]
-          libtpu-version-type: ["pinned", "nightly"]
+          libtpu-version-type: ["pinned"]
           exclude:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            # Exclude pinned for nightly releases
-            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pinned' }}
             # Run Python versions in between min and max for v6e-8
             - tpu-specs:
                 type: "v6e-8"
-              python: "3.11"
+              python: "3.12"
             - tpu-specs:
                 type: "v6e-8"
               python: "3.14"
             - tpu-specs:
                 type: "v6e-8"
-              python: "3.14-nogil"
+              python: "3.14t"
             # Run max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v5e-8"
               python: "3.12"
             - tpu-specs:
                 type: "v5e-8"
               python: "3.13"
-            - tpu-specs:
-                type: "v5e-8"
-              python: "3.13-nogil"
             # Run min and max Python versions for v7x-8
             - tpu-specs:
                 type: "v7x-8"
-              python: "3.12"
-            - tpu-specs:
-                type: "v7x-8"
               python: "3.13"
-            - tpu-specs:
-                type: "v7x-8"
-              python: "3.13-nogil"
 
     name: "Pytest TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
@@ -291,62 +314,43 @@ jobs:
       halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-bazel-test-tpu:
+    if: github.repository_owner == 'jax-ml'
     uses: ./.github/workflows/bazel_test_tpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.12", "3.13", "3.13-nogil", "3.14", "3.14-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14t"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
             {type: "v7x-8", cores: "4", runner: "linux-x86-tpu7x-224-4tpu"},
           ]
-          libtpu-version-type: ["pinned", "nightly"]
+          libtpu-version-type: ["pinned"]
           exclude:
             # Exclude nightly for releases
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
-            # Exclude pinned for nightly releases
-            - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pinned' }}
             # Run a single Python version for v4-8
             - tpu-specs:
                 type: "v4-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v4-8"
               python: "3.12"
             - tpu-specs:
                 type: "v4-8"
               python: "3.13"
             - tpu-specs:
                 type: "v4-8"
-              python: "3.13-nogil"
-            - tpu-specs:
-                type: "v4-8"
-              python: "3.14-nogil"
+              python: "3.14t"
             # Run max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
-              python: "3.11"
-            - tpu-specs:
-                type: "v5e-8"
               python: "3.12"
             - tpu-specs:
                 type: "v5e-8"
               python: "3.13"
-            - tpu-specs:
-                type: "v5e-8"
-              python: "3.13-nogil"
             # Run min and max Python versions for v7x-8
             - tpu-specs:
                 type: "v7x-8"
-              python: "3.12"
-            - tpu-specs:
-                type: "v7x-8"
               python: "3.13"
-            - tpu-specs:
-                type: "v7x-8"
-              python: "3.13-nogil"
 
     name: "Bazel tests TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
@@ -365,7 +369,7 @@ jobs:
       clone_main_xla: 0
 
   verify-release-wheels-install:
-    if: ${{ startsWith(github.ref_name, 'release/')}}
+    if: ${{ startsWith(github.ref_name, 'release/') && github.repository_owner == 'jax-ml' }}
     defaults:
       run:
         # Set the shell to bash as GitHub actions runs with /bin/sh by default
@@ -374,7 +378,7 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.11", "3.13", "3.13-nogil"]
+          python: ["3.12", "3.13", "3.14", "3.14-nogil"]
           cuda-version: [12, 13]
     container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
@@ -391,8 +395,8 @@ jobs:
           final_gcs_download_uri="${INPUTS_GCS_DOWNLOAD_URI}"
 
           # Get the major and minor version of Python.
-          # E.g if python=3.11, then python_major_minor=311
-          # E.g if python=3.13-nogil, then python_major_minor=313t
+          # E.g if python=3.12, then python_major_minor=312
+          # E.g if python=3.14-nogil, then python_major_minor=314t
           python_major_minor='${{ matrix.python }}'
           python_major_minor="$(echo "${python_major_minor//-nogil/t}" | tr -d '.')"
           python_major_minor="cp${python_major_minor%t}-cp${python_major_minor}-"
@@ -420,6 +424,7 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
         env:
+          CLOUDSDK_AUTH_DISABLE_CREDENTIALS: 1
           INPUTS_GCS_DOWNLOAD_URI: ${{ inputs.gcs_download_uri }}
           INPUTS_SKIP_DOWNLOAD_JAXLIB_AND_PLUGINS_FROM_GCS: ${{ inputs.skip-download-jaxlib-and-plugins-from-gcs }}
       - name: Verify JAX CPU packages can be installed

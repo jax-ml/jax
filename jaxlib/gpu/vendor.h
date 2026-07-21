@@ -55,7 +55,7 @@ typedef cuDoubleComplex gpuDoubleComplex;
 typedef cuComplex gpublasComplex;
 typedef cuDoubleComplex gpublasDoubleComplex;
 typedef cublasFillMode_t gpusolverFillMode_t;
-typedef cublasStatus_t gpublasStatus_t;
+
 typedef cublasHandle_t gpublasHandle_t;
 typedef cublasOperation_t gpublasOperation_t;
 typedef cublasFillMode_t gpublasFillMode_t;
@@ -68,7 +68,6 @@ typedef cudaDataType gpuDataType;
 typedef CUdevice gpuDevice_t;
 typedef CUdeviceptr gpuDevicePtr_t;
 typedef cudaStream_t gpuStream_t;
-typedef cudaError_t gpuError_t;
 typedef CUevent gpuEvent_t;
 typedef CUfunction gpuFunction_t;
 typedef cudnnHandle_t gpudnnHandle_t;
@@ -87,7 +86,7 @@ typedef cudnnRNNMode_t gpudnnRNNMode_t;
 typedef cudnnForwardMode_t gpudnnForwardMode_t;
 typedef CUmodule gpuModule_t;
 typedef cusolverDnHandle_t gpusolverDnHandle_t;
-typedef cusolverStatus_t gpusolverStatus_t;
+
 typedef cusolverEigMode_t gpusolverEigMode_t;
 typedef syevjInfo gpuSyevjInfo;
 typedef syevjInfo_t gpuSyevjInfo_t;
@@ -96,7 +95,7 @@ typedef gesvdjInfo_t gpuGesvdjInfo_t;
 typedef cusparseIndexType_t gpusparseIndexType_t;
 typedef cusparseHandle_t gpusparseHandle_t;
 typedef cusparseOperation_t gpusparseOperation_t;
-typedef cusparseStatus_t gpusparseStatus_t;
+
 typedef cusparseSpMatDescr_t gpusparseSpMatDescr_t;
 typedef cusparseDnMatDescr_t gpusparseDnMatDescr_t;
 typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
@@ -124,8 +123,6 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpublasCsyrk cublasCsyrk
 #define gpublasZsyrk cublasZsyrk
 
-#define GPUBLAS_STATUS_SUCCESS CUBLAS_STATUS_SUCCESS
-
 #define gpudnnCreate cudnnCreate
 #define gpudnnGetErrorString cudnnGetErrorString
 #define gpudnnCreateRNNDescriptor cudnnCreateRNNDescriptor
@@ -148,7 +145,6 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpudnnGetRNNTempSpaceSizes cudnnGetRNNTempSpaceSizes
 #define gpudnnRNNForward cudnnRNNForward
 
-#define GPUDNN_STATUS_SUCCESS CUDNN_STATUS_SUCCESS
 #define GPUDNN_WGRAD_MODE_ADD CUDNN_WGRAD_MODE_ADD
 #define GPUDNN_RNN_ALGO_STANDARD CUDNN_RNN_ALGO_STANDARD
 #define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED \
@@ -283,7 +279,6 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSOLVER_FILL_MODE_UPPER CUBLAS_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR CUSOLVER_EIG_MODE_VECTOR
 #define GPUSOLVER_EIG_MODE_NOVECTOR CUSOLVER_EIG_MODE_NOVECTOR
-#define GPUSOLVER_STATUS_SUCCESS CUSOLVER_STATUS_SUCCESS
 
 #define GPUBLAS_OP_N CUBLAS_OP_N
 #define GPUBLAS_OP_T CUBLAS_OP_T
@@ -358,7 +353,6 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSPARSE_OPERATION_TRANSPOSE CUSPARSE_OPERATION_TRANSPOSE
 #define GPUSPARSE_ORDER_ROW CUSPARSE_ORDER_ROW
 #define GPUSPARSE_SPARSETODENSE_ALG_DEFAULT CUSPARSE_SPARSETODENSE_ALG_DEFAULT
-#define GPUSPARSE_STATUS_SUCCESS CUSPARSE_STATUS_SUCCESS
 
 #define GPU_STREAM_CAPTURE_STATUS_ACTIVE CU_STREAM_CAPTURE_STATUS_ACTIVE
 #define GPU_STREAM_CAPTURE_MODE_RELAXED CU_STREAM_CAPTURE_MODE_RELAXED
@@ -412,7 +406,6 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
 #define gpuStreamSynchronize cudaStreamSynchronize
 #define gpuStreamWaitEvent cudaStreamWaitEvent
-#define gpuSuccess cudaSuccess
 
 #define gpuDeviceProp cudaDeviceProp
 #define gpuGetDeviceProperties cudaGetDeviceProperties
@@ -453,6 +446,42 @@ typedef cusolverDnParams_t gpusolverDnParams_t;
 
 namespace jax::cuda {
 inline constexpr uint32_t kNumThreadsPerWarp = 32;
+
+template <typename T>
+struct GpuErrorTraits;
+
+template <>
+struct GpuErrorTraits<cudaError_t> {
+  static constexpr cudaError_t kSuccess = cudaSuccess;
+};
+template <>
+struct GpuErrorTraits<cusolverStatus_t> {
+  static constexpr cusolverStatus_t kSuccess = CUSOLVER_STATUS_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<cusparseStatus_t> {
+  static constexpr cusparseStatus_t kSuccess = CUSPARSE_STATUS_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<cublasStatus_t> {
+  static constexpr cublasStatus_t kSuccess = CUBLAS_STATUS_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<CUresult> {
+  static constexpr CUresult kSuccess = CUDA_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<CUptiResult> {
+  static constexpr CUptiResult kSuccess = CUPTI_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<cufftResult> {
+  static constexpr cufftResult kSuccess = CUFFT_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<cudnnStatus_t> {
+  static constexpr cudnnStatus_t kSuccess = CUDNN_STATUS_SUCCESS;
+};
 }  // namespace jax::cuda
 
 #elif defined(JAX_GPU_HIP)
@@ -494,7 +523,7 @@ typedef hipsolverFillMode_t gpusolverFillMode_t;
 typedef struct hipblasHandle_* gpublasHandle_t;
 typedef hipblasOperation_t gpublasOperation_t;
 typedef hipblasSideMode_t gpublasSideMode_t;
-typedef hipblasStatus_t gpublasStatus_t;
+
 typedef hipCtx_t gpuContext_t;
 typedef hipStreamCaptureMode gpustreamCaptureMode_t;
 typedef hipStreamCaptureStatus gpustreamCaptureStatus_t;
@@ -502,7 +531,6 @@ typedef hipDataType gpuDataType;
 typedef hipDevice_t gpuDevice_t;
 typedef hipDeviceptr_t gpuDevicePtr_t;
 typedef hipStream_t gpuStream_t;
-typedef hipError_t gpuError_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipFunction_t gpuFunction_t;
 typedef miopenHandle_t gpudnnHandle_t;
@@ -524,11 +552,11 @@ typedef hipsolverSyevjInfo_t gpuSyevjInfo_t;
 typedef void gpuGesvdjInfo;
 typedef hipsolverGesvdjInfo_t gpuGesvdjInfo_t;
 typedef hipsolverEigMode_t gpusolverEigMode_t;
-typedef hipsolverStatus_t gpusolverStatus_t;
+
 typedef hipsparseIndexType_t gpusparseIndexType_t;
 typedef struct hipsparseHandle_* gpusparseHandle_t;
 typedef hipsparseOperation_t gpusparseOperation_t;
-typedef hipsparseStatus_t gpusparseStatus_t;
+
 typedef hipsparseSpMatDescr_t gpusparseSpMatDescr_t;
 typedef hipsparseDnMatDescr_t gpusparseDnMatDescr_t;
 typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
@@ -561,8 +589,6 @@ inline hipblasStatus_t gpublasCreate(gpublasHandle_t* handle) {
 #define gpublasCsyrk hipblasCsyrk
 #define gpublasZsyrk hipblasZsyrk
 
-#define GPUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
-
 #define gpudnnCreate miopenCreate
 #define gpudnnGetErrorString miopenGetErrorString
 #define gpudnnSetStream miopenSetStream
@@ -585,7 +611,6 @@ inline hipblasStatus_t gpublasCreate(gpublasHandle_t* handle) {
 #define gpudnnRNNForward miopenRNNForward
 #define gpudnnGetRNNWeightSpaceSize miopenGetRNNParamsSize
 
-#define GPUDNN_STATUS_SUCCESS MIOPEN_STATUS_SUCCESS
 #define GPUDNN_RNN_ALGO_STANDARD miopenRNNdefault
 #define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED miopenRNNDataSeqMajorPadded
 #define GPUDNN_DATA_FLOAT miopenFloat
@@ -720,7 +745,6 @@ inline hipsolverStatus_t gpusolverDnCreate(gpusolverDnHandle_t* handle) {
 #define GPUSOLVER_FILL_MODE_UPPER HIPSOLVER_FILL_MODE_UPPER
 #define GPUSOLVER_EIG_MODE_VECTOR HIPSOLVER_EIG_MODE_VECTOR
 #define GPUSOLVER_EIG_MODE_NOVECTOR HIPSOLVER_EIG_MODE_NOVECTOR
-#define GPUSOLVER_STATUS_SUCCESS HIPSOLVER_STATUS_SUCCESS
 
 #define GPUBLAS_OP_N HIPBLAS_OP_N
 #define GPUBLAS_OP_T HIPBLAS_OP_T
@@ -789,7 +813,6 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define GPUSPARSE_OPERATION_TRANSPOSE HIPSPARSE_OPERATION_TRANSPOSE
 #define GPUSPARSE_ORDER_ROW HIPSPARSE_ORDER_ROW
 #define GPUSPARSE_SPARSETODENSE_ALG_DEFAULT HIPSPARSE_SPARSETODENSE_ALG_DEFAULT
-#define GPUSPARSE_STATUS_SUCCESS HIPSPARSE_STATUS_SUCCESS
 
 #define GPU_STREAM_CAPTURE_STATUS_ACTIVE hipStreamCaptureStatusActive
 #define GPU_STREAM_CAPTURE_MODE_RELAXED hipStreamCaptureModeRelaxed
@@ -804,7 +827,6 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 #define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuStreamWaitEvent hipStreamWaitEvent
-#define gpuSuccess hipSuccess
 
 #define gpuCtxGetDevice hipCtxGetDevice
 #define gpuCtxGetCurrent hipCtxGetCurrent
@@ -855,10 +877,69 @@ inline hipsparseStatus_t gpusparseCreate(gpusparseHandle_t* handle) {
 
 namespace jax::hip {
 inline constexpr uint32_t kNumThreadsPerWarp = 64;
+
+template <typename T>
+struct GpuErrorTraits;
+
+template <>
+struct GpuErrorTraits<hipError_t> {
+  static constexpr hipError_t kSuccess = hipSuccess;
+};
+template <>
+struct GpuErrorTraits<hipsolverStatus_t> {
+  static constexpr hipsolverStatus_t kSuccess = HIPSOLVER_STATUS_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<hipsparseStatus_t> {
+  static constexpr hipsparseStatus_t kSuccess = HIPSPARSE_STATUS_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<hipblasStatus_t> {
+  static constexpr hipblasStatus_t kSuccess = HIPBLAS_STATUS_SUCCESS;
+};
+template <>
+struct GpuErrorTraits<miopenStatus_t> {
+  static constexpr miopenStatus_t kSuccess = miopenStatusSuccess;
+};
 }  // namespace jax::hip
 
+#elif defined(JAX_GPU_ONEAPI)
+
+#include "jaxlib/oneapi/oneapi_gpu_runtime.h"
+
+#define JAX_GPU_NAMESPACE oneapi
+#define JAX_GPU_PREFIX "oneapi"
+#define JAX_GPU_PLUGIN_NAME "oneapi"
+
+#define JAX_GPU_HAVE_64_BIT 0
+#define JAX_GPU_HAVE_FP8 0
+#define JAX_GPU_HAVE_SOLVER_GEEV 0
+
+typedef ::sycl::queue *gpuStream_t;
+
+#define GPU_EVENT_DEFAULT 0
+
+// The Sycl* wrappers return absl::Status; JAX_AS_STATUS resolves to the
+// AsStatus(const absl::Status&) passthrough in gpu_kernel_helpers.h.
+#define gpuMemcpyDeviceToHost ::jax::oneapi::SyclMemcpyDeviceToHost
+#define gpuMemcpyHostToDevice ::jax::oneapi::SyclMemcpyHostToDevice
+#define gpuMemcpyDeviceToDevice ::jax::oneapi::SyclMemcpyDeviceToDevice
+#define gpuMemcpyAsync ::jax::oneapi::SyclMemcpyAsync
+#define gpuGetLastError ::jax::oneapi::SyclGetLastError
+#define gpuStreamSynchronize ::jax::oneapi::SyclStreamSynchronize
+
+namespace jax::oneapi {
+inline constexpr uint32_t kNumThreadsPerWarp = 32;
+
+// Declared here so the AsStatus<T> template in gpu_kernel_helpers.h
+// can compile. Specializations are not needed for oneAPI.
+template <typename T>
+struct GpuErrorTraits;
+
+}  // namespace jax::oneapi
+
 #else  // defined(GPU vendor)
-#error "Either JAX_GPU_CUDA or JAX_GPU_HIP must be defined"
+#error "Either JAX_GPU_CUDA, JAX_GPU_HIP, or JAX_GPU_ONEAPI must be defined"
 #endif  // defined(GPU vendor)
 
 #endif  // JAXLIB_GPU_VENDOR_H_
