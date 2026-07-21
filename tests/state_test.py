@@ -1971,6 +1971,8 @@ class RunStateHypothesisTest(jtu.JaxTestCase):
 class PinnedBuffersTest(jtu.JaxTestCase):
 
   def test_pin_unpin_basic(self):
+    if jtu.is_device_rocm():
+      self.skipTest("Pinned buffers not supported on ROCm.")
     @jax.jit
     def f(x):
       return unpin(pin(x))
