@@ -711,37 +711,30 @@ class LaunchContext:
     else:
       yield
 
-  @functools.cached_property
-  def device_collective_metadata(self) -> ir.Value | None:
+  def _collective_metadata(self, idx: int) -> ir.Value | None:
     if self.num_peers <= 1:
       return None
     host_block = self.buffers.owner
     assert isinstance(host_block, ir.Block)
     with ir.InsertionPoint.at_block_begin(host_block):
       ptr_ty = llvm.PointerType.get()
-      metadata_ptr = llvm.load(
-          ptr_ty, utils.getelementptr(self.buffers, [self.num_params], ptr_ty)
+      buffer_ptr = utils.getelementptr(
+          self.buffers, [self.num_params + idx], ptr_ty
       )
+      metadata_ptr = llvm.load(ptr_ty, buffer_ptr)
       metadata_ty = ir.MemRefType.get(
           (get_collective_metadata_size(self.num_params, self.num_peers),),
           ir.IntegerType.get_signless(64),
       )
       return utils.ptr_as_memref(metadata_ptr, metadata_ty)
 
-  @property
-  def host_collective_metadata(self) -> ir.Value | None:
-    if self.device_collective_metadata is None:
-      return None
-    ptr_ty = llvm.PointerType.get()
-    metadata_ty = ir.MemRefType.get(
-      (get_collective_metadata_size(self.num_params, self.num_peers),),
-      ir.IntegerType.get_signless(64),
-    )
+  @functools.cached_property
+  def device_collective_metadata(self) -> ir.Value | None:
+    return self._collective_metadata(0)
 
-    host_metadata_ptr = llvm.load(
-      ptr_ty, utils.getelementptr(self.buffers, [self.num_params + 1], ptr_ty)
-    )
-    return utils.ptr_as_memref(host_metadata_ptr, metadata_ty)
+  @functools.cached_property
+  def host_collective_metadata(self) -> ir.Value | None:
+    return self._collective_metadata(1)
 
   def _alloc_scratch(
       self,
@@ -1953,7 +1946,6 @@ class LaunchContext:
       utils.warp_barrier()
     else:
       raise ValueError(f"Unsupported scope: {scope}")
-
 
   def _ensure_nvshmem_decls(self):
     if self.is_device_collective or self.device_collective_metadata is not None:
