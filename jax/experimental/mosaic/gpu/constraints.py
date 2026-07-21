@@ -382,7 +382,7 @@ def reduce_collapse_shape_expression(
       assert not rev_shape_to_process
       new_tiling = tuple(rev_new_tiling[::-1])
       return SMEMTransforms(lc.TileTransform(tuple(new_tiling)), swizzle)
-    case Constant():
+    case _ if isinstance(reduced_expr, Constant):
       raise NotImplementedError(
           "CollapseShape is only implemented for variables in SMEM")
     case _:

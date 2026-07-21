@@ -1987,7 +1987,15 @@ def _handle_transforms[T: (ir.Value, tcgen05.TMEMRef)](
         assert handle_reshapes
         if isinstance(transformed_ref, tcgen05.TMEMRef):
           raise ValueError("TMEM reshape not allowed.")
-        transformed_ref = mgpu.memref_reshape(transformed_ref, t.shape)
+        if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+          # TODO(allanrenucci): Remove once 0.11.1 is the minimum jaxlib
+          # version.
+          if hasattr(mgpu.dialect, "memref_reshape"):
+            transformed_ref = mgpu.dialect.memref_reshape(transformed_ref, t.shape)
+          else:
+            transformed_ref = mgpu.memref_reshape(transformed_ref, t.shape)
+        else:
+          transformed_ref = mgpu.memref_reshape(transformed_ref, t.shape)
         ref_aval = t_aval.transform_type(ref_aval)  # pyrefly: ignore [bad-assignment]
       case gpu_core.PeerMemRef(device_id, device_id_type):
         assert isinstance(t_aval, gpu_core.PeerMemRef)

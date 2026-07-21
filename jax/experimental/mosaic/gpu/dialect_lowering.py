@@ -2294,6 +2294,22 @@ def _memref_collapse_shape_op_lowering_rule(
   return [wrap_transformed_memref(result, op.result.type, out_transforms_attr)]
 
 
+# TODO(allanrenucci): Remove once 0.11.1 is the minimum jaxlib version.
+if hasattr(mgpu, "MemRefReshapeOp"):
+  @_register_lowering(mgpu.MemRefReshapeOp, support_warp_semantics=True)
+  def _memref_reshape_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.MemRefReshapeOp
+  ) -> Sequence[ir.Value]:
+    del ctx
+    [in_transforms] = inference_utils.in_transforms(op)
+    [out_transforms] = inference_utils.out_transforms(op)
+    unwrapped = unwrap_transformed_memref(op.source, in_transforms)
+    target_physical_type = transform_type(op.result.type, out_transforms)
+    target_shape = tuple(target_physical_type.shape)
+    reshaped = utils.memref_reshape(unwrapped, target_shape)
+    return [wrap_transformed_memref(reshaped, op.result.type, out_transforms)]
+
+
 @_register_lowering(memref.LoadOp)
 def _memref_load_op_lowering_rule(
     ctx: LoweringContext, op: memref.LoadOp
