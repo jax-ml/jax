@@ -151,6 +151,7 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
     hub_name = "jax_pypi",
     local_wheels = {
         "libtpu": "dist/libtpu-*.whl",  # On CI, we use the downloaded nightly version of libtpu.
+        "numpy": "dist/numpy-*.whl",  # On TSAN CI, we use a custom TSAN-instrumented NumPy wheel.
     },
     python_version = python_version,
     requirements_by_platform = {} if python_version in [

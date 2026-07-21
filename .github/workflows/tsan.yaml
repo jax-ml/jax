@@ -35,6 +35,67 @@ jobs:
         with:
           path: jax
           persist-credentials: false
+      - name: Get pinned NumPy version
+        id: numpy-version
+        run: |
+          NUMPY_VER=$(grep -m1 -E '^numpy==' jax/build/requirements_lock_3_14_ft.txt | cut -d'=' -f3 | cut -d' ' -f1 | tr -d ' \n\r')
+          echo "version=v${NUMPY_VER}" >> "$GITHUB_OUTPUT"
+          echo "Targeting NumPy release tag: v${NUMPY_VER}"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: numpy/numpy
+          ref: ${{ steps.numpy-version.outputs.version }}
+          path: numpy
+          submodules: true
+          persist-credentials: false
+      - name: Get year & week number
+        id: get-date
+        run: echo "date=$(/bin/date "+%Y-%U")" >> "$GITHUB_OUTPUT"
+        shell: bash -l {0}
+      - name: Restore cached TSAN Numpy
+        id: cache-numpy-tsan-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ./wheelhouse
+          key: ${{ runner.os }}-numpy-tsan-3.14-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
+      - name: Install Clang TSAN runtime
+        if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
+        run: |
+          apt update
+          apt install -y libclang-rt-18-dev
+      - name: Build TSAN Numpy wheel
+        if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          cd numpy
+
+          # Download and extract the prebuilt TSAN CPython tarball from GCS
+          curl -sSL -o "${GITHUB_WORKSPACE}/cpython-tsan.tar.gz" https://storage.googleapis.com/ml-sysroot-testing/python/cpython-3.14.x-tsan-shared-linux-x86_64-llvm-18.1.8.tar.gz
+          mkdir -p "${GITHUB_WORKSPACE}/cpython-tsan"
+          tar -xzf "${GITHUB_WORKSPACE}/cpython-tsan.tar.gz" -C "${GITHUB_WORKSPACE}/cpython-tsan" --strip-components=1
+          export PATH="${GITHUB_WORKSPACE}/cpython-tsan/bin:$PATH"
+
+          python3 -m pip install uv~=0.5.30
+          python3 -m uv pip install -r requirements/build_requirements.txt
+
+          CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Db_lundef=false -Csetup-args=-Dbuildtype=debugoptimized
+
+          # Copy the built wheel to wheelhouse for caching
+          mkdir -p "${GITHUB_WORKSPACE}/wheelhouse/numpy"
+          numpy_whl_path=$(find dist -maxdepth 1 -name "numpy*.whl" | head -n 1)
+          if [ -z "${numpy_whl_path}" ]; then exit 1; fi
+
+          echo "Built TSAN Numpy wheel: ${numpy_whl_path}"
+          cp "${numpy_whl_path}" "${GITHUB_WORKSPACE}/wheelhouse/numpy/"
+      - name: Save TSAN Numpy wheel
+        id: cache-numpy-tsan-save
+        if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ./wheelhouse
+          key: ${{ runner.os }}-numpy-tsan-3.14-${{ hashFiles('numpy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
       - name: Build Jax and run tests
         timeout-minutes: 180
         env:
@@ -50,6 +111,11 @@ jobs:
           echo "JAX_NUM_GENERATED_CASES=${JAX_NUM_GENERATED_CASES}"
           echo "JAX_ENABLE_X64=${JAX_ENABLE_X64}"
           echo "JAX_SKIP_SLOW_TESTS=${JAX_SKIP_SLOW_TESTS}"
+
+          mkdir -p dist
+          # Check whether we have numpy wheel or exit with error
+          find "${GITHUB_WORKSPACE}/wheelhouse/numpy" -maxdepth 1 -name "*.whl" | grep -q . || exit 1
+          find "${GITHUB_WORKSPACE}/wheelhouse/numpy" -maxdepth 1 -name "*.whl" -exec cp -v {} dist/ \;
 
           cat << 'EOF' >> MODULE.bazel
           python.override(minor_mapping = {"3.14": "3.14.3"})
