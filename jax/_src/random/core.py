@@ -84,7 +84,6 @@ def _check_all_safe_to_cast(name: str, dtype: DTypeLike, *args):
     if not dtypes.safe_to_cast(arg, dtype):
       raise dtypes.TypePromotionError(f"In arguments to {name}, cannot safely cast argument of type {jnp.asarray(arg).dtype} to {dtype}")
 
-
 def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
@@ -1219,7 +1218,6 @@ def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
     return u2 < p - u1
   else:
     return uniform(key, shape, lax.dtype(p)) < p
-
 
 def beta(key: ArrayLike,
          a: RealArray,
@@ -2707,8 +2705,10 @@ def _maxwell(key, shape, dtype, out_sharding) -> Array:
 def double_sided_maxwell(key: ArrayLike,
                          loc: RealArray,
                          scale: RealArray,
-                         shape: Shape = (),
-                         dtype: DTypeLikeFloat | None = None) -> Array:
+                         shape: Shape | None = None,
+                         dtype: DTypeLikeFloat | None = None,
+                         *,
+                         out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample from a double sided Maxwell distribution.
 
   The values are distributed according to the probability density function:
@@ -2723,8 +2723,17 @@ def double_sided_maxwell(key: ArrayLike,
     key: a PRNG key.
     loc: The location parameter of the distribution.
     scale: The scale parameter of the distribution.
-    shape: The shape added to the parameters loc and scale broadcastable shape.
-    dtype: The type used for samples.
+    shape: Optional, a tuple of nonnegative integers specifying the result
+      shape. Must be broadcast-compatible with ``loc`` and ``scale``.
+    dtype: Optional, the type used for samples.
+    out_sharding: Optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A jnp.array of samples.
@@ -2735,24 +2744,21 @@ def double_sided_maxwell(key: ArrayLike,
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `double_sided_maxwell` must be a float"
-                     f" dtype, got {dtype}")
-  shape = core.canonicalize_shape(shape)
-  return _double_sided_maxwell(key, loc, scale, shape, dtype)
-
+                    f" dtype, got {dtype}")
+  shape = _check_broadcast_shapes("double_sided_maxwell", shape, loc, scale)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "double_sided_maxwell", shape)
+  _check_all_safe_to_cast("double_sided_maxwell", dtype, loc, scale)
+  return maybe_auto_axes(_double_sided_maxwell, out_sharding, shape=shape, dtype=dtype)(key, loc, scale)
 
 @jit(static_argnums=(3, 4))
 def _double_sided_maxwell(key, loc, scale, shape, dtype) -> Array:
-  params_shapes = lax.broadcast_shapes(np.shape(loc), np.shape(scale))
-  if not shape:
-    shape = params_shapes
-
-  shape = shape + params_shapes
   maxwell_key, rademacher_key = _split(key)
   maxwell_rvs = maxwell(maxwell_key, shape=shape, dtype=dtype)
   # Generate random signs for the symmetric variates.
   random_sign = rademacher(rademacher_key, shape=shape, dtype=dtype)
   assert random_sign.shape == maxwell_rvs.shape
-
+  scale = lax.convert_element_type(scale, dtype)
+  loc = lax.convert_element_type(loc, dtype)
   return random_sign * maxwell_rvs * scale + loc
 
 
