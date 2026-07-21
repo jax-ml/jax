@@ -680,6 +680,53 @@ class MpmdTest(PallasSCTest):
     x = jnp.ones((8, 128), dtype=jnp.float32)
     np.testing.assert_array_equal(jax.grad(f)(x), jnp.full_like(x, 2.0))
 
+  def test_passing_in_transformed_refs(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    x = jnp.arange(16 * 8 * 128, dtype=jnp.int32).reshape(16 * 8, 128)
+
+    @pl.kernel(mesh=mesh)
+    def kernel(x_ref):
+      @functools.partial(
+          pl.run_scoped, scratch_ref=pltpu.VMEM(x_ref.shape, x_ref.dtype)
+      )
+      def _(scratch_ref):
+        pltpu.sync_copy(x_ref, scratch_ref)
+        scratch_ref[...] += 1
+        pltpu.sync_copy(scratch_ref, x_ref)
+
+    @jax.jit
+    def fn(x):
+      x_ref = jax.new_ref(x)
+      kernel(x_ref.reshape((-1, 128)))
+      return jax.freeze(x_ref)
+
+    np.testing.assert_array_equal(fn(x), x + 1)
+
+  def test_passing_in_transformed_refs_with_dynamic_values(self):
+    mesh = pltpu.TensorCoreMesh(axis_name="tc", num_cores=1)
+    x = jnp.arange(16 * 8 * 128, dtype=jnp.int32).reshape(16 * 8, 128)
+
+    @pl.kernel(mesh=mesh)
+    def kernel(x_ref):
+      @functools.partial(
+          pl.run_scoped, scratch_ref=pltpu.VMEM(x_ref.shape, x_ref.dtype)
+      )
+      def _(scratch_ref):
+        pltpu.sync_copy(x_ref, scratch_ref)
+        scratch_ref[...] += 1
+        pltpu.sync_copy(scratch_ref, x_ref)
+
+    @jax.jit
+    def fn(x):
+      x_ref = jax.new_ref(x)
+      def body(i, _):
+        kernel(x_ref.at[i, ...])
+
+      jax.lax.fori_loop(0, 16, body, None)
+      return jax.freeze(x_ref)
+
+    np.testing.assert_array_equal(fn(x)[0, ...], (x + 1)[0, ...])
+
   @parameterized.product(
       use_tc_tiling=(False, True), full_core_spec=(True, False),
       signalling_direction=("scs_to_tec", "tec_to_scs", "both"),

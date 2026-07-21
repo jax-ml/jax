@@ -659,9 +659,11 @@ def mpmd_map(
 def _aval_to_ref_aval(
     aval: Any,
     meshes: Sequence[pallas_core.Mesh],
-) -> state.AbstractRef:
+) -> state.AbstractRef | state.TransformedRef:
   match aval:
     case state.AbstractRef():
+      return aval
+    case state.TransformedRef():
       return aval
     case jax_core.ShapedArray(memory_space=memory_space):
       if memory_space == jax_core.MemorySpace.Device:
@@ -826,9 +828,8 @@ def _mpmd_map(
   )
 
   def wrapper(*args):
-    flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
-    in_paths, flat_args = util.unzip2(flat_args_with_paths)
-    del in_paths
+    flat_args_ft = ft.flatten(args)
+    flat_args, in_tree = flat_args_ft.vals, flat_args_ft.tree
 
     seen_ref_ids = set()
     for arg in flat_args:
@@ -900,10 +901,15 @@ def _mpmd_map(
       kernel_arg_avals.extend(unflat_scratch_types)
       kernel_kwarg_avals = {}
 
-    unflat_kernel_avals = tree_util.tree_map(
-        functools.partial(_aval_to_ref_aval, meshes=meshes),
+    # Wrap kernel_arg_avals and kernel_kwarg_avals into Refs except
+    # TransformedRefs to allowed their transform data be passed as scalar args.
+    unflat_kernel_ft = ft.flatten(
         (kernel_arg_avals, kernel_kwarg_avals),
+        is_leaf=lambda x: isinstance(x, state.TransformedRef),
     )
+    unflat_kernel_avals = unflat_kernel_ft.map(
+        functools.partial(_aval_to_ref_aval, meshes=meshes)
+    ).unflatten()
     in_avals_ft = ft.flatten(unflat_kernel_avals)
     flat_kernel_avals = list(in_avals_ft.vals)
 
