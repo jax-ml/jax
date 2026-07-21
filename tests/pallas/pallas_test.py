@@ -941,6 +941,35 @@ class PallasCallTest(ptu.PallasTest):
 
     self.assertAllClose(kernel(x), expected)
 
+  def test_empty_ref_like_accepts_kernel_ref(self):
+    # https://github.com/jax-ml/jax/issues/39190
+    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
+      self.skipTest("In-kernel ref allocation is not supported on GPU")
+
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape(8, 128)
+    ref_avals = []
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct.like(x),
+    )
+    def double(x_ref, o_ref):
+      tmp_ref = pl.empty_ref_like(x_ref)
+      ref_avals.append((jax.typeof(x_ref), jax.typeof(tmp_ref)))
+      tmp_ref[...] = x_ref[...] * 2
+      o_ref[...] = tmp_ref[...]
+
+    np.testing.assert_array_equal(double(x), x * 2)
+    x_ref_aval, tmp_ref_aval = ref_avals[0]
+    self.assertEqual(tmp_ref_aval.shape, x_ref_aval.shape)
+    self.assertEqual(tmp_ref_aval.dtype, x_ref_aval.dtype)
+    self.assertEqual(tmp_ref_aval.memory_space, x_ref_aval.memory_space)
+
+  def test_empty_ref_like_rejects_unsupported_inputs(self):
+    with self.assertRaisesRegex(
+        ValueError, "empty_ref_like does not support"):
+      pl.empty_ref_like(jnp.ones((8, 128), jnp.int32))
+
 
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
