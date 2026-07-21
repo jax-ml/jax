@@ -315,8 +315,10 @@ _SHAPE_CASES = [
     # ('double_sided_maxwell', lambda key, shape: random.double_sided_maxwell(key, loc=jnp.zeros(shape), scale=jnp.ones(shape), shape=shape)),
     ('f', lambda key, shape: random.f(key, jnp.ones(shape), jnp.ones(shape), shape=shape)),
     ('gamma', lambda key, shape: random.gamma(key, jnp.ones(shape), shape=shape)),
+    ('gamma_approx', lambda key, shape: random.gamma(key, jnp.ones(shape), shape=shape, method='approximate')),
     ('geometric', lambda key, shape: random.geometric(key, jnp.full(shape, 0.5), shape=shape)),
     ('loggamma', lambda key, shape: random.loggamma(key, jnp.ones(shape), shape=shape)),
+    ('loggamma_approx', lambda key, shape: random.loggamma(key, jnp.ones(shape), shape=shape, method='approximate')),
     ('lognormal', lambda key, shape: random.lognormal(key, jnp.ones(shape), shape=shape)),
     ('pareto', lambda key, shape: random.pareto(key, jnp.ones(shape), shape=shape)),
     ('poisson', lambda key, shape: random.poisson(key, jnp.ones(shape), shape=shape)),
@@ -677,69 +679,18 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(
     a=[0.1, 1., 10.],
     dtype=jtu.dtypes.floating,
+    method=['exact', 'approximate'],
   )
   @jtu.skip_on_devices("tpu")  # low accuracy leads to failures.
-  def testGammaVsLogGamma(self, a, dtype):
+  def testGammaVsLogGamma(self, a, dtype, method):
     # Test that gamma() and loggamma() produce equivalent samples.
-    rand_gamma = lambda key, a: random.gamma(key, a, (100,), dtype)
-    rand_loggamma = lambda key, a: random.loggamma(key, a, (100,), dtype)
-    crand_loggamma = jax.jit(rand_loggamma)
+    rand_gamma = lambda key, a: random.gamma(key, a, (100,), dtype, method=method)
+    rand_loggamma = lambda key, a: random.loggamma(key, a, (100,), dtype, method=method)
     tol = {np.float32: 1E-6, np.float64: 1E-12}
 
     key = lambda: self.make_key(0)
     self.assertAllClose(rand_gamma(key(), a), jnp.exp(rand_loggamma(key(), a)),
                         atol=tol, rtol=tol)
-    self.assertAllClose(rand_gamma(key(), a), jnp.exp(crand_loggamma(key(), a)),
-                        atol=tol, rtol=tol)
-
-  @jtu.sample_product(
-    a=[0.1, 1., 10.],
-    dtype=jtu.dtypes.floating,
-  )
-  def testGammaApproximate(self, a, dtype):
-    # The approximate method should still follow the gamma distribution.
-    key = lambda: self.make_key(1)
-    rand = lambda key, a: random.gamma(key, a, (10000,), dtype,
-                                       method='approximate')
-    crand = jax.jit(rand)
-
-    for samples in [rand(key(), a), crand(key(), a)]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
-
-  @jtu.sample_product(
-    a=[0.1, 1., 10.],
-    dtype=jtu.dtypes.floating,
-  )
-  def testLogGammaApproximate(self, a, dtype):
-    # The approximate method should still follow the log-gamma distribution.
-    key = lambda: self.make_key(1)
-    rand = lambda key, a: random.loggamma(key, a, (10000,), dtype,
-                                          method='approximate')
-    crand = jax.jit(rand)
-
-    for samples in [rand(key(), a), crand(key(), a)]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.loggamma(a).cdf)
-
-  @jtu.sample_product(
-    a=[0.1, 1., 10.],
-    dtype=jtu.dtypes.floating,
-  )
-  def testGammaVsLogGammaApproximate(self, a, dtype):
-    # For a shared key, approximate gamma is exactly exp of approximate loggamma.
-    # This holds bit-exactly only when dtype is the compute dtype (>= float32);
-    # narrower dtypes differ by the exp/round ordering, so we skip them.
-    if dtypes.finfo(dtype).bits < 32:
-      self.skipTest("exact only for dtype >= float32")
-    key = self.make_key(0)
-    g = random.gamma(key, a, (100,), dtype, method='approximate')
-    lg = random.loggamma(key, a, (100,), dtype, method='approximate')
-    self.assertArraysEqual(g, jnp.exp(lg))
-
-  def testGammaApproximateShape(self):
-    key = self.make_key(0)
-    for sampler in [random.gamma, random.loggamma]:
-      x = sampler(key, np.array([0.2, 0.3]), shape=(3, 2), method='approximate')
-      assert x.shape == (3, 2)
 
   def testGammaInvalidMethod(self):
     key = self.make_key(0)
@@ -752,18 +703,14 @@ class DistributionsTest(RandomTestBase):
     a=[0.1, 1., 10.],
     dtype=jtu.dtypes.floating,
     use_jit=[False, True],
+    method=['exact', 'approximate']
   )
-  def testGamma(self, a, dtype, use_jit):
+  def testGamma(self, a, dtype, use_jit, method):
     key = self.make_key(1)
     rand = random.gamma if not use_jit else jax.jit(
-        random.gamma, static_argnames=['shape', 'dtype'])
-    samples = rand(key, a, shape=(10000,), dtype=dtype)
+        random.gamma, static_argnames=['shape', 'dtype', 'method'])
+    samples = rand(key, a, shape=(10000,), dtype=dtype, method=method)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
-
-  def testGammaShape(self):
-    key = self.make_key(0)
-    x = random.gamma(key, np.array([0.2, 0.3]), shape=(3, 2))
-    assert x.shape == (3, 2)
 
   @jtu.sample_product(
     log_space=[True, False],
