@@ -94,6 +94,9 @@ class Transform(Protocol):
   def transform_type(self, x: core.AbstractValue) -> core.AbstractValue:
     raise NotImplementedError(type(self))
 
+  def transform_array(self, x: Any) -> Any:
+    raise NotImplementedError(type(self))
+
   def undo(self, x: core.AbstractValue) -> Transform:
     raise NotImplementedError(type(self))
 

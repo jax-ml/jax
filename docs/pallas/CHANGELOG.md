@@ -55,6 +55,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
+  * Added {func}`jax.experimental.pallas.tpu.annotate` to attach memory access
+    assumptions (`no_store`, `no_bank_conflict`, `no_hazard`, and
+    `no_hazard_no_deps`) to VMEM/SMEM references and slices, allowing kernels to
+    override compiler scheduling, bundle packing, and memory dependency analysis.
   * Added `jax_pallas_auto_assign_collective_ids_limit` config flag to allow
     configuring the limit for auto-assigned collective IDs.
   * {func}`jax.experimental.pallas.tpu.get_barrier_semaphore` now accepts an
