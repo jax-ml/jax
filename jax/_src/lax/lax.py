@@ -3562,6 +3562,8 @@ def top_k(
 ) -> tuple[Array, Array]:
   """Returns top ``k`` values and their indices along the specified axis of ``operand``.
 
+  The order of returned values is implementation-dependent.
+
   Args:
     operand: N-dimensional array of non-complex type.
     k: integer specifying the number of top entries.
