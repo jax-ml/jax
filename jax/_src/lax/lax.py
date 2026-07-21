@@ -26,8 +26,6 @@ import operator
 from typing import Any, NamedTuple, Never, TypeVar, Union, cast as type_cast, overload
 import warnings
 
-import numpy as np
-
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
@@ -38,16 +36,18 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import ffi
+from jax._src import flattree as ft
 from jax._src import literals
 from jax._src import pjit
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
-from jax._src import flattree as ft
+from jax._src import tpu_info
 from jax._src import tree_util
 from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, ShapedArray, abstract_token,
                            canonicalize_shape)
+from jax._src.core import getr, getu, stage_p, typeof
 from jax._src.errors import UnexpectedTracerError
 from jax._src.hashable_array import HashableArray
 from jax._src.interpreters import ad
@@ -57,22 +57,22 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import remat
 from jax._src.lax import slicing
 from jax._src.lax import utils as lax_utils
-from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
-from jax._src.lax.utils import (
-  input_dtype, dtype_to_string, standard_multi_result_abstract_eval,
-  standard_primitive, standard_abstract_eval)
-from jax._src.core import typeof, getu, getr, stage_p
+from jax._src.lax.utils import ( dtype_to_string,
+  input_dtype, standard_abstract_eval, standard_multi_result_abstract_eval,
+  standard_primitive)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding import Sharding
+from jax._src.mesh import get_abstract_mesh, get_concrete_mesh, use_abstract_mesh
 from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
+from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (NamedSharding, canonicalize_sharding,
                                      flatten_spec)
-from jax._src.typing import (Array, ArrayLike, DimSize, DuckTypedArray, DType,
-                             DTypeLike, Shape)
-from jax._src.util import (cache, canonicalize_axis, safe_map, safe_zip,
-                           split_list, weakref_lru_cache, foreach)
+from jax._src.typing import ( Array, ArrayLike, DType,
+                             DTypeLike, DimSize, DuckTypedArray, Shape)
+from jax._src.util import ( cache, canonicalize_axis, foreach, safe_map, safe_zip,
+                           split_list, weakref_lru_cache)
+import numpy as np
 
 _max = builtins.max
 _min = builtins.min
@@ -4600,6 +4600,15 @@ def logistic_impl(x, accuracy):
 
 mlir.register_lowering(logistic_p,
                        mlir.lower_fun(logistic_impl, multiple_results=False))
+
+
+def _logistic_tpu_lowering(ctx, x, **params):
+  if tpu_info.get_tpu_generation() >= 6:
+    return _nary_lower_hlo(hlo.logistic, ctx, x, **params)
+  return mlir.lower_fun(logistic_impl, multiple_results=False)(ctx, x, **params)
+
+
+mlir.register_lowering(logistic_p, _logistic_tpu_lowering, platform='tpu')
 core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
 
 def _sin_complex(x):
