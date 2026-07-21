@@ -1249,6 +1249,7 @@ class LaunchContext:
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
+    i64 = ir.IntegerType.get_signless(64)
 
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
@@ -1353,6 +1354,18 @@ class LaunchContext:
         gep_type = i8  # LLVM has no support for f8.
       else:
         gep_type = element_type
+
+      gmem_strides, _ = gmem_ref_ty.get_strides_and_offset()
+      transformed_strides = gmem_strides
+      for t in gmem_transform:
+        transformed_strides = t.transform_strides(transformed_strides)
+      gmem_offset = utils.dyn_dot(
+          dyn_base_indices, [c(s, index) for s in transformed_strides]
+      )
+      if offset_scale > 1:
+        gmem_offset = arith.divui(gmem_offset, c(offset_scale, index))
+      gmem_offset = arith.index_castui(i64, gmem_offset)
+
       if not gmem_transform:
         if swizzle is not None:
           raise NotImplementedError(
@@ -1371,6 +1384,9 @@ class LaunchContext:
         gmem_base_ptr = utils.memref_ptr(gmem_ref)
         gmem_base_ptr = llvm.addrspacecast(
             llvm.PointerType.get(address_space=1), gmem_base_ptr
+        )
+        gmem_base_ptr = utils.getelementptr(
+            gmem_base_ptr, [gmem_offset], gep_type
         )
         smem_base_ptr = utils.memref_ptr(smem_ref)
         bytes_per_transfer = layout.vec_size * element_bitwidth // 8
@@ -1396,7 +1412,6 @@ class LaunchContext:
         layout = fa.tiled_copy_smem_gmem_layout(
             *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
         )
-        gmem_strides = gmem_ref_ty.get_strides_and_offset()[0]
         dst_tiled_strides = [
             arith.constant(i32, s)
             for s in layout.tiling.tile_strides(tuple(gmem_strides))[gmem_ref_ty.rank :]
@@ -1405,6 +1420,8 @@ class LaunchContext:
         warp_offset = utils.dyn_dot(layout.warp_indices(), dst_tiled_strides)
         dyn_offset = arith.addi(lane_offset, warp_offset)
         dyn_offset = arith.divui(dyn_offset, c(offset_scale, i32))
+        dyn_offset = arith.extui(i64, dyn_offset)
+        dyn_offset = arith.addi(dyn_offset, gmem_offset)
         if gmem_ref_ty.rank != 2:
           raise NotImplementedError("Only 2D copies implemented")
         transfers = fa.FragmentedArray.transfer_tiled(
