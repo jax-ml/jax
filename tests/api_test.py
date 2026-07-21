@@ -1548,6 +1548,25 @@ class JitTest(jtu.BufferDonationTestCase):
       with jax.no_tracing():
         _ = f(y)  # crash!
 
+  def test_no_tracing_warm_call_with_callback(self):
+    # https://github.com/jax-ml/jax/issues/39289
+    @jax.jit
+    def f(x):
+      jax.debug.callback(lambda _: None, x)
+      return x + 1
+
+    # inputs created outside no_tracing to avoid cold internal jits
+    x = jnp.arange(3.)
+    y = jnp.arange(4.)
+    _ = f(x)  # compile once
+
+    with jax.no_tracing():
+      _ = f(x)  # warm call, callbacks never take the C++ fastpath; no crash
+
+    with self.assertRaisesRegex(RuntimeError, 'no_tracing'):
+      with jax.no_tracing():
+        _ = f(y)  # new shape, genuine re-trace: crash!
+
   def test_no_execution(self):
     @jax.jit
     def f():
