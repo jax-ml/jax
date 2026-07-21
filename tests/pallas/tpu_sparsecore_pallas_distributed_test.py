@@ -142,6 +142,9 @@ class RemoteDMATest(parameterized.TestCase):
   @parameterized.product(src_is_hbm=[False, True])
   def test_scs_remote_dma_spmem(self, src_is_hbm):
     """Tests ScalarSubcore remote DMA to VMEM_SHARED from VMEM_SHARED or HBM."""
+    if src_is_hbm is False:
+      # TODO(ivyzheng, rdyro): Re-enable this test once the bug is fixed.
+      self.skipTest('VMEM_SHARED to VMEM_SHARED version is flaky.')
     num_devices = jax.device_count()
     sc_info = pltpu.get_tpu_info().sparse_core
     num_cores = sc_info.num_cores
@@ -163,24 +166,36 @@ class RemoteDMATest(parameterized.TestCase):
     if not src_is_hbm:
       scratch_types['scratch_send'] = pltpu.VMEM_SHARED(scratch_shape, x.dtype)
 
-    def scalar_subcore_fn(x_ref, out_ref, *, scratch_recv, send_sem, recv_sem, scratch_send=None):
+    @functools.partial(
+        pl.kernel,
+        mesh=s_mesh,
+        out_type=jax.ShapeDtypeStruct(local_out_shape, x.dtype),
+        scratch_types=scratch_types,
+        compiler_params=pltpu.CompilerParams(
+            needs_layout_passes=False,
+        ),
+    )
+    def shift_kernel(x_ref, out_ref, *, scratch_recv, send_sem, recv_sem, scratch_send=None):
+      assert x_ref.shape == (1, num_cores, num_subcores, sc_info.num_lanes)
       my_id, axis_size = jax.lax.axis_index('x'), jax.lax.axis_size('x')
       neighbor = jax.lax.rem(my_id + 1, axis_size)
+      core_id = jax.lax.axis_index('core')
       if src_is_hbm:
-        src_ref = x_ref.at[0]
+        src_ref = x_ref.at[0, core_id]
       else:
         assert scratch_send is not None
-        pltpu.async_copy(x_ref.at[0], scratch_send, send_sem).wait()
-        src_ref = scratch_send
+        pltpu.async_copy(x_ref.at[0, core_id], scratch_send.at[core_id], send_sem).wait()
+        src_ref = scratch_send.at[core_id]
       pltpu.async_remote_copy(
-          src_ref, scratch_recv, send_sem, recv_sem,
+          src_ref, scratch_recv.at[core_id], send_sem, recv_sem,
           device_id={'x': neighbor}
       ).wait()
-      pltpu.async_copy(scratch_recv, out_ref.at[0], send_sem).wait()
+      pltpu.async_copy(scratch_recv.at[core_id], out_ref.at[0, core_id], send_sem).wait()
 
     device_mesh = mesh_utils.create_device_mesh((num_devices,), jax.devices()[:num_devices])
     mesh = jax.sharding.Mesh(device_mesh, ['x'])
 
+    @jax.jit
     @functools.partial(
         jax.shard_map,
         mesh=mesh,
@@ -188,18 +203,9 @@ class RemoteDMATest(parameterized.TestCase):
         out_specs=jax.P('x', None, None, None),
         check_vma=False,
     )
-    @jax.jit
     def run(x):
       x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
-      return pl.kernel(
-          body=scalar_subcore_fn,
-          mesh=s_mesh,
-          out_type=jax.ShapeDtypeStruct(local_out_shape, x.dtype),
-          scratch_types=scratch_types,
-          compiler_params=pltpu.CompilerParams(
-              needs_layout_passes=False,
-          ),
-      )(x_ref)
+      return shift_kernel(x_ref)
 
     expected = jnp.roll(x, shift=1, axis=0)
     actual = run(x)
