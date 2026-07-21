@@ -929,5 +929,49 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
     self.assertEqual(constraint.holds(), expected_holds)
 
+  def test_one_of_constraint_holds(self):
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    self.assertTrue(cs.OneOf(layout1, (layout1, layout2)).holds())
+    self.assertTrue(cs.OneOf(layout2, (layout1, layout2)).holds())
+    self.assertFalse(cs.OneOf(RL(mgpu.WGMMA_COL_LAYOUT), (layout1, layout2)).holds())
+
+  def test_one_of_reduces_to_unsatisfiable_if_invalid_assignment(self):
+    v0 = V(0)
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    system = cs.ConstraintSystem(
+        assignments={v0: RL(mgpu.WGMMA_COL_LAYOUT)},
+        constraints=[cs.OneOf(v0, (layout1, layout2))],
+    )
+    self.assertIsInstance(cs.reduce(system), cs.Unsatisfiable)
+
+  def test_one_of_canonicalize_preserves_order_and_removes_duplicates(self):
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    constraint = cs.OneOf(V(0), (layout2, layout1, layout2))
+    self.assertEqual(constraint.canonicalize(), cs.OneOf(V(0), (layout2, layout1)))
+
+  def test_one_of_canonicalize_reduces_singleton_to_equals(self):
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    constraint = cs.OneOf(V(0), (layout1, layout1))
+    self.assertEqual(constraint.canonicalize(), cs.Equals(V(0), layout1))
+
+  def test_reduce_one_of_singleton_yields_equals(self):
+    shape = (128,)
+    v0 = V(MockVariableKey(0, shape, cs.MemorySpace.REG))
+    layout = RL(mgpu.WGSplatFragLayout((128,)))
+    constraint = cs.OneOf(v0, (layout,))
+    self.assertEqual(cs.reduce_constraint(constraint, {}), cs.Equals(v0, layout))
+
+  def test_reduce_one_of_with_assigned_variable_reduces(self):
+    shape = (128,)
+    v0 = V(MockVariableKey(0, shape, cs.MemorySpace.REG))
+    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
+    layout2 = RL(mgpu.WGMMA_LAYOUT)
+    constraint = cs.OneOf(v0, (layout2, layout1))
+    self.assertEqual(cs.reduce_constraint(constraint, {v0: layout1}), cs.AlwaysTrue())
+
+
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
