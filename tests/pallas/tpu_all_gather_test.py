@@ -34,16 +34,7 @@ import hypothesis.strategies as hps
 jax.config.parse_flags_with_absl()
 P = jax.sharding.PartitionSpec
 
-hp.settings.register_profile(
-    "deterministic",
-    database=None,
-    derandomize=True,
-    deadline=None,
-    max_examples=50,
-    print_blob=True,
-    verbosity=hp.Verbosity.verbose,
-)
-hp.settings.load_profile("deterministic")
+htu.setup_hypothesis(max_examples=50)
 
 
 @hps.composite

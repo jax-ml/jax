@@ -35,16 +35,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-hp.settings.register_profile(
-    'deterministic',
-    database=None,
-    derandomize=True,
-    deadline=None,
-    max_examples=200,
-    print_blob=True,
-    verbosity=hp.Verbosity.verbose,
-)
-hp.settings.load_profile('deterministic')
+htu.setup_hypothesis(max_examples=200)
 
 
 jax.config.parse_flags_with_absl()

@@ -32,15 +32,7 @@ P = jax.sharding.PartitionSpec
 
 partial = functools.partial
 
-hp.settings.register_profile(
-    "deterministic",
-    database=None,
-    derandomize=True,
-    deadline=None,
-    max_examples=10,
-    print_blob=True,
-)
-hp.settings.load_profile("deterministic")
+htu.setup_hypothesis(max_examples=10)
 
 @hps.composite
 def group_strategy(
