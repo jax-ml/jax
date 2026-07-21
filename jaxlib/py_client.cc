@@ -33,6 +33,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
@@ -538,6 +539,13 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                                 std::optional<xla::CompileOptions> options,
                                 std::vector<nb::capsule> host_callbacks) {
   ifrt::LoadedExecutableRef ifrt_loaded_executable;
+#if JAX_IFRT_VERSION_NUMBER >= 62
+  absl::Cord cord = absl::MakeCordFromExternal(
+      std::string_view(serialized.c_str(), serialized.size()),
+      [serialized]() mutable {
+        GlobalPyRefManager()->AddGarbage(std::move(serialized));
+      });
+#endif
   std::optional<std::string> fingerprint;
   auto ifrt_deserialize_options = MakeIfrtDeserializeExecutableOptions(
       std::move(options), std::move(executable_devices),
@@ -545,13 +553,22 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
+#if JAX_IFRT_VERSION_NUMBER >= 62
+    TF_ASSIGN_OR_RETURN(
+        ifrt_loaded_executable,
+        client->ifrt_client_->GetDefaultCompiler()
+            ->DeserializeLoadedExecutable(std::move(cord),
+                                          std::move(ifrt_deserialize_options))
+            .Await());
+#else
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
             ->DeserializeLoadedExecutable(
-                std::string_view(serialized.c_str(), serialized.size()),
+                absl::string_view(serialized.c_str(), serialized.size()),
                 std::move(ifrt_deserialize_options))
             .Await());
+#endif
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
@@ -566,6 +583,13 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                                 std::optional<xla::CompileOptions> options,
                                 std::vector<nb::callable> host_callbacks) {
   ifrt::LoadedExecutableRef ifrt_loaded_executable;
+#if JAX_IFRT_VERSION_NUMBER >= 62
+  absl::Cord cord = absl::MakeCordFromExternal(
+      std::string_view(serialized.c_str(), serialized.size()),
+      [serialized]() mutable {
+        GlobalPyRefManager()->AddGarbage(std::move(serialized));
+      });
+#endif
   std::optional<std::string> fingerprint;
   auto ifrt_deserialize_options = MakeIfrtDeserializeExecutableOptions(
       std::move(options), std::move(executable_devices),
@@ -573,6 +597,14 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
   PyUserContextScope user_context_scope;
   {
     nb::gil_scoped_release gil_release;
+#if JAX_IFRT_VERSION_NUMBER >= 62
+    TF_ASSIGN_OR_RETURN(
+        ifrt_loaded_executable,
+        client->ifrt_client_->GetDefaultCompiler()
+            ->DeserializeLoadedExecutable(std::move(cord),
+                                          std::move(ifrt_deserialize_options))
+            .Await());
+#else
     TF_ASSIGN_OR_RETURN(
         ifrt_loaded_executable,
         client->ifrt_client_->GetDefaultCompiler()
@@ -580,6 +612,7 @@ PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                 std::string_view(serialized.c_str(), serialized.size()),
                 std::move(ifrt_deserialize_options))
             .Await());
+#endif
   }
   TF_ASSIGN_OR_RETURN(fingerprint, ifrt_loaded_executable->Fingerprint());
   return make_nb_class<PyLoadedExecutable>(std::move(client),
