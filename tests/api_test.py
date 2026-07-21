@@ -8356,6 +8356,80 @@ class NamedCallTest(jtu.JaxTestCase):
           OverflowError, 'An overflow.*whose argument path is x.', f,
           int_max + 1)
 
+  @parameterized.parameters(
+    [dict(func=func, np_dtype=np_dtype)
+      for func in ['jit', 'asarray', 'device_put']
+      for np_dtype in ['int64', 'uint64']
+    ],
+  )
+  def test_numpy_64bit_array_overflow(self, func, np_dtype):
+    # https://github.com/jax-ml/jax/issues/18385
+    if lib.jaxlib_extension_version < 479:
+      self.skipTest("requires jaxlib extension version >= 479")
+    funcdict = {
+      'jit': jax.jit(lambda x: x + 0),
+      'asarray': lambda x: jnp.asarray(x),
+      'device_put': lambda x: api.device_put(x),
+    }
+    f = funcdict[func]
+
+    dtype = np.dtype(np_dtype)
+    small_dtype = np.dtype('int32') if np_dtype == 'int64' else np.dtype('uint32')
+    in_range = [np.iinfo(small_dtype).min, np.iinfo(small_dtype).max]
+    out_of_range = [
+      np.array([np.iinfo(small_dtype).max + 1], dtype=dtype),
+      np.array(np.iinfo(small_dtype).max + 1, dtype=dtype),  # 0-dimensional
+      np.array([np.iinfo(dtype).max], dtype=dtype),
+    ]
+    if np_dtype == 'int64':
+      out_of_range.append(np.array([np.iinfo(small_dtype).min - 1], dtype=dtype))
+
+    if config.enable_x64.value:
+      # No truncation happens, so any value must pass through unchanged.
+      for x in out_of_range:
+        self.assertArraysEqual(f(x), x)
+      return
+
+    # Boundary values must convert exactly, before and after any jit cache
+    # entry exists for this dtype/shape (the two calls take different paths
+    # through jaxlib).
+    for _ in range(2):
+      for value in in_range:
+        out = f(np.array([value], dtype=dtype))
+        self.assertArraysEqual(out, np.array([value], dtype=small_dtype))
+
+    # Empty arrays trivially satisfy the range check.
+    self.assertArraysEqual(f(np.array([], dtype=dtype)),
+                           np.array([], dtype=small_dtype))
+
+    # Out-of-range values must raise OverflowError rather than silently
+    # wrapping around, both with a cold and with a warm jit cache.
+    for _ in range(2):
+      for x in out_of_range:
+        self.assertRaisesRegex(OverflowError, "too large in magnitude", f, x)
+
+  @parameterized.parameters('int64', 'uint64')
+  def test_numpy_64bit_scalar_overflow(self, np_dtype):
+    # https://github.com/jax-ml/jax/issues/18385
+    if lib.jaxlib_extension_version < 479:
+      self.skipTest("requires jaxlib extension version >= 479")
+    scalar_type = np.int64 if np_dtype == 'int64' else np.uint64
+    small_dtype = np.dtype('int32') if np_dtype == 'int64' else np.dtype('uint32')
+    good = scalar_type(np.iinfo(small_dtype).max)
+    bad = scalar_type(np.iinfo(small_dtype).max + 1)
+
+    f = jax.jit(lambda x: x + 0)
+    if config.enable_x64.value:
+      self.assertEqual(f(bad), bad)
+      self.assertEqual(jnp.asarray(bad), bad)
+      return
+    # Cold and warm jit caches take different paths through jaxlib.
+    for _ in range(2):
+      self.assertEqual(f(good), good)
+      self.assertRaisesRegex(OverflowError, "too large in magnitude", f, bad)
+    self.assertRaisesRegex(
+        OverflowError, "too large in magnitude", jnp.asarray, bad)
+
 
 class BackendsTest(jtu.JaxTestCase):
 
