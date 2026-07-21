@@ -31,7 +31,8 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
-from jax._src.random.core import _safe_int_to_float, _check_broadcast_shapes
+from jax._src.random.core import (_safe_int_to_float, _check_broadcast_shapes,
+                                  _poisson_from_normal)
 from jax._src import test_util as jtu
 from jax import vmap
 
@@ -323,6 +324,7 @@ _SHAPE_CASES = [
     ('lognormal', lambda key, shape: random.lognormal(key, jnp.ones(shape), shape=shape)),
     ('pareto', lambda key, shape: random.pareto(key, jnp.ones(shape), shape=shape)),
     ('poisson', lambda key, shape: random.poisson(key, jnp.ones(shape), shape=shape)),
+    ('poisson_approx', lambda key, shape: random.poisson(key, jnp.ones(shape), shape=shape, method='approximate')),
     ('randint', lambda key, shape: random.randint(key, shape=shape, minval=jnp.zeros(shape, jnp.int32), maxval=jnp.full(shape, 10, jnp.int32))),
     ('rayleigh', lambda key, shape: random.rayleigh(key, jnp.ones(shape), shape=shape)),
     ('t', lambda key, shape: random.t(key, jnp.ones(shape), shape=shape)),
@@ -784,12 +786,15 @@ class DistributionsTest(RandomTestBase):
     lam=[0.5, 3, 9, 11, 50, 500],
     dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]),
     use_jit=[False, True],
+    method=['exact', 'approximate'],
   )
-  def testPoisson(self, lam, dtype, use_jit):
+  def testPoisson(self, lam, dtype, use_jit, method):
+    # The approximate method should still follow the Poisson distribution; its
+    # total variation error < 1e-4 is undetectable at this sample size.
     key = self.make_key(0)
     rand = random.poisson if not use_jit else jax.jit(
-        random.poisson, static_argnames=['shape', 'dtype'])
-    samples = rand(key, lam, shape=(10000,), dtype=dtype)
+        random.poisson, static_argnames=['shape', 'dtype', 'method'])
+    samples = rand(key, lam, shape=(10000,), dtype=dtype, method=method)
     self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
     # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
     # based on the central limit theorem).
@@ -814,10 +819,11 @@ class DistributionsTest(RandomTestBase):
     x = random.poisson(key, np.array([2.0, 20.0]), shape=(3, 2))
     assert x.shape == (3, 2)
 
-  def testPoissonZeros(self):
+  @jtu.sample_product(method=['exact', 'approximate'])
+  def testPoissonZeros(self, method):
     key = self.make_key(0)
     lam = jnp.concatenate([jnp.zeros(10), 20 * jnp.ones(10)])
-    samples = random.poisson(key, lam, shape=(2, 20))
+    samples = random.poisson(key, lam, shape=(2, 20), method=method)
     self.assertArraysEqual(samples[:, :10], jnp.zeros_like(samples[:, :10]))
 
   def testPoissonCornerCases(self):
@@ -825,6 +831,97 @@ class DistributionsTest(RandomTestBase):
     lam = jnp.array([-1, 0, jnp.nan])
     samples = random.poisson(key, lam, shape=(3,))
     self.assertArraysEqual(samples, jnp.array([-1, 0, -1]), check_dtypes=False)
+
+  def testPoissonInvalidMethod(self):
+    key = self.make_key(0)
+    with self.assertRaisesRegex(ValueError, "method argument to `poisson`"):
+      random.poisson(key, 1.0, method='nonsense')
+
+  def testPoissonApproximateRngImpl(self):
+    # Unlike 'exact', the 'approximate' method only draws normal variates, so
+    # it works with any RNG implementation.
+    key = jax.random.key(0, impl='rbg')
+    with self.assertRaises(NotImplementedError):
+      random.poisson(key, 3.0, (100,))
+    samples = random.poisson(key, 3.0, (100,), method='approximate')
+    self.assertTrue(jnp.all(samples >= 0))
+
+  @jtu.sample_product(lam=[0.5, 2., 7., 20., 1e3])
+  def testPoissonApproximateGrad(self, lam):
+    # Single-sample derivatives of a discrete variable are meaningless; the
+    # tangent of the approximate sampler is defined so that averaged over
+    # samples it estimates derivatives of expected values. Check the first two
+    # moments, whose derivatives w.r.t. lam are 1 and 2 * lam + 1. The
+    # tolerance is set by the sampling noise: the tangent variance peaks at
+    # ~ 1/(3 lam) at small lam.
+    key = self.make_key(0)
+    nsamples = 100_000
+    sampler = lambda lam: random.poisson(key, jnp.full((nsamples,), lam),
+                                         dtype=float, method='approximate')
+    sample, tangent = jax.jvp(sampler, (lam,), (1.0,))
+    self.assertTrue(jnp.all(jnp.isfinite(tangent)))
+
+    # average in float64: at large lam the float32 reduction error on the
+    # second moment would be comparable to the tolerance
+    sample = np.array(sample, np.float64)
+    tangent = np.array(tangent, np.float64)
+    self.assertAllClose(np.mean(tangent), 1.0, rtol=0.05, check_dtypes=False)
+    self.assertAllClose(np.mean(2 * sample * tangent), 2 * lam + 1, rtol=0.05,
+                        check_dtypes=False)
+
+  def testPoissonApproximateGradBroadcast(self):
+    # Reverse mode w.r.t. an unbroadcasted lam sums the per-sample tangents
+    # over the broadcast.
+    key = self.make_key(0)
+    lam = jnp.array([2.0, 20.0])
+    f = lambda lam: random.poisson(key, lam, (5, 2), dtype=float,
+                                   method='approximate')
+    _, tangent = jax.jvp(f, (lam,), (jnp.ones_like(lam),))
+    gradient = jax.grad(lambda lam: f(lam).sum())(lam)
+    self.assertAllClose(gradient, tangent.sum(axis=0), rtol=1e-6)
+
+  @jtu.sample_product([
+    dict(lam=1.0, bound=1e-6),
+    dict(lam=6.9, bound=1e-4),
+    dict(lam=7.0, bound=1e-4),
+    dict(lam=20.0, bound=1e-5),
+    dict(lam=1e6, bound=1e-4),
+  ])
+  def testPoissonApproximateTotalVariation(self, lam, bound):
+    # The approximate sampler maps a normal variate monotonically to an
+    # integer, so its implied pmf can be computed exactly (no sampling) by
+    # locating the jumps of the map with bisection. The total variation
+    # distance to the true Poisson pmf is dominated by float roundoff below
+    # the branch split at lam = 7 and by the Peizer-Pratt approximation error
+    # just above it; the bounds are the observed values rounded up to a power
+    # of ten.
+    dist = scipy.stats.poisson(lam)
+
+    # enumerate a window covering all but ~1e-12 of both pmfs; k0 - 1 is
+    # included as the base of the cdf differences (never sampled, so its
+    # implied cdf bisects to ~0 when k0 = 0)
+    k0 = max(int(dist.ppf(1e-12)) - 2, 0)
+    k1 = int(dist.isf(1e-12)) + 2
+    k = k0 - 1 + jnp.arange(k1 - k0 + 2, dtype=jnp.float32)
+
+    # invariant: sampler(lo) <= k < sampler(hi), z jump locations in between
+    lo = jnp.full(k.shape, -8.0, jnp.float32)
+    hi = jnp.full(k.shape, 8.0, jnp.float32)
+    for _ in range(60):
+      mid = (lo + hi) / 2
+      below = _poisson_from_normal(mid, jnp.float32(lam)) <= k
+      lo = jnp.where(below, mid, lo)
+      hi = jnp.where(below, hi, mid)
+
+    implied_cdf = scipy.stats.norm.cdf(np.asarray(lo, np.float64))
+    implied_pmf = np.diff(implied_cdf)
+    exact_pmf = dist.pmf(np.arange(k0, k1 + 1))
+
+    tv = 0.5 * np.abs(implied_pmf - exact_pmf).sum()
+    # out-of-window mass of both pmfs bounds its TV contribution
+    tv += 0.5 * (implied_cdf[0] + dist.cdf(k0 - 1))
+    tv += 0.5 * ((1 - implied_cdf[-1]) + dist.sf(k1))
+    self.assertLess(tv, bound)
 
   @jtu.sample_product(dtype=jtu.dtypes.floating, use_jit=[False, True])
   def testGumbel(self, dtype, use_jit):
