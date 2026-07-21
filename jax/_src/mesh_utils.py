@@ -290,6 +290,8 @@ def _create_device_mesh_for_nd_torus(
       useful for hardware where certain physical axes have higher bandwidth
       (e.g., TPU v7 where the core axis has higher bandwidth than x/y/z axes).
       If None (default), all physical axes are treated with equal priority.
+      If provided, must enumerate exactly all physical axes of `physical_mesh`
+      (each axis index exactly once); partial coverage is not supported.
 
   Returns:
     An np.ndarray of devices in the shape of the logical mesh (mesh_shape), with
