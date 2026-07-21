@@ -846,6 +846,21 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
 
 standard_linalg_primitive = partial(linalg_primitive, lax.input_dtype)
 
+_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
+                     np.dtype(np.complex64), np.dtype(np.complex128)}
+
+def _prepare_lapack_call(fn_base, dtype):
+  # Validate the dtype here to raise a clear error instead of the internal
+  # KeyError raised by the dtype-to-prefix lookup in jaxlib. See
+  # https://github.com/jax-ml/jax/issues/38825.
+  if np.dtype(dtype) not in _cpu_lapack_types:
+    raise NotImplementedError(
+        f"dtype {dtype} is not supported by LAPACK-backed linear algebra "
+        "operations on CPU. Supported dtypes are float32, float64, complex64, "
+        "and complex128; cast the input to a supported dtype, e.g. "
+        "x.astype(jnp.float32).")
+  return lapack.prepare_lapack_call(fn_base, dtype)
+
 
 # Primitive implementations
 
@@ -887,7 +902,7 @@ def _cholesky_cpu_lowering(ctx, operand):
   operand_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
-  target_name = lapack.prepare_lapack_call("potrf_ffi", operand_aval.dtype)
+  target_name = _prepare_lapack_call("potrf_ffi", operand_aval.dtype)
   info_aval = ShapedArray(batch_dims, np.int32)
   rule = _linalg_ffi_lowering(target_name, avals_out=[operand_aval, info_aval],
                               operand_output_aliases={0: 0})
@@ -1021,7 +1036,7 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   avals_out = [eigvals_aval, eigvecs_aval, eigvecs_aval, info_aval]
   if real:
     avals_out = [eigvals_aval, *avals_out]
-  target_name = lapack.prepare_lapack_call("geev_ffi", operand_aval.dtype)
+  target_name = _prepare_lapack_call("geev_ffi", operand_aval.dtype)
   rule = _linalg_ffi_lowering(target_name, avals_out=avals_out)
   *w, vl, vr, info = rule(ctx, operand,
                           compute_left=_eig_compute_attr(compute_left_eigenvectors),
@@ -1290,8 +1305,7 @@ def _eigh_cpu_gpu_lowering(
   if target_name_prefix == "cpu":
     dtype = operand_aval.dtype
     prefix = "he" if dtypes.issubdtype(dtype, np.complexfloating) else "sy"
-    target_name = lapack.prepare_lapack_call(f"{prefix}evd_ffi",
-                                             operand_aval.dtype)
+    target_name = _prepare_lapack_call(f"{prefix}evd_ffi", operand_aval.dtype)
     kwargs = {
       "mode": np.uint8(ord("V")),
       "uplo": np.uint8(ord("L" if lower else "U")),
@@ -1389,7 +1403,7 @@ def _hessenberg_cpu_lowering(ctx, a):
   if not core.is_constant_dim(n):
     raise ValueError("hessenberg requires the last dimension of a to be "
                      f"constant, got a.shape of {a.shape}.")
-  target_name = lapack.prepare_lapack_call("gehrd_ffi", a_aval.dtype)
+  target_name = _prepare_lapack_call("gehrd_ffi", a_aval.dtype)
   avals_out = [*ctx.avals_out, ShapedArray(batch_dims, np.int32)]
   rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
                               operand_output_aliases={0: 0})
@@ -1449,7 +1463,7 @@ def _householder_product_cpu_gpu_lowering(ctx, a, taus, *,
   if target_name_prefix == "cpu":
     dtype = a_aval.dtype
     prefix = "un" if dtypes.issubdtype(dtype, np.complexfloating) else "or"
-    target_name = lapack.prepare_lapack_call(f"{prefix}gqr_ffi", dtype)
+    target_name = _prepare_lapack_call(f"{prefix}gqr_ffi", dtype)
   else:
     target_name = f"{target_name_prefix}solver_orgqr_ffi"
   rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
@@ -1580,7 +1594,7 @@ def _ormqr_cpu_gpu_lowering(ctx, a, taus, c, *, left, transpose,
   if target_name_prefix == "cpu":
     dtype = a_aval.dtype
     prefix = "un" if dtypes.issubdtype(dtype, np.complexfloating) else "or"
-    target_name = lapack.prepare_lapack_call(f"{prefix}mqr_ffi", dtype)
+    target_name = _prepare_lapack_call(f"{prefix}mqr_ffi", dtype)
   else:
     target_name = f"{target_name_prefix}solver_ormqr_ffi"
   rule = _linalg_ffi_lowering(target_name, operand_output_aliases={2: 0})
@@ -1740,7 +1754,7 @@ def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
   m = operand_aval.shape[-2]
 
   if target_name_prefix == "cpu":
-    target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
+    target_name = _prepare_lapack_call("getrf_ffi", operand_aval.dtype)
   else:
     target_name = f"{target_name_prefix}solver_getrf_ffi"
   rule = _linalg_ffi_lowering(target_name,
@@ -1989,7 +2003,7 @@ def _geqrf_lowering_rule(ctx, operand):
 def _geqrf_cpu_gpu_lowering(ctx, a, *, target_name_prefix: str):
   operand_aval, = ctx.avals_in
   if target_name_prefix == "cpu":
-    target_name = lapack.prepare_lapack_call("geqrf_ffi", operand_aval.dtype)
+    target_name = _prepare_lapack_call("geqrf_ffi", operand_aval.dtype)
   else:
     target_name = f"{target_name_prefix}solver_geqrf_ffi"
   rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
@@ -2033,7 +2047,7 @@ def _geqp3_dtype_rule(dtype, jpvt_dtype, *_, **__):
 def _geqp3_cpu_gpu_lowering(ctx, a, jpvt, *, use_magma, target_name_prefix):
   a_aval, _ = ctx.avals_in
   if target_name_prefix == "cpu":
-    target_name = lapack.prepare_lapack_call("geqp3_ffi", a_aval.dtype)
+    target_name = _prepare_lapack_call("geqp3_ffi", a_aval.dtype)
     params = {}
   else:
     gpu_solver.initialize_hybrid_kernels()
@@ -2246,7 +2260,7 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
   real = operand_aval.dtype == np.float32 or operand_aval.dtype == np.float64
-  target_name = lapack.prepare_lapack_call("gees_ffi", operand_aval.dtype)
+  target_name = _prepare_lapack_call("gees_ffi", operand_aval.dtype)
 
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
   eigvals_aval = ShapedArray(operand_aval.shape[:-1], operand_aval.dtype)
@@ -2475,11 +2489,11 @@ def _svd_cpu_gpu_lowering(
     )
   if target_name_prefix == "cpu":
     if algorithm is None or algorithm == SvdAlgorithm.DEFAULT:
-      target_name = lapack.prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
+      target_name = _prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
     elif algorithm == SvdAlgorithm.QR:
-      target_name = lapack.prepare_lapack_call("gesvd_ffi", operand_aval.dtype)
+      target_name = _prepare_lapack_call("gesvd_ffi", operand_aval.dtype)
     elif algorithm == SvdAlgorithm.DIVIDE_AND_CONQUER:
-      target_name = lapack.prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
+      target_name = _prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
     else:
       raise NotImplementedError(
           "The SVD Jacobi and Polar algorithms are not implemented on CPU.")
@@ -2766,9 +2780,6 @@ def _triangular_solve_lowering(
   return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
 
 
-_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
-                     np.dtype(np.complex64), np.dtype(np.complex128)}
-
 def _triangular_solve_cpu_lower(
     ctx, a, b, *, left_side, lower, transpose_a,
     conjugate_a, unit_diagonal):
@@ -2778,7 +2789,7 @@ def _triangular_solve_cpu_lower(
     a = chlo.conj(a)
     conjugate_a = False
   if np.dtype(a_aval.dtype) in _cpu_lapack_types:
-    target_name = lapack.prepare_lapack_call("trsm_ffi", a_aval.dtype)
+    target_name = _prepare_lapack_call("trsm_ffi", a_aval.dtype)
     alpha, alpha_aval, batch_partitionable = (), (), True
     rule = _linalg_ffi_lowering(target_name,
                                 [a_aval, b_aval, *alpha_aval],
@@ -2856,7 +2867,7 @@ def _tridiagonal_cpu_gpu_lowering(ctx, a, *, lower, target_name_prefix):
   if target_name_prefix == "cpu":
     real = a_aval.dtype == np.float32 or a_aval.dtype == np.float64
     prefix = "sy" if real else "he"
-    target_name = lapack.prepare_lapack_call(f"{prefix}trd_ffi", a_aval.dtype)
+    target_name = _prepare_lapack_call(f"{prefix}trd_ffi", a_aval.dtype)
     params = {"uplo": _matrix_uplo_attr(lower)}
   else:
     target_name = f"{target_name_prefix}solver_sytrd_ffi"
@@ -2919,7 +2930,7 @@ def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, *, perturb_singular):
     rule = _linalg_ffi_lowering(target_name, avals_out=[b_aval])
     return rule(ctx, dl, d, du, b)
 
-  target_name = lapack.prepare_lapack_call("gtsv_ffi", b_aval.dtype)
+  target_name = _prepare_lapack_call("gtsv_ffi", b_aval.dtype)
   info_aval = ShapedArray(batch_dims, np.int32)
   rule = _linalg_ffi_lowering(target_name,
                               avals_out=[*ctx.avals_in, info_aval],

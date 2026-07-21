@@ -309,6 +309,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np.linalg.slogdet, jnp.linalg.slogdet, args_maker,
                               tol=1e-3)
 
+  @jtu.run_on_devices("cpu")
+  def testLapackUnsupportedDtypeError(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38825: LAPACK-
+    # backed operations on unsupported dtypes should raise a clear error, not
+    # an internal KeyError from the jaxlib dtype dispatch table.
+    for dtype in [jnp.float16, jnp.bfloat16]:
+      with self.subTest(dtype=np.dtype(dtype).name):
+        x = jnp.eye(3, dtype=dtype)
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            f"dtype {np.dtype(dtype).name} is not supported by LAPACK"):
+          jnp.linalg.cholesky(x)
+        with self.assertRaisesRegex(
+            NotImplementedError, "float32, float64, complex64"):
+          jnp.linalg.qr(x)
+
   @jtu.sample_product(
     shape=[(0, 0), (4, 4), (5, 5), (50, 50), (2, 6, 6)],
     dtype=float_types + complex_types,
@@ -938,7 +954,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     arr = rng(shape, dtype)
     if jtu.test_device_matches(['cpu']):
-      err, msg = NotImplementedError, "Unsupported dtype float16"
+      err, msg = NotImplementedError, "dtype float16 is not supported by LAPACK"
     else:
       err, msg = Exception, "Unsupported dtype"
     with self.assertRaisesRegex(err, msg):
@@ -1314,6 +1330,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
 
 class ScipyLinalgTest(jtu.JaxTestCase):
+
+  @jtu.run_on_devices("cpu")
+  def testLapackUnsupportedDtypeError(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38825.
+    with self.assertRaisesRegex(
+        NotImplementedError, "dtype float16 is not supported by LAPACK"):
+      jsp.linalg.inv(jnp.eye(4, dtype=jnp.float16))
+    with self.assertRaisesRegex(
+        NotImplementedError, "dtype bfloat16 is not supported by LAPACK"):
+      jsp.linalg.cholesky(jnp.eye(4, dtype=jnp.bfloat16))
 
   @jtu.sample_product(
     args=[
