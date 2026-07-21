@@ -115,7 +115,7 @@ class HiType(core.AbstractValue):
     _must_override(self, "lo_ty", "lowering (e.g. under jit)")
 
   # define lowering from hijax value to lojax values and back (like pytrees)
-  def lower_val(self, hi_val: HiVal) -> list[LoVal]:  # TODO(mattjj): not lovals
+  def lower_val(self, hi_val: HiVal, /) -> list[LoVal]:  # TODO(mattjj): not lovals
     _must_override(self, "lower_val", "lowering values (e.g. under jit)")
   def raise_val(self, *lo_vals: LoVal) -> HiVal:
     _must_override(self, "raise_val", "raising lowered values (e.g. under jit)")

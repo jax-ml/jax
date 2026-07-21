@@ -26,7 +26,7 @@ from jax.errors import KeyReuseError
 from jax.interpreters import batching, mlir
 from jax._src import api_util
 from jax._src import core
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import pjit
 from jax._src.random import prng
 from jax._src import random
@@ -405,13 +405,11 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
 
 
 def function_type_signature(fun: Callable[..., Any], *args: Any) -> KeyReuseSignature:
-  args_flat, in_tree = tree_util.tree_flatten(args)
+  args_flat, in_tree = tree_util.tree_flatten((args, {}))
   in_avals_flat = [core.typeof(arg) for arg in args_flat]
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun,
-                   debug_info=api_util.debug_info("key_reuse", fun, args, {})),
-      in_tree)
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+  jaxpr, _ = pe.trace_to_jaxpr(
+      fun, ft.treedef_args_to_ft(in_tree, in_avals_flat),
+      api_util.debug_info("key_reuse", fun, args, {}))
   return jaxpr_type_signature(jaxpr)
 
 

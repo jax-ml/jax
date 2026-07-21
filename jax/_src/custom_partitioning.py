@@ -34,7 +34,7 @@ from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dispatch
 from jax._src import errors
-from jax._src import linear_util as lu
+from jax._src import flattree as ft
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
 from jax._src import tree_util
@@ -512,27 +512,24 @@ class custom_partitioning:
                                 static_argnums=self.static_argnums)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
-      args = tuple(x if i in static_argnums else x for i, x in enumerate(args))
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      f_, dyn_args = api_util.argnums_partial(
-          lu.wrap_init(self.fun, debug_info=debug),
-          dyn_argnums,
-          args,
-          require_static_args_hashable=False,
-      )
       static_args = tuple(args[i] for i in self.static_argnums)
       _check_for_tracers(static_args)
+      dyn_args = tuple(args[i] for i in dyn_argnums)
+      full_args = list(args)
+      def f_(*dyn):
+        for i, x in zip(dyn_argnums, dyn): full_args[i] = x
+        return self.fun(*full_args)
     else:
       static_args = ()
-      f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug), args
+      f_, dyn_args = self.fun, args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
-    flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
     in_avals = [core.typeof(x) for x in args_flat]
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):
-      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-    assert not len(consts)
-    closed_call = pe.convert_constvars_jaxpr(jaxpr)
+      closed_call, out_avals = pe.trace_to_jaxpr(
+          f_, ft.pack((ft.treedef_args_to_ft(in_tree, in_avals), {})), debug)
+    assert not closed_call.consts
 
     propagate_user_sharding = None
     infer_sharding_from_operands = None
@@ -552,7 +549,6 @@ class custom_partitioning:
       infer_sharding_from_operands = self.infer_sharding_from_operands
 
     out_flat = custom_partitioning_p.bind(
-        *consts,
         *args_flat,
         call=closed_call,
         partition=self.partition,
@@ -561,10 +557,10 @@ class custom_partitioning:
         decode_shardings=self.decode_shardings,
         sharding_rule=sharding_rule,
         in_tree=in_tree,
-        out_tree=out_tree(),
+        out_tree=out_avals.tree,
         static_args=static_args
     )
-    return tree_util.tree_unflatten(out_tree(), out_flat)
+    return tree_util.tree_unflatten(out_avals.tree, out_flat)
 
 
 def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,

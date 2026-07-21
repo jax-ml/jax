@@ -14,12 +14,11 @@
 
 from jax._src import core
 from jax._src import flattree as ft
-from jax._src import linear_util as lu
 from jax._src import dispatch
 from jax._src.core import typeof
 from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_map, safe_zip, weakref_lru_cache, unzip2
-from jax._src.api_util import debug_info, flatten_fun_nokwargs
+from jax._src.api_util import debug_info
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -33,21 +32,15 @@ def fused(*, out_spaces):
   def wrap(f):
     def wrapped(*args):
       dbg = debug_info('fused', f, args, {})
-      args_flat, in_tree = tree_flatten(args)
+      args_flat, in_tree = tree_flatten((args, {}))
       in_avals = [typeof(x).update(memory_space=core.MemorySpace.Any)
                   for x in args_flat]
-      jaxpr, out_tree = _trace_to_jaxpr(f, in_tree, tuple(in_avals), dbg)
+      jaxpr, out_avals = pe.trace_to_jaxpr(
+          f, ft.treedef_args_to_ft(in_tree, tuple(in_avals)), dbg)
       outs_flat = fused_p.bind(*args_flat, jaxpr=jaxpr, out_spaces=out_spaces)
-      return tree_unflatten(out_tree, outs_flat)
+      return tree_unflatten(out_avals.tree, outs_flat)
     return wrapped
   return wrap
-
-@weakref_lru_cache
-def _trace_to_jaxpr(fun, in_tree, in_avals, dbg):
-  f = lu.wrap_init(fun, debug_info=dbg)
-  f, out_tree = flatten_fun_nokwargs(f, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, in_avals)
-  return jaxpr.with_consts(consts), out_tree()
 
 fused_p = core.Primitive('fused_call')
 fused_p.multiple_results = True
@@ -154,9 +147,9 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals):
     cts_out, cell.out_tree = tree_flatten(out)  # pyrefly: ignore[missing-attribute]
     return cts_out
   dbg = jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return trans_jaxpr.with_consts(consts), cell.out_tree  # pyrefly: ignore[missing-attribute]
+  trans_jaxpr, _ = pe.trace_to_jaxpr(
+      transposed, ft.flatten_args(*in_avals), dbg)
+  return trans_jaxpr, cell.out_tree  # pyrefly: ignore[missing-attribute]
 ad.primitive_transposes[fused_p] = _fused_transpose
 
 

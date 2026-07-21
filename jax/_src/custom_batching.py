@@ -21,6 +21,7 @@ import operator
 
 from jax._src import api
 from jax._src import core
+from jax._src import flattree as ft
 from jax._src import custom_api_util
 from jax._src import linear_util as lu
 from jax._src import source_info_util
@@ -154,12 +155,12 @@ class custom_vmap:
           f"No batching rule defined for custom_vmap function {debug_fun.func_name} "
           "using def_vmap.")
     args_flat, in_tree = tree_flatten(args)
-    flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(self.fun, debug_info=debug_fun),
-        in_tree)
     in_avals = [core.typeof(x) for x in args_flat]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-    closed_call = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr, out_avals = pe.trace_to_jaxpr(
+        self.fun, ft.pack((ft.treedef_args_to_ft(in_tree, in_avals), {})),
+        debug_fun)
+    closed_call, consts = pe.separate_consts(jaxpr)
+    out_tree = tree_structure(out_avals.unflatten())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
     debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
@@ -169,8 +170,8 @@ class custom_vmap:
                                   rule=ClosedRule(self.vmap_rule,
                                                   debug_rule),
                                   in_tree=in_tree,
-                                  out_tree=out_tree())
-    return tree_unflatten(out_tree(), out_flat)
+                                  out_tree=out_tree)
+    return tree_unflatten(out_tree, out_flat)
 
 
 ### utils

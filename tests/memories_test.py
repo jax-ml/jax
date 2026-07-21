@@ -1742,8 +1742,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       compute_on2(f, compute_type='device',
                   out_memory_spaces=jax.memory.Space.Device)(inp)
 
-    # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
-    self.assertEqual(count(), 4)
+    # 2 for tracing under compute_on, 2 for `f`, and 2 for `mul` (compute type
+    # changes for `mul`)
+    self.assertEqual(count(), 6)
 
   @jtu.run_on_devices('tpu')
   def test_compute_on_aot(self):
