@@ -2740,6 +2740,38 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         self.assertEqual(data.count('"name": "store"'), 8)
       np.testing.assert_array_equal(y, x + x)
 
+  def test_profiler_bounds_check_truncates(self):
+    def kernel(x_ref, o_ref):
+      with jax.named_scope("a"):
+        with jax.named_scope("b"):
+          with jax.named_scope("c"):
+            o = x_ref[...] + 1
+      o_ref[...] = o
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      x = jnp.arange(256).astype(jnp.float32)
+      y = self.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+          compiler_params=plgpu.CompilerParams(
+              profile_space=3,
+              profile_dir=tmpdir,
+              profile_bounds_check=True,
+          ),
+      )(x)
+      jax.block_until_ready(y)
+      jax.effects_barrier()
+      [name] = os.listdir(tmpdir)
+      with open(os.path.join(tmpdir, name)) as f:
+        data = f.read()
+      # The buffer holds 3 * 2 * 2 - 3 = 9 usable entries, enough for 4 of the
+      # 6 events (B:a, B:b, B:c, E:c); the rest are dropped instead of
+      # overflowing the buffer. The two ranges left open by truncation (b, a)
+      # get synthetic end events, so begins and ends stay balanced.
+      self.assertEqual(data.count('"ph": "B"'), 3)
+      self.assertEqual(data.count('"ph": "E"'), 3)
+      np.testing.assert_array_equal(y, x + 1)
+
   def test_profiler_computes_correct_allocation_size(self):
     def kernel(x_ref, o_ref):
       with jax.named_scope("copy"):
