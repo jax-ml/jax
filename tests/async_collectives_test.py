@@ -85,24 +85,6 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
     self.assertIn('stablehlo.all_to_all', stablehlo)
     self.assertIn('stablehlo.async_done', stablehlo)
 
-  # pbroadcast is only implemented on GPU. If you try to run this on another
-  # platform, you'll get an error like this:
-  #
-  # > NotImplementedError: MLIR translation rule for primitive 'pbroadcast' not
-  # > found for platform cpu
-  @jtu.run_on_devices('gpu')
-  @jtu.with_explicit_mesh((2,), ('i',))
-  def test_lower_async_pbroadcast(self, mesh):
-    @jax.shard_map(out_specs=jax.P('i'))
-    def f(x):
-      return parallel.pbroadcast_start(x, 'i', source=0).done()
-
-    x = jnp.arange(64.0, out_sharding=jax.P('i'))
-    stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.collective_broadcast', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
-
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_ppermute(self, mesh):
     @jax.jit
@@ -276,21 +258,6 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
       for op in ['collective-permute-start(', 'collective-permute-done(']:
         if op in hlo_sync:
           self.assertIn(op, hlo_async)
-
-  @jtu.run_on_devices('gpu')
-  @jtu.with_explicit_mesh((2,), ('i',))
-  def test_async_pbroadcast(self, mesh):
-    @jax.jit
-    @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-    def pbroadcast(x):
-      y_sync = jax.lax.pbroadcast(x, 'i', source=0)
-      future = parallel.pbroadcast_start(x, 'i', source=0)
-      y_async = future.done()
-      return y_sync, y_async
-
-    x = jnp.arange(64.0, out_sharding=jax.P('i'))
-    y_sync, y_async = pbroadcast(x)
-    self.assertAllClose(y_sync, y_async)
 
 
 if __name__ == '__main__':

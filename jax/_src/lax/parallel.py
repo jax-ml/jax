@@ -144,7 +144,7 @@ def _psum_is_async(x, axis_name, *, axis_index_groups=None, is_async=False):
     if from_ == 'unreduced':
       if axis_index_groups is not None:
         raise NotImplementedError
-      return unreduced_psum(leaf, axes, is_async)
+      return unreduced_psum(leaf, axes)
     else:
       return _psum(leaf, axes, axis_index_groups=axis_index_groups,
                    is_async=is_async)
@@ -185,8 +185,7 @@ def _psum(x, axis_name, *, axis_index_groups, is_async):
                                       is_async=is_async)
                   for leaf in leaves]
     else:
-      prim = psum_start_p if is_async else psum_p
-      out_flat = [prim.bind(leaf, axes=tuple(axis_name),
+      out_flat = [psum_p.bind(leaf, axes=tuple(axis_name),
                               axis_index_groups=axis_index_groups)
                   for leaf in leaves]
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -370,12 +369,8 @@ def pbroadcast(x, axis_name, source):
   Returns:
     Array(s) with ``x`` being copied from the ``source`` index slice of ``axis_name``.
   """
-  return _pbroadcast_is_async(x, axis_name, source, is_async=False)
-
-def _pbroadcast_is_async(x, axis_name, source, is_async=False):
-  prim = pbroadcast_start_p if is_async else pbroadcast_p
   return tree_util.tree_map(
-      partial(prim.bind, axis_name=axis_name, source=source), x)
+      partial(pbroadcast_p.bind, axis_name=axis_name, source=source), x)
 
 
 def ppermute(x, axis_name, perm):
@@ -2347,8 +2342,7 @@ def _psum_scatter_is_async(x, axis_name, *, scatter_dimension=0,
       if axis_index_groups is not None:
         raise NotImplementedError
       return unreduced_psum_scatter(
-          leaf, axes, scatter_dimension=scatter_dimension, tiled=tiled,
-          is_async=is_async)
+          leaf, axes, scatter_dimension=scatter_dimension, tiled=tiled)
     else:
       return _psum_scatter(leaf, axes, scatter_dimension=scatter_dimension,
                            axis_index_groups=axis_index_groups, tiled=tiled,
@@ -2635,17 +2629,14 @@ batching.fancy_primitive_batchers[all_gather_reduced_p] = _all_gather_reduced_ba
 ####################### unreduced_psum_scatter ###########################
 
 # Unreduced -> Varying collective
-def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False,
-                           is_async=False):
+def unreduced_psum_scatter(x, axis_name, *, scatter_dimension=0, tiled=False):
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if not axis_name:
     return x
   axis_size = _axis_size(axis_name, None)
   def bind(leaf):
-    prim = (unreduced_reduce_scatter_start_p if is_async else
-            unreduced_reduce_scatter_p)
-    return prim.bind(
+    return unreduced_reduce_scatter_p.bind(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
@@ -2729,14 +2720,13 @@ mlir.register_lowering(unreduced_reduce_scatter_p,
 ############################## unreduced_psum ###########################
 
 # Unreduced -> Invariant collective
-def unreduced_psum(x, axis_name, is_async=False):
+def unreduced_psum(x, axis_name):
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
   if not axis_name:
     return x
-  prim = unreduced_psum_start_p if is_async else unreduced_psum_p
   return tree_util.tree_map(
-      lambda leaf: prim.bind(leaf, axes=tuple(axis_name)), x)
+      lambda leaf: unreduced_psum_p.bind(leaf, axes=tuple(axis_name)), x)
 
 unreduced_psum_p = core.Primitive('unreduced_psum')
 
@@ -3042,24 +3032,17 @@ def pcast(x, axis_name, *, to: str):
 
 ######################### async ops #########################
 
-# Asynchronous start primitives.
 all_gather_start_p = core.Primitive("all_gather_start")
 all_gather_reduced_start_p = core.Primitive("all_gather_reduced_start")
-psum_start_p = core.Primitive("psum_start")
 psum_invariant_start_p = core.Primitive("psum_invariant_start")
-unreduced_psum_start_p = core.Primitive("unreduced_psum_start")
 reduce_scatter_start_p = core.Primitive("reduce_scatter_start")
-unreduced_reduce_scatter_start_p = core.Primitive("unreduced_reduce_scatter_start")
 all_to_all_start_p = core.Primitive("all_to_all_start")
-pbroadcast_start_p = core.Primitive("pbroadcast_start")
 ppermute_start_p = core.Primitive("ppermute_start")
 
-# Asynchronous done primitives.
 all_gather_done_p = core.Primitive("all_gather_done")
 psum_done_p = core.Primitive("psum_done")
 reduce_scatter_done_p = core.Primitive("reduce_scatter_done")
 all_to_all_done_p = core.Primitive("all_to_all_done")
-pbroadcast_done_p = core.Primitive("pbroadcast_done")
 ppermute_done_p = core.Primitive("ppermute_done")
 
 
@@ -3076,9 +3059,6 @@ def psum_scatter_start(*args, **kwargs):
 def all_to_all_start(*args, **kwargs):
   return _all_to_all_is_async(*args, **kwargs, is_async=True)
 
-def pbroadcast_start(*args, **kwargs):
-  return _pbroadcast_is_async(*args, **kwargs, is_async=True)
-
 def ppermute_start(*args, **kwargs):
   return _ppermute_is_async(*args, **kwargs, is_async=True)
 
@@ -3090,13 +3070,9 @@ def _async_start_abstract_eval(sync_prim, done_fun, *args, **kwargs):
 for async_prim, sync_prim, done_p in [
     (all_gather_start_p, all_gather_p, all_gather_done_p),
     (all_gather_reduced_start_p, all_gather_reduced_p, all_gather_done_p),
-    (psum_start_p, psum_p, psum_done_p),
     (psum_invariant_start_p, psum_invariant_p, psum_done_p),
-    (unreduced_psum_start_p, unreduced_psum_p, psum_done_p),
     (reduce_scatter_start_p, reduce_scatter_p, reduce_scatter_done_p),
-    (unreduced_reduce_scatter_start_p, unreduced_reduce_scatter_p, reduce_scatter_done_p),
     (all_to_all_start_p, all_to_all_p, all_to_all_done_p),
-    (pbroadcast_start_p, pbroadcast_p, pbroadcast_done_p),
     (ppermute_start_p, ppermute_p, ppermute_done_p),
 ]:
   async_prim.def_effectful_abstract_eval(
@@ -3108,7 +3084,7 @@ def _async_done_abstract_eval(aval):
   return aval.inner_aval
 
 for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
-          all_to_all_done_p, pbroadcast_done_p, ppermute_done_p]:
+          all_to_all_done_p, ppermute_done_p]:
   p.def_abstract_eval(_async_done_abstract_eval)
   mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])
 
@@ -3158,53 +3134,20 @@ def _reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
     raise NotImplementedError
   lower = partial(_reduce_scatter_lowering, lax.add_p)
   return _async_start_lowering(lower, ctx, x, tiled=tiled, **kwargs)
+mlir.register_lowering(reduce_scatter_start_p, _reduce_scatter_start_lowering)
 
+for p, f in zip([all_gather_start_p, all_gather_reduced_start_p],
+                [_all_gather_lowering, _all_gather_reduced_lowering]):
+  mlir.register_lowering(p, partial(f, is_async=True))
+  for plat in ("cuda", "rocm", "tpu"):
+    mlir.register_lowering(p, partial(f, platform=p, is_async=True), platform=plat)
 
-def _unreduced_reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
-  if not tiled:
-    # Same reason as _reduce_scatter_start_lowering
-    raise NotImplementedError
-  lower = partial(_unreduced_reduce_scatter_lowering, lax.add_p)
-  return _async_start_lowering(lower, ctx, x, tiled=tiled, **kwargs)
-
-
-mlir.register_lowering(
-    all_gather_start_p, partial(_all_gather_lowering, is_async=True)
-)
-for p in ("cuda", "rocm", "tpu"):
-  mlir.register_lowering(
-      all_gather_start_p,
-      partial(_all_gather_lowering, platform=p, is_async=True),
-      platform=p,
-  )
-mlir.register_lowering(
-    all_gather_reduced_start_p,
-    partial(_all_gather_reduced_lowering, is_async=True),
-)
-for p in ("cuda", "rocm", "tpu"):
-  mlir.register_lowering(
-      all_gather_reduced_start_p,
-      partial(_all_gather_reduced_lowering, platform=p, is_async=True),
-      platform=p,
-  )
-mlir.register_lowering(
-    psum_start_p,
-    partial(_async_start_lowering, partial(_allreduce_lowering, lax.add_p, lax.reduce_sum)),
-)
 mlir.register_lowering(
     psum_invariant_start_p, partial(_async_start_lowering, _psum_invariant_lowering_rule)
-)
-mlir.register_lowering(
-    unreduced_psum_start_p, partial(_async_start_lowering, _unreduced_psum_lowering)
-)
-mlir.register_lowering(reduce_scatter_start_p, _reduce_scatter_start_lowering)
-mlir.register_lowering(
-    unreduced_reduce_scatter_start_p, _unreduced_reduce_scatter_start_lowering
 )
 mlir.register_lowering(
     all_to_all_start_p, partial(_all_to_all_lowering, is_async=True)
 )
 mlir.register_lowering(
-    pbroadcast_start_p, partial(_async_start_lowering, _pbroadcast_lowering),
-    platform="gpu")
-mlir.register_lowering(ppermute_start_p, partial(_async_start_lowering, _ppermute_lowering))
+    ppermute_start_p, partial(_async_start_lowering, _ppermute_lowering)
+)
