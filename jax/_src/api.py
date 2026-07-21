@@ -1707,8 +1707,9 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
                       isinstance(args_res_[i.idx], NotSaveable)]:
     _vjp_not_saveable_error(jaxpr, in_tree, not_restored)
   residuals = [args_res_[i.idx] if i.primal else opaque_res[i.idx] for i in spec]
+  arg_invars = jaxpr.invars[len(spec):]  # skip the residual invars
   maybe_accums = [_vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x)
-                  for idx, (v, x) in enumerate(unsafe_zip(jaxpr.invars, maybe_ct_refs_flat))]
+                  for idx, (v, x) in enumerate(unsafe_zip(arg_invars, maybe_ct_refs_flat))]
   return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
                          out_primal_avals, want_logs), residuals, structured_res,
                  maybe_accums)
@@ -2168,12 +2169,8 @@ def make_jaxpr(
       traced = jit(fun, static_argnums=static_argnums).trace(*args, **kwargs)
     # `jit` converts tracers in consts to args but `make_jaxpr` callers expect
     # consts not to be converted.
-    num_consts = traced._num_consts
-    if num_consts:
-      jaxpr = pe.convert_invars_to_constvars(
-          traced.jaxpr, num_consts).with_consts(traced._consts)
-    else:
-      jaxpr = traced.jaxpr
+    jaxpr = (traced.jaxpr.with_consts(traced._consts) if traced._consts
+             else traced.jaxpr)
     if return_shape:
       return jaxpr, traced.out_info
     return jaxpr

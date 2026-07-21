@@ -197,10 +197,9 @@ def physicalize_jaxpr(jaxpr: core.Jaxpr) -> core.Jaxpr:
       _flat_jaxpr_eval, in_avals_ft, debug_info
   )
   assert not closed_jaxpr.consts
-  new_jaxpr = pe.convert_invars_to_constvars(
-      closed_jaxpr, len(tree_util.tree_leaves(const_avals))
-  )
-  return new_jaxpr
+  # The physicalized consts are the leading invars; callers with const values
+  # in hand can reattach them via with_consts.
+  return closed_jaxpr
 
 
 @dataclasses.dataclass
@@ -386,7 +385,8 @@ def _core_map_rule(ctx: Context, *args, jaxpr, **params):
   _assert_no_fusion_types(ctx.avals_out)
   assert not jaxpr.invars
   with core.extend_axis_env_nd(params["mesh"].shape.items()):
-    jaxpr = physicalize_jaxpr(jaxpr)
+    jaxpr = physicalize_jaxpr(jaxpr).with_consts(list(args))
+  assert not jaxpr.invars
   return pallas_core.core_map_p.bind(*args, jaxpr=jaxpr, **params)
 
 
@@ -415,11 +415,8 @@ _physicalize_rules[mpmd.mpmd_map_p] = _mpmd_map_rule
 
 def _run_scoped_rule(ctx: Context, *args, jaxpr, **params):
   _assert_no_fusion_types(ctx.avals_out)
-  jaxpr = physicalize_jaxpr(jaxpr)
   flat_args = tree_util.tree_leaves(args)
-  assert len(flat_args) == len(
-      jaxpr.constvars
-  ), f"Length mismatch: {len(flat_args)=} != {len(jaxpr.constvars)=}"
+  jaxpr = physicalize_jaxpr(jaxpr).with_consts(flat_args)
   return pallas_primitives.run_scoped_p.bind(*flat_args, jaxpr=jaxpr, **params)
 
 

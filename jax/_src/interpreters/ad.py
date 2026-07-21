@@ -275,10 +275,11 @@ def _linearize_jaxpr(
   return fwd_jaxpr, fwd_out_ty, nzs_out, fwds, tangent_jaxpr
 
 def _dce_consts(jaxpr, consts):
-  jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
+  # `jaxpr` is freshly traced, so its leading invars bind `consts`.
+  jaxpr, used_inputs = pe.dce_jaxpr(
       jaxpr, [True] * len(jaxpr.outvars),
-      [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
-  return jaxpr, [c for c, used in zip(consts, used_consts) if used]
+      [False] * len(consts) + [True] * (len(jaxpr.invars) - len(consts)))
+  return jaxpr, [c for c, used in zip(consts, used_inputs[:len(consts)]) if used]
 
 def _strip_tracer(tracer_type, tag, x):
    if isinstance(x, tracer_type) and x._trace.tag is tag:
@@ -326,10 +327,7 @@ def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
   jaxpr, consts = tangent_trace.to_jaxpr(out_nz_tangents, dbg, source_info)
   tangent_trace.invalidate()
   config.enable_checks.value and core.check_jaxpr(jaxpr)
-  jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
-      jaxpr, [True] * len(jaxpr.outvars),
-      [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
-  consts = [c for c, used in zip(consts, used_consts) if used]
+  jaxpr, consts = _dce_consts(jaxpr, consts)
   out_zeros = map(op.not_, out_nzs)
   auxs = tuple(aux.unflatten() for aux in auxs)
   return out_primals, out_zeros, jaxpr, consts, structured_residuals, *auxs
@@ -1021,10 +1019,7 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
     jaxpr, out_consts, _ = pe.tracers_to_jaxpr(
         in_tracers, out_nz_tracers, trace.effect_handles,
         jvp.debug_info.with_unknown_names())
-    jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
-        jaxpr, [True] * len(jaxpr.outvars),
-        [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
-    out_consts = [c for used, c in zip(used_consts, out_consts) if used]
+    jaxpr, out_consts = _dce_consts(jaxpr, out_consts)
 
     def linearized(residuals, _, *tangents):
       nz_tangents_in = [t for (t, nz) in zip(tangents, nonzeros) if nz]

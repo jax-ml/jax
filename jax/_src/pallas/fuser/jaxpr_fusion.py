@@ -100,7 +100,8 @@ def _construct_fusion_jaxpr(
       outvars=flat_outvars,
       constvars=jaxpr.constvars + jaxpr.invars,
       invars=flat_invars,
-      debug_info=jaxpr.debug_info.with_unknown_names()
+      debug_info=jaxpr.debug_info.with_unknown_names(),
+      consts=tuple(candidate_values),
   )
   new_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
       new_jaxpr_no_dce,
@@ -312,7 +313,8 @@ def fuse_jaxpr(
                 + jaxpr.eqns[fusion_eqn_index + 1 :]),
       constvars=jaxpr.constvars + jaxpr.invars,
       invars=fusion_eqn.outvars,
-      debug_info=jaxpr.debug_info.with_unknown_names())
+      debug_info=jaxpr.debug_info.with_unknown_names(),
+      consts=tuple(candidate_values))
   discharged_jaxpr_without_fusible, *_ = (
       fuser_utils.discharge_state(jaxpr_without_fusible))
   independent_jaxpr, _, out_used, *_ = pe.partial_eval_jaxpr_custom(

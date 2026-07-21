@@ -759,7 +759,6 @@ def _run_scoped_discharge_rule(
     raise NotImplementedError(
         "run_scoped discharge does not support collective_axes yet."
     )
-  num_consts = len(args_flat)
   # discharge_state only discharges invars, not consts, so in order to
   # discharge the requested refs we need to move them to the invar set.
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
@@ -774,7 +773,7 @@ def _run_scoped_discharge_rule(
         "Cannot handle new consts created by state discharge.")
 
   # Lowering expects that the jaxpr.consts to be the eqn.invals.
-  discharged_body = pe.convert_invars_to_constvars(discharged_body, num_consts)
+  discharged_body = discharged_body.with_consts(args_flat)
 
   # Run_scoped discharged the external variables but the scoped ones
   # are not discharged.
@@ -816,9 +815,9 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
         "Cannot handle new consts created by state discharge.")
 
   def _lower_fun(*lower_fun_args):
-    # Create inputs filled with uninitialized values to the body.
     num_consts = len(lower_fun_args)
     body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
+    # Create inputs filled with uninitialized values to the body.
     init_vals = [
         uninitialized_value(aval.shape, aval.dtype) for aval in body_avals  # type: ignore
     ]

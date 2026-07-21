@@ -214,8 +214,8 @@ def discharge_state(
                  if keep])
     used_consts = [True] * len(jaxpr.constvars)
     used_inputs = used_consts + [True] * len(jaxpr.invars)
-  discharged_jaxpr = pe.convert_invars_to_constvars(
-      discharged_jaxpr, sum(used_consts))
+  discharged_jaxpr = discharged_jaxpr.with_consts(
+      [c for c, used in zip(jaxpr.consts, used_consts) if used])
 
   # adjust indices given used_inputs, so we can compute output_input_aliases
   new_input_idx = list(itertools.accumulate(used_inputs, initial=-1))[1:]
