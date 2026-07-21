@@ -3714,12 +3714,19 @@ class Sm80Test(TestCase):
       dtype=(jnp.int16,),
       m_mult=(1, 2, 3, 4, 6, 7, 9),
       k_mult=(1, 2, 3, 4, 6, 7, 9),
+      transpose=(False, True),
   )
   @jtu.thread_unsafe_test()
-  def test_ldmatrix(self, dtype, m_mult, k_mult):
+  def test_ldmatrix(self, dtype, m_mult, k_mult, transpose):
     m, k = 32 * m_mult, 8 * k_mult
     dtype = jnp.dtype(dtype)
-    swizzle = next(s for s in (128, 64, 32, 16) if (k * 2) % s == 0)
+    in_shape = (k, m) if transpose else (m, k)
+    swizzle = next(
+        s for s in (128, 64, 32, 16)
+        if (in_shape[1] * 2) % s == 0
+        # For async copy.
+        and (((in_shape[0] // 8) * (in_shape[1] // (s // 2))) % 4 == 0)
+    )
     layout = fa.TiledLayout(
         fa.Tiling(((32, 8), (8, 8), (2,))),
         warp_dims=(-5,),
@@ -3737,23 +3744,32 @@ class Sm80Test(TestCase):
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
       )
       barrier.wait()
+      if transpose:
+        a_smem = mgpu.memref_transpose(a_smem, (1, 0, 3, 2))
       a_fa = mgpu.FragmentedArray.load_tiled(
           a_smem, layout=layout, swizzle=swizzle, is_signed=True
       )
       a_fa.store_untiled(out, optimized=False)
 
-    x = self.prng.integers(-10000, 10000, (m, k)).astype(dtype)
+    x = self.prng.integers(-10000, 10000, in_shape).astype(dtype)
+    out_shape = jax.ShapeDtypeStruct((m, k), dtype)
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
       y = mgpu.as_gpu_kernel(
-          kernel, (1, 1, 1), (128, 1, 1), x, x,
+          kernel, (1, 1, 1), (128, 1, 1), x, out_shape,
           (
-              jax.ShapeDtypeStruct(tile_shape(x.shape, (8, swizzle // 2)), dtype),
+              jax.ShapeDtypeStruct(tile_shape(in_shape, (8, swizzle // 2)), dtype),
               mgpu.TMABarrier(1)
           ),
       )(x)
-      np.testing.assert_array_equal(y, x)
+      expected = x.T if transpose else x
+      np.testing.assert_array_equal(y, expected)
     num = next(n for n in (4, 2, 1) if (m_mult * k_mult) % n == 0)
-    self.assertIn(f"ldmatrix.sync.aligned.m8n8.x{num}.shared", ptx())
+    expected_instr = (
+        f"ldmatrix.sync.aligned.m8n8.x{num}.trans.shared"
+        if transpose
+        else f"ldmatrix.sync.aligned.m8n8.x{num}.shared"
+    )
+    self.assertIn(expected_instr, ptx())
     self.assertNotIn("ld.shared", ptx())
 
 
@@ -6086,27 +6102,41 @@ class FragmentedArrayTest(TestCase):
 
   @parameterized.product(
       dtype=(jnp.int16,),
+      transpose=(False, True),
   )
   @jtu.thread_unsafe_test()
-  def test_stmatrix(self, dtype):
+  def test_stmatrix(self, dtype, transpose):
     m, k = 128, 128
     dtype = jnp.dtype(dtype)
     swizzle = 128
     def kernel(ctx, x, out, x_smem):
       mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
-      x_fa = mgpu.FragmentedArray.load_untiled(x, layout=mma_layouts.lhs, is_signed=True, optimized=False)
-      x_fa.store_tiled(x_smem, swizzle=swizzle)
+      x_fa = mgpu.FragmentedArray.load_untiled(
+          x, layout=mma_layouts.lhs, is_signed=True, optimized=False
+      )
+      x_smem_store = x_smem
+      if transpose:
+        x_smem_store = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
+      x_fa.store_tiled(x_smem_store, swizzle=swizzle)
       mgpu.warpgroup_barrier()
       copy(x_smem, mgpu.TileTransform((8, swizzle // 2)).apply(out), swizzle)
 
     x = self.prng.integers(-10000, 10000, (m, k)).astype(dtype)
+    out_shape = (k, m) if transpose else (m, k)
     with jtu.set_env(MOSAIC_GPU_DUMP_PTX="1"), self.capture_stdout() as ptx:
       y = mgpu.as_gpu_kernel(
-          kernel, (1, 1, 1), (128, 1, 1), x, x,
-          jax.ShapeDtypeStruct(tile_shape(x.shape, (8, swizzle // 2)), dtype),
+          kernel, (1, 1, 1), (128, 1, 1), x,
+          jax.ShapeDtypeStruct(out_shape, dtype),
+          jax.ShapeDtypeStruct(tile_shape(out_shape, (8, swizzle // 2)), dtype),
       )(x)
-      np.testing.assert_array_equal(y, x)
-    self.assertIn("stmatrix.sync.aligned.m8n8.x4.shared", ptx())
+      expected = x.T if transpose else x
+      np.testing.assert_array_equal(y, expected)
+    expected_instr = (
+        "stmatrix.sync.aligned.m8n8.x4.trans.shared"
+        if transpose
+        else "stmatrix.sync.aligned.m8n8.x4.shared"
+    )
+    self.assertIn(expected_instr, ptx())
     self.assertNotIn("st.shared", ptx())
 
 
