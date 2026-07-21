@@ -853,9 +853,10 @@ def _prepare_lapack_call(fn_base, dtype):
   # Validate the dtype here to raise a clear error instead of the internal
   # KeyError raised by the dtype-to-prefix lookup in jaxlib. See
   # https://github.com/jax-ml/jax/issues/38825.
-  if np.dtype(dtype) not in _cpu_lapack_types:
-    raise NotImplementedError(
-        f"dtype {dtype} is not supported by LAPACK-backed linear algebra "
+  dtype = np.dtype(dtype)
+  if dtype not in _cpu_lapack_types:
+    raise RuntimeError(
+        f"dtype {dtype.name} is not supported by LAPACK-backed linear algebra "
         "operations on CPU. Supported dtypes are float32, float64, complex64, "
         "and complex128; cast the input to a supported dtype, e.g. "
         "x.astype(jnp.float32).")
