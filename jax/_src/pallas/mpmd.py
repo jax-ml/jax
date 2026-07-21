@@ -16,22 +16,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Generator, Hashable, Iterable, Mapping, Sequence
 import contextlib
+import dataclasses
 import functools
 import itertools as it
-from typing import Any, Hashable, TypeVar, cast
-from collections.abc import Generator
+from typing import Any
 
 from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
+from jax._src import flattree as ft
 from jax._src import hijax
 from jax._src import numpy as jnp
 from jax._src import state
-from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
 from jax._src.mesh import get_abstract_mesh
@@ -43,8 +43,6 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state import discharge as state_discharge
 from jax._src.typing import Array
-
-_T = TypeVar("_T")
 
 
 def get_super_mesh_shape(
@@ -638,7 +636,7 @@ def mpmd_map(
     cost_estimate: pallas_core.CostEstimate | None = None,
     name: str | None = None,
     metadata: dict[str, str] | None = None,
-) -> Callable[..., _T]:
+) -> PallasWrapped:
   interpret = (
       config.pallas_tpu_interpret_mode_context_manager.value or interpret
   )
@@ -795,37 +793,116 @@ def _dedup_consts_and_unify_jaxpr_signatures(
   return new_jaxprs, unique_consts
 
 
-def _mpmd_map(
-    meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[..., None]]],
-    /,
-    out_types: tree_util.PyTree = (),
-    *,
-    input_output_aliases: Mapping[int, int] = {},
-    scratch_types: pallas_core.ScratchShapeTree = (),
-    compiler_params: Any | None = None,
-    interpret: bool | Any = False,
-    debug: bool = False,
-    cost_estimate: pallas_core.CostEstimate | None = None,
-    name: str | None = None,
-    metadata: dict[str, str] | None = None,
-) -> Callable[..., _T]:
-  """Like ``pallas_call``, but MPMD and without pipelining."""
-  if not meshes_and_fns:
-    raise ValueError("At least one mesh/function pair is required")
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class PallasTraced:
+  jaxprs: tuple[jax_core.Jaxpr, ...]
+  _consts: tuple[Any, ...]
+  meshes: tuple[pallas_core.Mesh, ...]
+  _external_meshes: tuple[Any, ...]
+  _flat_args: tuple[Any, ...]
+  _flat_out_avals: tuple[jax_core.AbstractValue, ...]
+  _out_tree: tree_util.PyTreeDef
+  _input_output_aliases: FrozenDict[int, int]
+  _compiler_params: Any | None
+  _interpret: bool | Any
+  _debug: bool
+  _cost_estimate: pallas_core.CostEstimate | None
+  _metadata: FrozenDict[str, str] | None
+  _name: str | None
 
-  is_output_sequence = isinstance(out_types, Sequence)
+  @property
+  def _bind_params(self) -> dict[str, Any]:
+    return dict(
+        meshes=self.meshes,
+        jaxprs=self.jaxprs,
+        external_meshes=self._external_meshes,
+        out_avals=self._flat_out_avals,
+        input_output_aliases=self._input_output_aliases,
+        compiler_params=self._compiler_params,
+        interpret=self._interpret,
+        debug=self._debug,
+        cost_estimate=self._cost_estimate,
+        metadata=self._metadata,
+        name=self._name,
+    )
 
-  flat_out_types_with_paths, out_tree = tree_util.tree_flatten_with_path(
-      out_types
-  )
-  out_paths, flat_out_types = util.unzip2(flat_out_types_with_paths)
-  # TODO(sharadmv): Use out_paths for debugging info.
-  del out_paths
-  flat_out_avals = tuple(
-      map(pallas_core._convert_out_shape_to_aval, flat_out_types)
-  )
+  def call(self):
+    if self._debug:
+      for mesh, jaxpr in zip(self.meshes, self.jaxprs):
+        print(f"jaxpr for {mesh.core_type}")
+        print(jaxpr)
 
-  def wrapper(*args):
+    # TODO(slebedev): The named scope should not be necessary here.
+    ctx = (
+        api.named_scope(self._name)
+        if self._name is not None
+        else contextlib.nullcontext()
+    )
+    with ctx:
+      flat_outs = mpmd_map_p.bind(
+          *self._flat_args, *self._consts, **self._bind_params
+      )
+    return self._out_tree.unflatten(flat_outs)
+
+  def lower(self):
+    raise NotImplementedError
+
+
+@dataclasses.dataclass(frozen=True)
+class PallasWrapped:
+  _meshes_and_fns: tuple[tuple[pallas_core.Mesh, Callable[..., None]], ...]
+  _input_output_aliases: FrozenDict[int, int]
+  _flat_scratch_types: tuple[Any, ...]
+  _scratch_tree: tree_util.PyTreeDef
+  _compiler_params: Any | None
+  _interpret: bool | Any
+  _debug: bool
+  _cost_estimate: pallas_core.CostEstimate | None
+  _name: str | None
+  _metadata: FrozenDict[str, str] | None
+  _flat_out_avals: tuple[jax_core.AbstractValue, ...]
+  _out_tree: tree_util.PyTreeDef
+
+  @classmethod
+  def create(
+      cls,
+      meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[..., None]]],
+      out_types: tree_util.PyTree,
+      *,
+      input_output_aliases: Mapping[int, int],
+      scratch_types: pallas_core.ScratchShapeTree,
+      compiler_params: Any | None,
+      interpret: bool | Any,
+      debug: bool,
+      cost_estimate: pallas_core.CostEstimate | None,
+      name: str | None,
+      metadata: Mapping[str, str] | None,
+  ) -> PallasWrapped:
+    flat_out_types_with_paths, out_tree = tree_util.tree_flatten_with_path(
+        out_types
+    )
+    out_paths, flat_out_types = util.unzip2(flat_out_types_with_paths)
+    # TODO(sharadmv): Use out_paths for debugging info.
+    del out_paths
+    flat_scratch_types, scratch_tree = tree_util.tree_flatten(scratch_types)
+    return cls(
+        _meshes_and_fns=tuple(meshes_and_fns),
+        _input_output_aliases=FrozenDict.wrap(input_output_aliases),
+        _flat_scratch_types=tuple(flat_scratch_types),
+        _scratch_tree=scratch_tree,
+        _compiler_params=compiler_params,
+        _interpret=interpret,
+        _debug=debug,
+        _cost_estimate=cost_estimate,
+        _name=name,
+        _metadata=FrozenDict.wrap(metadata) if metadata is not None else None,
+        _flat_out_avals=tuple(
+            map(pallas_core._convert_out_shape_to_aval, flat_out_types)
+        ),
+        _out_tree=out_tree,
+    )
+
+  def trace(self, *args) -> PallasTraced:
     flat_args_with_paths, in_tree = tree_util.tree_flatten_with_path(args)
     in_paths, flat_args = util.unzip2(flat_args_with_paths)
     del in_paths
@@ -841,11 +918,9 @@ def _mpmd_map(
     # TODO(sharadmv): Use in_paths for debugging info.
     flat_avals = tuple(map(jax_core.typeof, flat_args))
 
-    external_meshes = []
-    meshes = tuple(mesh for mesh, _ in meshes_and_fns)
-
-    flat_scratch_types, scratch_tree = tree_util.tree_flatten(scratch_types)
-    if len(meshes_and_fns) > 1:
+    external_meshes: list[Any] = []
+    meshes = tuple(mesh for mesh, _ in self._meshes_and_fns)
+    if len(self._meshes_and_fns) > 1:
       # TODO(rdyro): For MPMD with more than one mesh, come up with a better
       # solution for how to enforce core_type presence in scratch_shape.
       # TODO(rdyro): Check if we need to have a similar check for in-kernel
@@ -853,7 +928,7 @@ def _mpmd_map(
       # core_type is inherited from the caller (we then need the core_type in
       # the caller context during tracing).
       # TODO(rdyro): Also check inputs and outputs for core type.
-      for scratch_type in flat_scratch_types:
+      for scratch_type in self._flat_scratch_types:
         from jax._src.pallas.mosaic import core as tpu_core  # pyrefly: ignore[missing-import]
 
         if not isinstance(
@@ -871,7 +946,7 @@ def _mpmd_map(
     # async kernels). For example, the SC ScalarSubcore may have a Reference
     # to a TC semaphore that it is signaling. There is no explicit TC mesh as
     # part of the user-provided meshes, and are instead snuck in via the aval.
-    for aval in [*flat_avals, *flat_out_avals, *flat_scratch_types]:
+    for aval in [*flat_avals, *self._flat_out_avals, *self._flat_scratch_types]:
       if (
           isinstance(aval, jax_core.ShapedArray)
           and isinstance(aval.memory_space, pallas_core.CoreMemorySpace)
@@ -887,10 +962,10 @@ def _mpmd_map(
         mesh.check_is_compatible_with(other_mesh)
 
     unflat_in_avals = in_tree.unflatten(flat_avals)
-    unflat_out_avals = out_tree.unflatten(flat_out_avals)
-    unflat_scratch_types = scratch_tree.unflatten(flat_scratch_types)
+    unflat_out_avals = self._out_tree.unflatten(self._flat_out_avals)
+    unflat_scratch_types = self._scratch_tree.unflatten(self._flat_scratch_types)
     kernel_arg_avals = list(unflat_in_avals)
-    if is_output_sequence:
+    if isinstance(unflat_out_avals, Sequence):
       kernel_arg_avals.extend(unflat_out_avals)
     else:
       kernel_arg_avals.append(unflat_out_avals)
@@ -909,21 +984,27 @@ def _mpmd_map(
 
     jaxprs: list[jax_core.Jaxpr] = []
     consts_per_fn = []
-    debug_infos = [api_util.debug_info("mpmd_map", fn, kernel_arg_avals, kernel_kwarg_avals)
-                   for _, fn in meshes_and_fns]
-    if name is not None:
-      debug_infos = [di.replace_func_name(name) for di in debug_infos]
+    debug_infos = [
+        api_util.debug_info(
+            "mpmd_map", fn, kernel_arg_avals, kernel_kwarg_avals
+        )
+        for _, fn in self._meshes_and_fns
+    ]
+    if self._name is not None:
+      debug_infos = [
+          di.replace_func_name(self._name) for di in debug_infos
+      ]
     # If names are non-distinct (e.g. because user passed multiple functions
     # with the same name, or because of the name= arg handled just above),
     # uniquify them with the core type.
     if len({di.func_name for di in debug_infos}) != len(debug_infos):
-      debug_infos = [di.replace_func_name(f"{di.func_name}__{mesh.core_type}")
-                     for di, mesh in zip(debug_infos, meshes)]
-    for (mesh, fn), debug_info in zip(meshes_and_fns, debug_infos):
+      debug_infos = [
+          di.replace_func_name(f"{di.func_name}__{mesh.core_type}")
+          for di, mesh in zip(debug_infos, meshes)
+      ]
+    for (mesh, fn), debug_info in zip(self._meshes_and_fns, debug_infos):
       with mpmd_map_tracing_context(mesh, all_meshes):
-        jaxpr, out_avals = pe.trace_to_jaxpr(
-            fn, in_avals_ft, debug_info
-        )
+        jaxpr, out_avals = pe.trace_to_jaxpr(fn, in_avals_ft, debug_info)
       fun_out_tree = out_avals.tree
       if fun_out_tree != tree_util.tree_structure(None):
         raise ValueError(
@@ -935,6 +1016,7 @@ def _mpmd_map(
       jaxprs.append(jaxpr)
       consts_per_fn.append(jaxpr.consts)
 
+    consts: list[Array]
     if any(consts_per_fn):
       # If we close over any constants in the kernel functions, we need to
       # deduplicate them and then unify the jaxpr signatures.
@@ -949,33 +1031,58 @@ def _mpmd_map(
           all_meshes,
       )
     else:
-      consts: list[Array] = []
+      consts = []
 
-    if debug:
-      for mesh, jaxpr in zip(meshes, jaxprs):
-        print(f"jaxpr for {mesh.core_type}")
-        print(jaxpr)
-
-    # TODO(slebedev): The named scope should not be necessary here.
-    ctx = (
-        api.named_scope(name) if name is not None else contextlib.nullcontext()
+    return PallasTraced(
+        jaxprs=tuple(jaxprs),
+        _consts=tuple(consts),
+        meshes=meshes,
+        _external_meshes=tuple(external_meshes),
+        _flat_args=tuple(flat_args),
+        _flat_out_avals=self._flat_out_avals,
+        _out_tree=self._out_tree,
+        _input_output_aliases=self._input_output_aliases,
+        _compiler_params=self._compiler_params,
+        _interpret=self._interpret,
+        _debug=self._debug,
+        _cost_estimate=self._cost_estimate,
+        _metadata=self._metadata,
+        _name=self._name,
     )
-    with ctx:
-      flat_outs = mpmd_map_p.bind(
-          *flat_args,
-          *consts,
-          meshes=tuple(meshes),
-          jaxprs=tuple(jaxprs),
-          external_meshes=tuple(external_meshes),
-          out_avals=flat_out_avals,
-          input_output_aliases=FrozenDict(input_output_aliases),
-          compiler_params=compiler_params,
-          interpret=interpret,
-          debug=debug,
-          cost_estimate=cost_estimate,
-          metadata=FrozenDict(metadata) if metadata is not None else None,
-          name=name,
-      )
-    return out_tree.unflatten(flat_outs)
 
-  return cast(Callable[..., _T], wrapper)
+  def lower(self, *args):
+    return self.trace(*args).lower()
+
+  def __call__(self, *args):
+    return self.trace(*args).call()
+
+
+def _mpmd_map(
+    meshes_and_fns: Sequence[tuple[pallas_core.Mesh, Callable[..., None]]],
+    /,
+    out_types: tree_util.PyTree = (),
+    *,
+    input_output_aliases: Mapping[int, int] = FrozenDict({}),
+    scratch_types: pallas_core.ScratchShapeTree = (),
+    compiler_params: Any | None = None,
+    interpret: bool | Any = False,
+    debug: bool = False,
+    cost_estimate: pallas_core.CostEstimate | None = None,
+    name: str | None = None,
+    metadata: Mapping[str, str] | None = None,
+) -> PallasWrapped:
+  """Like ``pallas_call``, but MPMD and without pipelining."""
+  if not meshes_and_fns:
+    raise ValueError("At least one mesh/function pair is required")
+  return PallasWrapped.create(
+      meshes_and_fns,
+      out_types,
+      input_output_aliases=input_output_aliases,
+      scratch_types=scratch_types,
+      compiler_params=compiler_params,
+      interpret=interpret,
+      debug=debug,
+      cost_estimate=cost_estimate,
+      name=name,
+      metadata=metadata,
+  )

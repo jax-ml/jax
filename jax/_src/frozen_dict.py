@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from typing import Any, TypeVar
 from collections.abc import Iterator, Mapping
 
@@ -20,6 +22,10 @@ V = TypeVar("V")
 
 
 class FrozenDict(Mapping[K, V]):
+
+  @classmethod
+  def wrap(cls, d: Mapping[K, V]) -> FrozenDict[K, V]:
+    return d if isinstance(d, FrozenDict) else cls(d)
 
   def __init__(self, d: Mapping[K, V]):
     self._d = dict(d.items())
