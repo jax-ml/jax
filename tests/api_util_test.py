@@ -124,6 +124,39 @@ class ApiUtilTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r"Mismatch details \(2 found\)"):
       api_util.flatten_axis_resources("test_spec", tree, shardings, False)
 
+  def test_flatten_axes_error_mentions_leaf_not_dummy_type(self):
+    # https://github.com/jax-ml/jax/issues/13074
+    treedef = jax.tree.structure({"a": 1})
+    spec = {"a": (0, 1)}
+    with self.assertRaises(ValueError) as cm:
+      api_util.flatten_axes("test_spec", treedef, spec)
+    self.assertNotIn("PytreeLeaf", str(cm.exception))
+    self.assertIn("the full pytree has a leaf", str(cm.exception))
+
+  def test_flatten_axes_valid_none_spec_not_reported(self):
+    # None is a valid spec leaf, so it must not be reported as a mismatch.
+    # https://github.com/jax-ml/jax/issues/13074
+    treedef = jax.tree.structure({"a": 1, "b": 2})
+    spec = {"a": None, "b": (0, 1)}
+    with self.assertRaisesRegex(ValueError, r"Mismatch details \(1 found\)"):
+      api_util.flatten_axes("test_spec", treedef, spec)
+
+  def test_flatten_axis_resources_error_mentions_leaf_not_dummy_type(self):
+    # https://github.com/jax-ml/jax/issues/13074
+    tree = jax.tree.structure({"a": 1})
+    shardings = {"a": (None, None)}
+    with self.assertRaises(ValueError) as cm:
+      api_util.flatten_axis_resources("test_spec", tree, shardings, False)
+    self.assertNotIn("PytreeLeaf", str(cm.exception))
+    self.assertIn("the full pytree has a leaf", str(cm.exception))
+
+  def test_flatten_axis_resources_valid_none_spec_not_reported(self):
+    # https://github.com/jax-ml/jax/issues/13074
+    tree = jax.tree.structure({"a": 1, "b": 2})
+    shardings = {"a": None, "b": (None, None)}
+    with self.assertRaisesRegex(ValueError, r"Mismatch details \(1 found\)"):
+      api_util.flatten_axis_resources("test_spec", tree, shardings, False)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

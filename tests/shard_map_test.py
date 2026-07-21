@@ -981,6 +981,20 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r'shard_map in_specs\[0\]'):
       f([x, x])
 
+  def test_tree_prefix_error_with_none(self):
+    # A valid None entry in in_specs must not be reported as the mismatch.
+    # https://github.com/jax-ml/jax/issues/13074
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+
+    @partial(shard_map, mesh=mesh,
+             in_specs=(None, (P('x'), P('x'), P('x'))), out_specs=P('x'))
+    def f(x, ys):
+      return x
+
+    x = jnp.arange(8.).reshape(4, 2)
+    with self.assertRaisesRegex(ValueError, r'shard_map in_specs\[1\]'):
+      f(x, (x, x))
+
   def test_rank_errors(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 

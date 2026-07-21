@@ -3393,6 +3393,18 @@ class APITest(jtu.JaxTestCase):
         lambda: api.vmap(lambda x: x, in_axes=([0],))(value_tree)
     )
 
+  def test_vmap_in_axes_tree_prefix_error_with_none(self):
+    # A valid None entry in in_axes must not be reported as a mismatch, and
+    # the message must not leak internal dummy leaf types.
+    # https://github.com/jax-ml/jax/issues/13074
+    x = jnp.ones(3)
+    with self.assertRaises(ValueError) as cm:
+      api.vmap(lambda a, b: (a, b), in_axes=(None, (0, 0, 0)))(x, (x, x))
+    msg = str(cm.exception)
+    self.assertIn("Mismatch details (1 found)", msg)
+    self.assertNotIn("PytreeLeaf", msg)
+    self.assertNotIn("NoneType", msg)
+
   def test_vmap_in_axes_leaf_types(self):
     with self.assertRaisesRegex(
         TypeError, r"vmap in_axes must be an int, None, or .*"):
