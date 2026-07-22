@@ -90,6 +90,11 @@ def shard_args(
     args: Sequence[Any],
     canonicalize: bool = True,
 ) -> Sequence[xc.ArrayImpl]:
+  logging.info("XXX shard_args: nr_args[%d]", len(args))
+  for i, arg in enumerate(args):
+    logging.info("arg[%d]: %s %s%s to sharding: %s", i, type(arg),
+                 getattr(arg, 'dtype', ''), getattr(arg, 'shape', ''),
+                 shardings[i])
   # Fast path for one argument.
   if len(args) == 1:
     arg = args[0]
@@ -1979,6 +1984,9 @@ class MeshExecutable(stages.Executable):
             if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
             else s for s, a in zip(self._out_shardings, self.out_avals)
         ]
+        logging.info("XXX MeshExecutable.aot_cache_miss nr_const_args[%d] in_shardings[%d]: %s",
+                     len(params.const_args), len(in_shardings), in_shardings)
+        logging.info("XXX MeshExecutable.set_fastpath_data")
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
             out_shardings, out_avals, out_committed, kept_var_bitvec,
@@ -1987,7 +1995,8 @@ class MeshExecutable(stages.Executable):
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
-    return _jax.pjit(
+      logging.info("XXX MeshExecutable.xla.pjit")
+      return _jax.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [],
         JitGlobalCppCacheKeys(), tree_util.dispatch_registry, cc_shard_arg)
 
@@ -2003,6 +2012,9 @@ class MeshExecutable(stages.Executable):
                       const_args)
 
 def cc_shard_arg(x, sharding, layout):
+  logging.info("XXX cc_shard_arg type(x): %s, shape: %s, sharding: %s, layout: %s",
+               type(x), getattr(x, "dtype", ""), getattr(x, "shape", ""),
+               sharding, layout)
   return shard_args([sharding], [layout], [xc.ArrayCopySemantics.REUSE_INPUT],
                     [x])[0]
 
