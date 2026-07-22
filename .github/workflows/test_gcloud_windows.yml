@@ -1,0 +1,95 @@
+name: Validate GCloud Refactor (Sandbox)
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  test-gcloud:
+    name: Test Gcloud on ${{ matrix.runner-name }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-x86-n2-16
+            runner-name: Windows
+            container: null
+            jaxlib-filename: jaxlib-0.0.0-cp312-cp312-win_amd64.whl
+            jaxlib-pattern: jaxlib*cp312*win_amd64*.whl
+          - runner: linux-x86-n4-16
+            runner-name: Linux
+            container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+            jaxlib-filename: jaxlib-0.0.0-cp312-cp312-manylinux2014_x86_64.whl
+            jaxlib-pattern: jaxlib*cp312*manylinux2014_x86_64*.whl
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Google Cloud CLI on Windows (No Spaces Path)
+        if: matrix.runner-name == 'Windows'
+        run: |
+          echo "Downloading Google Cloud CLI..."
+
+          curl -fsSLo gc.zip https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-windows-x86_64.zip
+          echo "Extracting to C:\gcloud..."
+          mkdir -p /c/gcloud
+          unzip gc.zip -d /c/gcloud
+          echo '/c/gcloud/google-cloud-sdk/bin' >> $GITHUB_PATH
+
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@7f5ca0c263a81ed09ea276524c1b9192f1304e3c
+        if: matrix.runner-name == 'Windows'
+        with:
+          halt-dispatch-input: 'yes'
+
+      - name: Create Dummy Wheels
+        run: |
+          mkdir -p dist
+          echo "dummy JAX wheel" > dist/jax-0.0.0-py3-none-any.whl
+          echo "dummy jaxlib wheel" > dist/${{ matrix.jaxlib-filename }}
+
+      - name: Test Refactored Upload (bash with gcloud alias)
+        env:
+          INPUTS_GCS_UPLOAD_URI: gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ "${{ matrix.runner-name }}" = "Windows" ]; then
+            gcloud() {
+              gcloud.cmd "$@"
+            }
+          fi
+
+          echo gcloud: $(which gcloud)
+          echo type for gcloud: $(type gcloud)
+          echo python: $(which python)
+          echo "MSYS_NO_PATHCONV: $MSYS_NO_PATHCONV"
+
+          echo "Testing upload of: dist/*.whl to ${INPUTS_GCS_UPLOAD_URI}"
+          gcloud storage cp -r "dist/*.whl" "${INPUTS_GCS_UPLOAD_URI}/"
+
+      - name: Test Refactored Download (bash with gcloud alias)
+        env:
+          INPUTS_GCS_DOWNLOAD_URI: gs://general-ml-ci-transient/jax-github-actions/jax-fork/CI - Wheel Tests (Continuous)/${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ "${{ matrix.runner-name }}" = "Windows" ]; then
+            gcloud() {
+              gcloud.cmd "$@"
+            }
+          fi
+
+          echo "Testing download from ${INPUTS_GCS_DOWNLOAD_URI} to download_dist/"
+          mkdir -p download_dist
+          gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}"/jax*py3*none*any.whl download_dist/
+          gcloud storage cp -r "${INPUTS_GCS_DOWNLOAD_URI}/${{ matrix.jaxlib-pattern }}" download_dist/
+
+          echo "Downloaded files:"
+          ls -la download_dist
+
