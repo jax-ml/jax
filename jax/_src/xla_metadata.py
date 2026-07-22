@@ -20,7 +20,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import flattree as ft
-from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax._src import xla_metadata_lib
 from jax._src.api_util import debug_info
@@ -426,9 +425,9 @@ def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
     outs, out_tree = tree_flatten((cts_out, logs))
     return outs
   dbg = jaxpr.debug_info.with_unknown_names()
-  trans_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(transposed, debug_info=dbg), in_avals)
-  return trans_jaxpr.with_consts(consts), out_tree
+  trans_jaxpr, _ = pe.trace_to_jaxpr(
+      transposed, ft.flatten_args(*in_avals), dbg)
+  return trans_jaxpr, out_tree
 
 
 def _xla_metadata_call_transpose(cts_in, *args, jaxpr, xla_metadata,

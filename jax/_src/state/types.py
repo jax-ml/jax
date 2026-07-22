@@ -469,7 +469,7 @@ class AbstractRef(core.AbstractValue):
         for x in self.inner_aval.lo_ty()
     ]
 
-  def lower_val(self, ref):
+  def lower_val(self, ref, /):
     if not self.is_high:
       return [ref]
     return self.inner_aval.lower_val(ref._refs)  # pyrefly: ignore[missing-attribute]
