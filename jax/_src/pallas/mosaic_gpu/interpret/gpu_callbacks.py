@@ -614,9 +614,10 @@ def _get(
     )
 
   if shared_memory.detect_races and thread is not None:
+    assert clock is not None
     get_races().check_read(
         thread,
-        clock,
+        clock.generic_clock,
         allocation_key,
         read_range,
         source_info=source_info,
@@ -705,9 +706,10 @@ def _swap(
       )
 
   if shared_memory.detect_races:
+    assert clock is not None
     get_races().check_write(
         thread,
-        clock,
+        clock.generic_clock,
         allocation_key,
         read_write_range,
         source_info=source_info,
@@ -936,20 +938,17 @@ def _barrier_arrive(
   barrier, clock = shared_memory.get_barrier_and_increment_clock(
       barrier_key, thread
   )
-  smem_commit_clock = shared_memory.get_smem_commit_clock(thread)
   if isinstance(barrier, memory.ClusterBarrier):
     barrier.arrive(
         mesh_location=mesh_location,
         thread=thread,
         clock=clock,
-        smem_commit_clock=smem_commit_clock,
         logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
     )
   elif isinstance(barrier, memory.Barrier):
     barrier.arrive(
-        clock=clock,
-        smem_commit_clock=smem_commit_clock,
-        logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
+        clock,
+        memory.GPULoggingInfo(mesh_location, thread, source_info),
     )
   else:
     raise ValueError(f"Unsupported barrier type: {type(barrier)}")
@@ -1171,7 +1170,6 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
 
   barrier: memory.Barrier
   clock: VectorClock | None = None
-  smem_commit_clock: VectorClock | None = None
 
   def __init__(
       self,
@@ -1184,7 +1182,7 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
         barrier_allocation_key: HostAllocationKey,
         source_info: source_info_util.SourceInfo | None,
         clock: VectorClock | None = None,
-        smem_commit_clock: VectorClock | None = None):
+  ):
     super().__init__(
         mesh_location=mesh_location,
         thread=thread,
@@ -1196,7 +1194,6 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
     shared_memory = _get_shared_memory()
     self.barrier = shared_memory.get_barrier(barrier_allocation_key)
     self.clock = clock
-    self.smem_commit_clock = smem_commit_clock
 
   def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     # TODO(paulbib): GMEM updates are only visible to the async proxy (TMA)
@@ -1204,11 +1201,10 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
     # is exposed in Pallas. When it is, we should use a `commit_gmem` clock here
     if shared_memory.detect_races:
       assert self.clock is not None
-      assert self.smem_commit_clock is not None
       self.clock.inc(tma_thread_id)
       get_races().check_read(
           self.thread,
-          self.clock.copy(),
+          self.clock.generic_clock.copy(),
           self.src_allocation_key,
           interpret_utils.to_range(self.src_transforms),
           source_info=self.source_info,
@@ -1217,13 +1213,11 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
   def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     if shared_memory.detect_races:
       assert self.clock is not None
-      assert self.smem_commit_clock is not None
       self.clock.inc(tma_thread_id)
-      self.smem_commit_clock.inc(tma_thread_id)
 
       get_races().check_write(
           self.thread,
-          self.smem_commit_clock.copy(),
+          self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
           interpret_utils.to_range(self.dst_transforms),
           source_info=self.source_info,
@@ -1231,9 +1225,8 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
 
   def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     self.barrier.arrive(
-        clock=self.clock.copy() if self.clock is not None else None,
-        smem_commit_clock=self.smem_commit_clock.copy() if self.smem_commit_clock is not None else None,
-        logging_info=self.logging_info,
+        self.clock.copy() if self.clock is not None else None,
+        self.logging_info,
     )
 
 
@@ -1243,7 +1236,6 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
   VectorClock = memory.GPUSharedMemory.VectorClock
 
   clock: VectorClock | None = None
-  smem_commit_clock: VectorClock | None = None
   read_clock: VectorClock | None = None
   write_clock: VectorClock | None = None
 
@@ -1257,7 +1249,6 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       dst_transforms: tuple[Any, ...],
       source_info: source_info_util.SourceInfo | None,
       clock: VectorClock | None = None,
-      smem_commit_clock: VectorClock | None = None,
   ):
     super().__init__(
         mesh_location=mesh_location,
@@ -1268,18 +1259,15 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
         dst_transforms=dst_transforms,
         source_info=source_info)
     self.clock = clock
-    self.smem_commit_clock = smem_commit_clock
 
   def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     if shared_memory.detect_races:
       assert self.clock is not None
-      assert self.smem_commit_clock is not None
       self.clock.inc(tma_thread_id)
-      self.smem_commit_clock.inc(tma_thread_id)
       self.read_clock = self.clock.copy()
       get_races().check_read(
           self.thread,
-          self.smem_commit_clock,
+          self.clock.async_smem_clock.copy(),
           self.src_allocation_key,
           interpret_utils.to_range(self.src_transforms),
           source_info=self.source_info,
@@ -1288,12 +1276,11 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
   def post_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     if shared_memory.detect_races:
       assert self.clock is not None
-      assert self.smem_commit_clock is not None
       self.clock.inc(tma_thread_id)
       self.write_clock = self.clock.copy()
       get_races().check_write(
           self.thread,
-          self.smem_commit_clock,
+          self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
           interpret_utils.to_range(self.dst_transforms),
           source_info=self.source_info,
@@ -1436,12 +1423,10 @@ def copy_smem_to_gmem(
     raise NotImplementedError("reduction_op not supported")
 
   clock = None
-  smem_commit_clock = None
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
     clock = shared_memory.incr_clock(thread)
-    smem_commit_clock = shared_memory.get_smem_commit_clock(thread)
 
   task = AsyncCopySmemToGmemTask(
       mesh_location=mesh_location,
@@ -1452,7 +1437,6 @@ def copy_smem_to_gmem(
       dst_transforms=dst_transforms,
       source_info=source_info,
       clock=clock,
-      smem_commit_clock=smem_commit_clock,
   )
 
   shared_memory = _get_shared_memory()
@@ -1497,12 +1481,10 @@ def copy_gmem_to_smem(
   )
 
   clock = None
-  smem_commit_clock = None
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
     clock = shared_memory.incr_clock(thread)
-    smem_commit_clock = shared_memory.get_smem_commit_clock(thread)
 
   transfer = AsyncCopyGmemToSmemTask(
       mesh_location=mesh_location,
@@ -1514,7 +1496,6 @@ def copy_gmem_to_smem(
       barrier_allocation_key=barrier_allocation_key,
       source_info=source_info,
       clock=clock,
-      smem_commit_clock=smem_commit_clock,
   )
 
   shared_memory = _get_shared_memory()
@@ -1532,7 +1513,7 @@ def commit_smem(
 ):
   del mesh_location, source_info
   shared_memory = _get_shared_memory()
-  shared_memory.update_smem_commit_clock(thread)
+  shared_memory.commit_smem(thread)
 
   return token
 
@@ -1620,11 +1601,7 @@ def tcgen05_mma(
     )
     if not isinstance(barrier, memory.Barrier):
       raise ValueError("tcgen05_mma only allows arriving on a Barrier")
-    smem_commit_clock = shared_memory.get_smem_commit_clock(thread)
-    barrier.arrive(
-        clock=clock,
-        smem_commit_clock=smem_commit_clock,
-        logging_info=logging_info)
+    barrier.arrive(clock, logging_info)
 
   return token
 

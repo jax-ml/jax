@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import collections
+import contextlib
 import dataclasses
 import itertools
 import logging
@@ -292,16 +293,42 @@ class AsyncTask(Protocol):
     ...
 
 
+class GpuClockBundle(vector_clock.VectorClockProto):
+  # The clock for access from the generic proxy
+  generic_clock: vector_clock.NpVectorClock
+  # The clock for access to SMEM from the async proxy
+  async_smem_clock: vector_clock.NpVectorClock
+
+  def __init__(self, size: int):
+    self.generic_clock = vector_clock.NpVectorClock(size)
+    self.async_smem_clock = vector_clock.NpVectorClock(size)
+
+  def copy(self) -> Self:
+    new = self.__new__(self.__class__)
+    new.generic_clock = self.generic_clock.copy()
+    new.async_smem_clock = self.async_smem_clock.copy()
+    return new
+
+  def update(self, other: Self) -> None:
+    self.generic_clock.update(other.generic_clock)
+    self.async_smem_clock.update(other.async_smem_clock)
+
+  def inc(self, position: int) -> None:
+    self.generic_clock.inc(position)
+    self.async_smem_clock.inc(position)
+
+  def commit_smem(self) -> None:
+    self.async_smem_clock.update(self.generic_clock)
+
+
 class GPUSharedMemory(
-    memory.GenericSharedMemory[
-        HostAllocationKey, Thread, vector_clock.NpVectorClock
-    ]
+    memory.GenericSharedMemory[HostAllocationKey, Thread, GpuClockBundle]
 ):
 
   # TODO(paulbib): Is there a way to assert these match the base class?
   MemKey = HostAllocationKey
   ThreadKey = Thread
-  VectorClock = vector_clock.NpVectorClock
+  VectorClock = GpuClockBundle
 
   # All Pallas threads that are concurrently executed by interpret mode, mapped
   # to their position in the vector clock.
@@ -321,10 +348,6 @@ class GPUSharedMemory(
   # NOTE: We use negative integers so that, when debugging, it is easy to
   # visually distinguish REGS IDs from other IDs.
   next_regs_id: dict[ThreadKey, int]
-
-  # Vector clocks used for tracking the logical time of the last observed call
-  # to `commit_smem` for each thread.
-  smem_commit_clocks: dict[ThreadKey, VectorClock]
 
   # For each thread, a queue of clocks used for the read/write side of pending
   # smem_to_gmem transfers.
@@ -383,10 +406,6 @@ class GPUSharedMemory(
     # clusters concurrently.
     vector_clock_size = len(self.all_concurrent_threads) + self.num_tma_threads
     clocks = {
-        thread: self.VectorClock(vector_clock_size)
-        for thread in self.all_concurrent_threads
-    }
-    self.smem_commit_clocks = {
         thread: self.VectorClock(vector_clock_size)
         for thread in self.all_concurrent_threads
     }
@@ -617,18 +636,20 @@ class GPUSharedMemory(
           alloc, ClusterBarrier
       ), f"Cluster barrier remains allocated at key `{key}`."
 
-  def update_smem_commit_clock(self, thread: ThreadKey):
-    """Sets the smem commit clock for the given core to its current clock."""
-    if not self.detect_races:
-      return
-    with self.lock:
-      self.smem_commit_clocks[thread].update(self.clocks[thread])
+  def incr_clock(
+      self, thread: ThreadKey, take_lock: bool = True
+  ) -> VectorClock:
+    """Increments a thread's own index within its generic clock by one."""
+    with self.lock if take_lock else contextlib.nullcontext():
+      pos = self.thread_to_vc_position(thread)
+      self.clocks[thread].generic_clock.inc(pos)
+      return self.clocks[thread].copy()
 
-  def get_smem_commit_clock(self, thread: ThreadKey) -> VectorClock | None:
-    if not self.detect_races:
-      return None
-    with self.lock:
-      return self.smem_commit_clocks[thread].copy()
+  def commit_smem(self, thread: ThreadKey):
+    """Sets the async smem clock for the given thread to its current generic clock."""
+    if self.detect_races:
+      with self.lock:
+        self.clocks[thread].commit_smem()
 
   def execute_async_task(self, task: AsyncTask, thread: ThreadKey):
     """Executes an async task immediately (intiated by the given thread)."""
@@ -692,7 +713,6 @@ class GPUSharedMemory(
   def update_clocks_for_device_barrier(self, device: Device):
     """Synchronizes the vector clocks for the cores on the given device."""
     self.update_clocks(self.concurrent_threads(device))
-    # TODO(paulbib): This needs to also synchronize commit_smem clocks
 
   def update_clock(self, source: ThreadKey, dest: ThreadKey):
     """Joins the source and dest clocks, and assigns the result to dest."""
@@ -700,7 +720,6 @@ class GPUSharedMemory(
       return
     with self.lock:
       self.clocks[dest].update(self.clocks[source])
-      self.smem_commit_clocks[dest].update(self.smem_commit_clocks[source])
 
 
 class Barrier(memory.Allocation):
@@ -779,8 +798,7 @@ class Barrier(memory.Allocation):
     self.cv = threading.Condition()
 
     if self.shared_memory.detect_races:
-      self.clock: self.VectorClock | None = None  # Protected by `self.cv`'s lock.
-      self.smem_commit_clock: self.VectorClock | None = (
+      self.clock: self.VectorClock | None = (
           None  # Protected by `self.cv`'s lock.
       )
 
@@ -831,9 +849,7 @@ class Barrier(memory.Allocation):
 
   def arrive(
       self,
-      *,
       clock: VectorClock | None = None,
-      smem_commit_clock: VectorClock | None = None,
       logging_info: GPULoggingInfo | None = None,
   ):
     with self.cv:
@@ -873,12 +889,6 @@ class Barrier(memory.Allocation):
           self.clock = clock.copy()
         else:
           self.clock.update(clock)
-
-        assert smem_commit_clock is not None
-        if self.smem_commit_clock is None:
-          self.smem_commit_clock = smem_commit_clock.copy()
-        else:
-          self.smem_commit_clock.update(smem_commit_clock)
 
       self.cv.notify_all()
 
@@ -1003,7 +1013,6 @@ class Barrier(memory.Allocation):
       # detection is enabled, the clock is needed below to update a vector clock
       # that is managed by `self.shared_memory`.)
       clock = self.clock if self.detect_races else None
-      smem_commit_clock = self.smem_commit_clock if self.detect_races else None
 
     # Note that this block cannot be nested under the `with self.cv` block
     # immediately above since this would violate the invariant that
@@ -1011,12 +1020,8 @@ class Barrier(memory.Allocation):
     # already held. (See the documentation of `self.cv` above.)
     if self.detect_races:
       assert clock is not None
-      assert smem_commit_clock is not None
       with self.shared_memory.lock:
         self.shared_memory.clocks[thread].update(clock)
-        self.shared_memory.smem_commit_clocks[thread].update(
-            smem_commit_clock
-        )
 
 
 class ClusterBarrier(memory.Allocation):
@@ -1106,7 +1111,6 @@ class ClusterBarrier(memory.Allocation):
       mesh_location: MeshLocation,
       thread: Thread,
       clock: VectorClock | None = None,
-      smem_commit_clock: VectorClock | None = None,
       logging_info: GPULoggingInfo | None = None,
   ):
     if self.enable_logging and logging_info is not None:
@@ -1123,11 +1127,7 @@ class ClusterBarrier(memory.Allocation):
     # any collective axis) from `block_coords`.
     with self.lock:
       barrier = self.barriers[thread.block_id]
-    barrier.arrive(
-        clock=clock,
-        smem_commit_clock=smem_commit_clock,
-        logging_info=logging_info,
-    )
+    barrier.arrive(clock, logging_info)
 
     # Arrive at the barriers for those blocks whose coordinates differ from
     # `block_coords` along *exactly one* collective axis.
@@ -1156,11 +1156,7 @@ class ClusterBarrier(memory.Allocation):
         )
         with self.lock:
           barrier = self.barriers[barrier_index]
-        barrier.arrive(
-            clock=clock,
-            smem_commit_clock=smem_commit_clock,
-            logging_info=logging_info,
-        )
+        barrier.arrive(clock, logging_info)
 
   def wait(
       self,
