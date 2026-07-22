@@ -53,10 +53,11 @@ def prepare_lapack_call(fn_base, dtype):
 
 def build_lapack_fn_target(fn_base: str, dtype) -> str:
   """Builds the target name for a LAPACK function custom call."""
-  try:
-    prefix = (
-        LAPACK_DTYPE_PREFIX.get(dtype, None) or LAPACK_DTYPE_PREFIX[dtype.type]
-    )
-    return f"lapack_{prefix}{fn_base}"
-  except KeyError as err:
-    raise NotImplementedError(err, f"Unsupported dtype {dtype}.") from err
+  key = np.dtype(dtype).type
+  prefix = LAPACK_DTYPE_PREFIX.get(key, None)
+  if prefix is None:
+    raise NotImplementedError(
+      f"Unsupported dtype {dtype} for LAPACK operations. Supported dtypes are "
+      f"{', '.join(typ.__name__ for typ in LAPACK_DTYPE_PREFIX)}. "
+      f"Please cast the input to a supported type.")
+  return f"lapack_{prefix}{fn_base}"
