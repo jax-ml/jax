@@ -233,7 +233,7 @@ def _indexed_shape(ref: Ref, indices: Sequence[jax.Array]) -> tuple[int, ...]:
       )
     if prev_idx is not None and idx.size != prev_idx.size:
       raise ValueError(
-          "Indices must have the same size, got {prev_idx.size} and {idx.size}"
+          f"Indices must have the same size, got {prev_idx.size} and {idx.size}"
       )
     prev_idx = idx
   assert prev_idx is not None
