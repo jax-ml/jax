@@ -182,9 +182,10 @@ def _integer_pow_cost_rule(ctx: Context, *, y: int) -> CostEstimate:
     cost_per_element = 0
   else:
     # We assume integer pow is implemented using repeated squaring.
-    # The cost is log(y) squarings, plus one multiply per non-zero bit.
-    highest_bit = math.floor(math.log(y, 2))
-    cost_per_element = highest_bit + y.bit_count()
+    # The cost is log(abs(y)) squarings, plus one multiply per non-zero bit,
+    # plus a reciprocal if y is negative.
+    highest_bit = math.floor(math.log(abs(y), 2))
+    cost_per_element = highest_bit + y.bit_count() + (y < 0)
   return CostEstimate(
       flops=num_elements * cost_per_element,
       transcendentals=0,
