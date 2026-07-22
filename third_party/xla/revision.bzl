@@ -21,5 +21,5 @@
 #    and update XLA_SHA256 with the result.
 
 # buildifier: disable=module-docstring
-XLA_COMMIT = "fc85f31ce66531ea167ba20765151374051ed217"
-XLA_SHA256 = "522b5e8922e8832be843927896221fe8789c6d76b1175f0ff05fbf26e8da5f21"
+XLA_COMMIT = "8abc7d525e7fcde22ae9ed068aeeae5396c65f89"
+XLA_SHA256 = "e6ffed56ac1a6fb7de4dd676a04765b6e008946e8d160ab8d048e4a0790920d0"
