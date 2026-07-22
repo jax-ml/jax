@@ -16,9 +16,9 @@ limitations under the License.
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <utility>
 
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "jaxlib/mosaic/gpu/nvshmem.h"
 
 namespace {
 template <typename... Args>
@@ -184,54 +184,6 @@ void mosaic_gpu_init_tma_desc(CUtensorMap* tma_desc, void* base_addr,
                              CU_TENSOR_MAP_L2_PROMOTION_NONE,
                              CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE),
       "cuTensorMapEncodeTiled failed: %s\n");
-}
-
-void* mosaic_gpu_module_load(void* data) {
-  CUmodule module = nullptr;
-  abort_on_error(cuModuleLoadData(&module, data),
-                 "cuModuleLoadData failed: %s\n");
-  {  // Set the NVSHMEM state if it's used by the module.
-    CUdeviceptr ptr = 0;
-    size_t size = 0;
-    if (cuModuleGetGlobal(&ptr, &size, module,
-                          "nvshmemi_device_lib_version_d") == CUDA_SUCCESS) {
-      if (mosaic::gpu::NvshmemApi::Default().cumodule_init(module) !=
-          NVSHMEM_SUCCESS) {
-        fprintf(stderr, "nvshmemx_cumodule_init failed.\n");
-        abort();
-      }
-    }
-  }
-
-  return module;
-}
-
-// cluster_size can be -1 when it's not statically known.
-void* mosaic_gpu_get_function(CUmodule module, const char* name,
-                              int32_t smem_bytes, int32_t cluster_size) {
-  CUfunction function = nullptr;
-  abort_on_error(cuModuleGetFunction(&function, module, name),
-                 "Failed to retrieve function pointer to kernel \"%s\", "
-                 "cuModuleGetFunction failed: %s\n",
-                 name);
-  if (smem_bytes) {
-    abort_on_error(
-        cuFuncSetAttribute(function,
-                           CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                           smem_bytes),
-        "Failed to set maximum dynamic shared memory size for kernel \"%s\" "
-        "to %d bytes, cuFuncSetAttribute failed: %s\n",
-        name, smem_bytes);
-  }
-  if (cluster_size > 8) {
-    abort_on_error(
-        cuFuncSetAttribute(
-            function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1),
-        "Failed to set allowed cluster size for kernel \"%s\" to %d, "
-        "cuFuncSetAttribute failed: %s\n",
-        name, cluster_size);
-  }
-  return function;
 }
 
 void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,

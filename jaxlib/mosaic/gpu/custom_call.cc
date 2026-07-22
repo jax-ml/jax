@@ -109,6 +109,8 @@ limitations under the License.
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/ExecutionEngine/OptUtils.h"
 #include "mlir/IR/AsmState.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
@@ -169,7 +171,6 @@ using ::mosaic::gpu::NvshmemApi;
 namespace ffi = xla::ffi;
 namespace se = stream_executor;
 
-using MosaicInitFunc = void(CUmodule*, CUfunction*);
 using MosaicHostFunc = void(CUfunction, void*, void**);
 using KernelHash = std::array<uint64_t, 4>;
 
@@ -420,11 +421,8 @@ absl::StatusOr<se::CudaComputeCapability> GetCudaComputeCapability() {
                                        : FeatureExtension::kNone);
 }
 
-absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
-    mlir::ModuleOp module_op) {
-  // We look for two top level C-interface functions:
-  // - "host" function with symbol name "_mlir_ciface_<foo>"
-  // - "init" function with symbol name "_mlir_ciface_<foo>_init"
+absl::StatusOr<std::string> GetHostFuncName(mlir::ModuleOp module_op) {
+  // We look for top level host C-interface function "_mlir_ciface_<foo>"
   constexpr std::string_view prefix = "_mlir_ciface_";
   std::vector<std::string> names;
   for (mlir::LLVM::LLVMFuncOp llvm_func :
@@ -433,42 +431,32 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
       names.push_back(llvm_func.getName().str());
     }
   }
-  if (auto size = names.size(); size != 2) {
+  if (auto size = names.size(); size != 1) {
     return absl::InternalError(absl::StrFormat(
-        "Expected to locate 2 symbols with %s prefix in the MLIR module, found "
-        "%d instead.",
+        "Expected to locate exactly 1 symbol with %s prefix in the MLIR "
+        "module, found %d instead.",
         prefix, size));
   }
-  // _mlir_ciface_<foo>_init now follows _mlir_ciface_<foo>
-  std::sort(names.begin(), names.end());
-
-  std::string host_func_name = names[0];
-  std::string init_func_name = names[1];
-
-  if (init_func_name != absl::StrCat(host_func_name, "_init")) {
-    return absl::InternalError(absl::StrFormat(
-        "Expected init function name to equal the concatenation of the host "
-        "function name and the \"_init\" suffix, instead got "
-        "init_func_name=%s, host_func_name=%s.",
-        init_func_name, host_func_name));
-  }
-  return std::make_pair(host_func_name, init_func_name);
+  return names[0];
 }
 
 struct CompiledKernel {
   CompiledKernel(std::unique_ptr<llvm::orc::LLJIT> lljit,
-                 MosaicHostFunc* host_launch, MosaicInitFunc* init,
-                 bool is_nvshmem_used, bool is_multimem_used,
-                 std::string object_file, std::string host_func_name,
-                 std::string init_func_name)
+                 MosaicHostFunc* host_launch, bool is_nvshmem_used,
+                 bool is_multimem_used, std::string object_file,
+                 std::string host_func_name, std::string gpu_binary,
+                 std::string kernel_name, int32_t smem_bytes,
+                 int32_t cluster_size)
       : lljit(std::move(lljit)),
         host_launch(host_launch),
-        init(init),
         is_nvshmem_used(is_nvshmem_used),
         is_multimem_used(is_multimem_used),
+        gpu_binary(std::move(gpu_binary)),
+        kernel_name(std::move(kernel_name)),
+        smem_bytes(smem_bytes),
+        cluster_size(cluster_size),
         object_file(std::move(object_file)),
-        host_func_name(std::move(host_func_name)),
-        init_func_name(std::move(init_func_name)) {}
+        host_func_name(std::move(host_func_name)) {}
 
   // CompiledKernel is neither copyable nor movable. We use CompiledKernel* as a
   // key in a cache, so we require pointer stability.
@@ -477,13 +465,15 @@ struct CompiledKernel {
 
   std::unique_ptr<llvm::orc::LLJIT> lljit;
   MosaicHostFunc* host_launch = nullptr;
-  MosaicInitFunc* init = nullptr;
   bool is_nvshmem_used = false;
   bool is_multimem_used = false;
+  std::string gpu_binary;
+  std::string kernel_name;
+  int32_t smem_bytes = 0;
+  int32_t cluster_size = 1;
   // The following fields are used for de/serialization of CompiledKernel.
   std::string object_file;
   std::string host_func_name;
-  std::string init_func_name;
 };
 
 absl::Status RunMlirPasses(mlir::ModuleOp module, se::CudaComputeCapability cc,
@@ -587,7 +577,8 @@ absl::StatusOr<std::unique_ptr<llvm::MemoryBuffer>> CompileModuleToObject(
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
     std::unique_ptr<llvm::MemoryBuffer> object_file, std::string host_func_name,
-    std::string init_func_name, bool is_nvshmem_used, bool is_multimem_used) {
+    bool is_nvshmem_used, bool is_multimem_used, std::string gpu_binary,
+    std::string kernel_name, int32_t smem_bytes, int32_t cluster_size) {
   EnsureLLVMisInitialized();
   std::string object_file_str = object_file->getBuffer().str();
   auto lljit_builder = llvm::orc::LLJITBuilder();
@@ -697,18 +688,11 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> CreateAndInitJIT(
         "Failed to lookup host symbol: %s", llvm::toString(std::move(err))));
   }
 
-  auto init_sym = lljit->lookup(init_func_name);
-  if (auto err = init_sym.takeError()) {
-    return absl::InternalError(absl::StrFormat(
-        "Failed to lookup init symbol: %s", llvm::toString(std::move(err))));
-  }
-
   VLOG(5) << "Successfully JIT-linked Mosaic GPU kernel";
   return std::make_unique<CompiledKernel>(
-      std::move(lljit), host_sym->toPtr<MosaicHostFunc*>(),
-      init_sym->toPtr<MosaicInitFunc*>(), is_nvshmem_used, is_multimem_used,
-      std::move(object_file_str), std::move(host_func_name),
-      std::move(init_func_name));
+      std::move(lljit), host_sym->toPtr<MosaicHostFunc*>(), is_nvshmem_used,
+      is_multimem_used, std::move(object_file_str), std::move(host_func_name),
+      std::move(gpu_binary), std::move(kernel_name), smem_bytes, cluster_size);
 }
 
 absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
@@ -779,6 +763,32 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
       mosaic::gpu::GetOrSetDumpOptionsForModule(*module);
   RETURN_IF_ERROR(RunMlirPasses(*module, cc, use_nvshmem, dump_opts));
 
+  auto gpu_binary_attr =
+      (*module)->getAttrOfType<mlir::StringAttr>("mosaic_gpu.gpu_binary");
+  auto kernel_name_attr =
+      (*module)->getAttrOfType<mlir::StringAttr>("mosaic_gpu.kernel_name");
+  auto smem_bytes_attr =
+      (*module)->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.smem_bytes");
+  auto cluster_size_attr =
+      (*module)->getAttrOfType<mlir::IntegerAttr>("mosaic_gpu.cluster_size");
+
+  if (!gpu_binary_attr || !kernel_name_attr || !smem_bytes_attr ||
+      !cluster_size_attr) {
+    return absl::InternalError(
+        "Failed to retrieve kernel metadata attributes after running MLIR "
+        "passes");
+  }
+
+  std::string gpu_binary = gpu_binary_attr.getValue().str();
+  std::string kernel_name = kernel_name_attr.getValue().str();
+  int32_t smem_bytes = smem_bytes_attr.getInt();
+  int32_t cluster_size = cluster_size_attr.getInt();
+
+  (*module)->removeAttr("mosaic_gpu.gpu_binary");
+  (*module)->removeAttr("mosaic_gpu.kernel_name");
+  (*module)->removeAttr("mosaic_gpu.smem_bytes");
+  (*module)->removeAttr("mosaic_gpu.cluster_size");
+
   ASSIGN_OR_RETURN(
       auto object_file,
       CompileModuleToObject(*module, dump_opts, cpu_target_machine_options));
@@ -790,12 +800,11 @@ absl::StatusOr<std::unique_ptr<CompiledKernel>> Compile(
   }
 #endif
 
-  ASSIGN_OR_RETURN(auto host_and_init_func_names,
-                   GetHostAndInitFuncNames(*module));
+  ASSIGN_OR_RETURN(auto host_func_name, GetHostFuncName(*module));
 
-  return CreateAndInitJIT(
-      std::move(object_file), std::move(host_and_init_func_names.first),
-      std::move(host_and_init_func_names.second), use_nvshmem, multimem_used);
+  return CreateAndInitJIT(std::move(object_file), std::move(host_func_name),
+                          use_nvshmem, multimem_used, std::move(gpu_binary),
+                          std::move(kernel_name), smem_bytes, cluster_size);
 }
 
 struct KernelCache {
@@ -868,6 +877,37 @@ struct InitResult {
   CUfunction function;
 };
 
+absl::StatusOr<CUmodule> LoadModule(const CompiledKernel& kernel) {
+  CUmodule module = nullptr;
+  CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
+  CUdeviceptr ptr = 0;
+  size_t size = 0;
+  if (cuModuleGetGlobal(&ptr, &size, module, "nvshmemi_device_lib_version_d") ==
+      CUDA_SUCCESS) {
+    if (NvshmemApi::Default().cumodule_init(module) != NVSHMEM_SUCCESS) {
+      return absl::InternalError("nvshmemx_cumodule_init failed.");
+    }
+  }
+  return module;
+}
+
+absl::StatusOr<CUfunction> GetFunction(CUmodule module,
+                                       const CompiledKernel& kernel) {
+  CUfunction function = nullptr;
+  CUDA_RETURN_IF_ERROR(
+      cuModuleGetFunction(&function, module, kernel.kernel_name.c_str()));
+  if (kernel.smem_bytes) {
+    CUDA_RETURN_IF_ERROR(cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+        kernel.smem_bytes));
+  }
+  if (kernel.cluster_size > 8) {
+    CUDA_RETURN_IF_ERROR(cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1));
+  }
+  return function;
+}
+
 absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   if (kernel.is_nvshmem_used &&
       !NvshmemApi::Default(/*assert_ok=*/false).is_loaded()) {
@@ -905,9 +945,8 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
       }
     }
   }
-  CUmodule module = nullptr;
-  CUfunction function = nullptr;
-  kernel.init(&module, &function);
+  ASSIGN_OR_RETURN(CUmodule module, LoadModule(kernel));
+  ASSIGN_OR_RETURN(CUfunction function, GetFunction(module, kernel));
   VLOG(5) << "Successfully initialized Mosaic GPU kernel";
   return InitResult{module, function};
 }
@@ -991,7 +1030,10 @@ absl::StatusOr<std::string> CustomCallResources::Serialize(
   kernel_proto.set_is_multimem_used(kernel->is_multimem_used);
   kernel_proto.set_kernel_hash(resources.hash.data(), sizeof(KernelHash));
   kernel_proto.set_host_func_name(kernel->host_func_name);
-  kernel_proto.set_init_func_name(kernel->init_func_name);
+  kernel_proto.set_gpu_binary(kernel->gpu_binary);
+  kernel_proto.set_kernel_name(kernel->kernel_name);
+  kernel_proto.set_smem_bytes(kernel->smem_bytes);
+  kernel_proto.set_cluster_size(kernel->cluster_size);
   return kernel_proto.SerializeAsString();
 }
 
@@ -1017,19 +1059,22 @@ CustomCallResources::Deserialize(absl::string_view data) {
   }
 
   std::string host_func_name = kernel_proto.host_func_name();
-  std::string init_func_name = kernel_proto.init_func_name();
+  std::string gpu_binary = kernel_proto.gpu_binary();
+  std::string kernel_name = kernel_proto.kernel_name();
+  int32_t smem_bytes = kernel_proto.smem_bytes();
+  int32_t cluster_size = kernel_proto.cluster_size();
 
   ASSIGN_OR_RETURN(
       resources->kernel,
       GetOrCreateKernel(
           resources->hash,
           [&]() -> absl::StatusOr<std::unique_ptr<CompiledKernel>> {
-            return CreateAndInitJIT(llvm::MemoryBuffer::getMemBuffer(
-                                        kernel_proto.object_file(), "kernel"),
-                                    std::move(host_func_name),
-                                    std::move(init_func_name),
-                                    kernel_proto.is_nvshmem_used(),
-                                    kernel_proto.is_multimem_used());
+            return CreateAndInitJIT(
+                llvm::MemoryBuffer::getMemBuffer(kernel_proto.object_file(),
+                                                 "kernel"),
+                std::move(host_func_name), kernel_proto.is_nvshmem_used(),
+                kernel_proto.is_multimem_used(), std::move(gpu_binary),
+                std::move(kernel_name), smem_bytes, cluster_size);
           }));
   return resources;
 }
