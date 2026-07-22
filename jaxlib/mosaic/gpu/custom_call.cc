@@ -169,8 +169,8 @@ using ::mosaic::gpu::NvshmemApi;
 namespace ffi = xla::ffi;
 namespace se = stream_executor;
 
-using MosaicInitFunc = void(void**, void**);
-using MosaicHostFunc = void(void*, void*, void**);
+using MosaicInitFunc = void(CUmodule*, CUfunction*);
+using MosaicHostFunc = void(CUfunction, void*, void**);
 using KernelHash = std::array<uint64_t, 4>;
 
 // Returns the latest PTX ISA version supported by both LLVM and the underlying
@@ -905,14 +905,11 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
       }
     }
   }
-  void* module_ptr = nullptr;
-  void* kernel_ptr = nullptr;
-  kernel.init(&module_ptr, &kernel_ptr);
+  CUmodule module = nullptr;
+  CUfunction function = nullptr;
+  kernel.init(&module, &function);
   VLOG(5) << "Successfully initialized Mosaic GPU kernel";
-  return InitResult{
-      reinterpret_cast<CUmodule>(module_ptr),
-      reinterpret_cast<CUfunction>(kernel_ptr),
-  };
+  return InitResult{module, function};
 }
 
 // Initializes the kernel in the current CUDA context and return a handle to the
