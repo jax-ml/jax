@@ -179,6 +179,15 @@ def _copy_smem_to_gmem_abstract_eval(src, dst, *args, **params):
         "Expected dtypes to match but src had type "
         f"{src_ref.dtype} and dst had type {dst_ref.dtype}"
     )
+  src_shape = src_ref.shape
+  dst_shape = dst_ref.shape
+
+  if any(s != d for s, d in zip(src_shape, dst_shape, strict=True)):
+    raise ValueError(
+        f"Expected shapes to match, but src has shape {src_shape} and dst has "
+        f"shape {dst_shape}"
+    )
+
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
@@ -729,6 +738,30 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
         "Expected dtypes to match but src had type "
         f"{src_ref.dtype} and dst had type {dst_ref.dtype}"
     )
+
+  src_shape = src_ref.shape
+  dst_shape = dst_ref.shape
+
+  leader_tracked = params.get("leader_tracked", None)
+  partition_axis = None
+  if isinstance(leader_tracked, CopyPartition.PARTITIONED):
+    partition_axis = leader_tracked.axis
+
+  if any(
+      s != d if i != partition_axis else s % d != 0
+      for i, (s, d) in enumerate(zip(src_shape, dst_shape, strict=True))
+  ):
+    if partition_axis is not None:
+      partition_axis_caveat = " (up to the partitioned dimension)"
+      partition_axis_desc = f" (dimension {partition_axis} partitioned)"
+    else:
+      partition_axis_caveat = ""
+      partition_axis_desc = ""
+    raise ValueError(
+        f"Expected shapes to match{partition_axis_caveat}, but src has "
+        f"shape {src_shape} and dst has shape {dst_shape}{partition_axis_desc}"
+    )
+
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
@@ -872,6 +905,8 @@ def _copy_gmem_to_smem_lowering(
       raise ValueError(
           f"Expected exactly one collective axis, got {collective_axes=}"
       )
+    # TODO(olechwierowicz): We can additionally raise if the GMEM partitioned
+    # dimension is not twice the size of SMEM partitioned dimension.
     if math.prod(ctx.launch_ctx.cluster_size) != 2:
       raise NotImplementedError(
           "Partitioned loads only supported for clusters of size 2. Got"
