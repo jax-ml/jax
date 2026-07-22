@@ -31,12 +31,13 @@ import operator
 import os
 from pathlib import Path
 import sys
+from typing import ForwardRef
+import urllib.request
 
 sys.path.insert(0, os.path.abspath('..'))
 
 # Workaround to avoid expanding type aliases. See:
 # https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
-from typing import ForwardRef
 
 def _do_not_evaluate_in_jax(
     self, globalns, *args, _evaluate=ForwardRef._evaluate, **kwargs,
@@ -78,7 +79,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'matplotlib.sphinxext.plot_directive',
     'myst_nb',
-    "sphinx_remove_toctrees",
+    'sphinx_remove_toctrees',
     'sphinx_copybutton',
     'jax_extensions',
     'jax_list_config_options',
@@ -88,13 +89,32 @@ extensions = [
     'sphinxcontrib.mermaid'
 ]
 
+# Define local cache paths
+cache_dir = os.path.join(os.path.dirname(__file__), 'intersphinx_cache')
+
 intersphinx_mapping = {
-    'array_api': ('https://data-apis.org/array-api/2023.12/', None),
-    'python': ('https://docs.python.org/3/', None),
-    'numpy': ('https://numpy.org/doc/stable/', None),
+    'array_api': ('https://data-apis.org/array-api/2023.12/', (os.path.join(cache_dir, 'array_api.inv'), None)),
+    'python': ('https://docs.python.org/3/', (os.path.join(cache_dir, 'python.inv'), None)),
+    'numpy': ('https://numpy.org/doc/stable/', (os.path.join(cache_dir, 'numpy.inv'), None)),
     # TODO(phawkins,jakevdp): revert to stable scipy docs when it is up again.
-    'scipy': ('https://scipy.github.io/devdocs/', None),
+    'scipy': ('https://scipy.github.io/devdocs/', (os.path.join(cache_dir, 'scipy.inv'), None)),
 }
+
+os.makedirs(cache_dir, exist_ok=True)
+for name, (url, (inv_path, _)) in intersphinx_mapping.items():
+  if not os.path.exists(inv_path):
+    print(f"Intersphinx cache miss for '{name}': downloading from {url}...")
+    try:
+      req = urllib.request.Request(
+          url + 'objects.inv',
+          headers={'User-Agent': 'Mozilla/5.0 (compatible; JAX-docs/1.0)'},
+      )
+      with urllib.request.urlopen(req) as resp, open(inv_path, 'wb') as out:
+        out.write(resp.read())
+    except Exception as e:
+      print(f"Warning: failed to download intersphinx inventory for {name}: {e}")
+  else:
+    print(f"Intersphinx cache hit for '{name}': using local inventory file at {inv_path}")
 
 suppress_warnings = [
     'ref.citation',  # Many duplicated citations in numpy/scipy docstrings.

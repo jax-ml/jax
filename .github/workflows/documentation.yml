@@ -82,7 +82,7 @@ jobs:
     - name: Image Setup
       run: |
         apt update
-        apt install -y build-essential
+        apt install -y build-essential curl
     - name: Set up Python ${{ matrix.python-version }}
       id: setup_python
       uses: google-ml-infra/actions/setup-uv-python@a1817800cb84c752378772c2a02781cf8309a399
@@ -96,9 +96,19 @@ jobs:
         uv pip install --python "$PYTHON_BIN" -r docs/requirements.txt
         echo "### documentation_render dependency install (${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
         echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
+    - name: Get current date
+      id: get-date
+      run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+    - name: Cache Intersphinx Inventories
+      id: cache-intersphinx
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      
+      with:
+        path: docs/intersphinx_cache
+        key: sphinx-intersphinx-${{ hashFiles('docs/conf.py', 'docs/requirements.txt') }}-${{ steps.get-date.outputs.date }}
     - name: Render documentation
       env:
         PYTHON_BIN: ${{ steps.setup_python.outputs.python-bin }}
       run: |
         source ci/utilities/setup_portserver.sh
-        PORTSERVER_ADDRESS=@unittest-portserver $PYTHON_BIN -m sphinx -j auto --color -W --keep-going -b html docs docs/build/html
+        PORTSERVER_ADDRESS=@unittest-portserver $PYTHON_BIN -m sphinx -v -j auto --color -W --keep-going -b html docs docs/build/html
