@@ -1503,6 +1503,20 @@ py_library_providing_imports_info(
 )
 
 pytype_strict_library(
+    name = "tpu_info",
+    srcs = ["tpu_info.py"],
+    type_checking = "pyrefly",
+    visibility = ["//jax:internal"],
+    deps = [
+        ":api",
+        ":core",
+        ":dtypes",
+        ":mesh",
+        ":util",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "internal_mesh_utils",
     srcs = ["mesh_utils.py"],
     type_checking = "pyrefly",
