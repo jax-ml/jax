@@ -13,226 +13,80 @@
 # limitations under the License.
 
 """Exposes GPU hardware information."""
-
-from collections.abc import Callable
 import dataclasses
-import enum
-import re
+from collections.abc import Callable
+from functools import lru_cache
 
 from jax._src import mesh as mesh_lib
 from jax._src import util as jax_util
 from jax._src.interpreters import pxla
+from jax._src.lib import _gpu_spec
 
 
-class GpuVersion(enum.Enum):
-  """GPU version"""
-
-  # NVIDIA GPUs
-  A10 = "NVIDIA A10"
-  A30 = "NVIDIA A30"
-  A100 = "NVIDIA A100"
-  H100 = "NVIDIA H100"
-  H200 = "NVIDIA H200"
-  GH200 = "NVIDIA GH200"
-  B200 = "NVIDIA B200"
-  GB200 = "NVIDIA GB200"
-  B300 = "NVIDIA B300"
-  GB300 = "NVIDIA GB300"
-  GB10 = "NVIDIA GB10"
-  L4 = "NVIDIA L4"
-  L40 = "NVIDIA L40"
-  T4 = "Tesla T4"
-  RTX_4090 = "NVIDIA GeForce RTX 4090"
-  RTX_PRO_4500 = "NVIDIA RTX PRO 4500"
-  RTX_PRO_5000 = "NVIDIA RTX PRO 5000"
-  RTX_PRO_6000 = "NVIDIA RTX PRO 6000"
-  THOR = "NVIDIA Thor"
-  VR200 = "NVIDIA VR200"
-
-  def __str__(self) -> str:
-    return self.value
-
-
-# Longer names first so e.g. "NVIDIA A100" wins over "NVIDIA A10".
-_GPU_VERSION_RE = re.compile(
-    r"\b("
-    + "|".join(
-        re.escape(e.value)
-        for e in sorted(GpuVersion, key=lambda e: len(e.value), reverse=True)
-    )
-    + r")\b"
-)
-
-
-def gpu_version_from_device_kind(device_kind: str) -> GpuVersion | None:
-  if m := _GPU_VERSION_RE.search(device_kind):
-    return GpuVersion(m.group(1))
-  return None
-
-
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class GpuInfo:
-  """GPU hardware information"""
-
-  # None when device_kind does not map to a known GpuVersion but arch_name is
-  # still a valid backend target (e.g. a ROCm GPU with a marketing device_kind).
-  gpu_version: GpuVersion | None
+@dataclasses.dataclass
+class CustomGpuTargetConfig:
+  platform_name: str
+  device_description_str: str
   arch_name: str
   compute_capability: int
+  core_count: int
+  shared_memory_per_core: int
+
+
+GpuTargetConfig = _gpu_spec.GpuTargetConfig | CustomGpuTargetConfig
+GpuModel = _gpu_spec.GpuModel
+
+
+@lru_cache
+def gpu_version_from_device_kind(device_kind: str) -> GpuTargetConfig | None:
+  for model in GpuModel:
+    config = _gpu_spec.get_gpu_spec(model)
+    if config.device_description_str == device_kind:
+      return config
+
+  if device_kind in registry:
+    return registry[device_kind]
+  return None
 
 
 def is_gpu_device() -> bool:
   return get_device_platform() == "gpu"
 
 
-registry: dict[str, Callable[[], GpuInfo]] = {}
+registry: dict[str, Callable[[], GpuTargetConfig]] = {
+  "Tesla T4": CustomGpuTargetConfig("CUDA", "Tesla T4", "7.5", 75, 0, 0),
+  "NVIDIA A30": CustomGpuTargetConfig("CUDA", "NVIDIA A30", "8.0", 80, 0, 0),
+  "NVIDIA A10": CustomGpuTargetConfig("CUDA", "NVIDIA A10", "8.6", 86, 0, 0),
+  "NVIDIA L4": CustomGpuTargetConfig("CUDA", "NVIDIA L4", "8.9", 89, 0, 0),
+  "NVIDIA L40": CustomGpuTargetConfig("CUDA", "NVIDIA L40", "8.9", 89, 0, 0),
+  "NVIDIA GeForce RTX 4090": CustomGpuTargetConfig("CUDA", "NVIDIA GeForce RTX 4090", "8.9", 89, 0, 0),
 
+  "NVIDIA GH200": CustomGpuTargetConfig("CUDA", "NVIDIA GH200", "9.0", 90, 0, 0),
 
-def _get_gpu_info_impl(gpu_version: GpuVersion) -> GpuInfo:
-  """Returns the GPU hardware info for the given its version.
+  "NVIDIA RTX PRO 4500 Blackwell": CustomGpuTargetConfig("CUDA", "NVIDIA RTX PRO 4500 Blackwell", "12.0", 120, 0, 0),
+  "NVIDIA RTX PRO 5000 Blackwell": CustomGpuTargetConfig("CUDA", "NVIDIA RTX PRO 5000 Blackwell", "12.0", 120, 0, 0),
 
-  Args:
-    gpu_version: The GPU version.
-  """
-  # https://developer.nvidia.com/cuda/gpus
-  match gpu_version:
-    case GpuVersion.T4:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="7.5",
-          compute_capability=75,
-      )
-    case GpuVersion.A100 | GpuVersion.A30:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="8.0",
-          compute_capability=80,
-      )
-    case GpuVersion.A10:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="8.6",
-          compute_capability=86,
-      )
-    case GpuVersion.L4 | GpuVersion.L40 | GpuVersion.RTX_4090:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="8.9",
-          compute_capability=89,
-      )
-    case GpuVersion.H100 | GpuVersion.H200 | GpuVersion.GH200:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="9.0",
-          compute_capability=90,
-      )
-    case GpuVersion.B200 | GpuVersion.GB200:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="10.0",
-          compute_capability=100,
-      )
-    case GpuVersion.B300 | GpuVersion.GB300:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="10.3",
-          compute_capability=103,
-      )
-    case GpuVersion.VR200:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="10.7",
-          compute_capability=107,
-      )
-    case (
-        GpuVersion.RTX_PRO_4500
-        | GpuVersion.RTX_PRO_5000
-        | GpuVersion.RTX_PRO_6000
-    ):
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="12.0",
-          compute_capability=120,
-      )
-    case GpuVersion.GB10:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="12.1",
-          compute_capability=121,
-      )
-    case GpuVersion.THOR:
-      return GpuInfo(
-          gpu_version=gpu_version,
-          arch_name="11.0",
-          compute_capability=110,
-      )
-    case _:
-      raise ValueError(f"Unsupported GPU version: {gpu_version}")
+  "NVIDIA GB10": CustomGpuTargetConfig("CUDA", "NVIDIA GB10", "12.1", 121, 0, 0),
+  "NVIDIA Thor": CustomGpuTargetConfig("CUDA", "NVIDIA Thor", "11.0", 110, 0, 0),
+  "NVIDIA VR200": CustomGpuTargetConfig("CUDA", "NVIDIA VR200", "10.7", 107, 0, 0),
+}
 
 
 @jax_util.cache(trace_context_in_key=True)
-def get_gpu_info() -> GpuInfo:
+def get_gpu_info() -> GpuTargetConfig:
   """Returns the GPU hardware info for the current device."""
   device_kind = get_device_kind()
-  gpu_version = gpu_version_from_device_kind(device_kind)
-  if gpu_version is not None:
-    return _get_gpu_info_impl(gpu_version)
-
-  if get_device_platform() == "gpu" and device_kind.startswith("gfx"):
-    return GpuInfo(
-        gpu_version=None, arch_name=device_kind, compute_capability=0
-    )
-
-  # generic NVIDIA GPU device without GpuVersion entry
-  if get_device_platform() == "gpu" and device_kind.startswith("NVIDIA"):
-    gpu_arch_name = _get_device_arch_name(device_kind)
-    gpu_compute_capability = int(gpu_arch_name.replace(".", ""))
-    return GpuInfo(
-        gpu_version=None,
-        arch_name=gpu_arch_name,
-        compute_capability=gpu_compute_capability,
-    )
-
-  if device_kind in registry:
-    return registry[device_kind]()
+  gpu_config = gpu_version_from_device_kind(device_kind)
+  if gpu_config is not None:
+    return gpu_config
   raise ValueError(f"Unsupported GPU device kind: {device_kind}")
 
 
-@jax_util.cache(trace_context_in_key=True)
-def get_gpu_info_from_version(gpu_version: GpuVersion) -> GpuInfo:
-  """Returns the GPU hardware info for the given GPU version.
-
-  Args:
-    gpu_version: The GPU version.
-  """
-  return _get_gpu_info_impl(gpu_version)
-
-
-def _get_device_arch_name(device_kind: str) -> str:
-  concrete_device = pxla.get_default_device()
-
-  if device_kind != concrete_device.device_kind:
-    raise ValueError(
-        f"Cannot infer architecture of an unknown abstract GPU {device_kind!r}"
-    )
-
-  return concrete_device.compute_capability
-
-
 def get_device_kind() -> str:
-  device = pxla.get_default_device()
   abstract_device = mesh_lib.get_abstract_mesh().abstract_device
   if abstract_device is not None:
-    if abstract_device.device_kind.startswith("gfx"):
-      return abstract_device.device_kind
-    # A kind that differs from the concrete device is a deliberate AOT target;
-    # if it matches, the abstract mesh just mirrors the local device.
-    if abstract_device.device_kind != device.device_kind:
-      return abstract_device.device_kind
-  cc = getattr(device, "compute_capability", None)
-  if isinstance(cc, str) and cc.startswith("gfx"):
-    return cc
-  return device.device_kind
+    return abstract_device.device_kind
+  return pxla.get_default_device().device_kind
 
 
 _GPU_PLATFORMS = ("gpu", "rocm", "cuda")
