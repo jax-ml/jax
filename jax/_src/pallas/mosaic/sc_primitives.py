@@ -735,22 +735,44 @@ def _masked_sort_lowering_rule(
     return sorted_keys, sorted_values, out_mask
   return sorted_keys, sorted_values
 
+
+@overload
 def sort_key_val(
-    keys: jax.Array, values: jax.Array, *,
-    mask: jax.Array | None = None, descending: bool = False
-) -> jax.Array:
+    keys: jax.Array, values: jax.Array, *, descending: bool = ...
+) -> tuple[jax.Array, jax.Array]:
+  ...
+
+
+@overload
+def sort_key_val(
+    keys: jax.Array,
+    values: jax.Array,
+    *,
+    mask: jax.Array,
+    descending: bool = ...,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+  ...
+
+
+def sort_key_val(
+    keys: jax.Array,
+    values: jax.Array,
+    *,
+    mask: jax.Array | None = None,
+    descending: bool = False,
+) -> tuple[jax.Array, jax.Array, jax.Array] | tuple[jax.Array, jax.Array]:
   """Sorts keys and values, pushing invalid elements to the last positions.
 
   Args:
     keys: An array of integers or floats.
     values: An array of values corresponding to the keys.
     mask: An optional array of booleans, which specifies which elements of
-      `keys` and `values` are valid. If `None`, all elements are valid.
+      ``keys`` and ``values`` are valid. If ``None``, all elements are valid.
     descending: Whether to sort in descending order.
 
   Returns:
-    sorted_keys, sorted_values, [output_mask]: The sorted keys and values, and,
-    if a mask was given, the corresponding mask for output keys and values.
+    A tuple of sorted keys and values, and, if a mask was given, the
+    corresponding mask for output keys and values.
   """
   maybe_mask = () if mask is None else (mask,)
   return masked_sort_p.bind(keys, values, *maybe_mask, descending=descending)
