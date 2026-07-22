@@ -265,12 +265,6 @@ pytype_strict_library(
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("pallas/mosaic/tpu_info"),
     deps = [
-        "//jax",
-        "//jax/_src:api",
-        "//jax/_src:core",
-        "//jax/_src:dtypes",
-        "//jax/_src:mesh",
-        "//jax/_src:util",
-        "//jax/_src/pallas",
+        "//jax/_src:tpu_info",
     ],
 )

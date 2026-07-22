@@ -502,6 +502,7 @@ py_library_providing_imports_info(
         ":sharding",
         ":sharding_impls",
         ":source_info_util",
+        ":tpu_info",
         ":traceback_util",
         ":tree_util",
         ":typing",
@@ -897,6 +898,20 @@ pytype_strict_library(
     name = "hardware_utils",
     srcs = ["hardware_utils.py"],
     type_checking = "pyrefly",
+)
+
+pytype_strict_library(
+    name = "tpu_info",
+    srcs = ["tpu_info.py"],
+    type_checking = "pyrefly",
+    visibility = ["//jax:internal"],
+    deps = [
+        ":core",
+        ":dtypes",
+        ":mesh",
+        ":util",
+        ":xla_bridge",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
