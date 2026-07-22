@@ -28,6 +28,7 @@ limitations under the License.
 // resources allocated by the first function.
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -38,6 +39,7 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -125,12 +127,37 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
       /*res_attrs=*/nullptr);
 }
 
+int32_t getClusterSize(mlir::gpu::LaunchFuncOp launch) {
+  if (!launch.hasClusterSize()) {
+    return 1;
+  }
+  mlir::gpu::KernelDim3 cluster_shape = launch.getClusterSizeOperandValues();
+  assert(cluster_shape.x && cluster_shape.y && cluster_shape.z);
+  auto x = mlir::getConstantIntValue(cluster_shape.x);
+  auto y = mlir::getConstantIntValue(cluster_shape.y);
+  auto z = mlir::getConstantIntValue(cluster_shape.z);
+  if (x && y && z) {
+    return *x * *y * *z;
+  }
+  return -1;
+}
+
+int32_t getDynamicSmemSize(mlir::gpu::LaunchFuncOp launch) {
+  mlir::Value size = launch.getDynamicSharedMemorySize();
+  if (!size) {
+    return 0;
+  }
+  if (auto const_smem = mlir::getConstantIntValue(size)) {
+    return *const_smem;
+  }
+  return 0;
+}
+
 void buildInitFunction(mlir::OpBuilder& module_builder,
                        mlir::func::FuncOp init_func,
-                       llvm::StringRef kernel_name,
                        mlir::gpu::ObjectAttr object,
-                       mlir::Value dynamic_smem_size,
-                       mlir::gpu::KernelDim3 cluster_shape) {
+                       mlir::gpu::LaunchFuncOp launch) {
+  llvm::StringRef kernel_name = launch.getKernelName().getValue();
   auto i32 = mlir::IntegerType::get(init_func.getContext(), 32);
   auto ptr_ty = mlir::LLVM::LLVMPointerType::get(init_func.getContext());
   mlir::Location loc = init_func.getLoc();
@@ -167,39 +194,12 @@ void buildInitFunction(mlir::OpBuilder& module_builder,
           llvm::Twine(kernel_name).concat(llvm::Twine('\0'))));
   mlir::Value kernel_name_ptr =
       mlir::LLVM::AddressOfOp::create(builder, loc, kernel_name_global);
+  int32_t const_smem_size = getDynamicSmemSize(launch);
   mlir::Value used_smem = mlir::LLVM::ConstantOp::create(
-      builder, loc, i32, builder.getI32IntegerAttr(0));
-  if (dynamic_smem_size) {
-    if (auto const_smem =
-            dynamic_smem_size.getDefiningOp<mlir::LLVM::ConstantOp>()) {
-      used_smem = mlir::LLVM::ConstantOp::create(
-          builder, loc, i32,
-          builder.getI32IntegerAttr(
-              mlir::cast<mlir::IntegerAttr>(const_smem.getValue()).getInt()));
-    }
-  }
-  mlir::Value cluster_size;
-  if (cluster_shape.x) {
-    assert(cluster_shape.y && cluster_shape.z);
-    auto const_x = cluster_shape.x.getDefiningOp<mlir::LLVM::ConstantOp>();
-    auto const_y = cluster_shape.y.getDefiningOp<mlir::LLVM::ConstantOp>();
-    auto const_z = cluster_shape.z.getDefiningOp<mlir::LLVM::ConstantOp>();
-    if (const_x && const_y && const_z) {
-      cluster_size = mlir::LLVM::ConstantOp::create(
-          builder, loc, i32,
-          builder.getI32IntegerAttr(
-              mlir::cast<mlir::IntegerAttr>(const_x.getValue()).getInt() *
-              mlir::cast<mlir::IntegerAttr>(const_y.getValue()).getInt() *
-              mlir::cast<mlir::IntegerAttr>(const_z.getValue()).getInt()));
-    } else {
-      cluster_size = mlir::LLVM::ConstantOp::create(
-          builder, loc, i32, builder.getI32IntegerAttr(-1));
-    }
-  } else {
-    assert(!cluster_shape.y && !cluster_shape.z);
-    cluster_size = mlir::LLVM::ConstantOp::create(builder, loc, i32,
-                                                  builder.getI32IntegerAttr(1));
-  }
+      builder, loc, i32, builder.getI32IntegerAttr(const_smem_size));
+  int32_t const_cluster_size = getClusterSize(launch);
+  mlir::Value cluster_size = mlir::LLVM::ConstantOp::create(
+      builder, loc, i32, builder.getI32IntegerAttr(const_cluster_size));
   mlir::Value kernel_handle =
       mlir::func::CallOp::create(
           builder, loc, "mosaic_gpu_get_function", ptr_ty,
@@ -313,13 +313,7 @@ class GpuLaunchLoweringPass
             return mlir::WalkResult::interrupt();
           }
 
-          mlir::gpu::KernelDim3 cluster_shape;
-          if (launch.hasClusterSize()) {
-            cluster_shape = launch.getClusterSizeOperandValues();
-          }
-          buildInitFunction(module_builder, init_func,
-                            launch.getKernelName().getValue(), object,
-                            launch.getDynamicSharedMemorySize(), cluster_shape);
+          buildInitFunction(module_builder, init_func, object, launch);
 
           // Add a new function argument for the kernel handle.
           if (func.insertArgument(
