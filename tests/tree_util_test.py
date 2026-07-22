@@ -1814,6 +1814,15 @@ class RegistrationTest(jtu.JaxTestCase):
         Foo, data_fields=["x"], meta_fields=[], drop_fields=["y", "z"]
     )
 
+  def test_register_dataclass_init_false(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int = dataclasses.field(default=42)
+      z: int = dataclasses.field(default=42, init=False)
+
+    tree_util.register_dataclass(Foo)
+
   def test_register_dataclass_invalid_plain_class(self):
     class Foo:
       x: int

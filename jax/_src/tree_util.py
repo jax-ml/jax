@@ -1114,12 +1114,12 @@ def register_dataclass(
     data_fields = [
         f.name
         for f in dataclasses.fields(nodetype)
-        if not f.metadata.get("static", False)
+        if not f.metadata.get("static", False) and f.init
     ]
     meta_fields = [
         f.name
         for f in dataclasses.fields(nodetype)
-        if f.metadata.get("static", False)
+        if f.metadata.get("static", False) and f.init
     ]
 
   assert meta_fields is not None
