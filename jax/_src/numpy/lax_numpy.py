@@ -3131,9 +3131,12 @@ def _split(op: str, ary: ArrayLike,
   if (isinstance(indices_or_sections, (tuple, list)) or
       isinstance(indices_or_sections, (np.ndarray, Array)) and
       indices_or_sections.ndim > 0):
-    split_indices = np.asarray([0] + [
-        core.concrete_dim_or_error(i_s, f"in jax.numpy.{op} argument 1")
-        for i_s in indices_or_sections] + [size])
+    indices = [core.concrete_dim_or_error(i_s, f"in jax.numpy.{op} argument 1")
+               for i_s in indices_or_sections]
+    # Negative indices are resolved relative to the axis size, as in np.split.
+    indices = [i + size if not core.is_symbolic_dim(i) and i < 0 else i
+               for i in indices]
+    split_indices = np.asarray([0, *indices, size])
     sizes = list(np.diff(split_indices))
   else:
     if core.is_symbolic_dim(indices_or_sections):

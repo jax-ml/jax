@@ -67,6 +67,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
     `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
 
+* Bug fixes
+  * {func}`jax.numpy.split`, {func}`jax.numpy.array_split`, and the
+    `hsplit`/`vsplit`/`dsplit` variants once again accept negative split
+    indices, matching NumPy ({jax-issue}`#6599`).
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
