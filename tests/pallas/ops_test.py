@@ -285,7 +285,8 @@ UNARY_PRIMITIVES = [
 ]
 
 UNARY_FUNCTIONS = [
-    (prim.name, functools.partial(prim.bind, **params), strategy) for prim, params, strategy in UNARY_PRIMITIVES
+    (prim.name, functools.partial(prim.bind, **params), strategy)
+    for prim, params, strategy in UNARY_PRIMITIVES
 ] + [
     (
         name,
@@ -305,6 +306,8 @@ UNARY_FUNCTIONS = [
         ("reciprocal", jnp.reciprocal),
         ("round", jnp.round),
         ("rint", jnp.rint),
+        ("sigmoid", jax.nn.sigmoid),
+        ("silu", jax.nn.silu),
     ]
 ]
 
@@ -648,6 +651,8 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       if name == "exp2":
         tol = 1e-6
+      elif name in ("logistic", "sigmoid", "silu"):
+        tol = 1e-4
     if jtu.test_device_matches(["gpu"]):
       if func == jnp.round or func == jnp.rint:
         self.skipTest("TODO: not implemented on GPU")
@@ -1201,14 +1206,19 @@ class OpsTest(PallasBaseTest):
     def kernel(x_ref, o_ref):
       o_ref[:] = fn(x_ref[...])
 
+    atol = None
     # create an array with shape (8, 128)
     if fn in (jnp.exp, jnp.exp2) and dtype == "bfloat16":
       x = jnp.array([0.42, 1.26] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
       rtol = 2e-3
+    elif fn in (jax.nn.sigmoid, jax.nn.silu):
+      x = jnp.array([0.42, 2.4] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
+      rtol = 1e-4
+      atol = 1e-4
     else:
       x = jnp.array([0.42, 2.4] * (8 * 128 // 2)).reshape(8, 128).astype(dtype)
       rtol = 1e-6
-    self.assertAllClose(kernel(x), fn(x), rtol=rtol)
+    self.assertAllClose(kernel(x), fn(x), rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       (f"{fn.__name__}_{dtype}", fn, dtype)

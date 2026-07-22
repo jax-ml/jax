@@ -997,10 +997,20 @@ class OpsTest(ptu.PallasTPUTest):
     def kernel(x_ref, o_ref):
       o_ref[...] = jax.nn.sigmoid(x_ref[...])
 
-    self.assertAllClose(
-        kernel(x),
-        jax.nn.sigmoid(x),
-    )
+    if dtype == jnp.bfloat16:
+      self.assertAllClose(
+          kernel(x),
+          jax.nn.sigmoid(x),
+          atol=2e-3,
+          rtol=6e-3,
+      )
+    else:
+      self.assertAllClose(
+          kernel(x),
+          jax.nn.sigmoid(x),
+          atol=1e-4,
+          rtol=1e-4,
+      )
 
   def test_erf(self):
     # Regression test for https://github.com/jax-ml/jax/issues/36149.

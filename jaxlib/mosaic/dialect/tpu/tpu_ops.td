@@ -976,6 +976,16 @@ def TPU_ReciprocalOp : TPU_Op<"reciprocal", [Pure, SameOperandsAndResultType, El
   let hasVerifier = 1;
 }
 
+def TPU_LogisticOp : TPU_Op<"logistic", [Pure, SameOperandsAndResultType, ElementwiseMappable]> {
+  let summary = "Computes the logistic function of the input.";
+  let description = [{
+    Computes 1 / (1 + exp(-x)).
+  }];
+  let arguments = (ins AnyVectorOfNonZeroRank:$input);
+  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+}
+
 def TPU_StochasticConvertOp : TPU_Op<"stochastic_convert", [Pure, SameOperandsAndResultShape]> {
   let arguments = (ins
     VectorOfNonZeroRankOf<[F32]>:$input,
