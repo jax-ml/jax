@@ -18,7 +18,6 @@ import itertools
 import threading
 
 from jax._src import source_info_util
-from jax._src.pallas.mosaic.interpret import vector_clock as vc
 
 
 def _is_empty_slice(slice_or_idx: slice | int):
@@ -108,7 +107,7 @@ class RaceDetectionState[ThreadKey]:
           write_range,
           write_frame,
       ) = writes[i]
-      if vc.ordered(write_clock, clock):
+      if write_clock.ordered(clock):
         continue
       if not _ranges_overlap(rnge, write_range):
         continue
@@ -149,7 +148,7 @@ class RaceDetectionState[ThreadKey]:
           write_range,
           write_frame,
       ) = writes[i]
-      if vc.ordered(write_clock, clock):
+      if write_clock.ordered(clock):
         continue
       if not _ranges_overlap(rnge, write_range):
         continue
@@ -169,7 +168,7 @@ class RaceDetectionState[ThreadKey]:
       read_thread, read_clock, read_range, read_frame = (
           reads[i]
       )
-      if vc.ordered(read_clock, clock):
+      if read_clock.ordered(clock):
         continue
       if not _ranges_overlap(rnge, read_range):
         continue

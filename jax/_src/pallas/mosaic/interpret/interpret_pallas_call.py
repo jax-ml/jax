@@ -38,7 +38,6 @@ from jax._src.pallas.mosaic import core as mosaic_core
 from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic import tpu_info
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
-from jax._src.pallas.mosaic.interpret import vector_clock as vc
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic.interpret.thread_map import thread_map
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
@@ -905,7 +904,7 @@ class DMA:
   src_sem: memory.Semaphore | None
   dst_sem: memory.Semaphore
   virtual_device_id: int
-  clock: vc.VectorClock
+  clock: memory.SharedMemory.VectorClock
 
   source_info: source_info_util.SourceInfo | None = None
 
@@ -948,7 +947,7 @@ class DMA:
         return
 
       if self.detect_races:
-        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+        self.clock.inc(self.virtual_device_id)
 
       _, self.data = get.__wrapped__(
           None,
@@ -957,14 +956,14 @@ class DMA:
           self.src_memory_space,
           self.src_buffer_id,
           self.src_transforms,
-          clock=vc.copy_vector_clock(self.clock),
+          clock=self.clock.copy() if self.clock is not None else None,
           src_device_id=self.id,
           src_local_core_id=0,
           source_info=self.source_info,
       )
 
       if self.detect_races:
-        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+        self.clock.inc(self.virtual_device_id)
 
       # Signal the send semaphore.
       if self.src_sem is not None:
@@ -995,7 +994,7 @@ class DMA:
       assert self.data is not None
 
       if self.detect_races:
-        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+        self.clock.inc(self.virtual_device_id)
 
       store.__wrapped__(
           None,
@@ -1005,14 +1004,14 @@ class DMA:
           self.dst_buffer_id,
           self.dst_transforms,
           self.data,
-          clock=vc.copy_vector_clock(self.clock),
+          clock=self.clock.copy() if self.clock is not None else None,
           src_device_id=self.id,
           src_local_core_id=0,
           source_info=self.source_info,
       )
 
       if self.detect_races:
-        vc.inc_vector_clock(self.clock, self.virtual_device_id)
+        self.clock.inc(self.virtual_device_id)
 
       self.dst_sem.signal(
           self.data_size, self.dst_global_core_id, clock=self.clock,

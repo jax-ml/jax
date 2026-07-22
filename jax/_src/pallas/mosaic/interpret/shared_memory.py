@@ -26,7 +26,7 @@ import threading
 import traceback
 from typing import Any, Literal
 
-from jax._src.pallas.mosaic.interpret import vector_clock as vc
+from jax._src.pallas.mosaic.interpret import vector_clock
 import jax._src.pallas.mosaic.interpret.params as params
 import jax._src.pallas.mosaic.interpret.utils as interpret_utils
 import numpy as np
@@ -68,7 +68,7 @@ class Semaphore:
       #
       # TODO(jburnim): Model happens-before more precisely for the case where
       # semaphores are over-signaled.
-      self.clocks: list[vc.VectorClock | None] = [
+      self.clocks: list[SharedMemory.VectorClock | None] = [
           None
       ] * self.shared_memory.num_cores
 
@@ -136,9 +136,9 @@ class Semaphore:
 
       if self.detect_races:
         if (global_clock := self.clocks[global_core_id]) is None:
-          self.clocks[global_core_id] = vc.copy_vector_clock(clock)
+          self.clocks[global_core_id] = clock.copy()
         else:
-          vc.update_vector_clock(global_clock, clock)
+          global_clock.update(clock)
       self.cv.notify_all()
 
   def read(self, global_core_id):
@@ -194,8 +194,9 @@ class Semaphore:
               )
           )
           if self.detect_races:
-            assert self.clocks[global_core_id] is not None
-            clock = vc.copy_vector_clock(self.clocks[global_core_id])
+            clock = self.clocks[global_core_id]
+            assert clock is not None
+            clock = clock.copy()
         elif len(self.tasks[global_core_id]) > 0:
           task = self.tasks[global_core_id].pop()
         else:
@@ -205,9 +206,7 @@ class Semaphore:
 
       if clock is not None:
         with self.shared_memory.lock:
-          vc.update_vector_clock(
-              self.shared_memory.clocks[thread], clock
-          )
+          self.shared_memory.clocks[thread].update(clock)
 
       if done:
         return
@@ -373,7 +372,10 @@ class ShapeAndDtype:
 
 
 @dataclasses.dataclass(kw_only=True)
-class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
+class GenericSharedMemory[
+    MemKey, ThreadKey, VectorClock: vector_clock.VectorClockProto
+](abc.ABC):
+
   num_devices: int
   out_of_bounds_reads: Literal["raise", "uninitialized"]
   dma_execution_mode: str
@@ -381,7 +383,7 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
   detect_races: bool
   vector_clock_size: int
 
-  clocks: dict[ThreadKey, vc.VectorClock]
+  clocks: dict[ThreadKey, VectorClock]
   barrier: threading.Barrier
   clean_up_barrier: threading.Barrier
 
@@ -432,8 +434,8 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
     """Increments a threads's own index within its clock by one."""
     with self.lock if take_lock else contextlib.nullcontext():
       pos = self.thread_to_vc_position(thread)
-      vc.inc_vector_clock(self.clocks[thread], pos)
-      return vc.copy_vector_clock(self.clocks[thread])
+      self.clocks[thread].inc(pos)
+      return self.clocks[thread].copy()
 
   def get_next_buffer_id(self, key: ThreadKey) -> int:
     """Returns the next buffer ID for the given device and thread."""
@@ -508,7 +510,7 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
       thread: ThreadKey | None,
       increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
-  ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
+  ) -> tuple[np.ndarray | None, ShapeAndDtype, VectorClock | None]:
     """Reads contents of a memory buffer.
 
     Args:
@@ -566,7 +568,7 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
       thread: ThreadKey,
       increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
-  ) -> tuple[bool, ShapeAndDtype, vc.VectorClock | None]:
+  ) -> tuple[bool, ShapeAndDtype, VectorClock | None]:
     """Stores contents into a memory buffer.
 
     Args:
@@ -628,7 +630,7 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
       thread: ThreadKey,
       increment_clock: bool = True,
       logging_info: interpret_utils.LoggingInfo | None = None,
-  ) -> tuple[np.ndarray | None, ShapeAndDtype, vc.VectorClock | None]:
+  ) -> tuple[np.ndarray | None, ShapeAndDtype, VectorClock | None]:
     """Swaps contents of a memory buffer.
 
     Args:
@@ -721,19 +723,24 @@ class GenericSharedMemory[MemKey, ThreadKey](abc.ABC):
     init_thread = threads[0]
     with self.lock:
       for thread in threads[1:]:
-        vc.update_vector_clock(self.clocks[init_thread], self.clocks[thread])
+        self.clocks[init_thread].update(self.clocks[thread])
       for thread in threads[1:]:
-        vc.update_vector_clock(self.clocks[thread], self.clocks[init_thread])
+        self.clocks[thread].update(self.clocks[init_thread])
 
 
 @dataclasses.dataclass
-class SharedMemory(GenericSharedMemory[tuple[str, int, int, int], tuple[int, int]]):
+class SharedMemory(
+    GenericSharedMemory[
+        tuple[str, int, int, int], tuple[int, int], vector_clock.NpVectorClock
+    ]
+):
   """The shared state of memory for TPU interpret mode."""
 
   # (memory_space, buffer_id, device_id, local_core_id)
   MemKey = tuple[str, int, int, int]
   # (device_id, local_core_id)
   ThreadKey = tuple[int, int]
+  VectorClock = vector_clock.NpVectorClock
 
   num_cores_per_device: int
 
@@ -762,7 +769,7 @@ class SharedMemory(GenericSharedMemory[tuple[str, int, int, int], tuple[int, int
       num_cores_per_device: int,
   ):
     clocks = {
-        (device_id, core_id): vc.make_vector_clock(vector_clock_size)
+        (device_id, core_id): self.VectorClock(vector_clock_size)
         for device_id in range(num_devices)
         for core_id in range(num_cores_per_device)
     }
@@ -913,7 +920,7 @@ class SharedMemory(GenericSharedMemory[tuple[str, int, int, int], tuple[int, int
 
   def get_semaphores_and_increment_clock(
       self, sem_ids: Sequence[int | None], global_core_id: int
-  ) -> tuple[list[Semaphore | None], vc.VectorClock | None]:
+  ) -> tuple[list[Semaphore | None], VectorClock | None]:
     """Returns the semaphores with the given `sem_ids` and increments the vector clock for the core with `global_core_id`.
 
     If race detection is enabled, this method increments the vector clock for

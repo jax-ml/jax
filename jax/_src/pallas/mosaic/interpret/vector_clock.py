@@ -12,35 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Protocol, Self
 import numpy as np
 
-VectorClock = np.ndarray
+
+class VectorClockProto(Protocol):
+
+  def __init__(self, vector_clock_size: int):
+    ...
+
+  def copy(self) -> Self:
+    ...
+
+  def update(self, other: Self) -> None:
+    ...
+
+  def lt(self, other: Self) -> bool:
+    ...
+
+  def ordered(self, other: Self) -> bool:
+    ...
+
+  def inc(self, global_core_id: int) -> None:
+    ...
 
 
-def make_vector_clock(vector_clock_size: int) -> VectorClock:
-  return np.zeros(vector_clock_size, dtype=np.int32)
+class NpVectorClock(VectorClockProto):
+  clock: np.ndarray
 
+  def __init__(self, vector_clock_size: int):
+    self.clock = np.zeros(vector_clock_size, dtype=np.int32)
 
-def copy_vector_clock(x: VectorClock | None) -> VectorClock | None:
-  if x is None:
-    return None
-  return x.copy()
+  def copy(self) -> "NpVectorClock":
+    new = NpVectorClock(len(self.clock))
+    new.clock[:] = self.clock[:]
+    return new
 
+  def update(self, other: Self) -> None:
+    self.clock[:] = np.maximum(self.clock[:], other.clock[:])
 
-def update_vector_clock(x: VectorClock, y: VectorClock):
-  x[:] = np.maximum(x[:], y[:])
+  def lt(self, other: Self) -> bool:
+    return bool((self.clock <= other.clock).all() & (self.clock < other.clock).any())
 
+  def ordered(self, other: Self) -> bool:
+    return self.lt(other) or other.lt(self)
 
-def lt(x: VectorClock, y: VectorClock) -> bool:
-  return bool((x <= y).all() & (x < y).any())
-
-
-def ordered(x: VectorClock, y: VectorClock) -> bool:
-  return lt(x, y) | lt(y, x)
-
-
-def inc_vector_clock(x: VectorClock, global_core_id: int):
-  if global_core_id >= len(x):
-    raise ValueError(f'device_id={global_core_id} is out of range for x={x}')
-  assert global_core_id < len(x)
-  x[global_core_id] += 1
+  def inc(self, global_core_id: int) -> None:
+    if global_core_id >= len(self.clock):
+      raise ValueError(f'device_id={global_core_id} is out of range for x={self.clock}')
+    assert global_core_id < len(self.clock)
+    self.clock[global_core_id] += 1
