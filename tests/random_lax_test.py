@@ -599,22 +599,29 @@ class DistributionsTest(RandomTestBase):
     b=[0.2, 5.],
     dtype=[np.float64],  # NOTE: KS test fails with float32
     use_jit=[False, True],
+    method=['approximate', 'exact'],
   )
-  def testBeta(self, a, b, dtype, use_jit):
+  def testBeta(self, a, b, dtype, use_jit, method):
     if not config.enable_x64.value:
       raise SkipTest("skip test except on X64")
     key = self.make_key(0)
     rand = random.beta if not use_jit else jax.jit(
-        random.beta, static_argnames=['shape', 'dtype'])
-    samples = rand(key, a, b, shape=(10000,), dtype=dtype)
+        random.beta, static_argnames=['shape', 'dtype', 'method'])
+    samples = rand(key, a, b, shape=(10000,), dtype=dtype, method=method)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
 
+  def testBetaInvalidMethod(self):
+    key = self.make_key(0)
+    with self.assertRaisesRegex(ValueError, "method argument to `beta`"):
+      random.beta(key, 1.0, 1.0, method='nonsense')
+
+  @jtu.sample_product(method=['approximate', 'exact'])
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
-  def testBetaSmallParameters(self, dtype=np.float32):
+  def testBetaSmallParameters(self, method, dtype=np.float32):
     # Regression test for beta version of https://github.com/jax-ml/jax/issues/9896
     key = self.make_key(0)
     a, b = 0.0001, 0.0002
-    samples = random.beta(key, a, b, shape=(100,), dtype=dtype)
+    samples = random.beta(key, a, b, shape=(100,), dtype=dtype, method=method)
 
     # With such small parameters, all samples should be exactly zero or one.
     tol = 5E-2 if jtu.test_device_matches(["tpu"]) else 1E-3

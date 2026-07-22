@@ -1227,6 +1227,7 @@ def beta(key: ArrayLike,
          shape: Shape | None = None,
          dtype: DTypeLikeFloat | None = None,
          *,
+         method: str = "exact",
          out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Beta random values with given shape and float dtype.
 
@@ -1248,6 +1249,11 @@ def beta(key: ArrayLike,
       (None) produces a result shape by broadcasting ``a`` and ``b``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. ``a`` and ``b`` differs between the two
+      methods because of the ambiguity in defining a gradient for random variates.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -1262,6 +1268,9 @@ def beta(key: ArrayLike,
     ``shape`` is not None, or else by broadcasting ``a`` and ``b``.
   """
   key, _ = _check_prng_key("beta", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `beta` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -1271,11 +1280,11 @@ def beta(key: ArrayLike,
   shape = _check_broadcast_shapes("beta", shape, a, b)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "beta", shape)
 
-  return maybe_auto_axes(_beta, out_sharding,
+  return maybe_auto_axes(_beta, out_sharding, method=method,
                          shape=shape, dtype=dtype)(key, a, b)
 
-@jit(static_argnums=(3, 4))
-def _beta(key, a, b, shape, dtype) -> Array:
+@jit(static_argnums=(3, 4, 5))
+def _beta(key, a, b, method, shape, dtype) -> Array:
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(a), np.shape(b))
   else:
@@ -1288,8 +1297,8 @@ def _beta(key, a, b, shape, dtype) -> Array:
   key_a, key_b = _split(key)
   a = jnp.broadcast_to(a, shape)
   b = jnp.broadcast_to(b, shape)
-  log_gamma_a = loggamma(key_a, a, shape, dtype)
-  log_gamma_b = loggamma(key_b, b, shape, dtype)
+  log_gamma_a = loggamma(key_a, a, shape, dtype, method=method)
+  log_gamma_b = loggamma(key_b, b, shape, dtype, method=method)
   # Compute gamma_a / (gamma_a + gamma_b) without losing precision.
   log_max = lax.max(log_gamma_a, log_gamma_b)
   gamma_a_scaled = jnp.exp(log_gamma_a - log_max)
