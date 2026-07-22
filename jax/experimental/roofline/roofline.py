@@ -28,7 +28,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.api import make_jaxpr
-from jax._src.interpreters.partial_eval import dce_jaxpr
+from jax._src.interpreters.partial_eval import dce_jaxpr, lower_jaxpr2
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten, tree_map
 from jax._src.util import foreach
@@ -143,6 +143,9 @@ def _roofline_interpreter(
   pin_lhs_in_vmem: bool = False,
   pin_rhs_in_vmem: bool = False,
 ) -> RooflineResult:
+  if jaxpr.is_high:
+    jaxpr = lower_jaxpr2(jaxpr)
+
   name_stack = source_info_util.new_name_stack(util.wrap_name("roofline", f_name))
 
   result = RooflineResult.zeros()

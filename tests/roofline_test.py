@@ -21,6 +21,7 @@ import jax
 from jax._src import core
 from jax._src import test_util as jtu
 from jax.experimental import roofline
+from jax._src import hijax
 import jax.lax as lax
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -88,6 +89,18 @@ def _fake_jax_primitive_abstract_eval(x):
 
 def fake_jax_primitive_function(x):
   return fake_jax_primitive_p.bind(x)
+
+
+class DummyDotHiPrimitive(hijax.VJPHiPrimitive):
+  def __init__(self, x_aval, y_aval):
+    self.in_avals = (x_aval, y_aval)
+    self.out_aval = core.ShapedArray((x_aval.shape[0], y_aval.shape[1]), x_aval.dtype)
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x, y):
+    dimension_numbers = (((1,), (0,)), ((), ()))
+    return lax.dot_general(x, y, dimension_numbers)
 
 
 class RooflineTest(jtu.JaxTestCase):
@@ -1194,6 +1207,16 @@ class RooflineTest(jtu.JaxTestCase):
 
     _, expected_result = roofline.roofline(lax.abs)(x)
     self.assertDataclassEqual(result, expected_result)
+
+
+  def test_hijax_primitive_roofline(self):
+    def f(x, y):
+      return DummyDotHiPrimitive(core.typeof(x), core.typeof(y))(x, y)
+
+    x = jnp.ones((4, 4), dtype=jnp.float32)
+    y = jnp.ones((4, 4), dtype=jnp.float32)
+    _, result = roofline.roofline(f)(x, y)
+    self.assertGreater(result.flops, 0)
 
 
 if __name__ == "__main__":
