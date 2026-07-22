@@ -257,6 +257,7 @@ class KernelEvalContext:
   grid_len: int | None
   scalar_prefetch_handler: Any | None
   out_usages: tuple[set[Usage], ...] | None
+  strict_mode: bool = True
 
   def get_program_ids(self):
     if self.program_ids is None:
@@ -393,6 +394,7 @@ def pull_block_spec(
         env,
         scalar_prefetch_handler,
         grid_len,
+        strict_mode=strict_mode,
     )
     in_block_specs = jax.tree.unflatten(in_tree, in_block_specs)
     in_block_specs = jax.tree.map(
@@ -455,6 +457,8 @@ def _block_transforms_equal(
   if isinstance(bs1, BlockIndexTransform) and isinstance(
       bs2, BlockIndexTransform
   ):
+    if bs1.block_shape is _illegal or bs2.block_shape is _illegal:
+      return False
     value = _block_shapes_equal(
         bs1.block_shape, bs2.block_shape
     )
@@ -650,6 +654,7 @@ def make_kernel_function(
     block_spec_env,
     scalar_prefetch_handler,
     grid_len,
+    strict_mode: bool = True,
 ):
   in_avals = [v.aval for v in jaxpr.invars]
   invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
@@ -748,6 +753,7 @@ def make_kernel_function(
             scalar_prefetch_handler=scalar_prefetch_handler,
             grid_len=grid_len,
             out_usages=out_usages,
+            strict_mode=strict_mode,
         )
         outs = eval_rule(eval_ctx, *in_vals, **eqn.params)
         if not eqn.primitive.multiple_results:
@@ -2458,6 +2464,7 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       read_usage_env=read_usage_env,
       grid_len=ctx.grid_len,
+      strict_mode=ctx.strict_mode,
   )
   kernel_fn = make_kernel_function(
       jaxpr,
@@ -2525,6 +2532,7 @@ def _custom_jvp_call_eval_rule(
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       grid_len=ctx.grid_len,
       read_usage_env=read_usage_env,
+      strict_mode=ctx.strict_mode,
   )
   kernel_fn = make_kernel_function(
       jaxpr,
@@ -2592,6 +2600,7 @@ def _custom_vjp_call_eval_rule(
       scalar_prefetch_handler=ctx.scalar_prefetch_handler,
       grid_len=ctx.grid_len,
       read_usage_env=read_usage_env,
+      strict_mode=ctx.strict_mode,
   )
   kernel_fn = make_kernel_function(
       jaxpr,
