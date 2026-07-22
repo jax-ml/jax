@@ -6560,11 +6560,8 @@ def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None
            [1., 0., 0., 0.],
            [1., 1., 0., 0.]], dtype=float32)
   """
-  if dtype is None:
-    # TODO(phawkins): this is a strange default.
-    dtype = np.dtype(np.float32)
-  else:
-    dtype = dtypes.check_and_canonicalize_user_dtype(dtype, "tri")
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      float if dtype is None else dtype, "tri")
   M = M if M is not None else N
   return lax._tri(dtype, (N, M), k)
 
