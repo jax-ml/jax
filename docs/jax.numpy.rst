@@ -33,33 +33,113 @@ cannot follow NumPy exactly.
 Nearly all applicable NumPy functions are implemented in the ``jax.numpy``
 namespace; they are listed below.
 
-.. Generate the list below as follows:
-   >>> import jax.numpy, numpy
-   >>> fns = set(dir(numpy)) & set(dir(jax.numpy))
-   >>> print('\n'.join('    ' + x for x in fns if callable(getattr(jax.numpy, x))))  # doctest: +SKIP
 
-   # Finally, sort the list using sort(1), which is different than Python's
-   # sorted() function.
+Array creation
+--------------
 
 .. autosummary::
   :toctree: _autosummary
 
-    ndarray.at
+    arange
+    array
+    asarray
+    copy
+    diag
+    diagflat
+    empty
+    empty_like
+    eye
+    from_dlpack
+    frombuffer
+    fromfile
+    fromfunction
+    fromiter
+    fromstring
+    full
+    full_like
+    geomspace
+    identity
+    linspace
+    logspace
+    meshgrid
+    mgrid
+    ogrid
+    ones
+    ones_like
+    zeros
+    zeros_like
+
+Array properties
+----------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    ndim
+    shape
+    size
+    
+Array manipulation
+------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    append
+    array_split
+    astype
+    atleast_1d
+    atleast_2d
+    atleast_3d
+    block
+    broadcast_arrays
+    broadcast_to
+    column_stack
+    concat
+    concatenate
+    delete
+    dsplit
+    dstack
+    expand_dims
+    flip
+    fliplr
+    flipud
+    hsplit
+    hstack
+    insert
+    matrix_transpose
+    moveaxis
+    permute_dims
+    ravel
+    repeat
+    reshape
+    resize
+    roll
+    rollaxis
+    rot90
+    split
+    squeeze
+    stack
+    swapaxes
+    tile
+    transpose
+    trim_zeros
+    unstack
+    vsplit
+    vstack
+
+Elementwise functions
+---------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
     abs
     absolute
     acos
     acosh
     add
-    all
-    allclose
-    amax
-    amin
     angle
-    any
-    append
-    apply_along_axis
-    apply_over_axes
-    arange
     arccos
     arccosh
     arcsin
@@ -67,31 +147,12 @@ namespace; they are listed below.
     arctan
     arctan2
     arctanh
-    argmax
-    argmin
-    argpartition
-    argsort
-    argwhere
     around
-    array
-    array_equal
-    array_equiv
-    array_repr
-    array_split
-    array_str
-    asarray
     asin
     asinh
-    astype
     atan
-    atanh
     atan2
-    atleast_1d
-    atleast_2d
-    atleast_3d
-    average
-    bartlett
-    bincount
+    atanh
     bitwise_and
     bitwise_count
     bitwise_invert
@@ -100,165 +161,49 @@ namespace; they are listed below.
     bitwise_or
     bitwise_right_shift
     bitwise_xor
-    blackman
-    block
-    bool_
-    broadcast_arrays
-    broadcast_shapes
-    broadcast_to
-    c_
-    can_cast
     cbrt
-    cdouble
     ceil
-    character
-    choose
     clip
-    column_stack
-    complex_
-    complex128
-    complex64
-    complexfloating
-    ComplexWarning
-    compress
-    concat
-    concatenate
     conj
     conjugate
-    convolve
-    copy
     copysign
-    corrcoef
-    correlate
     cos
     cosh
-    count_nonzero
-    cov
-    cross
-    csingle
-    cumprod
-    cumsum
-    cumulative_prod
-    cumulative_sum
     deg2rad
     degrees
-    delete
-    diag
-    diag_indices
-    diag_indices_from
-    diagflat
-    diagonal
-    diff
-    digitize
     divide
     divmod
-    dot
-    double
-    dsplit
-    dstack
-    dtype
-    ediff1d
-    einsum
-    einsum_path
-    empty
-    empty_like
     equal
     exp
     exp2
-    expand_dims
     expm1
-    extract
-    eye
     fabs
-    fill_diagonal
-    finfo
-    flatnonzero
-    flexible
-    flip
-    fliplr
-    flipud
-    float_
     float_power
-    float16
-    float32
-    float64
-    floating
     floor
     floor_divide
     fmax
     fmin
     fmod
     frexp
-    frombuffer
-    fromfile
-    fromfunction
-    fromiter
-    frompyfunc
-    fromstring
-    from_dlpack
-    full
-    full_like
     gcd
-    generic
-    geomspace
-    get_printoptions
-    gradient
     greater
     greater_equal
-    hamming
-    hanning
     heaviside
-    histogram
-    histogram_bin_edges
-    histogram2d
-    histogramdd
-    hsplit
-    hstack
     hypot
     i0
-    identity
-    iinfo
     imag
-    index_exp
-    indices
-    inexact
-    inner
-    insert
-    int_
-    int16
-    int32
-    int64
-    int8
-    integer
-    interp
-    intersect1d
     invert
     isclose
-    iscomplex
-    iscomplexobj
-    isdtype
     isfinite
-    isin
     isinf
     isnan
     isneginf
     isposinf
-    isreal
-    isrealobj
-    isscalar
-    issubdtype
-    iterable
-    ix_
-    kaiser
-    kron
     lcm
     ldexp
     left_shift
     less
     less_equal
-    lexsort
-    linspace
-    load
     log
     log10
     log1p
@@ -269,26 +214,85 @@ namespace; they are listed below.
     logical_not
     logical_or
     logical_xor
-    logspace
-    mask_indices
-    matmul
-    matrix_transpose
-    matvec
-    max
     maximum
-    mean
-    median
-    meshgrid
-    mgrid
-    min
     minimum
     mod
     modf
-    moveaxis
     multiply
     nan_to_num
+    negative
+    nextafter
+    not_equal
+    positive
+    pow
+    power
+    rad2deg
+    radians
+    real
+    reciprocal
+    remainder
+    right_shift
+    rint
+    round
+    sign
+    signbit
+    sin
+    sinc
+    sinh
+    spacing
+    sqrt
+    square
+    subtract
+    tan
+    tanh
+    true_divide
+    trunc
+
+Sorting and searching
+---------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    argmax
+    argmin
+    argpartition
+    argsort
+    argwhere
+    count_nonzero
+    extract
+    flatnonzero
+    lexsort
     nanargmax
     nanargmin
+    nonzero
+    partition
+    searchsorted
+    select
+    sort
+    sort_complex
+    where
+
+Reductions and statistics
+-------------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    all
+    allclose
+    amax
+    amin
+    any
+    average
+    cumprod
+    cumsum
+    cumulative_prod
+    cumulative_sum
+    max
+    mean
+    median
+    min
     nancumprod
     nancumsum
     nanmax
@@ -301,25 +305,61 @@ namespace; they are listed below.
     nanstd
     nansum
     nanvar
-    ndarray
-    ndim
-    negative
-    nextafter
-    nonzero
-    not_equal
-    number
-    object_
-    ogrid
-    ones
-    ones_like
-    outer
-    packbits
-    pad
-    partition
     percentile
-    permute_dims
-    piecewise
+    prod
+    ptp
+    quantile
+    std
+    sum
+    var
+
+Indexing
+--------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    ndarray.at
+    diag_indices
+    diag_indices_from
+    index_exp
+    indices
+    mask_indices
     place
+    put
+    put_along_axis
+    ravel_multi_index
+    take
+    take_along_axis
+    tril_indices
+    tril_indices_from
+    triu_indices
+    triu_indices_from
+    unravel_index
+
+Set-like operations
+-------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    intersect1d
+    isin
+    setdiff1d
+    setxor1d
+    union1d
+    unique
+    unique_all
+    unique_counts
+    unique_inverse
+    unique_values
+
+Polynomial functions
+--------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
     poly
     polyadd
     polyder
@@ -329,111 +369,145 @@ namespace; they are listed below.
     polymul
     polysub
     polyval
-    positive
-    pow
-    power
-    printoptions
-    prod
-    promote_types
-    ptp
-    put
-    put_along_axis
-    quantile
-    r_
-    rad2deg
-    radians
-    ravel
-    ravel_multi_index
-    real
-    reciprocal
-    remainder
-    repeat
-    reshape
-    resize
-    result_type
-    right_shift
-    rint
-    roll
-    rollaxis
-    roots
-    rot90
-    round
-    s_
-    save
-    savez
-    searchsorted
-    select
-    set_printoptions
-    setdiff1d
-    setxor1d
-    shape
-    sign
-    signbit
-    signedinteger
-    sin
-    sinc
-    single
-    sinh
-    size
-    sort
-    sort_complex
-    spacing
-    split
-    sqrt
-    square
-    squeeze
-    stack
-    std
-    subtract
-    sum
-    swapaxes
-    take
-    take_along_axis
-    tan
-    tanh
+
+Tensor products
+---------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    cross
+    dot
+    einsum
+    einsum_path
+    inner
+    kron
+    matmul
+    matvec
+    outer
     tensordot
-    tile
-    trace
-    trapezoid
-    transpose
-    tri
-    tril
-    tril_indices
-    tril_indices_from
-    trim_zeros
-    triu
-    triu_indices
-    triu_indices_from
-    true_divide
-    trunc
+    vdot
+    vecdot
+    vecmat
+
+Data types and related
+----------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    ComplexWarning
+    bool_
+    can_cast
+    cdouble
+    character
+    complex128
+    complex64
+    complex_
+    complexfloating
+    csingle
+    double
+    dtype
+    finfo
+    flexible
+    float16
+    float32
+    float64
+    float_
+    floating
+    generic
+    iinfo
+    inexact
+    int16
+    int32
+    int64
+    int8
+    int_
+    integer
+    isdtype
+    issubdtype
+    number
+    object_
+    promote_types
+    result_type
+    signedinteger
+    single
     ufunc
     uint
     uint16
     uint32
     uint64
     uint8
-    union1d
-    unique
-    unique_all
-    unique_counts
-    unique_inverse
-    unique_values
-    unpackbits
-    unravel_index
-    unstack
     unsignedinteger
+
+Other
+-----
+
+.. autosummary::
+  :toctree: _autosummary
+
+    apply_along_axis
+    apply_over_axes
+    array_equal
+    array_equiv
+    array_repr
+    array_str
+    bartlett
+    bincount
+    blackman
+    broadcast_shapes
+    c_
+    choose
+    compress
+    convolve
+    corrcoef
+    correlate
+    cov
+    diagonal
+    diff
+    digitize
+    ediff1d
+    fill_diagonal
+    frompyfunc
+    get_printoptions
+    gradient
+    hamming
+    hanning
+    histogram
+    histogram2d
+    histogram_bin_edges
+    histogramdd
+    interp
+    iscomplex
+    iscomplexobj
+    isreal
+    isrealobj
+    isscalar
+    iterable
+    ix_
+    kaiser
+    load
+    ndarray
+    packbits
+    pad
+    piecewise
+    printoptions
+    r_
+    roots
+    s_
+    save
+    savez
+    set_printoptions
+    trace
+    trapezoid
+    tri
+    tril
+    triu
+    unpackbits
     unwrap
     vander
-    var
-    vdot
-    vecdot
-    vecmat
     vectorize
-    vsplit
-    vstack
-    where
-    zeros
-    zeros_like
+
 
 jax.numpy.fft
 -------------
