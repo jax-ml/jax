@@ -301,8 +301,13 @@ class custom_jvp(Generic[ReturnValue]):
                              (*static_args, diff_args, diff_args),
                              {},
                              static_argnums=tuple(range(len(static_args))))
-      jvp = prepend_static_args(lu.wrap_init(self.jvp,
-                                             debug_info=debug_jvp), static_args)
+      # If this call is staged out (e.g. under jit or scan), the jvp rule is
+      # traced only later, when the staged call is differentiated. Any Tracer
+      # captured here in static_args is stale by then and would surface as a
+      # confusing leaked-tracer error, so check for that when the rule runs.
+      jvp_ = _check_static_args_fresh(self.jvp, static_args)
+      jvp = prepend_static_args(lu.wrap_init(jvp_, debug_info=debug_jvp),
+                                static_args)
     else:
       f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug), args
       debug_jvp = debug_info("custom_jvp jvp", self.jvp,
@@ -317,6 +322,31 @@ class custom_jvp(Generic[ReturnValue]):
                                       symbolic_zeros=self.symbolic_zeros)
     _, (out_tree, _, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
+
+def _check_static_args_fresh(jvp: Callable, static_args) -> Callable:
+  # See the comment at the call site in custom_jvp.__call__: this runs when the
+  # jvp rule itself runs, which for a staged-out custom_jvp call happens after
+  # the trace that created any Tracers in static_args has concluded.
+  def jvp_with_freshness_check(*args):
+    for arg in static_args:
+      for leaf in tree_leaves(arg):
+        if isinstance(leaf, core.Tracer) and (
+            getattr(leaf._trace, '_concluded', False)
+            or not leaf._trace.is_valid()):
+          raise UnexpectedTracerError(
+              "Found a JAX Tracer object passed as an argument to a "
+              "custom_jvp function in a position indicated by nondiff_argnums "
+              "as non-differentiable, and the custom JVP rule was applied "
+              "after the transformation that created the Tracer had finished "
+              "(as happens, for example, when differentiating through a "
+              "jax.lax.scan or jax.jit boundary). nondiff_argnums should only "
+              "be used for arguments that can't be or contain JAX tracers, "
+              "e.g. function-valued or static configuration arguments. In "
+              "particular, array-valued arguments should typically not be "
+              "indicated as nondiff_argnums; instead, pass them as ordinary "
+              "arguments and ignore the corresponding tangents.")
+    return jvp(*args)
+  return jvp_with_freshness_check
 
 @partial(lu.transformation_with_aux2, use_eq_store=True)
 def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args):
