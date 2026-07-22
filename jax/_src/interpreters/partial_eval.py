@@ -1760,7 +1760,7 @@ class TracingEqn:
     return self.in_tracers
 
 class DynamicJaxprTrace(core.Trace):
-  __slots__ = ("frame", "tag", "parent_trace")
+  __slots__ = ("frame", "tag", "parent_trace", "_concluded")
 
   # Note that tag is only used when DynamicJaxprTrace is associated with a LinearizeTrace;
   # otherwise it will be undefined.
@@ -1768,6 +1768,7 @@ class DynamicJaxprTrace(core.Trace):
   frame: JaxprStackFrame
   parent_trace: core.Trace | None
   requires_low: bool
+  _concluded: bool
 
   def __init__(self, debug_info: core.DebugInfo | None,
                parent_trace: core.Trace | None = None,
@@ -1776,10 +1777,16 @@ class DynamicJaxprTrace(core.Trace):
     self.requires_low = lower
     self.frame = JaxprStackFrame(debug_info, auto_dce)
     self.parent_trace = parent_trace
+    self._concluded = False
 
   def invalidate(self):
     # TODO(mattjj): exposed existing tracer leaks; fix them and re-enable!
     # super().invalidate()
+
+    # Unlike _invalidated, this flag doesn't make binds involving this trace's
+    # tracers an error (see the TODO above); it only marks that tracing has
+    # concluded, so opt-in checks can diagnose stale tracers.
+    self._concluded = True
 
     # avoid cyclic refs
     self.frame.tracing_eqns = []  # thunk -> eqn -> in_tracers -> trace ->
