@@ -102,10 +102,19 @@ if [[ -n "${JAXCI_TEST_TAG_FILTERS:-}" ]]; then
   bazel_args+=(--test_tag_filters="${JAXCI_TEST_TAG_FILTERS}")
 fi
 
+local_run_under=""
+if [[ "${JAXCI_TRACK_TEST_MEMORY:-0}" == '1' ]]; then
+  local_run_under="/usr/bin/time -v "
+fi
+
 if [[ "${JAXCI_USE_PARALLEL_ACCELERATOR_RUNNER:-0}" == '1' ]]; then
-  bazel_args+=(--run_under "$(pwd)/build/parallel_accelerator_execute.sh")
+  local_run_under+="$(pwd)/build/parallel_accelerator_execute.sh"
   bazel_args+=(--test_env=JAX_ACCELERATOR_COUNT="${JAXCI_ACCELERATOR_COUNT:-1}")
   bazel_args+=(--test_env=JAX_TESTS_PER_ACCELERATOR="${JAXCI_TESTS_PER_ACCELERATOR:-8}")
+fi
+
+if [[ -n "${local_run_under}" ]]; then
+  bazel_args+=(--run_under="${local_run_under}")
 fi
 
 if [[ -n "${JAXCI_EXCLUDE_TEST_TARGETS:-}" ]]; then
@@ -137,6 +146,12 @@ INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
 bazel test --invocation_id="$INVOCATION_ID" "${bazel_args[@]}" "${targets[@]}" || bazel_retval=$?
 echo "::endgroup::" >&2
 python3 ci/utilities/report_resultstore_link.py "CUDA targeted tests" "$INVOCATION_ID" "${bazel_retval:-0}"
+
+if [[ "${JAXCI_TRACK_TEST_MEMORY:-0}" == '1' ]]; then
+  echo "::group::Memory Footprint Report" >&2
+  python3 ci/utilities/generate_memory_report.py || true
+  echo "::endgroup::" >&2
+fi
 
 echo "::group::Cleanup" >&2
 ci/utilities/collect_bazel_test_xmls.sh test-artifacts
