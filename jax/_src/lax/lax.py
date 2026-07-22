@@ -5693,12 +5693,6 @@ def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
   rhs_tensored_shape = tuple_delete(rhs_shape, rhs_contract_or_batch_or_group)
   return batch_shape + lhs_tensored_shape + rhs_tensored_shape
 
-
-def _check_specs_match(lhs_spec, rhs_spec, msg):
-  for l, r in zip(lhs_spec, rhs_spec):
-    if l is not None and r is not None and l != r:
-      raise core.ShardingTypeError(msg)
-
 def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
                                out_sharding):
@@ -5717,19 +5711,20 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                for i in lhs_contracting)
   rhs_contracting_spec = tuple(rhs.sharding.spec.partitions[i]
                                for i in rhs_contracting)
-
   lhs_batch_spec = tuple(lhs.sharding.spec.partitions[i] for i in lhs_batch)
   rhs_batch_spec = tuple(rhs.sharding.spec.partitions[i] for i in rhs_batch)
-  msg = ("dot_general requires lhs batch dimensions and rhs batch dimensions "
-        f"to have the consistent sharding, got {lhs_batch_spec} and "
-        f"{rhs_batch_spec}.")
-  _check_specs_match(lhs_batch_spec, rhs_batch_spec, msg)
 
-  msg = ("dot_general requires contracting dimensions to have consistent "
-        f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
-  _check_specs_match(lhs_contracting_spec, rhs_contracting_spec, msg)
-
+  for l, r in zip(lhs_batch_spec, rhs_batch_spec):
+    if l != r:
+      raise core.ShardingTypeError(
+          "dot_general requires lhs batch dimensions and rhs batch dimensions "
+          f"to have the same sharding, got {lhs_batch_spec} and "
+          f"{rhs_batch_spec}.")
   for l, r in zip(lhs_contracting_spec, rhs_contracting_spec):
+    if l is not None and r is not None and l != r:
+      raise core.ShardingTypeError(
+          "dot_general requires contracting dimensions to have consistent "
+          f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
     if l is not None and r is not None:
       raise core.ShardingTypeError(
           'Contracting dimensions are sharded and it is ambiguous how the'

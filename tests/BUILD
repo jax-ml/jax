@@ -462,7 +462,7 @@ jax_multiplatform_test(
         "gpu_h100x2_full",
     ],
     shard_count = {
-        "cpu": 5,
+        "cpu": 10,
         "gpu": 2,
         "tpu": 5,
     },

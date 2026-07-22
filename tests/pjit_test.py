@@ -5126,14 +5126,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         'dot_general requires lhs batch dimensions and rhs batch dimensions to'
-        ' have the consistent sharding'):
+        ' have the same sharding'):
       jax.lax.dot_general(
           arr1, arr2, dimension_numbers=(([2], [1]), ([0], [0])))
 
     with self.assertRaisesRegex(
         core.ShardingTypeError,
         'dot_general requires lhs batch dimensions and rhs batch dimensions to'
-        ' have the consistent sharding'):
+        ' have the same sharding'):
       jnp.einsum('abc,acz->abz', arr1, arr2)
 
   @jtu.with_explicit_mesh((2, 2), ('model', 'data'))
@@ -8854,6 +8854,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(('x', 'y'))))
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_dot_batch_dims_error(self, mesh):
+    arr1 = jnp.ones((8, 4, 6), out_sharding=P('x'))
+    arr2 = jnp.ones((8, 4, 2, 6), out_sharding=P(reduced={'x'}))
+
+    with self.assertRaisesRegex(
+        core.ShardingTypeError,
+        'dot_general requires lhs batch dimensions and rhs batch dimensions to'
+        ' have the same sharding'):
+      jnp.einsum('bld,blvd->blv', arr1, arr2)
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_reshard_rng_keys(self, mesh):
