@@ -2980,12 +2980,12 @@ class PallasPrimitivesTest(PallasBaseTest):
     )
     self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
 
-  @parameterized.product(approx=[False, True], full_range=[False, True])
-  def test_reciprocal(self, approx, full_range):
+  @parameterized.product(approx=[False, True], full_range=[False, True], dtype=[jnp.float32, jnp.float16])
+  def test_reciprocal(self, approx, full_range, dtype):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Not implemented on non-TPU devices")
     shape = (32, 256)
-    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+    x = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
     if not full_range:
       x = jnp.where(x == 0, -1.0, x)
 
@@ -2995,7 +2995,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       )
 
     out = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
     )(x)
     kwargs = {}
     if approx:
