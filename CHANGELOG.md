@@ -67,6 +67,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
     `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
 
+* Bug fixes
+  * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
+    infinity for singular matrices when `p` is `None` or `2`, matching NumPy
+    and the other norms.
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
