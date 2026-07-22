@@ -3983,6 +3983,8 @@ class FragmentedArray:
         utils.multimem_store(ptr, get(self.registers))
     else:
       try:
+        if utils.get_arch().major < 9:
+          raise TxMatrixIneligible("TxMatrix not supported on pre-Hopper GPUs")
         stores = self.transfer_tiled(
             ref, swizzle, layout, shape, optimized, ref_tiling_rank=tiling_rank, use_txmatrix=True,
         )
