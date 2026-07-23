@@ -1,0 +1,71 @@
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: jax-checkpointing-job
+spec:
+  # failurePolicy ensures the entire JobSet restarts if any process fails.
+  # This allows the JAX group to re-initialize and resume from the latest GCS checkpoint.
+  failurePolicy:
+    maxRestarts: 3
+  replicatedJobs:
+    - name: jax-worker
+      replicas: 1 
+      template:
+        spec:
+          parallelism: 4 # Number of JAX processes (pods) in this job
+          completions: 4
+          # completionMode: Indexed is CRITICAL for JAX.
+          # It ensures K8s populates the JOB_COMPLETION_INDEX env var,
+          # which JAX uses to determine the process_id of each worker.
+          completionMode: Indexed
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                # Enable GKE GCSFuse sidecar injection for this pod.
+                gke-gcsfuse/volumes: "true"
+            spec:
+              containers:
+              - name: jax-training
+                image: us-central1-docker.pkg.dev/YOUR_PROJECT_ID/jax-k8s-repo/jax-train:latest
+                ports:
+                - containerPort: 8471 # Standard JAX distributed coordination port.
+                # Liveness probe monitors a heartbeat file touched by the training loop.
+                # If the loop deadlocks or crashes, the container is restarted.
+                livenessProbe:
+                  exec:
+                    command:
+                    - cat
+                    - /tmp/healthy
+                  initialDelaySeconds: 60
+                  periodSeconds: 10
+                # Readiness probe ensures the pod isn't marked ready until JAX is initialized.
+                # This prevents traffic from being routed to un-initialized workers.
+                readinessProbe:
+                  exec:
+                    command:
+                    - cat
+                    - /tmp/healthy
+                  initialDelaySeconds: 30
+                  periodSeconds: 5
+                # volumeMounts for GCSFuse. 
+                # Note: The Python script uses native gs:// paths for speed, 
+                # but this mount is useful for manual inspection (ls /data).
+                volumeMounts:
+                - name: gcs-fuse-storage
+                  mountPath: /data
+                env:
+                - name: CHECKPOINT_DIR
+                  value: "gs://YOUR_BUCKET_NAME/project-alpha/v1/"
+                resources:
+                  requests:
+                    cpu: "2"
+                    memory: "4Gi"
+              # Configure the GCS bucket as a volume via GCSFuse CSI driver.
+              volumes:
+              - name: gcs-fuse-storage
+                csi:
+                  driver: gcsfuse.csi.storage.gke.io
+                  volumeAttributes:
+                    bucketName: YOUR_BUCKET_NAME
+                    mountOptions: "implicit-dirs"
