@@ -1524,6 +1524,42 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, expected):
       raise e('in_axes')
 
+  def test_different_types_full_tree_leaf(self):
+    # The full tree may be a dummy tree whose leaves are internal sentinel
+    # objects, so the message must not mention the leaf's type.
+    # https://github.com/jax-ml/jax/issues/13074
+    e, = prefix_errors({'a': 1}, 7)
+    expected = (r"(?s)pytree structure error: different types at key path.*"
+                r"but at the same key path the full pytree has a leaf\.")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_different_types_full_tree_none(self):
+    # https://github.com/jax-ml/jax/issues/13074
+    e, = prefix_errors((1, 2), None)
+    expected = (r"(?s)pytree structure error: different types at key path.*"
+                r"but at the same key path the full pytree has None, which is "
+                r"treated as a pytree container with no leaves\.")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_different_types_prefix_none(self):
+    # https://github.com/jax-ml/jax/issues/13074
+    e, = prefix_errors(None, 7)
+    expected = (r"(?s)pytree structure error: different types at key path.*"
+                r"prefix pytree in_axes has None, which is treated as a "
+                r"pytree container with no leaves,")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_none_is_leaf_nested_valid_prefix(self):
+    # is_leaf must apply below the root too: it used to be dropped on
+    # recursion, so the nested None was falsely reported as a mismatch.
+    # https://github.com/jax-ml/jax/issues/13074
+    errors = prefix_errors((None, (1, 2)), ((3, 4), (5, 6)),
+                           is_leaf=lambda x: x is None)
+    self.assertEqual(errors, [])
+
 
 class TreeAliasTest(jtu.JaxTestCase):
   """Simple smoke-tests for tree_util aliases under jax.tree"""

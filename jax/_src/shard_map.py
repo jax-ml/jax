@@ -264,7 +264,9 @@ def _shard_map(f: F, *, mesh: Mesh | AbstractMesh | None,
       in_specs_flat = broadcast_prefix(
           in_specs, args, is_leaf=lambda x: x is None)
     except ValueError:
-      e, *_ = prefix_errors(in_specs, args)
+      # None is a valid in_specs leaf (the broadcast above treats it as one),
+      # so the error scan must treat it as one too.
+      e, *_ = prefix_errors(in_specs, args, is_leaf=lambda x: x is None)
       raise e('shard_map in_specs') from None
 
     if (in_specs is Infer and
