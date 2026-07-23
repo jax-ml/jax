@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# INTEL ONEAPI plugin extension (glue only, no GPU kernels)
+# INTEL ONEAPI plugin extension
 
+load("@local_config_sycl//sycl:build_defs.bzl", "sycl_library")
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "nanobind_extension",
@@ -76,6 +78,62 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+sycl_library(
+    name = "oneapi_prng_kernels_impl",
+    srcs = ["//jaxlib/gpu:prng_kernels_oneapi.cc"],
+    hdrs = ["//jaxlib/gpu:prng_kernels.h"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_vendor",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+sycl_library(
+    name = "oneapi_prng_kernels",
+    srcs = ["//jaxlib/gpu:prng_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:prng_kernels.h"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_prng_kernels_impl",
+        ":oneapi_vendor",
+        ":oneapi_gpu_runtime",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_prng",
+    srcs = ["//jaxlib/gpu:prng.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    linkopts = ["-link_stage"],
+    features = ["-use_header_modules"],
+    module_name = "_prng",
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_prng_kernels",
+        ":oneapi_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@nanobind",
+    ],
+)
+
+py_library(
+    name = "oneapi_gpu_support",
+    deps = [
+        ":_prng",
     ],
 )
 
