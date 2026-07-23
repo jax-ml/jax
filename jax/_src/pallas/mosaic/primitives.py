@@ -1399,8 +1399,8 @@ def matmul_pop_fifo(
 
 @matmul_pop_fifo_p.def_effectful_abstract_eval
 def _matmul_pop_fifo_abstract_eval(*, shape, dtype, **_):
-  if dtype != jnp.float32:
+  if dtype not in [jnp.float32, jnp.int32]:
     raise ValueError(
-        f"Only float32 results are supported, got {dtype}"
+        f"Only float32 and int32 results are supported, got {dtype}"
     )
   return jax_core.ShapedArray(shape, dtype), {mxu_effect}

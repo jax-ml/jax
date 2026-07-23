@@ -5491,8 +5491,8 @@ class ExplicitMXUTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_tpu_at_least(6):
-      self.skipTest('TPU v6e+ required for this test.')
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('TPU v5e+ required for this test.')
 
   @parameterized.named_parameters(
       ('f32', jnp.float32, False),
@@ -5503,6 +5503,9 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('f32_transpose', jnp.float32, True),
   )
   def test_basic(self, dtype, transpose):
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest('TPU generation too old')
+
     if not jtu.is_device_tpu_at_least(7):
       expect_ctx = self.assertRaisesRegex(
           error_handling.MosaicError,
@@ -5556,12 +5559,16 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       ('f32', jnp.float32, False),
       ('bf16', jnp.bfloat16, False),
       ('f8_e5m2', jnp.float8_e5m2, False),
+      ('int8', jnp.int8, False),
       ('bf16_transpose', jnp.bfloat16, True),
       ('f32_transpose', jnp.float32, True),
+      ('int8_transpose', jnp.int8, True),
   )
   def test_fifo(self, dtype, transpose):
     if jtu.jaxlib_version() < (0, 11, 0):
       self.skipTest('Test requires JAX v0.11.0 or newer.')
+    if not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest('Test requires libtpu 0.0.46 or newer.')
 
     if jtu.is_device_tpu_at_least(7):
       expect_ctx = self.assertRaisesRegex(
@@ -5574,17 +5581,22 @@ class ExplicitMXUTest(jtu.JaxTestCase):
     m, k, n = 256, 512, 512
     w_m, w_n = 128, 256
     m1 = m2 = pltpu.get_tpu_info().mxu_column_size
+    sublanes = pltpu.get_tpu_info().num_sublanes
+    packing = 32 // jax.dtypes.itemsize_bits(dtype)
+    num_rows = sublanes * packing
     k_iters = k // m1
     n_iters = w_n // m2
-    packing = 32 // jax.dtypes.itemsize_bits(dtype)
-    num_rows = 8 * packing
 
     generator = np.random.default_rng(1234)
-    x = generator.normal(size=(m, k)).astype(dtype)
-    if transpose:
-      y = generator.normal(size=(n, k)).astype(dtype)
+    y_shape = (n, k) if transpose else (k, n)
+    if jnp.issubdtype(dtype, jnp.integer):
+      x = generator.integers(jnp.iinfo(dtype).max, size=(m, k)).astype(dtype)
+      y = generator.integers(jnp.iinfo(dtype).max, size=y_shape).astype(dtype)
+      out_type = jnp.int32
     else:
-      y = generator.normal(size=(k, n)).astype(dtype)
+      x = generator.normal(size=(m, k)).astype(dtype)
+      y = generator.normal(size=y_shape).astype(dtype)
+      out_type = jnp.float32
 
     def matmul_kernel(x_ref, y_ref, o_ref):
       o_ref[...] = jnp.zeros_like(o_ref[...])
@@ -5612,7 +5624,7 @@ class ExplicitMXUTest(jtu.JaxTestCase):
             o_ref[
                 l * num_rows : (l + 1) * num_rows, i * m2 : (i + 1) * m2
             ] += pltpu.matmul_pop_fifo(
-                shape=(num_rows, m2), dtype=jnp.float32, mxu_index=0
+                shape=(num_rows, m2), dtype=out_type, mxu_index=0
             )
 
     matmul = pl.pallas_call(
@@ -5625,19 +5637,19 @@ class ExplicitMXUTest(jtu.JaxTestCase):
             else pl.BlockSpec((k, w_n), lambda i, j: (0, j)),
         ],
         out_specs=pl.BlockSpec((w_m, w_n), lambda i, j: (i, j)),
-        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((m, n), out_type),
     )
 
     with expect_ctx:
       out = matmul(x, y).block_until_ready()
 
-      rhs = y.astype(jnp.float32)
+      rhs = y.astype(out_type)
       if transpose:
         rhs = rhs.T
       out_ref = jnp.matmul(
-          x.astype(jnp.float32),
+          x.astype(out_type),
           rhs,
-          preferred_element_type=jnp.float32,
+          preferred_element_type=out_type,
       )
       np.testing.assert_allclose(out, out_ref, atol=1e-3, rtol=1e-3)
 
