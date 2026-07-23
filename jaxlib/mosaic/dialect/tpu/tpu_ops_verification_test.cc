@@ -757,7 +757,8 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaElementTypeMismatch) {
           .getMemref(),
       /*target_semaphore=*/AllocaSemaphore(),
       /*device_id=*/nullptr,
-      /*core_id=*/nullptr);
+      /*core_id=*/nullptr,
+      /*subcore_id=*/nullptr);
 
   ASSERT_THAT(
       VerifyOp(dma),
@@ -773,7 +774,8 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaDynamicRankMismatch) {
                 MemorySpace::kHbm),
       /*target_semaphore=*/AllocaSemaphore(),
       /*device_id=*/nullptr,
-      /*core_id=*/nullptr);
+      /*core_id=*/nullptr,
+      /*subcore_id=*/nullptr);
 
   ASSERT_THAT(VerifyOp(dma),
               StatusIs(_, HasSubstr("DMA source and target shape mismatch.")));
@@ -787,6 +789,7 @@ TEST_F(TpuOpsVectorSubcoreVerificationTest, DmaStrictOrderingSupported) {
       /*target_semaphore=*/AllocaSemaphore(),
       /*device_id=*/nullptr,
       /*core_id=*/nullptr,
+      /*subcore_id=*/nullptr,
       /*priority=*/0,
       /*strict_ordering=*/true);
 
@@ -807,6 +810,7 @@ TEST_F(TpuOpsVerificationTest, DmaStrictOrderingNotSupportedOnTc) {
       /*target_semaphore=*/AllocaSemaphore(),
       /*device_id=*/nullptr,
       /*core_id=*/nullptr,
+      /*subcore_id=*/nullptr,
       /*priority=*/0,
       /*strict_ordering=*/true);
 
