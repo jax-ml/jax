@@ -3844,10 +3844,18 @@ def sinc(x: ArrayLike, /) -> Array:
   x = ensure_arraylike("sinc", x)
   x, = promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, _lax_const(x, 0))
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    eq_inf = lax.bitwise_and(
+        lax.eq(lax.abs(lax.real(x)), _lax_const(lax.real(x), np.inf)),
+        lax.is_finite(lax.imag(x)),
+    )
+  else:
+    eq_inf = lax.eq(lax.abs(x), _lax_const(x, np.inf))
   pi_x = lax.mul(_lax_const(x, np.pi), x)
-  safe_pi_x = _where(eq_zero, _lax_const(x, 1), pi_x)
-  return _where(eq_zero, _sinc_maclaurin(0, pi_x),
-                lax.div(lax.sin(safe_pi_x), safe_pi_x))
+  safe_pi_x = _where(lax.bitwise_or(eq_zero, eq_inf), _lax_const(x, 1), pi_x)
+  result = _where(eq_zero, _sinc_maclaurin(0, pi_x),
+                  lax.div(lax.sin(safe_pi_x), safe_pi_x))
+  return _where(eq_inf, _lax_const(x, 0), result)
 
 
 @partial(custom_jvp, nondiff_argnums=(0,))

@@ -3,7 +3,7 @@ cloudpickle
 filelock
 flatbuffers
 hypothesis
-mpmath==1.3.0  # TODO(dsuo): Remove pin sinc(inf) is resolved as either nan or 0.0.
+mpmath
 pillow>=11.3
 portpicker
 pytest
