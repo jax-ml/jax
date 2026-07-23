@@ -40,28 +40,6 @@ _T = TypeVar('_T')
 _ET = TypeVar('_ET', bound=enum.Enum)
 _F = TypeVar('_F', bound=Callable[..., Any])
 
-class EffortLevel(enum.Enum):
-  """Effort level enum, mirroring the XLA effort options."""
-
-  UNKNOWN = 0
-  O0 = 9
-  O1 = 19
-  O2 = 29
-  O3 = 39
-
-  @classmethod
-  def _missing_(cls, value: object) -> EffortLevel | None:
-    return _effort_from_string.get(value)
-
-
-_effort_from_string: dict[Any, EffortLevel] = {
-    'UNKNOWN': EffortLevel.UNKNOWN,
-    'O0': EffortLevel.O0,
-    'O1': EffortLevel.O1,
-    'O2': EffortLevel.O2,
-    'O3': EffortLevel.O3,
-}
-
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.

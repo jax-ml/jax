@@ -45,38 +45,38 @@ from jax import tree as tree
 from jax import typing as typing
 
 from jax._src.config import (
-  config as config,
-  enable_checks as enable_checks,
-  enable_x64 as enable_x64,
-  debug_key_reuse as debug_key_reuse,
-  check_tracer_leaks as check_tracer_leaks,
-  checking_leaks as checking_leaks,
-  enable_custom_prng as enable_custom_prng,
-  softmax_custom_jvp as softmax_custom_jvp,
-  debug_nans as debug_nans,
-  debug_infs as debug_infs,
-  log_compiles as log_compiles,
-  no_tracing as no_tracing,
-  no_execution as no_execution,
-  explain_cache_misses as explain_cache_misses,
-  default_device as default_device,
-  default_matmul_precision as default_matmul_precision,
-  default_prng_impl as default_prng_impl,
-  numpy_dtype_promotion as numpy_dtype_promotion,
-  numpy_rank_promotion as numpy_rank_promotion,
-  allow_f16_reductions as allow_f16_reductions,
-  jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
-  legacy_prng_key as legacy_prng_key,
-  threefry_partitionable as threefry_partitionable,
-  array_garbage_collection_guard as array_garbage_collection_guard,
-  transfer_guard as transfer_guard,
-  transfer_guard_host_to_device as transfer_guard_host_to_device,
-  transfer_guard_device_to_device as transfer_guard_device_to_device,
-  transfer_guard_device_to_host as transfer_guard_device_to_host,
-  make_user_context as make_user_context,
-  remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
-  thread_guard as thread_guard,
-  auto_pcast as auto_pcast,
+    config as config,
+    enable_checks as enable_checks,
+    enable_x64 as enable_x64,
+    debug_key_reuse as debug_key_reuse,
+    check_tracer_leaks as check_tracer_leaks,
+    checking_leaks as checking_leaks,
+    enable_custom_prng as enable_custom_prng,
+    softmax_custom_jvp as softmax_custom_jvp,
+    debug_nans as debug_nans,
+    debug_infs as debug_infs,
+    log_compiles as log_compiles,
+    no_tracing as no_tracing,
+    no_execution as no_execution,
+    explain_cache_misses as explain_cache_misses,
+    default_device as default_device,
+    default_matmul_precision as default_matmul_precision,
+    default_prng_impl as default_prng_impl,
+    numpy_dtype_promotion as numpy_dtype_promotion,
+    numpy_rank_promotion as numpy_rank_promotion,
+    allow_f16_reductions as allow_f16_reductions,
+    jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
+    legacy_prng_key as legacy_prng_key,
+    threefry_partitionable as threefry_partitionable,
+    array_garbage_collection_guard as array_garbage_collection_guard,
+    transfer_guard as transfer_guard,
+    transfer_guard_host_to_device as transfer_guard_host_to_device,
+    transfer_guard_device_to_device as transfer_guard_device_to_device,
+    transfer_guard_device_to_host as transfer_guard_device_to_host,
+    make_user_context as make_user_context,
+    remove_size_one_mesh_axis_from_type as remove_size_one_mesh_axis_from_type,
+    thread_guard as thread_guard,
+    auto_pcast as auto_pcast,
 )
 
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
@@ -87,6 +87,7 @@ Device = _xc.Device
 del _xc
 
 from jax._src.core import typeof as typeof
+from jax._src.compiler import CompilerEffortLevel as CompilerEffortLevel
 from jax._src.api import effects_barrier as effects_barrier
 from jax._src.api import block_until_ready as block_until_ready
 from jax._src.ad_checkpoint import checkpoint as checkpoint

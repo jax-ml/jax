@@ -83,6 +83,7 @@ Just-in-time compilation (:code:`jit`)
     copy_to_host_async
     make_mesh
     set_mesh
+    CompilerEffortLevel
 
 .. _jax-grad:
 

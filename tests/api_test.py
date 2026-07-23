@@ -1383,27 +1383,29 @@ class JitTest(jtu.BufferDonationTestCase):
             "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
         })(1.0)  # doesn't crash.
 
-  def test_optimization_level_compiler_option(self):
+  def test_effort_level_compiler_option(self):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
     jit(
         f,
         compiler_options={
-            "optimization_level": config.EffortLevel.O1.value,
+            "optimization_level": jax.CompilerEffortLevel.O1,
+            "memory_fitting_level": jax.CompilerEffortLevel.O1,
         },
     )(
         1.0
     )  # doesn't crash.
 
-  def test_memory_fitting_level_compiler_option(self):
+  def test_effort_level_as_strings_compiler_option(self):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
     jit(
         f,
         compiler_options={
-            "memory_fitting_level": config.EffortLevel.O0.value,
+            "optimization_level": "O0",
+            "memory_fitting_level": "O0",
         },
     )(
         1.0

@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from collections.abc import Sequence
 import copy
+import enum
 from functools import partial
 import logging
 import time
 from typing import Any
-from collections.abc import Callable
 import warnings
 
 from jax._src import compilation_cache
@@ -36,12 +37,40 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_client as xc
 from jax._src.lib import _jax
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 import numpy as np
 
 
+class CompilerEffortLevel(enum.Enum):
+  """Effort level enumeration for XLA.
+
+  Used to specify the degree to which the XLA compiler should optimize for
+  runtime performance or memory fitting, as described in
+  https://openxla.org/xla/effort_levels. Higher effort levels will expend
+  more compile time but should yield better results in the respective
+  dimension.
+  """
+
+  UNKNOWN = 0
+  O0 = 9
+  O1 = 19
+  O2 = 29
+  O3 = 39
+
+  @classmethod
+  def _missing_(cls, value: object) -> CompilerEffortLevel | None:
+    return _effort_from_string.get(value)
+
+
+_effort_from_string: dict[Any, CompilerEffortLevel] = {
+    "UNKNOWN": CompilerEffortLevel.UNKNOWN,
+    "O0": CompilerEffortLevel.O0,
+    "O1": CompilerEffortLevel.O1,
+    "O2": CompilerEffortLevel.O2,
+    "O3": CompilerEffortLevel.O3,
+}
 _DISABLE_MOST_OPTIMIZATIONS = config.bool_flag(
     'jax_disable_most_optimizations',
     config.bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
@@ -194,10 +223,10 @@ def get_compile_options(
     assert device_assignment.computation_count() == num_partitions
     compile_options.device_assignment = device_assignment
 
-  build_options.optimization_level = config.EffortLevel(
+  build_options.optimization_level = CompilerEffortLevel(
       config.optimization_level.value
   ).value
-  build_options.memory_fitting_level = config.EffortLevel(
+  build_options.memory_fitting_level = CompilerEffortLevel(
       config.memory_fitting_level.value
   ).value
 
@@ -208,7 +237,11 @@ def get_compile_options(
     env_options_overrides = dict(env_options_overrides)
     for name in overrides_on_build_options:
       if name in env_options_overrides:
-        setattr(build_options, name, env_options_overrides.pop(name))
+        setattr(
+            build_options,
+            name,
+            CompilerEffortLevel(env_options_overrides.pop(name)).value,
+        )
     compile_options.env_option_overrides = list(env_options_overrides.items())
 
   debug_options = compile_options.executable_build_options.debug_options
