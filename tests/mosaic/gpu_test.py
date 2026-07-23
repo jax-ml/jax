@@ -2794,27 +2794,46 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      in_jax_dtype=(jnp.float16, jnp.bfloat16, jnp.int8, jnp.float8_e4m3fn),
+      ab_dtype=(
+          (jnp.float16, jnp.float16),
+          (jnp.bfloat16, jnp.bfloat16),
+          (jnp.int8, jnp.int8),
+          (jnp.float8_e4m3fn, jnp.float8_e4m3fn),
+          (jnp.float8_e5m2, jnp.float8_e5m2),
+          (jnp.float8_e4m3fn, jnp.float8_e5m2),
+          (jnp.float8_e5m2, jnp.float8_e4m3fn),
+      ),
       m=(128,),  # TODO(apaszke): 256
       n=(16, 32, 128, 192, 256),
       lhs_swizzle=(32, 64, 128),
       rhs_swizzle=(64, 128),  # 32 is too small and unsupported.
   )
-  def test_mma_sparse(self, m, n, in_jax_dtype, lhs_swizzle, rhs_swizzle, lhs_transpose, rhs_transpose):
-    if in_jax_dtype == jnp.int8:
+  def test_mma_sparse(
+      self,
+      m,
+      n,
+      ab_dtype,
+      lhs_swizzle,
+      rhs_swizzle,
+      lhs_transpose,
+      rhs_transpose,
+  ):
+    a_dtype, b_dtype = ab_dtype
+    if a_dtype == jnp.int8:
       self.skip_unless_tcgen05_int8()
-    if jnp.issubdtype(in_jax_dtype, jnp.floating):
+    if jnp.issubdtype(a_dtype, jnp.floating):
       out_jax_dtype = jnp.float32
     else:
       out_jax_dtype = jnp.int32
     sparse_meta_dtype = jnp.uint2
 
-    in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
+    a_mlir_dtype = utils.dtype_to_ir_type(a_dtype)
+    b_mlir_dtype = utils.dtype_to_ir_type(b_dtype)
     k = 256
-    lhs_tiling = (8, 8 * lhs_swizzle // bitwidth(in_mlir_dtype))
-    rhs_tiling = (8, 8 * rhs_swizzle // bitwidth(in_mlir_dtype))
+    lhs_tiling = (8, 8 * lhs_swizzle // bitwidth(a_mlir_dtype))
+    rhs_tiling = (8, 8 * rhs_swizzle // bitwidth(b_mlir_dtype))
     if not rhs_transpose and n % rhs_tiling[1]:
-      self.skipTest(f"{n=} not divisible by {rhs_swizzle=} (for {in_jax_dtype=})")
+      self.skipTest(f"{n=} not divisible by {rhs_swizzle=} (for {b_dtype=})")
 
     def kernel(ctx, lhs, rhs, lhs_sparse_gmem, out, scratch):
       lhs_smem, rhs_smem, lhs_sparse_smem, barriers, mma_barrier, acc, lhs_sparse = scratch
@@ -2840,21 +2859,21 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         )
         tcgen05.commit_arrive(mma_barrier)
       mma_barrier.wait(orders_tensor_core=True)
-      is_signed = True if jnp.issubdtype(in_jax_dtype, jnp.integer) else None
+      is_signed = True if jnp.issubdtype(a_dtype, jnp.integer) else None
       acc.load(is_signed=is_signed).store_untiled(out, optimized=False)
 
     x_shape = (k // 2, m) if lhs_transpose else (m, k // 2)
     y_shape = (n, k) if rhs_transpose else (k, n)
-    if jnp.issubdtype(in_jax_dtype, jnp.integer):
-      x = jax.random.randint(jax.random.key(1234), x_shape, -64, 64, dtype=in_jax_dtype)
-      y = jax.random.randint(jax.random.key(2567), y_shape, -64, 64, dtype=in_jax_dtype)
+    if jnp.issubdtype(a_dtype, jnp.integer):
+      x = jax.random.randint(jax.random.key(1234), x_shape, -64, 64, dtype=a_dtype)
+      y = jax.random.randint(jax.random.key(2567), y_shape, -64, 64, dtype=b_dtype)
     else:
-      x = self.prng.uniform(-1, 1, x_shape).astype(in_jax_dtype)
-      y = self.prng.uniform(-1, 1, y_shape).astype(in_jax_dtype)
+      x = self.prng.uniform(-1, 1, x_shape).astype(a_dtype)
+      y = self.prng.uniform(-1, 1, y_shape).astype(b_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
     scratch_shape = [
-        jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), in_jax_dtype),
-        jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), in_jax_dtype),
+        jax.ShapeDtypeStruct(tile_shape(x_shape, lhs_tiling), a_dtype),
+        jax.ShapeDtypeStruct(tile_shape(y_shape, rhs_tiling), b_dtype),
         jax.ShapeDtypeStruct((m // 128, k // 128, 128, 64), sparse_meta_dtype),
         mgpu.TMABarrier(3),
         mgpu.Barrier(1),
@@ -2871,7 +2890,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       mn, k, _2 = meta.shape
       assert _2 == 2
       k *= 2
-      if jnp.dtype(in_jax_dtype).itemsize == 1:
+      if jnp.dtype(a_dtype).itemsize == 1:
         meta_tiled = (
             meta.reshape(mn // 128, 128, k // 64, 64).transpose(0, 2, 1, 3)
         )
@@ -8012,25 +8031,19 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
     x = jax.random.normal(key, gmem_shape).astype(dtype)
     self.assertArraysEqual(kernel(x), x)
 
-  @parameterized.product(
-      m=(64, 128),
-      n=(128, 256, 512),
-      # TODO(allanrenucci): Add 32-byte swizzle once implemented.
-      swizzle=(64, 128),
-      ab_type=(jnp.float16, jnp.bfloat16),
-      acc_type=(jnp.float16, jnp.float32),
-      a_in_tmem=(False, True),
-  )
-  def test_tcgen05_mma(self, m, n, swizzle, ab_type, acc_type, a_in_tmem):
-    if acc_type == jnp.float16 and ab_type != jnp.float16:
+
+  def _test_tcgen05_mma(
+      self, m, n, swizzle, a_type, b_type, acc_type, a_in_tmem
+  ):
+    if acc_type == jnp.float16 and (a_type != jnp.float16 or b_type != jnp.float16):
       self.skipTest("Only f16 input is supported for f16 output.")
     if a_in_tmem and m != 128:
       self.skipTest("Only M=128 is supported for MMA with A in TMEM.")
 
-    swizzle_elems = swizzle // np.dtype(ab_type).itemsize
+    swizzle_elems = swizzle // np.dtype(b_type).itemsize
     groups_k = 2
     k = swizzle_elems * groups_k
-    a_packing = 4 // np.dtype(ab_type).itemsize
+    a_packing = 4 // np.dtype(a_type).itemsize
     tmem_cols = tcgen05.tmem_alloc_exact_ncols(n, exact=False)
     if a_in_tmem:
       tmem_cols += tcgen05.tmem_alloc_exact_ncols(k // a_packing, exact=False)
@@ -8041,8 +8054,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       )
     a_shape = (m, k)
     b_shape = (k, n)
-    bytes_a = np.dtype(ab_type).itemsize * math.prod(a_shape)
-    bytes_b = np.dtype(ab_type).itemsize * math.prod(b_shape)
+    bytes_a = np.dtype(a_type).itemsize * math.prod(a_shape)
+    bytes_b = np.dtype(b_type).itemsize * math.prod(b_shape)
     acc_shape = (m, n)
 
     def matmul(ctx, a_gmem, b_gmem, result_gmem, scratch):
@@ -8096,36 +8109,73 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
 
     # Required order: SMEM -> Barrier -> TMEM.
     scratch_shape = [
-        jax.ShapeDtypeStruct(a_shape, ab_type) if not a_in_tmem else None,
-        jax.ShapeDtypeStruct(b_shape, ab_type),
+        jax.ShapeDtypeStruct(a_shape, a_type) if not a_in_tmem else None,
+        jax.ShapeDtypeStruct(b_shape, b_type),
         core.TMABarrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
-        mgpu.TMEM(a_shape, ab_type, packing=a_packing) if a_in_tmem else None,
+        mgpu.TMEM(a_shape, a_type, packing=a_packing) if a_in_tmem else None,
     ]
     kernel = mgpu.as_gpu_kernel(
         matmul,
         grid=(1, 1, 1),
         block=(128, 1, 1),
         in_shape=(
-            jax.ShapeDtypeStruct(a_shape, ab_type),
-            jax.ShapeDtypeStruct(b_shape, ab_type),
+            jax.ShapeDtypeStruct(a_shape, a_type),
+            jax.ShapeDtypeStruct(b_shape, b_type),
         ),
         out_shape=jax.ShapeDtypeStruct(acc_shape, acc_type),
         smem_scratch_shape=scratch_shape,
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
-    a = self.prng.uniform(-1, 1, a_shape).astype(ab_type)
-    b = self.prng.uniform(-1, 1, b_shape).astype(ab_type)
+    a = self.prng.uniform(-1, 1, a_shape).astype(a_type)
+    b = self.prng.uniform(-1, 1, b_shape).astype(b_type)
 
-    atol = 2e-2 if acc_type == jnp.float16 else 2e-5
-    rtol = 8e-4 if acc_type == jnp.float16 else 1e-7
+    if acc_type == jnp.float32 and (
+        a_type in (jnp.float8_e5m2, jnp.float8_e4m3fn)
+        or b_type in (jnp.float8_e5m2, jnp.float8_e4m3fn)
+    ):
+      atol, rtol = 1e-2, 1e-2
+    else:
+      atol = 2e-2 if acc_type == jnp.float16 else 2e-5
+      rtol = 8e-4 if acc_type == jnp.float16 else 1e-7
     self.assertArraysAllClose(
         kernel(a, b),
         np.matmul(a.astype(acc_type), b.astype(acc_type)),
         atol=atol,
         rtol=rtol,
+    )
+
+  @parameterized.product(
+      m=(64, 128),
+      n=(128, 256, 512),
+      # TODO(allanrenucci): Add 32-byte swizzle once implemented.
+      swizzle=(64, 128),
+      ab_type=(jnp.float16, jnp.bfloat16),
+      acc_type=(jnp.float16, jnp.float32),
+      a_in_tmem=(False, True),
+  )
+  def test_tcgen05_mma(self, m, n, swizzle, ab_type, acc_type, a_in_tmem):
+    self._test_tcgen05_mma(
+        m, n, swizzle, ab_type, ab_type, acc_type, a_in_tmem
+    )
+
+  @parameterized.parameters(
+      (jnp.float8_e5m2, jnp.float8_e5m2),
+      (jnp.float8_e4m3fn, jnp.float8_e4m3fn),
+      (jnp.float8_e5m2, jnp.float8_e4m3fn),
+      (jnp.float8_e4m3fn, jnp.float8_e5m2),
+  )
+  def test_tcgen05_mma_mixed_fp8(self, a_type, b_type):
+    self._test_tcgen05_mma(
+        m=128,
+        n=64,
+        swizzle=128,
+        a_type=a_type,
+        b_type=b_type,
+        acc_type=jnp.float32,
+        a_in_tmem=False,
     )
 
   @parameterized.product(
@@ -8552,14 +8602,21 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       m=(128,),
       n=(128, 256),
       scale_type=(jnp.float8_e8m0fnu, jnp.float8_e4m3fn),
-      ab_type=(jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn)
+      ab_type=(
+          (jnp.float8_e5m2, jnp.float8_e5m2),
+          (jnp.float8_e4m3fn, jnp.float8_e4m3fn),
+          (jnp.float8_e5m2, jnp.float8_e4m3fn),
+          (jnp.float8_e4m3fn, jnp.float8_e5m2),
+          (jnp.float4_e2m1fn, jnp.float4_e2m1fn),
+      ),
   )
   def test_simple_scaled_matmul(self, m, n, scale_type, ab_type):
+    a_type, b_type = ab_type
     acc_type = jnp.float32
 
     block_size = 32
     if scale_type == jnp.float8_e4m3fn:
-      if ab_type != jnp.float4_e2m1fn:
+      if a_type != jnp.float4_e2m1fn or b_type != jnp.float4_e2m1fn:
         self.skipTest("Only float4_e2m1fn input is supported for e4m3fn scale.")
       block_size = 16
 
@@ -8603,8 +8660,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       ) = scratch
 
       # GMEM -> SMEM
-      cp(b_gmem, b_smem, tma_barrier, b_shape, ab_type)
-      cp(a_gmem, a_smem, tma_barrier, a_shape, ab_type)
+      cp(b_gmem, b_smem, tma_barrier, b_shape, b_type)
+      cp(a_gmem, a_smem, tma_barrier, a_shape, a_type)
       cp(a_scale_gmem, a_scale_smem, tma_barrier, scale_shape_a, scale_type)
       cp(b_scale_gmem, b_scale_smem, tma_barrier, scale_shape_b, scale_type)
 
@@ -8626,11 +8683,11 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
       mgpu_dialect.vector_store(r_out, result_gmem)
 
     scratch_shape = [
-        jax.ShapeDtypeStruct(a_shape, ab_type),
-        jax.ShapeDtypeStruct(b_shape, ab_type),
+        jax.ShapeDtypeStruct(a_shape, a_type),
+        jax.ShapeDtypeStruct(b_shape, b_type),
         jax.ShapeDtypeStruct(scale_shape_a, scale_type),
         jax.ShapeDtypeStruct(scale_shape_b, scale_type),
-        core.TMABarrier(1),
+        mgpu.TMABarrier(1),
         mgpu.Barrier(1, orders_tensor_core=True),
         mgpu.TMEM(acc_shape, acc_type),
         mgpu.TMEM((m, k_scales), scale_type),
@@ -8643,8 +8700,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         cluster=(1, 1, 1),
         block=(128, 1, 1),
         in_shape=(
-            jax.ShapeDtypeStruct(a_shape, ab_type),
-            jax.ShapeDtypeStruct(b_shape, ab_type),
+            jax.ShapeDtypeStruct(a_shape, a_type),
+            jax.ShapeDtypeStruct(b_shape, b_type),
             jax.ShapeDtypeStruct(scale_shape_a, scale_type),
             jax.ShapeDtypeStruct(scale_shape_b, scale_type),
         ),
@@ -8653,8 +8710,8 @@ class MosaicGpuDialectTCGen05Test(TestCase, jtu.JaxTestCase, jtu.CudaArchSpecifi
         thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
-    x = self.prng.uniform(-1, 1, (m, k)).astype(ab_type)
-    y = self.prng.uniform(-1, 1, (n, k)).astype(ab_type)
+    x = self.prng.uniform(-1, 1, (m, k)).astype(a_type)
+    y = self.prng.uniform(-1, 1, (n, k)).astype(b_type)
 
     ksx, ksy = jax.random.split(jax.random.key(1234), 2)
     def scale_data(key, dim):

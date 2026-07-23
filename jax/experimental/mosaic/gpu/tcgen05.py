@@ -50,7 +50,8 @@ def create_instr_descriptor(
     m: int,
     n: int,
     acc_dtype,
-    input_dtype,
+    a_dtype,
+    b_dtype,
     transpose_a: bool = False,
     transpose_b: bool = False,
     sparsity_selector: int | None = None,
@@ -74,25 +75,28 @@ def create_instr_descriptor(
     raise NotImplementedError(f"Unsupported accumulator dtype: {acc_dtype}")
   desc |= (d_type_val << 4)  # D type, bits 4-5
   # Bit 6 is reserved
-  if input_dtype == f16:
-    assert acc_dtype in {f16, f32}
-    ab_type_val = 0
-  elif input_dtype == ir.BF16Type.get():
-    assert acc_dtype == f32
-    ab_type_val = 1
-  elif input_dtype == ir.Float8E4M3FNType.get():
-    assert acc_dtype in {f16, f32}
-    ab_type_val = 0
-  elif input_dtype == ir.Float8E5M2Type.get():
-    assert acc_dtype in {f16, f32}
-    ab_type_val = 1
-  elif input_dtype == ir.IntegerType.get_signless(8):  # Only s8 for now.
-    assert acc_dtype == i32
-    ab_type_val = 1
-  else:
-    raise NotImplementedError(f"Unsupported input dtype: {input_dtype}")
-  desc |= (ab_type_val << 7)   # A dtype, bits 7-9
-  desc |= (ab_type_val << 10)  # B dtype, bits 10-12
+  def get_input_encoding(ty):
+    if ty == f16:
+      assert acc_dtype in {f16, f32}
+      return 0
+    elif ty == ir.BF16Type.get():
+      assert acc_dtype == f32
+      return 1
+    elif ty == ir.Float8E4M3FNType.get():
+      assert acc_dtype in {f16, f32}
+      return 0
+    elif ty == ir.Float8E5M2Type.get():
+      assert acc_dtype in {f16, f32}
+      return 1
+    elif ty == ir.IntegerType.get_signless(8):  # Only s8 for now.
+      assert acc_dtype == i32
+      return 1
+    else:
+      raise NotImplementedError(f"Unsupported input dtype: {ty}")
+  a_type_val = get_input_encoding(a_dtype)
+  b_type_val = get_input_encoding(b_dtype)
+  desc |= (a_type_val << 7)   # A dtype, bits 7-9
+  desc |= (b_type_val << 10)  # B dtype, bits 10-12
   # We ignore negate bits 13-14
   desc |= transpose_a << 15  # Transpose A
   desc |= transpose_b << 16  # Transpose B
@@ -204,14 +208,14 @@ def mma(
   # Step 1. Establish the shape and element type of the operation.
   if not isinstance(b.type, ir.MemRefType):
     raise ValueError(f"B must be a memref, got: {b.type}")
-  (k, n), element_type = mma_utils.tiled_memref_shape(b)
+  (k, n), b_element_type = mma_utils.tiled_memref_shape(b)
   if isinstance(a, TMEMRef):
     m, k2 = a.shape
-    element_type2 = a.dtype
+    a_element_type = a.dtype
     if m != 128:
       raise NotImplementedError(f"Only M=128 is supported for MMA with A in TMEM, but got M={m}")
     # Watch out: this layout must be consistent with D's layout (up to packing).
-    expected_packing = 32 // utils.bitwidth(element_type)
+    expected_packing = 32 // utils.bitwidth(a_element_type)
     expected_layout = _infer_tmem_layout(
         a.shape, collective, packing=expected_packing
     )
@@ -222,7 +226,7 @@ def mma(
   else:
     if not isinstance(a.type, ir.MemRefType):
       raise ValueError(f"A must be a memref, got {a.type}")
-    (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
+    (m, k2), a_element_type = mma_utils.tiled_memref_shape(a)
   if is_sparse:
     k2 *= 2
   if k != k2:
@@ -230,10 +234,15 @@ def mma(
         "MMA requires A and B to have the same contraction dimension (K),"
         f" got: {k2} and {k}"
     )
-  if element_type != element_type2:
+
+  is_fp8 = lambda ty: isinstance(ty, (ir.Float8E5M2Type, ir.Float8E4M3FNType))
+  if a_element_type != b_element_type and not (
+      is_fp8(a_element_type) and is_fp8(b_element_type)
+  ):
     raise ValueError(
-        "MMA requires A and B to have the same element type, got:"
-        f" {element_type2} and {element_type}"
+        "MMA requires A and B to have the same element type, except that "
+        "FP8 types (f8E4M3FN and f8E5M2) may be mixed; got: "
+        f"{a_element_type} and {b_element_type}"
     )
   if d.shape != (m, n * num_cta):
     raise ValueError(
@@ -263,7 +272,7 @@ def mma(
       n_lane_groups = 2
       # We can't split N into groups if we would partition it below the tile size.
       # TODO: We only need to check this if N is the minormost dim in B.
-      if 8 * b_swizzle // utils.bitwidth(element_type) > n // n_lane_groups:
+      if 8 * b_swizzle // utils.bitwidth(a_element_type) > n // n_lane_groups:
         raise ValueError(
             f"Swizzle={b_swizzle} is too big for MMA with M=64. Try"
             " lowering it."
@@ -273,56 +282,61 @@ def mma(
   f32 = ir.F32Type.get()
   f16 = ir.F16Type.get()
   s32 = ir.IntegerType.get_signless(32)
-  if element_type == f32 or element_type == ir.BF16Type.get():
-    if element_type == f32 and is_sparse:
+  elem_type_str = (
+      f"{a_element_type}"
+      if a_element_type == b_element_type
+      else f"({a_element_type}, {b_element_type})"
+  )
+  if a_element_type == f32 or a_element_type == ir.BF16Type.get():
+    if a_element_type == f32 and is_sparse:
       raise NotImplementedError("Sparse MMA unsupported for f32")
     if is_scaled:
       raise ValueError(
-          f"MMA with element type {element_type} does not support block scaling"
+          f"MMA with element type {elem_type_str} does not support block scaling"
       )
     if d.dtype != f32:
       raise ValueError(
-          f"MMA with element type {element_type} only supports accumulators"
+          f"MMA with element type {elem_type_str} only supports accumulators"
           f" of type f32, but got: {d.dtype}"
       )
-  elif element_type == f16:
+  elif a_element_type == f16:
     if is_scaled:
       raise ValueError(
-          f"MMA with element type {element_type} does not support block scaling"
+          f"MMA with element type {elem_type_str} does not support block scaling"
       )
     if d.dtype != f16 and d.dtype != f32:
       raise ValueError(
-          f"MMA with element type {element_type} only supports accumulators of"
+          f"MMA with element type {elem_type_str} only supports accumulators of"
           f" type f32 or f16, but got: {d.dtype}"
       )
   elif any(
-      isinstance(element_type, t)
+      isinstance(a_element_type, t)
       for t in {ir.Float8E5M2Type, ir.Float8E4M3FNType}
   ):
     if d.dtype != f16 and d.dtype != f32:
       raise ValueError(
-          f"MMA with element type {element_type} only supports accumulators of"
+          f"MMA with element type {elem_type_str} only supports accumulators of"
           f" type f32 or f16, but got: {d.dtype}"
       )
     if is_scaled and d.dtype != f32:
       raise ValueError(
-          f"Block-scaled MMA with element type {element_type} only supports f32"
+          f"Block-scaled MMA with element type {elem_type_str} only supports f32"
           f" accumulators, but got: {d.dtype}"
       )
-  elif any(isinstance(element_type, t) for t in {ir.Float4E2M1FNType}):
+  elif any(isinstance(a_element_type, t) for t in {ir.Float4E2M1FNType}):
     if not is_scaled:
       raise ValueError(
-          f"MMA with element type {element_type} only supports block scaling"
+          f"MMA with element type {elem_type_str} only supports block scaling"
       )
     if d.dtype != f32:
       raise ValueError(
-          f"Block-scaled MMA with element type {element_type} only supports f32"
+          f"Block-scaled MMA with element type {elem_type_str} only supports f32"
           f" accumulators, but got: {d.dtype}"
       )
-  elif element_type == i8:
+  elif a_element_type == i8:
     if is_scaled:
       raise ValueError(
-          f"MMA with element type {element_type} does not support block scaling"
+          f"MMA with element type {elem_type_str} does not support block scaling"
       )
     if d.dtype != s32:
       raise ValueError(
@@ -330,12 +344,12 @@ def mma(
           f" {d.dtype}"
       )
   else:
-    raise NotImplementedError(f"Unsupported element type: {element_type}")
+    raise NotImplementedError(f"Unsupported element type: {elem_type_str}")
 
   # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
   # instructions must be issued in groups that are a multiple of swizzle.
   m_group_elems = m  # We have already verified M is supported above.
-  k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(element_type)
+  k_group_elems = 8 * max(a_swizzle * (1 + is_sparse), b_swizzle) // utils.bitwidth(a_element_type)
   if is_sparse and k_group_elems < 64:
     # This is a limitation of the implementation below. We could relax it if we
     # ever need to support k=32.
@@ -363,7 +377,7 @@ def mma(
         f" got N={n}"
     )
   if is_sparse:
-    n_div = 32 if collective and element_type == i8 else 16
+    n_div = 32 if collective and a_element_type == i8 else 16
     if n % n_div != 0:
       raise NotImplementedError(
           f"N must be a multiple of {n_div} for sparse MMA, but got N={n}"
@@ -393,8 +407,11 @@ def mma(
   k_groups = k // k_group_elems
   n_groups = n // n_group_elems
   # TODO(apaszke): Require users to bitcast input refs to tf32 before MMA.
-  mma_element_type = (
-      ir.FloatTF32Type.get() if element_type == ir.F32Type.get() else element_type
+  mma_b_element_type = (
+      ir.FloatTF32Type.get() if b_element_type == ir.F32Type.get() else b_element_type
+  )
+  mma_a_element_type = (
+      ir.FloatTF32Type.get() if a_element_type == ir.F32Type.get() else a_element_type
   )
 
   # Check that the shapes and element types are correct for block scaling.
@@ -409,7 +426,7 @@ def mma(
       )
     assert scale_block is not None
     base_scale_block = scale_block // (2 if is_sparse else 1)
-    if isinstance(element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
+    if isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       if not isinstance(scale_element_type, ir.Float8E8M0FNUType):
         raise ValueError(
             "Scale element type mismatch: expected f8e8m0fnu, got"
@@ -421,7 +438,7 @@ def mma(
             f"Scale block size mismatch: expected {expected}, got"
             f" {scale_block}"
         )
-    elif isinstance(element_type, ir.Float4E2M1FNType):
+    elif isinstance(a_element_type, ir.Float4E2M1FNType):
       if isinstance(scale_element_type, ir.Float8E4M3FNType):
         if base_scale_block != 16:
           expected = 32 if is_sparse else 16
@@ -443,7 +460,7 @@ def mma(
         )
     else:
       raise NotImplementedError(
-          f"Unsupported element type for block scaling: {element_type}"
+          f"Unsupported element type for block scaling: {a_element_type}"
       )
     k_scales = k // scale_block
     if a_scale.shape != (TMEM_ROWS, k_scales):
@@ -477,7 +494,7 @@ def mma(
           f" got {b_scale.shape}"
       )
   if is_sparse:
-    sparse_group_elems = 8 if utils.bitwidth(element_type) == 4 else 4
+    sparse_group_elems = 8 if utils.bitwidth(a_element_type) == 4 else 4
     # Each sparse group has 2 entries.
     expected_meta_k = k // sparse_group_elems * 2
     if a_sparse_metadata.shape != (m, expected_meta_k):
@@ -524,7 +541,7 @@ def mma(
       split_const=True,
   )
 
-  if is_scaled and utils.bitwidth(mma_element_type) == 4:
+  if is_scaled and utils.bitwidth(mma_a_element_type) == 4:
     if a_fastest != mma_utils.Dim.K:
       raise ValueError(
           "4-bit block scaled MMA only supports K-fastest operands, but A is M-fastest"
@@ -571,7 +588,7 @@ def mma(
     if a_sparse_addr_base is not None:
       if n_groups != 1 or m_groups != 1:
         raise NotImplementedError("A sparse metadata address calculation for multiple tiles")
-      sparse_group_elems = 8 if utils.bitwidth(mma_element_type) == 4 else 4
+      sparse_group_elems = 8 if utils.bitwidth(mma_a_element_type) == 4 else 4
       # Each sparse group has 2 entries, each TMEM column holds 16 i2 entries.
       cols_per_k_group = k_group_elems // sparse_group_elems * 2 // 16
       a_sparse_addr = arith.addi(a_sparse_addr_base, utils.c(ki * cols_per_k_group, i32))
@@ -619,11 +636,12 @@ def mma(
         b_k_strides=b_k_instr_strides,
         a_scale_addr=a_scale_addr,
         b_scale_addr=b_scale_addr,
-        b_scale_n_stride=b_scale_n_stride,
         a_scale_m_stride=a_scale_m_stride,
+        b_scale_n_stride=b_scale_n_stride,
         a_sparse_addr=a_sparse_addr,
         accumulate=acc,
-        element_type=mma_element_type,
+        a_element_type=mma_a_element_type,
+        b_element_type=mma_b_element_type,
         scale_element_type=scale_element_type,
         scale_block=scale_block,
     )
@@ -639,13 +657,14 @@ def _do_mma(
     b_k_strides: tuple[tuple[int, ...], tuple[int, ...]],
     a_scale_addr: ir.Value | None,
     b_scale_addr: ir.Value | None,
-    b_scale_n_stride: int | None,
     a_scale_m_stride: int | None,
+    b_scale_n_stride: int | None,
     a_sparse_addr: ir.Value | None,
     m: int,
     n: int,
     k: int,
-    element_type: ir.Type,
+    a_element_type: ir.Type,
+    b_element_type: ir.Type,
     scale_element_type: ir.Type | None,
     scale_block: int | None,
     d_type: ir.Type,
@@ -663,7 +682,7 @@ def _do_mma(
   assert (a_scale_addr is None) == (b_scale_addr is None)
   is_scaled = a_scale_addr is not None
   is_sparse = a_sparse_addr is not None
-  elem_bitwidth = utils.bitwidth(element_type)
+  elem_bitwidth = utils.bitwidth(a_element_type)
   instr_k = (1 + is_sparse) * 8 * 32 // elem_bitwidth
   packing = 8 * 4 // elem_bitwidth
 
@@ -671,7 +690,7 @@ def _do_mma(
   kind = None
   if is_scaled:
     assert scale_block is not None
-    if isinstance(element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
+    if isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       assert isinstance(scale_element_type, ir.Float8E8M0FNUType)
       kind = "mxf8f6f4.block_scale.scale_vec::1X"
       scale_steps = 4
@@ -680,7 +699,7 @@ def _do_mma(
           scale_type=scale_element_type,
           sparse=is_sparse,
       )
-    elif isinstance(element_type, ir.Float4E2M1FNType):
+    elif isinstance(a_element_type, ir.Float4E2M1FNType):
       assert not a_transpose and not b_transpose
       create_scaled_instr_descriptor = functools.partial(
           create_scaled_f4_instr_descriptor,
@@ -698,28 +717,24 @@ def _do_mma(
         scale_steps = 1
     else:
       raise NotImplementedError(
-          f"Unsupported element type for block scaling: {element_type}"
+          f"Unsupported element type for block scaling: {a_element_type}"
       )
     extra_ptx = "[$5], [$6], "
     extra_constraints = ",r,r"
   else:
-    if isinstance(element_type, ir.F16Type) or isinstance(
-        element_type, ir.BF16Type
-    ):
+    if isinstance(a_element_type, (ir.F16Type, ir.BF16Type)):
       kind = "f16"
-    elif isinstance(element_type, ir.Float8E5M2Type):
-      kind = "f8f6f4"
-    elif isinstance(element_type, ir.Float8E4M3FNType):
+    elif isinstance(a_element_type, (ir.Float8E5M2Type, ir.Float8E4M3FNType)):
       kind = "f8f6f4"
     elif (
-        isinstance(element_type, ir.IntegerType)
-        and element_type.width == 8
-        and element_type.is_signless
+        isinstance(a_element_type, ir.IntegerType)
+        and a_element_type.width == 8
+        and a_element_type.is_signless
     ):
       kind = "i8"
     else:
       raise NotImplementedError(
-          f"Unsupported input element type: {element_type}"
+          f"Unsupported input element type: {a_element_type}"
       )
     extra_constraints = extra_ptx = ""
 
@@ -766,7 +781,7 @@ def _do_mma(
       scale_id = (k_step % scale_steps) * scale_vec_width
       assert sp_selector in {None, 0}  # Scaled instr descriptor has no selector
       i_desc = create_scaled_instr_descriptor(
-          m * num_cta, n * num_cta, element_type, element_type,
+          m * num_cta, n * num_cta, a_element_type, b_element_type,
           scale_id, scale_id, a_transpose, b_transpose
       )
       assert (m == 64 and collective) or m == 128
@@ -784,11 +799,11 @@ def _do_mma(
       )
     elif is_sparse:
       i_desc = create_instr_descriptor(
-          m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose, sparsity_selector=sp_selector
+          m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose, sparsity_selector=sp_selector
       )
     else:
       i_desc = create_instr_descriptor(
-          m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose
+          m * num_cta, n * num_cta, d_type, a_element_type, b_element_type, a_transpose, b_transpose
       )
     if a_in_tmem:
       cols_per_k_group = instr_k // packing // (1 + is_sparse)

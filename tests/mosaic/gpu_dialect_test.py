@@ -668,6 +668,22 @@ class DialectTest(MosaicGpuTest):
 
     self.module.operation.verify()
 
+  def test_tcgen05_mma_mixed_fp8_operands_are_allowed(self):
+    smem, tmem = mgpu_utils.smem(), mgpu_utils.tmem()
+    e4m3 = ir.Float8E4M3FNType.get()
+    e5m2 = ir.Float8E5M2Type.get()
+    with ir.InsertionPoint(self.module.body):
+      for a_type, b_type in ((e4m3, e5m2), (e5m2, e4m3)):
+        acc, a, b, accumulate = undefs(
+            ir.MemRefType.get([128, 160], ir.F32Type.get(), memory_space=tmem),
+            ir.MemRefType.get([128, 128], a_type, memory_space=smem),
+            ir.MemRefType.get([128, 160], b_type, memory_space=smem),
+            ir.IntegerType.get_signless(1),
+        )
+        mgpu.dialect.tcgen05_mma(acc, a, b, accumulate)
+
+    self.module.operation.verify()
+
   def test_wgmma_acc_m_dim_not_multiple_of_64(self):
     with ir.InsertionPoint(self.module.body):
       acc, a, b = undefs(

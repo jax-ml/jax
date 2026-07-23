@@ -5843,78 +5843,101 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     expected = x.astype(o_dtype) @ y.astype(o_dtype)
     np.testing.assert_array_equal(result, expected)
 
-  @parameterized.product(m=[64, 128],
-                         n=[64, 128, 256],
-                         swizzle=[128, 64, 32],
-                         dtype=[jnp.float16, jnp.bfloat16],
-                         lhs_tmem=[False, True],
-                         transpose_rhs=[False, True],
-                         transpose_lhs=[False, True])
+  @parameterized.product(
+      m=[64, 128],
+      n=[64, 128, 256],
+      swizzle=[128, 64, 32],
+      ab_type=[
+          jnp.float16,
+          jnp.bfloat16,
+          (jnp.float8_e5m2, jnp.float8_e5m2),
+          (jnp.float8_e4m3fn, jnp.float8_e4m3fn),
+          (jnp.float8_e5m2, jnp.float8_e4m3fn),
+          (jnp.float8_e4m3fn, jnp.float8_e5m2),
+      ],
+      lhs_tmem=[False, True],
+      transpose_rhs=[False, True],
+      transpose_lhs=[False, True],
+  )
   def test_simple_matmul(
-      self, m, n, swizzle, dtype, lhs_tmem, transpose_lhs, transpose_rhs
+      self, m, n, swizzle, ab_type, lhs_tmem, transpose_lhs, transpose_rhs
   ):
+    a_type, b_type = (
+        ab_type if isinstance(ab_type, tuple) else (ab_type, ab_type)
+    )
+    is_fp8 = a_type in (jnp.float8_e5m2, jnp.float8_e4m3fn) or b_type in (
+        jnp.float8_e5m2,
+        jnp.float8_e4m3fn,
+    )
+    if is_fp8:
+      if transpose_lhs or transpose_rhs:
+        self.skipTest("Skipping FP8 transpose tests in simple sweep")
     if transpose_lhs and lhs_tmem:
       self.skipTest("TMEM transpose not supported")
-    if n * jnp.dtype(dtype).itemsize <= swizzle:
+    if n * jnp.dtype(b_type).itemsize <= swizzle:
       self.skipTest("swizzle too big")
     if lhs_tmem and m == 64:
       self.skipTest("m=64 not supported for LHS in TMEM")
     k = 128
-    # Test a matmul with a single block.
-    transforms = self.default_transforms(dtype=dtype, swizzle=swizzle)
+    a_transforms = self.default_transforms(dtype=a_type, swizzle=swizzle)
+    b_transforms = self.default_transforms(dtype=b_type, swizzle=swizzle)
 
-    def kernel(a_smem, b_smem, out_ref, acc_tmem, barrier_ref,
-               a_tmem_ref):
+    def kernel(a_smem, b_smem, out_ref, acc_tmem, barrier_ref, a_tmem_ref):
       if transpose_lhs:
         a_smem = plgpu.transpose_ref(a_smem, (1, 0))
       if transpose_rhs:
         b_smem = plgpu.transpose_ref(b_smem, (1, 0))
       if lhs_tmem:
         lhs_ref = a_tmem_ref
-        layout = plgpu.Layout.TCGEN05 if m == 128 else plgpu.Layout.WGMMA
-        plgpu.async_store_tmem(lhs_ref, plgpu.load(a_smem, layout=layout))
+        layout = plgpu.Layout.TCGEN05_TMEM_NATIVE(32 // jnp.finfo(a_type).bits)
+        plgpu.async_store_tmem(lhs_ref, plgpu.load(a_smem, layout=layout, optimized=False))
         plgpu.commit_tmem()
       else:
         lhs_ref = a_smem
-      plgpu.tcgen05_mma(acc_tmem,
-                        lhs_ref,
-                        b_smem,
-                        barrier_ref,
-                        accumulate=False)
+      plgpu.tcgen05_mma(
+          acc_tmem, lhs_ref, b_smem, barrier_ref, accumulate=False
+      )
       plgpu.barrier_wait(barrier_ref)
-      # We don't await the load because acc_tmem is never modified again.
-      out_ref[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
+      out_ref[...] = plgpu.async_load_tmem(acc_tmem).astype(
+          jnp.float32 if is_fp8 else a_type
+      )
 
     scratch_shapes = [
         plgpu.TMEM((m, n), jnp.float32, packed=False),
         plgpu.Barrier(orders_tensor_core=True),
     ]
     if lhs_tmem:
-      scratch_shapes.append(plgpu.TMEM((m, k), dtype, packed=True))
+      scratch_shapes.append(plgpu.TMEM((m, k), a_type, packed=True))
     else:
       scratch_shapes.append(None)
 
+    out_dtype = jnp.float32 if is_fp8 else a_type
     f = self.pallas_call(
         kernel,
         in_specs=(
-            plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
-            plgpu.BlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
+            plgpu.BlockSpec(transforms=a_transforms, memory_space=plgpu.SMEM),
+            plgpu.BlockSpec(transforms=b_transforms, memory_space=plgpu.SMEM),
         ),
         out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
-        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        out_shape=jax.ShapeDtypeStruct((m, n), out_dtype),
         scratch_shapes=scratch_shapes,
     )
     lhs_shape = (k, m) if transpose_lhs else (m, k)
     rhs_shape = (n, k) if transpose_rhs else (k, n)
-    x = jax.random.uniform(jax.random.key(0), shape=lhs_shape, dtype=dtype)
-    y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=dtype)
+    x = jax.random.uniform(jax.random.key(0), shape=lhs_shape, dtype=a_type)
+    y = jax.random.uniform(jax.random.key(1), shape=rhs_shape, dtype=b_type)
     result = f(x, y)
     if transpose_lhs:
       x = jnp.transpose(x, (1, 0))
     if transpose_rhs:
       y = jnp.transpose(y, (1, 0))
-    expected = x @ y
-    np.testing.assert_allclose(result, expected, rtol=1e-3)
+    if is_fp8:
+      expected = x.astype(jnp.float32) @ y.astype(jnp.float32)
+      atol, rtol = 1e-2, 1e-2
+    else:
+      expected = x @ y
+      atol, rtol = 0, 1e-3
+    np.testing.assert_allclose(result, expected, atol=atol, rtol=rtol)
 
   def test_matmul_alignment(self):
     m = k = n = 128
@@ -5951,17 +5974,29 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
   @parameterized.product(
       m=[128],
       n=[128, 256],
-      dtype=[jnp.float8_e5m2, jnp.float8_e4m3fn, jnp.float4_e2m1fn],
+      ab_type=[
+          jnp.float8_e5m2,
+          jnp.float8_e4m3fn,
+          (jnp.float8_e5m2, jnp.float8_e4m3fn),
+          (jnp.float8_e4m3fn, jnp.float8_e5m2),
+          jnp.float4_e2m1fn,
+      ],
       block_size=[16, 32],
   )
-  def test_simple_scaled_matmul(self, m, n, dtype, block_size):
-    if block_size == 16 and dtype != jnp.float4_e2m1fn:
+  def test_simple_scaled_matmul(self, m, n, ab_type, block_size):
+    a_type, b_type = (
+        ab_type if isinstance(ab_type, tuple) else (ab_type, ab_type)
+    )
+    if block_size == 16 and (
+        a_type != jnp.float4_e2m1fn or b_type != jnp.float4_e2m1fn
+    ):
       self.skipTest("Only float4_e2m1fn supports block size 16.")
     # TODO(apaszke): Add support for single-buffering in pallas_call.
-    causes_oom = jnp.finfo(dtype).bits == 8 and n == 256
+    causes_oom = jnp.finfo(a_type).bits == 8 and n == 256
     k = 128 if causes_oom else 256
     swizzle = 128
-    transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+    a_transforms = self.default_transforms(swizzle=swizzle, dtype=a_type)
+    b_transforms = self.default_transforms(swizzle=swizzle, dtype=b_type)
     out_transforms = self.default_transforms(dtype=jnp.float32)
 
     def kernel(a_smem, b_smem, a_scale_smem, b_scale_smem, out_ref,
@@ -5998,8 +6033,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     f = self.pallas_call(
         kernel,
         in_specs=(
-            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
-            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=transforms),
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=a_transforms),
+            plgpu.BlockSpec(memory_space=plgpu.SMEM, transforms=b_transforms),
             plgpu.BlockSpec(memory_space=plgpu.SMEM),
             plgpu.BlockSpec(memory_space=plgpu.SMEM),
         ),
@@ -6007,8 +6042,12 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
         out_specs=plgpu.BlockSpec(transforms=out_transforms),
         scratch_shapes=scratch_shapes,
     )
-    x = jax.random.uniform(jax.random.key(1), shape=(m, k), dtype=jnp.float32).astype(dtype)
-    y = jax.random.uniform(jax.random.key(2), shape=(n, k), dtype=jnp.float32).astype(dtype)
+    x = jax.random.uniform(
+        jax.random.key(1), shape=(m, k), dtype=jnp.float32
+    ).astype(a_type)
+    y = jax.random.uniform(
+        jax.random.key(2), shape=(n, k), dtype=jnp.float32
+    ).astype(b_type)
     ksx, ksy = jax.random.split(jax.random.key(1234), 2)
     x_scale = jax.lax.bitcast_convert_type(
         jax.random.randint(
@@ -6841,13 +6880,27 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
           (128, 64, 128),
       ],
       swizzle=[128, 64, 32],
-      dtype=[jnp.float16, jnp.bfloat16],
+      ab_type=[
+          jnp.float16,
+          jnp.bfloat16,
+          (jnp.float8_e5m2, jnp.float8_e5m2),
+          (jnp.float8_e4m3fn, jnp.float8_e4m3fn),
+          (jnp.float8_e5m2, jnp.float8_e4m3fn),
+          (jnp.float8_e4m3fn, jnp.float8_e5m2),
+      ],
       lhs_tmem=[False, True],
   )
-  def test_simple_collective_matmul(self, m_n_k, swizzle, dtype, lhs_tmem):
+  def test_simple_collective_matmul(self, m_n_k, swizzle, ab_type, lhs_tmem):
+    a_type, b_type = (
+        ab_type if isinstance(ab_type, tuple) else (ab_type, ab_type)
+    )
+    is_fp8 = a_type in (jnp.float8_e5m2, jnp.float8_e4m3fn) or b_type in (
+        jnp.float8_e5m2,
+        jnp.float8_e4m3fn,
+    )
     m, n, k = m_n_k
-    if (n // 2) * jnp.dtype(dtype).itemsize < swizzle:
-      self.skipTest("swizzle too big")
+    if min(k, n // 2) * jnp.dtype(a_type).itemsize < swizzle:
+      self.skipTest("Swizzle is too big")
     full_lhs_shape = (m, k)
     full_rhs_shape = (k, n)
     full_acc_shape = (m, n)
@@ -6855,9 +6908,11 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     block_lhs_shape = (m // 2, k)
     block_rhs_shape = (k, n // 2)
     # Test a collective (paired CTA) matmul on a single block.
-    transforms = self.default_transforms(swizzle=swizzle, dtype=dtype)
+    a_transforms = self.default_transforms(swizzle=swizzle, dtype=a_type)
+    b_transforms = self.default_transforms(swizzle=swizzle, dtype=b_type)
     if lhs_tmem and m == 128:
       self.skipTest("m=128 not supported for LHS in TMEM")
+    out_dtype = jnp.float32 if is_fp8 else a_type
 
     def kernel(a_gmem, b_gmem, out_gmem, a_smem, b_smem,
                acc_tmem, tma_barrier, mma_barrier,
@@ -6873,7 +6928,8 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
 
       if lhs_tmem:
         lhs_ref = lhs_tmem_ref
-        plgpu.async_store_tmem(lhs_ref, plgpu.load(a_smem, layout=plgpu.Layout.TCGEN05))
+        layout = plgpu.Layout.TCGEN05_TMEM_NATIVE(32 // jnp.finfo(a_type).bits)
+        plgpu.async_store_tmem(lhs_ref, plgpu.load(a_smem, layout=layout, optimized=False))
         plgpu.commit_tmem()
       else:
         lhs_ref = a_smem
@@ -6895,11 +6951,13 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
       else:
         layout = plgpu.Layout.TCGEN05
       # We don't await the load because acc_tmem is never modified again.
-      out_gmem[slice_lhs, :] = plgpu.async_load_tmem(acc_tmem, layout=layout).astype(dtype)
+      out_gmem[slice_lhs, :] = plgpu.async_load_tmem(
+          acc_tmem, layout=layout
+      ).astype(out_dtype)
 
     scratch_types = [
-        plgpu.SMEM(block_lhs_shape, dtype, transforms=transforms),
-        plgpu.SMEM(block_rhs_shape, dtype, transforms=transforms),
+        plgpu.SMEM(block_lhs_shape, a_type, transforms=a_transforms),
+        plgpu.SMEM(block_rhs_shape, b_type, transforms=b_transforms),
         plgpu.TMEM(block_acc_shape, jnp.float32, collective=True),
         plgpu.Barrier(),
         plgpu.Barrier(orders_tensor_core=True),
@@ -6907,23 +6965,24 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     ]
     if lhs_tmem:
       scratch_types.append(
-          plgpu.TMEM(block_lhs_shape, dtype, collective=True, packed=True)
+          plgpu.TMEM(block_lhs_shape, a_type, collective=True, packed=True)
       )
     else:
       scratch_types.append(None)
 
     f = self.kernel(
         kernel,
-        out_type=jax.ShapeDtypeStruct(full_acc_shape, dtype),
+        out_type=jax.ShapeDtypeStruct(full_acc_shape, out_dtype),
         cluster=(2,),
         cluster_names=("x",),
         scratch_types=scratch_types,
     )
-    x = jax.random.uniform(jax.random.key(0), shape=full_lhs_shape, dtype=dtype)
-    y = jax.random.uniform(jax.random.key(1), shape=full_rhs_shape, dtype=dtype)
+    x = jax.random.uniform(jax.random.key(0), shape=full_lhs_shape, dtype=a_type)
+    y = jax.random.uniform(jax.random.key(1), shape=full_rhs_shape, dtype=b_type)
     result = f(x, y)
-    expected = x @ y
-    np.testing.assert_allclose(result, expected, rtol=1e-3)
+    expected = x.astype(jnp.float32) @ y.astype(jnp.float32)
+    atol, rtol = (1e-2, 1e-2) if is_fp8 else (0, 4e-3)
+    np.testing.assert_allclose(result, expected, atol=atol, rtol=rtol)
 
   @parameterized.parameters(
       (128, jnp.float16)
