@@ -260,10 +260,7 @@ cc_library(
         "-Wl,--export-dynamic-symbol='nvshmemx_init_status'",
         "-Wl,--export-dynamic-symbol='nvshmemx_mc_ptr'",
     ],
-    deps = [
-        ":nvshmem",
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
+    deps = ["@local_config_cuda//cuda:cuda_headers"],
     alwayslink = True,
 )
 
@@ -452,7 +449,6 @@ cc_binary(
         "notap",
     ],
     deps = [
-        ":nvshmem",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

@@ -11,6 +11,10 @@ message MosaicGpuKernelProto {
   bool is_nvshmem_used = 3;
   bytes kernel_hash = 4;
   string host_func_name = 5;
-  string init_func_name = 6;
+  reserved 6;
   bool is_multimem_used = 7;
+  bytes gpu_binary = 8;
+  string kernel_name = 9;
+  int32 smem_bytes = 10;
+  int32 cluster_size = 11;
 }
