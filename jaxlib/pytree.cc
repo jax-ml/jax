@@ -386,10 +386,9 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
               "A namedtuple's _fields attribute should have the same size as "
               "the tuple.");
         }
-        auto field_iter = fields.begin();
-        for (nb::handle entry : in) {
+        for (size_t i = 0; i < in.size(); ++i) {
           out.append(nb::make_tuple(
-              make_nb_class<GetAttrKey>(nb::str(*field_iter)), entry));
+              make_nb_class<GetAttrKey>(nb::str(fields[i])), in[i]));
         }
         return nb::make_tuple(std::move(out), x.type());
       }
