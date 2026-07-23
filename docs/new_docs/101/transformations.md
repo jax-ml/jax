@@ -140,6 +140,7 @@ training progress. {func}`jax.value_and_grad` computes both in one pass:
 ```{code-cell}
 loss_value, Wb_grad = jax.value_and_grad(loss, (0, 1))(W, b)
 print(loss_value)
+print(Wb_grad)
 ```
 
 And sometimes a function naturally computes intermediate results worth
