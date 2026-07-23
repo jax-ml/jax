@@ -334,6 +334,15 @@ def MosaicGPU_OOBFillMode : I32EnumAttr<"OOBFillMode",
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_AsyncCopyImplementation : I32EnumAttr<"AsyncCopyImplementation",
+    "The hardware mechanism used to perform an async GMEM to SMEM copy.",
+    [
+      I32EnumAttrCase<"kTma", 0, "tma">,
+      I32EnumAttrCase<"kCpAsync", 1, "cp_async">
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
@@ -389,7 +398,9 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective,
-    DefaultValuedAttr<MosaicGPU_OOBFillMode, "OOBFillMode::kZeros">:$oob_fill_mode
+    DefaultValuedAttr<MosaicGPU_OOBFillMode, "OOBFillMode::kZeros">:$oob_fill_mode,
+    DefaultValuedAttr<MosaicGPU_AsyncCopyImplementation,
+        "AsyncCopyImplementation::kTma">:$implementation
   );
 
   let hasVerifier = 1;
