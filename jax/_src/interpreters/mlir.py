@@ -314,6 +314,8 @@ def _ir_constant(val: Any, *,
   const_lowering: dict[tuple[int, core.AbstractValue], IrValues] | None = None,
   aval: core.AbstractValue | None = None
 ) -> IrValues:
+  if type(val).__name__ == "EArray":
+    return _ir_constant(val._data, const_lowering=const_lowering, aval=aval)
   if const_lowering is not None:
     # pyrefly: ignore[bad-argument-type]
     if np.shape(val) and (c_val := const_lowering.get((id(val), aval))) is not None:
