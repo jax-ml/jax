@@ -30,6 +30,7 @@ _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
 _TPU_V4_LITE = "TPU v4 lite"
 _TPU_V5_LITE = "TPU v5 lite"
+_TPU_V5 = "TPU v5"
 _TPU_V5E = "TPU v5e"
 _TPU_V5P = "TPU v5p"
 _TPU_V6_LITE = "TPU v6 lite"
@@ -240,6 +241,7 @@ device_kind_handler_dict: dict[
     _TPU_V5_LITE: _v5e_create_device_mesh,
     _TPU_V5E: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
+    _TPU_V5: _v5p_create_device_mesh,
     _TPU_V6_LITE: _v5e_create_device_mesh,
     _TPU_7X: _7x_create_device_mesh,
     _TPU_7: _7x_create_device_mesh,
@@ -708,7 +710,7 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
           d.core_on_chip - min_cores_per_chip,
       ] = d
   elif (device_kind in (_TPU_7X, _TPU_7, _TPU_8I) or
-        (device_kind in (_TPU_V5P,) and cores_per_chip == 2)):
+        (device_kind in (_TPU_V5P,_TPU_V5) and cores_per_chip == 2)):
     out = np.empty(dims + (cores_per_chip,), dtype=object)
     for d in jax_devices:
       coords = d.coords
