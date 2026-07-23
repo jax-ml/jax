@@ -19,6 +19,7 @@ import numpy as np
 import scipy
 import scipy.linalg
 import scipy as osp
+import unittest
 
 from absl.testing import absltest, parameterized
 
@@ -37,6 +38,7 @@ from jax._src.numpy.util import promote_dtypes_inexact
 config.parse_flags_with_absl()
 
 scipy_version = jtu.parse_version(scipy.version.version)
+jaxlib_version = jtu.parse_version(jax.lib.__version__)
 
 T = lambda x: np.swapaxes(x, -1, -2)
 
@@ -1049,6 +1051,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.linalg.inv, jnp.linalg.inv, args_maker,
                             tol=1e-3)
     self._CompileAndCheck(jnp.linalg.inv, args_maker)
+
+  @unittest.skipIf(jaxlib_version < (0, 11, 1), "Test requires jaxlib v0.11.1 or newer.")
+  @jtu.run_on_devices('cpu')
+  def testInvDtypeError(self):
+    # regression test for https://github.com/jax-ml/jax/issues/38825
+    x = jnp.ones((3, 3), dtype='float16')
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Unsupported dtype .*float16.* for LAPACK operations."):
+      jsp.linalg.inv(x)
 
   @jtu.sample_product(
     [dict(shape=shape, hermitian=hermitian)
