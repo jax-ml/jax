@@ -1613,6 +1613,7 @@ effects.custom_derivatives_allowed_effects.add_type(CommsEffect)
 
 kernel_local_effects: effects.EffectTypeSet = effects.EffectTypeSet()
 kernel_local_effects.add_type(jax_core.InternalMutableArrayEffect)
+kernel_local_effects.add_type(checkify.ErrorEffect)
 kernel_local_effects.add_type(CommsEffect)
 
 
