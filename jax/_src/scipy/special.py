@@ -312,7 +312,7 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{betaln}(a, b) = \log B(a, b)
+     \mathrm{betaln}(a, b) = \log |B(a, b)|
 
   where :math:`B` is the :func:`~jax.scipy.special.beta` function.
 
@@ -321,7 +321,7 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     b: arraylike, real-valued.  Parameter *b* of the beta distribution.
 
   Returns:
-    array containing the values of the log-beta function
+    array containing the logarithm of the absolute value of the beta function
 
   See Also:
     :func:`jax.scipy.special.beta`
@@ -468,9 +468,9 @@ def digamma(x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{digamma}(z) = \psi(z) = \frac{\mathrm{d}}{\mathrm{d}z}\log \Gamma(z)
+     \mathrm{digamma}(x) = \psi(x) = \frac{\mathrm{d}}{\mathrm{d}x}\log \Gamma(x)
 
-  where :math:`\Gamma(z)` is the :func:`~jax.scipy.special.gamma` function.
+  where :math:`\Gamma(x)` is the :func:`~jax.scipy.special.gamma` function.
 
   Args:
     x: arraylike, real-valued.
@@ -898,7 +898,7 @@ def logit(x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{logit}(p) = \log\frac{p}{1 - p}
+     \mathrm{logit}(x) = \log\frac{x}{1 - x}
 
   Args:
     x: arraylike, real-valued.
@@ -1445,9 +1445,9 @@ def ndtr(x: ArrayLike) -> Array:
   .. math::
     \begin{align}
     \mathrm{ndtr}(x) =&
-      \ \frac{1}{\sqrt{2 \pi}}\int_{-\infty}^{x} e^{-\frac{1}{2}t^2} dt \\
+      \ \frac{1}{\sqrt{2 \pi}}\int_{-\infty}^{x} e^{-\frac{1}{2}t^2} \mathrm{d}t \\
     =&\ \frac{1}{2} (1 + \mathrm{erf}(\frac{x}{\sqrt{2}})) \\
-    =&\ \frac{1}{2} \mathrm{erfc}(\frac{x}{\sqrt{2}})
+    =&\ \frac{1}{2} \mathrm{erfc}(-\frac{x}{\sqrt{2}})
     \end{align}
 
   Args:
@@ -2959,7 +2959,7 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{expn}(x) = E_n(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
+     \mathrm{expn}(n, x) = E_n(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t^n}\mathrm{d}t
 
   Args:
     n: arraylike, real-valued
@@ -3016,7 +3016,7 @@ def exp1(x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{exp1}(x) = E_1(x) = x^{n-1}\int_x^\infty\frac{e^{-t}}{t}\mathrm{d}t
+     \mathrm{exp1}(x) = E_1(x) = \int_x^\infty\frac{e^{-t}}{t}\mathrm{d}t
 
 
   Args:
@@ -3163,7 +3163,7 @@ def bernoulli(n: int) -> Array:
 
 @custom_derivatives.custom_jvp
 def poch(z: ArrayLike, m: ArrayLike) -> Array:
-  r"""The Pochammer symbol.
+  r"""The Pochhammer symbol.
 
   JAX implementation of :obj:`scipy.special.poch`.
 
@@ -3178,7 +3178,7 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
     m: arraylike, real-valued
 
   Returns:
-    array of Pochammer values.
+    array of Pochhammer values.
 
   Notes:
     The JAX version supports only real-valued inputs.
@@ -3273,7 +3273,7 @@ def _hyp1f1_asymptotic(a, b, x):
 @jnp_vectorize.vectorize
 def _hyp1f1_a_derivative(a, b, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
@@ -3301,7 +3301,7 @@ def _hyp1f1_a_derivative(a, b, x):
 @jnp_vectorize.vectorize
 def _hyp1f1_b_derivative(a, b, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
@@ -3328,7 +3328,7 @@ def _hyp1f1_b_derivative(a, b, x):
 @jit
 def _hyp1f1_x_derivative(a, b, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/04/
   """
 
@@ -3345,9 +3345,9 @@ def hyp1f1(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{hyp1f1}(a, b, x) = {}_1F_1(x;a, b) = \sum_{k=0}^\infty \frac{(a)_k}{(b)_kk!}x^k
+     \mathrm{hyp1f1}(a, b, x) = {}_1F_1(a; b; x) = \sum_{k=0}^\infty \frac{(a)_k}{(b)_k}\frac{x^k}{k!}
 
-  where :math:`(\cdot)_k` is the Pochammer symbol (refer to :func:`~jax.scipy.special.poch`).
+  where :math:`(\cdot)_k` is the Pochhammer symbol (refer to :func:`~jax.scipy.special.poch`).
 
   The JAX version only accepts positive and real inputs. Values of ``a``, ``b``,
   and ``x``, leading to high values of 1F1 may lead to erroneous results;
@@ -3583,7 +3583,7 @@ def _hyp2f1_digamma_transform(a, b, c, x):
 @jnp_vectorize.vectorize
 def _hyp2f1_a_derivative(a, b, c, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/01/
   """
 
@@ -3611,7 +3611,7 @@ def _hyp2f1_a_derivative(a, b, c, x):
 @jnp_vectorize.vectorize
 def _hyp2f1_b_derivative(a, b, c, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/02/
   """
 
@@ -3639,7 +3639,7 @@ def _hyp2f1_b_derivative(a, b, c, x):
 @jnp_vectorize.vectorize
 def _hyp2f1_c_derivative(a, b, c, x):
   """
-  Define it as a serie using :
+  Define it as a series using:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/03/
   """
 
@@ -3666,7 +3666,7 @@ def _hyp2f1_c_derivative(a, b, c, x):
 @jit
 def _hyp2f1_x_derivative(a, b, c, x):
   """
-  Define the derivative with regard to ``x`` :
+  Define the derivative with respect to ``x``:
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric2F1/20/01/05/
   """
 
@@ -3683,9 +3683,9 @@ def hyp2f1(a: ArrayLike, b: ArrayLike, c: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a; b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
+     \mathrm{hyp2f1}(a, b, c, x) = {}_2F_1(a, b; c; x) = \sum_{k=0}^\infty \frac{(a)_k(b)_k}{(c)_k}\frac{x^k}{k!}
 
-  where :math:`(\cdot)_k` is the Pochammer symbol.
+  where :math:`(\cdot)_k` is the Pochhammer symbol.
 
   The JAX version only accepts positive and real inputs. Values of
   ``a``, ``b``, ``c``, and ``x`` leading to high values of 2F1 may
