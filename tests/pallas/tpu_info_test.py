@@ -112,9 +112,6 @@ class TpuInfoTest(jtu.JaxTestCase):
     if info.chip_version in {
         pltpu.ChipVersion.TPU_V4,
         pltpu.ChipVersion.TPU_V5P,
-        pltpu.ChipVersion.TPU_8I,
-        pltpu.ChipVersion.TPU_7,
-        pltpu.ChipVersion.TPU_7X,
     }:
       self.assertEqual(info.num_cores, 2)
     else:
@@ -128,9 +125,6 @@ class TpuInfoTest(jtu.JaxTestCase):
         in {
             pltpu.ChipVersion.TPU_V4,
             pltpu.ChipVersion.TPU_V5P,
-            pltpu.ChipVersion.TPU_8I,
-            pltpu.ChipVersion.TPU_7,
-            pltpu.ChipVersion.TPU_7X,
         }
         else 1
     )
