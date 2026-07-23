@@ -312,6 +312,7 @@ _SHAPE_CASES = [
     ('beta', lambda key, shape: random.beta(key, jnp.ones(shape), jnp.ones(shape), shape=shape)),
     ('binomial', lambda key, shape: random.binomial(key, jnp.full(shape, 10.), jnp.full(shape, 0.5), shape=shape)),
     ('chisquare', lambda key, shape: random.chisquare(key, jnp.ones(shape), shape=shape)),
+    ('chisquare_approx', lambda key, shape: random.chisquare(key, jnp.ones(shape), shape=shape, method='approximate')),
     # ('double_sided_maxwell', lambda key, shape: random.double_sided_maxwell(key, loc=jnp.zeros(shape), scale=jnp.ones(shape), shape=shape)),
     ('f', lambda key, shape: random.f(key, jnp.ones(shape), jnp.ones(shape), shape=shape)),
     ('gamma', lambda key, shape: random.gamma(key, jnp.ones(shape), shape=shape)),
@@ -1299,14 +1300,22 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(
       df = [0.2, 1., 10., 100.],
       dtype=jtu.dtypes.floating,
-      use_jit=[False, True])
-  def testChisquare(self, df, dtype, use_jit):
+      use_jit=[False, True],
+      method=['approximate', 'exact'])
+  def testChisquare(self, df, dtype, use_jit, method):
+    if not config.enable_x64.value:
+      raise SkipTest("skip test except on X64")
     key = self.make_key(1)
 
     rand = random.chisquare if not use_jit else jax.jit(
-        random.chisquare, static_argnames=['shape', 'dtype'])
-    samples = rand(key, df, shape=(10000,), dtype=dtype)
+        random.chisquare, static_argnames=['shape', 'dtype', 'method'])
+    samples = rand(key, df, shape=(10000,), dtype=dtype, method=method)
     self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.chi2(df).cdf)
+
+  def testChisquareInvalidMethod(self):
+    key = self.make_key(0)
+    with self.assertRaisesRegex(ValueError, "method argument to `chisquare`"):
+      random.chisquare(key, 1.0, method='nonsense')
 
   @jtu.sample_product(
       dfnum = [1., 2., 10. ,100.],

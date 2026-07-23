@@ -2488,6 +2488,7 @@ def chisquare(key: ArrayLike,
               shape: Shape | None = None,
               dtype: DTypeLikeFloat | None = None,
               *,
+              method: str = "exact",
               out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Chisquare random values with given shape and float dtype.
 
@@ -2508,6 +2509,11 @@ def chisquare(key: ArrayLike,
       produces a result shape equal to ``df.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method is a rejection
+      sampler. The ``'approximate'`` method is loop-free and faster but carries
+      a small bias. The gradient w.r.t. ``df`` differs between the two
+      methods because of the ambiguity in defining a gradient for random variates.
     out_sharding: optional, Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2522,6 +2528,9 @@ def chisquare(key: ArrayLike,
     ``shape`` is not None, or else by ``df.shape``.
   """
   key, _ = _check_prng_key("chisquare", key)
+  if method not in {"exact", "approximate"}:
+    raise ValueError("method argument to `chisquare` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
@@ -2530,14 +2539,16 @@ def chisquare(key: ArrayLike,
   shape = _check_broadcast_shapes("chisquare", shape, df)
   _check_all_safe_to_cast("chisquare", dtype, df)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "chisquare", shape)
-  return _chisquare(key, df, shape, dtype, out_sharding)
+  return maybe_auto_axes(_chisquare, out_sharding, method=method,
+                         shape=shape, dtype=dtype)(key, df)
+
 
 @jit(static_argnums=(2, 3, 4))
-def _chisquare(key, df, shape, dtype, out_sharding) -> Array:
+def _chisquare(key, df, method, shape, dtype) -> Array:
   df = lax.convert_element_type(df, dtype)
   two = lax._const(df, 2)
   half_df = lax.div(df, two)
-  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, out_sharding=out_sharding)
+  log_g = loggamma(key, a=half_df, shape=shape, dtype=dtype, method=method)
   chi2 = lax.mul(jnp.exp(log_g), two)
   return chi2
 
