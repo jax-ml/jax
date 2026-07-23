@@ -135,6 +135,8 @@ def _load_nvidia_libraries():
   _load("nccl", ["libnccl.so.2"])
   _load("cuda_cupti", ["libcupti.so.12"])
   _load("cu13", ["libcupti.so.13"])
+  _load("nvjitlink", ["libnvJitLink.so.12"])
+  _load("cu13", ["libnvJitLink.so.13"])
   _load("cusparse", ["libcusparse.so.12"])
   _load("cu13", ["libcusparse.so.12"])
   _load("cusolver", ["libcusolver.so.11"])
