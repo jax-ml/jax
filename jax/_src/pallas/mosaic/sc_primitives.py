@@ -253,10 +253,13 @@ def _gather_abstract_eval(*flat_args, tree):
     raise TypeError(f"ref.dtype={ref.dtype} must be int32 or float32")
   out_aval = jax_core.ShapedArray(_indexed_shape(ref, indices), ref.dtype)
   sc_lowering._check_aval_is_supported("Gather", out_aval)
-  if mask is not None and mask.shape != out_aval.shape:
-    raise ValueError(
-        f"{mask.shape=} does not match the expected shape {out_aval.shape}"
-    )
+  if mask is not None:
+    if mask.shape != out_aval.shape:
+      raise ValueError(
+          f"{mask.shape=} does not match the expected shape {out_aval.shape}"
+      )
+    if mask.dtype != jnp.bool:
+      raise TypeError(f"Mask must be a boolean array, got {mask.dtype}")
   return out_aval, {state_types.ReadEffect(0)}
 
 
@@ -327,10 +330,13 @@ def _scatter_abstract_eval(*flat_args, tree, add):
     )
   if x.dtype != ref.dtype:
     raise TypeError(f"val.dtype={x.dtype} != ref.dtype={ref.dtype}")
-  if mask is not None and mask.shape != expected_shape:
-    raise ValueError(
-        f"{mask.shape=} does not match expected shape {expected_shape}"
-    )
+  if mask is not None:
+    if mask.shape != expected_shape:
+      raise ValueError(
+          f"{mask.shape=} does not match expected shape {expected_shape}"
+      )
+    if mask.dtype != jnp.bool:
+      raise TypeError(f"Mask must be a boolean array, got {mask.dtype}")
   effects: set[jax_core.Effect] = {state_types.WriteEffect(0)}
   if add:
     effects.add(state_types.ReadEffect(0))
@@ -382,7 +388,7 @@ def store_scatter(
     indices: A sequence of 1D arrays, one for each dimension of ``ref``. Each
       array specifies an index for that dimension. All arrays must have the same
       size.
-    val: The array to store.
+    x: The array to store.
     mask: An optional boolean array, which specifies which elements to store. If
       ``None``, all elements are stored.
   """
@@ -403,11 +409,21 @@ def addupdate_scatter(
     *,
     mask: jax.Array | None = None,
 ) -> None:
-  """Scatters an array to a ref atomically adding to existing values."""
+  """Scatters an array to a ref, atomically adding to existing values.
+
+  Args:
+    ref: The ref in ``VMEM`` to scatter to.
+    indices: A sequence of 1D arrays, one for each dimension of ``ref``. Each
+      array specifies an index for that dimension. All arrays must have the same
+      size.
+    x: The array to add.
+    mask: An optional boolean array, which specifies which elements to add. If
+      ``None``, all elements are added.
+  """
   if not indices:
     raise ValueError("Indices must not be empty")
   ref, transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "store_scatter"
+      ref, None, "addupdate_scatter"
   )
   flat_args, tree = jax.tree.flatten((ref, transforms, indices, x, mask))
   _ = scatter_p.bind(*flat_args, tree=tree, add=True)
@@ -450,6 +466,17 @@ def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
   Unlike ``lax.bitcast_convert_type``, this function returns an array of the
   same rank as the input. The minormost dimension is expanded/shrunk to
   account for the difference in the element bitwidth.
+
+  When the target dtype has a different bitwidth, the size of the minormost
+  dimension in bits (``x.shape[-1] * old_bitwidth``) must be divisible by the
+  target bitwidth.
+
+  Args:
+    x: The array to bitcast.
+    dtype: The target dtype.
+
+  Returns:
+    The bitcast array.
   """
   if x.dtype == dtype:
     return x
@@ -483,12 +510,12 @@ def subcore_barrier():
   """Blocks until all subcores on the same core reach this instruction.
 
   The barrier must be used with
-  :class:jax.experimental.pallas.tpu_sc.VectorSubcoreMesh.
+  :class:`jax.experimental.pallas.tpu_sc.VectorSubcoreMesh`.
   """
   barrier_p.bind()
 
 
-scan_count_p = jax_core.Primitive("unique")
+scan_count_p = jax_core.Primitive("scan_count")
 scan_count_p.multiple_results = True
 
 
@@ -1160,8 +1187,14 @@ def unpack(
 def _mask_all_reduce_abstract_eval(x, *, reduce):
   if x.dtype != jnp.bool:
     raise TypeError(f"Mask all-reduce only supports bool arrays, got {x.dtype}")
+  if reduce < 1:
+    raise ValueError(f"reduce must be >=1, got {reduce}")
   match x.shape:
     case (minor_dim,):
+      if minor_dim % reduce != 0:
+        raise ValueError(
+            f"{reduce=} must divide the dimension size {minor_dim}"
+        )
       return jax_core.ShapedArray((minor_dim // reduce,), jnp.int32)
     case _:
       raise ValueError("Mask all-reduce only supports 1D arrays")

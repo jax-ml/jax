@@ -999,6 +999,24 @@ class VectorSubcoreTest(PallasSCTest):
     mask = mask_fn(x)
     np.testing.assert_array_equal(kernel(x, indices)[mask], x[indices][mask])
 
+  def test_load_gather_invalid_mask_dtype(self):
+    x = jnp.arange(self.num_lanes)
+    indices = jax.random.permutation(
+        jax.random.key(42), jnp.arange(self.num_lanes)
+    )
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    def kernel(x_ref, indices_ref, o_ref):
+      o_ref[...] = plsc.load_gather(
+          x_ref, [indices_ref[...]], mask=x_ref[...]
+      )
+
+    with self.assertRaisesRegex(TypeError, "Mask must be a boolean array"):
+      kernel(x, indices)
+
   def test_store_scatter(self):
     x = jnp.arange(self.num_lanes)
     indices = jax.random.permutation(
@@ -1037,6 +1055,22 @@ class VectorSubcoreTest(PallasSCTest):
         kernel(x, indices),
         jnp.zeros_like(x).at[indices[mask]].set(x[mask]),
     )
+
+  def test_store_scatter_invalid_mask_dtype(self):
+    x = jnp.arange(self.num_lanes)
+    indices = jax.random.permutation(
+        jax.random.key(42), jnp.arange(self.num_lanes)
+    )
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    def kernel(x_ref, indices_ref, o_ref):
+      plsc.store_scatter(o_ref, [indices_ref[...]], x_ref[...], mask=x_ref[...])
+
+    with self.assertRaisesRegex(TypeError, "Mask must be a boolean array"):
+      kernel(x, indices)
 
   def test_store_scatter_2d(self):
     num_steps = 4
@@ -1280,6 +1314,31 @@ class VectorSubcoreTest(PallasSCTest):
     np.testing.assert_array_equal(
         kernel(x), np.broadcast_to(np.count_nonzero(x < 50), x.shape)
     )
+
+  def test_population_count_invalid_reduce(self):
+    x = jnp.arange(self.num_lanes)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    def kernel_zero(x_ref, o_ref):
+      o_ref[...] = plsc.all_reduce_population_count(x_ref[...] < 50, reduce=0)
+
+    with self.assertRaisesRegex(ValueError, "reduce must be >=1"):
+      kernel_zero(x)
+
+    @self.vector_subcore_kernel(
+        out_shape=x,
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    def kernel_indivisible(x_ref, o_ref):
+      o_ref[...] = plsc.all_reduce_population_count(x_ref[...] < 50, reduce=3)
+
+    with self.assertRaisesRegex(
+        ValueError, "reduce=3 must divide the dimension size"
+    ):
+      kernel_indivisible(x)
 
   def test_iota(self):
     key = jax.random.key(42)
