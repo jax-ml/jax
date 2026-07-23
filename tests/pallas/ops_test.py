@@ -2501,10 +2501,25 @@ class OpsTest(PallasBaseTest):
           ("add", jnp.sum),
           ("max", jnp.max),
           ("min", jnp.min),
+      ]
+      for axis in [0, 1, (1,), (0, 1)]
+      for dtype in [
+          "float16",
+          "bfloat16",
+          "float32",
+          "float64",
+          "int32",
+          "int64",
+          "uint32",
+          "uint64",
+      ]
+  ] + [
+      (f"{op_name}_{dtype}_{axis}", op, dtype, axis)
+      for op_name, op in [
           ("argmax", jnp.argmax),
           ("argmin", jnp.argmin),
       ]
-      for axis in [0, 1, (1,), (0, 1)]
+      for axis in [0, 1]
       for dtype in [
           "float16",
           "bfloat16",
