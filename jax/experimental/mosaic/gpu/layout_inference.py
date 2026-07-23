@@ -25,6 +25,7 @@ import math
 import re
 from typing import Any, assert_never, cast
 
+from jax._src import traceback_util
 from jax._src.lib import mosaic_gpu_dialect as mgpu  # noqa: F401
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -32,6 +33,7 @@ from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax._src.pallas.mosaic import error_handling as error
 from jax.experimental.mosaic.gpu.mma import MMALayouts
 import numpy as np
 
@@ -2600,6 +2602,113 @@ def check_layout_assignment(var: cs.Variable, layout: cs.Constant) -> None:
     )
 
 
+def _construct_value_error_with_op_stacktrace(
+    msg: str, culprit_op: ir.Operation
+) -> ValueError:
+  tb = None
+  try:
+    tb = error.traceback_from_op(culprit_op)
+  except Exception:  # pylint: disable=broad-except
+    pass
+  ve = ValueError(msg)
+  if tb is not None:
+    ve.__traceback__ = traceback_util.filter_traceback(tb)
+  return ve
+
+
+def _check_unsatisfiable_divisibility_constraints(
+    ctx: DerivationContext,
+    system: cs.ConstraintSystem,
+) -> None:
+  """Given `system` attempts to find unsatisfiable `cs.Divides` constraints.
+
+  If at least one such a constraint is found, a `ValueError` is raised, pointing
+  to the problematic value site.
+  """
+  divides_per_var = _divides_per_var(system.constraints)
+  if not divides_per_var:
+    return
+
+  candidates_per_var: dict[cs.Variable, list[cs.SMEMTransforms]] = {
+      v: [] for v in divides_per_var
+  }
+
+  for var, cst in system.assignments.items():
+    if var in candidates_per_var:
+      if isinstance(cst, cs.SMEMTransforms) and cst.tiling is not None:
+        candidates_per_var[var].append(cst)
+
+  # We only look at candidates from `IsValidMmaTiling` because we assume
+  # candidates extracted from it are exhaustive. Semantically it allows us to
+  # raise an error message saying there's a problem with the kernel, and not
+  # the layout inference system itself.
+  for constraint in system.constraints:
+    if isinstance(constraint, cs.IsValidMmaTiling):
+      for mma_var, candidate in _extract_layout_candidates_from_mma_tiling(
+          constraint
+      ):
+        if (
+            mma_var in candidates_per_var
+            and mma_var not in system.assignments
+            and isinstance(candidate, cs.SMEMTransforms)
+            and candidate.tiling is not None
+        ):
+          candidates_per_var[mma_var].append(candidate)
+
+  def _culprit_indices(
+      tiling: tuple[int, ...], multiple: tuple[int, ...]
+  ):
+    """Returns negative indices into the tiling for which the divisibility
+    constraint is not satisfied."""
+    assert len(tiling) <= len(multiple)
+    for i, (t, m) in enumerate(zip(reversed(tiling), reversed(multiple))):
+      if m % t != 0:
+        yield -(i + 1)
+    raise RuntimeError("Unreachable")
+
+  for var, constraint in divides_per_var.items():
+    candidates = candidates_per_var[var]
+    multiple = constraint.tiling_multiple
+    if any(cs.Divides(c, multiple).holds() for c in candidates):
+      continue
+
+    # At this point we know that the contradiction for `var` within the `system`
+    # exist. We attempt to fetch the troublesome value site to build a localized
+    # error message.
+    def transfer_ops():
+      for vs in [var.key] + ctx.value_sites_for_variable.get(var, []):
+        if isinstance(vs, ValueSite) and isinstance(
+            vs.operation, (mgpu.AsyncLoadOp, mgpu.AsyncStoreOp)
+        ):
+          yield vs.operation
+
+    for op in transfer_ops():
+      for cand in candidates:
+        # TODO(olechwierowicz): If only len(multiple) < len(tiling) candidates
+        # are present we should raise too.
+        assert cand.tiling is not None
+        tiling = cand.tiling.tiling
+        if cs.Divides(cand, multiple).holds():
+          continue
+        # None of the tiling candidates satisfy the constraint. Here
+        # we attempt to find a case of a dynamic index of which we do not
+        # know the value at compile time.
+        for bad_idx in _culprit_indices(tiling, multiple):
+          assert len(op.indices) == len(multiple)
+          idx = op.indices[bad_idx]
+          # TODO(olechwierowicz): We check for dynamic_gcd == 1, but a
+          # dynamic_gcd > 1 could still be insufficient to satisfy the tiling
+          # constraint. Relax this check to compare dynamic_gcd against the
+          # required multiple.
+          if dynamic_gcd(list(op.slice_lengths)[bad_idx], idx) != 1:
+            continue
+          msg = (
+              "Failed to infer a possible set of layouts. You need to"
+              " prove divisibility using pl.multiple_of."
+          )
+          raise _construct_value_error_with_op_stacktrace(msg, idx)
+
+
 def infer_layout(
     module: ir.Module, *, fuel: int = _DEFAULT_LAYOUT_INFERENCE_FUEL,
     arch: tuple[int, int] = (9, 0)
@@ -2706,6 +2815,11 @@ def infer_layout(
           f"consumed {fuel - remaining_fuel}/{fuel} fuel.")
 
   if isinstance(solution, cs.Unsatisfiable):
+    # At this point we know the system is unsatisfiable. We attempt to find
+    # contradictions in the `cs.ConstraintSystem`, and raise a meaningful error
+    # message.
+    _check_unsatisfiable_divisibility_constraints(ctx, global_constraint_system)
+
     raise ValueError(
         "Failed to infer a possible set of layouts. This should only happen if "
         "user-provided layout casts are unsatisfiable."
