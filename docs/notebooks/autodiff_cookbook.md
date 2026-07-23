@@ -168,7 +168,7 @@ Another convenient function is `value_and_grad` for efficiently computing both a
 from jax import value_and_grad
 loss_value, Wb_grad = value_and_grad(loss, (0, 1))(W, b)
 print('loss value', loss_value)
-print('loss value', loss(W, b))
+print('gradients', Wb_grad)
 ```
 
 +++ {"id": "rYTrH5tKllC_"}
