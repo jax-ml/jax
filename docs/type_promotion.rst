@@ -128,7 +128,7 @@ on this lattice, which generates the following binary promotion table:
 
     print(out)
 
-Jax's type promotion rules differ from those of NumPy, as given by
+JAX's type promotion rules differ from those of NumPy, as given by
 :func:`numpy.promote_types`, in those cells highlighted with a green background
 in the table above. There are three key classes of differences:
 

@@ -394,7 +394,7 @@ def f(x):
   return y, z
 ```
 
-If we unpack the future into its components, we’ll see the the aliasing patterns:
+If we unpack the future into its components, we’ll see the aliasing patterns:
 
 ```py
 def f(x):
