@@ -105,14 +105,6 @@ def get_scipy_distribution(sampler_name: str, kwargs: dict[str, Any]) -> Any:
   """Returns the corresponding scipy.stats distribution for a given sampler."""
   sname = sampler_name.lower()
 
-  if (
-      sname in ("bernoulli", "poisson", "geometric", "binomial")
-      or isinstance(getattr(scipy.stats, sname, None), scipy.stats.rv_discrete)
-  ):
-    raise ValueError(
-        f"Discrete distributions like '{sampler_name}' are not supported for analytical quantile evaluation."
-    )
-
   if sname == "gamma":
     a = kwargs.get("a", 1.0)
     return scipy.stats.gamma(a=a, scale=1.0)
@@ -120,6 +112,19 @@ def get_scipy_distribution(sampler_name: str, kwargs: dict[str, Any]) -> Any:
     loc = kwargs.get("loc", 0.0)
     scale = kwargs.get("scale", 1.0)
     return scipy.stats.norm(loc=loc, scale=scale)
+  elif sname == "poisson":
+    lam = kwargs.get("lam", 1.0)
+    return scipy.stats.poisson(mu=lam)
+  elif sname == "bernoulli":
+    p = kwargs.get("p", 0.5)
+    return scipy.stats.bernoulli(p=p)
+  elif sname == "geometric":
+    p = kwargs.get("p", 0.5)
+    return scipy.stats.geom(p=p)
+  elif sname == "binomial":
+    n = kwargs.get("n", 1)
+    p = kwargs.get("p", 0.5)
+    return scipy.stats.binom(n=n, p=p)
   elif sname == "uniform":
     minval = kwargs.get("minval", 0.0)
     maxval = kwargs.get("maxval", 1.0)
@@ -172,12 +177,7 @@ def get_scipy_distribution(sampler_name: str, kwargs: dict[str, Any]) -> Any:
     return scipy.stats.maxwell(scale=scale)
   elif hasattr(scipy.stats, sname):
     dist_cls = getattr(scipy.stats, sname)
-    dist = dist_cls(**kwargs)
-    if isinstance(getattr(dist, "dist", dist), scipy.stats.rv_discrete):
-      raise ValueError(
-          f"Discrete distributions like '{sampler_name}' are not supported for analytical quantile evaluation."
-      )
-    return dist
+    return dist_cls(**kwargs)
   else:
     raise ValueError(
         f"Unknown or unsupported distribution for analytical quantiles: {sampler_name}"
@@ -209,15 +209,18 @@ def evaluate_bias(
   # Generate samples
   try:
     samples = sampler_fn(key, shape=(num_samples,), dtype=dtype, **jax_kwargs)
-  except TypeError:
+  except (TypeError, ValueError):
     try:
       samples = sampler_fn(key, shape=(num_samples,), **jax_kwargs)
-    except TypeError:
+    except (TypeError, ValueError):
       samples = sampler_fn(key, **jax_kwargs)
 
   samples_np = np.asarray(samples, dtype=np.float64)
 
   scipy_dist = get_scipy_distribution(sampler_name, jax_kwargs)
+  is_discrete = isinstance(
+      getattr(scipy_dist, "dist", scipy_dist), scipy.stats.rv_discrete
+  )
 
   empirical_quantiles = np.quantile(samples_np, quantiles)
   analytical_quantiles = scipy_dist.ppf(quantiles)
@@ -233,26 +236,44 @@ def evaluate_bias(
 
   std_errors = []
   z_scores = []
-  pdf_fn = getattr(scipy_dist, "pdf", None)
 
-  for q, ana, err in zip(quantiles, analytical_quantiles, abs_errors):
-    try:
-      if pdf_fn is not None:
-        dens = pdf_fn(ana)
-        if dens > 0:
-          se = np.sqrt(q * (1.0 - q)) / (np.sqrt(num_samples) * dens)
-          z = err / se
+  if is_discrete:
+    for ana in analytical_quantiles:
+      try:
+        ana_prob = float(scipy_dist.cdf(ana))
+        emp_prob = float(np.mean(samples_np <= ana))
+        if 0.0 < ana_prob < 1.0:
+          se = np.sqrt(ana_prob * (1.0 - ana_prob) / num_samples)
+          z = (emp_prob - ana_prob) / se
+        else:
+          se = 0.0 if emp_prob == ana_prob else np.nan
+          z = 0.0 if emp_prob == ana_prob else np.nan
+      except Exception:  # pylint: disable=broad-exception-caught
+        se = np.nan
+        z = np.nan
+      std_errors.append(se)
+      z_scores.append(z)
+  else:
+    pdf_fn = getattr(scipy_dist, "pdf", None)
+
+    for q, ana, err in zip(quantiles, analytical_quantiles, abs_errors):
+      try:
+        if pdf_fn is not None:
+          dens = pdf_fn(ana)
+          if dens > 0:
+            se = np.sqrt(q * (1.0 - q)) / (np.sqrt(num_samples) * dens)
+            z = err / se
+          else:
+            se = np.nan
+            z = np.nan
         else:
           se = np.nan
           z = np.nan
-      else:
+      except Exception:  # pylint: disable=broad-exception-caught
         se = np.nan
         z = np.nan
-    except Exception:  # pylint: disable=broad-exception-caught
-      se = np.nan
-      z = np.nan
-    std_errors.append(se)
-    z_scores.append(z)
+      std_errors.append(se)
+      z_scores.append(z)
 
   results = []
   for q, emp, ana, abs_err, rel_err, se, z in zip(

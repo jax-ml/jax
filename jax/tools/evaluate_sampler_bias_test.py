@@ -42,11 +42,9 @@ class EvaluateSamplerBiasTest(absltest.TestCase):
     dist_norm = evaluate_sampler_bias.get_scipy_distribution("normal", {})
     self.assertAlmostEqual(dist_norm.ppf(0.5), 0.0)
 
-    with self.assertRaises(ValueError):
-      evaluate_sampler_bias.get_scipy_distribution("bernoulli", {"p": 0.5})
-
-    with self.assertRaises(ValueError):
-      evaluate_sampler_bias.get_scipy_distribution("poisson", {"lam": 1.0})
+    dist_poisson = evaluate_sampler_bias.get_scipy_distribution("poisson", {"lam": 5.0})
+    self.assertIsNotNone(dist_poisson)
+    self.assertEqual(dist_poisson.ppf(0.5), 5.0)
 
   def test_evaluate_bias_gamma(self):
     res = evaluate_sampler_bias.evaluate_bias(
@@ -73,6 +71,21 @@ class EvaluateSamplerBiasTest(absltest.TestCase):
     )
     self.assertEqual(res.sampler_name, "normal")
     self.assertLess(res.max_abs_error, 0.05)
+
+  def test_evaluate_bias_poisson(self):
+    res = evaluate_sampler_bias.evaluate_bias(
+        sampler_name="poisson",
+        kwargs={"lam": 5.0},
+        num_samples=100000,
+        seed=42,
+        dtype_str="int32",
+        quantiles=[0.1, 0.5, 0.9],
+    )
+    self.assertEqual(res.sampler_name, "poisson")
+    self.assertIsNotNone(res.results)
+    self.assertLen(res.results, 3)
+    self.assertLess(res.max_abs_error, 1.0)
+    self.assertLess(res.max_z_score, 4.0)
 
   def test_format_table_output(self):
     res = evaluate_sampler_bias.evaluate_bias(
