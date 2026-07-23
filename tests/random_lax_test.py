@@ -1423,7 +1423,7 @@ class DistributionsTest(RandomTestBase):
     key = jax.random.key(0)
     n = jax.numpy.float16(100)
     p = jax.numpy.float16(0.5)
-    jax.random.binomial(key, n, p)  # doesn't error
+    jax.random.binomial(key, n, p, dtype=jnp.float32)  # doesn't error
 
   def testMultinomialExample(self):
     key = random.key(0)

@@ -21,6 +21,7 @@ from operator import index
 import typing
 from typing import Union
 import warnings
+from contextlib import nullcontext
 
 import numpy as np
 
@@ -3398,10 +3399,6 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_binomial_op.cc
   # and tensorflow_probability.substrates.jax.distributions.Binomial
   # For n * p < 10, we use the binomial inverse algorithm; otherwise btrs.
-  if shape is None:
-    shape = jnp.broadcast_shapes(np.shape(count), np.shape(prob))
-  else:
-    _check_shape("binomial", shape, np.shape(count), np.shape(prob))
   (prob,) = promote_dtypes_inexact(prob)
   count = lax.convert_element_type(count, prob.dtype)
   count = jnp.broadcast_to(count, shape)
@@ -3479,13 +3476,20 @@ def binomial(
       shape. Must be broadcast-compatible with ``n`` and ``p``.
       The default (None) produces a result shape equal to ``np.broadcast(n, p).shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      any type promotions of ``a`` or ``b`` will be seen as explicit. If
+      left unspecified, type promotions will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
 
   Returns:
     A random array with the specified dtype and with shape given by
     ``np.broadcast(n, p).shape``.
   """
   key, _ = _check_prng_key("binomial", key)
+  if dtype is not None:
+    cxt = config.numpy_dtype_promotion('standard')
+  else:
+    cxt = nullcontext()
   check_arraylike("binomial", n, p)
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
@@ -3493,8 +3497,9 @@ def binomial(
     raise ValueError(
         f"dtype argument to `binomial` must be a float dtype, got {dtype}"
       )
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("binomial", shape, n, p)
+  with cxt:
+    _check_all_safe_to_cast("binomial", dtype, n, p)
   return _binomial(key, n, p, shape, dtype)
 
 
