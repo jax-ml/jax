@@ -101,7 +101,7 @@ def _allocate_buffers_for_inputs(
         # are not sempahores, barriers etc.) are placed in `GMEM`. These arrays
         # (or slices thereof) may need to be copied into `SMEM` before executing
         # the kernel.
-        memory_space_id=gpu_callbacks.get_memory_space_idx(
+        memory_space_id=memory.get_memory_space_idx(
             mosaic_gpu_core.MemorySpace.GMEM
         ),
     )
@@ -173,7 +173,7 @@ def _allocate_buffers_for_outputs(
           # are not sempahores, barriers etc.) are placed in `GMEM`. Results
           # from executing the kernel (or slices thereof) may need to be copied
           # from `SMEM` into the `GMEM` output buffers that are allocated here.
-          memory_space_id=gpu_callbacks.get_memory_space_idx(
+          memory_space_id=memory.get_memory_space_idx(
               mosaic_gpu_core.MemorySpace.GMEM
           ),
           initial_ref_count=num_threads,
@@ -226,7 +226,7 @@ def _get_kernel_buffers(
       token, req = gpu_callbacks.call_make_allocation_request_array(
           token=token,
           compute_unit=device,
-          memory_space_id=gpu_callbacks.get_memory_space_idx(aval.memory_space),
+          memory_space_id=memory.get_memory_space_idx(aval.memory_space),
           initial_ref_count=num_threads,
       )
       if transforms:
@@ -551,6 +551,11 @@ def interpret_pallas_call(
         token,
         grid_coords,
         use_ordered_callback=True,
+    )
+    token = callback.io_callback(
+        functools.partial(gpu_callbacks.cluster_finished),
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
     )
     return token
     # TODO(nrink): Determine if any synchronization between the vector clocks is

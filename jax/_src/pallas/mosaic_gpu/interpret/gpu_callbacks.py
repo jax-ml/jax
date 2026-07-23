@@ -14,19 +14,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import contextlib
+import dataclasses
 import functools
 import itertools
 import threading
-import types
 from typing import Any
 
 import jax
 from jax import numpy as jnp
 from jax._src import callback
 from jax._src import source_info_util
-from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret.race_detection_state import RaceDetectionState
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
@@ -38,23 +37,6 @@ from jax._src.state import indexing
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
-
-
-IDX_BY_GPU_MEMORY_SPACE: Mapping[mosaic_gpu_core.MemorySpace, int]
-IDX_BY_GPU_MEMORY_SPACE = types.MappingProxyType(
-    {v: i for i, v in enumerate(mosaic_gpu_core.MemorySpace)}
-)
-
-
-GPU_MEMORY_SPACE_BY_IDX: Mapping[int, mosaic_gpu_core.MemorySpace]
-GPU_MEMORY_SPACE_BY_IDX = types.MappingProxyType(
-    dict(enumerate(mosaic_gpu_core.MemorySpace))
-)
-
-def get_memory_space_idx(space: mosaic_gpu_core.MemorySpace) -> int:
-  if space is pallas_core.MemorySpace.DEFAULT:
-    return IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.MemorySpace.SMEM]
-  return IDX_BY_GPU_MEMORY_SPACE[space]
 
 
 def is_gmem_memory_space(space: mosaic_gpu_core.MemorySpace | None) -> bool:
@@ -294,7 +276,7 @@ def _allocate_buffer_for_all_threads(
     raise ValueError(
         "`block_id` must be zero when allocating a buffer for all threads"
     )
-  assert allocation_request.memory_space_id != get_memory_space_idx(
+  assert allocation_request.memory_space_id != memory.get_memory_space_idx(
       mosaic_gpu_core.MemorySpace.REGS
   )
 
@@ -382,8 +364,9 @@ def _allocate_buffer(
 
   shared_memory = _get_shared_memory()
 
-  if (allocation_request.memory_space_id
-      == get_memory_space_idx(mosaic_gpu_core.MemorySpace.REGS)):
+  if allocation_request.memory_space_id == memory.get_memory_space_idx(
+      mosaic_gpu_core.MemorySpace.REGS
+  ):
     # For barrier and buffer identifiers to line up across threads, we rely on
     # each thread making the same sequence of allocations.  But threads are
     # permitted to make different REGS allocations, so we use a different
@@ -750,11 +733,13 @@ def _allocate_barriers(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     num_arrivals: jax.Array,
+    orders_tensor_core: jax.Array,
     flat_num_barriers: jax.Array,
     ref_count: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ) -> tuple[jax.Array, np.ndarray]:
   num_arrivals_as_int = int(num_arrivals)
+  orders_tensor_core_as_bool = bool(orders_tensor_core)
   flat_num_barriers_as_int = int(flat_num_barriers)
   ref_count_as_int = int(ref_count)
   del num_arrivals, flat_num_barriers, ref_count
@@ -766,7 +751,7 @@ def _allocate_barriers(
     # Advance `shared_memory`'s internal buffer id counter for all threads that
     # call into this function.
     barrier_id = shared_memory.get_next_buffer_id(thread)
-    smem_space_id = IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.SMEM]
+    smem_space_id = memory.IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.SMEM]
 
     # Barriers are shared between threads. For each group of threads that share
     # a barrier, we compute the thread ID to be used for the allocation key.
@@ -785,6 +770,7 @@ def _allocate_barriers(
         key,
         ref_count=ref_count_as_int,
         num_arrivals=num_arrivals_as_int,
+        orders_tensor_core=orders_tensor_core_as_bool,
         logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
     )
     keys.append(key.as_np_array)
@@ -799,6 +785,7 @@ def call_allocate_barriers(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     num_arrivals: jax.Array,
+    orders_tensor_core: bool,
     flat_num_barriers: int | jax.Array,
     ref_count: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
@@ -818,6 +805,7 @@ def call_allocate_barriers(
       mesh_location=mesh_location,
       thread=thread,
       num_arrivals=num_arrivals,
+      orders_tensor_core=orders_tensor_core,
       flat_num_barriers=flat_num_barriers,
       ref_count=ref_count,
   )
@@ -947,6 +935,7 @@ def _barrier_arrive(
     )
   elif isinstance(barrier, memory.Barrier):
     barrier.arrive(
+        thread,
         clock,
         memory.GPULoggingInfo(mesh_location, thread, source_info),
     )
@@ -1014,7 +1003,7 @@ def _allocate_cluster_barriers(
     # SMEM (or any other memory space). We nonetheless use `SMEM` here to
     # indicate that the (per thread-block) `Barrier`s that the `ClusterBarrier`
     # is composed of are each allocated in `SMEM` (on a real GPU).
-    smem_space_id = IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.SMEM]
+    smem_space_id = memory.IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.SMEM]
 
     # Cluster barriers are shared between all threads in a cluster. Hence use 0
     # for the thread/block ID in the allocation `key` below.
@@ -1225,6 +1214,7 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
 
   def post_write(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     self.barrier.arrive(
+        self.thread,
         self.clock.copy() if self.clock is not None else None,
         self.logging_info,
     )
@@ -1440,7 +1430,7 @@ def copy_smem_to_gmem(
   )
 
   shared_memory = _get_shared_memory()
-  shared_memory.execute_async_task(task, thread)
+  shared_memory.execute_async_task(task)
 
   return token
 
@@ -1499,7 +1489,7 @@ def copy_gmem_to_smem(
   )
 
   shared_memory = _get_shared_memory()
-  shared_memory.execute_async_task(transfer, thread)
+  shared_memory.execute_async_task(transfer)
 
   return token
 
@@ -1516,6 +1506,157 @@ def commit_smem(
   shared_memory.commit_smem(thread)
 
   return token
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class TcGen05Mma(memory.PipelineableAsyncTask):
+  mesh_location: memory.MeshLocation
+  thread: memory.Thread
+  acc_key: HostAllocationKey
+  acc_transforms: tuple[Any, ...]
+  acc_dtype: jnp.dtype
+  a_key: HostAllocationKey
+  a_transforms: tuple[Any, ...]
+  b_key: HostAllocationKey
+  b_transforms: tuple[Any, ...]
+  accumulate: bool
+  barrier_key: HostAllocationKey | None = None
+  a_scale_key: HostAllocationKey | None = None
+  a_scale_transforms: tuple[Any, ...] | None = None
+  b_scale_key: HostAllocationKey | None = None
+  b_scale_transforms: tuple[Any, ...] | None = None
+  a_sparse_metadata_key: HostAllocationKey | None = None
+  a_sparse_metadata_transforms: tuple[Any, ...] | None = None
+  collective_axis: str | None = None
+  source_info: source_info_util.SourceInfo | None = None
+
+  def forms_pipeline(self, parent: memory.PipelineableAsyncTask) -> bool:
+    if isinstance(parent, TcGen05Mma):
+      # In order to pipeline with another mma, the accumulator, collective block
+      # count, and dtype must match
+      return (
+          parent.acc_key == self.acc_key
+          and interpret_utils.to_range(parent.acc_transforms)
+          == interpret_utils.to_range(self.acc_transforms)
+          and parent.acc_dtype == self.acc_dtype
+          and parent.collective_axis == self.collective_axis
+      )
+    if isinstance(parent, TcGen05Copy):
+      return parent.collective_axis == self.collective_axis
+    return False
+
+  def __call__(
+      self,
+      pipeline_clock: memory.GpuClockBundle | None,
+      tma_thread_id: int,
+  ) -> memory.GpuClockBundle | None:
+    # TODO(paulbib): Support scales and sparse metadata.
+    assert self.a_scale_key is None
+    assert self.b_scale_key is None
+    assert self.a_sparse_metadata_key is None
+    assert self.collective_axis is None, "collective_axis not supported yet"
+
+    shared_memory = _get_shared_memory()
+
+    logging_info = memory.GPULoggingInfo(
+        self.mesh_location, self.thread, self.source_info
+    )
+    a, _, _ = shared_memory.get_buffer_content(
+        self.a_key,
+        interpret_utils.to_range(self.a_transforms),
+        self.thread,
+        logging_info=logging_info,
+    )
+    b, _, _ = shared_memory.get_buffer_content(
+        self.b_key,
+        interpret_utils.to_range(self.b_transforms),
+        self.thread,
+        logging_info=logging_info,
+    )
+    assert a is not None
+    assert b is not None
+
+    clock = None
+    if shared_memory.detect_races:
+      initiating_clock = shared_memory.get_clock(self.thread)
+      assert initiating_clock is not None
+      if pipeline_clock is not None:
+        initiating_clock.update(pipeline_clock)
+      initiating_clock.inc(tma_thread_id)
+      clock = initiating_clock
+
+      # a can be in either SMEM or TMEM, but b will always be in SMEM.
+      a_clock = (
+          clock.async_smem_clock
+          if self.a_key.memory_space_id
+          == memory.IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.MemorySpace.SMEM]
+          else clock.generic_clock
+      )
+
+      get_races().check_read(
+          self.thread,
+          a_clock,
+          self.a_key,
+          interpret_utils.to_range(self.a_transforms),
+          source_info=self.source_info,
+      )
+      get_races().check_read(
+          self.thread,
+          clock.async_smem_clock,
+          self.b_key,
+          interpret_utils.to_range(self.b_transforms),
+          source_info=self.source_info,
+      )
+
+    acc_range = interpret_utils.to_range(self.acc_transforms)
+
+    if self.accumulate:
+      acc, _, _ = shared_memory.get_buffer_content(
+          self.acc_key,
+          acc_range,
+          None,
+          logging_info=logging_info,
+      )
+      assert acc is not None
+      res = acc + np.matmul(a, b, dtype=self.acc_dtype)
+    else:
+      res = np.matmul(a, b, dtype=self.acc_dtype)
+
+    shared_memory.store_buffer_content(
+        self.acc_key,
+        acc_range,
+        res,
+        self.thread,
+        increment_clock=False,
+        logging_info=logging_info,
+    )
+
+    if shared_memory.detect_races:
+      assert clock is not None
+      get_races().check_write(
+          self.thread,
+          clock.generic_clock,
+          self.acc_key,
+          acc_range,
+          source_info=self.source_info,
+      )
+
+    if self.barrier_key:
+      barrier = shared_memory.get_barrier(self.barrier_key)
+      if not isinstance(barrier, memory.Barrier):
+        raise ValueError("tcgen05_mma only allows arriving on a Barrier")
+      if not barrier.orders_tensor_core:
+        raise ValueError(
+            "tcgen05_mma only allows arriving on a Barrier that orders tensor"
+            " core"
+        )
+      barrier.arrive(
+          thread=self.thread,
+          clock=clock,
+          logging_info=logging_info,
+      )
+
+    return clock.copy() if clock is not None else None
 
 
 def tcgen05_mma(
@@ -1538,70 +1679,277 @@ def tcgen05_mma(
     b_scale_transforms: tuple[Any, ...] | None = None,
     a_sparse_metadata_allocation_key_as_array: jax.Array | None = None,
     a_sparse_metadata_transforms: tuple[Any, ...] | None = None,
+    collective_axis: str | None = None,
     source_info: source_info_util.SourceInfo | None = None,
 ):
-  # TODO(jburnim): Support scales and sparse metadata.
-  assert a_scale_allocation_key_as_array is None
-  assert b_scale_allocation_key_as_array is None
-  assert a_sparse_metadata_allocation_key_as_array is None
-  del a_scale_transforms, b_scale_transforms, a_sparse_metadata_transforms
 
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
+  def _maybe_key(array: jax.Array | None):
+    return HostAllocationKey.from_array(array) if array is not None else None
+
+  a_scale_allocation_key = _maybe_key(a_scale_allocation_key_as_array)
+  b_scale_allocation_key = _maybe_key(b_scale_allocation_key_as_array)
+  a_sparse_metadata_allocation_key = _maybe_key(
+      a_sparse_metadata_allocation_key_as_array
+  )
+
   acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
   a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
   b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
+  if a_scale_transforms is not None:
+    a_scale_transforms = jax.tree.map(
+        int, _remove_noop_transforms(a_scale_transforms)
+    )
+  if b_scale_transforms is not None:
+    b_scale_transforms = jax.tree.map(
+        int, _remove_noop_transforms(b_scale_transforms)
+    )
+  if a_sparse_metadata_transforms is not None:
+    a_sparse_metadata_transforms = jax.tree.map(
+        int, _remove_noop_transforms(a_sparse_metadata_transforms)
+    )
   accumulate: bool = bool(accumulate)  # pyrefly: ignore[redefinition]
 
+  barrier_key = _maybe_key(barrier_allocation_key_as_array)
+
   shared_memory = _get_shared_memory()
+  if shared_memory.detect_races:
+    shared_memory.incr_clock(thread)
 
-  logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
-  a, _, _ = shared_memory.get_buffer_content(
-      a_allocation_key,
-      interpret_utils.to_range(a_transforms),
+  shared_memory.execute_pipelineable_async_task(
+      TcGen05Mma(
+          mesh_location=mesh_location,
+          thread=thread,
+          acc_key=acc_allocation_key,
+          acc_transforms=acc_transforms,
+          acc_dtype=acc_dtype,
+          a_key=a_allocation_key,
+          a_transforms=a_transforms,
+          b_key=b_allocation_key,
+          b_transforms=b_transforms,
+          accumulate=accumulate,
+          barrier_key=barrier_key,
+          a_scale_key=a_scale_allocation_key,
+          a_scale_transforms=a_scale_transforms,
+          b_scale_key=b_scale_allocation_key,
+          b_scale_transforms=b_scale_transforms,
+          a_sparse_metadata_key=a_sparse_metadata_allocation_key,
+          a_sparse_metadata_transforms=a_sparse_metadata_transforms,
+          collective_axis=collective_axis,
+          source_info=source_info,
+      ),
       thread,
-      logging_info=logging_info,
   )
-  b, _, _ = shared_memory.get_buffer_content(
-      b_allocation_key,
-      interpret_utils.to_range(b_transforms),
-      thread,
-      logging_info=logging_info,
-  )
-  assert a is not None
-  assert b is not None
 
-  acc_range = interpret_utils.to_range(acc_transforms)
+  return token
 
-  if accumulate:
-    acc, _, _ = shared_memory.get_buffer_content(
-        acc_allocation_key,
-        acc_range,
-        thread,
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class TcGen05Copy(memory.PipelineableAsyncTask):
+  mesh_location: memory.MeshLocation
+  thread: memory.Thread
+  smem_key: HostAllocationKey
+  smem_transforms: tuple[Any, ...]
+  tmem_key: HostAllocationKey
+  tmem_transforms: tuple[Any, ...]
+  collective_axis: str | None = None
+  source_info: source_info_util.SourceInfo | None = None
+
+  def forms_pipeline(self, parent: memory.PipelineableAsyncTask) -> bool:
+    return False
+
+  def __call__(
+      self,
+      pipeline_clock: memory.GpuClockBundle | None,
+      tma_thread_id: int,
+  ) -> memory.GpuClockBundle | None:
+    assert (
+        self.collective_axis is None
+    ), "Collective axis not supported for copy yet"
+
+    shared_memory = _get_shared_memory()
+
+    logging_info = memory.GPULoggingInfo(
+        self.mesh_location, self.thread, self.source_info
+    )
+    smem, _, _ = shared_memory.get_buffer_content(
+        self.smem_key,
+        interpret_utils.to_range(self.smem_transforms),
+        self.thread,
         logging_info=logging_info,
     )
-    assert acc is not None
-    res = acc + np.matmul(a, b, dtype=acc_dtype)
-  else:
-    res = np.matmul(a, b, dtype=acc_dtype)
+    assert smem is not None
 
-  shared_memory.store_buffer_content(
-      acc_allocation_key,
-      acc_range,
-      res,
-      thread,
-      logging_info=logging_info,
-  )
+    clock = None
+    if shared_memory.detect_races:
+      initiating_clock = shared_memory.get_clock(self.thread)
+      assert initiating_clock is not None
+      if pipeline_clock is not None:
+        initiating_clock.update(pipeline_clock)
+      initiating_clock.inc(tma_thread_id)
+      clock = initiating_clock
 
-  if barrier_allocation_key_as_array is not None:
-    barrier_key = HostAllocationKey.from_array(barrier_allocation_key_as_array)
-    barrier, clock = shared_memory.get_barrier_and_increment_clock(
-        barrier_key, thread
+      get_races().check_read(
+          self.thread,
+          clock.async_smem_clock,
+          self.smem_key,
+          interpret_utils.to_range(self.smem_transforms),
+          source_info=self.source_info,
+      )
+
+    tmem_range = interpret_utils.to_range(self.tmem_transforms)
+
+    shared_memory.store_buffer_content(
+        self.tmem_key,
+        tmem_range,
+        smem,
+        self.thread,
+        increment_clock=False,
+        logging_info=logging_info,
     )
+
+    if shared_memory.detect_races:
+      assert clock is not None
+      get_races().check_write(
+          self.thread,
+          clock.generic_clock,
+          self.tmem_key,
+          tmem_range,
+          source_info=self.source_info,
+      )
+
+    return clock.copy() if clock is not None else None
+
+
+def async_copy_smem_to_tmem(
+    *,
+    token: jax.Array,
+    mesh_location: memory.MeshLocation,
+    thread: memory.Thread,
+    smem_allocation_key_as_array: jax.Array,
+    smem_transforms: tuple[Any, ...],
+    tmem_allocation_key_as_array: jax.Array,
+    tmem_transforms: tuple[Any, ...],
+    collective_axis: str | None = None,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  smem_allocation_key = HostAllocationKey.from_array(
+      smem_allocation_key_as_array
+  )
+  tmem_allocation_key = HostAllocationKey.from_array(
+      tmem_allocation_key_as_array
+  )
+  smem_transforms = jax.tree.map(int, _remove_noop_transforms(smem_transforms))
+  tmem_transforms = jax.tree.map(int, _remove_noop_transforms(tmem_transforms))
+
+  shared_memory = _get_shared_memory()
+  if shared_memory.detect_races:
+    shared_memory.incr_clock(thread)
+
+  shared_memory.execute_pipelineable_async_task(
+      TcGen05Copy(
+          mesh_location=mesh_location,
+          thread=thread,
+          smem_key=smem_allocation_key,
+          smem_transforms=smem_transforms,
+          tmem_key=tmem_allocation_key,
+          tmem_transforms=tmem_transforms,
+          collective_axis=collective_axis,
+          source_info=source_info,
+      ),
+      thread,
+  )
+  return token
+
+
+def tcgen05_commit_arrive(
+    *,
+    token: jax.Array,
+    mesh_location: memory.MeshLocation,
+    thread: memory.Thread,
+    barrier_key_as_array: jax.Array,
+    collective_axis: str | None = None,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  # TODO(paulbib): Support collective_axis.
+  del collective_axis
+  barrier_key = HostAllocationKey.from_array(barrier_key_as_array)
+
+  shared_memory = _get_shared_memory()
+  if shared_memory.detect_races:
+    shared_memory.incr_clock(thread)
+
+  def f(tma_thread_id: int):
+    shared_memory = _get_shared_memory()
+    barrier = shared_memory.get_barrier(barrier_key)
     if not isinstance(barrier, memory.Barrier):
-      raise ValueError("tcgen05_mma only allows arriving on a Barrier")
-    barrier.arrive(clock, logging_info)
+      raise ValueError(
+          "tcgen05_commit_arrive only allows arriving on a Barrier"
+      )
+    if not barrier.orders_tensor_core:
+      raise ValueError(
+          "tcgen05_commit_arrive only allows arriving on a Barrier that orders"
+          " tensor core"
+      )
+
+    clock = None
+    if shared_memory.detect_races:
+      clock = shared_memory.get_clock(thread)
+      completions_clock = shared_memory.get_tcgen05_async_clock(thread)
+      assert clock is not None
+      if completions_clock is not None:
+        clock.update(completions_clock)
+
+    barrier.arrive(
+        thread,
+        clock,
+        memory.GPULoggingInfo(mesh_location, thread, source_info),
+    )
+
+  _get_shared_memory().execute_async_task(f)
+  return token
+
+
+def async_store_tmem(
+    *,
+    token: jax.Array,
+    mesh_location: memory.MeshLocation,
+    thread: memory.Thread,
+    dst_allocation_key_as_array: jax.Array,
+    dst_transforms: tuple[Any, ...],
+    vals: np.ndarray,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
+  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
+
+  def f(tma_thread_id: int):
+    shared_memory = _get_shared_memory()
+    shared_memory.store_buffer_content(
+        dst_allocation_key,
+        interpret_utils.to_range(dst_transforms),
+        vals,
+        thread,
+        increment_clock=False,
+        logging_info=logging_info,
+    )
+    if shared_memory.detect_races:
+      clock = shared_memory.get_clock(thread)
+      assert clock is not None
+      clock.inc(tma_thread_id)
+      get_races().check_write(
+          thread,
+          clock.generic_clock,
+          dst_allocation_key,
+          interpret_utils.to_range(dst_transforms),
+          source_info=source_info,
+      )
+      shared_memory.add_store_tmem_clock(thread, clock)
+
+  _get_shared_memory().execute_async_task(f)
 
   return token
 
@@ -1617,18 +1965,61 @@ def async_load_tmem(
 ):
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
   src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
-
-  shared_memory = _get_shared_memory()
-
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
-  val, _, _ = shared_memory.get_buffer_content(
-      src_allocation_key,
-      interpret_utils.to_range(src_transforms),
-      thread,
-      logging_info=logging_info,
-  )
 
-  return token, val
+  def f(tma_thread_id: int):
+    shared_memory = _get_shared_memory()
+
+    val, _, _ = shared_memory.get_buffer_content(
+        src_allocation_key,
+        interpret_utils.to_range(src_transforms),
+        None,
+        logging_info=logging_info,
+    )
+
+    if shared_memory.detect_races:
+      clock = shared_memory.get_clock(thread)
+      assert clock is not None
+      clock.inc(tma_thread_id)
+      get_races().check_read(
+          thread,
+          clock.generic_clock,
+          src_allocation_key,
+          interpret_utils.to_range(src_transforms),
+          source_info=source_info,
+      )
+      shared_memory.add_load_tmem_clock(thread, clock)
+
+    return val
+
+  result = _get_shared_memory().execute_async_task(f)
+  return token, result
+
+
+def commit_tmem(
+    *,
+    token: jax.Array,
+    mesh_location: memory.MeshLocation,
+    thread: memory.Thread,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  del mesh_location, source_info
+  shared_memory = _get_shared_memory()
+  shared_memory.wait_tmem_stores(thread)
+  return token
+
+
+def wait_load_tmem(
+    *,
+    token: jax.Array,
+    mesh_location: memory.MeshLocation,
+    thread: memory.Thread,
+    source_info: source_info_util.SourceInfo | None = None,
+):
+  del mesh_location, source_info
+  shared_memory = _get_shared_memory()
+  shared_memory.wait_tmem_loads(thread)
+  return token
 
 
 def sync_warps_with_warpgroup(
@@ -1666,4 +2057,19 @@ def kernel_thread_finished(
   del mesh_location
   shared_memory = _get_shared_memory()
   shared_memory.kernel_thread_finished(thread)
+  return token
+
+
+def cluster_finished(
+    *,
+    token: jax.Array,
+):
+  """Called when a cluster finishes execution of a kernel.
+
+  Since clusters are executed sequentially in interpret mode, when this
+  function is called no code is running and we can reset shared memory state
+  if needed
+  """
+  shared_memory = _get_shared_memory()
+  shared_memory.reset_per_cluster_state()
   return token

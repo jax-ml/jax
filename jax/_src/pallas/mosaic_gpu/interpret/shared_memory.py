@@ -21,19 +21,36 @@ import itertools
 import logging
 import math
 import threading
+import types
 from typing import Literal, Protocol, Self
 
 import jax
 from jax import numpy as jnp
 from jax._src import source_info_util
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic.interpret import shared_memory as memory
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock
+from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import params as params
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+IDX_BY_GPU_MEMORY_SPACE: collections.abc.Mapping[
+    mosaic_gpu_core.MemorySpace, int
+]
+IDX_BY_GPU_MEMORY_SPACE = types.MappingProxyType(
+    {v: i for i, v in enumerate(mosaic_gpu_core.MemorySpace)}
+)
+
+
+def get_memory_space_idx(space: mosaic_gpu_core.MemorySpace) -> int:
+  if space is pallas_core.MemorySpace.DEFAULT:
+    return IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.MemorySpace.SMEM]
+  return IDX_BY_GPU_MEMORY_SPACE[space]
 
 
 def _to_int(x):
@@ -80,6 +97,17 @@ class MeshLocation:
     self.block_coords = tuple(_to_int(x) for x in block_coords)
     self.thread_id = _to_int(thread_id)
     self.warp_id = _to_int(warp_id) if warp_id is not None else None
+
+  def __hash__(self) -> int:
+    return hash(
+        (
+            self.device_coords,
+            self.cluster_coords,
+            self.block_coords,
+            self.thread_id,
+            self.warp_id,
+        )
+    )
 
 
 @jax.tree_util.register_dataclass
@@ -248,6 +276,19 @@ class HostAllocationRequest:
         self.initial_ref_count,
     ))
 
+  def __eq__(self, other: object) -> bool:
+    return isinstance(other, HostAllocationRequest) and (
+        self.memory_space_id,
+        self.device_id,
+        self.block_id,
+        self.thread_id,
+    ) == (
+        other.memory_space_id,
+        other.device_id,
+        other.block_id,
+        other.thread_id,
+    )
+
   @classmethod
   def shape_and_dtype(cls) -> jax.ShapeDtypeStruct:
     num_fields = len(dataclasses.fields(cls))
@@ -278,6 +319,13 @@ class HostAllocationKey(HostAllocationRequest):
 
   buffer_id: int
 
+  def __eq__(self, other: object) -> bool:
+    return (
+        isinstance(other, HostAllocationKey)
+        and super().__eq__(other)
+        and self.buffer_id == other.buffer_id
+    )
+
   def __iter__(self):
     # Note that implementing `__iter__` here affects the bahviour of the
     # `as_array` and `as_jax_array` methods of the base class. This is intended.
@@ -285,12 +333,72 @@ class HostAllocationKey(HostAllocationRequest):
     yield self.buffer_id
 
 
-class AsyncTask(Protocol):
-  """Async task to be run on some non-main thread (e.g. TMA or TensorCore)"""
+class AsyncTask[T](Protocol):
+  """Async task to be run on some non-main thread (e.g. TMA or TensorCore)
 
-  def __call__(self, tma_thread_id: int) -> None:
-    """Execute the async task on the given thread."""
+  These tasks are asynchronous only from the programmers perspective: their
+  memory effects happen as soon as the task is created, but later operations
+  will not see the updated vector clocks (and will therefore race) unless they
+  observe the task's completion.
+  """
+
+  def __call__(self, tma_thread_id: int) -> T:
+    """Execute the async task on the given thread.
+
+    This is a pseudo-thread that exists to provide a position in the vector
+    clock
+    """
     ...
+
+
+class PipelineableAsyncTask(Protocol):
+  """An async task that can form a pipeline with another task.
+
+  Like `AsyncTask`, these tasks affect memory immediately but must be observed
+  to see the updated vector clocks.
+  """
+
+  def forms_pipeline(self, parent: PipelineableAsyncTask) -> bool:
+    """Returns whether this task forms a pipeline with the given parent task.
+
+    If task B forms a pipeline with task A, then A's effects will be visible
+    when B executes, even if A has not been otherwise awaited.
+    Additionally, if a thread observes the completion of B, it also transitively
+    observes the completion of A.
+    It is assumed that both tasks are visible to each other (e.g. executed by
+    the same thread or by two different threads who have synchronized).
+    """
+    ...
+
+  def __call__(
+      self,
+      pipeline_clock: GpuClockBundle | None,
+      tma_thread_id: int,
+  ) -> GpuClockBundle | None:
+    """Execute the async task on the given pseudo-thread, potentially pipelined
+    with another previously initiated task.
+
+    Args:
+      pipeline_clock: The combiend clock of all parent tasks, or None if this
+      task does not have a parent or race detection is not enabled.
+      tma_thread_id: The ID of the TMA thread to use for this task.
+
+    Returns the resulting clocks, or None if race detection is not enabled.
+    """
+    ...
+
+
+@dataclasses.dataclass(frozen=True)
+class CompletedPipelineableTask:
+  id: int
+  parents: tuple[CompletedPipelineableTask, ...]
+  result_clock: GpuClockBundle | None
+  initiating_thread: Thread
+  tma_thread_id: int
+  task: PipelineableAsyncTask
+
+  def __hash__(self) -> int:
+    return hash(self.id)
 
 
 class GpuClockBundle(vector_clock.VectorClockProto):
@@ -353,6 +461,21 @@ class GPUSharedMemory(
   # smem_to_gmem transfers.
   pending_smem_to_gmem_read_clocks: dict[ThreadKey, collections.deque[VectorClock]]
   pending_smem_to_gmem_write_clocks: dict[ThreadKey, collections.deque[VectorClock]]
+
+  # For each thread, the set of pipelineable async tasks that are visible to it.
+  # When a task is first executed it is only visible to the thread that initiated
+  # it. If two threads synchronize (e.g. via a barrier), the consumer thread
+  # gains visibility to the producer's pipelineable tasks.
+  pipelineable_async_tasks: dict[Thread, set[CompletedPipelineableTask]]
+  next_pipelineable_task_id: int
+
+  # Clocks resulting from tcgen05 MMA or copy operations for each thread.
+  # These are never cleared, as any call to commit_arrive observes all prior
+  # tensor core operation completions.
+  tcgen05_completion_clocks: dict[Thread, GpuClockBundle]
+
+  pending_tmem_stores: dict[Thread, VectorClock]
+  pending_tmem_loads: dict[Thread, VectorClock]
 
   def __init__(
       self,
@@ -431,17 +554,34 @@ class GPUSharedMemory(
       )
 
     self.num_blocks_per_cluster = num_blocks_per_cluster
-    self.next_tma_thread_id = 0
     self.num_pallas_threads_per_block = num_threads_per_block
-    self.next_regs_id = collections.defaultdict(lambda: -100)
-    self.pending_smem_to_gmem_read_clocks = {
-        thread: collections.deque()
-        for thread in self.all_concurrent_threads
-    }
-    self.pending_smem_to_gmem_write_clocks = {
-        thread: collections.deque()
-        for thread in self.all_concurrent_threads
-    }
+    self.reset_per_cluster_state()
+
+  def reset_per_cluster_state(self):
+    """Resets the per-cluster state of the shared memory."""
+    with self.lock:
+      self.next_tma_thread_id = 0
+      self.next_regs_id = collections.defaultdict(lambda: -100)
+      self.clocks = {
+          thread: self.VectorClock(self.vector_clock_size)
+          for thread in self.all_concurrent_threads
+      }
+
+      self.pending_smem_to_gmem_read_clocks = {
+          thread: collections.deque()
+          for thread in self.all_concurrent_threads
+      }
+      self.pending_smem_to_gmem_write_clocks = {
+          thread: collections.deque()
+          for thread in self.all_concurrent_threads
+      }
+      self.pipelineable_async_tasks = collections.defaultdict(set)
+      self.next_pipelineable_task_id = 0
+      self.tcgen05_completion_clocks = collections.defaultdict(
+          lambda: self.VectorClock(self.vector_clock_size)
+      )
+      self.pending_tmem_stores = {}
+      self.pending_tmem_loads = {}
 
   def thread_to_vc_position(self, thread: ThreadKey) -> int:
     return self.all_concurrent_threads[thread]
@@ -466,6 +606,7 @@ class GPUSharedMemory(
       key: MemKey,
       ref_count: int,
       num_arrivals: int,
+      orders_tensor_core: bool,
       logging_info: GPULoggingInfo | None = None,
   ):
     """Allocates a barrier with the given key unless it already exists."""
@@ -476,6 +617,7 @@ class GPUSharedMemory(
             num_pallas_threads_per_block=self.num_pallas_threads_per_block,
             ref_count=ref_count,
             num_arrivals=num_arrivals,
+            orders_tensor_core=orders_tensor_core,
             enable_logging=(
                 self.logging_mode is not None
                 and params.LoggingMode.BARRIER in self.logging_mode
@@ -651,12 +793,56 @@ class GPUSharedMemory(
       with self.lock:
         self.clocks[thread].commit_smem()
 
-  def execute_async_task(self, task: AsyncTask, thread: ThreadKey):
-    """Executes an async task immediately (intiated by the given thread)."""
-    self.incr_clock(thread)
+  def get_clock(self, thread: ThreadKey) -> VectorClock | None:
+    if not self.detect_races:
+      return None
+    with self.lock:
+      return self.clocks[thread].copy()
 
+  def execute_pipelineable_async_task(
+      self, task: PipelineableAsyncTask, initiating_thread: Thread
+  ) -> None:
     tma_thread_id = self.get_next_tma_thread_id()
-    task(tma_thread_id)
+    with self.lock:
+      # TODO(paulbib): since we never get rid of old tasks, this list grows
+      # without bound and the scan has quadratic complexity. We can fix this
+      # by maintaining an index.
+      parents = [
+          other_task
+          for other_task in self.pipelineable_async_tasks[initiating_thread]
+          if task.forms_pipeline(other_task.task)
+      ]
+      if self.detect_races and len(parents) > 0:
+        parent_clock = parents[0].result_clock
+        assert parent_clock is not None
+        parent_clock = parent_clock.copy()
+        for parent in parents[1:]:
+          assert parent.result_clock is not None
+          parent_clock.update(parent.result_clock)
+      else:
+        parent_clock = None
+
+    result_clock = task(parent_clock, tma_thread_id)
+    with self.lock:
+      id = self.next_pipelineable_task_id
+      self.next_pipelineable_task_id += 1
+      self.pipelineable_async_tasks[initiating_thread].add(
+          CompletedPipelineableTask(
+              id,
+              tuple(parents),
+              result_clock,
+              initiating_thread,
+              tma_thread_id,
+              task,
+          )
+      )
+      if self.detect_races:
+        assert result_clock is not None
+        self.tcgen05_completion_clocks[initiating_thread].update(result_clock)
+
+  def execute_async_task[T](self, task: AsyncTask[T]) -> T:
+    tma_thread_id = self.get_next_tma_thread_id()
+    return task(tma_thread_id)
 
   def add_copy_smem_to_gmem_clocks(
       self,
@@ -675,7 +861,6 @@ class GPUSharedMemory(
       self, thread: ThreadKey, n: int, wait_read_only: bool
   ):
     """Ensures no more than n SMEM to GMEM copies are outstanding."""
-    # TODO(paulbib): if copies were actually async, they would be run here.
     with self.lock:
       self.incr_clock(thread, take_lock=False)
       while len(self.pending_smem_to_gmem_read_clocks[thread]) > n:
@@ -689,7 +874,51 @@ class GPUSharedMemory(
               self.pending_smem_to_gmem_write_clocks[thread].popleft()
           )
 
-  def kernel_thread_finished(self, thread: ThreadKey):
+  def get_tcgen05_async_clock(self, thread: ThreadKey) -> None | GpuClockBundle:
+    """Returns the vector clock for completed TCGen05 async ops."""
+    if self.detect_races:
+      with self.lock:
+        return self.tcgen05_completion_clocks[thread]
+    else:
+      return None
+
+  def add_store_tmem_clock(self, thread: ThreadKey, clock: VectorClock) -> None:
+    """Records the vector clock for a completed store to TMEM."""
+    if self.detect_races:
+      with self.lock:
+        if thread not in self.pending_tmem_stores:
+          self.pending_tmem_stores[thread] = clock
+        else:
+          self.pending_tmem_stores[thread].update(clock)
+
+  def add_load_tmem_clock(self, thread: ThreadKey, clock: VectorClock) -> None:
+    """Records vector clock for a completed load from TMEM."""
+    if self.detect_races:
+      with self.lock:
+        if thread not in self.pending_tmem_loads:
+          self.pending_tmem_loads[thread] = clock
+        else:
+          self.pending_tmem_loads[thread].update(clock)
+
+  def wait_tmem_stores(self, thread: ThreadKey) -> None:
+    """Awaits all outstanding stores to TMEM."""
+    if self.detect_races:
+      with self.lock:
+        self.incr_clock(thread, take_lock=False)
+        if thread in self.pending_tmem_stores:
+          self.clocks[thread].update(self.pending_tmem_stores[thread])
+          del self.pending_tmem_stores[thread]
+
+  def wait_tmem_loads(self, thread: ThreadKey) -> None:
+    """Awaits all outstanding loads from TMEM."""
+    if self.detect_races:
+      with self.lock:
+        self.incr_clock(thread, take_lock=False)
+        if thread in self.pending_tmem_loads:
+          self.clocks[thread].update(self.pending_tmem_loads[thread])
+          del self.pending_tmem_loads[thread]
+
+  def kernel_thread_finished(self, thread: ThreadKey) -> None:
     """Called when a thread completes execution of a kernel."""
     with self.lock:
       if self.detect_races:
@@ -701,6 +930,7 @@ class GPUSharedMemory(
               "Not all copy_smem_to_gmem read-side operations completed before"
               f" kernel finished on thread {thread}."
           )
+        # TODO(paulbib): add check that tmem loads and stores have completed.
 
   def concurrent_threads(self, device: Device) -> list[Thread]:
     """Returns all concurrent threads on the given device."""
@@ -759,12 +989,19 @@ class Barrier(memory.Allocation):
       num_pallas_threads_per_block: int,
       ref_count: int,
       num_arrivals: int,
+      orders_tensor_core: bool,
       enable_logging: bool = False,
   ):
     self.shared_memory = shared_memory
     self.ref_count: int = ref_count  # Protected by `self.cv`'s lock.
     self.num_pallas_threads_per_block: int = num_pallas_threads_per_block
     self.num_arrivals: int = num_arrivals  # Protected by `self.cv`'s lock.
+    # We track orders_tensor_core here, but we do not match its full semantics.
+    # The only thing it is used for is making sure that MMAs that provide a
+    # barrier to arrive on use a barrier with orders_tensor_core=True.
+    # A fully complete system would also use orders_tensor_core=False to not make
+    # tensor core ops visible across threads, but we don't do that yet.
+    self.orders_tensor_core: bool = orders_tensor_core
     self.arrivals_count: int = 0  # Protected by `self.cv`'s lock.
     self.enable_logging: bool = enable_logging
 
@@ -796,6 +1033,11 @@ class Barrier(memory.Allocation):
     #     `self.cv` are both held to be nested in both ways, this can lead to
     #     deadlock.
     self.cv = threading.Condition()
+
+    # Arriving and waiting at a barrier can allow other threads to see your
+    # tensor core tasks and pipeline with them, so we track the tasks of any
+    # thread that arrives at the barrier.
+    self.pipelineable_async_tasks: set[CompletedPipelineableTask] = set()
 
     if self.shared_memory.detect_races:
       self.clock: self.VectorClock | None = (
@@ -849,10 +1091,20 @@ class Barrier(memory.Allocation):
 
   def arrive(
       self,
+      thread: Thread | None,
       clock: VectorClock | None = None,
       logging_info: GPULoggingInfo | None = None,
   ):
+    pipelineable_async_tasks = None
+    if thread is not None:
+      with self.shared_memory.lock:
+        # copy the set (not the elements) so we can release the lock
+        pipelineable_async_tasks = set(
+            self.shared_memory.pipelineable_async_tasks[thread]
+        )
     with self.cv:
+      if pipelineable_async_tasks is not None:
+        self.pipelineable_async_tasks |= pipelineable_async_tasks
       self.arrivals_count += 1
       if self.arrivals_count == self.num_arrivals:
         if self.enable_logging and logging_info is not None:
@@ -862,7 +1114,6 @@ class Barrier(memory.Allocation):
                   line_prefix="`arrive`",
               )
           )
-
         self.phase += 1
         self.arrivals_count = 0
 
@@ -882,6 +1133,7 @@ class Barrier(memory.Allocation):
                 f" {self.phase - 1}, meaning thread {i} missed observing phase"
                 f" {last_observed_phase + 1}."
             )
+        self.cv.notify_all()
 
       if self.detect_races:
         assert clock is not None
@@ -889,8 +1141,6 @@ class Barrier(memory.Allocation):
           self.clock = clock.copy()
         else:
           self.clock.update(clock)
-
-      self.cv.notify_all()
 
   def wait(
       self,
@@ -1014,13 +1264,22 @@ class Barrier(memory.Allocation):
       # that is managed by `self.shared_memory`.)
       clock = self.clock if self.detect_races else None
 
+      # Ensure that threads that wait on the barrier can see tensor core
+      # operations (outstanding or complete) from threads that arrived at the
+      # barrier.
+      pipelineable_async_tasks = set(self.pipelineable_async_tasks)
+
     # Note that this block cannot be nested under the `with self.cv` block
     # immediately above since this would violate the invariant that
     # `self.shared_memory.lock` *cannot* be acquired when `self.cv`'s lock is
     # already held. (See the documentation of `self.cv` above.)
-    if self.detect_races:
-      assert clock is not None
-      with self.shared_memory.lock:
+    with self.shared_memory.lock:
+      self.shared_memory.pipelineable_async_tasks[
+          thread
+      ] |= pipelineable_async_tasks
+
+      if self.detect_races:
+        assert clock is not None
         self.shared_memory.clocks[thread].update(clock)
 
 
@@ -1085,6 +1344,7 @@ class ClusterBarrier(memory.Allocation):
             # the underlying barriers.
             ref_count=1,
             num_arrivals=num_arrivals * num_blocks_for_arrival,
+            orders_tensor_core=False,
             enable_logging=enable_logging,
         )
         for _ in range(num_blocks_in_cluster)
@@ -1127,7 +1387,7 @@ class ClusterBarrier(memory.Allocation):
     # any collective axis) from `block_coords`.
     with self.lock:
       barrier = self.barriers[thread.block_id]
-    barrier.arrive(clock, logging_info)
+    barrier.arrive(thread, clock, logging_info)
 
     # Arrive at the barriers for those blocks whose coordinates differ from
     # `block_coords` along *exactly one* collective axis.
@@ -1156,7 +1416,7 @@ class ClusterBarrier(memory.Allocation):
         )
         with self.lock:
           barrier = self.barriers[barrier_index]
-        barrier.arrive(clock, logging_info)
+        barrier.arrive(thread, clock, logging_info)
 
   def wait(
       self,
