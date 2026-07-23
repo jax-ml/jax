@@ -578,6 +578,10 @@ common:rbe_cross_compile_darwin_x86_64 --config=rbe_cross_compile_base
 common:debug_symbols --strip=never --per_file_copt="xla/pjrt|xla/python@-g3"
 common:debug --config=debug_symbols -c fastbuild
 
+# Config for peak memory profiling of test actions.
+test:memprofile --run_under=//ci/utilities:memory_wrapper
+test:memprofile --nocache_test_results
+
 # Load `.jax_configure.bazelrc` file written by build.py
 try-import %workspace%/.jax_configure.bazelrc
 

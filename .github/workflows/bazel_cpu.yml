@@ -38,6 +38,10 @@ on:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
         default: 'no'
+      profile-memory:
+        description: 'Profile peak memory usage of tests?'
+        type: boolean
+        default: false
       build_jaxlib:
         description: 'Should jaxlib be built from source?'
         required: true
@@ -80,7 +84,9 @@ jobs:
       JAXCI_ENABLE_BZLMOD: ${{ inputs.enable-bzlmod }}
       JAXCI_BUILD_JAXLIB: ${{ inputs.build_jaxlib }}
       JAXCI_BUILD_JAX: ${{ inputs.build_jax }}
+      JAXCI_PROFILE_MEMORY: ${{ inputs.profile-memory }}
       JAXCI_BAZEL_CPU_RBE_MODE: "${{ inputs.bazel_command }}"
+
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}
       JAXCI_XLA_COMMIT: ${{ inputs.xla_commit }}
 
@@ -109,7 +115,11 @@ jobs:
       - name: "Bazel CPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}"
         timeout-minutes: 60
         run: ./ci/run_bazel_test_cpu_rbe.sh
+      - name: Generate Memory Profile Summary
+        if: always() && inputs.profile-memory
+        run: python3 ci/utilities/parse_memory_profiles.py >> "$GITHUB_STEP_SUMMARY"
       - name: Upload test artifacts
+
         if: always()
         continue-on-error: true
         uses: ./.github/actions/upload-test-artifacts
