@@ -15,6 +15,10 @@
 """Utilities for working with tree-like container data structures.
 
 The :mod:`jax.tree` namespace contains aliases of utilities from :mod:`jax.tree_util`.
+
+Refer to the Working with pytrees `[1]`_ tutorial for examples.
+
+.. _[1] https://jax.readthedocs.io/en/latest/working-with-pytrees.html
 """
 
 from jax._src.tree import (
