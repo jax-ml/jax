@@ -35,6 +35,16 @@ class CompileOptions:
 def make_hlo_program(mlir_module: str) -> Program: ...
 @overload
 def make_hlo_program(mlir_module: bytes) -> Program: ...
+@overload  # ifrt_version >= 63
+def make_colocated_python_program(
+    name: str,
+    picked_function: bytes,
+    devices: Sequence[_Device] | _DeviceList,
+    split_device_index_ranges: Sequence[tuple[int, int]],
+    input_avals: Sequence[Any],
+    output_avals: Sequence[Any],
+) -> Program: ...
+@overload  # ifrt_version < 63
 def make_colocated_python_program(
     name: str,
     picked_function: bytes,
