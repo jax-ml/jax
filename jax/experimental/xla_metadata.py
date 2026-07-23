@@ -143,3 +143,24 @@ def must_fuse_call(identifier: str):
   """
 
   return xla_metadata_call(MUST_FUSE=identifier)
+
+
+def vmem_limit_bytes(limit: int):
+  """Decorator for specifying a VMEM limit in bytes on operations in the call.
+
+  When lowered to HLO, the instructions within the function call will be
+  annotated
+  with `vmem_limit_bytes=<limit>` in their frontend attributes. During TPU
+  compilation,
+  this limit is transferred to the instruction's backend config under
+  `memory_space.vmem`,
+  and is propagated to fusion instructions.
+
+  Args:
+    limit: The VMEM limit in bytes.
+
+  Returns:
+    A wrapped version of the function with the vmem_limit_bytes metadata
+    applied.
+  """
+  return xla_metadata_call(vmem_limit_bytes=limit)

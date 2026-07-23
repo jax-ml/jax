@@ -570,6 +570,32 @@ class XlaMetadataTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(f))(jnp.array([2.3, 4.5]))  # doesn't crash
 
+  def test_vmem_limit_bytes_dot_fusion(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("vmem_limit_bytes backend_config only populated on TPU")
+
+    from jax.experimental.xla_metadata import vmem_limit_bytes
+
+    @vmem_limit_bytes(1048576)
+    def dot_fn(lhs, rhs):
+      return jnp.dot(lhs, rhs)
+
+    @jax.jit
+    def f(x, y):
+      a = x + y
+      b = dot_fn(a, x)
+      c = b + y
+      return c
+
+    x = jnp.ones((16, 16), dtype=jnp.float32)
+    y = jnp.ones((16, 16), dtype=jnp.float32)
+    lowered = f.lower(x, y)
+    lowered_text = lowered.as_text("hlo")
+    self.assertIn('vmem_limit_bytes="1048576"', lowered_text)
+    compiled_text = lowered.compile().as_text()
+    self.assertIn("scoped_memory_configs", compiled_text)
+    self.assertIn("1048576", compiled_text)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
