@@ -363,10 +363,10 @@ call_param_updaters: dict[Primitive, Callable[..., dict[str, Any]]] = {}
 
 def abstract_eval_fun(fun: Callable, *avals,
                       debug_info: core.DebugInfo, **params):
-  _, avals_out = trace_to_jaxpr(
-      partial(fun, **params), ft.flatten_args(*avals), debug_info)
+  _, avals_out, _ = trace_to_jaxpr_dynamic(
+      lu.wrap_init(fun, params, debug_info=debug_info), avals)
   assert all(isinstance(aval, AbstractValue) for aval in avals_out)
-  return list(avals_out)
+  return avals_out
 
 
 JaxprTracerRecipe = Union[
@@ -830,14 +830,16 @@ def _partial_eval_jaxpr_nounits(
     return [*known_vals_out, *residuals]
 
   known_avals = [a for a, uk in zip(jaxpr.in_aval_qdds, in_unknowns) if not uk]
-  closed_jaxpr_known, _ = trace_to_jaxpr(
-      fun, ft.flatten_args(*known_avals), f.debug_info.with_unknown_names())
+  jaxpr_known, _, consts_known = trace_to_jaxpr_dynamic(
+      lu.wrap_init(fun, debug_info=f.debug_info.with_unknown_names()),
+      known_avals)
   (out_unknowns, jaxpr_unknown, res_avals, fwds), = cell
 
   if config.enable_checks.value:
-    core.check_jaxpr(closed_jaxpr_known)
+    core.check_jaxpr(jaxpr_known)
     core.check_jaxpr(jaxpr_unknown)
 
+  closed_jaxpr_known = jaxpr_known.with_consts(consts_known)
   closed_jaxpr_unknown = jaxpr_unknown
   return closed_jaxpr_known, closed_jaxpr_unknown, out_unknowns, res_avals, fwds
 

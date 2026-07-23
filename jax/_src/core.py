@@ -1847,13 +1847,6 @@ class AbstractValue:
   def lo_ty_qdd(self, qdd):
     raise NotImplementedError("avals with qdd must override")
 
-  def lower_val(self, val, /):
-    return [val]
-
-  def raise_val(self, *vals):
-    val, = vals
-    return val
-
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str(self)
 
@@ -2536,6 +2529,10 @@ class ShapedArray(AbstractValue):
                        memory_space)
 
   # Interned types don't need __eq__ or __hash__.
+
+  def lower_val(self, val): return [val]
+  def raise_val(self, val): return val
+  def lo_ty(self): return [self]
 
   @property
   def mat(self):

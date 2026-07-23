@@ -25,13 +25,12 @@ from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval, p2tz)
 from jax._src.api_util import (
-  argnums_partial, resolve_kwargs,
+  argnums_partial, flatten_fun_nokwargs, resolve_kwargs,
   prepend_static_args, debug_info, fun_signature,
   infer_argnums_and_argnames)
 from jax._src.errors import UnexpectedTracerError
@@ -55,6 +54,12 @@ zip = safe_zip
 
 
 ### util
+
+def _initial_style_jaxpr(fun: lu.WrappedFun,
+                         in_avals: Sequence[core.AbstractValue]
+                         ) -> tuple[core.Jaxpr, Sequence[Any]]:
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  return jaxpr, consts
 
 def _lower_and_eval(
     name: str, jaxpr: core.Jaxpr, args: Sequence[Any]
@@ -1216,17 +1221,17 @@ def custom_gradient(fun):
 
   def fwd(*args, **kwargs):
     ans, rule = fun(*args, **kwargs)
-    ans_flat, out_tree = tree_flatten(((ans,), {}))
+    ans_flat, out_tree = tree_flatten((ans,))
     debug_fwd = debug_info("custom_gradient fwd", rule, (ans,), {})
+    rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule,
+                                                      debug_info=debug_fwd), out_tree)
     ans_avals = [core.typeof(x).to_ct_aval() for x in ans_flat]
-    closed_jaxpr, rule_out = pe.trace_to_jaxpr(
-        rule, ft.treedef_args_to_ft(out_tree, ans_avals), debug_fwd)
-    jaxpr, consts = pe.separate_consts(closed_jaxpr)
-    return ans, Residuals(jaxpr, rule_out.tree, out_tree, consts)
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
+    return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 
   def bwd(res, cts):
     jaxpr, in_tree, out_tree, consts = res
-    cts_flat, out_tree_ = tree_flatten(((cts,), {}))
+    cts_flat, out_tree_ = tree_flatten((cts,))
     if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
     cts_out = core.eval_jaxpr(jaxpr, consts, *cts_flat)
     cts_out = tree_unflatten(in_tree, cts_out)
@@ -1316,7 +1321,7 @@ def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
     values hoisted from its closure, and (ii) a list of values hoisted
     from the closure.
   """
-  flat_args, in_tree = tree_flatten((example_args, {}))
+  flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(core.typeof, flat_args))
   debug = debug_info("closure_convert", fun, example_args, {})
   if config.check_tracer_leaks.value:
@@ -1348,10 +1353,10 @@ def _maybe_perturbed(x: Any) -> bool:
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals,
                                debug_info: core.DebugInfo):
-  closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-      fun, ft.treedef_args_to_ft(in_tree, in_avals), debug_info)
-  jaxpr, consts = pe.separate_consts(closed_jaxpr)
-  out_tree = out_avals.tree
+  wrapped_fun, out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug_info), in_tree)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  out_tree = out_tree()
 
   (closure_consts, const_args), merge = partition_list(_maybe_perturbed, consts)
   num_consts = len(const_args)
@@ -1360,7 +1365,7 @@ def _closure_convert_for_avals(fun, in_tree, in_avals,
     num_args = len(args_hconsts) - num_consts
     args, const_args = split_list(args_hconsts, [num_args])
     consts = merge(closure_consts, const_args)
-    all_args, in_tree2 = tree_flatten((tuple(args), {}))
+    all_args, in_tree2 = tree_flatten(tuple(args))
     if in_tree != in_tree2:
       msg = ("The inputs to the closure produced by closure_convert must have "
              "the same Pytree structure as the example arguments passed when "
@@ -1473,32 +1478,39 @@ def linear_call(fun: Callable,
   operands_res, res_tree = tree_flatten(residual_args)
   operands_lin, lin_tree = tree_flatten(linear_args)
 
+  f_in_tree = treedef_tuple((res_tree, lin_tree))
+  f, out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(
+          fun,
+          debug_info=debug_info("linear_call fun", fun,
+                                (residual_args, linear_args), {})),
+      f_in_tree)
+
   res_avals = map(core.typeof, operands_res)
   lin_avals = map(core.typeof, operands_lin)
-  f_jaxpr, f_out_avals = pe.trace_to_jaxpr(
-      fun,
-      ft.pack(((ft.FTPyTree(res_avals, res_tree),
-                ft.FTPyTree(lin_avals, lin_tree)), {})),
-      debug_info("linear_call fun", fun, (residual_args, linear_args), {}))
-  f_jaxpr_closed, f_consts = pe.separate_consts(f_jaxpr)
+  f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
+  f_jaxpr_closed = pe.convert_constvars_jaxpr(f_jaxpr)
   out_avals = f_jaxpr_closed.out_avals
-  out_tree = f_out_avals.tree
+
+  t_in_tree = treedef_tuple((res_tree, out_tree()))
+  t, t_out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(
+          fun_transpose,
+          # TODO(necula): the fun_transpose takes residual and output of fun!
+          debug_info=debug_info("linear_call fun_transpose", fun_transpose,
+                                (residual_args, linear_args), {})),
+      t_in_tree)
 
   @pe._memoize
   def transpose_thunk():
-    t_jaxpr, t_out_avals = pe.trace_to_jaxpr(
-        fun_transpose,
-        ft.pack(((ft.FTPyTree(res_avals, res_tree),
-                  ft.FTPyTree(list(out_avals), out_tree)), {})),
-        # TODO(necula): the fun_transpose takes residual and output of fun!
-        debug_info("linear_call fun_transpose", fun_transpose,
-                   (residual_args, linear_args), {}).with_unknown_names())
-    if t_out_avals.tree != lin_tree:
+    t_jaxpr, t_consts = _initial_style_jaxpr(t.with_unknown_names(),
+                                             (*res_avals, *out_avals))
+    if t_out_tree() != lin_tree:
       raise TypeError(
           'transpose output pytree structure must match that of linear inputs, '
-          f'got output structure {t_out_avals.tree} '
+          f'got output structure {t_out_tree()} '
           f'and input structure {lin_tree}.')
-    return pe.separate_consts(t_jaxpr)
+    return pe.convert_constvars_jaxpr(t_jaxpr), t_consts
 
   out = linear_call_p.bind(*f_consts, *operands_res, *operands_lin,
                            callee=f_jaxpr_closed,
@@ -1506,7 +1518,7 @@ def linear_call(fun: Callable,
                            num_callee_consts=len(f_consts),
                            num_res=len(operands_res))
 
-  return tree_unflatten(out_tree, out)
+  return tree_unflatten(out_tree(), out)
 
 def _linear_call_impl(*args, callee, transpose_thunk, num_callee_consts,
                       num_res):
