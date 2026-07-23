@@ -24,6 +24,8 @@ query --experimental_downloader_config=bazel_downloader.cfg
 # By default, execute all actions locally.
 common --spawn_strategy=local
 
+common --features=-layering_check
+
 # Enable host OS specific configs. For instance, "common:linux" will be used
 # automatically when building on Linux.
 common --enable_platform_specific_config

@@ -11,18 +11,18 @@ xla_workspace4()
 
 load("@xla//:workspace3.bzl", "xla_workspace3")
 
-xla_workspace3()
-
 # Initialize Hermetic toolchains
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "6b1b294cbecb98a08bcfe59641461f72e113db30fa91b44fcc49d98099b5ba65",
-    strip_prefix = "rules_ml_toolchain-b11745590f513ec55b32e2d126073576fde18c71",
+    sha256 = "11b28a58ec7ea2ed0edd53733dd66cef6382b6801348b67ac5a180f606d65b3e",
+    strip_prefix = "rules_ml_toolchain-cb96c4faa01ce98c38f857c1b85c1ec6938ee201",
     urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/b11745590f513ec55b32e2d126073576fde18c71.tar.gz",
+        "https://github.com/yuriivcs/rules_ml_toolchain/archive/cb96c4faa01ce98c38f857c1b85c1ec6938ee201.tar.gz",
     ),
 )
+
+xla_workspace3()
 
 load("@rules_ml_toolchain//cc/deps:cc_toolchain_deps.bzl", "cc_toolchain_deps")
 
@@ -90,6 +90,13 @@ install_deps()
 
 load("@xla//:workspace2.bzl", "xla_workspace2")
 
+tf_http_archive(
+    name = "com_github_grpc_grpc",
+    sha256 = "41b695614b26652ff9e97ce50cfd4a6c7a3d45a9fe598d1454407746499bbf2c",
+    strip_prefix = "grpc-1.81.0",
+    patch_file = ["//third_party/grpc:grpc.patch"],
+    urls = tf_mirror_urls("https://github.com/grpc/grpc/archive/refs/tags/v1.81.0.tar.gz"),
+)
 xla_workspace2()
 
 load("@xla//:workspace1.bzl", "xla_workspace1")
