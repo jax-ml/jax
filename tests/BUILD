@@ -1281,6 +1281,20 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "cpu_profiler_test",
+    srcs = ["cpu_profiler_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    deps = [
+        "//jax/experimental:profiler",
+    ] + py_deps([
+        "absl/testing",
+        "numpy",
+    ]),
+)
+
+jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
     enable_backends = [
