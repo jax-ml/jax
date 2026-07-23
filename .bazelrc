@@ -454,6 +454,7 @@ common:rbe_linux_x86_64_base --linkopt=-lrt
 common:rbe_linux_x86_64_base --host_linkopt=-lrt
 common:rbe_linux_x86_64_base --linkopt=-lm
 common:rbe_linux_x86_64_base --host_linkopt=-lm
+common:rbe_linux_x86_64_base --sandbox_base=/run
 
 # Set the host, execution, and target platform
 common:rbe_linux_x86_64_base --host_platform="@ml_build_config_platform//:platform"
