@@ -2929,7 +2929,11 @@ def _custom_vjp_call_push_rule(
 def _custom_call_hi_primitive_push_block_spec_rule(
     ctx: PullRuleContext, *block_specs, _prim
 ):
-  return _prim.push_block_spec_rule(ctx, block_specs)
+  if hasattr(_prim, "push_block_spec_rule"):
+    return _prim.push_block_spec_rule(ctx, block_specs)
+  if hasattr(_prim, "traced") and hasattr(_prim.traced, "jaxpr"):
+    return _push_block_spec_jaxpr(_prim.traced.jaxpr, *block_specs)
+  raise NotImplementedError(f"push_block_spec_rule not implemented for {type(_prim)}")
 
 
 @register_push_block_spec_rule(pjit.jit_p)

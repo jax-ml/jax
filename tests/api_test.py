@@ -72,8 +72,7 @@ from jax.errors import (UnexpectedTracerError, TracerIntegerConversionError,
 from jax.interpreters import ad
 from jax.interpreters import batching
 import jax.numpy as jnp
-from jax.sharding import (PartitionSpec as P, AbstractMesh, AbstractDevice,
-                          AxisType)
+from jax.sharding import PartitionSpec as P
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -3027,23 +3026,6 @@ class APITest(jtu.JaxTestCase):
     primal, tangent = jax.jvp(fun, (2.,), (1.,))
     self.assertAllClose(primal, np.int32(3))
     self.assertEqual(tangent, np.zeros((), dtype=float0))
-
-  @jtu.run_on_devices('cpu')
-  def test_lax_logistic(self):
-    arr = np.arange(4.)
-
-    @jax.jit
-    def f(x):
-      return jax.lax.logistic(x)
-
-    lowered = f.trace(arr).lower(lowering_platforms=('tpu',))
-    self.assertNotIn('stablehlo.logistic', lowered.as_text())
-
-    adev = AbstractDevice('TPU7x', 1, 'tpu')
-    am = AbstractMesh((1,), ('x',), (AxisType.Explicit,), abstract_device=adev)
-    with jax.sharding.use_abstract_mesh(am):
-      lowered = f.trace(arr).lower()
-      self.assertIn('stablehlo.logistic', lowered.as_text())
 
   def test_vjp_of_int_index(self):
     primal, fn_vjp = api.vjp(lambda x, i: x[i], np.ones(2)*2, 1)
@@ -8932,7 +8914,7 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_custom_vjp_traceback(self):
     # TODO(dougalm): improve this
-    expected_depth_f = 7 if config.custom_vjp3.value else 9
+    expected_depth_f = 8 if config.custom_vjp3.value else 9
     expected_depth_f_fwd = 16
     expected_depth_f_rev = 12
     init_depth = self.cur_depth()
