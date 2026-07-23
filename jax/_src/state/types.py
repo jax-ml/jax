@@ -464,10 +464,7 @@ class AbstractRef(core.AbstractValue):
     return self.inner_aval.is_high
 
   def lo_ty(self):
-    return [
-        AbstractRef(x, memory_space=self.memory_space)
-        for x in self.inner_aval.lo_ty()
-    ]
+    return [self.update(inner_aval=x) for x in self.inner_aval.lo_ty()]
 
   def lower_val(self, ref, /):
     if not self.is_high:
