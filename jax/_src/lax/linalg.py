@@ -40,7 +40,6 @@ from jax._src.interpreters import mlir
 from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.lax import utils as lax_utils
-from jax._src.lax.lax import _float, _complex, _int
 from jax._src.lib import cuda_versions
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
@@ -51,6 +50,13 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike
+
+
+_int = {np.integer}
+_float = {np.float32, np.float64}
+_any_float = {np.floating}
+_complex = {np.complex64, np.complex128}
+_any_complex = {np.complexfloating}
 
 
 def initialize_lapack():
@@ -2823,7 +2829,7 @@ def _tri_solve_sharding(a, b, *, left_side, lower, transpose_a, conjugate_a,
   return a.sharding.update(spec=P(*batch_spec, *out_spec))
 
 triangular_solve_p = linalg_primitive(
-    _triangular_solve_dtype_rule, (_float | _complex, _float | _complex),
+    _triangular_solve_dtype_rule, (_any_float | _any_complex, _any_float | _any_complex),
     (2, 2), _triangular_solve_shape_rule, "triangular_solve",
     sharding_rule=_tri_solve_sharding)
 ad.defjvp2(triangular_solve_p,
