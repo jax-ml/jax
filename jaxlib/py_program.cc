@@ -244,6 +244,9 @@ constexpr std::string_view kColocatedPythonProgramType =
 
 absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
     std::string name, nb::bytes picked_function, nb::sequence devices,
+#if JAX_IFRT_VERSION_NUMBER >= 63
+    nb::sequence split_device_index_ranges,
+#endif
     nb::sequence input_avals, nb::sequence output_avals) {
   auto ifrt_serialized_program_text = absl::MakeCordFromExternal(
       std::string_view(reinterpret_cast<const char*>(picked_function.data()),
@@ -254,10 +257,20 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeColocatedPythonProgram(
   TF_ASSIGN_OR_RETURN(auto ifrt_device_list, GetDeviceList(devices));
   TF_ASSIGN_OR_RETURN(auto ifrt_input_specs, GetIfrtArraySpecs(input_avals));
   TF_ASSIGN_OR_RETURN(auto ifrt_output_specs, GetIfrtArraySpecs(output_avals));
+#if JAX_IFRT_VERSION_NUMBER >= 63
+  auto split_device_index_ranges_vector =
+      nb::cast<std::vector<std::pair<int, int>>>(split_device_index_ranges);
+  return std::make_unique<ifrt::CustomCallProgram>(
+      std::string(kColocatedPythonProgramType), std::move(name),
+      std::move(ifrt_serialized_program_text), std::move(ifrt_device_list),
+      /*split_device_index_ranges=*/std::move(split_device_index_ranges_vector),
+      std::move(ifrt_input_specs), std::move(ifrt_output_specs));
+#else
   return std::make_unique<ifrt::CustomCallProgram>(
       std::string(kColocatedPythonProgramType), std::move(name),
       std::move(ifrt_serialized_program_text), std::move(ifrt_device_list),
       std::move(ifrt_input_specs), std::move(ifrt_output_specs));
+#endif
 }
 
 }  // namespace
@@ -281,6 +294,9 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
       .def("make_colocated_python_program",
            xla::ValueOrThrowWrapper(MakeColocatedPythonProgram),
            nb::arg("name"), nb::arg("pickled_function"), nb::arg("devices"),
+#if JAX_IFRT_VERSION_NUMBER >= 63
+           nb::arg("split_device_index_ranges"),
+#endif
            nb::arg("input_avals"), nb::arg("output_avals"),
            nb::sig(
                // clang-format off
@@ -288,6 +304,9 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
             "name: str, "
             "picked_function: bytes, "
             "devices: typing.Sequence[_Device] | _DeviceList, "
+#if JAX_IFRT_VERSION_NUMBER >= 63
+            "split_device_index_ranges: typing.Sequence[tuple[int, int]], "
+#endif
             "input_avals: Sequence[typing.Any], "
             "output_avals: Sequence[Any]"
             ") -> Program"

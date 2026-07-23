@@ -157,9 +157,14 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         None,  # dummy devices
     )
     pickled_function = serialization._serialize(fun_and_specialization)
-    program = ifrt_programs.make_colocated_python_program(
-        "add_one", pickled_function, [cpu_devices[0]], [sds], [sds]
-    )
+    if jax._src.lib.ifrt_version >= 63:
+      program = ifrt_programs.make_colocated_python_program(
+          "add_one", pickled_function, [cpu_devices[0]], [], [sds], [sds]
+      )
+    else:
+      program = ifrt_programs.make_colocated_python_program(
+          "add_one", pickled_function, [cpu_devices[0]], [sds], [sds]
+      )
     del program
 
   def test_serialize_with_shared_obj(self):

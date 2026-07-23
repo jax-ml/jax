@@ -288,9 +288,14 @@ def _compile_to_executable(
       devices,
   )
   pickled_function = _serialize(fun_and_specialization)
-  program = ifrt_programs.make_colocated_python_program(
-      name, pickled_function, devices, in_specs_leaves, out_specs_leaves
-  )
+  if jax._src.lib.ifrt_version >= 63:
+    program = ifrt_programs.make_colocated_python_program(
+        name, pickled_function, devices, [], in_specs_leaves, out_specs_leaves
+    )
+  else:
+    program = ifrt_programs.make_colocated_python_program(
+        name, pickled_function, devices, in_specs_leaves, out_specs_leaves
+    )
   ifrt_client = devices[0].client
   out_sdss = tuple(
       jax.core.ShapedArray(sds.shape, sds.dtype) for sds in out_specs_leaves
