@@ -29,6 +29,8 @@ from jax._src import ffi
 from jax._src import numpy as jnp
 from jax._src import pretty_printer as pp
 from jax._src.sharding import Sharding
+from jax._src.named_sharding import NamedSharding
+from jax._src.mesh import AbstractMesh, get_concrete_mesh
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import typing
@@ -678,19 +680,20 @@ def random_fold_in_lowering(ctx, keys, msgs):
 mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
 
 
-def random_bits(keys, bit_width, shape):
-  return random_bits_p.bind(keys, bit_width=bit_width, shape=shape)
+def random_bits(keys, *, bit_width, shape, out_sharding=None):
+  return random_bits_p.bind(keys, bit_width=bit_width, shape=shape, out_sharding=out_sharding)
 
 random_bits_p = core.Primitive('random_bits')
 ad.defjvp_zero(random_bits_p)
 batching.defvectorized(random_bits_p)
 
 @random_bits_p.def_abstract_eval
-def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
+def random_bits_abstract_eval(keys_aval, *, bit_width, shape, out_sharding=None):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  # TODO(yashkatariya): random_bits should take an out_sharding argument.
-  if keys_aval.sharding.mesh.empty:
+  if out_sharding is not None:
+    out_sharding.check_compatible_aval(out_shape)
+  elif keys_aval.sharding.mesh.empty:
     out_sharding = core.get_cur_mesh_sharding()
   else:
     new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
@@ -699,16 +702,24 @@ def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
                           manual_axis_type=keys_aval.mat)
 
 @random_bits_p.def_impl
-def random_bits_impl(keys, *, bit_width, shape):
-  return random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
-                               bit_width=bit_width, shape=shape)
+def random_bits_impl(keys, *, bit_width, shape, out_sharding=None):
+  res = random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
+                              bit_width=bit_width, shape=shape)
+  if out_sharding is not None:
+    if isinstance(out_sharding, NamedSharding) and isinstance(out_sharding.mesh, AbstractMesh):
+      concrete_mesh = get_concrete_mesh()
+      if not concrete_mesh.empty:
+        out_sharding = NamedSharding(concrete_mesh, out_sharding.spec)
+    res = api.device_put(res, out_sharding)
+  return res
 
 def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape):
   bits = iterated_vmap_unary(
       keys_ndim, lambda k: impl.random_bits(k, bit_width, shape))
   return bits(base_arr)
 
-def random_bits_lowering(ctx, keys, *, bit_width, shape):
+def random_bits_lowering(ctx, keys, *, bit_width, shape, out_sharding=None):
+  del out_sharding
   aval, = ctx.avals_in
   impl = aval.dtype._impl
   bits = iterated_vmap_unary(
