@@ -751,7 +751,6 @@ def MosaicGPU_MemRefReshapeOp : Op<MosaicGPU_Dialect, "memref_reshape",
   let assemblyFormat = [{
     $source attr-dict `:` type($source) `->` type($result)
   }];
-  let hasVerifier = 1;
 }
 
 def MosaicGPU_WGMMASupportedABType : AnyTypeOf<[F16, BF16, TF32, F32, F8E4M3FN, F8E5M2, I8],

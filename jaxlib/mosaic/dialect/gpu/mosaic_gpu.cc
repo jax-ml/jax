@@ -32,7 +32,6 @@ limitations under the License.
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LogicalResult.h"
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
@@ -1380,8 +1379,75 @@ struct HoistReinterpretCastOutOfWarpMap
 };
 }  // namespace
 
+namespace {
+llvm::FailureOr<mlir::MemRefLayoutAttrInterface> inferReshapeLayout(
+    mlir::MemRefType src_type, llvm::ArrayRef<int64_t> tgt_shape) {
+  if (src_type.getLayout().isIdentity()) {
+    return mlir::MemRefLayoutAttrInterface();
+  }
+
+  llvm::ArrayRef<int64_t> src_shape = src_type.getShape();
+  llvm::SmallVector<int64_t> src_strides;
+  int64_t src_offset = 0;
+  if (src_type.getStridesAndOffset(src_strides, src_offset).failed()) {
+    return mlir::failure();
+  }
+
+  llvm::SmallVector<int64_t> tgt_strides(tgt_shape.size(), 0);
+  int src_idx = 0, tgt_idx = 0;
+  int src_rank = src_shape.size(), tgt_rank = tgt_shape.size();
+
+  // Pair up source and target dimensions into minimal matching blocks where
+  // total element count matches.
+  while (src_idx < src_rank || tgt_idx < tgt_rank) {
+    int src_start = src_idx, tgt_start = tgt_idx;
+    int64_t src_prod = 1, tgt_prod = 1;
+
+    // Advance source and target indices until element products match for this
+    // block.
+    do {
+      if (src_idx < src_rank &&
+          (src_prod <= tgt_prod || tgt_idx == tgt_rank)) {
+        src_prod *= src_shape[src_idx++];
+      } else if (tgt_idx < tgt_rank) {
+        tgt_prod *= tgt_shape[tgt_idx++];
+      }
+    } while (src_prod != tgt_prod &&
+             (src_idx < src_rank || tgt_idx < tgt_rank));
+
+    if (src_prod != tgt_prod) return mlir::failure();
+
+    // Verify contiguity of non-1 dimensions in the source group.
+    int64_t base_stride = src_strides[src_idx - 1];
+    // `prev_dim` is different from `k - 1` when `src_shape[k - 1] == 1`.
+    int prev_dim = -1;
+    for (int k = src_start; k < src_idx; ++k) {
+      if (src_shape[k] == 1) continue;
+      if (prev_dim != -1 &&
+          src_strides[prev_dim] != src_strides[k] * src_shape[k]) {
+        return mlir::failure();
+      }
+      prev_dim = k;
+    }
+    if (prev_dim != -1) {
+      base_stride = src_strides[prev_dim];
+    }
+
+    // Compute row-major strides for target dimensions in the matched group.
+    int64_t current_stride = base_stride;
+    for (int k = tgt_idx - 1; k >= tgt_start; --k) {
+      tgt_strides[k] = current_stride;
+      current_stride *= tgt_shape[k];
+    }
+  }
+
+  return mlir::MemRefLayoutAttrInterface(mlir::StridedLayoutAttr::get(
+      src_type.getContext(), src_offset, tgt_strides));
+}
+}  // namespace
+
 llvm::LogicalResult MemRefReshapeOp::inferReturnTypes(
-    mlir::MLIRContext*, std::optional<mlir::Location> location,
+    mlir::MLIRContext* context, std::optional<mlir::Location> location,
     mlir::ValueRange operands, mlir::DictionaryAttr attributes,
     mlir::PropertyRef properties, mlir::RegionRange regions,
     llvm::SmallVectorImpl<mlir::Type>& inferredReturnTypes) {
@@ -1389,33 +1455,31 @@ llvm::LogicalResult MemRefReshapeOp::inferReturnTypes(
   mlir::MemRefType source_type =
       mlir::cast<mlir::MemRefType>(adaptor.getSource().getType());
   llvm::ArrayRef<int64_t> shape = adaptor.getShape();
-  mlir::MemRefLayoutAttrInterface layout;
-  if (auto strided = mlir::dyn_cast_if_present<mlir::StridedLayoutAttr>(
-          source_type.getLayout())) {
-    llvm::SmallVector<int64_t> strides = mlir::computeStrides(shape);
-    layout = mlir::StridedLayoutAttr::get(source_type.getContext(),
-                                          strided.getOffset(), strides);
+
+  int64_t src_elements = source_type.getNumElements();
+  int64_t tgt_elements = 1;
+  for (int64_t d : shape) tgt_elements *= d;
+  if (src_elements != tgt_elements) {
+    return mlir::emitOptionalError(
+        location,
+        llvm::formatv(
+            "The total number of elements in `source` ({0}) must match "
+            "the total number of elements in `result` ({1}).",
+            src_elements, tgt_elements));
   }
+
+  auto layout_or = inferReshapeLayout(source_type, shape);
+  if (failed(layout_or)) {
+    return mlir::emitOptionalError(
+        location,
+        "memref_reshape requires source memref to have contiguous strides for "
+        "reshaped dimensions");
+  }
+
   inferredReturnTypes.assign(
-      {mlir::MemRefType::get(shape, source_type.getElementType(), layout,
+      {mlir::MemRefType::get(shape, source_type.getElementType(), *layout_or,
                              source_type.getMemorySpace())});
   return mlir::success();
-}
-
-llvm::LogicalResult MemRefReshapeOp::verify() {
-  auto source_type = getSource().getType();
-  auto result_type = getResult().getType();
-  if (!mlir::memref::isStaticShapeAndContiguousRowMajor(source_type)) {
-    return emitOpError(
-        "memref_reshape requires source memref to have contiguous strides");
-  }
-  if (source_type.getNumElements() != result_type.getNumElements()) {
-    return emitOpError(llvm::formatv(
-        "The total number of elements in `source` ({0}) must match the total "
-        "number of elements in `result` ({1}).",
-        source_type.getNumElements(), result_type.getNumElements()));
-  }
-  return llvm::success();
 }
 
 void WarpMapOp::getCanonicalizationPatterns(mlir::RewritePatternSet& patterns,

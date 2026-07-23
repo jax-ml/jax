@@ -2073,24 +2073,60 @@ ir.MLIRError,
           layout=ir.StridedLayoutAttr.get(0, [256, 1]),
       )
       [ref] = undefs(ref_ty)
-      mgpu.dialect.memref_reshape(ref, (8, 16, 64))
       with self.assertRaisesRegex(
           ir.MLIRError,
           "memref_reshape requires source memref to have contiguous strides",
       ):
-        self.module.operation.verify()
+        mgpu.dialect.memref_reshape(ref, (8, 16, 64))
+
+  def test_memref_reshape_infer_return_types_partially_non_contiguous_outer_dim(
+      self,
+  ):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get(
+          (10, 64, 128),
+          f32,
+          layout=ir.StridedLayoutAttr.get(0, [32768, 128, 1]),
+      )
+      ref, = undefs(ref_ty)
+      res = mgpu.dialect.memref_reshape(ref, (10, 8, 8, 128))
+      res_ty = ir.MemRefType.get(
+          (10, 8, 8, 128),
+          f32,
+          layout=ir.StridedLayoutAttr.get(0, [32768, 1024, 128, 1]),
+      )
+      self.assertEqual(res.type, res_ty)
+
+  def test_memref_reshape_infer_return_types_partially_non_contiguous_inner_dim(
+      self,
+  ):
+    with ir.InsertionPoint(self.module.body):
+      f32 = ir.F32Type.get()
+      ref_ty = ir.MemRefType.get(
+          (64, 128, 10),
+          f32,
+          layout=ir.StridedLayoutAttr.get(0, [128, 1, 4096]),
+      )
+      ref, = undefs(ref_ty)
+      res = mgpu.dialect.memref_reshape(ref, (8, 8, 128, 10))
+      res_ty = ir.MemRefType.get(
+          (8, 8, 128, 10),
+          f32,
+          layout=ir.StridedLayoutAttr.get(0, [1024, 128, 1, 4096]),
+      )
+      self.assertEqual(res.type, res_ty)
 
   def test_memref_reshape_shape_mismatch(self):
     with ir.InsertionPoint(self.module.body):
       f32 = ir.F32Type.get()
       ref_ty = ir.MemRefType.get((128,), f32)
-      [ref] = undefs(ref_ty)
-      mgpu.dialect.memref_reshape(ref, (3, 64))
+      ref, = undefs(ref_ty)
       with self.assertRaisesRegex(
           ir.MLIRError,
           "The total number of elements in `source`",
       ):
-        self.module.operation.verify()
+        mgpu.dialect.memref_reshape(ref, (3, 64))
 
 
 class DialectLoweringTest(MosaicGpuTest):
