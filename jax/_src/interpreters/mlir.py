@@ -34,11 +34,11 @@ from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
-from jax._src import flattree as ft
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import hashable_array
 from jax._src import jaxpr_util
+from jax._src import linear_util as lu
 from jax._src import literals
 from jax._src import path
 from jax._src import sharding_impls
@@ -2641,10 +2641,12 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   as `avals_out`."""
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    jaxpr, _ = pe.trace_to_jaxpr(
-        partial(f, **params), ft.flatten_args(*ctx.avals_in),
-        api_util.debug_info("lower_fun", fun, args, {}), requires_low=True)
-    consts_for_constvars = jaxpr.consts
+    wrapped_fun = lu.wrap_init(f, params,
+        debug_info=api_util.debug_info("lower_fun", fun, args, {}))
+
+    jaxpr, _, consts_for_constvars = pe.trace_to_jaxpr_dynamic(
+        wrapped_fun, ctx.avals_in, lower=True)
+    jaxpr = jaxpr.with_consts(consts_for_constvars)
 
     if any(isinstance(e, core.InternalMutableArrayEffect) for e in jaxpr.effects):
       from jax._src.interpreters import pxla  # pyrefly: ignore[missing-module-attribute]

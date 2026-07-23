@@ -208,7 +208,6 @@ pytype_strict_library(
         "//jax/_src:core",
         "//jax/_src:debugging",
         "//jax/_src:effects",
-        "//jax/_src:flattree",
         "//jax/_src:hashable_array",
         "//jax/_src:lax",
         "//jax/_src:partial_eval",
