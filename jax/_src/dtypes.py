@@ -1074,12 +1074,18 @@ def lattice_result_type(*args: Any) -> tuple[DType, bool]:
   return out_dtype, (out_dtype != bool_) and out_weak_type
 
 @overload
+
+
 def result_type(*args: Any, return_weak_type_flag: Literal[True]) -> tuple[DType, bool]: ...
 
 @overload
+
+
 def result_type(*args: Any, return_weak_type_flag: Literal[False] = False) -> DType: ...
 
 @overload
+
+
 def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tuple[DType, bool]: ...
 
 @export
@@ -1174,10 +1180,43 @@ class PrimalTangentDType(ExtendedDType):
   @property
   def _rules(self):  # pyrefly: ignore[bad-override]
     return types.SimpleNamespace(
-      physical_element_aval=
-      lambda dtype: types.SimpleNamespace(shape=(), dtype=self.primal_dtype),
-      tangent_dtype=lambda dtype: self.tangent_dtype,
-      allow_conversion=True)
+        physical_element_aval=lambda dtype: types.SimpleNamespace(
+            shape=(), dtype=self.primal_dtype
+        ),
+        tangent_dtype=lambda dtype: self.tangent_dtype,
+        zero=lambda dtype: np.zeros((), dtype=self.primal_dtype),
+        full=lambda shape, fill_value, dtype: _primal_tangent_full(
+            shape, fill_value, dtype
+        ),
+        global_sharded_result_handler=lambda aval, out_sharding, committed: _primal_tangent_global_sharded_result_handler(
+            aval, out_sharding, committed
+        ),
+        allow_conversion=True,
+    )
+
+
+def _primal_tangent_full(shape, fill_value, dtype):
+  from jax._src.lax import lax  # pyrefly: ignore[missing-import]
+
+  return lax.convert_element_type(
+      lax.full(shape, fill_value, dtype=dtype.primal_dtype), dtype
+  )
+
+
+def _primal_tangent_global_sharded_result_handler(
+    aval, out_sharding, committed
+):
+  # pytype: disable=import-error
+  from jax._src.interpreters import pxla
+  from jax._src import core
+  from jax._src import earray
+  # pytype: enable=import-error
+  phys_sharding = out_sharding
+  phys_aval = core.physical_aval(aval)
+  phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
+  phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
+  return phys_handler.wrap(lambda arr: earray.EArray(aval, arr))
+
 
 def primal_tangent_dtype(primal_dtype, tangent_dtype,
                          name: str | None = None) -> ExtendedDType:
