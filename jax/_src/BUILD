@@ -259,6 +259,7 @@ pytype_strict_library(
         "dispatch.py",
         "interpreters/pxla.py",
         "pjit.py",
+        "tpu_info.py",
     ],
     type_checking = "pyrefly",
     visibility = ["//jax:internal"] + jax_visibility("api"),
@@ -1500,20 +1501,6 @@ py_library_providing_imports_info(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("opt_einsum"),
-)
-
-pytype_strict_library(
-    name = "tpu_info",
-    srcs = ["tpu_info.py"],
-    type_checking = "pyrefly",
-    visibility = ["//jax:internal"],
-    deps = [
-        ":api",
-        ":core",
-        ":dtypes",
-        ":mesh",
-        ":util",
-    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
