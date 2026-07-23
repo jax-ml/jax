@@ -60,4 +60,7 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     a, b = jnp.minimum(a, b), jnp.maximum(a, b)
     small_b = lax.lgamma(a) + (lax.lgamma(b) - lax.lgamma(a + b))
     large_b = lax.lgamma(a) + algdiv(a, b)
-    return jnp.where(b < 8, small_b, large_b)
+    result = jnp.where(b < 8, small_b, large_b)
+    # B(a, inf) -> 0 for finite a > 0, so betaln(a, inf) -> -inf. The lgamma/algdiv
+    # path returns nan for an infinite argument; b is max(a, b) after the swap above.
+    return jnp.where(jnp.isinf(b) & jnp.isfinite(a) & (a > 0), -jnp.inf, result)
