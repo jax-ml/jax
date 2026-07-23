@@ -22,15 +22,15 @@ import numpy as np
 from functools import partial, reduce as _reduce
 
 from jax._src import core
-from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
+from jax._src.lax.lax import (abs, add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
-                              convert_element_type, div, eq, exp, full_like, ge,
-                              gt, le, log, log1p, lt, mul, ne, neg, reciprocal,
-                              reduce, select, sign, sqrt, square,
-                              standard_naryop, standard_unop, sub,
+                              convert_element_type, cos, div, eq, exp,
+                              full_like, ge, gt, le, log, log1p, lt, mul, ne,
+                              neg, pow, reciprocal, reduce, select, sign, sin,
+                              sqrt, square, standard_naryop, standard_unop, sub,
                               _const, _dtype,
                               _float, _nary_lower_hlo, _ones, _isnan)
-from jax._src.lax.control_flow.loops import while_loop
+from jax._src.lax.control_flow.loops import fori_loop, while_loop
 
 from jax._src import dtypes
 from jax._src.interpreters import ad
@@ -71,9 +71,115 @@ def digamma(x: ArrayLike) -> Array:
   return digamma_p.bind(x)
 
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
-  r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
+  r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`.
+
+  For negative non-integer ``x``, XLA's ``chlo.polygamma`` (Euler-Maclaurin
+  zeta expansion) produces incorrect results (see jax-ml/jax#37635).  This
+  implementation corrects negative inputs using the reflection formula derived
+  by differentiating the digamma reflection identity ``m`` times:
+
+  .. math::
+
+      \psi^{(m)}(x) = (-1)^m\,\psi^{(m)}(1-x) - g_m(x), \quad x \notin \mathbb{Z}
+
+  where ``g_m(x) = \pi \cdot \tfrac{d^m}{dx^m}[\cot(\pi x)]`` is a closed-form
+  trig expression and ``1 - x > 0`` for ``x < 0``, so ``chlo.polygamma``
+  evaluates correctly on the reflected argument.
+
+  The correction is applied for ``m = 0, 1, 2, 3, 4`` using the following
+  closed-form trig terms (derived by repeated differentiation of
+  ``g_0 = \pi\cot(\pi x)``):
+
+  .. code-block::
+
+    g_0 = π cot(πx)
+    g_1 = −π²/sin²(πx)
+    g_2 = 2π³ cos(πx)/sin³(πx)
+    g_3 = −2π⁴(2 + cos(2πx))/sin⁴(πx)
+    g_4 = 8π⁵ cos(πx)(2 + cos²(πx))/sin⁵(πx)
+
+  For ``m ≥ 5`` the function falls back to ``chlo.polygamma`` directly, which
+  is inaccurate for negative ``x`` but avoids introducing incorrect results from
+  an unverified ``g_m`` formula.  A safe dummy value (``0.5``) is substituted
+  for ``sin(πx)`` wherever ``x`` is an integer (a pole of polygamma) to prevent
+  NaN propagation from division-by-zero in the inactive reflection branch;
+  the pole is naturally represented as ±∞ by ``chlo.polygamma`` on those inputs.
+
+  Positive inputs are unchanged.
+  """
   m, x = core.auto_insert_reshard(m, x)
-  return polygamma_p.bind(m, x)
+  # Broadcast m and x to the common result shape so that all element-wise
+  # operations (select, eq, lt) have compatible shapes.  mul with a full_like
+  # tensor triggers NumPy-style broadcasting in XLA without adding extra data.
+  m_bc = mul(m, full_like(x, 1.0))   # shape: broadcast_shapes(m.shape, x.shape)
+  x_bc = mul(x, full_like(m, 1.0))   # same broadcast shape
+
+  is_negative = lt(x_bc, _const(x_bc, 0.0))
+  # Use a simpler integer check: x is an integer iff floor(x) == x.
+  # We approximate floor via round-toward-negative-infinity using the identity
+  # floor(x) = -ceil(-x) and ceil(x) = -floor(-x); but since we only need this
+  # for negative x (where |x| < 2^52 in float64), casting to int64 suffices.
+  # Detect negative integers (poles) using an int32 round-trip — safe for
+  # |x| < 2^31 ≈ 2.1e9, which covers all practical inputs. Avoids int64 so
+  # the check works even when jax_enable_x64 is False.
+  is_neg_integer = bitwise_and(is_negative,
+                                eq(x_bc, convert_element_type(
+                                    convert_element_type(x_bc, np.int32),
+                                    _dtype(x_bc))))
+  # Apply correction only for negative non-integer x with m in {0,1,2,3,4}.
+  apply_reflection = bitwise_and(is_negative,
+                                  bitwise_and(bitwise_not(is_neg_integer),
+                                              le(m_bc, _const(m_bc, 4.0))))
+
+  pi = _const(x_bc, np.pi)
+  # (-1)^m = cos(π m) for integer m — avoids pow(-1, float_exponent).
+  cos_pi_m = cos(mul(pi, m_bc))
+
+  # Reflected argument: 1 - x > 0 for x < 0, so chlo.polygamma is correct.
+  x_reflected = sub(_const(x_bc, 1.0), x_bc)
+  psi_reflected = polygamma_p.bind(m_bc,
+                                   select(apply_reflection, x_reflected,
+                                          full_like(x_bc, 1.5)))
+
+  # Trig correction g_m(x).  Use a safe non-zero dummy for sin(πx) when x is
+  # an integer to prevent NaN propagation from division-by-zero in the
+  # (inactive) reflected branch.
+  pix = mul(pi, select(is_neg_integer, full_like(x_bc, 0.5), x_bc))
+  s = sin(pix)   # sin(πx),  safe: non-zero except at (excluded) integer x
+  c = cos(pix)   # cos(πx)
+  s2 = mul(s, s)
+  s3 = mul(s2, s)
+  s4 = mul(s2, s2)
+  s5 = mul(s4, s)
+
+  pi2 = mul(pi, pi)
+  pi3 = mul(pi2, pi)
+  pi4 = mul(pi2, pi2)
+  pi5 = mul(pi4, pi)
+
+  g0 = mul(pi, div(c, s))                                         # π cot(πx)
+  g1 = neg(div(pi2, s2))                                          # −π²/sin²
+  g2 = mul(_const(x_bc, 2.0), div(mul(pi3, c), s3))              # 2π³c/s³
+  g3 = mul(_const(x_bc, -2.0),                                    # −2π⁴(2+cos2πx)/s⁴
+           div(mul(pi4, add(_const(x_bc, 2.0), cos(mul(_const(x_bc, 2.0), pix)))),
+               s4))
+  g4 = mul(_const(x_bc, 8.0),                                     # 8π⁵c(2+c²)/s⁵
+           div(mul(mul(pi5, c),
+                   add(_const(x_bc, 2.0), mul(c, c))),
+               s5))
+
+  is_m0 = eq(m_bc, _const(m_bc, 0.0))
+  is_m1 = eq(m_bc, _const(m_bc, 1.0))
+  is_m2 = eq(m_bc, _const(m_bc, 2.0))
+  is_m3 = eq(m_bc, _const(m_bc, 3.0))
+  gm = select(is_m0, g0,
+       select(is_m1, g1,
+       select(is_m2, g2,
+       select(is_m3, g3, g4))))
+
+  result_reflected = sub(mul(cos_pi_m, psi_reflected), gm)
+  result_direct = polygamma_p.bind(m, x)
+  return select(apply_reflection, result_reflected, result_direct)
 
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""

@@ -24,6 +24,7 @@ import scipy
 import scipy.special as osp_special
 
 import jax
+from jax import lax
 import jax.numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -522,6 +523,67 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
     self.assertAllClose(lsp_special.gamma(z), osp_special.gamma(z),
                         atol=1e-5, rtol=rtol)
+
+  @jtu.skip_on_flag("jax_enable_x64", False)
+  def testPolygammaNegativeInputsScalar(self):
+    """Regression test for jax-ml/jax#37635: polygamma at negative non-integer x.
+
+    XLA's chlo.polygamma (Euler-Maclaurin expansion) diverges for negative x,
+    returning values like -2.85e12 instead of ~9.77.  JAX now corrects this via
+    the reflection formula derived from differentiating the digamma reflection
+    identity ψ(1-x) - ψ(x) = π cot(πx).
+    """
+    # Values where the old XLA implementation produced catastrophically wrong
+    # results (> 3 orders of magnitude off).
+    with jax.enable_x64():
+      neg_inputs = np.array([-3.3, -8.5, -9.5, -16.5], dtype=np.float64)
+      expected_m1 = osp_special.polygamma(1, neg_inputs)   # trigamma
+      expected_m2 = osp_special.polygamma(2, neg_inputs)   # tetragamma
+
+      rtol = 1e-5
+      self.assertAllClose(lax.polygamma(np.float64(1), neg_inputs), expected_m1,
+                          rtol=rtol, check_dtypes=False)
+      self.assertAllClose(lax.polygamma(np.float64(2), neg_inputs), expected_m2,
+                          rtol=rtol, check_dtypes=False)
+
+  @jtu.skip_on_flag("jax_enable_x64", False)
+  def testPolygammaNegativeInputsDigamma(self):
+    """Digamma (m=0) at negative non-integer x should match SciPy."""
+    with jax.enable_x64():
+      neg_inputs = np.array([-0.5, -1.5, -8.5], dtype=np.float64)
+      expected = osp_special.digamma(neg_inputs)
+      self.assertAllClose(lax.polygamma(np.float64(0), neg_inputs), expected,
+                          rtol=1e-5, check_dtypes=False)
+
+  @jtu.skip_on_flag("jax_enable_x64", False)
+  def testDigammaGradientNegativeInputs(self):
+    """grad(digamma)(x) must equal polygamma(1, x) for negative non-integer x."""
+    with jax.enable_x64():
+      neg_inputs = jnp.array([-0.5, -1.5, -8.5, -16.5], dtype=jnp.float64)
+      grad_fn = jax.grad(lambda x: jax.scipy.special.digamma(x).sum())
+      got = grad_fn(neg_inputs)
+      expected = osp_special.polygamma(1, np.array(neg_inputs))
+      self.assertAllClose(got, expected, rtol=1e-5, check_dtypes=False)
+
+  def testPolygammaNegativeInputsPositiveUnchanged(self):
+    """Positive inputs must not be affected by the reflection-formula fix."""
+    # Use float32 to stay compatible with default x64 settings.
+    pos_inputs = np.array([0.5, 1.0, 2.5, 10.0], dtype=np.float32)
+    for m in [0, 1, 2]:
+      got = lax.polygamma(np.float32(m), pos_inputs)
+      expected = osp_special.polygamma(m, pos_inputs.astype(np.float64))
+      self.assertAllClose(got, expected, rtol=1e-5, atol=1e-5,
+                          check_dtypes=False,
+                          err_msg=f"positive input regression for m={m}")
+
+  @jtu.skip_on_flag("jax_enable_x64", False)
+  def testPolygammaNegativeInputsBatched(self):
+    """Batched (multi-dimensional) inputs with mixed positive/negative x."""
+    with jax.enable_x64():
+      x = np.array([[-8.5, 0.5], [-16.5, 2.0]], dtype=np.float64)
+      got = lax.polygamma(np.float64(1), x)
+      expected = osp_special.polygamma(1, x)
+      self.assertAllClose(got, expected, rtol=1e-5, check_dtypes=False)
 
 
 if __name__ == "__main__":
