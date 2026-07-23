@@ -362,9 +362,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.all_gather', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('all-gather-start', stablehlo)
+    self.assertIn('all-gather-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_psum(self, mesh):
@@ -374,9 +374,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.all_reduce', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('all-reduce-start', stablehlo)
+    self.assertIn('all-reduce-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_psum_scatter(self, mesh):
@@ -387,9 +387,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.reduce_scatter', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('reduce-scatter-start', stablehlo)
+    self.assertIn('reduce-scatter-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_all_to_all(self, mesh):
@@ -401,9 +401,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.all_to_all', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('all-to-all-start', stablehlo)
+    self.assertIn('all-to-all-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_ppermute(self, mesh):
@@ -414,9 +414,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.collective_permute', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('collective-permute-start', stablehlo)
+    self.assertIn('collective-permute-done', stablehlo)
 
   def test_async_all_gather(self):
     n = jax.device_count()
