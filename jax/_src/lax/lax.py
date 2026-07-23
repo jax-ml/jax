@@ -5727,10 +5727,6 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
           f"to have the same sharding, got {lhs_batch_spec} and "
           f"{rhs_batch_spec}.")
   for l, r in zip(lhs_contracting_spec, rhs_contracting_spec):
-    if l is not None and r is not None and l != r:
-      raise core.ShardingTypeError(
-          "dot_general requires contracting dimensions to have consistent "
-          f"sharding, got {lhs_contracting_spec} and {rhs_contracting_spec}.")
     if l is not None and r is not None:
       raise core.ShardingTypeError(
           'Contracting dimensions are sharded and it is ambiguous how the'
