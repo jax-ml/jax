@@ -4584,6 +4584,15 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
   def testFailureOnComplexPlane(self, name, dtype):
     self._testOnComplexPlaneWorker(name, dtype, 'failure')
 
+  def testSincInfinities(self):
+    for dtype in jtu.dtypes.supported([np.float32, np.float64]):
+      x = np.array([-np.inf, np.inf], dtype=dtype)
+      self.assertAllClose(jnp.sinc(x), np.zeros(2, dtype=dtype))
+    for dtype in jtu.dtypes.supported([np.complex64, np.complex128]):
+      x = np.array([-np.inf + 0j, np.inf + 0j, -np.inf + 1.5j, np.inf - 2j],
+                   dtype=dtype)
+      self.assertAllClose(jnp.sinc(x), np.zeros(4, dtype=dtype))
+
   def _testOnComplexPlaneWorker(self, name, dtype, kind):
     try:
       import mpmath
@@ -4728,7 +4737,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'sinc':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'mq1', 'mq2', 'mq3', 'mq4',
                                      'mneg.real', 'mpos.real', 'mnegj', 'mposj',
-                                     'ninf.imag', 'pinf.imag', 'ninfj.real', 'pinfj.real')
+                                     'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'sinh':
       if is_cuda:
