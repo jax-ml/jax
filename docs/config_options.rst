@@ -47,12 +47,13 @@ Common Configuration Options
 
 Here are some of the most frequently used configuration options:
 
-- ``jax_enable_x64`` -- Enable 64-bit floating-point precision
-- ``jax_disable_jit`` -- Disable JIT compilation for debugging
-- ``jax_debug_nans`` -- Check for and raise errors on NaNs
-- ``jax_platforms`` -- Control which backends (CPU/GPU/TPU) JAX will initialize
-- ``jax_numpy_rank_promotion`` -- Control automatic rank promotion behavior
-- ``jax_default_matmul_precision`` -- Set default precision for matrix multiplication operations
+- ``jax_enable_x64``: enable 64-bit floating-point precision
+- ``jax_disable_jit``: disable JIT compilation for debugging
+- ``jax_debug_nans``: check for and raise errors on NaNs
+- ``jax_platforms``: control which backends (CPU/GPU/TPU) JAX will initialize
+- ``jax_numpy_rank_promotion``: control automatic rank promotion behavior
+- ``jax_default_matmul_precision``: set default precision for matrix multiplication operations
+- ``jax_logging_level``: set how much to log
 
 .. raw:: html
 
