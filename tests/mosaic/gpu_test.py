@@ -1322,8 +1322,15 @@ class WGMMATest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
-    ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
+    lhs_ref = x32.T if lhs_transpose else x32
+    rhs_ref = y32.T if rhs_transpose else y32
+    if in_mlir_dtype == ir.F32Type.get():
+      ref = jnp.matmul(lhs_ref, rhs_ref, precision="tensorfloat32")
+    else:
+      ref = jnp.matmul(lhs_ref, rhs_ref, precision="high")
     atol = 2e-2 if jax_out_dtype == jnp.float16 else 5e-6
+    if in_mlir_dtype == ir.F16Type.get() and jax_out_dtype == jnp.float32:
+      atol = 5e-5
     if isinstance(in_mlir_dtype, ir.IntegerType) and isinstance(out_mlir_dtype, ir.IntegerType):
       atol = 0
     elif utils.bitwidth(in_mlir_dtype) == 8:
@@ -2050,7 +2057,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
-    ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
+    ref = jnp.matmul(
+        x32.T if lhs_transpose else x32,
+        y32.T if rhs_transpose else y32,
+        precision="high",
+    )
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 2e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 1e-7
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
@@ -2137,7 +2148,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
-    ref = x32 @ y32
+    ref = jnp.matmul(x32, y32, precision="high")
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 2e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 1e-7
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
@@ -2449,7 +2460,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     a_logical_scales = jnp.repeat(a_scales, block_size, axis=1).astype(jnp.float32)
     b_logical_scales = jnp.repeat(b_scales, block_size, axis=1).astype(jnp.float32)
-    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    ref = jnp.matmul(
+        x32 * a_logical_scales,
+        (y32 * b_logical_scales).T,
+        precision="high",
+    )
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
@@ -2613,7 +2628,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     a_logical_scales = jnp.repeat(a_scales, scale_block, axis=1).astype(jnp.float32)
     b_logical_scales = jnp.repeat(b_scales, scale_block, axis=1).astype(jnp.float32)
-    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    ref = jnp.matmul(
+        x32 * a_logical_scales,
+        (y32 * b_logical_scales).T,
+        precision="high",
+    )
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
@@ -2788,7 +2807,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     a_logical_scales = jnp.repeat(a_scales, scale_block, axis=1).astype(jnp.float32)
     b_logical_scales = jnp.repeat(b_scales, scale_block, axis=1).astype(jnp.float32)
-    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    ref = jnp.matmul(
+        x32 * a_logical_scales,
+        (y32 * b_logical_scales).T,
+        precision="high",
+    )
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
@@ -2896,7 +2919,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
     np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
     x_logical = x_logical.reshape(m, k)
-    ref = x_logical.astype(jnp.float32) @ y.astype(jnp.float32)
+    ref = jnp.matmul(x_logical.astype(jnp.float32), y.astype(jnp.float32), precision="high")
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 7e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
@@ -3009,7 +3032,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
     np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
     x_logical = x_logical.reshape(m, k)
-    ref = x_logical.astype(jnp.float32) @ y.astype(jnp.float32)
+    ref = jnp.matmul(x_logical.astype(jnp.float32), y.astype(jnp.float32), precision="high")
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 7e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
@@ -3132,7 +3155,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     x_logical = np.zeros_like(x, shape=(m, k // 4, 4))
     np.put_along_axis(x_logical, x_sparse, x.reshape(x_sparse.shape), axis=-1)
     x_logical = x_logical.reshape(m, k)
-    ref = x_logical.astype(jnp.float32) @ y.astype(jnp.float32)
+    ref = jnp.matmul(x_logical.astype(jnp.float32), y.astype(jnp.float32), precision="high")
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 7e-5
     rtol = 8e-4 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol, rtol=rtol)
@@ -3250,7 +3273,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     y32 = y.astype(np.float32)
     a_logical_scales = jnp.repeat(a_scales, block_size, axis=1).astype(jnp.float32)
     b_logical_scales = jnp.repeat(b_scales, block_size, axis=1).astype(jnp.float32)
-    ref = (x32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    ref = jnp.matmul(
+        x32 * a_logical_scales,
+        (y32 * b_logical_scales).T,
+        precision="high",
+    )
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
@@ -3372,7 +3399,11 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
     y32 = y.astype(np.float32)
     a_logical_scales = jnp.repeat(a_scales, block_size, axis=1).astype(jnp.float32)
     b_logical_scales = jnp.repeat(b_scales, block_size, axis=1).astype(jnp.float32)
-    ref = (x_logical32 * a_logical_scales) @ (y32 * b_logical_scales).T
+    ref = jnp.matmul(
+        x_logical32 * a_logical_scales,
+        (y32 * b_logical_scales).T,
+        precision="high",
+    )
     np.testing.assert_allclose(z, ref, atol=2e-4, rtol=5e-6)
 
   @parameterized.product(
@@ -3475,7 +3506,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         kernel, (2, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=(2, 1, 1)
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
-    ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
+    ref = jnp.matmul((x32.T if lhs_transpose else x32), (y32.T if rhs_transpose else y32), precision="high")
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol)
 
@@ -3604,7 +3635,7 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
         cluster=(2, 1, 1),
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
-    ref = x32 @ y32
+    ref = jnp.matmul(x32, y32, precision="high")
     atol = 2e-2 if out_jax_dtype == jnp.float16 else 5e-6
     np.testing.assert_allclose(z, ref, atol=atol)
 
@@ -5954,7 +5985,10 @@ class FragmentedArrayTest(TestCase):
       b = self.prng.uniform(-1, 1, (n, k)).astype(dtype)
       acc = self.prng.uniform(-1, 1, (m, n)).astype(acc_dtype)
 
-    expected = acc + a.astype(acc_dtype) @ b.astype(acc_dtype).T
+    if is_integer:
+      expected = acc + a.astype(acc_dtype) @ b.astype(acc_dtype).T
+    else:
+      expected = acc + jnp.matmul(a.astype(acc_dtype), b.astype(acc_dtype).T, precision="high")
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (acc, a, b), expected, ()
     )(acc, a, b)

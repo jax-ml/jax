@@ -398,8 +398,10 @@ class LaxLinalgEighTest(jtu.JaxTestCase):
 
         A = np.diag(np.real(alpha)) + np.diag(beta, 1) + np.diag(np.conj(beta), -1)
         self.assertAllClose(
-            A @ eigvecs, eigvecs * eigvals[None, :].astype(eigvecs.dtype),
-            atol=atol_eigvecs, rtol=rtol,
+            jnp.matmul(A, eigvecs, precision="high"),
+            eigvecs * eigvals[None, :].astype(eigvecs.dtype),
+            atol=atol_eigvecs,
+            rtol=rtol,
         )
 
   @jtu.sample_product(
