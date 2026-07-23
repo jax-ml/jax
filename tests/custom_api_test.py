@@ -418,6 +418,68 @@ class CustomJVPTest(jtu.JaxTestCase):
     with self.assertRaises(UnexpectedTracerError):
       api.jvp(f, (2.,), (1.,))
 
+  def test_nondiff_arg_stale_tracer_error_scan_grad(self):
+    # https://github.com/jax-ml/jax/issues/20889
+    @partial(jax.custom_jvp, nondiff_argnums=(1,))
+    def f(arr, mask):
+      return arr * mask
+    @f.defjvp
+    def f_jvp(mask, primals, tangents):
+      return api.jvp(lambda arr: arr * mask, primals, tangents)
+
+    def loss(x, mask):
+      def step(carry, _):
+        return (f(*carry), carry[1]), None
+      carry, _ = lax.scan(step, (x, mask), None, length=2)
+      return carry[0].sum()
+
+    x = jnp.ones(3)
+    mask = jnp.zeros(3)
+    with self.assertRaisesRegex(UnexpectedTracerError, "nondiff_argnums"):
+      grad(loss)(x, mask)
+
+  def test_nondiff_arg_stale_tracer_error_grad_of_jit(self):
+    # https://github.com/jax-ml/jax/issues/20889: this variant used to fail
+    # with an internal TypeError from lowering rather than any tracer error.
+    @partial(jax.custom_jvp, nondiff_argnums=(1,))
+    def f(arr, mask):
+      return arr * mask
+    @f.defjvp
+    def f_jvp(mask, primals, tangents):
+      return api.jvp(lambda arr: arr * mask, primals, tangents)
+
+    x = jnp.ones(3)
+    mask = jnp.zeros(3)
+    with self.assertRaisesRegex(UnexpectedTracerError, "nondiff_argnums"):
+      grad(lambda x: jit(f)(x, mask).sum())(x)
+
+  def test_nondiff_arg_tracer_inline_jvp_still_works(self):
+    # An array-valued nondiff arg is discouraged but works when the jvp rule
+    # runs inline, while the captured tracer is still live; in particular the
+    # stale-tracer check must not fire under jit(grad) or when the nondiff
+    # argument is a concrete array captured into a scan.
+    @partial(jax.custom_jvp, nondiff_argnums=(1,))
+    def f(x, scale):
+      return x * scale
+    @f.defjvp
+    def f_jvp(scale, primals, tangents):
+      (x,), (t,) = primals, tangents
+      return f(x, scale), t * scale
+
+    x = jnp.ones(3)
+    scale = jnp.full(3, 2.)
+    ans = jit(grad(lambda x, s: f(x, s).sum()))(x, scale)
+    self.assertAllClose(ans, scale)
+
+    def loss(x):
+      carry, _ = lax.scan(lambda c, _: (f(c, scale), None), x, None, length=2)
+      return carry.sum()
+    self.assertAllClose(grad(loss)(x), jnp.full(3, 4.))
+
+    scales = jnp.stack([scale, 3 * scale])
+    ans = grad(lambda x: jax.vmap(f)(x, scales).sum())(jnp.ones((2, 3)))
+    self.assertAllClose(ans, scales)
+
   def test_vmap_axes(self):
     raise unittest.SkipTest("TODO")  # TODO(mattjj): write test
 

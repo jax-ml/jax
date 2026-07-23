@@ -16,6 +16,17 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Bug fixes
+  * {class}`jax.custom_jvp` functions called with a traced array in a
+    `nondiff_argnums` position now raise an informative
+    {class}`jax.errors.UnexpectedTracerError` pointing at the `nondiff_argnums`
+    usage when the custom JVP rule is applied after the value has gone out of
+    scope (e.g. when differentiating through a {func}`jax.lax.scan` or
+    {func}`jax.jit` boundary). Previously this surfaced as a generic
+    leaked-tracer error, as an internal `TypeError` during lowering, or, if
+    the rule never actually used the stale value, silently succeeded
+    ({jax-issue}`#20889`).
+
 ## JAX 0.11.0 (July 16, 2026)
 
 * New features
