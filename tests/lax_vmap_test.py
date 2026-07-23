@@ -421,7 +421,15 @@ class LaxVmapTest(jtu.JaxTestCase):
   )
   def testReduce(self, op, init_val, shape, dtype, dims, bdims):
     rng = jtu.rand_small(self.rng())
-    init_val = np.asarray(init_val, dtype=dtype)
+    # Without x64, 64-bit dtypes are canonicalized to 32 bits. Clamp extremal
+    # 64-bit init_vals (e.g. iinfo(int64).min) into the canonical dtype's
+    # range, where they keep their role as the reduction's identity; otherwise
+    # converting them would raise an OverflowError.
+    canonical_dtype = dtypes.canonicalize_dtype(dtype)
+    if np.issubdtype(canonical_dtype, np.integer):
+      iinfo = dtypes.iinfo(canonical_dtype)
+      init_val = min(max(init_val, int(iinfo.min)), int(iinfo.max))
+    init_val = np.asarray(init_val, dtype=canonical_dtype)
     fun = lambda operand: lax.reduce(operand, init_val, op, dims)
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 

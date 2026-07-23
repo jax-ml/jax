@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -447,6 +448,76 @@ absl::StatusOr<ShardFn> HandlePythonInt(nb::handle obj, ifrt::Client* client,
   };
 }
 
+// When jax_enable_x64 is disabled, 64-bit integer inputs are converted to
+// 32-bit ones. Out-of-range values would wrap around silently, so we raise
+// OverflowError instead, mirroring the treatment of out-of-range Python ints.
+// See https://github.com/jax-ml/jax/issues/18385.
+[[noreturn]] void ThrowIntegerDowncastOverflow(nb::handle bad_value,
+                                               bool is_signed) {
+  PyErr_Format(PyExc_OverflowError,
+               "NumPy %s value %S too large in magnitude to convert to %s. "
+               "Enable the jax_enable_x64 configuration option to allow "
+               "64-bit values.",
+               is_signed ? "int64" : "uint64", bad_value.ptr(),
+               is_signed ? "int32" : "uint32");
+  throw nb::python_error();
+}
+
+// Checks that a 64-bit integer ndarray that is about to be cast to the 32-bit
+// integer type `target_type_num` contains only values representable in 32
+// bits. Casts between other types are ignored. The array is about to be cast
+// and copied anyway, so the extra pass to compute its min/max is
+// proportionally cheap.
+void CheckIntegerArrayFitsIn32Bits(nb::handle array_h, int target_type_num) {
+  PyArrayObject* array = reinterpret_cast<PyArrayObject*>(array_h.ptr());
+  bool is_signed;
+  if (PyArray_EquivTypenums(PyArray_TYPE(array), NPY_INT64) &&
+      PyArray_EquivTypenums(target_type_num, NPY_INT32)) {
+    is_signed = true;
+  } else if (PyArray_EquivTypenums(PyArray_TYPE(array), NPY_UINT64) &&
+             PyArray_EquivTypenums(target_type_num, NPY_UINT32)) {
+    is_signed = false;
+  } else {
+    return;
+  }
+  if (PyArray_SIZE(array) == 0) {
+    return;
+  }
+  auto as_index = [](const nb::object& value) -> nb::object {
+    nb::object result = nb::steal(PyNumber_Index(value.ptr()));
+    if (!result.ptr()) {
+      throw nb::python_error();
+    }
+    return result;
+  };
+  nb::object max = array_h.attr("max")();
+  if (is_signed) {
+    int64_t hi = PyLong_AsLongLong(as_index(max).ptr());
+    if (hi == -1 && PyErr_Occurred()) {
+      throw nb::python_error();
+    }
+    if (hi > std::numeric_limits<int32_t>::max()) {
+      ThrowIntegerDowncastOverflow(max, is_signed);
+    }
+    nb::object min = array_h.attr("min")();
+    int64_t lo = PyLong_AsLongLong(as_index(min).ptr());
+    if (lo == -1 && PyErr_Occurred()) {
+      throw nb::python_error();
+    }
+    if (lo < std::numeric_limits<int32_t>::min()) {
+      ThrowIntegerDowncastOverflow(min, is_signed);
+    }
+  } else {
+    uint64_t hi = PyLong_AsUnsignedLongLong(as_index(max).ptr());
+    if (hi == static_cast<uint64_t>(-1) && PyErr_Occurred()) {
+      throw nb::python_error();
+    }
+    if (hi > std::numeric_limits<uint32_t>::max()) {
+      ThrowIntegerDowncastOverflow(max, is_signed);
+    }
+  }
+}
+
 template <typename T, typename SquashedT = T>
 absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
                                           ifrt::Device* to_device,
@@ -515,6 +586,18 @@ absl::StatusOr<ShardFn> HandleNumpyScalar(nb::handle h, ifrt::Client* client,
   } else {
     T value;
     PyArray_ScalarAsCtype(h.ptr(), &value);
+    if constexpr (std::is_integral_v<T> && !std::is_same_v<T, SquashedT>) {
+      bool fits;
+      if constexpr (std::is_signed_v<T>) {
+        fits = value >= std::numeric_limits<SquashedT>::min() &&
+               value <= std::numeric_limits<SquashedT>::max();
+      } else {
+        fits = value <= std::numeric_limits<SquashedT>::max();
+      }
+      if (!fits) {
+        ThrowIntegerDowncastOverflow(h, std::is_signed_v<T>);
+      }
+    }
     data.template emplace<1>(static_cast<SquashedT>(value));
     type = xla::primitive_util::NativeToPrimitiveType<SquashedT>();
   }
@@ -602,6 +685,9 @@ absl::StatusOr<ShardFn> HandleNumpyArray(nb::handle h, ifrt::Client* client,
     if (squashed_type != type) {
       TF_ASSIGN_OR_RETURN(xla::nb_dtype squashed_dtype,
                           PrimitiveTypeToNbDtype(squashed_type));
+      CheckIntegerArrayFitsIn32Bits(
+          array,
+          reinterpret_cast<PyArray_Descr*>(squashed_dtype.ptr())->type_num);
       array = nb::steal<xla::nb_numpy_ndarray>(PyArray_CastToType(
           reinterpret_cast<PyArrayObject*>(array.ptr()),
           reinterpret_cast<PyArray_Descr*>(squashed_dtype.release().ptr()),
@@ -985,6 +1071,8 @@ nb::object CanonicalizeNumpyArray(nb::handle x) {
   if (raw_dtype.ptr() == canonical_dtype.ptr()) {
     return typed_ndarray_type(x);
   }
+  CheckIntegerArrayFitsIn32Bits(
+      x, reinterpret_cast<PyArray_Descr*>(canonical_dtype.ptr())->type_num);
   Py_INCREF(canonical_dtype.ptr());
   PyObject* casted = PyArray_CastToType(
       reinterpret_cast<PyArrayObject*>(x.ptr()),
@@ -1008,6 +1096,18 @@ nb::object CanonicalizeNumpyScalar(nb::handle x) {
   xla::nb_dtype canonical_dtype = CanonicalizeDtype(raw_dtype);
   if (raw_dtype.ptr() == canonical_dtype.ptr()) {
     return typed_ndarray_type(x);
+  }
+  int raw_type_num = reinterpret_cast<PyArray_Descr*>(raw_dtype.ptr())->type_num;
+  if (PyArray_EquivTypenums(raw_type_num, NPY_INT64) ||
+      PyArray_EquivTypenums(raw_type_num, NPY_UINT64)) {
+    nb::object scalar_as_array =
+        nb::steal(PyArray_FromScalar(x.ptr(), nullptr));
+    if (!scalar_as_array.ptr()) {
+      throw nb::python_error();
+    }
+    CheckIntegerArrayFitsIn32Bits(
+        scalar_as_array,
+        reinterpret_cast<PyArray_Descr*>(canonical_dtype.ptr())->type_num);
   }
   Py_INCREF(canonical_dtype.ptr());
   PyObject* coerced_val = PyArray_FromScalar(

@@ -37,6 +37,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.jit`.
 
 * Breaking changes
+  * When `jax_enable_x64` is disabled (the default), a NumPy int64 or
+    uint64 array or scalar whose values do not fit in 32 bits now raises an
+    `OverflowError` instead of silently wrapping the values around
+    ({jax-issue}`#18385`). This matches the existing behavior for out-of-range
+    Python ints, and applies wherever such values enter JAX: function
+    arguments, `jax.numpy.asarray`, `jax.device_put`, NumPy constants closed
+    over by traced functions, and callback results. Requires a matching
+    jaxlib.
   * The deprecated module jax.cloud_tpu_init was removed. This did nothing and
     references to it can be safely removed.
   * Support for Python 3.11, NumPy 2.0, and SciPy 1.14 has been dropped, per the
