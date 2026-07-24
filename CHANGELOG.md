@@ -102,6 +102,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     ({jax-issue}`#10144`).
   * Added {func}`jax.scipy.special.boxcox` and
     {func}`jax.scipy.special.boxcox1p` for the Box-Cox power transformation.
+  * Added {func}`jax.scipy.stats.laplace.ppf` ({jax-issue}`#13291`).
   * Moved RNG APIs from "implementations" to dtypes ({jax-issue}`#27854`):
     * Added `jax.random.key_dtype` to get the dtype corresponding to a PRNG
       implementation name.

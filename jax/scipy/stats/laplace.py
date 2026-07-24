@@ -19,4 +19,5 @@ from jax._src.scipy.stats.laplace import (
   cdf as cdf,
   logpdf as logpdf,
   pdf as pdf,
+  ppf as ppf,
 )
