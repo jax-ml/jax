@@ -701,10 +701,8 @@ def erfcx(x: ArrayLike) -> Array:
 @custom_derivatives.custom_jvp
 def _erfcx(x: Array) -> Array:
   if x.dtype == np.float64:
-    # At threshold ~26.6, first omitted term |c_9|/x^18 ~ 1e-21 << eps64 ~ 2e-16.
     return _erfcx_impl(x, nterms=9)
   elif x.dtype == np.float32:
-    # At threshold ~9.4, first omitted term |c_5|/x^10 ~ 5e-9 << eps32 ~ 1e-7.
     return _erfcx_impl(x, nterms=5)
   else:  # float16, bfloat16 — upcast to float32
     return _erfcx_impl(x.astype(np.float32), nterms=5).astype(x.dtype)
@@ -725,9 +723,21 @@ def _erfcx_asymptotic(x: Array, nterms: int) -> Array:
 
 
 def _erfcx_impl(x: Array, nterms: int) -> Array:
-  # Switch to asymptotic expansion when exp(x^2) would overflow.
-  # Overflow occurs when x^2 > log(fmax), i.e. x > sqrt(log(fmax)).
-  threshold = np.sqrt(np.log(dtypes.finfo(x.dtype).max))
+  # erfcx(x) = exp(x^2) * erfc(x). Evaluating this product directly loses all
+  # precision once erfc(x) underflows into the subnormal range, which happens at
+  # an argument *smaller* than the one at which exp(x^2) overflows (the two
+  # cancel, so the result stays finite well past where the product can be
+  # represented). Switching to the asymptotic expansion based on the overflow
+  # point of exp(x^2) therefore leaves a band of large x where the direct
+  # product underflows to a spurious 0 (https://github.com/jax-ml/jax/issues/38607).
+  #
+  # Instead, switch as soon as the asymptotic expansion is accurate to machine
+  # epsilon, which happens well before the direct path degrades. The first
+  # omitted term of the expansion truncated at `nterms` terms is
+  # |c_nterms| / x^(2*nterms) with c_n = (2n-1)!! / 2^n, so the expansion reaches
+  # eps for x >= (|c_nterms| / eps) ** (1 / (2*nterms)).
+  c_next = float(np.prod(np.arange(1, 2 * nterms, 2))) / 2.0 ** nterms
+  threshold = (c_next / float(dtypes.finfo(x.dtype).eps)) ** (1. / (2 * nterms))
   large = x > _lax_const(x, threshold)
   safe_x = lax.select(large, lax.full_like(x, 1.), x)
   direct = lax.exp(lax.square(safe_x)) * lax.erfc(safe_x)

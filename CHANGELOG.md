@@ -67,6 +67,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
     `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
 
+* Bug fixes:
+  * Fixed {func}`jax.scipy.special.erfcx` returning a spurious `0` for a band of
+    large arguments (~[26.5, 26.64] for float64, ~[9.2, 9.42] for float32)
+    ({jax-issue}`#38607`).
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
