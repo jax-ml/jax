@@ -59,6 +59,13 @@ istft_test_shapes = [
 
 default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 _TPU_FFT_TOL = 0.15
+_CONVOLUTION_2D_TOL = {
+    np.float16: 1e-2,
+    np.float32: 1e-2,
+    np.float64: 1e-12,
+    np.complex64: 1e-2,
+    np.complex128: 1e-12,
+}
 
 def _real_dtype(dtype):
   return jnp.finfo(dtypes.to_inexact_dtype(dtype)).dtype
@@ -126,22 +133,70 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     mode=['full', 'same', 'valid'],
+    boundary=['fill', 'wrap'],
     op=['convolve2d', 'correlate2d'],
     dtype=default_dtypes,
     xshape=twodim_shapes,
     yshape=twodim_shapes,
   )
-  def testConvolutions2D(self, xshape, yshape, dtype, mode, op):
+  def testConvolutions2D(self, xshape, yshape, dtype, mode, boundary, op):
     jsp_op = getattr(jsp_signal, op)
     osp_op = getattr(osp_signal, op)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
-    osp_fun = partial(osp_op, mode=mode)
-    jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
-    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12, np.complex64: 1e-2, np.complex128: 1e-12}
+    osp_fun = partial(osp_op, mode=mode, boundary=boundary)
+    jsp_fun = partial(jsp_op, mode=mode, boundary=boundary,
+                      precision=lax.Precision.HIGHEST)
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
-                            tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+                            tol=_CONVOLUTION_2D_TOL)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=_CONVOLUTION_2D_TOL,
+                          atol=_CONVOLUTION_2D_TOL)
+
+  @jtu.sample_product(
+    [dict(xshape=xshape, yshape=yshape)
+     for xshape, yshape in [((3, 4), (2, 5)), ((2, 5), (3, 4)),
+                            ((1, 3), (4, 2)), ((4, 2), (1, 3))]
+    ],
+    mode=['full', 'same'],
+    op=['convolve2d', 'correlate2d'],
+    dtype=default_dtypes,
+  )
+  def testConvolutions2DWrapMixedShapes(self, xshape, yshape, dtype, mode, op):
+    jsp_op = getattr(jsp_signal, op)
+    osp_op = getattr(osp_signal, op)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    osp_fun = partial(osp_op, mode=mode, boundary='wrap')
+    jsp_fun = partial(jsp_op, mode=mode, boundary='wrap',
+                      precision=lax.Precision.HIGHEST)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
+                            tol=_CONVOLUTION_2D_TOL)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=_CONVOLUTION_2D_TOL,
+                          atol=_CONVOLUTION_2D_TOL)
+
+  @jtu.sample_product(
+    mode=['full', 'same', 'valid'],
+    op=['convolve2d', 'correlate2d'],
+    dtype=default_dtypes,
+  )
+  def testConvolutions2DWrapIgnoresFillValue(self, dtype, mode, op):
+    jsp_op = getattr(jsp_signal, op)
+    osp_op = getattr(osp_signal, op)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng((3, 4), dtype), rng((2, 3), dtype)]
+    osp_fun = partial(osp_op, mode=mode, boundary='wrap', fillvalue=7)
+    jsp_fun = partial(jsp_op, mode=mode, boundary='wrap', fillvalue=7,
+                      precision=lax.Precision.HIGHEST)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
+                            tol=_CONVOLUTION_2D_TOL)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=_CONVOLUTION_2D_TOL,
+                          atol=_CONVOLUTION_2D_TOL)
+
+  @jtu.sample_product(op=['convolve2d', 'correlate2d'])
+  def testConvolutions2DRejectFillValue(self, op):
+    jsp_op = getattr(jsp_signal, op)
+    with self.assertRaisesRegex(NotImplementedError, "fillvalue=0"):
+      jsp_op(jnp.ones((2, 2)), jnp.ones((2, 2)), boundary='fill', fillvalue=1)
 
   @jtu.sample_product(
     shape=[(5,), (4, 5), (3, 4, 5)],

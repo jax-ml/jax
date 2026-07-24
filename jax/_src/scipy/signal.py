@@ -195,6 +195,42 @@ def _convolve_nd(in1: Array, in2: Array, mode: ModeString, *, precision: Precisi
   return result[0, 0]
 
 
+def _convolve_nd_wrap(in1: Array, in2: Array, mode: ModeString, *,
+                      precision: PrecisionLike) -> Array:
+  if mode not in ["full", "same", "valid"]:
+    raise ValueError("mode must be one of ['full', 'same', 'valid']")
+  if mode == "valid":
+    return _convolve_nd(in1, in2, mode, precision=precision)
+  if in1.ndim != in2.ndim:
+    raise ValueError("in1 and in2 must have the same number of dimensions")
+  if in1.size == 0 or in2.size == 0:
+    raise ValueError(f"zero-size arrays not supported in convolutions, got shapes {in1.shape} and {in2.shape}.")
+
+  if mode == "full":
+    out_shape = tuple(s1 + s2 - 1 for s1, s2 in zip(in1.shape, in2.shape))
+    out_start = (0,) * in1.ndim
+  else:
+    out_shape = in1.shape
+    out_start = tuple((s2 - 1) // 2 for s2 in in2.shape)
+
+  # Pad only the periodic input window needed for valid convolution to produce
+  # the requested full/same output.
+  pad_width = tuple((s2 - 1 - start, start + out - s1)
+                    for s1, s2, out, start in zip(in1.shape, in2.shape,
+                                                  out_shape, out_start))
+  return _convolve_nd(jnp.pad(in1, pad_width, mode="wrap"), in2, "valid",
+                      precision=precision)
+
+
+def _check_2d_boundary(func_name: str, boundary: str, fillvalue: float) -> None:
+  if boundary not in ["fill", "wrap"]:
+    raise NotImplementedError(
+        f"{func_name}() only supports boundary='fill' or boundary='wrap'")
+  if boundary == "fill" and fillvalue != 0:
+    raise NotImplementedError(
+        f"{func_name}() only supports fillvalue=0 when boundary='fill'")
+
+
 def convolve(in1: Array, in2: Array, mode: ModeString = 'full', method: str = 'auto',
              precision: PrecisionLike = None) -> Array:
   """Convolution of two N-dimensional arrays.
@@ -277,8 +313,9 @@ def convolve2d(in1: Array, in2: Array, mode: ModeString = 'full', boundary: str 
       * ``"valid"``: return the portion of the ``"full"`` output which do not
         depend on padding at the array edges.
 
-    boundary: only ``"fill"`` is supported.
-    fillvalue: only ``0`` is supported.
+    boundary: ``"fill"`` and ``"wrap"`` are supported.
+    fillvalue: only ``0`` is supported with ``boundary="fill"``; ignored for
+      ``boundary="wrap"``.
     method: controls the computation method. Options are
 
       * ``"auto"``: (default) always uses the ``"direct"`` method.
@@ -327,10 +364,11 @@ def convolve2d(in1: Array, in2: Array, mode: ModeString = 'full', boundary: str 
     Array([[22., 17.],
            [30., 32.]], dtype=float32)
   """
-  if boundary != 'fill' or fillvalue != 0:
-    raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
+  _check_2d_boundary("convolve2d", boundary, fillvalue)
   if np.ndim(in1) != 2 or np.ndim(in2) != 2:
     raise ValueError("convolve2d() only supports 2-dimensional inputs.")
+  if boundary == "wrap":
+    return _convolve_nd_wrap(in1, in2, mode, precision=precision)
   return _convolve_nd(in1, in2, mode, precision=precision)
 
 
@@ -411,8 +449,9 @@ def correlate2d(in1: Array, in2: Array, mode: ModeString = 'full', boundary: str
       * ``"valid"``: return the portion of the ``"full"`` output which do not
         depend on padding at the array edges.
 
-    boundary: only ``"fill"`` is supported.
-    fillvalue: only ``0`` is supported.
+    boundary: ``"fill"`` and ``"wrap"`` are supported.
+    fillvalue: only ``0`` is supported with ``boundary="fill"``; ignored for
+      ``boundary="wrap"``.
     method: controls the computation method. Options are
 
       * ``"auto"``: (default) always uses the ``"direct"`` method.
@@ -462,10 +501,17 @@ def correlate2d(in1: Array, in2: Array, mode: ModeString = 'full', boundary: str
     Array([[15., 24.],
            [28., 14.]], dtype=float32)
   """
-  if boundary != 'fill' or fillvalue != 0:
-    raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
+  _check_2d_boundary("correlate2d", boundary, fillvalue)
   if np.ndim(in1) != 2 or np.ndim(in2) != 2:
     raise ValueError("correlate2d() only supports 2-dimensional inputs.")
+
+  if boundary == "wrap" and mode != "valid":
+    if mode == "same":
+      # Preserve SciPy's correlate2d same-mode offset convention.
+      return jnp.flip(_convolve_nd_wrap(jnp.flip(in1), in2.conj(), mode,
+                                        precision=precision))
+    return _convolve_nd_wrap(in1, jnp.flip(in2).conj(), mode,
+                             precision=precision)
 
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
   same_shape =  all(s1 == s2 for s1, s2 in zip(in1.shape, in2.shape))
