@@ -939,10 +939,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/10530
     rng = jtu.rand_default(self.rng())
     arr = rng(shape, dtype)
-    if jtu.test_device_matches(['cpu']):
-      err, msg = NotImplementedError, "Unsupported dtype float16"
-    else:
-      err, msg = Exception, "Unsupported dtype"
+    err, msg = TypeError, "does not accept dtype float16"
     with self.assertRaisesRegex(err, msg):
       jax.block_until_ready(jnp.linalg.qr(arr))
 
@@ -1057,9 +1054,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testInvDtypeError(self):
     # regression test for https://github.com/jax-ml/jax/issues/38825
     x = jnp.ones((3, 3), dtype='float16')
-    with self.assertRaisesRegex(NotImplementedError,
-                                "Unsupported dtype .*float16.* for LAPACK operations."):
+    with self.assertRaisesRegex(TypeError,
+                                "lu does not accept dtype float16"):
       jsp.linalg.inv(x)
+
+  def testLinalgPrimitivesInvalidDtype(self):
+    x = jnp.ones((3, 3), dtype=jnp.float16)
+    with self.assertRaisesRegex(TypeError, "cholesky does not accept dtype float16"):
+      jnp.linalg.cholesky(x)
+    with self.assertRaisesRegex(TypeError, "eigh does not accept dtype float16"):
+      jnp.linalg.eigh(x)
+    with self.assertRaisesRegex(TypeError, "svd does not accept dtype float16"):
+      jnp.linalg.svd(x)
+    with self.assertRaisesRegex(TypeError, "eig does not accept dtype float16"):
+      jnp.linalg.eig(x)
+
 
   @jtu.sample_product(
     [dict(shape=shape, hermitian=hermitian)
