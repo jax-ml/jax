@@ -175,3 +175,21 @@ jobs:
           artifact-name: bazel-test-artifacts-${{ inputs.tpu-type }}-py${{ inputs.python }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}
+      - name: Generate Step Summary
+        if: always()
+        continue-on-error: true
+        env:
+          INVOCATION_ID: ${{ env.INVOCATION_ID_SINGLE || 'N/A' }}:Single-accelerator,${{ env.INVOCATION_ID_MULTI || 'N/A' }}:Multi-accelerator
+          JOB_STATUS_CODE: ${{ job.status == 'success' && '0' || '1' }}
+        run: |
+          DESCRIPTION="TPU Bazel Tests"
+          if [ -d "test-artifacts" ]; then
+            python3 ci/utilities/generate_step_summary.py "$DESCRIPTION" "test-artifacts" "$INVOCATION_ID" "$JOB_STATUS_CODE" "test"
+          else
+            {
+              echo "## ❌ $DESCRIPTION"
+              echo ""
+              echo "> [!WARNING]"
+              echo "> **Workflow failed before tests could finish.** Please check the workflow logs for errors."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
