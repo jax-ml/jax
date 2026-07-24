@@ -538,11 +538,29 @@ py_import(
 py_import(
     name = "jax_rocm_plugin_py_import",
     wheel = ":jax_rocm_plugin_wheel",
+    wheel_deps = [
+        "//jaxlib/rocm:rocm_plugin_extension",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocsolver",
+        "@local_config_rocm//rocm:rccl",
+        "@local_config_rocm//rocm:rocfft",
+        "@local_config_rocm//rocm:rocrand",
+    ],
 )
 
 py_import(
     name = "jax_rocm_pjrt_py_import",
     wheel = ":jax_rocm_pjrt_wheel",
+    wheel_deps = [
+        "//jax_plugins/rocm:pjrt_c_api_gpu_plugin.so",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocsolver",
+        "@local_config_rocm//rocm:rccl",
+        "@local_config_rocm//rocm:rocfft",
+        "@local_config_rocm//rocm:rocrand",
+    ],
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.
