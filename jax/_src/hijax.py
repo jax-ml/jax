@@ -889,6 +889,7 @@ vjp_from_lin = _VJPFromLin(_vjp_fwd_from_lin, _transpose_linearized)
 
 
 class CustomVJPTraced(VJPHiPrimitive):
+  lin, linearized = linearize_from_jvp
   traced: Any
   fwd: Any
   bwd: Any
@@ -1057,6 +1058,10 @@ class custom_vjp3:
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
     update_wrapper(self, f)
 
+  @property
+  def fun(self):
+    return self.f
+
   def defvjp(self, fwd, bwd, *, symbolic_zeros=False, optimize_remat=False):
     self.fwd = fwd
     self.bwd = bwd
@@ -1134,6 +1139,8 @@ def _set_up_nondiff(f, argnums_, argnames) -> frozenset[int]:
 @dataclass(frozen=True, slots=True)
 class Static:
   val: Any
+
+register_hitype(Static, lambda x: Static(typeof(x.val)))
 
 class MappingSpec: pass
 class HiPspec:
