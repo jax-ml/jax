@@ -209,7 +209,7 @@ jobs:
         run: |
           ./ci/run_bazel_test_rocm_rbe.sh  \
             --config="${GPU_CONFIG}" \
-            --local_test_jobs=4 \
+            --local_test_jobs=1 \
             --//jax:build_jaxlib="${BUILD_JAXLIB}" \
             --//jax:build_jax="${BUILD_JAX}" \
             --repo_env=HERMETIC_PYTHON_VERSION="${PYTHON}" \
