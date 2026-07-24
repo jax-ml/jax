@@ -11,6 +11,12 @@ on:
         options:
         - 'yes'
         - 'no'
+      profile-memory:
+        description: 'Profile peak memory usage of tests?'
+        type: boolean
+        required: false
+        default: false
+
   pull_request:
     branches:
       - main
@@ -88,8 +94,10 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
+      profile-memory: true
       enable-x64:  ${{ matrix.enable-x64 }}
       enable-bzlmod:  ${{ matrix.enable-bzlmod }}
+
       build_jaxlib: ${{ 'true' }}
       build_jax: ${{ 'true' }}
       bazel_command: ${{ (contains(matrix.runner, 'linux-x86') && 'test') || 'build' }}

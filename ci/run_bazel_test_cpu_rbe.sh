@@ -58,6 +58,12 @@ else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
+MEMPROFILE_CONFIG=""
+if [[ "${JAXCI_PROFILE_MEMORY:-false}" == "true" ]]; then
+  echo "Memory profiling is enabled."
+  MEMPROFILE_CONFIG="--config=memprofile"
+fi
+
 BZLMOD_CONFIG=""
 if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
   BZLMOD_CONFIG="--config=bzlmod"
@@ -117,8 +123,9 @@ bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
     --test_output=errors \
     --nocache_test_results \
-    --remote_download_regex='.*test\.xml$' \
+    --remote_download_regex='.*(test\.(xml|log)|outputs\.zip)$' \
     --color=yes \
+    $MEMPROFILE_CONFIG \
     -- \
     //tests:cpu_tests //tests:backend_independent_tests \
     //jax/experimental/jax2tf/tests:jax2tf_test_cpu \
