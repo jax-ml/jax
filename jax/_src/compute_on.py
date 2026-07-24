@@ -164,8 +164,8 @@ def _compute_on_lowering(ctx, *args, jaxpr, compute_type, out_memory_spaces,
 
   if compiler_options_json is not None:
     dict_attr |= {'backend_config': ir.StringAttr.get(compiler_options_json)}
-  elif compute_type == 'device':
-    dict_attr |= {'inlineable': ir.StringAttr.get('false')}
+  elif compute_type in {'device', 'tpu_sparsecore'}:
+    dict_attr |= {'backend_config': ir.StringAttr.get('{}')}
 
   call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
 
