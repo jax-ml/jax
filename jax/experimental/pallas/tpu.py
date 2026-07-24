@@ -83,6 +83,7 @@ CORE_PARALLEL = GridDimensionSemantics.CORE_PARALLEL
 SUBCORE_PARALLEL = GridDimensionSemantics.SUBCORE_PARALLEL
 ARBITRARY = GridDimensionSemantics.ARBITRARY
 
+ACC = core.AccMemorySpace
 CMEM = MemorySpace.CMEM
 SMEM = MemorySpace.SMEM
 VMEM = MemorySpace.VMEM
