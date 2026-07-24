@@ -730,7 +730,11 @@ class TilingTransform(state_types.Transform):
           return x
         leading_dims = shape[: -len(self.tiling) :]
         tiled_dims = shape[-len(self.tiling) :]
-        assert all(d % t == 0 for d, t in zip(tiled_dims, self.tiling))
+        if not all(d % t == 0 for d, t in zip(tiled_dims, self.tiling)):
+          raise ValueError(
+              f"Input shape {shape} has tiled dimensions {tiled_dims} "
+              f"which are not divisible by tiling sizes: {self.tiling}"
+          )
         num_tiles = [d // t for d, t in zip(tiled_dims, self.tiling)]
         new_shape = (*leading_dims, *num_tiles, *self.tiling)
         return x.update(shape=new_shape)
@@ -753,7 +757,11 @@ class UntilingTransform(state_types.Transform):
         shape = x.shape
         if shape is None:
           return x
-        assert shape[-len(self.tiling) :] == self.tiling, (shape, self.tiling)
+        if shape[-len(self.tiling) :] != self.tiling:
+          raise ValueError(
+              f"Input shape {shape} has tiled dimensions {shape[-len(self.tiling) :]} "
+              f"which should be equal to tiling sizes: {self.tiling}"
+          )
         shape = shape[: -len(self.tiling)]  # Drop tiling
         new_shape = shape[: -len(self.tiling)] + tuple(
             block_dim * tiling_dim
