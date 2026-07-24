@@ -1219,7 +1219,11 @@ def rel_entr(
   result = jnp.where(
       both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, np.inf)
   )
-  return result
+  # Propagate NaN: if either input is NaN, the result should be NaN,
+  # not inf. Comparisons with NaN return False, so both masks above
+  # are False for NaN inputs, causing the fallback to inf.
+  nan_mask = lax.bitwise_or(jnp.isnan(p), jnp.isnan(q))
+  return jnp.where(nan_mask, jnp.nan, result)
 
 # coefs of (2k)! / B_{2k} where B are bernoulli numbers
 # those numbers are obtained using https://www.wolframalpha.com
