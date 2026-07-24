@@ -14,6 +14,7 @@
 
 import os
 import sys
+import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -21,13 +22,19 @@ import jax
 from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
+import jax.numpy as jnp
+import numpy as np
+
+warnings.filterwarnings(
+    "ignore",
+    message="jax.experimental.pallas.ops.gpu.* is deprecated.*",
+    category=DeprecationWarning,
+)
 
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import decode_attention
 else:
   decode_attention = None
-import jax.numpy as jnp
-import numpy as np
 
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"

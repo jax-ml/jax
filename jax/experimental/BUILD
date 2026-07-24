@@ -403,9 +403,6 @@ pytype_strict_library(
     name = "pallas_gpu_ops",
     srcs = ["//jax/experimental/pallas/ops/gpu:triton_ops"],
     type_checking = "pyrefly",
-    visibility = [
-        ":pallas_triton_users",
-    ],
     deps = [
         ":pallas",
         ":pallas_triton",

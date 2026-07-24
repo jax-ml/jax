@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import functools
 import math
+import warnings
 from typing import Any
 
 import jax
@@ -25,6 +26,12 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import triton as plgpu
 import jax.numpy as jnp
 import numpy as np
+
+warnings.warn(
+    "jax.experimental.pallas.ops.gpu.paged_attention is deprecated.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 DEFAULT_MASK_VALUE = -0.7 * float(np.finfo(np.dtype("float32")).max)
 

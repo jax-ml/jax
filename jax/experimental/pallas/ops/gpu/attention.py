@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import functools
 import math
+import warnings
 from typing import Any
 
 import jax
@@ -26,6 +27,14 @@ from jax.experimental.pallas import triton as plgpu
 import jax.numpy as jnp
 import numpy as np
 import dataclasses
+
+warnings.warn(
+    "jax.experimental.pallas.ops.gpu.attention is deprecated. Please use "
+    "tokamax.dot_product_attention instead. See "
+    "https://github.com/openxla/tokamax for more details.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 DEFAULT_MASK_VALUE = -0.7 * float(np.finfo(np.dtype("float32")).max)
 

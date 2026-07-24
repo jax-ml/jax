@@ -26,6 +26,15 @@ from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
+import jax.numpy as jnp
+import numpy as np
+
+warnings.filterwarnings(
+    "ignore",
+    message="jax.experimental.pallas.ops.gpu.* is deprecated.*",
+    category=DeprecationWarning,
+)
+
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import attention
   from jax.experimental.pallas.ops.gpu import layer_norm
@@ -38,8 +47,6 @@ else:
   rms_norm = None
   softmax = None
   BlockSizes = None
-import jax.numpy as jnp
-import numpy as np
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
 

@@ -13,6 +13,15 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Deprecations
+
+  * Pallas Triton ops in {mod}`jax.experimental.pallas.ops.gpu` are deprecated.
+  Please use [`tokamax`](https://github.com/openxla/tokamax) for equivalent
+  implementations if available, e.g., `tokamax.layer_norm`,
+  `tokamax.dot_product_attention`.
+
+## Released with JAX 0.11.0 (July 16, 2026)
+
 * Changes
 
   * {func}`jax.experimental.pallas.kernel` now only aliases closed over or
