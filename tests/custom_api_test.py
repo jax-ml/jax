@@ -2343,6 +2343,29 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = {'a': np.cos(6.) * 3., 'b': np.cos(6.) * 2.}
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def test_remat_unused_output(self):
+    # One output of the custom_vjp function is unused by the differentiated
+    # function, exercising dce of the staged linearized computation.
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x), jnp.exp(x)
+    def f_fwd(x):
+      return f(x), x
+    def f_bwd(x, gs):
+      g1, g2 = gs
+      return (2. * g1 * jnp.cos(x) + g2 * jnp.exp(x),)
+    f.defvjp(f_fwd, f_bwd)
+
+    g = jax.remat(lambda x: f(x)[0] * 3.)
+
+    ans = api.grad(g)(0.5)
+    expected = 3. * 2. * np.cos(0.5)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+    ans = api.grad(api.grad(g))(0.5)
+    expected = 3. * 2. * -np.sin(0.5)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def test_remat_nondiff_argnums(self):
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def f(k, x):

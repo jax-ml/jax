@@ -727,6 +727,25 @@ def _call_hi_primitive_linearized_prettyprint(eqn, context, settings):
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 core.pp_eqn_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_prettyprint
 
+def _call_hi_primitive_linearized_dce(used_outs, eqn):
+  if not any(used_outs):
+    return [False] * len(eqn.invars), None
+  if all(used_outs):
+    return [True] * len(eqn.invars), eqn
+  # The eqn's outvars correspond to the True entries of nz_out_flat. Drop the
+  # unused outputs by flipping their nz_out_flat entries; the transpose rule
+  # then supplies symbolic-zero cotangents for them, just as it would have
+  # received for a dead output. All inputs stay used since vjp_bwd/linearized
+  # are opaque.
+  used_iter = iter(used_outs)
+  nz_out_flat = tuple(nz and next(used_iter) for nz in eqn.params['nz_out_flat'])
+  assert next(used_iter, None) is None
+  new_outvars = [v for v, u in zip(eqn.outvars, used_outs) if u]
+  new_eqn = eqn.replace(outvars=new_outvars,
+                        params=dict(eqn.params, nz_out_flat=nz_out_flat))
+  return [True] * len(eqn.invars), new_eqn
+pe.dce_rules[call_hi_primitive_linearized_p] = _call_hi_primitive_linearized_dce
+
 def _call_hi_primitive_jvp(primals, tangents, *, _prim):
   primals = tree_unflatten(_prim.in_tree, primals)
   tangents = tree_unflatten(_prim.in_tree, tangents)

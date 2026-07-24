@@ -7027,6 +7027,19 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count('MemorySpace.Host'), 1)
     self.assertEqual(jaxpr_text.count('MemorySpace.Device'), 1)
 
+  def test_remat_dce_unused_output(self):
+    @jax.remat
+    def f(x):
+      return jnp.sin(x), jnp.exp(x)
+
+    jaxpr = jax.jit(lambda x: f(x)[0]).trace(0.5).jaxpr
+    jaxpr_dce, _ = pe.dce_jaxpr(jaxpr.jaxpr, [True])
+    self.assertIn(' sin ', str(jaxpr_dce))
+    self.assertNotIn(' exp ', str(jaxpr_dce))
+
+    ans = api.grad(lambda x: f(x)[0])(0.5)
+    self.assertAllClose(ans, np.cos(0.5), check_dtypes=False)
+
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
