@@ -1410,11 +1410,11 @@ LogicalResult SemaphoreSignalOp::verify() {
     }
   }
   // Subcore ID applies only to SC vector subcore semaphore ops.
-  if (target_core_type != CoreType::kScVectorSubcore &&
-      getSubcoreId() != nullptr) {
+  if ((target_core_type == CoreType::kScVectorSubcore) !=
+      (getSubcoreId() != nullptr)) {
     return emitOpError(
-        "Subcore id should not be set unless target core type is SC vector "
-        "subcore");
+        "Subcore id should be set if and only if the target core type is the "
+        "SC vector subcore");
   }
   return success();
 }
@@ -1526,10 +1526,11 @@ LogicalResult EnqueueDMAOp::verify() {
     }
   }
   // Subcore ID applies only to SC vector subcore DMAs.
-  if (target_core != CoreType::kScVectorSubcore && getSubcoreId() != nullptr) {
+  if ((target_core == CoreType::kScVectorSubcore) !=
+      (getSubcoreId() != nullptr)) {
     return emitOpError(
-        "Subcore id should not be set unless target core type is SC vector "
-        "subcore");
+        "Subcore id should be set if and only if the target core type is the "
+        "SC vector subcore");
   }
   return success();
 }
@@ -1630,13 +1631,6 @@ LogicalResult WaitDMAOp::verify() {
   CoreType issuing_core = GetCoreTypeOfParentOp(**this);
   if (getRefCoreType(sem).value_or(issuing_core) != issuing_core) {
     return emitOpError("Can only await semaphores attached to the local core");
-  }
-
-  // Subcore ID applies only to SC vector subcore.
-  if (issuing_core != CoreType::kScVectorSubcore && getSubcoreId() != nullptr) {
-    return emitOpError(
-        "Subcore id should not be set unless issuing core type is SC vector "
-        "subcore");
   }
 
   return success();
