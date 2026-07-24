@@ -4499,6 +4499,7 @@ mlir.register_lowering(sign_p, _sign_lower_hlo)
 
 nextafter_p = standard_naryop([_float, _float], 'nextafter')
 mlir.register_lowering(nextafter_p, partial(_nary_lower_hlo, chlo.next_after))
+ad.defjvp_zero(nextafter_p)
 
 floor_p = standard_unop(_float, 'floor')
 ad.defjvp_zero(floor_p)
