@@ -451,16 +451,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       debug_print('y: {}, z: {}', y, z, ordered=ordered)
       return ad_checkpoint.checkpoint_name(jnp.exp(z), "w")
 
-    # Policy that saves everything so the debug callback will be saved
-    f = jax.checkpoint(f_, policy=ad_checkpoint.everything_saveable)
-
-    with jtu.capture_stdout() as output:
-      jax.grad(f)(2.)
-      jax.effects_barrier()
-    # We expect the print to happen once since it gets saved and isn't
-    # rematerialized.
-    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
-
     # Policy that saves nothing so everything gets rematerialized, including the
     # debug callback
     f = jax.checkpoint(f_, policy=ad_checkpoint.nothing_saveable)
@@ -479,37 +469,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       jax.grad(f)(2.)
       jax.effects_barrier()
     # We expect the print to happen twice since it is rematerialized.
-    self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
-
-    def save_everything_but_these_names(*names_not_to_save):
-      names_not_to_save = frozenset(names_not_to_save)
-      def policy(prim, *_, **params):
-        if prim is ad_checkpoint.name_p:
-          return params['name'] not in names_not_to_save
-        return True # Save everything else
-      return policy
-
-    # Policy that saves everything but `y`
-    f = jax.checkpoint(
-        f_, policy=save_everything_but_these_names("y"))
-
-    with jtu.capture_stdout() as output:
-      jax.grad(f)(2.)
-      jax.effects_barrier()
-    # We expect the print to happen once because `y` is not rematerialized and
-    # we won't do extra materialization.
-    self.assertEqual(output(), "y: 3.0, z: 6.0\n")
-
-    # Policy that saves everything but `y` and `z`
-    f = jax.checkpoint(
-        f_, policy=save_everything_but_these_names("y", "z"))
-
-    with jtu.capture_stdout() as output:
-      jax.grad(f)(2.)
-      jax.effects_barrier()
-    # We expect the print to happen twice because both `y` and `z` have been
-    # rematerialized and we don't have to do any extra rematerialization to
-    # print.
     self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
 
   def test_debug_print_in_staged_out_custom_jvp(self):

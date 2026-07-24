@@ -1115,6 +1115,17 @@ class RematTraced(VJPHiPrimitive):
     out_dims = [0 if b else None for b in out_batched]
     return RematTraced(jaxpr_batched, self.policy)(*args), out_dims
 
+  def remat(self, trace, *args):  # pyrefly: ignore[bad-param-name-override]
+    traced = core.jaxpr_as_fun(self.jaxpr)
+    out, rem_ = remat_transform(self.policy, traced, *args,
+                                custom_vjp_rules=trace.custom_vjp_rules)
+    (jaxpr, in_tree, out_tree), (res,) = rem_.func.args, rem_.args
+    def rem(*args_):
+      args_flat = tree_leaves_checked(in_tree, args_)
+      out_flat = RematTraced(jaxpr, self.policy)(*res, *args_flat)
+      return tree_unflatten(out_tree, out_flat)
+    return out, rem
+
 class CheckpointName(VJPHiPrimitive):
   name: str
 
