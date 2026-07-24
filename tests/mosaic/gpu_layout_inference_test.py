@@ -3479,6 +3479,103 @@ class LayoutInferenceTest(parameterized.TestCase):
         mgpu.dialect.SwizzleTransformAttr.get(128),
     ]))
 
+  def test_infer_out_layout_for_memref_reshape_collapse_dims(self):
+    shape = (32, 64, 128)
+    out_shape = (32, 64 * 128)
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((1, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.BF16Type.get()
+      smem = mgpu.utils.smem()
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      ref, = undefs(ref_ty)
+      ref = mgpu.dialect.with_transforms(ref, transforms)
+      op = mgpu.dialect.MemRefReshapeOp(ref, out_shape)
+    mgpu.infer_layout(self.module)
+    [out_transforms] = inference_utils.out_transforms(op)
+    self.assertSequenceEqual(out_transforms, ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((64,)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ]))
+
+  def test_infer_out_layout_for_memref_reshape_expand_dims(self):
+    shape = (32, 64 * 128)
+    out_shape = (32, 64, 128)
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((1, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.BF16Type.get()
+      smem = mgpu.utils.smem()
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      ref, = undefs(ref_ty)
+      op = mgpu.dialect.MemRefReshapeOp(ref, out_shape)
+      mgpu.dialect.with_transforms(op.result, transforms)
+
+    mgpu.infer_layout(self.module)
+    [in_transforms] = inference_utils.in_transforms(op)
+    self.assertSequenceEqual(in_transforms, ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((64,)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ]))
+
+  def test_infer_out_layout_for_memref_reshape_trailing_unit_dims(self):
+    shape = (32, 64, 1)
+    out_shape = (32, 64)
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((1, 64, 1)),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.BF16Type.get()
+      smem = mgpu.utils.smem()
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      ref, = undefs(ref_ty)
+      ref = mgpu.dialect.with_transforms(ref, transforms)
+      op = mgpu.dialect.MemRefReshapeOp(ref, out_shape)
+    mgpu.infer_layout(self.module)
+    [out_transforms] = inference_utils.out_transforms(op)
+    self.assertSequenceEqual(out_transforms, ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((1, 64)),
+    ]))
+
+  def test_infer_out_layout_for_memref_reshape_untiled(self):
+    shape = (7, 3)
+    out_shape = (3, 7)
+    no_transforms = ir.ArrayAttr.get([])
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.BF16Type.get()
+      smem = mgpu.utils.smem()
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      ref, = undefs(ref_ty)
+      op = mgpu.dialect.MemRefReshapeOp(ref, out_shape)
+    mgpu.infer_layout(self.module)
+    [in_transforms] = inference_utils.in_transforms(op)
+    self.assertSequenceEqual(in_transforms, no_transforms)
+    [out_transforms] = inference_utils.out_transforms(op)
+    self.assertSequenceEqual(out_transforms, no_transforms)
+
+  def test_infer_out_layout_for_memref_reshape_with_non_reassociable_tiling_fails(self):
+    shape = (32, 64, 128)
+    out_shape = (32, 64 * 128)
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((32, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+    with ir.InsertionPoint(self.module.body):
+      elt_ty = ir.BF16Type.get()
+      smem = mgpu.utils.smem()
+      ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      ref, = undefs(ref_ty)
+      ref = mgpu.dialect.with_transforms(ref, transforms)
+      mgpu.dialect.MemRefReshapeOp(ref, out_shape)
+    with self.assertRaisesRegex(
+        ValueError, "user-provided layout casts are unsatisfiable"
+    ):
+      mgpu.infer_layout(self.module)
+
   def test_layout_cast_incompatible_with_vector_shape_is_unsatisfiable(self):
     with ir.InsertionPoint(self.module.body):
       [vec] = undefs(ir.VectorType.get((4, 4), ir.BF16Type.get()))

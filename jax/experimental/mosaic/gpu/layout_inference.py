@@ -2082,6 +2082,95 @@ def _memref_collapse_shape_op_constraint_system(
   }
 
 
+def _get_reassociation(
+    source_shape: tuple[int, ...], dest_shape: tuple[int, ...]
+) -> tuple[int, ...] | None:
+  """Returns the reassociation for CollapseShape.
+
+  `reassociation` is a tuple of integers such that
+  `dest_shape = CollapseShape(source_shape, reassociation)` or `None` if no
+  such reassociation exists.
+
+  NOTE: We always fold to the right. E.g. for (3, 1, 4) -> (3, 4), the
+  reassociation is (1, 2).
+  """
+  assert math.prod(source_shape) == math.prod(dest_shape)
+  assert len(source_shape) > len(dest_shape)
+  if not source_shape or not dest_shape:
+    return None
+  reassociation = []
+  src_idx = 0
+  for d in dest_shape[:-1]:
+    curr = 1
+    count = 0
+    while src_idx < len(source_shape) and (count == 0 or curr < d):
+      curr = curr * source_shape[src_idx]
+      count += 1
+      src_idx += 1
+    if curr != d:
+      return None
+    reassociation.append(count)
+  # For the final target dimension, absorb all remaining source dimensions.
+  count = len(source_shape) - src_idx
+  reassociation.append(count)
+  assert math.prod(source_shape[-count:]) == dest_shape[-1]
+  return tuple(reassociation)
+
+
+# TODO(allanrenucci): Remove once 0.11.1 is the minimum jaxlib version.
+if hasattr(mgpu, "MemRefReshapeOp"):
+  @_add_constraint_system_derivation_rule(mgpu.MemRefReshapeOp)
+  def _memref_reshape_op_constraint_system(
+      ctx: DerivationContext,
+      op: mgpu.MemRefReshapeOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    source = ValueSite(op, VariableType.OPERAND, 0)
+    source_var = ctx.producer_ref(source)
+    dest = ValueSite(op, VariableType.RESULT, 0)
+    dest_var = cs.Variable(dest)
+
+    # We support arbitrary reshape of untiled references.
+    def untiled_system():
+      # TODO(allanrenucci): Pick a more optimal swizzle.
+      assignments: dict[cs.Variable, cs.Constant] = {
+          source_var: cs.SMEMTransforms(None, None),
+          dest_var: cs.SMEMTransforms(None, None),
+      }
+      return cs.ConstraintSystem(assignments), {
+          source_var: [source],
+          dest_var: [dest],
+      }
+
+    # TODO(allanrenucci): Add support for reshapes that can be expressed as a
+    # combination of expand and collapse shape. We currently default to
+    # untiled references for such cases.
+    if len(source.shape) == len(dest.shape):
+      constraints = [cs.Equals(source_var, dest_var)]
+    elif len(source.shape) > len(dest.shape):
+      reassociation = _get_reassociation(source.shape, dest.shape)
+      if reassociation is None:
+        return untiled_system()
+      constraints = [
+          cs.Equals(
+              cs.CollapseShape(source_var, source.shape, reassociation), dest_var
+          ),
+      ]
+    else:
+      reassociation = _get_reassociation(dest.shape, source.shape)
+      if reassociation is None:
+        return untiled_system()
+      constraints = [
+          cs.Equals(
+              cs.CollapseShape(dest_var, dest.shape, reassociation), source_var
+          ),
+      ]
+
+    return cs.ConstraintSystem(constraints=constraints), {
+        source_var: [source],
+        dest_var: [dest],
+    }
+
+
 # `memref.load` and `memref.store` are used to load barrier phases which are
 # scalars---the rule needn't do anything interesting, but we need to have it.
 @_add_constraint_system_derivation_rule(memref.LoadOp)
