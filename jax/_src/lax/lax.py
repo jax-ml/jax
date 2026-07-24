@@ -8551,10 +8551,23 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes, out_sharding):
   # locations in a single pass (rather than comparing equality) and use a
   # gather, and/or even push along the chosen elements of g (b/112040122)
   shape = [1 if i in axes else d for i, d in enumerate(operand.shape)]
-  location_indicators = convert_element_type(
-      _eq_meet(operand, reshape(ans, shape)), g.dtype)
-  counts = reduce_sum(location_indicators, axes)
-  return div(reduce_sum(mul(g, location_indicators), axes), counts)
+  bool_indicators = _eq_meet(operand, reshape(ans, shape))
+
+  int_indicators = convert_element_type(
+      bool_indicators, dtypes.canonicalize_dtype(np.int32))
+  counts = reduce_sum(int_indicators, axes)
+
+  compute_dtype = g.dtype
+  if compute_dtype in (np.float16, dtypes.bfloat16):
+    compute_dtype = dtypes.canonicalize_dtype(np.float32)
+
+  g_compute = convert_element_type(g, compute_dtype)
+  location_indicators = convert_element_type(bool_indicators, compute_dtype)
+  weighted_sum = reduce_sum(mul(g_compute, location_indicators), axes)
+
+  return convert_element_type(
+      div(weighted_sum, convert_element_type(counts, compute_dtype)),
+      g.dtype)
 
 def _reduce_max_ur_rule(operand, *, axes, out_sharding):
   out_unreduced, kind = _reduce_op_unreduced_rule(
