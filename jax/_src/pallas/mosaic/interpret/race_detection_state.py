@@ -18,6 +18,7 @@ import itertools
 import threading
 
 from jax._src import source_info_util
+from jax._src.pallas.mosaic.interpret import vector_clock as vc
 
 
 def _is_empty_slice(slice_or_idx: slice | int):
@@ -86,7 +87,12 @@ class RaceDetectionState[ThreadKey]:
   races_found: bool = False
 
   def check_read(
-      self, thread: ThreadKey, clock, buffer_key, rnge, source_info=None
+      self,
+      thread: ThreadKey,
+      clock: vc.NpVectorClock,
+      buffer_key,
+      rnge,
+      source_info=None,
   ):
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)
@@ -124,7 +130,12 @@ class RaceDetectionState[ThreadKey]:
       return
 
   def check_write(
-      self, thread: ThreadKey, clock, buffer_key, rnge, source_info=None
+      self,
+      thread: ThreadKey,
+      clock: vc.NpVectorClock,
+      buffer_key,
+      rnge,
+      source_info=None,
   ):
     if source_info is not None:
       user_frame = source_info_util.summarize(source_info)

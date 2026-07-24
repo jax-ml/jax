@@ -702,6 +702,7 @@ def get(
     if src_local_core_id is None:
       src_local_core_id = local_core_id
     assert races is not None
+    assert clock is not None
     races.check_read(
         (src_device_id, src_local_core_id),
         clock,
@@ -795,6 +796,7 @@ def store(
     if src_local_core_id is None:
       src_local_core_id = local_core_id
     assert races is not None
+    assert clock is not None
     races.check_write(
         (src_device_id, src_local_core_id),
         clock,
@@ -871,6 +873,7 @@ def swap(
 
   if shared_memory.detect_races:
     assert races is not None
+    assert clock is not None
     races.check_write(
         (device_id, local_core_id),
         clock,

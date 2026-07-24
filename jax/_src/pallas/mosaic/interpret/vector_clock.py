@@ -27,13 +27,7 @@ class VectorClockProto(Protocol):
   def update(self, other: Self) -> None:
     ...
 
-  def lt(self, other: Self) -> bool:
-    ...
-
-  def ordered(self, other: Self) -> bool:
-    ...
-
-  def inc(self, global_core_id: int) -> None:
+  def inc(self, position: int) -> None:
     ...
 
 
@@ -43,8 +37,8 @@ class NpVectorClock(VectorClockProto):
   def __init__(self, vector_clock_size: int):
     self.clock = np.zeros(vector_clock_size, dtype=np.int32)
 
-  def copy(self) -> "NpVectorClock":
-    new = NpVectorClock(len(self.clock))
+  def copy(self) -> Self:
+    new = self.__new__(self.__class__)
     new.clock[:] = self.clock[:]
     return new
 
@@ -57,8 +51,8 @@ class NpVectorClock(VectorClockProto):
   def ordered(self, other: Self) -> bool:
     return self.lt(other) or other.lt(self)
 
-  def inc(self, global_core_id: int) -> None:
-    if global_core_id >= len(self.clock):
-      raise ValueError(f'device_id={global_core_id} is out of range for x={self.clock}')
-    assert global_core_id < len(self.clock)
-    self.clock[global_core_id] += 1
+  def inc(self, position: int) -> None:
+    if position >= len(self.clock):
+      raise ValueError(f'position {position} is out of range for clock {self.clock}')
+    assert position < len(self.clock)
+    self.clock[position] += 1
