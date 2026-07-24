@@ -6,6 +6,7 @@ TPU specific documentation.
    :caption: Guides
    :maxdepth: 2
 
+   quickstart
    details
    pipelining
    matmul
@@ -15,4 +16,3 @@ TPU specific documentation.
    sparsecore
    prng
    hardware
-
