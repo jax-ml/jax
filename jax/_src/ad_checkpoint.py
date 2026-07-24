@@ -1024,22 +1024,25 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
   ``checkpoint_name``-tagged intermediates) cannot be marked saveable by the
   checkpoint ``policy`` there; they are always recomputed.
   """
-  if f is None:
-    return partial(partial, _remat3, policy, static_argnums, static_argnames)
-  else:
-    return partial(_remat3, policy, static_argnums, static_argnames, f)
+  kwargs = dict(policy=policy, static_argnums=static_argnums,
+                static_argnames=static_argnames)
+  if f is None: return lambda g: _remat3(g, **kwargs)
+  return _remat3(f, **kwargs)
 
-def _remat3(policy, static_argnums, static_argnames, f, *args, **kwargs):
-  args_ft = ft.flatten_static_argnums_argnames(
-      args, kwargs, static_argnums, static_argnames)
-  avals_ft = args_ft.map(typeof)
-  dbg = api_util.debug_info(
-      'remat3', f, args, kwargs, static_argnums=static_argnums,
-      static_argnames=static_argnames)
-  jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
-  jaxpr, consts = pe.separate_consts(jaxpr_)
-  out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
-  return out_avals_ft.update(out_flat).unflatten()
+def _remat3(f, *, policy, static_argnums, static_argnames):
+  @wraps(f)
+  def decorator(*args, **kwargs):
+    args_ft = ft.flatten_static_argnums_argnames(
+        args, kwargs, static_argnums, static_argnames)
+    avals_ft = args_ft.map(typeof)
+    dbg = api_util.debug_info(
+        'remat3', f, args, kwargs, static_argnums=static_argnums,
+        static_argnames=static_argnames)
+    jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
+    jaxpr, consts = pe.separate_consts(jaxpr_)
+    out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
+    return out_avals_ft.update(out_flat).unflatten()
+  return decorator
 
 def dce(traced, policy):
   # dce_jaxpr preserves attached consts (constvars are never pruned).
