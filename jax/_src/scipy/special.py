@@ -2604,7 +2604,10 @@ def expi(x: ArrayLike) -> Array:
   x_arr, = promote_args_inexact("expi", x)
   if dtypes.issubdtype(x_arr.dtype, np.complexfloating):
     raise ValueError("expi does not support complex-valued inputs.")
-  return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
+  result = jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
+  # expi(+inf) = +inf; the Cephes Pade approximant _expint7 evaluates
+  # exp(inf) * (1/inf) * polynomial = inf * 0 = nan without this guard.
+  return jnp.where(jnp.isposinf(x_arr), _lax_const(x_arr, np.inf), result)
 
 @expi.defjvp
 @jit
@@ -2979,6 +2982,7 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
   zero = _c(x, 0)
   one = _c(x, 1)
   conds = [
+    jnp.isinf(x) & (x > zero),
     (n < _c(n, 0)) | (x < zero),
     (x == zero) & (n < _c(n, 2)),
     (x == zero) & (n >= _c(n, 2)),
@@ -2988,6 +2992,7 @@ def expn(n: ArrayLike, x: ArrayLike) -> Array:
   ]
   n1 = jnp.where(n == _c(n, 1), n + n, n)
   vals = [
+    zero,        # E_n(+inf) = 0 for all n >= 0: integrand e^{-t}/t^n vanishes
     np.nan,
     np.inf,
     one / n1,  # prevent div by zero
