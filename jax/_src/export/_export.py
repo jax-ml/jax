@@ -1168,7 +1168,7 @@ _GPU_FFI_KERNELS = [
     "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
     "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
     # cholesky on GPU
-    "cusolver_potrf_ffi", "hipsolver_potrf_ffi",
+    "cusolver_potrf_ffi", "hipsolver_potrf_ffi", "rocsolver_potrf_ffi",
     # eigh on GPU
     "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
     # svd on GPU
