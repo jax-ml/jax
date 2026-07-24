@@ -45,7 +45,7 @@ ifrt_programs = _xla.ifrt_programs
 # Please suffix the version number with a brief description of your change
 # in a comment. The goal here is to force a merge conflict if two changes
 # attempt to grab the same version number.
-_version = 478  # JAX UnreducedKind
+_version = 479  # Add TPU_LogisticOp
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.

@@ -306,6 +306,8 @@ UNARY_FUNCTIONS = [
         ("reciprocal", jnp.reciprocal),
         ("round", jnp.round),
         ("rint", jnp.rint),
+        ("sigmoid", jax.nn.sigmoid),
+        ("silu", jax.nn.silu),
     ]
 ]
 
@@ -648,10 +650,6 @@ class OpsTest(PallasBaseTest):
     tol = 0.
     if jtu.test_device_matches(["tpu"]):
       if name == "exp2":
-        tol = 1e-6
-      # TODO(b/538128436): Remove this logistic branch once mosaic TPU has a
-      # tpu.logistic op.
-      elif name == 'logistic':
         tol = 1e-6
     if jtu.test_device_matches(["gpu"]):
       if func == jnp.round or func == jnp.rint:

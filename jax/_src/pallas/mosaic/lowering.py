@@ -38,8 +38,6 @@ from jax._src import flattree as ft
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
-from jax._src.random import prng
-from jax._src.random import threefry2x32
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
@@ -53,6 +51,7 @@ from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
 from jax._src.lib import jax_mlir_ext
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -71,6 +70,8 @@ from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.pallas.mosaic import random as pl_random
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
+from jax._src.random import prng
+from jax._src.random import threefry2x32
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
@@ -3603,23 +3604,35 @@ def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   return mlir_math.exp2(x)
 
 
-# TODO(b/411034003): use sigshift instead of exp for better numerics.
 @register_lowering_rule(lax.logistic_p)
 def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
-  neg_x = arith.negf(x)
-  exp_neg_x = mlir_math.exp(neg_x)
-  aval_out = ctx.avals_out[0]
-  out_type = ctx.aval_to_ir_type(aval_out)
-  if not aval_out.shape:
-    one = ir_constant(1.0, mlir_type=out_type)
+
+  if (
+      TYPE_CHECKING
+      or jaxlib_extension_version < 479
+      or ctx.forward_compatible
+      or ctx.is_cloud_tpu_older_than(2026, 7, 23)
+      or not tpu_info.is_tpu_device()
+      or tpu_info.get_tpu_info().generation < 6
+  ):
+    # Old fallback behavior for older libtpu wheels, legacy Cloud TPU runtimes, and TPU < v6
+    neg_x = arith.negf(x)
+    exp_neg_x = mlir_math.exp(neg_x)
+    aval_out = ctx.avals_out[0]
+    out_type = ctx.aval_to_ir_type(aval_out)
+    if not aval_out.shape:
+      one = ir_constant(1.0, mlir_type=out_type)
+    else:
+      one = vector.broadcast(
+          out_type, ir_constant(1.0, _dtype_to_ir_type(aval_out.dtype))
+      )
+    denom = arith.addf(one, exp_neg_x)
+    return arith.divf(one, denom)
   else:
-    one = vector.broadcast(
-        out_type, ir_constant(1.0, _dtype_to_ir_type(aval_out.dtype))
-    )
-  denom = arith.addf(one, exp_neg_x)
-  return arith.divf(one, denom)
+    # New hardware-accelerated emission
+    return tpu.logistic(x)  # pyrefly: ignore[missing-attribute]
 
 
 @register_lowering_rule(lax.sin_p)
