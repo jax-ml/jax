@@ -1341,7 +1341,21 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp.linalg.block_diag, jsp.linalg.block_diag,
                             args_maker, check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.block_diag, args_maker)
+  def testInvUnsupportedDtype(self):
+    x = jnp.eye(4, dtype=jnp.float16)
 
+    with self.assertRaisesRegex(
+          TypeError,
+          r"jax\.scipy\.linalg\.inv does not support dtype float16"):
+        jsp.linalg.inv(x)
+
+  def testCholeskyUnsupportedBfloat16(self):
+      x = jnp.eye(4, dtype=jnp.bfloat16)
+
+      with self.assertRaisesRegex(
+          TypeError,
+          r"jax\.scipy\.linalg\.cholesky does not support dtype bfloat16"):
+        jsp.linalg.cholesky(x)
   @jtu.sample_product(
     shape=[(1, 1), (4, 5), (10, 5), (50, 50)],
     dtype=float_types + complex_types,
