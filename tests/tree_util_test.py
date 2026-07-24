@@ -82,6 +82,19 @@ class AnObject:
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
 
+class ArrayMetadataBox:
+  # A pytree whose metadata (aux_data) is an array, hence unhashable and not
+  # comparable with plain `==` semantics. Used to test that pytree equality
+  # errors name the offending registered type. See issue #13027.
+
+  def __init__(self, x):
+    self.x = x
+
+tree_util.register_pytree_node(
+    ArrayMetadataBox,
+    lambda obj: ((), (obj.x,)),
+    lambda aux_data, children: ArrayMetadataBox(aux_data[0]))
+
 class AnObject2(AnObject): pass
 
 tree_util.register_pytree_with_keys(
@@ -1161,6 +1174,28 @@ class TreeKeyTest(absltest.TestCase):
     # Second fall fails, because arrays are marked static and compared for equality.
     with self.assertRaisesRegex(ValueError, msg):
       f(Tree(jnp.arange(4)))
+
+  def testEqualityErrorNamesOffendingType(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/13027
+    a = ArrayMetadataBox(jnp.arange(3))
+    b = ArrayMetadataBox(jnp.arange(3))
+    _, treedef_a = tree_util.tree_flatten(a)
+    _, treedef_b = tree_util.tree_flatten(b)
+
+    # hash succeeds despite unhashable metadata (metadata isn't actually
+    # hashed); the error only appears once equality is checked.
+    hash(treedef_a)
+    hash(treedef_b)
+
+    with self.assertRaisesRegex(ValueError, "ArrayMetadataBox"):
+      treedef_a == treedef_b
+
+    # The same error, reached through jax.jit's dispatch cache, should also
+    # name the offending type.
+    f = jax.jit(lambda x: x)
+    f(a)
+    with self.assertRaisesRegex(ValueError, "ArrayMetadataBox"):
+      f(b)
 
 
 class StaticTest(parameterized.TestCase):
