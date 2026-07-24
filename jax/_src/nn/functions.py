@@ -1319,6 +1319,15 @@ def scaled_matmul(
       - We currently do not support user-defined `precision` for customizing the
         compute data type. It is fixed to `jnp.float32`.
       - Block size is inferred as `K // K_a` for `a` and `K // K_b` for `b`.
+      - **Platform support:** ``scaled_matmul`` has a natively fused fast path on
+        GPU (NVIDIA CUDA, fused on Blackwell via cuDNN; AMD ROCm). On other
+        platforms it lowers through the ``xla.scaled_dot`` composite, whose
+        default expansion dequantizes the operands and calls
+        ``jax.lax.dot_general`` (correct, but not a native low-precision matmul
+        unless the backend provides a block-scaling rewrite for the composite).
+        Backends without any registered lowering raise ``NotImplementedError``;
+        portable callers can branch on ``jax.devices()[0].platform`` if they need
+        to guarantee a specific path.
       - To use cuDNN with Nvidia Blackwell GPUs, inputs must match::
 
           # mxfp8
