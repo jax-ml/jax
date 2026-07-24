@@ -54,6 +54,27 @@ def avals_to_layouts(avals):
   return [list(reversed(range(aval.ndim))) for aval in avals]
 
 
+def parse_custom_call_cost_estimate(serialized_metadata):
+  if not serialized_metadata:
+    return None
+  try:
+    if isinstance(serialized_metadata, bytes):
+      serialized_metadata = serialized_metadata.decode("utf-8")
+    meta_dict = json.loads(serialized_metadata)
+    if "flops" in meta_dict or "bytes_accessed" in meta_dict:
+      cost_estimate = {}
+      if "flops" in meta_dict:
+        cost_estimate["flops"] = int(float(meta_dict["flops"]))
+      if "bytes_accessed" in meta_dict:
+        cost_estimate["bytes_accessed"] = int(
+            float(meta_dict["bytes_accessed"])
+        )
+      return cost_estimate
+  except (json.JSONDecodeError, ValueError, TypeError):
+    pass
+  return None
+
+
 def pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -199,20 +220,25 @@ def pallas_call_lowering(
       mlir.aval_to_ir_type(ctx.module_context, aval)
       for aval in ctx.avals_out
   ])
+  backend_config: dict[str, ir.Attribute] = {
+      "name": ir.StringAttr.get(name),
+      "opaque": ir.StringAttr.get(
+          zlib.compress(
+              kernel_call.to_proto(name, (serialized_metadata or "").encode())
+          )
+      ),
+  }
+  cost_estimate = parse_custom_call_cost_estimate(serialized_metadata)
+  if cost_estimate:
+    backend_config["custom_call_cost_estimate"] = mlir.ir_attribute(  # pyrefly: ignore[bad-typed-dict-key]
+        cost_estimate
+    )
+
   return mlir.custom_call(
       call_target_name="triton_kernel_call_ffi",
       result_types=result_types,
       operands=in_nodes,
-      backend_config=dict(
-          name=ir.StringAttr.get(name),
-          opaque=ir.StringAttr.get(
-              zlib.compress(
-                  kernel_call.to_proto(
-                      name, (serialized_metadata or "").encode()
-                  )
-              )
-          ),
-      ),
+      backend_config=backend_config,  # pyrefly: ignore[bad-argument-type]
       operand_layouts=avals_to_layouts(ctx.avals_in),
       result_layouts=avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),
