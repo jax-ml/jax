@@ -159,7 +159,7 @@ SRAM and when we do `x_ref[...]` we are copying the value from SRAM into a regis
 We then use TPU vector compute to execute the addition, then copy the resulting
 value back into SRAM. After the kernel is executed, the SRAM value is copied back into HBM.
 
-We are in the process of writing backend-specific Pallas guides. Coming soon!
+For more details on each backend, see {ref}`the Mosaic GPU backend guide <pallas_mosaic_gpu>` and {ref}`the TPU backend guide <pallas_tpu>`.
 
 +++
 
