@@ -121,6 +121,7 @@ jobs:
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
           JAXCI_TEST_TIMEOUT: '420'
           CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}
+          JAXCI_TRACK_TEST_MEMORY: '1'
         run: |
           if [[ -n "${CUSTOM_BAZEL_TARGETS}" ]]; then
             export JAXCI_BAZEL_TARGETS="${CUSTOM_BAZEL_TARGETS// /$'\n'}"
