@@ -56,7 +56,11 @@ nb::dict Registrations() {
 NB_MODULE(_triton, m) {
   nb::class_<Kernel>(m, "TritonKernel")
       .def(nb::init<std::string, uint32_t, uint32_t, uint32_t, std::string,
-                    std::string, int>());
+                    std::string, int, uint32_t, uint32_t>(),
+           nb::arg("kernel_name"), nb::arg("num_warps"), nb::arg("num_ctas"),
+           nb::arg("shared_mem_bytes"), nb::arg("ptx"), nb::arg("ttir"),
+           nb::arg("compute_capability"), nb::arg("global_scratch_size") = 0,
+           nb::arg("global_scratch_align") = 1);
 
   nb::class_<KernelCall::Parameter>(m, "TritonParameter");
 

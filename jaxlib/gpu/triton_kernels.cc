@@ -452,14 +452,18 @@ class ModuleImage {
 
 Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-               int compute_capability)
+               int compute_capability, uint32_t global_scratch_size,
+               uint32_t global_scratch_align)
     : kernel_name_(std::move(kernel_name)),
       block_dim_x_(num_warps * kNumThreadsPerWarp),
       num_ctas_(num_ctas),
       shared_mem_bytes_(shared_mem_bytes),
       ptx_(std::move(ptx)),
       ttir_(std::move(ttir)),
-      compute_capability_(compute_capability) {}
+      compute_capability_(compute_capability),
+      global_scratch_size_(global_scratch_size),
+      global_scratch_align_(global_scratch_align == 0 ? 1
+                                                       : global_scratch_align) {}
 
 absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
                             void** params) {
@@ -530,10 +534,18 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
 /*static*/ Kernel Kernel::FromProto(const jax_triton::TritonKernel& proto) {
   // Use 1 as default value if not specified in already serialized kernels.
   int num_ctas = proto.has_num_ctas() ? proto.num_ctas() : 1;
+  // Older serialized kernels don't carry scratch memory metadata; 0/1 mean
+  // "no scratch buffer needed", matching pre-existing (null pointer)
+  // behavior.
+  uint32_t global_scratch_size =
+      proto.has_global_scratch_size() ? proto.global_scratch_size() : 0;
+  uint32_t global_scratch_align =
+      proto.has_global_scratch_align() ? proto.global_scratch_align() : 1;
 
   return Kernel(proto.kernel_name(), proto.num_warps(), num_ctas,
                 proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
-                proto.compute_capability());
+                proto.compute_capability(), global_scratch_size,
+                global_scratch_align);
 }
 
 jax_triton::TritonKernel Kernel::ToProto() const {
@@ -545,6 +557,8 @@ jax_triton::TritonKernel Kernel::ToProto() const {
   proto.set_ptx(ptx_);
   proto.set_ttir(ttir_);
   proto.set_compute_capability(compute_capability_);
+  proto.set_global_scratch_size(global_scratch_size_);
+  proto.set_global_scratch_align(global_scratch_align_);
   return proto;
 }
 
@@ -650,14 +664,50 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
           param.value)));
     }
   }
-  // Triton's kernel ABI expects an additional scratchpad global memory.
-  // For now it is only used for on-device creation of TMA descriptors, which
-  // we do not use yet, so we are just replacing this argument with a null
-  // pointer.
-  // TODO: b/381242007 - Allocate a proper buffer if we want to use
-  // device-side TMA APIs.
-  void* tma_descriptor_buffer = nullptr;  // Alive until kernel_.Launch returns.
-  params.push_back(&tma_descriptor_buffer);
+  // Triton's kernel ABI expects an additional scratchpad global memory
+  // buffer, used e.g. for on-device construction of TMA descriptors.
+  // Sized per-CTA by the compiler; the launcher must multiply by the
+  // number of CTAs actually launched (mirrors Triton's own CPU-side
+  // launcher in triton/backends/nvidia/driver.py).
+  gpuDevicePtr_t global_scratch = 0;
+  uint32_t global_scratch_size = kernel_.global_scratch_size();
+  if (global_scratch_size > 0) {
+    uint64_t grid_size =
+        static_cast<uint64_t>(grid_[0]) * grid_[1] * grid_[2];
+    uint64_t num_ctas = kernel_.num_ctas();
+    if (grid_size != 0 && num_ctas != 0 &&
+        global_scratch_size >
+            std::numeric_limits<uint64_t>::max() / grid_size / num_ctas) {
+      return absl::InvalidArgumentError(
+          "Triton global scratch buffer size overflow.");
+    }
+    uint64_t alloc_size = grid_size * num_ctas * global_scratch_size;
+#ifdef JAX_GPU_CUDA
+    GPU_RETURN_IF_ERROR(cuMemAllocAsync(&global_scratch, alloc_size, stream));
+#else  // JAX_GPU_HIP
+    // Allocate into a temporary void* rather than reinterpret_cast'ing the
+    // address of `global_scratch` itself, to avoid punning through an
+    // incompatible pointer type.
+    void* hip_scratch_ptr = nullptr;
+    GPU_RETURN_IF_ERROR(hipMallocAsync(&hip_scratch_ptr, alloc_size, stream));
+    global_scratch = reinterpret_cast<gpuDevicePtr_t>(hip_scratch_ptr);
+#endif
+  }
+  absl::Cleanup global_scratch_deleter = [&] {
+    if (global_scratch == 0) return;
+#ifdef JAX_GPU_CUDA
+    absl::Status s = JAX_AS_STATUS(cuMemFreeAsync(global_scratch, stream));
+#else  // JAX_GPU_HIP
+    absl::Status s = JAX_AS_STATUS(
+        hipFreeAsync(reinterpret_cast<void*>(global_scratch), stream));
+#endif
+    if (!s.ok()) {
+      LOG(WARNING) << "Failed to free Triton global scratch buffer: " << s;
+    }
+  };
+  // Alive until kernel_.Launch returns.
+  void* global_scratch_ptr = reinterpret_cast<void*>(global_scratch);
+  params.push_back(&global_scratch_ptr);
   void* profiling_buffer = nullptr;  // Alive until kernel_.Launch returns.
   params.push_back(&profiling_buffer);
 
