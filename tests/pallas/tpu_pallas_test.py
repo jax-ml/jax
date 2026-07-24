@@ -5571,6 +5571,8 @@ class ExplicitMXUTest(jtu.JaxTestCase):
       self.skipTest('Test requires libtpu 0.0.46 or newer.')
 
     if jtu.is_device_tpu_at_least(7):
+      if dtype == jnp.int8:
+        raise self.skipTest('Test encounters a verifier error with int8.')
       expect_ctx = self.assertRaisesRegex(
           error_handling.MosaicError,
           'MatmulLhsFifoOp not supported on TPU generations >= 7',
