@@ -707,6 +707,78 @@ class MeshUtilsTest(jtu.JaxTestCase):
         (1, 32), devices=devices[32:], contiguous_submeshes=False)
     self.assertEqual(mesh.shape, (1, 32))
 
+  @parameterized.named_parameters(
+      ('v7x', mesh_utils._TPU_7X),
+      ('v7', mesh_utils._TPU_7),
+  )
+  def test_v7_core_axis_priority(self, device_kind):
+    """Test that high network-intensity axes are assigned to core axis (highest bandwidth).
+
+    For TPU v7, the physical mesh shape is 4D: (x, y, z, core). The core axis
+    has the highest bandwidth. This test verifies that when we have a logical
+    mesh like [DP=2, FSDP=32] where FSDP has higher network intensity, the FSDP
+    axis is preferentially mapped to the core axis.
+
+    Physical mesh: (2, 4, 4, 2) = (x, y, z, core), total 64 devices
+    Logical mesh: (2, 32) = (DP, FSDP)
+
+    Without priority: FSDP=32 might be assigned to x*y*z = 2*4*4 = 32,
+    leaving DP=2 on core axis.
+
+    With priority: FSDP=32 should be assigned to y*z*core = 4*4*2 = 32 or
+    similar combination that includes the core axis.
+    """
+    devices = mock_tpu_devices(2, 4, 4, device_kind,
+                               one_device_per_chip=False)
+    # Use all 64 devices: DP=2, FSDP=32
+    mesh = mesh_utils.create_device_mesh(
+        (2, 32), devices=devices, contiguous_submeshes=False)
+    self.assertEqual(mesh.shape, (2, 32))
+
+    # Verify physical mesh is 4D for v7
+    physical_mesh = mesh_utils._get_physical_tpu_mesh(devices)
+    self.assertEqual(physical_mesh.shape, (2, 4, 4, 2))  # (x, y, z, core)
+
+    # _create_device_mesh_for_nd_torus detects the v7 device kind and
+    # preferentially maps high network intensity logical axes to the core axis.
+    # mesh_shape (2, 32): FSDP=32 (axis 1) should include core (axis 3)
+    device_mesh, assignment = mesh_utils._create_device_mesh_for_nd_torus(
+        physical_mesh,
+        (2, 32),
+    )
+    self.assertEqual(device_mesh.shape, (2, 32))
+
+    # assignment[physical_axis, logical_axis]
+    # assignment[:, 1] shows how FSDP (logical axis 1) is mapped
+    fsdp_assignment = assignment[:, 1]
+    # FSDP should use core axis (axis 3), so assignment[3, 1] should be 2 (core size)
+    self.assertEqual(fsdp_assignment[3], 2,  # core axis is used
+                     f"FSDP should be assigned to core axis, got assignment: {assignment}")
+
+  @parameterized.named_parameters(
+      ('v7x', mesh_utils._TPU_7X),
+      ('v7', mesh_utils._TPU_7),
+  )
+  def test_v7_core_axis_priority_direct(self, device_kind):
+    """Direct test of v7 core-axis priority behavior inside nd_torus."""
+    devices = mock_tpu_devices(2, 2, 2, device_kind,
+                               one_device_per_chip=False)
+    physical_mesh = mesh_utils._get_physical_tpu_mesh(devices)
+    # (2, 2, 2, 2) = 16 devices
+    self.assertEqual(physical_mesh.shape, (2, 2, 2, 2))
+
+    # logical mesh (2, 8): FSDP=8 could be assigned to x*y*z = 2*2*2 = 8 (no
+    # core) or y*z*core = 2*2*2 = 8 (with core). For v7, nd_torus applies the
+    # core-axis priority automatically, so the combination including core
+    # should be preferred.
+    mesh_priority, assign_priority = mesh_utils._create_device_mesh_for_nd_torus(
+        physical_mesh, (2, 8)
+    )
+
+    # Verify FSDP (axis 1) uses core (axis 3)
+    self.assertEqual(assign_priority[3, 1], 2,
+                     f"For v7, FSDP should use core axis: {assign_priority}")
+
 
 def int64_array(x) -> np.ndarray:
   return np.array(x, dtype=np.int64)

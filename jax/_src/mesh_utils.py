@@ -269,6 +269,14 @@ def _create_device_mesh_for_nd_torus(
   instead of splitting a physical axis over more than one logical axis (which
   would reduce total usable bandwidth).
 
+  For hardware where a subset of physical axes has higher bandwidth than the
+  others, high-network-intensity logical axes are preferentially mapped to those
+  high-bandwidth physical axes. This is currently applied for TPU v7/v7x, whose
+  core axis (the last axis of a 4D `physical_mesh`) has higher bandwidth than the
+  x/y/z axes; the priority is detected automatically from the device kind, so for
+  all other device kinds (and non-4D meshes) every physical axis is treated with
+  equal priority and behavior is unchanged.
+
   Let's use a concrete example to explain the concepts and considerations.
 
   As an example, suppose the logical mesh is [data, model], for data and model
@@ -302,6 +310,19 @@ def _create_device_mesh_for_nd_torus(
   # Map each logical axis to a subset of physical axes.
   assignment: list[tuple[int, ...]] = [() for _ in mesh_shape]
 
+  # Build a priority map honoring physical-axis bandwidth. Lower value = higher
+  # priority. Currently only TPU v7/v7x is known to have asymmetric bandwidth:
+  # on a 4D mesh shaped (x, y, z, core) the core axis is highest bandwidth, so
+  # it receives the highest priority (rank 0). All other device kinds treat
+  # every physical axis with equal priority (priority_map None -> unchanged).
+  priority_map: dict[int, int] | None = None
+  if (
+      len(physical_mesh.shape) == 4
+      and getattr(physical_mesh.flat[0], 'device_kind', None) in (_TPU_7X, _TPU_7)
+  ):
+    # 4D mesh (x, y, z, core): core (axis 3) first, then x, y, z.
+    priority_map = {0: 1, 1: 2, 2: 3, 3: 0}
+
   # Assign logical axes from highest network intensity to lowest.
   # `mesh_shape` is assumed to ordered by lowest network intensity first, so
   # reverse it first.
@@ -311,10 +332,28 @@ def _create_device_mesh_for_nd_torus(
     # Preferentially map to more physical axes first for higher bandwidth.
     for num_axes in range(len(physical_mesh.shape), 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
-      indices_and_axes = itertools.combinations(
-          enumerate(assignable_physical_mesh), num_axes
+      candidates = list(
+          itertools.combinations(enumerate(assignable_physical_mesh), num_axes)
       )
-      for elem in indices_and_axes:
+
+      # Sort candidates by priority if provided, so that candidates containing
+      # higher priority physical axes are tried first. This ensures high network
+      # intensity logical axes get assigned to high bandwidth physical axes.
+      if priority_map is not None:
+        pmap = priority_map  # local alias narrows the type for the closure below.
+
+        def _candidate_priority(candidate):
+          # Lower rank = higher priority. Sort by best (lowest) priority
+          # among all axes in the candidate, then by sum of priorities
+          # as a tie-breaker.
+          indices = tuple(c[0] for c in candidate)
+          best_priority = min(pmap[i] for i in indices)
+          total_priority = sum(pmap[i] for i in indices)
+          return (best_priority, total_priority)
+
+        candidates.sort(key=_candidate_priority)
+
+      for elem in candidates:
         c_indices, c_axes = zip(*elem)
         # TODO(zhangqiaorjc): Due to limitations in XLA, 2D collectives only
         # implemented for square 2D plane. Mapping a physical axis to two
@@ -844,6 +883,11 @@ def create_device_mesh(
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
       physical_mesh = _transpose_trick(physical_mesh, new_mesh_shape)
+
+    # For TPU v7/v7x, the core axis (last axis) has higher bandwidth than x/y/z
+    # axes. _create_device_mesh_for_nd_torus detects this from the device kind
+    # and preferentially maps high network intensity logical axes to the core
+    # axis without any caller-supplied priority.
     device_mesh, _ = _create_device_mesh_for_nd_torus(
         physical_mesh,
         new_mesh_shape,
