@@ -698,6 +698,9 @@ class JitWrapped(stages.Wrapped):
   def trace(self, *args, **kwargs) -> stages.Traced:
     raise NotImplementedError
 
+  def clear_cache(self) -> None:
+    raise NotImplementedError
+
 
 # in_shardings and out_shardings can't be None as the default value
 # because `None` means that the input is fully replicated.
