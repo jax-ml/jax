@@ -1014,66 +1014,58 @@ def warp_barrier():
 
 @dataclasses.dataclass(frozen=True)
 class BarrierRef:
-  base_address: ir.Value
-  offset: ir.Value
-  phases: ir.Value
-  num_barriers: int
+  ref: ir.Value[ir.MemRefType]
+  phases: ir.Value[ir.MemRefType]
 
   @staticmethod
-  def initialize(
-      barrier_memref: ir.Value, arrival_count: int = 1
-  ) -> "BarrierRef":
-    barrier_ty = ir.MemRefType(barrier_memref.type)
-    [num_barriers] = barrier_ty.shape
-    if num_barriers > 32:
-      raise NotImplementedError("Only up to 32 barriers per group supported")
+  def initialize(ref: ir.Value, arrival_count: int = 1) -> "BarrierRef":
     i32 = ir.IntegerType.get_signless(32)
     i64 = ir.IntegerType.get_signless(64)
-    address = memref_ptr(barrier_memref)
+    ref_ty = ir.MemRefType(ref.type)
+
+    if math.prod(ref_ty.shape) > 32:
+      raise NotImplementedError("Only up to 32 barriers per group supported")
+
+    # We roundtrip through a pointer to fold the offset into the base address.
+    ptr = memref_ptr(ref)
+    # Create a new memref type without any static offset.
+    strides, _ = ref_ty.get_strides_and_offset()
+    ref_ty = ir.MemRefType.get(
+        ref_ty.shape,
+        ref_ty.element_type,
+        ir.StridedLayoutAttr.get(0, strides),
+        ref_ty.memory_space,
+    )
+
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
     predicate = single_thread_predicate(scope=ThreadSubset.BLOCK)
-    for i in range(num_barriers):
+    for i in range(math.prod(ref_ty.shape)):
       nvvm.mbarrier_init(
-          getelementptr(address, [i], i64),
+          getelementptr(ptr, [i], i64),
           c(arrival_count, i32),
           predicate=predicate,
       )
-    return BarrierRef(address, c(0, i32), phases, num_barriers)
+    return BarrierRef(ptr_as_memref(ptr, ref_ty), phases)
 
   def __iter__(self) -> Iterator["BarrierRef"]:
-    if self.num_barriers == 1:
-      yield self
-    else:
-      for offset in range(self.num_barriers):
-        yield self[offset]
+    for idx in np.ndindex(*self.ref.type.shape):
+      yield self[idx]
 
-  def __getitem__(self, offset: ir.Value | int) -> "BarrierRef":
-    i32 = ir.IntegerType.get_signless(32)
-    if isinstance(offset, int):
-      if offset >= self.num_barriers:
-        raise IndexError(f"Barrier offset {offset} is out of bounds")
-      offset = c(offset, i32)
-    elif isinstance(offset.type, ir.IndexType):
-      offset = arith.index_castui(i32, offset)
-    elif offset.type != i32:
-      raise ValueError(f"Expected a dynamic index or an integer, got {offset}")
-    return BarrierRef(
-        self.base_address,
-        arith.addi(self.offset, offset),
-        self.phases,
-        1,
-    )
+  def __getitem__(self, idx: Any) -> "BarrierRef":
+    if isinstance(idx, int) and idx >= self.ref.type.shape[0]:
+      raise IndexError(f"Barrier indexer {idx} is out of bounds")
+    return BarrierRef(memref_slice(self.ref, idx), self.phases)
 
   @property
   def _ptx_scope(self) -> str:
-    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
+    if self.ref.type.memory_space == smem_cluster():
       return "cluster"
     return "cta"
 
   @property
   def _nvvm_scope(self) -> nvvm.MemScopeKind:
-    if self.base_address.type == ir.Type.parse("!llvm.ptr<7>"):
+    if self.ref.type.memory_space == smem_cluster():
       return nvvm.MemScopeKind.CLUSTER
     return nvvm.MemScopeKind.CTA
 
@@ -1125,7 +1117,8 @@ class BarrierRef:
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
-    bitmask = arith.shli(c(1, i32), self.offset)
+    offset = memref.extract_strided_metadata(self.ref)[1]  # pyrefly: ignore[bad-index]
+    bitmask = arith.shli(c(1, i32), offset)
     parity = arith.cmpi(
         arith.CmpIPredicate.ne, arith.andi(parities, bitmask), c(0, i32)
     )
@@ -1219,14 +1212,15 @@ class BarrierRef:
     )
 
   def get_ptr(self):
-    if self.num_barriers != 1:
+    if self.ref.type.shape == [1]:  # TODO(cjfj): Remove support for this.
+      return self[0].get_ptr()
+    if shape := self.ref.type.shape:
       raise ValueError(
-          f"Operation is only valid for a single barrier, but barrier ref "
-          f"contains {self.num_barriers}. Individual barriers can be accessed "
-          f"by indexing into the ref."
+          f"Operation is only valid for a single barrier, but barrier ref has "
+          f"shape {shape}. Individual barriers can be accessed by indexing "
+          f"into the ref."
       )
-    i64 = ir.IntegerType.get_signless(64)
-    return getelementptr(self.base_address, [self.offset], i64)
+    return memref_ptr(self.ref)
 
   def remap_to_cluster(self, dim: gpu.Dimension, idx: ir.Value):
     if self._ptx_scope != "cta":
@@ -1237,12 +1231,18 @@ class BarrierRef:
     idxs[dim] = idx
     flat_block = arith.index_cast(i32, cluster_idx(dim_idx=idxs))
     cptr = get_cluster_ptr(self.get_ptr(), flat_block, generic=False)
-    return BarrierRef(cptr, self.offset, self.phases, self.num_barriers)
+    ref_ty = ir.MemRefType.get(
+        self.ref.type.shape,
+        self.ref.type.element_type,
+        self.ref.type.layout,
+        smem_cluster(),
+    )
+    return BarrierRef(ptr_as_memref(cptr, ref_ty), self.phases)
 
 
 @dataclasses.dataclass(frozen=True)
 class DialectBarrierRef:
-  barrier_ref: BarrierRef
+  barrier: BarrierRef
   orders_tensor_core: bool
 
   @staticmethod
@@ -1264,40 +1264,36 @@ class DialectBarrierRef:
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
     return DialectBarrierRef(
-        barrier_ref=BarrierRef(address, c(0, i32), phases, num_barriers),
-        orders_tensor_core=orders_tensor_core,
+        BarrierRef(barrier_memref, phases), orders_tensor_core
     )
 
   def __iter__(self) -> Iterator["DialectBarrierRef"]:
-    if self.barrier_ref.num_barriers == 1:
-      yield self
-    else:
-      for offset in range(self.barrier_ref.num_barriers):
-        yield self[offset]
+    for barrier in self.barrier:
+      yield DialectBarrierRef(barrier, self.orders_tensor_core)
 
-  def __getitem__(self, offset: ir.Value | int) -> "DialectBarrierRef":
-    return DialectBarrierRef(self.barrier_ref[offset], self.orders_tensor_core)
+  def __getitem__(self, idx: Any) -> "DialectBarrierRef":
+    return DialectBarrierRef(self.barrier[idx], self.orders_tensor_core)
 
   def test_parity(self, parity, orders_tensor_core=False) -> ir.Value:
     assert self.orders_tensor_core == orders_tensor_core
-    return self.barrier_ref.test_parity(parity, orders_tensor_core)
+    return self.barrier.test_parity(parity, orders_tensor_core)
 
   def test(self, orders_tensor_core: bool = False) -> ir.Value:
     assert self.orders_tensor_core == orders_tensor_core
-    assert self.barrier_ref.phases is not None
-    return self.barrier_ref.test(orders_tensor_core)
+    assert self.barrier.phases is not None
+    return self.barrier.test(orders_tensor_core)
 
   def wait_parity(self, parity, orders_tensor_core=False):
     assert self.orders_tensor_core == orders_tensor_core
-    self.barrier_ref.wait_parity(parity, orders_tensor_core)
+    self.barrier.wait_parity(parity, orders_tensor_core)
 
   def wait(self, orders_tensor_core: bool = False):
     assert self.orders_tensor_core == orders_tensor_core
-    assert self.barrier_ref.phases is not None
-    self.barrier_ref.wait(orders_tensor_core)
+    assert self.barrier.phases is not None
+    self.barrier.wait(orders_tensor_core)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
-    return self.barrier_ref.update_parities(parities)
+    return self.barrier.update_parities(parities)
 
   def arrive(self, orders_tensor_core: bool = False):
     assert self.orders_tensor_core == orders_tensor_core
@@ -1308,43 +1304,18 @@ class DialectBarrierRef:
     dialect.ArriveExpectTxOp(barrier=self.as_barrier_memref(), expect_tx=bytes)
 
   def get_ptr(self):
-    return self.barrier_ref.get_ptr()
+    return self.barrier.get_ptr()
 
-  def as_barrier_memref(self) -> ir.Value:
-    num_barriers = self.barrier_ref.num_barriers
-    shape = () if num_barriers == 1 else (num_barriers,)
-    barrier_type = dialect.BarrierType.get(self.orders_tensor_core)
-    ptr_type = llvm.PointerType(self.get_ptr().type)
-    assert ptr_type.address_space == WORKGROUP_NVPTX_ADDRESS_SPACE
-    memref_type = ir.MemRefType.get(shape, barrier_type, memory_space=smem())
-    result = builtin.unrealized_conversion_cast([memref_type], [self.get_ptr()])
-    assert isinstance(result, ir.Value)
-    return result
+  def as_barrier_memref(self) -> ir.Value[ir.MemRefType]:
+    return self.barrier.ref
 
   @classmethod
-  def from_barrier_memref(cls, barrier: ir.Value):
+  def from_barrier_memref(cls, barrier: ir.Value[ir.MemRefType]):
     """Creates a DialectBarrierRef from a memref of a dialect barrier."""
-    memref_type = ir.MemRefType(barrier.type)
-    if memref_type.rank > 1 or not isinstance(
-        memref_type.element_type, dialect.BarrierType
-    ):
-      raise ValueError(
-          "Expected a memref with rank 0 or 1 and element type "
-          f"!mosaic_gpu.barrier, but got {barrier.type}"
-      )
-
-    ptr_type = llvm.PointerType.get(get_memref_llvm_address_space(memref_type))
-    addr = builtin.unrealized_conversion_cast([ptr_type], [barrier])
-    assert isinstance(addr, ir.Value)
     return cls(
-        barrier_ref=BarrierRef(
-            base_address=addr,
-            offset=c(0, ir.IntegerType.get_signless(64)),
-            # TODO(slebedev): Why is it safe to use None here?
-            phases=None,  # pyrefly: ignore[bad-argument-type]
-            num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
-        ),
-        orders_tensor_core=memref_type.element_type.orders_tensor_core,
+        # TODO(slebedev): Why is it safe to use None here?
+        barrier=BarrierRef(barrier, phases=None),  # pyrefly: ignore[bad-argument-type]
+        orders_tensor_core=barrier.type.element_type.orders_tensor_core,    # pyrefly: ignore[missing-attribute]
     )
 
 
@@ -1425,9 +1396,6 @@ class CollectiveBarrierRef:
 
     Note that unlike in arrive, each warpgroup arrives once.
     """
-    if self.barrier.num_barriers != 1:
-      raise ValueError("Can only arrive on a single barrier")
-
     if self.cluster_mask is None:
       return self.barrier.arrive(
           predicate=single_thread_predicate(ThreadSubset.WARPGROUP),
