@@ -252,7 +252,6 @@ def _create_device_mesh_for_nd_torus(
     mesh_shape: Sequence[int],
     *,
     allow_split_physical_axes: bool = False,
-    physical_axis_priority: Sequence[int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
   """Assigns logical parallelism axes to physical axes of an N-D torus network.
 
@@ -267,6 +266,14 @@ def _create_device_mesh_for_nd_torus(
   If allow_split_physical_axes = False (default), this routine will error out
   instead of splitting a physical axis over more than one logical axis (which
   would reduce total usable bandwidth).
+
+  For hardware where a subset of physical axes has higher bandwidth than the
+  others, high-network-intensity logical axes are preferentially mapped to those
+  high-bandwidth physical axes. This is currently applied for TPU v7/v7x, whose
+  core axis (the last axis of a 4D `physical_mesh`) has higher bandwidth than the
+  x/y/z axes; the priority is detected automatically from the device kind, so for
+  all other device kinds (and non-4D meshes) every physical axis is treated with
+  equal priority and behavior is unchanged.
 
   Let's use a concrete example to explain the concepts and considerations.
 
@@ -287,14 +294,6 @@ def _create_device_mesh_for_nd_torus(
       parallelism axes), with axes ordered by increasing network intensity.
     allow_split_physical_axes: If True, we would split physical axes if
       necessary to fit the desired mesh shape.
-    physical_axis_priority: Optional sequence of physical axis indices ordered
-      by decreasing priority (higher priority first). For example, [3, 0, 1, 2]
-      means physical axis 3 has highest priority, followed by 0, 1, 2. This is
-      useful for hardware where certain physical axes have higher bandwidth
-      (e.g., TPU v7 where the core axis has higher bandwidth than x/y/z axes).
-      If None (default), all physical axes are treated with equal priority.
-      If provided, must enumerate exactly all physical axes of `physical_mesh`
-      (each axis index exactly once); partial coverage is not supported.
 
   Returns:
     An np.ndarray of devices in the shape of the logical mesh (mesh_shape), with
@@ -309,13 +308,18 @@ def _create_device_mesh_for_nd_torus(
   # Map each logical axis to a subset of physical axes.
   assignment: list[tuple[int, ...]] = [() for _ in mesh_shape]
 
-  # Build priority map for faster lookup. Lower value = higher priority.
-  if physical_axis_priority is not None:
-    priority_map = {
-        axis: rank for rank, axis in enumerate(physical_axis_priority)
-    }
-  else:
-    priority_map = None
+  # Build a priority map honoring physical-axis bandwidth. Lower value = higher
+  # priority. Currently only TPU v7/v7x is known to have asymmetric bandwidth:
+  # on a 4D mesh shaped (x, y, z, core) the core axis is highest bandwidth, so
+  # it receives the highest priority (rank 0). All other device kinds treat
+  # every physical axis with equal priority (priority_map None -> unchanged).
+  priority_map: dict[int, int] | None = None
+  if (
+      len(physical_mesh.shape) == 4
+      and getattr(physical_mesh.flat[0], 'device_kind', None) in (_TPU_7X, _TPU_7)
+  ):
+    # 4D mesh (x, y, z, core): core (axis 3) first, then x, y, z.
+    priority_map = {0: 1, 1: 2, 2: 3, 3: 0}
 
   # Assign logical axes from highest network intensity to lowest.
   # `mesh_shape` is assumed to ordered by lowest network intensity first, so
@@ -334,14 +338,17 @@ def _create_device_mesh_for_nd_torus(
       # higher priority physical axes are tried first. This ensures high network
       # intensity logical axes get assigned to high bandwidth physical axes.
       if priority_map is not None:
+        pmap = priority_map  # local alias narrows the type for the closure below.
+
         def _candidate_priority(candidate):
           # Lower rank = higher priority. Sort by best (lowest) priority
           # among all axes in the candidate, then by sum of priorities
           # as a tie-breaker.
           indices = tuple(c[0] for c in candidate)
-          best_priority = min(priority_map[i] for i in indices)
-          total_priority = sum(priority_map[i] for i in indices)
+          best_priority = min(pmap[i] for i in indices)
+          total_priority = sum(pmap[i] for i in indices)
           return (best_priority, total_priority)
+
         candidates.sort(key=_candidate_priority)
 
       for elem in candidates:
@@ -876,19 +883,13 @@ def create_device_mesh(
       physical_mesh = _transpose_trick(physical_mesh, new_mesh_shape)
 
     # For TPU v7/v7x, the core axis (last axis) has higher bandwidth than x/y/z
-    # axes. Set physical_axis_priority to [core, x, y, z] so that high network
-    # intensity logical axes are preferentially mapped to the core axis.
-    physical_axis_priority = None
-    if last_device.device_kind in (_TPU_7X, _TPU_7):
-      if len(physical_mesh.shape) == 4:
-        # 4D mesh: (x, y, z, core) -> priority: core(3), x(0), y(1), z(2)
-        physical_axis_priority = (3, 0, 1, 2)
-
+    # axes. _create_device_mesh_for_nd_torus detects this from the device kind
+    # and preferentially maps high network intensity logical axes to the core
+    # axis without any caller-supplied priority.
     device_mesh, _ = _create_device_mesh_for_nd_torus(
         physical_mesh,
         new_mesh_shape,
         allow_split_physical_axes=allow_split_physical_axes,
-        physical_axis_priority=physical_axis_priority,
     )
     return device_mesh
   elif last_device.platform == 'gpu':

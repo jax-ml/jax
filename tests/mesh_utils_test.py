@@ -739,12 +739,12 @@ class MeshUtilsTest(jtu.JaxTestCase):
     physical_mesh = mesh_utils._get_physical_tpu_mesh(devices)
     self.assertEqual(physical_mesh.shape, (2, 4, 4, 2))  # (x, y, z, core)
 
-    # Test with explicit priority to ensure FSDP gets core axis
+    # _create_device_mesh_for_nd_torus detects the v7 device kind and
+    # preferentially maps high network intensity logical axes to the core axis.
     # mesh_shape (2, 32): FSDP=32 (axis 1) should include core (axis 3)
     device_mesh, assignment = mesh_utils._create_device_mesh_for_nd_torus(
         physical_mesh,
         (2, 32),
-        physical_axis_priority=(3, 0, 1, 2),  # core > x > y > z
     )
     self.assertEqual(device_mesh.shape, (2, 32))
 
@@ -760,31 +760,24 @@ class MeshUtilsTest(jtu.JaxTestCase):
       ('v7', mesh_utils._TPU_7),
   )
   def test_v7_core_axis_priority_direct(self, device_kind):
-    """Direct test of physical_axis_priority parameter behavior."""
+    """Direct test of v7 core-axis priority behavior inside nd_torus."""
     devices = mock_tpu_devices(2, 2, 2, device_kind,
                                one_device_per_chip=False)
     physical_mesh = mesh_utils._get_physical_tpu_mesh(devices)
     # (2, 2, 2, 2) = 16 devices
     self.assertEqual(physical_mesh.shape, (2, 2, 2, 2))
 
-    # Without priority: logical mesh (2, 8)
-    # FSDP=8 could be assigned to x*y*z = 2*2*2 = 8 (no core)
-    # or y*z*core = 2*2*2 = 8 (with core)
-
-    # With priority [3, 0, 1, 2]: should prefer combination with core
+    # logical mesh (2, 8): FSDP=8 could be assigned to x*y*z = 2*2*2 = 8 (no
+    # core) or y*z*core = 2*2*2 = 8 (with core). For v7, nd_torus applies the
+    # core-axis priority automatically, so the combination including core
+    # should be preferred.
     mesh_priority, assign_priority = mesh_utils._create_device_mesh_for_nd_torus(
-        physical_mesh, (2, 8), physical_axis_priority=(3, 0, 1, 2)
+        physical_mesh, (2, 8)
     )
 
     # Verify FSDP (axis 1) uses core (axis 3)
     self.assertEqual(assign_priority[3, 1], 2,
-                     f"With priority, FSDP should use core axis: {assign_priority}")
-
-    # Test without priority should still work (backward compatibility)
-    mesh_no_priority, _ = mesh_utils._create_device_mesh_for_nd_torus(
-        physical_mesh, (2, 8)
-    )
-    self.assertEqual(mesh_no_priority.shape, (2, 8))
+                     f"For v7, FSDP should use core axis: {assign_priority}")
 
 
 def int64_array(x) -> np.ndarray:
