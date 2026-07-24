@@ -67,6 +67,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `are_hlo_shardings_equal`, `is_hlo_sharding_replicated`, `ArrayMapping`, `_UNSPECIFIED`,
     `array_mapping_to_axis_resources`, and `op_sharding_to_indices`.
 
+* Bug fixes
+  * Fixed {func}`jax.scipy.stats.vonmises.pdf` and
+    {func}`jax.scipy.stats.vonmises.logpdf` returning `nan` at `kappa == 0`,
+    where the distribution reduces to the uniform distribution on the circle
+    (density `1 / (2 * pi)`), instead of the finite value returned by SciPy
+    ({jax-issue}`#38621`).
+
 ## JAX 0.10.2 (June 17, 2026)
 
 * New features
