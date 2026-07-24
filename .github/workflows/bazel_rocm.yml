@@ -215,6 +215,7 @@ jobs:
             --repo_env=HERMETIC_PYTHON_VERSION="${PYTHON}" \
             --action_env=JAX_ENABLE_X64="${ENABLE_X64}" \
             --repo_env=TF_ROCM_RBE_DOCKER_IMAGE="${RBE_IMAGE}" \
+            --repo_env=_TF_ROCM_RBE_SINGLE_GPU_POOL=linux_x64_gpu_do_gfx950_jax \
             "${JAXCI_ROCM_LOCK_FLAG:-}"
       - name: Upload test artifacts
         if: always()
