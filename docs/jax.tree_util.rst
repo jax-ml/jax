@@ -49,4 +49,5 @@ These APIs are now accessed via :mod:`jax.tree`.
    tree_structure
    tree_transpose
    tree_unflatten
+   tree_unzip
 

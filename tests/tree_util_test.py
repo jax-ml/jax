@@ -651,6 +651,78 @@ class TreeTest(jtu.JaxTestCase):
                                       FlatCache({"a": [3, 4], "b": [5, 6]}))
     self.assertEqual(expected, actual)
 
+  def testUnzipListOfTuples(self):
+    tree = [(1, 10), (2, 20), (3, 30)]
+    actual = tree_util.tree_unzip(tree)
+    expected = ([1, 2, 3], [10, 20, 30])
+    self.assertEqual(actual, expected)
+
+  def testUnzipDictOfTuples(self):
+    tree = {"a": (1, 2, 3), "b": (4, 5, 6)}
+    actual = tree_util.tree_unzip(tree)
+    expected = ({"a": 1, "b": 4}, {"a": 2, "b": 5}, {"a": 3, "b": 6})
+    self.assertEqual(actual, expected)
+
+  def testUnzipExplicitInnerTreedef(self):
+    tree = [(1, 10), (2, 20), (3, 30)]
+    inner_treedef = tree_util.tree_structure((0, 0))
+    actual = tree_util.tree_unzip(tree, inner_treedef)
+    expected = ([1, 2, 3], [10, 20, 30])
+    self.assertEqual(actual, expected)
+
+  def testUnzipWithIsLeaf(self):
+    # Without is_leaf, the outer structure is a 2x2 flat tuple.
+    # With is_leaf, we treat inner pairs as leaves and unzip them.
+    tree = ((1, 2), (3, 4))
+    is_leaf = lambda x: isinstance(x, tuple) and all(
+        isinstance(i, int) for i in x
+    )
+    actual = tree_util.tree_unzip(tree, is_leaf=is_leaf)
+    expected = ((1, 3), (2, 4))
+    self.assertEqual(actual, expected)
+
+  def testUnzipMismatchRaisesTypeError(self):
+    # Inner structures are inconsistent across leaves.
+    tree = [(1, 2), (3, 4, 5)]
+    with self.assertRaisesRegex(TypeError, "Mismatch"):
+      tree_util.tree_unzip(tree)
+
+  @parameterized.parameters(*TREES)
+  def testUnzip(self, tree):
+    if isinstance(tree, FlatCache):
+      self.skipTest("Test does not work properly for FlatCache.")
+    outer_treedef = tree_util.tree_structure(tree)
+    if not outer_treedef.num_leaves:
+      self.skipTest("Skipping empty tree")
+
+    def make_inner(x):
+      return [x, x, x]
+
+    nested = tree_util.tree_map(make_inner, tree)
+    actual = tree_util.tree_unzip(nested)
+    self.assertEqual(actual, make_inner(tree))
+
+  def testUnzipEquivalentToTranspose(self):
+    tree = {"x": (1, 2), "y": (3, 4)}
+    outer_treedef = tree_util.tree_structure(tree)
+    inner_treedef = tree_util.tree_structure((0, 0))
+    expected = tree_util.tree_transpose(outer_treedef, inner_treedef, tree)
+    actual = tree_util.tree_unzip(tree)
+    self.assertEqual(actual, expected)
+
+  def testUnzipListOfLists(self):
+    tree = [[1, 2], [3, 4], [5, 6]]
+    actual = tree_util.tree_unzip(tree)
+    expected = [[1, 3, 5], [2, 4, 6]]
+    self.assertEqual(actual, expected)
+
+  def testUnzipNestedOuter(self):
+    # Outer structure is a dict of lists, inner is a tuple.
+    tree = {"a": [(1, 10), (2, 20)], "b": [(3, 30)]}
+    actual = tree_util.tree_unzip(tree)
+    expected = ({"a": [1, 2], "b": [3]}, {"a": [10, 20], "b": [30]})
+    self.assertEqual(actual, expected)
+
   @parameterized.parameters(*TREES)
   def testBroadcast(self, tree):
     if isinstance(tree, FlatCache):
@@ -1647,6 +1719,10 @@ class TreeAliasTest(jtu.JaxTestCase):
       jax.tree.transpose(outer_treedef, inner_treedef, obj),
       tree_util.tree_transpose(outer_treedef, inner_treedef, obj)
     )
+
+  def test_tree_unzip(self):
+    obj = [(1, 2), (3, 4), (5, 6)]
+    self.assertEqual(jax.tree.unzip(obj), tree_util.tree_unzip(obj))
 
   def test_tree_broadcast(self):
     prefix = (1, 2, 3)
