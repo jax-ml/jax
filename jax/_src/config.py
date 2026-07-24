@@ -1276,7 +1276,7 @@ remat3 = bool_state(
 
 custom_vjp3 = bool_state(
     name='jax_custom_vjp3',
-    default=False,
+    default=True,
     upgrade=True,
     help='If True, embrace the future of custom autodiff rules.',
     include_in_jit_key=True,
