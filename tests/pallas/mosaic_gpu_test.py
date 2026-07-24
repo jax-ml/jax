@@ -1305,6 +1305,28 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  def test_tiled_copy_gmem_to_smem_cp_async_squeeze(self):
+    self.skip_if_wg_semantics()
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct([4, 8, 32], jnp.float32),
+        scratch_types=[
+            plgpu.SMEM((8, 32), jnp.float32),
+            plgpu.Barrier(),
+        ],
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      @pl.loop(0, o_ref.shape[0])
+      def _(i):
+        plgpu.copy_gmem_to_smem(
+            x_ref_gmem.at[i], scratch_ref, barrier_ref, impl="cp_async"
+        )
+        plgpu.barrier_wait(barrier_ref)
+        o_ref[i] = scratch_ref[...] + 1
+
+    x = jnp.arange(4 * 8 * 32).reshape(4, 8, 32).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
   def test_collective_copy_gmem_to_smem(self):
 
     @self.kernel(

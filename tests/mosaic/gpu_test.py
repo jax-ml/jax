@@ -4785,6 +4785,36 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
   def test_cp_async_untiled(self, shape, dtype):
     self._test_cp_async(shape, dtype)
 
+  @parameterized.product(slice=[(1,), (1, 1)])
+  def test_cp_async_untiled_squeezed_dims(self, slice):
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          gmem_slice=slice,
+          implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          barrier=barrier,
+      )
+      barrier.wait()
+      copy(tmp, dst)
+
+    shape = (2, 4, 128)
+    dtype = jnp.float32
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    expected = x[slice]
+
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        jax.ShapeDtypeStruct(expected.shape, dtype),
+        (jax.ShapeDtypeStruct(expected.shape, dtype), mgpu.Barrier(arrival_count=1)),
+    )(x)
+    np.testing.assert_array_equal(y, expected)
+
+
   def test_tma_collective_async_cp_with_no_swizzle(self):
     def body(ctx, src, dst, scratch):
       tmp, barrier = scratch

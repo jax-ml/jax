@@ -1315,11 +1315,6 @@ class LaunchContext:
 
     gmem_ref_ty = ir.MemRefType(gmem_ref.type)
     smem_ref_ty = ir.MemRefType(smem_ref.type)
-    # TODO(apaszke): Support squeezed dims for CP_ASYNC.
-    if implementation == AsyncCopyImplementation.CP_ASYNC and squeezed_dims:
-      raise NotImplementedError(
-          "Integer indexing in gmem_slice not supported for CP_ASYNC"
-      )
     # We moved all squeezed dims to the front in _prepare_async_copy.
     assert all(d == 1 for d in slice_shape[:len(squeezed_dims)])
     if slice_shape[len(squeezed_dims):] != smem_ref_ty.shape:
@@ -1365,6 +1360,30 @@ class LaunchContext:
       if offset_scale > 1:
         gmem_offset = arith.divui(gmem_offset, c(offset_scale, index))
       gmem_offset = arith.index_castui(i64, gmem_offset)
+
+      if squeezed_dims:
+        sliced_dims = [
+            i for i in range(gmem_ref_ty.rank) if i not in squeezed_dims
+        ]
+        if (
+            not gmem_transform
+            and sliced_dims
+            and max(squeezed_dims) > min(sliced_dims)
+        ):
+          raise NotImplementedError(
+              "Untiled CP_ASYNC copy expects the GMEM slice to be contiguous in"
+              " memory, so it only supports squeezing leading dimensions"
+          )
+        # Slice ``gmem_ref`` to drop squeezed dims.
+        gmem_ref = utils.memref_slice(
+            gmem_ref,
+            tuple(
+                0 if i in squeezed_dims else slice(None)
+                for i in range(gmem_ref_ty.rank)
+            ),
+        )
+        gmem_ref_ty = gmem_ref.type
+        gmem_strides = [gmem_strides[i] for i in sliced_dims]
 
       if not gmem_transform:
         if swizzle is not None:

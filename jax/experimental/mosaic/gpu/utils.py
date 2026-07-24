@@ -587,7 +587,7 @@ class DynamicSlice:
 ds = DynamicSlice
 
 
-def memref_slice(ref: ir.Value[ir.MemRefType], index) -> ir.Value:
+def memref_slice(ref: ir.Value[ir.MemRefType], index) -> ir.Value[ir.MemRefType]:
   ref_ty = ir.MemRefType(ref.type)
   base_indices, slice_shape, is_squeezed = parse_indices(index, ref_ty.shape)
   # TODO(apaszke): Check that slice is within the memref (indices might be
