@@ -105,8 +105,22 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
       custom_call_ext->custom_call;
 
   if (traits != 0) {
+#if PJRT_API_GPU_EXTENSION_VERSION >= 3
+    // The traits-aware entry point was added in extension version 3. The
+    // loaded plugin may be older than the headers we were built against, so
+    // probe for it at runtime via the extension's struct_size.
+    if (custom_call_ext->base.struct_size >=
+            PJRT_STRUCT_SIZE(PJRT_Gpu_Custom_Call, custom_call_with_traits) &&
+        custom_call_ext->custom_call_with_traits != nullptr) {
+      register_custom_call = custom_call_ext->custom_call_with_traits;
+    } else {
+      return xla::Unimplemented(
+          "The plugin does not support custom call traits.");
+    }
+#else
     return xla::Unimplemented(
         "The plugin does not support custom call traits.");
+#endif
   }
 
   PJRT_Gpu_Register_Custom_Call_Args args;
@@ -116,6 +130,10 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
 
 #if PJRT_API_GPU_EXTENSION_VERSION >= 1
   args.api_version = api_version;
+#endif
+
+#if PJRT_API_GPU_EXTENSION_VERSION >= 3
+  args.traits = traits;
 #endif
 
   auto as_capsule = [](nb::object obj) -> absl::StatusOr<nb::capsule> {
