@@ -1168,7 +1168,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     with self.assertRaisesRegex(
         ValueError,
-        "Expected shapes to match, but src has shape \\(128,\\) and dst has shape \\(256,\\)",
+        "Expected source shape to be \\(256,\\), but got \\(128,\\).",
     ):
       jax.jit(kernel).lower()
 
@@ -1216,9 +1216,38 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     with self.assertRaisesRegex(
         ValueError,
         (
-            "Expected shapes to match \\(up to the partitioned dimension\\),"
-            " but src has shape \\(127,\\) and dst has shape \\(8,\\)"
-            " \\(dimension 0 partitioned\\)"
+            "Expected source shape to be \\(16,\\), but got \\(127,\\). Dim 0"
+            " is partitioned over an axis of size 2."
+        ),
+    ):
+      jax.jit(kernel).lower()
+
+  def test_copy_gmem_to_smem_raises_on_mismatched_shapes_partitioned_composite_index(self):
+    dtype = jnp.bfloat16
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct([128], dtype),
+        scratch_types=[
+            plgpu.SMEM((32,), dtype),
+            plgpu.Barrier(),
+        ],
+        cluster=(2,),
+        cluster_names=(("x", "y"),),
+    )
+    def kernel(o_ref, scratch_ref, barrier_ref):
+      plgpu.copy_gmem_to_smem(
+          o_ref,
+          scratch_ref,
+          barrier_ref,
+          collective_axes=(("x", "y"),),
+          leader_tracked=plgpu.CopyPartition.PARTITIONED(0),
+      )
+      plgpu.barrier_wait(barrier_ref)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        (
+            "Expected source shape to be \\(64,\\), but got \\(128,\\). Dim 0"
+            " is partitioned over an axis of size 2."
         ),
     ):
       jax.jit(kernel).lower()

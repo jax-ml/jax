@@ -747,19 +747,30 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
   if isinstance(leader_tracked, CopyPartition.PARTITIONED):
     partition_axis = leader_tracked.axis
 
-  if any(
-      s != d if i != partition_axis else s % d != 0
-      for i, (s, d) in enumerate(zip(src_shape, dst_shape, strict=True))
-  ):
+  collective_axes = params.get("collective_axes", None)
+  axis_size = 1
+  if partition_axis is not None and collective_axes is not None:
+    if isinstance(collective_axes, str):
+      collective_axes = (collective_axes,)
+    axis_size = math.prod(
+        jax_core.get_axis_env().axis_size(axis) for axis in collective_axes
+    )
+
+  expected_src_shape = tuple(
+      d * axis_size if i == partition_axis else d
+      for i, d in enumerate(dst_shape)
+  )
+
+  if src_shape != expected_src_shape:
     if partition_axis is not None:
-      partition_axis_caveat = " (up to the partitioned dimension)"
-      partition_axis_desc = f" (dimension {partition_axis} partitioned)"
+      partitioned_desc = (
+          f"Dim {partition_axis} is partitioned over an axis of size {axis_size}."
+      )
     else:
-      partition_axis_caveat = ""
-      partition_axis_desc = ""
+      partitioned_desc = ""
     raise ValueError(
-        f"Expected shapes to match{partition_axis_caveat}, but src has "
-        f"shape {src_shape} and dst has shape {dst_shape}{partition_axis_desc}"
+        f"Expected source shape to be {expected_src_shape}, but got {src_shape}."
+        f" {partitioned_desc}"
     )
 
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
