@@ -54,7 +54,7 @@ jobs:
           echo "- duration: $(( $(date +%s) - PKG_INSTALL_START_TIME ))s" >> "$GITHUB_STEP_SUMMARY"
       - id: get-date
         run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ steps.get-date.outputs.date }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
