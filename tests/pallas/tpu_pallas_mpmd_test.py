@@ -720,7 +720,7 @@ class MpmdTest(PallasSCTest):
     def fn(x):
       x_ref = jax.new_ref(x)
       def body(i, _):
-        kernel(x_ref.at[i, ...])
+        kernel(x_ref.at[i])
 
       jax.lax.fori_loop(0, 16, body, None)
       return jax.freeze(x_ref)

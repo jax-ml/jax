@@ -903,13 +903,11 @@ def _mpmd_map(
 
     # Wrap kernel_arg_avals and kernel_kwarg_avals into Refs except
     # TransformedRefs to allowed their transform data be passed as scalar args.
-    unflat_kernel_ft = ft.flatten(
+    unflat_kernel_avals = tree_util.tree_map(
+        functools.partial(_aval_to_ref_aval, meshes=meshes),
         (kernel_arg_avals, kernel_kwarg_avals),
         is_leaf=lambda x: isinstance(x, state.TransformedRef),
     )
-    unflat_kernel_avals = unflat_kernel_ft.map(
-        functools.partial(_aval_to_ref_aval, meshes=meshes)
-    ).unflatten()
     in_avals_ft = ft.flatten(unflat_kernel_avals)
     flat_kernel_avals = list(in_avals_ft.vals)
 
