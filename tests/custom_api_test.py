@@ -16,6 +16,7 @@ import collections
 from collections.abc import Callable
 import concurrent.futures
 import copy
+import dataclasses
 import functools
 from functools import partial
 import itertools as it
@@ -3640,6 +3641,81 @@ class CustomVJP3Test(CustomVJPTest):
     self.assertIs(eqn.primitive, core.closed_call_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
 
+  def test_hityped_tracers(self):
+    # A custom_vjp'd function and its rules can take and return hi-typed
+    # values, seeing single hi-typed tracers rather than containers of
+    # tracers, including hi-typed residuals and cotangents.
+    @dataclasses.dataclass(frozen=True)
+    class Pair:
+      a: jax.Array
+      b: jax.Array
+
+    @dataclasses.dataclass(frozen=True)
+    class PairTy(hijax.HiType):
+      ty: core.ShapedArray
+
+      def str_short(self, **_):
+        return f'Pair[{self.ty.str_short()}]'
+      def lo_ty(self):
+        return [self.ty, self.ty]
+      def lower_val(self, p):
+        return [p.a, p.b]
+      def raise_val(self, a, b):
+        return Pair(a, b)
+      def to_tangent_aval(self):
+        return PairTy(self.ty.to_tangent_aval())
+    hijax.register_hitype(Pair, lambda p: PairTy(core.typeof(p.a)))
+
+    class PairProd(hijax.VJPHiPrimitive):
+      def __init__(self, pair_aval):
+        self.in_avals = (pair_aval,)
+        self.out_aval = pair_aval.ty
+        self.params = {}
+        super().__init__()
+
+      def expand(self, p):
+        return p.a * p.b
+
+    class PairSwapScale(hijax.VJPHiPrimitive):
+      def __init__(self, pair_aval, s_aval):
+        self.in_avals = (pair_aval, s_aval)
+        self.out_aval = pair_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, p, s):
+        return Pair(s * p.b, s * p.a)
+
+    pair_prod = lambda p: PairProd(core.typeof(p))(p)
+    seen = {}
+
+    @jax.custom_vjp
+    def f(p, y):
+      seen['f'] = type(p), core.typeof(p)
+      return pair_prod(p) * y
+
+    def f_fwd(p, y):
+      seen['fwd'] = type(p), core.typeof(p)
+      return f(p, y), (p, y)  # hi-typed residual
+
+    def f_bwd(res, g):
+      p, y = res
+      seen['bwd'] = type(p), core.typeof(p)
+      ct_p = PairSwapScale(core.typeof(p), core.typeof(g))(p, g * y)
+      return ct_p, pair_prod(p) * g  # hi-typed cotangent
+    f.defvjp(f_fwd, f_bwd)
+
+    p = Pair(jnp.float32(2.), jnp.float32(3.))
+    y = jnp.float32(5.)
+
+    self.assertAllClose(jax.jit(f)(p, y), 30., check_dtypes=False)
+    dp, dy = jax.jit(jax.grad(f, argnums=(0, 1)))(p, y)
+    self.assertAllClose(dp.a, 15., check_dtypes=False)  # d/da (a*b*y) = b*y
+    self.assertAllClose(dp.b, 10., check_dtypes=False)  # d/db (a*b*y) = a*y
+    self.assertAllClose(dy, 6., check_dtypes=False)     # d/dy (a*b*y) = a*b
+    for where, (ty, aval) in seen.items():
+      self.assertIs(type(aval), PairTy, msg=where)
+      self.assertTrue(issubclass(ty, core.Tracer), msg=f'{where}: {ty}')
 
 class CustomVmapTest(jtu.JaxTestCase):
 
