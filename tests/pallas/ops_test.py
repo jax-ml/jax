@@ -2528,12 +2528,15 @@ class OpsTest(PallasBaseTest):
     if jtu.test_device_matches(["tpu"]):
       if dtype == "float16" or dtype == "uint32":
         self.skipTest("Unsupported input type for reduction on TPU")
-      if op in (jnp.argmin, jnp.argmax) and dtype != "float32":
-        self.skipTest("argmin/argmax on TPU only supports float32")
-      if dtype == "bfloat16":
-        if jtu.get_tpu_version() < 4:
-          self.skipTest("require 16-bit iota")
-
+      if op in (jnp.argmin, jnp.argmax):
+        if dtype not in ("float32", "bfloat16"):
+          self.skipTest(
+              "argmin/argmax on TPU only supports float32 and bfloat16"
+          )
+        if dtype == "bfloat16" and not jtu.is_libtpu_at_least("0.0.46"):
+          self.skipTest("require libtpu 0.0.46 or newer")
+      if dtype == "bfloat16" and jtu.get_tpu_version() < 4:
+        self.skipTest("require 16-bit iota")
       if jtu.get_tpu_version() < 5 and axis == 1:
         self.skipTest("sublane gather not supported on old TPUs")
 

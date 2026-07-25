@@ -3335,8 +3335,8 @@ def _reduce_index_helper(
     ctx: LoweringRuleContext, x, axes, index_dtype, reduction_kind):
   (x_aval,) = ctx.avals_in
   (out_aval,) = ctx.avals_out
-  if x_aval.dtype != jnp.float32:
-    raise NotImplementedError("Only float32 is supported")
+  if x_aval.dtype not in (jnp.float32, jnp.bfloat16):
+    raise NotImplementedError("Only float32 and bfloat16 are supported")
   if len(axes) != 1:
     raise NotImplementedError("Only single axis reduction supported")
   if index_dtype != jnp.int32:

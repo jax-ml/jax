@@ -2158,20 +2158,18 @@ LogicalResult AllReduceOp::verify() {
 LogicalResult ReduceIndexOp::verify() {
   auto in_ty = getInput().getType();
   auto out_ty = getOutput().getType();
-  auto bitwidth = getElementTypeBitwidth(in_ty);
   auto axis = getAxis();
   auto kind = getKind();
   if (kind != ReductionKind::kArgMax && kind != ReductionKind::kArgMin) {
     return emitOpError("Reduction kind must be arg_max or arg_min");
   }
-  if (!in_ty.getElementType().isF32()) {
+  if (!in_ty.getElementType().isF32() && !in_ty.getElementType().isBF16()) {
     return emitOpError(
-        "Not Implemented: Only f32 input is supported for "
-        "arg_max and arg_min");
+        "Not Implemented: Only f32 and bf16 input is supported for arg_max and "
+        "arg_min");
   }
-  if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
-    return emitOpError(
-        absl::StrFormat("Arg_max and arg_min must have i%d output", bitwidth));
+  if (!out_ty.getElementType().isSignlessInteger(32)) {
+    return emitOpError("Arg_max and arg_min must have i32 output");
   }
 
   auto in_shape = in_ty.getShape();

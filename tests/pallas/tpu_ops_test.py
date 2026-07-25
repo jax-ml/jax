@@ -389,18 +389,24 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16],
       axis=[0, 1, 2],
       in_shape=[(2, 29, 206), (12, 28), (12,)],
-      reduce_func = [jnp.argmax, jnp.argmin],
+      reduce_func=[jnp.argmax, jnp.argmin],
       keepdims=[False, True],
   )
-  def test_reduce_index(self, axis, in_shape, reduce_func, keepdims):
-    dtype = jnp.float32
+  def test_reduce_index(self, dtype, axis, in_shape, reduce_func, keepdims):
+    if dtype == jnp.bfloat16 and not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest("Test requires libtpu 0.0.46 or newer.")
     rank = len(in_shape)
     if axis >= rank:
       self.skipTest("Requires axis < rank")
     if axis == rank - 1:
-      if keepdims and not jtu.is_device_tpu_at_least(version=4):
+      if (
+          keepdims
+          and not jtu.is_device_tpu_at_least(version=4)
+          and dtype == jnp.float32
+      ):
         self.skipTest("Requires TPUv4+ for axis=rank-1 and keepdims=True")
       if not keepdims and not jtu.is_device_tpu_at_least(version=5):
         self.skipTest("Requires TPUv5+ for axis=rank-1 and keepdims=False")
