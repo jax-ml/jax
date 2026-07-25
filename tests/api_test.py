@@ -5218,14 +5218,17 @@ class APITest(jtu.JaxTestCase):
                     modes=['rev'], atol=1e-3, rtol=1e-3)
 
   def test_remat_of_jit_input_to_output_forwarding(self):
-    @partial(jax.remat, policy=lambda *_, **__: True)
-    def f(x):
-      y = jnp.ones(2, 'float32')
-      x = jax.jit(lambda: x * y)()
-      x = jax.jit(lambda: x * y)()
-      return x
-    res = saved_residuals(f, jnp.float32(3.))
-    self.assertLen(res, 1)
+    # Old-remat-only: remat3 doesn't recognize bare-callable policies, treating
+    # them as full remat, under which this function saves no residuals.
+    with config.remat3(False):
+      @partial(jax.remat, policy=lambda *_, **__: True)
+      def f(x):
+        y = jnp.ones(2, 'float32')
+        x = jax.jit(lambda: x * y)()
+        x = jax.jit(lambda: x * y)()
+        return x
+      res = saved_residuals(f, jnp.float32(3.))
+      self.assertLen(res, 1)
 
   @unittest.skip # TODO(dougalm): figure out with Matt what to do with this feature
   def test_inner_jit_forwarded_consts_stay_const(self):
@@ -6346,6 +6349,42 @@ class RematTest(jtu.JaxTestCase):
     # 2 calls made while transposing g, no reevaluation for transposition of f
     with assertEvals(2):
       vjp(v)
+
+  def test_remat_recursive_checkpoint_recompute_counts(self):
+    add_one_p = core.Primitive('add_one')
+    num_evals = 0
+
+    def add_one_impl(x):
+      nonlocal num_evals
+      num_evals += 1
+      return x + 1
+    add_one_p.def_impl(add_one_impl)
+    add_one_p.def_abstract_eval(lambda x: x)
+
+    def add_one_jvp(pin, tin):
+      pout = add_one_p.bind(pin[0])
+      return pout, pout * tin[0]
+    ad.primitive_jvps[add_one_p] = add_one_jvp
+
+    def recursive_checkpoint(funs):
+      if len(funs) == 1:
+        return funs[0]
+      elif len(funs) == 2:
+        f1, f2 = funs
+        return lambda x: f1(f2(x))
+      else:
+        f1 = recursive_checkpoint(funs[:len(funs)//2])
+        f2 = recursive_checkpoint(funs[len(funs)//2:])
+        return lambda x: f1(jax.checkpoint(f2)(x))
+
+    for n, expected_bwd_evals in [(4, 2), (8, 8), (16, 24)]:
+      f = recursive_checkpoint([add_one_p.bind] * n)
+      num_evals = 0
+      _, vjp = jax.vjp(f, np.ones(()))
+      self.assertEqual(num_evals, n)
+      num_evals = 0
+      vjp(np.ones(()))
+      self.assertEqual(num_evals, expected_bwd_evals)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}

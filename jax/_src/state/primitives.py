@@ -33,6 +33,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import remat
 from jax._src.lax import lax
 from jax._src.state import indexing
 from jax._src.state.types import (
@@ -702,6 +703,21 @@ def _addupdate_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   else:
     return eqn, eqn, [], [], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[addupdate_p] = _addupdate_partial_eval_custom
+
+##  get/swap/addupdate remat rules
+
+def _state_remat(prim, trace, ref, *args, **params):
+  del trace
+  out = prim.bind(ref, *args, **params)
+  if core.typeof(ref).kind == "no_grad_no_remat":
+    # Run only in the fwd computation; any read value reaching the remnant
+    # computation is saved as a residual rather than re-read.
+    return out, lambda *_: out
+  return out, lambda ref_, *args_: prim.bind(ref_, *args_, **params)
+
+remat.rules[get_p] = partial(_state_remat, get_p)
+remat.rules[swap_p] = partial(_state_remat, swap_p)
+remat.rules[addupdate_p] = partial(_state_remat, addupdate_p)
 
 ##  get/swap/addupdate batching rules
 
