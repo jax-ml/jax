@@ -30,6 +30,7 @@ from jax._src.interpreters import mlir
 from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
+from jax._src.state import discharge as state_discharge
 from jax._src.state.types import (RefEffect)
 
 config.parse_flags_with_absl()
@@ -823,11 +824,38 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(g, jnp.cos(2.))
     self.assertLen(lst, 4)
 
+  def test_optimization_barrier_with_refs(self):
+    x_ref = core.new_ref(jnp.float32(1.))
+    y, x_ref2 = jax.lax.optimization_barrier((jnp.float32(2.), x_ref))
+    self.assertIs(x_ref2, x_ref)
+    self.assertAllClose(y, 2., check_dtypes=False)
+
+    def f(x_ref, y):
+      y, _ = jax.lax.optimization_barrier((y, x_ref))
+      x_ref[...] += y
+      return x_ref[...]
+
+    self.assertAllClose(jax.jit(f)(x_ref, jnp.float32(2.)), 3.,
+                        check_dtypes=False)
+    self.assertAllClose(x_ref[...], 3., check_dtypes=False)
+
+    # discharge threads the ref's value in and out of the barrier
+    jaxpr = jax.jit(f).trace(core.new_ref(jnp.float32(0.)),
+                             jnp.float32(2.)).jaxpr
+    discharged = state_discharge.discharge_state(jaxpr)
+    eqn, = (e for e in discharged.eqns if e.primitive.name ==
+            'optimization_barrier')
+    self.assertLen(eqn.invars, 2)
+    self.assertLen(eqn.outvars, 2)
+
   def test_remat_grad_stats_plumbing_basic(self):
+    # The custom_vjp's output must be used, else it all gets DCE'd away
+    # without exercising the ref-residual plumbing.
     @jax.remat
     def f(x_ref, y):
-      stash_grads(x_ref, y)
-      return y
+      y = jnp.sin(y)
+      y = stash_grads(x_ref, y)
+      return jnp.sin(y)
 
     @jax.custom_vjp
     def stash_grads(grads_ref, x):
@@ -839,8 +867,11 @@ class MutableArrayTest(jtu.JaxTestCase):
       return None, g
     stash_grads.defvjp(stash_grads_fwd, stash_grads_bwd)
 
-    x_ref = core.new_ref(0)
-    jax.grad(f, 1)(x_ref, 3.14)
+    x_ref = core.new_ref(jnp.float32(0.))
+    g = jax.grad(f, 1)(x_ref, jnp.float32(1.))
+    self.assertAllClose(x_ref[...], jnp.cos(jnp.sin(1.)), check_dtypes=False)
+    self.assertAllClose(g, jnp.cos(jnp.sin(1.)) * jnp.cos(1.),
+                        check_dtypes=False)
 
   @jtu.run_on_devices("cpu")  # tolerances, lol
   def test_vjp3_ref_grads_for_val_primals(self):

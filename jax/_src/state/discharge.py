@@ -583,6 +583,19 @@ def _addupdate_discharge_rule(
   ans = _addupdate_discharge(x, val, idx, tree)
   return (ans, None) + (None,) * len(idx), []
 
+@register_partial_discharge_rule(lax.optimization_barrier_p)
+def _optimization_barrier_partial_discharge(
+    should_discharge: Sequence[bool],
+    in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue], *args):
+  # A discharged ref's value is threaded through the barrier and written back,
+  # so the underlying buffer is pinned like any other barrier operand.
+  del out_avals
+  outs = lax.optimization_barrier(list(args))
+  is_ref = [isinstance(a, AbstractRef) for a in in_avals]
+  new_invals = [o if d else None for o, d in zip(outs, should_discharge)]
+  return new_invals, [o for o, r in zip(outs, is_ref) if not r]
+
 def _addupdate_discharge(x, val, idx, tree):
   transforms = tree_util.tree_unflatten(tree, idx)
   if not transforms:

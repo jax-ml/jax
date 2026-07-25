@@ -50,7 +50,7 @@ from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_structure, broadcast_prefix,
     tree_map, tree_leaves, tree_leaves_checked, Partial, tracing_registry)
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
-                           safe_zip, merge_lists, weakref_lru_cache)
+                           safe_zip, merge_lists, subs_list, weakref_lru_cache)
 from jax._src.core import typeof
 
 source_info_util.register_exclusion(__file__)
@@ -1045,16 +1045,31 @@ def _remat3(f, *, policy, static_argnums, static_argnames):
   return decorator
 
 def dce(traced, policy):
+  in_fwd = pe._jaxpr_forwarding(traced.jaxpr)
+  jaxpr = pe.prune_jaxpr_outputs(traced.jaxpr, [f is None for f in in_fwd])
+  for v in jaxpr.outvars:
+    if isinstance(v.aval, AbstractRef):
+      raise ValueError(
+          "the rematted computation's closure contains a mutable array "
+          f"reference of type {v.aval.str_short()} that is not one of the "
+          "rematted function's inputs, but such refs cannot be saved")
   # dce_jaxpr preserves attached consts (constvars are never pruned).
-  jaxpr, used = pe.dce_jaxpr(traced.jaxpr, True)
-  used_res, used_primals = split_list(used, [traced._num_consts])
-  res = [r for r, u in zip(traced._consts, used_res) if u]
-  return used_primals, Partial(partial(_dced, jaxpr, traced.out_tree, policy), res)
+  jaxpr, used = pe.dce_jaxpr(jaxpr, True)
+  keep = [u or i in {*in_fwd} for i, u in enumerate(used)]
+  kept_idx = {i: p for p, i in enumerate(i for i, k in enumerate(keep) if k)}
+  in_fwd = tuple(kept_idx[f] if f is not None else None for f in in_fwd)
+  take = tuple(kept_idx[i] for i, u in enumerate(used) if u)
+  keep_res, keep_primals = split_list(keep, [traced._num_consts])
+  res = [r for r, u in zip(traced._consts, keep_res) if u]
+  return keep_primals, Partial(
+      partial(_dced, jaxpr, in_fwd, take, traced.out_tree, policy), res)
 
 @source_info_util.extend_name_stack('rematted_computation')
-def _dced(jaxpr, out_tree, policy, res, *args):
-  out_flat = RematTraced(jaxpr, policy)(*res, *args)
-  return tree_unflatten(out_tree, out_flat)
+def _dced(jaxpr, in_fwd, take, out_tree, policy, res, *args):
+  ins = [*res, *args]
+  outs = RematTraced(jaxpr, policy)(*[ins[i] for i in take])
+  return tree_unflatten(out_tree, subs_list(in_fwd, ins, outs))
+
 
 class RematTraced(VJPHiPrimitive):
   jaxpr: core.Jaxpr
@@ -1075,8 +1090,9 @@ class RematTraced(VJPHiPrimitive):
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
-    used, rem = dce(api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals),
-                    self.policy)
+    with config.mutable_array_checks(False):
+      traced_vjp = api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals)
+    used, rem = dce(traced_vjp, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
     # TODO(mattjj): propagate symbolic zeros more generally
     nzs_out = [getattr(a.to_tangent_aval(), 'dtype', None) is not dtypes.float0
@@ -1097,8 +1113,10 @@ class RematTraced(VJPHiPrimitive):
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
-    used, rem = dce(api.jit(lambda *xs: api.linearize(fwd2, *xs)[1]).trace(*primals),
-                    self.policy)
+    with config.mutable_array_checks(False):
+      traced_lin = api.jit(
+          lambda *xs: api.linearize(fwd2, *xs)[1]).trace(*primals)
+    used, rem = dce(traced_lin, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
     return primals_out, (primals_, rem)
 
