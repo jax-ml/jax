@@ -1178,7 +1178,12 @@ This implementation allows overlap between communication and computation, and
 also avoids gathering a large intermediate onto each device. But on TPU it uses
 only half the interconnect bandwidth by permuting in only one direction along
 the ring. To permute bidirectionally, we just split the blocks in half and send
-each half in each direction:
+each half in each direction. Rather than performing two half-size matrix
+multiplies at each step, we can use a pad-and-add trick: pad the two half-blocks
+of each operand onto complementary halves of a full-size block and add them
+before the dot. A dot of operands concatenated along the contracting dimension
+equals the sum of the two half-products, so each step still issues a single
+full-size matrix multiply, making better use of the hardware:
 
 ```{code-cell}
 @jax.jit
@@ -1195,14 +1200,20 @@ def matmul_allgather_overlapped_bidi(lhs_block, rhs_block):
   B = lhs_block.shape[1] // size // 2  # half-size blocks
   lhs_blocks = lambda i, hi: lax.dynamic_slice_in_dim(lhs_block, (2*i+hi) * B, B, 1)
 
+  def block_matmul(rhs_lo, rhs_hi, i_lo, i_hi):
+    lhs_lo = jnp.pad(lhs_blocks(i_lo, 0), [(0, 0), (0, B)])
+    lhs_hi = jnp.pad(lhs_blocks(i_hi, 1), [(0, 0), (B, 0)])
+    rhs_lo = jnp.pad(rhs_lo, [(0, B), (0, 0)])
+    rhs_hi = jnp.pad(rhs_hi, [(B, 0), (0, 0)])
+    return (lhs_lo + lhs_hi) @ (rhs_lo + rhs_hi)
+
   rhs_block_lo, rhs_block_hi = jnp.split(rhs_block, 2, axis=0)
-  out_block  = lhs_blocks(idx, 0) @ rhs_block_lo
-  out_block += lhs_blocks(idx, 1) @ rhs_block_hi
+  out_block = block_matmul(rhs_block_lo, rhs_block_hi, idx, idx)
   for i in range(1, size):
     rhs_block_lo = shift_up(rhs_block_lo)
     rhs_block_hi = shift_dn(rhs_block_hi)
-    out_block += lhs_blocks((idx - i) % size, 0) @ rhs_block_lo
-    out_block += lhs_blocks((idx + i) % size, 1) @ rhs_block_hi
+    out_block += block_matmul(rhs_block_lo, rhs_block_hi,
+                              (idx - i) % size, (idx + i) % size)
   return out_block
 ```
 
@@ -1210,6 +1221,10 @@ def matmul_allgather_overlapped_bidi(lhs_block, rhs_block):
 out = matmul_allgather_overlapped_bidi(lhs, rhs)
 print(jnp.allclose(out, lhs @ rhs, atol=1e-3, rtol=1e-3))
 ```
+
+The profile below was captured from an earlier version of this example that
+issued two half-size matrix multiplies per step; the communication pattern and
+the overlap it illustrates are the same:
 
 ![Profile of an all-gather matmul with overlap.](../../_static/shard_map_09_profile_of_an_all_gather_matmul_with_overlap.png)
 
