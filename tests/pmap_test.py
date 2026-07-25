@@ -1747,6 +1747,8 @@ class PythonPmapTest(jtu.JaxTestCase):
           ('_new', jax.checkpoint),
       ])
   def test_remat_of_pmap_policy(self, remat):
+    # Old-remat-only: remat3 doesn't recognize bare-callable policies
+    self.enter_context(config.remat3(False))
     g = jax.pmap(lambda x: jnp.sin(jnp.sin(x)))
     x = jnp.arange(1.)
 

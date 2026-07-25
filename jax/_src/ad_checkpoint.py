@@ -1088,6 +1088,7 @@ class RematTraced(VJPHiPrimitive):
           'Effects not supported in partial-eval of `checkpoint`/`remat`: '
           f'{disallowed}')
 
+  @source_info_util.extend_name_stack('checkpoint')
   def expand(self, *args):
     # TODO eval_jaxpr_p
     return core.jaxpr_as_fun(self.jaxpr)(*args)
