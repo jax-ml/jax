@@ -47,6 +47,7 @@ import jax
 from jax import device_put, float0, grad, hessian, jacfwd, jacrev, jit
 from jax import lax
 from jax import tree_util
+from jax._src import ad_checkpoint
 from jax._src import api, api_util, dtypes, lib
 from jax._src import array
 from jax._src import config
@@ -8067,6 +8068,24 @@ class Remat3Test(RematTest):
     self.assertNotIn('cos', fwd_str)
     self.assertIn('cos ', bwd_str)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
+
+  def test_remat_dce_input_to_output_forwarding(self):
+    traced = jax.jit(lambda x, y: (x, x * y)).trace(
+        jnp.float32(1.), jnp.float32(2.))
+    used, rem = ad_checkpoint.dce(traced, None)
+    self.assertEqual(used, [True, True])
+    self.assertLen(rem.func.args[0].outvars, 1)
+    self.assertAllClose(rem(jnp.float32(3.), jnp.float32(4.)), (3., 12.),
+                        check_dtypes=False)
+
+    # a forwarding source is kept even if the pruned jaxpr doesn't use it
+    traced = jax.jit(lambda x, y: (x, y * y)).trace(
+        jnp.float32(1.), jnp.float32(2.))
+    used, rem = ad_checkpoint.dce(traced, None)
+    self.assertEqual(used, [True, True])
+    self.assertLen(rem.func.args[0].invars, 1)
+    self.assertAllClose(rem(jnp.float32(3.), jnp.float32(4.)), (3., 16.),
+                        check_dtypes=False)
 
 
 @jtu.with_config(jax_pprint_use_color=False)

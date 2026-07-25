@@ -67,6 +67,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
+from jax._src.state.types import AbstractRef, WriteEffect
 from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
 from jax._src.sharding_impls import (NamedSharding, canonicalize_sharding,
                                      flatten_spec)
@@ -9819,7 +9820,10 @@ def optimization_barrier(operand, /):
   Optimization barriers have no effect outside a compiled function.
 
   Args:
-    operand: a pytree of JAX values.
+    operand: a pytree of JAX values, possibly including mutable array
+      references. Refs are pinned as barrier inputs (their current value is
+      threaded through the barrier when state is discharged) but appear only
+      on the input side, and are returned unchanged.
 
   Returns:
     A pytree of JAX values, with the same structure and contents as ``operand``.
@@ -9833,9 +9837,11 @@ def optimization_barrier(operand, /):
     Array(0., dtype=float32, weak_type=True)
   """
   flat_args, treedef = tree_util.tree_flatten(operand)
-  flat_args = core.auto_insert_reshard(*flat_args)
-  out = optimization_barrier_p.bind(*flat_args)
-  return tree_util.tree_unflatten(treedef, out)
+  is_ref = [isinstance(core.typeof(x), AbstractRef) for x in flat_args]
+  vals, refs = util.partition_list(is_ref, flat_args)
+  vals = core.auto_insert_reshard(*vals)
+  out = optimization_barrier_p.bind(*util.merge_lists(is_ref, vals, refs))
+  return tree_util.tree_unflatten(treedef, util.merge_lists(is_ref, out, refs))
 
 
 optimization_barrier_p = core.Primitive('optimization_barrier')
@@ -9844,9 +9850,13 @@ optimization_barrier_p.def_impl(
     partial(dispatch.apply_primitive, optimization_barrier_p))
 
 def _optimization_barrier_abstract_eval(*args):
-  core.standard_vma_rule('optimization_barrier', *args)
-  return args
-optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
+  is_ref = [isinstance(a, AbstractRef) for a in args]
+  vals = [a for a, r in zip(args, is_ref) if not r]
+  core.standard_vma_rule('optimization_barrier', *vals)
+  effects = {WriteEffect(i) for i, r in enumerate(is_ref) if r}
+  return vals, effects
+optimization_barrier_p.def_effectful_abstract_eval(
+    _optimization_barrier_abstract_eval)
 
 def _optimization_barrier_lowering_rule(ctx, *args):
   barrier_types = map(partial(mlir._aval_to_ir_types, ctx.module_context),
