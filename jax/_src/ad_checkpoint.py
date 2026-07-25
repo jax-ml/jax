@@ -636,8 +636,7 @@ def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
   disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
-        'Effects not supported in partial-eval of `checkpoint`/`remat`: '
-        f'{disallowed_effects}')
+        f'Effects not supported in AD of `checkpoint`/`remat`: {disallowed_effects}')
   policy = params['policy'] or nothing_saveable
   in_unknowns = [not t.is_known() for t in tracers]
   jaxpr_known, jaxpr_staged, out_unknowns, out_inst, num_res = \
@@ -1079,7 +1078,15 @@ class RematTraced(VJPHiPrimitive):
     self.in_avals = tuple(jaxpr.in_avals)
     self.out_aval = jaxpr.out_avals
     self.params = dict(jaxpr=jaxpr, policy=policy)
+    self.effects = frozenset(core.positional_effects(jaxpr))
     super().__init__()
+
+  def _check_differentiable(self):
+    disallowed = effects.remat_allowed_effects.filter_not_in(self.jaxpr.effects)
+    if disallowed:
+      raise NotImplementedError(
+          'Effects not supported in partial-eval of `checkpoint`/`remat`: '
+          f'{disallowed}')
 
   def expand(self, *args):
     # TODO eval_jaxpr_p
@@ -1087,6 +1094,7 @@ class RematTraced(VJPHiPrimitive):
 
   def vjp_fwd(self, _nzs_in, *primals):
     # TODO eval_jaxpr_p trace time
+    self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
@@ -1110,6 +1118,7 @@ class RematTraced(VJPHiPrimitive):
     return api.jvp(traced, primals, tangents)
 
   def lin(self, nzs_in, *primals):
+    self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
