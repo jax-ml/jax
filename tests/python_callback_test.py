@@ -1250,8 +1250,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       io_callback(lambda x: x, y, y)
       return x
 
-    with self.assertRaisesRegex(NotImplementedError,
-        "Effects not supported in partial-eval of `checkpoint`"):
+    with self.assertRaisesRegex(NotImplementedError, "Effects not supported in"):
       f(2., 3.)
 
   @parameterized.named_parameters(

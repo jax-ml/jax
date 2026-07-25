@@ -261,6 +261,8 @@ class MakeTup(VJPHiPrimitive):
     tangents = map(ad.instantiate_zeros, tangents)
     return make_tup(*primals), make_tup(*tangents)
 
+  vjp_fwd, vjp_bwd_retval = vjp_from_jvp
+
   def transpose(self, ct, *maybe_accums):
     cts = [get_tuple_element(ct, i) for i in range(len(self.out_aval.tys))]
     for ct_, accum in zip(cts, maybe_accums):
@@ -290,7 +292,7 @@ class GetTupElt(VJPHiPrimitive):
     elts[self.idx] = g
     tup_accum.accum(make_tup(*elts))
 
-  def vjp_fwd(self, tup):
+  def vjp_fwd(self, nzs_in, tup):
     return get_tuple_element(tup, self.idx), None
 
   def vjp_bwd_retval(self, _res, g):
@@ -1417,8 +1419,14 @@ class HijaxTest(jtu.JaxTestCase):
     x = jnp.float32(2.0)
     expected_grad = jnp.float32(4.0)
     with self.subTest("jit-of-grad"):
-      with Square.assert_jvp_rule_called_once():
+      if config.remat3.value:
+        # remat3 differentiates via the vjp rules; the jvp rule is unused
+        count = Square._jvp_execution_count
         actual_grad = jax.jit(jax.grad(jax.remat(square)))(x)
+        self.assertEqual(Square._jvp_execution_count, count)
+      else:
+        with Square.assert_jvp_rule_called_once():
+          actual_grad = jax.jit(jax.grad(jax.remat(square)))(x)
       self.assertArraysAllClose(actual_grad, expected_grad)
 
   @parameterized.parameters([False, True])

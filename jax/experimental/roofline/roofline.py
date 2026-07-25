@@ -144,7 +144,10 @@ def _roofline_interpreter(
   pin_rhs_in_vmem: bool = False,
 ) -> RooflineResult:
   if jaxpr.is_high:
-    jaxpr = lower_jaxpr2(jaxpr)
+    # we interpret the body of a shard_map, so all mesh axes are in scope
+    axes = list(mesh.shape.items()) if mesh is not None else []
+    with core.extend_axis_env_nd(axes):
+      jaxpr = lower_jaxpr2(jaxpr)
 
   name_stack = source_info_util.new_name_stack(util.wrap_name("roofline", f_name))
 
