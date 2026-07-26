@@ -79,81 +79,102 @@ from jax._src.config import (
     auto_pcast as auto_pcast,
 )
 
-from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
 from jax._src.environment_info import print_environment_info as print_environment_info
 
 from jax._src.lib import xla_client as _xc
 Device = _xc.Device
 del _xc
 
-from jax._src.core import typeof as typeof
+from jax._src.core import (
+    typeof as typeof,
+    ensure_compile_time_eval as ensure_compile_time_eval,
+    ShapeDtypeStruct as ShapeDtypeStruct,
+)
 from jax._src.compiler import CompilerEffortLevel as CompilerEffortLevel
-from jax._src.api import effects_barrier as effects_barrier
-from jax._src.api import block_until_ready as block_until_ready
-from jax._src.ad_checkpoint import checkpoint as checkpoint
-from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
-from jax._src.ad_checkpoint import custom_remat as custom_remat
-from jax._src.ad_checkpoint import remat as remat
-from jax._src.api import clear_caches as clear_caches
-from jax._src.api import copy_to_host_async as copy_to_host_async
-from jax._src.custom_derivatives import closure_convert as closure_convert
-from jax._src.custom_derivatives import custom_gradient as custom_gradient
-from jax._src.custom_derivatives import custom_jvp as custom_jvp
-from jax._src.custom_derivatives import custom_vjp as custom_vjp
-from jax._src.xla_bridge import default_backend as default_backend
-from jax._src.xla_bridge import device_count as device_count
-from jax._src.api import device_get as device_get
-from jax._src.api import device_put as device_put
-from jax._src.api import device_put_sharded as _deprecated_device_put_sharded
-from jax._src.api import device_put_replicated as _deprecated_device_put_replicated
-from jax._src.xla_bridge import devices as devices
-from jax._src.api import disable_jit as disable_jit
-from jax._src.api import eval_shape as eval_shape
+from jax._src.api import (
+    effects_barrier as effects_barrier,
+    block_until_ready as block_until_ready,
+    clear_caches as clear_caches,
+    copy_to_host_async as copy_to_host_async,
+    device_get as device_get,
+    device_put as device_put,
+    device_put_sharded as _deprecated_device_put_sharded,
+    device_put_replicated as _deprecated_device_put_replicated,
+    disable_jit as disable_jit,
+    eval_shape as eval_shape,
+    fwd_and_bwd as fwd_and_bwd,
+    grad as grad,
+    hessian as hessian,
+    jacobian as jacobian,
+    jacfwd as jacfwd,
+    jacrev as jacrev,
+    jit as jit,
+    Inline as Inline,
+    jvp as jvp,
+    linearize as linearize,
+    linear_transpose as linear_transpose,
+    live_arrays as live_arrays,
+    make_jaxpr as make_jaxpr,
+    named_call as named_call,
+    named_scope as named_scope,
+    value_and_grad as value_and_grad,
+    vjp as vjp,
+    vmap as vmap,
+)
+from jax._src.ad_checkpoint import (
+    checkpoint as checkpoint,
+    checkpoint_policies as checkpoint_policies,
+    custom_remat as custom_remat,
+    remat as remat,
+)
+from jax._src.custom_derivatives import (
+    closure_convert as closure_convert,
+    custom_gradient as custom_gradient,
+    custom_jvp as custom_jvp,
+    custom_vjp as custom_vjp,
+)
 from jax._src.dtypes import float0 as float0
-from jax._src.api import fwd_and_bwd as fwd_and_bwd
-from jax._src.api import grad as grad
-from jax._src.api import hessian as hessian
-from jax._src.xla_bridge import host_count as host_count
-from jax._src.xla_bridge import host_id as host_id
-from jax._src.xla_bridge import host_ids as host_ids
-from jax._src.api import jacobian as jacobian
-from jax._src.api import jacfwd as jacfwd
-from jax._src.api import jacrev as jacrev
-from jax._src.api import jit as jit
-from jax._src.api import Inline as Inline
-from jax._src.api import jvp as jvp
-from jax._src.xla_bridge import local_device_count as local_device_count
-from jax._src.xla_bridge import local_devices as local_devices
-from jax._src.api import linearize as linearize
-from jax._src.api import linear_transpose as linear_transpose
-from jax._src.api import live_arrays as live_arrays
-from jax._src.api import make_jaxpr as make_jaxpr
-from jax._src.api import named_call as named_call
-from jax._src.api import named_scope as named_scope
+from jax._src.xla_bridge import (
+    default_backend as default_backend,
+    device_count as device_count,
+    devices as devices,
+    host_count as host_count,
+    host_id as host_id,
+    host_ids as host_ids,
+    local_device_count as local_device_count,
+    local_devices as local_devices,
+    process_count as process_count,
+    process_index as process_index,
+    process_indices as process_indices,
+)
 from jax._src.pmap import pmap as pmap
-from jax._src.xla_bridge import process_count as process_count
-from jax._src.xla_bridge import process_index as process_index
-from jax._src.xla_bridge import process_indices as process_indices
 from jax._src.callback import pure_callback as pure_callback
-from jax._src.core import ShapeDtypeStruct as ShapeDtypeStruct
-from jax._src.api import value_and_grad as value_and_grad
-from jax._src.api import vjp as vjp
-from jax._src.api import vmap as vmap
 from jax._src.indexing import ds as ds
-from jax._src.sharding_impls import NamedSharding as NamedSharding
-from jax._src.sharding_impls import make_mesh as make_mesh
-from jax._src.sharding_impls import set_mesh as set_mesh
+from jax._src.sharding_impls import (
+    NamedSharding as NamedSharding,
+    make_mesh as make_mesh,
+    set_mesh as set_mesh,
+    get_mesh as get_mesh
+)
+from jax._src.mesh import (
+    use_abstract_mesh as use_abstract_mesh,
+    get_abstract_mesh as get_abstract_mesh
+)
 from jax._src.partition_spec import P as P
 from jax._src.pjit import reshard as reshard
 
-from jax._src.shard_map import shard_map as shard_map
-from jax._src.shard_map import smap as smap
+from jax._src.shard_map import (
+    shard_map as shard_map,
+    smap as smap
+)
 
-from jax.ref import new_ref as new_ref
-from jax.ref import empty_ref as empty_ref
-from jax.ref import free_ref as free_ref
-from jax.ref import freeze as freeze
-from jax.ref import Ref as Ref
+from jax.ref import (
+    new_ref as new_ref,
+    empty_ref as empty_ref,
+    free_ref as free_ref,
+    freeze as freeze,
+    Ref as Ref,
+)
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
