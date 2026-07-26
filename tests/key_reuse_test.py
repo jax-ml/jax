@@ -19,6 +19,7 @@ import operator
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax._src import config
 from jax._src import core
 from jax._src.random import prng
 from jax._src import random
@@ -601,6 +602,11 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
   @jax.numpy_dtype_promotion('standard')
   def test_remat(self):
+    # TODO(mattjj,vanderplas): teach key reuse checking to see through
+    # remat3's RematTraced applications (and to skip rematted functions)
+    if config.remat3.value:
+      self.skipTest("key reuse checking doesn't support remat3")
+
     @jax.checkpoint
     def f_bad(x, key):
       return x * jax.random.bits(key) + jax.random.bits(key)
