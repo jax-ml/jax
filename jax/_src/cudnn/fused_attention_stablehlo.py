@@ -805,10 +805,44 @@ def _check_valid_batch_dims(bdims):
       raise NotImplementedError(
         f"Currently only support batch_dim in [0, None], but got {dim=}")
 
+def _broadcast_unbatched_args(batched_args, batch_dims, arg_idx):
+  # Broadcast the vmap axis onto the operands in arg_idx that do not carry it,
+  # so the flattening logic below sees uniformly batched operands.
+  sizes = {args.shape[dim] for args, dim in zip(batched_args, batch_dims)
+           if dim is not None}
+  assert len(sizes) == 1, f"expected one vmap axis size, got {sizes}"
+  axis_size, = sizes
+  args, dims = list(batched_args), list(batch_dims)
+  for i in arg_idx:
+    if dims[i] is None:
+      args[i] = jnp.broadcast_to(args[i][None], (axis_size,) + args[i].shape)
+      dims[i] = 0
+  return tuple(args), tuple(dims)
+
+def _batcher_arg_idx(mask_type, num_args):
+  # Operands that participate in batching; bias (index 3) is decided by the
+  # caller since an unbatched batch-1 bias may rely on cuDNN's broadcasting.
+  arg_idx = [0, 1, 2] + list(range(10, num_args))
+  if has_padding(mask_type):
+    arg_idx += [4, 5]
+  return arg_idx
+
 def _dot_product_attention_fwd_batcher(
     batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
     mask_type, layout, sliding_window_length, is_training):
   _check_valid_batch_dims(batch_dims)
+  has_bias, _ = variadic_args
+  arg_idx = _batcher_arg_idx(mask_type, len(batched_args))
+  if has_bias and batch_dims[3] is None:
+    query_batch = math.prod(
+        batched_args[0].shape[:-3]
+        if batch_dims[0] is None else batched_args[0].shape[1:-3])
+    if batched_args[3].shape[0] == query_batch:
+      arg_idx.append(3)
+  elif has_bias:
+    arg_idx.append(3)
+  batched_args, batch_dims = _broadcast_unbatched_args(
+      batched_args, batch_dims, arg_idx)
   query, key, value, bias, q_seqlen, kv_seqlen, \
     q_offsets, kv_offsets, page_table_k, page_table_v = batched_args
   query_bdim = batch_dims[0]
@@ -824,7 +858,6 @@ def _dot_product_attention_fwd_batcher(
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
-  has_bias, _ = variadic_args
   original_shape = query.shape
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
@@ -856,6 +889,23 @@ def _dot_product_attention_bwd_batcher(
      batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
      mask_type, layout, sliding_window_length):
   _check_valid_batch_dims(batch_dims)
+  has_bias, has_dbias = variadic_args
+  arg_idx = _batcher_arg_idx(mask_type, len(batched_args))
+  tile_shared_bias = False
+  if has_bias and batch_dims[3] is None:
+    query_batch = math.prod(
+        batched_args[0].shape[:-3]
+        if batch_dims[0] is None else batched_args[0].shape[1:-3])
+    if batched_args[3].shape[0] == query_batch:
+      arg_idx.append(3)
+    elif any(batch_dims[i] is None for i in arg_idx):
+      # The kernel sums dbias over the whole flattened batch, so a shared
+      # batch-1 bias must be tiled here and its gradient re-summed below.
+      tile_shared_bias = True
+  elif has_bias:
+    arg_idx.append(3)
+  batched_args, batch_dims = _broadcast_unbatched_args(
+      batched_args, batch_dims, arg_idx)
   query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets, \
     page_table_k, page_table_v, activation, fwd_output, grad_output = batched_args
   query_bdim = batch_dims[0]
@@ -868,7 +918,6 @@ def _dot_product_attention_bwd_batcher(
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
-  has_bias, has_dbias = variadic_args
   original_query_shape = query.shape
   original_key_shape = key.shape
   original_value_shape = value.shape
@@ -879,6 +928,8 @@ def _dot_product_attention_bwd_batcher(
   value = jnp.reshape(value, (B,) + key.shape[-3:])
   if has_bias and batch_dims[3] is not None:
     bias = jnp.reshape(bias, (B, N, T, S))
+  elif tile_shared_bias:
+    bias = jnp.broadcast_to(bias, (B,) + bias.shape[1:])
   if has_padding(mask_type):
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
     kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
@@ -900,12 +951,19 @@ def _dot_product_attention_bwd_batcher(
   grads[1] = jnp.reshape(grads[1], original_key_shape)
   grads[2] = jnp.reshape(grads[2], original_value_shape)
   if has_dbias:
-    assert has_bias
-    if variadic_args[1]:
+    assert has_bias and original_bias_shape is not None
+    if tile_shared_bias:
+      # Sum per-example bias gradients over the shared (non-vmap) batch dims.
+      dbias = jnp.reshape(grads[3], tuple(Bs) + grads[3].shape[1:])
+      dbias = jnp.sum(dbias, axis=tuple(range(1, len(Bs))))
+      grads[3] = jnp.reshape(dbias, (Bs[0],) + original_bias_shape)
+      out_bdims += (0,)
+    elif variadic_args[1]:
       grads[3] = jnp.reshape(grads[3], original_bias_shape)
+      out_bdims += (batch_dims[3],)
     else:
       grads.append(jnp.zeros(original_bias_shape, bias.dtype))
-    out_bdims += (batch_dims[3],)
+      out_bdims += (batch_dims[3],)
   return grads, out_bdims
 
 # custom partitioning
