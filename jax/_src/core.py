@@ -2263,7 +2263,10 @@ def _make_lengths_same(sharding, ndim):
   if ndim > len(pspec):
     return sharding.update(spec=pspec._normalized_spec_for_aval(ndim))
   if ndim < len(pspec):
-    assert all(s is None for s in pspec.partitions[ndim:]), (ndim, pspec)
+    if not all(s is None for s in pspec.partitions[ndim:]):
+      raise ValueError(
+          "Input's ndim is less than the length of PartitionSpec which is not"
+          f" allowed. Got input ndim={ndim} and pspec={pspec}")
     return sharding.update(spec=sharding.spec.update(
         partitions=pspec.partitions[:ndim]))
   assert False, "unreachable"

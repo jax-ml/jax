@@ -5116,6 +5116,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(error_type, error_msg):
       f(arr1, arr2)
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_ndim_less_than_pspec_length_error(self, mesh):
+    with self.assertRaisesRegex(ValueError, "Input's ndim is less than"):
+      jax.reshard(np.zeros((8, 4, 2)), P(None, None, None, 'x'))
+
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))
   def test_dot_general_batch_error(self, mesh):
     arr1 = jax.device_put(np.ones((8, 4, 2)),
