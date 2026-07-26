@@ -514,6 +514,106 @@ class DotProductAttentionBatchingTest(jtu.JaxTestCase):
 
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
+class DotProductAttentionF8BatchingTest(jtu.JaxTestCase):
+  # The fp8 twins of the batching-rule fixes above: besides the same
+  # unbatched-operand crash, the fp8 batchers returned out_bdims tuples
+  # shorter than their outputs (the amax outputs were unaccounted for) and
+  # restored output shapes from already-flattened operands, so no vmap of
+  # fp8 attention worked at all. Trace-level, like the class above. The
+  # amax outputs are whole-batch statistics and do not carry the vmap axis.
+
+  def setUp(self):
+    super().setUp()
+    try:
+      check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+
+  def _make_inputs(self):
+    B, T, N, H = 2, 128, 4, 128
+    f8 = jnp.float8_e4m3fn
+    keys = jax.random.split(jax.random.key(0), 3)
+    q, k, v = (jax.random.normal(key, (B, T, N, H), jnp.float32).astype(f8)
+               for key in keys)
+    fp8_metas = {name: jnp.ones((1, 1, 1, 1), jnp.float32)
+                 for name in fp8_meta_names}
+    return q, k, v, fp8_metas
+
+  def _attn(self, fp8_metas):
+    return partial(dot_product_attention, scale=0.5,
+                   mask_type=MaskType.NO_MASK, use_fp8=True,
+                   fp8_params=fp8_metas)
+
+  @jtu.sample_product(layout=["BTNH", "BNTH"])
+  @jtu.run_on_devices("cuda")
+  def test_all_batched_vmap(self, layout):
+    q, k, v, fp8_metas = self._make_inputs()
+    if layout == "BNTH":
+      q, k, v = (jnp.einsum("btnh->bnth", x) for x in (q, k, v))
+    qb, kb, vb = (jnp.stack([x, x, x]) for x in (q, k, v))
+    attn = partial(dot_product_attention, scale=0.5,
+                   mask_type=MaskType.NO_MASK, use_fp8=True,
+                   fp8_params=fp8_metas, qkv_layout=layout)
+    out, amax_s, amax_o = jax.eval_shape(jax.vmap(attn), qb, kb, vb)
+    self.assertEqual(out.shape, (3,) + q.shape)
+    self.assertEqual(amax_s.shape, (3, 1, 1, 1, 1))
+    self.assertEqual(amax_o.shape, (3, 1, 1, 1, 1))
+
+  @jtu.run_on_devices("cuda")
+  def test_vmap_partial_in_axes(self):
+    q, k, v, fp8_metas = self._make_inputs()
+    qb = jnp.stack([q, q, q])
+    out, _, _ = jax.eval_shape(
+        jax.vmap(self._attn(fp8_metas), in_axes=(0, None, None)), qb, k, v)
+    self.assertEqual(out.shape, (3,) + q.shape)
+
+  @jtu.run_on_devices("cuda")
+  def test_vmap_of_grad(self):
+    # Covers both the unbatched reduction cotangent (all-batched primals)
+    # and fully mixed batching (only query batched).
+    q, k, v, fp8_metas = self._make_inputs()
+    qb, kb, vb = (jnp.stack([x, x, x]) for x in (q, k, v))
+
+    def loss(q_, k_, v_):
+      out, _, _ = self._attn(fp8_metas)(q_, k_, v_)
+      return out.astype(jnp.float32).sum()
+
+    grads = jax.eval_shape(
+        jax.vmap(jax.grad(loss, argnums=(0, 1, 2))), qb, kb, vb)
+    self.assertEqual(tuple(g.shape for g in grads),
+                     ((3,) + q.shape,) * 3)
+    grads = jax.eval_shape(
+        jax.vmap(jax.grad(loss, argnums=(0, 1, 2)),
+                 in_axes=(0, None, None)), qb, k, v)
+    self.assertEqual(tuple(g.shape for g in grads),
+                     ((3,) + q.shape,) * 3)
+
+  @jtu.run_on_devices("cuda")
+  def test_vmap_over_scaling_factor_raises(self):
+    q, k, v, fp8_metas = self._make_inputs()
+    qb = jnp.stack([q, q, q])
+    descale_qs = jnp.ones((3, 1, 1, 1, 1), jnp.float32)
+
+    def fn(q_, descale_q):
+      metas = dict(fp8_metas, descale_q=descale_q)
+      return self._attn(metas)(q_, k, v)[0]
+
+    with self.assertRaisesRegex(NotImplementedError,
+                                "scale/descale operands"):
+      jax.eval_shape(jax.vmap(fn), qb, descale_qs)
+
+    # Same guard on the backward batcher, via a batched bwd-only scale.
+    def loss(q_, scale_dQ):
+      metas = dict(fp8_metas, scale_dQ=scale_dQ)
+      out, _, _ = self._attn(metas)(q_, k, v)
+      return out.astype(jnp.float32).sum()
+
+    with self.assertRaisesRegex(NotImplementedError,
+                                "scale/descale operands"):
+      jax.eval_shape(jax.vmap(jax.grad(loss)), qb, descale_qs)
+
+
+@jtu.with_config(jax_numpy_dtype_promotion="standard")
 class DotProductAttentionF8Test(jtu.JaxTestCase):
 
   def setUp(self):

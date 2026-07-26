@@ -32,6 +32,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     bias or `mask`. Previously `jax.jacobian`, `jax.vmap` with partial
     `in_axes`, and `jax.vmap` of a VJP or of `jax.grad` failed with a
     reshape `TypeError` ({jax-issue}`#38495`).
+  * `jax.vmap` of fp8 cuDNN fused attention now works: its batching rules
+    additionally mislabeled or dropped the amax outputs and restored output
+    shapes incorrectly, so previously no vmap of the fp8 path succeeded at
+    all. The amax outputs are whole-batch statistics and do not carry the
+    vmap axis; vmap over the scale/descale operands raises a clear
+    `NotImplementedError`.
 
 ## JAX 0.11.0 (July 16, 2026)
 
