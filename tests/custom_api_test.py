@@ -38,6 +38,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import hijax
 from jax._src import literals
 from jax._src import custom_derivatives
 from jax._src import test_util as jtu
@@ -3535,6 +3536,26 @@ class CustomVJP3Test(CustomVJPTest):
     with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
       jtu.check_grads(h, (jnp.float32(3.14),), order=1, modes=['rev'])
 
+  def test_overbatched_fwd_rule_error(self):
+    # The batchedness of an application under vmap is inferred from the primal
+    # function alone; a fwd rule with more-batched outputs (here, a batched
+    # value where the primal output is an unbatched constant) raises a
+    # pointed error.
+    @jax.custom_vjp
+    def f(x):
+      return np.zeros(x.shape, x.dtype)
+
+    def f_fwd(x):
+      return x * 0., None
+
+    def f_bwd(res, g):
+      return (g,)
+    f.defvjp(f_fwd, f_bwd)
+
+    with self.assertRaisesRegex(ValueError,
+                                "fwd rule of f.*batched along the mapped"):
+      jax.grad(lambda x: jax.vmap(f)(x).sum())(jnp.arange(3.))
+
   # improved error message (classic raises "CustomVJPPrimal ... is not a valid
   # JAX type" here instead)
   def test_jvp_error_symbolic_zeros(self):
@@ -4280,6 +4301,223 @@ class CustomJVPRemat3Test(CustomJVPTest):
 
 @jtu.with_config(jax_remat3=True)
 class CustomVJP3Remat3Test(CustomVJP3Test):
+  ...
+
+
+@jtu.with_config(jax_custom_jvp3=True)
+class CustomJVP3Test(CustomJVPTest):
+
+  # regress these, hope no one cares (the decorated function is traced up
+  # front, so no Python control flow on concrete values)
+  def test_python_control_flow(self): pass
+  def test_ensure_compile_time_eval(self): pass
+  def test_dce(self): pass
+
+  # custom_jvp3 functions can't close over Tracers (they raise a good error
+  # instead; see test_closed_over_tracer_error below)
+  def test_closure_with_vmap(self): pass
+  def test_closure_with_vmap2(self): pass
+  def test_fun_with_nested_calls_2(self): pass
+
+  # custom_jvp3 nondiff_argnums must be static, not Tracers
+  def test_nondiff_arg_vmap_tracer(self): pass
+  def test_nondiff_argnums_vmap_tracer(self): pass
+
+  def test_hard_stuff2(self):
+    # Like the base test, except the last case: the batchedness of a
+    # custom_jvp application under vmap is inferred from its primal function
+    # alone, so a jvp rule whose tangent is more batched than the (constant,
+    # hence unbatched) primal output raises rather than working.
+    @jax.custom_jvp
+    def f(x):
+      return np.zeros(x.shape, x.dtype)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      t, = tangents
+      return f(x), t
+
+    # don't crash
+    jax.jit(jax.vmap(f))(jnp.arange(3.))
+    jax.jit(jax.vmap(jax.grad(f)))(jnp.arange(3.))
+    jax.jit(jax.grad(lambda x: jax.vmap(f)(x).sum()))(jnp.arange(3.))
+    jax.grad(lambda x: jax.vmap(f)(x).sum())(jnp.arange(3.))
+
+    with self.assertRaisesRegex(ValueError, "batched along the mapped axis"):
+      jax.jvp(jax.vmap(f), (jnp.arange(3.),), (jnp.ones(3),))
+
+  def test_overbatched_rule_remedy(self):
+    # the remedy the error in test_hard_stuff2 recommends: a VJPHiPrimitive
+    # with a batch_dim_rule that declares the joined batchedness
+    class ZerosButTangent(hijax.VJPHiPrimitive):
+      def __init__(self, in_aval):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return jnp.zeros_like(x)
+
+      def jvp(self, primals, tangents):
+        (x,), (t,) = primals, tangents
+        return ZerosButTangent(core.typeof(x))(x), t
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        del axis_data
+        d, = self.in_tree.flatten_up_to(in_dims)
+        return d
+
+    f = lambda x: ZerosButTangent(core.typeof(x))(x)
+    out, tangents = jax.jvp(jax.vmap(f), (jnp.arange(3.),), (jnp.ones(3),))
+    self.assertArraysAllClose(out, jnp.zeros(3))
+    self.assertArraysAllClose(tangents, jnp.ones(3))
+
+  def test_axis_index_in_primal_under_vmap(self):
+    # batchedness inferred from the primal includes env-derived batchedness
+    @jax.custom_jvp
+    def f(x):
+      return x * jax.lax.axis_index('i').astype(x.dtype)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (t,) = primals, tangents
+      return f(x), t * jax.lax.axis_index('i').astype(t.dtype)
+
+    out = jax.vmap(f, axis_name='i')(jnp.ones(3))
+    self.assertArraysAllClose(out, jnp.arange(3.))
+    _, tangents = jax.jvp(jax.vmap(f, axis_name='i'),
+                          (jnp.ones(3),), (jnp.ones(3),))
+    self.assertArraysAllClose(tangents, jnp.arange(3.))
+
+  def test_axis_index_in_rule_only_error(self):
+    # ...but env-derived batchedness only in a rule can't be inferred from
+    # the primal, so it raises the same pointed error as test_hard_stuff2
+    @jax.custom_jvp
+    def f(x):
+      return x + 1.
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (t,) = primals, tangents
+      return f(x), t * (1. + jax.lax.axis_index('i').astype(t.dtype))
+
+    with self.assertRaisesRegex(ValueError, "batched along the mapped axis"):
+      jax.jvp(
+          lambda c: jax.vmap(lambda x: x * f(c), axis_name='i')(jnp.ones(3)),
+          (jnp.float32(1.),), (jnp.float32(1.),))
+
+  def test_closed_over_tracer_error(self):
+    def h(z):
+      def f(x):
+        @jax.custom_jvp
+        def g(y):
+          return x * y
+        @g.defjvp
+        def g_jvp(primals, tangents):
+          (y,), (y_dot,) = primals, tangents
+          return g(y), x * y_dot
+        return g(z)
+      return jax.vmap(f)(jnp.arange(3., dtype='float32')).sum()
+
+    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
+      jax.jvp(h, (jnp.float32(3.14),), (jnp.float32(1.),))
+
+  @parameterized.named_parameters(
+      ('jit_vmap', True, True),
+      ('jit', True, False),
+      ('vmap', False, True),
+      ('', False, False),
+  )
+  def test_symbolic_zero_custom_jvp(self, maybe_jit, maybe_vmap):
+    # Like the base test, but custom_jvp3 applications always produce Arrays,
+    # even in eager mode (the function is traced up front), so drop the
+    # python-float output expectation.
+    def f(static_scalar, static_array, dyn_scalar, dyn_array):
+      out1 = static_scalar + dyn_scalar
+      out2 = static_array + dyn_array
+      return out1, out2
+
+    def _pack(x):
+      return lax.broadcast(x, (1,))
+
+    def _unpack(x):
+      (x,) = x
+      return x
+
+    def _vmap(fun):
+      def _fun(*args):
+        args = jax.tree.map(_pack, args)
+        out = jax.vmap(fun)(*args)
+        out = jax.tree.map(_unpack, out)
+        return out
+      return _fun
+
+    f = jax.custom_jvp(f)
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(primals, tangents):
+      static_scalar, *_ = primals
+      t_static, t_static_arr, t_dyn_scalar, t_dyn_array = tangents
+      self.assertIs(type(t_static)    , jax.custom_derivatives.SymbolicZero)
+      self.assertIs(type(t_static_arr), jax.custom_derivatives.SymbolicZero)
+      self.assertEqual(t_static.shape, ())
+      self.assertEqual(t_static_arr.shape, (2,))
+      return f(*primals), (static_scalar + 90, t_dyn_array + 91)
+
+    def g(dyn_scalar, dyn_array):
+      if maybe_vmap:
+        f_ = _vmap(f)
+      else:
+        f_ = f
+      return f_(1., jnp.array([2., 3.]), dyn_scalar, dyn_array)
+
+    def run(primal_ins, tangent_ins):
+      return jax.jvp(g, primal_ins, tangent_ins)
+
+    if maybe_jit:
+      run = jax.jit(run)
+
+    primal_ins = (4., jnp.array([5., 6.]))
+    tangent_ins = (7., jnp.array([8., 9.]))
+    primal_outs, tangent_outs = run(primal_ins, tangent_ins)
+    primal_out1, primal_out2 = primal_outs
+    tangent_out1, tangent_out2 = tangent_outs
+    tangent_scalar_type = jax.Array if maybe_jit or maybe_vmap else float
+    self.assertIsInstance(primal_out1, jax.Array)
+    self.assertAllClose(primal_out1, 5.)
+    self.assertIsInstance(tangent_out1, tangent_scalar_type)
+    self.assertAllClose(tangent_out1, 91.)
+    self.assertIsInstance(primal_out2, jax.Array)
+    self.assertArraysAllClose(primal_out2, jnp.array([7., 9.]))
+    self.assertIsInstance(tangent_out2, jax.Array)
+    self.assertArraysAllClose(tangent_out2, jnp.array([99., 100.]))
+
+  def test_pretty_print(self):
+    @jax.custom_jvp
+    def f(x):
+      return x + 1
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (t,) = primals, tangents
+      return f(x), t
+
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(f)(x)
+    actual = jaxpr.pretty_print(use_color=False)
+    expected = textwrap.dedent(
+        """
+        { lambda ; a:f32[1]. let
+            b:f32[1] = call_hi_primitive[_prim=CustomJVPTraced] a
+          in (b,) }
+        """).strip()
+    self.assertEqual(actual, expected)
+
+
+@jtu.with_config(jax_remat3=True)
+class CustomJVP3Remat3Test(CustomJVP3Test):
   ...
 
 

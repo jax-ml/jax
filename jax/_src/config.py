@@ -1283,6 +1283,15 @@ custom_vjp3 = bool_state(
     include_in_trace_context=True,
 )
 
+custom_jvp3 = bool_state(
+    name='jax_custom_jvp3',
+    default=False,
+    upgrade=True,
+    help='If True, embrace the future of custom autodiff rules.',
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 
 distributed_debug = bool_state(
     name='jax_distributed_debug',

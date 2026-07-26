@@ -151,6 +151,13 @@ class custom_jvp(Generic[ReturnValue]):
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
+  def __new__(cls, fun, nondiff_argnums=(), nondiff_argnames=()):
+    if config.custom_jvp3.value:
+      from jax._src.hijax import custom_jvp3  # pyrefly: ignore[missing-import]
+      return custom_jvp3(fun, nondiff_argnums, nondiff_argnames)
+    else:
+      return super().__new__(cls)
+
   def __init__(self,
                fun: Callable[..., ReturnValue],
                nondiff_argnums: Sequence[int] = (),
