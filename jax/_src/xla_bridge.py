@@ -1168,17 +1168,33 @@ def host_ids(
 def using_pjrt_c_api(backend=None):
   return "PJRT C API" in get_backend(backend).platform_version
 
-def make_pjrt_topology(platform: str, topology_name='', **kwargs):
+
+def make_pjrt_topology(
+    platform: str,
+    topology_name: str = "",
+    serialized_topology: bytes | None = None,
+    **kwargs,
+):
+  """Creates a PJRT DeviceTopology from name or serialized topology bytes."""
   _discover_and_register_pjrt_plugins()
   actual_platform = canonicalize_platform(platform)
   with _backend_lock:
+    if serialized_topology is not None:
+      if actual_platform == "tpu":
+        return make_pjrt_tpu_topology(serialized_topology=serialized_topology)
+      return _jax.DeviceTopology.deserialize(serialized_topology)
     if actual_platform in _topology_factories:
       return _topology_factories[actual_platform](topology_name, **kwargs)
   raise NotImplementedError("topology not implemented for %s" % platform)
 
 
 # TODO(parkers): Get rid of this in favor of a generic way to get topologies.
-def make_pjrt_tpu_topology(topology_name='', **kwargs):
+def make_pjrt_tpu_topology(
+    topology_name: str = "",
+    serialized_topology: bytes | None = None,
+    **kwargs,
+):
+  """Creates a PJRT TPU DeviceTopology from name or serialized topology bytes."""
   if not xla_client.pjrt_plugin_loaded("tpu"):
     library_path = get_tpu_library_path()
     if library_path is None:
@@ -1188,11 +1204,16 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
     c_api = xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
     _profiler.register_plugin_profiler(c_api)
   assert xla_client.pjrt_plugin_loaded("tpu")
+
+  if serialized_topology is not None:
+    return _jax.DeviceTopology.deserialize(serialized_topology)
+
   if not xla_client.pjrt_plugin_initialized("tpu"):
     xla_client.initialize_pjrt_plugin("tpu")
   return xla_client.make_tfrt_tpu_c_api_device_topology(
       topology_name, **kwargs
   )
+
 
 def _validate_backend_not_initialized(name, new_val):
   if backends_are_initialized():
