@@ -65,6 +65,7 @@ jax_multiplatform_test(
             "//tests/config:tsan_freethreading_rbe": 2,
             "//conditions:default": 1,
         }),
+        "gpu": 4,
     },
     deps = [
         "//jax/_src:custom_derivatives",
