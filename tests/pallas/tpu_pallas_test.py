@@ -945,11 +945,12 @@ class PallasCallDMATest(ptu.PallasTPUTest):
           pltpu.VMEM((8, 128), jnp.float32),
           w_ref=pltpu.VMEM((8, 128), jnp.float32),
       )
-      def body(y_ref, x_ref, w_ref):
+      def body(y_ref, x_ref, w_ref, scale=1.0):
         x_ref[...] = jnp.ones_like(x_ref)
         w_ref[...] = jnp.ones_like(w_ref)
-        y_ref[...] = 4 * x_ref[...] * w_ref[...]
-      body(y_ref)
+        y_ref[...] = scale * x_ref[...] * w_ref[...]
+
+      body(y_ref, scale=4.0)
 
     o = self.pallas_call(
         kernel,

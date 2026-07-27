@@ -296,9 +296,9 @@ def with_scoped(
 
   """
   def decorator(f):
-    def inner(*args):
+    def inner(*args, **kwargs):
       return pl_primitives.run_scoped(
-          functools.partial(f, *args),
+          functools.partial(f, *args, **kwargs),
           *types,
           collective_axes=collective_axes,
           **kw_types,
