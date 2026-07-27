@@ -29,6 +29,13 @@ filterwarnings = [
     # TODO(phawkins): Remove this once cloud_tpu_init is removed.
     "ignore:jax.cloud_tpu_init was deprecated",
 
+    # In mpmath 1.4.x, private/deprecated submodules define a module-level
+    # __getattr__ that emits a DeprecationWarning on any unknown attribute
+    # lookup. When unittest.TestCase.assertWarnsRegex inspects sys.modules
+    # and checks getattr(mod, '__warningregistry__', None), it triggers these
+    # warnings, which pytest's "error" filter promotes to exceptions.
+    "ignore:the (rational|math2).* module is deprecated.*:DeprecationWarning:mpmath.*",
+
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also
     # check for warnings and do not check this list. Most likely, you should
