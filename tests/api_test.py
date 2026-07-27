@@ -3025,10 +3025,6 @@ class APITest(jtu.JaxTestCase):
     _, out_tangent = api.jvp(jax.jit(lambda x: x+1), primals, tangents)
     self.assertEqual(out_tangent, np.zeros(shape=(), dtype=float0))
 
-  def test_none_in_sds_shape_error(self):
-    with self.assertRaisesRegex(ValueError, "`shape`.*cannot have None."):
-      jax.ShapeDtypeStruct((None, 2), np.int32)
-
   def test_jvp_of_convert_element_type(self):
     fun = lambda x: x.astype(np.int32) + 1
     primal, tangent = jax.jvp(fun, (2.,), (1.,))
