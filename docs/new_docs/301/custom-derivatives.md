@@ -1211,95 +1211,6 @@ invoked directly by `jax.jvp` or partially evaluated by
 `linearize_from_jvp`. As with cotangents, a rule can handle them explicitly
 to exploit the sparsity, or clean them up with `instantiate_zeros`.
 
-(jax-301-structured-residuals)=
-
-### Structured residuals
-
-The residuals a rule saves are normally flattened into an opaque list on
-the VJP object (`f_vjp.opaque_residuals` — see {doc}`vjp-objects`). A rule
-can instead direct residuals into a *structured* channel, where they remain
-a pytree of your choosing: visible on the VJP object as
-`f_vjp.structured_residuals`, and carried through transformations
-with structure intact — `scan` stacks entries across iterations, `cond`
-wraps its branches' entries in a tagged `CondSum` recording which branch
-ran (the same shape backward-pass logs take, below), and `shard_map`
-stacks per-shard entries along a leading mesh axis.
-
-To opt in, return *four* values from `vjp_fwd`: the primal output, the
-ordinary residuals, `nzs_out` (usually just `True`; see the symbolic zeros
-section above), and the structured residuals. The backward rule must then
-be `vjp_bwd`, which receives the structured residuals as an extra argument
-after the ordinary ones; `vjp_bwd_retval` can't be used with structured
-residuals:
-
-```{code-cell}
-class Square(VJPHiPrimitive):
-  def __init__(self, x_aval):
-    self.in_avals = (x_aval,)
-    self.out_aval = x_aval
-    self.params = {}
-    super().__init__()
-
-  def expand(self, x):
-    return x ** 2
-
-  def vjp_fwd(self, nzs_in, x):
-    return self(x), (), True, {'x': x}  # sres in the fourth slot
-
-  def vjp_bwd(self, res, sres, g, x_acc):
-    x_acc.accum(2. * sres['x'] * g)
-
-class Cube(VJPHiPrimitive):
-  def __init__(self, x_aval):
-    self.in_avals = (x_aval,)
-    self.out_aval = x_aval
-    self.params = {}
-    super().__init__()
-
-  def expand(self, x):
-    return x ** 3
-
-  def vjp_fwd(self, nzs_in, x):
-    return self(x), (), True, {'x': x}
-
-  def vjp_bwd(self, res, sres, g, x_acc):
-    x_acc.accum(3. * sres['x'] ** 2 * g)
-
-def square(x):
-  return Square(jax.typeof(x))(x)
-
-def cube(x):
-  return Cube(jax.typeof(x))(x)
-
-def f(x):
-  return square(x) + cube(x)
-
-print(grad(f)(3.))
-
-_, f_vjp = jax.vjp(f, 3.)
-print(f_vjp.structured_residuals)
-```
-
-Each equation of the forward computation contributes an entry: the two
-rules' dicts, plus an empty entry for the `add`.
-
-Both rules saved the same value — the argument they were both applied to —
-and JAX deduplicates the saved values, so it's stored just once. (That's an
-optimization JAX can apply, not a guarantee.)
-
-```{code-cell}
-x1, x2 = jax.tree.leaves(f_vjp.structured_residuals)
-print(x1 is x2)
-```
-
-Under `jit` the same optimization can go further: structured residuals
-that are just forwarded inputs (like `x` here) need not be materialized as
-extra outputs of the compiled forward pass at all.
-
-The same fourth slot works for linearization: `lin` may return `(ans, res,
-nzs_out, sres)`, in which case `linearized` receives the structured
-residuals after the ordinary ones, as `linearized(res, sres, *tangents)`.
-
 (jax-301-bwd-logging)=
 
 ### Logging data out of the backward pass
@@ -1407,6 +1318,95 @@ transposed contexts don't yet plumb logs through — `jax.remat`,
 `jax.custom_vjp` backward rules, and `lax.while_loop` — and logs inside
 them are silently dropped, consistent with drop-by-default. For plumbing
 data out of a backward pass with mutable refs instead, see {doc}`refs`.
+
+(jax-301-structured-residuals)=
+
+### Structured residuals
+
+The residuals a rule saves are normally flattened into an opaque list on
+the VJP object (`f_vjp.opaque_residuals` — see {doc}`vjp-objects`). A rule
+can instead direct residuals into a *structured* channel, where they remain
+a pytree of your choosing: visible on the VJP object as
+`f_vjp.structured_residuals`, and carried through transformations
+with structure intact — `scan` stacks entries across iterations, `cond`
+wraps its branches' entries in a tagged `CondSum` recording which branch
+ran (the same shape backward-pass logs take, above), and `shard_map`
+stacks per-shard entries along a leading mesh axis.
+
+To opt in, return *four* values from `vjp_fwd`: the primal output, the
+ordinary residuals, `nzs_out` (usually just `True`; see the symbolic zeros
+section above), and the structured residuals. The backward rule must then
+be `vjp_bwd`, which receives the structured residuals as an extra argument
+after the ordinary ones; `vjp_bwd_retval` can't be used with structured
+residuals:
+
+```{code-cell}
+class Square(VJPHiPrimitive):
+  def __init__(self, x_aval):
+    self.in_avals = (x_aval,)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return x ** 2
+
+  def vjp_fwd(self, nzs_in, x):
+    return self(x), (), True, {'x': x}  # sres in the fourth slot
+
+  def vjp_bwd(self, res, sres, g, x_acc):
+    x_acc.accum(2. * sres['x'] * g)
+
+class Cube(VJPHiPrimitive):
+  def __init__(self, x_aval):
+    self.in_avals = (x_aval,)
+    self.out_aval = x_aval
+    self.params = {}
+    super().__init__()
+
+  def expand(self, x):
+    return x ** 3
+
+  def vjp_fwd(self, nzs_in, x):
+    return self(x), (), True, {'x': x}
+
+  def vjp_bwd(self, res, sres, g, x_acc):
+    x_acc.accum(3. * sres['x'] ** 2 * g)
+
+def square(x):
+  return Square(jax.typeof(x))(x)
+
+def cube(x):
+  return Cube(jax.typeof(x))(x)
+
+def f(x):
+  return square(x) + cube(x)
+
+print(grad(f)(3.))
+
+_, f_vjp = jax.vjp(f, 3.)
+print(f_vjp.structured_residuals)
+```
+
+Each equation of the forward computation contributes an entry: the two
+rules' dicts, plus an empty entry for the `add`.
+
+Both rules saved the same value — the argument they were both applied to —
+and JAX deduplicates the saved values, so it's stored just once. (That's an
+optimization JAX can apply, not a guarantee.)
+
+```{code-cell}
+x1, x2 = jax.tree.leaves(f_vjp.structured_residuals)
+print(x1 is x2)
+```
+
+Under `jit` the same optimization can go further: structured residuals
+that are just forwarded inputs (like `x` here) need not be materialized as
+extra outputs of the compiled forward pass at all.
+
+The same fourth slot works for linearization: `lin` may return `(ans, res,
+nzs_out, sres)`, in which case `linearized` receives the structured
+residuals after the ordinary ones, as `linearized(res, sres, *tangents)`.
 
 ### What we haven't covered
 
