@@ -54,8 +54,10 @@ SerT = TypeVar("SerT")
 # Version 2, Dec 16th, 2023, adds the f0 dtype.
 # Version 3, October 16th, 2024, adds serialization for namedtuple and custom types
 #   This version is backwards compatible with Version 2.
+#   This version is beyond the 6 months compat window and not supported anymore.
 # Version 4, April 7th, 2025, adds serialization for PRNGs key types.
 #   This version is backwards compatible with Version 2 and 3.
+#   This version is beyond the 6 months compat window and not supported anymore.
 # Version 5, November 23rd, 2025, adds serialization for aval memory_space,
 #   upgrade num_devices to a 32 bit value.
 #   This version is backwards compatible with Version 2 to 4.
@@ -301,10 +303,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
 
   fun_name = exp.FunctionName().decode("utf-8")
 
-  # TODO(necula): remove the fallback to NrDevicesShort and mark
-  # the field "deprecated" once we abandon the old
-  # serialization format (6 months after 11/24/2025).
-  nr_devices = exp.NrDevices() or exp.NrDevicesShort()
+  nr_devices = exp.NrDevices()
   def sharding_by_idx(idx):
     if idx == 0:
       return None
