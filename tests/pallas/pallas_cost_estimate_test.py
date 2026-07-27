@@ -17,6 +17,8 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax._src import config
+from jax._src import core as jax_core
+from jax._src import hijax
 from jax._src import test_util as jtu
 from jax._src.pallas import cost_estimate
 from jax._src.state import discharge
@@ -122,6 +124,36 @@ class PallasCostEstimateTest(jtu.JaxTestCase):
     # TODO(justinfu): This is off by a factor of 2 because run_state
     # has all inputs/outputs as both arguments and return values.
     self.assertEqual(cost.bytes_accessed / 2, 3 * 4 * 100)
+
+  def test_call_hi_primitive(self):
+    class DummyHiPrim(hijax.VJPHiPrimitive):
+
+      def __init__(self, x_aval, y_aval):
+        self.in_avals = (x_aval, y_aval)
+        self.out_aval = jax_core.ShapedArray(
+            (x_aval.shape[0], y_aval.shape[1]), x_aval.dtype
+        )
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        dimension_numbers = (((1,), (0,)), ((), ()))
+        return lax.dot_general(x, y, dimension_numbers)
+
+    def fun(x, y):
+      x_aval = jax_core.ShapedArray(x.shape, x.dtype)
+      y_aval = jax_core.ShapedArray(y.shape, y.dtype)
+      return DummyHiPrim(x_aval, y_aval)(x, y)
+
+    m, k, n = 10, 20, 30
+    cost = cost_estimate.estimate_cost(
+        fun,
+        jax.ShapeDtypeStruct((m, k), jnp.float32),
+        jax.ShapeDtypeStruct((k, n), jnp.float32),
+    )
+    self.assertEqual(cost.flops, 2 * m * k * n)
+    self.assertEqual(cost.transcendentals, 0)
+    self.assertEqual(cost.bytes_accessed, 4 * (m * k + k * n + m * n))
 
 
 if __name__ == "__main__":

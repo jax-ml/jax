@@ -12,23 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Helper tool for automatic cost estimation."""
+from collections.abc import Sequence
 import dataclasses
 import functools
 import math
 from typing import Any
-from collections.abc import Sequence
 
-from jax._src import flattree as ft
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
+from jax._src import flattree as ft
+from jax._src import hijax
 from jax._src import pjit
-from jax._src.state import discharge
-from jax._src.pallas import core as pallas_core
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import lax
+from jax._src.pallas import core as pallas_core
+from jax._src.state import discharge
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
-from jax._src.lax import lax
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -258,3 +259,19 @@ def _run_state_rule(*_, jaxpr: jax_core.Jaxpr, **_2):
       bytes_accessed=inner_cost.bytes_accessed,
   )
 register_cost_rule(discharge.run_state_p, _run_state_rule)
+
+def _call_hi_primitive_cost_rule(ctx: Context, *, _prim, **_) -> CostEstimate:
+  in_avals_ft = ft.flatten((tuple(ctx.avals_in), {}))
+  debug_info = api_util.debug_info(
+      'call_hi_primitive_cost_rule', _prim.expand, ctx.avals_in, {}
+  )
+  def lojax_fun(*args_flat):
+    return hijax.call_hi_primitive_p.to_lojax(*args_flat, _prim=_prim)
+  inner_jaxpr, _ = pe.trace_to_jaxpr(lojax_fun, in_avals_ft, debug_info)
+  inner_cost_estimate = cost_estimate_jaxpr(inner_jaxpr)
+  return CostEstimate(
+      flops=inner_cost_estimate.flops,
+      transcendentals=inner_cost_estimate.transcendentals,
+      bytes_accessed=inner_cost_estimate.bytes_accessed,
+  )
+register_cost_rule(hijax.call_hi_primitive_p, _call_hi_primitive_cost_rule)
