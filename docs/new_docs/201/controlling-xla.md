@@ -30,22 +30,29 @@ untouched. Keys are XLA flag names without the `--` prefix, and values are
 ordinary Python booleans, numbers, or strings:
 
 ```python
-@jax.jit(compiler_options={
-    "xla_embed_ir_in_executable": True,
-    "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
-})
 def f(x):
   return jnp.sqrt(x ** 2) + 1.
 
-f(1.0)
+f_opt = jax.jit(f, compiler_options={
+    "xla_embed_ir_in_executable": True,
+    "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
+})
+
+f_opt(1.0)
 ```
 
+One restriction: `compiler_options` must be given on the top-level `jit` —
+the one whose compilation it configures — not on a jitted function called
+from inside another jitted function.
+
 Alongside XLA's debug-option flags, `compiler_options` also accepts XLA's
-compilation-effort knobs, like `optimization_level`,
-`memory_fitting_level`, and `exec_time_optimization_effort`:
+[compilation-effort knobs](https://openxla.org/xla/effort_levels),
+`optimization_level` and `memory_fitting_level`, valued as
+{class}`jax.CompilerEffortLevel` members or their string names, `"O0"`
+through `"O3"`:
 
 ```python
-g = jax.jit(f, compiler_options={"exec_time_optimization_effort": 0.5})
+g = jax.jit(f, compiler_options={"optimization_level": jax.CompilerEffortLevel.O3})
 ```
 
 Unrecognized keys or invalid values raise an error at compilation time, so
