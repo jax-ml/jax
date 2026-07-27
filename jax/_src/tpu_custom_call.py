@@ -114,6 +114,8 @@ class MemorySpace(enum.Enum):
   HOST = enum.auto()
   SC_SCALAR_SEMAPHORE_MEM = enum.auto()
   SC_VECTOR_SEMAPHORE_MEM = enum.auto()
+  SC_SCALAR_SMEM = enum.auto()
+  SC_VECTOR_SMEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -131,6 +133,10 @@ class MemorySpace(enum.Enum):
       return 4
     elif self == MemorySpace.HOST:
       return 5
+    elif self == MemorySpace.SC_SCALAR_SMEM:
+      return 11
+    elif self == MemorySpace.SC_VECTOR_SMEM:
+      return 12
     else:
       raise ValueError("invalid memory space: " + str(self))
 
