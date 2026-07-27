@@ -8091,14 +8091,29 @@ class Remat3Test(RematTest):
     self.assertAllClose(rem(jnp.float32(3.), jnp.float32(4.)), (3., 16.),
                         check_dtypes=False)
 
+  def test_remat_unhashable_static_argnums(self):
+    # unhashable static values are closed over rather than hashed
+    @partial(jax.remat, static_argnums=1)
+    def f(x, static_dict):
+      return x * static_dict['scale']
+
+    x = jnp.ones(4)
+    g = jax.grad(lambda x: jnp.sum(f(x, {'scale': 2.0})))(x)
+    self.assertAllClose(g, jnp.full(4, 2.), check_dtypes=False)
+
+    @partial(jax.checkpoint, static_argnames='cfg')
+    def h(x, cfg):
+      return x * cfg['scale']
+
+    g = jax.grad(lambda x: jnp.sum(h(x, cfg={'scale': 3.0})))(x)
+    self.assertAllClose(g, jnp.full(4, 3.), check_dtypes=False)
+
   def test_remat_eqn_dce(self):
-    # dce through a remat application prunes unused outputs and the inputs
-    # only they needed
     @jax.remat
     def f(x, y):
       return jnp.sin(x), jnp.cos(y)
 
-    jaxpr = jax.make_jaxpr(f)(1., 2.)
+    jaxpr = jax.make_jaxpr(f)(jnp.float32(1.), jnp.float32(2.))
     dced, used_ins = pe.dce_jaxpr(jaxpr, [True, False])
     self.assertEqual(used_ins, [True, False])
     eqn, = dced.eqns
