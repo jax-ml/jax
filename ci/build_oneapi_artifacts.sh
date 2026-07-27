@@ -80,7 +80,7 @@ bazel_remote_cache=""
 
 if [[ "$JAXCI_BUILD_ARTIFACT_WITH_RBE" == 1 ]]; then
   bazelrc_config="rbe_${bazelrc_config}"
-  bazel_cpu_pool_config="--config=rbe_cpu_pool"
+  bazel_cpu_pool_config="--bazel_options=--config=rbe_cpu_pool"
 else
   bazelrc_config="ci_${bazelrc_config}"
   bazel_cpu_pool_config=""
