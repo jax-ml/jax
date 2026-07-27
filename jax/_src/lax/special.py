@@ -126,6 +126,23 @@ def erf_inv(x: ArrayLike) -> Array:
   r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`."""
   return erf_inv_p.bind(x)
 
+def ndtr(x: Array) -> Array:
+  r"""Elementwise cumulative distribution function of the standard normal.
+
+  Implements the core logic of :func:`jax.scipy.special.ndtr`, placed here so
+  that lower-level modules can use it without importing ``jax.scipy``.
+  """
+  dtype = _dtype(x).type
+  half_sqrt_2 = dtype(0.5) * np.sqrt(2., dtype=dtype)
+  w = x * half_sqrt_2
+  z = abs(w)
+  y = select(lt(z, half_sqrt_2),
+             dtype(1.) + erf(w),
+             select(gt(w, dtype(0.)),
+                    dtype(2.) - erfc(z),
+                    erfc(z)))
+  return dtype(0.5) * y
+
 def betainc_gradx(g, a, b, x):
   lbeta = lgamma(a) + lgamma(b) - lgamma(a + b)
   partial_x = exp((b - 1) * log1p(-x) +

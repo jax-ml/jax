@@ -2005,11 +2005,163 @@ def _poisson(key, lam, shape, dtype) -> Array:
   return lax.select(lam == 0, jnp.zeros_like(result), result)
 
 
+# Below this mean, `_poisson_approx` samples by inverting the truncated cdf
+# directly; above, it inverts the Peizer-Pratt normal approximation of the cdf,
+# whose max cdf error at the split is ~6e-5 (chi-square-detectable only beyond
+# ~3e7 samples).
+_POISSON_SPLIT = 7.0
+
+# Number of pmf terms for the truncated cdf; the truncated tail mass
+# Pr[X > 19 | lam = 7] ~ 4e-5 keeps the truncated-branch total variation below
+# the Peizer-Pratt error at the split (~6e-5).
+_POISSON_NUM_TERMS = 20
+
+# Peizer-Pratt continuity correction constant (0 for simplicity, 0.02 for more
+# accuracy).
+_PEIZER_PRATT_EPS = 0.02
+
+
+@jit(static_argnums=(2, 3))
+def _poisson_approx(key, lam, shape, dtype) -> Array:
+  r"""Loop-free approximate sampler for ``Poisson(lam)``.
+
+  Backs the ``method='approximate'`` path of :func:`poisson`. It avoids the
+  rejection loops of the exact sampler, trading a small bias for a fully
+  vectorized computation that is much faster.
+
+  The total variation distance from the exact distribution stays below 1e-4,
+  worst around ``lam == _POISSON_SPLIT``.
+
+  A standard normal draw is mapped monotonically to a count by inverting an
+  approximate cdf, in :func:`_poisson_from_normal`. Below `_POISSON_SPLIT` the
+  pmf is truncated to `_POISSON_NUM_TERMS` terms and the cdf inverted directly;
+  above, the sampler inverts the very accurate normal approximation of the cdf
+  by Peizer and Pratt (1968), as presented in Johnson, Kemp & Kotz (2005), page
+  168.
+
+  The computation runs in float32, or float64 if ``lam`` is a 64-bit float
+  array or ``dtype`` is a 64-bit type: above ``lam ~ 2**24`` the samples land
+  on the float32 integer lattice, so wider means need the wider compute dtype
+  to resolve them, and a 64-bit ``dtype`` is the only way to represent such
+  counts in the output.
+
+  References:
+    Peizer, D. B., & Pratt, J. W. (1968). A Normal Approximation for Binomial,
+    F, Beta, and other Common, Related Tail Probabilities, I. Journal of the
+    American Statistical Association, 63(324), 1416-1456.
+
+    Johnson, N. L., Kemp, A. W., & Kotz, S. (2005). Univariate discrete
+    distributions (3rd ed), page 168. Wiley.
+  """
+  # compute at least in float32; don't use dtypes.promote_types, fails in
+  # strict mode
+  lam_dtype = dtypes.dtype(lam)
+  lam_is_f64 = (dtypes.issubdtype(lam_dtype, np.floating)
+                and dtypes.finfo(lam_dtype).bits > 32)
+  if lam_is_f64 or np.dtype(dtype).itemsize > 4:
+    compute_dtype = np.dtype('float64')
+  else:
+    compute_dtype = np.dtype('float32')
+
+  lam = lax.convert_element_type(lam, compute_dtype)
+  lam = lax.expand_dims(lam, tuple(range(len(shape) - np.ndim(lam))))
+  key, (lam,) = random_insert_pvary('poisson', key, lam)
+  z = _normal(key, shape, compute_dtype)
+  return lax.convert_element_type(_poisson_from_normal(z, lam), dtype)
+
+
+def _poisson_from_normal(z, lam):
+  """Map a standard normal variate to an approximate Poisson(lam) variate."""
+  small = _poisson_cdf_inversion(lax_special.ndtr(z), lam)
+  large = _poisson_peizer_pratt(z, lam)
+  return jnp.where(lam < _POISSON_SPLIT, small, large)
+
+
+def _poisson_cdf_inversion(u, lam):
+  """Invert the cdf truncated to the first `_POISSON_NUM_TERMS` values."""
+  # unrolled pmf recurrence instead of cumsum(exp(logpmf(arange))): keeps every
+  # op elementwise at the broadcast shape, so xla fuses the inversion into one
+  # kernel instead of materializing shape x _POISSON_NUM_TERMS intermediates
+  pmf = lax.exp(-lam)
+  cdf = pmf
+  # if the final cdf >= 1 due to rounding, the last possible value is never
+  # selected, no overflow
+  count = lax.convert_element_type(cdf < u, u.dtype)
+  for k in range(1, _POISSON_NUM_TERMS - 1):
+    pmf *= lam / k
+    cdf += pmf
+    count += lax.convert_element_type(cdf < u, u.dtype)
+  return count
+
+
+def _poisson_peizer_pratt(z, lam):
+  """Invert the Peizer-Pratt cdf approximation Pr[X <= x] ~ ndtr(z(x)).
+
+  The sample is the smallest integer x with z(x) >= z, i.e., ceil of the real
+  root of z(x) = z. The exact z(x) is evaluated at 2 integers around an
+  analytical guess to select the right value, correcting the guess as long as
+  it falls within +/-1 of the root.
+  """
+  # the guess error stays within (-1 + 0.6, 1 + 0.6) of the root over
+  # lam >= _POISSON_SPLIT, |z| <= 8.4 (the float64 range of normal draws), so
+  # shifting by 0.6 centers it in the +/-1 window around ceil
+  x = _peizer_pratt_root(z, lam) + 0.6
+
+  # select the smallest integer c with z(c) >= z among {c-1, c, c+1},
+  # c = ceil(x); z at negative integers is -inf since Pr[X <= x] = 0 there
+  c = jnp.ceil(x)
+
+  def zint(c):
+    return jnp.where(c < 0, -np.inf, _peizer_pratt_z(jnp.maximum(c, 0.0), lam))
+
+  def root_ge(c):
+    return lax.convert_element_type(zint(c) >= z, x.dtype)
+
+  out = c + 1 - root_ge(c) - root_ge(c - 1)
+  return jnp.maximum(out, 0.0)
+
+
+def _peizer_pratt_root(z, lam):
+  """Cornish-Fisher approximation of the root of `_peizer_pratt_z(x, .) = z`."""
+  s = jnp.sqrt(lam)
+  return (
+      lam + s * z - 2 / 3 + jnp.square(z) / 6 + z * (1 - jnp.square(z)) / (72 * s))
+
+
+def _peizer_pratt_z(x, lam):
+  """Peizer-Pratt z(x) such that Pr[X <= x] ~ ndtr(z(x)), for x > -1/2."""
+  y = (x + 0.5) / lam
+  t = _peizer_pratt_t(y)
+  return (x - lam + 2 / 3 + _PEIZER_PRATT_EPS / (x + 1)) * jnp.sqrt((1 + t) / lam)
+
+
+def _peizer_pratt_t(y):
+  """T(y) = (1 - y^2 + 2 y log y) / (1 - y)^2, stable around y = 1."""
+  d = y - 1
+  small = jnp.abs(d) < 0.25
+
+  # series: T(1 + d) = sum_{k>=1} 2 (-1)^k d^k / ((k+1) (k+2)); 9 terms are the
+  # fewest that keep the truncation error at the cutoff (~2e-8) below float32
+  # resolution; in float64 the Peizer-Pratt error dominates anyway
+  series = jnp.zeros_like(d)
+  for k in reversed(range(1, 10)):
+    coef = 2 * (-1) ** k / ((k + 1) * (k + 2))
+    series = d * (coef + series)
+
+  y_safe = jnp.where(small, 2.0, y)
+  d_safe = jnp.where(small, 1.0, d)
+  direct = (1 - jnp.square(y_safe) + 2 * y_safe * jnp.log(y_safe)) / jnp.square(
+      d_safe)
+
+  return jnp.where(small, series, direct)
+
+
 def poisson(key: ArrayLike,
             lam: RealArray,
             shape: Shape | None = None,
             dtype: DTypeLikeInt | None = None,
             *,
+            method: str = 'exact',
             out_sharding: NamedSharding | P | None = None) -> Array:
   r"""Sample Poisson random values with given shape and integer dtype.
 
@@ -2027,6 +2179,11 @@ def poisson(key: ArrayLike,
       shape. Default (None) produces a result shape equal to ``lam.shape``.
     dtype: optional, a integer dtype for the returned values (default int64 if
       jax_enable_x64 is true, otherwise int32).
+    method: optional, the sampling algorithm to use, either ``'exact'`` (the
+      default) or ``'approximate'``. The ``'exact'`` method uses rejection
+      sampling and supports only the threefry2x32 RNG. The ``'approximate'``
+      method is loop-free and faster but approximate: the total variation
+      distance from the exact distribution is below 1e-4.
     out_sharding: Optional. Specifies how the output array should be sharded
       across devices in multi-device computation. Can be a
       :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
@@ -2041,22 +2198,32 @@ def poisson(key: ArrayLike,
     ``shape is not None, or else by ``lam.shape``.
   """
   key, _ = _check_prng_key("poisson", key)
+  if method not in {'exact', 'approximate'}:
+    raise ValueError("method argument to `poisson` must be one of "
+                     f"{{'exact', 'approximate'}}, got {method!r}")
   dtype = dtypes.check_and_canonicalize_user_dtype(
       int if dtype is None else dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  else:
+    shape = np.shape(lam)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
+  if method == 'approximate':
+    # don't preemptively broadcast lam, if lower rank it may save some computation
+    if lax.broadcast_shapes(np.shape(lam), shape) != shape:
+      raise ValueError("lam shape must be broadcastable to shape argument; "
+                       f"got lam.shape {np.shape(lam)}, shape {shape}")
+    return maybe_auto_axes(_poisson_approx, out_sharding,
+                           shape=shape, dtype=dtype)(key, lam)
+  lam = jnp.broadcast_to(lam, shape)
   # TODO(frostig): generalize underlying poisson implementation and
   # remove this check
   keys_dtype = typing.cast(prng.KeyTy, key.dtype)
   key_impl = keys_dtype._impl
   if key_impl is not threefry2x32.threefry_prng_impl:
     raise NotImplementedError(
-        '`poisson` is only implemented for the threefry2x32 RNG, '
-        f'not {key_impl}')
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  else:
-    shape = np.shape(lam)
-  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "poisson", shape)
-  lam = jnp.broadcast_to(lam, shape)
+        "`poisson` with method='exact' is only implemented for the "
+        f'threefry2x32 RNG, not {key_impl}')
   lam = lax.convert_element_type(lam, np.float32)
   return maybe_auto_axes(_poisson, out_sharding, shape=shape, dtype=dtype)(key, lam)
 
