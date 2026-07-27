@@ -3956,7 +3956,11 @@ class ShapeDtypeStruct:
 
   def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
                manual_axis_type=None, is_ref=False):
-    object.__setattr__(self, 'shape', tuple(shape))
+    shape = tuple(shape)
+    if any(s is None for s in shape):
+      raise ValueError('`shape` passed to `ShapeDtypeStruct` cannot have '
+                       f'None in it. Got {shape=}')
+    object.__setattr__(self, 'shape', shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
