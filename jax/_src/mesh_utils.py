@@ -267,14 +267,6 @@ def _create_device_mesh_for_nd_torus(
   instead of splitting a physical axis over more than one logical axis (which
   would reduce total usable bandwidth).
 
-  For hardware where a subset of physical axes has higher bandwidth than the
-  others, high-network-intensity logical axes are preferentially mapped to those
-  high-bandwidth physical axes. This is currently applied for TPU v7/v7x, whose
-  core axis (the last axis of a 4D `physical_mesh`) has higher bandwidth than the
-  x/y/z axes; the priority is detected automatically from the device kind, so for
-  all other device kinds (and non-4D meshes) every physical axis is treated with
-  equal priority and behavior is unchanged.
-
   Let's use a concrete example to explain the concepts and considerations.
 
   As an example, suppose the logical mesh is [data, model], for data and model
@@ -338,15 +330,13 @@ def _create_device_mesh_for_nd_torus(
       # higher priority physical axes are tried first. This ensures high network
       # intensity logical axes get assigned to high bandwidth physical axes.
       if priority_map is not None:
-        pmap = priority_map  # local alias narrows the type for the closure below.
-
         def _candidate_priority(candidate):
           # Lower rank = higher priority. Sort by best (lowest) priority
           # among all axes in the candidate, then by sum of priorities
           # as a tie-breaker.
           indices = tuple(c[0] for c in candidate)
-          best_priority = min(pmap[i] for i in indices)
-          total_priority = sum(pmap[i] for i in indices)
+          best_priority = min(priority_map[i] for i in indices)
+          total_priority = sum(priority_map[i] for i in indices)
           return (best_priority, total_priority)
 
         candidates.sort(key=_candidate_priority)
