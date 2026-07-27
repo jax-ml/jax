@@ -1154,6 +1154,16 @@ class RematTraced(VJPHiPrimitive):
       return tree_unflatten(out_tree, out_flat)
     return out, rem
 
+  def dce(self, used_outs):
+    used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
+    if not any(used_outs_flat):
+      return False, False, None
+    new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat)
+    if all(used_ins) and all(used_outs_flat):
+      return True, True, self
+    return (tuple(used_ins), tuple(used_outs_flat),
+            RematTraced(new_jaxpr, self.policy))
+
 class CheckpointName(VJPHiPrimitive):
   name: str
 

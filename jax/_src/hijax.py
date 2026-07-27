@@ -778,8 +778,13 @@ def _call_hi_primitive_dce(used_outs_flat, eqn):
   used_ins, produced_outs, new_prim = _prim.dce(used_out)
   if new_prim is None:
     return [False] * len(eqn.invars), None
-  used_ins_flat = broadcast_prefix(used_ins, _prim.in_avals)
-  produced_outs_flat = broadcast_prefix(produced_outs, _prim.out_aval)
+  name = f'{type(_prim).__name__}.dce'
+  used_ins_flat = api.tuptree_flags(
+      used_ins, _prim.in_tree, 'used_ins',
+      f'the first (used inputs) return value of {name}')
+  produced_outs_flat = api.tuptree_flags(
+      produced_outs, _prim.out_tree, 'produced_outs',
+      f'the second (produced outputs) return value of {name}')
   new_invars = [x for x, u in zip(eqn.invars, used_ins_flat) if u]
   new_outvars = [v for v, u in zip(eqn.outvars, produced_outs_flat) if u]
   new_eqn = eqn.replace(invars=new_invars, outvars=new_outvars,
