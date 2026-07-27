@@ -1118,5 +1118,38 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
 
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+     for shape, axis in (
+         ((0,), None),
+         ((0,), 0),
+         ((0, 4), 0),
+         ((0, 4), None),
+         ((3, 0), 1),
+         ((3, 0), None),
+         ((2, 0, 3), (0, 1)),
+         ((2, 0, 3), (1, 2)),
+     )],
+    opname=["nanquantile", "nanpercentile"],
+    keepdims=[False, True],
+  )
+  @jtu.ignore_warning(category=RuntimeWarning, message="Mean of empty slice")
+  def testNanQuantileEmptyReduction(self, shape, axis, opname, keepdims):
+    is_percentile = "percentile" in opname
+    q = np.array(
+      [25.0, 50.0, 75.0] if is_percentile else [0.25, 0.5, 0.75],
+      dtype=np.float32,
+    )
+    args_maker = lambda: [np.empty(shape, dtype=np.float32)]
+    np_fun = partial(
+      getattr(np, opname), q=q, axis=axis, keepdims=keepdims)
+    jnp_fun = partial(
+      getattr(jnp, opname), q=q, axis=axis, keepdims=keepdims)
+
+    self._CheckAgainstNumpy(
+      np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(
+      jnp_fun, args_maker, check_dtypes=False)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
