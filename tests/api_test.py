@@ -3391,6 +3391,32 @@ class APITest(jtu.JaxTestCase):
                   "positional arguments passed to the function, but got len(in_axes)=2, len(args)=1")):
       jax.vmap(lambda x: x['a'], in_axes=(0, {'a': 0}))({'a': jnp.zeros((3, 3))})
 
+  def test_vmap_in_axes_tuple_with_kwargs_error(self):
+    # https://github.com/jax-ml/jax/issues/7465
+    def f(a, b, c):
+      return a + b + c
+
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("but got len(in_axes)=3, len(args)=0. Note that the function "
+                  "was called with keyword arguments ['a', 'b', 'c'], which "
+                  "the entries of a tuple in_axes never correspond to: "
+                  "keyword arguments are always mapped along their leading "
+                  "axis (axis 0)")):
+      jax.vmap(f, in_axes=(0, 0, None))(
+          a=jnp.array([1, 2]), b=jnp.array([2, 4]), c=0.5)
+
+  def test_vmap_in_axes_tuple_with_kwonly_error(self):
+    # https://github.com/jax-ml/jax/issues/7465
+    def g(a, *, b):
+      return a @ b
+
+    with self.assertRaisesRegex(
+        ValueError,
+        re.escape("but got len(in_axes)=2, len(args)=1. Note that the function "
+                  "was called with keyword arguments ['b']")):
+      jax.vmap(g, in_axes=(None, 0))(jnp.ones((2, 4)), b=jnp.ones((10, 4, 2)))
+
   def test_vmap_in_axes_tree_prefix_error(self):
     # https://github.com/jax-ml/jax/issues/795
     value_tree = jnp.ones(3)
