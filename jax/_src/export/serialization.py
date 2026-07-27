@@ -225,12 +225,8 @@ def _serialize_exported(
               for s in exp._out_named_shardings], dtype=np.uint32))
 
   ser_flatbuf.ExportedStart(builder)
-  # TODO(necula): we cannot really store the actual serialization_version
-  # in the flatbuffer because prior to 11/25/2025 deserializers checked
-  # if the version is 2 or 3. I have now removed that check, but for the
-  # sake of old deserializers we can only store version 3. Starting
-  # on January 2026 we can store the actual version.
-  ser_flatbuf.ExportedAddSerializationVersion(builder, 3)
+  # Started saving the actual serialization version on 7/27/2026.
+  ser_flatbuf.ExportedAddSerializationVersion(builder, _SERIALIZATION_VERSION)
   ser_flatbuf.ExportedAddFunctionName(builder, fun_name)
   ser_flatbuf.ExportedAddInTree(builder, in_tree)
   ser_flatbuf.ExportedAddInAvals(builder, in_avals)
@@ -281,6 +277,9 @@ def _serialize_array(
 
 
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
+  # TODO(b/539419341): check the minimum serialization version.
+  # We only started to save the actual serialization version on 7/27/2026, so
+  # we can add this check after 1/27/2027.
   scope = shape_poly.SymbolicScope(())  # TODO(necula): serialize the constraints
 
   unique_avals = [
@@ -304,6 +303,13 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   fun_name = exp.FunctionName().decode("utf-8")
 
   nr_devices = exp.NrDevices()
+  if nr_devices == 0 and exp.NrDevicesShort() > 0:
+    raise ValueError(
+        "Exported being deserialized seems to be from before 11/25/2025 and "
+        "cannot be deserialized anymore because it is older than the 6-month "
+        "backward-compatibility window. The Exported has serialization version "
+        f"{exp.SerializationVersion()}."
+    )
   def sharding_by_idx(idx):
     if idx == 0:
       return None
