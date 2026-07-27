@@ -142,8 +142,7 @@ class RemoteDMATest(parameterized.TestCase):
   @parameterized.product(src_is_hbm=[False, True])
   def test_scs_remote_dma_spmem(self, src_is_hbm):
     """Tests ScalarSubcore remote DMA to VMEM_SHARED from VMEM_SHARED or HBM."""
-    if src_is_hbm is False:
-      # TODO(ivyzheng, rdyro): Re-enable this test once the bug is fixed.
+    if src_is_hbm is False and not jtu.is_libtpu_at_least('0.45.0'):
       self.skipTest('VMEM_SHARED to VMEM_SHARED version is flaky.')
     num_devices = jax.device_count()
     sc_info = pltpu.get_tpu_info().sparse_core
