@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import threading
+import dataclasses
 from typing import Any, Union
 import warnings
 
@@ -85,6 +86,12 @@ def _is_tfval(v: TfVal) -> bool:
 class _DefaultNativeSerialization:
   pass
 DEFAULT_NATIVE_SERIALIZATION = _DefaultNativeSerialization()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _TfShapeDtypeStruct:
+  shape: tuple[Any, ...]
+  dtype: Any
 
 
 # In order to ensure that JAX picks up the proper user-frame for source
@@ -254,7 +261,7 @@ def convert(fun_jax: Callable,
       source_info_util.register_exclusion(os.path.dirname(tf.__file__))
       _has_registered_tf_source_path = True
 
-    def jax_arg_spec_from_tf(a: TfVal) -> jax.ShapeDtypeStruct:
+    def jax_arg_spec_from_tf(a: TfVal) -> _TfShapeDtypeStruct:
       # The shape and JAX dtype for a TF argument
       tf_arg_shape = np.shape(a)
       # Fix the shape for TF1
@@ -262,9 +269,10 @@ def convert(fun_jax: Callable,
                            if isinstance(d, tf.compat.v1.Dimension) else d
                            for d in tf_arg_shape)
       _, a_jax_dtype = _tfval_to_tensor_jax_dtype(a)
-      # We count on the fact that jax.ShapeDtypeStruct allows shapes that
-      # contain None.
-      return jax.ShapeDtypeStruct(tf_arg_shape, a_jax_dtype)
+      # We use _TfShapeDtypeStruct here because jax.ShapeDtypeStruct does not
+      # support None in the shape. We only use None for the shape dimensions
+      # that are symbolic. export.symbolic_args_specs will ignore those anyway.
+      return _TfShapeDtypeStruct(tf_arg_shape, a_jax_dtype)
 
     args_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, args_tf)
     args_specs = export.symbolic_args_specs(
