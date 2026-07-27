@@ -4221,10 +4221,8 @@ class FragmentedArray:
 
     minor_lane_dim = layout.lane_dims[-1]
     major_lane_dim = layout.lane_dims[0]
-    # TODO(apaszke): Any 32-bit vector should just work. Bitwidth is irrelevant.
     is_txmatrix_reg_layout = (
-        utils.bitwidth(dtype) == 16
-        and layout.vector_length == 2
+        utils.bitwidth(dtype) * layout.vector_length == 32
         and isinstance(minor_lane_dim, int)
         and tiled_nested_shape[minor_lane_dim][-1] % 4 == 0
         # TODO(apaszke): This is no worse than what we had before, but I'm
@@ -4238,6 +4236,7 @@ class FragmentedArray:
     )
     is_col_txmatrix_mem_layout = (
         is_txmatrix_reg_layout
+        and utils.bitwidth(dtype) == 16
         and isinstance(major_lane_dim, int)
         and len(layout.lane_dims) == 2
         and tiled_nested_shape[major_lane_dim] == (8,)
