@@ -2001,5 +2001,17 @@ class ValidateIndicesTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+
+class DSliceTest(jtu.JaxTestCase):
+  @parameterized.parameters([
+    ((None,), slice(None)),
+    ((5,), Slice(0, 5, 1)),
+    ((0, 5), Slice(0, 5, 1)),
+    ((0, 5, 2), Slice(0, 5, 2)),
+  ])
+  def test_dslice_construction(self, args, expected):
+    self.assertEqual(jax.ds(*args), expected)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
