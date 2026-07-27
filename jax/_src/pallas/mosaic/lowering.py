@@ -3659,14 +3659,20 @@ def _atan2_lowering_rule(ctx: LoweringRuleContext, x, y, accuracy=None):
   return mlir_math.atan2(x, y)
 
 
-@register_lowering_rule(lax.tanh_p)
+@register_lowering_rule(
+    lax.tanh_p,
+    kernel_types=(tpu_core.CoreType.TC, tpu_core.CoreType.SC_VECTOR_SUBCORE),
+)
 def _tanh_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
   return mlir_math.tanh(x)
 
 
-@register_lowering_rule(lax.log_p)
+@register_lowering_rule(
+    lax.log_p,
+    kernel_types=(tpu_core.CoreType.TC, tpu_core.CoreType.SC_VECTOR_SUBCORE),
+)
 def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy=None):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
