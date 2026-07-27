@@ -133,7 +133,7 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
+      options: --init --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --shm-size 64G --env-file /etc/podinfo/gha-gpu-isolation-settings
     name: "${{ (contains(inputs.runner, 'gfx950.1') && 'gfx950.1') ||
         (contains(inputs.runner, 'gfx950.4') && 'gfx950.4') ||
         (contains(inputs.runner, 'gfx950.8') && 'gfx950.8') }}, ROCm ${{ inputs.rocm-version }}, py${{ inputs.python }}"
@@ -205,3 +205,9 @@ jobs:
           IS_NIGHTLY: ${{ contains(github.workflow, 'Nightly/Release') && 'nightly' || 'continuous' }}
         run: |
           ./ci/upload_rocm_logs.sh
+      - name: Release container resources
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          ps -eo pid,ppid,stat,wchan:24,comm | awk 'NR==1 || $3 ~ /^[DZ]/' || true

@@ -119,6 +119,7 @@ jobs:
       volumes:
         - /data:/data
       options: >-
+        --init
         --device=/dev/kfd
         --device=/dev/dri
         --security-opt seccomp=unconfined
@@ -224,3 +225,10 @@ jobs:
           artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-rocm${{ inputs.rocm-version }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}
+      - name: Release container resources
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          bazel shutdown 2>/dev/null || true
+          ps -eo pid,ppid,stat,wchan:24,comm | awk 'NR==1 || $3 ~ /^[DZ]/' || true
