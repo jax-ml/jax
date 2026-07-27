@@ -15,6 +15,7 @@
 import collections
 from collections.abc import Callable
 import concurrent.futures
+import copy
 import functools
 from functools import partial
 import itertools as it
@@ -87,6 +88,10 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(api.jvp(f, (x,), (x,)),
                         api.jvp(f3, (x,), (x,)),
                         check_dtypes=False)
+
+  def test_deepcopy(self):
+    f = copy.deepcopy(jax.nn.relu)  # doesn't crash
+    self.assertAllClose(jax.grad(f)(1.), 1.)
 
   def test_python_control_flow(self):
     @jax.custom_jvp
@@ -1545,6 +1550,16 @@ class CustomVJPTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(api.grad(f)(x), api.grad(f3)(x),
                         check_dtypes=False)
+
+  def test_deepcopy(self):
+    with config.custom_vjp3(False):
+      @jax.custom_vjp
+      def f(x):
+        return jnp.sin(x)
+      f.defvjp(lambda x: (jnp.sin(x), jnp.cos(x)),
+               lambda cos_x, g: (cos_x * g,))
+    g = copy.deepcopy(f)  # doesn't crash
+    self.assertAllClose(jax.grad(g)(1.), jnp.cos(1.))
 
   def test_python_control_flow(self):
     @jax.custom_vjp

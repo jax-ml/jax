@@ -151,8 +151,8 @@ class custom_jvp(Generic[ReturnValue]):
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
-  def __new__(cls, fun, nondiff_argnums=(), nondiff_argnames=()):
-    if config.custom_jvp3.value:
+  def __new__(cls, fun=None, nondiff_argnums=(), nondiff_argnames=()):
+    if fun is not None and config.custom_jvp3.value:
       from jax._src.hijax import custom_jvp3  # pyrefly: ignore[missing-import]
       return custom_jvp3(fun, nondiff_argnums, nondiff_argnames)
     else:
@@ -580,8 +580,8 @@ class custom_vjp(Generic[ReturnValue]):
   .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
 
-  def __new__(cls, fun, nondiff_argnums=(), nondiff_argnames=()):
-    if config.custom_vjp3.value:
+  def __new__(cls, fun=None, nondiff_argnums=(), nondiff_argnames=()):
+    if fun is not None and config.custom_vjp3.value:
       from jax._src.hijax import custom_vjp3  # pyrefly: ignore[missing-import]
       return custom_vjp3(fun, nondiff_argnums, nondiff_argnames)
     else:
