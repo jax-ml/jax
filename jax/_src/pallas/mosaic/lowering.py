@@ -44,7 +44,7 @@ from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
 from jax._src import xla_bridge
-from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
+from jax._src.cloud_tpu_init import is_libtpu_at_least
 from jax._src.export import shape_poly
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
@@ -476,12 +476,8 @@ class LoweringRuleContext:
   def forward_compatible(self):
     return self.lowering_context.forward_compatible
 
-  def is_cloud_tpu_older_than(self, year: int, month: int, day: int):
-    # No way for us to query the version, so assume the oldest possible backend.
-    if self.lowering_context.backend is None:
-      return True
-    backend = self.lowering_context.backend
-    return is_cloud_tpu_older_than(year, month, day, backend)
+  def is_libtpu_at_least(self, version_str: str) -> bool:
+    return is_libtpu_at_least(version_str)
 
   def aval_to_ir_type(
       self,
@@ -1047,10 +1043,10 @@ def lower_jaxpr_into_pipelined_module(
 ) -> None:
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if backend is not None and is_cloud_tpu_older_than(2026, 4, 1, backend):
+  if not is_libtpu_at_least("0.0.44"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a libtpu version that's at most a month old. Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.44). Found"
         f" version string:\n{platform_version}"
     )
   debug_info = jaxpr.debug_info
@@ -1419,10 +1415,10 @@ def lower_jaxpr_into_unpipelined_module(
     )
   backend = lowering_context.module_context.get_backend(optional=True)
   # NOTE: We should bump this periodically
-  if backend is not None and is_cloud_tpu_older_than(2026, 4, 1, backend):
+  if not is_libtpu_at_least("0.0.44"):
     platform_version = xla_bridge.get_backend().platform_version
     raise RuntimeError(
-        "Pallas TPU requires a libtpu version that's at most a month old. Found"
+        "Pallas TPU requires a recent libtpu version (at least 0.0.44). Found"
         f" version string:\n{platform_version}"
     )
   sym_tab = ir.SymbolTable(module.operation)
@@ -3948,9 +3944,8 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       raise ValueError(
         "Cannot fully unroll loop with dynamic number of steps (unroll=0)")
 
-  backend = ctx.lowering_context.backend
-  supports_late_unroll = not ctx.forward_compatible and (
-      backend is not None and not is_cloud_tpu_older_than(2026, 7, 20, backend)
+  supports_late_unroll = (
+      not ctx.forward_compatible and ctx.is_libtpu_at_least("0.0.45")
   )
   # TODO(apaszke): Remove forward_compatible check and associated code after 20.08.2026
   if unroll > 1 and not supports_late_unroll:

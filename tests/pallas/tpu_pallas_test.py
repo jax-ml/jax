@@ -2162,11 +2162,6 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
 
 class PallasCallTest(ptu.PallasTPUTest):
 
-  def setUp(self):
-    super().setUp()
-    if not jtu.is_libtpu_at_least('0.0.44.2'):
-      self.skipTest('TODO(b/539904831): Unskip once LibTPU is updated.')
-
   def test_memory_space_like(self):
     x = jax.ShapeDtypeStruct((2, 3), jnp.float32)
     ref = pltpu.VMEM.like(x)

@@ -33,7 +33,6 @@ import textwrap
 import threading
 from typing import Any, TextIO
 import unittest
-import warnings
 import zlib
 
 from absl.testing import parameterized
@@ -51,7 +50,10 @@ from jax._src import sharding_impls
 from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src import util
-from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
+from jax._src.cloud_tpu_init import (
+    is_libtpu_at_least as is_libtpu_at_least,
+    running_in_cloud_tpu_vm as running_in_cloud_tpu_vm,
+)
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.lib import cuda_versions
@@ -424,52 +426,6 @@ def is_test_rbe() -> bool:
       os.getenv("IS_JAX_RBE_TESTING", "").lower() in {"true", "1", "yes", "y"}
       )
 
-def is_libtpu_at_least(version_str: str) -> bool:
-  """Returns True if not running on Cloud TPU.
-
-  If running on Cloud TPU, returns True if the installed libtpu version
-  is at least `version_str`.
-
-  Note: This checks the version of the installed `libtpu` Python package.
-  If `TPU_LIBRARY_PATH` is set to a different path than the installed
-  package's default, a warning will be issued as the loaded library
-  might not match the package version we are checking.
-  """
-  if not is_cloud_tpu():
-    return True
-
-  tpu_library_path = os.environ.get('TPU_LIBRARY_PATH')
-  try:
-    import libtpu  # pyrefly: ignore[missing-import]
-  except ImportError:
-    if tpu_library_path:
-      warnings.warn(
-          f"libtpu Python package is not installed, but TPU_LIBRARY_PATH is set to {tpu_library_path}. "
-          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
-          stacklevel=2
-      )
-    else:
-      warnings.warn(
-          f"libtpu Python package is not installed, but we appear to be on a Cloud TPU VM. "
-          f"Cannot determine libtpu version. Assuming it is newer than {version_str}.",
-          stacklevel=2
-      )
-    return True
-
-  if tpu_library_path and tpu_library_path != libtpu.get_library_path():
-    logger.info(
-        f"TPU_LIBRARY_PATH is set to {tpu_library_path}, which differs from "
-        f"the installed package default ({libtpu.get_library_path()}). Using "
-        f"the custom path set by TPU_LIBRARY_PATH and assuming the version of "
-        f"libtpu is head for version tests."
-    )
-    return True
-
-  # Parse unconditionally. If it throws ValueError, let it propagate.
-  actual_version = parse_version(libtpu.__version__)
-  required_version = parse_version(version_str)
-
-  return actual_version >= required_version
 
 def pjrt_c_api_version_at_least(major_version: int, minor_version: int) -> bool:
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()

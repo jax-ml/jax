@@ -31,7 +31,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import sharding_impls
-from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -66,7 +65,7 @@ ir_version_override: Callable[[], int | None] | None = None
 # mode: for 1 month when exporting, or when using old cloud TPU.
 #
 # This can be achieved by adding:
-#    if ctx.is_forward_compat() or backend is None or is_cloud_tpu_older_than(<today>):
+#    if ctx.is_forward_compat() or backend is None or not is_libtpu_at_least(<version>):
 #       return <previous_serialization_version>
 #    return None
 #
@@ -74,12 +73,7 @@ ir_version_override: Callable[[], int | None] | None = None
 _FWD_COMPAT_VERSION = 13
 def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
   backend = ctx.module_context.get_backend(optional=True)
-  if (
-      ctx.is_forward_compat()
-      or backend is None
-      # TODO(emilyaf): remove the forward compatibility check after 2026-07-08.
-      or is_cloud_tpu_older_than(2026, 6, 8, backend)
-  ):
+  if ctx.is_forward_compat() or backend is None:
     return _FWD_COMPAT_VERSION
   if ir_version_override is not None:
     return ir_version_override()
