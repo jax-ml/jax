@@ -35,7 +35,7 @@ from jax._src.pallas.triton import gpu_info as gpu_info_lib
 
 # TODO(b/526389887): Figure out how to flip this to True.
 USE_NEW_CUSTOM_CALL = False
-CUSTOM_CALL_TARGET_NAME: Final = (
+CUSTOM_CALL_TARGET_NAME: Final[str] = (
     "triton_kernel_call_ffi"
     if USE_NEW_CUSTOM_CALL
     else "__gpu$xla.gpu.triton"
