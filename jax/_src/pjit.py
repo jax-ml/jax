@@ -81,7 +81,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, distributed_debug_log,
     split_list, split_list_checked, weakref_lru_cache, merge_lists, subs_list,
-    fun_name)
+    fun_name, foreach)
 from jax._src.lib import jax_jit
 
 map, unsafe_map = safe_map, map
@@ -2600,6 +2600,63 @@ def _layout_constraint_batcher(axis_data, vals_in, dims_in, layout):
   y = layout_constraint_p.bind(x, layout=vmapped_layout)
   return y, d
 batching.fancy_primitive_batchers[layout_constraint_p] = _layout_constraint_batcher
+
+# ------------------------- program_order --------------------------------------
+
+def program_order(f=None, *, enforce: bool):
+  kwargs = dict(enforce=enforce)
+  if f is None:
+    return lambda g: _program_order(g, **kwargs)
+  return _program_order(f, **kwargs)
+
+def _program_order(fun, *, enforce):
+  @wraps(fun)
+  def wrapped(*args):
+    if not enforce:
+      return api.jit(fun)(*args)
+    traced = api.jit(fun).trace(*args)
+    jaxpr = traced.jaxpr
+    args_flat, _ = tree_flatten(args)
+    flat_outputs = eval_jaxpr_program_order(
+        jaxpr, jaxpr.consts, *traced._consts, *args_flat)
+    return tree_util.tree_unflatten(traced.out_tree, flat_outputs)
+  return wrapped
+
+def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
+  from jax._src.lax.lax import create_token, optimization_barrier  # type: ignore
+
+  def read(v) -> Any:
+    return v.val if isinstance(v, core.Literal) else env[v]
+
+  def write(v, val: Any) -> None:
+    if config.enable_checks.value:
+      assert core.typecheck(v.aval, val), (v.aval, typeof(val), val)
+    env[v] = val
+
+  token = create_token()
+
+  env = {}
+  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.invars, args)
+  last_used = core.last_used(jaxpr)
+  for eqn in jaxpr.eqns:
+    bind_params = eqn.primitive.get_bind_params(eqn.params)
+    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
+    traceback = eqn.source_info.traceback
+    with (source_info_util.user_context(traceback, name_stack=name_stack),
+          eqn.ctx.manager):
+      cur_inps = map(read, eqn.invars)
+      token, cur_inps = optimization_barrier((token, cur_inps))
+      ans = eqn.primitive.bind(*cur_inps, **bind_params)
+    token, ans = optimization_barrier((token, ans))
+    if eqn.primitive.multiple_results:
+      foreach(write, eqn.outvars, ans)
+    else:
+      write(eqn.outvars[0], ans)
+    core.clean_up_dead_vars(eqn, env, last_used)
+  outvals = map(read, jaxpr.outvars)
+  _, outvals = optimization_barrier((token, outvals))
+  return outvals
 
 # -------------------- helpers --------------------
 

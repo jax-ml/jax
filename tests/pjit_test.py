@@ -37,7 +37,6 @@ from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax._src import literals
 from jax._src import pretty_printer as pp
-from jax._src.compute_on import compute_on2
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
@@ -11377,115 +11376,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     expected_out = jax.jit(jax.grad(lambda x: f(x).sum()))(jnp_inp)
     self.assertArraysEqual(reshard(out, P()), expected_out)
-
-  @jtu.with_explicit_mesh((8,), ('x',))
-  def test_fsdp_pipeline_grad(self, mesh):
-    def ag(x):
-      return jax.reshard(x, P(reduced={'x'}))
-
-    if jtu.is_device_tpu_at_least(7):
-      ag = compute_on2(ag, compute_type='tpu_sparsecore',
-                       out_memory_spaces=jax.memory.Space.Device,
-                       compiler_options={'sparse_core_config': {'core_ids': [0]}})
-
-    def rs(x):
-      return jax.reshard(x, (P('x', None), P(None, 'x')))
-
-    if jtu.is_device_tpu_at_least(7):
-      rs = compute_on2(rs, compute_type='tpu_sparsecore',
-                       out_memory_spaces=jax.memory.Space.Device,
-                       compiler_options={'sparse_core_config': {'core_ids': [1]}})
-
-    @partial(jax.custom_vjp, nondiff_argnums=(0,))
-    def fsdp_pipe(f, x, ws):
-      w = ag(jax.tree.map(lambda x: x[0], ws))
-      carry = (x, w)
-      def body(carry, w_n_sharded):
-        x, w = carry
-        w_n = ag(w_n_sharded)
-        x = f(x, w)
-        return (x, w_n), ()
-      (x, w), () = jax.lax.scan(body, carry, jax.tree.map(lambda x: x[1:], ws),
-                                unroll=2)  # need for double buffering
-      x = f(x, w)
-      return x
-
-    def fsdp_pipe_fwd(f, x, ws):
-      w = ag(jax.tree.map(lambda x: x[0], ws))
-      x, f_vjp_first = jax.vjp(f, x, w)
-      f_vjp_first.args_res[1] = None  # could instead use remat
-
-      w = ag(jax.tree.map(lambda x: x[1], ws))
-      carry = (x, w)
-
-      def body(carry, w_n_sharded):
-        x, w = carry
-        w_n = ag(w_n_sharded)
-
-        x, f_vjp = jax.vjp(f, x, w)
-        f_vjp.args_res[1] = None
-
-        return (x, w_n), f_vjp
-      (x, w_last), f_vjps = jax.lax.scan(
-          body, carry, jax.tree.map(lambda x: x[2:], ws), unroll=2)  # need for double buffering
-
-      x, f_vjp_last = jax.vjp(f, x, w_last)
-      f_vjp_last.args_res[1] = None
-      return x, (f_vjp_first, f_vjps, f_vjp_last, ws)
-
-    def fsdp_pipe_bwd(_, res, x_bar):
-      f_vjp_first, f_vjps, f_vjp_last, ws = res
-
-      w_m1 = ag(jax.tree.map(lambda x: x[-1], ws))
-      f_vjp_last.args_res[1] = w_m1
-      x_bar, w_m1_bar_unreduced = f_vjp_last(x_bar)
-
-      w_m2 = ag(jax.tree.map(lambda x: x[-2], ws))
-      carry = (x_bar, w_m2, w_m1_bar_unreduced)
-
-      def body(carry, f_vjp_and_w_m1_sharded):
-        y_bar, w, w_p1_bar_unreduced = carry
-        f_vjp, w_m1_sharded = f_vjp_and_w_m1_sharded
-        w_m1 = ag(w_m1_sharded)
-        f_vjp.args_res[1] = w
-        x_bar, w_bar_unreduced = f_vjp(y_bar)
-        w_p1_bar_sharded = rs(w_p1_bar_unreduced)
-        return (x_bar, w_m1, w_bar_unreduced), w_p1_bar_sharded
-
-      (x_bar, w_0, w_1_bar_unreduced), ws_bar = jax.lax.scan(
-          body, carry, (f_vjps, jax.tree.map(lambda x: x[:-2], ws)),
-          reverse=True, unroll=2)
-
-      f_vjp_first.args_res[1] = w_0
-      x_bar, w_0_bar_unreduced = f_vjp_first(x_bar)
-      w_1_bar = rs(w_1_bar_unreduced)
-      w_0_bar = rs(w_0_bar_unreduced)
-      ws_bar = jax.tree.map(
-          lambda x, y, z: jnp.concatenate([x[None], y[None], z], axis=0),
-          w_0_bar, w_1_bar, ws_bar)
-      return x_bar, ws_bar
-
-    fsdp_pipe.defvjp(fsdp_pipe_fwd, fsdp_pipe_bwd)
-
-    def f(x, w):
-      w1, w2 = w
-      temp = x @ w1
-      out = temp @ w2
-      return out
-
-    x = jnp.ones((32 * 32, 128), out_sharding=P('x', None))
-    w1s = jnp.ones((32, 128, 256), out_sharding=P(None, 'x', None))
-    w2s = jnp.ones((32, 256, 128), out_sharding=P(None, None, 'x'))
-    ws = (w1s, w2s)
-
-    # primal only
-    jax.jit(partial(fsdp_pipe, f))(x, ws)  # doesn't crash
-
-    @jax.jit
-    def g(x, ws):
-      y, f_vjp = jax.vjp(partial(fsdp_pipe, f), x, ws)
-      return f_vjp(jnp.ones_like(y))
-    jax.block_until_ready(g(x, ws))  # doesn't crash
 
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_percentile(self, mesh):

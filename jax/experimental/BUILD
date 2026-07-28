@@ -162,11 +162,14 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "control_deps",
-    srcs = ["control_deps.py"],
+    name = "overlap",
+    srcs = ["overlap.py"],
     type_checking = "pyrefly",
     visibility = ["//visibility:public"],
-    deps = ["//jax"],
+    deps = [
+        "//jax/_src:api",
+        "//jax/_src:ffi",
+    ],
 )
 
 pytype_strict_library(

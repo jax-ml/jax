@@ -9859,6 +9859,7 @@ def _optimization_barrier_lowering_rule(ctx, *args):
   barrier_op = hlo.OptimizationBarrierOp(flat_args)
   _, treedef = mlir.ir_tree_registry.flatten(barrier_types)
   out = [mlir.lower_with_sharding_in_types(ctx, op, aval)
+         if isinstance(aval, core.ShapedArray) else op
          for op, aval in zip(barrier_op.results, ctx.avals_out)]
   return treedef.unflatten(out)
 mlir.register_lowering(optimization_barrier_p,

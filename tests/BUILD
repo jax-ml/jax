@@ -1978,22 +1978,15 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "control_deps_test",
-    srcs = ["control_deps_test.py"],
+    name = "overlap_test",
+    srcs = ["overlap_test.py"],
+    shard_count = {
+        "cpu": 5,
+        "tpu": 5,
+        "gpu": 2,
+    },
     tags = ["multiaccelerator"],
-    deps = [
-        "//jax/experimental:control_deps",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-    ]),
-)
-
-jax_multiplatform_test(
-    name = "async_collectives_test",
-    srcs = ["async_collectives_test.py"],
-    tags = ["multiaccelerator"],
-    deps = py_deps([
+    deps = ["//jax/experimental:overlap"] + py_deps([
         "absl/testing",
         "numpy",
     ]),
