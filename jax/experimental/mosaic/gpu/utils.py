@@ -766,19 +766,13 @@ def memref_reshape(
         (), ref_ty.element_type, new_layout, ref_ty.memory_space
     )
     return memref.collapse_shape(result_ty, ref, [])
-  # For contiguous refs we can do arbitrary reshapes easily.
-  strides, _ = ref_ty.get_strides_and_offset()
-  if all(
-      d == 1 or s1 == s2
-      for d, s1, s2 in zip(
-          ref_ty.shape,
-          get_contiguous_strides(ref_ty.shape),
-          strides,
-          strict=True,
-      )
-  ):
-    return memref_unfold(memref_fold(ref, 0, ref_ty.rank), 0, shape)
-  return _reshape(ref, src_shape, dst_shape)
+  try:
+    return _reshape(ref, src_shape, dst_shape)
+  except NotImplementedError as e:
+    # For contiguous refs we can do arbitrary reshapes easily.
+    if _is_contiguous_shape_slice(ref_ty):
+      return memref_unfold(memref_fold(ref, 0, ref_ty.rank), 0, shape)
+    raise e
 
 
 @overload
