@@ -25,6 +25,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     temporarily bypass the error check.
     See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
 
+* Changes
+  * The cuDNN fused attention backward pass (used by
+    {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) no
+    longer computes a bias gradient when the only attention bias comes from
+    a boolean `mask`, whose gradient no caller can request. Bias gradients
+    for an explicit `bias` or a non-boolean `mask` are unchanged
+    ({jax-issue}`#34685`).
+
 * Bug fixes
   * The batching rules of the cuDNN fused attention primitives (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now

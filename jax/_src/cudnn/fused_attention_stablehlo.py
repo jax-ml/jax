@@ -2141,12 +2141,18 @@ def dot_product_attention(
     if q_offsets is not None and (q_seqlen is None or kv_seqlen is None):
       raise ValueError("Require q_seqlen and kv_seqlen to use packed layout")
 
+    # A bias gradient can only be needed if a differentiable operand feeds the
+    # combined bias: an explicit bias, or a non-boolean mask. A boolean mask
+    # alone is converted to a constant additive bias whose gradient nobody can
+    # request, so skip the (costly) dbias computation in the backward pass.
+    bias_is_differentiable = bias is not None or (
+        mask is not None and mask.dtype != np.dtype('bool'))
     bias = combine_bias_and_mask(bias, mask, query.dtype)
     # check if input shape and data type is compatiable
     check_layout(query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
       None, None, layout)
     has_bias = bias is not None
-    has_dbias = has_bias and \
+    has_dbias = has_bias and bias_is_differentiable and \
       should_export_dbias(bias.shape, query.shape, layout)
     variadic_args = (has_bias, has_dbias)
 
