@@ -31,6 +31,7 @@ from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import tree_util
+from jax._src import custom_batching
 from jax._src import custom_derivatives
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
@@ -949,3 +950,43 @@ def _eval_jaxpr_ad_error(dis_jaxpr, consts, args):
 @_eval_jaxpr_ad_error.defjvp
 def _eval_jaxpr_ad_error_jvp(*_):
   raise Exception("should be unreachable, AD after discharge")
+
+
+@register_discharge_rule(custom_batching.custom_vmap_p)
+def custom_vmap_call_discharge(
+    in_avals, out_avals, *args, call, rule, in_tree, out_tree
+):
+  dis_closed_jaxpr = discharge_state(call)
+  if not any(isinstance(a, AbstractRef) for a in in_avals):
+    # No Refs cross the boundary; keep the primitive for subsequent batching.
+    out = custom_batching.custom_vmap_p.bind(
+        *args,
+        call=dis_closed_jaxpr,
+        rule=rule,
+        in_tree=in_tree,
+        out_tree=out_tree,
+    )
+    return [None] * len(in_avals), out
+  # Refs cross the boundary: drop the batching rule (discharge runs after
+  # batching) and inline the discharged body, threading updated Ref values
+  # back to their inputs.
+  outs = _eval_jaxpr_batching_error(
+      dis_closed_jaxpr, dis_closed_jaxpr.consts, args)
+  out_vals, ref_vals = split_list(outs, [len(call.out_avals)])
+  ref_vals_iter = iter(ref_vals)
+  new_invals = [
+      next(ref_vals_iter) if isinstance(aval, AbstractRef) else None
+      for aval in in_avals
+  ]
+  sentinel = object()
+  assert next(ref_vals_iter, sentinel) is sentinel
+  return new_invals, out_vals
+
+def _eval_jaxpr_batching_error(dis_jaxpr, consts, args):
+  @custom_batching.custom_vmap
+  def run(*args):
+    return core.eval_jaxpr(dis_jaxpr, consts, *args)
+  @run.def_vmap
+  def _(*_):
+    raise Exception("should be unreachable, batching after discharge")
+  return run(*args)

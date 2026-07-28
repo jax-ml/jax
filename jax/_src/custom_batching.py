@@ -260,7 +260,7 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
 
 def custom_vmap_abstract_eval(*in_avals, call, **_):
   del in_avals
-  return call.out_avals, call.effects
+  return call.out_avals, core.positional_effects(call)
 
 
 def custom_vmap_jvp(primals, tangents, *,

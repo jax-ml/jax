@@ -948,6 +948,43 @@ class MutableArrayTest(jtu.JaxTestCase):
     g, = f_vjp(1.)
     self.assertAllClose(g, 1., check_dtypes=False)
 
+  def test_custom_vmap_discharge_internal_ref(self):
+    @jax.custom_batching.custom_vmap
+    def f(x):
+      ref = jax.new_ref(jnp.zeros_like(x))
+      ref[...] = x * 2.
+      return jax.ref.freeze(ref)
+
+    @f.def_vmap
+    def _(axis_size, in_batched, x):
+      return x * 2., True
+
+    jaxpr = jax.make_jaxpr(f)(jnp.arange(3.))
+    discharged_jaxpr = state_discharge.discharge_state(jaxpr.jaxpr)
+    res = core.eval_jaxpr(discharged_jaxpr, jaxpr.consts, jnp.arange(3.))
+    self.assertAllClose(res[0], jnp.arange(3.) * 2., check_dtypes=False)
+
+    vmapped_res = jax.vmap(f)(jnp.arange(3.))
+    self.assertAllClose(vmapped_res, jnp.arange(3.) * 2., check_dtypes=False)
+
+  def test_custom_vmap_discharge_ref_across_boundary(self):
+    @jax.custom_batching.custom_vmap
+    def f(x):
+      ref = jax.new_ref(jnp.zeros(3))
+      ref[...] = x * 3.
+      return jax.ref.freeze(ref)
+
+    @f.def_vmap
+    def _(axis_size, in_batched, x):
+      return x * 3., True
+
+    # The constant-derived ref is hoisted to a custom_vmap_p const, so discharge
+    # sees an AbstractRef input.
+    jaxpr = jax.make_jaxpr(f)(jnp.arange(3.))
+    discharged_jaxpr = state_discharge.discharge_state(jaxpr.jaxpr)
+    res = core.eval_jaxpr(discharged_jaxpr, jaxpr.consts, jnp.arange(3.))
+    self.assertAllClose(res[0], jnp.arange(3.) * 3., check_dtypes=False)
+
   def test_get_transpose_uninstantiated_grad_ref(self):
     # from https://github.com/jax-ml/jax/pull/31412#discussion_r2308151559
     f = lambda x: jax.new_ref(x)[0]

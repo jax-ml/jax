@@ -486,6 +486,7 @@ py_library_providing_imports_info(
         ":callback",
         ":config",
         ":core",
+        ":custom_batching",
         ":custom_derivatives",
         ":custom_partitioning_sharding_rule",
         ":dtypes",
