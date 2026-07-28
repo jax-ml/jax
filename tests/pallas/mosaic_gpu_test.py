@@ -581,6 +581,33 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape1)).reshape(shape1).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
 
+  def test_reshape_tiled_with_indexing(self):
+    # This is a regression test from a Tokamax GLU kernel.
+    dtype = jnp.float16
+    shape1, shape2 = (2, 64, 2, 64), (64, 128)
+    swizzle = 128
+    swizzle_elems = 8 * swizzle // dtypes.itemsize_bits(dtype)
+    transforms = (
+        plgpu.TilingTransform((8, 1, swizzle_elems)),
+        plgpu.SwizzleTransform(swizzle),
+    )
+
+    @functools.partial(
+        self.kernel,
+        scratch_types=[
+            plgpu.SMEM(shape1, dtype, transforms=transforms),
+            plgpu.Barrier(),
+        ],
+        out_type=jax.ShapeDtypeStruct(shape2, dtype)
+    )
+    def kernel(src_ref, dst_ref, smem_ref, barrier):
+      plgpu.copy_gmem_to_smem(src_ref, smem_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      dst_ref[...] = smem_ref.at[1].reshape(shape2)[...]
+
+    x = jnp.arange(math.prod(shape1), dtype=dtype).reshape(shape1)
+    np.testing.assert_array_equal(kernel(x), x[1].reshape(shape2))
+
   def test_reshape_splat(self):
     shape = (1, 1, 1)
 
