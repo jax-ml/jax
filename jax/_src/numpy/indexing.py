@@ -222,10 +222,19 @@ class NDIndexer:
     for position, idx in enumerate(self.indices):
       if idx.typ == IndexType.SLICE:
         assert isinstance(idx.index, slice)
+        elts = [idx.index.start, idx.index.stop, idx.index.step]
         if not all(_is_slice_element_none_or_constant_or_symbolic(val)
-                   for val in [idx.index.start, idx.index.stop, idx.index.step]):
-          raise IndexError("Slice entries must be static integers."
-                          f" Got {idx.index} at position {position}")
+                   for val in elts):
+          msg = ("Array slice indices must have static start/stop/step to be used "
+                 f"with NumPy indexing syntax. Got {idx.index} at position "
+                 f"{position}. To index an array at a dynamic position with a "
+                 "static slice size, use x[jax.ds(start, size)] or "
+                 "lax.dynamic_slice/dynamic_update_slice instead (JAX does not "
+                 "support dynamically sized arrays within traced functions).")
+          tracer = next((val for val in elts if isinstance(val, core.Tracer)), None)
+          if tracer is not None:
+            msg += tracer._origin_msg()
+          raise IndexError(msg)
 
   @staticmethod
   def is_sharded(arr) -> bool:

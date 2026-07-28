@@ -1135,6 +1135,37 @@ class IndexingTest(jtu.JaxTestCase):
                                 "index .* out of bounds for axis .* with size 0"):
       jax.jit(lambda i: x[0, i])(0)  # JAX indexing under jit
 
+  def testNonStaticSliceErrorMessage(self):
+    # https://github.com/jax-ml/jax/issues/7222
+    x = jnp.arange(5)
+
+    # The error states the constraint, suggests dynamic-slicing remedies, and
+    # reports the transform and argument that produced the traced index.
+    with self.assertRaises(IndexError) as cm:
+      jax.jit(lambda x, i: x[i:i + 2])(x, 2)
+    self.assertIn("Array slice indices must have static start/stop/step",
+                  str(cm.exception))
+    self.assertIn("jax.ds(start, size)", str(cm.exception))
+    self.assertIn("lax.dynamic_slice", str(cm.exception))
+    self.assertRegex(str(cm.exception), r"while tracing the function .* for jit")
+    self.assertIn("the argument i", str(cm.exception))
+
+    # The transform name reflects the actual tracing context.
+    with self.assertRaises(IndexError) as cm:
+      lax.fori_loop(0, 3, lambda i, acc: acc + x[i:i + 2].sum(), 0)
+    self.assertRegex(str(cm.exception),
+                     r"while tracing the function .* for fori_loop")
+
+    # vmap tracers report their creation site.
+    with self.assertRaises(IndexError) as cm:
+      jax.vmap(lambda i: x[i:i + 1])(jnp.arange(2))
+    self.assertIn("BatchTracer", str(cm.exception))
+
+    # The update path shares the same error.
+    with self.assertRaises(IndexError) as cm:
+      jax.jit(lambda x, i: x.at[i:i + 2].set(0))(x, 2)
+    self.assertIn("jax.ds(start, size)", str(cm.exception))
+
   def testBooleanIndexingWithEmptyResult(self):
     # based on a TensorFlow Probability test that started failing after #1622
     x = jnp.array([-1])
