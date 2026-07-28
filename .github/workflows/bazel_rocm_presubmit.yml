@@ -49,6 +49,8 @@ jobs:
       jaxlib-version: ${{ matrix.jaxlib-version }}
       halt-for-connection: ${{ inputs.halt-for-connection }}
       rocm-version: ${{ matrix.rocm-version }}
+      rocm-tag: "therock-7.14"
+      rocm-release-version: "7.14.0"
       enable-x64:  ${{ matrix.enable-x64 }}
       build_jaxlib: ${{ (matrix.jaxlib-version == 'head' && 'wheel') || 'false' }}
       build_jax: ${{ 'true' }}
@@ -71,7 +73,8 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       rocm-version: "7"
-      rocm-tag: "rocm720"
+      rocm-tag: "therock-7.14"
+      rocm-release-version: "7.14.0"
       download-jax-from-gcs: 0
       jaxlib-version: "head"
       build_jaxlib: ${{ 'true' }}

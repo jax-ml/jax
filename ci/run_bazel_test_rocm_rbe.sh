@@ -61,6 +61,16 @@ done
 
 TEST_ARTIFACTS_DIR="test-artifacts"
 mkdir -p "$TEST_ARTIFACTS_DIR"
+
+# Point ROCM_PATH and LD_LIBRARY_PATH at the local TheRock installation.
+ROCM_SDK_FLAGS=()
+if command -v rocm-sdk >/dev/null 2>&1; then
+    ROCM_SDK_ROOT="$(rocm-sdk path --root)"
+    ROCM_SDK_FLAGS=(
+        "--repo_env=ROCM_PATH=${ROCM_SDK_ROOT}"
+        "--test_env=LD_LIBRARY_PATH=${ROCM_SDK_ROOT}/lib"
+    )
+fi
 echo "::endgroup::" >&2
 
 echo "::group::Bazel ROCm RBE tests" >&2
@@ -79,6 +89,7 @@ bazel --bazelrc=build/rocm/rocm.bazelrc test \
     --test_env=JAX_SKIP_SLOW_TESTS=true \
     --repo_env=TF_ROCM_AMDGPU_TARGETS="gfx908,gfx90a,gfx942,gfx950" \
     --color=yes \
+    "${ROCM_SDK_FLAGS[@]}" \
     $@ \
     --spawn_strategy=local \
     --target_pattern_file="${TARGETS_FILE}" || bazel_retval=$?
