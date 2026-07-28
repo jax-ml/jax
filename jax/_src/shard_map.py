@@ -2164,7 +2164,7 @@ pe.dce_rules[shard_map_p] = _shard_map_dce
 
 @discharge.register_discharge_rule(shard_map_p)
 def _shard_map_discharge(
-    in_avals, out_avals, *args, jaxpr, mesh, in_specs, out_specs, check_vma,
+    ctx, *args, jaxpr, mesh, in_specs, out_specs, check_vma,
     newly_manual_axes):
   inner_mesh = _as_manual_mesh(mesh, newly_manual_axes)
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
@@ -2188,7 +2188,7 @@ def _shard_map_discharge(
   out_vals, ref_vals = split_list(out_and_ref_vals, [len(jaxpr.outvars)])
   ref_vals_ = iter(ref_vals)
   new_invals = [next(ref_vals_) if isinstance(a, AbstractRef) else None
-                for a in in_avals]
+                for a in ctx.in_avals]
   assert next(ref_vals_, None) is None
   return new_invals, out_vals
 

@@ -1000,8 +1000,7 @@ jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
 @state_discharge.register_discharge_rule(pallas_call_p)
 def _pallas_call_state_discharge_rule(
-    avals_in,
-    avals_out,
+    ctx,
     *args,
     jaxpr: jax_core.Jaxpr,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -1015,10 +1014,9 @@ def _pallas_call_state_discharge_rule(
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
-  del avals_out
   assert all(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars)
   num_refs = len(jaxpr.constvars)
-  ref_avals, rest_in_avals = split_list(avals_in, [num_refs])
+  ref_avals, rest_in_avals = split_list(ctx.in_avals, [num_refs])
   assert all(isinstance(ref_aval, state.AbstractRef) for ref_aval in ref_avals)
   ref_avals = [
       state.AbstractRef(

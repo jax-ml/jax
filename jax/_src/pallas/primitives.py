@@ -262,12 +262,11 @@ _unpad_values_to_avoid_dynamic_slice_oob_shift = functools.partial(
 
 
 @state_discharge.register_discharge_rule(load_p)
-def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
-  del out_avals  # Unused.
+def _load_discharge_rule(ctx, *args_flat, args_tree, **_):
   ref, transforms, mask, other = args_tree.unflatten(args_flat)
   transforms = list(transforms)
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_aval = state.transform_type(transforms, in_avals[0])
+    ref_aval = state.transform_type(transforms, ctx.in_avals[0])
     assert isinstance(ref_aval, state.AbstractRef)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_aval.shape))
   *prev_transforms, idx = transforms
@@ -300,7 +299,7 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     raise NotImplementedError
   if mask is not None and other is not None:
     out = jnp.where(mask, out, other)
-  return (None,) * len(in_avals), out
+  return (None,) * len(ctx.in_avals), out
 
 
 swap_p = jax_core.Primitive('masked_swap')
@@ -386,12 +385,11 @@ ad.primitive_jvps[swap_p] = _swap_jvp
 
 
 @state_discharge.register_discharge_rule(swap_p)
-def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
-  del out_avals  # Unused.
+def _swap_discharge_rule(ctx, *args_flat, args_tree, **_):
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
   transforms = list(transforms)
   if not transforms or not isinstance(transforms[-1], indexing.NDIndexer):
-    ref_aval = state.transform_type(transforms, in_avals[0])
+    ref_aval = state.transform_type(transforms, ctx.in_avals[0])
     assert isinstance(ref_aval, state.AbstractRef)
     transforms.append(indexing.NDIndexer.make_trivial_indexer(ref_aval.shape))
   *prev_transforms, idx = transforms
@@ -432,7 +430,7 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     x_new = ref.at[idx.indices].set(val)
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(in_avals) - 1), out
+  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), out
 
 
 def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
@@ -746,15 +744,13 @@ def _run_scoped_abstract_eval(*args, jaxpr, collective_axes, **_):
 
 
 def _run_scoped_discharge_rule(
-    should_discharge,
-    in_avals,
-    out_avals,
+    ctx,
     *args_flat,
     jaxpr,
     collective_axes,
     ref_transforms,
-    **_):
-  del out_avals
+    **_,
+):
   if collective_axes:
     raise NotImplementedError(
         "run_scoped discharge does not support collective_axes yet."
@@ -765,7 +761,7 @@ def _run_scoped_discharge_rule(
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_closed_body = state_discharge.discharge_state(
       jaxpr_noconst,
-      should_discharge=should_discharge + [False] * len(jaxpr.invars),
+      should_discharge=ctx.should_discharge + [False] * len(jaxpr.invars),
   )
   discharged_body, new_consts = discharged_closed_body, discharged_closed_body.consts
   if new_consts:
@@ -789,12 +785,12 @@ def _run_scoped_discharge_rule(
   # body. For other values we leave them in place.
   updates = [
       ref_outputs.pop(0) if should and isinstance(aval, state.AbstractRef)
-      else None for should, aval in zip(should_discharge, in_avals)]
-  assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
+      else None for should, aval in zip(ctx.should_discharge, ctx.in_avals)]
+  assert len(updates) == len(ctx.in_avals), f'{len(updates)} != {len(ctx.in_avals)}'
   return updates, return_values
 
 
-state_discharge.register_partial_discharge_rule(run_scoped_p)(
+state_discharge.register_discharge_rule(run_scoped_p)(
     _run_scoped_discharge_rule)
 
 
@@ -857,8 +853,8 @@ def _get_global_abstract_eval(*, what):
   return what
 
 
-def _get_global_discharge_rule(in_avals, out_avals, *, what):
-  del in_avals, out_avals, what
+def _get_global_discharge_rule(ctx, *, what):
+  del ctx, what
   raise NotImplementedError(
       "get_global discharge is not supported in interpret mode."
   )
@@ -947,15 +943,13 @@ def _semaphore_read_abstract_eval(
   del avals, args_tree
   return jax_core.ShapedArray((), jnp.dtype("int32"))
 
-def _semaphore_read_discharge_rule(in_avals,
-                                   out_avals,
+def _semaphore_read_discharge_rule(ctx,
                                    *flat_args,
                                    args_tree):
-  del out_avals
   [ref, transforms] = args_tree.unflatten(flat_args)
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   sem_value = sem_value.astype(jnp.int32)
-  return (None,) * len(in_avals), sem_value
+  return (None,) * len(ctx.in_avals), sem_value
 state_discharge.register_discharge_rule(semaphore_read_p)(
     _semaphore_read_discharge_rule
 )
@@ -1108,23 +1102,22 @@ def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
 jax_core.pp_eqn_rules[semaphore_signal_p] = _semaphore_signal_pp_eqn
 
 
-def _semaphore_signal_discharge_rule(in_avals,
-                                     out_avals,
+def _semaphore_signal_discharge_rule(ctx,
                                      *flat_args,
                                      args_tree,
                                      device_id_type):
-  del out_avals, device_id_type
+  del device_id_type
   [ref, transforms, inc, device_id, core_index] = args_tree.unflatten(flat_args)
   if device_id is not None:
     raise NotImplementedError("Remote signal not implemented.")
   if core_index is not None:
     raise NotImplementedError("Multiple core support not implemented.")
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   inc = inc.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
   _, new_sem_value = state_discharge.transform_swap_array(
       ref, transforms, sem_value + inc
   )
-  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+  return (new_sem_value,) + (None,) * (len(ctx.in_avals) - 1), ()
 state_discharge.register_discharge_rule(semaphore_signal_p)(
     _semaphore_signal_discharge_rule
 )
@@ -1187,13 +1180,11 @@ def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
   return pp.concat(parts)
 jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
 
-def _semaphore_wait_discharge_rule(in_avals,
-                                     out_avals,
-                                     *flat_args,
-                                     args_tree):
-  del out_avals
+def _semaphore_wait_discharge_rule(ctx,
+                                   *flat_args,
+                                   args_tree):
   [ref, transforms, value, decrement] = args_tree.unflatten(flat_args)
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   value = value.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
   if decrement:
     _, new_sem_value = state_discharge.transform_swap_array(
@@ -1201,7 +1192,7 @@ def _semaphore_wait_discharge_rule(in_avals,
     )
   else:
     new_sem_value = sem_value
-  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+  return (new_sem_value,) + (None,) * (len(ctx.in_avals) - 1), ()
 state_discharge.register_discharge_rule(semaphore_wait_p)(
     _semaphore_wait_discharge_rule
 )
@@ -1373,19 +1364,16 @@ def _jaxpr_call_pp_eqn(
 jax_core.pp_eqn_rules[jaxpr_call_p] = _jaxpr_call_pp_eqn
 
 
-@state_discharge.register_partial_discharge_rule(jaxpr_call_p)
+@state_discharge.register_discharge_rule(jaxpr_call_p)
 def _jaxpr_call_discharge(
-    flat_should_discharge,
-    in_avals,
-    out_avals,
+    ctx,
     *flat_args,
     jaxpr,
     ref_treedefs,
     program_ids_treedef,
 ):
-  del in_avals, out_avals  # Unused.
   flat_should_discharge = util.split_list(
-      flat_should_discharge,
+      ctx.should_discharge,
       [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
   )
   should_discharge = [*map(any, flat_should_discharge)]

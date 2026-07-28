@@ -1734,8 +1734,7 @@ mlir.register_lowering(
 
 
 def default_mesh_discharge_rule(
-    in_avals,
-    out_avals,
+    ctx,
     *args,
     mesh,
     compiler_params,
@@ -1748,7 +1747,8 @@ def default_mesh_discharge_rule(
 ):
   """Discharges a ``core_map`` over a mesh to a ``mpmd_map``."""
   if not all(
-      isinstance(aval, state.AbstractRef) for aval in (in_avals + out_avals)
+      isinstance(aval, state.AbstractRef)
+      for aval in itertools.chain(ctx.in_avals, ctx.out_avals)
   ):
     raise ValueError(
         "default_mesh_discharge_rule only supports Ref inputs/outputs."
@@ -1759,10 +1759,10 @@ def default_mesh_discharge_rule(
       input_idx[eff.input]
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
-      and input_idx[eff.input] < len(in_avals)
+      and input_idx[eff.input] < len(ctx.in_avals)
   )
   default_memory_space = mesh.default_memory_space
-  in_memory_spaces = [get_memory_space_aval(aval) for aval in in_avals]
+  in_memory_spaces = [get_memory_space_aval(aval) for aval in ctx.in_avals]
   in_memory_spaces = [
       default_memory_space if m is None else m for m in in_memory_spaces
   ]
@@ -1781,7 +1781,7 @@ def default_mesh_discharge_rule(
     # Due to aliasing, ``args`` contains aliased inputs and outputs so we
     # remove outputs.
     in_refs, _, scratch_refs = split_list(
-        args, [len(in_avals), len(modified_idxs)]
+        args, [len(ctx.in_avals), len(modified_idxs)]
     )
     jax_core.eval_jaxpr(jaxpr, in_refs, *scratch_refs)
 
@@ -1789,7 +1789,7 @@ def default_mesh_discharge_rule(
 
   outs = mpmd._mpmd_map(
       [(mesh, body)],
-      out_types=tuple(_get_sds(in_avals[idx]) for idx in modified_idxs),
+      out_types=tuple(_get_sds(ctx.in_avals[idx]) for idx in modified_idxs),
       input_output_aliases={
           in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
       },
@@ -1810,7 +1810,7 @@ def default_mesh_discharge_rule(
 
 
 @state_discharge.register_discharge_rule(core_map_p)
-def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info, mesh, **kwargs):
+def _core_map_discharge_rule(ctx, *args_flat, jaxpr, debug_info, mesh, **kwargs):
   if type(mesh) not in _core_map_mesh_rules:
     raise NotImplementedError(f"Mesh type {type(mesh)} not supported.")
   if jaxpr.constvars:
@@ -1827,14 +1827,14 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info,
         for aval in consts_avals
     ]
     if not all(is_scalar_const_aval):
-      ctx = jax_core.JaxprPpContext()
+      pp_ctx = jax_core.JaxprPpContext()
       non_scalar_const_avals = [
           aval
           for aval, is_scalar in zip(consts_avals, is_scalar_const_aval)
           if not is_scalar
       ]
       non_scalar_const_pp_avals = ", ".join(
-          jax_core.pp_aval(aval, ctx) for aval in non_scalar_const_avals
+          jax_core.pp_aval(aval, pp_ctx) for aval in non_scalar_const_avals
       )
       raise ValueError(
           "The kernel function in core_map"
@@ -1842,7 +1842,7 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, debug_info,
           f" [{non_scalar_const_pp_avals}]. You should pass them as inputs."
       )
   return _core_map_mesh_rules[type(mesh)](
-      in_avals, out_avals, *args_flat, jaxpr=jaxpr, mesh=mesh, **kwargs
+      ctx, *args_flat, jaxpr=jaxpr, mesh=mesh, **kwargs
   )
 
 

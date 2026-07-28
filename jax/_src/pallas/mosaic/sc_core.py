@@ -113,8 +113,7 @@ class ScalarSubcoreMesh(pallas_core.Mesh):
 
 
 def _scalar_subcore_mesh_discharge_rule(
-    in_avals,
-    out_avals,
+    ctx,
     *args,
     mesh,
     jaxpr,
@@ -133,14 +132,14 @@ def _scalar_subcore_mesh_discharge_rule(
   if compiler_params.dimension_semantics is not None:
     raise ValueError("ScalarSubcoreMesh does not support dimension_semantics=")
   jaxpr, in_avals, out_avals, args, is_scalar_const = tpu_core.pass_scalars_as_refs(
-      jaxpr, args, in_avals, out_avals, mesh,
+      jaxpr, args, ctx.in_avals, ctx.out_avals, mesh,
       # TODO(sharadmv): Delete this once we can pass into SMEM directly on
       # SparseCore.
       copy_to_smem=True,
   )
+  new_ctx = ctx.replace(in_avals=in_avals, out_avals=out_avals)
   refs_out, out = pallas_core.default_mesh_discharge_rule(
-      in_avals,
-      out_avals,
+      new_ctx,
       *args,
       mesh=mesh,
       jaxpr=jaxpr,
@@ -254,8 +253,7 @@ class VectorSubcoreMesh(pallas_core.Mesh):
     yield
 
 def _vector_subcore_mesh_discharge_rule(
-    in_avals,
-    out_avals,
+    ctx,
     *args,
     mesh,
     jaxpr,
@@ -274,8 +272,7 @@ def _vector_subcore_mesh_discharge_rule(
   if compiler_params.dimension_semantics is not None:
     raise ValueError("VectorSubcoreMesh does not support dimension_semantics=")
   return pallas_core.default_mesh_discharge_rule(
-      in_avals,
-      out_avals,
+      ctx,
       *args,
       mesh=mesh,
       jaxpr=jaxpr,

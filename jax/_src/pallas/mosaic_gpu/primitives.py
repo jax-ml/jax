@@ -1733,8 +1733,8 @@ jax_core.pp_eqn_rules[wgmma_ref_p] = _wgmma_ref_pp_eqn
 
 
 @discharge.register_discharge_rule(wgmma_ref_p)
-def _wgmma_ref_discharge(in_avals, out_avals, *args, **kwargs):
-  del in_avals, out_avals
+def _wgmma_ref_discharge(ctx, *args, **kwargs):
+  del ctx
   return (wgmma_p.bind(*args, **kwargs), *([None] * (len(args) - 1))), []
 
 
@@ -2077,8 +2077,8 @@ def _wgmma_accumulator_deref_abstract_eval(acc, **_):
 
 
 @discharge.register_discharge_rule(wgmma_accumulator_deref_p)
-def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc, *, wait_n):
-  del in_avals, out_avals
+def _wgmma_accumulator_deref_discharge(ctx, acc, *, wait_n):
+  del ctx
   return (None,), wgmma_accumulator_deref_p.bind(acc, wait_n=wait_n)
 
 
@@ -2140,8 +2140,8 @@ def _wgmma_accumulator_store_abstract_eval(acc, val):
 
 
 @discharge.register_discharge_rule(wgmma_accumulator_store_p)
-def _wgmma_accumulator_store_discharge(in_avals, out_avals, acc, val):
-  del in_avals, out_avals
+def _wgmma_accumulator_store_discharge(ctx, acc, val):
+  del ctx
   return (wgmma_accumulator_store_p.bind(acc, val), None), []
 
 
@@ -3291,7 +3291,7 @@ def _inline_mgpu_abstract_eval(
   }
 
 
-@discharge.register_partial_discharge_rule(inline_mgpu_p)
+@discharge.register_discharge_rule(inline_mgpu_p)
 def _inline_mgpu_discharge(*args, **kwargs):
   del args, kwargs
   raise NotImplementedError("inline_mgpu_p does not support discharge.")
@@ -4892,9 +4892,8 @@ def _atomic_store_abstract_eval(*avals_flat, args_tree, atomic_type):
 
 @discharge.register_discharge_rule(atomic_store_p)
 def _atomic_store_discharge_rule(
-    in_avals, out_avals, *args_flat, args_tree, atomic_type: AtomicOpType
+    ctx, *args_flat, args_tree, atomic_type: AtomicOpType
 ):
-  del out_avals
   ref, transforms, val, mask = args_tree.unflatten(args_flat)
   *prev_transforms, idx = transforms
   ref = discharge.transform_array(ref, prev_transforms)
@@ -4936,7 +4935,7 @@ def _atomic_store_discharge_rule(
     x_new = ref.at[idx.indices].set(monoid(out, val))
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(in_avals) - 1), ()
+  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), ()
 
 
 def _atomic_store(

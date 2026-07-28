@@ -57,12 +57,48 @@ PyTreeDef = tree_util.PyTreeDef
 
 ## Discharging state
 
+def discharged_aval(
+    aval: core.AbstractValue, *, discharge: bool, strip_memory_space: bool
+) -> core.AbstractValue:
+  """Returns the abstract value after state discharge.
+
+  Args:
+    aval: The abstract value to discharge.
+    discharge: Whether to discharge `AbstractRef`s into their inner array
+      values. Has no effect on `ShapedArray`s.
+    strip_memory_space: Whether to strip non-default memory spaces on
+      `ShapedArray`s (and inner arrays of discharged `AbstractRef`s) to
+      `core.MemorySpace.Device`. Has no effect on `AbstractRef`s if
+      `discharge=False`.
+  """
+  if not isinstance(aval, AbstractRef):
+    if (
+        strip_memory_space
+        and isinstance(aval, core.ShapedArray)
+        and getattr(aval, "memory_space", None) is not None
+    ):
+      return aval.update(memory_space=core.MemorySpace.Device)
+    return aval
+
+  if not discharge:
+    return aval
+
+  inner = discharged_aval(
+      aval.inner_aval, discharge=False, strip_memory_space=strip_memory_space
+  )
+  if isinstance(inner, core.ShapedArray) and aval.memory_space is not None:
+    if strip_memory_space:
+      return inner.update(memory_space=core.MemorySpace.Device)
+    return inner.update(memory_space=aval.memory_space)
+  return inner
+
 
 def discharge_state(
     closed_jaxpr: core.Jaxpr,
     *,
     should_discharge: bool | Sequence[bool] = True,
     lower: bool = True,
+    strip_memory_space: bool = True,
 ) -> core.Jaxpr:
   """Converts a stateful jaxpr into a pure one.
 
@@ -74,6 +110,8 @@ def discharge_state(
     should_discharge: Whether to discharge each ``Ref`` input. If a single bool,
       applies to all inputs.
     lower: Whether to lower hijax to lojax while discharging.
+    strip_memory_space: Whether to strip the memory space from discharged ``Ref``
+      inputs.
 
   Returns:
     A pure jaxpr with no ``Read``/``Write``/``Accum`` effects. Discharged
@@ -82,21 +120,29 @@ def discharge_state(
   """
   if isinstance(should_discharge, bool):
     should_discharge = (should_discharge,) * len(closed_jaxpr.in_avals)
-  return _discharge_state(closed_jaxpr, tuple(should_discharge), lower)
+  return _discharge_state(closed_jaxpr, tuple(should_discharge), lower, strip_memory_space)
 
 @weakref_lru_cache
 def _discharge_state(
     closed_jaxpr: core.Jaxpr,
     should_discharge: tuple[bool, ...],
     lower: bool,
- ) -> core.Jaxpr:
+    strip_memory_space: bool,
+) -> core.Jaxpr:
   in_avals = [
-      v.aval.inner_aval
-      if isinstance(v.aval, AbstractRef) and d
-      else v.aval for v, d in zip(closed_jaxpr.invars, should_discharge)]
+      discharged_aval(
+          v.aval, discharge=d, strip_memory_space=strip_memory_space
+      )
+      for v, d in zip(closed_jaxpr.invars, should_discharge)
+  ]
   new_jaxpr, _ = pe.trace_to_jaxpr(
-      partial(_eval_jaxpr_discharge_state,
-              closed_jaxpr, should_discharge, closed_jaxpr.consts),
+      partial(
+          _eval_jaxpr_discharge_state,
+          closed_jaxpr,
+          should_discharge,
+          closed_jaxpr.consts,
+          strip_memory_space,
+      ),
       ft.flatten_args(*in_avals),
       closed_jaxpr.debug_info.with_unknown_names(),
       requires_low=lower)
@@ -116,12 +162,22 @@ class Environment:
     self.env[v] = val
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class DischargeContext:
+  """Per-rule context information for state discharging."""
+  in_avals: Sequence[core.AbstractValue]
+  out_avals: Sequence[core.AbstractValue]
+  should_discharge: Sequence[bool]
+  strip_memory_space: bool
+
+  replace = dataclasses.replace
+
+
 class DischargeRule(Protocol):
 
   def __call__(
       self,
-      in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue],
+      ctx: DischargeContext,
       *args: Any,
       **params: Any,
   ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
@@ -130,8 +186,7 @@ class DischargeRule(Protocol):
     See :func:`discharge_state` for an explanation of what discharge means.
 
     Args:
-      in_avals: Input abstract values.
-      out_avals: Output abstract values.
+      ctx: Discharge context containing abstract values and options.
       *args: Input values.
       **params: Primitive parameters.
 
@@ -156,38 +211,11 @@ def register_discharge_rule(prim: core.Primitive):
   return register
 
 
-class PartialDischargeRule(Protocol):
-  """Discharge rule that supports selective discharging of ``Ref`` inputs.
-
-  Generalizes :class:`DischargeRule` by accepting a ``should_discharge``
-  argument that specifies which ``Ref`` inputs to discharge. The returned
-  ``new_invals`` must contain a non-``None`` value if and only if the
-  corresponding ``Ref`` was discharged.
-  """
-
-  def __call__(
-      self,
-      should_discharge: Sequence[bool],
-      in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue],
-      *args: Any,
-      **params: Any,
-  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
-    ...
-
-
-_partial_discharge_rules: dict[core.Primitive, PartialDischargeRule] = {}
-
-
-def register_partial_discharge_rule(prim: core.Primitive):
-  def register(f: PartialDischargeRule):
-    _partial_discharge_rules[prim] = f
-  return register
 
 
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
-    *args: Any):
+    strip_memory_space: bool, *args: Any):
   env = Environment({})
 
   foreach(env.write, jaxpr.constvars, consts)
@@ -229,9 +257,7 @@ def _eval_jaxpr_discharge_state(
           ans = unpin(ans)
         refs_to_discharge.remove(id(invar.aval))
       elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
-        if eqn.primitive in _partial_discharge_rules:
-          rule: DischargeRule = partial(_partial_discharge_rules[eqn.primitive], should_discharge)
-        elif eqn.primitive in _discharge_rules:
+        if eqn.primitive in _discharge_rules:
           rule = _discharge_rules[eqn.primitive]
         else:
           raise NotImplementedError(
@@ -239,8 +265,11 @@ def _eval_jaxpr_discharge_state(
         invals = map(env.read, eqn.invars)
         in_avals = [v.aval for v in eqn.invars]
         out_avals = [v.aval for v in eqn.outvars]
+        ctx = DischargeContext(
+            in_avals, out_avals, should_discharge, strip_memory_space
+        )
         new_invals, ans = rule(
-            in_avals, out_avals, *invals, **eqn.params)
+            ctx, *invals, **eqn.params)
         for invar, should, new_inval in zip(eqn.invars, should_discharge, new_invals):
           if new_inval is not None:
             if not should:
@@ -432,10 +461,9 @@ def _convert_to_gather_arrays(indexer: indexing.NDIndexer) -> tuple[Array, ...]:
 
 @register_discharge_rule(get_p)
 def _get_discharge_rule(
-    in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, *idx,
+    ctx: DischargeContext, x, *idx,
     tree):
-  del in_avals, out_avals
+  del ctx
   y = _get_discharge(x, idx, tree)
   return (None,) * (len(idx) + 1), y
 
@@ -564,10 +592,9 @@ def _get_discharge(x, idx, tree):
 
 @register_discharge_rule(swap_p)
 def _swap_discharge_rule(
-    in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, val, *idx,
+    ctx: DischargeContext, x, val, *idx,
     tree):
-  del in_avals, out_avals
+  del ctx
   z, x_new = _swap_discharge(x, val, idx, tree)
   return (x_new, None) + (None,) * len(idx), z
 
@@ -577,24 +604,20 @@ def _swap_discharge(x, val, idx, tree):
 
 @register_discharge_rule(addupdate_p)
 def _addupdate_discharge_rule(
-    in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, val, *idx,
+    ctx: DischargeContext, x, val, *idx,
     tree):
-  del in_avals, out_avals
+  del ctx
   ans = _addupdate_discharge(x, val, idx, tree)
   return (ans, None) + (None,) * len(idx), []
 
-@register_partial_discharge_rule(lax.optimization_barrier_p)
-def _optimization_barrier_partial_discharge(
-    should_discharge: Sequence[bool],
-    in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], *args):
+@register_discharge_rule(lax.optimization_barrier_p)
+def _optimization_barrier_discharge_rule(
+    ctx: DischargeContext, *args):
   # A discharged ref's value is threaded through the barrier and written back,
   # so the underlying buffer is pinned like any other barrier operand.
-  del out_avals
   outs = lax.optimization_barrier(list(args))
-  is_ref = [isinstance(a, AbstractRef) for a in in_avals]
-  new_invals = [o if d else None for o, d in zip(outs, should_discharge)]
+  is_ref = [isinstance(a, AbstractRef) for a in ctx.in_avals]
+  new_invals = [o if d else None for o, d in zip(outs, ctx.should_discharge)]
   return new_invals, [o for o, r in zip(outs, is_ref) if not r]
 
 def _addupdate_discharge(x, val, idx, tree):
@@ -630,35 +653,36 @@ def _addupdate_discharge(x, val, idx, tree):
 
 
 @weakref_lru_cache
-def _cached_closed_jaxpr_discharge(closed_jaxpr: core.Jaxpr):
+def _cached_closed_jaxpr_discharge(closed_jaxpr: core.Jaxpr, *, strip_memory_space: bool):
   num_outs = len(closed_jaxpr.outvars)
-  discharged_closed_jaxpr = discharge_state(closed_jaxpr)
+  discharged_closed_jaxpr = discharge_state(closed_jaxpr, strip_memory_space=strip_memory_space)
   fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr),
                      debug_info=discharged_closed_jaxpr.debug_info)
   return discharged_closed_jaxpr, num_outs, fun
 
 @register_discharge_rule(core.closed_call_p)
 def _closed_call_discharge_rule(
-    in_avals: Sequence[core.AbstractValue], _,*args,
+    ctx: DischargeContext, *args,
     call_jaxpr: core.Jaxpr):
-  discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(call_jaxpr)
+  discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(
+      call_jaxpr, strip_memory_space=ctx.strip_memory_space)
   out_and_ref_vals = core.closed_call_p.bind(*args, subfuns=(fun,),
                                              call_jaxpr=discharged_closed_jaxpr)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
-                     else None for aval in in_avals)
+                     else None for aval in ctx.in_avals)
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
 
 def _call_primitive_discharge_rule(
     prim: core.Primitive,
-    in_avals: Sequence[core.AbstractValue], _,*args,
+    ctx: DischargeContext, *args,
     call_jaxpr: core.Jaxpr, **kwargs):
   closed_call_jaxpr = call_jaxpr
   discharged_closed_jaxpr, num_outs, fun = _cached_closed_jaxpr_discharge(
-      closed_call_jaxpr)
+      closed_call_jaxpr, strip_memory_space=ctx.strip_memory_space)
   discharged_call_jaxpr = discharged_closed_jaxpr
   discharged_consts = discharged_closed_jaxpr.consts
   discharged_call_jaxpr = pe.convert_constvars_jaxpr(discharged_call_jaxpr)
@@ -672,7 +696,7 @@ def _call_primitive_discharge_rule(
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
-                     else None for aval in in_avals)
+                     else None for aval in ctx.in_avals)
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
@@ -803,23 +827,19 @@ def _run_state_jvp(primals: Sequence[Any], tangents: Sequence[Any], *,
   return out_primals, out_tangents
 ad.primitive_jvps[run_state_p] = _run_state_jvp
 
-@register_partial_discharge_rule(run_state_p)
-def _run_state_discharge_rule(should_discharge: Sequence[bool],
-                              in_avals: Sequence[core.AbstractValue],
-                              out_avals: Sequence[core.AbstractValue],
+@register_discharge_rule(run_state_p)
+def _run_state_discharge_rule(ctx: DischargeContext,
                               *args: Any, jaxpr: core.Jaxpr,
                               which_linear: Sequence[bool],
                               is_initialized: tuple[bool, ...]):
-  del in_avals
   if not all(is_initialized):
     raise NotImplementedError(
         "Uninitialized Refs are not supported in discharge."
     )
-  del out_avals
   out_vals = run_state_p.bind(*args, jaxpr=jaxpr, which_linear=which_linear,
                               is_initialized=is_initialized)
   new_invals = []
-  for discharge, out_val in zip(should_discharge, out_vals):
+  for discharge, out_val in zip(ctx.should_discharge, out_vals):
     new_invals.append(out_val if discharge else None)
   return new_invals, out_vals
 
@@ -886,12 +906,12 @@ def run_state_reference(f: Callable[..., None]):
 
 @register_discharge_rule(pjit.jit_p)
 def _pjit_state_discharge_rule(
-    in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
+    ctx: DischargeContext, *args, jaxpr, in_shardings, out_shardings,
     in_layouts, out_layouts, **params):
   if not (any(isinstance(e, RefEffect) for e in jaxpr.effects)
           or any(isinstance(a, AbstractRef) for a in jaxpr.in_avals)):
     # Only internal ref effects
-    jaxpr_ = discharge_state(jaxpr)
+    jaxpr_ = discharge_state(jaxpr, strip_memory_space=ctx.strip_memory_space)
     out = pjit.jit_p.bind(
         *args,
         jaxpr=jaxpr_,
@@ -901,7 +921,7 @@ def _pjit_state_discharge_rule(
         out_layouts=out_layouts,
         **params,
     )
-    new_invals = [None] * len(in_avals)
+    new_invals = [None] * len(ctx.in_avals)
     return new_invals, out
   if not all(isinstance(s, sharding_impls.UnspecifiedValue) for s in (*in_shardings, *out_shardings)):
     raise NotImplementedError
@@ -910,7 +930,7 @@ def _pjit_state_discharge_rule(
           all(l is None for l in out_layouts)):
     raise NotImplementedError
 
-  discharged_jaxpr = discharge_state(jaxpr)
+  discharged_jaxpr = discharge_state(jaxpr, strip_memory_space=ctx.strip_memory_space)
   new_in_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.in_avals)
   new_out_shardings = (sharding_impls.UNSPECIFIED,) * len(discharged_jaxpr.out_avals)
   new_in_layouts = (None,) * len(discharged_jaxpr.in_avals)
@@ -922,25 +942,25 @@ def _pjit_state_discharge_rule(
   out_vals, ref_vals = split_list(out_and_ref_vals, [len(jaxpr.out_avals)])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
-                     else None for aval in in_avals)
+                     else None for aval in ctx.in_avals)
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
   return new_invals, out_vals
 
 
 @register_discharge_rule(custom_derivatives.custom_vjp_call_p)
-def custom_vjp_call_discharge(in_avals, out_avals, *args, call_jaxpr,
+def custom_vjp_call_discharge(ctx: DischargeContext, *args, call_jaxpr,
                               fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros,
                               num_consts):
   # Discharge happens after all AD is done, so we can discard the AD rules.
   del fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros, num_consts
-  dis_closed_jaxpr = discharge_state(call_jaxpr)
+  dis_closed_jaxpr = discharge_state(call_jaxpr, strip_memory_space=ctx.strip_memory_space)
   dis_jaxpr, dis_consts = dis_closed_jaxpr, dis_closed_jaxpr.consts
   outs = _eval_jaxpr_ad_error(dis_jaxpr, dis_consts, args)
   out_vals, ref_vals = split_list(outs, [len(call_jaxpr.out_avals)])
   ref_vals_ = iter(ref_vals)
   new_invals = [next(ref_vals_) if isinstance(aval, AbstractRef) else None
-                for aval in in_avals]
+                for aval in ctx.in_avals]
   assert next(ref_vals_, None) is None
   return new_invals, out_vals
 
@@ -954,10 +974,10 @@ def _eval_jaxpr_ad_error_jvp(*_):
 
 @register_discharge_rule(custom_batching.custom_vmap_p)
 def custom_vmap_call_discharge(
-    in_avals, out_avals, *args, call, rule, in_tree, out_tree
+    ctx: DischargeContext, *args, call, rule, in_tree, out_tree
 ):
-  dis_closed_jaxpr = discharge_state(call)
-  if not any(isinstance(a, AbstractRef) for a in in_avals):
+  dis_closed_jaxpr = discharge_state(call, strip_memory_space=ctx.strip_memory_space)
+  if not any(isinstance(a, AbstractRef) for a in ctx.in_avals):
     # No Refs cross the boundary; keep the primitive for subsequent batching.
     out = custom_batching.custom_vmap_p.bind(
         *args,
@@ -966,7 +986,7 @@ def custom_vmap_call_discharge(
         in_tree=in_tree,
         out_tree=out_tree,
     )
-    return [None] * len(in_avals), out
+    return [None] * len(ctx.in_avals), out
   # Refs cross the boundary: drop the batching rule (discharge runs after
   # batching) and inline the discharged body, threading updated Ref values
   # back to their inputs.
@@ -976,7 +996,7 @@ def custom_vmap_call_discharge(
   ref_vals_iter = iter(ref_vals)
   new_invals = [
       next(ref_vals_iter) if isinstance(aval, AbstractRef) else None
-      for aval in in_avals
+      for aval in ctx.in_avals
   ]
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel

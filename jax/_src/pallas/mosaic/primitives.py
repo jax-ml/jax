@@ -398,8 +398,8 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
 jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
 
-def dma_start_partial_discharge_rule(
-    should_discharge, in_avals, out_avals, *args, tree, device_id_type,
+def dma_start_discharge_rule(
+    ctx, *args, tree, device_id_type,
     priority, add
 ):
   # Note: we ignore the DMA priority in discharge rules.
@@ -414,12 +414,11 @@ def dma_start_partial_discharge_rule(
   src_sem, src_sem_transforms = _get_ref_and_transforms(src_sem)
 
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, _ = _dma_unflatten(
-      tree, in_avals
+      tree, ctx.in_avals
   )
-  del out_avals
 
   _, dst_discharge, dst_sem_discharge, *maybe_src_sem_discharge = (
-      _dma_unflatten(tree, should_discharge)
+      _dma_unflatten(tree, ctx.should_discharge)
   )
   dst_discharge = _get_ref(dst_discharge)
   dst_sem_discharge = _get_ref(dst_sem_discharge)
@@ -545,7 +544,7 @@ def dma_start_partial_discharge_rule(
     new_vals += (None,) * num_src_sem_transforms
     new_vals += (None,)  # device_id
   assert (len(new_vals) ==
-          len(in_avals)), f"{len(new_vals), new_vals} != {len(in_avals)}"
+          len(ctx.in_avals)), f"{len(new_vals), new_vals} != {len(ctx.in_avals)}"
 
   # If we didn't discharge everything we could we should keep writes
   # to the references that are left over.
@@ -559,7 +558,7 @@ def dma_start_partial_discharge_rule(
   return new_vals, []
 
 
-state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_discharge_rule)
+state_discharge.register_discharge_rule(dma_start_p)(dma_start_discharge_rule)
 
 
 dma_wait_p = jax_core.Primitive('dma_wait')
@@ -641,10 +640,8 @@ def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
 jax_core.pp_eqn_rules[dma_wait_p] = _dma_wait_pp_eqn
 
 
-def dma_wait_partial_discharge_rule(
-    should_discharge,
-    in_avals,
-    out_avals,
+def dma_wait_discharge_rule(
+    ctx,
     *args,
     tree,
     device_id_type,
@@ -652,20 +649,20 @@ def dma_wait_partial_discharge_rule(
     is_wait_send: bool = False,
 ):
   # TODO(b/370563115): perform ref update in dma_wait discharge rule instead of dma_start
-  del out_avals, device_id_type, insert_dummy_device, is_wait_send
+  del device_id_type, insert_dummy_device, is_wait_send
   _, dst_ref, dst_sem, _, _ = _dma_unflatten(tree, args)
   dst_ref, dst_ref_transforms = _get_ref_and_transforms(dst_ref)
   dst_sem, dst_sem_transforms = _get_ref_and_transforms(dst_sem)
   src_ref_aval, dst_ref_aval, dst_sem_aval, src_sem_aval, device_id_aval = (
-      _dma_unflatten(tree, in_avals)
+      _dma_unflatten(tree, ctx.in_avals)
   )
 
   # The only one we can discharge is the dst semaphore. The provided
   # buffers are only specified for their types and not their value so
   # it's completely irrelevant for us here if they are discharged.
-  should_discharge_unflattened = _dma_unflatten(tree, should_discharge)
+  should_discharge_unflattened = _dma_unflatten(tree, ctx.should_discharge)
   if not _get_ref(should_discharge_unflattened[2]):
-    return (None,) * len(in_avals), []
+    return (None,) * len(ctx.in_avals), []
 
   num_sem_transforms = len(_dma_tree_leaves(dst_sem_aval)) - 1
   num_src_transform_vals = len(_dma_tree_leaves(src_ref_aval)) - 1
@@ -688,7 +685,7 @@ def dma_wait_partial_discharge_rule(
   new_vals += (None,) * len(tree_util.tree_leaves(src_sem_aval))  # src_sem
   new_vals += (None,) * len(tree_util.tree_leaves(device_id_aval)) # device_id
   return new_vals, []
-state_discharge.register_partial_discharge_rule(dma_wait_p)(dma_wait_partial_discharge_rule)
+state_discharge.register_discharge_rule(dma_wait_p)(dma_wait_discharge_rule)
 
 def _get_ref_and_transforms(ref):
   if isinstance(ref, state.TransformedRef):

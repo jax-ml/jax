@@ -517,8 +517,7 @@ def pass_scalars_as_refs(
 
 
 def _tensorcore_mesh_discharge_rule(
-    in_avals,
-    out_avals,
+    ctx,
     *args,
     mesh,
     jaxpr,
@@ -545,18 +544,18 @@ def _tensorcore_mesh_discharge_rule(
     # cores by the (core-mapped) kernel.
     if any(
         pallas_core.get_memory_space_aval(aval) == MemorySpace.VMEM
-        for aval in in_avals
+        for aval in ctx.in_avals
     ):
       raise NotImplementedError(
           "TensorCoreMesh does not support VMEM inputs/outputs when there are"
           " >1 cores. Use HBM or ANY instead."
       )
   jaxpr, in_avals, out_avals, args, is_scalar_const = pass_scalars_as_refs(
-      jaxpr, args, in_avals, out_avals, mesh
+      jaxpr, args, ctx.in_avals, ctx.out_avals, mesh
   )
+  new_ctx = ctx.replace(in_avals=in_avals, out_avals=out_avals)
   refs_out, out = pallas_core.default_mesh_discharge_rule(
-      in_avals,
-      out_avals,
+      new_ctx,
       *args,
       jaxpr=jaxpr,
       mesh=mesh,
