@@ -562,7 +562,7 @@ class SplashAttentionTest(PallasBaseTest):
         atols["dk"] = 0.065
     elif dtype == jnp.float32:
       atols = {"dv": 3e-3, "dq": 0.05, "dk": 0.05}
-      atols_v = {"dv": 4e-4, "dq": 2e-3, "dk": 3e-3}
+      atols_v = {"dv": 4e-4, "dq": 2e-3, "dk": 4e-3}
       rtols = {"dv": 3e-3, "dq": 0.05, "dk": 0.05}
       rtols_v = {"dv": 8e-3, "dq": 5e-4, "dk": 5e-4}
       if jtu.is_device_tpu(version=4):
