@@ -209,6 +209,8 @@ table Exported {
   // 1-based indices into unique_named_shardings, or 0 if unspecified (added 4/4/2026, v10)
   in_shardings_idxs: [uint32];
   out_shardings_idxs: [uint32];
+
+  jax_version: string;  // Added 7/29/2026
 }
 
 root_type Exported;

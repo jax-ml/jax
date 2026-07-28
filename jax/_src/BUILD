@@ -853,6 +853,7 @@ pytype_strict_library(
         ":typing",
         ":util",
         ":xla_bridge",
+        "//jax:version",
         "//jax/_src/lib",
     ] + py_deps("flatbuffers") + py_deps("numpy") + py_deps("opt_einsum"),
 )

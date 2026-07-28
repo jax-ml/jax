@@ -16,6 +16,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features
+  * Added an error check for trying to deserialize JAX exports that are older
+    than the backwards compatibility window. Without this check the
+    deserialization of expired artifacts may succeed and then result in
+    obscure downstream errors.
+    Added a configuration flag `--jax_export_deserialize_expired_versions` to
+    temporarily bypass the error check.
+    See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
+
 ## JAX 0.11.0 (July 16, 2026)
 
 * New features

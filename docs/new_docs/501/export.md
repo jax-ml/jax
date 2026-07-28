@@ -157,6 +157,18 @@ Unlike direct lowering, the {class}`jax.export` module uses the
 [portable-artifact feature of StableHLO](https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md)
 to deal with the possible evolution of the StableHLO opset.
 
+If you try to deserialize a model that is older than the backwards-compatibility
+window you may get an error from the JAX deserializer, or may simply get
+obscure errors or crashes from JAX or XLA. If you get a deserialization
+error you can try to use the `--jax_export_deserialize_expired_versions=1`
+flag (or the `JAX_EXPORT_DESERIALIZE_EXPIRED_VERSIONS=1` environment variable).
+This may give you a small time window to continue your work while you work
+to refresh the old serialized artifact.
+
+**WARNING**: If you enable `--jax_export_deserialize_expired_versions=1` you
+accept that the deserialization behavior may change at any time. You take
+responsibility for refreshing the old serialized artifact ASAP.
+
 ### Compatibility guarantees for custom calls
 
 Furthermore, the raw StableHLO may contain custom calls referencing C++
