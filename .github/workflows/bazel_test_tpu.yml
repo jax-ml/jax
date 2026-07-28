@@ -99,7 +99,7 @@ jobs:
       run:
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images] intentionally tracks latest
     # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "${{ inputs.tpu-type }}, py${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}, jaxlib=${{ inputs.jaxlib-version }}"
     # End Presubmit Naming Check github-tpu-presubmits
