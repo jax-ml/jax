@@ -707,9 +707,14 @@ class IsTransferableSmemRegisters(IsTransferable):
     # TODO(bchetioui): move this below the UNOPTIMIZED check once it is
     # possible to do so.
     if smem_transposed:
-      regs_transposed = reg_layout in {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
+      valid_layouts = {
+          fa.TCGEN05_TRANSPOSED_LAYOUT,
+          fa.WGMMA_TRANSPOSED_LAYOUT,
+          fa.TCGEN05_LAYOUT,
+          fa.WGMMA_LAYOUT,
+      }
       # TODO(olechwierowicz): Lift restriction on 2D tiling rank enforcement below.
-      return tiling_rank == 2 and regs_transposed
+      return tiling_rank == 2 and reg_layout in valid_layouts
     # For a given `TiledLayout`, all transfers are possible if optimization is
     # not required.
     if self.optimized == OptimizedTransferKind.UNOPTIMIZED:

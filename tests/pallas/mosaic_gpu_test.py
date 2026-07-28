@@ -1844,6 +1844,24 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), jnp.transpose(x, permutation))
 
+  @parameterized.parameters((64, 128), (128, 128))
+  def test_wgmma_store_to_transposed_smem(self, m, n):
+    shape = (m, n)
+    dtype = jnp.float16
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(shape[::-1], dtype),
+        scratch_types=[plgpu.SMEM(shape[::-1], dtype)],
+    )
+    def kernel(x_ref, o_ref, smem_ref):
+      x = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      smem_ref_t = plgpu.transpose_ref(smem_ref, (1, 0))
+      smem_ref_t[...] = x
+      o_ref[...] = smem_ref[...]
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x.T)
+
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
       layout=[plgpu.Layout.WG_STRIDED((128,), vec_size=1), None,
