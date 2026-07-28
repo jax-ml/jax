@@ -36,9 +36,6 @@ filterwarnings = [
     # warnings, which pytest's "error" filter promotes to exceptions.
     "ignore:the (rational|math2).* module is deprecated.*:DeprecationWarning:mpmath.*",
 
-    # TODO(b/536011556): Remove once libtpu is fixed.
-    "default:TPU backend initialization is taking more than [0-9.]+ seconds\\.:UserWarning",
-
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also
     # check for warnings and do not check this list. Most likely, you should
