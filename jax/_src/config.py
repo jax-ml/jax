@@ -431,6 +431,43 @@ def bool_state(
   setattr(Config, name, property(lambda _: s.value))
   return s
 
+def optional_bool_state(
+    name: str,
+    default: bool | None,
+    help: str,
+    *,
+    update_global_hook: Callable[[bool], None] | None = None,
+    update_thread_local_hook: Callable[[bool | None], None] | None = None,
+    upgrade: bool = False,
+    extra_description: str = '',
+    include_in_jit_key: bool = False,
+    include_in_trace_context: bool = False,
+    validator: Callable[[str], None] | None = None):
+  if default is not None and not isinstance(default, bool):
+    raise TypeError(f"Default value must be of type bool, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
+  default = None if default is None else bool_env(name.upper(), default)
+  name = name.lower()
+  if upgrade:
+    help += ' ' + UPGRADE_BOOL_HELP
+    extra_description += UPGRADE_BOOL_EXTRA_DESC
+  config._contextmanager_flags.add(name)
+
+  def parser(val):
+    if validator is not None:
+      validator(val)
+    return None if val is None else bool(val)
+
+  s = State[bool | None](
+      name, default, help, update_global_hook=update_global_hook,  # type: ignore
+      update_thread_local_hook=update_thread_local_hook,
+      extra_description=extra_description, default_context_manager_value=True,
+      parser=parser, include_in_jit_key=include_in_jit_key,
+      include_in_trace_context=include_in_trace_context)
+  config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
+  setattr(Config, name, property(lambda _: s.value))
+  return s
+
 
 def enum_state(
     name: str,
@@ -1148,6 +1185,21 @@ debug_key_reuse = bool_state(
           ' every call to a JIT-compiled function with keys as inputs or outputs.'),
     include_in_trace_context=True,
     include_in_jit_key=True)
+
+use_hlo_logistic_lowering = optional_bool_state(
+    name='jax_use_hlo_logistic_lowering',
+    default=None,
+    help=(
+        'Uses `hlo.logistic` during lowering of logistic_p on TPUs. There are 3'
+        ' valid values:\n'
+        '  `None` - JAX chooses (Uses `hlo.logistic` for TPU gen >= 8 else uses '
+        '           current lowering)\n'
+        '  `True` - use `hlo.logistic`\n'
+        '  `False` - use the current lowering of logistic_p.'
+    ),
+    include_in_trace_context=True,
+    include_in_jit_key=True,
+)
 
 check_tracer_leaks = bool_state(
     name='jax_check_tracer_leaks',
