@@ -114,11 +114,6 @@ def _pallas_call_abstract_eval(
       avals[outin_aliases[out_idx]] if out_idx in outin_aliases else a
       for out_idx, a in enumerate(out_avals)
   )
-  # Make sure we don't return ShapedArray with pallas memory space to the
-  # outside world.
-  out_avals = tuple(a.update(memory_space=jax_core.MemorySpace.Device)
-                    if isinstance(a, jax_core.ShapedArray) else a
-                    for a in out_avals)
 
   # TODO(mattjj,yashkatariya): if we hide vmapped away mesh axes, use this:
   # if not (all(a.sharding.mesh.are_all_axes_manual for a in avals) and

@@ -194,7 +194,7 @@ class MpmdTest(PallasSCTest):
     @jax.jit
     def f(x):
       x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
-      out_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.HBM)
+      out_ref = jax.empty_ref(jax.typeof(x))
       def f_scs(scratch):
         del scratch
         pltpu.sync_copy(x_ref, out_ref)
@@ -219,7 +219,7 @@ class MpmdTest(PallasSCTest):
     @jax.jit
     def f(x):
       x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
-      out_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.HBM)
+      out_ref = jax.empty_ref(jax.typeof(x))
       def f_scs(scratch):
         del scratch
         pltpu.sync_copy(x_ref, out_ref)
@@ -286,9 +286,8 @@ class MpmdTest(PallasSCTest):
       def body(x_ref, out_ref):
         idx = jax.lax.axis_index("x")
         pltpu.sync_copy(x_ref.at[i], out_ref.at[idx])
-        vmem_buf = jax.empty_ref(
-            jax.typeof(y_ref).inner_aval, memory_space=pltpu.MemorySpace.VMEM
-        )
+        vmem_buf = jax.empty_ref(jax.ShapeDtypeStruct(y_ref.shape, y_ref.dtype,
+                                                      memory_space=pltpu.VMEM))
         pltpu.sync_copy(y_ref, vmem_buf)
 
       return pl.kernel(
@@ -319,7 +318,8 @@ class MpmdTest(PallasSCTest):
                           scratch_vmem_shd_ref, nested_in_dict):
       pltpu.sync_copy(x_hbm_ref, scratch_vmem_shd_ref)
       pltpu.sync_copy(x_hbm_ref, nested_in_dict["vmshd"])
-      scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.VMEM)
+      scratch_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(x.shape, x.dtype, memory_space=pltpu.VMEM))
       pltpu.sync_copy(scratch_vmem_shd_ref, scratch_ref)
 
       @pl.loop(0, x.size, step=self.num_lanes)
@@ -332,7 +332,8 @@ class MpmdTest(PallasSCTest):
     def scalar_subcore_fn(x_hbm_ref, out_hbm_ref,
                           scratch_vmem_shd_ref, nested_in_dict):
       del scratch_vmem_shd_ref, nested_in_dict
-      scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.SMEM)
+      scratch_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(x.shape, x.dtype, memory_space=pltpu.SMEM))
       pltpu.sync_copy(x_hbm_ref, scratch_ref)
 
       @pl.loop(0, x.size)
@@ -375,7 +376,8 @@ class MpmdTest(PallasSCTest):
 
     def vector_subcore_fn(x_hbm_ref, out_hbm_ref, scratch_vmem_shd_ref):
       pltpu.sync_copy(x_hbm_ref, scratch_vmem_shd_ref)
-      scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.VMEM)
+      scratch_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(x.shape, x.dtype, memory_space=pltpu.VMEM))
       pltpu.sync_copy(scratch_vmem_shd_ref, scratch_ref)
 
       @pl.loop(0, x.size, step=self.num_lanes)
@@ -387,7 +389,8 @@ class MpmdTest(PallasSCTest):
 
     def scalar_subcore_fn(x_hbm_ref, out_hbm_ref, scratch_vmem_shd_ref):
       del scratch_vmem_shd_ref
-      scratch_ref = jax.empty_ref(jax.typeof(x), memory_space=pltpu.SMEM)
+      scratch_ref = jax.empty_ref(
+          jax.ShapeDtypeStruct(x.shape, x.dtype, memory_space=pltpu.SMEM))
       pltpu.sync_copy(x_hbm_ref, scratch_ref)
 
       @pl.loop(0, x.size)
