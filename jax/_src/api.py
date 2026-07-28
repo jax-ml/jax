@@ -1835,37 +1835,46 @@ class RSpec:
 def tuptree_map(f, treedef, *args):
   return treedef.walk(lambda xs, _: tuple(xs), lambda xs: f(*xs), zip(*args))
 
-def _saveable_args_flags(saveable_args, treedef) -> list[bool]:
+def tuptree_flags(prefix, treedef, name: str, full_name: str) -> list[bool]:
+  """Expand a tuple-tree of bools into per-leaf flags for `treedef`.
+
+  A tuple-tree is made of bools and tuples only, and must form a tree prefix
+  of `treedef` up to pytree node types: tuples are matched against containers
+  only by their number of children."""
   ret: list[bool] = []
-  _saveable_args_flags_rec(saveable_args, treedef, (), ret)
+  _tuptree_flags_rec(prefix, treedef, name, full_name, (), ret)
   return ret
 
-def _saveable_args_flags_rec(prefix, td, path, ret):
+def _saveable_args_flags(saveable_args, treedef) -> list[bool]:
+  return tuptree_flags(saveable_args, treedef, 'saveable_args',
+                       'the saveable_args argument to jax.vjp')
+
+def _tuptree_flags_rec(prefix, td, name, full_name, path, ret):
   if isinstance(prefix, bool):
     ret.extend([prefix] * td.num_leaves)
     return
-  where = 'saveable_args' + ''.join(f'[{i}]' for i in path)
+  where = name + ''.join(f'[{i}]' for i in path)
   if not isinstance(prefix, tuple):
     raise ValueError(
-        "the saveable_args argument to jax.vjp must be a tuple-tree of bools "
+        f"{full_name} must be a tuple-tree of bools "
         f"(made of bools and tuples only), but {where} is {prefix!r} of type "
         f"{type(prefix).__name__}")
   if treedef_is_strict_leaf(td):
     raise ValueError(
-        "the saveable_args argument to jax.vjp must form a tree prefix of "
-        f"the primal arguments (up to pytree node types), but {where} is a "
-        "tuple while the corresponding part of the arguments is a leaf; use "
+        f"{full_name} must form a tree prefix of "
+        f"the corresponding values (up to pytree node types), but {where} is "
+        "a tuple while the corresponding part of the values is a leaf; use "
         "a single bool there instead")
   td_children = td.children()
   if len(prefix) != len(td_children):
     raise ValueError(
-        "the saveable_args argument to jax.vjp must form a tree prefix of "
-        "the primal arguments (up to pytree node types, so containers need "
-        f"only match in their number of children), but {where} has "
-        f"{len(prefix)} children while the corresponding container in the "
-        f"arguments has {len(td_children)}")
+        f"{full_name} must form a tree prefix of "
+        "the corresponding values (up to pytree node types, so containers "
+        f"need only match in their number of children), but {where} has "
+        f"{len(prefix)} children while the corresponding container has "
+        f"{len(td_children)}")
   for i, (p, td_) in enumerate(zip(prefix, td_children)):
-    _saveable_args_flags_rec(p, td_, (*path, i), ret)
+    _tuptree_flags_rec(p, td_, name, full_name, (*path, i), ret)
 
 def _is_ref(x):
   from jax._src.state.types import AbstractRef

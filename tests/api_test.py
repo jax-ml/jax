@@ -8095,6 +8095,44 @@ class Remat3Test(RematTest):
     self.assertAllClose(rem(jnp.float32(3.), jnp.float32(4.)), (3., 16.),
                         check_dtypes=False)
 
+  def test_remat_unhashable_static_argnums(self):
+    # unhashable static values are closed over rather than hashed
+    @partial(jax.remat, static_argnums=1)
+    def f(x, static_dict):
+      return x * static_dict['scale']
+
+    x = jnp.ones(4)
+    g = jax.grad(lambda x: jnp.sum(f(x, {'scale': 2.0})))(x)
+    self.assertAllClose(g, jnp.full(4, 2.), check_dtypes=False)
+
+    @partial(jax.checkpoint, static_argnames='cfg')
+    def h(x, cfg):
+      return x * cfg['scale']
+
+    g = jax.grad(lambda x: jnp.sum(h(x, cfg={'scale': 3.0})))(x)
+    self.assertAllClose(g, jnp.full(4, 3.), check_dtypes=False)
+
+  def test_remat_eqn_dce(self):
+    @jax.remat
+    def f(x, y):
+      return jnp.sin(x), jnp.cos(y)
+
+    jaxpr = jax.make_jaxpr(f)(jnp.float32(1.), jnp.float32(2.))
+    dced, used_ins = pe.dce_jaxpr(jaxpr, [True, False])
+    self.assertEqual(used_ins, [True, False])
+    eqn, = dced.eqns
+    self.assertEqual(eqn.primitive.name, 'call_hi_primitive')
+    self.assertLen(eqn.invars, 1)
+    self.assertLen(eqn.outvars, 1)
+    out, = core.eval_jaxpr(dced, dced.consts, jnp.float32(3.))
+    self.assertAllClose(out, jnp.sin(3.), check_dtypes=False)
+
+    # with all outputs used, the primitive is unchanged
+    dced2, used_ins2 = pe.dce_jaxpr(jaxpr, [True, True])
+    self.assertEqual(used_ins2, [True, True])
+    eqn2, = dced2.eqns
+    self.assertIs(eqn2.params['_prim'], jaxpr.eqns[0].params['_prim'])
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):

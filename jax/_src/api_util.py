@@ -31,7 +31,8 @@ from jax._src.tree_util import (
     broadcast_flattened_prefix_with_treedef, treedef_is_leaf, tree_structure,
     tracing_registry)
 from jax._src import linear_util as lu
-from jax._src.util import safe_map, HashableFunction, Unhashable, safe_zip
+from jax._src.util import (safe_map, HashableFunction, Unhashable, safe_zip,
+                           weakref_lru_cache)
 from jax._src import traceback_util
 
 traceback_util.register_exclusion(__file__)
@@ -324,6 +325,52 @@ def is_hashable(arg):
     return True
   except TypeError:
     return False
+
+
+class WrapHashably:
+  val: Any
+  hash: int
+  hashable: bool
+
+  def __init__(self, val):
+    self.val = val
+    try:
+      self.hash = hash(val)
+      self.hashable = True
+    except:
+      self.hash = id(val)
+      self.hashable = False
+  def __hash__(self):
+    return self.hash
+  def __eq__(self, other):
+    if isinstance(other, WrapHashably):
+      if self.hashable and other.hashable:
+        return self.val == other.val
+      else:
+        return self.val is other.val
+    return False
+
+# This caching is useful to avoid retracing even when static_argnums is used.
+# See api_benchmark.py:bench_remat_eager_retracing_overheads_static_argnums.
+# On that benchmark, including this caching makes a ~10x difference (which can
+# be made arbitrary large by involving larger functions to be traced).
+def dyn_args_fun(fun: Callable, static_argnums: frozenset[int],
+                 static_args: tuple[WrapHashably, ...], nargs: int):
+  if any(isinstance(x.val, core.Tracer) for x in static_args):
+    return _dyn_args_fun_uncached(fun, static_argnums, static_args, nargs)
+  return _dyn_args_fun_cached(fun, static_argnums, static_args, nargs)
+
+def _dyn_args_fun_uncached(fun: Callable, static_argnums: frozenset[int],
+                           static_args: tuple[WrapHashably, ...], nargs: int):
+  def new_fun(*dyn_args, **kwargs):
+    static_args_, dyn_args_ = iter(static_args), iter(dyn_args)
+    full_args = [next(static_args_).val if i in static_argnums
+                 else next(dyn_args_) for i in range(nargs)]
+    return fun(*full_args, **kwargs)
+  new_fun.__name__ = getattr(fun, '__name__', '<unnamed function>')
+  return new_fun
+
+_dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 
 
 SENTINEL = object()

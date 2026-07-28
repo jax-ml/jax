@@ -438,49 +438,8 @@ def _remat_static_argnums(fun, static_argnums, args):
   new_fun = _dyn_args_fun(fun, static_argnums_, tuple(static_args), nargs)
   return new_fun, dyn_args
 
-class WrapHashably:
-  val: Any
-  hash: int
-  hashable: bool
-
-  def __init__(self, val):
-    self.val = val
-    try:
-      self.hash = hash(val)
-      self.hashable = True
-    except:
-      self.hash = id(val)
-      self.hashable = False
-  def __hash__(self):
-    return self.hash
-  def __eq__(self, other):
-    if isinstance(other, WrapHashably):
-      if self.hashable and other.hashable:
-        return self.val == other.val
-      else:
-        return self.val is other.val
-    return False
-
-# This caching is useful to avoid retracing even when static_argnums is used.
-# See api_benchmark.py:bench_remat_eager_retracing_overheads_static_argnums.
-# On that benchmark, including this caching makes a ~10x difference (which can
-# be made arbitrary large by involving larger functions to be traced).
-def _dyn_args_fun(fun: Callable, static_argnums: frozenset[int],
-                  static_args: tuple[WrapHashably, ...], nargs: int):
-  if any(isinstance(x.val, core.Tracer) for x in static_args):
-    return _dyn_args_fun_uncached(fun, static_argnums, static_args, nargs)
-  return _dyn_args_fun_cached(fun, static_argnums, static_args, nargs)
-
-def _dyn_args_fun_uncached(fun: Callable, static_argnums: frozenset[int],
-                           static_args: tuple[WrapHashably, ...], nargs: int):
-  def new_fun(*dyn_args, **kwargs):
-    static_args_, dyn_args_ = iter(static_args), iter(dyn_args)
-    full_args = [next(static_args_).val if i in static_argnums
-                 else next(dyn_args_) for i in range(nargs)]
-    return fun(*full_args, **kwargs)
-  return new_fun
-
-_dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
+WrapHashably = api_util.WrapHashably
+_dyn_args_fun = api_util.dyn_args_fun
 
 # This helper is similar to those in control_flow/common.py, but with
 # remat-specific errors.
@@ -1031,6 +990,21 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
 def _remat3(f, *, policy, static_argnums, static_argnames):
   @wraps(f)
   def decorator(*args, **kwargs):
+    if static_argnums or static_argnames:
+      # Like classic remat (and custom_vjp3), support unhashable static
+      # values by closing over them instead of threading them through the
+      # tracing machinery, which hashes them.
+      args_ = api_util.resolve_kwargs(f, args, kwargs)
+      argnums_ = (static_argnums,) if type(static_argnums) is int else static_argnums
+      argnums = frozenset(i % len(args_) for i in _static_argnums(
+          f, argnums_, static_argnames))
+      if not all(api_util.is_hashable(args_[i]) for i in argnums):
+        which_static = [i in argnums for i in range(len(args_))]
+        dyn_args, static_args = partition_list(which_static, args_)
+        f2 = _dyn_args_fun(f, argnums, tuple(map(WrapHashably, static_args)),
+                           len(args_))
+        return _remat3(f2, policy=policy, static_argnums=(),
+                       static_argnames=())(*dyn_args)
     args_ft = ft.flatten_static_argnums_argnames(
         args, kwargs, static_argnums, static_argnames)
     avals_ft = args_ft.map(typeof)
@@ -1042,6 +1016,14 @@ def _remat3(f, *, policy, static_argnums, static_argnames):
     out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
     return out_avals_ft.update(out_flat).unflatten()
   return decorator
+
+def _static_argnums(f, argnums, argnames) -> frozenset[int]:
+  argnums = set(argnums)
+  if argnames:
+    sig = api_util.fun_signature(f)
+    assert sig is not None
+    argnums |= set(api_util.infer_argnums_and_argnames(sig, None, argnames)[0])
+  return frozenset(argnums)
 
 def dce(traced, policy):
   in_fwd = pe._jaxpr_forwarding(traced.jaxpr)
@@ -1153,6 +1135,16 @@ class RematTraced(VJPHiPrimitive):
       out_flat = RematTraced(jaxpr, self.policy)(*res, *args_flat)
       return tree_unflatten(out_tree, out_flat)
     return out, rem
+
+  def dce(self, used_outs):
+    used_outs_flat = tree_leaves_checked(self.out_tree, used_outs)
+    if not any(used_outs_flat):
+      return False, False, None
+    new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat)
+    if all(used_ins) and all(used_outs_flat):
+      return True, True, self
+    return (tuple(used_ins), tuple(used_outs_flat),
+            RematTraced(new_jaxpr, self.policy))
 
 class CheckpointName(VJPHiPrimitive):
   name: str

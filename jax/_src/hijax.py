@@ -28,7 +28,8 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src.api_util import (
-    resolve_kwargs, infer_argnums_and_argnames, debug_info, is_hashable)
+    resolve_kwargs, infer_argnums_and_argnames, debug_info, is_hashable,
+    dyn_args_fun, WrapHashably)
 from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.core import typeof
@@ -778,8 +779,13 @@ def _call_hi_primitive_dce(used_outs_flat, eqn):
   used_ins, produced_outs, new_prim = _prim.dce(used_out)
   if new_prim is None:
     return [False] * len(eqn.invars), None
-  used_ins_flat = broadcast_prefix(used_ins, _prim.in_avals)
-  produced_outs_flat = broadcast_prefix(produced_outs, _prim.out_aval)
+  name = f'{type(_prim).__name__}.dce'
+  used_ins_flat = api.tuptree_flags(
+      used_ins, _prim.in_tree, 'used_ins',
+      f'the first (used inputs) return value of {name}')
+  produced_outs_flat = api.tuptree_flags(
+      produced_outs, _prim.out_tree, 'produced_outs',
+      f'the second (produced outputs) return value of {name}')
   new_invars = [x for x, u in zip(eqn.invars, used_ins_flat) if u]
   new_outvars = [v for v, u in zip(eqn.outvars, produced_outs_flat) if u]
   new_eqn = eqn.replace(invars=new_invars, outvars=new_outvars,
@@ -1121,8 +1127,8 @@ class custom_vjp3:
       # accepted unhashable nondiff_argnums values, so close over them instead
       which_static = [i in self.static_argnums for i in range(len(args))]
       dyn_args, static_args = partition_list(which_static, args)
-      f = lambda *dyn: self.f(*merge_lists(which_static, dyn, static_args))
-      f.__name__ = getattr(self.f, '__name__', '<unnamed function>')
+      f = dyn_args_fun(self.f, self.static_argnums,
+                       tuple(map(WrapHashably, static_args)), len(args))
       traced = api.jit(f).trace(*dyn_args)
     if any(isinstance(x, core.Tracer) for x in traced._consts):
       t = next(x for x in traced._consts if isinstance(x, core.Tracer))
@@ -1381,8 +1387,8 @@ class custom_jvp3:
       # accepted unhashable nondiff_argnums values, so close over them instead
       which_static = [i in self.static_argnums for i in range(len(args))]
       dyn_args, static_args = partition_list(which_static, args)
-      f = lambda *dyn: self.f(*merge_lists(which_static, dyn, static_args))
-      f.__name__ = getattr(self.f, '__name__', '<unnamed function>')
+      f = dyn_args_fun(self.f, self.static_argnums,
+                       tuple(map(WrapHashably, static_args)), len(args))
       traced = api.jit(f).trace(*dyn_args)
     if any(isinstance(x, core.Tracer) for x in traced._consts):
       t = next(x for x in traced._consts if isinstance(x, core.Tracer))
