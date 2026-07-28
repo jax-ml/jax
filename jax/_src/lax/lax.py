@@ -45,7 +45,6 @@ from jax._src import source_info_util
 from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
-from jax._src import tpu_info
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, ShapedArray, abstract_token,
                            canonicalize_shape)
@@ -4592,22 +4591,17 @@ ad.defjvp2(
     if accuracy is AccuracyMode.HIGHEST
     else mul(g, mul(ans, sub(_one(ans), ans))),
 )
-core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
+# TODO(phawkins): switch to LogisticOp lowering; debug numerical problems.
+# mlir.register_lowering(logistic_p, partial(_nary_lower_hlo, hlo.logistic))
 
 def logistic_impl(x, accuracy):
   del accuracy
   one = _const(x, 1)
   return div(one, add(one, exp(neg(x))))
+
 mlir.register_lowering(logistic_p,
                        mlir.lower_fun(logistic_impl, multiple_results=False))
-
-def _logistic_tpu_lowering(ctx, x, *, accuracy):
-  if tpu_info.is_tpu_device() and tpu_info.get_tpu_info().generation >= 6:
-    return _nary_lower_hlo(hlo.logistic, ctx, x, accuracy=accuracy)
-  else:
-    return mlir.lower_fun(logistic_impl, multiple_results=False
-                          )(ctx, x, accuracy=accuracy)
-mlir.register_lowering(logistic_p, _logistic_tpu_lowering, platform='tpu')
+core.pp_eqn_rules[logistic_p] = _unary_with_accuracy_pp_rule
 
 def _sin_complex(x):
   # use expm1 instead of exp to avoid cancellation when abs(x) is small
