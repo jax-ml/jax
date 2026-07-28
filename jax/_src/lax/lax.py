@@ -9337,7 +9337,13 @@ dce_sink_p.def_impl(lambda _, **__: [])
 dce_sink_p.multiple_results = True
 dce_sink_p.def_effectful_abstract_eval(lambda _, **__: ([], {no_dce_effect}))
 ad.deflinear(dce_sink_p, lambda _, **__: [])
-batching.primitive_batchers[dce_sink_p] = lambda x, bd, **_: (x, bd)
+def _dce_sink_batcher(batched_args, batch_dims, **params):
+  # dce_sink has no outputs as indicated in the abstract eval above.
+  # Re-bind it on the batched value to keep the no-DCE effect, and return no outputs.
+  (x,) = batched_args
+  dce_sink_p.bind(x, **params)
+  return [], []
+batching.primitive_batchers[dce_sink_p] = _dce_sink_batcher
 
 @partial(mlir.register_lowering, dce_sink_p)
 def _dce_sink_lowering(ctx, x, *, prevent_mlir_dce):
