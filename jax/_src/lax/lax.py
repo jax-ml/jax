@@ -9330,6 +9330,7 @@ class NoDCEEffect(effects.Effect):
 no_dce_effect = NoDCEEffect()
 effects.control_flow_allowed_effects.add_type(NoDCEEffect)
 effects.lowerable_effects.add_type(NoDCEEffect)
+effects.custom_derivatives_allowed_effects.add_type(NoDCEEffect)
 
 dce_sink_p = core.Primitive('dce_sink')
 dce_sink_p.def_impl(lambda _, **__: [])

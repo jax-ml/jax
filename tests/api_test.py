@@ -1671,7 +1671,7 @@ class APITest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()  # Concurrent ache eviction means we may retrace.
   def test_fwd_and_bwd(self):
     def f(x, W):
-        return x @ W
+      return x @ W
 
     x = W = cot_out = jnp.ones((4,4))
     expected_y, f_vjp = api.vjp(f, x, W)
@@ -1702,7 +1702,6 @@ class APITest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type"):
       grad(f)("foo")
-
 
     err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
                "value is of type .* and was passed to the function at path x.")
@@ -2213,7 +2212,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaises(RuntimeError):
       result = jax.device_put(x, s2)
       result.block_until_ready()
-
 
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
@@ -3257,7 +3255,6 @@ class APITest(jtu.JaxTestCase):
       self.assertNotRegex(str(j_module),
           f"stablehlo.constant dense.*tensor<{const_size}x")
 
-
   def test_concurrent_device_get_and_put(self):
     def f(x):
       for _ in range(100):
@@ -3906,7 +3903,6 @@ class APITest(jtu.JaxTestCase):
       # The following call will try and raise the ones array to the count tracer
       # level, which is no longer live.
       jax.jit(jnp.add)(jnp.ones(()), count)
-
 
   def test_escaped_tracer_shape_dtype(self):
     with self.assertRaisesRegex(core.UnexpectedTracerError, r"int32\[4,3\]"):
@@ -5086,7 +5082,6 @@ class APITest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x) * y['hi']
 
-
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         for _ in range(2):
@@ -5525,7 +5520,7 @@ class APITest(jtu.JaxTestCase):
 
     jitted_test_function = jax.jit(test_jax_function)
     with self.assertRaisesRegex(TypeError, "returned a value of type"):
-        jitted_test_function(
+      jitted_test_function(
             TestClass3(
                 test_data_field=1,
                 test_enum_field=TestEnum.A,
@@ -5565,7 +5560,6 @@ class APITest(jtu.JaxTestCase):
       consts = f().consts
 
     self.assertLen(consts, 1)
-
 
     # TODO(mattjj,phawkins): we broke this on purpose, as it probably isn't
     # load-bearing (see above comment). If we wanted to fix it, we might share
@@ -5659,6 +5653,55 @@ class APITest(jtu.JaxTestCase):
       return x
 
     jax.vmap(f)(jnp.arange(3.))  # don't crash
+
+  def test_dce_sink_in_custom_jvp_and_vjp(self):
+    @jax.custom_jvp
+    def f_jvp(x):
+      jax.lax.dce_sink(x)
+      return x * 2.0
+
+    @f_jvp.defjvp
+    def f_jvp_rule(primals, tangents):
+      (x,) = primals
+      (x_dot,) = tangents
+      jax.lax.dce_sink(x)
+      return f_jvp(x), x_dot * 2.0
+
+    x = jnp.array([1.0, 2.0])
+    x_dot = jnp.array([1.0, 1.0])
+
+    # Using jax.make_jaxpr or jax.jit forces JAX to build call_jaxpr and run
+    # custom_derivatives_allowed_effects type-checking.
+    jaxpr = jax.make_jaxpr(f_jvp)(x)
+    self.assertIn("custom_jvp_call", str(jaxpr))
+
+    # Test execution under jit
+    primal_out, tangent_out = jax.jit(
+        lambda v, v_dot: jax.jvp(f_jvp, (v,), (v_dot,))
+    )(x, x_dot)
+    self.assertAllClose(primal_out, x * 2.0)
+    self.assertAllClose(tangent_out, x_dot * 2.0)
+
+    @jax.custom_vjp
+    def f_vjp(x):
+      jax.lax.dce_sink(x)
+      return x * 3.0
+
+    def f_fwd(x):
+      jax.lax.dce_sink(x)
+      return f_vjp(x), ()
+
+    def f_bwd(res, g):
+      del res
+      return (g * 3.0,)
+
+    f_vjp.defvjp(f_fwd, f_bwd)
+
+    # Verify reverse differentiation when staged under jit and make_jaxpr
+    grad_fn = jax.jit(jax.grad(lambda v: jnp.sum(f_vjp(v))))
+    _ = jax.make_jaxpr(grad_fn)(x)
+    grad_val = grad_fn(x)
+    self.assertAllClose(grad_val, jnp.full(2, 3.0))
 
   def test_sharding_attr_on_tracer_error(self):
     @jax.jit
