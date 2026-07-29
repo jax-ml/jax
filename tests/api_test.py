@@ -7764,7 +7764,7 @@ class RematTest(jtu.JaxTestCase):
     np.testing.assert_allclose(jax.ref.get(grad_ref), jax.grad(f)(param))
 
 
-@jtu.with_config(jax_remat3=True)
+@jtu.with_config(jax_remat3=True, jax_remat_barrier_no_cotangents=False)
 class Remat3Test(RematTest):
   # The original versions of these tests used a "save cosine" policy that can't
   # be expressed the same way with remat3. Instead, we use custom_remat.
@@ -8117,30 +8117,7 @@ class Remat3Test(RematTest):
     self.assertAllClose(rem(jnp.float32(3.), jnp.float32(4.)), (3., 16.),
                         check_dtypes=False)
 
-  # Under remat3, a prevent_cse tuple pins only the selected saved primals:
-  # unlike remat2, cotangents are pinned only by scalar prevent_cse=True.
-  def test_remat_partial_cse_prevention(self):
-    @partial(jax.remat, prevent_cse=(False, True))
-    def layer(W, x):
-      res = x @ W
-      res += jnp.array([1.0, 2.0, 3.0])  # ensure the jaxpr also contains a const
-      return res
-
-    def net(Ws, x):
-      for W in Ws:
-        x = layer(W, x)
-      return x
-
-    def loss(Ws, x):
-      return jnp.sum(net(Ws, x)**2)
-
-    Ws = [jnp.ones((3, 3)) for _ in range(2)]
-    x = jnp.ones(3)
-    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
-    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+ :')
-    self.assertNotRegex(txt, r'optimization_barrier %[a-z0-9]+, %')
-
-  def test_remat_partial_cse_prevention_pytree(self):
+  def test_remat_partial_cse_prevention_pytree_prefix_forms(self):
     # remat3 accepts a pytree prefix or an isomorphic tuple-tree prefix
     # (tuples matched against containers by their number of children)
     for prevent_cse in [({'W': False, 'x': True},), ((False, True),)]:
@@ -8159,8 +8136,7 @@ class Remat3Test(RematTest):
       Ws = [jnp.ones((3, 3)) for _ in range(2)]
       x = jnp.ones(3)
       txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
-      self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+ :')
-      self.assertNotRegex(txt, r'optimization_barrier %[a-z0-9]+, %')
+      self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
 
   def test_remat_computed_residuals_cse_prevention(self):
     # computed (policy-saved) residuals are always barriered when any cse
@@ -8174,23 +8150,29 @@ class Remat3Test(RematTest):
       return jnp.tanh(x @ W)
 
     W, x = jnp.ones((3, 3)), jnp.ones(3)
-    txt = jax.jit(jax.grad(lambda W, x: layer(W, x).sum(), (0, 1))
-                  ).lower(W, x).as_text()
-    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+ :')
+    f = jax.grad(lambda W, x: layer(W, x).sum(), (0, 1))
+    txt = jax.jit(f).lower(W, x).as_text()
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
+    with config.remat_barrier_no_cotangents(True):
+      txt = jax.jit(f).lower(W, x).as_text()
+      self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+ :')
+      self.assertNotRegex(txt, r'optimization_barrier %[a-z0-9]+, %')
 
-  def test_remat_all_true_cse_prevention_excludes_cotangents(self):
-    @partial(jax.remat, prevent_cse=(True, True))
-    def layer(W, x):
-      return x @ W
-
+  def test_remat_cse_prevention_no_cotangents_flag(self):
+    # under the upgrade flag, barriers never pin cotangents, and scalar True
+    # is equivalent to an all-True tuple
     def loss(W, x):
       return jnp.sum(layer(W, x)**2)
 
     W, x = jnp.ones((3, 3)), jnp.ones(3)
-    txt = jax.jit(jax.grad(loss, (0, 1))).lower(W, x).as_text()
-    # both saved primals pinned together, but not the cotangent
-    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
-    self.assertNotRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+, %')
+    with config.remat_barrier_no_cotangents(True):
+      for prevent_cse in [True, (True, True)]:
+        layer = jax.remat(lambda W, x: x @ W, prevent_cse=prevent_cse)
+        txt = jax.jit(jax.grad(loss, (0, 1))).lower(W, x).as_text()
+        # both saved primals pinned together, but not the cotangent
+        self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
+        self.assertNotRegex(txt,
+                            r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+, %')
 
   def test_remat_unhashable_static_argnums(self):
     # unhashable static values are closed over rather than hashed

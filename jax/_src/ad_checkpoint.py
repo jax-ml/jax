@@ -272,9 +272,8 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
       with tuples matched against argument containers by their number of
       children) — selecting which arguments' saved values to pin. Computed
       (policy-saved) residuals are always pinned when any prevention is on.
-      Under ``jax_remat3``, cotangents are pinned only by
-      ``prevent_cse=True`` exactly, so an all-True tuple pins everything
-      except the cotangents.
+      Under ``jax_remat3``, cotangents are likewise pinned unless the
+      ``jax_remat_barrier_no_cotangents`` upgrade flag is enabled.
     static_argnums: Optional, int or sequence of ints, a keyword-only argument
       indicating which argument values on which to specialize for tracing and
       caching purposes. Specifying arguments as static can avoid
@@ -1119,18 +1118,19 @@ class RematTraced(VJPHiPrimitive):
   def vjp_bwd(self, primals_rem, outgrad, *arg_accums):
     primals, prevent_cse, rem = primals_rem
     prevent_cse = prevent_cse.val
-    if prevent_cse is True:
+    if prevent_cse is not False:
+      which = ([True] * len(primals) if prevent_cse is True else
+               list(prevent_cse))
+      unpinned, pinned = partition_list(which, primals)
       res, = rem.args
-      primals, res, outgrad = lax_internal.optimization_barrier(
-          (primals, res, outgrad))
+      if config.remat_barrier_no_cotangents.value:
+        if pinned or res:
+          pinned, res = lax_internal.optimization_barrier((pinned, res))
+      else:
+        pinned, res, outgrad = lax_internal.optimization_barrier(
+            (pinned, res, outgrad))
       rem = Partial(rem.func, res)
-    elif prevent_cse is not False:
-      res, = rem.args
-      unpinned, pinned = partition_list(prevent_cse, primals)
-      if pinned or res:
-        pinned, res = lax_internal.optimization_barrier((pinned, res))
-        rem = Partial(rem.func, res)
-      primals = merge_lists(prevent_cse, unpinned, pinned)
+      primals = merge_lists(which, unpinned, pinned)
     bwd = rem(*primals)
     bwd.with_refs(*arg_accums)(outgrad)
 
