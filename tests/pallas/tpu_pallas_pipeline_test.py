@@ -1494,39 +1494,44 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
       grid=(num_cores,),
   )(x, y)
 
+
 @jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
+
+  _BM_CHOICES = 8, 16, 32, 128, 256, 512
+  _BK_BN_CHOICES = 128, 256, 512
+
+  @staticmethod
+  @hps.composite
+  def _padded_matmul_case(draw, *, min_bm):
+    bm_choices = PaddedPipelineEmitterTest._BM_CHOICES
+    bk_bn_choices = PaddedPipelineEmitterTest._BK_BN_CHOICES
+    bm = draw(
+        hps.sampled_from([
+            block_size
+            for block_size in bm_choices
+            if block_size >= min_bm
+        ])
+    )
+    bk = draw(hps.sampled_from(bk_bn_choices))
+    bn = draw(hps.sampled_from(bk_bn_choices))
+
+    # Draw the block sizes first so every matrix is large enough to contain them.
+    # The dimensions need not be multiples of the blocks, which preserves coverage
+    # of the padded cases this test is intended to exercise.
+    m = draw(hps.integers(min_value=bm, max_value=1024))
+    k = draw(hps.integers(min_value=bk, max_value=1024))
+    n = draw(hps.integers(min_value=bn, max_value=1024))
+    seed = draw(hps.integers(0, 4))
+    return m, k, n, bm, bk, bn, seed
 
   def setUp(self):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only TPU v4+ allowed.')
 
-  @parameterized.named_parameters(
-      ('float32', 'float32'), ('bfloat16', 'bfloat16'), ('int8', 'int8')
-  )
-  @hp.given(
-      hps.integers(1, 1024),
-      hps.integers(1, 1024),
-      hps.integers(1, 1024),
-      hps.sampled_from([8, 16, 32, 128, 256, 512]),
-      hps.sampled_from([128, 256, 512]),
-      hps.sampled_from([128, 256, 512]),
-      hps.integers(0, 4),
-  )
-  def test_padded_matmul(self, dtype, m, k, n, bm, bk, bn, seed):
-    if dtype == 'int8' and jtu.is_device_tpu_at_least(6):
-      self.skipTest('Not implemented for TPU v6.')
-
-    hp.assume(bm <= m)
-    hp.assume(bn <= n)
-    hp.assume(bk <= k)
-    if dtype == 'bfloat16':
-      hp.assume(bm >= 16)
-    if dtype == 'int8':
-      if not jtu.is_device_tpu_at_least(5):
-        self.skipTest('Only TPU v5+ allowed for int8.')
-      hp.assume(bm >= 32)
+  def _check_padded_matmul(self, dtype, case):
+    m, k, n, bm, bk, bn, seed = case
     k1, k2 = jax.random.split(jax.random.key(seed))
     x = jax.random.normal(k1, (m, k), jnp.float32).astype(dtype)
     y = jax.random.normal(k2, (k, n), jnp.float32).astype(dtype)
@@ -1539,6 +1544,22 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
       expected = expected.astype('float32')
       atol = rtol = 1e-2
     np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
+
+  @hp.given(_padded_matmul_case(min_bm=8))
+  def test_padded_matmul_float32(self, case):
+    self._check_padded_matmul('float32', case)
+
+  @hp.given(_padded_matmul_case(min_bm=16))
+  def test_padded_matmul_bfloat16(self, case):
+    self._check_padded_matmul('bfloat16', case)
+
+  @hp.given(_padded_matmul_case(min_bm=32))
+  def test_padded_matmul_int8(self, case):
+    if jtu.is_device_tpu_at_least(6):
+      self.skipTest('Not implemented for TPU v6.')
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only TPU v5+ allowed for int8.')
+    self._check_padded_matmul('int8', case)
 
 
 class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
