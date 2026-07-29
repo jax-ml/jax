@@ -46,7 +46,7 @@ from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, keystr, generate_key_paths,
     tree_flatten_with_path, equality_errors_pytreedef, register_pytree_node,
-    register_dataclass, treedef_is_strict_leaf)
+    register_dataclass, treedef_is_strict_leaf, broadcast_prefix)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -1642,7 +1642,8 @@ def vjp(
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
     saveable_args: Optional, a tuple-tree of bools (i.e. nested tuples with
-      bool leaves), by default the single bool ``True``. Indicates whether
+      bool leaves) or equivalently a pytree prefix of the primals with bool
+      leaves, by default the single bool ``True``. Indicates whether
       each primal argument (or argument sub-pytree, or leaf) may be saved for
       the backward pass. It must form a tree prefix of ``primals`` up to
       pytree node types: tuples are matched against argument containers only
@@ -1836,11 +1837,22 @@ def tuptree_map(f, treedef, *args):
   return treedef.walk(lambda xs, _: tuple(xs), lambda xs: f(*xs), zip(*args))
 
 def tuptree_flags(prefix, treedef, name: str, full_name: str) -> list[bool]:
-  """Expand a tuple-tree of bools into per-leaf flags for `treedef`.
+  """Expand a flags prefix into per-leaf flags for `treedef`.
 
-  A tuple-tree is made of bools and tuples only, and must form a tree prefix
-  of `treedef` up to pytree node types: tuples are matched against containers
+  The prefix may be a bool, a pytree prefix of `treedef` with bool leaves, or
+  a tuple-tree: made of bools and tuples only, forming a tree prefix of
+  `treedef` up to pytree node types, with tuples matched against containers
   only by their number of children."""
+  if isinstance(prefix, bool):
+    return [prefix] * treedef.num_leaves
+  try:
+    dummy = treedef.unflatten(list(range(treedef.num_leaves)))
+    flags = broadcast_prefix(prefix, dummy)
+  except ValueError:
+    pass
+  else:
+    if all(isinstance(f, bool) for f in flags):
+      return list(flags)
   ret: list[bool] = []
   _tuptree_flags_rec(prefix, treedef, name, full_name, (), ret)
   return ret
@@ -1856,7 +1868,8 @@ def _tuptree_flags_rec(prefix, td, name, full_name, path, ret):
   where = name + ''.join(f'[{i}]' for i in path)
   if not isinstance(prefix, tuple):
     raise ValueError(
-        f"{full_name} must be a tuple-tree of bools "
+        f"{full_name} must be a pytree prefix with bool leaves or a "
+        f"tuple-tree of bools "
         f"(made of bools and tuples only), but {where} is {prefix!r} of type "
         f"{type(prefix).__name__}")
   if treedef_is_strict_leaf(td):

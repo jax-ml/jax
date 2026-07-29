@@ -8117,6 +8117,81 @@ class Remat3Test(RematTest):
     self.assertAllClose(rem(jnp.float32(3.), jnp.float32(4.)), (3., 16.),
                         check_dtypes=False)
 
+  # Under remat3, a prevent_cse tuple pins only the selected saved primals:
+  # unlike remat2, cotangents are pinned only by scalar prevent_cse=True.
+  def test_remat_partial_cse_prevention(self):
+    @partial(jax.remat, prevent_cse=(False, True))
+    def layer(W, x):
+      res = x @ W
+      res += jnp.array([1.0, 2.0, 3.0])  # ensure the jaxpr also contains a const
+      return res
+
+    def net(Ws, x):
+      for W in Ws:
+        x = layer(W, x)
+      return x
+
+    def loss(Ws, x):
+      return jnp.sum(net(Ws, x)**2)
+
+    Ws = [jnp.ones((3, 3)) for _ in range(2)]
+    x = jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+ :')
+    self.assertNotRegex(txt, r'optimization_barrier %[a-z0-9]+, %')
+
+  def test_remat_partial_cse_prevention_pytree(self):
+    # remat3 accepts a pytree prefix or an isomorphic tuple-tree prefix
+    # (tuples matched against containers by their number of children)
+    for prevent_cse in [({'W': False, 'x': True},), ((False, True),)]:
+      @partial(jax.remat, prevent_cse=prevent_cse)
+      def layer(dct):
+        return dct['x'] @ dct['W']
+
+      def net(Ws, x):
+        for W in Ws:
+          x = layer(dict(W=W, x=x))
+        return x
+
+      def loss(Ws, x):
+        return jnp.sum(net(Ws, x)**2)
+
+      Ws = [jnp.ones((3, 3)) for _ in range(2)]
+      x = jnp.ones(3)
+      txt = jax.jit(jax.grad(loss, (0, 1))).lower(Ws, x).as_text()
+      self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+ :')
+      self.assertNotRegex(txt, r'optimization_barrier %[a-z0-9]+, %')
+
+  def test_remat_computed_residuals_cse_prevention(self):
+    # computed (policy-saved) residuals are always barriered when any cse
+    # prevention is on, even if no primal is selected: e.g. for
+    # remat(lambda x: sin(x) ** 2), the sin recompute must not be cse'd with
+    # the primal sin, and the ** 2 consumer puts sin(x) in the
+    # computed-residuals slot
+    @partial(jax.remat, policy=jax.checkpoint_policies.dots_saveable,
+             prevent_cse=(False, False))
+    def layer(W, x):
+      return jnp.tanh(x @ W)
+
+    W, x = jnp.ones((3, 3)), jnp.ones(3)
+    txt = jax.jit(jax.grad(lambda W, x: layer(W, x).sum(), (0, 1))
+                  ).lower(W, x).as_text()
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+ :')
+
+  def test_remat_all_true_cse_prevention_excludes_cotangents(self):
+    @partial(jax.remat, prevent_cse=(True, True))
+    def layer(W, x):
+      return x @ W
+
+    def loss(W, x):
+      return jnp.sum(layer(W, x)**2)
+
+    W, x = jnp.ones((3, 3)), jnp.ones(3)
+    txt = jax.jit(jax.grad(loss, (0, 1))).lower(W, x).as_text()
+    # both saved primals pinned together, but not the cotangent
+    self.assertRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+ :')
+    self.assertNotRegex(txt, r'optimization_barrier %[a-z0-9]+, %[a-z0-9]+, %')
+
   def test_remat_unhashable_static_argnums(self):
     # unhashable static values are closed over rather than hashed
     @partial(jax.remat, static_argnums=1)

@@ -38,7 +38,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.remat import remat_transform
-from jax._src.hijax import VJPHiPrimitive, call_hi_primitive_p
+from jax._src.hijax import VJPHiPrimitive, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
@@ -267,6 +267,14 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
       But in some settings, like when used inside a :func:`~jax.lax.scan`, this
       CSE prevention mechanism is unnecessary, in which case ``prevent_cse`` can
       be set to False.
+      ``prevent_cse`` may also be a pytree prefix of the arguments with bool
+      leaves — or equivalently a tuple-tree prefix (bools and tuples only,
+      with tuples matched against argument containers by their number of
+      children) — selecting which arguments' saved values to pin. Computed
+      (policy-saved) residuals are always pinned when any prevention is on.
+      Under ``jax_remat3``, cotangents are pinned only by
+      ``prevent_cse=True`` exactly, so an all-True tuple pins everything
+      except the cotangents.
     static_argnums: Optional, int or sequence of ints, a keyword-only argument
       indicating which argument values on which to specialize for tracing and
       caching purposes. Specifying arguments as static can avoid
@@ -376,7 +384,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool | Sequence[bool] = True,
   if config.remat3.value:
     policy = None if policy is nothing_saveable else policy
     return remat3(fun, policy=policy, static_argnums=static_argnums,
-                  static_argnames=static_argnames)
+                  static_argnames=static_argnames, prevent_cse=prevent_cse)
 
   @wraps(fun)
   @api_boundary
@@ -966,7 +974,8 @@ def _remat_state_discharge_rule(
 def checkpoint_name3(name, x):
   return CheckpointName(name, typeof(x))(x)
 
-def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
+def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=(),
+           prevent_cse=True):
   """Rematerialization decorator (new implementation, ``jax_remat3``).
 
   Note on interaction with :func:`jax.custom_vjp`: when differentiating
@@ -983,11 +992,14 @@ def remat3(f=None, /, policy=None, static_argnums=(), static_argnames=()):
   checkpoint ``policy`` there; they are always recomputed.
   """
   kwargs = dict(policy=policy, static_argnums=static_argnums,
-                static_argnames=static_argnames)
+                static_argnames=static_argnames, prevent_cse=prevent_cse)
   if f is None: return lambda g: _remat3(g, **kwargs)
   return _remat3(f, **kwargs)
 
-def _remat3(f, *, policy, static_argnums, static_argnames):
+def _remat3(f, *, policy, static_argnums, static_argnames, prevent_cse=True):
+  if not isinstance(prevent_cse, bool) and (static_argnums or static_argnames):
+    raise NotImplementedError(
+        "non-bool prevent_cse together with static_argnums/static_argnames")
   @wraps(f)
   def decorator(*args, **kwargs):
     if static_argnums or static_argnames:
@@ -1013,7 +1025,14 @@ def _remat3(f, *, policy, static_argnums, static_argnames):
         static_argnames=static_argnames)
     jaxpr_, out_avals_ft = pe.trace_to_jaxpr(f, avals_ft, dbg)
     jaxpr, consts = pe.separate_consts(jaxpr_)
-    out_flat = RematTraced(jaxpr, policy)(*consts, *args_ft)
+    if isinstance(prevent_cse, bool):
+      prevent_cse_ = prevent_cse
+    else:
+      cse_args = (args, kwargs) if kwargs else args
+      prevent_cse_ = (False,) * len(consts) + tuple(api.tuptree_flags(
+          prevent_cse, tree_structure(cse_args), 'prevent_cse',
+          'the prevent_cse argument to jax.checkpoint'))
+    out_flat = RematTraced(jaxpr, policy, prevent_cse_)(*consts, *args_ft)
     return out_avals_ft.update(out_flat).unflatten()
   return decorator
 
@@ -1055,11 +1074,14 @@ def _dced(jaxpr, in_fwd, take, out_tree, policy, res, *args):
 class RematTraced(VJPHiPrimitive):
   jaxpr: core.Jaxpr
   policy: Any
+  prevent_cse: bool | tuple[bool, ...]
 
-  def __init__(self, jaxpr, policy):
+  def __init__(self, jaxpr, policy, prevent_cse=True):
+    assert (isinstance(prevent_cse, bool) or
+            len(prevent_cse) == len(jaxpr.in_avals))
     self.in_avals = tuple(jaxpr.in_avals)
     self.out_aval = jaxpr.out_avals
-    self.params = dict(jaxpr=jaxpr, policy=policy)
+    self.params = dict(jaxpr=jaxpr, policy=policy, prevent_cse=prevent_cse)
     self.effects = frozenset(core.positional_effects(jaxpr))
     super().__init__()
 
@@ -1085,14 +1107,31 @@ class RematTraced(VJPHiPrimitive):
       traced_vjp = api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals)
     used, rem = dce(traced_vjp, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
+    if isinstance(self.prevent_cse, bool):
+      prevent_cse = self.prevent_cse
+    else:
+      prevent_cse = tuple(f for f, u in zip(self.prevent_cse, used) if u)
     # TODO(mattjj): propagate symbolic zeros more generally
     nzs_out = [getattr(a.to_tangent_aval(), 'dtype', None) is not dtypes.float0
                for a in self.out_aval]
-    return primals_out, (primals_, rem), nzs_out
+    return primals_out, (primals_, Static(prevent_cse), rem), nzs_out
 
   def vjp_bwd(self, primals_rem, outgrad, *arg_accums):
-    primals, rem = primals_rem
-    bwd = rem(*lax_internal.optimization_barrier(primals))
+    primals, prevent_cse, rem = primals_rem
+    prevent_cse = prevent_cse.val
+    if prevent_cse is True:
+      res, = rem.args
+      primals, res, outgrad = lax_internal.optimization_barrier(
+          (primals, res, outgrad))
+      rem = Partial(rem.func, res)
+    elif prevent_cse is not False:
+      res, = rem.args
+      unpinned, pinned = partition_list(prevent_cse, primals)
+      if pinned or res:
+        pinned, res = lax_internal.optimization_barrier((pinned, res))
+        rem = Partial(rem.func, res)
+      primals = merge_lists(prevent_cse, unpinned, pinned)
+    bwd = rem(*primals)
     bwd.with_refs(*arg_accums)(outgrad)
 
   def jvp(self, primals, tangents):
@@ -1123,7 +1162,8 @@ class RematTraced(VJPHiPrimitive):
         self.jaxpr, axis_data, dims,
         [batching.zero_if_mapped] * len(self.jaxpr.outvars))
     out_dims = [0 if b else None for b in out_batched]
-    return RematTraced(jaxpr_batched, self.policy)(*args), out_dims
+    return RematTraced(jaxpr_batched, self.policy,
+                       self.prevent_cse)(*args), out_dims
 
   def remat(self, trace, *args):  # pyrefly: ignore[bad-param-name-override]
     traced = core.jaxpr_as_fun(self.jaxpr)
@@ -1143,8 +1183,12 @@ class RematTraced(VJPHiPrimitive):
     new_jaxpr, used_ins = pe.dce_jaxpr(self.jaxpr, used_outs_flat)
     if all(used_ins) and all(used_outs_flat):
       return True, True, self
+    if isinstance(self.prevent_cse, bool):
+      prevent_cse = self.prevent_cse
+    else:
+      prevent_cse = tuple(f for f, u in zip(self.prevent_cse, used_ins) if u)
     return (tuple(used_ins), tuple(used_outs_flat),
-            RematTraced(new_jaxpr, self.policy))
+            RematTraced(new_jaxpr, self.policy, prevent_cse))
 
 class CheckpointName(VJPHiPrimitive):
   name: str
