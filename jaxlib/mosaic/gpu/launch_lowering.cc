@@ -17,15 +17,19 @@ limitations under the License.
 // instructions that load the kernel onto the GPU, run it and immediately unload
 // it again. This has the correct semantics, but loading the kernel is both
 // expensive and forces synchronization, which causes performance issues.
-
-// This pass implements an alternative strategy, where each function containing
-// a gpu.launch_func is split into two functions: one that preloads the kernel
-// onto the GPU, and second one that consumes the handle produced by the
-// first one. We call the first function at compile-time, while only the
-// second one is used at run-time.
-
-// TODO(apaszke): Implement a third function that properly cleans up the
-// resources allocated by the first function.
+//
+// This pass implements an alternative strategy:
+// 1. It lowers gpu.launch_func into a call to mosaic_gpu_launch_kernel, which
+//    takes a preloaded kernel function handle (CUfunction) passed as an extra
+//    first argument to the enclosing host function.
+// 2. It extracts the embedded GPU binary (gpu.binary) and kernel configuration
+//    metadata (name, dynamic shared memory size, and cluster size) and attaches
+//    them as attributes on the root mlir::ModuleOp before erasing gpu.binary.
+//
+// At compile time, the XLA custom call handler (custom_call.cc) retrieves
+// these module attributes and serializes them. At runtime initialization, it
+// preloads the GPU module and kernel function directly via CUDA Driver APIs
+// and passes the resulting kernel handle to the host function during execution.
 
 #include <cassert>
 #include <cstdint>
@@ -36,7 +40,6 @@ limitations under the License.
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
-#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -112,19 +115,6 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
                               {}),
       decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
       /*res_attrs=*/nullptr);
-  mlir::func::FuncOp::create(
-      decl_builder, module.getLoc(),
-      decl_builder.getStringAttr("mosaic_gpu_module_load"),
-      mlir::FunctionType::get(module.getContext(), {ptr_ty}, {ptr_ty}),
-      decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
-      /*res_attrs=*/nullptr);
-  mlir::func::FuncOp::create(
-      decl_builder, module.getLoc(),
-      decl_builder.getStringAttr("mosaic_gpu_get_function"),
-      mlir::FunctionType::get(module.getContext(), {ptr_ty, ptr_ty, i32, i32},
-                              {ptr_ty}),
-      decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
-      /*res_attrs=*/nullptr);
 }
 
 int32_t getClusterSize(mlir::gpu::LaunchFuncOp launch) {
@@ -151,66 +141,6 @@ int32_t getDynamicSmemSize(mlir::gpu::LaunchFuncOp launch) {
     return *const_smem;
   }
   return 0;
-}
-
-void buildInitFunction(mlir::OpBuilder& module_builder,
-                       mlir::func::FuncOp init_func,
-                       mlir::gpu::ObjectAttr object,
-                       mlir::gpu::LaunchFuncOp launch) {
-  llvm::StringRef kernel_name = launch.getKernelName().getValue();
-  auto i32 = mlir::IntegerType::get(init_func.getContext(), 32);
-  auto ptr_ty = mlir::LLVM::LLVMPointerType::get(init_func.getContext());
-  mlir::Location loc = init_func.getLoc();
-  auto builder = mlir::OpBuilder::atBlockBegin(init_func.addEntryBlock());
-  auto binary_global_decl = mlir::LLVM::GlobalOp::create(
-      module_builder, loc,
-      mlir::LLVM::LLVMArrayType::get(builder.getI8Type(),
-                                     object.getObject().size()),
-      /*is_constant=*/true,
-      /*linkage=*/mlir::LLVM::Linkage::Internal,
-      /*name=*/
-      builder.getStringAttr(kernel_name.str() + "_kernel_binary"),
-      /*value=*/object.getObject());
-  mlir::Value binary_addr = mlir::LLVM::AddressOfOp::create(
-      builder, init_func.getLoc(), binary_global_decl);
-  mlir::Value module_handle =
-      mlir::func::CallOp::create(builder, loc, "mosaic_gpu_module_load", ptr_ty,
-                                 binary_addr)
-          .getResult(0);
-
-  // TODO(apaszke): This will create duplicate globals if the kernel
-  // is called from multiple functions!
-  mlir::StringAttr kernel_name_global_name =
-      builder.getStringAttr(kernel_name.str() + "_name");
-  auto kernel_name_global = mlir::LLVM::GlobalOp::create(
-      module_builder, loc,
-      mlir::LLVM::LLVMArrayType::get(builder.getI8Type(),
-                                     kernel_name.size() + 1),
-      /*is_constant=*/true,
-      /*linkage=*/mlir::LLVM::Linkage::Internal,
-      /*name=*/kernel_name_global_name,
-      /*value=*/
-      builder.getStringAttr(
-          llvm::Twine(kernel_name).concat(llvm::Twine('\0'))));
-  mlir::Value kernel_name_ptr =
-      mlir::LLVM::AddressOfOp::create(builder, loc, kernel_name_global);
-  int32_t const_smem_size = getDynamicSmemSize(launch);
-  mlir::Value used_smem = mlir::LLVM::ConstantOp::create(
-      builder, loc, i32, builder.getI32IntegerAttr(const_smem_size));
-  int32_t const_cluster_size = getClusterSize(launch);
-  mlir::Value cluster_size = mlir::LLVM::ConstantOp::create(
-      builder, loc, i32, builder.getI32IntegerAttr(const_cluster_size));
-  mlir::Value kernel_handle =
-      mlir::func::CallOp::create(
-          builder, loc, "mosaic_gpu_get_function", ptr_ty,
-          mlir::ValueRange{module_handle, kernel_name_ptr, used_smem,
-                           cluster_size})
-          .getResult(0);
-  mlir::LLVM::StoreOp::create(builder, loc, module_handle,
-                              init_func.getArgument(0));
-  mlir::LLVM::StoreOp::create(builder, loc, kernel_handle,
-                              init_func.getArgument(1));
-  mlir::func::ReturnOp::create(builder, loc);
 }
 
 mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
@@ -277,12 +207,6 @@ class GpuLaunchLoweringPass
                 mlir::LLVM::LLVMDialect::getEmitCWrapperAttrName())) {
           continue;
         }
-        auto module_builder = mlir::OpBuilder::atBlockBegin(module.getBody());
-        auto init_func = mlir::func::FuncOp::create(
-            module_builder, op.getLoc(), func.getName().str() + "_init",
-            mlir::FunctionType::get(func->getContext(), {ptr_ty, ptr_ty}, {}));
-        init_func->setAttr(mlir::LLVM::LLVMDialect::getEmitCWrapperAttrName(),
-                           mlir::UnitAttr::get(func->getContext()));
         bool had_launch = false;
         mlir::Operation* gpu_binary = nullptr;
         auto result = getOperation()->walk([&](mlir::gpu::LaunchFuncOp launch)
@@ -313,7 +237,15 @@ class GpuLaunchLoweringPass
             return mlir::WalkResult::interrupt();
           }
 
-          buildInitFunction(module_builder, init_func, object, launch);
+          int32_t smem_bytes = getDynamicSmemSize(launch);
+          int32_t cluster_size = getClusterSize(launch);
+          module->setAttr("mosaic_gpu.gpu_binary", object.getObject());
+          module->setAttr("mosaic_gpu.kernel_name", launch.getKernelName());
+          mlir::OpBuilder builder(module);
+          module->setAttr("mosaic_gpu.smem_bytes",
+                          builder.getI32IntegerAttr(smem_bytes));
+          module->setAttr("mosaic_gpu.cluster_size",
+                          builder.getI32IntegerAttr(cluster_size));
 
           // Add a new function argument for the kernel handle.
           if (func.insertArgument(
@@ -333,9 +265,6 @@ class GpuLaunchLoweringPass
 
           return mlir::WalkResult::advance();
         });
-        if (!had_launch) {
-          init_func.erase();
-        }
         if (gpu_binary) {
           // This deletion is load-bearing: the conversion of `gpu.binary` to
           // LLVM is side-effecting, as it creates module constructors and
