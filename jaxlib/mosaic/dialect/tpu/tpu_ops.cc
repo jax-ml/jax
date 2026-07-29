@@ -535,37 +535,6 @@ void MemRefSqueezeOp::getCanonicalizationPatterns(RewritePatternSet& results,
   results.add<MemRefSqueezeFoldCast>(context);
 }
 
-LogicalResult RelayoutOp::verify() {
-  auto in_layout_array_attr =
-      getOperation()->getAttrOfType<ArrayAttr>("in_layout");
-  if (!in_layout_array_attr) {
-    return emitOpError("missing 'in_layout' attribute");
-  }
-  if (in_layout_array_attr.size() != 1) {
-    return emitOpError(
-        "'in_layout' attribute must be an array containing a single "
-        "VectorLayoutAttr");
-  }
-  if (!isa<tpu::VectorLayoutAttr>(in_layout_array_attr[0])) {
-    return emitOpError("'in_layout' attribute is not a VectorLayoutAttr");
-  }
-
-  auto out_layout_array_attr =
-      getOperation()->getAttrOfType<ArrayAttr>("out_layout");
-  if (!out_layout_array_attr) {
-    return emitOpError("missing 'out_layout' attribute");
-  }
-  if (out_layout_array_attr.size() != 1) {
-    return emitOpError(
-        "'out_layout' attribute must be an array containing a single "
-        "VectorLayoutAttr");
-  }
-  if (!isa<tpu::VectorLayoutAttr>(out_layout_array_attr[0])) {
-    return emitOpError("'out_layout' attribute is not a VectorLayoutAttr");
-  }
-  return success();
-}
-
 LogicalResult MemRefReshapeOp::verify() {
   auto src_ty = getInput().getType();
   auto tgt_ty = getType();

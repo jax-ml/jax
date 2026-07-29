@@ -248,23 +248,6 @@ absl::StatusOr<func::FuncOp> GetFuncWithCoreType(ModuleOp module,
       core_type));
 }
 
-void VectorLayoutAttr::print(AsmPrinter& printer) const {
-  printer << '<';
-  printer << getLayout();
-  printer << '>';
-}
-
-Attribute VectorLayoutAttr::parse(AsmParser& parser, Type type) {
-  if (failed(parser.parseLess())) {
-    return {};
-  }
-  if (auto layout = parseLayout(parser);
-      layout.has_value() && succeeded(parser.parseGreater())) {
-    return get(parser.getContext(), *layout);
-  }
-  return {};
-}
-
 void TiledLayoutAttr::print(AsmPrinter& printer) const {
   printer << '<';
   for (const xla::Tile& tile : getTiles()) {

@@ -47,13 +47,6 @@ def TPU_ElementWindowAttr : TPU_Attr<"ElementWindow", "element_window"> {
   let assemblyFormat = "`<` `[` $pad_low `]` `,` `[` $pad_high `]` `>`";
 }
 
-def TPU_VectorLayoutAttr : TPU_Attr<"VectorLayout", "vpad"> {
-  let description = [{TODO}];
-
-  let parameters = (ins "Layout":$layout);
-  let hasCustomAssemblyFormat = 1;
-}
-
 def TPU_TiledLayoutAttr
   : TPU_Attr<"TiledLayout", "tiled",
              [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface, ["verifyLayout"]>]> {
@@ -718,12 +711,6 @@ def TPU_UnpackElementwiseOp : TPU_Op<"unpack_elementwise", [Pure, ElementwiseMap
   let hasVerifier = 1;
 }
 
-def TPU_RelayoutOp : TPU_Op<"relayout", [Pure, SameOperandsAndResultType]> {
-  let arguments = (ins AnyVectorOfAnyRank:$input);
-  let results = (outs AnyVectorOfAnyRank:$output);
-  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
-  let hasVerifier = 1;
-}
 
 def TPU_PackMaskOp : TPU_Op<"pack_vmsk", [Pure, SameTypeOperands]> {
   let description = [{
