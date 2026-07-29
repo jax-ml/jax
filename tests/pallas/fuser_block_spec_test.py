@@ -211,7 +211,6 @@ class PullBlockSpecTest(jtu.JaxTestCase):
           scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
       )(new_values, in_type)
 
-
   def test_const(self):
 
     x = np.ones((512, 512), dtype=np.float32)
@@ -365,6 +364,43 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(
         kernel_fn((0, 0, 0), scalar_prefetch_values, new_values, x, y), x + y
     )
+
+  def test_custom_fusion_prefetch(self):
+    @custom_fusion_lib.custom_fusion
+    def fn(x):
+      return x * 2.0
+
+    fn.def_pull_block_spec(lambda bss: bss)
+    fn.def_push_block_spec(lambda bss: bss)
+
+    @fn.def_eval_rule
+    def eval_rule(ctx, x):
+      self.assertIsNotNone(ctx.scalar_prefetch)
+      sp_handler = block_spec_lib.make_scalar_prefetch_handler(0)
+      prefetch_val = sp_handler(*ctx.scalar_prefetch)
+      return (fn(x) + prefetch_val,)
+
+    in_type = jax.ShapeDtypeStruct((512, 512), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        fn, in_type
+    )
+    self.assertEmpty(new_values)
+    self.assertEmpty(scalar_prefetch_values)
+
+    block_spec = pl.BlockSpec((128, 128), lambda i, j, k, *sp: (i, j))
+    kernel_fn, (value_block_specs, in_block_spec), _ = (
+        block_spec_lib.pull_block_spec(f2, block_spec, grid_len=3)(
+            new_values, in_type
+        )
+    )
+    self.assertEmpty(value_block_specs)
+    self.assertEqual(in_block_spec.block_shape, (128, 128))
+
+    x = np.ones((128, 128), dtype=np.float32)
+    prefetch_val = np.float32(5.0)
+    scalar_prefetch_inputs = (prefetch_val,)
+    result = kernel_fn((0, 0, 0), scalar_prefetch_inputs, new_values, x)
+    np.testing.assert_array_equal(result, x * 2.0 + 5.0)
 
   @parameterized.product(
       fn=[
