@@ -2588,9 +2588,6 @@ def raise_lo_outs(hi_avals, lo_outs):
   assert next(lo_outs_, None) is None
   return hi_outs
 
-def num_himuts_out(final_qdds):
-  return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
-
 
 def _closed_call_to_lojax(*hi_args, call_jaxpr: Jaxpr, **_):
   from jax._src.custom_derivatives import _lower_and_eval  # pyrefly: ignore[missing-import]

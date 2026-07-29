@@ -575,11 +575,6 @@ def backward_pass(jaxpr, transform_stack: bool, consts, primals_in, cts_in):
   return [x.freeze() if isinstance(x, ValAccum) else p2cz(x)
           for x in primals_in]
 
-def closed_backward_pass(jaxpr: core.Jaxpr, transform_stack,
-                         primals_in, cotangents_in):
-  return backward_pass(jaxpr, transform_stack, jaxpr.consts,
-                       primals_in, cotangents_in)
-
 
 @lu.transformation_with_aux2
 def nonzero_tangent_outputs(f, store, *args, **kwargs):
