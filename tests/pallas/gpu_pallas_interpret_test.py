@@ -1633,7 +1633,7 @@ class InterpretTest(jtu.JaxTestCase):
           out_ref[...] = 42
 
     with self.assertRaisesRegex(
-        Exception, r'Cannot core_map over WarpMesh while already core_mapped'
+        Exception, r'Cannot .*map over WarpMesh while already .*mapped'
     ):
       _kernel()
 

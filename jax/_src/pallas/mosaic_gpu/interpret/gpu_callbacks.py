@@ -51,8 +51,8 @@ GPU_MEMORY_SPACE_BY_IDX = types.MappingProxyType(
     dict(enumerate(mosaic_gpu_core.MemorySpace))
 )
 
-def get_memory_space_idx(space: mosaic_gpu_core.MemorySpace) -> int:
-  if space is pallas_core.MemorySpace.DEFAULT:
+def get_memory_space_idx(space: mosaic_gpu_core.MemorySpace | None) -> int:
+  if space is None or space is pallas_core.MemorySpace.DEFAULT:
     return IDX_BY_GPU_MEMORY_SPACE[mosaic_gpu_core.MemorySpace.SMEM]
   return IDX_BY_GPU_MEMORY_SPACE[space]
 
