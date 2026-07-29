@@ -4311,7 +4311,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_make_mesh_non_int_error(self):
     with self.assertRaisesRegex(
         ValueError,
-        "`axis_shapes` passed to `make_mesh` should be a sequence of ints"):
+        "`axis_sizes` passed to `make_mesh` should be a sequence of ints"):
       jax.make_mesh(((4,), 4), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
 
     jax.make_mesh((1, np.int32(1), np.int64(1)), ('x', 'y', 'z'),

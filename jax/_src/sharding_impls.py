@@ -896,7 +896,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
   return sharding
 
 
-def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
+def make_mesh(axis_sizes: Sequence[int], axis_names: Sequence[str],
               axis_types: tuple[AxisType, ...] | None = None,
               *, devices: Sequence[xc.Device] | None = None) -> Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
@@ -921,7 +921,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   >>> [d.id for d in mesh.devices.flat]  # doctest: +SKIP
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
-  As you can see, logical axes (`axis_shapes`) affect the ordering of the
+  As you can see, logical axes (`axis_sizes`) affect the ordering of the
   devices.
 
   You can use `jax.experimental.mesh_utils.create_device_mesh` if you want to
@@ -929,7 +929,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   `allow_split_physical_axes`.
 
   Args:
-    axis_shapes: Shape of the mesh. For example, axis_shape=(4, 2)
+    axis_sizes: Shape of the mesh. For example, axis_shape=(4, 2)
     axis_names: Names of the mesh axes. For example, axis_names=('x', 'y')
     axis_types: Optional tuple of :class:`jax.sharding.AxisType` entries
       corresponding to the ``axis_names``. See `Explicit Sharding`_ for more
@@ -944,18 +944,18 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   """
   if devices is None:
     devices = xb.devices()
-  new_axis_shapes = mesh_utils._canonicalize_axis_sizes(axis_shapes)
-  if new_axis_shapes is None:
+  new_axis_sizes = mesh_utils._canonicalize_axis_sizes(axis_sizes)
+  if new_axis_sizes is None:
     raise ValueError(
-        '`axis_shapes` passed to `make_mesh` should be a sequence of ints.'
-        f' Got {axis_shapes}')
-  del axis_shapes
+        '`axis_sizes` passed to `make_mesh` should be a sequence of ints.'
+        f' Got {axis_sizes}')
+  del axis_sizes
 
-  axis_size = math.prod(new_axis_shapes)
+  axis_size = math.prod(new_axis_sizes)
   if axis_size > len(devices):
     raise ValueError(
         f'Number of devices {len(devices)} must be >= the product '
-        f'of mesh_shape {new_axis_shapes}')
+        f'of mesh_shape {new_axis_sizes}')
   elif axis_size < len(devices):
     devices = devices[:axis_size]
   if devices[0].device_kind in (mesh_utils._TPU_V5_LITE, mesh_utils._TPU_V5E):
@@ -963,7 +963,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   else:
     allow_split_physical_axes = False
   mesh_devices = mesh_utils.create_device_mesh(
-      new_axis_shapes, devices,
+      new_axis_sizes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
   if (hasattr(mesh_devices.flat[0], 'slice_index') and
       len({d.slice_index for d in mesh_devices.flat}) > 1):
@@ -973,6 +973,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   if axis_types is None:
     axis_types = (AxisType.Explicit,) * len(mesh_devices.shape)
   return Mesh(mesh_devices, axis_names, axis_types=axis_types)
+
 
 class set_mesh:
   """Sets a concrete mesh in a thread-local context.

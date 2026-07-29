@@ -3156,7 +3156,7 @@ class PallasCallPoisonTest(ptu.PallasTPUTest):
     num_devices = jax.local_device_count()
     devices = mesh_utils.create_device_mesh((num_devices,))
     mesh = jax.make_mesh(
-        axis_shapes=[num_devices], axis_names=['x'], devices=devices
+        axis_sizes=[num_devices], axis_names=['x'], devices=devices
     )
     with jax.set_mesh(mesh):
       x = jnp.zeros(shape, dtype=np.float32, out_sharding=P('x'))
