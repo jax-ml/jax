@@ -1332,6 +1332,7 @@ pytype_strict_library(
         ":layout",
         ":mesh",
         ":mlir",
+        ":partial_eval",
         ":sharding",
         ":sharding_impls",
         ":source_info_util",

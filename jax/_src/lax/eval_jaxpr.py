@@ -11,38 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Module for eval_jaxpr primitive."""
+"""Transformation rules for the eval_jaxpr primitive.
+
+The primitive itself is defined in partial_eval.py; here we register the rules
+that depend on the ad and batching machinery.
+"""
 
 from jax._src import ad_util
 from jax._src import core
-from jax._src.core import Jaxpr
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters.partial_eval import eval_jaxpr_p
 from jax._src.tree_util import tree_leaves
 from jax._src.util import safe_map, safe_zip, split_list, subs_list
 
 _map = safe_map
 zip = safe_zip
 
-
-eval_jaxpr_p = core.Primitive('eval_jaxpr')
-eval_jaxpr_p.multiple_results = True
-
-def _stage_jaxpr(trace: pe.DynamicJaxprTrace, source_info, *tracers,
-                 jaxpr: Jaxpr):
-  params = dict(call_jaxpr=jaxpr)
-  return trace.default_process_primitive(core.closed_call_p, tracers, params,
-                                         source_info=source_info)
-pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
-
-@eval_jaxpr_p.def_effectful_abstract_eval  # abstract eval only used for jax2tf
-def _stage_jaxpr_abstract_eval(*_, jaxpr):
-  return jaxpr.out_avals, core.positional_effects(jaxpr)
-
-@eval_jaxpr_p.def_impl
-def _eval_jaxpr_impl(*args, jaxpr):
-  return core.jaxpr_as_fun(jaxpr)(*args)
 
 def _eval_jaxpr_jvp(primals, tangents, *, jaxpr):
   nonzeros = [type(t) is not ad_util.Zero for t in tangents]

@@ -281,7 +281,6 @@ class BatchTrace(Trace):
 
   def process_call(self, call_primitive, f, tracers, params, /):
     assert call_primitive.multiple_results
-    params = dict(params, name=params.get('name', f.__name__))
     vals, dims = unzip2(map(self.to_batch_info, tracers))
     f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
 

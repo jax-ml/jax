@@ -41,7 +41,6 @@ from jax._src.interpreters.remat import remat_transform
 from jax._src.hijax import VJPHiPrimitive, call_hi_primitive_p, Static
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
-from jax._src.lax.eval_jaxpr import eval_jaxpr_p
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.state import discharge
 from jax._src.state.types import AbstractRef
@@ -1094,12 +1093,7 @@ class RematTraced(VJPHiPrimitive):
 
   @source_info_util.extend_name_stack('checkpoint')
   def expand(self, *args):
-    if not self.jaxpr.is_high:
-      return eval_jaxpr_p.bind(*args, jaxpr=self.jaxpr)
-    if (any(a.has_qdd for a in self.jaxpr.in_aval_qdds) or
-        any(a.has_qdd for a in self.jaxpr.final_aval_qdds)):
-      return core.jaxpr_as_fun(self.jaxpr)(*args)
-    return custom_derivatives._lower_and_eval('checkpoint', self.jaxpr, args)
+    return pe._call_jaxpr('checkpoint', self.jaxpr, args)
 
   def vjp_fwd(self, _nzs_in, *primals):
     # TODO eval_jaxpr_p trace time

@@ -18,7 +18,6 @@ from collections.abc import Callable, Sequence
 import dataclasses
 from functools import update_wrapper, reduce, partial, wraps
 from typing import Any, Generic, TypeVar
-import itertools as it
 
 from jax._src import config
 from jax._src import core
@@ -55,29 +54,6 @@ zip = safe_zip
 
 
 ### util
-
-def _lower_and_eval(
-    name: str, jaxpr: core.Jaxpr, args: Sequence[Any]
-) -> list[Any]:
-  from jax._src.lax.eval_jaxpr import eval_jaxpr_p  # pyrefly: ignore[missing-import]
-  if any(aval.has_qdd for aval in jaxpr.in_aval_qdds):
-    raise NotImplementedError(f"{name!r} does not support qdd on inputs")
-  if any(aval.has_qdd for aval in jaxpr.final_aval_qdds):
-    raise NotImplementedError(f"{name!r} does not support qdd on outputs")
-
-  lo_jaxpr = pe.lower_jaxpr2(jaxpr)
-  lo_args = [
-      lo_val for aval, x in zip(jaxpr.in_avals, args)
-      for lo_val in aval.lower_val(x)
-  ]
-  lo_outs = eval_jaxpr_p.bind(*lo_args, jaxpr=lo_jaxpr)
-  lo_outs_ = iter(lo_outs)
-  hi_outs = [
-      t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
-      for t in jaxpr.out_avals
-  ]
-  assert next(lo_outs_, None) is None
-  return hi_outs
 
 def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
@@ -419,7 +395,7 @@ class CustomJVPCallPrimitive(core.Primitive):
     return call_jaxpr.is_high
 
   def to_lojax(self, *hi_args, call_jaxpr: core.Jaxpr, **params):
-    return _lower_and_eval("custom_jvp_call", call_jaxpr, hi_args)
+    return pe._lower_and_eval("custom_jvp_call", call_jaxpr, hi_args)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -1027,7 +1003,7 @@ class CustomVJPCallPrimitive(core.Primitive):
     return call_jaxpr.is_high
 
   def to_lojax(self, *hi_args, call_jaxpr: core.Jaxpr, **params):
-    return _lower_and_eval("custom_vjp_call", call_jaxpr, hi_args)
+    return pe._lower_and_eval("custom_vjp_call", call_jaxpr, hi_args)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -1857,7 +1833,7 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     return used_ins, new_eqn
 
 def _remat_opt_to_lojax(*hi_args, fwd_jaxpr: core.Jaxpr, num_consts, **params):
-  return _lower_and_eval("remat_opt", fwd_jaxpr, hi_args)
+  return pe._lower_and_eval("remat_opt", fwd_jaxpr, hi_args)
 
 remat_opt_p = core.Primitive("remat_opt")
 remat_opt_p.multiple_results = True
