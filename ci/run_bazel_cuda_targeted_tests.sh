@@ -26,6 +26,8 @@
 #   JAXCI_LOCAL_TEST_JOBS: value for --local_test_jobs (default: 8)
 #   JAXCI_EXCLUDE_TEST_TARGETS: value for JAX_EXCLUDE_TEST_TARGETS test env
 #   JAXCI_TEST_TIMEOUT: value for --test_timeout
+#   JAXCI_RUNS_PER_TEST: value for --runs_per_test (default: 1)
+#   JAXCI_CACHE_TEST_RESULTS: value for --cache_test_results (default: auto)
 #   JAXCI_ACCELERATOR_COUNT: value for JAX_ACCELERATOR_COUNT when run_under is enabled (default: 1)
 #   JAXCI_TESTS_PER_ACCELERATOR: value for JAX_TESTS_PER_ACCELERATOR when run_under is enabled (default: 8)
 #   JAXCI_HERMETIC_PYTHON_VERSION: Hermetic Python version (default: 3.14)
@@ -68,6 +70,19 @@ source ci/utilities/setup_build_environment.sh
 nvidia-smi
 
 local_test_jobs="${JAXCI_LOCAL_TEST_JOBS:-8}"
+runs_per_test="${JAXCI_RUNS_PER_TEST:-1}"
+if [[ ! "${runs_per_test}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Invalid JAXCI_RUNS_PER_TEST: ${runs_per_test}. Expected a positive integer."
+  exit 1
+fi
+
+cache_test_results="${JAXCI_CACHE_TEST_RESULTS:-auto}"
+if [[ "${cache_test_results}" != 'auto' &&
+      "${cache_test_results}" != 'yes' &&
+      "${cache_test_results}" != 'no' ]]; then
+  echo "Invalid JAXCI_CACHE_TEST_RESULTS: ${cache_test_results}. Expected 'auto', 'yes', or 'no'."
+  exit 1
+fi
 
 bazel_args=(
   --config=ci_linux_x86_64_cuda
@@ -81,6 +96,8 @@ bazel_args=(
   --test_output=errors
   --strategy=TestRunner=local
   --local_test_jobs="${local_test_jobs}"
+  --runs_per_test="${runs_per_test}"
+  --cache_test_results="${cache_test_results}"
   --test_env=TF_CPP_MIN_LOG_LEVEL=0
   --test_env=JAX_SKIP_SLOW_TESTS=true
   --action_env=JAX_ENABLE_X64=1

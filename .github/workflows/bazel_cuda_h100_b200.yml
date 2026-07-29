@@ -1,10 +1,10 @@
 name: CI - Bazel H100 and B200 CUDA tests
-# The workflow runs if any of the following conditions are met:
-# - H100 and B200 on Workflow dispatch.
-# - H100 and B200 on scheduled every two hours.
-# - H100 and B200 on PR to main that has the 'CI Optional GPU Presubmit' label.
+# Diagnostic branch behavior:
+# - B200 is disabled.
+# - H100 runs automatically for same-repository PR branches.
+# - H100 defaults to repeated, uncached pjit_test_gpu runs.
+# - H100 can compare XLA revisions with or without reverting 29e7e9bf48.
 on:
-  # Runs on PR if label "CI Optional GPU Presubmit" is present.
   workflow_dispatch:
     inputs:
       halt-for-connection:
@@ -20,28 +20,39 @@ on:
         type: string
         required: true
         default: '3.14'
-      xla_track:
-        description: 'XLA revision used by tests.'
-        type: choice
-        required: true
-        default: 'head'
-        options:
-        - 'pinned'
-        - 'head'
-        - 'commit'
       xla_commit:
-        description: 'XLA commit SHA used by tests (only respected if xla_track is "commit").'
+        description: 'Optional full XLA base commit SHA (blank uses main HEAD).'
         type: string
         required: false
-      jobs_to_run:
-        description: 'Which jobs to run?'
+      apply_xla_revert:
+        description: 'Revert XLA commit 29e7e9bf48 after checking out the base.'
+        type: boolean
+        required: true
+        default: true
+      test_mode:
+        description: 'Focused pjit, 8-way stress, or the original full suite.'
         type: choice
         required: true
-        default: 'all'
+        default: 'focused'
         options:
-        - 'all'
-        - 'single_b200'
-        - 'multi_h100'
+        - 'focused'
+        - 'stress'
+        - 'faithful'
+      runs_per_test:
+        description: 'Bazel runs per test (ignored by faithful mode).'
+        type: number
+        required: true
+        default: 3
+      local_test_jobs:
+        description: 'Concurrent local tests (stress/faithful force 8).'
+        type: number
+        required: true
+        default: 4
+      test_timeout:
+        description: 'Per-test timeout in seconds.'
+        type: number
+        required: true
+        default: 300
       bazel_targets:
         description: 'Custom Bazel targets to run (space-separated, overrides defaults)'
         type: string
@@ -81,16 +92,12 @@ defaults:
 
 jobs:
   run_tests:
+    # Diagnostic branch: keep B200 disabled while testing the H100 XLA revert.
+    # `disabled_b200` is deliberately absent from the test_mode choices.
     if: >-
       ${{
-          github.repository_owner == 'jax-ml'
-          && github.event.repository.fork == false
-          && (github.event_name == 'schedule'
-              || (github.event_name == 'workflow_dispatch'
-                  && (github.event.inputs.jobs_to_run == 'all'
-                      || github.event.inputs.jobs_to_run == 'single_b200'))
-              || contains(github.event.pull_request.labels.*.name,
-                          'CI Optional GPU Presubmit'))
+          github.event_name == 'workflow_dispatch'
+          && inputs.test_mode == 'disabled_b200'
       }}
     runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
@@ -105,9 +112,7 @@ jobs:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Bazel single B200 CUDA Tests
         env:
-          JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
-          JAXCI_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
+          JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python_version || '3.14' }}
           JAXCI_BAZEL_TARGETS: |
             //tests:cudnn_fusion_test_gpu
             //tests:scaled_matmul_stablehlo_test_gpu
@@ -120,7 +125,7 @@ jobs:
           JAXCI_LOCAL_TEST_JOBS: '8'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
           JAXCI_TEST_TIMEOUT: '420'
-          CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}
+          CUSTOM_BAZEL_TARGETS: ${{ inputs.bazel_targets }}
         run: |
           if [[ -n "${CUSTOM_BAZEL_TARGETS}" ]]; then
             export JAXCI_BAZEL_TARGETS="${CUSTOM_BAZEL_TARGETS// /$'\n'}"
@@ -141,11 +146,12 @@ jobs:
           && github.event.repository.fork == false
           && (
               github.event_name == 'schedule'
-              || (github.event_name == 'workflow_dispatch'
-                  && (github.event.inputs.jobs_to_run == 'all'
-                      || github.event.inputs.jobs_to_run == 'multi_h100'))
-              || contains(github.event.pull_request.labels.*.name,
-                          'CI Optional GPU Presubmit')
+              || github.event_name == 'workflow_dispatch'
+              || (github.event_name == 'pull_request'
+                  && (github.event.pull_request.head.repo.full_name
+                      == github.repository
+                      || contains(github.event.pull_request.labels.*.name,
+                                  'CI Optional GPU Presubmit')))
           )
       }}
     runs-on: linux-x86-a3-8g-h100-8gpu
@@ -155,15 +161,58 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+      - name: Prepare XLA diagnostic checkout
+        env:
+          XLA_REVERT_COMMIT: 29e7e9bf48267093c75791ca099a29e8bab81d00
+          XLA_BASE_COMMIT: ${{ inputs.xla_commit || '' }}
+          APPLY_XLA_REVERT: >-
+            ${{
+                github.event_name != 'workflow_dispatch'
+                || inputs.apply_xla_revert
+            }}
+        run: |
+          xla_dir="${GITHUB_WORKSPACE}/xla"
+          git clone --filter=blob:none --depth=1 --no-tags \
+            --single-branch --branch main \
+            https://github.com/openxla/xla.git "${xla_dir}"
+          git config --global --add safe.directory "${xla_dir}"
+          git -C "${xla_dir}" config user.name 'JAX CI'
+          git -C "${xla_dir}" config user.email 'jax-ci@google.com'
+          if [[ -n "${XLA_BASE_COMMIT}" ]]; then
+            git -C "${xla_dir}" fetch --filter=blob:none --depth=1 \
+              origin "${XLA_BASE_COMMIT}"
+            git -C "${xla_dir}" checkout --detach FETCH_HEAD
+          fi
+          xla_base_commit="$(git -C "${xla_dir}" rev-parse HEAD)"
+          if [[ "${APPLY_XLA_REVERT}" == 'true' ]]; then
+            # Fetch only the reverted commit and its parent. Later XLA changes
+            # overlap three reverted files, so prefer the pre-change side for
+            # reverse-merge conflict hunks.
+            git -C "${xla_dir}" fetch --filter=blob:none --depth=2 \
+              origin "${XLA_REVERT_COMMIT}"
+            git -C "${xla_dir}" revert -X theirs --no-edit \
+              "${XLA_REVERT_COMMIT}"
+          fi
+          xla_test_commit="$(git -C "${xla_dir}" rev-parse HEAD)"
+          git -C "${xla_dir}" log -2 --oneline
+          {
+            echo '### XLA diagnostic checkout'
+            echo
+            echo '| Setting | Value |'
+            echo '| --- | --- |'
+            echo "| Base commit | \`${xla_base_commit}\` |"
+            echo "| Applied revert | \`${APPLY_XLA_REVERT}\` |"
+            echo "| Test commit | \`${xla_test_commit}\` |"
+          } >> "${GITHUB_STEP_SUMMARY}"
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@9f8d7d8d9954430d0fef4a8cce2cb4e3844c200d
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Bazel multiple H100 CUDA Tests
         env:
-          JAXCI_HERMETIC_PYTHON_VERSION: ${{ github.event.inputs.python_version || '3.14' }}
-          JAXCI_XLA_TRACK: ${{ github.event.inputs.xla_track || 'head' }}
-          JAXCI_XLA_COMMIT: ${{ github.event.inputs.xla_commit }}
+          JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python_version || '3.14' }}
+          JAXCI_XLA_TRACK: 'head'
+          JAXCI_XLA_GIT_DIR: ${{ github.workspace }}/xla
           JAXCI_BAZEL_TARGETS: |
             //tests/mosaic:gpu_tests
             //tests/pallas:gpu_tests
@@ -176,13 +225,50 @@ jobs:
             //tests/multiprocess:gpu_tests
             //jax/experimental/jax2tf/tests/multiprocess:gpu_tests
           JAXCI_TEST_TAG_FILTERS: 'multiaccelerator'
-          JAXCI_LOCAL_TEST_JOBS: '8'
           JAXCI_EXCLUDE_TEST_TARGETS: 'PmapTest.testSizeOverflow|.*InterpretTest.*'
-          CUSTOM_BAZEL_TARGETS: ${{ github.event.inputs.bazel_targets }}
+          JAXCI_CACHE_TEST_RESULTS: 'no'
+          TEST_MODE: ${{ inputs.test_mode || 'focused' }}
+          REQUESTED_RUNS_PER_TEST: ${{ inputs.runs_per_test || 3 }}
+          REQUESTED_LOCAL_TEST_JOBS: ${{ inputs.local_test_jobs || '2' }}
+          REQUESTED_TEST_TIMEOUT: ${{ inputs.test_timeout || 300 }}
+          CUSTOM_BAZEL_TARGETS: ${{ inputs.bazel_targets }}
         run: |
+          case "${TEST_MODE}" in
+            focused)
+              export JAXCI_BAZEL_TARGETS='//tests:pjit_test_gpu'
+              export JAXCI_LOCAL_TEST_JOBS="${REQUESTED_LOCAL_TEST_JOBS}"
+              export JAXCI_RUNS_PER_TEST="${REQUESTED_RUNS_PER_TEST}"
+              ;;
+            stress)
+              export JAXCI_BAZEL_TARGETS='//tests:pjit_test_gpu'
+              export JAXCI_LOCAL_TEST_JOBS=8
+              export JAXCI_RUNS_PER_TEST="${REQUESTED_RUNS_PER_TEST}"
+              ;;
+            faithful)
+              export JAXCI_LOCAL_TEST_JOBS=8
+              export JAXCI_RUNS_PER_TEST=1
+              ;;
+            *)
+              echo "Unknown test mode: ${TEST_MODE}"
+              exit 1
+              ;;
+          esac
           if [[ -n "${CUSTOM_BAZEL_TARGETS}" ]]; then
             export JAXCI_BAZEL_TARGETS="${CUSTOM_BAZEL_TARGETS// /$'\n'}"
           fi
+          export JAXCI_TEST_TIMEOUT="${REQUESTED_TEST_TIMEOUT}"
+          {
+            echo '### H100 test configuration'
+            echo
+            echo '| Setting | Value |'
+            echo '| --- | --- |'
+            echo "| Mode | \`${TEST_MODE}\` |"
+            echo "| Bazel targets | \`$(tr '\n' ' ' <<< "${JAXCI_BAZEL_TARGETS}")\` |"
+            echo "| Runs per test | \`${JAXCI_RUNS_PER_TEST}\` |"
+            echo "| Local test jobs | \`${JAXCI_LOCAL_TEST_JOBS}\` |"
+            echo "| Test timeout | \`${JAXCI_TEST_TIMEOUT}\` seconds |"
+            echo "| Test-result cache | \`${JAXCI_CACHE_TEST_RESULTS}\` |"
+          } >> "${GITHUB_STEP_SUMMARY}"
           bash ./ci/run_bazel_cuda_targeted_tests.sh
       - name: Upload test artifacts
         if: always()
