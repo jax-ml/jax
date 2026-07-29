@@ -337,6 +337,7 @@ class SplashAttentionTest(PallasBaseTest):
       is_dynamic_mask=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
   def test_splash_attention(self, is_mqa, is_segmented, is_dynamic_mask, data):
     seed = data.draw(seed_strategy())
     key = random.key(seed)
@@ -414,6 +415,7 @@ class SplashAttentionTest(PallasBaseTest):
       is_dynamic_mask=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
   def test_splash_attention_fwd(
       self, is_mqa, is_segmented, is_dynamic_mask, data
   ):
@@ -496,6 +498,7 @@ class SplashAttentionTest(PallasBaseTest):
       is_segmented=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
   def test_splash_attention_custom_bwd(self, is_segmented, data):
     seed = data.draw(seed_strategy(), label="seed")
     key = random.key(1 + seed)
@@ -591,6 +594,7 @@ class SplashAttentionTest(PallasBaseTest):
       use_sinks=(False, True),
   )
   @hp.given(hps.data())
+  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
   def test_splash_attention_bwd(
       self,
       is_mqa,

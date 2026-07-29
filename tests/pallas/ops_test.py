@@ -637,6 +637,7 @@ class OpsTest(PallasBaseTest):
       for name, func, strategy in UNARY_FUNCTIONS
   )
   @hp.given(hps.data())
+  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
     if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
