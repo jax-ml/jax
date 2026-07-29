@@ -59,20 +59,11 @@ mkdir -p test-artifacts
 set +e
 
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
-  # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
-  # TPU does not guarantee anything about forward compatibility (unless
-  # jax.export is used) and the 12 week compatibility window accumulates way
-  # too many failures.
-  IGNORE_FLAGS=""
-  if [ "${libtpu_version_type:-""}" == "oldest_supported_libtpu" ]; then
-    IGNORE_FLAGS="--ignore=tests/pallas"
-  fi
-
   # Run single-accelerator tests in parallel
   JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
     --junitxml=test-artifacts/junit-single.xml \
     --deselect=tests/pallas/tpu_pallas_interpret_thread_map_test.py::InterpretThreadMapTest::test_thread_map \
-    --dist=loadfile --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
+    --dist=loadfile --maxfail=20 -m "not multiaccelerator" tests examples
 
   # Store the return value of the first command.
   first_cmd_retval=$?

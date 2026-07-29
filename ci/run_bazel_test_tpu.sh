@@ -85,16 +85,7 @@ echo "::endgroup::" >&2
 PYTHON_BIN="$JAXCI_PYTHON" source ci/utilities/setup_portserver.sh
 
 if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
-  # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
-  # TPU does not guarantee anything about forward compatibility (unless
-  # jax.export is used) and the 12 week compatibility window accumulates way
-  # too many failures.
-  IGNORE_TESTS=""
-  if [ "${libtpu_version_type:-""}" == "oldest_supported_libtpu" ]; then
-    IGNORE_TESTS="-//tests/pallas/..."
-  else
-    IGNORE_TESTS="-//tests/pallas:tpu_pallas_interpret_thread_map_test_tpu"
-  fi
+  IGNORE_TESTS="-//tests/pallas:tpu_pallas_interpret_thread_map_test_tpu"
 
   # Run single-accelerator tests in parallel
   TEST_ARTIFACTS_DIR="test-artifacts-single"
