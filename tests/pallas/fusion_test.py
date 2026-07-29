@@ -461,22 +461,19 @@ class FusionTest(jtu.JaxTestCase):
     @fuser.fusible
     def quantize(x_fn, out_fn):
       x = x_fn()
-      return jnp.sum(x * 2.0)
+      return x * 2.0
 
     mesh = jax.make_mesh((jax.device_count(),), ('data',))
 
     @jax.shard_map(
-        in_specs=(jax.P('data'),), out_specs=jax.P(), mesh=mesh, check_vma=False
+        in_specs=(jax.P('data'),), out_specs=jax.P('data'), mesh=mesh
     )
     def f(x):
       return quantize(x)
 
     sharding = jax.sharding.NamedSharding(mesh, jax.P('data'))
     x = jax.device_put(jnp.ones(jax.device_count() * 128), sharding)
-    result = jax.jit(jax.grad(f))(x)
-    sharding = jax.sharding.NamedSharding(mesh, jax.P('data'))
-    x = jax.device_put(jnp.ones(jax.device_count() * 128), sharding)
-    result = jax.jit(jax.grad(f))(x)
+    result = jax.jit(jax.grad(lambda x: jnp.sum(f(x))))(x)
     np.testing.assert_allclose(result, jnp.full_like(x, 2.0))
 
   def test_fusible_shard_map_mlir_compilation(self):
