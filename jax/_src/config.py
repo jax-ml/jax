@@ -1344,6 +1344,16 @@ custom_jvp3 = bool_state(
     include_in_trace_context=True,
 )
 
+remat_barrier_no_cotangents = bool_state(
+    name='jax_remat_barrier_no_cotangents',
+    default=False,
+    upgrade=True,
+    help=('If True, embrace the future of remat CSE-prevention barriers, '
+          'which do not pin cotangents.'),
+    include_in_jit_key=True,
+    include_in_trace_context=True,
+)
+
 
 distributed_debug = bool_state(
     name='jax_distributed_debug',
