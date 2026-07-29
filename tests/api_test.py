@@ -2840,6 +2840,15 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "dtype must be specified"):
       api.ShapeDtypeStruct(shape=(), dtype=None)
 
+  def test_shape_dtype_struct_non_jax_dtypes(self):
+    # To avoid breaking downstream users who store non-JAX dtypes (such as
+    # np.bytes_ or np.object_) in ShapeDtypeStruct metadata containers,
+    # ShapeDtypeStruct.__init__ preserves dtypes without downcasting or validating.
+    bytes_spec = api.ShapeDtypeStruct((), np.bytes_)
+    self.assertEqual(bytes_spec.dtype, np.dtype(np.bytes_))
+    obj_spec = api.ShapeDtypeStruct((), np.object_)
+    self.assertEqual(obj_spec.dtype, np.dtype(np.object_))
+
   def test_eval_shape(self):
     def fun(x, y):
       return jnp.tanh(jnp.dot(x, y) + 3.)

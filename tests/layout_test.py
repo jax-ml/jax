@@ -46,8 +46,8 @@ class LayoutTest(jtu.JaxTestCase):
     def init(x, y):
       return x * 2, y * 2
 
-    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
-    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+    np_inp1 = np.arange(math.prod(shape1), dtype=np.int32).reshape(shape1)
+    np_inp2 = np.arange(math.prod(shape2), dtype=np.int32).reshape(shape2)
     sds1 = jax.ShapeDtypeStruct(np_inp1.shape, np_inp1.dtype, sharding=s1)
     sds2 = jax.ShapeDtypeStruct(np_inp2.shape, np_inp2.dtype, sharding=s2)
 
@@ -101,7 +101,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_default_layout(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (4, 4, 2)
-    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    np_inp = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
     arr = jax.device_put(np_inp, s)
@@ -232,7 +232,7 @@ class LayoutTest(jtu.JaxTestCase):
       self.skipTest('This test does not work on CPU or GPU backends.')
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (256, 4, 2)
-    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    np_inp = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
     s = NamedSharding(mesh, P('x'))
 
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
@@ -329,7 +329,7 @@ class LayoutTest(jtu.JaxTestCase):
   def test_make_array_from_callback(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
-    np_inp = np.arange(16).reshape(8, 2)
+    np_inp = np.arange(16, dtype=np.int32).reshape(8, 2)
     sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
 
     format = jax.jit(lambda x: x * 2).lower(sds).compile().output_formats

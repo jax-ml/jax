@@ -282,6 +282,23 @@ class X64ContextTests(jtu.JaxTestCase):
         self.assertEqual(res, 5)
         self.assertEqual(res.dtype, jnp.int64)
 
+  def test_explicit_x64_dtypes_allow_shape_dtype_struct(self):
+    # We canonicalize ShapeDtypeStruct dtypes at JAX boundary time so that explicit
+    # 64-bit dtypes are respected when jax_explicit_x64_dtypes="allow".
+    with config.explicit_x64_dtypes('allow'):
+      with jax.enable_x64(False):
+        def f(x):
+          with jax.enable_x64():
+            return x + jnp.int64(1)
+        input_spec = jax.ShapeDtypeStruct((), np.int64)
+        self.assertEqual(input_spec.dtype, np.dtype('int64'))
+        lowered = jax.jit(f).lower(input_spec)
+        compiled = lowered.compile()
+        x = jnp.int64(42)
+        res = compiled(x)
+        self.assertEqual(res.dtype, jnp.int64)
+        self.assertEqual(int(res), 43)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

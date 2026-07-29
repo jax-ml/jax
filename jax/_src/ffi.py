@@ -23,6 +23,7 @@ from typing import Any, TypedDict, NotRequired, overload
 
 import numpy as np
 
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
@@ -349,12 +350,10 @@ def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue
         raise ValueError(
             "All elements of result_shape_dtypes must have 'shape' and 'dtype' "
             f"attributes. Got {result} at position {idx}.")
-      # Update the dtype because shaped_abstractify can canonicalize the dtype.
-      # We need to call shaped_abstractify here to handle sharding, vma and
-      # memory_kind bits.
-      # TODO(yashkatariya): Maybe add an option to shaped_abstractify/typeof
-      # to not canonicalize dtype.
-      avals.append(core.shaped_abstractify(result).update(dtype=result.dtype))
+      # We use explicit_x64_dtypes("allow") so shaped_abstractify does not
+      # canonicalize explicit 64-bit dtypes on result_shape_dtypes.
+      with config.explicit_x64_dtypes("allow"):
+        avals.append(core.shaped_abstractify(result))
   return tuple(avals)
 
 def _check_compatible_avals(a: core.AbstractValue, b: core.AbstractValue) -> bool:

@@ -1101,7 +1101,9 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
     dtype = default_types['f' if dtype in _custom_float_dtypes else dtype.kind]()
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
-def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
+def check_and_canonicalize_user_dtype(
+    dtype, fun_name=None, *, allow_non_jax_dtypes: bool = False
+) -> DType:
   """Checks validity of a user-provided dtype, and returns its canonical form.
 
   For Python scalar types this function returns the corresponding default dtype.
@@ -1118,6 +1120,8 @@ def check_and_canonicalize_user_dtype(dtype, fun_name=None) -> DType:
     return f()
   np_dtype = np.dtype(dtype)
   if np_dtype not in _jax_dtype_set:
+    if allow_non_jax_dtypes:
+      return np_dtype
     msg = (
         f'JAX only supports number, bool, and string dtypes, got dtype {dtype}'
     )

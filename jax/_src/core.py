@@ -4100,16 +4100,24 @@ class ShapeDtypeStruct:
 
 
 def _sds_aval_mapping(x):
-  aval = ShapedArray(
-      x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-      weak_type=x.weak_type)
+  dtype = dtypes.check_and_canonicalize_user_dtype(
+      x.dtype, "ShapeDtypeStruct", allow_non_jax_dtypes=True)
+  aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type)
   aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
     return AbstractRef(aval)
   return aval
+
+def _canonicalize_sds(sds):
+  dt = dtypes.check_and_canonicalize_user_dtype(
+      sds.dtype, "ShapeDtypeStruct", allow_non_jax_dtypes=True)
+  if dt == sds.dtype:
+    return sds
+  return sds.update(dtype=dt)
+
 pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
-dtypes.register_canonicalize_value_handler(ShapeDtypeStruct, None)
+dtypes.register_canonicalize_value_handler(ShapeDtypeStruct, _canonicalize_sds)
 
 # ------------------- Jaxpr printed representation -------------------
 
