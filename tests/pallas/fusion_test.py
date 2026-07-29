@@ -458,13 +458,11 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_allclose(result, x * 2.0)
 
   def test_fusible_shard_map_jit_grad(self):
-    if jtu.is_device_tpu(7, variant='x'):
-      self.skipTest('TODO(b/540358206): Re-enable once fixed.')
 
     @fuser.fusible
     def quantize(x_fn, out_fn):
       x = x_fn()
-      return jnp.sum(x * 2.0)
+      return jax.lax.psum(jnp.sum(x * 2.0), axis_name='data')
 
     mesh = jax.make_mesh((jax.device_count(),), ('data',))
 
@@ -474,9 +472,6 @@ class FusionTest(jtu.JaxTestCase):
     def f(x):
       return quantize(x)
 
-    sharding = jax.sharding.NamedSharding(mesh, jax.P('data'))
-    x = jax.device_put(jnp.ones(jax.device_count() * 128), sharding)
-    result = jax.jit(jax.grad(f))(x)
     sharding = jax.sharding.NamedSharding(mesh, jax.P('data'))
     x = jax.device_put(jnp.ones(jax.device_count() * 128), sharding)
     result = jax.jit(jax.grad(f))(x)
