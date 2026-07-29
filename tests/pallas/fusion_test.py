@@ -458,6 +458,9 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_allclose(result, x * 2.0)
 
   def test_fusible_shard_map_jit_grad(self):
+    if jtu.is_device_tpu(7, variant='x'):
+      self.skipTest('TODO(b/540358206): Re-enable once fixed.')
+
     @fuser.fusible
     def quantize(x_fn, out_fn):
       x = x_fn()
