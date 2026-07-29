@@ -2,6 +2,7 @@
 
 common:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 common:rocm --repo_env=TF_NEED_ROCM=1
+common:rocm --@local_config_rocm//rocm:rocm_path_type=hermetic
 
 # Build with hipcc for ROCm and clang for the host.
 common:rocm --action_env=TF_HIPCC_CLANG="1"
@@ -70,7 +71,7 @@ build:rocm_rbe --remote_download_outputs=minimal
 test:rocm_rbe --remote_timeout=3600
 test:rocm_rbe --jobs=32
 test:rocm_rbe --strategy=TestRunner=remote,local
-test:rocm_rbe --worker_sandboxing=false
+test:rocm_rbe --worker_sandboxing=true
 test:rocm_rbe --repo_env=REMOTE_GPU_TESTING=1
 
 # Dynamic execution config for ROCm RBE - builds locally, tests use hybrid mode
