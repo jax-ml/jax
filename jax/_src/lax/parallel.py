@@ -18,34 +18,39 @@ Parallelization primitives.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from functools import partial
 from dataclasses import dataclass
+from functools import partial
 import itertools
+import json
 import math
 from typing import Any
 
-from jax._src import core
 from jax._src import config
+from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import tree_util
-from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
-from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
-                                     NamedSharding)
+from jax._src.core import abstract_token, pvary
 from jax._src.core import AxisName, ShapedArray
+from jax._src.core import check_unreduced_args
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.core import check_unreduced_args
-from jax._src.mesh import get_abstract_mesh
-from jax._src.core import abstract_token, pvary
 from jax._src.lax import control_flow
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.mesh import get_abstract_mesh
+from jax._src.partition_spec import PartitionSpec as P, UnreducedKind
+from jax._src.sharding_impls import (
+    NamedSharding,
+    SPMDAxisContext,
+    ShardingContext,
+)
 from jax._src.typing import Array
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
@@ -1422,23 +1427,17 @@ def _all_to_all_lowering(
         **other_args,
     ).results
 
-  (out_aval,) = ctx.avals_out
-  out_aval = out_aval.inner_aval
-  # pyrefly: ignore[missing-attribute]
-  future_type = hlo.FutureType.get([mlir.aval_to_ir_type(ctx.module_context, out_aval)])
-  async_start = hlo.AsyncStartOp(future_type, [x])
-  block = async_start.regions[0].blocks.append(x.type)
-  with ir.InsertionPoint(block):
-    results = hlo.AllToAllOp(
-        [block.arguments[0]],
-        split_dimension=mlir.i64_attr(split_axis),
-        concat_dimension=mlir.i64_attr(concat_axis),
-        split_count=mlir.i64_attr(split_count),
-        replica_groups=replica_groups_attr,
-        **other_args,
-    ).results
-    hlo.return_(results)
-  return async_start.results
+  replica_groups = _replica_groups(
+      ctx.module_context.axis_context, axis_name, axis_index_groups
+  )
+  config = {
+      "split_dimension": split_axis,
+      "concat_dimension": concat_axis,
+      "split_count": split_count,
+      "replica_groups": replica_groups,
+      **_spmd_config(ctx, use_global_device_ids=False),
+  }
+  return _emit_async_start_custom_call("all-to-all-start", ctx, x, config)
 
 
 def _all_to_all_transpose_rule(
@@ -1886,19 +1885,15 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         **other_args,
     ).results
 
-  future_type = hlo.FutureType.get([out_type])
-  async_start = hlo.AsyncStartOp(future_type, [x])
-  block = async_start.regions[0].blocks.append(x.type)
-  with ir.InsertionPoint(block):
-    results = hlo.AllGatherOp(
-        [out_type],
-        [block.arguments[0]],
-        all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=replica_groups_attr,
-        **other_args,
-    ).results
-    hlo.return_(results)
-  return async_start.results
+  replica_groups = _replica_groups(
+      ctx.module_context.axis_context, axis_name, axis_index_groups
+  )
+  config = {
+      "all_gather_dimension": all_gather_dimension,
+      "replica_groups": replica_groups,
+      **_spmd_config(ctx),
+  }
+  return _emit_async_start_custom_call("all-gather-start", ctx, x, config)
 
 
 def collective_vma_rule(prim_name, axis_name, x_aval):
@@ -3030,7 +3025,86 @@ def pcast(x, axis_name, *, to: str):
     return func(leaf, axes)
   return tree_util.tree_map(bind, x)
 
-######################### async ops #########################
+
+def _reducer_builder_mlir(ctx, op_type):
+  scalar = ir.RankedTensorType.get([], op_type)
+  ir_types = [scalar, scalar]
+  result_types = [scalar]
+
+  func_type = ir.FunctionType.get(ir_types, result_types)
+  func_name = f"all_reduce_add_{op_type}"
+
+  symbol_table = ctx.module_context.symbol_table
+  if func_name in symbol_table:
+    return symbol_table[func_name]
+
+  with ir.InsertionPoint.at_block_begin(ctx.module_context.module.body):
+    reducer = func_dialect.FuncOp(func_name, func_type)
+  symbol_table.insert(reducer)
+
+  entry_block = reducer.add_entry_block()
+  with ir.InsertionPoint(entry_block):
+    p0, p1 = entry_block.arguments
+    res = hlo.add(p0, p1)
+    hlo.return_([res])
+
+  return reducer
+
+
+def _spmd_config(ctx, use_global_device_ids=True):
+  axis_context = ctx.module_context.axis_context
+  is_spmd = isinstance(axis_context, (SPMDAxisContext, ShardingContext))
+  config = {}
+  if is_spmd:
+    config["channel_id"] = mlir.COLLECTIVE_CHANNEL_ID
+    if use_global_device_ids:
+      config["use_global_device_ids"] = True
+  return config
+
+
+def _emit_async_start_custom_call(
+    target_name, ctx, x, config, called_computations=None
+):
+  (x_aval,) = ctx.avals_in
+  (out_aval,) = ctx.avals_out
+  inner_aval = out_aval.inner_aval
+  inner_type = mlir.aval_to_ir_type(ctx.module_context, inner_aval)
+  future_type = inner_type
+
+  def _json_default(obj):
+    if isinstance(obj, np.integer):
+      return int(obj)
+    if isinstance(obj, np.floating):
+      return float(obj)
+    if isinstance(obj, np.ndarray):
+      return obj.tolist()
+    raise TypeError(
+        f"Object of type {obj.__class__.__name__} is not JSON serializable"
+    )
+
+  config_str = json.dumps(config, default=_json_default)
+  frontend_attrs = mlir.ir_attribute({"async_collective_config": config_str})
+
+  return mlir.custom_call(
+      call_target_name=target_name,
+      result_types=[future_type],
+      operands=[x],
+      extra_attributes={"mhlo.frontend_attributes": frontend_attrs},
+      api_version=1,
+      called_computations=[c.name.value for c in called_computations or []],
+  ).results
+
+
+def _async_done_lowering(target_name, ctx, x):
+  (out_aval,) = ctx.avals_out
+  out_type = mlir.aval_to_ir_type(ctx.module_context, out_aval)
+  return mlir.custom_call(
+      call_target_name=target_name,
+      result_types=[out_type],
+      operands=[x],
+      api_version=1,
+  ).results
+
 
 all_gather_start_p = core.Primitive("all_gather_start")
 all_gather_reduced_start_p = core.Primitive("all_gather_reduced_start")
@@ -3083,71 +3157,118 @@ def _async_done_abstract_eval(aval):
     raise TypeError(f"async done op got {aval}, want core.AbstractFuture")
   return aval.inner_aval
 
-for p in [all_gather_done_p, psum_done_p, reduce_scatter_done_p,
-          all_to_all_done_p, ppermute_done_p]:
+for p, target in [
+    (all_gather_done_p, "all-gather-done"),
+    (psum_done_p, "all-reduce-done"),
+    (reduce_scatter_done_p, "reduce-scatter-done"),
+    (all_to_all_done_p, "all-to-all-done"),
+    (ppermute_done_p, "collective-permute-done"),
+]:
   p.def_abstract_eval(_async_done_abstract_eval)
-  mlir.register_lowering(p, lambda ctx, x: [hlo.async_done(x)])
+  mlir.register_lowering(p, partial(_async_done_lowering, target))
 
 
-def _async_start_lowering(sync_lower, ctx, x, **kwargs):
-  """Returns an async start lowering function given a synchronous lowering.
+def _reduce_scatter_start_lowering(
+    ctx, x, *, scatter_dimension, axis_name, axis_index_groups, axis_size, tiled
+):
+  element_type = ir.RankedTensorType(x.type).element_type
+  reducer = _reducer_builder_mlir(ctx, element_type)
 
-  An async StableHLO collective looks like this:
+  replica_groups = _replica_groups(
+      ctx.module_context.axis_context, axis_name, axis_index_groups
+  )
+  config = {
+      "scatter_dimension": scatter_dimension,
+      "replica_groups": replica_groups,
+      "tiled": tiled,
+      **_spmd_config(ctx),
+  }
 
-  > %f = "stablehlo.async_start"(%x) ({
-  >   ^bb0(%arg: tensor<2x2xf32>):
-  >     %tmp = "stablehlo.all_gather"(%arg) : (tensor<2x2xf32>) ->
-  tensor<4x2xf32>
-  >     stablehlo.return %tmp : tensor<4x2xf32>
-  > }) : (tensor<2x2xf32>) -> !stablehlo.future<tensor<4x2xf32>>
-  > %y = "stablehlo.async_done"(%f) : (!stablehlo.future<tensor<4x2xf32>>) ->
-  tensor<4x2xf32>
-
-  There is an async_start op with a region that performs and returns the
-  synchronous collective. _start_lowering takes in a lowering function for the
-  synchronous collective and transforms it into a lowering function for the
-  async collective by wrapping everything in an async_start.
-  """
-  (x_aval,) = ctx.avals_in  # e.g., f32[2, 2]
-  (out_aval,) = ctx.avals_out  # e.g., # AbstractFuture[f32[4, 2]]
-  inner_aval = out_aval.inner_aval  # e.g., f32[4, 2]
-  inner_type = mlir.aval_to_ir_type(ctx.module_context, inner_aval)  # e.g., <tensor<4x2xf32>
-  # e.g., !stablehlo.future<tensor<4x2xf32>>
-  future_type = hlo.FutureType.get([inner_type])
-  async_start = hlo.AsyncStartOp(future_type, [x])
-  block = async_start.regions[0].blocks.append(x.type)
-  with ir.InsertionPoint(block):
-    inner_ctx = ctx.replace(
-        primitive=None, avals_in=[x_aval], avals_out=[inner_aval]
-    )
-    results = sync_lower(inner_ctx, block.arguments[0], **kwargs)
-    hlo.return_(results)
-  return async_start.results
+  return _emit_async_start_custom_call(
+      "reduce-scatter-start", ctx, x, config, called_computations=[reducer]
+  )
 
 
-def _reduce_scatter_start_lowering(ctx, x, *, tiled, **kwargs):
-  if not tiled:
-    # TODO(mwhittaker): When the output is not tiled, a reduce_scatter is
-    # lowered to two operations: a reduce_scatter and a reshape. Lowering the
-    # async version of this is tricky because we need to reshape after the
-    # future is resolved.
-    raise NotImplementedError
-  lower = partial(_reduce_scatter_lowering, lax.add_p)
-  return _async_start_lowering(lower, ctx, x, tiled=tiled, **kwargs)
+def _psum_invariant_start_lowering(ctx, x, *, axes):
+  named_axes = [a for a in axes if not isinstance(a, int)]
+  positional_axes = [a for a in axes if isinstance(a, int)]
+
+  (aval_in,) = ctx.avals_in
+
+  if positional_axes:
+    reducer = mlir.lower_fun(lax.reduce_sum, multiple_results=False)
+
+    def _positional_reduce(aval, arg):
+      aval_out = aval.update(
+          shape=np.delete(np.array(aval.shape, dtype=np.int64), positional_axes)
+      )
+      reducer_ctx = ctx.replace(
+          primitive=None, avals_in=[aval], avals_out=[aval_out]
+      )
+      (out,) = reducer(reducer_ctx, arg, axes=tuple(positional_axes))
+      return out, aval_out
+
+    x, aval_in = _positional_reduce(aval_in, x)
+
+  replica_groups = _replica_groups(
+      ctx.module_context.axis_context, named_axes, axis_index_groups=None
+  )
+
+  element_type = ir.RankedTensorType(x.type).element_type
+  reducer = _reducer_builder_mlir(ctx, element_type)
+
+  config = {
+      "replica_groups": replica_groups,
+      **_spmd_config(ctx),
+  }
+
+  custom_call_ctx = ctx
+  if positional_axes:
+    custom_call_ctx = ctx.replace(avals_in=[aval_in])
+
+  return _emit_async_start_custom_call(
+      "all-reduce-start",
+      custom_call_ctx,
+      x,
+      config,
+      called_computations=[reducer],
+  )
+
+
+def _ppermute_start_lowering(ctx, x, *, axis_name, perm):
+  full_perm, other_args = _pcollectives_lowering_common(
+      ctx, axis_name=axis_name, perm=perm, op_name="ppermute"
+  )
+  config = {
+      "permutation": full_perm.tolist(),
+  }
+  axis_context = ctx.module_context.axis_context
+  is_manual = (
+      isinstance(axis_context, SPMDAxisContext) and axis_context.manual_axes
+  )
+  if is_manual:
+    config["channel_id"] = mlir.COLLECTIVE_CHANNEL_ID
+
+  return _emit_async_start_custom_call(
+      "collective-permute-start", ctx, x, config
+  )
+
+
 mlir.register_lowering(reduce_scatter_start_p, _reduce_scatter_start_lowering)
+mlir.register_lowering(psum_invariant_start_p, _psum_invariant_start_lowering)
+mlir.register_lowering(
+    all_to_all_start_p, partial(_all_to_all_lowering, is_async=True)
+)
+mlir.register_lowering(ppermute_start_p, _ppermute_start_lowering)
 
 for p, f in zip([all_gather_start_p, all_gather_reduced_start_p],
                 [_all_gather_lowering, _all_gather_reduced_lowering]):
   mlir.register_lowering(p, partial(f, is_async=True))
   for plat in ("cuda", "rocm", "tpu"):
-    mlir.register_lowering(p, partial(f, platform=p, is_async=True), platform=plat)
+    mlir.register_lowering(
+        p, partial(f, platform=plat, is_async=True), platform=plat
+    )
 
-mlir.register_lowering(
-    psum_invariant_start_p, partial(_async_start_lowering, _psum_invariant_lowering_rule)
-)
-mlir.register_lowering(
-    all_to_all_start_p, partial(_all_to_all_lowering, is_async=True)
-)
-mlir.register_lowering(
-    ppermute_start_p, partial(_async_start_lowering, _ppermute_lowering)
-)
+mlir.ir_type_handlers[core.AbstractFuture] = lambda x: mlir.ir_type_handlers[
+    core.ShapedArray
+](x.inner_aval)
