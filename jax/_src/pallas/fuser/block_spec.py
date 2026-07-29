@@ -2634,12 +2634,19 @@ def _custom_vjp_call_pull_block_spec_rule(
 def _custom_call_hi_primitive_pull_block_spec_rule(
     ctx: PullRuleContext, out_block_specs, *, _prim
 ):
+  if isinstance(_prim, hijax.CustomVJPTraced):
+    return _custom_vjp_call_pull_block_spec_rule(
+        ctx, out_block_specs, call_jaxpr=_prim.traced.jaxpr
+    )
   return _prim.pull_block_spec_rule(ctx, out_block_specs)
+
 
 @register_eval_rule(hijax.call_hi_primitive_p)
 def _custom_call_hi_primitive_eval_rule(
     ctx: KernelEvalContext, *args, _prim
 ):
+  if isinstance(_prim, hijax.CustomVJPTraced):
+    return _custom_vjp_call_eval_rule(ctx, *args, call_jaxpr=_prim.traced.jaxpr)
   return jax.tree.leaves(_prim.block_eval_rule(ctx, *args))
 
 
@@ -2925,10 +2932,13 @@ def _custom_vjp_call_push_rule(
   del ctx, num_consts, fwd_jaxpr_thunk, bwd, out_trees, symbolic_zeros
   return _push_block_spec_jaxpr(call_jaxpr, *block_specs)
 
+
 @register_push_block_spec_rule(hijax.call_hi_primitive_p)
 def _custom_call_hi_primitive_push_block_spec_rule(
     ctx: PullRuleContext, *block_specs, _prim
 ):
+  if isinstance(_prim, hijax.CustomVJPTraced):
+    return _push_block_spec_jaxpr(_prim.traced.jaxpr, *block_specs)
   return _prim.push_block_spec_rule(ctx, block_specs)
 
 

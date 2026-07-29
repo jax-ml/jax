@@ -2079,6 +2079,27 @@ class PushBlockSpecTest(parameterized.TestCase):
       self.assertEqual(out_block_spec.block_shape, (size, pl.Blocked(128)))
       self.assertEqual(out_block_spec.index_map(1), (0, 1))
 
+  def test_push_pull_block_spec_on_custom_vjp_traced(self):
+    with config.custom_vjp3(True):
+      @jax.custom_vjp
+      def custom_act(x):
+        return jax.nn.relu(x)
+      def custom_act_fwd(x):
+        return custom_act(x), (x,)
+      def custom_act_bwd(res, g):
+        (x,) = res
+        return (g * (x > 0),)
+      custom_act.defvjp(custom_act_fwd, custom_act_bwd)
+      def f(x):
+        return custom_act(x)
+      x_struct = jax.ShapeDtypeStruct((256, 256), jnp.float32)
+      block_spec = pl.BlockSpec((128, 128), lambda i, j: (i, j))
+
+      out_spec = block_spec_lib.push_block_spec(f, block_spec)(x_struct)
+      self.assertEqual(out_spec.block_shape, (128, 128))
+      _, (in_spec,), _ = block_spec_lib.pull_block_spec(f, block_spec)(x_struct)
+      self.assertEqual(in_spec.block_shape, (128, 128))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
