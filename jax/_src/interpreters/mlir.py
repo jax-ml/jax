@@ -620,8 +620,15 @@ class JaxIrContext(ir.Context):
     # context. We want to ensure that only the dialects we need are loaded.
     super(ir.Context, self).__init__(*args, **kwargs)
 
-def make_ir_context() -> ir.Context:
-  """Creates an MLIR context suitable for JAX IR."""
+_thread_local_context = _jax.config.Config(
+    'mlir_thread_local_context',
+    None,
+    include_in_jit_key=False,
+    include_in_trace_context=False,
+)
+
+
+def _create_ir_context() -> JaxIrContext:
   context = JaxIrContext()
   context.append_dialect_registry(upstream_dialects)
   context.load_all_available_dialects()
@@ -640,6 +647,23 @@ def make_ir_context() -> ir.Context:
   # TODO(phawkins): clean up users who add their own dialects to JAX's contexts
   # and enable this.
   return context
+
+
+def make_ir_context() -> ir.Context:
+  """Creates an MLIR context suitable for JAX IR."""
+  val = _thread_local_context.value
+  if val is not None:
+    ctx, count = val
+    # Reuse each context at most 10 times per thread to prevent unbounded
+    # growth of interned values (such as types, attributes, and locations)
+    # in long-running threads. 10 is a compromise intended to get
+    # most of the benefit without much memory overhead.
+    if count < 10:
+      _thread_local_context.set_local((ctx, count + 1))
+      return ctx
+  ctx = _create_ir_context()
+  _thread_local_context.set_local((ctx, 0))
+  return ctx
 
 
 AxisContext = Union[sharding_impls.SPMDAxisContext,
@@ -837,7 +861,10 @@ class ModuleContext:
       pallas_collective_id_mapping: None | CollectiveIdMapping = None):
 
     self.context = context or make_ir_context()
-    self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
+    if module is None:
+      with ir.Location.unknown(self.context):
+        module = ir.Module.create()
+    self.module = module
     self.ip = ip or ir.InsertionPoint(self.module.body)
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.backend = backend

@@ -224,7 +224,7 @@ def _serialize_ir(m: ir.Module, ignore_custom_partitioning: bool) -> bytes:
   output = io.BytesIO()
   if ignore_custom_partitioning:
     m = _remove_custom_partitioning_callbacks(
-        type_cast(ir.Module, m.operation.clone())
+        type_cast(ir.Module, m.operation.clone(ip=False))
     )
   m.operation.write_bytecode(file=output)
   return output.getvalue()
@@ -234,7 +234,7 @@ def _canonicalize_ir(
     m_original: ir.Module, ignore_custom_partitioning: bool
 ) -> bytes:
   with m_original.context:
-    m = type_cast(ir.Module, m_original.operation.clone())
+    m = type_cast(ir.Module, m_original.operation.clone(ip=False))
     passes = pm.PassManager.parse(
         "builtin.module(strip-debuginfo)"
     )
