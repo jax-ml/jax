@@ -8264,6 +8264,38 @@ class Remat3Test(RematTest):
     eqn2, = dced2.eqns
     self.assertIs(eqn2.params['_prim'], jaxpr.eqns[0].params['_prim'])
 
+  def test_remat_expand_stages_call_without_inlining(self):
+    # expand binds eval_jaxpr_p, staging a single closed_call eqn rather than
+    # retracing the body, so lowering work doesn't scale with the jaxpr size
+    @jax.remat
+    def f(x):
+      for _ in range(10):
+        x = jnp.sin(x)
+      return x
+
+    hi = jax.jit(f).trace(1.).jaxpr
+    lo = pe.lower_jaxpr2(hi.jaxpr)
+    eqn, = lo.eqns
+    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
+
+  def test_remat_expand_stages_call_without_inlining_high_jaxpr(self):
+    # a high (here nested-remat) body is lowered and staged as a single
+    # closed_call rather than inlined
+    inner = jax.remat(lambda x: jnp.cos(jnp.cos(x)))
+
+    @jax.remat
+    def f(x):
+      for _ in range(10):
+        x = jnp.sin(x)
+      return inner(x)
+
+    hi = jax.jit(f).trace(1.).jaxpr
+    lo = pe.lower_jaxpr2(hi.jaxpr)
+    eqn, = lo.eqns
+    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertLen(eqn.params['call_jaxpr'].eqns, 11)  # 10 sins + inner call
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
