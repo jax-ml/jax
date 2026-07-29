@@ -1636,7 +1636,9 @@ def _extract_aliased_ref(
           alloc_id = ir.IntegerAttr(source_slice_op.attributes["alias_id"]).value
           # TODO(bchetioui): Use a scheme resilient to hash collisions.
           alias_id = hash((offset, alloc_id, alias_group_idx))
-          slice_op = mgpu.dialect.SliceTmemOp(ref_ty, ref, total_offset)
+          slice_op = mgpu.dialect.SliceTmemOp(
+              ref_ty, source_slice_op.source, total_offset
+          )
           i64 = ir.IntegerType.get_signless(64)
           slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
           ref = slice_op.result

@@ -5679,6 +5679,32 @@ class PallasCallTCGen05Test(PallasTCGen05Test):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_array_equal(x_result, x + 1)
 
+  def test_tmem_ref_union_multi_allocation(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((128, 512), jnp.float16),
+        scratch_types=[
+            plgpu.TMEM((128, 256), jnp.float16, packed=False),
+            plgpu.RefUnion(
+                plgpu.TMEM((128, 256), jnp.float16, packed=False),
+            ),
+        ],
+    )
+    def kernel(x_ref, y_ref, tmem_ref1, aliased_tmem_ref2):
+      [tmem_ref2] = aliased_tmem_ref2
+      x_val1 = plgpu.load(x_ref.at[:, 0:256], layout=plgpu.Layout.TCGEN05, optimized=False)
+      x_val2 = plgpu.load(x_ref.at[:, 256:512], layout=plgpu.Layout.TCGEN05, optimized=False)
+      plgpu.async_store_tmem(tmem_ref1, x_val1 + 1)
+      plgpu.async_store_tmem(tmem_ref2, x_val2 + 2)
+      plgpu.commit_tmem()
+
+      y_ref[:, 0:256] = plgpu.async_load_tmem(tmem_ref1)
+      y_ref[:, 256:512] = plgpu.async_load_tmem(tmem_ref2)
+
+    x = jax.random.uniform(
+        jax.random.key(0), shape=(128, 512), dtype=jnp.float16)
+    expected = jnp.concatenate([x[:, 0:256] + 1, x[:, 256:512] + 2], axis=1)
+    np.testing.assert_array_equal(kernel(x), expected)
+
   @parameterized.parameters(
       plgpu.Layout.TCGEN05, plgpu.Layout.TCGEN05_TMEM_NATIVE
   )
