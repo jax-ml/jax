@@ -708,9 +708,10 @@ def _error_if_non_ref_consts(consts, debug_info):
         jax_core.pp_aval(aval, ctx) for aval in non_scalar_consts_avals
     )
     raise ValueError(
-        "The kernel function in the mpmd_map"
-        f" {debug_info.func_src_info} captures non-Ref constants"
-        f" [{pp_consts_avals}]. You should pass them as inputs."
+        "The kernel function in mpmd_map"
+        f" {debug_info.func_src_info} captures non-scalar array constants"
+        f" [{pp_consts_avals}]. You can only close over scalars and Refs;"
+        " arrays must be passed as explicit inputs."
     )
 
 

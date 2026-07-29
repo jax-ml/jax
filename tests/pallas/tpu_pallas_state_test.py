@@ -380,7 +380,7 @@ class CoreMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     with self.assertRaisesRegex(
-        Exception, "captures non-Ref constants"
+        Exception, "You can only close over scalars and Refs"
     ):
       f(x)
 
