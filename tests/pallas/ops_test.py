@@ -2344,6 +2344,88 @@ class OpsTest(PallasBaseTest):
         rtol=0.05 if dtype == jnp.int4 else 0,
     )
 
+  @parameterized.product(
+      shapes_and_dim_nums=[
+          (
+              (4, 1, 256, 256),
+              (4, 1, 256, 256),
+              (((3,), (2,)), ((0, 1), (0, 1))),
+          ),
+          (
+              (7, 2, 128, 256),
+              (7, 2, 256, 128),
+              (((3,), (2,)), ((0, 1), (0, 1))),
+          ),
+          (
+              (3, 2, 1, 128, 128),
+              (3, 2, 1, 128, 128),
+              (((4,), (3,)), ((0, 1, 2), (0, 1, 2))),
+          ),
+          (
+              (128, 5, 2, 128),
+              (5, 2, 128, 128),
+              (((3,), (2,)), ((1, 2), (0, 1))),
+          ),
+          (
+              (3, 128, 2, 128),
+              (128, 3, 2, 128),
+              (((3,), (0,)), ((0, 2), (1, 2))),
+          ),
+          (
+              (3, 1, 16, 128),
+              (1, 3, 128, 32),
+              (((3,), (2,)), ((1, 0), (0, 1))),
+          ),
+          (
+              (16, 3, 1, 128),
+              (1, 3, 128, 32),
+              (((3,), (2,)), ((2, 1), (0, 1))),
+          ),
+          (
+              (16, 3, 128, 1),
+              (128, 1, 32, 3),
+              (((2,), (0,)), ((3, 1), (1, 3))),
+          ),
+      ],
+  )
+  def test_dot_general_multiple_batch_dims(self, shapes_and_dim_nums):
+    self.skip_if_mosaic_gpu()
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not supported on this hardware")
+    if jtu.jaxlib_version() < (0, 11, 1):
+      self.skipTest("Test requires JAX v0.11.1 or newer.")
+    if not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest("Test requires libtpu 0.0.46 or newer.")
+
+    lhs_shape, rhs_shape, dim_nums = shapes_and_dim_nums
+    lhs_key, rhs_key = random.split(random.key(0))
+    lhs = jax.random.normal(lhs_key, lhs_shape, dtype=jnp.bfloat16).astype(
+        jnp.float32
+    )
+    rhs = jax.random.normal(rhs_key, rhs_shape, dtype=jnp.bfloat16).astype(
+        jnp.float32
+    )
+    expected = jax.lax.dot_general(
+        lhs,
+        rhs,
+        dim_nums,
+        preferred_element_type=jnp.float32,
+    )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(expected.shape, expected.dtype),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jax.lax.dot_general(
+          x_ref[...],
+          y_ref[...],
+          dim_nums,
+          preferred_element_type=jnp.float32,
+      )
+
+    np.testing.assert_allclose(kernel(lhs, rhs), expected, atol=1e-5, rtol=1e-5)
+
   def test_strided_load(self):
     self.skip_if_mosaic_gpu()
 

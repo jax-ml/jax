@@ -1118,10 +1118,6 @@ LogicalResult MatmulOp::verify() {
           "dims");
       return failure();
     }
-    if (lhs_batch_dims.size() > 1) {
-      emitOpError("Not implemented: Up to 1 batch dim supported");
-      return failure();
-    }
 
     int64_t lhs_rank = lhs_ty.getShape().size();
     int64_t rhs_rank = rhs_ty.getShape().size();
@@ -1178,23 +1174,14 @@ LogicalResult MatmulOp::verify() {
       }
     }
 
-    const std::optional<int64_t> batch_dim_lhs =
-        lhs_batch_dims.empty() ? std::nullopt
-                               : std::optional<int64_t>(lhs_batch_dims[0]);
-    const std::optional<int64_t> batch_dim_rhs =
-        rhs_batch_dims.empty() ? std::nullopt
-                               : std::optional<int64_t>(rhs_batch_dims[0]);
-
-    // Invariant above enforces only 1 batch dim atm.
-    std::optional<int64_t> batch_size = std::nullopt;
-    if (batch_dim_lhs.has_value()) {
-      batch_size = lhs_ty.getShape()[batch_dim_lhs.value()];
-      auto rhs_batch_size = rhs_ty.getShape()[batch_dim_rhs.value()];
-      if (batch_size != rhs_batch_size) {
-        emitOpError("Not Implemented: batch dims must be equal");
+    for (int64_t i = 0; i < lhs_batch_dims.size(); ++i) {
+      int64_t batch_size_lhs = lhs_ty.getDimSize(lhs_batch_dims[i]);
+      int64_t batch_size_rhs = rhs_ty.getDimSize(rhs_batch_dims[i]);
+      if (batch_size_lhs != batch_size_rhs) {
+        emitOpError("Not Implemented: batch size must be equal");
         return failure();
       }
-      if (batch_size == 0) {
+      if (batch_size_lhs == 0) {
         emitOpError("Illegal: batch size must be > 0");
         return failure();
       }
@@ -1205,9 +1192,6 @@ LogicalResult MatmulOp::verify() {
           "Illegal: output dim order must have an even number of elements.");
       return failure();
     }
-
-    // Invariants above enforce a single batch idx for now. Future extension to
-    // this will be to support multiple batch dims.
 
     // Verify that the output dim order is always in the form of [0,
     // lhs_batch_dims, 0, lhs_non_contracting_dims, 1,
