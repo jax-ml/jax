@@ -37,7 +37,7 @@ class NameStackTest(jtu.JaxTestCase):
 
     def f(x):
       return x + 1
-    jaxpr = jax.make_jaxpr(f)(2).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2)
     for eqn in jaxpr.eqns:
       self.assertEqual(str(eqn.source_info.name_stack), '')
 
@@ -46,7 +46,7 @@ class NameStackTest(jtu.JaxTestCase):
     @jax.named_call
     def f(x):
       return x + 1
-    jaxpr = jax.make_jaxpr(f)(2).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2)
     for eqn in jaxpr.eqns:
       self.assertEqual(str(eqn.source_info.name_stack), 'f')
 
@@ -55,7 +55,7 @@ class NameStackTest(jtu.JaxTestCase):
     @jax.named_scope('foo')
     def f(x):
       return x + 1
-    jaxpr = jax.make_jaxpr(f)(2).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2)
     for eqn in jaxpr.eqns:
       self.assertEqual(str(eqn.source_info.name_stack), 'foo')
 
@@ -65,7 +65,7 @@ class NameStackTest(jtu.JaxTestCase):
     def f(x):
       with jax.named_scope('bar'):
         return x + 1
-    jaxpr = jax.make_jaxpr(f)(2).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2)
     for eqn in jaxpr.eqns:
       self.assertEqual(str(eqn.source_info.name_stack), 'foo/bar')
 
@@ -77,7 +77,7 @@ class NameStackTest(jtu.JaxTestCase):
       with jax.named_scope('bar'):
         with jax.named_scope('baz'):
           return y + 1
-    jaxpr = jax.make_jaxpr(f)(2).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2)
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'bar/baz')
 
@@ -91,7 +91,7 @@ class NameStackTest(jtu.JaxTestCase):
         _f, debug_info=api_util.debug_info("test", _f, (0,), {}))
       return core.call(x, subfuns=(sub,))[0]
 
-    jaxpr = jax.make_jaxpr(f)(2).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2)
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 
     hlo_text = _get_hlo(f)(2)
@@ -107,7 +107,7 @@ class NameStackTest(jtu.JaxTestCase):
         return x + 1
       return _f(x)
 
-    jaxpr = jax.make_jaxpr(f)(2).jaxpr
+    jaxpr = jax.make_jaxpr(f)(2)
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
     jaxpr_param = 'jaxpr'
     self.assertEqual(
@@ -123,7 +123,7 @@ class NameStackTest(jtu.JaxTestCase):
     def f(x):
       with jax.named_scope('bar'):
         return x + 1
-    jaxpr = jax.make_jaxpr(f)(jnp.ones(1)).jaxpr
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(1))
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
     self.assertEqual(str(jaxpr.eqns[0].params['jaxpr'].eqns[0].params['jaxpr'].eqns[1].source_info.name_stack), 'bar')
 
@@ -135,7 +135,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     def f(x):
       with jax.named_scope('foo'):
         return x + 1
-    jaxpr = jax.make_jaxpr(f)(jnp.ones(2)).jaxpr
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(2))
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'vmap(foo)')
 
   def test_vmap_should_transform_inner_name_stacks(self):
@@ -145,7 +145,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
       with jax.named_scope('bar'):
         with jax.named_scope('baz'):
           return x + 1
-    jaxpr = jax.make_jaxpr(f)(jnp.ones(2)).jaxpr
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(2))
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo/vmap(bar)/baz')
 
   def test_vmap_should_apply_to_call_jaxpr(self):
@@ -158,7 +158,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
         return x + 1
       return _f(x)
 
-    jaxpr = jax.make_jaxpr(f)(jnp.ones(2)).jaxpr
+    jaxpr = jax.make_jaxpr(f)(jnp.ones(2))
     jaxpr_param = 'jaxpr'
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo/vmap()')
     self.assertEqual(
@@ -175,7 +175,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
         with jax.named_scope('baz'):
           return jnp.square(x)
     g = jax.named_scope('foo')(lambda x, t: jax.jvp(f, (x,), (t,)))
-    jaxpr = jax.make_jaxpr(g)(1., 1.).jaxpr
+    jaxpr = jax.make_jaxpr(g)(1., 1.)
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack),
                      'foo/jvp(bar)/baz')
 
@@ -186,7 +186,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
         with jax.named_scope('baz'):
           return jnp.square(x)
     g = jax.named_scope('foo')(lambda x, t: jax.jvp(f, (x,), (t,)))
-    jaxpr = jax.make_jaxpr(g)(1., 1.).jaxpr
+    jaxpr = jax.make_jaxpr(g)(1., 1.)
     jaxpr_param = 'jaxpr'
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo/jvp()')
     self.assertEqual(
@@ -202,7 +202,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     def f(x):
       with jax.named_scope('foo'):
         return 2 * jnp.sin(x)
-    jaxpr = jax.make_jaxpr(f)(1.).jaxpr
+    jaxpr = jax.make_jaxpr(f)(1.)
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'jvp(foo)')
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'jvp(foo)')
     self.assertEqual(str(jaxpr.eqns[2].source_info.name_stack), 'jvp(foo)')
@@ -222,7 +222,7 @@ class NameStackTransformationTest(jtu.JaxTestCase):
       with jax.named_scope('bar'):
         # return jnp.sin(x)
         return jax.lax.sin(x)
-    jaxpr = jax.make_jaxpr(f)(1.).jaxpr
+    jaxpr = jax.make_jaxpr(f)(1.)
     jaxpr_param = 'jaxpr'
 
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'jvp(foo)')
@@ -438,7 +438,7 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
     g = lambda x, t: jax.jvp(f_, (x,), (t,))
     jaxpr = jax.make_jaxpr(g)(jnp.arange(2.), jnp.ones(2))
     jaxpr_param = 'jaxpr'
-    call_jaxpr = jaxpr.jaxpr.eqns[0].params[jaxpr_param]
+    call_jaxpr = jaxpr.eqns[0].params[jaxpr_param]
     self.assertEqual(str(call_jaxpr.eqns[1].source_info.name_stack), 'foo')
     self.assertEqual(str(
       call_jaxpr.eqns[1].params['branches'][0].eqns[0].source_info.name_stack),
@@ -468,7 +468,7 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(g)(jnp.arange(2.), jnp.ones(2))
     jaxpr_param = 'jaxpr'
 
-    call_jaxpr = jaxpr.jaxpr.eqns[0].params[jaxpr_param]
+    call_jaxpr = jaxpr.eqns[0].params[jaxpr_param]
     self.assertEqual(str(
       call_jaxpr.eqns[1].params['branches'][0].eqns[0].source_info.name_stack),
       'false')

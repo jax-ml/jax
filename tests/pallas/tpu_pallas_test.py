@@ -920,9 +920,9 @@ class PallasCallDMATest(ptu.PallasTPUTest):
         state.shaped_array_ref((8,), jnp.float32),
         state.shaped_array_ref((8,), jnp.float32),
     )
-    x, y = jaxpr.jaxpr.invars
+    x, y = jaxpr.invars
     expected_effects = {state.ReadEffect(y), state.WriteEffect(x)}
-    self.assertSetEqual(jaxpr.jaxpr.effects, expected_effects)
+    self.assertSetEqual(jaxpr.effects, expected_effects)
 
   def test_scoped_allocation(self):
     def kernel(y_ref):
@@ -3857,7 +3857,7 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
         state.shaped_array_ref((2, 8, 128), jnp.int32),
         jax.core.ShapedArray((), jnp.int32),
     )
-    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
+    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(
       (
@@ -3891,7 +3891,7 @@ class PrettyPrintingTest(ptu.PallasTPUTest):
         pltpu.SemaphoreType.REGULAR.get_ref_aval(),
         jax.core.ShapedArray((), jnp.int32),
     )
-    printed = jaxpr.jaxpr.pretty_print(use_color=False)
+    printed = jaxpr.pretty_print(use_color=False)
     self.assertIn('semaphore_signal', printed)
     self.assertRegex(printed, expected_regex)
 

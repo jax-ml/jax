@@ -919,7 +919,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_scan_jaxpr(self):
     ks = self.make_keys(3, 4, 5)
     f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
-    jaxpr = jax.make_jaxpr(f)(ks).jaxpr
+    jaxpr = jax.make_jaxpr(f)(ks)
     # { lambda ; a:key<fry>[3,4,5]. let
     #     b:key<fry>[3,5,4] = scan[
     #       jaxpr={ lambda ; c:key<fry>[4,5]. let

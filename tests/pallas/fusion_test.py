@@ -365,9 +365,9 @@ class FusionTest(jtu.JaxTestCase):
 
     x, y = jnp.array(2.0), jnp.array(3.0)
     closed_jaxpr = jax.make_jaxpr(f)(x, y)
-    self.assertLen(closed_jaxpr.jaxpr.effects, 1)
+    self.assertLen(closed_jaxpr.effects, 1)
 
-    jax.core.eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, x, y)
+    jax.core.eval_jaxpr(closed_jaxpr, closed_jaxpr.consts, x, y)
 
     np.testing.assert_allclose(ref[...], 5.0)
 

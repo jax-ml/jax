@@ -398,7 +398,7 @@ class CoreTest(jtu.JaxTestCase):
       return z, zdot
 
     jaxpr = jax.make_jaxpr(f)(y)
-    e1, e2 = jaxpr.jaxpr.eqns
+    e1, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal out, no residuals
     self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
 

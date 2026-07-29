@@ -2312,7 +2312,7 @@ class HijaxTest(jtu.JaxTestCase):
     self.assertAllClose(x_ref[...], 4., check_dtypes=False)
     traced_jaxpr = jax.jit(f).trace(0, x_ref).jaxpr
     self.assertEqual(traced_jaxpr.effects,
-                     {state.WriteEffect(traced_jaxpr.jaxpr.invars[1])})
+                     {state.WriteEffect(traced_jaxpr.invars[1])})
 
   def test_lower_preserves_arg_names_for_shaped_arrays(self):
     x = jnp.array(1.0)
@@ -2648,7 +2648,7 @@ class BoxTest(jtu.JaxTestCase):
       return foo(x)
 
     jaxpr = jax.make_jaxpr(f)(2.0)
-    self.assertTrue(jaxpr.jaxpr.is_high)
+    self.assertTrue(jaxpr.is_high)
 
   @parameterized.parameters([False, True])
   def test_grad_closure_stop_gradient(self, jit):
@@ -3205,7 +3205,7 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(foo)(jnp.float32(2.0))
     # The call_jaxpr should contain hi-primitives (square)
-    self.assertTrue(jaxpr.jaxpr.is_high)
+    self.assertTrue(jaxpr.is_high)
 
   def test_custom_vjp_with_hiprimitive_lowered(self):
 

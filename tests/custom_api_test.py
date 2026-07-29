@@ -314,7 +314,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     def g(x):
       jaxpr = api.make_jaxpr(f)(x)
-      return core.eval_jaxpr(jaxpr.jaxpr, [], x)[0]
+      return core.eval_jaxpr(jaxpr, [], x)[0]
 
     v = api.vmap(lambda _, x: g(x), axis_name='foo', in_axes=(0, None),
         out_axes=None)(jnp.arange(4.), 2.)
@@ -1346,7 +1346,7 @@ class CustomJVPTest(jtu.JaxTestCase):
         assert all(eqn.primitive != prim for eqn in call_jaxpr.eqns)
 
     x, y = 0.1, -1.3
-    jaxpr = jax.make_jaxpr(f)(x, y).jaxpr
+    jaxpr = jax.make_jaxpr(f)(x, y)
     check_jaxpr(jaxpr, [True, True], [lax.sin_p, lax.cos_p], [])
     check_jaxpr(jaxpr, [True, False], [lax.sin_p], [lax.cos_p])
     check_jaxpr(jaxpr, [False, True], [lax.cos_p], [lax.sin_p])
@@ -2211,7 +2211,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     def g(x):
       jaxpr = api.make_jaxpr(f)(x)
-      return core.eval_jaxpr(jaxpr.jaxpr, [], x)[0]
+      return core.eval_jaxpr(jaxpr, [], x)[0]
 
     out = api.vmap(lambda _, x: g(x), axis_name='foo', in_axes=(0, None),
         out_axes=None)(jnp.arange(4.), 2.)
@@ -3326,7 +3326,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         assert all(eqn.primitive != prim for eqn in call_jaxpr.eqns)
 
     x, y = 0.1, -1.3
-    jaxpr = jax.make_jaxpr(f)(x, y).jaxpr
+    jaxpr = jax.make_jaxpr(f)(x, y)
     check_jaxpr(jaxpr, [True, True], [lax.sin_p, lax.cos_p], [])
     check_jaxpr(jaxpr, [True, False], [lax.sin_p], [lax.cos_p])
     check_jaxpr(jaxpr, [False, True], [lax.cos_p], [lax.sin_p])
@@ -3412,7 +3412,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     x = jnp.array([4.2], dtype=jnp.float32)
     jaxpr = jax.make_jaxpr(lambda x: jax.jvp(f, (x,), (x,)))(x)
-    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [False, True])
+    jaxpr, _ = pe.dce_jaxpr(jaxpr, [False, True])
     actual = jaxpr.pretty_print(use_color=False)
     expected = textwrap.dedent(
         """
@@ -3474,7 +3474,7 @@ class CustomVJP3Test(CustomVJPTest):
 
     x = jnp.array([4.2], dtype=jnp.float32)
     jaxpr = jax.make_jaxpr(lambda x: jax.jvp(f, (x,), (x,)))(x)
-    jaxpr, _ = pe.dce_jaxpr(jaxpr.jaxpr, [False, True])
+    jaxpr, _ = pe.dce_jaxpr(jaxpr, [False, True])
     actual = jaxpr.pretty_print(use_color=False)
     expected = textwrap.dedent(
         """

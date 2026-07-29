@@ -1200,7 +1200,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     x = jnp.arange(4 * 4).reshape(4, 4)
-    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name='y'))(x).jaxpr
+    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name='y'))(x)
     e, = jaxpr.eqns
     self.assertIn('in_specs', e.params)
     self.assertEqual(e.params['in_specs'], (P('y', 'x'),))
@@ -1287,7 +1287,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     x = jnp.arange(4 * 4).reshape(4, 4)
-    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name=('x', 'y')))(x).jaxpr
+    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name=('x', 'y')))(x)
     e, = jaxpr.eqns
     self.assertIn('in_specs', e.params)
     self.assertEqual(e.params['in_specs'][0], P(('x', 'y')))
@@ -1323,7 +1323,7 @@ class ShardMapTest(jtu.JaxTestCase):
     y = jnp.arange(2 * 2).reshape(2, 2)
     # Inner vmap inside of shard-map will be over an axis of size 1. Outer vmap
     # is over an axis of size 2. This is a problem at the moment.
-    jax.make_jaxpr(mapped)(x, y).jaxpr
+    jax.make_jaxpr(mapped)(x, y)
 
   def test_shard_map_abstract_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -1976,7 +1976,7 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.zeros((4, 4))
     y = jnp.zeros((8, 8))
     z = jnp.zeros((16, 16))
-    jaxpr = jax.make_jaxpr(f)(x, y, z).jaxpr
+    jaxpr = jax.make_jaxpr(f)(x, y, z)
     self.assertLen(jaxpr.eqns, 1)
     self.assertLen(jaxpr.eqns[0].params['jaxpr'].eqns, 3)
 
@@ -2219,11 +2219,11 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, 1.)[1])(1.)
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     self.assertEmpty(e.params['jaxpr'].eqns)
 
     jaxpr = jax.make_jaxpr(jax.vjp(jax.vjp(f, 1.)[1], 1.)[1])((1.,))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     self.assertEmpty(e.params['jaxpr'].eqns)
 
     @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P())
@@ -2231,7 +2231,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.jit(lambda x: 1. * x)(x)
 
     jaxpr = jax.make_jaxpr(jax.vjp(g, 1.)[1])(1.)
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e1, = e.params['jaxpr'].eqns
     self.assertLen(e1.params['jaxpr'].eqns, 1)
 
@@ -2243,7 +2243,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(1.))[1])(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e2, = e.params['jaxpr'].eqns
     self.assertEqual(str(e2.primitive), 'psum_invariant')
     self.assertEqual(e2.params['axes'], ('x',))
@@ -2256,7 +2256,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.psum(x, 'x')
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.array([1.]))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e1, = e.params['jaxpr'].eqns
     self.assertEqual(str(e1.primitive), 'pvary')
 
@@ -2268,7 +2268,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.psum(x, 'x')
 
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e1, e2 = e.params['jaxpr'].eqns
     self.assertEqual(str(e1.primitive), 'psum_invariant')
     self.assertEqual(str(e2.primitive), 'pvary')
@@ -2360,7 +2360,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x * y
 
     jaxpr = jax.make_jaxpr(f)(jnp.arange(1.), jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e = e.params['jaxpr'].eqns[0]
     self.assertEqual(e.primitive.name, 'pvary')
     self.assertEqual(e.params['axes'], ('x',))
@@ -2376,7 +2376,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return x
 
     jaxpr = jax.make_jaxpr(f)(jnp.arange(4.))
-    e, = jaxpr.jaxpr.eqns
+    e, = jaxpr.eqns
     e, = e.params['jaxpr'].eqns
     e1, e2 = e.params['jaxpr'].eqns
     self.assertEqual(e1.primitive.name, 'psum_invariant')
@@ -2443,7 +2443,7 @@ class ShardMapTest(jtu.JaxTestCase):
       # remat3 doesn't support everything_saveable, which these assertions need
       # (they check out_fwd forwarding of a saved primal output)
       return
-    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
     self.assertLen(e2.invars, 2)   # res and cotangent inputs
@@ -2482,7 +2482,7 @@ class ShardMapTest(jtu.JaxTestCase):
       # remat3 doesn't support everything_saveable, which these assertions need
       # (they check out_fwd forwarding of a saved primal output)
       return
-    jaxpr, _ = pe.dce_jaxpr(jaxpr_.jaxpr, [True] * len(jaxpr_.out_avals))
+    jaxpr, _ = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.out_avals))
     e1, *_, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
     self.assertLen(e2.invars, 4)   # two res and two cotangent inputs

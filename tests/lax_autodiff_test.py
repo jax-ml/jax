@@ -252,7 +252,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = np.float32(3.0)
     _, f_lin = jax.linearize(lambda x: 2 * x**0 + 3 * x**1 + 4 * x**2, x)
     jaxpr = jax.make_jaxpr(f_lin)(x)
-    prims = [eqn.primitive for eqn in jaxpr.jaxpr.eqns]
+    prims = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertNotIn(lax.integer_pow_p, prims)
 
   @parameterized.parameters(itertools.chain.from_iterable(

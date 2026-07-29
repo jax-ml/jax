@@ -509,7 +509,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.relu, (1.,), order=3, rtol=rtol)
     check_grads(nn.relu, (-1.,), order=3, rtol=rtol)
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
-    self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
+    self.assertGreaterEqual(len(jaxpr.eqns), 2)
 
   def testReluGradAtZero(self):
     # https://dl.acm.org/doi/10.5555/3540261.3540297

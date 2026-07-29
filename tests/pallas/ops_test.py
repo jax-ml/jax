@@ -2937,7 +2937,7 @@ class PallasPrimitivesTest(PallasBaseTest):
     jaxpr, _ = trace_to_jaxpr(
         body, state.shaped_array_ref((4, 3, 2), jnp.int32)
     )
-    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
+    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
     (lambda: (pl.dslice(0, 4), slice(None), slice(None)), "a[:,:,:] <-"),
@@ -2955,7 +2955,7 @@ class PallasPrimitivesTest(PallasBaseTest):
     jaxpr, _ = trace_to_jaxpr(
         body, state.shaped_array_ref((4, 3, 2), jnp.int32)
     )
-    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
+    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
     (lambda: (pl.dslice(0, 4), slice(None), slice(None)),
@@ -2978,7 +2978,7 @@ class PallasPrimitivesTest(PallasBaseTest):
     jaxpr, _ = trace_to_jaxpr(
         body, state.shaped_array_ref((4, 3, 2), jnp.int32)
     )
-    self.assertIn(expected, jaxpr.jaxpr.pretty_print(use_color=False))
+    self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.product(approx=[False, True], full_range=[False, True])
   def test_reciprocal(self, approx, full_range):

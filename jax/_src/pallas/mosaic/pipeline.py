@@ -2475,7 +2475,7 @@ def _emit_pipeline_to_lojax(
   new_args_flat, new_args_tree = tracing_registry.flatten(new_prim_args)
   return emit_pipeline_p.bind(
       *new_args_flat,
-      body_jaxpr=closed_lo_jaxpr.jaxpr,
+      body_jaxpr=closed_lo_jaxpr,
       grid_mapping=grid_mapping.to_lojax(),
       args_tree=new_args_tree,
       refs_tree=new_refs_tree,

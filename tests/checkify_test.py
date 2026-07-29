@@ -1370,7 +1370,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
       return x
     x = jnp.ones(())
     jaxpr = jax.make_jaxpr(f)(x)
-    roundtrip_f = partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts)
+    roundtrip_f = partial(core.eval_jaxpr, jaxpr, jaxpr.consts)
     checked_f = checkify.checkify(jax.jit(roundtrip_f))
     err, _ = checked_f(jnp.ones(()))
     self.assertIsNotNone(err.get())

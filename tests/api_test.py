@@ -727,7 +727,7 @@ class JitTest(jtu.BufferDonationTestCase):
       return lax.cond(x, lambda: x, lambda: ~ x)
 
     jaxpr = f.trace(True).jaxpr
-    self.assertIs(pe.close_jaxpr(jaxpr.jaxpr), jaxpr.jaxpr)
+    self.assertIs(pe.close_jaxpr(jaxpr), jaxpr.jaxpr)
 
   def test_jit_shallow_copy(self):
     def f(x):
@@ -4336,7 +4336,7 @@ class APITest(jtu.JaxTestCase):
         return x + y
       g = lambda x: f(x, inp)
       jaxpr = jax.make_jaxpr(g)(1)
-      return jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 1)
+      return jax.core.eval_jaxpr(jaxpr, jaxpr.consts, 1)
 
     jax.vmap(run)(jnp.arange(2))  # doesn't crash
 
@@ -4354,7 +4354,7 @@ class APITest(jtu.JaxTestCase):
       jnp.dot(x, x)  # doesn't crash
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
     # self.assertIn('precision=None', str(jaxpr))
-    self.assertIs(jaxpr.jaxpr.eqns[0].params['precision'], None)
+    self.assertIs(jaxpr.eqns[0].params['precision'], None)
 
     with jax.default_matmul_precision("bfloat16"):
       x @ x  # doesn't crash
@@ -4748,7 +4748,7 @@ class APITest(jtu.JaxTestCase):
       return g(x)
 
     jaxpr = jax.make_jaxpr(h)(7)
-    core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+    core.eval_jaxpr(jaxpr, jaxpr.consts, 7)
 
     b(8)  # don't crash
 
@@ -4770,7 +4770,7 @@ class APITest(jtu.JaxTestCase):
       return g(x)
 
     jaxpr = jax.make_jaxpr(h)(7)
-    core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+    core.eval_jaxpr(jaxpr, jaxpr.consts, 7)
 
     b(8)  # don't crash
 
@@ -6109,11 +6109,11 @@ class RematTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     jaxpr = api.make_jaxpr(api.linearize(f_yesremat, 4.)[1])(1.)
-    scan_eqn, = jaxpr.jaxpr.eqns
+    scan_eqn, = jaxpr.eqns
     self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
 
     jaxpr = api.make_jaxpr(api.vjp(f_yesremat, 4.)[1])(1.)
-    scan_eqn, = jaxpr.jaxpr.eqns
+    scan_eqn, = jaxpr.eqns
     self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
 
   @parameterized.named_parameters(
@@ -7955,7 +7955,7 @@ class Remat3Test(RematTest):
     fwd_jaxpr, _, fwds = remat_internal.remat_jaxpr(
         jaxpr, policy, custom_vjp_rules=True, allow_fwds=True)
     self.assertEqual(fwds, [0])
-    self.assertLen(fwd_jaxpr.jaxpr.outvars, len(jaxpr.jaxpr.outvars))
+    self.assertLen(fwd_jaxpr.outvars, len(jaxpr.jaxpr.outvars))
 
     f = jax.remat(lambda x: jax.jit(body)(x), policy=policy)
     self.assertAllClose(api.grad(f)(1.), jnp.cos(1.), check_dtypes=False)
@@ -7975,7 +7975,7 @@ class Remat3Test(RematTest):
       return a ** 2 + b
 
     jaxpr = api.make_jaxpr(lambda x: api.vjp(g, x))(1.)
-    [jit_eqn] = [e for e in jaxpr.jaxpr.eqns if e.primitive.name == 'jit']
+    [jit_eqn] = [e for e in jaxpr.eqns if e.primitive.name == 'jit']
     self.assertLen(jit_eqn.outvars, 1)
 
     def g_ref(x):
@@ -8040,12 +8040,12 @@ class Remat3Test(RematTest):
 
     def fwd_bwd_jaxpr_strs(f, *args):
       fwd_jaxpr = jax.jit(partial(jax.vjp, f)).trace(*args).lojax.jaxpr
-      fwd_jaxpr, _ = pe.dce_jaxpr(fwd_jaxpr.jaxpr, True)
+      fwd_jaxpr, _ = pe.dce_jaxpr(fwd_jaxpr, True)
       fwd_str = fwd_jaxpr.pretty_print(use_color=False)
 
       y, f_vjp = jax.vjp(f, *args)
       bwd_jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
-      bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr.jaxpr, True)
+      bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr, True)
       bwd_str = bwd_jaxpr.pretty_print(use_color=False)
 
       return fwd_str, bwd_str
@@ -8076,12 +8076,12 @@ class Remat3Test(RematTest):
 
     def fwd_bwd_jaxpr_strs(f, *args):
       fwd_jaxpr = jax.jit(partial(jax.vjp, f)).trace(*args).lojax.jaxpr
-      fwd_jaxpr, _ = pe.dce_jaxpr(fwd_jaxpr.jaxpr, True)
+      fwd_jaxpr, _ = pe.dce_jaxpr(fwd_jaxpr, True)
       fwd_str = fwd_jaxpr.pretty_print(use_color=False)
 
       y, f_vjp = jax.vjp(f, *args)
       bwd_jaxpr = jax.jit(f_vjp).trace(y).lojax.jaxpr
-      bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr.jaxpr, True)
+      bwd_jaxpr, _ = pe.dce_jaxpr(bwd_jaxpr, True)
       bwd_str = bwd_jaxpr.pretty_print(use_color=False)
 
       return fwd_str, bwd_str
@@ -8218,7 +8218,7 @@ class JaxprTest(jtu.JaxTestCase):
 
   def test_scalar_literals(self):
     jaxpr = api.make_jaxpr(lambda x: x + 2)(42)
-    self.assertLen(jaxpr.jaxpr.constvars, 0)
+    self.assertLen(jaxpr.constvars, 0)
 
   def test_abstract_inputs(self):
     jaxpr = api.make_jaxpr(lambda x: x + 2.)(
@@ -8314,7 +8314,7 @@ class JaxprTest(jtu.JaxTestCase):
     # since we apply broadcast to a numpy.ndarray, the primitive is still bound
     # and thus would appear in the jaxpr if we didn't clean it up
     jaxpr = api.make_jaxpr(lambda: lax.broadcast(np.float32(3), ()))()
-    self.assertLen(jaxpr.jaxpr.eqns, 0)
+    self.assertLen(jaxpr.eqns, 0)
 
   def test_convert_element_type_literal_constant_folding(self):
     # this convert_element_type is nontrivial, but because it's on a scalar we

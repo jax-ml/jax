@@ -3580,7 +3580,7 @@ class LaxTest(jtu.JaxTestCase):
   def test_select_jvp_complexity(self):
     jaxpr = jax.make_jaxpr(lambda x: jax.jvp(lambda x: lax.select(True, x, x),
                                              (x,), (1.,)))(1.)
-    self.assertLen(jaxpr.jaxpr.eqns, 2)
+    self.assertLen(jaxpr.eqns, 2)
 
   def testRngBitGenerator(self):
     # This test covers the original behavior of lax.rng_bit_generator, which
@@ -3905,7 +3905,7 @@ class LaxTest(jtu.JaxTestCase):
     def f(x):
       return list(x)
     jaxpr = jax.make_jaxpr(f)(np.arange(3.))
-    primitives = [eqn.primitive for eqn in jaxpr.jaxpr.eqns]
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertIn(lax_internal.unstack_p, primitives)
 
 

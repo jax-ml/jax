@@ -615,7 +615,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jax.ShapeDtypeStruct((1, 5, 4), jnp.float32)
     y = jax.ShapeDtypeStruct((1, 4, 3), jnp.float32)
     jaxpr = jax.make_jaxpr(jnp.matmul)(x, y)
-    [dot_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive == lax.dot_general_p)
+    [dot_eqn] = (eqn for eqn in jaxpr.eqns if eqn.primitive == lax.dot_general_p)
     self.assertEqual(dot_eqn.invars[0].aval.shape, (5, 4))
     self.assertEqual(dot_eqn.invars[1].aval.shape, (4, 3))
     self.assertEqual(dot_eqn.params['dimension_numbers'], (((1,), (0,)), ((), ())))
@@ -1477,7 +1477,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testIntegerPower(self, ptype):
     p = {'int': 2, 'np.int': np.int32(2), 'jnp.int': jnp.int32(2)}[ptype]
     jaxpr = jax.make_jaxpr(lambda x1: jnp.power(x1, p))(1)
-    eqns = jaxpr.jaxpr.eqns
+    eqns = jaxpr.eqns
     self.assertLen(eqns, 1)
     self.assertEqual(eqns[0].primitive, lax.integer_pow_p)
 
@@ -1924,7 +1924,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     a = jnp.array([1,2,3,4])
     f = lambda a: jnp.repeat(a, repeats=2)
     jaxpr = jax.make_jaxpr(f)(a)
-    self.assertLessEqual(len(jaxpr.jaxpr.eqns), 6)
+    self.assertLessEqual(len(jaxpr.eqns), 6)
 
   @jtu.sample_product(fixed_size=[False, True])
   def testNonScalarRepeats(self, fixed_size):
@@ -4659,10 +4659,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             wrap_negative_indices=False,
         )
     )(indices)
-    [jit_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'jit')
+    [jit_eqn] = (eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'jit')
     nested_jaxpr = jit_eqn.params['jaxpr']
     [gather_eqn] = (
-        eqn for eqn in nested_jaxpr.jaxpr.eqns if eqn.primitive == lax.gather_p
+        eqn for eqn in nested_jaxpr.eqns if eqn.primitive == lax.gather_p
     )
     indices_var = gather_eqn.invars[1]
     self.assertEqual(indices_var.aval.dtype, jnp.int8)
@@ -4675,10 +4675,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
             arr, i, axis=0, mode='promise_in_bounds', wrap_negative_indices=True
         )
     )(indices)
-    [jit_eqn] = (eqn for eqn in jaxpr.jaxpr.eqns if eqn.primitive.name == 'jit')
+    [jit_eqn] = (eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'jit')
     nested_jaxpr = jit_eqn.params['jaxpr']
     [gather_eqn] = (
-        eqn for eqn in nested_jaxpr.jaxpr.eqns if eqn.primitive == lax.gather_p
+        eqn for eqn in nested_jaxpr.eqns if eqn.primitive == lax.gather_p
     )
     indices_var = gather_eqn.invars[1]
     self.assertEqual(indices_var.aval.dtype, jnp.int32)
@@ -4769,9 +4769,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           prims.update(get_all_primitives(eqn.params['jaxpr']))
       return prims
 
-    wrap_prims = get_all_primitives(jaxpr_wrap.jaxpr)
-    no_wrap_prims = get_all_primitives(jaxpr_no_wrap.jaxpr)
-    default_prims = get_all_primitives(jaxpr_default.jaxpr)
+    wrap_prims = get_all_primitives(jaxpr_wrap)
+    no_wrap_prims = get_all_primitives(jaxpr_no_wrap)
+    default_prims = get_all_primitives(jaxpr_default)
 
     self.assertTrue(
         'select' in wrap_prims or 'lt' in wrap_prims or 'add' in wrap_prims
@@ -5149,8 +5149,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # [a:i32[5] = iota[dimension=0 dtype=int32 shape=(5,)],
     #  a:i32[5] = device_put[devices=[None] srcs=[None]] b]
     num_eqs = 2 if device is not None else 1
-    self.assertEqual(len(jaxpr.jaxpr.eqns), num_eqs)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
+    self.assertEqual(len(jaxpr.eqns), num_eqs)
+    self.assertEqual(jaxpr.eqns[0].primitive, lax.iota_p)
 
   @jtu.sample_product(specify_device=[True, False])
   def testArangeJaxprNonZeroStart(self, specify_device):
@@ -5158,9 +5158,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(lambda: jnp.arange(1, 5, device=device))()
     # Non-zero start should produce iota + add (+ device_put if device specified)
     num_eqs = 3 if device is not None else 2
-    self.assertEqual(len(jaxpr.jaxpr.eqns), num_eqs)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[1].primitive, lax.add_p)
+    self.assertEqual(len(jaxpr.eqns), num_eqs)
+    self.assertEqual(jaxpr.eqns[0].primitive, lax.iota_p)
+    self.assertEqual(jaxpr.eqns[1].primitive, lax.add_p)
 
   @jtu.sample_product(
       dtype=[np.int32, np.float32],

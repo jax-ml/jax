@@ -2790,7 +2790,7 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
         state.shaped_array_ref((512,), jnp.float32),
         state.shaped_array_ref((512,), jnp.float32),
     )
-    x, y, o = jaxpr.jaxpr.invars
+    x, y, o = jaxpr.invars
     expected_effects = {state.ReadEffect(x), state.ReadEffect(y),
                         state.WriteEffect(o)}
     self.assertSetEqual(jaxpr.effects, expected_effects)
@@ -2812,7 +2812,7 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
         state.shaped_array_ref((512,), jnp.float32),
         state.shaped_array_ref((512,), jnp.float32),
     )
-    _, x, o = jaxpr.jaxpr.invars
+    _, x, o = jaxpr.invars
     expected_effects = {state.ReadEffect(x), state.WriteEffect(o)}
     self.assertSetEqual(jaxpr.effects, expected_effects)
 
@@ -2832,7 +2832,7 @@ class PallasCallPipelineEffectsTest(jtu.JaxTestCase):
         state.shaped_array_ref((2, 512), jnp.float32),
         state.shaped_array_ref((512,), jnp.float32),
     )
-    x, o = jaxpr.jaxpr.invars
+    x, o = jaxpr.invars
     expected_effects = {state.ReadEffect(x), state.WriteEffect(o)}
     self.assertSetEqual(jaxpr.effects, expected_effects)
 

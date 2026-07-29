@@ -960,7 +960,7 @@ class MutableArrayTest(jtu.JaxTestCase):
       return x * 2., True
 
     jaxpr = jax.make_jaxpr(f)(jnp.arange(3.))
-    discharged_jaxpr = state_discharge.discharge_state(jaxpr.jaxpr)
+    discharged_jaxpr = state_discharge.discharge_state(jaxpr)
     res = core.eval_jaxpr(discharged_jaxpr, jaxpr.consts, jnp.arange(3.))
     self.assertAllClose(res[0], jnp.arange(3.) * 2., check_dtypes=False)
 
@@ -981,7 +981,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     # The constant-derived ref is hoisted to a custom_vmap_p const, so discharge
     # sees an AbstractRef input.
     jaxpr = jax.make_jaxpr(f)(jnp.arange(3.))
-    discharged_jaxpr = state_discharge.discharge_state(jaxpr.jaxpr)
+    discharged_jaxpr = state_discharge.discharge_state(jaxpr)
     res = core.eval_jaxpr(discharged_jaxpr, jaxpr.consts, jnp.arange(3.))
     self.assertAllClose(res[0], jnp.arange(3.) * 3., check_dtypes=False)
 

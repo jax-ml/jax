@@ -226,7 +226,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     # Checks that batching didn't introduce any transposes or broadcasts.
     jaxpr = jax.make_jaxpr(dot)(np.zeros(lhs_shape, dtype),
                                 np.zeros(rhs_shape, dtype))
-    for eqn in jtu.iter_eqns(jaxpr.jaxpr):
+    for eqn in jtu.iter_eqns(jaxpr):
       self.assertFalse(eqn.primitive in ["transpose", "broadcast"])
 
   @jtu.sample_product(

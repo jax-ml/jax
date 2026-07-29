@@ -133,7 +133,7 @@ class Fusible(hijax.VJPHiPrimitive):
     new_out_aval = tree_util.tree_unflatten(out_tree, out_avals_flat)
 
     new_prim = Fusible(
-        jaxpr=new_jaxpr.jaxpr,
+        jaxpr=new_jaxpr,
         in_avals=const_avals + flat_avals,
         out_aval=new_out_aval,
         output_fusion_prefix=self.output_fusion_prefix,

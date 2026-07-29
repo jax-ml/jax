@@ -1037,76 +1037,76 @@ class IndexingTest(jtu.JaxTestCase):
 
   def testSimpleIndexingUsesSlice(self):
     jaxpr = jax.make_jaxpr(lambda x: x[:2, :2])(jnp.ones((3, 4)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.slice_p)
     self.assertIsNone(eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, :2, 1])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[0, 0])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     jaxpr = jax.make_jaxpr(lambda x: x[:, 1])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     # Indexing with `Ellipsis` is not lowered to `gather` ...
     jaxpr = jax.make_jaxpr(lambda x: x[..., 0])(jnp.ones((3, 4, 5)))
-    slice_eqn, squeeze_eqn = jaxpr.jaxpr.eqns
+    slice_eqn, squeeze_eqn = jaxpr.eqns
     self.assertEqual(slice_eqn.primitive, lax.slice_p)
     self.assertEqual(squeeze_eqn.primitive, lax.squeeze_p)
     self.assertIsNone(slice_eqn.params['strides'])
 
     # ... even when the ellipsis expands to no dimensions.
     jaxpr = jax.make_jaxpr(lambda x: x[..., 0:1])(jnp.ones((3,)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.slice_p)
     self.assertIsNone(eqn.params['strides'])
     jaxpr = jax.make_jaxpr(lambda x: x[0:1, ...])(jnp.ones((3,)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.slice_p)
     self.assertIsNone(eqn.params['strides'])
 
     # Simple reverses lower to lax.rev_p
     jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
-    eqn, = jaxpr.jaxpr.eqns
+    eqn, = jaxpr.eqns
     self.assertEqual(eqn.primitive, lax.rev_p)
 
     # Non-static scalar indices produce a dynamic slice
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), 2)
-    self.assertLen(jaxpr.jaxpr.eqns, 6)
-    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+    self.assertLen(jaxpr.eqns, 6)
+    self.assertEqual(jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
     # Non-scalar indices produce a gather
     jaxpr = jax.make_jaxpr(lambda x, i: x[i])(jnp.ones((4,)), jnp.array([2, 3]))
-    self.assertIn(len(jaxpr.jaxpr.eqns), (5, 6))  # depending on X64 mode
-    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.gather_p)
+    self.assertIn(len(jaxpr.eqns), (5, 6))  # depending on X64 mode
+    self.assertEqual(jaxpr.eqns[-1].primitive, lax.gather_p)
 
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/jax-ml/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns, 1)
     self.assertNotIn('gather', str(jaxpr))
 
     jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 0)
+    self.assertLen(jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 0)
+    self.assertLen(jaxpr.eqns, 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
-    self.assertLen(jaxpr.jaxpr.eqns, 1)
-    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.eqns[0].primitive, lax.rev_p)
 
   def testOOBEmptySlice(self):
     x = jnp.arange(4, dtype='float32')

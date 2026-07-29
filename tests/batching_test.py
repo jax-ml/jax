@@ -65,7 +65,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
     jaxpr = make_jaxpr(matmat)(A, B)
-    self.assertLen(jaxpr.jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns, 1)
 
   def testPerExampleGradients(self):
     def predict(params, inputs):
