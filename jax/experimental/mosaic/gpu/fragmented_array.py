@@ -4219,45 +4219,48 @@ class FragmentedArray:
         nested_ref_shape, nested_ref_strides
     )
 
-    minor_lane_dim = layout.lane_dims[-1]
-    major_lane_dim = layout.lane_dims[0]
-    is_txmatrix_reg_layout = (
-        utils.bitwidth(dtype) * layout.vector_length == 32
-        and isinstance(minor_lane_dim, int)
-        and tiled_nested_shape[minor_lane_dim][-1] % 4 == 0
-        # TODO(apaszke): This is no worse than what we had before, but I'm
-        # pretty sure it is too relaxed.
-    )
-    is_row_txmatrix_mem_layout = (
-        is_txmatrix_reg_layout
-        and tiled_nested_strides[minor_lane_dim][-1] == layout.vector_length
-        # The stride along vector_dim will be checked below.
-        # Strides along other lane dims are irrelevant.
-    )
-    is_col_txmatrix_mem_layout = (
-        is_txmatrix_reg_layout
-        and utils.bitwidth(dtype) == 16
-        and isinstance(major_lane_dim, int)
-        and len(layout.lane_dims) == 2
-        and tiled_nested_shape[major_lane_dim] == (8,)
-        # At this point, considering is_txmatrix_reg_layout, we know that lane
-        # dims represent a 8x4 matrix of vectors.
-        and tiled_nested_strides[major_lane_dim] == (1,)
-        # TODO(apaszke): Those are not technically necessary, but they do
-        # simplify lane_offset calculation below.
-        and len(tiled_nested_shape[layout.vector_dim]) == 1
-        and tiled_nested_strides[minor_lane_dim]
-        == (layout.vector_length * tiled_nested_strides[layout.vector_dim][0],)
-    )
-    can_use_txmatrix = (
-        is_row_txmatrix_mem_layout or is_col_txmatrix_mem_layout
-    ) and utils.is_smem_ref(ref)
-    if use_txmatrix and not can_use_txmatrix:
-      raise TxMatrixIneligible("Cannot use txmatrix for this layout")
-    load_vector_dim = (
-        layout.vector_dim if not is_col_txmatrix_mem_layout else major_lane_dim
-    )
-    assert isinstance(load_vector_dim, int)
+    if use_txmatrix:
+      minor_lane_dim = layout.lane_dims[-1]
+      major_lane_dim = layout.lane_dims[0]
+      is_txmatrix_reg_layout = (
+          utils.bitwidth(dtype) * layout.vector_length == 32
+          and isinstance(minor_lane_dim, int)
+          and tiled_nested_shape[minor_lane_dim][-1] % 4 == 0
+      )
+      is_row_txmatrix_mem_layout = (
+          is_txmatrix_reg_layout
+          and tiled_nested_strides[minor_lane_dim][-1] == layout.vector_length
+          # The stride along vector_dim will be checked below.
+          # Strides along other lane dims are irrelevant.
+      )
+      is_col_txmatrix_mem_layout = (
+          is_txmatrix_reg_layout
+          and utils.bitwidth(dtype) == 16
+          and isinstance(major_lane_dim, int)
+          and len(layout.lane_dims) == 2
+          and tiled_nested_shape[major_lane_dim] == (8,)
+          # At this point, considering is_txmatrix_reg_layout, we know that lane
+          # dims represent a 8x4 matrix of vectors.
+          and tiled_nested_strides[major_lane_dim] == (1,)
+          # TODO(apaszke): Those are not technically necessary, but they do
+          # simplify lane_offset calculation below.
+          and len(tiled_nested_shape[layout.vector_dim]) == 1
+          and tiled_nested_strides[minor_lane_dim]
+          == (layout.vector_length * tiled_nested_strides[layout.vector_dim][0],)
+      )
+      can_use_txmatrix = (
+          is_row_txmatrix_mem_layout or is_col_txmatrix_mem_layout
+      ) and utils.is_smem_ref(ref)
+      if not can_use_txmatrix:
+        raise TxMatrixIneligible("Cannot use txmatrix for this layout")
+      load_vector_dim = (
+          layout.vector_dim if not is_col_txmatrix_mem_layout else major_lane_dim
+      )
+      assert isinstance(load_vector_dim, int)
+      tx_layout = nvvm.MMALayout.row if is_row_txmatrix_mem_layout else nvvm.MMALayout.col
+    else:
+      load_vector_dim = layout.vector_dim
+      tx_layout = None
     # Not sure if this is strictly required for all data types, but it certainly
     # is for sub-byte types (else we might not increment the pointer by whole bytes).
     if any(
@@ -4354,13 +4357,13 @@ class FragmentedArray:
       return new_idxs
     # All offsets are in units of transfer_dtype.
     offset_lane_idx = None
-    if use_txmatrix and is_col_txmatrix_mem_layout:
+    if tx_layout == nvvm.MMALayout.col:
       col_stride_vec = dyn_tiled_strides[layout.vector_dim]
       lane_offset = arith.muli(
           arith.remui(utils.thread_idx(), c(8)), col_stride_vec
       )
     else:
-      if use_txmatrix:
+      if tx_layout == nvvm.MMALayout.row:
         offset_lane_idx = arith.muli(arith.remui(utils.thread_idx(), c(8)), c(4))
       lane_offset = utils.dyn_dot(
           expand_nested_dims(layout.lane_indices(offset_lane_idx)),
@@ -4515,7 +4518,6 @@ class FragmentedArray:
 
     lane_quadrant = arith.remui(arith.divui(utils.thread_idx(), c(WARP_SIZE // 4)), c(4))
     base_dyn_offset = dyn_offset
-    tx_layout = nvvm.MMALayout.row if is_row_txmatrix_mem_layout else nvvm.MMALayout.col
     for tx in transfers:
       assert tx.num in (1, 2, 4)
       lane_quadrant_remaining = lane_quadrant
