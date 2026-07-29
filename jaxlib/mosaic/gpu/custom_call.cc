@@ -1111,6 +1111,15 @@ bool ModuleUsesCollectiveMetadata(const xla::ffi::Dictionary& attrs) {
   return attrs.get<bool>("uses_xla_collective_metadata").value_or(false);
 }
 
+size_t GetCollectiveMetadataSize(size_t num_buffers, size_t num_devices) {
+  const size_t param_to_peers_size_bytes =
+      num_buffers * num_devices * sizeof(void*);
+  const size_t param_to_multimem_addresses_size_bytes =
+      num_buffers * sizeof(void*);
+  return sizeof(CollectiveKernelMetadata) + param_to_peers_size_bytes +
+         param_to_multimem_addresses_size_bytes;
+}
+
 absl::StatusOr<std::vector<int64_t>> ParseInts(std::string_view str) {
   std::vector<int64_t> result;
   std::vector<std::string> strs = absl::StrSplit(str, ',');
@@ -1300,6 +1309,15 @@ absl::Status MosaicGpuPrepare(
     }
   }
 
+  const size_t metadata_size =
+      GetCollectiveMetadataSize(buffers.size(), clique_key.num_devices());
+  if (device_state.metadata_handle.address().is_null()) {
+    VLOG(5) << "Allocating device memory for Mosaic GPU collective metadata";
+    device_state.metadata_handle = se::DeviceAddressHandle{
+        collective_params->executor,
+        collective_params->executor->Allocate(metadata_size)};
+  }
+
   XLA_VLOG_DEVICE(5, device_ordinal)
       << "MosaicGpuPrepare is done for clique key: " << clique_key;
   return absl::OkStatus();
@@ -1458,9 +1476,8 @@ absl::Status MosaicGpuInitialize(
   const size_t param_to_multimem_addresses_size_bytes =
       parameter_multimem_addresses.size() * sizeof(void*);
 
-  const size_t metadata_size = sizeof(CollectiveKernelMetadata) +
-                               param_to_peers_size_bytes +
-                               param_to_multimem_addresses_size_bytes;
+  const size_t metadata_size =
+      GetCollectiveMetadataSize(buffers.size(), clique_key.num_devices());
   device_state.metadata_bytes.resize(metadata_size);
   std::memcpy(device_state.metadata_bytes.data(), &metadata,
               sizeof(CollectiveKernelMetadata));
@@ -1473,13 +1490,6 @@ absl::Status MosaicGpuInitialize(
   std::memcpy(param_to_multimem_addresses_ptr,
               parameter_multimem_addresses.data(),
               param_to_multimem_addresses_size_bytes);
-
-  if (device_state.metadata_handle.address().is_null()) {
-    VLOG(5) << "Allocating device memory for Mosaic GPU collective metadata";
-    device_state.metadata_handle = se::DeviceAddressHandle{
-        collective_params->executor,
-        collective_params->executor->Allocate(metadata_size)};
-  }
   // Copy metadata to the device.
   se::DeviceAddressBase metadata_address =
       device_state.metadata_handle.address();
