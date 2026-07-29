@@ -28,7 +28,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import Layout as DLL, Format
 from jax._src import config
-from jax.ad_checkpoint import checkpoint_name, Offloadable, Recompute
+from jax.ad_checkpoint import checkpoint_name, Recompute
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding, PartitionSpec as P)
@@ -2532,25 +2532,30 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ("x",))
     inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
 
-    def policy(prim, *avals, **params):
-      return Offloadable(src="device", dst="pinned_host")
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=[],
+        names_which_can_be_offloaded=["a", "b", "c"],
+        offload_src="device",
+        offload_dst="pinned_host",
+    )
 
     @functools.partial(jax.remat, policy=policy)
     def f(x):
-      x = jnp.sin(x)
-      x = jnp.sin(x)
-      x = jnp.sin(x)
+      x = checkpoint_name(jnp.sin(x), "a")
+      x = checkpoint_name(jnp.sin(x), "b")
+      x = checkpoint_name(jnp.sin(x), "c")
       return jnp.sum(x)
 
     fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, inp)
 
     self.assertLen(fwd_jaxpr.out_avals, 4)  # 1 output, 3 offloaded residuals
     fwd_mem_kind_count = str(fwd_jaxpr).count("MemorySpace.Host")
-    self.assertEqual(fwd_mem_kind_count, 3)
+    expected_fwd_mem_kind_count = 3 if config.remat3.value else 2
+    self.assertEqual(fwd_mem_kind_count, expected_fwd_mem_kind_count)
 
     self.assertLen(bwd_jaxpr.in_avals, 4)  # 3 offloaded residuals, 1 input
     bwd_mem_kind_count = str(bwd_jaxpr).count("MemorySpace.Device")
-    self.assertEqual(bwd_mem_kind_count, 3)
+    self.assertEqual(bwd_mem_kind_count, 2)
 
     # Execution test.
     f = jax.jit(jax.grad(f))
@@ -2602,7 +2607,8 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     self.assertLen(fwd_jaxpr.out_avals, 5)  # 2 output, 3 offloaded residuals
     fwd_mem_kind_count = str(fwd_jaxpr).count("MemorySpace.Host")
-    self.assertEqual(fwd_mem_kind_count, 2)
+    expected_fwd_mem_kind_count = 2
+    self.assertEqual(fwd_mem_kind_count, expected_fwd_mem_kind_count)
 
     self.assertLen(bwd_jaxpr.in_avals, 5)  # 3 offloaded residuals, 2 input
     bwd_mem_kind_count = str(bwd_jaxpr).count("MemorySpace.Device")
@@ -2698,16 +2704,18 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     shape = (128,)
     inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
-    def policy(prim, *args, **kwargs):
-      del args, kwargs
-      if prim.multiple_results:
-        return Offloadable("device", "pinned_host")
-      return Recompute
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=[],
+        names_which_can_be_offloaded=["foo"],
+        offload_src="device",
+        offload_dst="pinned_host",
+    )
 
     @functools.partial(jax.remat, policy=policy)
     def test_fn(x):
       # Need any primitive with multiple outputs and a non-trivial grad.
       x1, _ = jax.lax.approx_max_k(x, k=2)
+      x1 = checkpoint_name(x1, "foo")
       return jnp.sum(x1)
 
     fn = jax.grad(test_fn)

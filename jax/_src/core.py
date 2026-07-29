@@ -3944,7 +3944,7 @@ class ShapeDtypeStruct:
     sharding: (optional) a :class:`jax.Sharding` object
   """
   __slots__ = ["shape", "dtype", "_sharding", "_dll", "weak_type",
-               "manual_axis_type", "is_ref"]
+               "manual_axis_type", "is_ref", "_memory_space"]
 
   shape: Any
   dtype: Any
@@ -3953,9 +3953,10 @@ class ShapeDtypeStruct:
   weak_type: Any
   manual_axis_type: Any
   is_ref: Any
+  _memory_space: Any
 
   def __init__(self, shape, dtype, *, sharding=None, weak_type=False,
-               manual_axis_type=None, is_ref=False):
+               manual_axis_type=None, is_ref=False, _memory_space=None):
     shape = tuple(shape)
     if any(s is None for s in shape):
       raise ValueError('`shape` passed to `ShapeDtypeStruct` cannot have '
@@ -3990,6 +3991,7 @@ class ShapeDtypeStruct:
           f" {type(manual_axis_type)}")
     object.__setattr__(self, 'manual_axis_type', manual_axis_type)
     object.__setattr__(self, 'is_ref', is_ref)
+    object.__setattr__(self, '_memory_space', _memory_space)
 
   def __setattr__(self, name, value):
     if hasattr(self, name):
@@ -4026,7 +4028,8 @@ class ShapeDtypeStruct:
       sharding = None
     mat = None if aval.mat.empty else aval.mat
     return cls(aval.shape, aval.dtype, sharding=sharding,
-               weak_type=aval.weak_type, manual_axis_type=mat, is_ref=False)
+               weak_type=aval.weak_type, manual_axis_type=mat, is_ref=False,
+               _memory_space=aval.memory_space)
 
   @property
   def sharding(self):
@@ -4096,13 +4099,16 @@ class ShapeDtypeStruct:
         sharding=sharding,
         weak_type=kwargs.pop('weak_type', self.weak_type),
         manual_axis_type=kwargs.pop('manual_axis_type', self.manual_axis_type),
-        is_ref=kwargs.pop('is_ref', self.is_ref))
+        is_ref=kwargs.pop('is_ref', self.is_ref),
+        _memory_space=kwargs.pop('_memory_space', self._memory_space))
 
 
 def _sds_aval_mapping(x):
   dtype = dtypes.check_and_canonicalize_user_dtype(
       x.dtype, "ShapeDtypeStruct", allow_non_jax_dtypes=True)
-  aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type)
+  memory_space = getattr(x, "_memory_space", None) or MemorySpace.Device
+  aval = ShapedArray(x.shape, dtype, weak_type=x.weak_type,
+                     memory_space=memory_space)
   aval = update_aval_with_sharding(aval, x.sharding, mat=x.manual_axis_type)
   if x.is_ref:
     from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
