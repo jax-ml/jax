@@ -23,6 +23,7 @@ import itertools
 from functools import partial
 import types
 from typing import cast, Any, TypeVar
+import warnings
 
 try:
   import flatbuffers
@@ -31,6 +32,7 @@ except ImportError as e:
       "Please install 'flatbuffers' in order to use Exported serialization"
       ) from e
 
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -43,6 +45,7 @@ from jax._src import named_sharding
 from jax._src import partition_spec
 from jax._src import tree_util
 
+from jax import version
 import numpy as np
 
 T = TypeVar("T")
@@ -74,7 +77,8 @@ SerT = TypeVar("SerT")
 # Version 10, April 4th, 2026, optimizes serialization of duplicate shardings,
 #   abstract meshes and avals.
 # Version 11, May 15th, 2026, add AbstractDevice.platform.
-_SERIALIZATION_VERSION = 11
+# Version 12, July 29th, 2026, add JAX version for the serializer.
+_SERIALIZATION_VERSION = 12
 
 
 @dataclasses.dataclass(slots=True)
@@ -224,6 +228,8 @@ def _serialize_exported(
     np.array([0 if s is None else 1 + uniques.named_shardings_map[s]
               for s in exp._out_named_shardings], dtype=np.uint32))
 
+  jax_version_idx = builder.CreateString(version.__version__)
+
   ser_flatbuf.ExportedStart(builder)
   # Started saving the actual serialization version on 7/27/2026.
   ser_flatbuf.ExportedAddSerializationVersion(builder, _SERIALIZATION_VERSION)
@@ -259,7 +265,7 @@ def _serialize_exported(
   ser_flatbuf.ExportedAddOutAvalsIdxs(builder, out_aval_idxs)
   ser_flatbuf.ExportedAddInShardingsIdxs(builder, in_shardings_idxs)
   ser_flatbuf.ExportedAddOutShardingsIdxs(builder, out_shardings_idxs)
-
+  ser_flatbuf.ExportedAddJaxVersion(builder, jax_version_idx)
   return ser_flatbuf.ExportedEnd(builder)
 
 
@@ -279,7 +285,9 @@ def _serialize_array(
 def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   # TODO(b/539419341): check the minimum serialization version.
   # We only started to save the actual serialization version on 7/27/2026, so
-  # we can add this check after 1/27/2027.
+  # we can add this check after 1/27/2027. We also started saving the
+  # JAX version that created the export on 7/28/2026 and we can use it
+  # after 1/28/2027 in error messages.
   scope = shape_poly.SymbolicScope(())  # TODO(necula): serialize the constraints
 
   unique_avals = [
@@ -304,12 +312,20 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
 
   nr_devices = exp.NrDevices()
   if nr_devices == 0 and exp.NrDevicesShort() > 0:
-    raise ValueError(
+    msg = (
         "Exported being deserialized seems to be from before 11/25/2025 and "
         "cannot be deserialized anymore because it is older than the 6-month "
         "backward-compatibility window. The Exported has serialization version "
         f"{exp.SerializationVersion()}."
     )
+    if exp.JaxVersion() is not None:
+      msg += f" It was created with JAX version {exp.JaxVersion().decode('utf-8')}."
+    if not config.export_deserialize_expired_versions.value:
+      raise ValueError(msg)
+    # TODO(necula): remove this once we bump the minimum supported version.
+    warnings.warn(msg, DeprecationWarning)
+    nr_devices = exp.NrDevicesShort()
+
   def sharding_by_idx(idx):
     if idx == 0:
       return None

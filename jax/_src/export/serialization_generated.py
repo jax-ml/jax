@@ -21,7 +21,7 @@ import flatbuffers
 from flatbuffers.compat import import_numpy
 np = import_numpy()
 
-class PyTreeDefKind:
+class PyTreeDefKind(object):
     leaf = 0
     none = 1
     tuple = 2
@@ -30,12 +30,12 @@ class PyTreeDefKind:
     custom = 5
 
 
-class AbstractValueKind:
+class AbstractValueKind(object):
     shapedArray = 0
     abstractToken = 1
 
 
-class DType:
+class DType(object):
     bool = 0
     i8 = 1
     i16 = 2
@@ -68,33 +68,33 @@ class DType:
     key_unsafe_rbg = 29
 
 
-class MemorySpace:
+class MemorySpace(object):
     Missing = 0
     Device = 1
     Host = 2
     Any = 3
 
 
-class AxisType:
+class AxisType(object):
     Missing = 0
     Auto = 1
     Explicit = 2
     Manual = 3
 
 
-class ShardingKind:
+class ShardingKind(object):
     unspecified = 0
     hlo_sharding = 1
     named_sharding = 2
 
 
-class DisabledSafetyCheckKind:
+class DisabledSafetyCheckKind(object):
     platform = 0
     custom_call = 1
     shape_assertions = 2
 
 
-class PyTreeDef:
+class PyTreeDef(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -229,7 +229,7 @@ def PyTreeDefEnd(builder):
 
 
 
-class AbstractDevice:
+class AbstractDevice(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -285,7 +285,7 @@ def AbstractDeviceEnd(builder):
 
 
 
-class AbstractMesh:
+class AbstractMesh(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -416,7 +416,7 @@ def AbstractMeshEnd(builder):
 
 
 
-class PartitionSpecOneAxis:
+class PartitionSpecOneAxis(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -468,7 +468,7 @@ def PartitionSpecOneAxisEnd(builder):
 
 
 
-class PartitionSpec:
+class PartitionSpec(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -576,7 +576,7 @@ def PartitionSpecEnd(builder):
 
 
 
-class NamedSharding:
+class NamedSharding(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -648,7 +648,7 @@ def NamedShardingEnd(builder):
 
 
 
-class AbstractValue:
+class AbstractValue(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -730,7 +730,7 @@ def AbstractValueEnd(builder):
 
 
 
-class Sharding:
+class Sharding(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -812,7 +812,7 @@ def ShardingEnd(builder):
 
 
 
-class Effect:
+class Effect(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -848,7 +848,7 @@ def EffectEnd(builder):
 
 
 
-class DisabledSafetyCheck:
+class DisabledSafetyCheck(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -894,7 +894,7 @@ def DisabledSafetyCheckEnd(builder):
 
 
 
-class Exported:
+class Exported(object):
     __slots__ = ['_tab']
 
     @classmethod
@@ -1412,8 +1412,15 @@ class Exported:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(54))
         return o == 0
 
+    # Exported
+    def JaxVersion(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(56))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
 def ExportedStart(builder):
-    builder.StartObject(26)
+    builder.StartObject(27)
 
 def ExportedAddSerializationVersion(builder, serializationVersion):
     builder.PrependUint16Slot(0, serializationVersion, 0)
@@ -1543,6 +1550,9 @@ def ExportedAddOutShardingsIdxs(builder, outShardingsIdxs):
 
 def ExportedStartOutShardingsIdxsVector(builder, numElems):
     return builder.StartVector(4, numElems, 4)
+
+def ExportedAddJaxVersion(builder, jaxVersion):
+    builder.PrependUOffsetTRelativeSlot(26, flatbuffers.number_types.UOffsetTFlags.py_type(jaxVersion), 0)
 
 def ExportedEnd(builder):
     return builder.EndObject()

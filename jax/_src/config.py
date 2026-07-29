@@ -1142,6 +1142,19 @@ export_ignore_forward_compatibility = bool_state(
     )
 )
 
+export_deserialize_expired_versions = bool_state(
+    name='jax_export_deserialize_expired_versions',
+    default=bool_env('JAX_EXPORT_DESERIALIZE_EXPIRED_VERSIONS', False),
+    help=(
+        'Whether to allow deserialization of expired versions of JAX exports.'
+        'If you turn this on, you may see obscure downstream errors in JAX or '
+        'the compiler and runtime. Furthermore, you accept the fact that the '
+        'behavior of the deserialized model may change at any time. '
+        'Read carefully '
+        'https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.'
+    )
+)
+
 jax_platforms = optional_string_state(
     name='jax_platforms',
     default=None,
