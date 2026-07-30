@@ -3624,6 +3624,22 @@ class CustomVJP3Test(CustomVJPTest):
         r"got fwd output type float32\[3\] which doesn't match",
         lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
+  def test_expand_stages_call_without_inlining(self):
+    # lowering stages the traced primal as a single closed_call rather than
+    # retracing it eqn-by-eqn
+    @jax.custom_vjp
+    def f(x):
+      for _ in range(10):
+        x = jnp.sin(x)
+      return x
+    f.defvjp(lambda x: (f(x), x), lambda x, g: (g,))
+
+    hi = jax.jit(f).trace(1.).jaxpr
+    lo = pe.lower_jaxpr2(hi.jaxpr)
+    eqn, = lo.eqns
+    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
+
 
 class CustomVmapTest(jtu.JaxTestCase):
 
@@ -4529,6 +4545,22 @@ class CustomJVP3Test(CustomJVPTest):
           in (b,) }
         """).strip()
     self.assertEqual(actual, expected)
+
+  def test_expand_stages_call_without_inlining(self):
+    # lowering stages the traced primal as a single closed_call rather than
+    # retracing it eqn-by-eqn
+    @jax.custom_jvp
+    def f(x):
+      for _ in range(10):
+        x = jnp.cos(x)
+      return x
+    f.defjvp(lambda primals, tangents: (f(primals[0]), tangents[0]))
+
+    hi = jax.jit(f).trace(1.).jaxpr
+    lo = pe.lower_jaxpr2(hi.jaxpr)
+    eqn, = lo.eqns
+    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
 
 
 @jtu.with_config(jax_remat3=True)

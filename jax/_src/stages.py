@@ -46,6 +46,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.core import typeof
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.layout import AutoLayoutSingleton, Format, Layout
 from jax._src.lib import _jax
 from jax._src.lib import hlo
@@ -435,7 +436,7 @@ class Traced(Stage):
 
   def __call__(self, *args, **kwargs):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
-    out_flat = core.jaxpr_as_fun(self.jaxpr)(*args_flat)
+    out_flat = pe._call_jaxpr(self.fun_name, self.jaxpr, args_flat)
     return tree_unflatten(self.out_tree, out_flat)
 
   @property
@@ -452,7 +453,6 @@ class Traced(Stage):
       return self._lojax
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
-    from jax._src.interpreters import partial_eval as pe  # type:ignore
     from jax._src.pjit import _lojax_expand_params  # pyrefly: ignore[missing-import]
     hi_jaxpr = self.jaxpr
     _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
