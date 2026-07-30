@@ -3486,10 +3486,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         scratch_shapes=[plgpu.SemaphoreType.REGULAR],
     )
     abstract_mesh = jax.sharding.AbstractMesh((2,), ('x',))
-    with jax.use_abstract_mesh(abstract_mesh):
-      jax.jit(jax.shard_map(kernel_jax, mesh=abstract_mesh, in_specs=(),
-                            out_specs=jax.P(), check_vma=False)
-              ).trace().lower(lowering_platforms=('gpu',))  # doesn't crash
+    jax.jit(jax.shard_map(
+        kernel_jax, mesh=abstract_mesh, in_specs=(),
+        out_specs=jax.P(), check_vma=False)).trace().lower(
+            lowering_platforms=('gpu',))  # doesn't crash
 
   @parameterized.named_parameters(
     (
