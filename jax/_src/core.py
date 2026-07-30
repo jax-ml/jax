@@ -868,11 +868,6 @@ class Trace:
   def __repr__(self):
     return f'{self.__class__.__name__}'
 
-  def process_call(self, call_primitive, f, tracers, params, /):
-    msg = (f"{type(self)} must override process_call to handle call-like "
-           "primitives")
-    raise NotImplementedError(msg)
-
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_jvp_call "
@@ -1306,14 +1301,6 @@ class EvalTrace(Trace):
         args = map(full_lower, args)
         check_eval_args(args)
         return primitive.impl(*args, **params)
-
-  def process_call(self, primitive, f, tracers, params, /):
-    with set_current_trace(self):
-      if config.debug_key_reuse.value:
-        from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pyrefly: ignore[missing-import]
-        return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
-      else:
-        return primitive.impl(f, *tracers, **params)
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, **_):
     del primitive, jvp, _  # Unused.
@@ -3328,48 +3315,46 @@ def dim_value_aval() -> AbstractValue:
 
 # ------------------- Call -------------------
 
-class CallPrimitive(Primitive):
-  multiple_results = True
-  call_primitive = True
-  skip_canonicalization = True
+# eval_jaxpr_p is a call-like primitive parameterized by a jaxpr rather than a
+# Python callable: applying it evaluates the jaxpr, and staging it out is O(1),
+# emitting a single eqn that keeps its identity under retracing. Its
+# transformation rules live in partial_eval.py and lax/eval_jaxpr.py.
+eval_jaxpr_p = Primitive('eval_jaxpr')
+eval_jaxpr_p.multiple_results = True
+eval_jaxpr_p.def_impl(lambda *args, call_jaxpr, **_: jaxpr_as_fun(call_jaxpr)(*args))
+eval_jaxpr_p.def_effectful_abstract_eval(
+    lambda *_, call_jaxpr, **__: (call_jaxpr.out_avals, positional_effects(call_jaxpr)))
 
-  def bind_with_trace(self, trace, args, avals, params, /):
-    params = dict(params)
-    fun, = params.pop('subfuns')
-    return trace.process_call(self, fun, args, params)
+# Aliases for the deleted final-style call primitives, for downstream code that
+# matches on these names when interpreting jaxprs.
+call_p = closed_call_p = eval_jaxpr_p
 
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.hashable_partial(
-        lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info), jaxpr, ())
-    new_params['subfuns'] = (subfun,)
-    return new_params
-
-def call_impl(f: lu.WrappedFun, *args, **params):
-  del params  # params parameterize the call primitive, not the function
-  with set_current_trace(eval_trace):
-    return f.call_wrapped(*args)
-
-call_p: CallPrimitive = CallPrimitive('call')
-call = call_p.bind
-call_p.def_impl(call_impl)
-
-
-class ClosedCallPrimitive(CallPrimitive):
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    jaxpr: Jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr, jaxpr.consts),
-                          debug_info=jaxpr.debug_info)
-    new_params['subfuns'] = (subfun,)
-    return new_params
-
-closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
-closed_call_p.def_impl(call_impl)
-closed_call_p.def_effectful_abstract_eval(
-    lambda *_, call_jaxpr: (call_jaxpr.out_avals,
-                            positional_effects(call_jaxpr)))
+def CallPrimitive(name: str) -> Primitive:
+  from jax._src import checkify  # pyrefly: ignore[missing-import]
+  from jax._src.interpreters import ad, batching, mlir  # pyrefly: ignore[missing-import]
+  from jax._src.interpreters import partial_eval as pe  # pyrefly: ignore[missing-import]
+  from jax._src.lax import eval_jaxpr  # pyrefly: ignore[missing-import]
+  from jax._src.state import discharge  # pyrefly: ignore[missing-import]
+  prim = Primitive(name)
+  prim.multiple_results = True
+  # some rules are generic and ignore params
+  prim.def_impl(eval_jaxpr_p.impl)
+  prim.def_effectful_abstract_eval(eval_jaxpr_p.abstract_eval)
+  custom_typechecks[prim] = custom_typechecks[eval_jaxpr_p]
+  mlir.register_lowering(prim, partial(mlir.core_call_lowering, name=name), cacheable=False)
+  checkify.error_checks[prim] = checkify.error_checks[eval_jaxpr_p]
+  # others are generic and bind `prim`, passing through params
+  prim.to_lojax = partial(pe._eval_jaxpr_to_lojax, prim)
+  ad.primitive_jvps[prim] = partial(eval_jaxpr._eval_jaxpr_jvp, prim)
+  ad.primitive_linearizations[prim] = partial(eval_jaxpr._eval_jaxpr_linearize, prim)
+  ad.fancy_transposes[prim] = partial(eval_jaxpr._eval_jaxpr_transpose, prim)
+  batching.fancy_primitive_batchers[prim] = partial(eval_jaxpr._eval_jaxpr_batch, prim)
+  pe.custom_partial_eval_rules[prim] = partial(pe._eval_jaxpr_partial_eval, prim)
+  pe.partial_eval_jaxpr_custom_rules[prim] = pe.partial_eval_jaxpr_custom_rules[eval_jaxpr_p]
+  pe.dce_rules[prim] = pe.dce_rules[eval_jaxpr_p]
+  discharge.register_discharge_rule(prim)(partial(discharge._eval_jaxpr_discharge_rule, prim))
+  return prim
+ClosedCallPrimitive = CallPrimitive
 
 # ------------------- Map -------------------
 
@@ -3564,12 +3549,12 @@ class JaxprTypeError(TypeError):
 
 custom_typechecks: dict[Primitive, Callable] = {}
 
-def _check_closed_call(_, *in_atoms, call_jaxpr):
+def _check_closed_call(_, *in_atoms, call_jaxpr, **__):
   in_avals = [x.aval for x in in_atoms]
   if not all(map(typecompat, call_jaxpr.in_avals, in_avals)):
     raise JaxprTypeError("Closed call in_avals mismatch")
   return call_jaxpr.out_avals, positional_effects(call_jaxpr)
-custom_typechecks[closed_call_p] = _check_closed_call
+custom_typechecks[eval_jaxpr_p] = _check_closed_call
 
 def check_jaxpr(jaxpr: Jaxpr):
   """Checks well-formedness of a jaxpr.
@@ -3693,9 +3678,6 @@ def _check_jaxpr(
         if prim in custom_typechecks:
           out_type, eqn_effects = custom_typechecks[prim](
             ctx_factory, *in_atoms, **eqn.params)
-        elif prim.call_primitive:
-          out_type, eqn_effects = _check_call(ctx_factory, prim, in_atoms,
-                                              eqn.params)
         else:
           out_type, eqn_effects = check_eqn(prim, in_avals, eqn.params)
 

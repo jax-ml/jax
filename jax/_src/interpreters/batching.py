@@ -274,16 +274,6 @@ class BatchTrace(Trace):
     else:
       raise NotImplementedError(f"Batching rule for '{p}' not implemented")
 
-  def process_call(self, call_primitive, f, tracers, params, /):
-    assert call_primitive.multiple_results
-    vals, dims = unzip2(map(self.to_batch_info, tracers))
-    f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
-
-    with core.set_current_trace(self.parent_trace):
-      vals_out = call_primitive.bind(*vals, subfuns=(f_,), **params)
-    src = source_info_util.current()
-    return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
-
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fun, out_dims1 = batch_subtrace(fun, self.tag, self.axis_data, in_dims)

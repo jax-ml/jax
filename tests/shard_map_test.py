@@ -2057,7 +2057,8 @@ class ShardMapTest(jtu.JaxTestCase):
       sub = lu.wrap_init(
         lambda x: [2. * x],
         debug_info=api_util.debug_info("test", lambda x: [2. * x], (x,), {}))
-      return core.call_p.bind(x, subfuns=(sub,))[0] * x
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(sub, [core.typeof(x)])
+      return core.call_p.bind(*consts, x, call_jaxpr=jaxpr)[0] * x
 
     mesh = jtu.create_mesh((4,), ('x',))
     g = shard_map(f, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'))
@@ -2076,7 +2077,8 @@ class ShardMapTest(jtu.JaxTestCase):
       sub = lu.wrap_init(
         lambda: [2. * x],
         debug_info=api_util.debug_info("test", lambda: [2. * x], (), {}))
-      return core.call_p.bind(subfuns=(sub,))[0] * x
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(sub, [])
+      return core.call_p.bind(*consts, call_jaxpr=jaxpr)[0] * x
 
     x = jnp.arange(4.)
     y = f(x)

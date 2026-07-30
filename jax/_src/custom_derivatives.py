@@ -395,7 +395,7 @@ class CustomJVPCallPrimitive(core.Primitive):
     return call_jaxpr.is_high
 
   def to_lojax(self, *hi_args, call_jaxpr: core.Jaxpr, **params):
-    return pe._lower_and_eval("custom_jvp_call", call_jaxpr, hi_args)
+    return pe._lower_and_eval(pe.eval_jaxpr_p, call_jaxpr, hi_args)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -1040,7 +1040,7 @@ class CustomVJPCallPrimitive(core.Primitive):
     return call_jaxpr.is_high
 
   def to_lojax(self, *hi_args, call_jaxpr: core.Jaxpr, **params):
-    return pe._lower_and_eval("custom_vjp_call", call_jaxpr, hi_args)
+    return pe._lower_and_eval(pe.eval_jaxpr_p, call_jaxpr, hi_args)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -1917,13 +1917,13 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     _, invars = split_list(eqn.invars, [eqn.params["num_consts"]])
     invars = [v for used, v in zip(used_ins, invars) if used]
     new_eqn = pe.new_jaxpr_eqn(
-        invars, outvars, core.closed_call_p, dict(call_jaxpr=closed_jaxpr),
+        invars, outvars, core.eval_jaxpr_p, dict(call_jaxpr=closed_jaxpr),
         core.eqn_effects(closed_jaxpr, invars), eqn.source_info, eqn.ctx)
     used_ins = [False] * eqn.params["num_consts"] + used_ins
     return used_ins, new_eqn
 
 def _remat_opt_to_lojax(*hi_args, fwd_jaxpr: core.Jaxpr, num_consts, **params):
-  return pe._lower_and_eval("remat_opt", fwd_jaxpr, hi_args)
+  return pe._lower_and_eval(pe.eval_jaxpr_p, fwd_jaxpr, hi_args)
 
 remat_opt_p = core.Primitive("remat_opt")
 remat_opt_p.multiple_results = True

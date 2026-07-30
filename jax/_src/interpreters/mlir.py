@@ -2788,9 +2788,9 @@ def call_lowering(fn_name, call_jaxpr: core.Jaxpr, backend,
   tokens_out = tokens_in.update_tokens(TokenSet(dict(zip(effects, tokens))))
   return out_nodes, tokens_out
 
-def core_call_lowering(ctx: LoweringRuleContext,
-                       *args, name, backend=None,
-                       call_jaxpr: core.Jaxpr):
+def core_call_lowering(
+    ctx: LoweringRuleContext, *args, name, backend=None, call_jaxpr: core.Jaxpr,
+    **_):
   effects = list(effects_lib.ordered_effects.filter_in(call_jaxpr.effects))
   tokens_in = ctx.tokens_in.subset(effects)
   out_nodes, tokens = call_lowering(
@@ -2802,11 +2802,6 @@ def core_call_lowering(ctx: LoweringRuleContext,
   return [lower_with_sharding_in_types(ctx, o, a)
           for o, a in zip(out_nodes, ctx.avals_out)]
 
-register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
-# TODO(phawkins): Not cacheable because of debug_print on TPU.
-register_lowering(core.closed_call_p,
-                  partial(core_call_lowering, name="closed_call"),
-                  cacheable=False)
 
 def map_compute_type(c_type: str) -> str:
   if c_type == "device_host":

@@ -6389,9 +6389,10 @@ class RematTest(jtu.JaxTestCase):
     def named_call(f):
       def named_f(*args):
         my_f = lambda: (f(*args),)
-        f_ = lu.wrap_init(
-            my_f, debug_info=api_util.debug_info("test_remat", my_f, (), {}))
-        out, = core.call_p.bind(subfuns=(f_,))
+        dbg = api_util.debug_info("test_remat", my_f, (), {})
+        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+            lu.wrap_init(my_f, debug_info=dbg), [])
+        out, = core.eval_jaxpr_p.bind(*consts, call_jaxpr=jaxpr)
         return out
       return named_f
 
@@ -6444,9 +6445,10 @@ class RematTest(jtu.JaxTestCase):
     @jax_util.curry
     def call(f, *args):
       my_f = lambda *args: [f(*args)]
-      sub = lu.wrap_init(
-        my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
-      return core.call(*args, name='foo', subfuns=(sub,))[0]
+      dbg = api_util.debug_info("test_remat", my_f, args, {})
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          lu.wrap_init(my_f, debug_info=dbg), [core.typeof(x) for x in args])
+      return core.eval_jaxpr_p.bind(*consts, *args, call_jaxpr=jaxpr)[0]
 
     f = call(add_one)
     g = jax.remat(lambda x: add_one(f(x)))
@@ -9286,6 +9288,24 @@ class EvalJaxprPrimitiveTest(jtu.JaxTestCase):
       return self._bind_eval_jaxpr(lambda x: [jnp.sin(x)], x)[0]
     x = jnp.array(1.0)
     self.assertAllClose(jax.jit(g)(x), jnp.sin(x))
+
+  def test_eval_jaxpr_linearize_of_while(self):
+    # JaxprTrace partial eval must split eval_jaxpr eqns into known and
+    # unknown parts rather than staging them atomically
+    def f(x):
+      def body(c):
+        i, v = c
+        v2 = self._bind_eval_jaxpr(lambda u: [jnp.sin(u) * 2.0], v)[0]
+        return i + 1, v2
+      _, y = lax.while_loop(lambda c: c[0] < 3, body, (0, x))
+      return y
+
+    x = jnp.float32(1.)
+    ref = lambda v: jnp.sin(jnp.sin(jnp.sin(v) * 2.) * 2.) * 2.
+    y, lin = jax.linearize(f, x)
+    y_ref, lin_ref = jax.linearize(ref, x)
+    self.assertAllClose(y, y_ref)
+    self.assertAllClose(lin(jnp.float32(1.)), lin_ref(jnp.float32(1.)))
 
 
 if __name__ == '__main__':

@@ -36,7 +36,6 @@ from jax._src.core import (
   Token as Token,
   TraceTag as TraceTag,
   Var as Var,
-  call_impl as call_impl,
   check_jaxpr as check_jaxpr,
   concrete_or_error as concrete_or_error,
   find_top_trace as find_top_trace,

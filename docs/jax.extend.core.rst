@@ -23,7 +23,6 @@
   TraceTag
   Var
   array_types
-  call_impl
   check_jaxpr
   concrete_or_error
   find_top_trace

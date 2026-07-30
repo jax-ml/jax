@@ -1443,10 +1443,6 @@ class ShardMapTrace(core.Trace):
     return out_vals.map2(out_mats,
                          lambda val, vma: ShardMapTracer(self, vma, val))
 
-  def process_call(self, call_primitive, fun, tracers, params, /):
-    with core.set_current_trace(self):
-      return fun.call_wrapped(*tracers)
-
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
     del prim, jvp, symbolic_zeros

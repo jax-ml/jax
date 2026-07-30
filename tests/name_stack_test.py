@@ -21,6 +21,7 @@ import jax.numpy as jnp
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
+from jax._src.interpreters import partial_eval as pe
 
 jax.config.parse_flags_with_absl()
 
@@ -89,13 +90,14 @@ class NameStackTest(jtu.JaxTestCase):
         return [x + 1]
       sub = lu.wrap_init(
         _f, debug_info=api_util.debug_info("test", _f, (0,), {}))
-      return core.call(x, subfuns=(sub,))[0]
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(sub, [core.typeof(x)])
+      return core.eval_jaxpr_p.bind(*consts, x, call_jaxpr=jaxpr)[0]
 
     jaxpr = jax.make_jaxpr(f)(2)
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 
     hlo_text = _get_hlo(f)(2)
-    self.assertIn('jit(f)/foo/call', hlo_text)
+    self.assertIn('jit(f)/foo/eval_jaxpr', hlo_text)
     self.assertIn('bar/add', hlo_text)
 
   def test_jit_jaxpr_should_not_store_outer_name_stack(self):
