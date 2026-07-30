@@ -1956,7 +1956,7 @@ class HijaxTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cpu")  # TODO(mattjj): debug xla failures
   def test_hijax_inside_call_primitives(self):
-    from jax._src.compute_on import compute_on2
+    from jax._src.compute_on import compute_on
     from jax.experimental.fused import fused
     from jax.experimental.scheduling_groups import scheduling_group
 
@@ -1989,7 +1989,7 @@ class HijaxTest(jtu.JaxTestCase):
     def square(x):
       return Square(jax.typeof(x))(x)
 
-    co = lambda f: compute_on2(f, compute_type='device_host',
+    co = lambda f: compute_on(f, compute_type='device_host',
                                out_memory_spaces=jax.memory.Space.Device)
     for wrap, prim_name in [(scheduling_group('g'), 'xla_metadata_call'),
                             (co, 'compute_on')]:
@@ -2026,7 +2026,7 @@ class HijaxTest(jtu.JaxTestCase):
   def test_backward_pass_logging_call_primitives(self):
     from jax._src import api_util
     from jax._src import flattree as ft
-    from jax._src.compute_on import compute_on2
+    from jax._src.compute_on import compute_on
     from jax._src.interpreters import mlir, partial_eval as pe
     from jax._src.lax.eval_jaxpr import eval_jaxpr_p
     from jax.experimental.scheduling_groups import scheduling_group
@@ -2050,7 +2050,7 @@ class HijaxTest(jtu.JaxTestCase):
     jaxpr, _ = pe.trace_to_jaxpr(f, args_ft.map(core.shaped_abstractify), dbg)
 
     fns = [scheduling_group('g')(f),
-           compute_on2(f, compute_type='device_host',
+           compute_on(f, compute_type='device_host',
                        out_memory_spaces=jax.memory.Space.Device),
            lambda x: eval_jaxpr_p.bind(x, call_jaxpr=jaxpr)[0]]
     for fn in fns:

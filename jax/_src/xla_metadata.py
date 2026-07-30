@@ -264,7 +264,7 @@ def _canonicalize_ad_metadata(ad_metadata):
         "ad_metadata must be 'same', 'drop', or a dict of metadata, got "
         f"{ad_metadata!r}")
 
-# TODO(yashkatariya): Figure out a way to reuse code with compute_on2_p, fused_p
+# TODO(yashkatariya): Figure out a way to reuse code with compute_on_p, fused_p
 def _xla_metadata_call(fun, metadata, ad_metadata):
   if metadata is not None and not isinstance(metadata, Mapping):
     raise TypeError(f"metadata must be a dict, got {metadata!r}")

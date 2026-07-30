@@ -35,7 +35,7 @@ from jax._src.sharding_impls import (
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.xla_metadata import set_xla_metadata
 from jax._src.shard_map import shard_map
-from jax.experimental.compute_on import compute_on2
+from jax.experimental.compute_on import compute_on
 import jax.numpy as jnp
 import numpy as np
 
@@ -853,7 +853,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out_s = make_single_device_sharding(
         jax.devices()[0], memory_kind='pinned_host')
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return x * 2
@@ -883,7 +883,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out_s = make_single_device_sharding(
         jax.devices()[0], memory_kind="pinned_host")
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return x * 2
@@ -915,7 +915,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     device_sharding = NamedSharding(mesh, P("x"))
     host_sharding = device_sharding.with_memory_kind("pinned_host")
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=(jax.memory.Space.Host, jax.memory.Space.Device))
     def host_func(x, y):
       y = jax.device_put(y, host_sharding)
@@ -947,7 +947,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(output_device, [0., 0., 0., 0., 4., 4., 4., 4.])
 
   def test_compute_on_basic_inline(self):
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return x * 2
@@ -973,7 +973,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out_s = make_single_device_sharding(
         jax.devices()[0], memory_kind='pinned_host')
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       # Reduction generates multiple host computations (inside a single host
@@ -1004,14 +1004,14 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
   def test_compute_host_loop(self):
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def fn():
       k = jax.random.key(0)
       return jax.nn.initializers.lecun_normal()(k, (2, 2), jnp.float32)
     fn()  # doesn't crash
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def fn():
       k = jax.random.key(0)
@@ -1019,12 +1019,12 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     fn()  # doesn't crash
 
   def test_nested_compute_error(self):
-    @compute_on2(compute_type='device',
+    @compute_on(compute_type='device',
                  out_memory_spaces=jax.memory.Space.Device)
     def f0(x):
       return x * 2
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def f1(x):
       return f0(x)
@@ -1039,7 +1039,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       f2(jnp.arange(8))
 
   def test_compute_on_grad(self):
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return jnp.sin(x)
@@ -1063,7 +1063,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     def policy(prim, *avals, **params):
       return Recompute
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       x = jnp.sin(x)
@@ -1090,12 +1090,12 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def f0(x):
       return x * 2
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def f1(x):
       x = x * 3
@@ -1114,7 +1114,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x, y):
       return x * y
@@ -1136,7 +1136,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sin(x)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     @jax.jit
     def eq(x, y):
@@ -1170,7 +1170,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sin(x)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     @jax.jit
     def eq(x, y):
@@ -1200,7 +1200,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     @jax.jit
     def f(xs):
       def body(carry, x):
-        out_tpu = compute_on2(
+        out_tpu = compute_on(
             lambda a, b: a + b, compute_type='device_host',
             out_memory_spaces=jax.memory.Space.Device)(x, carry)
         return carry, out_tpu
@@ -1210,7 +1210,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out = f(np_inp)
     self.assertArraysEqual(out, np_inp + 1)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def body2(carry, x):
       out_tpu = x + carry
@@ -1234,10 +1234,10 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     @jax.jit
     def f(x):
       if jit_compute_fn:
-        y = compute_on2(jax.jit(g), compute_type="device_host",
+        y = compute_on(jax.jit(g), compute_type="device_host",
                         out_memory_spaces=jax.memory.Space.Device)(x)
       else:
-        y = compute_on2(g, compute_type='device_host',
+        y = compute_on(g, compute_type='device_host',
                         out_memory_spaces=jax.memory.Space.Device)(x)
       return y * 3
 
@@ -1256,7 +1256,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr_host = jax.device_put(np_inp, s)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return x * x
@@ -1273,7 +1273,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_eager_compute(self):
     inp = jnp.arange(8.)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def f(x):
       return jnp.sin(x * 2)
@@ -1511,7 +1511,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, s)
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return x * 2
@@ -1537,7 +1537,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     dtype = np.float32
     operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
 
-    @compute_on2(compute_type="device_host",
+    @compute_on(compute_type="device_host",
                  out_memory_spaces=jax.memory.Space.Device)
     @jax.jit
     def g(x):
@@ -1571,7 +1571,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     s_dev = s.with_memory_kind('device')
 
     @jax.jit(out_shardings=(s, s_dev), donate_argnums=(0, 1))
-    @compute_on2(
+    @compute_on(
         compute_type='device_host',
         out_memory_spaces=(jax.memory.Space.Host, jax.memory.Space.Device))
     def f(inp1, inp2):
@@ -1611,7 +1611,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     p_sharding = make_single_device_sharding(
         jax.devices()[0], memory_kind="pinned_host")
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=(jax.memory.Space.Device, jax.memory.Space.Host))
     def host_fn(x_in, y_in):
       return x_in * x_in, y_in + y_in
@@ -1644,7 +1644,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     p_sharding = make_single_device_sharding(
         jax.devices()[0], memory_kind="pinned_host")
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=(jax.memory.Space.Device, jax.memory.Space.Host))
     def host_fn(x_in, y_in):
       return x_in * x_in, y_in + y_in
@@ -1685,7 +1685,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     sharding = NamedSharding(mesh, P("x", "y"))
     p_sharding = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=(jax.memory.Space.Device, jax.memory.Space.Host))
     def host_fn(x_in, y_in):
       return x_in * x_in, y_in + y_in
@@ -1720,7 +1720,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(y_out, y1 + y1)
 
   def test_indexing_on_host(self):
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Host)
     def fn2(x):
       y = jnp.ones((2, 1, 4))
@@ -1737,9 +1737,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     inp = jnp.arange(10)
     with jtu.count_jit_tracing_cache_miss() as count:
-      compute_on2(f, compute_type='device_host',
+      compute_on(f, compute_type='device_host',
                   out_memory_spaces=jax.memory.Space.Device)(inp)
-      compute_on2(f, compute_type='device',
+      compute_on(f, compute_type='device',
                   out_memory_spaces=jax.memory.Space.Device)(inp)
 
     # 2 for tracing under compute_on, 2 for `f`, and 2 for `mul` (compute type
@@ -1751,7 +1751,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     operand = np.float32(0.)
 
     @jax.jit
-    @compute_on2(compute_type="device_host",
+    @compute_on(compute_type="device_host",
                  out_memory_spaces=jax.memory.Space.Device)
     def f_host(x):
       # Adds 1 on CPU and adds 2 on other platforms
@@ -1764,7 +1764,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     )
 
   def test_offload_take_host(self):
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def peer_forward(x, experts, indices, scores):
       w = jnp.take(experts, indices.astype(int), axis=0)
@@ -1782,7 +1782,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
   def test_int4_host_compute(self):
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x):
       return x + x
@@ -1819,7 +1819,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_tc(operand, indices, updates):
       return jax.lax.scatter_add(operand, indices, updates, dnums)
 
-    @compute_on2(
+    @compute_on(
         compute_type="tpu_sparsecore",
         out_memory_spaces=jax.memory.Space.Device,
         compiler_options={'sparse_core_config': {'core_ids': [0]}},
@@ -1856,7 +1856,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_tc(operand, indices, updates):
       return jax.lax.scatter_add(operand, indices, updates, dnums)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices, updates):
       return jax.lax.scatter_add(operand, indices, updates, dnums)
@@ -1885,7 +1885,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     )
     slice_sizes = (1, 3)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
@@ -1921,7 +1921,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_tc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
@@ -1950,7 +1950,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
         scatter_dims_to_operand_dims=(0,),
     )
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def f_sc(operand, indices, updates):
       return jax.lax.scatter(operand, indices, updates, dnums)
@@ -1985,7 +1985,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     def f_tc(operand, indices):
       return jax.lax.gather(operand, indices, dnums, slice_sizes)
 
-    @compute_on2(
+    @compute_on(
         compute_type="tpu_sparsecore",
         out_memory_spaces=jax.memory.Space.Device,
         compiler_options={'sparse_core_config': {'core_ids': [0]}},
@@ -2013,7 +2013,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P('x', None))
     arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P('x', None))
 
-    @compute_on2(compute_type='tpu_sparsecore',
+    @compute_on(compute_type='tpu_sparsecore',
                  out_memory_spaces=jax.memory.Space.Device)
     def ag(arr):
       return jax.lax.all_gather(arr, 'x', tiled=True)
@@ -2046,7 +2046,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P("x", None))
     arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
 
-    @compute_on2(
+    @compute_on(
         compute_type="device", out_memory_spaces=jax.memory.Space.Device
     )
     def ag(arr):
@@ -2085,7 +2085,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     arr1 = jax.device_put(np.arange(64 * 128).reshape(64, 128), P("x", None))
     arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
 
-    @compute_on2(
+    @compute_on(
         compute_type="tpu_sparsecore",
         out_memory_spaces=jax.memory.Space.Device,
         compiler_options={
@@ -2123,13 +2123,13 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     arr2 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
     arr3 = jax.device_put(np.arange(128 * 128).reshape(128, 128), P("x", None))
 
-    @compute_on2(
+    @compute_on(
         compute_type="tpu_sparsecore", out_memory_spaces=jax.memory.Space.Device
     )
     def ag(arr):
       return jax.lax.all_gather(arr, "x", tiled=True)
 
-    @compute_on2(
+    @compute_on(
         compute_type="device", out_memory_spaces=jax.memory.Space.Device
     )
     def ag2(arr):
@@ -2173,7 +2173,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((8,), "x")
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def sparsecore_psum_scatter(x):
       return jax.lax.psum_scatter(x, "x", tiled=True)
@@ -2203,7 +2203,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((8,), "x")
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def sparsecore_psum(x):
       return jax.lax.psum(x, "x")
@@ -2233,12 +2233,12 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
     arr2 = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def sparsecore_psum_scatter(x):
       return jax.lax.psum_scatter(x, "x", tiled=True)
 
-    @compute_on2(compute_type="device",
+    @compute_on(compute_type="device",
                  out_memory_spaces=jax.memory.Space.Device)
     def tensorcore_psum_scatter(x):
       return jax.lax.psum_scatter(x, "x", tiled=True)
@@ -2268,12 +2268,12 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
     arr = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
     arr2 = jnp.arange(512 * 256, dtype=np.float32).reshape(512, 256)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def sparsecore_psum(x):
       return jax.lax.psum(x, "x")
 
-    @compute_on2(compute_type="device",
+    @compute_on(compute_type="device",
                  out_memory_spaces=jax.memory.Space.Device)
     def tensorcore_psum(x):
       return jax.lax.psum(x, "x")
@@ -2308,7 +2308,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
       return grads * math.prod(shape), None
     my_unroute.defvjp(_unroute_fwd, _unroute_bwd)
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def g(w):
       return w * 2
@@ -2326,7 +2326,7 @@ class SparsecoreOffloadTest(jtu.JaxTestCase):
   def test_compute_on_reshard_inside(self, mesh):
     arr = jnp.ones((2, 8))
 
-    @compute_on2(compute_type="tpu_sparsecore",
+    @compute_on(compute_type="tpu_sparsecore",
                  out_memory_spaces=jax.memory.Space.Device)
     def ag_w(w):
       w_sharded = jax.reshard(w, P('x'))
@@ -2352,7 +2352,7 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np_inp, s)
 
-    @compute_on2(compute_type='gpu_stream:1',
+    @compute_on(compute_type='gpu_stream:1',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x, y):
       return x + y
@@ -2376,12 +2376,12 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
     s = NamedSharding(mesh, P('x'))
 
-    @compute_on2(compute_type='gpu_stream:1',
+    @compute_on(compute_type='gpu_stream:1',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x, y):
       return x @ y
 
-    @compute_on2(compute_type='gpu_stream:2',
+    @compute_on(compute_type='gpu_stream:2',
                  out_memory_spaces=jax.memory.Space.Device)
     def h(x, y):
       return x @ y
@@ -2421,12 +2421,12 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np_inp, s)
 
-    @compute_on2(compute_type='gpu_stream:1',
+    @compute_on(compute_type='gpu_stream:1',
                  out_memory_spaces=jax.memory.Space.Device)
     def g(x, y):
       return x * y + x
 
-    @compute_on2(compute_type='gpu_stream:2',
+    @compute_on(compute_type='gpu_stream:2',
                  out_memory_spaces=jax.memory.Space.Device)
     def h(x, y):
       return x * y + x
@@ -2465,11 +2465,11 @@ class StreamAnnotationTest(jtu.JaxTestCase):
       return res_x, res_y
 
     def f_async(x, y):
-      res_x = compute_on2(
+      res_x = compute_on(
           kernel, compute_type="gpu_stream:0",
           out_memory_spaces=jax.memory.Space.Device,
       )(x)
-      res_y = compute_on2(
+      res_y = compute_on(
           kernel, compute_type="gpu_stream:1",
           out_memory_spaces=jax.memory.Space.Device,
       )(y)
@@ -2492,10 +2492,10 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertNotIn("_xla_stream_annotation", seq_text)
 
   @jtu.skip_on_devices('cpu')
-  def test_compute_on2_out_mem_space(self):
+  def test_compute_on_out_mem_space(self):
     arr = jnp.array([1.0, 2.0, 3.0])
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=jax.memory.Space.Host)
     def f(x):
       return x * 2.0
@@ -2505,11 +2505,11 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding.memory_kind, 'pinned_host')
 
   @jtu.skip_on_devices('cpu')
-  def test_compute_on2_out_mem_space_tuple(self):
+  def test_compute_on_out_mem_space_tuple(self):
     arr = jnp.array([1.0, 2.0, 3.0])
     arr2 = jnp.array([1.0, 2.0, 3.0])
 
-    @compute_on2(compute_type='device_host',
+    @compute_on(compute_type='device_host',
                  out_memory_spaces=(jax.memory.Space.Host, jax.memory.Space.Device))
     def f(x, y):
       return x * 2, y * 2

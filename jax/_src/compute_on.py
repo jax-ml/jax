@@ -60,15 +60,15 @@ def _check_valid(c_type: str):
         'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
 
 
-def compute_on2(f=None, *, compute_type, out_memory_spaces,
+def compute_on(f=None, *, compute_type, out_memory_spaces,
                 compiler_options=None):
   kwargs = dict(compute_type=compute_type, out_memory_spaces=out_memory_spaces,
                 compiler_options=compiler_options)
   if f is None:
-    return lambda g: _compute_on2(g, **kwargs)
-  return _compute_on2(f, **kwargs)
+    return lambda g: _compute_on(g, **kwargs)
+  return _compute_on(f, **kwargs)
 
-def _compute_on2(f, *, compute_type, out_memory_spaces, compiler_options):
+def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
   if not isinstance(compute_type, str):
     raise TypeError("`compute_on`'s compute_type argument must be a string.")
   _check_valid(compute_type)
