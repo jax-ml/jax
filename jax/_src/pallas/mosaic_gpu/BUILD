@@ -131,6 +131,7 @@ pytype_strict_library(
         "//jax/_src:dtypes",
         "//jax/_src:lax",
         "//jax/_src:literals",
+        "//jax/_src:partial_eval",
         "//jax/_src:pretty_printer",
         "//jax/_src:state_types",
         "//jax/_src:tree_util",
