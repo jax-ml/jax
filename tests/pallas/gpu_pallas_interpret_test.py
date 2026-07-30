@@ -1788,6 +1788,53 @@ class InterpretTest(jtu.JaxTestCase):
     out = _kernel()
     self.assertEqual(out, 42)
 
+  def test_async_copy_tmem_with_mma(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128,128), jnp.float32),
+        scratch_types=dict(
+            a_smem=plgpu.SMEM((128,128), jnp.float16),
+            a_tmem=plgpu.TMEM((128,128), jnp.float16, packed=True),
+            b_smem=plgpu.SMEM((128,128), jnp.float16),
+            acc_ref=plgpu.TMEM((128,128), jnp.float32),
+            barrier=plgpu.Barrier(orders_tensor_core=True),
+        ),
+        interpret=InterpretParams(),
+    )
+    def kernel(a, b, out_ref, a_smem, a_tmem, b_smem, acc_ref, barrier):
+      a_smem[...] = a[...]
+      b_smem[...] = b[...]
+      plgpu.commit_smem()
+      plgpu.async_copy_smem_to_tmem(a_smem, a_tmem)
+      plgpu.tcgen05_mma(acc_ref, a_tmem, b_smem, accumulate=False)
+      plgpu.tcgen05_commit_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      out_ref[...] = plgpu.async_load_tmem(acc_ref)
+
+    a = jax.random.uniform(jax.random.key(0), (128, 128), jnp.float16)
+    b = jax.random.uniform(jax.random.key(1), (128, 128), jnp.float16)
+    output = kernel(a, b)
+    expected = jnp.matmul(a, b, preferred_element_type=jnp.float32)
+    self.assertArraysEqual(output, expected)
+
+  def test_async_store_load_tmem(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128,128), jnp.int32),
+        scratch_types=dict(
+            tmem_ref=plgpu.TMEM((128,128), jnp.int32),
+        ),
+        interpret=InterpretParams(),
+    )
+    def kernel(in_ref, out_ref, tmem_ref):
+      plgpu.async_store_tmem(tmem_ref, in_ref[...])
+      plgpu.commit_tmem()
+      out_ref[...] = plgpu.async_load_tmem(tmem_ref)
+
+    a = jnp.full((128,128), 42, dtype=jnp.int32)
+    output = kernel(a)
+    self.assertArraysEqual(output, a)
+
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
@@ -1956,9 +2003,7 @@ def matmul1(a, b, config: TuningConfig):
           )
 
         jax.lax.fori_loop(0, k_iters, _loop_body, None)
-        # TODO(paubib): re-enable this once implemented. (it's a no-op besides race-checking)
-        # plgpu.tcgen05_commit_arrive(mma_done_barrier)
-        plgpu.barrier_arrive(mma_done_barrier)
+        plgpu.tcgen05_commit_arrive(mma_done_barrier)
 
     plgpu.barrier_wait(mma_done_barrier)
     acc_smem[...] = plgpu.async_load_tmem(acc_tmem).astype(dtype)
@@ -2080,9 +2125,7 @@ def matmul2(a, b, config: TuningConfig):
           )
 
         jax.lax.fori_loop(0, k_iters, _loop_body, None)
-        # TODO(paubib): re-enable this once implemented. (it's a no-op besides race-checking)
-        # plgpu.tcgen05_commit_arrive(mma_done_barrier)
-        plgpu.barrier_arrive(mma_done_barrier)
+        plgpu.tcgen05_commit_arrive(mma_done_barrier)
 
     plgpu.barrier_wait(mma_done_barrier)
     out_gmem_window = out_gmem.at[m_slice, n_slice]
@@ -2139,15 +2182,28 @@ def matmul2(a, b, config: TuningConfig):
 @jtu.thread_unsafe_test_class()
 class BlackwellExampleMatmulTest(jtu.JaxTestCase):
 
-  @jtu.run_on_devices('cpu')
-  def test_matmul0(self):
+  def setUp(self):
+    super().setUp()
+    mosaic_interpret.gpu_callbacks.reset_gpu_interpret_mode_state()
+
+    if not jtu.test_device_matches(['cpu']):
+      self.skipTest('CPU-only test')
+
+    self.num_devices = jax.device_count()
+    if self.num_devices > 1:
+      self.skipTest(f'requires 1 device, found {self.num_devices}')
+
+  @jtu.parameterized.product(
+      detect_races=[False, True],
+  )
+  def test_matmul0(self, detect_races: bool):
     example_config = TuningConfig(
         tile_m=128,
         tile_n=128,
         tile_k=64,
         max_concurrent_steps=4,
     )
-    m, n, k = 512, 512, 512
+    m, n, k = 256, 256, 256
     k1, k2 = jax.random.split(jax.random.key(0))
     a = jax.random.uniform(k1, (m, k), jnp.float16)
     b = jax.random.uniform(k2, (k, n), jnp.float16)
@@ -2161,15 +2217,17 @@ class BlackwellExampleMatmulTest(jtu.JaxTestCase):
         jax.sharding.use_abstract_mesh(
             jax.sharding.AbstractMesh((), (), abstract_device=device)
         ),
-        force_gpu_interpret_mode(InterpretParams()),
+        force_gpu_interpret_mode(InterpretParams(detect_races=detect_races)),
     ):
       res = matmul0(a, b, example_config).block_until_ready()
 
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
     np.testing.assert_allclose(res, expected, rtol=1e-3)
 
-  @jtu.run_on_devices('cpu')
-  def test_matmul1(self):
+  @jtu.parameterized.product(
+      detect_races=[False, True],
+  )
+  def test_matmul1(self, detect_races: bool):
     example_config = TuningConfig(
         tile_m=128,
         tile_n=128,
@@ -2190,15 +2248,17 @@ class BlackwellExampleMatmulTest(jtu.JaxTestCase):
         jax.sharding.use_abstract_mesh(
             jax.sharding.AbstractMesh((), (), abstract_device=device)
         ),
-        force_gpu_interpret_mode(InterpretParams(detect_races=False)),
+        force_gpu_interpret_mode(InterpretParams(detect_races=detect_races)),
     ):
       res = matmul1(a, b, example_config).block_until_ready()
 
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
     np.testing.assert_allclose(res, expected, rtol=1e-3)
 
-  @jtu.run_on_devices('cpu')
-  def test_matmul2(self):
+  @jtu.parameterized.product(
+      detect_races=[False, True],
+  )
+  def test_matmul2(self, detect_races: bool):
     example_config = TuningConfig(
         tile_m=128,
         tile_n=128,
@@ -2219,7 +2279,7 @@ class BlackwellExampleMatmulTest(jtu.JaxTestCase):
         jax.sharding.use_abstract_mesh(
             jax.sharding.AbstractMesh((), (), abstract_device=device)
         ),
-        force_gpu_interpret_mode(InterpretParams(detect_races=False)),
+        force_gpu_interpret_mode(InterpretParams(detect_races=detect_races)),
     ):
       res = matmul2(a, b, example_config).block_until_ready()
 

@@ -116,10 +116,13 @@ pytype_strict_library(
     deps = [
         ":params",
         "//jax",
+        "//jax/_src:core",
         "//jax/_src:source_info_util",
+        "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic/interpret:shared_memory",
         "//jax/_src/pallas/mosaic/interpret:utils",
         "//jax/_src/pallas/mosaic/interpret:vector_clock",
+        "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/experimental:pallas_mosaic_gpu",
     ] + py_deps([
         "numpy",

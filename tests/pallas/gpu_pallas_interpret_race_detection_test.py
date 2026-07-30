@@ -456,24 +456,31 @@ class InterpretTest(jtu.JaxTestCase):
     self.assertFalse(mosaic_interpret.get_races().races_found)
     self.assertEqual(out, 42)
 
-  def test_finds_race_in_double_gmem_to_smem(self):
+  @jtu.parameterized.product(
+      do_wait=[False, True],
+  )
+  def test_gmem_to_smem_visible_in_async_if_awaited(self, do_wait):
     @functools.partial(
         plgpu.kernel,
         out_type=jax.ShapeDtypeStruct((), jnp.int32),
         scratch_types=dict(
             smem_ref=plgpu.SMEM((2,), jnp.int32),
             gmem_ref=plgpu.GMEM((2,), jnp.int32),
-            barrier=plgpu.Barrier(num_arrivals=2),
+            barrier=plgpu.Barrier(num_arrivals=1 if do_wait else 2),
             ),
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(_out_ref, smem_ref, gmem_ref, barrier):
       plgpu.commit_smem()
       plgpu.copy_gmem_to_smem(gmem_ref, smem_ref, barrier)
+      if do_wait:
+        plgpu.barrier_wait(barrier)
       plgpu.copy_gmem_to_smem(gmem_ref, smem_ref, barrier)
+      plgpu.barrier_wait(barrier)
 
     _kernel()
-    self.assertTrue(mosaic_interpret.get_races().races_found)
+    correct = do_wait
+    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
 
 
   def test_finds_race_in_double_smem_to_gmem(self):
