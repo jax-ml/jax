@@ -2867,10 +2867,6 @@ def _dot_general_lowering_rule(
     precision = precision[0]
   if precision is None or precision == lax.Precision.DEFAULT:
     precision_attr = None  # That's the default in Mosaic.
-  elif precision == lax.Precision.HIGH:
-    precision_attr = ir.Attribute.parse(
-        "#tpu.contract_precision<bf16x3>"
-    )
   elif precision == lax.Precision.HIGHEST:
     precision_attr = ir.Attribute.parse(
         "#tpu.contract_precision<fp32>"
