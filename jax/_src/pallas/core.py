@@ -33,7 +33,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import frozen_dict
 from jax._src import hijax
 from jax._src import numpy as jnp
 from jax._src import state
@@ -1555,36 +1554,11 @@ def core_map(
       config.pallas_tpu_interpret_mode_context_manager.value or interpret)
 
   def wrapped(f: Callable):
-    if isinstance(scratch_shapes, dict):
-      fun_args = ((), scratch_shapes)
-    else:
-      fun_args = (scratch_shapes, {})
+    from jax._src.pallas import mpmd
 
-    debug_info = api_util.debug_info("pallas_core_map", f, *fun_args)  # pyrefly: ignore[bad-argument-type]
-    fun_args_refs = ft.flatten(fun_args).map(
-        lambda x: x.get_ref_aval())
-
-    with (
-        tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
-        jax_core.extend_axis_env_nd(mesh.shape.items()),
-        config._check_vma(False),
-    ):
-      jaxpr, out_avals = pe.trace_to_jaxpr(
-          f, fun_args_refs, debug_info)
-
-    if out_avals.tree != tree_util.tree_structure(None):
-      raise ValueError(
-          f"The kernel function in core_map {debug_info.func_src_info} should"
-          f" return None. It returns a PyTree: {out_avals.tree}."
-      )
-    if debug:
-      print(f"core_map jaxpr: {jaxpr}")
-
-    out = core_map_p.bind(
-        *jaxpr.consts,
-        jaxpr=jaxpr,
-        debug_info=debug_info,
-        mesh=mesh,
+    mpmd._mpmd_map(
+        [(mesh, f)],
+        scratch_types=scratch_shapes,
         compiler_params=compiler_params,
         interpret=(
             config.pallas_tpu_interpret_mode_context_manager.value or interpret
@@ -1592,11 +1566,9 @@ def core_map(
         debug=debug,
         cost_estimate=cost_estimate,
         name=name or util.fun_name(f),
-        metadata=frozen_dict.FrozenDict(metadata)
-        if metadata is not None
-        else None,
-    )
-    return tree_util.tree_unflatten(out_avals.tree, out)
+        metadata=metadata,
+    )()
+    return None
 
   return wrapped
 

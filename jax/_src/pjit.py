@@ -1458,6 +1458,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
       if inline is not api.Inline.AUTO:
         dict_attr = {'inlineable': ir.StringAttr.get(inline.value)}
         call.operation.attributes['mhlo.frontend_attributes'] = ir.DictAttr.get(dict_attr)  # type: ignore
+      mlir.wrap_compute_type_in_place(ctx, call.operation)
       results = call.results
   tokens, res = split_list(results, [len(effects)])
   res = tokens + [mlir.lower_with_sharding_in_types(ctx, o, a)

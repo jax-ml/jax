@@ -387,7 +387,10 @@ class TensorCoreMesh(pallas_core.Mesh):
 
   @contextlib.contextmanager
   def tracing_context(self):
-    yield
+    with pallas_core.tracing_grid_env(
+        tuple(self.shape.values()), mapped_dims=()
+    ):
+      yield
 
 
 def create_tensorcore_mesh(

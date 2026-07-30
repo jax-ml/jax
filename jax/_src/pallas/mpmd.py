@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 import contextlib
+import dataclasses
 import functools
 import itertools as it
 from typing import Any, Hashable, TypeVar, cast
@@ -196,6 +197,22 @@ def _mpmd_map_discharge_rule(
         ):
           write_indices.add(write_index)
 
+  default_memory_space = _default_memory_space(meshes)
+  in_memory_spaces = [
+      pallas_core.get_memory_space_aval(aval) for aval in ctx.in_avals
+  ]
+  in_memory_spaces = [
+      default_memory_space if m is None else m for m in in_memory_spaces
+  ]
+  args = tuple(
+      pallas_core.with_memory_space_constraint_p.bind(
+          arg, memory_space=memory_space
+      )
+      if memory_space is not default_memory_space
+      else arg
+      for arg, memory_space in zip(args, in_memory_spaces)
+  )
+
   write_indices = sorted(write_indices)
   num_in = len(ctx.in_avals)
   num_out_orig = len(ctx.out_avals)
@@ -220,7 +237,7 @@ def _mpmd_map_discharge_rule(
     in_avals_trace, orig_out_avals_trace, scratch_avals_trace = util.split_list(
         all_in_avals, [num_in, num_out_orig]
     )
-    new_out_avals_trace = [ctx.in_avals[i] for i in write_indices]
+    new_out_avals_trace = [in_avals_trace[i] for i in write_indices]
     tracing_avals = (
         in_avals_trace
         + orig_out_avals_trace
@@ -662,24 +679,30 @@ def mpmd_map(
   )
 
 
+def _default_memory_space(meshes: Sequence[pallas_core.Mesh]):
+  defaults = {mesh.default_memory_space for mesh in meshes}
+  if len(defaults) != 1:
+    raise ValueError(
+        "Multiple meshes with different default memory spaces are not"
+        " supported."
+    )
+  return defaults.pop()
+
+
 def _aval_to_ref_aval(
     aval: Any,
     meshes: Sequence[pallas_core.Mesh],
 ) -> state.AbstractRef | state.TransformedRef:
   match aval:
-    case state.AbstractRef():
-      return aval
+    case state.AbstractRef(memory_space=memory_space):
+      if memory_space is None:
+        memory_space = _default_memory_space(meshes)
+      return aval.update(memory_space=memory_space)
     case state.TransformedRef():
-      return aval
+      return dataclasses.replace(aval, ref=_aval_to_ref_aval(aval.ref, meshes))
     case jax_core.ShapedArray(memory_space=memory_space):
-      if memory_space == jax_core.MemorySpace.Device:
-        defaults = {mesh.default_memory_space for mesh in meshes}
-        if len(defaults) != 1:
-          raise ValueError(
-              "Multiple meshes with different default memory spaces are not"
-              " supported."
-          )
-        memory_space = list(defaults)[0]
+      if memory_space is None or memory_space == jax_core.MemorySpace.Device:
+        memory_space = _default_memory_space(meshes)
       return state.AbstractRef(aval, memory_space=memory_space)
     case jax_core.AbstractValue():
       return state.AbstractRef(aval, memory_space=None)
@@ -759,7 +782,12 @@ def _dedup_consts_and_unify_jaxpr_signatures(
         "Closed-over ref aliases with a passed-in ref is not supported."
     )
 
-  unique_const_avals = [jax_core.typeof(c) for c in unique_consts]
+  unique_const_avals = []
+  for c in unique_consts:
+    aval = jax_core.typeof(c)
+    if isinstance(aval, state.AbstractRef):
+      aval = _aval_to_ref_aval(aval, meshes)
+    unique_const_avals.append(aval)
 
   num_inputs = len(tree_util.tree_leaves(unflat_in_avals))
   num_outputs = len(tree_util.tree_leaves(unflat_out_avals))
