@@ -354,6 +354,165 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       kv_seqlen=kv_seqlen, page_table_k=page_table_k, page_table_v=page_table_v)
     out_ref = sdpa_infer_ref(q, k, v)
     self.assertArraysAllClose(out_ref, out_ref, rtol=1e-2, atol=1e-2)
+
+
+@jtu.with_config(jax_numpy_dtype_promotion="standard")
+class DotProductAttentionBatchingTest(jtu.JaxTestCase):
+  # Regression tests for https://github.com/jax-ml/jax/issues/38495.
+  # Trace-level (jax.eval_shape), so they do not need Ampere, except for
+  # the execution-mode test_sdpa_mixed_batching_values at the end.
+
+  def setUp(self):
+    super().setUp()
+    try:
+      check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+
+  def _shapes(self, tree):
+    return jax.tree.map(lambda x: (x.shape, x.dtype), tree)
+
+  def _make_qkv(self):
+    keys = jax.random.split(jax.random.key(0), 3)
+    return [jax.random.normal(key, (2, 4, 16, 32), dtype=jnp.float16)
+            for key in keys]
+
+  def _check_matches_xla(self, transform, *args):
+    cudnn_fn = transform(
+        partial(jax.nn.dot_product_attention, implementation="cudnn"))
+    xla_fn = transform(
+        partial(jax.nn.dot_product_attention, implementation="xla"))
+    out = jax.eval_shape(cudnn_fn, *args)
+    out_ref = jax.eval_shape(xla_fn, *args)
+    self.assertEqual(self._shapes(out), self._shapes(out_ref))
+
+  @jtu.run_on_devices("cuda")
+  def test_jacobian(self):
+    # The reported case: unbatched residuals with a batched cotangent.
+    q, k, v = self._make_qkv()
+    self._check_matches_xla(jax.jacobian, q, k, v)
+
+  @jtu.run_on_devices("cuda")
+  def test_vmap_partial_in_axes(self):
+    # Only query carries the vmap axis; its size (3) differs from the
+    # per-example batch (2) so a mixed-up axis would change the shape.
+    q, k, v = self._make_qkv()
+    qb = jnp.stack([q, q, q])
+    self._check_matches_xla(
+        lambda f: jax.vmap(f, in_axes=(0, None, None)), qb, k, v)
+
+  @jtu.run_on_devices("cuda")
+  def test_vmap_of_vjp(self):
+    # Shared primals, batched cotangents, decoupled from jacobian's basis.
+    q, k, v = self._make_qkv()
+    cts = jnp.zeros((5,) + q.shape, q.dtype)
+
+    def transform(f):
+      def pull(ct):
+        _, pullback = jax.vjp(f, q, k, v)
+        return pullback(ct)
+      return jax.vmap(pull)
+
+    self._check_matches_xla(transform, cts)
+
+  @jtu.run_on_devices("cuda")
+  def test_vmap_of_grad(self):
+    # A reduction cotangent reaches the backward batcher unbatched even
+    # when all primals are batched.
+    q, k, v = self._make_qkv()
+    qb, kb, vb = (jnp.stack([x, x, x]) for x in (q, k, v))
+
+    def transform(f):
+      return jax.vmap(jax.grad(
+          lambda *xs: f(*xs).astype(jnp.float32).sum(), argnums=(0, 1, 2)))
+
+    self._check_matches_xla(transform, qb, kb, vb)
+
+  @jtu.run_on_devices("cuda")
+  def test_jacobian_with_bias(self):
+    # Bias with an explicit batch dim; also covers dbias labeling.
+    q, k, v = self._make_qkv()
+    bias = jax.random.normal(jax.random.key(1), (2, 16, 4, 4),
+                             dtype=jnp.float16)
+    self._check_matches_xla(
+        lambda f: jax.jacobian(partial(f, q, k, v)), bias)
+
+  @jtu.run_on_devices("cuda")
+  def test_vmap_of_grad_shared_bias(self):
+    # A batch-1 (shared) bias exercises the tile-and-resum dbias path.
+    q, k, v = self._make_qkv()
+    qb, kb, vb = (jnp.stack([x, x, x]) for x in (q, k, v))
+    bias = jax.random.normal(jax.random.key(1), (1, 16, 4, 4),
+                             dtype=jnp.float16)
+
+    def transform(f):
+      return jax.vmap(jax.grad(
+          lambda q_, k_, v_, b_: f(q_, k_, v_, b_).astype(jnp.float32).sum(),
+          argnums=(0, 1, 2, 3)), in_axes=(0, 0, 0, None))
+
+    self._check_matches_xla(transform, qb, kb, vb, bias)
+
+  @jtu.run_on_devices("cuda")
+  def test_jacobian_with_mask(self):
+    # mask= becomes a batch-1 bias internally (shared-bias tiling path).
+    q, k, v = self._make_qkv()
+    mask = jnp.tril(jnp.ones((4, 4), dtype=jnp.bool_))
+    self._check_matches_xla(
+        lambda f: jax.jacobian(lambda q_: f(q_, k, v, mask=mask)), q)
+
+  @jtu.run_on_devices("cuda")
+  def test_jacobian_gqa_unequal_seqlen(self):
+    # GQA with unequal seq lengths so mixed-up dims cannot cancel out.
+    keys = jax.random.split(jax.random.key(0), 3)
+    q = jax.random.normal(keys[0], (2, 4, 16, 32), dtype=jnp.float16)
+    k = jax.random.normal(keys[1], (2, 6, 8, 32), dtype=jnp.float16)
+    v = jax.random.normal(keys[2], (2, 6, 8, 32), dtype=jnp.float16)
+    self._check_matches_xla(jax.jacobian, q, k, v)
+
+  @jtu.run_on_devices("cuda")
+  def test_all_batched_vmap(self):
+    # The previously working fully-batched case must stay intact.
+    q, k, v = self._make_qkv()
+    qb, kb, vb = (jnp.stack([x, x, x]) for x in (q, k, v))
+    self._check_matches_xla(jax.vmap, qb, kb, vb)
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_mixed_batching_values(self):
+    # Execution-mode companion of the trace-level tests above: checks
+    # values, not just shapes. Lives in this class rather than
+    # DotProductAttentionTest for its dtype promotion config: the xla
+    # reference implementation of jax.nn.dot_product_attention promotes
+    # bfloat16 logits to float32, which strict mode rejects.
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      self.skipTest("Requires at least Ampere arch")
+    if jtu.is_cuda_version_at_least(13, 0):
+      self.skipTest("cuDNN creates no execution plans on CUDA 13.0.")
+    keys = jax.random.split(jax.random.key(0), 3)
+    B, T, N, H = 2, 64, 4, 64
+    q, k, v = (jax.random.normal(key, (B, T, N, H), dtype=jnp.bfloat16)
+               for key in keys)
+    qb = jnp.stack([q, q + 1, q - 1])
+
+    def attn(impl):
+      return partial(jax.nn.dot_product_attention, implementation=impl)
+
+    # Forward batcher: only query carries the vmap axis.
+    out_ans = jax.vmap(attn("cudnn"), in_axes=(0, None, None))(qb, k, v)
+    out_ref = jax.vmap(attn("xla"), in_axes=(0, None, None))(qb, k, v)
+    self.assertArraysAllClose(out_ref, out_ans, rtol=1e-2, atol=1e-2)
+
+    # Backward batcher: the reduction cotangent reaches it unbatched.
+    def grads(impl):
+      return jax.vmap(jax.grad(
+          lambda *xs: attn(impl)(*xs).astype(jnp.float32).sum(),
+          argnums=(0, 1, 2)), in_axes=(0, None, None))
+
+    grads_ans = grads("cudnn")(qb, k, v)
+    grads_ref = grads("xla")(qb, k, v)
+    for g_ref, g_ans in zip(grads_ref, grads_ans):
+      self.assertArraysAllClose(g_ref, g_ans, rtol=2e-1, atol=2e-1)
+
+
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class DotProductAttentionF8Test(jtu.JaxTestCase):
 

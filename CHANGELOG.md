@@ -25,6 +25,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     temporarily bypass the error check.
     See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
 
+* Bug fixes
+  * The batching rules of the cuDNN fused attention primitives (used by
+    {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
+    support operands that do not carry the vmap axis, including a shared
+    bias or `mask`. Previously `jax.jacobian`, `jax.vmap` with partial
+    `in_axes`, and `jax.vmap` of a VJP or of `jax.grad` failed with a
+    reshape `TypeError` ({jax-issue}`#38495`).
+
 ## JAX 0.11.0 (July 16, 2026)
 
 * New features

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -835,6 +836,24 @@ class LayoutTest(jtu.JaxTestCase):
                      NamedSharding(mesh, P(None, None, unreduced={'x'})))
     self.assertEqual(out.format.layout.major_to_minor, (1, 0))
     self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
+
+  def test_layout_propagation_host(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    arr = jnp.ones((5, 2, 1004, 512, 36), dtype=jnp.float32)
+
+    host_sharding = jax.NamedSharding(mesh, jax.P(), memory_kind='pinned_host')
+    host_format = Format(layout=Layout((0, 1, 4, 2, 3)),
+                          sharding=host_sharding)
+
+    @jax.jit(out_shardings=host_format)
+    def test_fun(x):
+      return with_layout_constraint(x * 2, host_format.layout)
+
+    compiled_text = test_fun.lower(arr).compile().as_text()
+    match = re.search(r'->\s*f32\[5,2,1004,512,36\]\{([^}]+)\}', compiled_text)
+    layout_str = match.group(1)
+    self.assertIn('3,2,4,1,0', layout_str)
+    self.assertIn('S(5)', layout_str)
 
 
 if __name__ == '__main__':

@@ -1014,11 +1014,8 @@ def lower_sharding_computation(
   else:
     const_args = []
 
-  # If layout is propagated, then set the out_layout in the top module to AUTO
-  # so that XLA can override the entry_computation_layout. The propagated
-  # layout will be set via a custom call.
   out_layouts_via_prop = get_out_layouts_via_propagation(closed_jaxpr)
-  out_layouts = tuple(Layout.AUTO if p is not None else o
+  out_layouts = tuple(p if p is not None and o is None else o
                       for o, p in safe_zip(out_layouts, out_layouts_via_prop))
 
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (

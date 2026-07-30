@@ -74,7 +74,8 @@ def TPU_DimensionSemanticsEnum
 
 def TPU_ContractPrecision : I32EnumAttr<"ContractPrecision", "Contraction precision", [
   I32EnumAttrCase<"kBF16", 0, "bf16">,
-  I32EnumAttrCase<"kFP32", 1, "fp32">
+  I32EnumAttrCase<"kFP32", 1, "fp32">,
+  I32EnumAttrCase<"kBF16x3", 2, "bf16x3">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";

@@ -1514,7 +1514,12 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
       hps.sampled_from([128, 256, 512]),
       hps.integers(0, 4),
   )
-  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.filter_too_much,
+      ]
+  )
   def test_padded_matmul(self, dtype, m, k, n, bm, bk, bn, seed):
     if dtype == 'int8' and jtu.is_device_tpu_at_least(6):
       self.skipTest('Not implemented for TPU v6.')

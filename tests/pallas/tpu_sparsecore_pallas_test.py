@@ -519,7 +519,12 @@ class VectorSubcoreTest(PallasSCTest):
 
   @jtu.thread_unsafe_test(condition=not htu.hypothesis_is_thread_safe())
   @hp.given(hps.data())
-  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.filter_too_much,
+      ]
+  )
   def test_block_spec_untiled_slicing(self, data):
     self.skipTest(
         "Test uncovers a bug: @reproduce_failure('6.80.0', b'AAEBAQAAAAA=')"
