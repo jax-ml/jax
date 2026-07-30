@@ -23,7 +23,9 @@ jobs:
     name: Bazel dependency violations
     # End Presubmit Naming Check github-bazel-nobuild
     runs-on: linux-x86-n4-16
-    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     defaults:
       run:
         shell: bash

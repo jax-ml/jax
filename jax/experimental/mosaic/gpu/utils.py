@@ -2138,8 +2138,8 @@ def is_known_divisible(value: ir.Value, divisor: int, max_depth=10) -> bool:
       return is_known_divisible(
           def_op.lhs, divisor, new_depth
       ) and is_known_divisible(def_op.rhs, divisor, new_depth)
-    case arith.AddIOp() | arith.SubIOp():
-      # Only cover the common case where both operads are divisible.
+    case arith.AddIOp() | arith.SubIOp() | arith.RemUIOp() | arith.RemSIOp():
+      # Only cover the common case where both operands are divisible.
       return is_known_divisible(
           def_op.lhs, divisor, new_depth
       ) and is_known_divisible(def_op.rhs, divisor, new_depth)

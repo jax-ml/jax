@@ -1033,13 +1033,15 @@ class LaunchContext:
       gmem_transform = (TransposeTransform((*squeezed_dims, *sliced_dims)),
                         *(t.batch(len(squeezed_dims)) for t in gmem_transform))
 
-    slice_shape = tuple(slice_shape)
+    untransformed_slice_shape = tuple(slice_shape)
+    slice_shape = untransformed_slice_shape
     for t in gmem_transform:
       dyn_base_indices = t.transform_index(dyn_base_indices)
       slice_shape = t.transform_shape(slice_shape)
 
     return (
         list(slice_shape),
+        untransformed_slice_shape,
         dyn_base_indices,
         squeezed_dims,
         gather_indices,
@@ -1299,6 +1301,7 @@ class LaunchContext:
 
     (
         slice_shape,
+        untransformed_slice_shape,
         dyn_base_indices,
         squeezed_dims,
         gather_indices,
@@ -1426,7 +1429,8 @@ class LaunchContext:
       else:
         assert swizzle is not None
         swizzle_elems = 8 * swizzle // element_bitwidth
-        if gmem_transform != (TileTransform((8, swizzle_elems)),):
+        tiling = (8, swizzle_elems)
+        if gmem_transform != (TileTransform(tiling),):
           raise NotImplementedError(gmem_transform)
         layout = fa.tiled_copy_smem_gmem_layout(
             *smem_ref_ty.shape[-4:-2], swizzle, element_bitwidth  # pyrefly: ignore[bad-argument-count]
@@ -1443,8 +1447,13 @@ class LaunchContext:
         dyn_offset = arith.addi(dyn_offset, gmem_offset)
         if gmem_ref_ty.rank != 2:
           raise NotImplementedError("Only 2D copies implemented")
+        gmem_slice_shape = tuple(
+            s
+            for i, s in enumerate(untransformed_slice_shape)
+            if i not in squeezed_dims
+        )
         transfers = fa.FragmentedArray.transfer_tiled(
-            smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
+            smem_ref, swizzle, layout, gmem_slice_shape, optimized=False
         )
         gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
         gmem_base_ptr = llvm.addrspacecast(
@@ -1922,6 +1931,7 @@ class LaunchContext:
     impl =  AsyncCopyImplementation.TMA
     (
         slice_shape,
+        _,
         dyn_base_indices,
         squeezed_dims,
         gather_indices,

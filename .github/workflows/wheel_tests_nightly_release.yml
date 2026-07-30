@@ -380,7 +380,9 @@ jobs:
         matrix:
           python: ["3.12", "3.13", "3.14", "3.14-nogil"]
           cuda-version: [12, 13]
-    container:  "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
     # Verifies that JAX's release wheels can be installed
     name: "Verify release wheels install (Python ${{ matrix.python }})"

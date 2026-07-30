@@ -102,7 +102,9 @@ jobs:
         # Explicitly set the shell to bash
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
