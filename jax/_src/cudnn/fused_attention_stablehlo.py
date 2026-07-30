@@ -517,7 +517,7 @@ def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
 
   if get_max_seg_per_batch(q_offsets) > 1:
     B, T, N, H = query.shape
-    _, S, _, _ = key.shape
+    _, S, N_kv, _ = key.shape
 
     q_seqlen = _shift_to_left(q_seqlen, 0)
     kv_seqlen = _shift_to_left(kv_seqlen, 0)
@@ -530,7 +530,7 @@ def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
     # multiply by stride_per_token to get correct offsets
     # do it here because real stride changes after sharding
     q_offsets = q_offsets * N * H
-    kv_offsets = kv_offsets * N * H
+    kv_offsets = kv_offsets * N_kv * H
 
   return q_seqlen, kv_seqlen, q_offsets, kv_offsets
 
