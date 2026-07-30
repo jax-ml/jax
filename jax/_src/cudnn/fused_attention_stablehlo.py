@@ -1620,16 +1620,32 @@ def _dot_product_attention_fp8_bwd_cuda_lowering(
   # Only keep dQ, dK, dV, amax_dQ, amax_dK, amax_dV, amax_dP here
   return dqkv_amaxs
 
+def _check_unbatched_scaling_factors(batched_args, batch_dims, first_idx):
+  # The fp8 scale/descale operands are whole-tensor scaling factors; the
+  # kernel consumes a single value per tensor, so a vmapped (per-example)
+  # scaling factor cannot be expressed.
+  for i in range(first_idx, len(batched_args)):
+    if batch_dims[i] is not None:
+      raise NotImplementedError(
+          "vmap over the scale/descale operands of fp8 attention is not "
+          "supported.")
+
 def _dot_product_attention_fp8_fwd_batcher(
     batched_args, batch_dims, *, scale, use_causal_mask, layout, is_training):
   _check_valid_batch_dims(batch_dims)
+  _check_unbatched_scaling_factors(batched_args, batch_dims, 3)
+  batched_args, batch_dims = _broadcast_unbatched_args(
+      batched_args, batch_dims, [0, 1, 2])
   query, key, value,\
     descale_q, descale_k, descale_v, descale_s, scale_s, scale_o, = batched_args
   query_bdim = batch_dims[0]
+  # The amax outputs are whole-batch statistics: the kernel computes one
+  # value across the flattened batch, exactly as a non-vmapped call on the
+  # same data would, so they do not carry the vmap axis.
   if is_training:
-    out_bdims = query_bdim, query_bdim
+    out_bdims = query_bdim, None, None, query_bdim
   else:
-    out_bdims = (query_bdim,)
+    out_bdims = (query_bdim, None, None)
 
   if layout == AttentionLayout.BNTH.value:
     *Bs, N, T, _ = query.shape
@@ -1638,6 +1654,7 @@ def _dot_product_attention_fp8_fwd_batcher(
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
+  original_shape = query.shape
 
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
@@ -1650,7 +1667,7 @@ def _dot_product_attention_fp8_fwd_batcher(
 
   # reshape to original shape
   output, amax_s, amax_o = outputs[0], outputs[1], outputs[2]
-  output = jnp.reshape(output, query.shape)
+  output = jnp.reshape(output, original_shape)
   if is_training:
     activation = outputs[3]
     activation = jnp.reshape(activation, (*Bs, N, T))
@@ -1661,11 +1678,15 @@ def _dot_product_attention_fp8_fwd_batcher(
 def _dot_product_attention_fp8_bwd_batcher(
     batched_args, batch_dims, *, scale, use_causal_mask, layout):
   _check_valid_batch_dims(batch_dims)
+  _check_unbatched_scaling_factors(batched_args, batch_dims, 6)
+  batched_args, batch_dims = _broadcast_unbatched_args(
+      batched_args, batch_dims, [0, 1, 2, 3, 4, 5])
   query, key, value, fwd_output, grad_output, activation,\
     descale_q, descale_k, descale_v, descale_o, descale_dO, descale_s, descale_dP,\
     scale_s, scale_dQ, scale_dK, scale_dV, scale_dP = batched_args
   query_bdim = batch_dims[0]
-  out_bdims = query_bdim, query_bdim, query_bdim
+  # The four amax outputs are whole-batch statistics (see the fwd batcher).
+  out_bdims = (query_bdim, query_bdim, query_bdim, None, None, None, None)
 
   if layout == AttentionLayout.BNTH.value:
     *Bs, N, T, _ = query.shape
@@ -1674,6 +1695,9 @@ def _dot_product_attention_fp8_bwd_batcher(
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
+  original_query_shape = query.shape
+  original_key_shape = key.shape
+  original_value_shape = value.shape
 
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
@@ -1690,11 +1714,10 @@ def _dot_product_attention_fp8_bwd_batcher(
       scale=scale, use_causal_mask=use_causal_mask, layout=layout,
   )
 
-  grad_query, grad_key, grad_value = grads[:3]
   # reshape to original shape
-  grad_query = jnp.reshape(grad_query, query.shape)
-  grad_key = jnp.reshape(grad_key, key.shape)
-  grad_value = jnp.reshape(grad_value, value.shape)
+  grads[0] = jnp.reshape(grads[0], original_query_shape)
+  grads[1] = jnp.reshape(grads[1], original_key_shape)
+  grads[2] = jnp.reshape(grads[2], original_value_shape)
 
   return grads, out_bdims
 
@@ -1955,7 +1978,11 @@ def paged_attention(
       token's left local window (pos - sliding_window_length, pos] where `pos`
       is the index of each token. E.g., if sliding_window_length == 3 and the
       sequence is [0, 1, 2, 3, c, 4, 5], token `c` can attend to [4, 5, c].
-    use_fp8: Whether to use FP8 attention mechanism.
+    use_fp8: Whether to use FP8 attention mechanism. The fp8 amax outputs
+      are statistics of the whole (flattened) batch; under `jax.vmap` every
+      vmapped instance observes the same global amax rather than a
+      per-instance one, and vmap over the scale/descale entries of
+      `fp8_params` is not supported.
     return_residual: Whether to return the logsumexp tensor of shape BTN
       or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
@@ -2068,7 +2095,11 @@ def dot_product_attention(
       token's left local window (pos - sliding_window_length, pos] where `pos`
       is the index of each token. E.g., if sliding_window_length == 3 and the
       sequence is [0, 1, 2, 3, c, 4, 5], token `c` can attend to [4, 5, c].
-    use_fp8: Whether to use FP8 attention mechanism.
+    use_fp8: Whether to use FP8 attention mechanism. The fp8 amax outputs
+      are statistics of the whole (flattened) batch; under `jax.vmap` every
+      vmapped instance observes the same global amax rather than a
+      per-instance one, and vmap over the scale/descale entries of
+      `fp8_params` is not supported.
     return_residual: Whether to return the logsumexp tensor of shape BTN
       or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
       https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
