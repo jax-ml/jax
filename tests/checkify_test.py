@@ -1292,6 +1292,27 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     # TODO(lenamartens): re-enable assertions below.
     # self.assertIsNone(err.get())
 
+  def test_vmap_of_checkify_of_while(self):
+    # vmap-of-checkify-of-while is a supported composition: checkify injects a
+    # dce_sink into the while body and the outer vmap must batch it. Regression
+    # test for "foreach() argument 2 is longer than argument 1".
+    def fun(v):
+      def while_cond(s):
+        counter, value = s
+        return value < 6.
+      def while_body(s):
+        counter, value = s
+        checkify.check(value >= 0, "value needs to be positive!")
+        return counter + 1, value + 1.
+      counter, _ = jax.lax.while_loop(while_cond, while_body,
+                                      (jnp.int32(0), v))
+      return counter
+
+    checked_f = checkify.checkify(fun, errors=checkify.all_checks)
+    err, counts = jax.jit(jax.vmap(checked_f))(jnp.asarray([1., 2., 3.]))
+    self.assertIsNone(err.get())
+    self.assertArraysEqual(counts, jnp.asarray([5, 4, 3], dtype=jnp.int32))
+
   def test_assert_cond_no_data_dependence(self):
     def true_fun():
       return checkify.check(False, "hi!")
