@@ -79,6 +79,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_compiler.h"
 #include "xla/pjrt/pjrt_layout.h"
+#include "xla/pjrt/raw_buffer.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
@@ -2314,9 +2315,25 @@ absl::Status PyArray::Register(nb::module_& m) {
   type.attr("_npy_value") =
       xla::nb_property(&PyArray::npy_value, &PyArray::set_npy_value);
   type.attr("_committed") = xla::nb_property_readonly(&PyArray::committed);
+  nb::class_<xla::PjRtRawBufferRef>(m, "RawBuffer")
+      .def_prop_ro("ptr", [](const xla::PjRtRawBufferRef& self) {
+        return reinterpret_cast<std::uintptr_t>(self.get());
+      })
+      .def("__repr__", [](const xla::PjRtRawBufferRef& self) {
+        return absl::StrFormat("<RawBuffer 0x%x>",
+                               reinterpret_cast<std::uintptr_t>(self.get()));
+      });
+  // TODO(parkers): consider replacing with unsafe_raw_buffer.
   type.attr("unsafe_buffer_pointer") = nb::cpp_function(
       [](PyArray self) {
         return xla::ValueOrThrow(self.UnsafeBufferPointer());
+      },
+      nb::is_method());
+  type.attr("unsafe_raw_buffer") = nb::cpp_function(
+      [](PyArray self) {
+        auto arr = xla::ValueOrThrow(self.AssertUnsharded("unsafe_raw_buffer"));
+        return xla::ValueOrThrow(xla::PjRtRawBuffer::CreateRawAliasOfBuffer(
+            GetPjrtBuffer(arr.ifrt_array())));
       },
       nb::is_method());
   type.attr("__cuda_array_interface__") = xla::nb_property_readonly(

@@ -672,6 +672,11 @@ def set_tracer_class(arg: object, /) -> None: ...
 
 ArrayImpl: Any
 
+class RawBuffer:
+  @property
+  def ptr(self) -> int: ...
+  def __repr__(self) -> str: ...
+
 def batched_copy_array_to_devices_with_sharding(
     arg0: Sequence[Array],
     arg1: Sequence[DeviceList],
