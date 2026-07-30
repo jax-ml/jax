@@ -116,8 +116,8 @@ class AxisType(enum.Enum):
   def __repr__(self):
     return self.name
 
-def _normalize_axis_types(axis_names, axis_types, name):
-  axis_types = ((AxisType.Auto,) * len(axis_names)
+def _normalize_axis_types(axis_names, axis_types, name, default_axis_type):
+  axis_types = ((default_axis_type,) * len(axis_names)
                 if axis_types is None else axis_types)
   if not isinstance(axis_types, tuple):
     axis_types = (axis_types,)
@@ -281,7 +281,8 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
           f"len(axis_names) == {len(axis_names)}.")
 
     devices_flat = tuple(devices.flat)
-    axis_types = _normalize_axis_types(axis_names, axis_types, 'Mesh')
+    axis_types = _normalize_axis_types(axis_names, axis_types, 'Mesh',
+                                       AxisType.Auto)
     empty = not axis_names and devices_flat[0] is None
     size = 0 if empty else math.prod(devices.shape)
     return cls._create(devices_flat, devices.shape, axis_names,
@@ -488,7 +489,8 @@ class AbstractMesh(BaseMesh):
   def __new__(cls, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
                axis_types: AxisType | tuple[AxisType, ...] | None = None,
                *, abstract_device=None):
-    axis_types = _normalize_axis_types(axis_names, axis_types, 'AbstractMesh')
+    axis_types = _normalize_axis_types(axis_names, axis_types, 'AbstractMesh',
+                                       AxisType.Explicit)
     return AbstractMesh._create(axis_sizes, axis_names, axis_types, abstract_device)
 
   # No __eq__ or __hash__: interned classes use object identity.

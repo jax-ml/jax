@@ -373,7 +373,7 @@ devices in the mesh are ignored for tracing and lowering:
 >>> # and it knows the shardings for the inputs. These will be applied
 >>> # when the exported is called.
 >>> exp.in_shardings_jax(export_mesh)
-(NamedSharding(mesh=AbstractMesh('a': 4, axis_types=(Auto,)), spec=P('a',)),)
+(NamedSharding(mesh=AbstractMesh('a': 4, axis_types=(Explicit,)), spec=P('a',)),)
 
 >>> # You can also use a concrete set of devices for exporting
 >>> concrete_devices = jax.local_devices()[:4]

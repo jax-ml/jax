@@ -180,7 +180,8 @@ class RaggedDotTestCase(jtu.JaxTestCase):
     m, k, n = 1024, 512, 512
 
     P = jax.sharding.PartitionSpec
-    abstract_mesh = jax.sharding.AbstractMesh((2,), ("x",))
+    abstract_mesh = jax.sharding.AbstractMesh((2,), ("x",),
+                                              (jax.sharding.AxisType.Auto,))
 
     @jax.shard_map(
         mesh=abstract_mesh,

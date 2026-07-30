@@ -6234,8 +6234,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = jnp.arange(8)
       self.assertEqual(
           out.sharding,
-          NamedSharding(mesh.update(axis_names=('y',), axis_types=(AxisType.Auto,)),
-                        P()))
+          NamedSharding(mesh.update(axis_names=('y',), axis_types=(AxisType.Explicit,)),
+                        P(None)))
 
     new_am = jax.sharding.AbstractMesh((2,), ('x',), (AxisType.Explicit,))
     with use_abstract_mesh(new_am):
