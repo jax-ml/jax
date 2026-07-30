@@ -26,7 +26,9 @@ jobs:
       run:
         shell: bash
     runs-on: "linux-x86-n4-64"
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     name: "Oldest supported numpy, py3.12, x64=0"
 # End Presubmit Naming Check github-oldest-supported-numpy-presubmit

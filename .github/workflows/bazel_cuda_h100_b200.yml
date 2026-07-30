@@ -93,7 +93,9 @@ jobs:
                           'CI Optional GPU Presubmit'))
       }}
     runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel single B200 CUDA tests"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -149,7 +151,9 @@ jobs:
           )
       }}
     runs-on: linux-x86-a3-8g-h100-8gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     name: "Bazel multiple H100 CUDA tests"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0

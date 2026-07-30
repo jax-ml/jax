@@ -603,8 +603,12 @@ class OpsTest(PallasBaseTest):
   # TODO(sharadmv): test rank < 2, size < 2
   @hp.given(select_n_strategy(max_cases=2, min_rank=2, max_rank=4,
                               min_size_exp=1))
-  @hp.settings(suppress_health_check=([hp.HealthCheck.too_slow]
-                                      if jtu.is_asan() else []))
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          *([hp.HealthCheck.too_slow] if jtu.is_asan() else []),
+      ]
+  )
   def test_select_n(self, args):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("TODO: error on GPU, lowering bug for select_n")
@@ -637,7 +641,12 @@ class OpsTest(PallasBaseTest):
       for name, func, strategy in UNARY_FUNCTIONS
   )
   @hp.given(hps.data())
-  @hp.settings(suppress_health_check=[hp.HealthCheck.filter_too_much])
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.filter_too_much,
+      ]
+  )
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
     if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
       self.skip_if_mosaic_gpu()
@@ -673,7 +682,12 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.product(from_dtype=_DTYPES_32BIT, to_dtype=_DTYPES)
   @hp.given(hps.data())
-  @hp.settings(suppress_health_check=[hp.HealthCheck.too_slow])  # ASAN is slow
+  @hp.settings(
+      suppress_health_check=[
+          *hp.settings.default.suppress_health_check,
+          hp.HealthCheck.too_slow,
+      ]
+  )  # ASAN is slow
   def test_cast_from_32bit(self, from_dtype, to_dtype, data):
     if jtu.test_device_matches(["cpu"]) and jtu.SKIP_SLOW_TESTS.value:
       self.skipTest("Test is slow on CPU.")

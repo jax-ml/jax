@@ -1053,7 +1053,10 @@ class StateHypothesisTest(jtu.JaxTestCase):
   @hp.settings(deadline=None,
                print_blob=True,
                max_examples=jtu.NUM_GENERATED_CASES.value,
-               suppress_health_check=[hp.HealthCheck.too_slow])
+               suppress_health_check=[
+                   *hp.settings.default.suppress_health_check,
+                   hp.HealthCheck.too_slow,
+               ])
   def test_get_vmap(self, get_vmap_param: GetVmapParams):
     indexed_dims = get_vmap_param.vmap_index_param.index_param.indexed_dims
 
@@ -1095,7 +1098,10 @@ class StateHypothesisTest(jtu.JaxTestCase):
   @hp.given(set_vmap_params())
   @hp.settings(deadline=None, print_blob=True,
                max_examples=jtu.NUM_GENERATED_CASES.value,
-               suppress_health_check=[hp.HealthCheck.too_slow])
+               suppress_health_check=[
+                   *hp.settings.default.suppress_health_check,
+                   hp.HealthCheck.too_slow,
+               ])
   def test_set_vmap(self, set_vmap_param: SetVmapParams):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("Scatter is nondeterministic on GPU")
@@ -1150,7 +1156,10 @@ class StateHypothesisTest(jtu.JaxTestCase):
   @hp.given(set_vmap_params())
   @hp.settings(deadline=None, print_blob=True,
                max_examples=jtu.NUM_GENERATED_CASES.value,
-               suppress_health_check=[hp.HealthCheck.too_slow])
+               suppress_health_check=[
+                   *hp.settings.default.suppress_health_check,
+                   hp.HealthCheck.too_slow,
+               ])
   def test_addupdate_vmap(self, set_vmap_param: SetVmapParams):
     indexed_dims = set_vmap_param.vmap_index_param.index_param.indexed_dims
 

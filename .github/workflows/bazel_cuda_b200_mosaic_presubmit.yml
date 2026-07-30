@@ -65,7 +65,9 @@ jobs:
   changed_files:
     if: ${{ github.repository_owner == 'jax-ml' && github.event_name == 'pull_request' }}
     runs-on: linux-x86-n4-16
-    container: us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -137,7 +139,9 @@ jobs:
           )
       }}
     runs-on: linux-x86-a4-224-b200-1gpu
-    container: 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'
     timeout-minutes: 15  # Stop potential hangs from keeping the job running too long.
     name: Mosaic GPU B200 tests
     steps:

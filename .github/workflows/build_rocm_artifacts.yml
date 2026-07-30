@@ -123,7 +123,8 @@ jobs:
     outputs:
       s3_upload_uri: ${{ steps.store-s3-upload-uri.outputs.s3_upload_uri }}
     container:
-      image: "${{ inputs.manylinux-image || format('ghcr.io/rocm/jax-manylinux_2_28-rocm-{0}:latest', inputs.rocm-release-version) }}"  # zizmor: ignore[unpinned-images]
+      image: >- # zizmor: ignore[unpinned-images]
+        ${{ inputs.manylinux-image || format('ghcr.io/rocm/jax-manylinux_2_28-rocm-{0}:latest', inputs.rocm-release-version) }}
       volumes:
         - /data:/data
       options: >-
@@ -158,6 +159,7 @@ jobs:
           JAXCI_WHEEL_VERSION_SUFFIX: ${{ inputs.wheel-version-suffix }}
       - name: Configure AWS Credentials
         if: ${{ inputs.upload_artifacts_to_s3 }}
+        # zizmor: ignore[ref-version-mismatch] Ratchet records a floating update constraint
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # ratchet:aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::661452401056:role/jax-ci-amd-s3-oidc

@@ -71,7 +71,9 @@ jobs:
       run:
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     name: "${{ inputs.tpu-type }}, py${{ inputs.python }}, libtpu=${{ inputs.libtpu-version-type }}"
 
     env:

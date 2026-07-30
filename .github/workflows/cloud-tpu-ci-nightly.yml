@@ -51,7 +51,9 @@ jobs:
     env:
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container:
+      # zizmor: ignore[unpinned-images] intentionally tracks latest
+      "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
     timeout-minutes: 180
     defaults:
       run:
