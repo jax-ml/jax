@@ -119,6 +119,7 @@ jobs:
       volumes:
         - /data:/data
       options: >-
+        --init
         --device=/dev/kfd
         --device=/dev/dri
         --security-opt seccomp=unconfined
