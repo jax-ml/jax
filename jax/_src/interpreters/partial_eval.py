@@ -2591,26 +2591,25 @@ def raise_lo_outs(hi_avals, lo_outs):
 
 # eval_jaxpr_p is a call-like primitive parameterized by a jaxpr rather than a
 # Python callable: applying it evaluates the jaxpr, and staging it out is O(1),
-# emitting a single closed_call eqn rather than retracing the jaxpr. Its
-# transformation rules live in lax/eval_jaxpr.py; the primitive is defined here
-# so that jaxpr-level utilities below can use it without upward imports.
+# emitting a single eqn (which stays an eval_jaxpr eqn under retracing) rather
+# than retracing the jaxpr. Its ad and batching rules live in
+# lax/eval_jaxpr.py; the primitive is defined here so that jaxpr-level
+# utilities below can use it without upward imports.
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
 
-def _eval_jaxpr_staging(trace: DynamicJaxprTrace, source_info, *tracers,
-                        jaxpr: Jaxpr):
-  params = dict(call_jaxpr=jaxpr)
-  return trace.default_process_primitive(core.closed_call_p, tracers, params,
-                                         source_info=source_info)
-custom_staging_rules[eval_jaxpr_p] = _eval_jaxpr_staging
-
-@eval_jaxpr_p.def_effectful_abstract_eval  # abstract eval only used for jax2tf
-def _eval_jaxpr_abstract_eval(*_, jaxpr):
-  return jaxpr.out_avals, core.positional_effects(jaxpr)
+@eval_jaxpr_p.def_effectful_abstract_eval
+def _eval_jaxpr_abstract_eval(*_, call_jaxpr):
+  return call_jaxpr.out_avals, core.positional_effects(call_jaxpr)
 
 @eval_jaxpr_p.def_impl
-def _eval_jaxpr_impl(*args, jaxpr):
-  return core.jaxpr_as_fun(jaxpr)(*args)
+def _eval_jaxpr_impl(*args, call_jaxpr):
+  return core.jaxpr_as_fun(call_jaxpr)(*args)
+
+dce_rules[eval_jaxpr_p] = dce_jaxpr_closed_call_rule
+
+partial_eval_jaxpr_custom_rules[eval_jaxpr_p] = \
+    partial_eval_jaxpr_custom_rules[core.closed_call_p]
 
 
 def _lower_and_eval(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
@@ -2624,7 +2623,7 @@ def _lower_and_eval(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
       lo_val for aval, x in zip(jaxpr.in_avals, args)
       for lo_val in aval.lower_val(x)
   ]
-  lo_outs = eval_jaxpr_p.bind(*lo_args, jaxpr=lo_jaxpr)
+  lo_outs = eval_jaxpr_p.bind(*lo_args, call_jaxpr=lo_jaxpr)
   lo_outs_ = iter(lo_outs)
   hi_outs = [
       t.raise_val(*it.islice(lo_outs_, len(t.lo_ty())))
@@ -2636,7 +2635,7 @@ def _lower_and_eval(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
 
 def _call_jaxpr(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
   if not jaxpr.is_high:
-    return eval_jaxpr_p.bind(*args, jaxpr=jaxpr)
+    return eval_jaxpr_p.bind(*args, call_jaxpr=jaxpr)
   if (any(aval.has_qdd for aval in jaxpr.in_aval_qdds) or
       any(aval.has_qdd for aval in jaxpr.final_aval_qdds)):
     return core.jaxpr_as_fun(jaxpr)(*args)
@@ -2648,3 +2647,10 @@ def _closed_call_to_lojax(*hi_args, call_jaxpr: Jaxpr, **_):
 
 
 core.closed_call_p.to_lojax = _closed_call_to_lojax
+
+
+def _eval_jaxpr_to_lojax(*hi_args, call_jaxpr: Jaxpr):
+  return _lower_and_eval("eval_jaxpr", call_jaxpr, hi_args)
+
+
+eval_jaxpr_p.to_lojax = _eval_jaxpr_to_lojax

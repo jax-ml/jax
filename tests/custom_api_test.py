@@ -3625,7 +3625,7 @@ class CustomVJP3Test(CustomVJPTest):
         lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
   def test_expand_stages_call_without_inlining(self):
-    # lowering stages the traced primal as a single closed_call rather than
+    # lowering stages the traced primal as a single eval_jaxpr call rather than
     # retracing it eqn-by-eqn
     @jax.custom_vjp
     def f(x):
@@ -3637,7 +3637,7 @@ class CustomVJP3Test(CustomVJPTest):
     hi = jax.jit(f).trace(1.).jaxpr
     lo = pe.lower_jaxpr2(hi.jaxpr)
     eqn, = lo.eqns
-    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertIs(eqn.primitive, pe.eval_jaxpr_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
 
 
@@ -4547,7 +4547,7 @@ class CustomJVP3Test(CustomJVPTest):
     self.assertEqual(actual, expected)
 
   def test_expand_stages_call_without_inlining(self):
-    # lowering stages the traced primal as a single closed_call rather than
+    # lowering stages the traced primal as a single eval_jaxpr call rather than
     # retracing it eqn-by-eqn
     @jax.custom_jvp
     def f(x):
@@ -4559,7 +4559,7 @@ class CustomJVP3Test(CustomJVPTest):
     hi = jax.jit(f).trace(1.).jaxpr
     lo = pe.lower_jaxpr2(hi.jaxpr)
     eqn, = lo.eqns
-    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertIs(eqn.primitive, pe.eval_jaxpr_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
 
 
