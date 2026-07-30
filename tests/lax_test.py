@@ -47,6 +47,7 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
 from jax._src.tree_util import tree_map
@@ -2599,6 +2600,28 @@ class LaxTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["tpu"]) and dtype == np.float32:
       tol = 1e-4
     self._CheckAgainstNumpy(np_fun, fun, args_maker, atol=tol, rtol=tol)
+
+  def testCumulativeReduceExplicitShardingLowering(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("The chlo.ScanOp cumulative-reduction lowering is TPU-only")
+    if jaxlib_extension_version < 460:
+      self.skipTest("Needs a jaxlib with chlo.ScanOp")
+    if not jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest("Needs a libtpu with the native scan emitter")
+    mesh = jtu.create_mesh(
+        (1,), ("x",), axis_types=(jax.sharding.AxisType.Explicit,)
+    )
+    x = jax.device_put(
+        np.arange(8.0, dtype=np.float32).reshape(2, 4),
+        jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", None)),
+    )
+    with jax.set_mesh(mesh):
+      text = jax.jit(partial(lax.cumsum, axis=1)).lower(x).as_text()
+    self.assertIn("chlo.scan", text)
+    # Under explicit sharding the scan result must carry the output sharding.
+    self.assertTrue(
+        "sdy.sharding_constraint" in text or "@Sharding" in text, msg=text
+    )
 
   @jtu.sample_product(
     shape=[(), (3,), (3, 4)],
