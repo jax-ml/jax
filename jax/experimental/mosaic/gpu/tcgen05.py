@@ -1034,7 +1034,13 @@ class TMEMLayout(fa.TiledLayout):
       raise ValueError(
           f"{shape} is not divisible into tiles of shape {self.base_tile_shape}"
       )
-    if self.vector_length not in {1, fully_packed := 32 // bitwidth}:
+    if bitwidth == 6:
+      if self.vector_length != 4:
+        raise ValueError(
+            f"For 6-bit types, the vector length must be 4, but got:"
+            f" {self.vector_length}"
+        )
+    elif self.vector_length not in {1, fully_packed := 32 // bitwidth}:
       raise ValueError(
           f"For {bitwidth}-bit types, the vector length must be 1 or"
           f" {fully_packed} , but got: {self.vector_length}"
@@ -1204,7 +1210,8 @@ class TMEMRef:
     return self.layout.vector_length
 
   def __post_init__(self):
-    self.layout.check_type(self.shape, utils.bitwidth(self.dtype))
+    bitwidth = utils.bitwidth(self.dtype, allow_non_power_of_2=True)
+    self.layout.check_type(self.shape, bitwidth)
 
   @classmethod
   def from_alloc(
@@ -1985,13 +1992,20 @@ def async_copy_smem_to_tmem(
   smem_ty = ir.MemRefType(smem_ref.type)
   if (dtype := smem_ty.element_type) != tmem_ref.dtype:
     raise ValueError(f"Incompatible dtypes: SMEM has {dtype}, TMEM has {tmem_ref.dtype}")
+  is_f6_decompression = isinstance(
+      dtype, (ir.Float6E2M3FNType, ir.Float6E3M2FNType)
+  )
+
   if swizzle not in {16, 32, 64, 128}:
     raise ValueError(f"Unsupported swizzle, expected 16, 32, 64 or 128, but got: {swizzle}")
-  bitwidth = utils.bitwidth(dtype)
-  if tmem_ref.packing != 32 // bitwidth:
+
+  effective_bitwidth = 8 if is_f6_decompression else utils.bitwidth(dtype)
+
+  if tmem_ref.packing != 32 // effective_bitwidth:
     raise ValueError(
         "tcgen05.cp only supports fully packed TMEM references"
-        f" (packing={32 // bitwidth}), but got packing={tmem_ref.packing}"
+        f" (packing={32 // effective_bitwidth}), but got "
+        f"packing={tmem_ref.packing}"
     )
   if tmem_ref.shape[0] != TMEM_ROWS:
     raise ValueError(
@@ -2001,7 +2015,7 @@ def async_copy_smem_to_tmem(
     raise ValueError(
         f"Only standard TMEM layout is supported, got: {tmem_ref.layout}"
     )
-  swizzle_elems = 8 * swizzle // bitwidth
+  swizzle_elems = 8 * swizzle // effective_bitwidth
   expected_smem_shape = utils.tile_shape(tmem_ref.shape, (8, swizzle_elems))
   smem_shape = tuple(smem_ty.shape)
   if smem_shape != expected_smem_shape:
@@ -2014,7 +2028,7 @@ def async_copy_smem_to_tmem(
   if inner_col_stride != 1 or inner_row_stride != swizzle_elems:
     raise ValueError("The SMEM tiles must be contiguous")
   # Make sure strides are a multiple of the byte packing for narrow types.
-  byte_packing = max(8 // bitwidth, 1)
+  byte_packing = max(8 // effective_bitwidth, 1)
   assert row_tile_stride % byte_packing == 0
   assert col_tile_stride % byte_packing == 0
 
@@ -2026,8 +2040,8 @@ def async_copy_smem_to_tmem(
   # far apart is the beginning of the next matrix along the major dimension.
   # We use a tiling of 8, so it is simply the tile stride.
   leading_byte_offset = 16
-  stride_byte_offset = row_tile_stride * bitwidth // 8
-  assert tmem_ref.shape[1] * bitwidth // 8 >= 16
+  stride_byte_offset = row_tile_stride * effective_bitwidth // 8
+  assert tmem_ref.shape[1] * effective_bitwidth // 8 >= 16
   if swizzle == 16:
     cp_shape = nvvm.Tcgen05CpShape.SHAPE_128x128b
     cp_cols_bytes = 16  # 128 bit = 16 bytes
@@ -2035,14 +2049,15 @@ def async_copy_smem_to_tmem(
     cp_shape = nvvm.Tcgen05CpShape.SHAPE_128x256b
     cp_cols_bytes = 32  # 256 bit = 32 bytes
 
-  minor_elems_per_cp = cp_cols_bytes * 8 // bitwidth
+  minor_elems_per_cp = cp_cols_bytes * 8 // effective_bitwidth
   num_smem_minor_tiles = smem_shape[1]
   cps_per_smem_minor_tile = swizzle_elems // minor_elems_per_cp
-  col_tile_byte_stride = col_tile_stride * bitwidth // 8
+  col_tile_byte_stride = col_tile_stride * effective_bitwidth // 8
   smem_base_ptr = utils.memref_ptr(smem_ref)
   group = (
       nvvm.CTAGroupKind.CTA_2 if collective else nvvm.CTAGroupKind.CTA_1
   )
+  src_format = nvvm.Tcgen05CpSrcFormat.B6x16_P32 if is_f6_decompression else None
   for smem_minor_tile in range(num_smem_minor_tiles):
     for cp_idx in range(cps_per_smem_minor_tile):
       smem_byte_offset = (
@@ -2058,5 +2073,6 @@ def async_copy_smem_to_tmem(
           load_ptr, leading_byte_offset, stride_byte_offset, swizzle
       )
       nvvm.tcgen05_cp(
-          cp_shape, _tmem_addr_to_ptr(store_addr), desc, group=group
+          cp_shape, _tmem_addr_to_ptr(store_addr), desc,
+          src_format=src_format, group=group,
       )
