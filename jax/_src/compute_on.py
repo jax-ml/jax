@@ -52,6 +52,16 @@ def extend_compute_type(c_type: str | None):
     config.compute_on_context_manager.set_local(prev)
 
 
+@contextmanager
+def compute_on(compute_type: str):
+  if not isinstance(compute_type, str):
+    raise TypeError("`compute_on`'s compute_type argument must be a string.")
+  _check_valid(compute_type)
+
+  with extend_compute_type(compute_type):
+    yield
+
+
 def _check_valid(c_type: str):
   if (c_type not in {'device_host', 'device', 'tpu_sparsecore'}
       and not c_type.startswith("gpu_stream:")):

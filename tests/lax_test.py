@@ -3895,6 +3895,24 @@ class LaxTest(jtu.JaxTestCase):
     hlo = jax.jit(g).lower(x).compile().as_text()
     self.assertNotIn("add", hlo)
 
+  def test_dce_sink_vmap_of_while(self):
+    # dce_sink is a 0-output, effect-only primitive; its batching rule must
+    # not emit an output. Regression test for a batching-arity bug that made
+    # vmap over a while_loop containing a dce_sink fail with
+    # "foreach() argument 2 is longer than argument 1".
+    def cond(c):
+      x, i = c
+      return i < 3
+    def body(c):
+      x, i = c
+      lax.dce_sink(x > 0)
+      return x + 1., i + 1
+    def f(x):
+      x, _ = lax.while_loop(cond, body, (x, jnp.int32(0)))
+      return x
+    out = jax.jit(jax.vmap(f))(jnp.arange(3.))
+    self.assertAllClose(out, jnp.arange(3.) + 3., check_dtypes=False)
+
   def testStagePreservesWeakType(self):
     aval = core.ShapedArray((), np.float32, weak_type=True)
     x = literals.TypedNdArray(np.array(1.0, dtype=np.float32), aval=aval)
