@@ -2592,7 +2592,6 @@ def lower_per_platform(ctx: LoweringRuleContext,
     for o, a in zip(flat_output, ctx.avals_out):
       if not isinstance(o, ir.BlockArgument):
         check_unreduced_constraint(o, a, description)
-        wrap_compute_type_in_place(ctx, o)
         wrap_xla_metadata_in_place(ctx, o)
     return flat_output
 
@@ -2636,7 +2635,6 @@ def lower_per_platform(ctx: LoweringRuleContext,
       for o, a in zip(out_nodes, ctx.avals_out):
         if not isinstance(o, ir.BlockArgument):
           check_unreduced_constraint(o, a, description)
-          wrap_compute_type_in_place(ctx, o)
           wrap_xla_metadata_in_place(ctx, o)
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
@@ -2828,27 +2826,6 @@ def _update_frontend_attributes(op, attrs):
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(attrs)
 
 
-# TODO(yashkatariya): Delete this after legacy compute_on is deleted.
-def wrap_compute_type_in_place(ctx: LoweringRuleContext,
-                               op: ir.Value | ir.Operation) -> None:
-  if ctx.jaxpr_eqn_ctx is None or ctx.jaxpr_eqn_ctx.compute_type is None:
-    return
-  op = _get_owner(op)
-
-  if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
-    _, stream = ctx.jaxpr_eqn_ctx.compute_type.split(":", 1)
-    dict_attr = {
-        "_xla_stream_annotation": ir.StringAttr.get(stream),
-        "inlineable": ir.StringAttr.get("false")
-    }
-  else:
-    dict_attr = {
-        "_xla_compute_type": ir.StringAttr.get(
-            map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))
-    }
-  _update_frontend_attributes(op, dict_attr)
-
-
 def wrap_xla_metadata_in_place(ctx: LoweringRuleContext,
                                op: ir.Value | ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is None:
@@ -2913,7 +2890,6 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
       out = hlo.broadcast_in_dim(
           result_type, op,
           dense_int_array(broadcast_dimensions))
-    wrap_compute_type_in_place(ctx, out)
     return out
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
