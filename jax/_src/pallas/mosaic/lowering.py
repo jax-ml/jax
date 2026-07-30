@@ -2895,6 +2895,225 @@ def _dot_general_lowering_rule(
   )
 
 
+def jax_conv_dims_to_tpu_conv_dims(dimension_numbers):
+  """Converts jax ConvDimensionNumbers to a tpu.ConvDimensionNumbersAttr."""
+  lhs_spec = dimension_numbers.lhs_spec
+  rhs_spec = dimension_numbers.rhs_spec
+  out_spec = dimension_numbers.out_spec
+
+  def format_dims(dims):
+    return "[" + ", ".join(str(d) for d in dims) + "]"
+
+  tpu_conv_dims_str = (
+      f"#tpu.conv_dimension_numbers<{lhs_spec[0]}, {lhs_spec[1]}, "
+      f"{format_dims(lhs_spec[2:])}, {rhs_spec[1]}, {rhs_spec[0]}, "
+      f"{format_dims(rhs_spec[2:])}, {out_spec[0]}, {out_spec[1]}, "
+      f"{format_dims(out_spec[2:])}>"
+  )
+  return ir.Attribute.parse(tpu_conv_dims_str)
+
+
+def _parse_precision_attr(precision):
+  if precision is not None:
+    if isinstance(precision, tuple) and precision[0] != precision[1]:
+      raise NotImplementedError("Per-operand conv precision unsupported")
+    precision = precision[0] if isinstance(precision, tuple) else precision
+  if precision is None or precision == lax.Precision.DEFAULT:
+    return None
+  elif precision == lax.Precision.HIGHEST:
+    return ir.Attribute.parse("#tpu.contract_precision<fp32>")
+  else:
+    raise NotImplementedError(f"Unsupported conv precision: {precision}")
+
+
+@register_lowering_rule(lax.conv_general_dilated_p)
+def _conv_general_dilated_lowering_rule(
+    ctx: LoweringRuleContext,
+    lhs,
+    rhs,
+    *,
+    window_strides,
+    padding,
+    lhs_dilation,
+    rhs_dilation,
+    dimension_numbers,
+    feature_group_count,
+    batch_group_count,
+    precision=None,
+    preferred_element_type=None,
+    **_,
+):
+  for aval in ctx.avals_in:
+    if jnp.issubdtype(aval.dtype, jnp.unsignedinteger):
+      raise NotImplementedError(
+          f"Unsigned integer dtype {aval.dtype} is not supported for conv on"
+          " the Pallas Mosaic TPU backend."
+      )
+  (aval_out,) = ctx.avals_out
+  out_type = ctx.aval_to_ir_type(aval_out)
+  assert isinstance(out_type, ir.ShapedType)
+  val_type = ir.ShapedType(out_type).element_type
+  if any(
+      isinstance(val_type, cls)
+      for cls in [
+          ir.BF16Type,
+          ir.F32Type,
+          ir.Float8E5M2Type,
+          ir.Float8E4M3FNType,
+          ir.Float8E4M3B11FNUZType,
+      ]
+  ):
+    val = ir.FloatAttr.get(val_type, 0.0)
+  elif isinstance(val_type, ir.IntegerType):
+    val = ir.IntegerAttr.get(val_type, 0)
+  else:
+    raise NotImplementedError(ctx.avals_out[0].dtype)
+  out_tile = arith.constant(
+      out_type, ir.DenseElementsAttr.get_splat(out_type, val)
+  )
+
+  tpu_conv_dims = jax_conv_dims_to_tpu_conv_dims(dimension_numbers)
+  precision_attr = _parse_precision_attr(precision)
+
+  window_strides_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), s)
+      for s in window_strides
+  ])
+  padding_flat = [p for pair in padding for p in pair]
+  padding_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), p)
+      for p in padding_flat
+  ])
+  lhs_dilation_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), d)
+      for d in lhs_dilation
+  ])
+  rhs_dilation_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), d)
+      for d in rhs_dilation
+  ])
+  window_reversal_attr = ir.ArrayAttr.get(
+      [ir.BoolAttr.get(False) for _ in window_strides]
+  )
+
+  return tpu.ConvOp(
+      out_type,
+      lhs,
+      rhs,
+      out_tile,
+      window_strides=window_strides_attr,
+      padding=padding_attr,
+      lhs_dilation=lhs_dilation_attr,
+      rhs_dilation=rhs_dilation_attr,
+      window_reversal=window_reversal_attr,
+      feature_group_count=ir.IntegerAttr.get(
+          ir.IntegerType.get_signless(64), feature_group_count
+      ),
+      batch_group_count=ir.IntegerAttr.get(
+          ir.IntegerType.get_signless(64), batch_group_count
+      ),
+      precision=precision_attr,
+      dimension_numbers=tpu_conv_dims,
+  ).result
+
+
+@register_lowering_rule(tpu_primitives.conv_p)
+def _conv_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    dimension_numbers,
+    window_strides=None,
+    padding=None,
+    lhs_dilation=None,
+    rhs_dilation=None,
+    window_reversal=None,
+    feature_group_count=1,
+    batch_group_count=1,
+    precision=None,
+    **_,
+):
+  lhs, rhs = args[0], args[1]
+  acc = args[2] if len(args) > 2 else None
+  (aval_out,) = ctx.avals_out
+  out_type = ctx.aval_to_ir_type(aval_out)
+  if acc is None:
+    assert isinstance(out_type, ir.ShapedType)
+    val_type = ir.ShapedType(out_type).element_type
+    if any(
+        isinstance(val_type, cls)
+        for cls in [
+            ir.BF16Type,
+            ir.F32Type,
+            ir.Float8E5M2Type,
+            ir.Float8E4M3FNType,
+            ir.Float8E4M3B11FNUZType,
+        ]
+    ):
+      val = ir.FloatAttr.get(val_type, 0.0)
+    elif isinstance(val_type, ir.IntegerType):
+      val = ir.IntegerAttr.get(val_type, 0)
+    else:
+      raise NotImplementedError(ctx.avals_out[0].dtype)
+    acc = arith.constant(
+        out_type, ir.DenseElementsAttr.get_splat(out_type, val)
+    )
+  tpu_conv_dims = jax_conv_dims_to_tpu_conv_dims(dimension_numbers)
+  precision_attr = _parse_precision_attr(precision)
+
+  num_spatial = len(dimension_numbers.lhs_spec) - 2
+  if window_strides is None:
+    window_strides = (1,) * num_spatial
+  if padding is None:
+    padding = ((0, 0),) * num_spatial
+  if lhs_dilation is None:
+    lhs_dilation = (1,) * num_spatial
+  if rhs_dilation is None:
+    rhs_dilation = (1,) * num_spatial
+  if window_reversal is None:
+    window_reversal = (False,) * num_spatial
+
+  window_strides_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), s)
+      for s in window_strides
+  ])
+  padding_flat = [p for pair in padding for p in pair]
+  padding_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), p)
+      for p in padding_flat
+  ])
+  lhs_dilation_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), d)
+      for d in lhs_dilation
+  ])
+  rhs_dilation_attr = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), d)
+      for d in rhs_dilation
+  ])
+  window_reversal_attr = ir.ArrayAttr.get(
+      [ir.BoolAttr.get(r) for r in window_reversal]
+  )
+
+  return tpu.ConvOp(
+      out_type,
+      lhs,
+      rhs,
+      acc,
+      window_strides=window_strides_attr,
+      padding=padding_attr,
+      lhs_dilation=lhs_dilation_attr,
+      rhs_dilation=rhs_dilation_attr,
+      window_reversal=window_reversal_attr,
+      feature_group_count=ir.IntegerAttr.get(
+          ir.IntegerType.get_signless(64), feature_group_count
+      ),
+      batch_group_count=ir.IntegerAttr.get(
+          ir.IntegerType.get_signless(64), batch_group_count
+      ),
+      precision=precision_attr,
+      dimension_numbers=tpu_conv_dims,
+  ).result
+
+
 def _convert_helper(x: Array, *, to_dtype: jnp.dtype) -> Array:
   # Helper function for dtype conversion
   from_dtype = x.dtype
