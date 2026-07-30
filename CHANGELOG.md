@@ -46,6 +46,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     all. The amax outputs are whole-batch statistics and do not carry the
     vmap axis; vmap over the scale/descale operands raises a clear
     `NotImplementedError`.
+  * Setting `jax_compiler_enable_remat_pass` to `False` now adds
+    `rematerialization` to the set of disabled XLA passes instead of
+    overwriting it, so HLO passes disabled via
+    `XLA_FLAGS=--xla_disable_hlo_passes=...` stay disabled
+    ({jax-issue}`#37391`).
 
 ## JAX 0.11.0 (July 16, 2026)
 
