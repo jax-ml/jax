@@ -85,7 +85,7 @@ class Fusible(hijax.VJPHiPrimitive):
     else:
       lo_args = flat_args
       lo_jaxpr = jax_core.ClosedJaxpr(self.jaxpr, consts)
-    lo_outs = eval_jaxpr_p.bind(*lo_args, jaxpr=lo_jaxpr)
+    lo_outs = eval_jaxpr_p.bind(*lo_args, call_jaxpr=lo_jaxpr)
     out_flat = pe.raise_lo_outs(self.out_avals_flat, lo_outs)
     return tree_util.tree_unflatten(self.out_tree, out_flat)
 

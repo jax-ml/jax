@@ -8265,7 +8265,7 @@ class Remat3Test(RematTest):
     self.assertIs(eqn2.params['_prim'], jaxpr.eqns[0].params['_prim'])
 
   def test_remat_expand_stages_call_without_inlining(self):
-    # expand binds eval_jaxpr_p, staging a single closed_call eqn rather than
+    # expand binds eval_jaxpr_p, staging a single eval_jaxpr eqn rather than
     # retracing the body, so lowering work doesn't scale with the jaxpr size
     @jax.remat
     def f(x):
@@ -8276,12 +8276,12 @@ class Remat3Test(RematTest):
     hi = jax.jit(f).trace(1.).jaxpr
     lo = pe.lower_jaxpr2(hi.jaxpr)
     eqn, = lo.eqns
-    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertIs(eqn.primitive, pe.eval_jaxpr_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 10)
 
   def test_remat_expand_stages_call_without_inlining_high_jaxpr(self):
     # a high (here nested-remat) body is lowered and staged as a single
-    # closed_call rather than inlined
+    # eval_jaxpr call rather than inlined
     inner = jax.remat(lambda x: jnp.cos(jnp.cos(x)))
 
     @jax.remat
@@ -8293,7 +8293,7 @@ class Remat3Test(RematTest):
     hi = jax.jit(f).trace(1.).jaxpr
     lo = pe.lower_jaxpr2(hi.jaxpr)
     eqn, = lo.eqns
-    self.assertIs(eqn.primitive, core.closed_call_p)
+    self.assertIs(eqn.primitive, pe.eval_jaxpr_p)
     self.assertLen(eqn.params['call_jaxpr'].eqns, 11)  # 10 sins + inner call
 
 
@@ -9227,7 +9227,7 @@ class EvalJaxprPrimitiveTest(jtu.JaxTestCase):
   def _bind_eval_jaxpr(self, f, *args):
     """Trace f into a jaxpr and evaluate it via eval_jaxpr_p.bind."""
     closed_jaxpr = jax.make_jaxpr(f)(*args)
-    return eval_jaxpr_p.bind(*args, jaxpr=closed_jaxpr)
+    return eval_jaxpr_p.bind(*args, call_jaxpr=closed_jaxpr)
 
   def test_eval_jaxpr_impl(self):
     def f(x, y):

@@ -2060,7 +2060,7 @@ def _add_reshapes(which: Sequence[bool],
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars
 
   def known(*args):
-    out = eval_jaxpr_p.bind(*args, jaxpr=jaxpr_known)
+    out = eval_jaxpr_p.bind(*args, call_jaxpr=jaxpr_known)
     out_known, res = split_list(out, [len(out) - sum(which)])
     res = [_add_singleton(x) if not x.shape else x for x in res]
     return [*out_known, *res]
@@ -2073,7 +2073,7 @@ def _add_reshapes(which: Sequence[bool],
     res_, ins = split_list(args, [len(which)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res_, which_)]
     closed_jaxpr_staged = jaxpr_staged
-    return eval_jaxpr_p.bind(*res, *ins, jaxpr=closed_jaxpr_staged)
+    return eval_jaxpr_p.bind(*res, *ins, call_jaxpr=closed_jaxpr_staged)
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
   avals_in = (*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]])
