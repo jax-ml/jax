@@ -1588,6 +1588,28 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertIsInstance(g, jax.custom_vjp)
     self.assertIs(g.fun, f)
 
+  def test_transpose_inside_custom_jvp_tangent_error(self):
+    # Transposing a custom_vjp that appears inside a custom_jvp tangent is
+    # unsupported; the error should point users to hijax. See #19087.
+    @jax.custom_vjp
+    def g(x, y):
+      return x + y
+    g.defvjp(lambda x, y: (g(x, y), None), lambda _, ct: (ct, ct))
+
+    @jax.custom_jvp
+    def f(x, y):
+      return x + y
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, y = primals
+      tx, ty = tangents
+      return f(x, y), g(tx, ty)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "hijax.VJPHiPrimitive"):
+      api.grad(f)(1., 1.)
+
   def test_invariance(self):
     @jax.custom_vjp
     def f(x):
