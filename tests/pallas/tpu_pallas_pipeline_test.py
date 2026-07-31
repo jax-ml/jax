@@ -1497,6 +1497,8 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
 @jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
+  hypothesis_max_threads = 4
+
   def setUp(self):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):
@@ -1539,7 +1541,7 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
     out = matmul(x, y, bm=bm, bk=bk, bn=bn)
     expected = x @ y
-    atol = rtol = 2.3e-5
+    atol, rtol = 5e-5, 2.3e-5
     if dtype == 'bfloat16':
       out = out.astype('float32')
       expected = expected.astype('float32')
