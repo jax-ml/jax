@@ -4751,7 +4751,9 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     ):
       run_kernel([23])
 
-  def _test_cp_async(self, shape, dtype, swizzle=None, tiling=None):
+  def _test_cp_async(
+      self, shape, dtype, swizzle=None, tiling=None, use_barrier=True
+  ):
 
     def kernel(ctx, src, dst, scratch):
       tmp, barrier = scratch
@@ -4761,9 +4763,12 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(tiling) if tiling else (),
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
-          barrier=barrier,
+          barrier=barrier if use_barrier else None,
       )
-      barrier.wait()
+      if use_barrier:
+        barrier.wait()
+      else:
+        ctx.await_cp_async_copy(0)
       if tiling:
         mgpu.copy_tiled(tmp, dst, swizzle=swizzle)
       else:
@@ -4786,20 +4791,24 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
       swizzle=(16, 32, 64, 128),
       shape=((64, 128), (128, 32)),
       dtype=(jnp.float32, jnp.float16, jnp.float8_e5m2, jnp.int4),
+      use_barrier=(False, True),
   )
-  def test_cp_async_tiled(self, swizzle, shape, dtype):
+  def test_cp_async_tiled(self, swizzle, shape, dtype, use_barrier):
     bw = bitwidth(dtype_to_ir_type(dtype))
     swizzle_elems = 8 * swizzle // bw
     tiling = (8, swizzle_elems)
     if shape[-1] % swizzle_elems:
       self.skipTest("Minor dimension not divisible by swizzle_elems")
-    self._test_cp_async(shape, dtype, swizzle=swizzle, tiling=tiling)
+    self._test_cp_async(
+        shape, dtype, swizzle=swizzle, tiling=tiling, use_barrier=use_barrier
+    )
 
   @parameterized.product(
       swizzle=(32, 128),
       dtype=(jnp.float32, jnp.float16),
+      use_barrier=(False, True),
   )
-  def test_cp_async_tiled_sliced(self, swizzle, dtype):
+  def test_cp_async_tiled_sliced(self, swizzle, dtype, use_barrier):
     bw = bitwidth(dtype_to_ir_type(dtype))
     swizzle_elems = 8 * swizzle // bw
     tiling = (8, swizzle_elems)
@@ -4817,9 +4826,12 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           swizzle=swizzle,
           gmem_transform=mgpu.TileTransform(tiling),
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
-          barrier=barrier,
+          barrier=barrier if use_barrier else None,
       )
-      barrier.wait()
+      if use_barrier:
+        barrier.wait()
+      else:
+        ctx.await_cp_async_copy(0)
       mgpu.copy_tiled(tmp, dst, swizzle=swizzle)
 
     x = np.arange(np.prod(full_shape), dtype=dtype).reshape(full_shape)
@@ -4839,12 +4851,16 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
   @parameterized.product(
       shape=((64, 128), (128, 40), (5, 256)),
       dtype=(jnp.float32, jnp.float16),
+      use_barrier=(False, True),
   )
-  def test_cp_async_untiled(self, shape, dtype):
-    self._test_cp_async(shape, dtype)
+  def test_cp_async_untiled(self, shape, dtype, use_barrier):
+    self._test_cp_async(shape, dtype, use_barrier=use_barrier)
 
-  @parameterized.product(slice=[(1,), (1, 1)])
-  def test_cp_async_untiled_squeezed_dims(self, slice):
+  @parameterized.product(
+      slice=[(1,), (1, 1)],
+      use_barrier=(False, True),
+  )
+  def test_cp_async_untiled_squeezed_dims(self, slice, use_barrier):
     def kernel(ctx, src, dst, scratch):
       tmp, barrier = scratch
       ctx.async_copy(
@@ -4852,9 +4868,12 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
           dst_ref=tmp,
           gmem_slice=slice,
           implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
-          barrier=barrier,
+          barrier=barrier if use_barrier else None,
       )
-      barrier.wait()
+      if use_barrier:
+        barrier.wait()
+      else:
+        ctx.await_cp_async_copy(0)
       copy(tmp, dst)
 
     shape = (2, 4, 128)
