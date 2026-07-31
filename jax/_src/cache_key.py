@@ -298,6 +298,7 @@ xla_flags_to_exclude_from_cache_key = [
     "--xla_gpu_cuda_data_dir",
     "--xla_gpu_experimental_autotune_cache_mode",
     "--xla_gpu_per_fusion_autotune_cache_dir",
+    "--xla_tpu_compiler_variant",
 ]
 
 env_override_flags_to_exclude_from_cache_key = {
