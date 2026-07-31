@@ -14,13 +14,11 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
 import contextlib
 from dataclasses import dataclass, replace
 from functools import partial
 import inspect
-import itertools as it
 import weakref
 from typing import NamedTuple, Any, Union
 import warnings
@@ -45,7 +43,7 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.core import typeof, cur_qdd
+from jax._src.core import typeof
 from jax._src.api_util import (
     flatten_axes, donation_vector, check_callable, resolve_argnums, debug_info,
     check_no_aliased_ref_args, _check_no_aliased_closed_over_refs,
@@ -528,17 +526,12 @@ def _trace_for_jit(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type = avals_ft.map2(
-    args_ft,
-    lambda a, x: core.AvalQDD(a, cur_qdd(x)) if a.has_qdd else a)
   assert avals_ft is not None
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
       avals_ft, in_tree_filtered, dbg, device_or_backend_set, has_kwargs)
-
-  qdd_token = _qdd_cache_index(fun, in_type.vals)  # represents qdd state context
 
   elapsed_time_ctx = (
       dispatch.log_elapsed_time(
@@ -549,9 +542,9 @@ def _trace_for_jit(
     if ji.use_resource_env:  # pjit
       with (_internal_use_concrete_mesh(ctx_mesh),
             mesh_lib.use_abstract_mesh(ctx_mesh.abstract_mesh)):
-        jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+        jaxpr, out_avals = pe.trace_to_jaxpr(fun, avals_ft, dbg)
     else:
-      jaxpr, out_avals = pe.trace_to_jaxpr(fun, in_type, dbg, qdd_token)
+      jaxpr, out_avals = pe.trace_to_jaxpr(fun, avals_ft, dbg)
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -564,15 +557,13 @@ def _trace_for_jit(
 
   # TODO(mattjj,yashkatariya): if we take the 'true' path then we *must* fall
   # off the C++ dispatch fast path for correctness. Ensure that happens.
-  if any(isinstance(c, core.Tracer) or core.typeof(c).has_qdd for c in jaxpr.consts):
+  if any(isinstance(c, core.Tracer) for c in jaxpr.consts):
     jaxpr, consts = pe.separate_consts(jaxpr)
   else:
     consts = []
 
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), args_ft.vals)
-  _qdd_cache_update(fun, in_type.vals, qdd_token, consts,
-                    jaxpr.in_aval_qdds[:len(consts)])
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
@@ -650,10 +641,6 @@ def _infer_params(
     return entry.pjit_params, entry.pjit_params.consts + dynargs
 
   p = _trace_for_jit(fun, ji, ctx_mesh, dbg_fn(), avals, args, kwargs)
-  const_avals = _infer_input_type(fun, dbg_fn, p.consts)
-  # TODO(mattjj, yashkatariya): Remove this when Box and qdd are deleted.
-  if p.params['jaxpr'].is_high and any(a.has_qdd for a in const_avals + avals):
-    return p, p.consts + dynargs
   entry.pjit_params = p
   return p, p.consts + dynargs
 
@@ -825,29 +812,6 @@ def _check_and_canonicalize_out_shardings(
       "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
-_seen_qdds = weakref.WeakKeyDictionary()
-
-def _seen_qdds_get(fun, in_type) -> list:
-  cache = _seen_qdds.setdefault(fun, defaultdict(list))
-  assert cache is not None  # pyrefly#2407
-  return cache[in_type]
-
-def _qdd_cache_index(fun, in_type) -> int:
-  cases = _seen_qdds_get(fun, in_type)
-  for i, records in enumerate(cases):
-    for obj, qdd in records:
-      if core.cur_qdd(obj) != qdd: break
-    else:
-      return i
-  return len(cases)
-
-def _qdd_cache_update(fun, in_type, i, consts, aval_qdds):
-  cases = _seen_qdds_get(fun, in_type)
-  if i == len(cases):
-    cases.append([(c, aval_qdd.qdd) for c, aval_qdd in zip(consts, aval_qdds)
-                  if aval_qdd.has_qdd])
-
-
 @dataclass(frozen=True, slots=True)
 class IgnoreKey:
   val: Any
@@ -916,13 +880,7 @@ def _is_high(*_, jaxpr, **__) -> bool:
 jit_p.is_high = _is_high
 
 def _to_lojax(*hi_args, jaxpr, **params):
-  # convert closed-over boxes to explicit args
-  jaxpr, closed_over_himutables = pe.convert_const_himutables(jaxpr)
-  hi_args = [*closed_over_himutables, *hi_args]
-  params = _converted_mutables_add_params(len(closed_over_himutables), **params)
-
-  lo_args_lol = [aval.read_loval_in(x) if aval.has_qdd else aval.lower_val(x)
-                 for aval, x in zip(jaxpr.in_aval_qdds, hi_args)]
+  lo_args_lol = [aval.lower_val(x) for aval, x in zip(jaxpr.in_avals, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
 
   in_avals = ft.flatten(([[typeof(x) for x in xs] for xs in lo_args_lol], {}))
@@ -930,20 +888,9 @@ def _to_lojax(*hi_args, jaxpr, **params):
   params = _lojax_expand_params(in_avals, out_avals, **params)
 
   all_outs = jit_p.bind(*lo_args, jaxpr=lo_jaxpr, **params)
-  out_mut, lo_outs = out_avals.update(all_outs).unpack()
-  for a, x, u in zip(jaxpr.final_aval_qdds, hi_args, out_mut.unpack()):
-    if a.has_qdd:
-      a.aval.update_from_loval2(a.qdd, x, u)
+  lo_outs = out_avals.update(all_outs)
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 jit_p.to_lojax = _to_lojax
-
-def _converted_mutables_add_params(
-    n, *, donated_invars, in_shardings, in_layouts, **params):
-  donated_invars = (False,) * n + donated_invars
-  in_shardings = (UNSPECIFIED,) * n + in_shardings
-  in_layouts = (None,) * n + in_layouts
-  return dict(params, donated_invars=donated_invars, in_shardings=in_shardings,
-              in_layouts=in_layouts)
 
 
 def _lojax_expand_params(
@@ -951,8 +898,7 @@ def _lojax_expand_params(
     out_shardings, out_layouts, **params):
   in_avals, () = in_avals_.unpack()
   in_lol = in_avals.unpack()
-  mut_out_lol, out_lol_ = out_avals.unpack()
-  out_lol = out_lol_.unpack()
+  out_lol = out_avals.unpack()
 
   def expand(lol, stuff):
     return tuple(x for l, x in zip(lol, stuff) for _ in l)
@@ -961,11 +907,6 @@ def _lojax_expand_params(
   in_layouts     = expand(in_lol , in_layouts    )
   out_shardings  = expand(out_lol, out_shardings )
   out_layouts    = expand(out_lol, out_layouts   )
-
-  # also, the lo_jaxpr has pure outputs corresponding to mutable hi_jaxpr types
-  num_muts_out = len(mut_out_lol)  # it's a flat tree
-  out_shardings = (UNSPECIFIED,) * num_muts_out + out_shardings
-  out_layouts = (None,) * num_muts_out + out_layouts
 
   new_params = dict(params, donated_invars=donated_invars,
                     in_shardings=in_shardings, in_layouts=in_layouts,
@@ -1336,11 +1277,6 @@ def pjit_staging_rule(trace, source_info, *args, **params):
   else:
     out_tracers = trace.default_process_primitive(
         jit_p, args, params, source_info=source_info)
-    # TODO(mattjj): handle qdd in the presence of refs
-    for v, x in zip(it.chain(jaxpr.constvars, jaxpr.invars), it.chain(jaxpr.consts, args)):
-      if v.initial_qdd:
-        assert core.cur_qdd(x) == v.initial_qdd
-        x.aval_mutable_qdd.mutable_qdd.update(v.final_qdd)
   return out_tracers
 pe.custom_staging_rules[jit_p] = pjit_staging_rule
 
@@ -1922,8 +1858,7 @@ def _pjit_transpose_fancy(
     compiler_options_kvs):
   primals_ctrefs, specs = ad.project_accums(args)
   in_flat, in_tree = tree_flatten((primals_ctrefs, cts_in))
-  in_avals = [core.AvalQDD(a, cur_qdd(x)) if (a := typeof(x)).has_qdd
-              else a for x in in_flat]
+  in_avals = [typeof(x) for x in in_flat]
   trans_jaxpr, out_tree = _transpose_jaxpr_fancy(jaxpr, in_tree, (*in_avals,), specs)
 
   trans_in_shardings = (

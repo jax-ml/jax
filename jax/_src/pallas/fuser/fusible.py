@@ -77,9 +77,7 @@ class Fusible(hijax.VJPHiPrimitive):
       lo_args = [
           lo_val
           for aval, x in zip(arg_avals, flat_args)
-          for lo_val in (
-              aval.read_loval(x) if aval.has_qdd else aval.lower_val(x)
-          )
+          for lo_val in aval.lower_val(x)
       ]
       lo_jaxpr = pe.lower_jaxpr2(jax_core.ClosedJaxpr(self.jaxpr, consts))
     else:

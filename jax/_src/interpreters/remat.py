@@ -198,7 +198,7 @@ def _remat_jaxpr(jaxpr, policy, custom_vjp_rules, allow_fwds):
   def new_arg(a):
     return RematTracer(trace, fwd_trace.new_arg(a, src), rem_trace.new_arg(a, src))  # noqa: F821
 
-  tracers = map(new_arg, jaxpr.in_aval_qdds)
+  tracers = map(new_arg, jaxpr.in_avals)
   with core.set_current_trace(trace, check_leaks=True):
     ans = core.eval_jaxpr(jaxpr, jaxpr.consts, *tracers)
     out_primals, out_rem = unzip2(map(trace.to_val_tracer_pair, ans))

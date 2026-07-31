@@ -421,15 +421,10 @@ def _mpmd_map_to_lojax(
     **params,
 ):
   in_avals = [jax_core.typeof(a) for a in hi_args]
-  if any(aval.has_qdd for aval in in_avals):
-    raise NotImplementedError("mpmd_map does not support QDD for inputs")
-  if any(aval.has_qdd for aval in out_avals):
-    raise NotImplementedError("mpmd_map does not support QDD for outputs")
-
   lo_args = [
       lo_val
       for aval, x in zip(in_avals, hi_args)
-      for lo_val in (aval.read_loval(x) if aval.has_qdd else aval.lower_val(x))
+      for lo_val in aval.lower_val(x)
   ]
 
   lo_out_avals = [lo_aval for aval in out_avals for lo_aval in aval.lo_ty()]

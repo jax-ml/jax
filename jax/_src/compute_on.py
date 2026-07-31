@@ -27,7 +27,6 @@ from jax._src import source_info_util
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe
 from jax._src import flattree as ft
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
-from jax._src.xla_metadata import _check_no_qdd
 from jax._src.util import (safe_map, safe_zip, weakref_lru_cache, unzip2,
                            split_list, subs_list, merge_lists)
 from jax._src.api_util import debug_info, flatten_axes
@@ -384,20 +383,18 @@ ad.fancy_transposes[compute_on_p] = _compute_on_transpose
 
 def _compute_on_to_lojax(*hi_args, jaxpr, compute_type, out_memory_spaces,
                          compiler_options_json):
-  _check_no_qdd(jaxpr, 'compute_on')
   lo_args_lol = [a.lower_val(x) for a, x in zip(jaxpr.in_avals, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
   in_avals = ft.flatten(([[core.typeof(x) for x in xs] for xs in lo_args_lol],
                          {}))
   lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
-  _, out_lol = out_avals.unpack()
-  lo_spaces = tuple(s for l, s in zip(out_lol.unpack(), out_memory_spaces)
+  lo_spaces = tuple(s for l, s in zip(out_avals.unpack(), out_memory_spaces)
                     for _ in l)
   all_outs = compute_on_p.bind(*lo_args, jaxpr=lo_jaxpr,
                                compute_type=compute_type,
                                out_memory_spaces=lo_spaces,
                                compiler_options_json=compiler_options_json)
-  _, lo_outs = out_avals.update(all_outs).unpack()
+  lo_outs = out_avals.update(all_outs)
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 compute_on_p.to_lojax = _compute_on_to_lojax
 

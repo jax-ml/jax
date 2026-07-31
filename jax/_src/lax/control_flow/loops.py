@@ -43,7 +43,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   _check_no_aliased_closed_over_refs, check_no_aliased_ref_args,
   check_no_transformed_refs_args)
-from jax._src.core import (AbstractValue, Jaxpr, ShapedArray, cur_qdd, typeof)
+from jax._src.core import (AbstractValue, Jaxpr, ShapedArray, typeof)
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1154,7 +1154,7 @@ def _scan_transpose_fancy(cts, *args, reverse, length, ft_in, ft_out, jaxpr,
 
   # prepare transposed jaxpr
   accum_typeof = lambda x: (x.aval if isinstance(x, ad.GradAccum)
-                            else core.aval_qdd_from_current_val(typeof(x), x))
+                            else typeof(x))
   trans_avals, ext_avals = split_list(_map(accum_typeof, trans_in), [num_consts+num_carry])
   trans_avals = trans_avals + [core.mapped_leading_aval(length, a) for a in ext_avals]
   xs_avals = tuple(core.mapped_leading_aval(length, accum_typeof(x)) for x in immut_xs_dot)
@@ -1574,21 +1574,12 @@ scan_p.is_high = _scan_is_high
 
 def _scan_to_lojax(*hi_args, jaxpr, ft_in, ft_out, **params):
   num_consts, num_carry, _ = _map(len, ft_in.unpack())
-  # move qdd binders and corresponding hi_args from consts slots to carry slots
-  to_move = [t.has_qdd and not t.is_writer for t in jaxpr.in_aval_qdds[:num_consts]]
-  jaxpr = pe.move_invars_right(jaxpr, to_move)
-  hi_args = _move_right(hi_args, to_move)
-  num_consts -= sum(to_move)
-  num_carry += sum(to_move)
 
   const, carry, ext = split_list(hi_args, [num_consts, num_carry])
-  const_qdds, carry_qdds, ext_qdds = split_list(jaxpr.in_aval_qdds, [num_consts, num_carry])
-  const_lol = [a.read_loval_in(x) if a.has_qdd else a.lower_val(x)
-               for a, x in zip(const_qdds, const)]
-  carry_lol = [a.read_loval_in(x) if a.has_qdd else a.lower_val(x)
-               for a, x in zip(carry_qdds, carry)]
-  ext_lol   = [a.read_loval_in(x) if a.has_qdd else a.lower_val(x)
-               for a, x in zip(ext_qdds, ext)]
+  const_avals, carry_avals, ext_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
+  const_lol = [a.lower_val(x) for a, x in zip(const_avals, const)]
+  carry_lol = [a.lower_val(x) for a, x in zip(carry_avals, carry)]
+  ext_lol   = [a.lower_val(x) for a, x in zip(ext_avals, ext)]
   num_lo_carry = sum(len(xs) for xs in carry_lol)
   lo_args_lol = [*const_lol, *carry_lol, *ext_lol]
   rrtype = lambda x: core.mapped_leading_aval(params['length'], typeof(x))
@@ -1599,17 +1590,6 @@ def _scan_to_lojax(*hi_args, jaxpr, ft_in, ft_out, **params):
 
   lo_jaxpr, out_avals = pe.lower_jaxpr(jaxpr, in_avals)
 
-  # move extensive outputs
-  out_mut_avals, _ = out_avals.unpack()
-  const_mut, carry_mut, ext_mut = split_list(out_mut_avals.unpack(), [num_consts, num_carry])
-  num_const_mut = sum(len(xs) for xs in const_mut)
-  num_carry_mut = sum(len(xs) for xs in carry_mut)
-  num_ext_mut   = sum(len(xs) for xs in ext_mut)
-  num_rest = len(lo_jaxpr.out_avals) - num_const_mut - num_carry_mut - num_ext_mut
-  to_move = ([True] * num_const_mut + [False] * num_carry_mut +
-             [True] * num_ext_mut + [False] * num_rest)
-  lo_jaxpr = pe.move_outvars_to_back(lo_jaxpr, to_move)
-
   lo_args = [x for xs in lo_args_lol for x in xs]
   all_outs = scan_p.bind(
       *lo_args, jaxpr=lo_jaxpr,
@@ -1617,21 +1597,10 @@ def _scan_to_lojax(*hi_args, jaxpr, ft_in, ft_out, **params):
       ft_out=ft.pack((ft.flatten(carry_lol).void(),
                       ft.nones(len(lo_jaxpr.out_avals) - num_lo_carry))),
       **params)
-  carry_mut, rest, const_mut, ext_mut = split_list_checked(
-      all_outs, [num_carry_mut, num_rest, num_const_mut, num_ext_mut])
-  all_outs = [*const_mut, *carry_mut, *ext_mut, *rest]
 
-  out_mut, lo_outs = out_avals.update(all_outs).unpack()
-  for a, x, u in zip(jaxpr.final_aval_qdds, hi_args, out_mut.unpack()):
-    if a.has_qdd:
-      a.aval.update_from_loval2(a.qdd, x, u)
+  lo_outs = out_avals.update(all_outs)
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 scan_p.to_lojax = _scan_to_lojax
-
-def _move_right(lst, to_move):
-  lst, rest = split_list(lst, [len(to_move)])
-  left, right = partition_list(to_move, lst)
-  return [*left, *right, *rest]
 
 ### while_loop
 
@@ -1745,9 +1714,6 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   body_jaxpr, body_consts = pe.separate_consts(body_jaxpr)
   _check_carry_type('while_loop body', body_fun, init_aval, body_out_avals)
 
-  if not all(not v.aval.has_qdd or v.initial_qdd == v.final_qdd for v in
-             body_jaxpr.invars):
-    raise TypeError("type-changing mutations not allowed in while_loop body")
   joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
@@ -2491,52 +2457,29 @@ def _while_is_high(*_, cond_jaxpr, body_jaxpr, **__):
 while_p.is_high = _while_is_high
 
 def _while_to_lojax(*hi_args, cond_jaxpr, body_jaxpr, cond_nconsts, body_nconsts):
-  if any(a.has_qdd for a in cond_jaxpr.in_avals[:cond_nconsts]):
-    raise NotImplementedError  # TODO(mattjj,dougalm)
-  assert not any(a.has_qdd for a in cond_jaxpr.in_avals[cond_nconsts:])
-
   hi_cconsts, hi_bconsts, hi_carry = split_list(hi_args, [cond_nconsts, body_nconsts])
 
-  # move qdd binders and corresponding hi_args from consts slots to carry slots
-  to_move = [t.has_qdd for t in body_jaxpr.in_aval_qdds[:body_nconsts]]
-  body_jaxpr = pe.move_invars_right(body_jaxpr, to_move)
-  hi_bconsts, hi_bconsts_qdd = partition_list(to_move, hi_bconsts)
-  hi_carry = [*hi_bconsts_qdd, *hi_carry]
-  body_nconsts -= sum(to_move)
-  cond_jaxpr = _insert_binders(cond_jaxpr, cond_nconsts, hi_bconsts_qdd)
-  del hi_bconsts_qdd
-
   # collect input values
-  loval = lambda a, x: a.read_loval(x) if a.has_qdd else a.lower_val(x)
-  lovals = lambda avals, xs: [lo for a, x in zip(avals, xs) for lo in loval(a, x)]
-  lo_cconsts = lovals(cond_jaxpr.in_aval_qdds[:cond_nconsts], hi_cconsts)
-  lo_bconsts = lovals(body_jaxpr.in_aval_qdds[:body_nconsts], hi_bconsts)
-  lo_carry = lovals(body_jaxpr.in_aval_qdds[body_nconsts:], hi_carry)
+  lovals = lambda avals, xs: [lo for a, x in zip(avals, xs)
+                              for lo in a.lower_val(x)]
+  lo_cconsts = lovals(cond_jaxpr.in_avals[:cond_nconsts], hi_cconsts)
+  lo_bconsts = lovals(body_jaxpr.in_avals[:body_nconsts], hi_bconsts)
+  lo_carry = lovals(body_jaxpr.in_avals[body_nconsts:], hi_carry)
 
   # expand cond_nconsts and body_nconsts according to lo types
   cond_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_cconsts)
   body_nconsts = sum(len(typeof(x).lo_ty()) for x in hi_bconsts)
 
   # lower jaxprs and bind
-  in_avals = ft.flatten(([a.lo_ty() for a in body_jaxpr.in_aval_qdds], {}))
+  in_avals = ft.flatten(([a.lo_ty() for a in body_jaxpr.in_avals], {}))
   lo_body_jaxpr, out_avals = pe.lower_jaxpr(body_jaxpr, in_avals)
   all_outs = while_p.bind(*lo_cconsts, *lo_bconsts, *lo_carry,
                           cond_jaxpr=pe.lower_jaxpr2(cond_jaxpr),
                           body_jaxpr=lo_body_jaxpr,
                           cond_nconsts=cond_nconsts, body_nconsts=body_nconsts)
-  out_mut, lo_outs = out_avals.update(all_outs).unpack()
-  for a, x, u in zip(body_jaxpr.final_aval_qdds, it.chain(hi_bconsts, hi_carry), out_mut.unpack()):
-    if a.has_qdd:
-      a.aval.update_from_loval2(a.qdd, x, u)
+  lo_outs = out_avals.update(all_outs)
   return [a.raise_val2(y) for a, y in zip(body_jaxpr.out_avals, lo_outs.unpack())]
 while_p.to_lojax = _while_to_lojax
-
-def _insert_binders(jaxpr, n_after, vals):
-  avals = _map(typeof, vals)
-  invars = [core.Var(lo_ty) for a, x in zip(avals, vals) for lo_ty in
-            (a.lo_ty_qdd(cur_qdd(x)) if a.has_qdd else a.lo_ty())]
-  invars = jaxpr.invars[:n_after] + invars + jaxpr.invars[n_after:]
-  return jaxpr.replace(invars=invars)
 
 
 def _pred_bcast_select_hlo(ctx,
