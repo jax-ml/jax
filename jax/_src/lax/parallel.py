@@ -1903,22 +1903,17 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
 
   out_type = mlir.aval_to_ir_type(ctx.module_context, out_aval)
   if not is_async:
-    return hlo.AllGatherOp(
-        [out_type],
-        [x],
-        all_gather_dim=mlir.i64_attr(all_gather_dimension),
-        replica_groups=replica_groups_attr,
-        **other_args,
-    ).results
+    return hlo.AllGatherOp([out_type], [x],
+                           all_gather_dim=mlir.i64_attr(all_gather_dimension),
+                           replica_groups=replica_groups_attr,
+                           **other_args).results
   else:
     replica_groups = _replica_groups(
         ctx.module_context.axis_context, axis_name, axis_index_groups
     )
-    config = {
-        "all_gather_dimension": all_gather_dimension,
-        "replica_groups": replica_groups,
-        **other_args,
-    }
+    config = {"all_gather_dimension": all_gather_dimension,
+              "replica_groups": replica_groups,
+              **other_args}
     return _emit_async_start_custom_call("all-gather-start", ctx, x, config)
 
 
