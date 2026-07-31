@@ -272,7 +272,7 @@ class OverlapTest(jtu.JaxTestCase):
   def test_unrolled_fsdp_pipeline_grad_program_order_async_decomp(self, mesh):
     if ifrt_version < 63:
       self.skipTest("Requires ifrt_version >= 63")
-    if jtu.is_libtpu_at_least("0.0.45"):
+    if not jtu.is_libtpu_at_least("0.0.45"):
       self.skipTest("Requires libtpu 0.0.45+")
 
     if not jtu.is_device_tpu_at_least(6):
@@ -354,17 +354,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
   def setUp(self):
     if ifrt_version < 63:
       self.skipTest("Requires ifrt_version >= 63")
-    if jtu.is_libtpu_at_least("0.0.45"):
+    if not jtu.is_libtpu_at_least("0.0.45"):
       self.skipTest("Requires libtpu 0.0.45+")
-
-  def create_explicit_mesh(self, axes, names):
-    axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
-    return jtu.create_mesh(axes, names, axis_types=axis_types)
-
-  def overlappable_math(self, a):
-    # On some backends, async collectives are erased if there isn't any
-    # computation to overlap. Hence, we do some math on a.
-    return a @ a
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_all_gather(self, mesh):
@@ -430,166 +421,162 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
     self.assertIn('collective-permute-start', stablehlo)
     self.assertIn('collective-permute-done', stablehlo)
 
-  def test_async_all_gather(self):
-    n = jax.device_count()
-    with jax.set_mesh(self.create_explicit_mesh((n,), ('i',))):
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P(None, reduced={'i'}), jax.P('i')))
-      def all_gather_sync(x, a):
-        a = self.overlappable_math(a)
-        y_sync = jax.lax.all_gather(x, 'i', tiled=True, to='reduced')
-        return y_sync, a
+  @jtu.with_explicit_mesh((2,), ('i',))
+  def test_async_all_gather(self, mesh):
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P(None, reduced={'i'}), jax.P('i')))
+    def all_gather_sync(x, a):
+      a = a @ a
+      y_sync = jax.lax.all_gather(x, 'i', tiled=True, to='reduced')
+      return y_sync, a
 
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P(None, reduced={'i'}), jax.P('i')))
-      def all_gather_async(x, a):
-        a = self.overlappable_math(a)
-        future = parallel.all_gather_start(x, 'i', tiled=True, to='reduced')
-        y_async = future.done()
-        return y_async, a
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P(None, reduced={'i'}), jax.P('i')))
+    def all_gather_async(x, a):
+      a = a @ a
+      future = parallel.all_gather_start(x, 'i', tiled=True, to='reduced')
+      y_async = future.done()
+      return y_async, a
 
-      x = jnp.arange(n * 4096.0, out_sharding=jax.P('i'))
-      a = jnp.ones((n * 1024, 1024), out_sharding=jax.P('i'))
-      y_sync, _ = all_gather_sync(x, a)
-      y_async, _ = all_gather_async(x, a)
-      self.assertAllClose(y_sync, y_async)
+    x = jnp.arange(2 * 4096.0, out_sharding=jax.P('i'))
+    a = jnp.ones((2 * 1024, 1024), out_sharding=jax.P('i'))
+    y_sync, _ = all_gather_sync(x, a)
+    y_async, _ = all_gather_async(x, a)
+    self.assertAllClose(y_sync, y_async)
 
-      # If the synchronous JAX collective lowers to an asynchronous HLO
-      # collective, then so should the asynchronous JAX collective.
-      hlo_sync = all_gather_sync.lower(x, a).compile().as_text()
-      hlo_async = all_gather_async.lower(x, a).compile().as_text()
-      for op in ['call-start(', 'all-gather(', 'call-done(']:
-        if op in hlo_sync:
-          self.assertIn(op, hlo_async)
+    # If the synchronous JAX collective lowers to an asynchronous HLO
+    # collective, then so should the asynchronous JAX collective.
+    hlo_sync = all_gather_sync.lower(x, a).compile().as_text()
+    hlo_async = all_gather_async.lower(x, a).compile().as_text()
+    for op in ['call-start(', 'all-gather(', 'call-done(']:
+      if op in hlo_sync:
+        self.assertIn(op, hlo_async)
 
-  def test_async_psum(self):
-    n = jax.device_count()
-    with jax.set_mesh(self.create_explicit_mesh((n,), ('i',))):
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def psum_sync(x, a):
-        a = self.overlappable_math(a)
-        y_sync = jax.lax.psum(x, 'i')
-        return y_sync, a
+  @jtu.with_explicit_mesh((2,), ('i',))
+  def test_async_psum(self, mesh):
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P(), jax.P('i')))
+    def psum_sync(x, a):
+      a = a @ a
+      y_sync = jax.lax.psum(x, 'i')
+      return y_sync, a
 
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def psum_async(x, a):
-        a = self.overlappable_math(a)
-        y_async = parallel.psum_start(x, 'i').done()
-        return y_async, a
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P(), jax.P('i')))
+    def psum_async(x, a):
+      a = a @ a
+      y_async = parallel.psum_start(x, 'i').done()
+      return y_async, a
 
-      x = jnp.arange(n * 4096.0, out_sharding=jax.P('i'))
-      a = jnp.ones((n * 1024, 1024), out_sharding=jax.P('i'))
-      y_sync, _ = psum_sync(x, a)
-      y_async, _ = psum_async(x, a)
-      self.assertAllClose(y_sync, y_async)
+    x = jnp.arange(2 * 4096.0, out_sharding=jax.P('i'))
+    a = jnp.ones((2 * 1024, 1024), out_sharding=jax.P('i'))
+    y_sync, _ = psum_sync(x, a)
+    y_async, _ = psum_async(x, a)
+    self.assertAllClose(y_sync, y_async)
 
-      # If the synchronous JAX collective lowers to an asynchronous HLO
-      # collective, then so should the asynchronous JAX collective.
-      hlo_sync = psum_sync.lower(x, a).compile().as_text()
-      hlo_async = psum_async.lower(x, a).compile().as_text()
-      for op in ['call-start(', 'all-reduce(', 'call-done(']:
-        if op in hlo_sync:
-          self.assertIn(op, hlo_async)
+    # If the synchronous JAX collective lowers to an asynchronous HLO
+    # collective, then so should the asynchronous JAX collective.
+    hlo_sync = psum_sync.lower(x, a).compile().as_text()
+    hlo_async = psum_async.lower(x, a).compile().as_text()
+    for op in ['call-start(', 'all-reduce(', 'call-done(']:
+      if op in hlo_sync:
+        self.assertIn(op, hlo_async)
 
-  def test_async_psum_scatter(self):
-    n = jax.device_count()
-    with jax.set_mesh(self.create_explicit_mesh((n,), ('i',))):
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def psum_scatter_sync(x, a):
-        a = self.overlappable_math(a)
-        y_sync = jax.lax.psum_scatter(x, 'i', scatter_dimension=0, tiled=True)
-        return y_sync, a
+  @jtu.with_explicit_mesh((2,), ('i',))
+  def test_async_psum_scatter(self, mesh):
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
+    def psum_scatter_sync(x, a):
+      a = a @ a
+      y_sync = jax.lax.psum_scatter(x, 'i', scatter_dimension=0, tiled=True)
+      return y_sync, a
 
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def psum_scatter_async(x, a):
-        a = self.overlappable_math(a)
-        future = parallel.psum_scatter_start(x, 'i', scatter_dimension=0, tiled=True)
-        y_async = future.done()
-        return y_async, a
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
+    def psum_scatter_async(x, a):
+      a = a @ a
+      future = parallel.psum_scatter_start(x, 'i', scatter_dimension=0, tiled=True)
+      y_async = future.done()
+      return y_async, a
 
-      x = jnp.ones((n * 128, 128), dtype=jnp.float32, out_sharding=jax.P('i'))
-      a = jnp.ones((n * 1024, 1024), out_sharding=jax.P('i'))
-      y_sync, _ = psum_scatter_sync(x, a)
-      y_async, _ = psum_scatter_async(x, a)
-      self.assertAllClose(y_sync, y_async)
+    x = jnp.ones((2 * 128, 128), dtype=jnp.float32, out_sharding=jax.P('i'))
+    a = jnp.ones((2 * 1024, 1024), out_sharding=jax.P('i'))
+    y_sync, _ = psum_scatter_sync(x, a)
+    y_async, _ = psum_scatter_async(x, a)
+    self.assertAllClose(y_sync, y_async)
 
-      # If the synchronous JAX collective lowers to an asynchronous HLO
-      # collective, then so should the asynchronous JAX collective.
-      hlo_sync = psum_scatter_sync.lower(x, a).compile().as_text()
-      hlo_async = psum_scatter_async.lower(x, a).compile().as_text()
-      for op in ['call-start(', 'reduce-scatter(', 'call-done(']:
-        if op in hlo_sync:
-          self.assertIn(op, hlo_async)
+    # If the synchronous JAX collective lowers to an asynchronous HLO
+    # collective, then so should the asynchronous JAX collective.
+    hlo_sync = psum_scatter_sync.lower(x, a).compile().as_text()
+    hlo_async = psum_scatter_async.lower(x, a).compile().as_text()
+    for op in ['call-start(', 'reduce-scatter(', 'call-done(']:
+      if op in hlo_sync:
+        self.assertIn(op, hlo_async)
 
-  def test_async_all_to_all(self):
-    n = jax.device_count()
-    with jax.set_mesh(self.create_explicit_mesh((n,), ('i',))):
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def all_to_all_sync(x, a):
-        a = self.overlappable_math(a)
-        y_sync = jax.lax.all_to_all(x, 'i', split_axis=0, concat_axis=0, tiled=True)
-        return y_sync, a
+  @jtu.with_explicit_mesh((2,), ('i',))
+  def test_async_all_to_all(self, mesh):
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
+    def all_to_all_sync(x, a):
+      a = a @ a
+      y_sync = jax.lax.all_to_all(x, 'i', split_axis=0, concat_axis=0, tiled=True)
+      return y_sync, a
 
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def all_to_all_async(x, a):
-        a = self.overlappable_math(a)
-        future = parallel.all_to_all_start(x, 'i', split_axis=0, concat_axis=0,
-                                           tiled=True)
-        y_async = future.done()
-        return y_async, a
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
+    def all_to_all_async(x, a):
+      a = a @ a
+      future = parallel.all_to_all_start(x, 'i', split_axis=0, concat_axis=0,
+                                          tiled=True)
+      y_async = future.done()
+      return y_async, a
 
-      x = jnp.ones((n * 128, 128, 128), dtype=jnp.float32, out_sharding=jax.P('i'))
-      a = jnp.ones((n * 1024, 1024), out_sharding=jax.P('i'))
-      y_sync, _ = all_to_all_sync(x, a)
-      y_async, _ = all_to_all_async(x, a)
-      self.assertAllClose(y_sync, y_async)
+    x = jnp.ones((2 * 128, 128, 128), dtype=jnp.float32, out_sharding=jax.P('i'))
+    a = jnp.ones((2 * 1024, 1024), out_sharding=jax.P('i'))
+    y_sync, _ = all_to_all_sync(x, a)
+    y_async, _ = all_to_all_async(x, a)
+    self.assertAllClose(y_sync, y_async)
 
-      # If the synchronous JAX collective lowers to an asynchronous HLO
-      # collective, then so should the asynchronous JAX collective.
-      hlo_sync = all_to_all_sync.lower(x, a).compile().as_text()
-      hlo_async = all_to_all_async.lower(x, a).compile().as_text()
-      for op in ['all-to-all-start(', 'all-to-all-done(']:
-        if op in hlo_sync:
-          self.assertIn(op, hlo_async)
+    # If the synchronous JAX collective lowers to an asynchronous HLO
+    # collective, then so should the asynchronous JAX collective.
+    hlo_sync = all_to_all_sync.lower(x, a).compile().as_text()
+    hlo_async = all_to_all_async.lower(x, a).compile().as_text()
+    for op in ['all-to-all-start(', 'all-to-all-done(']:
+      if op in hlo_sync:
+        self.assertIn(op, hlo_async)
 
-  def test_async_ppermute(self):
-    n = jax.device_count()
-    permutation = [(i, (i + 1) % n) for i in range(n)]
-    with jax.set_mesh(self.create_explicit_mesh((n,), ('i',))):
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def ppermute_sync(x, a):
-        a = self.overlappable_math(a)
-        y_sync = jax.lax.ppermute(x, 'i', permutation)
-        return y_sync, a
+  @jtu.with_explicit_mesh((2,), ('i',))
+  def test_async_ppermute(self, mesh):
+    permutation = [(i, (i + 1) % 2) for i in range(2)]
 
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
-      def ppermute_async(x, a):
-        a = self.overlappable_math(a)
-        future = parallel.ppermute_start(x, 'i', permutation)
-        y_async = future.done()
-        return y_async, a
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
+    def ppermute_sync(x, a):
+      a = a @ a
+      y_sync = jax.lax.ppermute(x, 'i', permutation)
+      return y_sync, a
 
-      x = jnp.arange(n * 4096.0, out_sharding=jax.P('i'))
-      a = jnp.ones((n * 1024, 1024), out_sharding=jax.P('i'))
-      y_sync, _ = ppermute_sync(x, a)
-      y_async, _ = ppermute_async(x, a)
-      self.assertAllClose(y_sync, y_async)
+    @jax.jit
+    @jax.shard_map(out_specs=(jax.P('i'), jax.P('i')))
+    def ppermute_async(x, a):
+      a = a @ a
+      future = parallel.ppermute_start(x, 'i', permutation)
+      y_async = future.done()
+      return y_async, a
 
-      # If the synchronous JAX collective lowers to an asynchronous HLO
-      # collective, then so should the asynchronous JAX collective.
-      hlo_sync = ppermute_sync.lower(x, a).compile().as_text()
-      hlo_async = ppermute_async.lower(x, a).compile().as_text()
-      for op in ['collective-permute-start(', 'collective-permute-done(']:
-        if op in hlo_sync:
-          self.assertIn(op, hlo_async)
+    x = jnp.arange(2 * 4096.0, out_sharding=jax.P('i'))
+    a = jnp.ones((2 * 1024, 1024), out_sharding=jax.P('i'))
+    y_sync, _ = ppermute_sync(x, a)
+    y_async, _ = ppermute_async(x, a)
+    self.assertAllClose(y_sync, y_async)
+
+    # If the synchronous JAX collective lowers to an asynchronous HLO
+    # collective, then so should the asynchronous JAX collective.
+    hlo_sync = ppermute_sync.lower(x, a).compile().as_text()
+    hlo_async = ppermute_async.lower(x, a).compile().as_text()
+    for op in ['collective-permute-start(', 'collective-permute-done(']:
+      if op in hlo_sync:
+        self.assertIn(op, hlo_async)
 
 
 # class ControlDepsTest(jtu.JaxTestCase):
