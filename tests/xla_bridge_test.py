@@ -113,6 +113,34 @@ class XlaBridgeTest(jtu.JaxTestCase):
     # Map order does not matter.
     self.assertEqual(c1str, c2.SerializeAsString())
 
+  def test_disable_hlo_passes_preserves_existing_and_dedupes(self):
+    self.assertEqual(
+        compiler._append_disabled_hlo_passes("", "rematerialization"),
+        "rematerialization",
+    )
+    self.assertEqual(
+        compiler._append_disabled_hlo_passes(
+            "scalar-constant-sinker", "rematerialization"
+        ),
+        "scalar-constant-sinker,rematerialization",
+    )
+    self.assertEqual(
+        compiler._append_disabled_hlo_passes(
+            "scalar-constant-sinker, rematerialization", "rematerialization"
+        ),
+        "scalar-constant-sinker,rematerialization",
+    )
+
+    with config.enable_remat_opt_pass(False):
+      compile_options = compiler.get_compile_options(
+          num_replicas=1, num_partitions=1
+      )
+      passes = (
+          compile_options.executable_build_options.debug_options
+          .xla_disable_hlo_passes
+      )
+      self.assertIn("rematerialization", passes.split(","))
+
   def test_local_devices(self):
     self.assertNotEmpty(xb.local_devices())
     with self.assertRaisesRegex(ValueError, "Unknown process_index 100"):
