@@ -624,6 +624,9 @@ class FfiEffect(effects.Effect):
 _FfiEffect = FfiEffect()
 effects.lowerable_effects.add_type(FfiEffect)
 effects.control_flow_allowed_effects.add_type(FfiEffect)
+effects.remat_allowed_effects.add_type(FfiEffect)
+effects.custom_derivatives_allowed_effects.add_type(FfiEffect)
+effects.partial_eval_kept_effects.add_type(FfiEffect)
 
 
 def ffi_call_abstract_eval(

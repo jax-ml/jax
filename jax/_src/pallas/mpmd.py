@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import contextlib
 import functools
 import itertools as it
-from typing import Any, Hashable, TypeVar, cast
+from typing import Any, Hashable
 from collections.abc import Generator
 
 from jax._src import api
@@ -43,8 +43,6 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.state import discharge as state_discharge
 from jax._src.typing import Array
-
-_T = TypeVar("_T")
 
 
 def get_super_mesh_shape(
@@ -644,7 +642,7 @@ def mpmd_map(
     cost_estimate: pallas_core.CostEstimate | None = None,
     name: str | None = None,
     metadata: dict[str, str] | None = None,
-) -> Callable[..., _T]:
+) -> Callable[..., Any]:
   interpret = (
       config.pallas_tpu_interpret_mode_context_manager.value or interpret
   )
@@ -817,7 +815,7 @@ def _mpmd_map(
     cost_estimate: pallas_core.CostEstimate | None = None,
     name: str | None = None,
     metadata: dict[str, str] | None = None,
-) -> Callable[..., _T]:
+) -> Callable[..., Any]:
   """Like ``pallas_call``, but MPMD and without pipelining."""
   if not meshes_and_fns:
     raise ValueError("At least one mesh/function pair is required")
@@ -989,4 +987,4 @@ def _mpmd_map(
       )
     return out_tree.unflatten(flat_outs)
 
-  return cast(Callable[..., _T], wrapper)
+  return wrapper

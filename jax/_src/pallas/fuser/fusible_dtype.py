@@ -19,7 +19,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import itertools as it
-from typing import Any, TypeVar
+from typing import Any
 
 import jax
 from jax._src import api_util
@@ -47,7 +47,6 @@ from jax._src.util import foreach
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
-T = TypeVar("T")
 
 _physicalize_rules: dict[core.Primitive, Callable[..., Any]] = {}
 

@@ -20,7 +20,7 @@ import functools
 import itertools
 import math
 import threading
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal
 
 import jax
 from jax import lax
@@ -1260,17 +1260,15 @@ def _get_memory_space_and_raise_if_hbm(aval, primitive_name, message=None):
 
 _interpret_impls: dict[jax_core.Primitive, Callable] = {}
 
-T = TypeVar('T', bound=Callable)
 
-
-def register_tpu_interpret_impl(prim: jax_core.Primitive) -> Callable[[T], T]:
+def register_tpu_interpret_impl(prim: jax_core.Primitive) -> Callable[..., Any]:
   """Registers an alternate primitive implementation for TPU Interpret Mode.
 
   User-defined primitives may register a custom Mosaic lowering.  To be able
   to run such a primitive in TPU Interpret Mode, a JAX implementation of the
   primitive must be registered using this function.
   """
-  def decorator(impl: T) -> T:
+  def decorator[T: Callable[..., Any]](impl: T) -> T:
     _interpret_impls[prim] = impl
     return impl
 

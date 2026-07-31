@@ -6246,6 +6246,35 @@ class FragmentedArrayTest(TestCase):
     self.assertIn(expected_instr, ptx())
     self.assertNotIn("st.shared", ptx())
 
+  @parameterized.product(
+      dtype=(jnp.int16,),
+      transpose=(False, True),
+  )
+  def test_stmatrix_bank_conflict(self, dtype, transpose):
+    m, k = 128, 128
+    dtype = jnp.dtype(dtype)
+    swizzle = 16
+    def kernel(ctx, x, out, x_smem):
+      mma_layouts = mgpu.MMALayouts(utils.dtype_to_ir_type(dtype))
+      x_fa = mgpu.FragmentedArray.load_untiled(
+          x, layout=mma_layouts.lhs, is_signed=True, optimized=False
+      )
+      x_smem_store = x_smem
+      if transpose:
+        x_smem_store = mgpu.memref_transpose(x_smem, (1, 0))
+      x_fa.store_untiled(x_smem_store, swizzle=swizzle)
+      mgpu.warpgroup_barrier()
+      copy(x_smem, out, swizzle)
+
+    x = self.prng.integers(-10000, 10000, (m, k)).astype(dtype)
+    out_shape = (k, m) if transpose else (m, k)
+    with self.assertRaises(fa.TransferPlanDerivationError):
+      mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), x,
+          jax.ShapeDtypeStruct(out_shape, dtype),
+          jax.ShapeDtypeStruct(out_shape, dtype),
+      )(x)
+
 
 class ProfilerTest(TestCase, jtu.JaxTestCase):
 

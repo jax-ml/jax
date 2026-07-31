@@ -4322,12 +4322,61 @@ class FragmentedArray:
       raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
 
     plan = TrivialTransferPlan()
-    if optimized and not use_txmatrix:
+    if optimized:
       if llvm_memory_space != 3 and llvm_memory_space != 7:
         raise NotImplementedError("Only optimized transfers to SMEM supported")
+      mem_layout = layout
+      if tx_layout == nvvm.MMALayout.col:
+        assert element_bits == 16  # 8x8 txmatrix
+        new_tiling = list(layout.tiling.tiles)
+        major_lane_dim, minor_lane_dim = layout.lane_dims
+        assert isinstance(major_lane_dim, int)
+        assert isinstance(minor_lane_dim, int)
+        # First, find the tile that contains the major lane dim and split it
+        dims = 0
+        major_lane_dim_tile = 9999  # Just to silence the type checker.
+        major_lane_dim_within_tile = 9999  # Just to silence the type checker.
+        for major_lane_dim_tile in range(1, len(new_tiling) + 1):
+          dims -= len(new_tiling[-major_lane_dim_tile])
+          if major_lane_dim >= dims:
+            major_lane_dim_within_tile = major_lane_dim - dims
+            break
+        major_lane_dim_tile = -major_lane_dim_tile
+        # Now, we add a new tile that splits the 8-sized dimension into 4 and 2.
+        # It will be inserted right after the tile containing major_lane_dim,
+        # in a way such that after tiling the original tile containing
+        # major_lane_dim will contain a single 4-sized dim in place of
+        # major_lane_dim with all other elements being 1.
+        # For example, if we had a tiling of (8, 8)(2,) with lane_dims=(-3, -2)
+        # and vector_dim=-1, we will transform it into:
+        # tiling=(8, 8)(2, 8)(2,) (tiled base shape of (4, 1, 2, 4, 2)).
+        new_tile = list(new_tiling[major_lane_dim_tile])
+        new_tile[major_lane_dim_within_tile] = layout.vector_length
+        assert major_lane_dim_tile < -1
+        new_tiling.insert(major_lane_dim_tile + 1, tuple(new_tile))
+        # We now adjust the lane and vector dimensions. The 8-sized lane dim is
+        # now composed of the minor lane dim and the original vector dim, the
+        # minor 4-sized lane dim corresponds to the major portion of the 4x2
+        # split of the original 8-sized major lane dim, with the remaining 2
+        # becoming the new vector dim.
+        new_vector_dim = major_lane_dim
+        new_lane_dims = (minor_lane_dim, layout.vector_dim, major_lane_dim - len(new_tile))
+        # We also might need to decrement the warp dims since we added a tile.
+        new_warp_dims = tuple(
+            d - len(new_tile) if isinstance(d, int) and d < dims else d
+            for d in layout.warp_dims
+        )
+        mem_layout = TiledLayout(
+            Tiling(tuple(new_tiling)),
+            new_warp_dims,
+            new_lane_dims,
+            new_vector_dim,
+        )
       plan = plan_tiled_transfer(
-        nested_ref_shape, nested_ref_strides, layout, element_bits, swizzle,
+        nested_ref_shape, nested_ref_strides, mem_layout, element_bits, swizzle,
       )
+      if tx_layout is not None and not isinstance(plan, TrivialTransferPlan):
+        raise TxMatrixIneligible("txmatrix requires a trivial transfer plan")
 
     tiles_strides_transfer = [s // vector_length for s in tiles_strides]
     # Technically we should keep the vector_dim stride set to 1, but its shape

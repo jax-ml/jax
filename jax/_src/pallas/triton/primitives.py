@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import enum
-from typing import Any, TypeAlias
+from typing import Any
 
 import jax
 from jax._src import core as jax_core
@@ -41,7 +41,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-Ref: TypeAlias = state.AbstractRef | state.TransformedRef
+type Ref = state.AbstractRef | state.TransformedRef
 
 Slice = indexing.Slice
 

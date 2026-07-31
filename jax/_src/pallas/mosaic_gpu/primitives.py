@@ -917,8 +917,6 @@ def _copy_gmem_to_smem_lowering(
       raise ValueError(
           f"Expected exactly one collective axis, got {collective_axes=}"
       )
-    # TODO(olechwierowicz): We can additionally raise if the GMEM partitioned
-    # dimension is not twice the size of SMEM partitioned dimension.
     if math.prod(ctx.launch_ctx.cluster_size) != 2:
       raise NotImplementedError(
           "Partitioned loads only supported for clusters of size 2. Got"

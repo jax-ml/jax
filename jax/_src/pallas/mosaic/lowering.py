@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import string
-from typing import Any, Literal, Protocol, Self, TYPE_CHECKING, TypeVar, cast
+from typing import Any, Literal, Protocol, Self, TYPE_CHECKING, cast
 
 import jax
 from jax import api_util
@@ -658,16 +658,13 @@ _primitives_needing_grid: set[jax_core.Primitive] = {
 }
 
 
-T = TypeVar("T", bound=Callable)
-
-
 def register_lowering_rule(
     prim: jax_core.Primitive,
     *,
     kernel_types: Collection[tpu_core.CoreType] = (tpu_core.CoreType.TC,),
     ensure_mlir_values: bool = True,
-) -> Callable[[T], T]:
-  def decorator(rule: T) -> T:
+) -> Callable[..., Any]:
+  def decorator[T: Callable[..., Any]](rule: T) -> T:
     for kernel_type in kernel_types:
       lowering_rules[kernel_type][prim] = rule
       if not ensure_mlir_values:
