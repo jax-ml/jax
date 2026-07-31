@@ -43,15 +43,6 @@ constexpr llvm::StringRef kMangledDialect = "stable_mosaic_gpu.";
 constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in Mosaic GPU lowering in a month!
-//
-// TODO(apaszke): Update the forward-compatible version to 3 in Mosaic GPU
-// lowering after 2025-10-08.
-// TODO(apaszke): Update the forward-compatible version to 4 in Mosaic GPU
-// lowering after 2025-11-13.
-// TODO(apaszke): Update the forward-compatible version to 5 in Mosaic GPU
-// lowering after 2025-12-07.
-// TODO(apaszke): Update the forward-compatible version to 6 in Mosaic GPU
-// lowering after 2025-12-18.
 constexpr int kVersion = 6;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;

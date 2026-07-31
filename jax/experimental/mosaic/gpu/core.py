@@ -79,7 +79,7 @@ def artificial_shared_memory_limit(limit):
         _SMEM_SIZE_BOUND = old_limit
 
 # This tracks the latest Mosaic GPU IR version with a monthly delay.
-FWD_COMPAT_IR_VERSION = 2
+FWD_COMPAT_IR_VERSION = 6
 
 c = utils.c  # This is too common to fully qualify.
 
