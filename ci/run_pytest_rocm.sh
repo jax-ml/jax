@@ -26,6 +26,15 @@ set -exu -o history -o allexport
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
+# Point PATH and LD_LIBRARY_PATH at the local TheRock installation.
+if command -v rocm-sdk >/dev/null 2>&1; then
+  sdk_root="$(rocm-sdk path --root)"
+  if [[ -n "$sdk_root" ]]; then
+    export PATH="$sdk_root/bin:$PATH"
+    export LD_LIBRARY_PATH="$sdk_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  fi
+fi
+
 # Install jaxlib and ROCm plugin wheels inside the $JAXCI_OUTPUT_DIR directory
 echo "Installing wheels locally..."
 source ./ci/utilities/install_wheels_locally.sh
@@ -35,17 +44,6 @@ echo "Installed packages:"
 "$JAXCI_PYTHON" -m uv pip freeze
 
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
-
-# TheRock (pip) ROCm images are intentionally /opt/rocm-less, so ROCm CLI tools
-# (rocminfo, rocm-smi, ...) live in the SDK bin dir rather than on PATH. Put
-# them on PATH via rocm-sdk. apt-ROCm images lack rocm-sdk and already have
-# these tools on PATH, so the gate leaves them untouched.
-if command -v rocm-sdk >/dev/null 2>&1; then
-  sdk_bin="$(rocm-sdk path --bin)"
-  if [[ -n "$sdk_bin" ]]; then
-    export PATH="$sdk_bin:$PATH"
-  fi
-fi
 
 rocm-smi
 
