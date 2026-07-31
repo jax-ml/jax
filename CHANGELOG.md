@@ -146,6 +146,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     instances ({jax-issue}`#39297`).
   * Fixed `_get_prime_factors` in `jax.experimental.mesh_utils`
     ({jax-issue}`#38286`).
+  * Unpickling a malformed `PyTreeDef` whose cached `num_leaves` or
+    `num_nodes` is negative now raises instead of restoring an inconsistent
+    tree structure, and `PyTreeDef.flatten_up_to` now raises `ValueError`
+    instead of crashing when a treedef's leaf count is negative, which
+    {func}`jax.tree_util.treedef_tuple` could still produce by overflowing the
+    sum of its children's counts. Previously both cases could terminate the
+    interpreter with a segmentation fault ({jax-issue}`#37412`).
 
 ## JAX 0.11.0 (July 16, 2026)
 
