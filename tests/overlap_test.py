@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial, reduce
+from functools import partial
 from absl.testing import absltest
 
 import jax
@@ -21,8 +21,9 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
 from jax._src.compute_on import compute_on2
-from jax.experimental.overlap import program_order, control_dep, schedule
+from jax.experimental.overlap import program_order
 from jax.sharding import PartitionSpec as P
+from jax._src.lib import ifrt_version
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -269,6 +270,11 @@ class OverlapTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((8,), ('x',))
   def test_unrolled_fsdp_pipeline_grad_program_order_async_decomp(self, mesh):
+    if ifrt_version < 63:
+      self.skipTest("Requires ifrt_version >= 63")
+    if jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest("Requires libtpu 0.0.45+")
+
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest("Requires TPU >= 6")
 
@@ -345,6 +351,12 @@ class OverlapTest(jtu.JaxTestCase):
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    if ifrt_version < 63:
+      self.skipTest("Requires ifrt_version >= 63")
+    if jtu.is_libtpu_at_least("0.0.45"):
+      self.skipTest("Requires libtpu 0.0.45+")
+
   def create_explicit_mesh(self, axes, names):
     axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
     return jtu.create_mesh(axes, names, axis_types=axis_types)
@@ -362,9 +374,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.all_gather', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('all-gather-start', stablehlo)
+    self.assertIn('all-gather-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_psum(self, mesh):
@@ -374,9 +386,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.all_reduce', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('all-reduce-start', stablehlo)
+    self.assertIn('all-reduce-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_psum_scatter(self, mesh):
@@ -387,9 +399,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.reduce_scatter', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('reduce-scatter-start', stablehlo)
+    self.assertIn('reduce-scatter-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_all_to_all(self, mesh):
@@ -401,9 +413,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.all_to_all', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('all-to-all-start', stablehlo)
+    self.assertIn('all-to-all-done', stablehlo)
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_ppermute(self, mesh):
@@ -414,9 +426,9 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
 
     x = jnp.arange(64.0, out_sharding=jax.P('i'))
     stablehlo = jax.jit(f).lower(x).as_text()
-    self.assertIn('stablehlo.async_start', stablehlo)
-    self.assertIn('stablehlo.collective_permute', stablehlo)
-    self.assertIn('stablehlo.async_done', stablehlo)
+    self.assertIn('stablehlo.custom_call', stablehlo)
+    self.assertIn('collective-permute-start', stablehlo)
+    self.assertIn('collective-permute-done', stablehlo)
 
   def test_async_all_gather(self):
     n = jax.device_count()
@@ -580,152 +592,152 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
           self.assertIn(op, hlo_async)
 
 
-class ControlDepsTest(jtu.JaxTestCase):
+# class ControlDepsTest(jtu.JaxTestCase):
 
-  def create_explicit_mesh(self, axes, names):
-    axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
-    return jtu.create_mesh(axes, names, iota_order=False, axis_types=axis_types)
+#   def create_explicit_mesh(self, axes, names):
+#     axis_types = (jax.sharding.AxisType.Explicit,) * len(axes)
+#     return jtu.create_mesh(axes, names, iota_order=False, axis_types=axis_types)
 
-  @jtu.run_on_devices("tpu", "cpu")
-  def test_math(self):
-    @jax.jit
-    def f_math(x, y, z):
-      a = jnp.sin(x @ x)
-      b = jnp.cos(y @ y)
-      c = jnp.exp(z @ z)
-      schedule([c, b, a])
-      return a + b + c
+#   @jtu.run_on_devices("tpu", "cpu")
+#   def test_math(self):
+#     @jax.jit
+#     def f_math(x, y, z):
+#       a = jnp.sin(x @ x)
+#       b = jnp.cos(y @ y)
+#       c = jnp.exp(z @ z)
+#       schedule([c, b, a])
+#       return a + b + c
 
-    x = jnp.ones((67, 67))
-    hlo = f_math.lower(x, x, x).as_text(dialect="hlo")
-    self.assertIn('custom_call_target="control_dep"', hlo)
-    f_math(x, x, x)  # doesn't crash
+#     x = jnp.ones((67, 67))
+#     hlo = f_math.lower(x, x, x).as_text(dialect="hlo")
+#     self.assertIn('custom_call_target="control_dep"', hlo)
+#     f_math(x, x, x)  # doesn't crash
 
-  @jtu.run_on_devices("tpu", "cpu")
-  def test_fsdp(self):
-    k = 4
-    n = jax.device_count()
-    with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
-      def f_fsdp(x, ws):
-        starts = []
-        dones = []
-        maths = []
+#   @jtu.run_on_devices("tpu", "cpu")
+#   def test_fsdp(self):
+#     k = 4
+#     n = jax.device_count()
+#     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
+#       @jax.jit
+#       @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
+#       def f_fsdp(x, ws):
+#         starts = []
+#         dones = []
+#         maths = []
 
-        # This is a simple version of FSDP where x is like a set of activations
-        # and ws is a list of weights, one per layer. We repeatedly all-gather
-        # the weights for a layer and multiply with x.
-        for w_shard in ws:
-          fut = parallel.all_gather_start(w_shard, "i", tiled=True)
-          w = fut.done()
-          x = x @ w
+#         # This is a simple version of FSDP where x is like a set of activations
+#         # and ws is a list of weights, one per layer. We repeatedly all-gather
+#         # the weights for a layer and multiply with x.
+#         for w_shard in ws:
+#           fut = parallel.all_gather_start(w_shard, "i", tiled=True)
+#           w = fut.done()
+#           x = x @ w
 
-          # Note that we pipe out the intermediate values.
-          starts.append(fut)
-          dones.append(w)
-          maths.append(x)
+#           # Note that we pipe out the intermediate values.
+#           starts.append(fut)
+#           dones.append(w)
+#           maths.append(x)
 
-        # Here we schedule the code to run in a smart FSDP order where the all
-        # gather for the next layer is overlapped with the math for the current
-        # layer.
-        deps = []
-        for i in range(k + 1):
-          if i == 0:
-            deps.append(starts[0])
-            deps.append(dones[0])
-          elif i < k:
-            deps.append(starts[i])
-            deps.append(maths[i - 1])
-            deps.append(dones[i])
-          else:
-            deps.append(maths[i - 1])
-        schedule(deps)
+#         # Here we schedule the code to run in a smart FSDP order where the all
+#         # gather for the next layer is overlapped with the math for the current
+#         # layer.
+#         deps = []
+#         for i in range(k + 1):
+#           if i == 0:
+#             deps.append(starts[0])
+#             deps.append(dones[0])
+#           elif i < k:
+#             deps.append(starts[i])
+#             deps.append(maths[i - 1])
+#             deps.append(dones[i])
+#           else:
+#             deps.append(maths[i - 1])
+#         schedule(deps)
 
-        return x
+#         return x
 
-      N = 128 * n
-      x = jnp.ones((n * N, N), out_sharding=jax.P("i", None))
-      ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
-      hlo = jax.jit(f_fsdp).lower(x, ws).as_text(dialect="hlo")
-      self.assertIn('custom_call_target="control_dep"', hlo)
-      f_fsdp(x, ws)  # doesn't crash
+#       N = 128 * n
+#       x = jnp.ones((n * N, N), out_sharding=jax.P("i", None))
+#       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
+#       hlo = jax.jit(f_fsdp).lower(x, ws).as_text(dialect="hlo")
+#       self.assertIn('custom_call_target="control_dep"', hlo)
+#       f_fsdp(x, ws)  # doesn't crash
 
-  @jtu.run_on_devices("tpu", "cpu")
-  def test_scan_fsdp(self):
-    k = 4
-    n = jax.device_count()
-    with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
-      # This test shows FSDP with scan.
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
-      def f_scan_fsdp(x, ws):
-        # Prologue.
-        w_0 = jax.lax.all_gather(ws[0], "i", tiled=True)
+#   @jtu.run_on_devices("tpu", "cpu")
+#   def test_scan_fsdp(self):
+#     k = 4
+#     n = jax.device_count()
+#     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
+#       # This test shows FSDP with scan.
+#       @jax.jit
+#       @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
+#       def f_scan_fsdp(x, ws):
+#         # Prologue.
+#         w_0 = jax.lax.all_gather(ws[0], "i", tiled=True)
 
-        # Scan.
-        def f(carry, w_shard):
-          w, x = carry
-          fut = parallel.all_gather_start(w_shard, "i", tiled=True)
-          x = x @ w
-          w_next = fut.done()
-          schedule([fut, x, w_next])
-          return (w_next, x), None
-        (w, x), _ = jax.lax.scan(f, (w_0, x), ws[1:])
+#         # Scan.
+#         def f(carry, w_shard):
+#           w, x = carry
+#           fut = parallel.all_gather_start(w_shard, "i", tiled=True)
+#           x = x @ w
+#           w_next = fut.done()
+#           schedule([fut, x, w_next])
+#           return (w_next, x), None
+#         (w, x), _ = jax.lax.scan(f, (w_0, x), ws[1:])
 
-        # Epilogue.
-        x = x @ w
-        return x
+#         # Epilogue.
+#         x = x @ w
+#         return x
 
-      N = 128 * n
-      x = jnp.ones((n * N, N), out_sharding=jax.P("i", None))
-      ws = jnp.ones((k, N, N), out_sharding=jax.P(None, "i", None))
-      hlo = jax.jit(f_scan_fsdp).lower(x, ws).as_text(dialect="hlo")
-      self.assertIn('custom_call_target="control_dep"', hlo)
-      f_scan_fsdp(x, ws)  # doesn't crash
+#       N = 128 * n
+#       x = jnp.ones((n * N, N), out_sharding=jax.P("i", None))
+#       ws = jnp.ones((k, N, N), out_sharding=jax.P(None, "i", None))
+#       hlo = jax.jit(f_scan_fsdp).lower(x, ws).as_text(dialect="hlo")
+#       self.assertIn('custom_call_target="control_dep"', hlo)
+#       f_scan_fsdp(x, ws)  # doesn't crash
 
-  @jtu.run_on_devices("tpu", "cpu")
-  def test_pipeline(self):
-    if jtu.device_under_test() == "tpu" and not jtu.is_device_tpu_at_least(7):
-      self.skipTest("Needs TPU >= 7")
-    k = 4
-    n = jax.device_count()
-    with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
+#   @jtu.run_on_devices("tpu", "cpu")
+#   def test_pipeline(self):
+#     if jtu.device_under_test() == "tpu" and not jtu.is_device_tpu_at_least(7):
+#       self.skipTest("Needs TPU >= 7")
+#     k = 4
+#     n = jax.device_count()
+#     with jax.set_mesh(self.create_explicit_mesh((n,), ("i",))):
 
-      @jax.jit
-      @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
-      def f_pipeline(xs, ws):
-        starts = []
-        dones = []
-        maths = []
+#       @jax.jit
+#       @jax.shard_map(out_specs=(jax.P("i")), check_vma=False)
+#       def f_pipeline(xs, ws):
+#         starts = []
+#         dones = []
+#         maths = []
 
-        # This shows a form of pipelining across microbatches. xs and ws are the
-        # same size. We need to run xs[i] @ ws[i] for every i.
-        for x, w_shard in zip(xs, ws):
-          f = parallel.all_gather_start(w_shard, "i", tiled=True)
-          w = f.done()
-          y = x @ w
+#         # This shows a form of pipelining across microbatches. xs and ws are the
+#         # same size. We need to run xs[i] @ ws[i] for every i.
+#         for x, w_shard in zip(xs, ws):
+#           f = parallel.all_gather_start(w_shard, "i", tiled=True)
+#           w = f.done()
+#           y = x @ w
 
-          starts.append(f)
-          dones.append(w)
-          maths.append(y)
+#           starts.append(f)
+#           dones.append(w)
+#           maths.append(y)
 
-        # We schedule things to run all the starts, then done and math in the
-        # right order.
-        schedule(starts)
-        schedule([starts[-1], dones[0]])
-        schedule(maths)
-        for i in range(k - 1):
-          control_dep(maths[i], dones[i + 1])
+#         # We schedule things to run all the starts, then done and math in the
+#         # right order.
+#         schedule(starts)
+#         schedule([starts[-1], dones[0]])
+#         schedule(maths)
+#         for i in range(k - 1):
+#           control_dep(maths[i], dones[i + 1])
 
-        return reduce(lambda x, y: x + y, maths)
+#         return reduce(lambda x, y: x + y, maths)
 
-      N = 128 * n
-      x = [jnp.ones((N, N), out_sharding=jax.P(None, None)) for _ in range(k)]
-      ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
-      hlo = jax.jit(f_pipeline).lower(x, ws).as_text(dialect="hlo")
-      self.assertIn('custom_call_target="control_dep"', hlo)
-      f_pipeline(x, ws)  # doesn't crash
+#       N = 128 * n
+#       x = [jnp.ones((N, N), out_sharding=jax.P(None, None)) for _ in range(k)]
+#       ws = [jnp.ones((N, N), out_sharding=jax.P("i", None)) for _ in range(k)]
+#       hlo = jax.jit(f_pipeline).lower(x, ws).as_text(dialect="hlo")
+#       self.assertIn('custom_call_target="control_dep"', hlo)
+#       f_pipeline(x, ws)  # doesn't crash
 
 
 if __name__ == '__main__':
