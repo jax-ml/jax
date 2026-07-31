@@ -523,9 +523,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
     self.assertRegex(hlo_text, hlo_pattern)
 
     out = j_scaled_matmul(a_q, b_q, a_s, b_s)
-    out_ref = jnp.einsum(
-        "BMK,BNK->BMN", a_dq, b_dq
-    )
+    out_ref = jnp.einsum("BMK,BNK->BMN", a_dq, b_dq, precision="highest")
     self.assertArraysAllClose(
         out, out_ref.astype(dtype), rtol=1e-2, atol=5e-2
     )

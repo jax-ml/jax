@@ -306,12 +306,22 @@ class EinsumTest(jtu.JaxTestCase):
         for d in range(D):
           for k in range(K):
             for t in range(T):
-                s += S[n,t,k] * W[k,d] * V[d,c]
+              s += S[n,t,k] * W[k,d] * V[d,c]
         L[n,c] = s
 
     path = jnp.einsum_path('ntk,kd,dc->nc', S, W, V, optimize='optimal')[0]
-    self.assertAllClose(L, jnp.einsum('ntk,kd,dc->nc', S, W, V, optimize=path),
-                        check_dtypes=False)
+    self.assertAllClose(
+        L,
+        jnp.einsum(
+            'ntk,kd,dc->nc',
+            S,
+            W,
+            V,
+            optimize=path,
+            precision=lax.Precision.HIGHEST,
+        ),
+        check_dtypes=False,
+    )
 
   def test_contraction_broadcasting(self):
     r = self.rng()
@@ -406,7 +416,12 @@ class EinsumTest(jtu.JaxTestCase):
   def test_einsum_optimization_modes(self, signature, shapes, optimize, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
-    jnp_fun = partial(jnp.einsum, signature, optimize=optimize)
+    jnp_fun = partial(
+        jnp.einsum,
+        signature,
+        optimize=optimize,
+        precision=lax.Precision.HIGH,
+    )
     np_fun = partial(np.einsum, signature)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1E-4)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=1E-4)
@@ -427,7 +442,9 @@ class EinsumTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype) for shape in shapes]
     def jnp_fun(*args, signature=signature, optimize=optimize):
       path, _ = jnp.einsum_path(signature, *args, optimize=optimize)
-      return jnp.einsum(signature, *args, optimize=path)
+      return jnp.einsum(
+          signature, *args, optimize=path, precision=lax.Precision.HIGH
+      )
     np_fun = partial(np.einsum, signature)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1E-4)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=1E-4)
