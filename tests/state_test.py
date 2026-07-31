@@ -2370,6 +2370,176 @@ class RefTransformTest(jtu.JaxTestCase):
     self.assertEqual(f().shape, (1,))
     self.assertAllClose(f(), jnp.array([5.0]))
 
+  def test_newaxis_read(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(4)
+      ref = jax.new_ref(x)
+      return ref[None]
+    self.assertAllClose(f(), jnp.arange(4)[None])
+
+  def test_newaxis_read_multiple(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros((2, 3))
+      ref = jax.new_ref(x)
+      return ref[None, :, None, 1:2]
+    self.assertAllClose(f(), jnp.zeros((2, 3))[None, :, None, 1:2])
+
+  def test_newaxis_write(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      ref[None] = jnp.ones((1, 4))
+      return ref[...]
+    self.assertAllClose(f(), jnp.ones(4))
+
+  def test_newaxis_addupdate(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      ref[None] += jnp.ones((1, 4))
+      return ref[...]
+    self.assertAllClose(f(), jnp.ones(4))
+
+  def test_newaxis_view(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      view = ref.at[None]
+      view[...] = jnp.full((1, 4), 5.0)
+      return ref[...]
+    self.assertAllClose(f(), jnp.full(4, 5.0))
+
+  def test_newaxis_swap(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(4, dtype=jnp.float32)
+      ref = jax.new_ref(x)
+      view = ref.at[None]
+      old_val = view.swap(jnp.ones((1, 4), dtype=jnp.float32))
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertAllClose(old_val, jnp.arange(4, dtype=jnp.float32)[None])
+    self.assertAllClose(new_val, jnp.ones(4, dtype=jnp.float32))
+
+  def test_newaxis_between_advanced_indices_errors(self):
+    x = jnp.zeros((3, 4, 5))
+    ref = jax.new_ref(x)
+    arr1, arr2 = jnp.array([0, 2]), jnp.array([1, 3])
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Advanced indexing separated by newaxis after sliced dimensions",
+    ):
+      _ = ref[:, arr1, None, arr2]
+
+  def test_scalar_bool_read(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(4)
+      ref = jax.new_ref(x)
+      return ref[True]
+    self.assertAllClose(f(), jnp.arange(4)[True])
+
+  def test_scalar_bool_false_raises(self):
+    ref = jax.new_ref(jnp.arange(4))
+    with self.assertRaisesRegex(
+        IndexError, "Indexing Ref with `False` is not supported"
+    ):
+      _ = ref[False]
+
+  def test_scalar_bool_write(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      ref[True] = jnp.ones((1, 4))
+      return ref[...]
+    self.assertAllClose(f(), jnp.ones(4))
+
+  def test_ellipsis_with_newaxis(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(24).reshape((2, 3, 4))
+      ref = jax.new_ref(x)
+      return ref[None, ..., None], ref[..., None, 0]
+    out1, out2 = f()
+    x = jnp.arange(24).reshape((2, 3, 4))
+    self.assertAllClose(out1, x[None, ..., None])
+    self.assertAllClose(out2, x[..., None, 0])
+
+  def test_bool_array_indexing(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(6).reshape((2, 3))
+      ref = jax.new_ref(x)
+      mask = np.array([[True, False, True], [False, True, False]])
+      return ref[mask]
+    x = jnp.arange(6).reshape((2, 3))
+    mask = np.array([[True, False, True], [False, True, False]])
+    self.assertAllClose(f(), x[mask])
+
+  def test_bool_array_write(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      mask = np.array([True, False, True, False])
+      ref[mask] = jnp.array([10.0, 30.0])
+      return ref[...]
+    self.assertAllClose(f(), jnp.array([10.0, 0.0, 30.0, 0.0]))
+
+  def test_bool_array_swap(self):
+    @jax.jit
+    def f():
+      x = jnp.array([10.0, 20.0, 30.0, 40.0])
+      ref = jax.new_ref(x)
+      mask = np.array([True, False, True, False])
+      old_val = ref.at[mask].swap(jnp.array([1.0, 3.0]))
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertAllClose(old_val, jnp.array([10.0, 30.0]))
+    self.assertAllClose(new_val, jnp.array([1.0, 20.0, 3.0, 40.0]))
+
+  def test_non_contiguous_advanced_indexing_with_newaxis(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(24, dtype=jnp.float32).reshape((2, 3, 4))
+      ref = jax.new_ref(x)
+      arr1, arr2 = jnp.array([0, 1]), jnp.array([1, 2])
+      view = ref[None, arr1, :, arr2]
+      return view[...]
+    x = jnp.arange(24, dtype=jnp.float32).reshape((2, 3, 4))
+    arr1, arr2 = jnp.array([0, 1]), jnp.array([1, 2])
+    self.assertAllClose(f(), x[None, arr1, :, arr2])
+
+  def test_scalar_ref_newaxis(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array(5.0))
+      return ref[None], ref[None, None]
+    out1, out2 = f()
+    self.assertEqual(out1.shape, (1,))
+    self.assertAllClose(out1, jnp.array([5.0]))
+    self.assertEqual(out2.shape, (1, 1))
+    self.assertAllClose(out2, jnp.array([[5.0]]))
+
+  def test_explicit_none_in_primitives(self):
+    @jax.jit
+    def f():
+      ref = jax.new_ref(jnp.array([1.0, 2.0, 3.0, 4.0]))
+      read_val = ref_get(ref, None)
+      ref_set(ref, None, jnp.ones((1, 4)))
+      ref_addupdate(ref, None, jnp.full((1, 4), 2.0))
+      return read_val, ref[...]
+    read_val, new_val = f()
+    self.assertEqual(read_val.shape, (1, 4))
+    self.assertAllClose(read_val, jnp.array([[1.0, 2.0, 3.0, 4.0]]))
+    self.assertEqual(new_val.shape, (4,))
+    self.assertAllClose(new_val, jnp.full(4, 3.0))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

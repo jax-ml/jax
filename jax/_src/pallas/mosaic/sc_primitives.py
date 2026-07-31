@@ -336,7 +336,7 @@ def load_gather(
     The gathered array.
   """
   ref, transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "load_gather"
+      ref, (), "load_gather"
   )
   flat_args, tree = jax.tree.flatten((ref, transforms, indices, mask))
   return gather_p.bind(*flat_args, tree=tree)
@@ -426,7 +426,7 @@ def store_scatter(
   if not indices:
     raise ValueError("Indices must not be empty")
   ref, transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "store_scatter"
+      ref, (), "store_scatter"
   )
   flat_args, tree = jax.tree.flatten((ref, transforms, indices, x, mask))
   _ = scatter_p.bind(*flat_args, tree=tree, add=False)
@@ -454,7 +454,7 @@ def addupdate_scatter(
   if not indices:
     raise ValueError("Indices must not be empty")
   ref, transforms = state_primitives.get_ref_and_transforms(
-      ref, None, "addupdate_scatter"
+      ref, (), "addupdate_scatter"
   )
   flat_args, tree = jax.tree.flatten((ref, transforms, indices, x, mask))
   _ = scatter_p.bind(*flat_args, tree=tree, add=True)

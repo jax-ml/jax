@@ -267,7 +267,7 @@ def load(
   """
   return pallas_primitives.load(
       ref,
-      None,
+      (),
       mask=mask,
       other=other,
       cache_modifier=cache_modifier,
@@ -289,7 +289,7 @@ def store(
   """
   return pallas_primitives.store(
       ref,
-      None,
+      (),
       val,
       mask=mask,
       eviction_policy=eviction_policy,
