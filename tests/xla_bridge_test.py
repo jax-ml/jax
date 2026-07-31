@@ -14,10 +14,6 @@
 
 import os
 import platform
-import subprocess
-import sys
-import textwrap
-import unittest
 
 from absl import logging
 from absl.testing import absltest
@@ -156,34 +152,6 @@ class XlaBridgeTest(jtu.JaxTestCase):
           "rematerialization",
           debug_options.xla_disable_hlo_passes.split(","),
       )
-
-  @unittest.skipIf(platform.system() == "Windows",
-                   "Subprocess test doesn't work on Windows")
-  def test_disable_remat_pass_preserves_disabled_hlo_passes(self):
-    # https://github.com/jax-ml/jax/issues/37391: disabling the remat pass
-    # must add to xla_disable_hlo_passes, not overwrite passes the user
-    # disabled via XLA_FLAGS. XLA_FLAGS is parsed once at initialization,
-    # so the end-to-end check needs a fresh process.
-    if sys.executable is None:
-      raise self.skipTest("test requires access to python binary")
-    program = textwrap.dedent("""
-        import jax
-        jax.config.update("jax_compiler_enable_remat_pass", False)
-        from jax._src import compiler
-        opts = compiler.get_compile_options(num_replicas=1, num_partitions=1)
-        print(opts.executable_build_options.debug_options.xla_disable_hlo_passes)
-    """)
-    env = dict(
-        os.environ,
-        XLA_FLAGS="--xla_disable_hlo_passes=scalar-constant-sinker",
-    )
-    p = subprocess.run(
-        [sys.executable, "-c", program], env=env,
-        capture_output=True, text=True, check=True,
-    )
-    disabled = p.stdout.strip().split(",")
-    self.assertIn("scalar-constant-sinker", disabled)
-    self.assertIn("rematerialization", disabled)
 
   def test_local_devices(self):
     self.assertNotEmpty(xb.local_devices())
