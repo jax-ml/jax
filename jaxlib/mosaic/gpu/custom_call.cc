@@ -1674,6 +1674,9 @@ extern "C" {
 
 __attribute__((visibility("default"))) void** MosaicGpuCompile(
     const char* module, int num_module_bytes) {
+  // We should make sure that NVPTX target is initialized before
+  // getting cuda compute capability
+  mosaic::gpu::EnsureLLVMNVPTXTargetIsRegistered();
   std::string module_str(module, num_module_bytes);
   auto cc = GetCudaComputeCapability();
   if (!cc.ok()) {
