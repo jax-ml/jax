@@ -20,7 +20,7 @@ from collections.abc import Callable, Hashable, Sequence
 import dataclasses
 import functools
 import math
-from typing import Any, TypeVar
+from typing import Any
 
 import jax
 from jax import lax
@@ -54,8 +54,6 @@ from jax._src.util import foreach
 from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
-
-_T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -203,11 +201,11 @@ def _bcast(
   return x, y
 
 
-triton_lowering_rules = {}
+triton_lowering_rules: dict[jax_core.Primitive, Callable[..., Any]] = {}
 
 
-def register_lowering(primitive: jax_core.Primitive) -> Callable[[_T], _T]:
-  def wrapper(fn):
+def register_lowering(primitive: jax_core.Primitive) -> Callable[..., Any]:
+  def wrapper[T: Callable[..., Any]](fn: T) -> T:
     triton_lowering_rules[primitive] = fn
     return fn
   return wrapper

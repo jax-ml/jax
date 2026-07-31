@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 import enum
 import functools
 import inspect
-from typing import Any, TypeAlias, TypeVar, overload
+from typing import Any, overload
 
 import jax
 from jax import api_util
@@ -47,10 +47,9 @@ import jax.numpy as jnp
 
 _ensure_ir_value = tc_lowering._ensure_mlir_value
 
-TransformedRef: TypeAlias = state_types.TransformedRef
-Ref: TypeAlias = state_types.AbstractRef | TransformedRef
+TransformedRef = state_types.TransformedRef
+Ref = state_types.AbstractRef | TransformedRef
 
-_T = TypeVar("_T")
 
 load_p = jax_core.Primitive("load")
 load_p.is_effectful = lambda params: True
@@ -814,7 +813,7 @@ parallel_loop_p.multiple_results = True
 def _parallel_loop_abstract_eval(*args, jaxpr, tree, **params):
   del params  # Unused.
   _, _, _, _, carries = tree.unflatten(args)
-  if any(isinstance(c, (Ref, TransformedRef)) for c in carries):
+  if any(isinstance(c, Ref) for c in carries):
     raise TypeError(f"Carried values may not be refs, but got: {carries}")
   updated_effects = set()
   for eff in jax_core.positional_effects(jaxpr):
@@ -874,14 +873,14 @@ def parallel_loop(
 
 
 @overload
-def parallel_loop(
+def parallel_loop[T](
     lower: jax.typing.ArrayLike,
     upper: jax.typing.ArrayLike,
     step: jax.typing.ArrayLike = ...,
     *,
     unroll: int = ...,
-    carry: _T,
-) -> Callable[[Callable[[jax.Array, _T], _T]], _T]:
+    carry: T,
+) -> Callable[[Callable[[jax.Array, T], T]], T]:
   ...
 
 

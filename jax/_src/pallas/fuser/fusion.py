@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Generic, ParamSpec, TypeVar
+from typing import Any
 from collections.abc import Callable
 
 import jax
@@ -25,12 +25,9 @@ from jax._src import util
 
 safe_map = util.safe_map
 
-A = ParamSpec("A")
-K = TypeVar("K")
-
 
 @dataclasses.dataclass
-class Fusion(Generic[A, K]):
+class Fusion[**A, K]:
 
   func: Callable[A, K]
   in_type: tuple[tuple[Any, ...], dict[str, Any]]
