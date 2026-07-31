@@ -1,3 +1,5 @@
+.. _pallas_mosaic_gpu:
+
 Pallas:Mosaic GPU
 =================
 Backend specific documentation for the Mosaic GPU backend.
