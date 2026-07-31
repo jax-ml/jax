@@ -232,7 +232,9 @@ class LoweringContext:
     if not self.grid_names:
       yield
       return
-    grid_names = self.grid_names
+    grid_names = tuple(
+        n for i, n in enumerate(self.grid_names) if i not in self.vmapped_dims
+    )
     valid_grid_sizes = tuple(
         d for i, d in enumerate(self.grid_sizes) if i not in self.vmapped_dims
     )

@@ -2703,6 +2703,24 @@ class PallasCallNamedGridTest(ptu.PallasTest):
         y, x + jnp.arange(4, dtype=jnp.int32)[:, None, None]
     )
 
+  def test_vmap_named_grid(self):
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] * 2
+
+    def f(x):
+      return self.pallas_call(
+          kernel,
+          out_shape=x,
+          in_specs=[pl.BlockSpec((1, 128), lambda i: (i, 0))],
+          out_specs=pl.BlockSpec((1, 128), lambda i: (i, 0)),
+          grid=(("tile", 1),),
+      )(x)
+
+    x = jnp.ones((2, 1, 128))
+    y = jax.vmap(f)(x)
+    np.testing.assert_array_equal(y, x * 2)
+
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True

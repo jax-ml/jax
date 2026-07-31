@@ -709,8 +709,16 @@ def _pallas_call_batching_rule(
   axis_size_is_dynamic = not jax_core.is_constant_dim(axis_size)
   new_grid_dim = pallas_core.dynamic_grid_dim if axis_size_is_dynamic else axis_size
 
+  # The batch dimension is prepended to the grid, so grid_names (if present)
+  # must grow to match. The batch dimension is unnamed.
+  batched_grid_names = (
+      None if grid_mapping.grid_names is None
+      else (None, *grid_mapping.grid_names)
+  )
+
   batched_grid_mapping = grid_mapping.replace(
       grid=(new_grid_dim, *grid_mapping.grid),
+      grid_names=batched_grid_names,
       block_mappings=tuple(batched_block_mappings),
       index_map_avals=tuple(batched_index_map_avals),
       index_map_tree=batched_index_map_tree,
