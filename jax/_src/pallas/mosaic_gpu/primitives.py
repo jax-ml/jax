@@ -841,7 +841,6 @@ def _copy_gmem_to_smem_lowering(
     collective_axes,
     leader_tracked,
     oob_mode,
-    impl,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -923,8 +922,28 @@ def _copy_gmem_to_smem_lowering(
           f" cluster size {ctx.launch_ctx.cluster_size}."
       )
 
+  # TMA is only available on Hopper and newer. On older architectures we fall
+  # back to the cp.async implementation.
+  is_cp_async = mgpu.utils.get_arch().major < 9
+  if is_cp_async:
+    if collective_axes is not None:
+      raise ValueError("Only the TMA implementation supports collective copies")
+    if leader_tracked is not None:
+      raise ValueError(
+          "Only the TMA implementation supports leader_tracked copies"
+      )
+    # cp.async does not predicate out-of-bounds accesses, so the caller has to
+    # guarantee that the copy stays in bounds.
+    if oob_mode != OOBFillMode.PROMISE_IN_BOUNDS:
+      raise ValueError(
+          "The cp.async implementation only supports "
+          "oob_mode=OOBFillMode.PROMISE_IN_BOUNDS"
+      )
+  else:
+    if oob_mode is None:
+      oob_mode = OOBFillMode.ZEROS
+
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    is_cp_async = impl == "cp_async"
     if not is_cp_async:
       if bytes % WARPGROUP_SIZE:
         raise NotImplementedError(
@@ -1000,7 +1019,7 @@ def _copy_gmem_to_smem_lowering(
       barrier.arrive()
     return ()
   i32 = ir.IntegerType.get_signless(32)
-  if impl == "cp_async":
+  if is_cp_async:
     raise NotImplementedError(
         "cp_async implementation is not supported with Warpgroup lowering"
     )
@@ -1056,16 +1075,18 @@ def copy_gmem_to_smem(
     dst: _Ref,
     barrier: _Ref,
     *,
-    impl: Literal["tma", "cp_async"] = "tma",
     collective_axes: str | tuple[str, ...] | None = None,
     leader_tracked: CopyPartition | None = None,
     oob_mode: OOBFillMode | None = None,
 ) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
-  When ``impl="tma"`` and ``collective_axes`` is specified, the copy involves
-  multiple CUDA blocks in the cluster. The value of ``leader_tracked``
-  determines the behavior:
+  The underlying copy implementation is selected automatically based on the
+  target architecture: TMA on Hopper and newer, and ``cp.async`` on
+  older architectures.
+
+  When ``collective_axes`` is specified, the copy involves multiple CUDA blocks
+  in the cluster. The value of ``leader_tracked`` determines the behavior:
 
   * ``None`` (**multicast**): all CUDA blocks sharing the same index along the
     collective axes receive the same data from ``src``.
@@ -1087,19 +1108,20 @@ def copy_gmem_to_smem(
     src: The source Ref. Must be in GMEM.
     dst: The destination Ref. Must be in SMEM.
     barrier: The barrier to use for tracking completion of the copy.
-    impl: The underlying copy implementation to use: ``"cp_async"`` or
-      ``"tma"``. Defaults to ``"tma"``.
     collective_axes: The collective axes to use for the copy. Only a single
       collective axis is supported when ``leader_tracked`` is specified (but
-      the axis can be composite). Only supported when ``impl="tma"``.
+      the axis can be composite). Only supported with the TMA implementation
+      (Hopper and newer).
     leader_tracked: If specified, only the leader block in the cluster will
       observe the completion of the copy. If
       ``CopyPartition.PARTITIONED(axis)``, performs a partitioned collective
       copy along the given axis. If ``CopyPartition.REPLICATED``, all blocks
-      load the same data. Only supported when ``impl="tma"``.
+      load the same data. Only supported with the TMA implementation (Hopper
+      and newer).
     oob_mode: The optional out-of-bounds fill mode. Can be
       ``OOBFillMode.UNDEFINED``, ``OOBFillMode.PROMISE_IN_BOUNDS`` or
-      ``OOBFillMode.ZEROS``. Only supported when ``impl="tma"``.
+      ``OOBFillMode.ZEROS`` for the TMA implementation, and only
+      ``OOBFillMode.PROMISE_IN_BOUNDS`` for the ``cp.async`` one.
 
   See also:
     :func:`jax.experimental.pallas.mosaic_gpu.barrier_arrive`
@@ -1123,27 +1145,12 @@ def copy_gmem_to_smem(
   flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
       barrier_transforms
   )
-  if impl == "cp_async":
-    if collective_axes is not None:
-      raise ValueError(
-          "`collective_axes` is not supported with `impl='cp_async'`"
-      )
-    if leader_tracked is not None:
-      raise ValueError(
-          "`leader_tracked` is not supported with `impl='cp_async'`"
-      )
-    if oob_mode is not None:
-      raise ValueError(
-          "`oob_mode` is not supported with `impl='cp_async'`"
-      )
   if isinstance(collective_axes, str):
     collective_axes = (collective_axes,)
   if leader_tracked is not None and collective_axes is None:
     raise ValueError(
         "`collective_axes` must be specified when `leader_tracked` is set"
     )
-  if impl == "tma" and oob_mode is None:
-    oob_mode = OOBFillMode.ZEROS
   copy_gmem_to_smem_p.bind(
       src,
       dst,
@@ -1157,7 +1164,6 @@ def copy_gmem_to_smem(
       collective_axes=collective_axes,
       leader_tracked=leader_tracked,
       oob_mode=oob_mode,
-      impl=impl,
   )
   return None
 
