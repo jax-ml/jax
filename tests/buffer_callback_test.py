@@ -96,6 +96,7 @@ class BufferCallbackTest(jtu.JaxTestCase):
       dtype=jtu.dtypes.all, command_buffer_compatible=[True, False]
   )
   @jtu.run_on_devices("gpu")
+  @jtu.skip_on_devices("oneapi")
   def test_cuda_array_interface(self, dtype, command_buffer_compatible):
 
     def callback(ctx, out, arg):

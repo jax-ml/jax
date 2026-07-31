@@ -295,6 +295,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kXlaBufferPythonGpuCallback,
 #ifdef JAX_GPU_CUDA
     (jax::XlaBufferCallback<kDLCUDA>),
+#elif defined(JAX_GPU_ONEAPI)
+    (jax::XlaBufferCallback<kDLOneAPI>),
 #else
     (jax::XlaBufferCallback<kDLROCM>),
 #endif
@@ -310,6 +312,8 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kXlaBufferPythonGpuCallbackCmdBuffer,
 #ifdef JAX_GPU_CUDA
     (jax::XlaBufferCallback<kDLCUDA>),
+#elif defined(JAX_GPU_ONEAPI)
+    (jax::XlaBufferCallback<kDLOneAPI>),
 #else
     (jax::XlaBufferCallback<kDLROCM>),
 #endif
