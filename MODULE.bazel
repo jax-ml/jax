@@ -14,7 +14,7 @@ bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
 bazel_dep(name = "pybind11_bazel", version = "3.0.0")
 bazel_dep(name = "rules_cc", version = "0.2.17")
-bazel_dep(name = "rules_python", version = "1.8.5")
+bazel_dep(name = "rules_python", version = "2.2.0")
 bazel_dep(name = "zlib", version = "1.3.2")
 
 # TODO: use a released version when available
@@ -31,6 +31,8 @@ bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
     integrity = "sha256-WBEPAgpbRrQFmLSB3jw8WbdgXUeFmVJ+hks/m/atcJU=",
+    patch_strip = 1,
+    patches = ["//third_party/xla:rules_python_220.patch"],
     strip_prefix = "xla-08bafa2093fecd3917ca261ad73f680e6c6e4be8",
     urls = ["https://github.com/openxla/xla/archive/08bafa2093fecd3917ca261ad73f680e6c6e4be8.tar.gz"],
 )
@@ -96,9 +98,8 @@ single_version_override(
     patches = [
         # Upstreamed at https://github.com/bazel-contrib/rules_python/pull/3768
         "//third_party/py:rules_python_local_wheel.patch",
-        "//third_party/py:rules_python_site_init_retry.patch",
     ],
-    version = "1.8.5",
+    version = "2.2.0",
 )
 
 single_version_override(
