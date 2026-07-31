@@ -22,13 +22,17 @@ _cuhybrid = import_from_plugin("cuda", "_hybrid")
 _hipsolver = import_from_plugin("rocm", "_solver")
 _hiphybrid = import_from_plugin("rocm", "_hybrid")
 
+_oneapisolver = import_from_plugin("oneapi", "_solver")
+
 
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
   registrations: dict[str, list[tuple[str, Any, int]]] = {
       "CUDA": [],
       "ROCM": [],
+      "ONEAPI": [],
   }
-  for platform, module in [("CUDA", _cusolver), ("ROCM", _hipsolver)]:
+  for platform, module in [("CUDA", _cusolver), ("ROCM", _hipsolver),
+                           ("ONEAPI", _oneapisolver)]:
     if module:
       registrations[platform].extend(
           (name, value, int(name.endswith("_ffi")))
@@ -44,7 +48,7 @@ def registrations() -> dict[str, list[tuple[str, Any, int]]]:
 
 def batch_partitionable_targets() -> list[str]:
   targets: list[str] = []
-  for module in [_cusolver, _hipsolver]:
+  for module in [_cusolver, _hipsolver, _oneapisolver]:
     if module:
       targets.extend(
           name for name in module.registrations() if name.endswith("_ffi")

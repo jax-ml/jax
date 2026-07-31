@@ -112,6 +112,27 @@ enum SyclMemcpyKind {
 absl::Status SyclMemcpyAsync(void *dst, const void *src, size_t byte_count,
                              SyclMemcpyKind kind, ::sycl::queue *stream);
 
+absl::Status SyclMemsetAsync(void *ptr, int value, size_t byte_count,
+                             ::sycl::queue *stream);
+
+template <typename T>
+absl::Status SyclMemfillAsync(T *ptr, T value, size_t count,
+                              ::sycl::queue *stream) {
+  if (count == 0) {
+    return absl::OkStatus();
+  }
+  if (ptr == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemfillAsync: null destination pointer (ptr); cannot fill it");
+  }
+  if (stream == nullptr) {
+    return absl::InvalidArgumentError(
+        "SyclMemfillAsync: null SYCL queue (sycl::queue* stream); cannot "
+        "submit the fill");
+  }
+  return TryCatchToStatus([&] { stream->fill<T>(ptr, value, count); });
+}
+
 // TODO(Intel-tf): Asynchronous error handling.
 // Placeholder for gpuGetLastError. SYCL has no equivalent; currently returns
 // OkStatus so that call sites can compile without #ifdef guards.

@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# INTEL ONEAPI plugin extension (glue only, no GPU kernels)
-
+# INTEL ONEAPI plugin extension and GPU kernels
+load("@local_config_sycl//sycl:build_defs.bzl", "sycl_library")
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "nanobind_extension",
@@ -76,6 +77,53 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+sycl_library(
+    name = "oneapisolver_kernels_ffi",
+    srcs = ["oneapi_solver_kernels_ffi.cc"],
+    hdrs = ["//jaxlib/gpu:solver_kernels_ffi.h"],
+    features = ["-use_header_modules"],
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_gpu_runtime",
+        ":oneapi_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_solver",
+    srcs = ["//jaxlib/gpu:solver.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_solver",
+    deps = [
+        ":oneapi_gpu_kernel_helpers",
+        ":oneapi_vendor",
+        ":oneapisolver_kernels_ffi",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@oneapi//:headers",
+        "@nanobind",
+        "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+py_library(
+    name = "oneapi_gpu_support",
+    deps = [
+        ":_solver",
     ],
 )
 

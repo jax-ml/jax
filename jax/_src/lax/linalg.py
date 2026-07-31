@@ -736,7 +736,8 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array, *,
 
 # Primitive registration helper functions
 
-_platform_prefix_map = {"cpu": "cpu", "cuda": "cu", "rocm": "hip"}
+_platform_prefix_map = {"cpu": "cpu", "cuda": "cu", "rocm": "hip",
+                        "oneapi": "oneapi"}
 
 def register_cpu_gpu_lowering(
     prim, lowering_rule, supported_platforms=("cpu", "cuda", "rocm")
@@ -917,7 +918,7 @@ ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
 register_cpu_gpu_lowering(cholesky_p, _cholesky_gpu_lowering,
-                          supported_platforms=("cuda", "rocm"))
+                          supported_platforms=("cuda", "rocm", "oneapi"))
 
 
 # Cholesky update

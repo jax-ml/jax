@@ -905,7 +905,15 @@ struct GpuErrorTraits<miopenStatus_t> {
 
 #elif defined(JAX_GPU_ONEAPI)
 
+#include <complex>
+
 #include "jaxlib/oneapi/oneapi_gpu_runtime.h"
+
+typedef std::complex<float> gpuComplex;
+typedef std::complex<double> gpuDoubleComplex;
+
+typedef std::complex<float> gpublasComplex;
+typedef std::complex<double> gpublasDoubleComplex;
 
 #define JAX_GPU_NAMESPACE oneapi
 #define JAX_GPU_PREFIX "oneapi"
