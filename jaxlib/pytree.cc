@@ -398,6 +398,7 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
         for (nb::handle entry : in) {
           out.append(nb::make_tuple(
               make_nb_class<GetAttrKey>(nb::str(*field_iter)), entry));
+          ++field_iter;
         }
         return nb::make_tuple(std::move(out), x.type());
       }
