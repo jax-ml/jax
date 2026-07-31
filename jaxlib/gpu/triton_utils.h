@@ -24,6 +24,7 @@ limitations under the License.
 
 namespace jax::JAX_GPU_NAMESPACE {
 
+absl::StatusOr<std::string> ZlibCompress(std::string_view uncompressed);
 absl::StatusOr<std::string> ZlibUncompress(std::string_view compressed);
 absl::StatusOr<std::string> GetTritonKernelCallName(std::string_view opaque);
 absl::StatusOr<std::string> GetTritonKernelCallSerializedMetadata(

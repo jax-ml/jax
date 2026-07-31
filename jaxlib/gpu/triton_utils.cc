@@ -27,6 +27,20 @@ limitations under the License.
 
 namespace jax::JAX_GPU_NAMESPACE {
 
+absl::StatusOr<std::string> ZlibCompress(std::string_view uncompressed) {
+  std::string compressed;
+  uLongf dest_len = compressBound(uncompressed.size());
+  compressed.resize(dest_len);
+  int ret = compress(reinterpret_cast<Bytef*>(compressed.data()), &dest_len,
+                     reinterpret_cast<const Bytef*>(uncompressed.data()),
+                     uncompressed.size());
+  if (ret != Z_OK) {
+    return absl::InternalError("Failed to compress data with zlib.");
+  }
+  compressed.resize(dest_len);
+  return compressed;
+}
+
 absl::StatusOr<std::string> ZlibUncompress(std::string_view compressed) {
   std::string data;
   uLongf dest_len = 5 * compressed.size();
