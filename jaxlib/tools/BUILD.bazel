@@ -547,10 +547,11 @@ collect_data_files(
         "@local_config_rocm//rocm:hipfft",
         "@local_config_rocm//rocm:hiprand",
         "@local_config_rocm//rocm:hipsolver",
-        "@local_config_rocm//rocm:rccl",
-        "@local_config_rocm//rocm:rocsolver",
         "@local_config_rocm//rocm:miopen",
+        "@local_config_rocm//rocm:rccl",
         "@local_config_rocm//rocm:rocm_smi",
+        "@local_config_rocm//rocm:rocprofiler_sdk",
+        "@local_config_rocm//rocm:rocsolver",
     ],
 )
 
