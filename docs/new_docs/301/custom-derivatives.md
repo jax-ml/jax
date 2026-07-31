@@ -1275,7 +1275,22 @@ the forward computation:
   each logged key maps to a `CondSum` recording which branch ran, with one
   slot per branch (example below);
 * out of a transposed `shard_map`, stacked along a leading mesh axis (a
-  per-shard scalar becomes a vector of shape `(num_shards,)`).
+  per-shard scalar becomes a vector of shape `(num_shards,)`);
+* out of a rematerialized (`jax.remat`, i.e. `jax.checkpoint`) backward
+  pass, unchanged — rematerialization affects what's saved versus
+  recomputed, not what's logged.
+
+```{note}
+Backward-pass logging doesn't work nicely with `jax.remat` unless you set
+`JAX_REMAT3=1` (or `jax.config.update('jax_remat3', True)`). The classic
+default remat implementation differentiates rematted code through `jvp`
+rules, so a `vjp_bwd` rule — where logs originate — never runs inside a
+rematted region: a hijax primitive with only `vjp_fwd`/`vjp_bwd` rules
+can't be differentiated under it at all. Under the new implementation
+(`jax_remat3`), rematted code is differentiated through the same `vjp`
+rules as everywhere else, and logs flow out as described above. This
+caveat disappears once `jax_remat3` becomes the default.
+```
 
 For example, with a `scan`:
 
@@ -1313,11 +1328,11 @@ branch that logs the key but wasn't taken (here `'neg'`), and `None` for a
 branch that doesn't log the key at all. Branches needn't agree on keys or
 types, and nested `cond`s nest their `CondSum`s.
 
-A rule's log return must be a dict (or `None`, meaning no logs). A few
-transposed contexts don't yet plumb logs through — `jax.remat`,
-`jax.custom_vjp` backward rules, and `lax.while_loop` — and logs inside
-them are silently dropped, consistent with drop-by-default. For plumbing
-data out of a backward pass with mutable refs instead, see {doc}`refs`.
+A rule's log return must be a dict (or `None`, meaning no logs). A couple
+of transposed contexts don't yet plumb logs through — `jax.custom_vjp`
+backward rules and `lax.while_loop` — and logs inside them are silently
+dropped, consistent with drop-by-default. For plumbing data out of a
+backward pass with mutable refs instead, see {doc}`refs`.
 
 (jax-301-structured-residuals)=
 

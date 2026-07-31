@@ -2062,6 +2062,110 @@ class HijaxTest(jtu.JaxTestCase):
       (ct,) = f_vjp(1.0)  # plain call drops the logs without error
       self.assertAllClose(ct, 2 * jnp.cos(1.0))
 
+  def test_backward_pass_logging_remat3(self):
+    # Under remat3, a vjp_bwd rule's logs flow out of a rematted computation's
+    # backward pass.
+    class Square(VJPHiPrimitive):
+      def __init__(self, in_aval, tag):
+        self.in_avals = (in_aval,)
+        self.out_aval = in_aval
+        self.params = dict(tag=tag)
+        super().__init__()
+
+      def expand(self, x):
+        return x ** 2
+
+      def vjp_fwd(self, nzs_in, x):
+        return self(x), x
+
+      def vjp_bwd(self, res, t, x_accum):
+        if isinstance(x_accum, ad.GradAccum):
+          x_accum.accum(t * 2.0 * res)
+        return {self.tag: {'x': res, 'ct_in': t}}
+
+    def square(x, tag='sq'):
+      return Square(jax.typeof(x), tag)(x)
+
+    with config.remat3(True):
+      f = jax.checkpoint(lambda x: square(jnp.sin(x)))
+      _, f_vjp = jax.vjp(f, 3.0)
+      cts, logs = f_vjp.with_logs(1.0)
+      self.assertAllClose(cts[0], 2 * jnp.sin(3.0) * jnp.cos(3.0))
+      self.assertAllClose(logs, {'sq': {'x': jnp.sin(3.0), 'ct_in': 1.0}},
+                          check_dtypes=False)
+      (ct,) = f_vjp(1.0)  # plain call drops the logs without error
+      self.assertAllClose(ct, 2 * jnp.sin(3.0) * jnp.cos(3.0))
+
+      # under jit, and with with_logs itself traced
+      _, logsj = jax.vjp(jax.jit(f), 3.0)[1].with_logs(1.0)
+      self.assertAllClose(logsj['sq']['x'], jnp.sin(3.0))
+      _, logst = jax.jit(lambda x, ct: jax.vjp(f, x)[1].with_logs(ct))(3.0, 1.0)
+      self.assertAllClose(logst['sq']['x'], jnp.sin(3.0))
+
+      # nested remat
+      g = jax.checkpoint(lambda x: square(jax.checkpoint(
+          lambda y: square(y, 'inner'))(x), 'outer'))
+      cts, logs = jax.vjp(g, 2.0)[1].with_logs(1.0)
+      self.assertAllClose(cts[0], 32.0, check_dtypes=False)
+      self.assertEqual(set(logs), {'inner', 'outer'})
+      self.assertAllClose(logs['inner']['x'], 2.0, check_dtypes=False)
+      self.assertAllClose(logs['outer']['x'], 4.0, check_dtypes=False)
+
+      # remat-of-scan stacks the body's logs across iterations
+      def f_scan(xs):
+        c, _ = jax.lax.scan(lambda c, x: (c + square(x), None), 0., xs)
+        return c
+      xs = jnp.arange(1., 4.)
+      _, logss = jax.vjp(jax.checkpoint(f_scan), xs)[1].with_logs(1.0)
+      self.assertArraysEqual(logss['sq']['x'], xs)
+
+      # a checkpoint policy doesn't disturb the logs
+      fp = jax.checkpoint(lambda x: square(jnp.sin(x)),
+                          policy=jax.checkpoint_policies.nothing_saveable)
+      _, logsp = jax.vjp(fp, 3.0)[1].with_logs(1.0)
+      self.assertAllClose(logsp['sq']['x'], jnp.sin(3.0))
+
+  @parameterized.parameters([False, True])
+  def test_backward_pass_logging_remat_fancy_transpose(self, remat3):
+    # A fancy transpose rule's logs flow out of a rematted computation's
+    # backward pass, under both the classic remat_p implementation and remat3.
+    # (Unlike a vjp_bwd-only VJPHiPrimitive, a primitive with a jvp rule and a
+    # logging transpose rule works under classic remat's jvp-based
+    # differentiation too.)
+    from jax._src.interpreters import mlir
+
+    log_id_p = core.Primitive('log_id')
+    log_id_p.def_impl(lambda x: x)
+    log_id_p.def_abstract_eval(lambda a: a)
+    ad.defjvp(log_id_p, lambda g, x: log_id_p.bind(g))
+    mlir.register_lowering(log_id_p, lambda ctx, x: [x])
+    def _log_id_transpose(ct, x):
+      if isinstance(x, ad.ValAccum):
+        x.accum(ct)
+      return {'canary': ct}
+    ad.fancy_transposes[log_id_p] = _log_id_transpose
+
+    with config.remat3(remat3):
+      f = jax.checkpoint(lambda x: log_id_p.bind(jnp.sin(x)) * 2.)
+      _, f_vjp = jax.vjp(f, 1.0)
+      cts, logs = f_vjp.with_logs(1.0)
+      self.assertAllClose(cts[0], 2 * jnp.cos(1.0))
+      self.assertAllClose(logs, {'canary': 2.0}, check_dtypes=False)
+      (ct,) = f_vjp(1.0)  # plain call drops the logs without error
+      self.assertAllClose(ct, 2 * jnp.cos(1.0))
+
+      # under jit, and with with_logs itself traced
+      _, logsj = jax.vjp(jax.jit(f), 1.0)[1].with_logs(1.0)
+      self.assertAllClose(logsj, {'canary': 2.0}, check_dtypes=False)
+      _, logst = jax.jit(lambda x, ct: jax.vjp(f, x)[1].with_logs(ct))(1.0, 1.0)
+      self.assertAllClose(logst, {'canary': 2.0}, check_dtypes=False)
+
+      # nested remat
+      g = jax.checkpoint(lambda x: jax.checkpoint(
+          lambda y: log_id_p.bind(jnp.sin(y)))(x) * 2.)
+      _, logsn = jax.vjp(g, 1.0)[1].with_logs(1.0)
+      self.assertAllClose(logsn, {'canary': 2.0}, check_dtypes=False)
+
   def test_jvp_derived_from_lin(self):
     class RaiseToStaticPower(VJPHiPrimitive):
       def __init__(self, in_aval, *, power):

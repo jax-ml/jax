@@ -568,12 +568,14 @@ def accum_typeof(x):
     return typeof(x)
 
 # TODO(mattjj): this is for for backward (get it?) compatibility. Remove, maybe.
-def backward_pass(jaxpr, transform_stack: bool, consts, primals_in, cts_in):
+def backward_pass(jaxpr, transform_stack: bool, consts, primals_in, cts_in,
+                  *, return_logs: bool = False):
   primals_in = [ValAccum(x.aval) if isinstance(x, UndefinedPrimal) else x
                 for x in primals_in]
-  backward_pass3(jaxpr, transform_stack, consts, primals_in, cts_in)
-  return [x.freeze() if isinstance(x, ValAccum) else p2cz(x)
-          for x in primals_in]
+  logs = backward_pass3(jaxpr, transform_stack, consts, primals_in, cts_in)
+  cts_out = [x.freeze() if isinstance(x, ValAccum) else p2cz(x)
+             for x in primals_in]
+  return (cts_out, logs) if return_logs else cts_out
 
 
 @lu.transformation_with_aux2
