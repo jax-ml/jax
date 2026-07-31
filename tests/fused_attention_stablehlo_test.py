@@ -785,5 +785,109 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=8e-2, atol=8e-2)
 
 
+class DotProductAttentionDbiasTest(jtu.JaxTestCase):
+  # Regression tests for https://github.com/jax-ml/jax/issues/34685: the
+  # backward kernel computed dbias whenever a bias or mask was present, but a
+  # boolean mask alone becomes a constant additive bias whose gradient no
+  # caller can request, so computing it is pure waste. These tests are
+  # trace-level (they inspect the jaxpr, without running the kernel), so
+  # unlike the execution tests above they do not need Ampere; they run
+  # wherever cuDNN is available.
+
+  def setUp(self):
+    super().setUp()
+    try:
+      check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+
+  def _bwd_eqns(self, jaxpr):
+    for eqn in jaxpr.eqns:
+      if eqn.primitive.name == "dot_product_attention_bwd_wrapper":
+        yield eqn
+      for param in eqn.params.values():
+        values = param if isinstance(param, (tuple, list)) else (param,)
+        for subjaxpr in values:
+          if hasattr(subjaxpr, "jaxpr"):
+            yield from self._bwd_eqns(subjaxpr.jaxpr)
+          elif hasattr(subjaxpr, "eqns"):
+            yield from self._bwd_eqns(subjaxpr)
+
+  def _bwd_variadic_args(self, fn, *args):
+    jaxpr = jax.make_jaxpr(fn)(*args)
+    eqns = list(self._bwd_eqns(jaxpr.jaxpr))
+    self.assertLen(eqns, 1)
+    return eqns[0].params["variadic_args"]
+
+  def _make_qkv(self):
+    keys = jax.random.split(jax.random.key(0), 3)
+    return [jax.random.normal(key, (2, 4, 16, 32), dtype=jnp.float16)
+            for key in keys]
+
+  @jtu.run_on_devices("cuda")
+  def test_bool_mask_only_skips_dbias(self):
+    q, k, v = self._make_qkv()
+    mask = jnp.tril(jnp.ones((4, 4), dtype=jnp.bool_))[None, None]
+
+    def f(q, k, v):
+      out = jax.nn.dot_product_attention(
+          q, k, v, mask=mask, implementation="cudnn")
+      return out.astype(jnp.float32).sum()
+
+    has_bias, has_dbias = self._bwd_variadic_args(jax.grad(f), q, k, v)
+    self.assertTrue(has_bias)
+    self.assertFalse(has_dbias)
+
+  @jtu.run_on_devices("cuda")
+  def test_bias_keeps_dbias(self):
+    q, k, v = self._make_qkv()
+    bias = jnp.zeros((1, 16, 4, 4), dtype=jnp.float16)
+
+    def f(q, k, v, bias):
+      out = jax.nn.dot_product_attention(
+          q, k, v, bias=bias, implementation="cudnn")
+      return out.astype(jnp.float32).sum()
+
+    has_bias, has_dbias = self._bwd_variadic_args(
+        jax.grad(f, argnums=3), q, k, v, bias)
+    self.assertTrue(has_bias)
+    self.assertTrue(has_dbias)
+    # The bias gradient has the shape of the (combined) bias.
+    dbias = jax.eval_shape(jax.grad(f, argnums=3), q, k, v, bias)
+    self.assertEqual(dbias.shape, bias.shape)
+
+  @jtu.run_on_devices("cuda")
+  def test_bool_mask_with_bias_keeps_dbias(self):
+    q, k, v = self._make_qkv()
+    bias = jnp.zeros((1, 16, 4, 4), dtype=jnp.float16)
+    mask = jnp.tril(jnp.ones((4, 4), dtype=jnp.bool_))[None, None]
+
+    def f(q, k, v, bias):
+      out = jax.nn.dot_product_attention(
+          q, k, v, bias=bias, mask=mask, implementation="cudnn")
+      return out.astype(jnp.float32).sum()
+
+    has_bias, has_dbias = self._bwd_variadic_args(
+        jax.grad(f, argnums=3), q, k, v, bias)
+    self.assertTrue(has_bias)
+    self.assertTrue(has_dbias)
+
+  @jtu.run_on_devices("cuda")
+  def test_float_mask_keeps_dbias(self):
+    # A non-boolean mask is used as an additive term, so it is differentiable
+    # and its gradient must remain available.
+    q, k, v = self._make_qkv()
+    fmask = jnp.zeros((1, 16, 4, 4), dtype=jnp.float16)
+
+    def f(q, k, v, fmask):
+      out = dot_product_attention(q, k, v, mask=fmask)
+      return out.astype(jnp.float32).sum()
+
+    has_bias, has_dbias = self._bwd_variadic_args(
+        jax.grad(f, argnums=3), q, k, v, fmask)
+    self.assertTrue(has_bias)
+    self.assertTrue(has_dbias)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
