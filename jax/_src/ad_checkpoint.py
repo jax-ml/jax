@@ -731,7 +731,7 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   assert not jaxpr.constvars
   in_linear = [ad.is_undefined_primal(x) for x in args_]
   out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
-  transposed_jaxpr_, in_zeros = transpose_jaxpr(
+  transposed_jaxpr_, in_zeros, out_tree = transpose_jaxpr(
       jaxpr, in_linear, out_zeros)
   transposed_jaxpr, consts = transposed_jaxpr_, transposed_jaxpr_.consts
   transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
@@ -739,18 +739,20 @@ def remat_transpose(out_cts, *args, jaxpr, prevent_cse, **params):
   if isinstance(prevent_cse, tuple):
     prevent_cse_, _ = partition_list(in_linear, prevent_cse)
     prevent_cse = tuple(prevent_cse_) + (True,) * (len(out_zeros) - sum(out_zeros))
-  in_cts_nz = remat_p.bind(*consts, *flat_args, jaxpr=transposed_jaxpr,
-                           prevent_cse=prevent_cse, **params)
+  outs = remat_p.bind(*consts, *flat_args, jaxpr=transposed_jaxpr,
+                      prevent_cse=prevent_cse, **params)
+  in_cts_nz, logs = tree_unflatten(out_tree, outs)
   in_cts_nz_, in_zeros_ = iter(in_cts_nz), iter(in_zeros)
   for x in args:
     if isinstance(x, ad.GradAccum) and not next(in_zeros_):
       x.accum(next(in_cts_nz_))
+  return logs
 ad.fancy_transposes[remat_p] = remat_transpose
 
 # TODO(mattjj): move this to ad.py
 def transpose_jaxpr(jaxpr: core.Jaxpr, in_linear: bool | Sequence[bool],
                     out_zeros: bool | Sequence[bool],
-                    ) -> tuple[core.Jaxpr, list[bool]]:
+                    ) -> tuple[core.Jaxpr, list[bool], PyTreeDef]:
   if isinstance(in_linear, bool):
     in_linear = (in_linear,) * len(jaxpr.in_avals)
   if isinstance(out_zeros, bool):
@@ -784,20 +786,23 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr,
     assert next(out_cts_iter, None) is None
     dummy_args = [ad.UndefinedPrimal(aval.to_ct_aval())
                   for aval in lin_jaxpr.in_avals[len(consts):]]
-    in_cts = ad.backward_pass(lin_jaxpr, False, lin_jaxpr.consts,
-                              [*consts, *dummy_args], out_cts)
+    in_cts, logs = ad.backward_pass(lin_jaxpr, False, lin_jaxpr.consts,
+                                    [*consts, *dummy_args], out_cts,
+                                    return_logs=True)
     in_cts = in_cts[len(consts):]
 
-    # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
+    # Identify symbolic zeros in the resulting cotangents, and return nonzeros,
+    # with any backward-pass log leaves riding along as extra outputs.
     in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]  # pyrefly: ignore[missing-attribute]
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
-    return in_cts_nz
+    outs, cell.out_tree = tree_flatten((in_cts_nz, logs))  # pyrefly: ignore[missing-attribute]
+    return outs
 
   dbg = jaxpr.debug_info.with_unknown_names()
   in_avals_flat_tree = ft.flatten((tuple(in_avals), {}))
   transposed_closed_jaxpr, _ = pe.trace_to_jaxpr(
       transposed, in_avals_flat_tree, dbg)
-  return transposed_closed_jaxpr, cell.in_cts_zero  # pyrefly: ignore[missing-attribute]
+  return transposed_closed_jaxpr, cell.in_cts_zero, cell.out_tree  # pyrefly: ignore[missing-attribute]
 
 def remat_vmap(axis_data, args, dims, *, jaxpr, **params):
   assert not jaxpr.constvars
@@ -1131,7 +1136,8 @@ class RematTraced(VJPHiPrimitive):
       rem = Partial(rem.func, res)
       primals = merge_lists(which, unpinned, pinned)
     bwd = rem(*primals)
-    bwd.with_refs(*arg_accums)(outgrad)
+    _, logs = bwd.with_logs.with_refs(*arg_accums)(outgrad)
+    return logs
 
   def jvp(self, primals, tangents):
     traced = core.jaxpr_as_fun(self.jaxpr)
