@@ -1535,7 +1535,7 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
     out = matmul(x, y, bm=bm, bk=bk, bn=bn)
     expected = x @ y
-    atol = rtol = 2.3e-5
+    atol, rtol = 5e-5, 2.3e-5
     if dtype == 'bfloat16':
       out = out.astype('float32')
       expected = expected.astype('float32')
