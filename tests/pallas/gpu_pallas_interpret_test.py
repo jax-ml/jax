@@ -19,6 +19,7 @@ from typing import Any
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
+from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
 from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode
@@ -1779,6 +1780,254 @@ class InterpretTest(jtu.JaxTestCase):
       @pl.core_map(plgpu.WarpMesh(axis_name='warp'))
       def _per_warp():
         plgpu.barrier_wait(barrier)
+
+      # warpgroup can wait, since its consituent warps observed prior phases
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      out_ref[...] = 42
+
+    out = _kernel()
+    self.assertEqual(out, 42)
+
+  def test_mpmd_warp_specialize(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((5,), jnp.int32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(in_ref, out_ref):
+      out_ref[...] = jnp.zeros((5,), jnp.int32)
+
+      def _per_warp():
+        warp_id = jax.lax.axis_index('warp')
+
+        @pl.when(warp_id == 0)
+        def _():
+          out_ref[0] = in_ref[0]
+
+        @pl.when(warp_id == 1)
+        def _():
+          out_ref[1] = in_ref[1]
+
+        @pl.when(warp_id == 2)
+        def _():
+          out_ref[2] = in_ref[2]
+
+        @pl.when(warp_id == 3)
+        def _():
+          out_ref[3] = in_ref[3]
+
+        # this should never be reached
+        @pl.when(warp_id == 4)
+        def _():
+          out_ref[4] = in_ref[4]
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+    x = jnp.arange(5, dtype=jnp.int32)
+    expected = x.at[4].set(0)
+    output = _kernel(x)
+    np.testing.assert_array_equal(output, expected)
+
+  def test_mpmd_warps_share_shared_memory(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            smem_ref=plgpu.SMEM((), jnp.int32),
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref, smem_ref, barrier):
+      def _per_warp():
+        warp_id = jax.lax.axis_index('warp')
+
+        @pl.when(warp_id == 0)
+        def _():
+          smem_ref[...] = 1
+          plgpu.barrier_arrive(barrier)
+
+        @pl.when(warp_id == 1)
+        def _():
+          plgpu.barrier_wait(barrier)
+          out_ref[...] = smem_ref[...]
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+    out = _kernel()
+    self.assertEqual(out, 1)
+
+  def test_cant_mpmd_map_twice(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref):
+      def _per_warp():
+        def _():
+          out_ref[...] = 42
+
+        mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp1'), _)])()
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp0'), _per_warp)])()
+
+    with self.assertRaisesRegex(
+        Exception, r'Cannot mpmd_map over WarpMesh while already mpmd_mapped'
+    ):
+      _kernel()
+
+  def test_mpmd_all_warps_must_wait_on_barrier(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(_out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+
+      # only three warps wait on barrier
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 0)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+      # now the whole warpgroup waits on the barrier
+      plgpu.barrier_wait(barrier)
+
+    with self.assertRaisesRegex(
+        Exception,
+        r'Warpgroup-thread Warpgroup\(.+\) is waiting at barrier \d+, but only'
+        r' 3 of its constituent warps have participated in the barrier',
+    ):
+      _kernel()
+
+  def test_mpmd_warps_must_wait_on_barrier_evenly(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(_out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 3)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+      plgpu.barrier_arrive(barrier)
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 0)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+    with self.assertRaisesRegex(
+        Exception,
+        r'Thread Warp\(.+\) is waiting at barrier \d+ for the first time, but'
+        r' barrier is already at phase 2.'
+    ):
+      _kernel()
+
+  def test_mpmd_warps_of_warpgroup_must_wait_on_barrier_evenly(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(_out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+
+      # all four warps wait on the barrier
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+      plgpu.barrier_arrive(barrier)
+
+      # only three warps wait on barrier
+      def _per_warp():
+        @pl.when(jax.lax.axis_index('warp') != 0)
+        def _():
+          plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+      # now the whole warpgroup waits on the barrier
+      plgpu.barrier_wait(barrier)
+
+    with self.assertRaisesRegex(
+        Exception,
+        r'Warpgroup-thread Warpgroup\(.+\) is waiting at barrier \d+, but its'
+        r' constituent warps have previously observed different phases',
+    ):
+      _kernel()
+
+  def test_mpmd_warps_get_parent_warpgroups_barrier_phase(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      plgpu.barrier_arrive(barrier)
+      plgpu.barrier_wait(barrier)
+      plgpu.barrier_arrive(barrier)
+
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+      out_ref[...] = 42
+
+    out = _kernel()
+    self.assertEqual(out, 42)
+
+  def test_mpmd_warpgroup_gets_warps_barrier_phase(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((), jnp.int32),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(num_arrivals=1),
+        ),
+        interpret=InterpretParams(),
+    )
+    def _kernel(out_ref, barrier):
+      plgpu.barrier_arrive(barrier)
+
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
+
+      plgpu.barrier_arrive(barrier)
+
+      def _per_warp():
+        plgpu.barrier_wait(barrier)
+
+      mpmd.mpmd_map([(plgpu.WarpMesh(axis_name='warp'), _per_warp)])()
 
       # warpgroup can wait, since its consituent warps observed prior phases
       plgpu.barrier_arrive(barrier)

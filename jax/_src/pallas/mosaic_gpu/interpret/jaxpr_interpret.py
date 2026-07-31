@@ -24,6 +24,7 @@ from jax._src import callback
 from jax._src import core as jax_core
 from jax._src import source_info_util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import mpmd
 from jax._src.pallas import primitives
 from jax._src.pallas.mosaic.interpret import thread_map
 from jax._src.pallas.mosaic.interpret import utils as interpret_utils
@@ -590,6 +591,58 @@ class JaxprInterpreter:
 
     return token, []
 
+  def _interpret_mpmd_map_p(
+      self, eqn, token, get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is mpmd.mpmd_map_p
+    meshes = eqn.params["meshes"]
+    jaxprs = eqn.params["jaxprs"]
+    if len(jaxprs) > 1:
+      raise NotImplementedError(
+          "mpmd_map with multiple meshes is not supported in an MGPU kernel."
+      )
+    mesh = meshes[0]
+    jaxpr = jaxprs[0]
+    if not isinstance(mesh, plgpu.WarpMesh):
+      raise ValueError(
+          "Only mpmd_map over WarpMesh is supported in an MGPU kernel."
+      )
+    if isinstance(self.thread, memory.Warp):
+      raise ValueError(
+          "Cannot mpmd_map over WarpMesh while already mpmd_mapped."
+      )
+
+    def f(i: int, token: jax.Array):
+      jaxpr_interpreter = JaxprInterpreter(
+          mesh_location=dataclasses.replace(self.mesh_location, warp_id=i),
+          thread=self.thread.warp(i),
+          cluster_dims=self.cluster_dims,
+          mesh=self.mesh,
+          warp_mesh=mesh,
+          device_info=self.device_info,
+          compiler_params=self.compiler_params,
+          interpret_params=self.interpret_params,
+      )
+      token, _out = jaxpr_interpreter.interpret(jaxpr, token, *get_invals())
+      return token
+
+    token = callback.io_callback(
+        gpu_callbacks.sync_warps_with_warpgroup,
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        warpgroup=self.thread,
+    )
+    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+
+    token = callback.io_callback(
+        gpu_callbacks.sync_warpgroup_with_warps,
+        gpu_callbacks.TOKEN_SHAPE_DTYPE,
+        token=token,
+        warpgroup=self.thread,
+    )
+
+    return token, []
+
   def _interpret_cond_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
@@ -1086,6 +1139,8 @@ class JaxprInterpreter:
                 eqn, token, deferred_invals)
           case pallas_core.core_map_p:
             token, out = self._interpret_core_map_p(eqn, token, deferred_invals)
+          case mpmd.mpmd_map_p:
+            token, out = self._interpret_mpmd_map_p(eqn, token, deferred_invals)
           case lax.cond_p:
             token, out = self._interpret_cond_p(eqn, token, deferred_invals)
           case lax.scan_p:
