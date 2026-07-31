@@ -2573,6 +2573,11 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   a_shape = a.shape
   q_orig = q
   if squash_nans:
+    # When the reduction axis is empty, nanquantile has no values to aggregate.
+    # NumPy falls back to nanmean in this case, returning NaN with the reduced shape.
+    # Match that behaviour instead of raising an indexing error.
+    if a_shape[axis] == 0:
+      return nanmean(a, axis=axis, keepdims=keepdims)
     a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
     if weights is not None:
       a, weights = lax.sort_key_val(a, weights, dimension=axis)

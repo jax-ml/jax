@@ -1118,5 +1118,35 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, tol=tol)
 
+  @jtu.ignore_warning(category=RuntimeWarning, message="Mean of empty slice")
+  def testNanquantileEmptyAxis(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/39468
+    # jnp.nanquantile should return NaN (not raise) when the reduction axis is empty.
+    # NumPy's nanquantile falls back to nanmean for empty axes, so we match that shape.
+
+    # scalar q, axis=0: shape (0, 4) -> (4,) of NaNs
+    x = jnp.empty((0, 4), dtype=jnp.float32)
+    with jtu.ignore_warning(category=RuntimeWarning):
+      expected = np.nanquantile(np.empty((0, 4), dtype=np.float32), 0.5, axis=0)
+    result = jnp.nanquantile(x, 0.5, axis=0)
+    self.assertEqual(result.shape, expected.shape)
+    self.assertTrue(np.all(np.isnan(result)))
+
+    # axis=1, empty along axis=1: shape (4, 0) -> (4,) of NaNs
+    x2 = jnp.empty((4, 0), dtype=jnp.float32)
+    with jtu.ignore_warning(category=RuntimeWarning):
+      expected2 = np.nanquantile(np.empty((4, 0), dtype=np.float32), 0.5, axis=1)
+    result2 = jnp.nanquantile(x2, 0.5, axis=1)
+    self.assertEqual(result2.shape, expected2.shape)
+    self.assertTrue(np.all(np.isnan(result2)))
+
+    # keepdims=True: shape (0, 4) with axis=0 -> (1, 4) of NaNs
+    with jtu.ignore_warning(category=RuntimeWarning):
+      expected_kd = np.nanquantile(np.empty((0, 4), dtype=np.float32), 0.5, axis=0, keepdims=True)
+    result_kd = jnp.nanquantile(x, 0.5, axis=0, keepdims=True)
+    self.assertEqual(result_kd.shape, expected_kd.shape)
+    self.assertTrue(np.all(np.isnan(result_kd)))
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
