@@ -2605,12 +2605,36 @@ def _eval_jaxpr_abstract_eval(*_, call_jaxpr):
 @eval_jaxpr_p.def_impl
 def _eval_jaxpr_impl(*args, call_jaxpr):
   return core.jaxpr_as_fun(call_jaxpr)(*args)
-
 dce_rules[eval_jaxpr_p] = dce_jaxpr_closed_call_rule
+
+def _eval_jaxpr_partial_eval(trace, *in_tracers, call_jaxpr):
+  in_pvals = [t.pval for t in in_tracers]
+  unknown_ins = [not pv.is_known() for pv in in_pvals]
+  known_jaxpr, unknown_jaxpr, unknown_outs, res_avals, in_fwd_res = \
+      partial_eval_jaxpr_nounits_fwd(call_jaxpr, unknown_ins, instantiate=False)
+  consts = [pv.get_known() for pv in in_pvals if pv.is_known()]
+  all_known_outs = eval_jaxpr_p.bind(*consts, call_jaxpr=known_jaxpr)
+  known_outs, res = split_list(all_known_outs, [len(all_known_outs) - len(res_avals)])
+  res_ = iter(res)
+  res = [next(res_) if f is None else [*call_jaxpr.consts, *consts][f]
+         for f in in_fwd_res]
+  assert next(res_, sentinel := object()) is sentinel
+  res_tracers = map(trace.new_instantiated_const, res)
+  unk_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
+  unk_tracers_out = [JaxprTracer(trace, PartialVal.unknown(aval), None)
+                     for aval in unknown_jaxpr.out_avals]
+  eqn = new_eqn_recipe(trace, [*res_tracers, *unk_tracers_in], unk_tracers_out,
+                       eval_jaxpr_p, dict(call_jaxpr=unknown_jaxpr),
+                       core.positional_effects(unknown_jaxpr),
+                       source_info_util.current())
+  for t in unk_tracers_out: t.recipe = eqn
+  if effects.partial_eval_kept_effects.filter_in(unknown_jaxpr.effects):
+    trace.effect_handles.append(EffectHandle([*unk_tracers_in, *res_tracers], eqn))  # type: ignore
+  return merge_lists(unknown_outs, known_outs, unk_tracers_out)
+custom_partial_eval_rules[eval_jaxpr_p] = _eval_jaxpr_partial_eval
 
 partial_eval_jaxpr_custom_rules[eval_jaxpr_p] = \
     partial_eval_jaxpr_custom_rules[core.closed_call_p]
-
 
 def _lower_and_eval(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
   if any(aval.has_qdd for aval in jaxpr.in_aval_qdds):
@@ -2632,7 +2656,6 @@ def _lower_and_eval(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
   assert next(lo_outs_, None) is None
   return hi_outs
 
-
 def _call_jaxpr(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
   if not jaxpr.is_high:
     return eval_jaxpr_p.bind(*args, call_jaxpr=jaxpr)
@@ -2641,16 +2664,10 @@ def _call_jaxpr(name: str, jaxpr: Jaxpr, args: Sequence[Any]) -> list[Any]:
     return core.jaxpr_as_fun(jaxpr)(*args)
   return _lower_and_eval(name, jaxpr, args)
 
-
 def _closed_call_to_lojax(*hi_args, call_jaxpr: Jaxpr, **_):
   return _lower_and_eval("closed_call", call_jaxpr, hi_args)
-
-
 core.closed_call_p.to_lojax = _closed_call_to_lojax
-
 
 def _eval_jaxpr_to_lojax(*hi_args, call_jaxpr: Jaxpr):
   return _lower_and_eval("eval_jaxpr", call_jaxpr, hi_args)
-
-
 eval_jaxpr_p.to_lojax = _eval_jaxpr_to_lojax
