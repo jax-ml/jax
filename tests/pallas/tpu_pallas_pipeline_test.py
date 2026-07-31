@@ -1494,6 +1494,15 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
       grid=(num_cores,),
   )(x, y)
 
+@hps.composite
+def _dim_and_block_size(
+    draw: hps.DrawFn, block_sizes: list[int]
+) -> tuple[int, int]:
+  block_size = draw(hps.sampled_from(block_sizes))
+  dim = draw(hps.integers(block_size, 1024))
+  return dim, block_size
+
+
 @jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
@@ -1506,33 +1515,20 @@ class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
       ('float32', 'float32'), ('bfloat16', 'bfloat16'), ('int8', 'int8')
   )
   @hp.given(
-      hps.integers(1, 1024),
-      hps.integers(1, 1024),
-      hps.integers(1, 1024),
-      hps.sampled_from([8, 16, 32, 128, 256, 512]),
-      hps.sampled_from([128, 256, 512]),
-      hps.sampled_from([128, 256, 512]),
+      _dim_and_block_size([32, 128, 256, 512]),
+      _dim_and_block_size([128, 256, 512]),
+      _dim_and_block_size([128, 256, 512]),
       hps.integers(0, 4),
   )
-  @hp.settings(
-      suppress_health_check=[
-          *hp.settings.default.suppress_health_check,
-          hp.HealthCheck.filter_too_much,
-      ]
-  )
-  def test_padded_matmul(self, dtype, m, k, n, bm, bk, bn, seed):
+  def test_padded_matmul(self, dtype, m_bm, k_bk, n_bn, seed):
     if dtype == 'int8' and jtu.is_device_tpu_at_least(6):
       self.skipTest('Not implemented for TPU v6.')
+    if dtype == 'int8' and not jtu.is_device_tpu_at_least(5):
+      self.skipTest('Only TPU v5+ allowed for int8.')
 
-    hp.assume(bm <= m)
-    hp.assume(bn <= n)
-    hp.assume(bk <= k)
-    if dtype == 'bfloat16':
-      hp.assume(bm >= 16)
-    if dtype == 'int8':
-      if not jtu.is_device_tpu_at_least(5):
-        self.skipTest('Only TPU v5+ allowed for int8.')
-      hp.assume(bm >= 32)
+    m, bm = m_bm
+    k, bk = k_bk
+    n, bn = n_bn
     k1, k2 = jax.random.split(jax.random.key(seed))
     x = jax.random.normal(k1, (m, k), jnp.float32).astype(dtype)
     y = jax.random.normal(k2, (k, n), jnp.float32).astype(dtype)
