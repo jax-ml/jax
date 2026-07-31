@@ -1117,8 +1117,10 @@ def custom_vjp_call_rule(in_err, enabled_errors, *in_vals,
   # TODO(necula): the fwd result_paths are not quite the same as fun_jaxpr
   checkified_fwd_wrapped = lu.wrap_init(checkified_fwd,
                                         debug_info=fwd_jaxpr_thunk.debug_info)
-  bwd_ = lu.wrap_init(lambda *args: (*(None,)*num_errs, *bwd.call_wrapped(*args)),
-                      debug_info=bwd.debug_info)
+  def bwd_with_errs(*args):
+    cts, logs = bwd.call_wrapped(*args)  # flat bwd returns a (cts, logs) pair
+    return (*(None,) * num_errs, *cts), logs
+  bwd_ = lu.wrap_init(bwd_with_errs, debug_info=bwd.debug_info)
   checkified_fwd_wrapped, fwd_out_tree = flatten_fun_output(checkified_fwd_wrapped)
   all_outs = custom_derivatives.custom_vjp_call_p.bind(
       *err_vals, *in_vals, out_trees=out_trees, symbolic_zeros=symbolic_zeros,

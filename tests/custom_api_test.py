@@ -2545,6 +2545,48 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(api.grad(f)(3.), 3., check_dtypes=False)
     self.assertAllClose(api.grad(api.grad(f))(3.), 1., check_dtypes=False)
 
+  def test_custom_gradient_with_logs(self):
+    @jax.custom_gradient(with_logs=True)
+    def f(x, y):
+      return x * y, lambda g: ((g * y, g * x), {'f': {'ct_out': g, 'x': x}})
+
+    self.assertAllClose(f(3., 4.), 12., check_dtypes=False)
+    self.assertAllClose(api.grad(f)(3., 4.), 4., check_dtypes=False)
+    _, f_vjp = jax.vjp(f, 3., 4.)
+    (x_ct, y_ct), logs = f_vjp.with_logs(1.)
+    self.assertAllClose(x_ct, 4., check_dtypes=False)
+    self.assertAllClose(y_ct, 3., check_dtypes=False)
+    self.assertAllClose(logs, {'f': {'ct_out': 1., 'x': 3.}},
+                        check_dtypes=False)
+    x_ct2, _ = f_vjp(1.)  # plain call drops the logs without error
+    self.assertAllClose(x_ct2, 4., check_dtypes=False)
+
+    _, logsj = jax.jit(
+        lambda x, y, ct: jax.vjp(f, x, y)[1].with_logs(ct))(3., 4., 1.)
+    self.assertAllClose(logsj['f']['x'], 3., check_dtypes=False)
+
+    @jax.custom_gradient(with_logs=True)
+    def g(x):
+      return x ** 2, lambda ct: (ct * 2 * x, {'ct': ct})  # singleton cts
+
+    self.assertAllClose(api.grad(g)(3.), 6., check_dtypes=False)
+    (x_ct,), logsg = jax.vjp(g, 3.)[1].with_logs(1.)
+    self.assertAllClose(x_ct, 6., check_dtypes=False)
+    self.assertAllClose(logsg['ct'], 1., check_dtypes=False)
+
+  def test_custom_gradient_with_logs_bad_return_errors(self):
+    @jax.custom_gradient(with_logs=True)
+    def e(x):
+      return x, lambda ct: (ct,)
+    with self.assertRaisesRegex(TypeError, "pair"):
+      api.grad(e)(1.)
+
+    @jax.custom_gradient(with_logs=True)
+    def e2(x):
+      return x, lambda ct: (ct, [1.0])
+    with self.assertRaisesRegex(TypeError, "None or a dict"):
+      api.grad(e2)(1.)
+
   def test_closure_convert(self):
     def cos_after(fn, x):
       converted_fn, aux_args = jax.closure_convert(fn, x)
@@ -3427,6 +3469,94 @@ class CustomVJPTest(jtu.JaxTestCase):
           in (b,) }
         """).strip()
     self.assertEqual(actual, expected)
+
+  def test_defvjp_with_logs(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g), {'f': {'ct_out': g, 'y': y}}
+
+    f.defvjp_with_logs(f_fwd, f_bwd)
+
+    _, f_vjp = jax.vjp(f, 1.0, 2.0)
+    (x_ct, y_ct), logs = f_vjp.with_logs(1.0)
+    self.assertAllClose(x_ct, jnp.cos(1.0) * 2.0)
+    self.assertAllClose(y_ct, jnp.sin(1.0))
+    self.assertAllClose(logs, {'f': {'ct_out': 1.0, 'y': 2.0}},
+                        check_dtypes=False)
+    x_ct2, _ = f_vjp(1.0)  # plain call drops the logs without error
+    self.assertAllClose(x_ct2, jnp.cos(1.0) * 2.0)
+    self.assertAllClose(jax.grad(f)(1.0, 2.0), jnp.cos(1.0) * 2.0,
+                        check_dtypes=False)
+
+    _, logsj = jax.vjp(jax.jit(f), 1.0, 2.0)[1].with_logs(1.0)
+    self.assertAllClose(logsj['f']['y'], 2.0, check_dtypes=False)
+    _, logst = jax.jit(
+        lambda x, y, ct: jax.vjp(f, x, y)[1].with_logs(ct))(1.0, 2.0, 1.0)
+    self.assertAllClose(logst['f']['y'], 2.0, check_dtypes=False)
+
+    def f_scan(xs):
+      c, _ = jax.lax.scan(lambda c, x: (c + f(x, 2.0), None), 0., xs)
+      return c
+    xs = jnp.arange(1., 4.)
+    cts, logss = jax.vjp(f_scan, xs)[1].with_logs(1.0)
+    self.assertAllClose(cts[0], 2.0 * jnp.cos(xs))
+    self.assertEqual(logss['f']['ct_out'].shape, (3,))
+    self.assertArraysAllClose(logss['f']['y'], jnp.full((3,), 2.0),
+                              check_dtypes=False)
+
+    (x_cts, _), logsv = jax.vmap(
+        lambda x, y, ct: jax.vjp(f, x, y)[1].with_logs(ct))(
+            xs, jnp.full((3,), 2.0), jnp.ones(3))
+    self.assertAllClose(x_cts, 2.0 * jnp.cos(xs))
+    self.assertEqual(logsv['f']['y'].shape, (3,))
+
+    r = jax.grad(lambda x: jax.vmap(f, in_axes=(0, None))(x, 2.0).sum())(xs)
+    self.assertAllClose(r, 2.0 * jnp.cos(xs))
+    _, logsvm = jax.vjp(
+        lambda x: jax.vmap(f, in_axes=(0, None))(x, 2.0), xs
+        )[1].with_logs(jnp.ones(3))
+    self.assertEqual(logsvm['f']['ct_out'].shape, (3,))
+
+    fr = jax.checkpoint(lambda x, y: f(x, y) * 3.)
+    (x_ct, _), logsr = jax.vjp(fr, 1.0, 2.0)[1].with_logs(1.0)
+    self.assertAllClose(x_ct, 3.0 * jnp.cos(1.0) * 2.0, check_dtypes=False)
+    self.assertAllClose(logsr['f']['ct_out'], 3.0, check_dtypes=False)
+
+  def test_defvjp_with_logs_nondiff_argnums_and_none_logs(self):
+    g = jax.custom_vjp(lambda n, x: x * n, nondiff_argnums=(0,))
+    g.defvjp_with_logs(lambda n, x: (g(n, x), None),
+                       lambda n, res, ct: ((ct * n,), {'g': ct * n}))
+    (x_ct,), logs = jax.vjp(lambda x: g(3.0, x), 2.0)[1].with_logs(1.0)
+    self.assertAllClose(x_ct, 3.0, check_dtypes=False)
+    self.assertAllClose(logs['g'], 3.0, check_dtypes=False)
+
+    h = jax.custom_vjp(lambda x: x * 2.)
+    h.defvjp_with_logs(lambda x: (h(x), None), lambda _, ct: ((2. * ct,), None))
+    (ct,), logs = jax.vjp(h, 1.0)[1].with_logs(1.0)
+    self.assertAllClose(ct, 2.0, check_dtypes=False)
+    self.assertEqual(logs, {})
+
+  def test_defvjp_with_logs_bad_return_errors(self):
+    @jax.custom_vjp
+    def e(x):
+      return x
+    e.defvjp_with_logs(lambda x: (e(x), None), lambda _, ct: (ct,))
+    with self.assertRaisesRegex(TypeError, "must produce a pair"):
+      jax.grad(e)(1.0)
+
+    @jax.custom_vjp
+    def e2(x):
+      return x
+    e2.defvjp_with_logs(lambda x: (e2(x), None), lambda _, ct: ((ct,), [1.0]))
+    with self.assertRaisesRegex(TypeError, "None or a dict"):
+      jax.grad(e2)(1.0)
 
 @jtu.with_config(jax_custom_vjp3=True)
 class CustomVJP3Test(CustomVJPTest):

@@ -2126,27 +2126,21 @@ class HijaxTest(jtu.JaxTestCase):
       self.assertAllClose(logsp['sq']['x'], jnp.sin(3.0))
 
   @parameterized.parameters([False, True])
-  def test_backward_pass_logging_remat_fancy_transpose(self, remat3):
-    # A fancy transpose rule's logs flow out of a rematted computation's
-    # backward pass, under both the classic remat_p implementation and remat3.
-    # (Unlike a vjp_bwd-only VJPHiPrimitive, a primitive with a jvp rule and a
-    # logging transpose rule works under classic remat's jvp-based
-    # differentiation too.)
-    from jax._src.interpreters import mlir
+  def test_backward_pass_logging_remat_custom_vjp(self, remat3):
+    @jax.custom_vjp
+    def log_id(x):
+      return x
 
-    log_id_p = core.Primitive('log_id')
-    log_id_p.def_impl(lambda x: x)
-    log_id_p.def_abstract_eval(lambda a: a)
-    ad.defjvp(log_id_p, lambda g, x: log_id_p.bind(g))
-    mlir.register_lowering(log_id_p, lambda ctx, x: [x])
-    def _log_id_transpose(ct, x):
-      if isinstance(x, ad.ValAccum):
-        x.accum(ct)
-      return {'canary': ct}
-    ad.fancy_transposes[log_id_p] = _log_id_transpose
+    def log_id_fwd(x):
+      return log_id(x), None
+
+    def log_id_bwd(_, ct):
+      return (ct,), {'canary': ct}
+
+    log_id.defvjp_with_logs(log_id_fwd, log_id_bwd)
 
     with config.remat3(remat3):
-      f = jax.checkpoint(lambda x: log_id_p.bind(jnp.sin(x)) * 2.)
+      f = jax.checkpoint(lambda x: log_id(jnp.sin(x)) * 2.)
       _, f_vjp = jax.vjp(f, 1.0)
       cts, logs = f_vjp.with_logs(1.0)
       self.assertAllClose(cts[0], 2 * jnp.cos(1.0))
@@ -2162,7 +2156,7 @@ class HijaxTest(jtu.JaxTestCase):
 
       # nested remat
       g = jax.checkpoint(lambda x: jax.checkpoint(
-          lambda y: log_id_p.bind(jnp.sin(y)))(x) * 2.)
+          lambda y: log_id(jnp.sin(y)))(x) * 2.)
       _, logsn = jax.vjp(g, 1.0)[1].with_logs(1.0)
       self.assertAllClose(logsn, {'canary': 2.0}, check_dtypes=False)
 
