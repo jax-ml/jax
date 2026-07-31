@@ -651,12 +651,12 @@ def _scan_impl(*args, reverse, length, ft_in, ft_out, jaxpr,
   def inner(n, carry, xs):
     ys = []
     if unroll == 1:
-      carry_y = eval_jaxpr_p.bind(*consts, *carry, *xs, call_jaxpr=jaxpr)
+      carry_y = eval_jaxpr_p.bind(*consts, *carry, *xs, jaxpr=jaxpr)
       return _map(list, ft_out.update(carry_y).unpack())
     for i_ in range(n):
       i = n - i_ - 1 if reverse else i_
       x = [slicing.index_in_dim(x, i, keepdims=False) for x in xs]
-      carry_y = eval_jaxpr_p.bind(*consts, *carry, *x, call_jaxpr=jaxpr)
+      carry_y = eval_jaxpr_p.bind(*consts, *carry, *x, jaxpr=jaxpr)
       carry, y = _map(list, ft_out.update(carry_y).unpack())
       ys.append(y)
     ys = list(reversed(ys)) if reverse else ys
@@ -1482,7 +1482,7 @@ def _scan_state_discharge_rule(
     xs_refvals = [ds(x, i) for x in xs_refvals_]
     consts = merge_lists(is_ref_const, pure_consts, const_refvals)
     xs = merge_lists(is_ref_xs, pure_xs, xs_refvals)
-    outs = eval_jaxpr_p.bind(*consts, *carry, *xs, call_jaxpr=discharged_jaxpr)
+    outs = eval_jaxpr_p.bind(*consts, *carry, *xs, jaxpr=discharged_jaxpr)
     carry, ys, const_refvals, xs_updates = split_list_checked(
         outs, [num_carry, num_ys, num_const_refs, num_xs_refs])
     xs_refvals = [dus(x, u, i) for x, u in zip(xs_refvals_, xs_updates)]

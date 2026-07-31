@@ -17,13 +17,10 @@ The primitive itself is defined in partial_eval.py; here we register the rules
 that depend on the ad and batching machinery.
 """
 
-from functools import partial
-
 from jax._src import ad_util
 from jax._src import core
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import eval_jaxpr_p
 from jax._src.tree_util import tree_leaves
@@ -33,53 +30,47 @@ _map = safe_map
 zip = safe_zip
 
 
-mlir.register_lowering(eval_jaxpr_p,
-                       partial(mlir.core_call_lowering, name="eval_jaxpr"),
-                       cacheable=False)
-
-
-def _eval_jaxpr_jvp(primals, tangents, *, call_jaxpr):
+def _eval_jaxpr_jvp(primals, tangents, *, jaxpr):
   nonzeros = [type(t) is not ad_util.Zero for t in tangents]
-  jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(call_jaxpr, nonzeros, False)
+  jaxpr_jvp, nonzeros_out = ad.jvp_jaxpr(jaxpr, nonzeros, False)
   nz_tangents = [t for t, nz in zip(tangents, nonzeros) if nz]
-  outs = eval_jaxpr_p.bind(*primals, *nz_tangents, call_jaxpr=jaxpr_jvp)
-  primals_out, tangents_out = split_list(outs, [len(call_jaxpr.out_avals)])
+  outs = eval_jaxpr_p.bind(*primals, *nz_tangents, jaxpr=jaxpr_jvp)
+  primals_out, tangents_out = split_list(outs, [len(jaxpr.out_avals)])
   nz_tangents_out = iter(tangents_out)
   tangents_out = [next(nz_tangents_out) if nz else ad_util.Zero(aval.to_tangent_aval())
-                  for aval, nz in zip(call_jaxpr.out_avals, nonzeros_out)]
+                  for aval, nz in zip(jaxpr.out_avals, nonzeros_out)]
   return primals_out, tangents_out
 ad.primitive_jvps[eval_jaxpr_p] = _eval_jaxpr_jvp
 
-def _eval_jaxpr_batching_rule(axis_data, args, dims, *, call_jaxpr):
+def _eval_jaxpr_batching_rule(axis_data, args, dims, *, jaxpr):
   batched = [d is not None for d in dims]
-  new_jaxpr, out_batched = batching.batch_jaxpr(call_jaxpr, axis_data, batched,
-                                                False)
+  new_jaxpr, out_batched = batching.batch_jaxpr(jaxpr, axis_data, batched, False)
   new_args = [batching.moveaxis(x, d, 0)
               if d is not None and d != 0 else x
               for x, d in zip(args, dims)]
-  outs = eval_jaxpr_p.bind(*new_args, call_jaxpr=new_jaxpr)
+  outs = eval_jaxpr_p.bind(*new_args, jaxpr=new_jaxpr)
   out_dims = [0 if b else None for b in out_batched]
   return outs, out_dims
 batching.fancy_primitive_batchers[eval_jaxpr_p] = _eval_jaxpr_batching_rule
 
-def _eval_jaxpr_linearize(is_vjp, nzs, *primals_in, call_jaxpr):
+def _eval_jaxpr_linearize(is_vjp, nzs, *primals_in, jaxpr):
   primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
-      ad.linearize_jaxpr(call_jaxpr, nzs, is_vjp=is_vjp)
+      ad.linearize_jaxpr(jaxpr, nzs, is_vjp=is_vjp)
   _, ures_avals, sres_avals = out_tree.unpack()
   num_res_out = len(ures_avals) + len(sres_avals)
-  primals_and_res = eval_jaxpr_p.bind(*primals_in, call_jaxpr=primal_jaxpr)
+  primals_and_res = eval_jaxpr_p.bind(*primals_in, jaxpr=primal_jaxpr)
   primals_out, non_fwd_res = split_list(
       primals_and_res, [len(primals_and_res) - num_res_out])
   ures, sres_flat = split_list(non_fwd_res, [len(ures_avals)])
-  res = subs_list(in_fwd_res, [*call_jaxpr.consts, *primals_in], ures)
+  res = subs_list(in_fwd_res, [*jaxpr.consts, *primals_in], ures)
   sres = sres_avals.update(sres_flat).unflatten()
 
   def tangent_fun(res, sres, *tangents):
     sres_flat = tree_leaves(sres)
     nz_tangents = [ad.instantiate_zeros(x) for nz, x in zip(nzs, tangents) if nz]
     nz_tangents_out = eval_jaxpr_p.bind(*res, *nz_tangents, *sres_flat,
-                                        call_jaxpr=tangent_jaxpr)
-    tangent_avals_out = [v.aval.to_tangent_aval() for v in call_jaxpr.outvars]
+                                        jaxpr=tangent_jaxpr)
+    tangent_avals_out = [v.aval.to_tangent_aval() for v in jaxpr.outvars]
     nz_tangents_out_ = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_) if nz else ad_util.Zero(aval)
                     for aval, nz in zip(tangent_avals_out, nzs_out)]
@@ -89,8 +80,8 @@ def _eval_jaxpr_linearize(is_vjp, nzs, *primals_in, call_jaxpr):
   return primals_out, nzs_out, res, sres, tangent_fun
 ad.primitive_linearizations[eval_jaxpr_p] = _eval_jaxpr_linearize
 
-def _eval_jaxpr_transpose(ct, *args, call_jaxpr):
-  jaxpr_, consts = call_jaxpr, call_jaxpr.consts
+def _eval_jaxpr_transpose(ct, *args, jaxpr):
+  jaxpr_, consts = jaxpr, jaxpr.consts
   jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
   return ad.call_transpose_fancy(core.closed_call_p, ct, *consts, *args,
                                  call_jaxpr=jaxpr_)

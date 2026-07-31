@@ -2052,7 +2052,7 @@ class HijaxTest(jtu.JaxTestCase):
     fns = [scheduling_group('g')(f),
            compute_on2(f, compute_type='device_host',
                        out_memory_spaces=jax.memory.Space.Device),
-           lambda x: eval_jaxpr_p.bind(x, call_jaxpr=jaxpr)[0]]
+           lambda x: eval_jaxpr_p.bind(x, jaxpr=jaxpr)[0]]
     for fn in fns:
       _, f_vjp = jax.vjp(fn, 1.0)
       cts, logs = f_vjp.with_logs(1.0)

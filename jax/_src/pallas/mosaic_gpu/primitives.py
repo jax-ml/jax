@@ -36,7 +36,6 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
-from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import builtin as builtin_dialect
@@ -3083,8 +3082,6 @@ def broadcasted_iota(
 
 @lowering.register_lowering_rule(jax_core.closed_call_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(jax_core.closed_call_p, mgpu.LoweringSemantics.Warpgroup)
-@lowering.register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Lane)
-@lowering.register_lowering_rule(pe.eval_jaxpr_p, mgpu.LoweringSemantics.Warpgroup)
 def _closed_call_lowering_rule(ctx, *args, call_jaxpr: jax_core.Jaxpr):
   if call_jaxpr.consts: raise NotImplementedError
   return lowering.lower_jaxpr_to_mosaic_gpu(
@@ -3092,7 +3089,6 @@ def _closed_call_lowering_rule(ctx, *args, call_jaxpr: jax_core.Jaxpr):
 
 
 @lowering._register_resource_estimator(jax_core.closed_call_p)
-@lowering._register_resource_estimator(pe.eval_jaxpr_p)
 def _closed_call_resource_estimator(ctx, *args, call_jaxpr):
   del args  # Unused.
   if call_jaxpr.consts: raise NotImplementedError

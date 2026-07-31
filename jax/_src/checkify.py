@@ -667,10 +667,6 @@ def div_error_check(error, enabled_errors, x, y):
   return nan_error_check(lax.div_p, error, enabled_errors, x, y)
 error_checks[lax.div_p] = div_error_check
 
-def eval_jaxpr_error_check(error, enabled_errors, *invals, call_jaxpr):
-  return checkify_jaxpr(call_jaxpr, enabled_errors, error, *invals)
-error_checks[pe.eval_jaxpr_p] = eval_jaxpr_error_check
-
 def oob_payload(oob_mask, indices, dims_map, operand_shape):
   # Get first OOB index, axis and axis size so it can be added to the error msg.
   flat_idx = jnp.argmin(jnp.logical_not(oob_mask))
