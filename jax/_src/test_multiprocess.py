@@ -42,6 +42,27 @@ try:
 except ImportError:
   portpicker = None
 
+
+def _rocm_gpu_allocation():
+  """Physical AMD GPU ids available to this test invocation.
+
+  ROCm exposes two independent visibility layers: ROCR_VISIBLE_DEVICES selects
+  the physical GPUs at the ROCr/HSA level, while HIP_VISIBLE_DEVICES indexes
+  into the ROCr-visible set. We honor any ROCR_VISIBLE_DEVICES allocation
+  provided by the environment (e.g. by the container orchestrator such as
+  Kubernetes, or the parallel_gpu_execute test wrapper) so that we only ever
+  hand out GPUs from the pool we were given. Falls back to all AMD GPUs
+  detected via the KFD driver when no allocation is provided.
+  """
+  allocated = os.environ.get("ROCR_VISIBLE_DEVICES")
+  if allocated:
+    tokens = [t.strip() for t in allocated.split(",") if t.strip()]
+    if tokens:
+      return tokens
+  num_gpus = hardware_utils.num_available_amd_gpus()
+  return [str(i) for i in range(max(num_gpus, 0))]
+
+
 NUM_PROCESSES = absl.flags.DEFINE_integer(
     "num_processes", None, "Number of processes to use."
 )
@@ -248,18 +269,29 @@ def _main(argv, shard_main):
   )
   megascale_coordinator_port = None
 
+  # On ROCm, GPUs are assigned to worker processes via ROCR_VISIBLE_DEVICES
+  # (physical selection) plus HIP_VISIBLE_DEVICES (per-process re-indexing),
+  # rather than the CUDA-style visible-device allow-list which requires every
+  # GPU to remain visible to every process.
+  is_rocm = gpus_per_process > 0 and hardware_utils.num_available_amd_gpus() > 0
+  rocm_gpus = _rocm_gpu_allocation() if is_rocm else []
+
   if gpus_per_process > 0:
     # Get the number of GPUs visible to this process without initializing the runtime
-    if cuda_versions is not None:
+    local_device_count = None
+    if is_rocm:
+      local_device_count = len(rocm_gpus)
+    elif cuda_versions is not None:
       local_device_count = cuda_versions.cuda_device_count()
-      if num_processes * gpus_per_process > local_device_count:
-        print(
-          f"Cannot run {num_processes} processes with {gpus_per_process} GPU(s) "
-          f"each on a system with only {local_device_count} local GPU(s), "
-          f"starting {local_device_count // gpus_per_process} instead - test "
-          "cases will likely be skipped!"
-        )
-        num_processes = local_device_count // gpus_per_process
+    if (local_device_count is not None
+        and num_processes * gpus_per_process > local_device_count):
+      print(
+        f"Cannot run {num_processes} processes with {gpus_per_process} GPU(s) "
+        f"each on a system with only {local_device_count} local GPU(s), "
+        f"starting {local_device_count // gpus_per_process} instead - test "
+        "cases will likely be skipped!"
+      )
+      num_processes = local_device_count // gpus_per_process
 
   if portpicker is None:
     jax_port = 9876
@@ -309,8 +341,21 @@ def _main(argv, shard_main):
       env["ALLOW_MULTIPLE_LIBTPU_LOAD"] = "1"
 
     if gpus_per_process > 0:
-      device_ids = range(i * gpus_per_process, (i + 1) * gpus_per_process)
-      args.append(f"--jax_cuda_visible_devices={','.join(map(str, device_ids))}")
+      if is_rocm:
+        # Physical GPUs allocated to this worker, drawn from the (possibly
+        # externally provided) ROCR_VISIBLE_DEVICES pool.
+        phys = rocm_gpus[i * gpus_per_process:(i + 1) * gpus_per_process]
+        env["ROCR_VISIBLE_DEVICES"] = ",".join(phys)
+        # ROCr hides every other physical device, so the allocated GPUs are
+        # re-indexed to 0..gpus_per_process-1 at the HIP level. This also
+        # overrides any HIP_VISIBLE_DEVICES the wrapper/orchestrator preset.
+        env["HIP_VISIBLE_DEVICES"] = ",".join(
+            str(k) for k in range(gpus_per_process))
+        # JAX therefore sees the allocated GPUs as logical ordinals 0..N-1.
+        device_ids = range(gpus_per_process)
+      else:
+        device_ids = range(i * gpus_per_process, (i + 1) * gpus_per_process)
+        args.append(f"--jax_cuda_visible_devices={','.join(map(str, device_ids))}")
 
     if device_ids is not None:
       args.append(f"--device_ids={','.join(map(str, device_ids))}")
