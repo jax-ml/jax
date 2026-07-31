@@ -430,10 +430,16 @@ class VJPHiPrimitive:
         "setting `vjp_fwd, vjp_bwd_retval = vjp_from_jvp` (or `= "
         "vjp_from_lin`)")
 
+  vjp_bwd_retval_logs: bool = False
+
   def vjp_bwd(self, res, outgrad, /, *arg_accums):
-    args_grad = self.vjp_bwd_retval(res, outgrad)
+    if self.vjp_bwd_retval_logs:
+      args_grad, logs = self.vjp_bwd_retval(res, outgrad)
+    else:
+      args_grad, logs = self.vjp_bwd_retval(res, outgrad), None
     maybe_accum = lambda acc, v: isinstance(acc, ad.GradAccum) and acc.accum(v)
     tree_map(maybe_accum, arg_accums, args_grad)
+    return logs
 
   def vjp_bwd_retval(self, res, outgrad, /):
     # Classic API: returns values instead of using accumulators
@@ -516,6 +522,7 @@ class VmapOf(VJPHiPrimitive):
   out_dim: Any
 
   def __init__(self, prim, axis_data, in_dims, out_dim):
+    self.vjp_bwd_retval_logs = prim.vjp_bwd_retval_logs
     unmap = lambda a, d: core.unmapped_aval(axis_data.size, d, a,
                                             axis_data.explicit_mesh_axis)
     self.in_avals = tree_map(unmap, prim.in_avals, in_dims)
@@ -563,9 +570,12 @@ class VmapOf(VJPHiPrimitive):
     in_dims = tree_map(lambda x: batching.sum_axis if x is None else x, self.in_dims,
                        is_leaf=lambda x: x is None)
     g = tree_map(partial(map_zero, self.axis_data), self.out_dim, g, is_leaf=lambda x: x is None)
+    out_axes = (in_dims, 0) if self.vjp_bwd_retval_logs else in_dims
     out = api.vmap(self.prim.vjp_bwd_retval, in_axes=(res_axes, self.out_dim),  # pyrefly: ignore[missing-attribute]
-                   out_axes=in_dims, **self._vmap_params, sum_match=True)(res, g)
-    return tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)
+                   out_axes=out_axes, **self._vmap_params, sum_match=True)(res, g)
+    out, logs = out if self.vjp_bwd_retval_logs else (out, None)
+    out = tree_map(partial(unmap_zero, self.axis_data), self.in_dims, out, is_leaf=lambda x: x is None)
+    return (out, logs) if self.vjp_bwd_retval_logs else out
 
   def batch_dim_rule(self, axis_data, in_dims):
     fix = lambda d, d_: d if (d is None or d_ is None) else d - (d_ < d)
@@ -942,12 +952,16 @@ class CustomVJPTraced(VJPHiPrimitive):
   symbolic_zeros: Any
   static_argnums: Any
   opt_remat: bool
+  with_logs: bool
 
-  def __init__(self, traced, fwd, bwd, in_avals, sym_zeros, static_argnums, opt_remat):
+  def __init__(self, traced, fwd, bwd, in_avals, sym_zeros, static_argnums,
+               opt_remat, with_logs=False):
+    self.vjp_bwd_retval_logs = with_logs
     self.in_avals = in_avals
     self.out_aval = traced.out_avals
     self.params = dict(traced=traced, fwd=fwd, bwd=bwd, symbolic_zeros=sym_zeros,
-                       static_argnums=static_argnums, opt_remat=opt_remat)
+                       static_argnums=static_argnums, opt_remat=opt_remat,
+                       with_logs=with_logs)
     super().__init__()
 
   def expand(self, *args):
@@ -985,6 +999,20 @@ class CustomVJPTraced(VJPHiPrimitive):
     else:
       out_ct = tree_map(ad_util.instantiate, out_ct, is_leaf=leaf)
     in_cts = self.bwd(*static_args, res, out_ct)
+    logs = None
+    if self.with_logs:
+      if not (isinstance(in_cts, (list, tuple)) and len(in_cts) == 2):
+        raise TypeError(
+            f"Custom VJP bwd rule {self.bwd} was registered with "
+            "defvjp_with_logs and so must produce a pair (in_cts, logs), "
+            f"but got {in_cts}.")
+      in_cts, logs = in_cts
+      if logs is not None and type(logs) is not dict:
+        raise TypeError(
+            f"Custom VJP bwd rule {self.bwd} was registered with "
+            "defvjp_with_logs, and so the second element of the pair it "
+            "returns must be None or a dict of backward-pass log entries, "
+            f"but got {type(logs).__name__}.")
     if isinstance(in_cts, list):
       in_cts = tuple(in_cts)
     if not isinstance(in_cts, tuple):
@@ -999,7 +1027,7 @@ class CustomVJPTraced(VJPHiPrimitive):
     tree_map_with_path(_vjp_bwd_aval_mismatch_err, self.in_avals, in_cts)
     if self.symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
-    return in_cts
+    return (in_cts, logs) if self.with_logs else in_cts
 
   def jvp(self, primals, tangents):
     if self.symbolic_zeros: ad.raise_custom_vjp_error_on_jvp()
@@ -1047,7 +1075,7 @@ class CustomVJPTraced(VJPHiPrimitive):
                                            custom_vjp_rules=False)
     rem = lambda *args: rem_(*[x for i, x in enumerate(args) if i not in self.static_argnums])
     helper = CustomVJPTraced(self.traced, rem, self.bwd, self.in_avals,
-                             False, self.static_argnums, False)
+                             False, self.static_argnums, False, self.with_logs)
     return out, helper
 
 def _vjp_primal_fwd_tree_mismatch_err(self, tree):
@@ -1098,6 +1126,7 @@ class custom_vjp3:
   bwd: Callable | None = None
   symz: bool = False
   opt_remat: bool = False
+  with_logs: bool = False
 
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
     self.f = f
@@ -1109,6 +1138,13 @@ class custom_vjp3:
     self.bwd = bwd
     self.symz = symbolic_zeros
     self.opt_remat = optimize_remat
+    return self
+
+  def defvjp_with_logs(self, fwd, bwd, *, symbolic_zeros=False,
+                       optimize_remat=False):
+    self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
+                optimize_remat=optimize_remat)
+    self.with_logs = True
     return self
 
   def __call__(self, *args, **kwargs):
@@ -1139,7 +1175,7 @@ class custom_vjp3:
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
     in_avals = tree_map(typeof, args)
     prim = CustomVJPTraced(traced, self.fwd, self.bwd, in_avals, self.symz,
-                           self.static_argnums, self.opt_remat)
+                           self.static_argnums, self.opt_remat, self.with_logs)
     return prim(*args)
 
   def def_vmap(self, rule, /): return self.f.def_vmap(rule)

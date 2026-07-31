@@ -587,6 +587,7 @@ class custom_vjp(Generic[ReturnValue]):
     self.bwd: Callable[..., tuple[Any, ...]] | None = None
     self.symbolic_zeros = False
     self.optimize_remat = False
+    self.with_logs = False
 
   __getattr__ = custom_api_util.forward_attr
 
@@ -688,6 +689,28 @@ class custom_vjp(Generic[ReturnValue]):
       raise NotImplementedError(
           "remat optimization for custom_vjp does not support symbolic zeros")
 
+  def defvjp_with_logs(self,
+                       fwd: Callable[..., tuple[ReturnValue, Any]],
+                       bwd: Callable[..., tuple[tuple[Any, ...], dict | None]],
+                       symbolic_zeros: bool = False,
+                       optimize_remat: bool = False,
+                       ) -> None:
+    """Like :py:func:`~jax.custom_vjp.defvjp`, but ``bwd`` can also log.
+
+    The only difference from ``defvjp`` is the return convention of ``bwd``:
+    it must return a pair ``(in_cts, logs)``, where ``in_cts`` is the usual
+    tuple of cotangents (one entry per primal argument), and ``logs`` is a
+    dict of named pytrees to log out of the backward pass, or ``None`` to log
+    nothing. To receive the logs, apply the VJP function via its
+    ``with_logs`` method: ``f_vjp.with_logs(out_ct)`` returns a pair
+    ``(arg_cts, logs)``. Logging is drop-by-default: a plain ``f_vjp(out_ct)``
+    call ignores the logs, and under ``jit`` the logging computation is
+    dead-code-eliminated.
+    """
+    self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
+                optimize_remat=optimize_remat)
+    self.with_logs = True
+
   @partial(traceback_util.api_boundary,
            repro_api_name="jax.custom_vjp.__call__")
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:
@@ -741,7 +764,7 @@ class custom_vjp(Generic[ReturnValue]):
     flat_fwd, out_trees = _flatten_fwd(
         fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
         debug_fwd, in_tree, out_type)
-    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
+    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees, self.with_logs)
     out_flat = custom_vjp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_fwd, flat_bwd),
                                       out_trees=out_trees,
                                       symbolic_zeros=self.symbolic_zeros)
@@ -907,6 +930,7 @@ def _flatten_bwd(f: Callable,
                  in_tree: PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],  # primal avals
                  out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
+                 with_logs: bool,
                  *args):
   out_tree, res_tree, _ = out_trees()
   assert len(args) == res_tree.num_leaves + out_tree.num_leaves
@@ -914,6 +938,19 @@ def _flatten_bwd(f: Callable,
   py_res = tree_unflatten(res_tree, res)
   py_cts_out = tree_unflatten(out_tree, cts_out)
   py_cts_in = f(py_res, py_cts_out)
+  if with_logs:
+    if not (isinstance(py_cts_in, (list, tuple)) and len(py_cts_in) == 2):
+      raise TypeError(
+          "Custom VJP bwd rule was registered with defvjp_with_logs and so "
+          f"must produce a pair (in_cts, logs), but got {py_cts_in}.")
+    py_cts_in, logs = py_cts_in
+    if logs is not None and type(logs) is not dict:
+      raise TypeError(
+          "Custom VJP bwd rule was registered with defvjp_with_logs, and so "
+          "the second element of the pair it returns must be None or a dict "
+          f"of backward-pass log entries, but got {type(logs).__name__}.")
+  else:
+    logs = None
   if isinstance(py_cts_in, list) and len(py_cts_in) == len(treedef_children(in_tree)):
     py_cts_in = tuple(py_cts_in)
   # For each None in py_cts_in, indicating an argument for which the rule
@@ -971,7 +1008,7 @@ def _flatten_bwd(f: Callable,
                f"{core.aval_mismatch_extra(a, a_)}")
         raise ValueError(msg)
       results.append(ct)
-  return results
+  return results, logs
 
 def _ref_typecompat(a, a_):
   return (isinstance(a, AbstractRef) and
@@ -1031,7 +1068,8 @@ def lift_fwd(num_consts: int, fwd_jaxpr_thunk: lu.WrappedFun) -> lu.WrappedFun:
 
 @lu.transformation2
 def _handle_consts_in_bwd(f, const_avals, *args):
-  return [Zero(a) for a in const_avals] + list(f(*args))
+  cts, logs = f(*args)
+  return [Zero(a) for a in const_avals] + list(cts), logs
 
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 # TODO(phawkins,mattjj): make this primitive cacheable.
@@ -1131,7 +1169,7 @@ mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp,
                        cacheable=False)
 
 
-def custom_gradient(fun):
+def custom_gradient(fun=None, /, *, with_logs: bool = False):
   """Convenience function for defining custom VJP rules (aka custom gradients).
 
   While the canonical way to define custom VJP rules is via ``jax.custom_vjp``,
@@ -1164,6 +1202,11 @@ def custom_gradient(fun):
       differentiated and its reverse-mode differentiation rule. It should return
       a pair consisting of an output value and a Python callable that represents
       the custom gradient function.
+    with_logs: optional bool, default ``False``. If ``True``, the custom
+      gradient function must return a pair ``(in_cts, logs)`` rather than just
+      the cotangents, where ``logs`` is a dict of named pytrees to log out of
+      the backward pass, or ``None`` to log nothing, as with
+      :py:meth:`jax.custom_vjp.defvjp_with_logs`.
 
   Returns:
     A Python callable that accepts the same arguments as ``fun`` and returns the
@@ -1191,7 +1234,25 @@ def custom_gradient(fun):
   12.0
   >>> print(jax.grad(f, argnums=(0, 1))(3., 4.))
   (Array(4., dtype=float32, weak_type=True), Array(3., dtype=float32, weak_type=True))
+
+  With ``with_logs=True``, the VJP function returns a pair of the cotangents
+  and a dict of backward-pass logs, received via the ``with_logs`` method of
+  the VJP function that :py:func:`jax.vjp` returns:
+
+  >>> @jax.custom_gradient(with_logs=True)
+  ... def f(x):
+  ...   return x ** 2, lambda g: ((g * 2 * x,), {'ct_out': g})
+  ...
+  >>> print(jax.grad(f)(3.))
+  6.0
+  >>> _, f_vjp = jax.vjp(f, 3.)
+  >>> (x_ct,), logs = f_vjp.with_logs(1.)
+  >>> print(logs['ct_out'])
+  1.0
   """
+  if fun is None:
+    return lambda f: custom_gradient(f, with_logs=with_logs)
+
   @custom_vjp
   def wrapped_fun(*args, **kwargs):
     ans, _ = fun(*args, **kwargs)
@@ -1199,6 +1260,8 @@ def custom_gradient(fun):
 
   def fwd(*args, **kwargs):
     ans, rule = fun(*args, **kwargs)
+    if with_logs:
+      rule = _custom_gradient_logs_rule(rule)
     ans_flat, out_tree = tree_flatten(((ans,), {}))
     debug_fwd = debug_info("custom_gradient fwd", rule, (ans,), {})
     ans_avals = [core.typeof(x).to_ct_aval() for x in ans_flat]
@@ -1213,12 +1276,39 @@ def custom_gradient(fun):
     if out_tree != out_tree_: raise TypeError(f'{out_tree}\n!=\n{out_tree_}')
     cts_out = core.eval_jaxpr(jaxpr, consts, *cts_flat)
     cts_out = tree_unflatten(in_tree, cts_out)
+    if with_logs:
+      cts_out, logs = cts_out
+      cts_tree, _ = treedef_children(in_tree)
+      if treedef_is_leaf(cts_tree):
+        cts_out = (cts_out,)
+      return cts_out, logs
     if treedef_is_leaf(in_tree):
       cts_out = (cts_out,)
     return cts_out
 
-  wrapped_fun.defvjp(fwd, bwd)
+  if with_logs:
+    wrapped_fun.defvjp_with_logs(fwd, bwd)
+  else:
+    wrapped_fun.defvjp(fwd, bwd)
   return wrapped_fun
+
+def _custom_gradient_logs_rule(rule):
+  @wraps(rule)
+  def rule_with_logs(*cts):
+    out = rule(*cts)
+    if not (isinstance(out, (list, tuple)) and len(out) == 2):
+      raise TypeError(
+          "custom_gradient function used with with_logs=True must return a "
+          "VJP function producing a pair (in_cts, logs), but the VJP function "
+          f"returned {out}.")
+    in_cts, logs = out
+    if logs is not None and type(logs) is not dict:
+      raise TypeError(
+          "custom_gradient function used with with_logs=True must return a "
+          "VJP function whose second output is None or a dict of "
+          f"backward-pass log entries, but got {type(logs).__name__}.")
+    return in_cts, logs
+  return rule_with_logs
 
 @register_pytree_node_class
 class Residuals:

@@ -1288,8 +1288,10 @@ rules, so a `vjp_bwd` rule — where logs originate — never runs inside a
 rematted region: a hijax primitive with only `vjp_fwd`/`vjp_bwd` rules
 can't be differentiated under it at all. Under the new implementation
 (`jax_remat3`), rematted code is differentiated through the same `vjp`
-rules as everywhere else, and logs flow out as described above. This
-caveat disappears once `jax_remat3` becomes the default.
+rules as everywhere else, and logs flow out as described above. (Logs from
+`jax.custom_vjp` rules registered with `defvjp_with_logs` are the
+exception: they flow out of rematted code under either implementation.)
+This caveat disappears once `jax_remat3` becomes the default.
 ```
 
 For example, with a `scan`:
@@ -1328,11 +1330,47 @@ branch that logs the key but wasn't taken (here `'neg'`), and `None` for a
 branch that doesn't log the key at all. Branches needn't agree on keys or
 types, and nested `cond`s nest their `CondSum`s.
 
-A rule's log return must be a dict (or `None`, meaning no logs). A couple
-of transposed contexts don't yet plumb logs through — `jax.custom_vjp`
-backward rules and `lax.while_loop` — and logs inside them are silently
-dropped, consistent with drop-by-default. For plumbing data out of a
-backward pass with mutable refs instead, see {doc}`refs`.
+`jax.custom_vjp` backward rules can log too, with no hijax rewrite needed:
+register the rules with `defvjp_with_logs` instead of `defvjp`. The only
+difference is the backward rule's return convention: it returns a pair
+`(in_cts, logs)`, where `in_cts` is the usual tuple of cotangents and
+`logs` is a dict of named pytrees, or `None` to log nothing. (The separate
+registration is needed because a plain `defvjp` backward rule can already
+return any pytree of cotangents, so a trailing log dict would be
+ambiguous.)
+
+```{code-cell}
+@jax.custom_vjp
+def f(x, y):
+  return jnp.sin(x) * y
+
+def f_fwd(x, y):
+  return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+def f_bwd(res, g):
+  cos_x, sin_x, y = res
+  return (cos_x * g * y, sin_x * g), {'f': {'ct_out': g}}
+
+f.defvjp_with_logs(f_fwd, f_bwd)
+
+_, f_vjp = jax.vjp(f, 1., 2.)
+_, logs = f_vjp.with_logs(1.)
+print(logs)
+```
+
+The `jax.custom_gradient` convenience wrapper supports the same thing via
+`@custom_gradient(with_logs=True)`, with the returned VJP function producing
+a pair `(in_cts, logs)`.
+
+Retval-style hijax rules can opt in the same way: set
+`vjp_bwd_retval_logs = True` on the primitive class, and have
+`vjp_bwd_retval` return `(args_grad, logs)` instead of just `args_grad`.
+
+A rule's log return must be a dict (or `None`, meaning no logs). One
+transposed context doesn't yet plumb logs through — `lax.while_loop` — and
+logs inside it are silently dropped, consistent with drop-by-default. For
+plumbing data out of a backward pass with mutable refs instead, see
+{doc}`refs`.
 
 (jax-301-structured-residuals)=
 

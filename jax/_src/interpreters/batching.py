@@ -549,17 +549,30 @@ def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
             for x, dim in zip(args, in_dims_)]
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
-    bwd_, out_dims_thunk = batch_subtrace(bwd, tag, axis_data, in_dims_)
-    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, out_dim_dests)
-    return bwd_.call_wrapped(*args)
+    bwd_pair, pair_info_thunk = _flatten_cts_logs_pair(bwd)
+    bwd_, out_dims_thunk = batch_subtrace(bwd_pair, tag, axis_data, in_dims_)
+    all_dests = lambda: (*out_dim_dests, *(0,) * pair_info_thunk()[1].num_leaves)
+    bwd_ = _match_axes_and_sum(bwd_, axis_data, out_dims_thunk, all_dests)
+    outs = bwd_.call_wrapped(*args)
+    num_cts, log_tree = pair_info_thunk()
+    cts, log_leaves = split_list(outs, [num_cts])
+    return cts, tree_unflatten(log_tree, log_leaves)
   return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
+@lu.transformation_with_aux2
+def _flatten_cts_logs_pair(f, store, *args):
+  cts, logs = f(*args)
+  log_leaves, log_tree = tree_flatten(logs)
+  store.store((len(cts), log_tree))
+  return [*cts, *log_leaves]
+
 @lu.transformation2
-def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests, *in_vals):
+def _match_axes_and_sum(f, axis_data, out_dims_thunk, out_dim_dests_thunk,
+                        *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = f(*in_vals)
   return map(partial(_matchaxis_symzeros, axis_data, sum_match=True),
-             out_dims_thunk(), out_dim_dests, out_vals)
+             out_dims_thunk(), out_dim_dests_thunk(), out_vals)
 
 def _matchaxis_symzeros(axis_data, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
