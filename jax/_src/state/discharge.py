@@ -548,9 +548,11 @@ def transform_swap_array(x, transforms, val):
           # was indexed into.
         intermediates.append(new_val)
       case BitcastTransform():
-        intermediates.append(bitcast(new_val, transform.dtype))
+        new_val = bitcast(new_val, transform.dtype)
+        intermediates.append(new_val)
       case ReshapeTransform():
-        intermediates.append(new_val.reshape(transform.shape))
+        new_val = new_val.reshape(transform.shape)
+        intermediates.append(new_val)
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
 
@@ -580,6 +582,10 @@ def transform_swap_array(x, transforms, val):
         if transpose_order is not None:
           transpose_order_inversed = np.argsort(transpose_order)
           new_x = new_x.transpose(transpose_order_inversed)
+    elif isinstance(transform, ReshapeTransform):
+      new_x = new_x.reshape(intermediate.shape)
+    elif isinstance(transform, BitcastTransform):
+      new_x = bitcast(new_x, intermediate.dtype)
     else:
       raise NotImplementedError(f"Unsupported transform: {transform}")
 
@@ -621,7 +627,15 @@ def _optimization_barrier_discharge_rule(
   return new_invals, [o for o, r in zip(outs, is_ref) if not r]
 
 def _addupdate_discharge(x, val, idx, tree):
-  transforms = tree_util.tree_unflatten(tree, idx)
+  transforms = list(tree_util.tree_unflatten(tree, idx))
+  if transforms and isinstance(transforms[-1], ReshapeTransform):
+    from jax._src.numpy import lax_numpy  # pyrefly: ignore[missing-import]
+    broadcast_shape = transforms[-1].shape
+    while transforms and isinstance(transforms[-1], ReshapeTransform):
+      transforms.pop()
+    target_shape = transforms[-1].get_indexer_shape() if transforms and isinstance(transforms[-1], indexing.NDIndexer) else x.shape
+    val = lax_numpy.broadcast_to(val, broadcast_shape).reshape(target_shape)
+
   if not transforms:
     return x + val
   if len(transforms) > 1:

@@ -1993,5 +1993,74 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       self.assertAllClose(y, x)
 
 
+class RefNumpyIndexingTest(jtu.JaxTestCase):
+
+  def test_newaxis_read(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(4)
+      ref = jax.new_ref(x)
+      return ref[None]
+    self.assertAllClose(f(), jnp.arange(4)[None])
+
+  def test_newaxis_read_multiple(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros((2, 3))
+      ref = jax.new_ref(x)
+      return ref[None, :, None, 1:2]
+    self.assertAllClose(f(), jnp.zeros((2, 3))[None, :, None, 1:2])
+
+  def test_newaxis_write(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      ref[None] = jnp.ones((1, 4))
+      return ref[...]
+    self.assertAllClose(f(), jnp.ones(4))
+
+  def test_newaxis_addupdate(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      ref[None] += jnp.ones((1, 4))
+      return ref[...]
+    self.assertAllClose(f(), jnp.ones(4))
+
+  def test_newaxis_view(self):
+    @jax.jit
+    def f():
+      x = jnp.zeros(4)
+      ref = jax.new_ref(x)
+      view = ref.at[None]
+      view[...] = jnp.full((1, 4), 5.0)
+      return ref[...]
+    self.assertAllClose(f(), jnp.full(4, 5.0))
+
+  def test_newaxis_swap(self):
+    @jax.jit
+    def f():
+      x = jnp.arange(4, dtype=jnp.float32)
+      ref = jax.new_ref(x)
+      view = ref.at[None]
+      old_val = view.swap(jnp.ones((1, 4), dtype=jnp.float32))
+      return old_val, ref[...]
+    old_val, new_val = f()
+    self.assertAllClose(old_val, jnp.arange(4, dtype=jnp.float32)[None])
+    self.assertAllClose(new_val, jnp.ones(4, dtype=jnp.float32))
+
+  def test_newaxis_between_advanced_indices_errors(self):
+    x = jnp.zeros((3, 4, 5))
+    ref = jax.new_ref(x)
+    arr1, arr2 = jnp.array([0, 2]), jnp.array([1, 3])
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Advanced indexing separated by newaxis after sliced dimensions",
+    ):
+      _ = ref[:, arr1, None, arr2]
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
