@@ -258,9 +258,6 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   def cache_miss(*args, **kwargs):
     # args do not include the const args
     # See https://docs.jax.dev/en/latest/internals/constants.html.
-    if config.no_tracing.value:
-      raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
-                         "`jit`, but 'no_tracing' is set")
     p, args_flat = _infer_params(fun, jit_info, args, kwargs)
     (outs, out_flat, out_tree, args_flat, jaxpr,
      executable, pgle_profiler, const_args) = _run_python_pjit(
