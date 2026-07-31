@@ -105,22 +105,20 @@ def get_ref_and_transforms(
       and not ref_aval.inner_aval.is_high):
     return ref, ()
 
-  if idx is None or idx is Ellipsis:
+  if idx is Ellipsis:
     idx = ()
   elif not isinstance(idx, tuple):
     idx = (idx,)
 
   if not idx:
     return ref, transforms
-  if not idx and transforms and isinstance(transforms[-1], indexing.NDIndexer):
-    return ref, transforms
-  nd_indexer = indexing.NDIndexer.from_indices_shape(idx, ref_or_view.shape)
-  return ref, (*transforms, nd_indexer)
+  new_transforms = indexing.get_transforms_from_indices(idx, ref_or_view.shape)
+  return ref, (*transforms, *new_transforms)
 
 @partial(traceback_util.api_boundary, repro_api_name="jax.ref.get")
 def ref_get(
     ref: core.Ref | TransformedRef,
-    idx: Indexer | tuple[Indexer, ...] | None = None
+    idx: Indexer | tuple[Indexer, ...] | None = ()
 ) -> Array | HijaxType:
   """Read a value from an Ref.
 

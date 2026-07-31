@@ -409,7 +409,7 @@ def _perform_transpose_before_gather(
     indexer: indexing.NDIndexer,
     transpose_order: tuple[int, ...],
 ) -> tuple[Array, indexing.NDIndexer]:
-  new_target_arr = target_arr.transpose(transpose_order)
+  new_target_arr = lax.transpose(target_arr, transpose_order)
   reordered_indices = tuple(indexer.indices[i] for i in transpose_order)
   new_indexer = indexing.NDIndexer(
       indices=reordered_indices,
@@ -511,7 +511,7 @@ def transform_array(x, transforms):
       case BitcastTransform():
         result = bitcast(result, transform.dtype)
       case ReshapeTransform():
-        result = result.reshape(transform.shape)
+        result = lax.reshape(result, transform.shape)
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
   return result
@@ -555,9 +555,11 @@ def transform_swap_array(x, transforms, val):
           # was indexed into.
         intermediates.append(new_val)
       case BitcastTransform():
-        intermediates.append(bitcast(new_val, transform.dtype))
+        new_val = bitcast(new_val, transform.dtype)
+        intermediates.append(new_val)
       case ReshapeTransform():
-        intermediates.append(new_val.reshape(transform.shape))
+        new_val = lax.reshape(new_val, transform.shape)
+        intermediates.append(new_val)
       case _:
         raise NotImplementedError(f"Unsupported transform: {transform}")
 
@@ -583,10 +585,15 @@ def transform_swap_array(x, transforms, val):
               intermediate, indexer, transpose_order
           )
         arrays = _convert_to_gather_arrays(indexer)
-        new_x = intermediate.at[arrays].set(new_x)
+        from jax._src.numpy import lax_numpy  # pyrefly: ignore[missing-import]
+        new_x = lax_numpy.asarray(intermediate).at[arrays].set(new_x)
         if transpose_order is not None:
           transpose_order_inversed = np.argsort(transpose_order)
-          new_x = new_x.transpose(transpose_order_inversed)
+          new_x = lax.transpose(new_x, transpose_order_inversed)
+    elif isinstance(transform, ReshapeTransform):
+      new_x = lax.reshape(new_x, np.shape(intermediate))
+    elif isinstance(transform, BitcastTransform):
+      new_x = bitcast(new_x, intermediate.dtype)
     else:
       raise NotImplementedError(f"Unsupported transform: {transform}")
 
@@ -628,12 +635,35 @@ def _optimization_barrier_discharge_rule(
   return new_invals, [o for o, r in zip(outs, is_ref) if not r]
 
 def _addupdate_discharge(x, val, idx, tree):
-  transforms = tree_util.tree_unflatten(tree, idx)
+  transforms = list(tree_util.tree_unflatten(tree, idx))
+  if transforms and isinstance(transforms[-1], ReshapeTransform):
+    from jax._src.numpy import lax_numpy  # pyrefly: ignore[missing-import]
+    broadcast_shape = transforms[-1].shape
+    while transforms and isinstance(transforms[-1], ReshapeTransform):
+      transforms.pop()
+    target_shape = (transforms[-1].get_indexer_shape()
+        if transforms and isinstance(transforms[-1], indexing.NDIndexer)
+        else x.shape)
+    val = lax_numpy.broadcast_to(val, broadcast_shape).reshape(target_shape)
+
+  if any(isinstance(t, BitcastTransform) for t in transforms):
+    raise NotImplementedError(
+        "`addupdate` (`+=`) is not supported on bitcast views. Use explicit"
+        " read-modify-write (`ref.bitcast(...)[...] = ...`) or `.swap(...)`"
+        " instead."
+    )
+
   if not transforms:
     return x + val
   if len(transforms) > 1:
-    raise NotImplementedError("Only single indexer is supported.")
+    raise NotImplementedError(
+        f"Only single indexer is supported for `addupdate`, got {transforms}."
+    )
   indexer = transforms[0]
+  if not isinstance(indexer, indexing.NDIndexer):
+    raise NotImplementedError(
+        f"Unsupported transform for `addupdate`: {indexer}"
+    )
 
   if _is_trivial_indexer(indexer):
     return x + val
