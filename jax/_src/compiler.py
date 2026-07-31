@@ -98,6 +98,19 @@ CompileOptions = xc.CompileOptions
 logger = logging.getLogger(__name__)
 
 
+def _add_disabled_hlo_pass(disabled_passes: str, pass_name: str) -> str:
+  """Adds a pass to a comma-separated pass list, preserving existing entries.
+
+  ``DebugOptions.xla_disable_hlo_passes`` may already hold passes the user
+  disabled via ``XLA_FLAGS=--xla_disable_hlo_passes=...``; those must not be
+  overwritten. Entries are stripped because XLA matches pass names exactly.
+  """
+  passes = [p.strip() for p in disabled_passes.split(",") if p.strip()]
+  if pass_name not in passes:
+    passes.append(pass_name)
+  return ",".join(passes)
+
+
 def _get_cross_compile_backend(compile_only_backend):
   """Returns a real backend for cross-compilation via a real client.
 
@@ -254,7 +267,8 @@ def get_compile_options(
     debug_options.xla_test_all_input_layouts = False
 
   if not config.enable_remat_opt_pass.value:
-    debug_options.xla_disable_hlo_passes = "rematerialization"
+    debug_options.xla_disable_hlo_passes = _add_disabled_hlo_pass(
+        debug_options.xla_disable_hlo_passes, "rematerialization")
 
   # XLA-AutoFDO profile version: precedence order is:
   # 1. Whatever --jax_xla_profile_version is set to.
