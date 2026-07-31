@@ -198,13 +198,13 @@ RACE DETECTED
   write ... from .../jax/tests/pallas/tpu_pallas_interpret_distributed_test.py:1038:10 (InterpretDistributedTest.test_race_detection.<locals>.kernel.<locals>._)
 ```
 
-<!--internal:3-->
+<!--internal:2-->
 
 ## Useful Command line flags
 
 * OOB Checks: `--xla_mosaic_on_device_checks=bounds`
 * Poison VMEM allocations: `--xla_jf_poison_vmem_allocations=true`
-<!--internal:4-->
+<!--internal:3-->
 * Dump Mosaic: `--xla_mosaic_dump_to=<directory>`
 * Enable trace markers in XProf: `--xla_enable_transpose_trace`
 
