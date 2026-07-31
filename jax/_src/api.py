@@ -574,7 +574,15 @@ def _check_scalar(x):
   else:
     if isinstance(aval, ShapedArray):
       if aval.shape != ():
-        raise TypeError(msg(f"had shape: {aval.shape}"))
+        if aval.size == 1:
+          idx = " or output[0]" if aval.ndim == 1 else ""
+          extract = f"extract the scalar with output.reshape(()){idx}, "
+        else:
+          extract = ""
+        hint = (f" To get the gradient, {extract}reduce the output to a "
+                "scalar with output.sum(), or use jax.jacobian to "
+                "differentiate a function with a non-scalar output.")
+        raise TypeError(msg(f"had shape: {aval.shape}") + hint)
     else:
       raise TypeError(msg(f"had abstract value {aval}"))
 

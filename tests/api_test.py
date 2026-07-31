@@ -1720,6 +1720,31 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises(lambda: grad(lambda x: x)(np.zeros(3)), TypeError,
                      "Gradient only defined for scalar-output functions. ")
 
+  def test_grad_nonscalar_output_hint(self):
+    # https://github.com/jax-ml/jax/issues/2303
+    with self.assertRaises(TypeError) as cm:
+      grad(lambda x: jnp.array([x ** 2]))(1.0)
+    self.assertIn("Output had shape: (1,).", str(cm.exception))
+    self.assertIn("output.reshape(()) or output[0]", str(cm.exception))
+    self.assertIn("output.sum()", str(cm.exception))
+    self.assertIn("jax.jacobian", str(cm.exception))
+
+    # Scalar-extraction advice is only given for size-1 outputs.
+    with self.assertRaises(TypeError) as cm:
+      api.value_and_grad(lambda x: x)(np.zeros(3))
+    self.assertIn("Output had shape: (3,).", str(cm.exception))
+    self.assertIn("output.sum()", str(cm.exception))
+    self.assertIn("jax.jacobian", str(cm.exception))
+    self.assertNotIn("reshape", str(cm.exception))
+
+    # output[0] advice is only given for 1-D outputs; it would not extract a
+    # scalar from e.g. a (1, 1) output.
+    with self.assertRaises(TypeError) as cm:
+      grad(lambda x: jnp.array([[x ** 2]]))(1.0)
+    self.assertIn("Output had shape: (1, 1).", str(cm.exception))
+    self.assertIn("output.reshape(())", str(cm.exception))
+    self.assertNotIn("output[0]", str(cm.exception))
+
   def test_unwrapped_numpy(self):
     def f(x):
       return np.exp(x)
