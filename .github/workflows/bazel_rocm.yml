@@ -125,6 +125,7 @@ jobs:
         --group-add video
         --shm-size 64G
         --env-file /etc/podinfo/gha-gpu-isolation-settings
+        --init
 
     env:
       JAXCI_CLONE_MAIN_XLA: ${{ inputs.clone_main_xla }}

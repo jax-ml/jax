@@ -129,6 +129,7 @@ jobs:
       options: >-
         --security-opt seccomp=unconfined
         --shm-size 64G
+        --init
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
