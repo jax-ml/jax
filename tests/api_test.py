@@ -9287,6 +9287,24 @@ class EvalJaxprPrimitiveTest(jtu.JaxTestCase):
     x = jnp.array(1.0)
     self.assertAllClose(jax.jit(g)(x), jnp.sin(x))
 
+  def test_eval_jaxpr_linearize_of_while(self):
+    # JaxprTrace partial eval must split eval_jaxpr eqns into known and
+    # unknown parts rather than staging them atomically
+    def f(x):
+      def body(c):
+        i, v = c
+        v2 = self._bind_eval_jaxpr(lambda u: [jnp.sin(u) * 2.0], v)[0]
+        return i + 1, v2
+      _, y = lax.while_loop(lambda c: c[0] < 3, body, (0, x))
+      return y
+
+    x = jnp.float32(1.)
+    ref = lambda v: jnp.sin(jnp.sin(jnp.sin(v) * 2.) * 2.) * 2.
+    y, lin = jax.linearize(f, x)
+    y_ref, lin_ref = jax.linearize(ref, x)
+    self.assertAllClose(y, y_ref)
+    self.assertAllClose(lin(jnp.float32(1.)), lin_ref(jnp.float32(1.)))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
