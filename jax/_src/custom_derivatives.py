@@ -1127,12 +1127,6 @@ core.pp_eqn_rules[custom_vjp_call_p] = _custom_vjp_call_pp_rule
 
 
 def _custom_vjp_call_transpose(*_, **__):
-  # A custom_vjp_call has no transpose rule: it may appear inside a linear
-  # computation that reverse-mode autodiff must transpose (for example, when a
-  # custom_vjp function is called from the tangent rule of a custom_jvp
-  # function), and there is no well-defined way to transpose through the
-  # user-supplied fwd/bwd pair. Point users to hijax, whose VJPHiPrimitive lets
-  # them define a primitive with its own transpose rule directly.
   raise NotImplementedError(
       "Reverse-mode differentiation (transpose) is not supported for a "
       "custom_vjp function that appears inside a linearized computation, such "
