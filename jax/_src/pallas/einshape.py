@@ -71,6 +71,7 @@ from jax._src import dispatch
 from jax._src import hijax
 from jax._src import typing as jax_typing
 from jax._src.frozen_dict import FrozenDict
+from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.pallas import core as pallas_core
@@ -392,23 +393,23 @@ class Einshape(hijax.VJPHiPrimitive):
     )
     super().__init__()
 
-  def vjp_fwd(self, nzs_in, /, *args):
-    del nzs_in
-    return self(*args), None
+  def transpose(self, g, accum):  # pyrefly: ignore [bad-override]
+    if isinstance(g, ad.Zero):
+      accum.accum(ad.zeros_like_aval(self.in_avals[0]))
+    else:
+      lhs, rhs = self.equation.split("->")
+      new_sizes = dict(self.sizes.items())
+      new_sizes |= _get_einshape_dims(
+          _parse_side(lhs), self.in_avals[0].shape, new_sizes)
+      update = einshape(
+          f"{rhs}->{lhs}",
+          g,
+          assert_is_tile_preserving=self.assert_is_tile_preserving,
+          **new_sizes
+      )
+      accum.accum(update)
 
-  def vjp_bwd_retval(self, res, outgrad, /):
-    del res
-    lhs, rhs = self.equation.split("->")
-    new_sizes = dict(self.sizes.items())
-    new_sizes |= _get_einshape_dims(
-        _parse_side(lhs), self.in_avals[0].shape, new_sizes)
-    out = einshape(
-        f"{rhs}->{lhs}",
-        outgrad,
-        assert_is_tile_preserving=self.assert_is_tile_preserving,
-        **new_sizes
-    )
-    return (out,)
+  vjp_fwd, vjp_bwd_retval = hijax.vjp_from_lin
 
   def expand(self, x: jax_typing.Array) -> jax_typing.Array:  # pyrefly: ignore[bad-override]
     return einshape_lo(

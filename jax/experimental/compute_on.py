@@ -13,5 +13,6 @@
 # limitations under the License.
 
 from jax._src.compute_on import (
+    compute_on as compute_on,
     compute_on2 as compute_on2,
 )
