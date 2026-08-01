@@ -9317,7 +9317,11 @@ def _copy_impl(prim, *args, **kwargs):
 copy_p = core.Primitive('copy')
 copy_p.def_impl(partial(_copy_impl, copy_p))
 copy_p.def_abstract_eval(lambda x: x)
-mlir.register_lowering(copy_p, lambda ctx, x: [x])
+
+def _copy_lowering(ctx, x):
+  out_aval, = ctx.avals_out
+  return [mlir.lower_with_sharding_in_types(ctx, x, out_aval)]
+mlir.register_lowering(copy_p, _copy_lowering)
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
 
