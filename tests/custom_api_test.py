@@ -1589,8 +1589,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertIs(g.fun, f)
 
   def test_transpose_inside_custom_jvp_tangent_error(self):
-    # Transposing a custom_vjp that appears inside a custom_jvp tangent is
-    # unsupported; the error should point users to hijax. See #19087.
     @jax.custom_vjp
     def g(x, y):
       return x + y
