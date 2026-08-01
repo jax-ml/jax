@@ -368,7 +368,7 @@ class CompiledCallParams(NamedTuple):
   in_tree: tree_util.PyTreeDef  # lo tree
   out_tree: tree_util.PyTreeDef  # lo tree
   const_args: list[ArrayLike]  # https://docs.jax.dev/en/latest/internals/constants.html
-  in_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue | core.AvalQDD]] | None
+  in_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
   out_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
 
   @property
@@ -455,13 +455,11 @@ class Traced(Stage):
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
     from jax._src.pjit import _lojax_expand_params  # pyrefly: ignore[missing-import]
     hi_jaxpr = self.jaxpr
-    _, closed_over_himutables = pe.convert_const_himutables(hi_jaxpr)
-    if closed_over_himutables: raise NotImplementedError  # TODO(mattjj)
-    in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_aval_qdds], {}))
+    in_avals = ft.flatten(([a.lo_ty() for a in hi_jaxpr.in_avals], {}))
     lo_jaxpr, out_avals = pe.lower_jaxpr(hi_jaxpr, in_avals)
     params = dict(_lojax_expand_params(in_avals, out_avals, **self._params), jaxpr=lo_jaxpr)
-    if any(a.is_high for a in hi_jaxpr.final_aval_qdds):
-      in_tree = lojax_pytree(hi_jaxpr.in_aval_qdds, self._in_tree)
+    if any(a.is_high for a in hi_jaxpr.in_avals):
+      in_tree = lojax_pytree(hi_jaxpr.in_avals, self._in_tree)
     else:
       in_tree = self._in_tree
     if any(a.is_high for a in hi_jaxpr.out_avals):
@@ -469,12 +467,11 @@ class Traced(Stage):
     else:
       out_tree = self.out_tree
     lo_meta_tys = [mty.replace(aval=lo_ty)
-                   for mty, aq in zip(self._meta_tys_flat, hi_jaxpr.in_aval_qdds)
-                   for lo_ty in (mty.aval.lo_ty_qdd(aq.qdd)
-                                 if mty.aval.has_qdd else mty.aval.lo_ty())]
+                   for mty in self._meta_tys_flat
+                   for lo_ty in mty.aval.lo_ty()]
     self._lojax = LoJax(
         lo_meta_tys, params, in_tree, out_tree,
-        (self._in_tree, hi_jaxpr.final_aval_qdds),
+        (self._in_tree, hi_jaxpr.in_avals),
         (self.out_tree, hi_jaxpr.out_avals),
         self._consts)
     return self._lojax
@@ -546,7 +543,7 @@ class Lowered(Stage):
   args_info: Any  # PyTree of ArgInfo, not including the const_args
   out_tree: tree_util.PyTreeDef
   _no_kwargs: bool
-  _in_types: list[tuple[core.AbstractValue, core.QuasiDynamicData]] | None
+  _in_types: tuple[tree_util.PyTreeDef, list[core.AbstractValue]] | None
   _out_types: list[core.AbstractValue] | None
 
   def __init__(self, lowering: Lowering, args_info,
@@ -829,15 +826,10 @@ class Compiled(Stage):
 
     if params.is_high:
       hi_args_flat, hi_tree = tree_util.tracing_registry.flatten((args, kwargs))
-      _in_hi_tree, final_qdds = params.in_types
-      # TODO(jakevdp): remove pyrefly ignore when https://github.com/facebook/pyrefly/issues/2382 is fixed.
-      args_flat = [a.read_loval(core.cur_qdd(x), x) if (a := typeof(x)).has_qdd
-                   else a.lower_val(x) for x in hi_args_flat]
+      args_flat = [typeof(x).lower_val(x) for x in hi_args_flat]
       args_flat, in_tree = tree_util.tracing_registry.flatten(
           tree_util.tree_unflatten(hi_tree, args_flat))
     else:
-      hi_args_flat = []
-      final_qdds = None
       args_flat, in_tree = tree_util.tracing_registry.flatten((args, kwargs))
 
     # TODO(mattjj): improve wrong-number-of-args error
@@ -869,8 +861,6 @@ class Compiled(Stage):
     lo_outs = params.executable.call(*params.const_args, *args_flat)
 
     if params.is_high:
-      out_mut, lo_outs = util.split_list(lo_outs, [_num_himuts_out(final_qdds)])
-      _apply_himut(final_qdds, hi_args_flat, out_mut)
       out_hi_tree, out_hi_types = params.out_types
       out_flat = raise_lo_outs(out_hi_types, lo_outs)
       outs = tree_util.tree_unflatten(out_hi_tree, out_flat)
@@ -890,19 +880,6 @@ class Compiled(Stage):
           return outs
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
-
-# TODO(mattjj): de-dup with partial_eval.py
-def _num_himuts_out(final_qdds):
-  return sum(len(a.lo_ty()) for a in final_qdds if a.has_qdd)
-
-# TODO(mattjj): de-dup with partial_eval.py
-def _apply_himut(final_qdds, hi_args, out_mut):
-  out_mut_ = iter(out_mut)
-  for i, a in enumerate(final_qdds):
-    if isinstance(a, core.AvalQDD):
-      lo_vals = it.islice(out_mut_, len(a.aval.lo_ty_qdd(a.qdd)))
-      a.aval.update_from_loval(a.qdd, hi_args[i], *lo_vals)  # pyrefly: ignore[missing-attribute]
-  assert next(out_mut_, None) is None
 
 # TODO(mattjj): de-dup with partial_eval.py
 def raise_lo_outs(hi_avals, lo_outs):

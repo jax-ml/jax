@@ -245,11 +245,6 @@ class BatchTrace(Trace):
     else:
       return val, None
 
-  def cur_qdd(self, x):
-    val, _ = self.to_batch_info(x)
-    with core.set_current_trace(self.parent_trace):
-      return core.cur_qdd(val)
-
   def stage_value(self, val):
     if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
       return val

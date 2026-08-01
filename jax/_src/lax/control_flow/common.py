@@ -56,9 +56,9 @@ def _merge_common_consts(
   # Jaxprs must share consts, so we concat consts and pad the jaxprs' constvars.
   lens = map(len, all_consts)
   consts = [c for cs in all_consts for c in cs]
-  avalqdds = tuple(map(core.cur_aval_qdd, consts))
+  avals = tuple(map(core.typeof, consts))
   num_constss = [len(cs) for cs in all_consts]
-  jaxprs = [_pad_constvars(jaxpr, num_consts, avalqdds[:sum(lens[:i])], avalqdds[sum(lens[:i+1]):])
+  jaxprs = [_pad_constvars(jaxpr, num_consts, avals[:sum(lens[:i])], avals[sum(lens[:i+1]):])
             for i, (jaxpr, num_consts) in enumerate(zip(jaxprs, num_constss))]
   # De-duplicate shared constants.
   const_ids = tuple(id(c) for c in consts)
@@ -69,12 +69,10 @@ def _merge_common_consts(
 
 @weakref_lru_cache
 def _pad_constvars(jaxpr: core.Jaxpr, num_consts: int,
-                   left: tuple[core.AvalQDD, ...],
+                   left: tuple[core.AbstractValue, ...],
                    right: tuple[core.AbstractValue, ...]) -> core.Jaxpr:
-  def make_var(aq):
-    return core.Var(aq.aval, initial_qdd=aq.qdd, final_qdd=aq.qdd)
-  invars = [*map(make_var, left), *jaxpr.invars[:num_consts],
-            *map(make_var, right), *jaxpr.invars[num_consts:]]
+  invars = [*map(core.Var, left), *jaxpr.invars[:num_consts],
+            *map(core.Var, right), *jaxpr.invars[num_consts:]]
   jaxpr = jaxpr.replace(invars=invars)
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr

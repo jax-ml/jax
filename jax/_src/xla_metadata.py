@@ -453,7 +453,6 @@ ad.fancy_transposes[xla_metadata_call_p] = _xla_metadata_call_transpose
 
 
 def _xla_metadata_call_to_lojax(*hi_args, jaxpr, xla_metadata, ad_metadata):
-  _check_no_qdd(jaxpr, 'xla_metadata_call')
   lo_args_lol = [a.lower_val(x) for a, x in zip(jaxpr.in_avals, hi_args)]
   lo_args = [x for xs in lo_args_lol for x in xs]
   in_avals = ft.flatten(([[core.typeof(x) for x in xs] for xs in lo_args_lol],
@@ -462,16 +461,9 @@ def _xla_metadata_call_to_lojax(*hi_args, jaxpr, xla_metadata, ad_metadata):
   all_outs = xla_metadata_call_p.bind(*lo_args, jaxpr=lo_jaxpr,
                                       xla_metadata=xla_metadata,
                                       ad_metadata=ad_metadata)
-  _, lo_outs = out_avals.update(all_outs).unpack()
+  lo_outs = out_avals.update(all_outs)
   return [a.raise_val2(y) for a, y in zip(jaxpr.out_avals, lo_outs.unpack())]
 xla_metadata_call_p.to_lojax = _xla_metadata_call_to_lojax
-
-def _check_no_qdd(jaxpr, name):
-  if (any(a.has_qdd for a in jaxpr.in_avals) or
-      any(core.typeof(c).has_qdd for c in jaxpr.consts)):
-    raise NotImplementedError(
-        f"hijax values with quasi-dynamic data (e.g. Boxes) are not "
-        f"supported in {name} bodies")
 
 
 def _xla_metadata_call_partial_eval_custom_params_updater(

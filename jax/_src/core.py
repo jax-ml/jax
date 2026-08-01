@@ -170,16 +170,6 @@ class Jaxpr:
     return [v.aval for v in self.invars]
 
   @property
-  def in_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.initial_qdd is None else AvalQDD(v.aval, v.initial_qdd)
-            for v in self.invars]
-
-  @property
-  def final_aval_qdds(self) -> list[AbstractValue | AvalQDD]:
-    return [v.aval if v.final_qdd is None else AvalQDD(v.aval, v.final_qdd)
-            for v in self.invars]
-
-  @property
   def out_avals(self):
     return [v.aval for v in self.outvars]
 
@@ -532,19 +522,13 @@ def resolve_input_effects(effs, invars) -> Effects:
   return out_effs
 
 class Var:
-  __slots__ = ["aval", "initial_qdd", "final_qdd"]
+  __slots__ = ["aval"]
 
   aval: AbstractValue
-  # these are only useful for jaxpr binders but rather than create a separate
-  # type for those, breaking existing interpreters, we add fields here.
-  initial_qdd : QuasiDynamicData | None
-  final_qdd : QuasiDynamicData | None
 
-  def __init__(self, aval: AbstractValue, initial_qdd=None, final_qdd=None):
+  def __init__(self, aval: AbstractValue):
     assert isinstance(aval, AbstractValue), aval
     self.aval = aval
-    self.initial_qdd = initial_qdd
-    self.final_qdd = final_qdd
 
   def __repr__(self):
     return f'Var(id={id(self)}):{self.aval.str_short()}'
@@ -1341,9 +1325,6 @@ class EvalTrace(Trace):
     with set_current_trace(self):
       return fun.call_wrapped(*tracers)
 
-  def cur_qdd(self, x):
-    return x.cur_qdd()
-
 class TraceTag:
   # TODO: this works for surprisingly subtle reasons. Function transformations
   # like `jvp_subtrace` are parameterized by a tag that identifies the set of
@@ -1805,10 +1786,6 @@ class AbstractValue:
   def is_high(self) -> bool:
     return False
 
-  @property
-  def has_qdd(self) -> bool:
-    return False
-
   def to_tangent_aval(self) -> AbstractValue:
     raise NotImplementedError("must override")
 
@@ -1843,9 +1820,6 @@ class AbstractValue:
 
   def lo_ty(self):
     return [self]
-
-  def lo_ty_qdd(self, qdd):
-    raise NotImplementedError("avals with qdd must override")
 
   def lower_val(self, val, /):
     return [val]
@@ -2035,76 +2009,6 @@ def concrete_dim_or_error(val: Any, context=""):
     return val
   else:
     return concrete_or_error(operator.index, val, context=context)
-
-### Quasi-dynamic data
-
-# Quasi-dynamic data includes things like liveness bits and the content type of
-# a type-changeable box. These change throughout the program but at a given
-# point in the program they have a single statically known value.
-
-class MutableQuasiDynamicData:
-  def __init__(self, val : QuasiDynamicData | None):
-    self.init_val = val
-    self.cur_val = val  # immutable payload
-
-  def update(self, val):
-    self.cur_val = val
-
-  def __repr__(self):
-    return f'MutableQuasiDynamicData(init_val={self.init_val}, cur_val={self.cur_val})'
-
-class QuasiDynamicData:
-  pass
-
-@dataclass(frozen=True, slots=True)
-class AvalQDD:
-  is_high = True
-  aval: AbstractValue
-  qdd: QuasiDynamicData | None # immutable
-  has_qdd = True
-
-  is_writer = property(lambda self: self.aval.is_writer)
-
-  def lo_ty(self):
-    return self.aval.lo_ty_qdd(self.qdd)
-
-  def read_loval(self, val):
-    return self.aval.read_loval(self.qdd, val)  # pyrefly: ignore[missing-attribute]
-
-  def read_loval_in(self, val):
-    return self.aval.read_loval_in(self.qdd, val)  # pyrefly: ignore[missing-attribute]
-
-  def read_loval_out(self, val):
-    return self.aval.read_loval_out(self.qdd, val)  # pyrefly: ignore[missing-attribute]
-
-  def new_from_loval(self, *lovals):
-    return self.aval.new_from_loval(self.qdd, *lovals)  # pyrefly: ignore[missing-attribute]
-
-  def to_tangent_aval(self):
-    return AvalQDD(self.aval.to_tangent_aval(), self.qdd and self.qdd.to_tangent_qdd())  # pyrefly: ignore[missing-attribute]
-
-@dataclass(frozen=True, slots=True)
-class AvalMutableQDD:
-  aval: AbstractValue
-  mutable_qdd: MutableQuasiDynamicData
-
-def cur_qdd(x):
-  with take_current_trace() as prev_trace:
-    if prev_trace is None:
-      return x.cur_qdd()
-    else:
-      return prev_trace.cur_qdd(x)
-
-def cur_aval_qdd(x):
-  aval = typeof(x)
-  qdd = cur_qdd(x) if aval.has_qdd else None
-  return AvalQDD(aval, qdd)
-
-def aval_qdd_from_current_val(aval, x):
-  if aval.has_qdd:
-    return cur_aval_qdd(x)
-  else:
-    return aval
 
 ### Extended dtypes
 #
@@ -3706,12 +3610,6 @@ def check_jaxpr(jaxpr: Jaxpr):
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pyrefly: ignore[missing-import]
     check_key_reuse_jaxpr(jaxpr)
 
-# A place to track the quasi-dynamic data associated with a variable during typechecking
-@dataclass(frozen=True, slots=True)
-class MutableTypecheckVal:
-  aval : AbstractValue
-  mutable_qdd : MutableQuasiDynamicData
-
 @partial(weakref_lru_cache, trace_context_in_key=False)
 def _dropvars(jaxpr: Jaxpr) -> dict[Var, Literal_['_']]:
   varnames: dict[Var, Literal_['_']] = {}
@@ -3728,9 +3626,9 @@ def _check_jaxpr(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
     jaxpr: Jaxpr
   ) -> None:
-  env: dict[Var, Atom | MutableTypecheckVal] = {}
+  env: dict[Var, Atom] = {}
 
-  def read(x: Atom) -> Atom | MutableTypecheckVal:
+  def read(x: Atom) -> Atom:
     # Check the type annotation is itself well-typed.
     check_type(ctx_factory, env, x.aval)
     if isinstance(x, Var):
@@ -3750,8 +3648,7 @@ def _check_jaxpr(
     else:
       assert False, "syntactically invalid jaxpr"
 
-  def write(v: Var, a: AvalQDD) -> None:
-    aval, qdd = a.aval, a.qdd
+  def write(v: Var, aval: AbstractValue) -> None:
     assert isinstance(v, Var), "syntactically invalid jaxpr"
     # Check the type annotation of the binder is itself well-typed.
     check_type(ctx_factory, env, v.aval)
@@ -3768,10 +3665,7 @@ def _check_jaxpr(
 
     # If the variable is not a DropVar, add it to the environment.
     if not isinstance(v, DropVar):
-      if qdd is None:
-        env[v] = v
-      else:
-        env[v] = MutableTypecheckVal(aval, MutableQuasiDynamicData(qdd))
+      env[v] = v
 
   # # Don't return refs
   if config.mutable_array_checks.value:
@@ -3783,7 +3677,7 @@ def _check_jaxpr(
   # Check type annotations on lambda binders.
   for v in it.chain(jaxpr.constvars, jaxpr.invars):
     check_type(ctx_factory, env, v.aval)
-    write(v, AvalQDD(v.aval, v.initial_qdd))
+    write(v, v.aval)
 
   # Check each eqn.
   input_vars = set(it.chain(jaxpr.constvars, jaxpr.invars))
@@ -3792,8 +3686,7 @@ def _check_jaxpr(
     prim = eqn.primitive
     try:
       in_atoms = map(read, eqn.invars)
-      in_avals = [AvalMutableQDD(x.aval, x.mutable_qdd) if isinstance(x, MutableTypecheckVal)
-                  else x.aval for x in in_atoms]  # use in_atoms for dyn shapes
+      in_avals = [x.aval for x in in_atoms]  # use in_atoms for dyn shapes
 
       # Compute the type of the primitive application.
       with eqn.ctx.manager:
@@ -3837,8 +3730,6 @@ def _check_jaxpr(
                                f"Jaxpr effects: {jaxpr.effects}")
 
       # Check out_type matches the let-binders' annotation (after substitution).
-      out_type = [t if isinstance(t, AvalQDD) else AvalQDD(t, None)
-                  for t in out_type]
       foreach(write, eqn.outvars, out_type)
 
     except JaxprTypeError as e:
@@ -3861,7 +3752,7 @@ def _check_jaxpr(
 
 def check_type(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
-    env: dict[Var, Atom | MutableTypecheckVal],
+    env: dict[Var, Atom],
     ty: AbstractValue,
   ) -> None:
   return  # Except in above case(s), all syntactic forms are valid
@@ -3886,7 +3777,7 @@ def _check_call(ctx_factory, prim, in_atoms, params):
                          f"{len(call_jaxpr.invars)} inputs")
 
   # Check `call_jaxpr` can be applied to in_atoms.
-  env: dict[Var, Atom | MutableTypecheckVal] = {}
+  env: dict[Var, Atom] = {}
   for v, x in zip(call_jaxpr.invars, in_atoms):
     if not typecompat(v.aval, x.aval):
       # TODO(mattjj): vars in error message are confusing b/c of Var.__repr__

@@ -171,10 +171,6 @@ def _pallas_call_to_lojax(
     metadata: FrozenDict[str, str] | None,
     name: str | None,
 ):
-  if any(jax_core.typeof(x).has_qdd for x in hi_args):
-    raise NotImplementedError("pallas_call does not support QDD for inputs")
-  if any(aval.has_qdd for aval in out_avals):
-    raise NotImplementedError("pallas_call does not support QDD for outputs")
   closed_jaxpr = jaxpr
   with grid_mapping.trace_env():
     closed_lo_jaxpr = pe.lower_jaxpr2(closed_jaxpr)
@@ -188,8 +184,7 @@ def _pallas_call_to_lojax(
       )
   avals = [jax_core.typeof(a) for a in hi_args]
   lo_args = [lo_val for aval, x in zip(avals, hi_args)
-             for lo_val in (aval.read_loval(x) if aval.has_qdd
-                            else aval.lower_val(x))]
+             for lo_val in aval.lower_val(x)]
   lo_out_avals = [
       lo_aval
       for aval in out_avals

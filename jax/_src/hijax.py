@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from functools import partial, reduce, update_wrapper
 import inspect
-import itertools as it
 from typing import Any, NoReturn, NamedTuple
 from collections.abc import Hashable, Callable
 
@@ -45,7 +44,6 @@ from jax._src.state.types import AbstractRef
 from jax._src import ad_util
 from jax._src.util import (
     safe_zip, safe_map, split_list, unzip2, partition_list, merge_lists)
-from jax._src import flattree as ft
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_leaves, tree_leaves_checked,
     broadcast_prefix, register_static, register_pytree_node, tree_map_with_path,
@@ -65,7 +63,6 @@ traceback_util.register_exclusion(__file__)
 
 Ty = core.AbstractValue
 LoType = core.AbstractValue
-QDD = core.QuasiDynamicData
 ShapedArray = core.ShapedArray
 
 class HiPrimitive(core.Primitive):
@@ -104,7 +101,6 @@ def _must_override(ty, method: str, needed_for: str) -> NoReturn:
 
 class HiType(core.AbstractValue):
   is_high = True
-  has_qdd = False  # immutable
 
   # type equality
   def __hash__(self):
@@ -154,244 +150,12 @@ class HiType(core.AbstractValue):
     _must_override(self, "nospec", "autodiff through shard_map")
 
 
-class MutableHiType(core.AbstractValue):
-  is_high = True
-  has_qdd = True  # mutable and potentially type-changing
-  is_writer = False
-  type_state = core.aval_method(core.cur_qdd)
-
-  # type equality
-  def __hash__(self): _must_override(self, "__hash__", "type equality")
-  def __eq__(self, other): _must_override(self, "__eq__", "type equality")
-
-  # define lowering from (mutable) hijax type to (immutable) lojax types
-  def lo_ty_qdd(self, state: QDD, /) -> list[core.AbstractValue]:  # pyrefly: ignore[bad-override]
-    _must_override(self, "lo_ty_qdd", "lowering (e.g. under jit)")
-  def lo_ty(self):
-    assert False, "mutable hitypes should use lo_ty_qdd instead"
-
-  # define lowering from hijax value to lojax values and back, depending on qdd
-  def new_from_loval(self, state: QDD, /, *vals: LoVal) -> HiVal:
-    _must_override(self, "new_from_loval", "raising lowered values")
-  def read_loval(self, state: QDD, val: HiVal, /) -> list[LoVal]:
-    _must_override(self, "read_loval", "lowering values")
-  # default implementations of newer apis
-  def read_loval_in(self, state, val, /):
-    return self.read_loval(state, val)
-  def read_loval_out(self, qdd, hi, /):
-    return ft.flatten(self.read_loval(qdd, hi))
-
-  # define how to mutate/set the mutable hijax value given immutable lojax vals
-  def update_from_loval(self, state: QDD, val: HiVal, /, *lo_vals: LoVal) -> None:
-    _must_override(self, "update_from_loval", "updating values from lowered values")
-  # default implementation of newer api
-  def update_from_loval2(self, state, val, lo_vals_ft, /) -> None:
-    self.update_from_loval(state, val, *lo_vals_ft.unflatten())
-
-  # autodiff interface
-  def to_tangent_aval(self) -> HiType:
-    _must_override(self, "to_tangent_aval", "autodiff")
-
-  # Subclasses should override if the cotangent type is a function of primal
-  # type. For example, CT unreduced = reduced and vice-versa.
-  def to_ct_aval(self) -> HiType:
-    return self.to_tangent_aval()
-
 def register_hitype(val_cls, typeof_fn) -> None:
   core.pytype_aval_mappings[val_cls] = typeof_fn
   dtypes.register_canonicalize_value_handler(val_cls, None)
 
 def hijax_method(f):
   return core.aval_method(f)
-
-
-# Boxes
-
-## Box API
-
-def new_box():
-  (), treedef = tree_flatten(None)
-  return new_box_p.bind(treedef=treedef)
-
-def box_get(box):
-  tys = core.cur_qdd(box)
-  leaf_vals = box_get_p.bind(box, avals=tuple(tys.leaf_avals))
-  return tree_unflatten(tys.treedef, leaf_vals)
-
-def box_set(box, val):
-  leaves, treedef = tree_flatten(val)
-  box_set_p.bind(box, *leaves, treedef=treedef)
-
-## Box implementation
-
-@dataclass(frozen=True, slots=True)
-class BoxTypeState(QDD):
-  leaf_avals: tuple[core.AbstractValue, ...]
-  treedef: PyTreeDef
-
-  def to_tangent_qdd(self):
-    leaf_avals = tuple(a.to_tangent_aval() for a in self.leaf_avals)
-    return BoxTypeState(leaf_avals, self.treedef)
-
-  def normalize(self):
-    leaf_types = tuple(a.normalize() for a in self.leaf_avals)
-    return BoxTypeState(leaf_types, self.treedef)
-
-class BoxTy(MutableHiType):
-  has_qdd = True
-
-  # forwarded to value
-  get = core.aval_method(box_get)
-  set = core.aval_method(box_set)
-
-  # aval interface: hashability and str_short
-  def __hash__(self): return hash(BoxTy)
-  def __eq__(self, other): return isinstance(other, BoxTy)
-
-  def str_short(self, short_dtypes=False, **_) -> str:  # pyrefly: ignore[bad-override]
-    return 'BoxTy'
-
-  # mutable interface
-  def lo_ty_qdd(self, box_state):
-    return [lo_ty for t in box_state.leaf_avals for lo_ty in t.lo_ty()]
-
-  def new_from_loval(self, box_state: BoxTypeState, *lo_vals) -> Box:  # pyrefly: ignore[bad-override]
-    lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # pyrefly: ignore[missing-attribute]
-               for hi_ty in box_state.leaf_avals]
-    assert next(lo_vals_, None) is None
-    return Box._new(tree_unflatten(box_state.treedef, hi_vals))  # will be mutated
-
-  def read_loval(self, box_state: BoxTypeState, box) -> list:  # pyrefly: ignore[bad-override]
-    leaf_vals, treedef = tree_flatten(box_get(box))
-    assert treedef == box_state.treedef
-    return [lo_val for hi_ty, hi_val in zip(box_state.leaf_avals, leaf_vals)
-            for lo_val in hi_ty.lower_val(hi_val)]  # pyrefly: ignore[missing-attribute]
-
-  def update_from_loval(self, box_state: BoxTypeState, box, *lo_vals) -> None:  # pyrefly: ignore[bad-override]
-    lo_vals_ = iter(lo_vals)
-    hi_vals = [hi_ty.raise_val(*it.islice(lo_vals_, len(hi_ty.lo_ty())))  # pyrefly: ignore[missing-attribute]
-               for hi_ty in box_state.leaf_avals]
-    assert next(lo_vals_, None) is None
-    box_set(box, tree_unflatten(box_state.treedef, hi_vals))
-
-  def to_tangent_aval(self):
-    return BoxTy()
-
-# Override isinstance checks under tracing
-class _BoxMeta(type):
-  def __instancecheck__(self, instance):
-    return (super().__instancecheck__(instance) or
-            isinstance(instance, core.Tracer) and
-            isinstance(core.typeof(instance), BoxTy))
-
-class Box(metaclass=_BoxMeta):  # noqa: F811
-  _val: Any
-
-  # We want `Box(x)` to bind a primitive, so we override __new__ and provide a
-  # raw `_new` method below.
-  def __new__(cls, init_val=None):
-    (), treedef = tree_flatten(None)
-    box = new_box_p.bind(treedef=treedef)
-    box.set(init_val)
-    return box
-
-  @classmethod
-  def _new(cls, init_val):
-    new = super().__new__(cls)
-    new._val = init_val
-    return new
-
-  def get(self):
-    return box_get(self)
-
-  def set(self, val):
-    box_set(self, val)
-
-  def cur_qdd(self):
-    return self.type_state()
-
-  @property
-  def ty(self):
-    return BoxTy()
-
-  def type_state(self):
-    leaves, treedef = tree_flatten(self._val)
-    leaf_avals = tuple(map(core.typeof, leaves))
-    return BoxTypeState(leaf_avals, treedef)
-
-register_hitype(Box, lambda b: b.ty)
-
-class BoxEffect(effects.Effect): ...
-box_effect = BoxEffect()
-effects.control_flow_allowed_effects.add_type(BoxEffect)
-effects.custom_derivatives_allowed_effects.add_type(BoxEffect)
-
-class NewBox(HiPrimitive):
-  def is_high(self, *, treedef) -> bool: return True
-
-  def abstract_eval(self, *, treedef):
-    leaves, treedef = tree_flatten(None)
-    qdd = BoxTypeState(tuple(leaves), treedef)
-    return core.AvalQDD(BoxTy(), qdd), {box_effect}
-
-  def to_lojax(_, *, treedef):
-    return Box._new(None)
-
-  def jvp(_, primals, tangents, *, treedef):  # pyrefly: ignore[bad-override]
-    assert False  # TODO
-
-  def transpose(_, *args, treedef):
-    assert False  # TODO
-new_box_p = NewBox('new_box')
-
-class BoxSet(HiPrimitive):
-  multiple_results = True
-
-  def is_high(self, *leaf_avals, treedef) -> bool: return True
-
-  def abstract_eval(self, box_ty, *leaf_avals, treedef):
-    box_ty.mutable_qdd.update(BoxTypeState(leaf_avals, treedef))
-    return [], {box_effect}  # TODO better typechecking...
-
-  def to_lojax(_, box, *leaves, treedef):
-    box._val = tree_unflatten(treedef, leaves)
-    return []
-
-  def jvp(_, primals, tangents, *, treedef):  # pyrefly: ignore[bad-override]
-    box, *vals = primals
-    box_dot, *val_dots = tangents
-    if type(box_dot) is ad_util.Zero:
-      raise Exception("can't differentiate Box.set operation, "
-                      "did you forget jax.lax.stop_gradient?")
-    box_set_p.bind(box, *vals, treedef=treedef)
-    box_set_p.bind(box_dot, *val_dots, treedef=treedef)
-    return [], []
-
-  def transpose(_, *args, treedef):
-    assert False  # TODO
-box_set_p = BoxSet('box_set')
-
-
-class BoxGet(HiPrimitive):
-  multiple_results = True
-
-  def abstract_eval(self, box_ty, *, avals):
-    return avals, {box_effect}
-
-  def to_lojax(_, box, *, avals):
-    return tree_leaves(box._val)
-
-  def jvp(_, primals, tangents, *, avals):  # pyrefly: ignore[bad-override]
-    (box,), (box_dot,) = primals, tangents
-    return (
-      box_get_p.bind(box, avals=avals),
-      box_get_p.bind(box_dot, avals=tuple(a.to_tangent_aval() for a in avals))
-    )
-
-  def transpose(_, *args):
-    assert False  # TODO
-box_get_p = BoxGet('box_get')
 
 
 # === new-style hijax primitive implementation ===
@@ -1447,122 +1211,3 @@ class HiPspec:
     _must_override(self, "to_tangent_spec", "autodiff through shard_map")
   def to_ct_spec(self) -> HiPspec:
     _must_override(self, "to_ct_spec", "autodiff through shard_map")
-
-# Logs
-
-log_effect = box_effect
-
-def log_extend(log, dct):
-  leaves, treedef = tree_flatten(dct)
-  log_extend_p.bind(log, *leaves, treedef=treedef)
-
-def log_append(log, key, val):
-  log_extend(log, {key: [val]})
-
-def log_read(log):
-  return log_read_p.bind(log)
-
-class _LogMeta(type):
-  def __instancecheck__(self, instance):
-    return (super().__instancecheck__(instance) or
-            isinstance(instance, core.Tracer) and
-            isinstance(core.typeof(instance), LogTy))
-
-class Log(metaclass=_LogMeta):  # noqa: F811
-  _dct: dict  # dict[str, list[PyTree[Array]]]
-
-  def __new__(cls):
-    return new_log_p.bind()
-
-  @classmethod
-  def _new(cls):
-    new = super().__new__(cls)
-    new._dct = {}
-    return new
-
-  def cur_qdd(self):
-    return ()
-
-  append = log_append
-  extend = log_extend
-  read = log_read
-
-class LogTy(MutableHiType):
-  has_qdd = True
-  is_writer = True
-
-  append = core.aval_method(log_append)
-  extend = core.aval_method(log_extend)
-  read = core.aval_method(log_read)
-
-  def __hash__(self): return hash(LogTy)
-  def __eq__(self, other): return isinstance(other, LogTy)
-  def str_short(self, short_dtypes=False, **_) -> str:  # pyrefly: ignore[bad-override]
-    return 'Log'
-
-  def to_tangent_aval(self):
-    return LogTy()
-
-  def lo_ty_qdd(self, qdd: QDD, /) -> list[core.AbstractValue]:
-    return []
-
-  def read_loval_in(self, qdd, log):
-    () = qdd
-    return []
-
-  def read_loval_out(self, qdd, log):
-    () = qdd
-    return ft.flatten(log._dct)
-
-  def new_from_loval(self, qdd):  # pyrefly: ignore[bad-override]
-    () = qdd
-    return Log._new()
-
-  def update_from_loval2(self, qdd, log: Log, lo_ft) -> None:
-    () = qdd
-    updates = lo_ft.unflatten()
-    for k, v in updates.items():
-      log._dct.setdefault(k, []).extend(v)
-
-register_hitype(Log, lambda _: LogTy())
-
-class LogExtend(HiPrimitive):
-  multiple_results = True  # no results
-  is_effectful = lambda *_, **__: True
-
-  def abstract_eval(self, log_ty, *val_tys, treedef):
-    return [], {log_effect}
-
-  def to_lojax(_, log, *vals, treedef):
-    updates = tree_unflatten(treedef, vals)
-    for k, v in updates.items():
-      log._dct.setdefault(k, []).extend(v)
-    return []
-log_extend_p = LogExtend('log_extend')
-
-class NewLog(HiPrimitive):
-  def is_high(self) -> bool: return True
-
-  def abstract_eval(self):
-    ty = LogTy()
-    return core.AvalQDD(ty, ()), {log_effect}  # pyrefly: ignore[bad-argument-type]
-
-  def to_lojax(_):
-    return Log._new()
-new_log_p = NewLog('new_log')
-
-def new_log():
-  return new_log_p.bind()
-
-
-class ReadLog(HiPrimitive):
-  multiple_results = True
-
-  def is_high(self, _) -> bool: return True
-
-  def abstract_eval(self, log_qdd):
-    raise Exception
-
-  def to_lojax(_, log):
-    return list(ft.flatten(log._dct))
-log_read_p = ReadLog('log_read')

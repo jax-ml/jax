@@ -30,6 +30,3 @@ from jax._src.dtypes import (
 from jax._src.earray import (
     EArray as EArray
 )
-from jax._src.core import (
-    cur_qdd as cur_qdd,
-)

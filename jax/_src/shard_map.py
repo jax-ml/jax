@@ -769,7 +769,7 @@ def _shard_map_to_lojax(*hi_args, jaxpr, in_specs, out_specs, **params):
   out = trace.emit_eqn([*const_tracers, *in_tracers], list(out_avals_ft), shard_map_p,
                        dict(params, jaxpr=lo_jaxpr, in_specs=in_specs,
                             out_specs=lo_out_specs), effs, source_info)
-  (), lo_outs = out_avals_ft.update(out).unpack()
+  lo_outs = out_avals_ft.update(out)
   hi_out_avals = tuple(unshard_aval(mesh, check_vma, s, a)
                        for a, s in zip(jaxpr.out_avals, out_specs))
   return [a.raise_val2(y) for a, y in zip(hi_out_avals, lo_outs.unpack())]

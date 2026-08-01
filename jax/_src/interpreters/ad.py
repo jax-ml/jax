@@ -233,7 +233,7 @@ def _linearize_jaxpr(
 
   source_info = source_info_util.current()
   tracers = [new_arg(lin_trace, a, nz, source_info)
-             for (a, nz) in zip(jaxpr.in_aval_qdds, nonzeros)]
+             for (a, nz) in zip(jaxpr.in_avals, nonzeros)]
   in_primals = [t.primal for t in tracers]
 
   with core.set_current_trace(lin_trace, check_leaks=True):
@@ -627,11 +627,6 @@ class JVPTrace(Trace):
     else:
       return maybe_jvp_tracer(self, primal_out, tangent_out)
 
-  def cur_qdd(self, x):
-    p, _ = self.to_primal_tangent_pair(x)
-    with core.set_current_trace(self.parent_trace):
-      return core.cur_qdd(p)
-
   def process_call(self, call_primitive, f, tracers, params, /):
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
@@ -723,9 +718,6 @@ class JVPTracer(Tracer[JVPTrace]):
     pp = lambda x: x._short_repr() if isinstance(x, Tracer) else str(x)
     primal, tangent = pp(self.primal), pp(self.tangent)
     return f'JVPTracer({primal=!s}, {tangent=!s})'
-
-  def cur_qdd(self):
-    return core.cur_qdd(self.primal)
 
   def full_lower(self):
     if type(self.tangent) is Zero:
@@ -834,11 +826,6 @@ class LinearizeTrace(Trace):
               for x, nz, t in zip(primal_out, tangent_nzs_out, tangent_out)]
     else:
       return maybe_linearize_tracer(self, primal_out, tangent_nzs_out, tangent_out)
-
-  def cur_qdd(self, x):
-    p, _ = self.to_primal_tangent_pair(x)
-    with core.set_current_trace(self.parent_trace):
-      return core.cur_qdd(p)
 
   def process_custom_jvp_call(self, primitive, fun: lu.WrappedFun,
                               jvp: lu.WrappedFun, tracers, /, *,
@@ -1064,9 +1051,6 @@ class LinearizeTracer(Tracer[LinearizeTrace]):
   def get_referent(self):
     return core.get_referent(self.primal)
 
-  def cur_qdd(self):
-    return core.cur_qdd(self.primal)
-
 
 # -------------------- Primitives --------------------
 
@@ -1251,7 +1235,7 @@ def jvp_jaxpr(jaxpr: core.Jaxpr, nonzeros: Sequence[bool],
 def _jvp_jaxpr(jaxpr: core.Jaxpr,
                nonzeros: Sequence[bool], instantiate: Sequence[bool]):
   assert len(jaxpr.in_avals) == len(nonzeros)
-  primal_avals_in = ft.flatten_list(jaxpr.in_aval_qdds)
+  primal_avals_in = ft.flatten_list(jaxpr.in_avals)
   tangent_avals_in = primal_avals_in.map(lambda aval: aval.to_tangent_aval())
   nz_tangent_avals_in = tangent_avals_in.map2(
       nonzeros, lambda aval, nz: aval if nz else Zero(aval)).filter_with_mask(nonzeros)

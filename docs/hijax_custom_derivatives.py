@@ -1061,10 +1061,9 @@ print(f_lin(1.))
 # Custom derivatives are only part of the hijax story. Hijax primitives can
 # also:
 #
-# * introduce new types beyond arrays, by subclassing `HiType` (immutable) or
-#   `MutableHiType` and registering them with `register_hitype`, with the
-#   primitive's `in_avals`/`out_aval` mentioning the new types — see
-#   {ref}`hijax-types`;
+# * introduce new types beyond arrays, by subclassing `HiType` and registering
+#   them with `register_hitype`, with the primitive's `in_avals`/`out_aval`
+#   mentioning the new types — see {ref}`hijax-types`;
 # * define a `transpose` rule, for primitives that are linear in some inputs;
 # * customize rematerialization via a `remat` method, and dead code
 #   elimination via a `dce` method.

@@ -2429,10 +2429,6 @@ def _emit_pipeline_lowering_rule(
   return jaxpr_subcomp(lowering_context, jaxpr, *args_flat)
 
 def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
-  all_args: EmitPipelinePrimitiveArgs = args_tree.unflatten(avals)
-  refs_avals = [jax.typeof(x) if not isinstance(x, core.AbstractValue) else x
-                for x in all_args.refs_flat]
-
   # Check that the index_maps jaxpr or consts are not high.
   if (any(bm.index_map_jaxpr.is_high for bm in grid_mapping.block_mappings)
       or any(any(c.is_high for c in bm.index_map_jaxpr.consts)
@@ -2441,7 +2437,6 @@ def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
                               f" currently supported. Got {grid_mapping=}")
 
   return (body_jaxpr.is_high
-          or any(aval.has_qdd for aval in refs_avals)
           or any(bm.transformed_block_aval.inner_aval.is_high
                  for bm in grid_mapping.block_mappings))
 
@@ -2459,7 +2454,7 @@ def _emit_pipeline_to_lojax(
   refs_avals = [jax.typeof(x) for x in all_args.refs_flat]
   lo_flat_refs, new_refs_tree = tracing_registry.flatten(
       refs_tree.unflatten(
-          [aval.read_loval(x) if aval.has_qdd else aval.lower_val(x)
+          [aval.lower_val(x)
            for aval, x in zip(refs_avals, all_args.refs_flat)]
       ),
       is_transformed_ref,
