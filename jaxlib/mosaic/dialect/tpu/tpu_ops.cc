@@ -595,6 +595,10 @@ mlir::InFlightDiagnostic MemRefReshapeOp::verifyTiling() {
   if (tile[0] == 1 && is_src_align_tile_minor && is_tgt_align_tile_minor) {
     // When the tiling is (1, ?) and the source and target shapes are aligned
     // to the tile, we support reshape on any dims.
+  } else if (is_src_align_tile_2nd_minor && is_src_align_tile_minor &&
+             is_tgt_align_tile_2nd_minor && is_tgt_align_tile_minor) {
+    // When all tiled dimensions are aligned to the tile in both source and
+    // target, the reshape maps complete tiles to complete tiles.
   } else if (tgt_tiled_shape[1] != src_tiled_shape[1]) {
     return emitOpError("Expected the minormost dimension to be unchanged");
   } else if (tgt_tiled_shape[0] != src_tiled_shape[0]) {
