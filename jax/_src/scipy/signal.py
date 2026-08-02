@@ -564,6 +564,81 @@ def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear',
     return jnp.moveaxis(data_arr.reshape(shape), 0, axis)
 
 
+def savgol_coeffs(window_length: int, polyorder: int, deriv: int = 0,
+                  delta: float = 1.0, pos: float | None = None,
+                  use: str = "conv") -> Array:
+  """
+  Compute the coefficients for a 1-D Savitzky-Golay FIR filter.
+
+  JAX implementation of :func:`scipy.signal.savgol_coeffs`.
+
+  Args:
+    window_length: The length of the filter window (i.e., the number of coefficients).
+    polyorder: The order of the polynomial used to fit the samples.
+      `polyorder` must be less than `window_length`.
+    deriv: The order of the derivative to compute. Must be a nonnegative integer.
+      The default is 0, which means to filter without differentiating.
+    delta: The spacing of the samples to which the filter will be applied.
+      Used only when ``deriv > 0``.
+    pos: If not ``None``, specifies the evaluation position within the window.
+      The default is the middle of the window.
+    use: Either ``'conv'`` or ``'dot'``. This argument chooses the order of the coefficients.
+      The default is ``'conv'``which orders them for use in a convolution. With
+      ``'dot'`` the order is reversed.
+
+  Returns:
+    A 1-D array of length ``window_length`` containing the filter coefficients.
+
+  Examples:
+    >>> from jax.scipy.signal import savgol_coeffs
+    >>> with jnp.printoptions(precision=4, suppress=True):
+    ...   print(savgol_coeffs(5, 2))
+    [-0.0857  0.3429  0.4857  0.3429 -0.0857]
+
+    Use ``deriv`` to compute coefficients for the derivative of the smoothed signal:
+
+    >>> with jnp.printoptions(precision=4, suppress=True):
+    ...   print(savgol_coeffs(5, 2, deriv=1))
+    [ 0.2  0.1  0.  -0.1 -0.2]
+  """
+  if polyorder >= window_length:
+    raise ValueError("polyorder must be less than window_length.")
+
+  if use not in ('conv', 'dot'):
+    raise ValueError("`use` must be 'conv' or 'dot'.")
+
+  halflen, rem = divmod(window_length, 2)
+  if pos is None:
+    pos = halflen - 0.5 if rem == 0 else halflen
+
+  if not 0 <= pos < window_length:
+    raise ValueError("pos must be nonnegative and less than window_length.")
+
+  if deriv > polyorder:
+    return jnp.zeros(window_length, dtype=dtypes.default_float_dtype())
+
+  # Form the design matrix A. The columns of A are powers of the integers
+  # from -pos to window_length - pos - 1. The powers (i.e., rows) range
+  # from 0 to polyorder. (That is, A is a vandermonde matrix, but not
+  # necessarily square.)
+  x = jnp.arange(-pos, window_length - pos, dtype=dtypes.default_float_dtype())
+  if use == 'conv':
+    x = jnp.flip(x)
+  order = jnp.arange(polyorder + 1, dtype=dtypes.default_float_dtype())
+  # (1, window_length) ** (polyorder + 1, 1) -> (polyorder + 1, window_length)
+  A = x[None, :] ** order[:, None]
+
+  # y determines which order derivative is returned.
+  # The coefficient assigned to y[deriv] scales the result to take into
+  # account the order of the derivative and the sample spacing.
+  y_zeros = jnp.zeros(polyorder + 1, dtype=dtypes.default_float_dtype())
+  y = y_zeros.at[deriv].set(math.factorial(deriv) / delta ** deriv)
+
+  # Find the least-squares solution
+  coeffs, *_ = linalg.lstsq(A, y)
+  return coeffs
+
+
 def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
                 nperseg: int, noverlap: int, nfft: int | None, sides: str) -> Array:
   """Calculate windowed FFT in the same way the original SciPy does.
