@@ -6599,9 +6599,10 @@ def _ragged_dot_batch_unpack_args(batched_args):
 
 
 def _ragged_dot_batch_unpack_dims(batch_dims):
-  if not all(dim == 0 for dim in batch_dims):
+  lbd, rbd, gbd = batch_dims
+  # Allow the group sizes to be unbatched.
+  if not (lbd == 0 and rbd == 0 and (gbd == 0 or gbd is None)):
     raise NotImplementedError('ragged_dot vmap over any dim but 0 - NYI')
-  lbd, rbd, _ = batch_dims
   return (lbd, rbd)
 
 
