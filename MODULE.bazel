@@ -159,6 +159,9 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_depen
 [pip.parse(
     download_only = True,
     experimental_index_url = "https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
+    experimental_index_url_overrides = {
+        "torch": "https://download.pytorch.org/whl/cu132",  # pytorch test dependency
+    },
     extra_hub_aliases = {
         "numpy": ["numpy_headers"],
     },
