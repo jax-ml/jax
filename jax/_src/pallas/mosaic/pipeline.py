@@ -2405,8 +2405,7 @@ def _emit_pipeline_lowering_rule(
   grid_names = ctx.lowering_context.grid_names
   if grid_names is None:
     grid_names = (None,) * len(ctx.lowering_context.grid_sizes)
-  grid_names = (tuple(None for i, _ in enumerate(grid_sizes)
-                      if i not in grid_mapping.vmapped_dims)
+  grid_names = (tuple(None for _ in grid_sizes)
                 + (tuple(grid_names or ())))
   user_grid_indices = (tuple(g for i, g in enumerate(grid_indices)
                              if i not in grid_mapping.vmapped_dims)
@@ -2423,9 +2422,7 @@ def _emit_pipeline_lowering_rule(
   )
 
   assert len(jaxpr.invars) == len(lowering_context.block_shapes)
-  valid_grid_sizes = tuple(d for i, d in enumerate(lowering_context.grid_sizes)
-                           if i not in grid_mapping.vmapped_dims)
-  assert len(valid_grid_sizes) == len(lowering_context.grid_names)
+  assert len(lowering_context.grid_sizes) == len(lowering_context.grid_names)
   return jaxpr_subcomp(lowering_context, jaxpr, *args_flat)
 
 def _emit_pipeline_is_high(*avals, body_jaxpr, grid_mapping, args_tree, **_):
