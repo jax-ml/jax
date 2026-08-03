@@ -30,7 +30,7 @@ archive_override(
 bazel_dep(name = "xla")
 archive_override(
     module_name = "xla",
-    integrity = "sha256-eUiwFO125GzahUSGRKCP+FkS++NKj/FnWApNy/ERQtY=",
+    integrity = "sha256-tJXV+rMGsD0XrTTXOawedSCCz1yt23xfMIokesx7Mq8=",
     strip_prefix = "xla-cf227a88e7ba467855899e7293334fea8995ee25",
     urls = ["https://github.com/openxla/xla/archive/cf227a88e7ba467855899e7293334fea8995ee25.tar.gz"],
 )
