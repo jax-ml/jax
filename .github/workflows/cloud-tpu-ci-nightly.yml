@@ -51,15 +51,12 @@ jobs:
     env:
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
-    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
+    container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"  # zizmor: ignore[unpinned-images] intentionally tracks latest
     timeout-minutes: 180
     defaults:
       run:
         shell: bash -ex {0}
     steps:
-      # https://opensource.google/documentation/reference/github/services#actions
-      # mandates using a specific commit for non-Google actions. We use
-      # https://github.com/sethvargo/ratchet to pin specific versions.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
