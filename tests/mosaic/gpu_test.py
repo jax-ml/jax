@@ -4796,6 +4796,46 @@ class AsyncCopyTest(TestCase, jtu.CudaArchSpecificTest):
     self._test_cp_async(shape, dtype, swizzle=swizzle, tiling=tiling)
 
   @parameterized.product(
+      swizzle=(32, 64, 128),
+      dtype=(jnp.float32, jnp.float16),
+  )
+  def test_cp_async_tiled_window(self, swizzle, dtype):
+    # A tiled copy of a sub-block of the array: the transfer must be built from
+    # the shape of the window, not the shape of the whole GMEM ref.
+    bw = bitwidth(dtype_to_ir_type(dtype))
+    swizzle_elems = 8 * swizzle // bw
+    tiling = (8, swizzle_elems)
+    window_shape = (64, swizzle_elems)
+    shape = (4 * window_shape[0], window_shape[1])
+    row = window_shape[0]  # Copy the second block of rows.
+
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          gmem_slice=(slice(row, row + window_shape[0]), slice(None)),
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          implementation=mgpu.AsyncCopyImplementation.CP_ASYNC,
+          barrier=barrier,
+      )
+      barrier.wait()
+      mgpu.copy_tiled(tmp, dst, swizzle=swizzle)
+
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    smem = jax.ShapeDtypeStruct(mgpu.tile_shape(window_shape, tiling), dtype)
+    y = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        x,
+        jax.ShapeDtypeStruct(window_shape, dtype),
+        (smem, mgpu.Barrier(arrival_count=1)),
+    )(x)
+    np.testing.assert_array_equal(y, x[row : row + window_shape[0]])
+
+  @parameterized.product(
       shape=((64, 128), (128, 40), (5, 256)),
       dtype=(jnp.float32, jnp.float16),
   )

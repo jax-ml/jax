@@ -1034,12 +1034,18 @@ class LaunchContext:
                         *(t.batch(len(squeezed_dims)) for t in gmem_transform))
 
     slice_shape = tuple(slice_shape)
+    # The logical shape of the window we extract from GMEM, before any user
+    # transforms are applied. Transforms are not always shape-preserving (e.g.
+    # tiling), so we return it separately for the benefit of callers that need
+    # to reason about the untransformed window.
+    logical_slice_shape = slice_shape
     for t in gmem_transform:
       dyn_base_indices = t.transform_index(dyn_base_indices)
       slice_shape = t.transform_shape(slice_shape)
 
     return (
         list(slice_shape),
+        list(logical_slice_shape),
         dyn_base_indices,
         squeezed_dims,
         gather_indices,
@@ -1299,6 +1305,7 @@ class LaunchContext:
 
     (
         slice_shape,
+        logical_slice_shape,
         dyn_base_indices,
         squeezed_dims,
         gather_indices,
@@ -1444,7 +1451,8 @@ class LaunchContext:
         if gmem_ref_ty.rank != 2:
           raise NotImplementedError("Only 2D copies implemented")
         transfers = fa.FragmentedArray.transfer_tiled(
-            smem_ref, swizzle, layout, tuple(gmem_ref_ty.shape), optimized=False
+            smem_ref, swizzle, layout, tuple(logical_slice_shape),
+            optimized=False,
         )
         gmem_base_ptr = utils.getelementptr(utils.memref_ptr(gmem_ref), [dyn_offset], gep_type)
         gmem_base_ptr = llvm.addrspacecast(
@@ -1922,6 +1930,7 @@ class LaunchContext:
     impl =  AsyncCopyImplementation.TMA
     (
         slice_shape,
+        _,
         dyn_base_indices,
         squeezed_dims,
         gather_indices,
