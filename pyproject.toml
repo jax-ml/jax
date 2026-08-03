@@ -158,3 +158,7 @@ max-complexity = 18
 "docs/hijax_custom_derivatives.ipynb" = ["F811"]
 "docs/jep/9407-type-promotion.ipynb" = ["F811"]
 "docs/autodidax.ipynb" = ["F811"]
+
+# This looks like a false positive, but there is no upstream bug.
+# TODO(slebedev): Investigate this and remove the ignore.
+"*.ipynb" = ["E113"]
