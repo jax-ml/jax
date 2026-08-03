@@ -88,6 +88,7 @@ cc_proto_library(
     visibility = [
         "//jax:internal",
         "//third_party/py/enzyme_ad:__subpackages__",
+        "@xla//xla/service/gpu:__pkg__",  # For tests.
     ],
     deps = [":triton_proto"],
 )

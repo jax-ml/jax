@@ -23,6 +23,9 @@ if _cuda_triton:
   xla_client.register_custom_call_target(
       "triton_kernel_call", _cuda_triton.get_custom_call(),
       platform='CUDA')
+  if hasattr(_cuda_triton, "types"):
+    for name, value in _cuda_triton.types().items():
+      xla_client.register_custom_type(name, value, platform="CUDA")
   for name, value in _cuda_triton.registrations().items():
     xla_client.register_custom_call_target(
         name, value, platform="CUDA", api_version=1
@@ -41,6 +44,9 @@ if _hip_triton:
   xla_client.register_custom_call_target(
       "triton_kernel_call", _hip_triton.get_custom_call(),
       platform='ROCM')
+  if hasattr(_hip_triton, "types"):
+    for name, value in _hip_triton.types().items():
+      xla_client.register_custom_type(name, value, platform="ROCM")
   for name, value in _hip_triton.registrations().items():
     xla_client.register_custom_call_target(
         name, value, platform="ROCM", api_version=1
