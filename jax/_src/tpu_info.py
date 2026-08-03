@@ -562,7 +562,12 @@ def get_tpu_info() -> TpuInfo:
   if chip_version is None:
     if device_kind in registry:
       return registry[device_kind]()
-    raise ValueError(f"Unsupported TPU device kind: {device_kind}")
+    raise ValueError(
+        f"Unsupported TPU device kind: {device_kind}. If you are not running "
+        "on a TPU device, you need to wrap your code in a "
+        "`jax.sharding.use_abstract_mesh` context manager whose `AbstractMesh` "
+        "argument specifies the exact TPU version you intend to target."
+    )
   return _get_tpu_info_impl(chip_version, get_num_device_cores())
 
 
