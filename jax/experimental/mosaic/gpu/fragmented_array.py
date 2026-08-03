@@ -4560,7 +4560,24 @@ class FragmentedArray:
     # into 4*(1x1) + 2*(1x1). This gives us a good schedule of a single num=4
     # transfer and a single num=2 transfer, which is ideal given that we had 6
     # tiles overall.
-    if tx_pair_tiled_dim:
+    #
+    # The scheme outlined above is fine for most layouts. However, if the loaded
+    # arrays are used to feed MMA instructions directly, we need to ensure that
+    # the order of registers produced by ldmatrix matches up the order in which
+    # the MMA instructions consume them. Otherwise, ptxas emits a bunch of extra
+    # MOV instructions that destroy the performance.
+    from .mma import MMALayouts
+    if any(layout == MMALayouts(dtype, m_warps=w).lhs for w in (1, 2, 4)):
+      assert tiled_nested_shape[-6] == (2,)
+      assert tiled_nested_shape[-5] == (2,)
+      major_dim = len(tiles_shape) - sum(len(s) for s in tiled_nested_shape[-6:])
+      minor_dim = major_dim + 1
+      factored_quadrant_dims = [(major_dim, 2), (minor_dim, 2)]
+    elif any(layout == MMALayouts(dtype, m_warps=w).rhs for w in (1, 2, 4)):
+      assert tiled_nested_shape[-6] == (2,)
+      dim = len(tiles_shape) - sum(len(s) for s in tiled_nested_shape[-6:])
+      factored_quadrant_dims = [(dim, 2)]
+    elif tx_pair_tiled_dim:
       # For 8-bit values, each tile is 8x16. But, the transposed instruction
       # uses 16x16 tiles, which is equivalent to pairing up two 8x16 tiles along
       # tx_pair_tiled_dim, so the transfer implicitly already has a num of 2.
@@ -4607,6 +4624,7 @@ class FragmentedArray:
         return math.prod(d[1] for d in self.quadrant_dims)
 
     for dim, size in factored_quadrant_dims:
+      assert tiles_shape[dim] % size == 0
       tiles_shape[dim] //= size
     offsets = [0] * len(tiles_shape)
     if (factored_num := math.prod(d[1] for d in factored_quadrant_dims)) == 4:

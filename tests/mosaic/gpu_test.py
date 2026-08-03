@@ -6120,6 +6120,92 @@ class FragmentedArrayTest(TestCase):
     else:
       np.testing.assert_allclose(result, expected, atol=1e-5)
 
+  @parameterized.product(
+      dtype=(jnp.float16, jnp.int8,),
+      m_warps=(4, 2, 1),
+      mults=((1, 1), (2, 1), (1, 2), (3, 3)),
+  )
+  @jtu.thread_unsafe_test()
+  def test_warp_mma_smem(self, dtype, m_warps, mults):
+    n_warps = 4 // m_warps
+    m_mult, n_mult = mults
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    bw = utils.bytewidth(mlir_dtype)
+    m, n, k = 16 * m_warps * m_mult, 8 * n_warps * n_mult, 32 // bw
+    dtype = jnp.dtype(dtype)
+    is_integer = jnp.issubdtype(dtype, jnp.integer)
+    acc_dtype = jnp.int32 if is_integer else jnp.float32
+
+    a_swizzle = b_swizzle = 16
+    a_tiling = b_tiling = (8, a_swizzle // bw)
+
+    def kernel(ctx, a, b, out, smem):
+      smem_a, smem_b, barriers = smem
+      ctx.async_copy(
+          src_ref=a,
+          dst_ref=smem_a,
+          swizzle=a_swizzle,
+          gmem_transform=(mgpu.TileTransform(a_tiling),),
+          barrier=barriers[0],
+      )
+      ctx.async_copy(
+          src_ref=b,
+          dst_ref=smem_b,
+          swizzle=b_swizzle,
+          gmem_transform=(mgpu.TileTransform(b_tiling),),
+          barrier=barriers[1],
+      )
+      for i in range(2):
+        barriers[i].wait()
+      mma_layouts = mgpu.MMALayouts(mlir_dtype, m_warps=m_warps)
+      is_signed = utils.is_signed(dtype)
+      a = mgpu.FragmentedArray.load_tiled(
+          smem_a, layout=mma_layouts.lhs, is_signed=is_signed, swizzle=a_swizzle
+      )
+      smem_b_t = utils.memref_transpose(smem_b, (1, 0, 3, 2))
+      b = mgpu.FragmentedArray.load_tiled(
+          smem_b_t, layout=mma_layouts.rhs, is_signed=is_signed, swizzle=b_swizzle
+      )
+      c0 = arith.constant(
+          utils.dtype_to_ir_type(acc_dtype), 0 if is_integer else 0.0
+      )
+      acc = mgpu.FragmentedArray.splat(
+          c0, shape=(m, n), layout=mma_layouts.acc, is_signed=is_signed
+      )
+      acc = mgpu.mma(acc, a, b)
+      acc.store_untiled(out, optimized=False)
+
+    if is_integer:
+      iinfo = jnp.iinfo(dtype)
+      a = self.prng.integers(iinfo.min, iinfo.max + 1, (m, k)).astype(dtype)
+      b = self.prng.integers(iinfo.min, iinfo.max + 1, (n, k)).astype(dtype)
+    else:
+      a = self.prng.uniform(-1, 1, (m, k)).astype(dtype)
+      b = self.prng.uniform(-1, 1, (n, k)).astype(dtype)
+
+    expected = a.astype(acc_dtype) @ b.astype(acc_dtype).T
+    smem_shapes = (
+        jax.ShapeDtypeStruct(mgpu.tile_shape((m, k), a_tiling), dtype),
+        jax.ShapeDtypeStruct(mgpu.tile_shape((n, k), b_tiling), dtype),
+        mgpu.TMABarrier(2),
+    )
+
+    with jtu.set_env(MOSAIC_GPU_DUMP_SASS="1"), self.capture_stdout() as sass:
+      result = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), (a, b), expected, smem_shapes
+      )(a, b)
+
+    sass_lines = sass().splitlines()
+    first_ldsm = next(i for i, line in enumerate(sass_lines) if "LDSM" in line)
+    last_mma = max(i for i, line in enumerate(sass_lines) if "MMA" in line)
+    interesting_sass = "\n".join(sass_lines[first_ldsm : last_mma + 1])
+    self.assertNotIn("MOV", interesting_sass)
+
+    if is_integer:
+      np.testing.assert_array_equal(result, expected)
+    else:
+      np.testing.assert_allclose(result, expected, atol=1e-5)
+
   @parameterized.parameters(
       (jnp.uint8, jnp.uint16, 255),
       (jnp.uint8, jnp.int16, 255),
