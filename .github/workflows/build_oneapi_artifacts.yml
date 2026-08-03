@@ -75,8 +75,7 @@ on:
         type: string
         default: "no"
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   build-oneapi-wheel:
