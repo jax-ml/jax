@@ -216,7 +216,7 @@ class LoweringContext:
   dynamic_shape_replacement_fn: DynamicShapeReplacementFn
   lowering_cache: dict[PallasLoweringCacheKey, func.FuncOp]
   # Accumulator offsets for each MXU, in units of MXU entries.
-  accumulator_offsets: list[int]
+  accumulator_offsets: list[int] | None = None
   dynamic_shape_env: LoweringDynamicShapeEnv | None = None
   needs_layout_passes: bool = False
   fuse_transposed_lhs_in_matmul: bool = False
@@ -266,6 +266,8 @@ class LoweringContext:
       raise ValueError(
           f"Accumulators are not available on TPU {info.chip_version}"
       )
+    if self.accumulator_offsets is None:
+      self.accumulator_offsets = [0] * info.num_mxus
     assert isinstance(aval.memory_space, tpu_core.AccMemorySpace)
     mxu_id = aval.memory_space.mxu_id
     assert 0 <= mxu_id < len(self.accumulator_offsets)
@@ -330,7 +332,6 @@ class PipelinedLoweringContext(LoweringContext):
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
-        accumulator_offsets=[0] * tpu_info.get_tpu_info().num_mxus,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=lowering_cache,
         dynamic_shape_env=dynamic_shape_env,
@@ -375,7 +376,6 @@ class UnpipelinedLoweringContext(LoweringContext):
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=lambda x: x,
-        accumulator_offsets=[0] * tpu_info.get_tpu_info().num_mxus,
         needs_layout_passes=needs_layout_passes,
         fuse_transposed_lhs_in_matmul=fuse_transposed_lhs_in_matmul,
         lowering_cache=lowering_cache,
@@ -1592,7 +1592,6 @@ def lower_jaxpr_to_transform_func(
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
         lowering_cache=lowering_cache,
         dynamic_shape_env=dynamic_shape_env,
-        accumulator_offsets=[0] * tpu_info.get_tpu_info().num_mxus
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -4700,19 +4699,28 @@ def _run_scoped_lowering_rule(
   in_avals = [v.aval for v in jaxpr.invars]
   with ctx.lowering_context.grid_name_context():
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-  old_accumulator_offsets = ctx.lowering_context.accumulator_offsets[:]
-  with ir.InsertionPoint(region.body):
-    args = map(lambda aval: _alloc_value(aval, ctx=ctx), in_avals)
-    block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None
-                         for a in in_avals)
-    block_shapes = tuple(map(_maybe_physicalize_block_shape,
-                             in_avals, block_shapes))
-    lowering_ctx = ctx.lowering_context.replace(
-        block_shapes=(*ctx.block_shapes, *block_shapes)
-    )
-    out = jaxpr_subcomp(lowering_ctx, jaxpr, *consts, *args)
-    tpu.yield_(out)
-  ctx.lowering_context.accumulator_offsets = old_accumulator_offsets
+  old_accumulator_offsets = (
+      None
+      if ctx.lowering_context.accumulator_offsets is None
+      else ctx.lowering_context.accumulator_offsets[:]
+  )
+  try:
+    with ir.InsertionPoint(region.body):
+      args = map(lambda aval: _alloc_value(aval, ctx=ctx), in_avals)
+      block_shapes = tuple(
+          a.shape if isinstance(a, state.AbstractRef) else None
+          for a in in_avals
+      )
+      block_shapes = tuple(
+          map(_maybe_physicalize_block_shape, in_avals, block_shapes)
+      )
+      lowering_ctx = ctx.lowering_context.replace(
+          block_shapes=(*ctx.block_shapes, *block_shapes)
+      )
+      out = jaxpr_subcomp(lowering_ctx, jaxpr, *consts, *args)
+      tpu.yield_(out)
+  finally:
+    ctx.lowering_context.accumulator_offsets = old_accumulator_offsets
   return region.results
 
 

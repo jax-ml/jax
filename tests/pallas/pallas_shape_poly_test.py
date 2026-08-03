@@ -505,6 +505,26 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
       res = exp.call(x, y)
       self.assertAllClose(res, x + y)
 
+  def test_deviceless_pallas_lowering_on_cpu(self):
+    """Verifies deviceless Pallas lowering on CPU host using AbstractMesh."""
+
+    def add_one_kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] + 1.0
+
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+          add_one_kernel,
+          out_shape=jax.ShapeDtypeStruct.like(x),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+      )(x)
+
+    exporter = jax.export.export(f, platforms=["tpu"])
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      exp = exporter(jax.ShapeDtypeStruct((8, 128), jnp.float32))
+      self.assertIsNotNone(exp)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
