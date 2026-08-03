@@ -25,6 +25,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     temporarily bypass the error check.
     See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
 
+* Breaking changes
+  * JAX does not support anymore deserialization of Exported modules from
+  before January 15th, 2026 because they are beyond the backwards compatibility
+  window. On that date we added support to serialize shardings as NamedSharding,
+  and now that is the only sharding serialization that is supported.
+
 * Changes
   * The cuDNN fused attention backward pass (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) no

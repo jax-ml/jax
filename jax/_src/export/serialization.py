@@ -64,6 +64,7 @@ SerT = TypeVar("SerT")
 # Version 5, November 23rd, 2025, adds serialization for aval memory_space,
 #   upgrade num_devices to a 32 bit value.
 #   This version is backwards compatible with Version 2 to 4.
+#   This version is beyond the 6 months compat window and not supported anymore.
 # Version 6, January 15th, 2026, adds serialization for sharding as
 #   NamedSharding, including the abstract mesh, and the partition spec.
 #   Contains also HloSharding serialization, for forward compatibility.
@@ -79,6 +80,18 @@ SerT = TypeVar("SerT")
 # Version 11, May 15th, 2026, add AbstractDevice.platform.
 # Version 12, July 29th, 2026, add JAX version for the serializer.
 _SERIALIZATION_VERSION = 12
+
+
+def _expired_error_msg(exp: ser_flatbuf.Exported) -> str:
+  msg = (
+      "Exported being deserialized seems to be older than the 6-month "
+      "backward-compatibility window and cannot be deserialized anymore."
+      f"The Exported uses serialization version {exp.SerializationVersion()}."
+  )
+  if exp.JaxVersion() is not None:
+    msg += f" It was created with JAX version {exp.JaxVersion().decode('utf-8')}."
+  msg += " See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees."
+  return msg
 
 
 @dataclasses.dataclass(slots=True)
@@ -312,14 +325,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
 
   nr_devices = exp.NrDevices()
   if nr_devices == 0 and exp.NrDevicesShort() > 0:
-    msg = (
-        "Exported being deserialized seems to be from before 11/25/2025 and "
-        "cannot be deserialized anymore because it is older than the 6-month "
-        "backward-compatibility window. The Exported has serialization version "
-        f"{exp.SerializationVersion()}."
-    )
-    if exp.JaxVersion() is not None:
-      msg += f" It was created with JAX version {exp.JaxVersion().decode('utf-8')}."
+    msg = _expired_error_msg(exp)
     if not config.export_deserialize_expired_versions.value:
       raise ValueError(msg)
     # TODO(necula): remove this once we bump the minimum supported version.
@@ -339,7 +345,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   elif exp.InShardingsLength() > 0:
     # TODO(necula): remove 6 months after 4/4/26
     in_shardings = tuple(
-        _deserialize_sharding(exp.InShardings(i), uniques=uniques)
+        _deserialize_sharding(exp, exp.InShardings(i), uniques=uniques)
         for i in range(exp.InShardingsLength())
     )
   else:
@@ -353,7 +359,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   elif exp.OutShardingsLength() > 0:
     # TODO(necula): remove 6 months after 4/4/26
     out_shardings = tuple(
-      _deserialize_sharding(exp.OutShardings(i), uniques=uniques)
+      _deserialize_sharding(exp, exp.OutShardings(i), uniques=uniques)
       for i in range(exp.OutShardingsLength())
     )
   else:
@@ -465,7 +471,6 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       uses_global_constants=uses_global_constants,
       _get_vjp=_get_vjp,
   )
-
 
 
 def _serialize_pytreedef(
@@ -664,6 +669,7 @@ def _serialize_abstract_device(builder: flatbuffers.Builder,
     ser_flatbuf.AbstractDeviceAddNumCores(builder, device.num_cores)
   ser_flatbuf.AbstractDeviceAddPlatform(builder, platform)
   return ser_flatbuf.AbstractDeviceEnd(builder)
+
 
 # TODO(necula): remove 6 months after 5/15/2026
 def get_platform_from_device_kind(device_kind) -> str:
@@ -874,7 +880,7 @@ def _serialize_sharding(
   return ser_flatbuf.ShardingEnd(builder)
 
 
-def _deserialize_sharding(s: ser_flatbuf.Sharding, *,
+def _deserialize_sharding(exp: ser_flatbuf.Exported, s: ser_flatbuf.Sharding, *,
                           uniques: _SerializedUniques) -> _export.HloSharding | named_sharding.NamedSharding | None:
   if (named_sharding_off := s.NamedSharding()) is not None:
     # After 1/15/26 all exports will have named shardings (or None)
@@ -883,6 +889,10 @@ def _deserialize_sharding(s: ser_flatbuf.Sharding, *,
 
   # TODO(b/489569164): We must keep reading the HloSharding for 6 months after 1/15/2026.
   if not s.HloShardingProtoIsNone():
+    msg = _expired_error_msg(exp)
+    if not config.export_deserialize_expired_versions.value:
+      raise ValueError(msg)
+    warnings.warn(msg, DeprecationWarning)
     proto = xla_client.OpSharding()
     proto.ParseFromString(s.HloShardingProtoAsNumpy().tobytes())
     return xla_client.HloSharding.from_proto(proto)
