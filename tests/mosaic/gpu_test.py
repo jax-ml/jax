@@ -3729,7 +3729,7 @@ class Sm80Test(TestCase):
     )()
     np.testing.assert_array_equal(y, np.array(1, dtype=np.int32))
 
-  def _test_ldmatrix(self, dtype, m_mult, k_mult, transpose=False):
+  def _test_ldmatrix(self, dtype, m_mult, k_mult, transpose=False, layout=None):
     m, k = 32 * m_mult, 8 * k_mult
     dtype = jnp.dtype(dtype)
     in_shape = (k, m) if transpose else (m, k)
@@ -3745,12 +3745,23 @@ class Sm80Test(TestCase):
       self.skipTest("No suitable swizzle found.")
     packing = 32 // bitwidth
     swizzle_elems = swizzle * 8 // bitwidth
-    layout = fa.TiledLayout(
-        fa.Tiling(((32, 4 * packing), (8, 4 * packing), (packing,))),
-        warp_dims=(-5,),
-        lane_dims=(-3, -2),
-        vector_dim=-1,
-    )
+    if layout is not None:
+      pass
+    elif bitwidth == 8 and transpose:
+      # We need each warp to hold a 16x16 submatrix (two 8x16 matrices).
+      layout = fa.TiledLayout(
+          fa.Tiling(((64, 4 * packing), (16, 4 * packing), (8, 4 * packing), (packing,))),
+          warp_dims=(-7,),
+          lane_dims=(-3, -2),
+          vector_dim=-1,
+      )
+    else:
+      layout = fa.TiledLayout(
+          fa.Tiling(((32, 4 * packing), (8, 4 * packing), (packing,))),
+          warp_dims=(-5,),
+          lane_dims=(-3, -2),
+          vector_dim=-1,
+      )
     def kernel(ctx, a, out, smem):
       a_smem, barrier = smem
       ctx.async_copy(
@@ -3781,13 +3792,17 @@ class Sm80Test(TestCase):
       )(x)
       expected = x.T if transpose else x
       np.testing.assert_array_equal(y, expected)
-    num_per_tile = 8 / (4 * packing)
-    num = next(n for n in (4, 2, 1) if int(num_per_tile * m_mult * k_mult) % n == 0)
-    expected_instr = (
-        f"ldmatrix.sync.aligned.m8n8.x{num}.trans.shared"
-        if transpose
-        else f"ldmatrix.sync.aligned.m8n8.x{num}.shared"
-    )
+    if transpose and bitwidth == 8:
+      num = next(n for n in (2, 1) if (m_mult * k_mult // 4) % n == 0)
+      expected_instr = f"ldmatrix.sync.aligned.m16n16.x{num}.trans.shared"
+    else:
+      num_per_tile = 8 / (4 * packing)
+      num = next(n for n in (4, 2, 1) if int(num_per_tile * m_mult * k_mult) % n == 0)
+      expected_instr = (
+          f"ldmatrix.sync.aligned.m8n8.x{num}.trans.shared"
+          if transpose
+          else f"ldmatrix.sync.aligned.m8n8.x{num}.shared"
+      )
     self.assertIn(expected_instr, ptx())
     self.assertNotIn("ld.shared", ptx())
 
@@ -3801,12 +3816,28 @@ class Sm80Test(TestCase):
     return self._test_ldmatrix(dtype, m_mult, k_mult, transpose=False)
 
   @parameterized.product(
+      dtype=(jnp.int8, jnp.int16),
       m_mult=(1, 2, 3, 4, 6, 7, 9),
       k_mult=(1, 2, 3, 4, 6, 7, 9),
   )
   @jtu.thread_unsafe_test()
-  def test_ldmatrix_transpose(self, m_mult, k_mult):
-    return self._test_ldmatrix(jnp.int16, m_mult, k_mult, transpose=True)
+  def test_ldmatrix_transpose(self, dtype, m_mult, k_mult):
+    if dtype == jnp.int8 and not jtu.is_cuda_compute_capability_at_least("10.0"):
+      raise self.skipTest("int8 transposed ldmatrix requires sm_10.")
+    scale = 16 // jax.dtypes.itemsize_bits(dtype)
+    return self._test_ldmatrix(dtype, m_mult * scale, k_mult * scale, transpose=True)
+
+  def test_ldmatrix_8b_transpose_wide_row_layout(self):
+    if not jtu.is_cuda_compute_capability_at_least("10.0"):
+      raise self.skipTest("int8 transposed ldmatrix requires sm_10.")
+    packing = 4
+    layout = fa.TiledLayout(
+        fa.Tiling(((32, 4 * packing), (8, 4 * packing), (packing,))),
+        warp_dims=(fa.Replicated(4),),
+        lane_dims=(-3, -2),
+        vector_dim=-1,
+    )
+    return self._test_ldmatrix(jnp.int8, 8, 4, transpose=True, layout=layout)
 
 
 class BarrierTest(TestCase):
