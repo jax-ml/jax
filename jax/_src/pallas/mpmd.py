@@ -166,16 +166,6 @@ def _mpmd_map_typecheck_rule(
 jax_core.custom_typechecks[mpmd_map_p] = _mpmd_map_typecheck_rule
 
 
-def _default_memory_space(meshes: Sequence[pallas_core.Mesh]):
-  defaults = {mesh.default_memory_space for mesh in meshes}
-  if len(defaults) != 1:
-    raise ValueError(
-        "Multiple meshes with different default memory spaces are not"
-        " supported."
-    )
-  return defaults.pop()
-
-
 def _mpmd_map_discharge_rule(
     ctx,
     *args: Any,
@@ -203,22 +193,6 @@ def _mpmd_map_discharge_rule(
             isinstance(ctx.in_avals[write_index], state.AbstractRef)
         ):
           write_indices.add(write_index)
-
-  default_memory_space = _default_memory_space(meshes)
-  in_memory_spaces = [
-      pallas_core.get_memory_space_aval(aval) for aval in ctx.in_avals
-  ]
-  in_memory_spaces = [
-      default_memory_space if m is None else m for m in in_memory_spaces
-  ]
-  args = tuple(
-      pallas_core.with_memory_space_constraint_p.bind(
-          arg, memory_space=memory_space
-      )
-      if memory_space is not default_memory_space
-      else arg
-      for arg, memory_space in zip(args, in_memory_spaces)
-  )
 
   write_indices = sorted(write_indices)
   num_in = len(ctx.in_avals)
@@ -692,7 +666,13 @@ def _aval_to_ref_aval(
       return aval
     case jax_core.ShapedArray(memory_space=memory_space):
       if memory_space == jax_core.MemorySpace.Device:
-        memory_space = _default_memory_space(meshes)
+        defaults = {mesh.default_memory_space for mesh in meshes}
+        if len(defaults) != 1:
+          raise ValueError(
+              "Multiple meshes with different default memory spaces are not"
+              " supported."
+          )
+        memory_space = list(defaults)[0]
       return state.AbstractRef(aval, memory_space=memory_space)
     case jax_core.AbstractValue():
       return state.AbstractRef(aval, memory_space=None)
