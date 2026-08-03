@@ -146,20 +146,12 @@ class Exported:
         an output, the `out_avals.sharding.spec` for `Auto` axes may be `None`
         even if after compilation the compiler may pick a non-replicated
         sharding. See https://docs.jax.dev/en/latest/parallel.html for more details.
-    in_shardings_hlo: (Not used for exports created after 3/17/2026.) the
-        flattened input shardings, a sequence as long
-        as ``in_avals``. ``None`` means unspecified sharding.
-        Note that these do not include the mesh or the actual devices used in
-        the mesh, and in general you should avoid using this field directly.
-        See ``in_shardings_jax`` for a way to turn these
-        into sharding specification that can be used with JAX APIs.
-    out_shardings_hlo: (Not used for exports created after 3/17/2026.) the
-        flattened output shardings, a sequence as long
-        as ``out_avals``. ``None`` means unspecified sharding.
-        Note that these do not include the mesh or the actual devices used in
-        the mesh, and in general you should avoid using this field directly.
-        See ``out_shardings_jax`` for a way to turn these
-        into sharding specification that can be used with JAX APIs.
+    in_shardings_hlo: Not used anymore starting 3/17/2026.
+        See ``in_shardings_jax``.
+        TODO(necula): Remove this field once users are updated.
+    out_shardings_hlo: Not used anymore starting 3/17/2026.
+        See ``out_shardings_jax``.
+        TODO(necula): Remove this field once users are updated.
     nr_devices: the number of devices that the module has been lowered for.
     platforms: a tuple containing the platforms for which the function should
         be exported. The set of platforms in JAX is open-ended; users can
@@ -203,14 +195,8 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: tuple[core.ShapedArray, ...]
 
-  # _has_named_shardings is True if the export was done after 1/15/2026 and
-  # we have _in_named_shardings and _out_named_shardings. In that case we
-  # support multiple meshes for inputs and outputs, and we do not rely
-  # anymore on the Shardy-saved meshes, which do not have axis_types anyway,
-  # and do not support multiple meshes.
-  _has_named_shardings: bool
-  _in_named_shardings: tuple[NamedSharding | None, ...]  # all None if not _has_named_shardings
-  _out_named_shardings: tuple[NamedSharding | None, ...]  # all None if not _has_named_shardings
+  _in_named_shardings: tuple[NamedSharding | None, ...]  # use abstract meshes
+  _out_named_shardings: tuple[NamedSharding | None, ...]  # use abstract meshes
   in_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/17/2026
   out_shardings_hlo: tuple[HloSharding | None, ...]  # all None for exports created after 3/17/2026
 
@@ -242,15 +228,16 @@ class Exported:
     return f"Exported(fun_name={self.fun_name}, ...)"
 
   def in_shardings_jax(
-      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
+      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh | None = None
   ) -> Sequence[sharding.Sharding | None]:
     """Creates Shardings corresponding to ``self.in_shardings_hlo`` and ``self._in_named_shardings``.
 
-    The Exported object stores ``in_shardings_hlo`` as HloShardings, and
-    after 12/5/2025 also ``_in_named_shardings`` as NamedShardings with
-    abstract meshes. This method constructs
-    Sharding that can be used in JAX APIs such as :func:`jax.jit` or
-    :func:`jax.device_put`. The `mesh` argument may be a concrete mesh.
+    The Exported object stores NamedShardings with abstract meshes.
+    This method constructs Sharding that can be used in JAX APIs such as
+    :func:`jax.jit` or :func:`jax.device_put`.
+    The `mesh` argument may be a concrete mesh to use in lieu of the abstract
+    mesh in the NamedSharding. The default `None` value indicates that the
+    NamedSharding should be used as is.
 
     Example usage:
 
@@ -280,10 +267,8 @@ class Exported:
 
     """
     return tuple(
-      _get_named_sharding(self._has_named_shardings, named_sharding,
-                          hlo_sharding, aval, mesh)
-      for named_sharding, hlo_sharding, aval in zip(
-        self._in_named_shardings, self.in_shardings_hlo, self.in_avals))
+      _get_named_sharding(named_sharding, mesh)
+      for named_sharding in self._in_named_shardings)
 
   def out_shardings_jax(
       self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
@@ -293,10 +278,8 @@ class Exported:
     See documentation for in_shardings_jax.
     """
     return tuple(
-      _get_named_sharding(self._has_named_shardings, named_sharding,
-                          hlo_sharding, aval, mesh)
-      for named_sharding, hlo_sharding, aval in zip(
-        self._out_named_shardings, self.out_shardings_hlo, self.out_avals))
+      _get_named_sharding(named_sharding, mesh)
+      for named_sharding in self._out_named_shardings)
 
   def has_vjp(self) -> bool:
     """Returns if this Exported supports VJP."""
@@ -613,28 +596,6 @@ def export(
       >>> rehydrated.call(np.array([.1, .2, .3, .4], dtype=np.float32))
       Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
   """
-  return _export_internal(fun_jit, platforms=platforms,
-                          disabled_checks=disabled_checks,
-                          override_lowering_rules=_override_lowering_rules)
-
-
-# TODO(necula): remove this once we improve the integration with jax2tf.
-def _export_internal(
-    fun_jit: stages.Wrapped,
-    *,
-    platforms: Sequence[str] | None = None,
-    disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only=None,
-    override_lowering_rules=None,
-    ) -> Callable[..., Exported]:
-  """Exports native serialization for a JAX function.
-
-  Note: this function exists only for internal usage by jax2tf. Use
-    :mod:`jax.export` instead.
-    See https://docs.jax.dev/en/latest/export/export.html
-
-  See docstring of ``export`` for more details.
-  """
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
         f"Function to be exported must be the result of `jit` but is: {fun_jit}")
@@ -652,14 +613,13 @@ def _export_internal(
     lowered = traced.lower(
         lowering_platforms=actual_lowering_platforms,
         _private_parameters=mlir.LoweringParameters(
-            override_lowering_rules=override_lowering_rules,
+            override_lowering_rules=_override_lowering_rules,
             for_export=True,
             hoist_constants_as_args=False,
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
-        disabled_checks=disabled_checks,
-        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
+        disabled_checks=disabled_checks)
   return do_export
 
 
@@ -729,20 +689,11 @@ def to_named_sharding_with_abstract_mesh(
   assert False, f"Unsupported sharding: {s}"
 
 
-# TODO(b/489569164): move to jax2tf 6 months after 1/15/2026,
-# when we don't need to support HloSharding in the serialized exports.
-def named_to_hlo_sharding(s: NamedSharding | None,
-                          aval: core.ShapedArray) -> HloSharding | None:
-  if s is None: return None
-  return s._to_xla_hlo_sharding(aval.ndim)
-
-
 def _export_lowered(
     lowered: stages.Lowered,
     jaxpr: core.Jaxpr,
     fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only=None,
   ) -> Exported:
   version = config.jax_export_calling_convention_version.value
   if (version < minimum_supported_calling_convention_version or
@@ -843,27 +794,18 @@ def _export_lowered(
     to_named_sharding_with_abstract_mesh(s, aval, cur_mesh)
     for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
 
-  device_assignment = lowering._device_list  # pyrefly: ignore[missing-attribute]
-  if _device_assignment_for_internal_jax2tf_use_only is not None:
-    _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
-
   def _get_exported_vjp(exp_primal: Exported) -> Exported:
     # Turn the primal jaxpr into a function, in preparation for exporting
     # the VJP. Note that jaxpr_as_fun produces a function with flat arguments
     assert(jaxpr is not None)  # None only when the lowered was created outside JAX
     fun_jax = core.jaxpr_as_fun(jaxpr)
-    assert exp_primal._has_named_shardings
     fun_vjp_jax, vjp_in_avals = _get_vjp_fun(
         fun_jax,
         in_tree=exp_primal.in_tree,
         in_avals=exp_primal.in_avals,
-        has_named_shardings=True,
-        in_shardings_hlo=(None,) * len(exp_primal._in_named_shardings),
-        out_shardings_hlo=(None,) * len(exp_primal._out_named_shardings),
         in_named_shardings=exp_primal._in_named_shardings,
         out_named_shardings=exp_primal._out_named_shardings,
         out_avals=exp_primal.out_avals,
-        device_assignment=device_assignment,
         apply_jit=True,
         flat_primal_fun=True,
         mesh=cur_mesh)
@@ -877,7 +819,6 @@ def _export_lowered(
       out_tree=lowered.out_tree,
       in_avals=tuple(args_avals_flat),
       out_avals=tuple(out_avals_flat),
-      _has_named_shardings=True,
       _in_named_shardings=in_named_shardings,
       _out_named_shardings=out_named_shardings,
       in_shardings_hlo=(None,) * len(in_named_shardings),
@@ -893,6 +834,7 @@ def _export_lowered(
       uses_global_constants=shape_poly_state.uses_dim_vars,
       calling_convention_version=version,
       _get_vjp=_get_exported_vjp)
+
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
   # `target_version` is used to manage situations when a StableHLO producer
@@ -1331,45 +1273,21 @@ def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
   return tuple(all_in_shardings)
 
 
-def _hlo_sharding_to_gspmd_sharding(
-    hlo_sharding: HloSharding | None,
-    device_assignment: Sequence[_jax.Device]
-    ) -> sharding_impls.GSPMDSharding | None:
-  if hlo_sharding is None:
-    return None
-  return sharding_impls.GSPMDSharding(device_assignment, hlo_sharding)
-
-
 def _get_named_sharding(
-    has_named_shardings: bool,
     named_sharding: NamedSharding | None,
-    hlo_sharding: HloSharding | None,
-    aval: core.ShapedArray,
     new_mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh | None
     ) -> sharding_impls.NamedSharding | None:
-  if has_named_shardings:
-    if named_sharding is None:  # Unspecified
-      return None
-    if new_mesh is None:
-      return named_sharding
-    # TODO(necula): for now we require that the mesh uses the same axis_names
-    if (new_mesh.abstract_mesh.axis_sizes != named_sharding.mesh.axis_sizes or
-        new_mesh.abstract_mesh.axis_names != named_sharding.mesh.axis_names or
-        new_mesh.abstract_mesh.axis_types != named_sharding.mesh.axis_types):
-      raise ValueError(f"NamedSharding new mesh {new_mesh} does not match the mesh used for export {named_sharding.mesh}.")
-
-    return named_sharding.update(mesh=new_mesh)
-
-  if hlo_sharding is None:
+  if named_sharding is None:  # Unspecified
     return None
+  if new_mesh is None:
+    return named_sharding
+  # TODO(necula): for now we require that the mesh uses the same axis_names
+  if (new_mesh.abstract_mesh.axis_sizes != named_sharding.mesh.axis_sizes or
+      new_mesh.abstract_mesh.axis_names != named_sharding.mesh.axis_names or
+      new_mesh.abstract_mesh.axis_types != named_sharding.mesh.axis_types):
+    raise ValueError(f"NamedSharding new mesh {new_mesh} does not match the mesh used for export {named_sharding.mesh}.")
 
-  mem_kind: str | None = None
-  if aval.memory_space is not None:
-    mem_kind = core.mem_space_to_kind(aval.memory_space)
-
-  return sharding_impls.cached_named_sharding(
-      new_mesh, sharding_impls.parse_flatten_op_sharding(hlo_sharding, new_mesh)[0],  # pyrefly: ignore[bad-argument-type]
-      memory_kind=mem_kind)
+  return named_sharding.update(mesh=new_mesh)
 
 
 def _get_vjp_fun(
@@ -1378,12 +1296,8 @@ def _get_vjp_fun(
     in_tree: tree_util.PyTreeDef,
     in_avals: Sequence[core.AbstractValue],
     out_avals: Sequence[core.AbstractValue],
-    has_named_shardings: bool,
-    in_shardings_hlo: tuple[HloSharding | None, ...],
-    out_shardings_hlo: tuple[HloSharding | None, ...],
     in_named_shardings: tuple[NamedSharding | None, ...],
     out_named_shardings: tuple[NamedSharding | None, ...],
-    device_assignment: Sequence[sharding_impls.Device] | None,
     apply_jit: bool,
     flat_primal_fun: bool = False,
     mesh: mesh_lib.AbstractMesh | None = None,
@@ -1391,9 +1305,7 @@ def _get_vjp_fun(
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
   # apply_jit=False is only used for backwards compatibility with the graph
-  # graph serialization. When apply_jit=True, we must pass a device assignment.
-  # flat_primal_fun=False is used only from jax2tf, and it means that the
-  # `primal_fun` takes PyTree `*args` and `**kwargs`.
+  # graph serialization.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):
@@ -1413,27 +1325,12 @@ def _get_vjp_fun(
                       map(lambda a: a.to_tangent_aval(), out_avals)))
 
   if apply_jit:
-    if has_named_shardings or mesh:
-      vjp_in_shardings = tuple(
-          _get_named_sharding(has_named_shardings, named_sharding,
-                              hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
-          for named_sharding, hlo_sharding, aval in zip(
-            itertools.chain(in_named_shardings, out_named_shardings),
-            itertools.chain(in_shardings_hlo, out_shardings_hlo),
-            vjp_in_avals))
-      vjp_out_shardings = tuple(
-        _get_named_sharding(has_named_shardings, named_sharding,
-                            hlo_sharding, aval, mesh)  # pyrefly: ignore[bad-argument-type]
-        for named_sharding, hlo_sharding, aval in zip(
-          in_named_shardings, in_shardings_hlo, in_avals))
-    else:
-      assert device_assignment is not None
-      vjp_in_shardings = tuple(
-          _hlo_sharding_to_gspmd_sharding(s, device_assignment)
-          for s in itertools.chain(in_shardings_hlo, out_shardings_hlo))
-      vjp_out_shardings = tuple(
-          _hlo_sharding_to_gspmd_sharding(s, device_assignment)
-          for s in in_shardings_hlo)
+    vjp_in_shardings = tuple(
+        _get_named_sharding(named_sharding, mesh)
+        for named_sharding in itertools.chain(in_named_shardings, out_named_shardings))
+    vjp_out_shardings = tuple(
+        _get_named_sharding(named_sharding, mesh)
+        for named_sharding in in_named_shardings)
     return pjit.pjit(fun_vjp_jax,
                      in_shardings=vjp_in_shardings,
                      out_shardings=vjp_out_shardings), vjp_in_avals
@@ -1562,10 +1459,7 @@ def _call_exported_abstract_eval(
 
   def make_aval(out_aval_idx: int):
     out_aval = exported.out_avals[out_aval_idx]
-    if exported._has_named_shardings:
-      sharding = exported._out_named_shardings[out_aval_idx]
-    else:
-      sharding = None
+    sharding = exported._out_named_shardings[out_aval_idx]
     aval = core.ShapedArray(
       core.evaluate_shape(out_aval.shape, exported_dim_vars,
                           *exported_dim_values),
@@ -1584,19 +1478,6 @@ def _call_exported_impl(*args, exported: Exported):
   return dispatch.apply_primitive(call_exported_p, *args, exported=exported)
 call_exported_p.def_impl(_call_exported_impl)
 
-
-def get_mesh_from_symbol(symtab: ir.SymbolTable) -> mesh_lib.AbstractMesh:
-  if "mesh" not in symtab:
-    return mesh_lib.empty_abstract_mesh
-  # pyrefly: ignore[missing-attribute]
-  mesh_attr = sdy.MeshAttr(symtab["mesh"].mesh)
-  axes = [sdy.MeshAxisAttr(a) for a in mesh_attr.axes]
-  if not axes:
-    return mesh_lib.empty_abstract_mesh
-  axes_sizes = tuple(a.size for a in axes)
-  axes_names = tuple(a.name for a in axes)
-  # TODO(necula): Shardy meshes do not have axis_types :-(
-  return mesh_lib.AbstractMesh(axes_sizes, axes_names)
 
 def has_sdy_meshes_in_frontend_attributes(submodule: ir.Module) -> bool:
   if "mhlo.frontend_attributes" not in submodule.operation.attributes:
@@ -1640,9 +1521,6 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     pipeline = passmanager.PassManager.parse(
         'builtin.module(sdy-lift-inlined-meshes)')
     pipeline.run(submodule.operation)
-  mesh = None
-  if shardy_enabled:
-    mesh = get_mesh_from_symbol(symtab)
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):
@@ -1665,32 +1543,13 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   exported_in_avals = [core.physical_aval(a)
                        if dtypes.issubdtype(a.dtype, dtypes.extended) else a
                        for a in exported.in_avals]
-  if exported._has_named_shardings:
-    args = tuple(
-        wrap_with_sharding(
-            ctx, x, x_aval,
-            _get_named_sharding(exported._has_named_shardings,
-                                named_sharding, None, x_aval, None),  # type: ignore
-            use_shardy=True)
-        for x, named_sharding, x_aval in zip(
-          args, exported._in_named_shardings, exported_in_avals))
-  elif mesh:
-    # A mesh only exists if Shardy is enabled, or we saved named shardings.
-    args = tuple(
-        wrap_with_sharding(
-            ctx, x, x_aval,
-            _get_named_sharding(False, None, hlo_sharding, x_aval, mesh),  # type: ignore
-            use_shardy=True)
-        for x, hlo_sharding, x_aval in zip(
-          args, exported.in_shardings_hlo, exported_in_avals))
-  else:
-    # Since there is no mesh - either due to shardy being disabled or the loaded
-    # function being lowered for GSPMD (so no shardy mesh) - need to create a
-    # GSPMD sharding from the HLO sharding (can't use shardy lowering).
-    args = tuple(
-        wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
-        for x, x_aval, x_sharding in zip(
-          args, in_avals, exported.in_shardings_hlo))
+  args = tuple(
+      wrap_with_sharding(
+          ctx, x, x_aval,
+          _get_named_sharding(named_sharding, None),
+          use_shardy=True)
+      for x, named_sharding, x_aval in zip(
+        args, exported._in_named_shardings, exported_in_avals))
 
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1783,30 +1642,13 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       for out, out_aval, refined_out_aval in zip(
           call.results[len(ordered_effects):], exported.out_avals, out_avals))
   # Apply out_shardings
-  if exported._has_named_shardings:
-    results = tuple(
-        wrap_with_sharding(
-            ctx, x, x_aval,
-            _get_named_sharding(True, x_sharding, None, x_aval, None),  # type: ignore
-            use_shardy=True)
-        for x, x_aval, x_sharding in zip(
-            results, out_avals, exported._out_named_shardings))
-  elif mesh:
-    results = tuple(
-        wrap_with_sharding(
-            ctx, x, x_aval,
-            _get_named_sharding(False, None, x_sharding, x_aval, mesh),  # type: ignore
-            use_shardy=True)
-        for x, x_aval, x_sharding in zip(
-            results, out_avals, exported.out_shardings_hlo))
-  else:
-    # Since there is no mesh - either due to shardy being disabled or the loaded
-    # function being lowered for GSPMD (so no shardy mesh) - need to create a
-    # GSPMD sharding from the HLO sharding (can't use shardy lowering).
-    results = tuple(
-        wrap_with_sharding(ctx, x, x_aval, x_sharding, use_shardy=False)
-        for x, x_aval, x_sharding in zip(
-            results, out_avals, exported.out_shardings_hlo))
+  results = tuple(
+      wrap_with_sharding(
+          ctx, x, x_aval,
+          _get_named_sharding(x_sharding, None),
+          use_shardy=True)
+      for x, x_aval, x_sharding in zip(
+          results, out_avals, exported._out_named_shardings))
   return results
 
 mlir.register_lowering(call_exported_p, _call_exported_lowering)
