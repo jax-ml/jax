@@ -1106,6 +1106,33 @@ class PullBlockSpecTest(jtu.JaxTestCase):
     y = kernel_fn((0, 1, 2), scalar_prefetch_values, (), x)
     np.testing.assert_array_equal(y, x.reshape(concrete_block_shape))
 
+  def test_unsupported_reshape_merge_error_message(self):
+
+    def f(x):
+      return x.reshape((2, 12))
+
+    in_type = jax.ShapeDtypeStruct((2, 3, 4), jnp.float32)
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(
+        f, in_type
+    )
+    block_spec = pl.BlockSpec((1, 6), lambda i, j: (i, j))
+    expected_msg = (
+        r'Cannot pull BlockSpec with block_shape=\(1, 6\) across reshape merge'
+        r' \(2, 3, 4\) -> \(2, 12\): Merging input dimensions \(3, 4\) into'
+        r' output dimension 12 with block size 6 produces a non-rectangular'
+        r' tile in the input buffer\. In Pallas, blocks must be rectangular'
+        r' tiles, but a 1D block of size 6 cuts across inner dimension 4'
+        r' \(remaining size 6 is not divisible by 4\)\.'
+        r' Hint: Make the block size divisible by 4\.'
+    )
+    with self.assertRaisesRegex(NotImplementedError, expected_msg):
+      block_spec_lib.pull_block_spec(
+          f2,
+          block_spec,
+          grid_len=2,
+          scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+      )(new_values, in_type)
+
   def test_basic_reshape_sublanes_to_lanes(self):
 
     def f(x):

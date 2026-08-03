@@ -2284,7 +2284,17 @@ def _reshape_pull_rule(
           new_block_dims.append(bs)
           bs = 1
         else:
-          raise NotImplementedError('unsupported reshape merge')
+          orig_bs = pallas_core.get_block_size(bd)
+          raise NotImplementedError(
+              f'Cannot pull BlockSpec with block_shape={block_shape} across'
+              f' reshape merge {shape_in} -> {shape_out}: Merging input'
+              f' dimensions {tuple(merged)} into output dimension {d} with'
+              f' block size {orig_bs} produces a non-rectangular tile in the'
+              ' input buffer. In Pallas, blocks must be rectangular tiles, but'
+              f' a 1D block of size {orig_bs} cuts across inner dimension {md}'
+              f' (remaining size {bs} is not divisible by {md}).'
+              f' Hint: Make the block size divisible by {md}.'
+          )
 
       new_block_dims.reverse()
       new_block_shape.extend(new_block_dims)
