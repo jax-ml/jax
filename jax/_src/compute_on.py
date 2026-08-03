@@ -342,7 +342,6 @@ pe.partial_eval_jaxpr_custom_rules[compute_on_p] = \
             _compute_on_partial_eval_custom_params_updater)
 
 @weakref_lru_cache
-@weakref_lru_cache
 def _transpose_jaxpr(jaxpr, in_tree, in_avals, specs):
   cell = lambda: None
   def transposed(*in_flat):
