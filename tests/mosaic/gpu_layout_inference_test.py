@@ -1004,28 +1004,40 @@ class LayoutInferenceTest(parameterized.TestCase):
     ):
       mgpu.infer_layout(self.module)
 
-  def test_vector_load_of_smem_transposed_tiled_dimensions_yields_transposed_layout(self):
+  def test_vector_load_of_smem_transposed_tiled_dimensions_yields_wgmma_layout(self):
     shape = (64, 64)
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
       [ref] = undefs(ref_ty)
-      mgpu.dialect.with_transforms(ref, [mgpu.dialect.TileTransformAttr.get((8, 64))])
+      mgpu.dialect.with_transforms(
+          ref,
+          [
+              mgpu.dialect.TileTransformAttr.get((8, 64)),
+              mgpu.dialect.SwizzleTransformAttr.get(128),
+          ],
+      )
       transposed_ref = mgpu.memref_transpose(ref, (1, 0))
       load = mgpu.dialect.VectorLoadOp(transposed_ref)
     mgpu.infer_layout(self.module)
-    self.checkOutLayouts(load, [mgpu.WGMMA_TRANSPOSED_LAYOUT])
+    self.checkOutLayouts(load, [mgpu.WGMMA_LAYOUT])
 
-  def test_vector_store_of_smem_transposed_tiled_dimensions_yields_transposed_layout(self):
+  def test_vector_store_of_smem_transposed_tiled_dimensions_yields_wgmma_layout(self):
     shape = (64, 64)
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(shape, ir.BF16Type.get(), memory_space=mgpu.utils.smem())
       vec_ty = ir.VectorType.get(shape, ir.BF16Type.get())
       [ref, value] = undefs(ref_ty, vec_ty)
-      mgpu.dialect.with_transforms(ref, [mgpu.dialect.TileTransformAttr.get((8, 64))])
+      mgpu.dialect.with_transforms(
+          ref,
+          [
+              mgpu.dialect.TileTransformAttr.get((8, 64)),
+              mgpu.dialect.SwizzleTransformAttr.get(128),
+          ],
+      )
       transposed_ref = mgpu.memref_transpose(ref, (1, 0))
       store = mgpu.dialect.VectorStoreOp(value, transposed_ref)
     mgpu.infer_layout(self.module)
-    self.checkInLayouts(store, [mgpu.WGMMA_TRANSPOSED_LAYOUT])
+    self.checkInLayouts(store, [mgpu.WGMMA_LAYOUT])
 
   def test_layout_of_wgmma_layout_to_wgmma_row_layout_raises(self):
     with ir.InsertionPoint(self.module.body):

@@ -4317,12 +4317,12 @@ class FragmentedArray:
         )
         if i != load_vector_dim
     ):
-      raise ValueError(
+      raise UnsupportedTransferError(
           "Tiled strides must be a multiple of the vector length, except for"
           " the load vectorized dimension"
       )
     if tiled_nested_strides[load_vector_dim] != (1,):
-      raise ValueError(
+      raise UnsupportedTransferError(
           "Vectorized dimension should not require further tiling and have a"
           " stride of 1"
       )
@@ -4716,6 +4716,9 @@ class FragmentedArray:
 
 
 class TxMatrixIneligible(Exception):
+  pass
+
+class UnsupportedTransferError(Exception):
   pass
 
 IndexTransform: TypeAlias = Callable[[tuple[int, ...]], tuple[int, ...]]

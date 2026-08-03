@@ -23,6 +23,8 @@ import enum
 import math
 from typing import Any, TYPE_CHECKING, Literal, assert_never, cast, final
 
+from jax._src.lib.mlir.dialects import builtin, func
+from jax._src.lib.mlir import ir
 import numpy as np
 
 from . import dialect_lowering as lowering
@@ -690,10 +692,6 @@ class IsTransferableSmemRegisters(IsTransferable):
 
     if not isinstance(reg_layout, fa.TiledLayout):
       return tiling_transform is None and swizzle is None
-    if len(self.strides) < 2:
-      smem_transposed = False
-    else:
-      smem_transposed = self.strides[-1] > self.strides[-2]
     tiling = tiling_transform.tiling if tiling_transform is not None else ()
     tiling_rank = len(tiling)
 
@@ -704,44 +702,42 @@ class IsTransferableSmemRegisters(IsTransferable):
       tiling = self.shape
       tiling_rank = len(tiling)
 
-    # TODO(bchetioui): move this below the UNOPTIMIZED check once it is
-    # possible to do so.
-    if smem_transposed:
-      regs_transposed = reg_layout in {fa.TCGEN05_TRANSPOSED_LAYOUT, fa.WGMMA_TRANSPOSED_LAYOUT}
-      # TODO(olechwierowicz): Lift restriction on 2D tiling rank enforcement below.
-      return tiling_rank == 2 and regs_transposed
-    # For a given `TiledLayout`, all transfers are possible if optimization is
-    # not required.
-    if self.optimized == OptimizedTransferKind.UNOPTIMIZED:
-      return True
-
+    optimized = self.optimized != OptimizedTransferKind.UNOPTIMIZED
     if is_untiled and self.optimized == OptimizedTransferKind.DOWNGRADABLE:
       # Model the Pallas behavior of downgrading to unoptimized transfers in
       # this case.
-      return True
+      optimized = False
 
-    tiled_strides = lowering.tile_strides(self.strides, tiling)
-
-    first_tiled_dim = len(self.shape) - tiling_rank
-    nested_ref_shape = tuple(
-        (self.shape[i] // tiling[i - first_tiled_dim], tiling[i - first_tiled_dim])
-        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
-        else (self.shape[i],)
-        for i in range(len(self.shape))
-    )
-    nested_ref_strides = tuple(
-        (tiled_strides[i], tiled_strides[i + tiling_rank])
-        if i >= first_tiled_dim and tiling[i - first_tiled_dim] != 1
-        else (tiled_strides[i],)
-        for i in range(len(self.shape))
-    )
-
+    int_ty = ir.IntegerType.get_signless(self.bitwidth)
+    layout = ir.StridedLayoutAttr.get(0, lowering.tile_strides(self.strides, tiling))
+    ref_shape = utils.tile_shape(self.shape, tiling)
+    assert len(layout.strides) == len(ref_shape), (len(layout.strides), len(ref_shape))
+    memref_ty = ir.MemRefType.get(ref_shape, int_ty, layout, utils.smem())
+    dummy_func = func.FuncOp("dummy_transfer_test", ir.FunctionType.get([], []))
+    dummy_block = dummy_func.add_entry_block()
     try:
-      fa.plan_tiled_transfer(nested_ref_shape, nested_ref_strides,
-                             reg_layout, self.bitwidth, swizzle or 16)
-      return True
-    except fa.TransferPlanDerivationError:
-      return False
+      with ir.InsertionPoint(dummy_block):
+        fake_ref_op = builtin.UnrealizedConversionCastOp([memref_ty], [])
+        fake_ref = fake_ref_op.results[0]
+        for use_txmatrix in [True, False]:
+          try:
+            next(
+                fa.FragmentedArray.transfer_tiled(
+                    fake_ref,
+                    swizzle or 16,
+                    reg_layout,
+                    self.shape,
+                    optimized=optimized,
+                    ref_tiling_rank=tiling_rank,
+                    use_txmatrix=use_txmatrix,
+                )
+            )
+            return True
+          except (fa.TxMatrixIneligible, fa.TransferPlanDerivationError, fa.UnsupportedTransferError):
+            continue
+        return False
+    finally:
+      dummy_func.erase()
 
   def _constant_holds(self) -> bool:
     match self.source, self.target:

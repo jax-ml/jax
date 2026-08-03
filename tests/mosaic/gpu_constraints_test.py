@@ -19,6 +19,8 @@ import dataclasses
 from absl.testing import parameterized
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir as mlir_interpreter
+from jax._src.lib.mlir import ir
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import constraints as cs
 from jax.experimental.mosaic.gpu import fragmented_array as fa
@@ -45,6 +47,12 @@ class ConstraintSystemTest(parameterized.TestCase):
     super().setUp()
     if jtu.test_device_matches(["rocm"]):
       self.skipTest("Mosaic GPU is not supported on ROCm.")
+    context = ir.Context()
+    context.append_dialect_registry(mlir_interpreter.upstream_dialects)
+    context.load_all_available_dialects()
+    mgpu.dialect.register_dialect(context)
+    self.enter_context(context)
+    self.enter_context(ir.Location.unknown())
 
   def test_constraint_system_is_unsatisfiable_if_assignment_is_invalid(
       self,
@@ -485,11 +493,9 @@ class ConstraintSystemTest(parameterized.TestCase):
     )
 
   @parameterized.parameters(
-      # Should work for any tiled layout.
+      # Should work for any tiled layout with compatible vector dim.
       mgpu.WGMMA_LAYOUT,
       mgpu.TCGEN05_LAYOUT,
-      mgpu.WGMMA_TRANSPOSED_LAYOUT,
-      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
       mgpu.WGMMA_ROW_LAYOUT,
       mgpu.WGMMA_COL_LAYOUT,
       mgpu.TCGEN05_ROW_LAYOUT,
@@ -537,11 +543,9 @@ class ConstraintSystemTest(parameterized.TestCase):
     self.assertEqual(smem_to_reg.holds(), holds)
 
   @parameterized.parameters(
-      # Should hold for any layout.
+      # Should hold for any layout with compatible vector dim.
       mgpu.WGMMA_LAYOUT,
       mgpu.TCGEN05_LAYOUT,
-      mgpu.WGMMA_TRANSPOSED_LAYOUT,
-      mgpu.TCGEN05_TRANSPOSED_LAYOUT,
       mgpu.WGMMA_ROW_LAYOUT,
       mgpu.WGMMA_COL_LAYOUT,
       mgpu.TCGEN05_ROW_LAYOUT,
@@ -567,8 +571,8 @@ class ConstraintSystemTest(parameterized.TestCase):
       # Works for some tiled layouts.
       (mgpu.WGMMA_LAYOUT, False),
       (mgpu.TCGEN05_LAYOUT, False),
-      (mgpu.WGMMA_TRANSPOSED_LAYOUT, True),
-      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, True),
+      (mgpu.WGMMA_TRANSPOSED_LAYOUT, False),
+      (mgpu.TCGEN05_TRANSPOSED_LAYOUT, False),
       (mgpu.WGMMA_ROW_LAYOUT, True),
       (mgpu.WGMMA_COL_LAYOUT, True),
       (mgpu.TCGEN05_ROW_LAYOUT, True),
@@ -916,7 +920,7 @@ class ConstraintSystemTest(parameterized.TestCase):
       self, shape, strides, reg_layout, expected_holds
   ):
     tiling = None
-    swizzle = 32
+    swizzle = 128
     smem_layout = cs.SMEMTransforms(tiling, swizzle)
     reg_layout_const = cs.RegisterLayout(reg_layout)
     constraint = cs.IsTransferableSmemRegisters(
@@ -924,7 +928,7 @@ class ConstraintSystemTest(parameterized.TestCase):
         reg_layout_const,
         shape,
         strides,
-        bitwidth=32,
+        bitwidth=16,
         optimized=cs.OptimizedTransferKind.OPTIMIZED,
     )
     self.assertEqual(constraint.holds(), expected_holds)

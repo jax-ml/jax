@@ -1872,6 +1872,32 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), jnp.transpose(x, permutation))
 
+  def test_wgmma_load_from_transposed_smem(self):
+    shape = (128, 128)
+    dtype = jnp.float16
+
+    transforms = ()
+    if not self.is_wg_semantics():
+      self.skipTest("Only works with WG semantics")
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(shape[::-1], dtype),
+        scratch_types=[
+            plgpu.SMEM(shape, dtype, transforms=transforms), plgpu.Barrier()
+        ],
+    )
+    def kernel(x_ref, o_ref, smem_ref, barrier):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      smem_ref_t = plgpu.transpose_ref(smem_ref, (1, 0))
+      # TODO(b/540761884): If we skip the layout, we end up inferring WGStrided
+      # and emitting vector.load along a non-contiguous dimension and failing
+      # the MLIR verifier
+      x = plgpu.load(smem_ref_t, layout=plgpu.Layout.WGMMA)
+      o_ref[...] = x
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x.T)
+
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
       layout=[plgpu.Layout.WG_STRIDED((128,), vec_size=1), None,
