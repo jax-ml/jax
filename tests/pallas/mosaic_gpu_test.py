@@ -1175,11 +1175,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   @run_on_sm80
   def test_copy_gmem_to_smem(self, indexer):
-    if (
-        self.is_wg_semantics() and
-        not jtu.is_cuda_compute_capability_at_least("9.0")
-    ):
-      self.skipTest("cp.async copies are not supported under WG semantics")
+    needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
+    if not needs_barrier:
+      # cp.async copies are not supported under WG semantics.
+      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -1189,13 +1188,17 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      barrier = barrier_ref if needs_barrier else None
       plgpu.copy_gmem_to_smem(
           x_ref_gmem.at[indexer],
           scratch_ref.at[indexer],
-          barrier_ref,
+          barrier,
           oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
       )
-      plgpu.barrier_wait(barrier_ref)
+      if barrier is not None:
+        plgpu.barrier_wait(barrier)
+      else:
+        plgpu.wait_gmem_to_smem(0)
       o_ref[...] = scratch_ref[...] + 1
 
     x = jnp.arange(256).astype(jnp.float32)
@@ -1203,11 +1206,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @run_on_sm80
   def test_copy_gmem_to_smem_dynamic_slice(self):
-    if (
-        self.is_wg_semantics() and
-        not jtu.is_cuda_compute_capability_at_least("9.0")
-    ):
-      self.skipTest("cp.async copies are not supported under WG semantics")
+    needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
+    if not needs_barrier:
+      # cp.async copies are not supported under WG semantics.
+      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -1218,6 +1220,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       assert o_ref.size % scratch_ref.size == 0
+      barrier = barrier_ref if needs_barrier else None
 
       @pl.loop(0, o_ref.size // scratch_ref.size)
       def _(i):
@@ -1225,10 +1228,13 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         plgpu.copy_gmem_to_smem(
             x_ref_gmem.at[s],
             scratch_ref,
-            barrier_ref,
+            barrier,
             oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
         )
-        plgpu.barrier_wait(barrier_ref)
+        if barrier is not None:
+          plgpu.barrier_wait(barrier)
+        else:
+          plgpu.wait_gmem_to_smem(0)
         o_ref[s] = scratch_ref[...] + 1
 
     x = jnp.arange(256).astype(jnp.float32)
@@ -1236,11 +1242,10 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
   @run_on_sm80
   def test_copy_gmem_to_smem_squeeze(self):
-    if (
-        self.is_wg_semantics() and
-        not jtu.is_cuda_compute_capability_at_least("9.0")
-    ):
-      self.skipTest("cp.async copies are not supported under WG semantics")
+    needs_barrier = jtu.is_cuda_compute_capability_at_least("9.0")
+    if not needs_barrier:
+      # cp.async copies are not supported under WG semantics.
+      self.skip_if_wg_semantics()
 
     @self.kernel(
         out_type=jax.ShapeDtypeStruct([4, 8, 32], jnp.float32),
@@ -1250,15 +1255,20 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
         ],
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      barrier = barrier_ref if needs_barrier else None
+
       @pl.loop(0, o_ref.shape[0])
       def _(i):
         plgpu.copy_gmem_to_smem(
             x_ref_gmem.at[i],
             scratch_ref,
-            barrier_ref,
+            barrier,
             oob_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
         )
-        plgpu.barrier_wait(barrier_ref)
+        if barrier is not None:
+          plgpu.barrier_wait(barrier)
+        else:
+          plgpu.wait_gmem_to_smem(0)
         o_ref[i] = scratch_ref[...] + 1
 
     x = jnp.arange(4 * 8 * 32).reshape(4, 8, 32).astype(jnp.float32)

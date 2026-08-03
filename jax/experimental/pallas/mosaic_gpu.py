@@ -94,6 +94,7 @@ from jax._src.pallas.mosaic_gpu.primitives import ShapeDtypeStruct as ShapeDtype
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_commit_arrive as tcgen05_commit_arrive
 from jax._src.pallas.mosaic_gpu.primitives import tcgen05_mma as tcgen05_mma
 from jax._src.pallas.mosaic_gpu.primitives import try_cluster_cancel as try_cluster_cancel
+from jax._src.pallas.mosaic_gpu.primitives import wait_gmem_to_smem as wait_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import wait_load_tmem as wait_load_tmem
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem as wait_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wgmma as wgmma

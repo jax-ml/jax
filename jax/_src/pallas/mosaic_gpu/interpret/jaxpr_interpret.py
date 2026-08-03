@@ -763,6 +763,11 @@ class JaxprInterpreter:
     assert eqn.primitive is gpu_primitives.copy_gmem_to_smem_p
     invals = get_invals()
 
+    if not eqn.params["has_barrier"]:
+      raise NotImplementedError(
+          "Interpret mode does not support copy_gmem_to_smem without a barrier."
+      )
+
     (
         (src, dst, barrier),
         src_transforms_flat, dst_transforms_flat, barrier_transforms_flat,

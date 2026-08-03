@@ -20,6 +20,16 @@ Remember to align the itemized text with the first line of an item within a list
   implementations if available, e.g., `tokamax.layer_norm`,
   `tokamax.dot_product_attention`.
 
+### Mosaic GPU
+
+* New features
+
+  * The ``barrier`` argument of
+    {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` must now be
+    omitted on pre-Hopper GPUs (which use the ``cp.async`` implementation).
+    When omitted, the completion of the copy must be awaited via
+    {func}`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem`.
+
 ## Released with JAX 0.11.0 (July 16, 2026)
 
 * Changes
