@@ -606,6 +606,47 @@ class TiledLayout:
         _check_canonical=False,
     )
 
+  def find_dim_in_tiling(self, dim: int) -> tuple[int, int]:
+    """Returns the index of the tile containing the given dimension and its position within the tile."""
+    dims = 0
+    tiling = self.tiling.tiles
+    for dim_tile in range(1, len(tiling) + 1):
+      dims -= len(tiling[-dim_tile])
+      if dim >= dims:
+        dim_within_tile = dim - dims
+        return -dim_tile, dim_within_tile
+    raise ValueError(f"Dimension {dim} not found in tiling")
+
+  def subdivide_tile(self, tile_idx: int, new_tile: tuple[int, ...]) -> TiledLayout:
+    """Inserts new_tile right after tile_idx in the tiling."""
+    assert tile_idx <= -1
+    new_tiles = list(self.tiling.tiles)
+    stable_dim_suffix = sum(map(len, new_tiles[tile_idx:]))
+    assert len(new_tile) == len(new_tiles[tile_idx])
+    if tile_idx == -1:
+      new_tiles.append(new_tile)
+    else:
+      new_tiles.insert(tile_idx + 1, new_tile)
+    def adjust_dim(d: int | Replicated):
+      if isinstance(d, int):
+        if d < -stable_dim_suffix:
+          yield d - len(new_tile)
+          return
+        elif d < -stable_dim_suffix + len(new_tile):
+          yield d - len(new_tile)
+          yield d
+          return
+      yield d
+    if self.vector_dim < -stable_dim_suffix + len(new_tile):
+      raise NotImplementedError("Multiple vector dimensions not supported.")
+    return TiledLayout(
+        Tiling(tuple(new_tiles)),
+        tuple(itertools.chain.from_iterable(map(adjust_dim, self.warp_dims))),
+        tuple(itertools.chain.from_iterable(map(adjust_dim, self.lane_dims))),
+        self.vector_dim,
+        _check_canonical=False,
+    ).canonicalize()
+
   @property
   def replication_factor(self) -> int:
     replication_factor = 1
@@ -4377,20 +4418,10 @@ class FragmentedArray:
       mem_layout = layout
       if tx_layout == nvvm.MMALayout.col:
         assert element_bits == 16  # 8x8 txmatrix
-        new_tiling = list(layout.tiling.tiles)
-        major_lane_dim, minor_lane_dim = layout.lane_dims
+        major_lane_dim, _ = layout.lane_dims
         assert isinstance(major_lane_dim, int)
-        assert isinstance(minor_lane_dim, int)
         # First, find the tile that contains the major lane dim and split it
-        dims = 0
-        major_lane_dim_tile = 9999  # Just to silence the type checker.
-        major_lane_dim_within_tile = 9999  # Just to silence the type checker.
-        for major_lane_dim_tile in range(1, len(new_tiling) + 1):
-          dims -= len(new_tiling[-major_lane_dim_tile])
-          if major_lane_dim >= dims:
-            major_lane_dim_within_tile = major_lane_dim - dims
-            break
-        major_lane_dim_tile = -major_lane_dim_tile
+        major_lane_dim_tile, major_lane_dim_within_tile = layout.find_dim_in_tiling(major_lane_dim)
         # Now, we add a new tile that splits the 8-sized dimension into 4 and 2.
         # It will be inserted right after the tile containing major_lane_dim,
         # in a way such that after tiling the original tile containing
@@ -4399,27 +4430,22 @@ class FragmentedArray:
         # For example, if we had a tiling of (8, 8)(2,) with lane_dims=(-3, -2)
         # and vector_dim=-1, we will transform it into:
         # tiling=(8, 8)(2, 8)(2,) (tiled base shape of (4, 1, 2, 4, 2)).
-        new_tile = list(new_tiling[major_lane_dim_tile])
+        new_tile = list(layout.tiling.tiles[major_lane_dim_tile])
         new_tile[major_lane_dim_within_tile] = layout.vector_length
-        assert major_lane_dim_tile < -1
-        new_tiling.insert(major_lane_dim_tile + 1, tuple(new_tile))
+        sub_layout = layout.subdivide_tile(major_lane_dim_tile, tuple(new_tile))
         # We now adjust the lane and vector dimensions. The 8-sized lane dim is
         # now composed of the minor lane dim and the original vector dim, the
         # minor 4-sized lane dim corresponds to the major portion of the 4x2
         # split of the original 8-sized major lane dim, with the remaining 2
         # becoming the new vector dim.
-        new_vector_dim = major_lane_dim
-        new_lane_dims = (minor_lane_dim, layout.vector_dim, major_lane_dim - len(new_tile))
-        # We also might need to decrement the warp dims since we added a tile.
-        new_warp_dims = tuple(
-            d - len(new_tile) if isinstance(d, int) and d < dims else d
-            for d in layout.warp_dims
-        )
+        sub_row_major, sub_row_minor, sub_col_major = sub_layout.lane_dims
+        assert isinstance(sub_row_minor, int)
+        sub_col_minor = sub_layout.vector_dim
         mem_layout = TiledLayout(
-            Tiling(tuple(new_tiling)),
-            new_warp_dims,
-            new_lane_dims,
-            new_vector_dim,
+            sub_layout.tiling,
+            sub_layout.warp_dims,
+            (sub_col_major, sub_col_minor, sub_row_major),
+            sub_row_minor,
         )
       plan = plan_tiled_transfer(
         nested_ref_shape, nested_ref_strides, mem_layout, element_bits, swizzle,
