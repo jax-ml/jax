@@ -78,12 +78,14 @@ fi
 
 echo "Running Bazel TPU tests..."
 
-# Don't abort the script if one command fails to ensure we run both test
+# Don't abort the script if one command fails to ensure we run all test
 # commands below.
 set +e
 
 # TODO(emilyaf): Debug and re-enable this test.
-IGNORE_TESTS_MULTIACCELERATOR="-//tests/multiprocess:array_test_tpu"
+IGNORE_TESTS_MULTIPROCESS="-//tests/multiprocess:array_test_tpu"
+
+multiprocess_bazel_cmd_retval=0
 
 echo "::endgroup::" >&2
 
@@ -135,7 +137,7 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
   python3 ci/utilities/report_resultstore_link.py "TPU single-accelerator tests (full)" "$INVOCATION_ID_SINGLE" "${first_bazel_cmd_retval:-0}"
   ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 
-  # Run multi-accelerator across all chips
+  # Run non-multiprocess multi-accelerator tests across all chips
   TEST_ARTIFACTS_DIR="test-artifacts-multi"
   mkdir -p "$TEST_ARTIFACTS_DIR"
 
@@ -165,14 +167,50 @@ if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
     --test_output=errors \
     -- \
     //tests:tpu_tests \
-    //tests/pallas:tpu_tests \
-    //tests/multiprocess:tpu_tests \
-    $IGNORE_TESTS_MULTIACCELERATOR
+    //tests/pallas:tpu_tests
 
   # Store the return value of the second bazel command.
   second_bazel_cmd_retval=$?
   echo "::endgroup::" >&2
   python3 ci/utilities/report_resultstore_link.py "TPU multi-accelerator tests (full)" "$INVOCATION_ID_MULTI" "${second_bazel_cmd_retval:-0}"
+  ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
+
+  # Run multiprocess targets one at a time. Their workers must execute each test
+  # together, so disable test-level threading.
+  TEST_ARTIFACTS_DIR="test-artifacts-multiprocess"
+  mkdir -p "$TEST_ARTIFACTS_DIR"
+
+  echo "::group::Bazel TPU multiprocess tests (full)" >&2
+  INVOCATION_ID_MULTIPROCESS=$(python3 ci/utilities/generate_invocation_id.py)
+
+  bazel "${BAZEL_STARTUP_ARGS[@]}" test \
+    --invocation_id="$INVOCATION_ID_MULTIPROCESS" \
+    --profile="$TEST_ARTIFACTS_DIR/bazel_profile.json.gz" \
+    --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+    $OVERRIDE_XLA_REPO \
+    --@rules_python//python/config_settings:py_freethreaded="$FREETHREADED_FLAG_VALUE" \
+    --config=ci_linux_x86_64 \
+    --config=ci_rbe_cache \
+    --//jax:build_jaxlib=$JAXCI_BUILD_JAXLIB \
+    --//jax:build_jax=$JAXCI_BUILD_JAXLIB \
+    --test_env=ALLOW_MULTIPLE_LIBTPU_LOAD=true \
+    --strategy=TestRunner=local \
+    --local_test_jobs=1 \
+    --repo_env=USE_MINIMAL_SHARD_COUNT=True \
+    --test_env=JAX_SKIP_SLOW_TESTS=1 \
+    --test_env=JAX_TEST_NUM_THREADS=0 \
+    --test_env=JAX_PLATFORMS=tpu,cpu \
+    $COMMON_TPU_TEST_ENV_VARS \
+    --test_tag_filters=multiaccelerator \
+    --verbose_failures \
+    --test_output=errors \
+    -- \
+    //tests/multiprocess:tpu_tests \
+    $IGNORE_TESTS_MULTIPROCESS
+
+  multiprocess_bazel_cmd_retval=$?
+  echo "::endgroup::" >&2
+  python3 ci/utilities/report_resultstore_link.py "TPU multiprocess tests (full)" "$INVOCATION_ID_MULTIPROCESS" "${multiprocess_bazel_cmd_retval:-0}"
   ci/utilities/collect_bazel_test_xmls.sh "$TEST_ARTIFACTS_DIR"
 else
 
@@ -296,14 +334,22 @@ if [[ -d test-artifacts-multi ]]; then
     cp "$f" "test-artifacts/multi_$(basename "$f")"
   done
 fi
+if [[ -d test-artifacts-multiprocess ]]; then
+  for f in test-artifacts-multiprocess/*; do
+    [[ -e "$f" ]] || continue
+    cp "$f" "test-artifacts/multiprocess_$(basename "$f")"
+  done
+fi
 set -x
 echo "::endgroup::" >&2
 
-# Exit with failure if either command fails.
+# Exit with failure if any command fails.
 if [[ $first_bazel_cmd_retval -ne 0 ]]; then
   exit $first_bazel_cmd_retval
 elif [[ $second_bazel_cmd_retval -ne 0 ]]; then
   exit $second_bazel_cmd_retval
+elif [[ $multiprocess_bazel_cmd_retval -ne 0 ]]; then
+  exit $multiprocess_bazel_cmd_retval
 else
   exit 0
 fi
