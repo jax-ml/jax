@@ -67,8 +67,6 @@ def compute_on(f=None, *, compute_type, out_memory_spaces,
     return lambda g: _compute_on(g, **kwargs)
   return _compute_on(f, **kwargs)
 
-# TODO(yashkatariya): Delete this.
-compute_on2 = compute_on
 
 def _compute_on(f, *, compute_type, out_memory_spaces, compiler_options):
   if not isinstance(compute_type, str):
