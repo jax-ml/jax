@@ -622,10 +622,16 @@ std::optional<bool> areAnyDivisible(Value lhs, Value rhs, int64_t divisor,
   // Otherwise, the result is unknown.
   return std::nullopt;
 }
-}  // namespace
 
-std::optional<int64_t> getRemainder(Value value, int64_t divisor,
-                                    int64_t fuel) {
+// Returns the remainder of the value divided by the divisor, if known.
+std::optional<int64_t> getExplicitRemainder(Value value, int64_t divisor,
+                                            int64_t fuel) {
+  if (fuel <= 0) {
+    return std::nullopt;
+  }
+  if (divisor == 1) {
+    return 0;
+  }
   if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
     if (auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue())) {
       return int_attr.getInt() % divisor;
@@ -639,13 +645,13 @@ std::optional<int64_t> getRemainder(Value value, int64_t divisor,
       }
     }
   }
-  if (isGuaranteedDivisible(value, divisor, fuel)) {
-    return 0;
-  }
   return std::nullopt;
 }
 
-std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
+// Checks whether `value` is divisible by `divisor` using op-specific
+// structural rules.
+std::optional<bool> isStructurallyDivisible(Value value, int64_t divisor,
+                                            int64_t fuel) {
   if (fuel <= 0) {
     return std::nullopt;
   }
@@ -683,14 +689,6 @@ std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
     }
     return areAnyDivisible(mul_op.getRhs(), mul_op.getLhs(), divisor, fuel);
   }
-  if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
-    auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue());
-    if (int_attr == nullptr) {
-      // Floating point divisibility check is not supported.
-      return std::nullopt;
-    }
-    return int_attr.getInt() % divisor == 0;
-  }
   if (auto cast_op = value.getDefiningOp<arith::IndexCastOp>()) {
     return isDivisible(cast_op.getOperand(), divisor, fuel - 1);
   }
@@ -703,9 +701,6 @@ std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
     if (auto rhs_cst = mlir::getConstantIntValue(div_op.getRhs())) {
       return isDivisible(div_op.getLhs(), divisor * *rhs_cst, fuel - 1);
     }
-  }
-  if (auto add_op = value.getDefiningOp<arith::AddIOp>()) {
-    return areAllDivisible(add_op.getLhs(), add_op.getRhs(), divisor, fuel);
   }
   if (auto sub_op = value.getDefiningOp<arith::SubIOp>()) {
     return areAllDivisible(sub_op.getLhs(), sub_op.getRhs(), divisor, fuel);
@@ -741,6 +736,31 @@ std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
     return std::nullopt;
   }
   return std::nullopt;
+}
+}  // namespace
+
+// Returns the remainder of the value divided by the divisor, if known.
+// If the remainder is unknown, but the value is structurally divisible by the
+// divisor, returns 0. Otherwise, returns nullopt.
+std::optional<int64_t> getRemainder(Value value, int64_t divisor,
+                                    int64_t fuel) {
+  if (auto rem = getExplicitRemainder(value, divisor, fuel)) {
+    return rem;
+  }
+  if (isStructurallyDivisible(value, divisor, fuel) == true) {
+    return 0;
+  }
+  return std::nullopt;
+}
+
+// Returns true if the value is divisible by the divisor.
+// Establishes divisibility by either inferring the remainder value, or
+// through structural analysis.
+std::optional<bool> isDivisible(Value value, int64_t divisor, int64_t fuel) {
+  if (auto rem = getExplicitRemainder(value, divisor, fuel)) {
+    return *rem == 0;
+  }
+  return isStructurallyDivisible(value, divisor, fuel);
 }
 
 bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {

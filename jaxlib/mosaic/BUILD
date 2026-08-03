@@ -268,6 +268,18 @@ cc_test(
 )
 
 cc_test(
+    name = "divisibility_check_test",
+    srcs = ["dialect/tpu/divisibility_check_test.cc"],
+    deps = [
+        ":tpu_dialect",
+        "@com_google_googletest//:gtest_main",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+cc_test(
     name = "tpu_ops_verification_test",
     srcs = ["dialect/tpu/tpu_ops_verification_test.cc"],
     deps = [
