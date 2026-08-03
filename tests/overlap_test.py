@@ -12,8 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
+os.environ['XLA_FLAGS'] = (
+    os.environ.get('XLA_FLAGS', '')
+    + ' --xla_dump_to='
+    + os.environ.get('TEST_UNDECLARED_OUTPUTS_DIR', '/tmp/hlo_dump')
+    + ' --xla_dump_hlo_as_text'
+)
+
 from functools import partial
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 import jax.numpy as jnp
@@ -268,8 +278,14 @@ class OverlapTest(jtu.JaxTestCase):
 
     jax.block_until_ready(g(x, w1s, w2s))
 
+  @parameterized.named_parameters(
+      ('full_program_order', True),
+      ('partial_program_order', False),
+  )
   @jtu.with_explicit_mesh((8,), ('x',))
-  def test_unrolled_fsdp_pipeline_grad_program_order_async_decomp(self, mesh):
+  def test_unrolled_fsdp_pipeline_grad_program_order_async_decomp(
+      self, full_po, mesh
+  ):
     if ifrt_version < 63:
       self.skipTest("Requires ifrt_version >= 63")
     if not jtu.is_libtpu_at_least("0.0.45"):
@@ -289,32 +305,55 @@ class OverlapTest(jtu.JaxTestCase):
       w2 = ag(w2s[0][0], 1)
       carry = (x, w1, w2)
 
-      @program_order(enforce=True)
-      def body(carry, w_n):
-        x, w1, w2 = carry
-        w1n, w2n = w_n
+      if full_po:
 
-        @program_order(enforce=False)
-        def inner():
+        @program_order(enforce=True)
+        def body(carry, w_n):
+          x, w1, w2 = carry
+          w1n, w2n = w_n
+
           w1n_start = ag_start(w1n[0], 0)
           w2n_start = ag_start(w2n[0], 1)
           temp = f(x, w1, w2)
           w1n_ = w1n_start.done()
           w2n_ = w2n_start.done()
-          return temp, w1n_, w2n_
-        temp, w1n_, w2n_ = inner()
 
-        @program_order(enforce=False)
-        def inner2():
           _w1n_start = ag_start(w1n[1], 0)
           _w2n_start = ag_start(w2n[1], 1)
           out = f(temp, w1n_, w2n_)
           _w1n_ = _w1n_start.done()
           _w2n_ = _w2n_start.done()
-          return out, _w1n_, _w2n_
-        out, _w1n_, _w2n_ = inner2()
+          return (out, _w1n_, _w2n_), ()
 
-        return (out, _w1n_, _w2n_), ()
+      else:
+
+        @program_order(enforce=True)
+        def body(carry, w_n):
+          x, w1, w2 = carry
+          w1n, w2n = w_n
+
+          @program_order(enforce=False)
+          def inner():
+            w1n_start = ag_start(w1n[0], 0)
+            w2n_start = ag_start(w2n[0], 1)
+            temp = f(x, w1, w2)
+            w1n_ = w1n_start.done()
+            w2n_ = w2n_start.done()
+            return temp, w1n_, w2n_
+
+          temp, w1n_, w2n_ = inner()
+
+          @program_order(enforce=False)
+          def inner2():
+            _w1n_start = ag_start(w1n[1], 0)
+            _w2n_start = ag_start(w2n[1], 1)
+            out = f(temp, w1n_, w2n_)
+            _w1n_ = _w1n_start.done()
+            _w2n_ = _w2n_start.done()
+            return out, _w1n_, _w2n_
+
+          out, _w1n_, _w2n_ = inner2()
+          return (out, _w1n_, _w2n_), ()
 
       (x, w1, w2), () = jax.lax.scan(body, carry, (w1s[1:], w2s[1:]))
       x = f(x, w1, w2)
@@ -347,6 +386,158 @@ class OverlapTest(jtu.JaxTestCase):
       return fsdp_pipe(f, x, w1s, w2s)
 
     jax.block_until_ready(g(x, w1s, w2s))
+
+  @jtu.with_explicit_mesh((8,), ('x',))
+  def test_fsdp_pipeline_grad_explicit_async_loop_carry_future(self, mesh):
+    if ifrt_version < 63:
+      self.skipTest('Requires ifrt_version >= 63')
+    if not jtu.is_libtpu_at_least('0.0.45'):
+      self.skipTest('Requires libtpu 0.0.45+')
+
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest('Requires TPU >= 6')
+
+    def ag_start(x, axis):
+      return parallel.all_gather_start(x, 'x', axis=axis, tiled=True)
+
+    def fsdp_pipe(f, x, w1s, w2s):
+      w1_start = ag_start(w1s[0][0], 0)
+      w2_start = ag_start(w2s[0][0], 1)
+      carry = (x, w1_start, w2_start)
+
+      @program_order(enforce=True)
+      def body(carry, w_n):
+        x, w1_start, w2_start = carry
+        w1n, w2n = w_n
+
+        @program_order(enforce=False)
+        def inner():
+          w1n_start = ag_start(w1n[0], 0)
+          w2n_start = ag_start(w2n[0], 1)
+          temp = f(x, w1_start, w2_start)
+          return temp, w1n_start, w2n_start
+
+        temp, w1n_start, w2n_start = inner()
+
+        @program_order(enforce=False)
+        def inner2():
+          _w1n_start = ag_start(w1n[1], 0)
+          _w2n_start = ag_start(w2n[1], 1)
+          out = f(temp, w1n_start, w2n_start)
+          return out, _w1n_start, _w2n_start
+
+        out, _w1n_start, _w2n_start = inner2()
+        return (out, _w1n_start, _w2n_start), ()
+
+      (x, w1_last_start, w2_last_start), () = jax.lax.scan(
+          body, carry, (w1s[1:], w2s[1:])
+      )
+      x = f(x, w1_last_start, w2_last_start)
+      return x
+
+    def f(x, w1, w2):
+      temp = x @ w1.done()
+      out = temp @ w2.done()
+      return out
+
+    x = jnp.ones(
+        (32 * 512 * 2, 1024), dtype=jnp.bfloat16, out_sharding=P('x', None)
+    )
+    w1s = jnp.ones(
+        (16, 2, 1024, 4096),
+        dtype=jnp.bfloat16,
+        out_sharding=P(None, None, 'x', None),
+    )
+    w2s = jnp.ones(
+        (16, 2, 4096, 1024),
+        dtype=jnp.bfloat16,
+        out_sharding=P(None, None, None, 'x'),
+    )
+
+    opts = dict(
+        xla_tpu_enable_sparse_core_collective_offload_all_gather='true',
+        xla_tpu_enable_sparse_core_collective_offload_2d_all_gather='true',
+        xla_tpu_enable_sparse_core_collective_offload_reduce_scatter='true',
+        xla_tpu_enable_sparse_core_offload_queuing_in_lhs='true',
+        xla_tpu_control_large_2nd_minor_layout_for_x16='true',
+        xla_msa_enable='false',
+    )
+
+    @jax.jit(compiler_options=opts)
+    @jax.shard_map(out_specs=P('x', None))
+    def g(x, w1s, w2s):
+      return fsdp_pipe(f, x, w1s, w2s)
+
+    res = g(x, w1s, w2s)
+    print('Jetski: Python: g() returned')
+    jax.block_until_ready(res)
+    print('Jetski: Python: block_until_ready returned')
+
+  @jtu.with_explicit_mesh((8,), ('x',))
+  def test_fsdp_pipeline_explicit_mode_async_start_done_in_shmap(self, mesh):
+    def ag_start(x, axis):
+      @jax.shard_map(out_specs=P(reduced={'x'}))
+      def _f(x):
+        return parallel.all_gather_start(
+            x, 'x', axis=axis, tiled=True, to='reduced'
+        )
+
+      return _f(x)
+
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def ag_done(x):
+      return x.done()
+
+    def fsdp_pipe(f, x, w1s, w2s):
+      w1_start = ag_start(w1s[0][0], 0)
+      w2_start = ag_start(w2s[0][0], 1)
+      carry = (x, w1_start, w2_start)
+
+      def body(carry, w_n):
+        x, w1_start, w2_start = carry
+        w1n, w2n = w_n
+
+        @program_order(enforce=True)
+        def outer():
+          @program_order(enforce=False)
+          def inner():
+            w1n_start = ag_start(w1n[0], 0)
+            w2n_start = ag_start(w2n[0], 1)
+            temp = f(x, w1_start, w2_start)
+            return temp, w1n_start, w2n_start
+
+          temp, w1n_start, w2n_start = inner()
+
+          @program_order(enforce=False)
+          def inner2():
+            _w1n_start = ag_start(w1n[1], 0)
+            _w2n_start = ag_start(w2n[1], 1)
+            out = f(temp, w1n_start, w2n_start)
+            return out, _w1n_start, _w2n_start
+
+          return inner2()
+
+        x, _w1n_start, _w2n_start = outer()
+        return (x, _w1n_start, _w2n_start), ()
+
+      (x, w1_start, w2_start), () = jax.lax.scan(
+          body, carry, (w1s[1:], w2s[1:])
+      )
+      x = f(x, w1_start, w2_start)
+      return x
+
+    def f(x, w1_start, w2_start):
+      temp = x @ ag_done(w1_start)
+      out = temp @ ag_done(w2_start)
+      return out
+
+    x = jnp.ones((32 * 32, 128), out_sharding=P('x', None))
+    w1s = jnp.ones((16, 2, 128, 256), out_sharding=P(None, None, 'x', None))
+    w2s = jnp.ones((16, 2, 256, 128), out_sharding=P(None, None, None, 'x'))
+
+    f = jax.jit(partial(fsdp_pipe, f))
+    print(f.lower(x, w1s, w2s).as_text())
+    jax.block_until_ready(f(x, w1s, w2s))
 
 
 class AsyncCollectivesTest(jtu.JaxTestCase):

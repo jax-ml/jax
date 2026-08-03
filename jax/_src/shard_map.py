@@ -879,6 +879,18 @@ def _shard_shaped_array(mesh: Mesh, manual_axes: frozenset, check_vma,
                      manual_axis_type=mat)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
+
+def _shard_future(
+    mesh, manual_axes, check_vma, spec, aval: core.AbstractFuture
+):
+  inner_aval = _shard_shaped_array(
+      mesh, manual_axes, check_vma, spec, aval.inner_aval
+  )
+  return aval.update(inner_aval=inner_aval)
+
+
+core.shard_aval_handlers[core.AbstractFuture] = _shard_future
+
 def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
                           ) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
@@ -929,6 +941,14 @@ def _unshard_shaped_array(mesh: Mesh, check_vma, spec, aval: core.ShapedArray
   return aval.update(shape=new_shape, sharding=new_sharding,
                      manual_axis_type=out_mat)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
+
+
+def _unshard_future(mesh, check_vma, spec, aval: core.AbstractFuture):
+  inner_aval = _unshard_shaped_array(mesh, check_vma, spec, aval.inner_aval)
+  return aval.update(inner_aval=inner_aval)
+
+
+core.unshard_aval_handlers[core.AbstractFuture] = _unshard_future
 
 # Type-checking
 

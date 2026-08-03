@@ -3037,6 +3037,12 @@ class AbstractFuture(AbstractValue):
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
 
+  def update(self, **kwargs):
+    return AbstractFuture(
+        kwargs.pop("inner_aval", self.inner_aval),
+        kwargs.pop("done_fun", self.done_fun),
+    )
+
   @aval_method
   def done(tracer):
     return tracer.aval.done_fun(tracer)  # type: ignore
