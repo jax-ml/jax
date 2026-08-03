@@ -40,7 +40,11 @@ def algdiv(a: ArrayLike, b: ArrayLike) -> Array:
     w = ((((c5 * s11 * t + c4 * s9) * t + c3 * s7) * t + c2 * s5) * t + c1 * s3) * t + c0
     w = w * (c / b)
     # Combine the results
-    u = d * lax.log1p(a / b)
+    # When b is infinite, log1p(a/b) = 0 so u = d * 0. Because d may also be
+    # infinite (d = b + a - 0.5), this produces 0 * inf = NaN. The correct
+    # limiting value is u = 0 (since a/b -> 0 as b -> inf and log1p(0) = 0).
+    log1p_ab = lax.log1p(a / b)
+    u = jnp.where(jnp.isinf(b) & jnp.isfinite(a), 0.0, d * log1p_ab)
     v = a * (lax.log(b) - 1.0)
     return jnp.where(u <= v, (w - v) - u, (w - u) - v)
 
@@ -60,4 +64,10 @@ def betaln(a: ArrayLike, b: ArrayLike) -> Array:
     a, b = jnp.minimum(a, b), jnp.maximum(a, b)
     small_b = lax.lgamma(a) + (lax.lgamma(b) - lax.lgamma(a + b))
     large_b = lax.lgamma(a) + algdiv(a, b)
-    return jnp.where(b < 8, small_b, large_b)
+    result = jnp.where(b < 8, small_b, large_b)
+    # When exactly one argument is +inf and the other is finite positive,
+    # beta(a, inf) -> 0 so betaln -> -inf.  The algdiv path handles this
+    # correctly after the fix above, but small_b = lgamma(a) + lgamma(inf) -
+    # lgamma(inf) = lgamma(a) + nan, so we must force -inf here.
+    one_inf = jnp.isinf(b) & jnp.isfinite(a) & (a > 0)
+    return jnp.where(one_inf, jnp.full_like(result, -jnp.inf), result)

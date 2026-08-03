@@ -253,6 +253,22 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     # Check that d/dx betaln(x, 1) = d/dx -log(x) = -1/x.
     self.assertAllClose(tangents_out, -1 / xs, atol=atol)
 
+
+  def testBetalnInfiniteArguments(self):
+    """betaln should return -inf (not NaN) when one argument is +inf.
+
+    Regression test for https://github.com/jax-ml/jax/issues/39106.
+    Root cause: algdiv computed u = d * log1p(a/b) where d=inf and
+    log1p(a/inf)=0, producing inf * 0 = NaN.
+    """
+    inf = jnp.inf
+    # One argument inf, other finite positive -> betaln = -inf
+    cases_a = jnp.array([inf,  inf,  10.0, 0.25], dtype=jnp.float32)
+    cases_b = jnp.array([0.25, 2.0,  inf,  inf],  dtype=jnp.float32)
+    expected = jnp.full(4, -inf, dtype=jnp.float32)
+    result = lsp_special.betaln(cases_a, cases_b)
+    self.assertAllClose(result, expected)
+
   def testXlogyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
