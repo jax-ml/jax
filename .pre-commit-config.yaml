@@ -34,7 +34,7 @@ repos:
     files: \.py$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: 0470f7c8a653e950f7cc5a653204ceb3fde4c02a  # frozen: v0.15.1
+  rev: 39d9ac5938dadb73df0564a45f163e25ff9fa6e2  # frozen: v0.16.1
   hooks:
   - id: ruff
 
