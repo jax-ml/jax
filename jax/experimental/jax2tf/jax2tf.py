@@ -38,6 +38,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import op_shardings
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.export import _export
@@ -389,13 +390,9 @@ class NativeSerializationImpl:
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.exported.in_tree,
                                 in_avals=self.exported.in_avals,
-                                has_named_shardings=self.exported._has_named_shardings,
                                 in_named_shardings=self.exported._in_named_shardings,
                                 out_named_shardings=self.exported._out_named_shardings,
-                                in_shardings_hlo=self.exported.in_shardings_hlo,
                                 out_avals=self.exported.out_avals,
-                                out_shardings_hlo=self.exported.out_shardings_hlo,
-                                device_assignment=self.device_assignment,
                                 apply_jit=True)
 
 
@@ -646,15 +643,12 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   # Do not apply XlaSharding for REPLICATED, on inputs and outputs.
   # This is an agreed convention, and also improves usability under TF eager.
   # See b/255511660.
-  kept_in_shardings = []
-  for i in exported.module_kept_var_idx:
-    if exported._has_named_shardings:
-      in_sharding_hlo = _export.named_to_hlo_sharding(
-        exported._in_named_shardings[i],
-        exported.in_avals[i])
-    else:
-      in_sharding_hlo = exported.in_shardings_hlo[i]
-    kept_in_shardings.append(in_sharding_hlo)
+  kept_in_shardings = [
+      _named_to_hlo_sharding(
+          exported._in_named_shardings[i], exported.in_avals[i]
+      )
+      for i in exported.module_kept_var_idx
+  ]
   args_flat_tf = tuple(
     map(partial(_shard_value,
                 skip_replicated_sharding=tf.executing_eagerly()),
@@ -669,12 +663,9 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
           concrete_fn._inference_function
       )
 
-  if exported._has_named_shardings:
-    out_shardings_hlo = tuple(
-      _export.named_to_hlo_sharding(s, a)
+  out_shardings_hlo = tuple(
+      _named_to_hlo_sharding(s, a)
       for s, a in zip(exported._out_named_shardings, exported.out_avals))
-  else:
-    out_shardings_hlo = exported.out_shardings_hlo
   res = list(map(partial(_shard_value,
                          skip_replicated_sharding=tf.executing_eagerly()),
                  res, out_shardings_hlo))
@@ -825,6 +816,14 @@ def split_to_logical_devices(tensor: TfVal,
   tile_assignment = np.arange(num_partition_splits).reshape(
       partition_dimensions)
   return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)
+
+
+def _named_to_hlo_sharding(
+    s: Any, a: core.ShapedArray
+) -> xla_client.HloSharding | None:
+  if s is None or isinstance(s, sharding_impls.UnspecifiedValue):
+    return None
+  return s._to_xla_hlo_sharding(a.ndim)
 
 
 def _shard_value(val: TfVal,
