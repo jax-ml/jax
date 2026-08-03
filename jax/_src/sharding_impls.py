@@ -65,7 +65,7 @@ def hashed_index(x) -> int:
   return hash(tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
 
 
-@util.cache(max_size=4096, trace_context_in_key=False)
+@util.cache(max_size=4096, trace_context_in_key=True)
 def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]:
   try:
     device_indices_map_fn = sharding.devices_indices_map
