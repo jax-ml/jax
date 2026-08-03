@@ -22,4 +22,4 @@
 
 # buildifier: disable=module-docstring
 XLA_COMMIT = "5d53e1e40cd08655e8fe52f104f35b57ce35a626"
-XLA_SHA256 = "37d3697cc4ca8eaf1878617f4918d1ca56446d83e20b249feda32813574ee7f1"
+XLA_SHA256 = "16b5f068d49de592ecf6d7ccf2d82555eca86bd8eff6417aab04d0913d37a4a2"

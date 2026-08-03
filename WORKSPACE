@@ -9,20 +9,20 @@ load("@xla//:workspace4.bzl", "xla_workspace4")
 
 xla_workspace4()
 
-load("@xla//:workspace3.bzl", "xla_workspace3")
-
-xla_workspace3()
-
 # Initialize Hermetic toolchains
 # Details: https://github.com/google-ml-infra/rules_ml_toolchain
 tf_http_archive(
     name = "rules_ml_toolchain",
-    sha256 = "6b1b294cbecb98a08bcfe59641461f72e113db30fa91b44fcc49d98099b5ba65",
-    strip_prefix = "rules_ml_toolchain-b11745590f513ec55b32e2d126073576fde18c71",
+    sha256 = "8b3f4610e1b3f190ec5e07e8945c84dd9d2b103d9cf60a4a5ae4b067b118c836",
+    strip_prefix = "rules_ml_toolchain-b3b4015a1aed6dc734d1f8cdb8320f6145f1dda6",
     urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/b11745590f513ec55b32e2d126073576fde18c71.tar.gz",
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/b3b4015a1aed6dc734d1f8cdb8320f6145f1dda6.tar.gz",
     ),
 )
+
+load("@xla//:workspace3.bzl", "xla_workspace3")
+
+xla_workspace3()
 
 load("@rules_ml_toolchain//cc/deps:cc_toolchain_deps.bzl", "cc_toolchain_deps")
 
