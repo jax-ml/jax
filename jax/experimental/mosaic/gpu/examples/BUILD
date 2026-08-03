@@ -34,7 +34,7 @@ py_library(
     srcs = [
         "__init__.py",
     ],
-    visibility = ["//jax:internal"],
+    visibility = ["//visibility:private"],
 )
 
 py_library(
