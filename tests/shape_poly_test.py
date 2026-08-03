@@ -2540,7 +2540,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   arg_descriptors=[RandArg((3, 5, 5), dtype),
                                    StaticArg(left), StaticArg(right)],
                   polymorphic_shapes=[poly])
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for poly in ["b, ...", "b, w, w"]
       for left in ([True, False] if dtype == np.float32 else [True])
       for right in ([True, False] if dtype == np.float32 else [False])
@@ -2864,7 +2864,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices)],
           polymorphic_shapes=[poly],
           symbolic_constraints=constraints)
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for shape, poly, full_matrices, constraints in [
           ((2, 0, 4), "b, ...", False, ()),  # m = 0
           ((2, 4, 0), "b, ...", False, ()),  # n = 0
@@ -2942,7 +2942,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           lambda x, lower: lax.linalg.eigh(x, lower=lower),
           arg_descriptors=[RandArg(shape, dtype), StaticArg(lower)],
           polymorphic_shapes=[poly])
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for lower in [True, False]
       for shape, poly in [
           ((4, 4), "n, n"),
@@ -2957,7 +2957,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           arg_descriptors=[RandArg(shape, dtype)],
           polymorphic_shapes=[poly],
           expect_error=(ValueError, "Argument to symmetric eigendecomposition"))
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for shape, poly in [
           ((4, 5), "m, n"),
           ((2, 3, 4, 5), "b1, b2, ..."),
@@ -2971,7 +2971,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
           arg_descriptors=[RandArg(shape, dtype), StaticArg(full_matrices), StaticArg(compute_uv)],
           polymorphic_shapes=[poly],
           symbolic_constraints=constraints)
-      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128}
       for compute_uv in [True, False]
       for full_matrices in ([True, False] if compute_uv else [True])
       for shape, poly, constraints in [
