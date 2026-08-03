@@ -47,7 +47,7 @@ def einsum(
     optimize: str | bool | list[tuple[int, ...]] = "auto",
     precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
-    _dot_general: Callable[..., Array] = lax.dot_general,
+    _dot_general: Callable[..., Array] | tuple[Callable[..., Array], Callable[..., Array]] = lax.dot_general,
     out_sharding=None,
 ) -> Array: ...
 
@@ -60,7 +60,7 @@ def einsum(
     optimize: str | bool | list[tuple[int, ...]] = "auto",
     precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
-    _dot_general: Callable[..., Array] = lax.dot_general,
+    _dot_general: Callable[..., Array] | tuple[Callable[..., Array], Callable[..., Array]] = lax.dot_general,
     out_sharding=None,
 ) -> Array: ...
 
@@ -72,7 +72,7 @@ def einsum(
     optimize: str | bool | list[tuple[int, ...]] = "auto",
     precision: lax.PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
-    _dot_general: Callable[..., Array] = lax.dot_general,
+    _dot_general: Callable[..., Array] | tuple[Callable[..., Array], Callable[..., Array]] = lax.dot_general,
     out_sharding=None,
 ) -> Array:
   """Einstein summation
@@ -103,6 +103,10 @@ def einsum(
     out: unsupported by JAX
     _dot_general: optionally override the ``dot_general`` callable used by ``einsum``.
       This parameter is experimental, and may be removed without warning at any time.
+      May also be a tuple ``(dot_general_fn, reduce_fn)`` where ``reduce_fn``
+      is a callable with signature ``(x, axes) -> Array`` used to reduce over
+      contracted indices instead of the default summation. This enables
+      einsum-like computations over custom semirings, e.g. ``(+, max)``.
 
   Returns:
     array containing the result of the einstein summation.
@@ -439,6 +443,12 @@ def _einsum(
     _dot_general=lax.dot_general,
     out_sharding=None,
 ):
+  # Unpack optional (dot_general_fn, reduce_fn) tuple.
+  if isinstance(_dot_general, tuple):
+    _dot_general, _reduce_fn = _dot_general
+  else:
+    _reduce_fn = None
+
   if preferred_element_type is None:
     preferred_element_type, output_weak_type = dtypes.result_type(
         *operands, return_weak_type_flag=True)
@@ -451,6 +461,8 @@ def _einsum(
   def sum(x, axes, out_s):
     if dtypes.result_type(x, preferred_element_type) != x.dtype:
       x = x.astype(preferred_element_type)
+    if _reduce_fn is not None:
+      return _reduce_fn(x, axes)
     return lax.reduce(
         x, np.array(0, x.dtype), lax.add if x.dtype != bool else lax.bitwise_or,
         axes, out_s)
