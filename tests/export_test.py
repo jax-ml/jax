@@ -2088,7 +2088,7 @@ class JaxExportTest(jtu.JaxTestCase):
     operand = np.float32(0.)
 
     @jax.jit
-    @compute_on.compute_on2(compute_type="device_host",
+    @compute_on.compute_on(compute_type="device_host",
                             out_memory_spaces=jax.memory.Space.Device)
     def f_host(x):
       # Adds 1 on CPU, which should be the result on all platforms because

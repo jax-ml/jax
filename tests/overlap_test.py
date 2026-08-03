@@ -20,7 +20,7 @@ import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import parallel
-from jax._src.compute_on import compute_on2
+from jax._src.compute_on import compute_on
 from jax.experimental.overlap import program_order
 from jax.sharding import PartitionSpec as P
 from jax._src.lib import ifrt_version
@@ -37,7 +37,7 @@ class OverlapTest(jtu.JaxTestCase):
       return jax.reshard(x, P(reduced={'x'}))
 
     if jtu.is_device_tpu_at_least(7):
-      ag = compute_on2(ag, compute_type='tpu_sparsecore',
+      ag = compute_on(ag, compute_type='tpu_sparsecore',
                        out_memory_spaces=jax.memory.Space.Device,
                        compiler_options={'sparse_core_config': {'core_ids': [0]}})
 
@@ -45,7 +45,7 @@ class OverlapTest(jtu.JaxTestCase):
       return jax.reshard(x, (P('x', None), P(None, 'x')))
 
     if jtu.is_device_tpu_at_least(7):
-      rs = compute_on2(rs, compute_type='tpu_sparsecore',
+      rs = compute_on(rs, compute_type='tpu_sparsecore',
                        out_memory_spaces=jax.memory.Space.Device,
                        compiler_options={'sparse_core_config': {'core_ids': [1]}})
 
