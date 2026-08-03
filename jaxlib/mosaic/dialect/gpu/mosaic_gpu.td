@@ -350,7 +350,15 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     contiguous.
 
     Upon completion of the copy, the `complete-tx(complete-count)` operation
-    will always be executed on the provided `barrier`.
+    will be executed on the provided `barrier`, if one is given.
+
+    The `barrier` is required on Hopper and newer GPUs, which use the TMA
+    implementation, and must be omitted on pre-Hopper GPUs, which use the
+    `cp.async` implementation. In that case, completion is tracked via cp.async
+    commit groups and has to be awaited with `nvvm.cp_async_wait_group` rather
+    than the barrier. When the `barrier` is omitted, `collective` and
+    `leader_tracked` must not be set, and `oob_fill_mode` must be
+    `promise_in_bounds`.
 
     The `indices` and `slice_lengths` inputs define what slice of the GMEM
     `source` corresponds to the SMEM `destination`. Both `indices` and
@@ -374,12 +382,18 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     a cluster will first load a slice from GMEM to SMEM and then the slices will
     be multicast to all other blocks in the cluster. In this way TMA multicast
     guarantees L2 cache hits. The `collective` attribute is the list of
-    cluster dimensions along which to partition the input data loads.
+    cluster dimensions along which to partition the input data loads. Only
+    supported with TMA (Hopper and newer).
 
     The `leader_tracked` attribute can be provided to only track the completion
     of the copy in the leader block in the cluster. If `CopyPartitioned(axis)`,
     performs a partitioned collective copy along the given axis. If
-    `CopyReplicated`, all blocks load the same data.
+    `CopyReplicated`, all blocks load the same data. Only supported with TMA
+    (Hopper and newer).
+
+    The `oob_fill_mode` attribute controls the behavior of out-of-bounds
+    accesses. `zeros` and `undefined` are only supported with TMA (Hopper and
+    newer); the `cp.async` implementation only supports `promise_in_bounds`.
 
     The `predicate` allows scheduling the transfer conditionally. The async copy
     is always scheduled by at most a single lane in the warpgroup.
@@ -391,7 +405,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
   let arguments = (ins
     AnyMemRef:$source,
     AnyMemRef:$destination,
-    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    Optional<MemRefRankOf<[MosaicGPU_Barrier], [0]>>:$barrier,
     Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     OptionalAttr<MosaicGPU_CopyPartitionAttrInterface>:$leader_tracked,
     PtxPredicate:$predicate,

@@ -336,6 +336,22 @@ llvm::LogicalResult AsyncLoadOp::verify() {
       }
   }
 
+  if (!getBarrier()) {
+    if (!getCollective().empty()) {
+      return emitOpError(
+          "Barrier-less copies do not support `collective`.");
+    }
+    if (getLeaderTracked()) {
+      return emitOpError(
+          "Barrier-less copies do not support `leader_tracked`.");
+    }
+    if (getOobFillMode() != OOBFillMode::kPromiseInBounds) {
+      return emitOpError(
+          "Barrier-less copies only support the `promise_in_bounds` "
+          "out-of-bounds fill mode.");
+    }
+  }
+
   return llvm::success();
 }
 
