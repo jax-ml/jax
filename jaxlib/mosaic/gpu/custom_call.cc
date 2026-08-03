@@ -911,10 +911,7 @@ absl::StatusOr<InitResult> InitKernel(const CompiledKernel& kernel) {
   }
   CUmodule module = nullptr;
   CUDA_RETURN_IF_ERROR(cuModuleLoadData(&module, kernel.gpu_binary.data()));
-  CUdeviceptr ptr = 0;
-  size_t size = 0;
-  if (cuModuleGetGlobal(&ptr, &size, module, "nvshmemi_device_lib_version_d") ==
-      CUDA_SUCCESS) {
+  if (kernel.is_nvshmem_used) {
     if (NvshmemApi::Default().cumodule_init(module) != NVSHMEM_SUCCESS) {
       return absl::InternalError("nvshmemx_cumodule_init failed.");
     }
