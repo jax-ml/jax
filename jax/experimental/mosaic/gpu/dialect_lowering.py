@@ -679,6 +679,23 @@ def pprint_layout(v: fa.FragmentedArray | tcgen05.TMEMRef) -> str:
     return str(v.layout)
 
 
+def pprint_transforms(
+    transforms: Sequence[lc.MemRefTransform],
+    swizzle: int | mgpu.SwizzlingMode | None = None,
+) -> str:
+  parts = []
+  for t in transforms:
+    if isinstance(t, lc.TileTransform):
+      parts.append(f"TilingTransform(tiling={t.tiling})")  # skip rounding
+    else:
+      parts.append(str(t))
+  if swizzle is not None and swizzle != mgpu.SwizzlingMode.kNoSwizzle:
+    if isinstance(swizzle, mgpu.SwizzlingMode):
+      swizzle = swizzle.value
+    parts.append(f"SwizzleTransform(swizzle={swizzle})")
+  return f"({', '.join(parts)})"
+
+
 @_register_lowering(mgpu.PrintLayoutOp)
 def _print_layout_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.PrintLayoutOp
@@ -688,6 +705,11 @@ def _print_layout_op_lowering_rule(
     (layout,) = inference_utils.in_layouts(op)
     a = _fragmented_array_from_ir(op.value, layout)
     print(op.format.value.format(pprint_layout(a)))
+  elif utils.is_smem_ref(op.value):
+    [transforms_attr] = inference_utils.in_transforms(op)
+    swizzle = swizzle_from_transforms_attr(transforms_attr)
+    transforms = memref_transforms_from_transforms_attr(transforms_attr)
+    print(op.format.value.format(pprint_transforms(transforms, swizzle)))
   else:
     (layout,) = inference_utils.in_tmem_layouts(op)
     ref = _tmem_ref_from_ir(op.value, layout)

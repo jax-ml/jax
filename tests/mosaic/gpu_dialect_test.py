@@ -1865,16 +1865,28 @@ ir.MLIRError,
     ):
       self.module.operation.verify()
 
-  def test_print_layout_op_invalid_ref(self):
+  def test_print_layout_op_smem_ref(self):
     with ir.InsertionPoint(self.module.body):
       ref_ty = ir.MemRefType.get(
           (2,), ir.F32Type.get(), memory_space=mgpu_utils.smem()
       )
       (ref,) = undefs(ref_ty)
-      mgpu.dialect.print_layout("tmem: {}", ref)
+      mgpu.dialect.print_layout("smem: {}", ref)
+    self.assertTrue(self.module.operation.verify())
+
+  def test_print_layout_op_invalid_ref(self):
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(
+          (2,),
+          ir.F32Type.get(),
+          memory_space=ir.Attribute.parse("#gpu.address_space<global>"),
+      )
+      (ref,) = undefs(ref_ty)
+      mgpu.dialect.print_layout("gmem: {}", ref)
     with self.assertRaisesRegex(
         ir.MLIRError,
-        "The tmem memref must have a mosaic_gpu.tmem memory space",
+        "The memref must have a mosaic_gpu.tmem or gpu.address_space<workgroup>"
+        " memory space",
     ):
       self.module.operation.verify()
 

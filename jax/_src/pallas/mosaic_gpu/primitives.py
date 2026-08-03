@@ -60,6 +60,7 @@ from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu.launch_context import AsyncCopyImplementation
 from jax.experimental.mosaic.gpu.launch_context import CopyPartition
 from jax.experimental.mosaic.gpu.launch_context import OOBFillMode
+from jax.experimental.mosaic.gpu.launch_context import TileTransform
 import jax.numpy as jnp
 import numpy as np
 
@@ -117,27 +118,53 @@ def _print_layout_lowering(
         ctx, ctx.avals_in[0], x, transform_avals,
         transforms_tree.unflatten(transforms_leaves),
     )
+  else:
+    remaining_transforms = []
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    if (
+        isinstance(x, ir.Value)
+        and isinstance(x.type, ir.MemRefType)
+        and mgpu_utils.is_smem_ref(x)
+    ):
+      swizzle = None
+      inverse_transforms: list[TileTransform] = []
+      for t in remaining_transforms:
+        match t:
+          case gpu_core.UnswizzleRef(s):
+            swizzle = s
+          case gpu_core.UntilingTransform(tiling):
+            inverse_transforms.append(TileTransform(tiling))
+          case _:
+            raise NotImplementedError(f"Unsupported transform: {t}")
+      layout_str = mgpu.dialect_lowering.pprint_transforms(
+          tuple(inverse_transforms[::-1]), swizzle
+      )
+    else:
+      if remaining_transforms:
+        raise NotImplementedError(
+            f"Unsupported transforms {remaining_transforms}."
+        )
+      layout_str = mgpu.dialect_lowering.pprint_layout(x)  # pyrefly: ignore[bad-argument-type]
+    print(fmt.format(layout_str))
+  else:
+    assert isinstance(x, ir.Value)
     if remaining_transforms:
       raise NotImplementedError(
           f"Unsupported transforms {remaining_transforms}."
       )
-  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
-    print(fmt.format(mgpu.dialect_lowering.pprint_layout(x)))  # pyrefly: ignore[bad-argument-type]
-  else:
-    assert isinstance(x, ir.Value)
     mgpu.dialect.print_layout(fmt, x)
   return ()
 
 
 def print_layout(fmt: str, x: jax.typing.ArrayLike | _Ref) -> None:
-  """Prints the layout chosen by Mosaic GPU for a given array or TMEM reference.
+  """Prints the layout chosen by Mosaic GPU for a given array, SMEM, or TMEM reference.
 
   This is evaluated at compile-time and has no incidence on the runtime behavior
   of the program.
 
   Args:
     fmt: The format string to use for printing the layout.
-    x: The array or TMEM reference to print the layout of.
+    x: The array, SMEM, or TMEM reference to print the layout of.
   """
   if isinstance(x, pallas_core.TransformedRef):
     transforms_leaves, transforms_tree = jax.tree.flatten(x.transforms)

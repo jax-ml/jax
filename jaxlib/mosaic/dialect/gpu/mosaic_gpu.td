@@ -1203,7 +1203,7 @@ def MosaicGPU_DebugPrintOp : Op<MosaicGPU_Dialect, "debug_print", []> {
 }
 
 def MosaicGPU_PrintLayoutOp : Op<MosaicGPU_Dialect, "print_layout", []> {
-  let summary = "Prints the layout of the given array or TMEM reference.";
+  let summary = "Prints the layout of the given array, TMEM or SMEM reference.";
 
   let arguments = (ins
     StrAttr:$format,

@@ -1240,8 +1240,14 @@ llvm::LogicalResult BroadcastedIotaOp::verify() {
 
 llvm::LogicalResult PrintLayoutOp::verify() {
   if (auto ref_ty = mlir::dyn_cast<mlir::MemRefType>(getValue().getType())) {
-    if (VerifyTmemRefType(getOperation(), ref_ty).failed()) {
-      return llvm::failure();
+    mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+        getContext(), mlir::gpu::AddressSpace::Workgroup);
+    mlir::Attribute tmem = TmemAttr::get(getContext());
+    if (ref_ty.getMemorySpace() != smem && ref_ty.getMemorySpace() != tmem) {
+      return emitOpError()
+             << "The memref must have a mosaic_gpu.tmem or "
+                "gpu.address_space<workgroup> memory space but got: "
+             << ref_ty.getMemorySpace();
     }
   }
   return llvm::success();
