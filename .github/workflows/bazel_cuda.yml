@@ -149,3 +149,21 @@ jobs:
           artifact-name: bazel-test-artifacts-${{ inputs.runner }}-py${{ inputs.python }}-cuda${{ inputs.cuda-version }}-x64_${{ inputs.enable-x64 }}-${{ inputs.build_jaxlib }}
           inputs_json: ${{ toJSON(inputs) }}
           matrix_json: ${{ toJSON(matrix) }}
+      - name: Generate Step Summary
+        if: always()
+        continue-on-error: true
+        env:
+          INVOCATION_ID: ${{ env.INVOCATION_ID && format('{0}:CUDA RBE tests', env.INVOCATION_ID) || format('{0}:Single-accelerator,{1}:Multi-accelerator', env.INVOCATION_ID_SINGLE || 'N/A', env.INVOCATION_ID_MULTI || 'N/A') }}
+          JOB_STATUS_CODE: ${{ job.status == 'success' && '0' || '1' }}
+        run: |
+          DESCRIPTION="CUDA Bazel Tests"
+          if [ -d "test-artifacts" ]; then
+            python3 ci/utilities/generate_step_summary.py "$DESCRIPTION" "test-artifacts" "$INVOCATION_ID" "$JOB_STATUS_CODE" "test"
+          else
+            {
+              echo "## ❌ $DESCRIPTION"
+              echo ""
+              echo "> [!WARNING]"
+              echo "> **Workflow failed before tests could finish.** Please check the workflow logs for errors."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

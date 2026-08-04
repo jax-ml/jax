@@ -62,6 +62,7 @@ echo "::endgroup::" >&2
 
 echo "::group::Bazel CUDA RBE tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
+echo "INVOCATION_ID=$INVOCATION_ID" >> "$GITHUB_ENV"
 
 bazel test --invocation_id="$INVOCATION_ID" \
       --config=rbe_linux_x86_64_cuda${JAXCI_CUDA_VERSION} \

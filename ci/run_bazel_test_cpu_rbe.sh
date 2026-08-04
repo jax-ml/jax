@@ -99,6 +99,7 @@ echo "::endgroup::" >&2
 
 echo "::group::Bazel CPU RBE tests" >&2
 INVOCATION_ID=$(python3 ci/utilities/generate_invocation_id.py)
+echo "INVOCATION_ID=$INVOCATION_ID" >> "$GITHUB_ENV"
 
 bazel $bazel_output_base $JAXCI_BAZEL_CPU_RBE_MODE \
     --invocation_id="$INVOCATION_ID" \
