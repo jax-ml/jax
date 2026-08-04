@@ -994,6 +994,86 @@ class MpmdTest(PallasSCTest):
           scratch_types=[pltpu.SemaphoreType.REGULAR(())],
       )()
 
+  @parameterized.parameters([False, True])
+  def test_smem_vmem_shared_signaling(self, reverse):
+    if not jtu.is_libtpu_at_least("0.0.43"):
+      self.skipTest("Requires libtpu 0.0.43 or newer")
+    num_cores = self.sc_info.num_cores
+    num_subcores = self.sc_info.num_subcores
+
+    v_mesh = plsc.VectorSubcoreMesh(
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+        num_cores=num_cores,
+        num_subcores=num_subcores,
+    )
+    s_mesh = plsc.ScalarSubcoreMesh(
+        axis_name="core", num_cores=num_cores
+    )
+
+    slice_size = 128
+    x = jnp.arange(
+        num_cores * num_subcores * slice_size, dtype=jnp.int32
+    ).reshape(num_cores, num_subcores, slice_size)
+
+    def vector_subcore_fn(x_ref, out_ref, smem_ref, vmem_shared_ref, scs_sem, tec_sem):
+      del smem_ref
+      core_id = jax.lax.axis_index("core")
+      subcore_id = jax.lax.axis_index("subcore")
+
+      # TEC waits on regular semaphore tec_sem
+      if not reverse:
+        pl.semaphore_wait(tec_sem, 1)
+
+      if reverse:
+        pltpu.sync_copy(
+            x_ref.at[core_id, subcore_id], vmem_shared_ref.at[subcore_id]
+        )
+        pl.semaphore_signal(scs_sem, device_id={"core": core_id})
+        del out_ref, tec_sem
+      else:
+        del x_ref, scs_sem
+        pltpu.sync_copy(
+            vmem_shared_ref.at[subcore_id], out_ref.at[core_id, subcore_id]
+        )
+
+    def scalar_subcore_fn(x_ref, out_ref, smem_ref, vmem_shared_ref, scs_sem, tec_sem):
+      core_id = jax.lax.axis_index("core")
+
+      if reverse:
+        del x_ref, tec_sem
+        pl.semaphore_wait(scs_sem, num_subcores)
+        pltpu.sync_copy(vmem_shared_ref, smem_ref)
+        pltpu.sync_copy(smem_ref, out_ref.at[core_id])
+      else:
+        del out_ref, scs_sem
+        pltpu.sync_copy(x_ref.at[core_id], smem_ref)
+        pltpu.sync_copy(smem_ref, vmem_shared_ref)
+
+        # Signal TECs
+        for j in range(num_subcores):
+          device_id = {"core": core_id, "subcore": j}
+          pl.semaphore_signal(tec_sem, device_id=device_id)
+
+    scratch_types = [
+        pltpu.SMEM((num_subcores, slice_size), jnp.int32) @ s_mesh,
+        pltpu.VMEM_SHARED((num_subcores, slice_size), jnp.int32),
+        pltpu.SemaphoreType.REGULAR(()) @ s_mesh,
+        pltpu.SemaphoreType.REGULAR(()) @ v_mesh,
+    ]
+
+    out = pl.kernel(
+        body=[vector_subcore_fn, scalar_subcore_fn],
+        mesh=[v_mesh, s_mesh],
+        out_type=jax.ShapeDtypeStruct(
+            (num_cores, num_subcores, slice_size), jnp.int32
+        ),
+        scratch_types=scratch_types,
+        compiler_params=pltpu.CompilerParams(use_tc_tiling_on_sc=True),
+    )(x)
+    expected = x
+    np.testing.assert_array_equal(out, expected)
+
 
 @dataclasses.dataclass(frozen=True)
 class WeirdTuple:
