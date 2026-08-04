@@ -2062,6 +2062,28 @@ class PallasCallDMATest(ptu.PallasTPUTest):
     y = kernel(*xs)
     np.testing.assert_array_equal(y[:, :128], x[:, :128])
 
+  def test_single_element_input_output_dma(self, shape, memory_space):
+    if not jtu.is_libtpu_at_least('0.0.46'):
+      self.skipTest('Needs a newer libtpu')
+
+    # Reproducer from https://github.com/jax-ml/jax/issues/39505.
+
+    @jax.jit
+    def fn(x):
+      o_hbm = jax.empty_ref(jax.typeof(x))
+      kernel = pl.kernel(
+          pltpu.sync_copy,
+          mesh=pltpu.TensorCoreMesh(axis_name='core', num_cores=1),
+      )
+      kernel(x, o_hbm)
+      return jax.freeze(o_hbm)
+
+    # Loop a few times to make sure we don't get a spurious match due to the
+    # HBM having the right value by chance.
+    for i in range(10):
+      x = jnp.ones(shape, dtype=jnp.int32) * i
+      np.testing.assert_array_equal(fn(x), x)
+
 
 class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
