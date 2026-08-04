@@ -738,7 +738,8 @@ def _scan_abstract_eval(*args, reverse, length, ft_in, ft_out, jaxpr,
                      "of jaxpr arguments: {len(args)} vs {len(jaxpr.in_avals)}")
   out_carry_avals, y_avals = ft_out.update(jaxpr.out_avals).unpack()
   _, in_carry_avals, _ = ft_in.update(args).unpack()
-  if [i.mat for i in in_carry_avals] != [o.mat for o in out_carry_avals]:
+  if ([i.mat for i in in_carry_avals if isinstance(i, core.ShapedArray)] !=
+      [o.mat for o in out_carry_avals if isinstance(o, core.ShapedArray)]):
     raise ValueError(
         'Scan carry input and output got mismatched varying manual axes '
         f'{in_carry_avals} and {out_carry_avals}. Please open an '

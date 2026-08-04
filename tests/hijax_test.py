@@ -780,6 +780,43 @@ class HijaxTest(jtu.JaxTestCase):
       f(x)
     self.assertEqual(count(), 1)
 
+  def test_scan_mat(self):
+    @dataclass(frozen=True)
+    class Box:
+      a: jax.Array
+
+    @dataclass(frozen=True)
+    class BoxTy(HiType):
+      shape: tuple
+      def lo_ty(self): return [ShapedArray(self.shape, jnp.dtype('float32'))]
+      def lower_val(self, b): return [b.a]
+      def raise_val(self, a): return Box(a)
+      def to_tangent_aval(self): return ShapedArray(self.shape, jnp.dtype('float32'))
+      def str_short(self, short_dtypes=False, **_): return f"box{list(self.shape)}"
+
+    register_hitype(Box, lambda b: BoxTy(b.a.shape))
+
+    class Wrap(VJPHiPrimitive):
+      def __init__(self, av):
+        self.in_avals, self.out_aval, self.params = (av,), BoxTy(av.shape), {}
+        super().__init__()
+      def expand(self, a): return Box(a)
+
+    class Scale(VJPHiPrimitive):
+      def __init__(self, av):
+        self.in_avals, self.out_aval, self.params = (av,), av, {}
+        super().__init__()
+      def expand(self, b): return Box(b.a * 2.0)
+
+    wrap  = lambda a: Wrap(jax.typeof(a))(a)
+    scale = lambda b: Scale(jax.typeof(b))(b)
+
+    b = wrap(jnp.arange(3, dtype='float32'))
+    f = lambda b: jax.lax.scan(lambda c, _: (scale(c), None), b, None, length=2)[0]
+
+    jax.typeof(f(b))  # doesn't crash
+    jax.typeof(jax.jit(f)(b))  # doesn't crash
+
   def test_stages(self):
     @dataclass(frozen=True)
     class ArrayTuple:
