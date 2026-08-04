@@ -11741,6 +11741,112 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out2 = merge(out)
     self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reduce_max_reduced_shmap(self, mesh):
+    arr = jax.device_put(np.arange(8, dtype=jnp.float32), P('x'))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P(reduced={'x'}))
+    def f(x):
+      y = jax.lax.all_gather(
+          x, axis_name='x', axis=0, tiled=True, to='reduced')
+      return jnp.max(y, axis=0)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(reduced={'x'})))
+
+    out_g = jax.jit(jax.grad(f))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    @jax.shard_map(out_specs=P())
+    def g(x):
+      y = jax.lax.all_gather(x, axis_name='x', axis=0, tiled=True,
+                             to='invarying')
+      return jnp.max(y, axis=0)
+
+    ex_out_g = jax.jit(jax.grad(g))(arr)
+    self.assertArraysEqual(out_g, ex_out_g)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_reduce_max_reduced_reshard(self, mesh):
+    arr = jax.device_put(np.arange(8, dtype=jnp.float32), P('x'))
+
+    @jax.jit
+    def f(x):
+      y = jax.reshard(x, P(reduced={'x'}))
+      return jnp.max(y, axis=0)
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(reduced={'x'})))
+
+    out_g = jax.jit(jax.grad(f))(arr)
+    self.assertEqual(out_g.sharding, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def g(x):
+      y = jax.reshard(x, P())
+      return jnp.max(y, axis=0)
+    ex_out_g = jax.jit(jax.grad(g))(arr)
+
+    self.assertArraysEqual(out_g, ex_out_g)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_div_reduced_fwd_unreduced_bwd(self, mesh):
+    arr1 = jax.device_put(np.arange(8, dtype=jnp.float32), P(reduced={'x'}))
+    arr2 = jax.device_put(np.arange(1, 9, dtype=jnp.float32), P(reduced={'x'}))
+
+    @jax.jit
+    def f(x, y):
+      return x / y
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
+
+    @jax.jit
+    def loss(x, y):
+      return f(x, y).sum()
+
+    out_g1 = jax.jit(jax.grad(loss))(arr1, arr2)
+    self.assertEqual(out_g1.sharding,
+                     NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    ex_arr1 = jax.device_put(np.arange(8, dtype=jnp.float32), P())
+    ex_arr2 = jax.device_put(np.arange(1, 9, dtype=jnp.float32), P())
+    ex_out_g1 = jax.jit(jax.grad(loss))(ex_arr1, ex_arr2)
+
+    self.assertArraysEqual(reshard(out_g1, P()), ex_out_g1)
+
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_div_unreduced_fwd_reduced_bwd(self, mesh):
+    arr1 = jax.device_put(jnp.arange(8, dtype=jnp.float32), P(unreduced={'x'}))
+    arr2 = jax.device_put(np.arange(1, 9, dtype=jnp.float32), P(reduced={'x'}))
+
+    @jax.jit
+    def f(x, y):
+      return x / y
+
+    out = f(arr1, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, unreduced={'x'})))
+
+    @jax.jit
+    def loss(x, y):
+      return f(x, y).sum()
+
+    out_g1 = jax.jit(jax.grad(loss))(arr1, arr2)
+    self.assertEqual(out_g1.sharding,
+                     NamedSharding(mesh, P(None, reduced={'x'})))
+
+    ex_arr1 = jax.device_put(np.arange(8, dtype=jnp.float32), P())
+    ex_arr2 = jax.device_put(np.arange(1, 9, dtype=jnp.float32), P())
+    ex_out_g1 = jax.jit(jax.grad(loss))(ex_arr1, ex_arr2)
+
+    self.assertArraysEqual(out_g1, ex_out_g1)
+
+    with self.assertRaisesRegex(
+        ValueError, "The denominator cannot be unreduced passed to `div`"):
+      f(arr1, arr1)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

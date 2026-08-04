@@ -5115,7 +5115,25 @@ def _div_transpose_rule(cotangent, x, y):
     return [ad_util.Zero(x.aval), None]
   else:
     return [_unbroadcast(x.aval, div(cotangent, y)), None]
-div_p = standard_naryop([_num, _num], 'div')
+
+def _div_ur_rule(x, y):
+  out_reduced = default_nary_reduced_rule(x, y)
+  x_ur, y_ur = getu(x), getu(y)
+  if y_ur:
+    raise ValueError(
+        f'The denominator cannot be unreduced passed to `div`. Got {y=}')
+  if x_ur and x_ur != getr(y):
+    raise ValueError(
+        'Denominator should be reduced along the same axes numerator is'
+        f' unreduced on. Got {x=}, {y=}')
+  out_unreduced = x_ur
+  if out_unreduced:
+    assert out_reduced == out_unreduced, (out_reduced, out_unreduced)
+    out_reduced = frozenset()  # if both are equal, set difference is empty.
+  kind = UnreducedKind.sum if out_unreduced else None
+  return out_unreduced, out_reduced, kind
+
+div_p = standard_naryop([_num, _num], 'div', ur_rule=_div_ur_rule)
 ad.defjvp(div_p,
           lambda g, x, y: div(g, y),
           lambda g, x, y: mul(mul(neg(g), x), integer_pow(y, -2)))
@@ -8517,10 +8535,17 @@ def _reduce_op_unreduced_rule(operand, axes, out_sharding, out_kind, name):
     out_u = getu(operand)
   return out_u, out_kind if out_u else None
 
+def _reduce_op_reduced_rule(operand, out_sharding, name):
+  if out_sharding is not None and out_sharding.spec.reduced:
+    raise ValueError(
+        f'out_sharding passed to {name} cannot be reduced. Got {out_sharding=}')
+  return getr(operand)
+
 def _reduce_sum_ur_rule(operand, *, axes, out_sharding):
   out_unreduced, kind = _reduce_op_unreduced_rule(
       operand, axes, out_sharding, UnreducedKind.sum, 'reduce_sum')
-  return out_unreduced, getr(operand), kind
+  out_reduced = _reduce_op_reduced_rule(operand, out_sharding, 'reduce_sum')
+  return out_unreduced, out_reduced, kind
 
 def _reduce_sum_dtype_rule(operand, *, axes, **_):
   dt = _reduce_number_dtype_rule('reduce_sum', operand)
@@ -8571,9 +8596,8 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes, out_sharding):
 def _reduce_max_ur_rule(operand, *, axes, out_sharding):
   out_unreduced, kind = _reduce_op_unreduced_rule(
       operand, axes, out_sharding, UnreducedKind.max, 'reduce_max')
-  if getr(operand):
-    raise NotImplementedError
-  return out_unreduced, frozenset(), kind
+  out_reduced = _reduce_op_reduced_rule(operand, out_sharding, 'reduce_max')
+  return out_unreduced, out_reduced, kind
 
 reduce_max_p = standard_primitive(
     _reduce_op_shape_rule, input_dtype, 'reduce_max',
@@ -8587,9 +8611,8 @@ batching.defreducer(reduce_max_p)
 def _reduce_min_ur_rule(operand, *, axes, out_sharding):
   out_unreduced, kind = _reduce_op_unreduced_rule(
       operand, axes, out_sharding, UnreducedKind.min, 'reduce_min')
-  if getr(operand):
-    raise NotImplementedError
-  return out_unreduced, frozenset(), kind
+  out_reduced = _reduce_op_reduced_rule(operand, out_sharding, 'reduce_min')
+  return out_unreduced, out_reduced, kind
 
 reduce_min_p = standard_primitive(
     _reduce_op_shape_rule, input_dtype, 'reduce_min',
