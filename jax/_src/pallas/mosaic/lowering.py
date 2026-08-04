@@ -5005,7 +5005,16 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   grid_names = ctx.lowering_context.grid_names
   if grid_names and axis_name in grid_names:
     # We are querying a named axis corresponding to a grid dimension.
-    return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
+    #
+    # NOTE: ``grid_names`` includes vmapped dimensions, but
+    # ``user_grid_indices`` indexed by the ``_program_id_lowering_rule``,
+    # excludes them. So, we map the full grid position to the logical axis by
+    # discounting any preceding vmapped dimensions.
+    full_axis = grid_names.index(axis_name)
+    axis = full_axis - sum(
+        d < full_axis for d in ctx.lowering_context.vmapped_dims
+    )
+    return _program_id_lowering_rule(ctx, axis=axis)
   # We are querying a named axis corresponding to a mesh dimension.
   device_id = tpu.device_id()
   mesh_context = ctx.lowering_context.jax_mesh_context
