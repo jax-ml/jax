@@ -1028,7 +1028,7 @@ def register_dataclass(
     data_fields: data field names: these are attributes which will be treated as non-static
       when this pytree is passed to :func:`jax.jit`. ``data_fields`` is optional only if
       ``nodetype`` is a dataclass, in which case fields are assumed data fields unless
-      marked via :func:`dataclasses.field` (see examples below).
+      marked via :func:`dataclasses.field` (see examples below) or present in drop_fields.
       Data fields *must* be JAX-compatible objects such as arrays (:class:`jax.Array`
       or :class:`numpy.ndarray`), scalars, or pytrees whose leaves are arrays or scalars.
       Note that ``None`` is a valid data field, as JAX recognizes this as an empty pytree.
@@ -1114,12 +1114,12 @@ def register_dataclass(
     data_fields = [
         f.name
         for f in dataclasses.fields(nodetype)
-        if not f.metadata.get("static", False)
+        if not f.metadata.get("static", False) and f.name not in drop_fields
     ]
     meta_fields = [
         f.name
         for f in dataclasses.fields(nodetype)
-        if f.metadata.get("static", False)
+        if f.metadata.get("static", False) and f.name not in drop_fields
     ]
 
   assert meta_fields is not None

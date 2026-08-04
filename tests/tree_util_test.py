@@ -1860,6 +1860,19 @@ class RegistrationTest(jtu.JaxTestCase):
         Foo, data_fields=["x"], meta_fields=[], drop_fields=["y", "z"]
     )
 
+  def test_register_dataclass_init_false(self):
+    @dataclasses.dataclass
+    class Foo:
+      x: int
+      y: int = dataclasses.field(default=42)
+      z: int = dataclasses.field(default=42, init=False)
+
+    with self.assertRaises(ValueError):
+      # Requires explicit drop_fields
+      tree_util.register_dataclass(Foo)
+
+    tree_util.register_dataclass(Foo, drop_fields="z")
+
   def test_register_dataclass_invalid_plain_class(self):
     class Foo:
       x: int
@@ -1890,6 +1903,7 @@ class RegistrationTest(jtu.JaxTestCase):
     with self.subTest("with static False"):
       static = jax.tree.static(metadata={"static": False})
       self.assertEqual(static.metadata, {"static": False})
+
 
 class FlatTreeTest(jtu.JaxTestCase):
 
