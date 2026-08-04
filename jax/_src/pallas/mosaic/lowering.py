@@ -3724,6 +3724,16 @@ def _round_lowering_rule(ctx: LoweringRuleContext, x, *, rounding_method):
     raise NotImplementedError(f"Unsupported rounding method: {rounding_method}")
 
 
+@register_lowering_rule(lax.reduce_precision_p)
+def _reduce_precision_lowering_rule(
+    ctx: LoweringRuleContext, x, *, exponent_bits: int, mantissa_bits: int
+):
+  del ctx
+  return tpu.reduce_precision(
+      x, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits
+  )
+
+
 @register_lowering_rule(lax.ceil_p)
 def _ceil_lowering_rule(ctx: LoweringRuleContext, x):
   return mlir_math.ceil(x)

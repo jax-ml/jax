@@ -2260,6 +2260,17 @@ OpFoldResult ExtFOp::fold(FoldAdaptor adaptor) {
       });
 }
 
+OpFoldResult ReducePrecisionOp::fold(FoldAdaptor adaptor) {
+  auto elem_ty = cast<FloatType>(getElementTypeOrSelf(getType()));
+  int32_t mantissa_bits = elem_ty.getFPMantissaWidth() - 1;
+  int32_t exponent_bits = elem_ty.getWidth() - mantissa_bits - 1;
+  if (getExponentBits() == exponent_bits &&
+      getMantissaBits() == mantissa_bits) {
+    return getInput();
+  }
+  return nullptr;
+}
+
 LogicalResult ReshapeOp::verify() {
   auto src_ty = getSource().getType();
   auto dst_ty = getResult().getType();

@@ -995,6 +995,28 @@ def TPU_StochasticConvertElementwiseOp : TPU_Op<"stochastic_convert_elementwise"
   let hasVerifier = 1;
 }
 
+def TPU_ReducePrecisionOp : TPU_Op<"reduce_precision", [Pure, ElementwiseMappable, SameOperandsAndResultType]> {
+  let summary = "Reduces the precision of a floating-point value.";
+
+  let description = [{
+    Performs element-wise conversion of operand to another floating-point value
+    that uses `exponent_bits` and `mantissa_bits`, rounding to nearest even, and
+    back to the original floating-point type and produces an output value.
+  }];
+
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[F32, BF16]>:$input,
+    I32Attr:$exponent_bits,
+    I32Attr:$mantissa_bits
+  );
+  let results = (outs VectorOfNonZeroRankOf<[F32, BF16]>:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+
+  let hasFolder = 1;
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
   let arguments = (ins Variadic<AnyVectorOfAnyRank>:$input);
   let results = (outs AnyVectorOfAnyRank:$output);
