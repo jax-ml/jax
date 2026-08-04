@@ -26,7 +26,7 @@ kernelspec:
 
 In this section, we will further explore how JAX works, and how we can make it performant.
 We will discuss the {func}`jax.jit` transformation, which will perform *Just In Time* (JIT)
-compilation of a JAX Python function so it can be executed efficiently in XLA.
+compilation of a JAX Python function so it can be executed efficiently in XLA. XLA is JAX’s underlying compiler that optimizes numerical computations for CPUs, GPUs, and TPUs.
 
 ## How JAX transformations work
 
@@ -57,7 +57,7 @@ Importantly, notice that the jaxpr does not capture the side-effect present in t
 This is a feature, not a bug: JAX transformations are designed to understand side-effect-free (a.k.a. functionally pure) code.
 If *pure function* and *side-effect* are unfamiliar terms, this is explained in a little more detail in [🔪 JAX - The Sharp Bits 🔪: Pure Functions](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions).
 
-Impure functions are dangerous because under JAX transformations they are likely not to behave as intended; they might fail silently, or produce surprising downstream errors like leaked [Tracers](key-concepts-tracing).
+Impure functions are dangerous because under JAX transformations they are likely not to behave as intended; they might fail silently, or produce surprising downstream errors like leaked Tracers (see :ref:`key-concepts-tracing`).
 Moreover, JAX often can't detect when side effects are present.
 (If you want debug printing, use {func}`jax.debug.print`. To express general side-effects at the cost of performance, see {func}`jax.experimental.io_callback`.
 To check for tracer leaks at the cost of performance, use with {func}`jax.check_tracer_leaks`).
@@ -76,7 +76,7 @@ def log2_with_print(x):
 print(jax.make_jaxpr(log2_with_print)(3.))
 ```
 
-See how the printed `x` is a `Traced` object? That's the JAX internals at work.
+See how the printed `x` is a `Traced` object? This happens because {func}`jax.make_jaxpr` traces the function to record its computation, replacing concrete values with Tracers during the process.
 
 The fact that the Python code runs at least once is strictly an implementation detail, and so shouldn't be relied upon. However, it's useful to understand as you can use it when debugging to print out intermediate values of a computation.
 
