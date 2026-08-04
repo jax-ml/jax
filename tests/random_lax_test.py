@@ -276,7 +276,7 @@ _DTYPE_CASES = [
     ('t', float, lambda key, dtype: random.t(key, np.float16(10.0), shape=(10,), dtype=dtype)),
     ('triangular', float, lambda key, dtype: random.triangular(key, np.float16(0.), np.float16(0.5), np.float16(1.), shape=(10,), dtype=dtype)),
     ('truncated_normal', float, lambda key, dtype: random.truncated_normal(key, lower=np.float16(-2.), upper=np.float16(2.), shape=(10,), dtype=dtype)),
-    # ('uniform', float, lambda key, dtype: random.uniform(key, shape=(10,), minval=np.float16(0.), maxval=np.float16(1.), dtype=dtype)),
+    ('uniform', float, lambda key, dtype: random.uniform(key, shape=(10,), minval=np.float16(0.), maxval=np.float16(1.), dtype=dtype)),
     ('wald', float, lambda key, dtype: random.wald(key, np.float16(1.0), shape=(10,), dtype=dtype)),
     # ('weibull_min', float, lambda key, dtype: random.weibull_min(key, np.float16(1.0), np.float16(1.0), shape=(10,), dtype=dtype)),
 ]

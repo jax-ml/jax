@@ -481,7 +481,7 @@ def canonicalize_sharding_for_samplers(out_sharding, name, shape):
 
 
 def uniform(key: ArrayLike,
-            shape: Shape = (),
+            shape: Shape | None = None,
             dtype: DTypeLikeFloat | None = None,
             minval: RealArray = 0.,
             maxval: RealArray = 1.,
@@ -492,9 +492,12 @@ def uniform(key: ArrayLike,
   Args:
     key: a PRNG key used as the random key.
     shape: optional, a tuple of nonnegative integers representing the result
-      shape. Default ().
+      shape.       shape. If ``None``, the result will broadcast the shapes of ``minval`` and ``maxval``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      any type promotions of ``minval`` or ``maxval`` will be seen as explicit. If
+      left unspecified, type promotions will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     minval: optional, a minimum (inclusive) value broadcast-compatible with shape for the range (default 0).
     maxval: optional, a maximum (exclusive) value broadcast-compatible with shape for the range (default 1).
     out_sharding: Optional. Specifies how the output array should be sharded
@@ -510,14 +513,19 @@ def uniform(key: ArrayLike,
     A random array with the specified shape and dtype.
   """
   key, _ = _check_prng_key("uniform", key)
+  implicit_dtype = dtype is None
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
-  shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("uniform", shape, minval, maxval)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "uniform", shape)
 
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
+  if implicit_dtype:
+    _check_all_safe_to_promote("uniform", dtype, minval, maxval)
+  else:
+    _check_all_safe_to_cast("uniform", dtype, minval, maxval)
   return maybe_auto_axes(_uniform, out_sharding,
                          shape=shape, dtype=dtype)(key, minval, maxval)
 
