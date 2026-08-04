@@ -57,6 +57,14 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     overwriting it, so HLO passes disabled via
     `XLA_FLAGS=--xla_disable_hlo_passes=...` stay disabled
     ({jax-issue}`#37391`).
+  * `PyTreeDef.deserialize_using_proto` now raises `ValueError` for a
+    malformed `PyTreeDefProto` instead of crashing the interpreter. A node
+    whose arity exceeds the subtrees preceding it is rejected, as is a dict
+    node whose arity disagrees with its key list, which previously segfaulted
+    later, when the structure was used to unflatten.
+    `PyTreeDef.compose` likewise raises `ValueError` rather than crashing when
+    an operand carries such an inconsistent arity, which is reachable from
+    `pickle.loads` ({jax-issue}`#37410`).
 
 ## JAX 0.11.0 (July 16, 2026)
 

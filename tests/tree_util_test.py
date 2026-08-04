@@ -1277,6 +1277,15 @@ class StaticTest(parameterized.TestCase):
     )
     self.assertEqual(tree_structure, new_structure)
 
+  def test_deserialize_malformed_treedef(self):
+    # A single list node claiming a child that no earlier node supplies.
+    # This used to segfault rather than raise.
+    with self.assertRaisesRegex(ValueError, "Malformed PyTreeDef"):
+      jax.tree_util.PyTreeDef.deserialize_using_proto(
+        jax.tree_util.default_registry,
+        bytes.fromhex("0a0408011002")
+      )
+
   def test_compare_pytreedef_with_registries(self):
     class MyCustomType:
       def __init__(self, x):
