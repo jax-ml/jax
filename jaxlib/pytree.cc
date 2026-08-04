@@ -1465,6 +1465,19 @@ void PyTreeDef::SetNumLeavesAndNumNodes() {
     if (traversal_[i].arity == 0) {
       starts.push_back(start);
     } else {
+      // A node absorbs `arity` subtrees, so that many must precede it; the
+      // resize and back() below read out of bounds otherwise.
+      if (traversal_[i].arity < 0) {
+        throw std::invalid_argument(absl::StrFormat(
+            "Malformed PyTreeDef: node %d has negative arity (%d).", i,
+            traversal_[i].arity));
+      }
+      if (static_cast<size_t>(traversal_[i].arity) > starts.size()) {
+        throw std::invalid_argument(absl::StrFormat(
+            "Malformed PyTreeDef: node %d has arity %d, exceeding the number "
+            "of subtrees preceding it (%d).",
+            i, traversal_[i].arity, starts.size()));
+      }
       starts.resize(starts.size() - (traversal_[i].arity - 1));
     }
     traversal_[i].num_leaves = num_leaves - starts.back().first;
@@ -1555,6 +1568,15 @@ nb_class_ptr<PyTreeDef> PyTreeDef::DeserializeFrom(
                 "Malformed pytree proto (dict_key out of range).");
           }
           node.sorted_dict_keys.push_back(interned_strings.at(str_id));
+        }
+        // MakeNode indexes sorted_dict_keys by [0, arity) without bounds
+        // checks; the proto carries the two fields independently.
+        if (node.arity < 0 || node.sorted_dict_keys.size() !=
+                                  static_cast<size_t>(node.arity)) {
+          throw std::invalid_argument(absl::StrFormat(
+              "Malformed pytree proto (dict node has arity %d, which does not "
+              "match its number of keys %d).",
+              node.arity, node.sorted_dict_keys.size()));
         }
         break;
       default:
