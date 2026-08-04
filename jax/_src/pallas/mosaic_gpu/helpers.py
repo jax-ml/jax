@@ -16,7 +16,6 @@
 
 from collections.abc import Callable, Hashable, Sequence
 import dataclasses
-import functools
 from typing import overload
 
 import jax
@@ -285,29 +284,21 @@ def planar_snake(
   major_size = jnp.int32(shape[1 - minor_dim])
   minor_size = jnp.int32(shape[minor_dim])
 
-  minor_tile_idx = lax.div(lin_idx, tile_width * major_size)
-
-  def tile_coordinates(lin_idx, width):
-    # if minor_dim == 0 then tiles are (tile_width, major_size) else (major_size, tile_width)
-    minor_within_tile = lax.rem(lin_idx, width)
-    major_within_tile = lax.rem(lax.div(lin_idx, width), major_size)
-    minor = minor_tile_idx * tile_width + minor_within_tile
-    major = lax.select(
-        lax.rem(minor_tile_idx, jnp.int32(2)) == 0,
-        major_within_tile,
-        major_size - 1 - major_within_tile,
-    )
-    return (minor, major) if minor_dim == 0 else (major, minor)
-
-  num_full_tiles = minor_size // tile_width
-  full_tiles_minor_size = num_full_tiles * tile_width
-  num_full_tiles_elements = num_full_tiles * tile_width * major_size
-  is_full_tile = lin_idx < num_full_tiles_elements
-  return jax.tree.map(
-      functools.partial(jax.lax.select, is_full_tile),
-      tile_coordinates(lin_idx, tile_width),
-      tile_coordinates(lin_idx - num_full_tiles_elements, minor_size - full_tiles_minor_size)
+  lax_divmod = lambda a, b: (lax.div(a, b), lax.rem(a, b))
+  num_full_tiles, last_tile_width = lax_divmod(minor_size, tile_width)
+  tile_idx, lin_idx_within_tile = lax_divmod(lin_idx, tile_width * major_size)
+  major_within_tile, minor_within_tile = lax.cond(
+      tile_idx < num_full_tiles,
+      lambda: lax_divmod(lin_idx_within_tile, tile_width),
+      lambda: lax_divmod(lin_idx_within_tile, last_tile_width),
   )
+
+  is_even_tile = lax.rem(tile_idx, jnp.int32(2)) == 0
+  major = lax.select(
+      is_even_tile, major_within_tile, major_size - 1 - major_within_tile
+  )
+  minor = tile_idx * tile_width + minor_within_tile
+  return (minor, major) if minor_dim == 0 else (major, minor)
 
 
 @overload
