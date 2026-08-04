@@ -5,6 +5,17 @@ load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 
 jax_xla_workspace()
 
+# Initialize Hermetic toolchains
+# Details: https://github.com/google-ml-infra/rules_ml_toolchain
+tf_http_archive(
+    name = "rules_ml_toolchain",
+    sha256 = "49a0c5981e00bb07078b0685c3e30547a6ad9600c16df8676f306f95b0012b78",
+    strip_prefix = "rules_ml_toolchain-9f3d54b5f3584b27bef1e3e0fa898f2940266efd",
+    urls = tf_mirror_urls(
+        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/9f3d54b5f3584b27bef1e3e0fa898f2940266efd.tar.gz",
+    ),
+)
+
 load("@xla//:workspace4.bzl", "xla_workspace4")
 
 xla_workspace4()
@@ -13,20 +24,11 @@ load("@xla//:workspace3.bzl", "xla_workspace3")
 
 xla_workspace3()
 
-# Initialize Hermetic toolchains
-# Details: https://github.com/google-ml-infra/rules_ml_toolchain
-tf_http_archive(
-    name = "rules_ml_toolchain",
-    sha256 = "6b1b294cbecb98a08bcfe59641461f72e113db30fa91b44fcc49d98099b5ba65",
-    strip_prefix = "rules_ml_toolchain-b11745590f513ec55b32e2d126073576fde18c71",
-    urls = tf_mirror_urls(
-        "https://github.com/google-ml-infra/rules_ml_toolchain/archive/b11745590f513ec55b32e2d126073576fde18c71.tar.gz",
-    ),
-)
-
 load("@rules_ml_toolchain//cc/deps:cc_toolchain_deps.bzl", "cc_toolchain_deps")
 
 cc_toolchain_deps()
+
+register_toolchains("@rules_ml_toolchain//cc:darwin_aarch64_darwin_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64")
 
@@ -38,9 +40,13 @@ register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_x86_64_rocm")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_linux_aarch64")
 
+register_toolchains("@rules_ml_toolchain//cc:linux_x86_64_darwin_aarch64")
+
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64")
 
 register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
+
+
 
 # Initialize hermetic Python
 load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
