@@ -3654,10 +3654,6 @@ def _binomial(key, count, prob, shape, dtype) -> Array:
   # https://github.com/tensorflow/tensorflow/blob/v2.2.0-rc3/tensorflow/core/kernels/random_binomial_op.cc
   # and tensorflow_probability.substrates.jax.distributions.Binomial
   # For n * p < 10, we use the binomial inverse algorithm; otherwise btrs.
-  if shape is None:
-    shape = jnp.broadcast_shapes(np.shape(count), np.shape(prob))
-  else:
-    _check_shape("binomial", shape, np.shape(count), np.shape(prob))
   (prob,) = promote_dtypes_inexact(prob)
   count = lax.convert_element_type(count, prob.dtype)
   count = jnp.broadcast_to(count, shape)
@@ -3713,6 +3709,8 @@ def binomial(
     p: RealArray,
     shape: Shape | None = None,
     dtype: DTypeLikeFloat | None = None,
+    *,
+    out_sharding: NamedSharding | P | None = None
 ) -> Array:
   r"""Sample Binomial random values with given shape and float dtype.
 
@@ -3736,6 +3734,14 @@ def binomial(
       The default (None) produces a result shape equal to ``np.broadcast(n, p).shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    out_sharding: optional, specifies how the output array should be sharded
+      across devices in multi-device computation. Can be a
+      :class:`~jax.sharding.NamedSharding`, a :class:`~jax.sharding.PartitionSpec`
+      (``P``), or ``None`` (default). When specified, the output will be sharded
+      according to the given sharding specification. Primarily used in explicit
+      sharding mode.
+      See the `explicit sharding tutorial <https://docs.jax.dev/en/latest/parallel.html>`_
+      for more details.
 
   Returns:
     A random array with the specified dtype and with shape given by
@@ -3743,15 +3749,20 @@ def binomial(
   """
   key, _ = _check_prng_key("binomial", key)
   check_arraylike("binomial", n, p)
+  implicit_dtype = dtype is None
   dtype = dtypes.check_and_canonicalize_user_dtype(
       float if dtype is None else dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(
         f"dtype argument to `binomial` must be a float dtype, got {dtype}"
       )
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
-  return _binomial(key, n, p, shape, dtype)
+  shape = _check_broadcast_shapes("binomial", shape, n, p)
+  out_sharding = canonicalize_sharding_for_samplers(out_sharding, "binomial", shape)
+  if implicit_dtype:
+    _check_all_safe_to_promote("binomial", dtype, n, p)
+  else:
+    _check_all_safe_to_cast("binomial", dtype, n, p)
+  return maybe_auto_axes(_binomial, out_sharding, shape=shape, dtype=dtype)(key, n, p)
 
 
 # Functions related to key reuse checking

@@ -260,7 +260,7 @@ class RandomOutShardingTest(RandomTestBase):
 
 _DTYPE_CASES = [
     ('beta', float, lambda key, dtype: random.beta(key, np.float16(0.5), np.float16(0.5), shape=(10,), dtype=dtype)),
-    # ('binomial', float, lambda key, dtype: random.binomial(key, np.float16(10.), np.float16(0.5), shape=(10,), dtype=dtype)),
+    ('binomial', float, lambda key, dtype: random.binomial(key, np.float16(10.), np.float16(0.5), shape=(10,), dtype=dtype)),
     ('chisquare', float, lambda key, dtype: random.chisquare(key, np.float16(2.0), shape=(10,), dtype=dtype)),
     ('dirichlet', float, lambda key, dtype: random.dirichlet(key, np.ones(3, np.float16), shape=(10,), dtype=dtype)),
     # ('double_sided_maxwell', float, lambda key, dtype: random.double_sided_maxwell(key, loc=np.float16(0.), scale=np.float16(1.), shape=(10,), dtype=dtype)),
