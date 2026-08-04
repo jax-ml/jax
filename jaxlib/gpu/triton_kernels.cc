@@ -30,8 +30,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "jaxlib/gpu/ffi_wrapper.h"
-#include "xla/ffi/api/ffi.h"
+#include "xla/backends/gpu/ffi.h"
+#include "xla/ffi/ffi.h"
 
 // Required for absl::c_find_if.
 // NOLINTNEXTLINE(misc-include-cleaner)
@@ -856,46 +856,48 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
   }
 }
 
-::xla::ffi::Error TritonKernelCallFfi(gpuStream_t stream,
-                                      ::xla::ffi::RemainingArgs args,
-                                      ::xla::ffi::RemainingRets rets,
-                                      ::xla::ffi::Dictionary attrs) {
-  auto opaque_attr = attrs.get<std::string_view>("opaque");
-  if (opaque_attr.has_error()) {
-    return opaque_attr.error();
+static absl::StatusOr<std::vector<void*>> CombineBuffers(
+    ::xla::ffi::RemainingArgs args, ::xla::ffi::RemainingRets rets) {
+  std::vector<void*> buffers;
+  buffers.reserve(args.size() + rets.size());
+  for (size_t i = 0; i < args.size(); ++i) {
+    JAX_ASSIGN_OR_RETURN(::xla::ffi::AnyBuffer buf,
+                         args.get<::xla::ffi::AnyBuffer>(i));
+    buffers.push_back(buf.untyped_data());
   }
-  std::string_view opaque = opaque_attr.value();
-  std::vector<void*> buffers = CombineBuffers(args, rets);
-  auto kernel_call_or = GetKernelCall(opaque, stream, buffers.data());
-  if (!kernel_call_or.ok()) {
-    return ::xla::ffi::Error::InvalidArgument(
-        std::string(kernel_call_or.status().message()));
+  for (size_t i = 0; i < rets.size(); ++i) {
+    JAX_ASSIGN_OR_RETURN(::xla::ffi::Result<::xla::ffi::AnyBuffer> buf,
+                         rets.get<::xla::ffi::AnyBuffer>(i));
+    buffers.push_back(buf->untyped_data());
   }
-  absl::Status status = (*kernel_call_or)->Launch(stream, buffers.data());
-  if (!status.ok()) {
-    return ::xla::ffi::Error::Internal(std::string(status.message()));
-  }
-  return ::xla::ffi::Error::Success();
+  return buffers;
+}
+
+absl::Status TritonKernelCallFfi(gpuStream_t stream,
+                                 ::xla::ffi::RemainingArgs args,
+                                 ::xla::ffi::RemainingRets rets,
+                                 ::xla::ffi::Dictionary attrs) {
+  JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
+  JAX_ASSIGN_OR_RETURN(std::string_view opaque,
+                       attrs.get<std::string_view>("opaque"));
+  JAX_ASSIGN_OR_RETURN(KernelCall * kernel_call,
+                       GetKernelCall(opaque, stream, buffers.data()));
+  return kernel_call->Launch(stream, buffers.data());
 }
 
 // For command buffer support, make sure that the kernel cache is populated
 // during initialization.
-::xla::ffi::Error TritonKernelCallFfiInitialize(gpuStream_t stream,
-                                                ::xla::ffi::RemainingArgs args,
-                                                ::xla::ffi::RemainingRets rets,
-                                                ::xla::ffi::Dictionary attrs) {
-  auto opaque_attr = attrs.get<std::string_view>("opaque");
-  if (opaque_attr.has_error()) {
-    return opaque_attr.error();
-  }
-  std::string_view opaque = opaque_attr.value();
-  std::vector<void*> buffers = CombineBuffers(args, rets);
-  auto kernel_call_or = GetKernelCall(opaque, stream, buffers.data());
-  if (!kernel_call_or.ok()) {
-    return ::xla::ffi::Error::InvalidArgument(
-        std::string(kernel_call_or.status().message()));
-  }
-  return ::xla::ffi::Error::Success();
+absl::Status TritonKernelCallFfiInitialize(gpuStream_t stream,
+                                           ::xla::ffi::RemainingArgs args,
+                                           ::xla::ffi::RemainingRets rets,
+                                           ::xla::ffi::Dictionary attrs) {
+  JAX_ASSIGN_OR_RETURN(std::string_view opaque,
+                       attrs.get<std::string_view>("opaque"));
+  JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
+  JAX_ASSIGN_OR_RETURN(KernelCall * kernel_call,
+                       GetKernelCall(opaque, stream, buffers.data()));
+  static_cast<void>(kernel_call);
+  return absl::OkStatus();
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
