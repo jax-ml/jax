@@ -100,6 +100,7 @@ pytype_strict_library(
         "@xla//xla/python:_hlo",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
+        "@xla//xla/python:_gpu_spec",
     ],
 )
 
@@ -190,6 +191,7 @@ pywrap_library(
         "@xla//xla/python:_hlo",
         "@xla//xla/python:_profile_data",
         "@xla//xla/python:_profiler",
+        "@xla//xla/python:_gpu_spec",
     ],
 )
 
