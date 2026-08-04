@@ -259,6 +259,11 @@ def logcdf(x, a, b, loc=0, scale=1):
     [0, -np.inf, jnp.log1p(-jnp.exp(logsf)), logcdf]
   )
   logcdf = jnp.where(a >= b, np.nan, logcdf)
+  # A NaN x, a, or b satisfies none of the jnp.select conditions and would
+  # otherwise take the default value of 0; propagate it instead so that
+  # cdf/sf/logcdf/logsf match scipy and jax.scipy.stats.norm rather than
+  # silently returning a support-boundary value.
+  logcdf = jnp.where(jnp.isnan(x) | jnp.isnan(a) | jnp.isnan(b), np.nan, logcdf)
   return logcdf
 
 @api.jit
