@@ -1878,7 +1878,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
 
     transforms = ()
     if not self.is_wg_semantics():
-      self.skipTest("Only works with WG semantics")
+      transforms = self.default_transforms(swizzle=128, dtype=dtype)
     @self.kernel(
         out_type=jax.ShapeDtypeStruct(shape[::-1], dtype),
         scratch_types=[
@@ -1894,6 +1894,25 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       # the MLIR verifier
       x = plgpu.load(smem_ref_t, layout=plgpu.Layout.WGMMA)
       o_ref[...] = x
+
+    x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    np.testing.assert_array_equal(kernel(x), x.T)
+
+  def test_wgmma_store_to_transposed_smem(self):
+    shape = (128, 128)
+    dtype = jnp.float16
+
+    transforms = ()
+    if not self.is_wg_semantics():
+      transforms = self.default_transforms(swizzle=128, dtype=dtype)
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(shape[::-1], dtype),
+        scratch_types=[plgpu.SMEM(shape[::-1], dtype, transforms=transforms)],
+    )
+    def kernel(x_ref, o_ref, smem_ref):
+      x = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      plgpu.transpose_ref(smem_ref, (1, 0))[...] = x
+      o_ref[...] = smem_ref[...]
 
     x = jnp.arange(math.prod(shape), dtype=dtype).reshape(shape)
     np.testing.assert_array_equal(kernel(x), x.T)
@@ -5328,8 +5347,14 @@ class PallasCallSm90ATest(PallasSm90ATest):
       self.kernel(
           kernel,
           scratch_types=[
-              plgpu.SMEM((128, 4, 32), jnp.float16,
-                         transforms=(plgpu.TilingTransform((2, 16)),)),
+              plgpu.SMEM(
+                  (128, 4, 32),
+                  jnp.float16,
+                  transforms=(
+                      plgpu.TilingTransform((2, 16)),
+                      plgpu.SwizzleTransform(32),
+                  ),
+              ),
           ],
           out_type=jax.ShapeDtypeStruct((128, 128), jnp.float16),
       )()
