@@ -107,3 +107,39 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.select(lax.le(diff, zero),
                     lax.mul(half, lax.exp(diff)),
                     lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
+
+
+def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  r"""Laplace percent point function.
+
+  JAX implementation of :obj:`scipy.stats.laplace` ``ppf``.
+
+  The percent point function is the inverse of the cumulative distribution
+  function, :func:`jax.scipy.stats.laplace.cdf`. In closed form,
+
+  .. math::
+
+     f_{ppf}(q) = \begin{cases}
+       \mathrm{loc} + \mathrm{scale} \cdot \log(2 q) & q \le 1/2 \\
+       \mathrm{loc} - \mathrm{scale} \cdot \log(2 - 2 q) & q > 1/2
+     \end{cases}
+
+  Args:
+    q: arraylike, value at which to evaluate the PPF
+    loc: arraylike, distribution offset parameter
+    scale: arraylike, distribution scale parameter
+
+  Returns:
+    array of ppf values.
+
+  See Also:
+    - :func:`jax.scipy.stats.laplace.cdf`
+    - :func:`jax.scipy.stats.laplace.pdf`
+  """
+  q, loc, scale = promote_args_inexact("laplace.ppf", q, loc, scale)
+  half = _lax_const(q, 0.5)
+  two = _lax_const(q, 2)
+  centered = lax.sub(q, half)
+  # ppf(q) = loc - scale * sign(q - 1/2) * log(1 - 2|q - 1/2|)
+  log_term = lax.log1p(lax.neg(lax.mul(two, lax.abs(centered))))
+  return lax.sub(loc, lax.mul(scale, lax.mul(lax.sign(centered), log_term)))
