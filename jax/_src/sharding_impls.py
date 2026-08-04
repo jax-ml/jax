@@ -49,6 +49,22 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.util import use_cpp_class, use_cpp_method
 import numpy as np
 
+# Add a helper to cap the number of sharding solutions explored for chains
+# of scatter operations. This mitigates exponential compile-time blowups like
+# that reported in #39483.
+_scatter_chain_cache: dict[tuple[Any, ...], Any] = {}
+
+def _get_cached_sharding(*key_args) -> Any:
+    """Caches sharding decisions for identical chain prefixes."""
+    key = tuple(key_args)
+    if key in _scatter_chain_cache:
+        return _scatter_chain_cache[key]
+    return None
+
+def _set_cached_sharding(* key_args, value) -> None:
+    key = tuple(key_args)
+    _scatter_chain_cache[key] = value
+
 
 config_ext = _jax.config
 
