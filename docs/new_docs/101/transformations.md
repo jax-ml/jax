@@ -28,23 +28,21 @@ nosearch: true
 
 The heart of JAX is a set of *function transformations*: higher-order
 functions that take a numerical function you've written and return a new
-function that computes something related. The two you'll use constantly are:
+function that computes something related. The two most common are:
 
 - {func}`jax.grad`, which transforms a function into one that computes its
-  gradient — automatic differentiation.
+  gradient via automatic differentiation;
 - {func}`jax.vmap`, which transforms a function written for single examples
-  into one that operates over batches — automatic vectorization.
+  into one that operates efficiently over batches via automatic vectorization.
 
-There's a third famous transformation, {func}`jax.jit`, which compiles a
+There's a third canonical transformation, {func}`jax.jit`, which compiles a
 function to make it run fast. Since `jax.jit` changes only performance and not
 what a function computes, we defer it to the performance and scaling docs (see
-{ref}`jax-201-jit`) — but everything on this page applies to it too.
+{ref}`jax-201-jit`), but everything on this page applies to it too.
 
-Transformations compose: you can differentiate a vectorized function,
-vectorize a derivative, and compile any of it. This page introduces `grad` and
-`vmap`, then explains the tracing mechanism that makes all transformations
-work, along with the main rule it imposes on your code: **write pure
-functions**.
+Transformations compose: you can differentiate a vectorized function, vectorize
+a derivative, and compile any of it. This page introduces `grad` and `vmap`,
+then explains the tracing mechanism that makes all transformations work.
 
 ## Automatic differentiation with `jax.grad`
 
@@ -128,8 +126,8 @@ print(f'{W_grad=}')
 print(f'{b_grad=}')
 ```
 
-Real models don't keep their parameters in separate positional arguments —
-they use nested containers like dictionaries. `jax.grad` handles those
+Real models don't keep their parameters in separate positional arguments.
+Instead they use nested containers like dictionaries. `jax.grad` handles those
 natively; that's the subject of the next page, {ref}`jax-101-pytrees`.
 
 ### `value_and_grad` and auxiliary outputs
@@ -143,8 +141,9 @@ print(loss_value)
 ```
 
 And sometimes a function naturally computes intermediate results worth
-returning alongside the scalar being differentiated. Give the function a
-second output — a pair `(scalar_output, aux_data)` — and pass `has_aux=True`:
+returning alongside the scalar being differentiated. Just provide a function
+that produces a `(scalar_output, aux_data)` pair as output and pass
+`has_aux=True`:
 
 ```{code-cell}
 def loss_and_preds(W, b):
@@ -175,17 +174,15 @@ from jax.test_util import check_grads
 check_grads(loss, (W, b), order=2)  # check up to 2nd order derivatives
 ```
 
-`jax.grad` is one entry point into a much deeper autodiff system: Jacobians
-with {func}`jax.jacobian`, forward- and reverse-mode primitives
-{func}`jax.jvp` and {func}`jax.vjp`, efficient Hessians, and custom derivative
-rules. Those are covered in the advanced autodiff docs; see the
-{doc}`autodiff cookbook </notebooks/autodiff_cookbook>` to go deeper.
+`jax.grad` is one entry point into a much deeper autodiff system built on the
+fundamental {func}`jax.jvp` and {func}`jax.vjp` transformations. Those are
+covered in the advanced autodiff docs; see {ref}`jax-301`.
 
 ## Automatic vectorization with `jax.vmap`
 
 {func}`jax.vmap` transforms a function written for single inputs into one that
-works on batches of inputs. Consider a function that computes the convolution
-of two one-dimensional vectors:
+works efficiently on batches of inputs. Consider a function that computes the
+convolution of two one-dimensional vectors:
 
 ```{code-cell}
 x = jnp.arange(5.0)
@@ -219,10 +216,10 @@ def manually_batched_convolve(xs, ws):
 manually_batched_convolve(xs, ws)
 ```
 
-This produces the correct result, but it processes one example at a time,
-which performs poorly on hardware built for array-level parallelism. To batch
-the computation efficiently you'd normally rewrite the function by hand so
-that every operation works over the batch dimension — manageable here, but
+This produces the correct result, but it processes one example at a time, which
+performs poorly on hardware built for array-level parallelism. To batch the
+computation efficiently you'd normally rewrite the function by hand so that
+every operation works over the batch dimension. That's manageable here, but
 messy and error-prone for realistic functions.
 
 `jax.vmap` does this rewrite automatically:
@@ -235,13 +232,13 @@ auto_batch_convolve(xs, ws)
 
 The transformed function behaves *as if* `convolve` were called on each
 example, but under the hood every operation inside it acts on the whole batch
-at once — no Python loop, no manual rewrite.
+at once. No Python loop, no manual rewrite.
 
 ### Choosing which axes to map with `in_axes` and `out_axes`
 
-By default, `vmap` maps over the leading axis of every input. The `in_axes`
-and `out_axes` arguments override this. For example, if your data has the
-batch as the *second* axis:
+By default, `vmap` maps over the leading axis of every input. The `in_axes` and
+`out_axes` arguments override this. For example, if your data has the batch as
+the *second* axis:
 
 ```{code-cell}
 auto_batch_convolve_v2 = jax.vmap(convolve, in_axes=1, out_axes=1)
@@ -252,8 +249,9 @@ wst = jnp.transpose(ws)
 auto_batch_convolve_v2(xst, wst)
 ```
 
-An `in_axes` entry of `None` means "don't map this argument" — it's broadcast
-to every call. Here we convolve a batch of `x`s against one shared `w`:
+An `in_axes` entry of `None` means "don't map this argument"; instead, it's
+broadcast to every call. Here we convolve a batch of `x`s against one shared
+`w`:
 
 ```{code-cell}
 batch_convolve_v3 = jax.vmap(convolve, in_axes=[0, None])
@@ -263,8 +261,8 @@ batch_convolve_v3(xs, w)
 
 ### Composing `vmap`
 
-Like all JAX transformations, `vmap` composes — with itself, and with `grad`.
-Nesting `vmap` gives concise expressions for "all pairs" computations:
+Like all JAX transformations, `vmap` composes. Nesting `vmap` gives concise
+expressions for "all pairs" computations:
 
 ```{code-cell}
 def dist(x, y):
@@ -296,16 +294,15 @@ print(b_grads)
 ```
 
 Each transformation did one conceptually simple job, and composition did the
-rest. This is the characteristic JAX pattern: write the mathematically
-natural, single-example function, and build everything else out of
-transformations.
+rest. This is the characteristic JAX pattern: write the mathematically natural,
+single-example function, and build everything else out of transformations.
 
 (jax-101-tracing)=
 ## How transformations work: tracing
 
 To transform a function, JAX has to know what the function *does*. It learns
-this by **tracing**: calling your Python function with special *tracer*
-objects in place of arrays, and overloading every JAX operation applied to them.
+this by **tracing**: calling your Python function with special *tracer* objects
+in place of arrays, and overloading every JAX operation applied to them.
 
 You can see tracers directly by printing an argument inside a transformed
 function:
@@ -319,22 +316,24 @@ def f(x):
 result = jax.vmap(f)(jnp.arange(3))
 ```
 
-The printed value isn't an array — it's a tracer, a stand-in for `x`. What a
-tracer always knows is the *JAX type* of the value it stands for, which you
-can query with {func}`jax.typeof` (for arrays, the JAX type roughly means
-shape and dtype). Here `x`'s type is `int32[]`: inside the transformed
-function, `x` is a rank-0 `int32` array (shape `()`, hence the empty
-brackets), exactly as `f` is written to expect. The tracer's printout also
-reveals `vmap`'s bookkeeping: a batch of three such values. As the traced
-function runs, each operation like `x * 2` is recorded rather than (only)
-computed. The recorded sequence of
-operations is what the transformation actually operates on: `vmap` rewrites
-each recorded operation to act on a batch axis, and `grad` applies the chain
-rule to the recorded operations in reverse.
+The printed value isn't an array, but a tracer, a stand-in for an element of
+`jnp.arange(3)`. A tracer always has the same *JAX type* as the value it
+stands for, which you can query with {func}`jax.typeof`. Here `x`'s type is
+`int32[]`: inside the transformed function, `x` is a rank-0 `int32` array
+(shape `()`, hence the empty brackets), exactly as `f` is written to expect.
+The tracer's printout also reveals `vmap`'s bookkeeping: a batch of three such
+values. As the traced function runs, each operation like `x * 2` is
+intercepted by the transformation. What happens next depends on the
+transformation being applied: `vmap` replaces each intercepted operation with
+a batched version, and `grad` applies each operation's derivative rule.
 
-The recorded program has a concrete representation, called a *jaxpr*. To see
-one, we can borrow {func}`jax.jit` — the compilation transformation we'll meet
-properly in the performance docs — and ask it to run only its tracing step:
+Another thing a transformation can do is simply record all the operations and
+their data dependencies. The result represents the computation performed by
+the traced function, specialized to the JAX types of the inputs that were
+provided. JAX's datatype for representing such a computation is a *jaxpr*. To
+see one, we can borrow {func}`jax.jit`, the compilation transformation we'll
+meet properly in the performance docs, and ask it to run only its tracing
+step:
 
 ```{code-cell}
 def g(x):
@@ -343,16 +342,12 @@ def g(x):
 jax.jit(g).trace(1.0).jaxpr
 ```
 
-(Don't worry about `jax.jit` itself yet; `jax.jit(g).trace(1.0)` traces `g`
-just as any transformation would, and `.jaxpr` is the jaxpr that tracing
-produced. We'll use this idiom whenever we want to see what a function traces
-to.)
-
-Notice what appears in the jaxpr: just the JAX operations, with every
-variable annotated with its JAX type, in the same notation `jax.typeof` uses
-(abbreviated: `f32[]` for `float32[]`). Everything else about your Python
-function — its variable names, its comments, and importantly, any *non-JAX*
-side effects — is gone.
+We'll use this `.trace(...).jaxpr` idiom whenever we want to see what a
+function traces to. Notice what appears in the jaxpr: just the JAX operations,
+with every variable annotated with its JAX type (`f32[]` abbreviates
+`float32[]`). Anything else
+about your Python function (variable names, comments, and importantly, any
+*non-JAX-intercepted* side effects) is not recorded.
 
 Jaxprs also let us see precisely what a transformation does to a program.
 Here's the recording of `convolve` from earlier, applied to a single example:
@@ -370,14 +365,14 @@ jax.jit(jax.vmap(convolve)).trace(xs, ws).jaxpr
 
 This is the same program, operation for operation. The only change is that
 every operation gained a batch axis: each `f32[5]` became `f32[2,5]`, and each
-`dot_general` picked up a batch dimension. That's what "`vmap` rewrites each
-recorded operation" means concretely — the batching happens *inside* each
-operation, where array-level hardware parallelism lives, and the program
-stays the same size no matter the batch.
+`dot_general` picked up a batch dimension. That's what "`vmap` replaces each
+intercepted operation with a batched version" means concretely: the batching
+happens *inside* each operation, where array-level hardware parallelism lives,
+and the program stays the same size no matter the batch.
 
 Compare the Python-loop version, `manually_batched_convolve`, whose recording
-contains a full copy of the body *per batch element* — count the
-`dot_general`s: six, not three, and growing linearly with the batch size:
+contains a full copy of the body *per batch element*: six `dot_general`s, not
+three, and growing linearly with the batch size:
 
 ```{code-cell}
 jax.jit(manually_batched_convolve).trace(xs, ws).jaxpr
@@ -385,50 +380,41 @@ jax.jit(manually_batched_convolve).trace(xs, ws).jaxpr
 
 Two big consequences follow from this design.
 
-### Consequence 1: transformations require pure functions
+### Consequence 1: transformations require traceable functions
 
-JAX transformations are designed for functions that are *functionally pure*:
-all inputs come in through arguments, all outputs leave through the return
-value, and nothing else happens.
+JAX transformations only work on operations that the tracing machinery
+intercepts. The usual sufficient condition for traceability is *functional
+purity*: outputs depend only on inputs (arguments and closed-over values);
+outputs are produced by applying JAX operations; and no side effects occur.
 
-Purity is worth wanting before any implementation detail enters the picture:
-it's what gives the transformations simple, clear meanings. A pure function
-denotes a mathematical function, and the transformations are mathematical
-operators on it: `jax.grad(f)` means $\nabla f$; `jax.vmap(f)` means "$f$,
-applied to each element"; `jax.jit(f)` can promise to return exactly what `f`
-returns, while caching and optimizing freely, precisely because `f`'s outputs
-are determined by its inputs. None of these has as tidy a meaning for a
-function that also prints, appends to a list, or mutates a global. Much of
-numerical computing is expressing math, and math is pure.
+Purity is valuable even without a tracing implementation: it makes code easier
+for the user to reason about, and easier for the compiler to optimize,
+parallelize, and scale. It also gives the transformations simple, clear
+meanings. A pure function denotes a mathematical function, and the
+transformations are mathematical operators on it:
+`jax.grad(f)` means $\nabla f$; `jax.vmap(f)` means "$f$ applied to each
+element" without worrying about whether or in what order side-effects might
+occur; `jax.jit(f)` can promise to return exactly what `f` returns, while
+caching and optimizing freely.
 
 Tracing then turns this from good advice into a working requirement. Side
-effects in your function happen at *trace time*, not when the recorded
-operations run, and the number of times a function is traced is an
-implementation detail of each transformation.
+effects in your function, like built-in Python `print` calls, happen at *trace
+time*, not when the transformed computation runs.
+Our `vmap` example above already showed this: the batch had three elements, but
+`print` ran only once, because `vmap` traces the function a single time,
+transforming each operation as it's intercepted. Under `jax.jit`, the effect
+is even sharper: traces are cached, so a side effect might happen on the first
+call and then never again.
+If you want to print *runtime* values from transformed code, there's a
+purpose-built tool: {func}`jax.debug.print`; see {ref}`jax-201-debugging`.
 
-Our `vmap` example above already showed this: the batch had three elements,
-but `print` ran only once, because `vmap` traces the function a single time to
-record its operations. Under `jax.jit`, the effect is even sharper — traces
-are cached, so a side effect might happen on the first call and then never
-again.
+Reading mutable state has the same problem in reverse: a global value is likely
+baked in at trace time, so later updates to it are silently ignored by
+transformed code.
 
-Reading external state has the same problem in reverse: a global variable's
-value may be baked in at trace time, so later updates to it are silently
-ignored by transformed code. Pass everything your function needs as an
-argument, and return everything it produces.
+For more about traceability, see {ref}`jax-101-state`.
 
-(If you want to print *runtime* values from transformed code, there's a
-purpose-built tool: {func}`jax.debug.print`; see {ref}`jax-201-debugging`.)
-
-Purity might sound like it forbids two staples of numerical programming:
-random number generation and in-place mutation. It doesn't. JAX's random
-functions are themselves pure: they take the source of randomness as an
-explicit key argument, and the same key always yields the same sample
-({ref}`jax-101-random`). And evolving state — parameters, counters, optimizer
-momenta — is expressed by threading values through pure functions, or with
-refs, JAX's mutable array type ({ref}`jax-101-state`).
-
-### Consequence 2: traced code can't specialize on data
+### Consequence 2: traced code can't always specialize on data values
 
 How much does a tracer know about the value it stands in for? That depends on
 the transformation. `vmap`'s tracers actually know quite a lot: they carry
@@ -436,7 +422,7 @@ the whole batch of values along as the trace proceeds. We can even peek at
 the batch mid-trace, through the tracer's `.val` attribute:
 
 ```{code-cell}
-# warning: `.val` is unsupported internals — don't rely on it in real code!
+# warning: `.val` is unsupported internals, so don't rely on it in real code!
 jax.vmap(lambda x: print(x.val))(jnp.arange(3.0))
 ```
 
@@ -444,11 +430,11 @@ jax.vmap(lambda x: print(x.val))(jnp.arange(3.0))
 implementation detail, not an API, and in real code you'd use
 {func}`jax.debug.print`. We're doing it here purely for a look inside.)
 
-So the values may well be present. What traced code can't do is *specialize*
-on them. The function is traced once, to produce a single recorded program
-that must serve every element of the batch — so it can't take one particular
-control-flow branch based on one particular element's value. Each element
-might want a different branch, and the trace can only record one:
+So the values may well be present. What traced code can't do is *specialize* on
+them. The operations applied must work for every element of the batch, so the
+traced code can't take one particular control-flow branch based on one
+particular element's value. Each element might want a different branch, and
+the trace can only record one:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -462,7 +448,7 @@ def absolute(x):
 jax.vmap(absolute)(jnp.arange(-2.0, 3.0))
 ```
 
-The error message points at the fix: express data-dependent choices as array
+The error message links to the fix: express data-dependent choices as array
 operations, like {func}`jax.numpy.where`, which compute a per-element answer
 instead of forcing a single branch:
 
@@ -479,12 +465,11 @@ structured control-flow operations like `jax.lax.cond` and `jax.lax.scan`; see
 
 `jax.jit` is the extreme case: its tracers carry no values at all, only the
 JAX type, because its recorded program must serve *every* value of that type.
-The same constraint follows, for an even stronger reason — there are no values
+The same constraint follows, for an even stronger reason: there are no values
 to consult in the first place.
 
-On the other hand, anything that depends only on JAX types — shapes, dtypes —
-works freely during tracing, because those are ordinary Python values at trace
-time.
+On the other hand, anything that depends only on JAX types works freely during
+tracing, because those are ordinary Python values at trace time.
 Python `for` loops over a fixed range, `if` statements on shapes, shape
 arithmetic — all fine. Our `convolve` function above used a Python loop whose
 bounds came from `len(x)`: that loop simply unrolls during tracing, and the
@@ -499,9 +484,9 @@ If a `vmap` tracer stands for a whole batch of values, and a `jit` tracer
 stands for any value of the right JAX type, `jax.grad`'s tracers occupy the
 opposite pole: applied on its own, `jax.grad` evaluates your function with
 tracers that carry exactly one concrete value alongside the derivative
-bookkeeping. With a single value there's nothing to be ambiguous about, so
-specializing on data is perfectly fine, and data-dependent Python control flow
-just works — `if`, `while`, recursion, whatever you can write:
+bookkeeping. With a single value, data-dependent Python control flow is
+unambiguous, so if you're just using `grad`, you can apply data-dependent `if`,
+`while`, recursion, or anything else:
 
 ```{code-cell}
 def f(x):
@@ -516,7 +501,7 @@ print(jax.grad(f)(4.0))  # differentiates the -4x branch
 
 Each call differentiates the branch actually taken, giving exactly the
 piecewise derivative you'd write by hand. Even loops whose trip count depends
-on the data are fine — here's differentiating through Newton's method for
+on the data are fine. Here's differentiating through Newton's method for
 square roots, where the number of iterations depends on the input:
 
 ```{code-cell}
@@ -532,32 +517,41 @@ print(jax.grad(sqrt_newton)(2.0))  # 1/(2√2) ≈ 0.3536
 
 This flexibility is part of JAX's lineage: JAX's autodiff grew out of
 [Autograd](https://github.com/hips/autograd), whose whole point was
-differentiating ordinary, idiomatic Python and NumPy code — branches, loops,
-closures and all — and `jax.grad` preserves that. If you can express a
-computation in Python, you can usually differentiate it, with no
-restructuring.
+differentiating ordinary, idiomatic Python and NumPy code, including branches,
+loops, and closures.
 
-The constraints return the moment you compose with a transformation that
-traces abstractly: `jax.jit(jax.grad(f))` and `jax.vmap(jax.grad(f))` see the
-`if` above fail again, and want it rewritten with `jnp.where`, `lax.cond`, and
-friends ({ref}`jax-201-control-flow`). That trade is this documentation's split in
-miniature: `grad` by itself maximizes what you can express, and it's
+The constraints return the moment you compose with a transformation that traces
+abstractly: `jax.jit(jax.grad(f))` and `jax.vmap(jax.grad(f))` see the `if`
+above fail again, and want it rewritten with `jnp.where`, `lax.cond`, and
+friends ({ref}`jax-201-control-flow`). That trade is this documentation's split
+in miniature: `grad` by itself maximizes what you can express, and it's
 compiling for speed that asks you to make control flow explicit.
 
 ### Where `jit` fits in
 
-{func}`jax.jit` uses this same tracing machinery, but instead of rewriting the
-recorded operations, it hands them to the XLA compiler to produce fast fused
-machine code, caching the result keyed on the JAX types of its inputs. Because it
-only sees traced JAX operations, everything above — purity, no data-dependent
-Python control flow — applies to it exactly as to `vmap`. What's new with
+{func}`jax.jit` uses this same tracing machinery, but instead of replacing
+each intercepted operation on the fly, it records them all and hands the
+recording to the XLA compiler to produce fast fused machine code, caching the
+compiled result keyed on the JAX types of its inputs. In use, it's most often
+applied as a decorator:
+
+```{code-cell}
+@jax.jit          # equivalent to sum_sq = jax.jit(sum_sq)
+def sum_sq(x):
+  return jnp.sum(x ** 2)
+
+sum_sq(jnp.arange(3.0))
+```
+
+The first call with a given set of input JAX types pays for tracing and
+compilation; later calls skip straight to the compiled code. What's new with
 `jit` is performance: compilation, caching and retracing, static arguments,
 asynchronous dispatch. That story starts the performance and scaling docs; see
 {ref}`jax-201-jit`.
 
 ## Next steps
 
-`grad` and `vmap` operate on functions over arrays — but real programs pass
-around richer structures: dictionaries of parameters, lists of batches, nested
-configurations. The next page, {ref}`jax-101-pytrees`, shows how JAX treats
-those structures as first-class citizens.
+Real programs pass around richer structures than just arrays: dictionaries of
+parameters, lists of batches, nested configurations. The next page,
+{ref}`jax-101-pytrees`, shows how JAX treats those structures as first-class
+citizens.

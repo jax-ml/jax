@@ -49,7 +49,7 @@ especially when comparing against any other system:
 3. **JAX by default only uses 32-bit dtypes.** Be mindful of dtypes when
    making performance comparisons: computing in 64-bit costs more than
    32-bit, so make sure any comparison runs at matched precision (see
-   {doc}`/default_dtypes` for controlling JAX's defaults).
+   {ref}`jax-101-arrays` for controlling JAX's defaults).
 4. **Transferring data between CPUs and accelerators takes time.** If you only
    want to measure how long it takes to evaluate a function, you may want to
    transfer data to the device on which you want to run it first.

@@ -19,8 +19,6 @@ compilation times.
 You can enable these via environment variables,
 Python API calls (`jax.config.update`),
 or ABSL command-line flags (if `jax.config.config_with_absl()` is called).
-(See {doc}`/config_options` for a full guide on setting JAX configuration
-options.)
 
 ### Logging Compilations and Cache Misses
 
@@ -35,11 +33,9 @@ options.)
 
 * **`jax_dump_ir_to`**: Specifies the directory where JAX should dump IR text
   files.
-  See [`jax_dump_ir_to`](https://docs.jax.dev/en/latest/config_options.html#jax_dump_ir_to).
 
 * **`jax_dump_ir_modes`**: Comma-delimited list of IR formats to dump.
   A useful mode is `eqn_count_pprof`.
-  See [`jax_dump_ir_modes`](https://docs.jax.dev/en/latest/config_options.html#jax_dump_ir_modes).
 
 ```python
 import jax

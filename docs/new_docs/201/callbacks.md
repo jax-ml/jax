@@ -375,7 +375,7 @@ per-host data loading in a distributed program.
 
 ## Example: `pure_callback` with `custom_jvp`
 
-One powerful way to take advantage of {func}`jax.pure_callback` is to combine it with {class}`jax.custom_jvp`. (Refer to {ref}`advanced-autodiff-custom-derivative-rules` for more details on {func}`jax.custom_jvp`).
+One powerful way to take advantage of {func}`jax.pure_callback` is to combine it with {class}`jax.custom_jvp`. (Refer to {ref}`jax-301-custom-jvp-vjp` for more details on {func}`jax.custom_jvp`).
 
 Suppose you want to create a JAX-compatible wrapper for a scipy or numpy function that is not yet available in the {mod}`jax.scipy` or {mod}`jax.numpy` wrappers.
 

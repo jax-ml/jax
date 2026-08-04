@@ -89,7 +89,7 @@ matching the structure of the arguments passed to it.
 The polymorphic shapes specification can be a
 pytree prefix in cases where one specification should apply
 to multiple arguments, as in the above example.
-See [how optional parameters are matched to arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+See {ref}`jax-101-pytrees` for background on pytree prefixes.
 
 
 A few examples of shape specifications:

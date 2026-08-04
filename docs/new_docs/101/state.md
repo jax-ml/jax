@@ -27,20 +27,16 @@ nosearch: true
 <!--* freshness: { reviewed: '2026-07-09' } *-->
 
 Real programs have state: model parameters that change across training steps,
-optimizer momentum, running statistics, counters. But
-{ref}`jax-101-transformations` established that JAX transformations expect
-*pure* functions — everything in through arguments, everything out through
-return values, no hidden updates on the side.
-
-This page covers the two ways to express stateful computation in JAX:
+optimizer momentum, running statistics, counters. This page covers the two ways
+to express stateful computation in JAX:
 
 1. **Threading state through pure functions** — state goes in as an argument
    and comes out as a return value. This is the classic pattern, and the way
    state is handled across nearly the entire JAX ecosystem.
-2. **Refs** — explicit mutable arrays, for when you really do want to write to
-   memory in place.
+2. **Refs** — explicit mutable arrays, for when plumbing is a pain, or you
+   really do want to write to memory in place.
 
-## The problem with hidden state
+## The problem with untraceable state
 
 Let's start with a simple stateful program: a counter.
 
@@ -66,9 +62,9 @@ for _ in range(3):
 ```
 
 The `n` attribute maintains the counter's *state* between calls, updated as a
-side effect. As plain Python this works fine — but `count` is impure, and it
-falls apart under transformation. We can see exactly how by looking at what
-tracing records, using the jaxpr-inspection idiom from {ref}`jax-101-tracing`:
+side effect. As plain Python this works fine, but it falls apart under JAX
+transformations. We can see exactly how by looking at what tracing records,
+using the jaxpr-inspection idiom from {ref}`jax-101-tracing`:
 
 ```{code-cell}
 counter = Counter()
@@ -78,7 +74,7 @@ jax.jit(counter.count).trace().jaxpr
 The recorded program takes no input, performs no operations, and always
 returns 1. The side effect `self.n += 1` ran once, at trace time; the *value*
 `self.n` produced was captured as a constant; and the state update itself is
-nowhere in the jaxpr. Any transformation working from this recording is
+nowhere in the jaxpr. Any transformation working from this traced view is
 working with a function that returns 1, forever. (Under `jax.jit`, which
 caches traces, that's precisely what you'd observe: the compiled counter
 returns 1 on every call.)
@@ -111,7 +107,7 @@ for _ in range(3):
 ```
 
 The caller now keeps track of the state explicitly. In exchange, `count` is
-pure — and tracing it tells a completely different story:
+pure and hence easy to trace, and tracing it tells a completely different story:
 
 ```{code-cell}
 jax.jit(counter.count).trace(0).jaxpr
@@ -120,8 +116,6 @@ jax.jit(counter.count).trace(0).jaxpr
 The state flows visibly through the recorded program: in as the argument, out
 as a result. Nothing is baked in, nothing is hidden, and every transformation
 handles this function correctly, because there's nothing left to mishandle.
-
-### The general recipe
 
 What we did to the counter works for any stateful computation. Take a class of
 the form
@@ -132,12 +126,14 @@ class StatefulClass:
   state: State
 
   def stateful_method(*args, **kwargs) -> Output:
+    ...
 ```
 
 and turn it into functions of the form
 
 ```python
 def stateless_method(state: State, *args, **kwargs) -> tuple[Output, State]:
+  ...
 ```
 
 This is a common [functional programming](https://en.wikipedia.org/wiki/Functional_programming)
@@ -174,84 +170,122 @@ for step in range(100):
 print(jax.tree.map(lambda x: round(float(x), 2), params))  # fits y = 2x + 1
 ```
 
-Notice that the state here is a *pytree* — a dict of parameters and a matching
-dict of momenta — so the pattern scales from a single counter to an entire
-model without changing shape (see {ref}`jax-101-pytrees`). This is also the
-convention you'll meet everywhere in the JAX ecosystem: optimizer libraries
-like [Optax](https://optax.readthedocs.io/) are built around
-`update(grads, opt_state, ...) -> (updates, new_opt_state)`, and neural
+Notice that the state here is a *pytree*, so the pattern scales from a single
+counter to an entire model without changing shape (see {ref}`jax-101-pytrees`).
+This is also the convention you'll meet everywhere in the JAX ecosystem:
+optimizer libraries like [Optax](https://optax.readthedocs.io/) are built
+around `update(grads, opt_state, ...) -> (updates, new_opt_state)`, and neural
 network libraries handle parameters the same way.
 
 Threading state as values has a deeper payoff, too: because each state is an
-immutable snapshot, transformations apply cleanly to the whole loop — you can
+immutable snapshot, transformations apply cleanly to the whole loop. You can
 differentiate through an update step, or `vmap` it to run many independent
 training runs at once, without worrying about aliased mutations.
 
 (jax-101-refs)=
 ## Refs: mutable arrays
 
-Threading is the workhorse, but it can be heavyweight. If a function deep in
-your call stack wants to record a metric, every function along the way must
-plumb that state in and out of its signature.
+Threading values is the workhorse approach, but it can be awkward. If a
+function deep in your call stack wants to update normalization statistics or
+record a metric, every function along the way must plumb that state in and out
+of its signature.
 
-For cases like this, JAX has **refs**: references to mutable memory, created with
-{func}`jax.new_ref <jax.ref.new_ref>` — a distinct type from `Array`, with its
-own rules for how it interacts with transformations. Refs can be read and
-written in place with NumPy-style indexing. Here's our counter one more time,
-with its state in a ref, mutated for real:
+For cases like this, JAX has **refs**: mutable arrays that can be read and
+written in place. Create one with {func}`jax.new_ref <jax.ref.new_ref>`:
 
 ```{code-cell}
-counter_ref = jax.new_ref(0)
+x_ref = jax.new_ref(jnp.zeros(3))  # new array ref, with initial value [0., 0., 0.]
 
-def count():
-  counter_ref[...] += 1
-  return counter_ref[...]
+@jax.jit
+def f():
+  x_ref[1] += 1.  # indexed add-update
 
-print(count(), count(), count())
+print(x_ref)  # Ref([0., 0., 0.])
+f()
+f()
+print(x_ref)  # Ref([0., 2., 0.])
 ```
 
-For a ref `x_ref`, `x_ref[...]` reads the whole current value as an `Array`,
-`x_ref[...] = v` writes one, and any NumPy-style index works in place of
-`...`:
+For a ref called `x_ref`, we can read its entire value into an `Array` by
+writing `x_ref[...]`, and write its entire value using `x_ref[...] = A` for
+some `Array`-valued expression `A`:
 
 ```{code-cell}
-x_ref = jax.new_ref(jnp.arange(6.0).reshape(2, 3))
+def g(x):
+  x_ref = jax.new_ref(0.)
+  x_ref[...] = jnp.sin(x)
+  return x_ref[...]
 
-x_ref[0, 0] = 100.0     # indexed write
-x_ref[1] += 10.0        # indexed add-update
-print(x_ref[...])       # read the full value
-print(x_ref[:, 1])      # read a column
+print(jax.grad(g)(1.0))  # 0.54
 ```
 
-Indexed reads and writes are essentially the *only* things you can do with a
-ref. In particular, you can't do math directly on one — read it first:
+Refs are a distinct type from `Array`, and come with some important
+constraints and limitations. In particular, indexed reading and writing is
+just about the *only* thing you can do with a ref. References can't be passed
+where `Array`s are expected:
 
 ```{code-cell}
 :tags: [raises-exception]
 
-jnp.sin(x_ref)  # error! read the value out first: jnp.sin(x_ref[...])
+x_ref = jax.new_ref(1.0)
+jnp.sin(x_ref)  # error! can't do math on refs
 ```
 
+To do math, you need to read the ref's value first, like `jnp.sin(x_ref[...])`.
+
+Reads and writes accept any NumPy indexing expression:
+
+```{code-cell}
+x_ref = jax.new_ref(jnp.arange(12.).reshape(3, 4))
+
+# int indexing
+row = x_ref[0]
+x_ref[1] = row
+
+# tuple indexing
+val = x_ref[1, 2]
+x_ref[2, 3] = val
+
+# slice indexing
+col = x_ref[:, 1]
+x_ref[0, :3] = col
+
+# advanced int array indexing
+vals = x_ref[jnp.array([0, 0, 1]), jnp.array([1, 2, 3])]
+x_ref[jnp.array([1, 2, 1]), jnp.array([0, 0, 1])] = vals
+```
+
+Indexing mostly follows NumPy behavior, except that an out-of-bounds index
+raises an error when its value is known in advance (unlike with `Array`s,
+where reads clamp and writes drop; see {ref}`jax-101-arrays`).
+
 When you're done mutating, {func}`jax.freeze <jax.ref.freeze>` invalidates the
-ref and returns its final value as an ordinary immutable array:
+ref (so that accessing it afterwards is an error) and produces its final value
+as an ordinary immutable `Array`:
 
 ```{code-cell}
 final = jax.freeze(x_ref)
 final
 ```
 
-```{note}
-Refs are a relatively new JAX feature. The core API shown here is expected to
-be stable, but some corners (especially around autodiff) are still evolving.
-```
+### Refs and purity
 
-## Refs and purity
+How do refs square with the purity condition from
+{ref}`jax-101-transformations`? Recall that functional purity provides three
+main benefits: it makes code and transformations easier for the user to reason
+about; it makes code easier for the compiler to optimize, parallelize, and
+scale; and it makes code easier for JAX to trace.
 
-How do refs square with the "pure functions only" rule? By a simple
-accounting: a function is **impure** if refs cross its boundary — taken as
-arguments, or captured from an enclosing scope, like `count` above. A function
-that creates and uses refs purely *internally* is still pure — purity is in
-the eye of the caller:
+Because operations on refs are intercepted, tracing isn't a problem.
+Their use does somewhat constrain the compiler's ability to transform code, but
+only as much as explicit state threading would.
+The main new thing to learn is how refs interact with transformations.
+
+A function still counts as pure if it only uses refs internally. That
+is, a function is impure if and only if it takes a ref as an input (either an
+explicit argument or via closure). Purity is in the eye of the caller. So
+functions that use refs internally transform the same way any pure function
+would:
 
 ```{code-cell}
 def normalize(x):        # pure: refs used internally only
@@ -262,11 +296,9 @@ def normalize(x):        # pure: refs used internally only
 jax.grad(lambda x: normalize(x).sum())(jnp.arange(1.0, 4.0))
 ```
 
-Pure functions that use refs internally work with all transformations in the
-usual way, as the `jax.grad` call above shows. Impure functions — those that
-take refs as arguments — are more constrained, but still work with many
-transformations. For example, you can `vmap` an impure function over a batch
-of ref entries:
+Impure functions, meaning those that take refs as inputs, are more
+constrained, but still work with many transformations. For example, you can
+`vmap` an impure function over a batch of ref entries:
 
 ```{code-cell}
 def scale_into(x, out_ref):   # impure: takes a ref argument
@@ -278,9 +310,9 @@ jax.vmap(scale_into)(xs, out_ref)   # each instance writes its own entry
 print(out_ref[...])
 ```
 
-What you *can't* do is `vmap` a function that closes over a ref — with every
-batch member writing to the same shared location, the final value would be
-ambiguous:
+What you *can't* do is `vmap` a function that closes over a ref, because with
+every batch member writing to the same shared location, the final value would
+be ambiguous:
 
 ```{code-cell}
 :tags: [raises-exception]
@@ -293,10 +325,10 @@ def write_shared(x):
 jax.vmap(write_shared)(jnp.arange(3.0))
 ```
 
-## Restrictions
+### Ref restrictions
 
-Refs come with rules designed to rule out *aliasing* — two refs unknowingly
-pointing at the same memory — and other situations where the meaning of a
+Refs come with rules designed to rule out *aliasing*, meaning two refs
+pointing at the same memory, and other situations where the meaning of a
 program would become unclear:
 
 - You can't return a ref from a `jit`-compiled function or from the body of a
@@ -310,26 +342,23 @@ program would become unclear:
 If you hit one of these, the error message will say so directly. Some of these
 restrictions may be lifted over time.
 
-## Performance, and what's next for refs
+### Ref performance and further reading
 
-Refs aren't just for expressiveness — they give you control over memory. Under
-`jax.jit`, writing through a ref updates its buffer in place rather than
-allocating a fresh array, and passing refs into a jitted function avoids
-copies without any donation ceremony. The performance story, like the rest of
-the `jit` story, is covered in the performance and scaling docs.
+Refs aren't just for expressiveness: they're also a tool for performance.
+Writing to a ref updates its buffer in place rather than allocating a fresh
+array. The full performance story is covered in {ref}`jax-201-jit`.
 
 Refs also interact with automatic differentiation: you can plumb values out of
 backward passes, accumulate gradients in place across microbatches, and
-differentiate with respect to ref arguments. That material lives with the
-advanced autodiff docs; see {doc}`/array_refs` for the full treatment in the
-meantime.
+differentiate with respect to ref arguments. That material lives with
+{ref}`jax-301-refs`.
 
 ## Where you've arrived
 
 This completes the expressiveness tour: arrays and `jax.numpy` as the
 vocabulary, `grad` and `vmap` as the verbs, pytrees for structure, keys for
-randomness, and — for state — threaded values or refs.
+randomness, and threaded values or refs for state.
 
-What you can't do yet is make it *fast* — that's a matter of `jax.jit`,
+What you can't do yet is make it *fast*. That's a matter of `jax.jit`,
 sharding, and profiling, and it's exactly where the performance and scaling
 docs pick up: {ref}`jax-201-jit`.

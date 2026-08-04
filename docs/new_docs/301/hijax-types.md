@@ -49,7 +49,7 @@ document walks through the whole story with one running example: a
 quantized array type.
 
 We'll assume some familiarity with hijax primitives; see
-{ref}`hijax-custom-derivatives` for an introduction to them. Like everything
+{ref}`jax-301-custom-derivatives` for an introduction to them. Like everything
 hijax, this is experimental: expect imports from `jax.experimental.hijax`,
 and expect the APIs to evolve.
 
@@ -194,7 +194,7 @@ declared types mention the new type. That's where invariants get enforced:
 if every primitive preserves them, they always hold.
 
 Our two primitives are `quantize` and `dequantize`, written with the
-`VJPHiPrimitive` API from {ref}`hijax-custom-derivatives`. Each declares
+`VJPHiPrimitive` API from {ref}`jax-301-custom-derivatives`. Each declares
 its input and output types, gives its implementation in `expand`, and
 (looking ahead to autodiff) carries a straight-through-estimator VJP rule:
 
@@ -646,8 +646,8 @@ print(jax.typeof(qys))
 
 ## Sharding in types: explicit mode
 
-Finally, sharding. In JAX's explicit sharding mode (see [the parallelism
-guide](https://docs.jax.dev/en/latest/parallel.html)), shardings are part
+Finally, sharding. In JAX's explicit sharding mode (see
+{ref}`jax-201-sharding`), shardings are part
 of array *types*: `jax.typeof` reports how a value is partitioned across
 the mesh, sharding propagation happens while tracing, and mismatches
 surface as type errors. The `sharding` field on `QArrayTy`, and the typing
@@ -1168,6 +1168,6 @@ On the primitive side, there are also hooks for customizing
 rematerialization and dead code elimination.
 
 As ever with hijax, `tests/hijax_test.py` is a good source of worked
-examples, and {ref}`hijax-custom-derivatives` covers the primitive-side
+examples, and {ref}`jax-301-custom-derivatives` covers the primitive-side
 API — including JVP rules, symbolic zeros, and custom linearization — in
 more depth.

@@ -126,8 +126,8 @@ class Mesh:
 ```
 
 At the top level of a program (i.e. not under a `jit`) we can create a
-concrete `Mesh` directly [using
-the class constructor](https://docs.jax.dev/en/latest/jax.sharding.html#jax.sharding.Mesh),
+concrete `Mesh` directly using the {class}`~jax.sharding.Mesh` class
+constructor,
 which lets us specify the exact device order, or using the `jax.make_mesh`
 helper, which automatically chooses a device order by taking the underlying
 hardware topology into account:

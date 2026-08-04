@@ -26,7 +26,7 @@ nosearch: true
 
 `shard_map` is complementary to, and composable with, the automatic compiler-based parallelization built into `jit`. With `jit` you write code as if for a single device, and [the compiler can automatically partition computation over multiple devices](sharding.md), generating per-device code and communication collectives behind the scenes. With `shard_map` you take control, writing your own partitioned code and explicit collectives. Or you can do a bit of both: take manual control across groups of devices while leaving within-group device partitioning up to the compiler. The two approaches can be mixed, matched, and composed as needed.
 
-By reading this tutorial, you'll learn how to use `shard_map` to get full control over your multi-device code. You'll see in detail how it composes with `jax.jit`'s automatic parallelization and `jax.grad`'s automatic differentiation. We'll also give some basic examples of neural network parallelization strategies, for a more detailed example see {doc}`/the-training-cookbook`.
+By reading this tutorial, you'll learn how to use `shard_map` to get full control over your multi-device code. You'll see in detail how it composes with `jax.jit`'s automatic parallelization and `jax.grad`'s automatic differentiation. We'll also give some basic examples of neural network parallelization strategies.
 
 We'll assume this tutorial is being run in an environment with eight devices:
 
@@ -1435,9 +1435,8 @@ loss.
 There's one other ingredient we need: we don't want to store the fully gathered
 parameters from the forward pass for use on the backward pass. Instead, we want
 to gather them again on the backward pass. We can express that by using
-`jax.remat` with a [custom
-policy](https://docs.jax.dev/en/latest/notebooks/autodiff_remat.html#custom-policies-for-what-s-saveable)
-(or a `custom_vjp`), though XLA typically does that rematerialization
+`jax.remat` with a custom policy (see {ref}`jax-301-remat`), or a
+`custom_vjp`, though XLA typically does that rematerialization
 automatically.
 
 This general [FSDP

@@ -223,7 +223,7 @@ Each microbatch is enqueued through the stages sequentially, but the queues
 are independent: while stage 1 works on microbatch 0, stage 0 has already
 started microbatch 1, with the transfers overlapping the computation. (For a
 richer treatment of pipelining, see the microbatched gradient-accumulation
-example in {doc}`/array_refs`.)
+example in {ref}`jax-301-refs`.)
 
 Everything on this page generalizes to multiple processes: meshes can span
 hosts, can cover just a subset of the devices in a cluster, and

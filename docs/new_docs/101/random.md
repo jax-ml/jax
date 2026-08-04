@@ -23,15 +23,8 @@ In most numerical libraries, drawing a random number means consulting a hidden
 generator that updates itself between calls. JAX has no such generator, and no
 hidden update. Randomness in JAX is driven by **keys**: ordinary immutable
 array values that you pass around explicitly. Every function in
-{mod}`jax.random` is a pure, deterministic function of its key argument — call
+{mod}`jax.random` is a pure, deterministic function of its key argument: call
 it twice with the same key and you get the same number twice, by design.
-
-It's tempting to describe keys as "the generator state made explicit", but
-that undersells the shift: there is no state *anywhere* in this design.
-Nothing advances, nothing mutates. A key is a value, sampling is a function of
-that value, and getting fresh randomness means deriving fresh key values. This
-page covers why JAX works this way and the small set of habits for working
-with keys well.
 
 ## Why not a global generator?
 
@@ -63,15 +56,13 @@ print(foo())
 This value is only reproducible because NumPy promises to run `bar()` before
 `baz()`. Such sequencing promises are exactly what JAX needs to avoid: an
 optimizing compiler should be free to reorder and parallelize work across
-devices, and as we saw in {ref}`jax-101-tracing`, how many times your Python
-code runs is an implementation detail of each transformation. JAX needs random
-number generation that is **reproducible**, **parallelizable**, and
-**vectorizable** — which rules out sampling functions that secretly read and
-write shared state.
+devices. JAX needs random number generation that is **reproducible**,
+**parallelizable**, and **vectorizable**, which rules out sampling functions
+that secretly read and write shared state.
 
 The solution isn't to make the generator state an explicit argument that you
-shuttle in and out of functions. It's more radical: eliminate the state, and
-make sampling a pure function of a key.
+shuttle in and out of functions. Instead, sampling is just a pure function of
+key values, and no updated state is threaded back out.
 
 ## Keys are values
 
@@ -108,27 +99,21 @@ which device ran what.
 The flip side is that *distinct* random numbers require *distinct* keys, which
 leads to the one rule of JAX randomness:
 
-**Never reuse a key (unless you want identical outputs).** Feeding the same
-key to two different samplers produces correlated results — depriving your
-program of lifegiving chaos.
+**Never reuse a key (unless you want identical outputs).** Feeding the same key
+to two different samplers produces correlated results, depriving your program
+of lifegiving chaos.
 
 ## Deriving new keys
 
 To get fresh keys, derive them from a key you already have.
-{func}`jax.random.split` deterministically produces any number of
-statistically independent new keys:
+{func}`jax.random.split` deterministically produces any number of new keys,
+each of which can be used to generate statistically independent samples:
 
 ```{code-cell}
 key = random.key(42)
 key, subkey = random.split(key)
 print(random.normal(subkey))
 ```
-
-The naming convention: the `subkey` is consumed immediately by a sampling
-function, while the `key` is kept for deriving more keys later. There's
-nothing special about which is which — all outputs of `split` are equally
-valid, independent keys — but the convention helps track what's been consumed.
-Treat a key that's been passed to `split` or to a sampler as spent.
 
 `split` produces as many keys as you ask for in one shot:
 
@@ -155,10 +140,9 @@ on.
 
 ### Keep the key tree wide, not deep
 
-Your program's keys form a tree, rooted at the seed, growing by derivation.
-A common habit — one you'll see in older JAX code, including older versions of
-these docs — is to grow that tree as a long chain, splitting off each step's
-key from the previous step's:
+Your program's keys form a tree, rooted at the seed, growing by either `split`
+or `fold_in` operations. A bad pattern is to grow that tree as a long chain,
+splitting off each step's key from the previous step's:
 
 ```python
 for step in range(num_steps):
@@ -166,26 +150,26 @@ for step in range(num_steps):
   ...
 ```
 
-Prefer wide derivation instead — all step keys hanging off one parent, via a
+Prefer wide trees instead: all step keys hanging off one parent, via a
 single `split(key, num_steps)` or via `fold_in(key, step)` as above. The
 chained version has two problems, one computational and one statistical:
 
-- **It serializes.** Each derivation depends on the previous one, so a chain
+- **It serializes.** Each key depends on the previous one, so a chain
   of a million steps means a million sequential hash applications. Wide
-  derivation is a single batched operation, free to vectorize and
+  key derivation is a single batched operation, free to vectorize and
   parallelize.
 
 - **It courts collisions.** For a *fixed* key, the PRNG's underlying hash is
   a pseudorandom *permutation* of its input, so the keys produced by one
   `split` (or by `fold_in` over distinct integers) are guaranteed distinct.
-  But viewed as a function *of the key*, the hash is not a permutation — it
+  But viewed as a function *of the key*, the hash is not a permutation: it
   behaves like a random function. Every derivation hop is therefore an
   independent chance for two keys in your tree to coincide, and over a long
   chain in the default 64-bit key space, collision probability accumulates
   toward the birthday bound. A collision means identical random streams from
   the point of collision onward.
 
-A handful of chained splits is harmless — the collision math only bites at
+A handful of chained splits is harmless; the collision math only bites at
 scale, and plenty of correct code splits a key a few times in sequence. But
 for anything proportional to the length of training or the size of a dataset,
 derive keys widely from a common parent.
@@ -206,7 +190,7 @@ print("all at once: ", random.normal(key, shape=(3,)))
 
 Sequential equivalence would impose exactly the kind of ordering constraint
 JAX's design exists to avoid. Giving it up means samples drawn from
-independent keys don't depend on each other in any order — so generation can
+independent keys don't depend on each other in any order, so generation can
 be freely vectorized and sharded.
 
 Since keys are just arrays, they compose with everything else in JAX. You can
@@ -218,7 +202,7 @@ jax.vmap(random.normal)(subkeys)
 ```
 
 With the default PRNG implementation, this is *exactly* equivalent to calling
-`random.normal` on each key separately — vectorizing over keys doesn't change
+`random.normal` on each key separately; vectorizing over keys doesn't change
 the values.
 
 ```{note}
@@ -228,23 +212,26 @@ encounter older code using {func}`jax.random.PRNGKey`, which produces a raw
 from doing arithmetic on it) and it doesn't record which PRNG implementation
 it belongs to. Prefer `jax.random.key` in new code, and convert at boundaries
 with {func}`jax.random.key_data` and {func}`jax.random.wrap_key_data` when
-interfacing with systems that need raw arrays. See {ref}`jep-9263` for the
-full story.
+interfacing with systems that need raw arrays. See the [typed PRNG keys
+JEP](https://docs.jax.dev/en/latest/jep/9263-typed-keys.html) for the full
+story.
 ```
 
 ## Design and implementations
 
 In one line: JAX's PRNG is a counter-based Threefry hash combined with a
 functional splitting model, chosen so that generation has no sequencing
-constraints at all — see {ref}`prng-design-jep` for the design rationale.
+constraints at all. See the [PRNG design
+JEP](https://docs.jax.dev/en/latest/jep/263-prng.html) for the design
+rationale.
 
 Threefry is the default of several available implementations. Alternatives
 (selected per-key via the `impl` argument to {func}`jax.random.key`, or
 globally via the `jax_default_prng_impl` config) trade off generation speed on
-TPUs, shardability, bit-for-bit identical results across platforms, and exact
-`vmap`-over-keys semantics. The {mod}`jax.random` module documentation has the
-full comparison table; the default is the right choice unless PRNG generation
-shows up in your profiles.
+TPUs, shardability and sharding-invariance, bit-for-bit identical results
+across platforms, and exact `vmap`-over-keys semantics. The {mod}`jax.random`
+module documentation has the full comparison table; the default is the right
+choice unless PRNG generation shows up in your profiles.
 
 {mod}`jax.random` itself offers samplers for a wide range of distributions —
 uniform, normal, categorical, permutations, and many more — all taking a key
