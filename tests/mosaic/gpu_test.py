@@ -1551,14 +1551,35 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
       (jnp.float4_e2m1fn, 8),
   ])
   def test_load_store_tmem_native(self, jax_dtype, packing):
-    # TODO(bchetioui): add a test for int8 with a native layout with vector
-    # length equal to 4 once TMEM load is implemented for it.
     def kernel(ctx, input, output, tmem):
       del ctx
       reg_layout = tcgen05.tmem_default_layout(max(packing, 2)).as_tiled_layout()
       tmem.store(fa.FragmentedArray.load_untiled(input, layout=reg_layout, optimized=False))
       tcgen05.commit_tmem()
       tmem.load(reg_layout).store_untiled(output, optimized=False)
+
+    x = self.prng.uniform(-1, 1, (128, 128)).astype(jax_dtype)
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, mgpu.TMEM(x.shape, jax_dtype, packing=packing)
+    )(x)
+    np.testing.assert_array_equal(x, y)
+
+  @parameterized.parameters([
+      (jnp.float32, 1, tcgen05.LAYOUT),
+      (jnp.float16, 1, tcgen05.LAYOUT),
+      (jnp.float16, 2, tcgen05.LAYOUT),
+      (jnp.float8_e5m2, 4, fa.tmem_native_layout(4)),
+      (jnp.float4_e2m1fn, 8, fa.tmem_native_layout(8)),
+  ])
+  def test_load_store_tmem_inference(self, jax_dtype, packing, expected_layout):
+    def kernel(ctx, input, output, tmem):
+      del ctx
+      reg_layout = tcgen05.tmem_default_layout(max(packing, 2)).as_tiled_layout()
+      tmem.store(fa.FragmentedArray.load_untiled(input, layout=reg_layout, optimized=False))
+      tcgen05.commit_tmem()
+      y = tmem.load()
+      self.assertEqual(y.layout, expected_layout)
+      y.store_untiled(output, optimized=False)
 
     x = self.prng.uniform(-1, 1, (128, 128)).astype(jax_dtype)
     y = mgpu.as_gpu_kernel(

@@ -1320,13 +1320,14 @@ class TMEMRef:
   ) -> fa.FragmentedArray | tuple[fa.FragmentedArray, fa.FragmentedArray]:
     packing = self.packing
     bitwidth = utils.bitwidth(self.dtype)
+    is_at_least_16b = bitwidth in {16, 32}
     columns = self.shape[1]
     if layout is None:
-      if self.layout == tmem_default_layout(packing):
+      if is_at_least_16b and self.layout == tmem_default_layout(packing):
         layout = LAYOUT
-      elif packing <= columns // 2 and self.layout == tmem_half_lane_layout(columns, packing):
+      elif is_at_least_16b and packing <= columns // 2 and self.layout == tmem_half_lane_layout(columns, packing):
         layout = fa.WGMMA_LAYOUT
-      elif columns % 16 == 0 and self.layout == tmem_m64_collective_layout(columns, packing):
+      elif is_at_least_16b and columns % 16 == 0 and self.layout == tmem_m64_collective_layout(columns, packing):
         layout = fa_m64_collective_layout(columns)
       elif packing * bitwidth == 32:
         layout = self.layout.as_tiled_layout()
@@ -1362,7 +1363,11 @@ class TMEMRef:
       raise NotImplementedError("Sparse meta layout loads unsupported.")
     if regs_shape[0] != 1:  # We'll need to issue multiple loads below.
       raise NotImplementedError("Loading multiple row tiles")
-    if layout == LAYOUT and self.layout == tmem_default_layout(packing):
+    if (
+        layout == LAYOUT
+        and self.layout == tmem_default_layout(packing)
+        and is_at_least_16b
+    ):
       if reduce is not None:
         raise ValueError(
             "Fused load-reduce is not supported for this layout"
@@ -1397,7 +1402,11 @@ class TMEMRef:
           self.address, columns, self.dtype, packing, TMEM_NATIVE_LAYOUT.vector_length, reduce=reduce
       )
       registers = flat_registers.reshape(regs_shape)
-    elif layout == fa.WGMMA_LAYOUT and self.layout == tmem_half_lane_layout(columns, packing):
+    elif (
+        layout == fa.WGMMA_LAYOUT
+        and self.layout == tmem_half_lane_layout(columns, packing)
+        and is_at_least_16b
+    ):
       if reduce is not None:
         raise ValueError("Fused load-reduce is not supported for this layout")
       reduced_reg = None
@@ -1408,7 +1417,11 @@ class TMEMRef:
       assert raw_registers.shape[0] == 4
       registers = np.concatenate([raw_registers[:2], raw_registers[2:]], axis=1)
       registers = registers.T.reshape(regs_shape)
-    elif layout == fa_m64_collective_layout(columns) and self.layout == tmem_m64_collective_layout(columns, packing):
+    elif (
+        layout == fa_m64_collective_layout(columns)
+        and self.layout == tmem_m64_collective_layout(columns, packing)
+        and is_at_least_16b
+    ):
       if reduce is not None:
         raise ValueError("Fused load-reduce is not supported for this layout")
       reduced_reg = None
@@ -1467,7 +1480,8 @@ class TMEMRef:
     packing = self.packing
     has_default_layout = self.layout == tmem_default_layout(packing=packing)
     bitwidth = utils.bitwidth(self.dtype)
-    if value.layout == LAYOUT and has_default_layout:
+    is_at_least_16b = bitwidth in {16, 32}
+    if value.layout == LAYOUT and has_default_layout and is_at_least_16b:
       _store_32xcols(
           self.address, value.registers.T.reshape((4, -1)), packing
       )
@@ -1486,14 +1500,17 @@ class TMEMRef:
     elif (
         value.layout == fa.WGMMA_LAYOUT
         and self.layout == tmem_half_lane_layout(self.shape[1], packing=packing)
+        and is_at_least_16b
     ):
       registers = value.registers.T.reshape(2, -1)
       registers = np.concatenate(np.split(registers, 2, axis=1), axis=0)
       _store_32xcols(self.address, registers, packing)
-    elif value.layout == fa_m64_collective_layout(
-        self.shape[1]
-    ) and self.layout == tmem_m64_collective_layout(
-        self.shape[1], packing=packing
+    elif (
+        value.layout == fa_m64_collective_layout(self.shape[1])
+        and self.layout == tmem_m64_collective_layout(
+            self.shape[1], packing=packing
+        )
+        and is_at_least_16b
     ):
       _store_32xcols(self.address, value.registers.reshape(4, -1), packing)
     else:
