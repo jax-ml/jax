@@ -157,11 +157,15 @@ class HypothesisShardedTestCase(jtu.JaxTestCase):
   shard, and then filtering out the tests that don't belong to the current
   shard.
 
+  Subclasses may set `hypothesis_max_threads` to limit thread-level sharding
+  without reducing the thread count used by other tests in the same process.
+
   Must be combined with `HypothesisShardedTestLoader`.
   """
 
   _thread_shard_index: int = 0
   _thread_total_shards: int = 1
+  hypothesis_max_threads: int | None = None
 
   def __init_subclass__(cls, **kwargs):
     super().__init_subclass__(**kwargs)
@@ -186,7 +190,9 @@ class HypothesisShardedTestLoader(JaxTestLoader):
     return super().shardTestCaseNames(iterator, ordered_names, shard_index)
 
   def loadTestsFromTestCase(self, testCaseClass):
-    num_threads = TEST_NUM_THREADS.value
+    num_threads = _hypothesis_thread_count(
+        testCaseClass, TEST_NUM_THREADS.value
+    )
     if (
         issubclass(testCaseClass, HypothesisShardedTestCase)
         and num_threads > 1
@@ -206,6 +212,15 @@ class HypothesisShardedTestLoader(JaxTestLoader):
           cases.append(testCaseClass(name))
       return self.suiteClass(cases)
     return super().loadTestsFromTestCase(testCaseClass)
+
+
+def _hypothesis_thread_count(test_case_class, num_threads: int) -> int:
+  max_threads = getattr(test_case_class, 'hypothesis_max_threads', None)
+  if max_threads is None:
+    return num_threads
+  if max_threads < 1:
+    raise ValueError('hypothesis_max_threads must be positive')
+  return min(num_threads, max_threads)
 
 
 def hypothesis_is_thread_safe() -> bool:

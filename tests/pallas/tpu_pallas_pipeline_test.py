@@ -1506,6 +1506,8 @@ def _dim_and_block_size(
 @jtu.thread_unsafe_test_class(condition=not htu.hypothesis_is_thread_safe())
 class PaddedPipelineEmitterTest(htu.HypothesisShardedTestCase):
 
+  hypothesis_max_threads = 4
+
   def setUp(self):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):

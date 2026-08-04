@@ -118,6 +118,29 @@ class SingleShardTest(jtu.JaxTestCase):
     self.assertEqual(shard_index, 2 % total_shards)
 
 
+class HypothesisThreadCountTest(htu.HypothesisShardedTestCase):
+
+  def test_class_max_threads(self):
+    class CappedTest(htu.HypothesisShardedTestCase):
+      hypothesis_max_threads = 4
+
+    self.assertEqual(htu._hypothesis_thread_count(CappedTest, 64), 4)
+    self.assertEqual(htu._hypothesis_thread_count(CappedTest, 2), 2)
+
+  def test_uncapped_class(self):
+    class UncappedTest(htu.HypothesisShardedTestCase):
+      pass
+
+    self.assertEqual(htu._hypothesis_thread_count(UncappedTest, 64), 64)
+
+  def test_invalid_max_threads(self):
+    class InvalidTest(htu.HypothesisShardedTestCase):
+      hypothesis_max_threads = 0
+
+    with self.assertRaisesRegex(ValueError, 'must be positive'):
+      htu._hypothesis_thread_count(InvalidTest, 64)
+
+
 # Avoid differing_executors if we run on unsharded environment.
 _helper_fail_suppressed_checks = [hp.HealthCheck.too_slow]
 if hasattr(hp.HealthCheck, "differing_executors"):
