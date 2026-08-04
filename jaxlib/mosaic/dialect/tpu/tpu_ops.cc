@@ -1221,6 +1221,27 @@ LogicalResult MatmulOp::verify() {
   return success();
 }
 
+LogicalResult ConvOp::verify() {
+  const VectorType lhs_ty = getLhs().getType();
+  const VectorType rhs_ty = getRhs().getType();
+  const VectorType acc_ty = getAcc().getType();
+  const VectorType res_ty = getResult().getType();
+  if (lhs_ty.getRank() < 2 || rhs_ty.getRank() < 2) {
+    return emitOpError("Expected conv operands to have rank >= 2");
+  }
+  if (acc_ty != res_ty) {
+    return emitOpError(
+        "Not implemented: conv acc and result have different types");
+  }
+  if (getElementTypeBitwidth(acc_ty) != 32) {
+    return emitOpError("Expected conv acc to be 32-bit");
+  }
+  return success();
+}
+
+void ConvOp::getCanonicalizationPatterns(RewritePatternSet& results,
+                                         MLIRContext* context) {}
+
 void MatmulOp::getCanonicalizationPatterns(RewritePatternSet& results,
                                            MLIRContext* context) {
   results.add<CanonicalizeAddOfMatmul<arith::AddFOp>,

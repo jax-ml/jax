@@ -851,6 +851,29 @@ def TPU_MatmulOp : TPU_Op<"matmul", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_ConvOp : TPU_Op<"conv", [Pure]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$lhs,
+    AnyVectorOfNonZeroRank:$rhs,
+    AnyVectorOfNonZeroRank:$acc,
+    I64ArrayAttr:$window_strides,
+    I64ArrayAttr:$padding,
+    I64ArrayAttr:$lhs_dilation,
+    I64ArrayAttr:$rhs_dilation,
+    BoolArrayAttr:$window_reversal,
+    DefaultValuedAttr<I64Attr, "1">:$feature_group_count,
+    DefaultValuedAttr<I64Attr, "1">:$batch_group_count,
+    OptionalAttr<TPU_ContractPrecisionEnum>:$precision,
+    OptionalAttr<TPU_ConvDimensionNumbersAttr>:$dimension_numbers
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$result);
+  let assemblyFormat = [{
+    $lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)
+  }];
+  let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+}
+
 def TPU_MatmulPushRhsOp : TPU_Op<"matmul_push_rhs"> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$rhs,
