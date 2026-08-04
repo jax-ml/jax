@@ -2668,6 +2668,48 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     if compiled_stats is not None:
       self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
+  def test_remat_scan_offloaded_residuals_gradients(self):
+    # Regression test for https://github.com/openxla/xla/pull/46231.
+    weights = jax.random.normal(
+        jax.random.key(42), shape=(8, 4, 4), dtype=jnp.float32) * 0.3
+    x = jax.random.normal(jax.random.key(42), shape=(2, 3, 4), dtype=jnp.float32)
+
+    def layer(w, carry):
+      return jnp.tanh(jnp.matmul(
+          carry, w, precision=lax.Precision.HIGHEST))
+
+    def named_layer(w, carry):
+      return layer(w, checkpoint_name(carry, "carry"))
+
+    offload_policy = (
+        jax.checkpoint_policies.save_and_offload_only_these_names(
+            names_which_can_be_saved=[],
+            names_which_can_be_offloaded=["carry"],
+            offload_src="device",
+            offload_dst="pinned_host",
+        )
+    )
+    offloaded_layer = jax.checkpoint(
+        named_layer, policy=offload_policy, prevent_cse=False)
+
+    def loss(layer_fn, w, carry):
+      carry, _ = lax.scan(
+          lambda carry, wi: (layer_fn(wi, carry), None), carry, w)
+      return jnp.sum(carry**2)
+
+    def gradient(layer_fn):
+      return jax.jit(jax.grad(
+          lambda w, carry: loss(layer_fn, w, carry), argnums=(0, 1)))
+
+    expected = gradient(layer)(weights, x)
+    compiled = gradient(offloaded_layer).lower(weights, x).compile()
+    actual = compiled(weights, x)
+
+    compiled_stats = compiled.memory_analysis()
+    self.assertIsNotNone(compiled_stats)
+    self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
+    self.assertAllClose(actual, expected, atol=1e-5, rtol=1e-5)
+
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
