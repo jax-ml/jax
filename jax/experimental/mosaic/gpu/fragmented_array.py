@@ -608,6 +608,7 @@ class TiledLayout:
 
   def find_dim_in_tiling(self, dim: int) -> tuple[int, int]:
     """Returns the index of the tile containing the given dimension and its position within the tile."""
+    assert dim < 0
     dims = 0
     tiling = self.tiling.tiles
     for dim_tile in range(1, len(tiling) + 1):
@@ -4302,7 +4303,7 @@ class FragmentedArray:
           # dims represent a 8x4 matrix of vectors.
           and tiled_nested_strides[major_lane_dim] == (1,)
       )
-      pair_tiled_dim = None
+      tx_pair_tiled_dim = None
       # For 8-bit types, each tile is actually 8x16. However, the only shape
       # supported by the transposed txmatrix is 16x16. This means that each
       # transfer actually deals with two tiles and we need to find the tiled
@@ -4316,11 +4317,11 @@ class FragmentedArray:
               " pre-Blackwell architectures"
           )
         shape_strides = list(zip(tiled_nested_shape, tiled_nested_strides))
-        for pair_tiled_dim, (shapes, strides) in enumerate_negative(shape_strides):
+        for tx_pair_tiled_dim, (shapes, strides) in enumerate_negative(shape_strides):
           if (
-              pair_tiled_dim in layout.lane_dims
-              or pair_tiled_dim in layout.warp_dims
-              or pair_tiled_dim == layout.vector_dim
+              tx_pair_tiled_dim in layout.lane_dims
+              or tx_pair_tiled_dim in layout.warp_dims
+              or tx_pair_tiled_dim == layout.vector_dim
           ):
             continue
           if strides[-1] == 8 and shapes[-1] % 2 == 0:
@@ -4341,14 +4342,19 @@ class FragmentedArray:
       assert isinstance(load_vector_dim, int)
       tx_layout = nvvm.MMALayout.row if is_row_txmatrix_mem_layout else nvvm.MMALayout.col
       # We remap pair_tile_dim to a valid index in tiles_shape (computed below)
-      if pair_tiled_dim is not None:
-        tx_pair_tiled_dim = sum(len(s) for s in tiled_nested_shape[:pair_tiled_dim])
+      if tx_pair_tiled_dim is not None:
+        # We need tx_pair_nested_tiled_dim to be positive, since that's what the
+        # lane quadrant logic expects.
+        if tx_pair_tiled_dim == -1:
+          tx_pair_nested_tiled_dim = sum(map(len, tiled_nested_shape)) - 1
+        else:
+          tx_pair_nested_tiled_dim = sum(len(s) for s in tiled_nested_shape[:tx_pair_tiled_dim + 1]) - 1
       else:
-        tx_pair_tiled_dim = None
+        tx_pair_tiled_dim = tx_pair_nested_tiled_dim = None
     else:
       load_vector_dim = layout.vector_dim
       tx_layout = None
-      tx_pair_tiled_dim = None
+      tx_pair_tiled_dim = tx_pair_nested_tiled_dim = None
     # Not sure if this is strictly required for all data types, but it certainly
     # is for sub-byte types (else we might not increment the pointer by whole bytes).
     if any(
@@ -4410,43 +4416,90 @@ class FragmentedArray:
       raise ValueError(f"Unsupported memory space: {ref_ty.memory_space}")
 
     plan = TrivialTransferPlan()
-    # TODO(apaszke): Add bank conflict analysis for 8-bit transposed transfers.
-    is_tx_8bit_col = tx_layout == nvvm.MMALayout.col and element_bits == 8
-    if optimized and not is_tx_8bit_col:
+    if optimized:
       if llvm_memory_space != 3 and llvm_memory_space != 7:
         raise NotImplementedError("Only optimized transfers to SMEM supported")
       mem_layout = layout
       if tx_layout == nvvm.MMALayout.col:
-        assert element_bits == 16  # 8x8 txmatrix
         major_lane_dim, _ = layout.lane_dims
         assert isinstance(major_lane_dim, int)
-        # First, find the tile that contains the major lane dim and split it
-        major_lane_dim_tile, major_lane_dim_within_tile = layout.find_dim_in_tiling(major_lane_dim)
-        # Now, we add a new tile that splits the 8-sized dimension into 4 and 2.
-        # It will be inserted right after the tile containing major_lane_dim,
-        # in a way such that after tiling the original tile containing
-        # major_lane_dim will contain a single 4-sized dim in place of
-        # major_lane_dim with all other elements being 1.
-        # For example, if we had a tiling of (8, 8)(2,) with lane_dims=(-3, -2)
-        # and vector_dim=-1, we will transform it into:
-        # tiling=(8, 8)(2, 8)(2,) (tiled base shape of (4, 1, 2, 4, 2)).
-        new_tile = list(layout.tiling.tiles[major_lane_dim_tile])
-        new_tile[major_lane_dim_within_tile] = layout.vector_length
-        sub_layout = layout.subdivide_tile(major_lane_dim_tile, tuple(new_tile))
-        # We now adjust the lane and vector dimensions. The 8-sized lane dim is
-        # now composed of the minor lane dim and the original vector dim, the
-        # minor 4-sized lane dim corresponds to the major portion of the 4x2
-        # split of the original 8-sized major lane dim, with the remaining 2
-        # becoming the new vector dim.
-        sub_row_major, sub_row_minor, sub_col_major = sub_layout.lane_dims
-        assert isinstance(sub_row_minor, int)
-        sub_col_minor = sub_layout.vector_dim
-        mem_layout = TiledLayout(
-            sub_layout.tiling,
-            sub_layout.warp_dims,
-            (sub_col_major, sub_col_minor, sub_row_major),
-            sub_row_minor,
-        )
+        if element_bits == 16:
+          # First, find the tile that contains the major lane dim and split it
+          major_lane_dim_tile, major_lane_dim_within_tile = layout.find_dim_in_tiling(major_lane_dim)
+          # Now, we add a new tile that splits the 8-sized dimension into 4 and 2.
+          # It will be inserted right after the tile containing major_lane_dim,
+          # in a way such that after tiling the original tile containing
+          # major_lane_dim will contain a single 4-sized dim in place of
+          # major_lane_dim with all other elements being 1.
+          # For example, if we had a tiling of (8, 8)(2,) with lane_dims=(-3, -2)
+          # and vector_dim=-1, we will transform it into:
+          # tiling=(8, 8)(2, 8)(2,) (tiled base shape of (4, 1, 2, 4, 2)).
+          new_tile = list(layout.tiling.tiles[major_lane_dim_tile])
+          new_tile[major_lane_dim_within_tile] = layout.vector_length
+          sub_layout = layout.subdivide_tile(major_lane_dim_tile, tuple(new_tile))
+          # We now adjust the lane and vector dimensions. The 8-sized lane dim
+          # is now composed of the minor lane dim and the original vector dim,
+          # the minor 4-sized lane dim corresponds to the major portion of the
+          # 4x2 split of the original 8-sized major lane dim, with the remaining
+          # 2 becoming the new vector dim.
+          sub_row_major, sub_row_minor, sub_col_major = sub_layout.lane_dims
+          assert isinstance(sub_row_minor, int)
+          sub_col_minor = sub_layout.vector_dim
+          mem_layout = TiledLayout(
+              sub_layout.tiling,
+              sub_layout.warp_dims,
+              (sub_col_major, sub_col_minor, sub_row_major),
+              sub_row_minor,
+          )
+        elif element_bits == 8:
+          assert tx_pair_tiled_dim is not None
+          *_, minor_lane_dim = layout.lane_dims
+          assert isinstance(minor_lane_dim, int)
+          # If the order was different, we'd have to subdivide the layout in a
+          # different order, or adjust dimension indices.
+          if not (tx_pair_tiled_dim < major_lane_dim < minor_lane_dim):
+            raise NotImplementedError("Unsupported layout for 8-bit txmatrix")
+          # First, we make sure that the tx_pair dimension will be equal to 2.
+          tx_pair_dim_tile, tx_pair_dim_within_tile = layout.find_dim_in_tiling(
+              tx_pair_tiled_dim
+          )
+          new_tile = list(layout.tiling.tiles[tx_pair_dim_tile])
+          new_tile[tx_pair_dim_within_tile] = 16
+          sub_layout = layout.subdivide_tile(tx_pair_dim_tile, tuple(new_tile))
+          # Now, similarly like in the 16-bit case, we partition the major dim,
+          # only this time into 2x4 (major_lane_dim remains 2).
+          major_lane_dim_tile, major_lane_dim_within_tile = sub_layout.find_dim_in_tiling(major_lane_dim)
+          new_major_lane_tile = list(sub_layout.tiling.tiles[major_lane_dim_tile])
+          new_major_lane_tile[major_lane_dim_within_tile] = layout.vector_length
+          sub_layout = sub_layout.subdivide_tile(major_lane_dim_tile, tuple(new_major_lane_tile))
+          # Finally, we partition the minor lane dim into 2x2.
+          minor_lane_dim_tile, minor_lane_dim_within_tile = sub_layout.find_dim_in_tiling(minor_lane_dim)
+          new_minor_lane_tile = list(sub_layout.tiling.tiles[minor_lane_dim_tile])
+          new_minor_lane_tile[minor_lane_dim_within_tile] = 2 * layout.vector_length
+          sub_layout = sub_layout.subdivide_tile(minor_lane_dim_tile, tuple(new_minor_lane_tile))
+          # Note that we skip the majormost col dim. A 16x16 matrix requires
+          # two SMEM wavefronts so we model sequential 16x8 access instead.
+          sub_row_major, sub_row_minor, _, sub_col_major = sub_layout.lane_dims  # 2x4x2x2
+          sub_col_minor = sub_layout.vector_dim  # 4
+          assert isinstance(sub_row_minor, int)
+          # The lane dims are adjusted automatically by subdivide_tile, but we
+          # need to manually adjust the tx_pair dim.
+          sub_tx_pair_tiled_dim = (
+              tx_pair_tiled_dim - len(new_major_lane_tile) - len(new_minor_lane_tile)
+          )
+          # The transfer layout now loads 8 columns (in majormost lanes), and
+          # then uses the remaining minor 4 lanes to load 4-element vectors
+          # along rows.
+          mem_layout = TiledLayout(
+              sub_layout.tiling,
+              sub_layout.warp_dims,
+              (sub_col_major, sub_col_minor, sub_tx_pair_tiled_dim, sub_row_major),
+              sub_row_minor,
+          )
+        else:
+          raise NotImplementedError(
+              f"Unsupported element bits for txmatrix: {element_bits}"
+          )
       plan = plan_tiled_transfer(
         nested_ref_shape, nested_ref_strides, mem_layout, element_bits, swizzle,
       )
@@ -4603,30 +4656,30 @@ class FragmentedArray:
       assert tiled_nested_shape[-6] == (2,)
       dim = len(tiles_shape) - sum(len(s) for s in tiled_nested_shape[-6:])
       factored_quadrant_dims = [(dim, 2)]
-    elif tx_pair_tiled_dim:
+    elif tx_pair_nested_tiled_dim:
       # For 8-bit values, each tile is 8x16. But, the transposed instruction
       # uses 16x16 tiles, which is equivalent to pairing up two 8x16 tiles along
-      # tx_pair_tiled_dim, so the transfer implicitly already has a num of 2.
-      # XXX: We must keep tx_pair_tiled_dim minor!
-      if tiles_shape[tx_pair_tiled_dim] % 4 == 0:
-        factored_quadrant_dims = [(tx_pair_tiled_dim, 4)]
+      # tx_pair_nested_tiled_dim, so the transfer implicitly already has a num of 2.
+      # XXX: We must keep tx_pair_nested_tiled_dim minor!
+      if tiles_shape[tx_pair_nested_tiled_dim] % 4 == 0:
+        factored_quadrant_dims = [(tx_pair_nested_tiled_dim, 4)]
       else:
-        assert tiles_shape[tx_pair_tiled_dim] % 2 == 0
+        assert tiles_shape[tx_pair_nested_tiled_dim] % 2 == 0
         candidate_dim = next(
             (
                 quadrant_dim
                 for quadrant_dim, d in enumerate(tiles_shape)
-                if d % 2 == 0 and quadrant_dim != tx_pair_tiled_dim
+                if d % 2 == 0 and quadrant_dim != tx_pair_nested_tiled_dim
             ),
             None,
         )
         if candidate_dim is not None:
           factored_quadrant_dims = [
               (candidate_dim, 2),
-              (tx_pair_tiled_dim, 2),
+              (tx_pair_nested_tiled_dim, 2),
           ]
         else:
-          factored_quadrant_dims = [(tx_pair_tiled_dim, 2)]
+          factored_quadrant_dims = [(tx_pair_nested_tiled_dim, 2)]
     else:
       for quadrant_dim, d in enumerate(tiles_shape):
         if d % 4 == 0:
@@ -4697,16 +4750,16 @@ class FragmentedArray:
     for tx in transfers:
       assert tx.num in (1, 2, 4)
       lane_tile_offset = arith.constant(i32, 0)
-      if tx_pair_tiled_dim:
+      if tx_pair_nested_tiled_dim:
         if len(tx.quadrant_dims) == 1:
-          assert tx.quadrant_dims[0][0] == tx_pair_tiled_dim
+          assert tx.quadrant_dims[0][0] == tx_pair_nested_tiled_dim
           if tx.quadrant_dims[0][1] == 4:
-            lane_tile_offset = arith.muli(lane_half, c(tiles_strides_transfer[tx_pair_tiled_dim] * 2))
+            lane_tile_offset = arith.muli(lane_half, c(tiles_strides_transfer[tx_pair_nested_tiled_dim] * 2))
         else:
           assert len(tx.quadrant_dims) == 2
-          assert tx.quadrant_dims[-1] == (tx_pair_tiled_dim, 2), tx.quadrant_dims
+          assert tx.quadrant_dims[-1] == (tx_pair_nested_tiled_dim, 2), tx.quadrant_dims
           dim = tx.quadrant_dims[-2][0]
-          assert dim != tx_pair_tiled_dim
+          assert dim != tx_pair_nested_tiled_dim
           lane_tile_offset = arith.muli(lane_half, c(tiles_strides_transfer[dim]))
       else:
         lane_quadrant_remaining = lane_quadrant
