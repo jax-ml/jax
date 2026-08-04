@@ -59,7 +59,8 @@ TEST_BINARY="$(rlocation $TEST_WORKSPACE/${1#./})"
 shift
 # *******************************************************************
 
-mkdir -p /var/lock
+JAX_LOCK_DIR="${JAX_LOCK_DIR:-/tmp/jax_accelerator_locks_${USER:-shared}}"
+mkdir -p "$JAX_LOCK_DIR"
 # Try to acquire any of the JAX_ACCELERATOR_COUNT * JAX_TESTS_PER_ACCELERATOR
 # slots to run a test at.
 #
@@ -67,7 +68,7 @@ mkdir -p /var/lock
 # So, we iterate over JAX_TESTS_PER_ACCELERATOR first.
 for j in `seq 0 $((JAX_TESTS_PER_ACCELERATOR-1))`; do
   for i in `seq 0 $((JAX_ACCELERATOR_COUNT-1))`; do
-    exec {lock_fd}>/var/lock/jax_accelerator_lock_${i}_${j} || exit 1
+    exec {lock_fd}>"$JAX_LOCK_DIR/jax_accelerator_lock_${i}_${j}" || exit 1
     if flock -n "$lock_fd";
     then
       (
@@ -76,6 +77,7 @@ for j in `seq 0 $((JAX_TESTS_PER_ACCELERATOR-1))`; do
         export TPU_VISIBLE_CHIPS=$i
         export CUDA_VISIBLE_DEVICES=$i
         export ROCR_VISIBLE_DEVICES=$i
+        export ONEAPI_VISIBLE_DEVICES=$i
         echo "Running test $TEST_BINARY $* on accelerator $i"
         "$TEST_BINARY" $@
       )
