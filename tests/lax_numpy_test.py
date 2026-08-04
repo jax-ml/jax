@@ -169,6 +169,27 @@ def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
 
 
+def ref_top_k(arr, k, /, *, axis, mode, sorted):
+  """Reference implementation of numpy.top_k, added in NumPy v2.6.0"""
+  # TODO(jakevdp): remove this helper when minimum required NumPy is version 2.6.0.
+  if jtu.numpy_version() >= (2, 6, 0):
+    return np.top_k(arr, k, axis=axis, mode=mode, sorted=sorted)
+  if mode == 'largest':
+    sorted_indices = np.argsort(
+        -arr.astype(np.float64) if np.issubdtype(arr.dtype, np.floating)
+        else ~arr if arr.dtype == np.bool_
+        else -arr.astype(np.int64) if not np.issubdtype(arr.dtype, np.unsignedinteger)
+        else -(arr.astype(np.int64) + 1),
+        axis=axis, kind='stable')
+  else:
+    sorted_indices = np.argsort(arr, axis=axis, kind='stable')
+  slc = [slice(None)] * arr.ndim
+  slc[axis] = slice(0, k)
+  indices = sorted_indices[tuple(slc)]
+  values = np.take_along_axis(arr, indices, axis=axis)
+  return values, indices
+
+
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
 
@@ -4482,6 +4503,51 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_values = getvals(arg, jnp_output)
     np_values = getvals(arg, np_output)
     self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis, k=k)
+     for shape in [(20,), (5, 8), (3, 4, 5)]
+     for axis in range(-len(shape), len(shape))
+     for k in [0, 1, 3, shape[axis]]],
+    mode=['largest', 'smallest'],
+    sorted=[True, False],
+    dtype=[np.float32, np.int32, np.uint32, np.bool_],
+  )
+  def testTopK(self, shape, dtype, axis, k, mode, sorted):
+    rng = jtu.rand_some_equal(self.rng())
+    arg = rng(shape, dtype)
+    args_maker = lambda: [arg]
+
+    jnp_fun = lambda x: jnp.top_k(x, k, axis=axis, mode=mode, sorted=sorted)
+
+    jnp_vals, jnp_indices = jnp_fun(arg)
+    ref_vals, _ = ref_top_k(arg, k, axis=axis, mode=mode, sorted=sorted)
+
+    if sorted:
+      self.assertArraysEqual(jnp_vals, ref_vals)
+    else:
+      self.assertArraysEqual(
+          jnp.sort(jnp_vals, axis=axis),
+          jnp.sort(ref_vals, axis=axis),
+      )
+
+    gathered = jnp.take_along_axis(arg, jnp_indices, axis=axis)
+    self.assertArraysEqual(gathered, jnp_vals)
+
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testTopKErrors(self):
+    x = jnp.arange(10)
+    with self.assertRaisesRegex(ValueError, "k argument to top_k must be nonnegative"):
+      jnp.top_k(x, -1)
+    with self.assertRaisesRegex(ValueError, "k argument to top_k must be no larger than size"):
+      jnp.top_k(x, 15)
+    with self.assertRaisesRegex(ValueError, "axis 5 is out of bounds"):
+      jnp.top_k(x, 2, axis=5)
+    with self.assertRaisesRegex(ValueError, "mode must be 'largest' or 'smallest'"):
+      jnp.top_k(x, 2, mode="middle")
+    with self.assertRaisesRegex(ValueError, "top_k is not compatible with complex inputs"):
+      jnp.top_k(jnp.array([1+2j, 3+4j]), 1)
 
   @jtu.sample_product(
     [dict(shifts=shifts, axis=axis)

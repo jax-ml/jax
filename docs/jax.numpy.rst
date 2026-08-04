@@ -393,6 +393,7 @@ namespace; they are listed below.
     tanh
     tensordot
     tile
+    top_k
     trace
     trapezoid
     transpose
