@@ -95,8 +95,8 @@ print_layout_p.multiple_results = True
 
 
 @print_layout_p.def_effectful_abstract_eval
-def _print_layout_abstract_eval(aval_in, fmt, *_, **params):
-  del aval_in, fmt, params  # Unused.
+def _print_layout_abstract_eval(aval_in, *_, **params):
+  del aval_in, params  # Unused.
   return (), {debugging.debug_effect}
 
 
@@ -107,8 +107,8 @@ def _print_layout_abstract_eval(aval_in, fmt, *_, **params):
 def _print_layout_lowering(
     ctx: lowering.LoweringRuleContext,
     x: mgpu.FragmentedArray | tcgen05.TMEMRef | ir.Value,
-    fmt: str,
     *transforms_leaves,
+    fmt: str,
     transforms_tree
 ):
   if transforms_tree is not None:
@@ -173,8 +173,8 @@ def print_layout(fmt: str, x: jax.typing.ArrayLike | _Ref) -> None:
     transforms_leaves, transforms_tree = [], None
   print_layout_p.bind(
       x,
-      fmt=fmt,
       *transforms_leaves,
+      fmt=fmt,
       transforms_tree=transforms_tree,
   )
 

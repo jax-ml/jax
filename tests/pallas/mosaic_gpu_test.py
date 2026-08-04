@@ -2195,6 +2195,20 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     transforms_str = f"({', '.join(str(t) for t in transforms)})"
     self.assertIn(f"smem: {transforms_str}\n", output())
 
+  def test_print_layout_dynamic_slice(self):
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((), jnp.bfloat16),
+        scratch_types=[plgpu.SMEM((128, 64), jnp.bfloat16)],
+    )
+    def kernel(idx_ref, o_ref, smem_ref):
+      del o_ref
+      idx = idx_ref[...]
+      plgpu.print_layout("smem: {}", smem_ref.at[pl.ds(idx, 64), :32])
+
+    with self.capture_stdout() as output:
+      jax.jit(kernel).lower(jnp.int32(0))
+    self.assertIn("smem: ()\n", output())
+
   @parameterized.parameters(False, True)
   def test_fp8_relayout(self, from_narrow):
     shape = (128, 32)
