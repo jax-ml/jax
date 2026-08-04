@@ -29,8 +29,8 @@ import operator
 import re
 import threading
 import types
-from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar, final,
-                    overload, Union, TYPE_CHECKING, Literal as Literal_)
+from typing import (Any, ClassVar, NamedTuple, final, overload,
+                    Union, TYPE_CHECKING, Literal as Literal_)
 import warnings
 import weakref
 
@@ -837,8 +837,6 @@ def check_avals_context_mesh(avals, prim_name):
 
 # -------------------- tracing --------------------
 
-TraceType = TypeVar('TraceType', bound='Trace')
-
 class Trace:
   __slots__ = ("__weakref__", "_invalidated", "_weakref", "requires_low")
 
@@ -965,10 +963,12 @@ if TYPE_CHECKING:
   TracerBase = Array
   TracerMeta = StrictABCMeta
 else:
-  TracerBase = object
+  class TracerBase:
+    __slots__ = ()
   TracerMeta = type
 
-class Tracer(Generic[TraceType], TracerBase, metaclass=TracerMeta):
+
+class Tracer[TraceType: Trace](TracerBase, metaclass=TracerMeta):
   __array_priority__ = 1000
   __slots__ = ['__weakref__', '_trace', '_line_info', 'aval']
   __hash__ = None
