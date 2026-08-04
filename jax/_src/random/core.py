@@ -1682,7 +1682,10 @@ def gamma(key: ArrayLike,
       shape. Must be broadcast-compatible with ``a``. The default (None)
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion for ``a`` will be seen as explicit. If
+      left unspecified, type promotions will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     method: optional, the sampling algorithm to use, either ``'exact'`` (the
       default) or ``'approximate'``. The ``'exact'`` method is a rejection
       sampler. The ``'approximate'`` method is loop-free and faster but carries
@@ -1706,6 +1709,7 @@ def gamma(key: ArrayLike,
       accuracy for small values of ``a``.
   """
   key, _ = _check_prng_key("gamma", key)
+  implicit_dtype = dtype is None
   if method not in {'exact', 'approximate'}:
     raise ValueError("method argument to `gamma` must be one of "
                      f"{{'exact', 'approximate'}}, got {method!r}")
@@ -1714,9 +1718,12 @@ def gamma(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("gamma", shape, a)
   out_sharding = canonicalize_sharding_for_samplers(out_sharding, "gamma", shape)
+  if implicit_dtype:
+    _check_all_safe_to_promote("gamma", dtype, a)
+  else:
+    _check_all_safe_to_cast("gamma", dtype, a)
   if method == 'approximate':
     return maybe_auto_axes(_gamma_approx, out_sharding,
                            shape=shape, dtype=dtype)(key, a)
@@ -1748,7 +1755,10 @@ def loggamma(key: ArrayLike,
       shape. Must be broadcast-compatible with ``a``. The default (None)
       produces a result shape equal to ``a.shape``.
     dtype: optional, a float dtype for the returned values (default float64 if
-      jax_enable_x64 is true, otherwise float32).
+      jax_enable_x64 is true, otherwise float32). If this argument is specified,
+      type promotion of ``b`` will be seen as explicit. If
+      left unspecified, type promotion will be seen as implicit, and may fail if
+      `jax_numpy_dtype_promotion='strict'`.
     method: optional, the sampling algorithm to use, either ``'exact'`` (the
       default) or ``'approximate'``. The ``'exact'`` method is a rejection
       sampler. The ``'approximate'`` method is loop-free and faster but carries
@@ -1771,6 +1781,7 @@ def loggamma(key: ArrayLike,
     gamma : standard gamma sampler.
   """
   key, _ = _check_prng_key("loggamma", key)
+  implicit_dtype = dtype is None
   if method not in {'exact', 'approximate'}:
     raise ValueError("method argument to `loggamma` must be one of "
                      f"{{'exact', 'approximate'}}, got {method!r}")
@@ -1779,9 +1790,12 @@ def loggamma(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
-  if shape is not None:
-    shape = core.canonicalize_shape(shape)
+  shape = _check_broadcast_shapes("loggamma", shape, a)
   out_sharding = canonicalize_sharding(out_sharding, "loggamma")
+  if implicit_dtype:
+    _check_all_safe_to_promote("loggamma", dtype, a)
+  else:
+    _check_all_safe_to_cast("loggamma", dtype, a)
   if method == 'approximate':
     return maybe_auto_axes(_gamma_approx, out_sharding, shape=shape,
                            dtype=dtype, log_space=True)(key, a)
@@ -1790,11 +1804,6 @@ def loggamma(key: ArrayLike,
 
 @jit(static_argnames=('shape', 'dtype', 'log_space'))
 def _gamma(key, a, shape, dtype, log_space=False) -> Array:
-  if shape is None:
-    shape = np.shape(a)
-  else:
-    _check_shape("gamma", shape, np.shape(a))
-
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
