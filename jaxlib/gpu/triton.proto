@@ -12,6 +12,9 @@ message TritonKernel {
   uint32 compute_capability = 6;
 
   reserved 7, 8, 9;
+
+  uint64 global_scratch_size = 11;
+  uint64 global_scratch_align = 12;
 }
 
 message TritonKernelCall {
