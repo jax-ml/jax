@@ -259,6 +259,7 @@ from jax._src.numpy.sorting import (
     partition as partition,
     sort as sort,
     sort_complex as sort_complex,
+    top_k as top_k,
 )
 
 from jax._src.numpy.tensor_contractions import (
