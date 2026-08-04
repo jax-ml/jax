@@ -6495,6 +6495,17 @@ class NumpyGradTests(jtu.JaxTestCase):
     check_grads(lambda x: jnp.ldexp(x, n), (x,), 1)
 
   @jtu.sample_product(
+    dtype=[jnp.float32, jnp.float64],
+  )
+  def testGradLdexpAtZero(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/37992
+    # ldexp(x, n) = x * 2^n, so d/dx = 2^n at all x including x=0.
+    n = jnp.arange(5)
+    jac_at_zero = jax.jacobian(lambda x: jnp.ldexp(x, n))(dtype(0.0))
+    expected = (2 ** n).astype(dtype)
+    self.assertAllClose(jac_at_zero, expected)
+
+  @jtu.sample_product(
     n=range(-4, 5),
     dtype=[jnp.float32, jnp.float64],
   )

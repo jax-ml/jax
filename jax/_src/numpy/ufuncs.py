@@ -3008,8 +3008,12 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
       or dtypes.issubdtype(x2_dtype, np.inexact)):
     raise ValueError(f"ldexp not supported for input types {(x1_dtype, x2_dtype)}")
   x1, = promote_args_inexact("ldexp", x1)
-  x2 = lax.convert_element_type(x2, x1.dtype)
+  return _ldexp_impl(x1, x2)
 
+
+@custom_jvp
+def _ldexp_impl(x1, x2):
+  x2 = lax.convert_element_type(x2, x1.dtype)
   # Split off the exponent to avoid overflow for small x1 and large x2.
   m, e = frexp(x1)
   e = (e.astype(x2.dtype) + x2).astype(x1.dtype)
@@ -3020,6 +3024,18 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
   x = m * (2 ** e.astype(m.dtype))
   return _where(isinf(x1) | (x1 == 0), x1, x)
+
+
+@_ldexp_impl.defjvp
+def _ldexp_impl_jvp(primals, tangents):
+  x1, x2 = primals
+  g1, g2 = tangents
+  assert g2.dtype == dtypes.float0, "x2 must be integer-typed"
+  # ldexp(x1, x2) = x1 * 2^x2, so d/dx1 = 2^x2.
+  # We compute the tangent by scaling g1 through ldexp itself.
+  primal_out = _ldexp_impl(x1, x2)
+  tangent_out = _ldexp_impl(g1, x2)
+  return primal_out, tangent_out
 
 
 @export
