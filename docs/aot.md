@@ -249,3 +249,39 @@ platform, and runtime. This makes for two important caveats:
    remain the same on the following day.
 
 When in doubt, see the package API documentation for {mod}`jax.stages`.
+
+## Tracing, lowering and compiling with an abstract device
+
+In some situations we can perform _ahead-of-time_ compilation without having a physical target device. In this case we can define {class}`jax.sharding.AbstractDevice`, an abstract array to trace and lower a jitted function under {class}`jax.sharding.use_abstract_mesh`:
+
+```python
+import jax
+import jax.numpy as jnp
+from jax.sharding import AxisType, NamedSharding
+
+
+abstract_device = jax.sharding.AbstractDevice('A100', 1, 'cuda')
+abstract_mesh = jax.sharding.AbstractMesh(
+    (1,),
+    ('x',),
+    (AxisType.Explicit,),
+    abstract_device=abstract_device,
+)
+
+@jax.jit
+def f(x):
+    return x * 10
+
+
+with jax.sharding.use_abstract_mesh(abstract_mesh):
+    abstract_arr = jax.ShapeDtypeStruct((4, 8), jnp.float32)
+    traced = f.trace(abstract_arr)
+    lowered = traced.lower()
+```
+
+Finally, we can compile on the real device:
+```python
+compiled = lowered.compile(device_assignment=tuple(jax.devices()))
+output = compiled(jnp.ones((4, 8)))
+print(output.shape)
+```
