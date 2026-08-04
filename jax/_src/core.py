@@ -818,7 +818,10 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 def check_avals_context_mesh(avals, prim_name):
   cur_mesh = mesh_lib.get_abstract_mesh()
   for a in avals:
-    # TODO(yashkatariya): Should be cur_mesh.unset
+    if not isinstance(a.memory_space, MemorySpace):
+      raise TypeError(
+          f"Primitive {prim_name} got aval {a} with unknown memory_space type:"
+          f" {type(a.memory_space)}")
     if cur_mesh.empty or a.sharding.mesh.empty:
       continue
     # avals can have meshes with different axis_names so allow that in
@@ -831,10 +834,6 @@ def check_avals_context_mesh(avals, prim_name):
           f" the aval mesh {a.sharding.mesh} for shape {a.str_short()}. This"
           " error occurs at source: "
           f" {source_info_util.summarize(source_info_util.current())}")
-    if not isinstance(a.memory_space, MemorySpace):
-      raise TypeError(
-          f"Primitive {prim_name} got aval {a} with unknown memory_space type:"
-          f" {type(a.memory_space)}")
 
 # -------------------- tracing --------------------
 
