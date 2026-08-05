@@ -971,6 +971,54 @@ def _declare_runtime_functions():
   )
 
 
+def lower_mgpu_module(
+    module: ir.Module,
+    launch_ctx: launch_context.LaunchContext,
+    lowering_semantics: LoweringSemantics,
+    *,
+    auto_barriers: bool = True,
+) -> None:
+  if lowering_semantics == LoweringSemantics.Warpgroup:
+    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
+    if hasattr(dialect, "get_or_set_dump_options"):
+      dump_options = dialect.get_or_set_dump_options(module)
+    else:
+      dump_options = None
+
+    # We need to run a pass that removes dead-code for which layout inference
+    # does not work.
+    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
+    pm.run(module.operation)
+
+    # Run Python lowering passes. The remaining passes will be run in C++ in
+    # jax/jaxlib/mosaic/gpu/custom_call.cc
+    if dump_options is not None and dump_options.mlir_passes:
+      utils.dump_to_file_or_stdout(
+          str(module),
+          f"{dump_options.module_basename}.before_layout_inference.txt",
+          dump_options.dump_path
+      )
+
+    layout_inference.infer_layout(module, arch=_infer_arch())
+
+    if dump_options is not None and dump_options.mlir_passes:
+      utils.dump_to_file_or_stdout(
+          str(module),
+          f"{dump_options.module_basename}.after_layout_inference.txt",
+          dump_options.dump_path
+      )
+
+    dialect_lowering.lower_mgpu_dialect(
+        module, launch_ctx, auto_barriers=auto_barriers
+    )
+
+  launch_ctx.scratch.finalize_size()
+  try:
+    module.operation.verify()
+  except ir.MLIRError as e:
+    raise error.mlir_error_to_verification_error(e) from e
+
+
 def _kernel_to_module(
     body,
     grid: tuple[int, int, int],
@@ -1009,43 +1057,7 @@ def _kernel_to_module(
       )
   )
 
-  if thread_semantics == LoweringSemantics.Warpgroup:
-    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
-    if hasattr(dialect, "get_or_set_dump_options"):
-      dump_options = dialect.get_or_set_dump_options(module)
-    else:
-      dump_options = None
-
-    # We need to run a pass that removes dead-code for which layout inference
-    # does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
-    pm.run(module.operation)
-
-    # Run Python lowering passes. The remaining passes will be run in C++ in
-    # jax/jaxlib/mosaic/gpu/custom_call.cc
-    if dump_options is not None and dump_options.mlir_passes:
-      utils.dump_to_file_or_stdout(
-          str(module),
-          f"{dump_options.module_basename}.before_layout_inference.txt",
-          dump_options.dump_path
-      )
-
-    layout_inference.infer_layout(module, arch=_infer_arch())
-
-    if dump_options is not None and dump_options.mlir_passes:
-      utils.dump_to_file_or_stdout(
-          str(module),
-          f"{dump_options.module_basename}.after_layout_inference.txt",
-          dump_options.dump_path
-      )
-
-    dialect_lowering.lower_mgpu_dialect(module, launch_ctx)
-
-  launch_ctx.scratch.finalize_size()
-  try:
-    module.operation.verify()
-  except ir.MLIRError as e:
-    raise error.mlir_error_to_verification_error(e) from e
+  lower_mgpu_module(module, launch_ctx, thread_semantics)
 
   return (
       module,

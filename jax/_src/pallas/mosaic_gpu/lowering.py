@@ -1147,40 +1147,12 @@ def lower_jaxpr_to_module(
       uses_pdl=uses_pdl,
   )
 
-  # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
-  if hasattr(mgpu.dialect, "get_or_set_dump_options"):
-    dump_options = mgpu.dialect.get_or_set_dump_options(module)
-  else:
-    dump_options = None
-
-  if lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
-    # We need to run a pass that removes dead-code for which layout inference
-    # does not work.
-    pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
-    pm.run(module.operation)
-
-    # Run Python lowering passes. The remaining passes will be run in C++ in
-    # jax/jaxlib/mosaic/gpu/custom_call.cc
-    if dump_options is not None and dump_options.mlir_passes:
-      mgpu_utils.dump_to_file_or_stdout(
-          str(module),
-          f"{dump_options.module_basename}.before_layout_inference.txt",
-          dump_options.dump_path
-      )
-
-    mgpu.infer_layout(module, arch=mgpu_core._infer_arch())
-
-    if dump_options is not None and dump_options.mlir_passes:
-      mgpu_utils.dump_to_file_or_stdout(
-          str(module),
-          f"{dump_options.module_basename}.after_layout_inference.txt",
-          dump_options.dump_path
-      )
-    mgpu.lower_mgpu_dialect(
-        module, launch_ctx, auto_barriers=not params.unsafe_no_auto_barriers
-    )
-
-  launch_ctx.scratch.finalize_size()
+  mgpu_core.lower_mgpu_module(
+      module,
+      launch_ctx,
+      lowering_semantics,
+      auto_barriers=not params.unsafe_no_auto_barriers,
+  )
 
   return LoweringResult(
       module, cuda_grid, block, new_out_shapes, prof_spec,
