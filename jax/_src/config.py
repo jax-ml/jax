@@ -23,7 +23,7 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast
+from typing import Any, NoReturn, Optional, Protocol, TypeVar, cast
 from typing import TYPE_CHECKING
 
 from jax._src import logging_config
@@ -37,8 +37,6 @@ config_ext = _jax.config
 logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
-_ET = TypeVar('_ET', bound=enum.Enum)
-_F = TypeVar('_F', bound=Callable[..., Any])
 
 
 def bool_env(varname: str, default: bool) -> bool:
@@ -66,7 +64,7 @@ def int_env(varname: str, default: int) -> int:
   return int(os.getenv(varname, str(default)))
 
 
-class ValueHolder(Protocol[_T]):
+class ValueHolder[ValueType](Protocol):
   """A holder for a configuration value.
 
   There are two kinds of value holders: ``Flag``, which is assigned exactly
@@ -74,9 +72,9 @@ class ValueHolder(Protocol[_T]):
   within a thread via a context manager.
   """
 
-  value: _T
+  value: ValueType
 
-  def _set(self, value: _T) -> None: ...
+  def _set(self, value: ValueType) -> None: ...
 
 
 class Config:
@@ -288,7 +286,7 @@ class State(config_ext.Config[_T]):
     update_global_hook(self.get_global())
 
 
-class StateContextManager:
+class StateContextManager[FuncType: Callable[..., Any]]:
   __slots__ = ['state', 'new_val', 'prev']
 
   def __init__(self, state, new_val):
@@ -321,12 +319,12 @@ class StateContextManager:
       else:
         self.state._update_thread_local_hook(cast(Optional[Any], self.prev))
 
-  def __call__(self, func: _F) -> _F:
+  def __call__(self, func: FuncType) -> FuncType:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with StateContextManager(self.state, self.new_val):
         return func(*args, **kwargs)
-    return cast(_F, wrapper)
+    return cast(FuncType, wrapper)
 
 
 UPGRADE_BOOL_HELP = (
@@ -596,18 +594,18 @@ def optional_enum_state(
   return s
 
 
-def enum_class_state(
+def enum_class_state[EnumType: enum.Enum](
     name: str,
-    enum_class: type[_ET],
-    default: _ET,
+    enum_class: type[EnumType],
+    default: EnumType,
     help: str,
     *,
-    update_global_hook: Callable[[_ET], None] | None = None,
-    update_thread_local_hook: Callable[[_ET | None], None] | None = None,
+    update_global_hook: Callable[[EnumType], None] | None = None,
+    update_thread_local_hook: Callable[[EnumType | None], None] | None = None,
     include_in_jit_key: bool = False,
     include_in_trace_context: bool = False,
-    extra_validator: Callable[[_ET], None] | None = None,
-) -> State[_ET]:
+    extra_validator: Callable[[EnumType], None] | None = None,
+) -> State[EnumType]:
   """Set up thread-local state and return a contextmanager for managing it.
 
   See docstring for ``bool_state``.
@@ -656,7 +654,7 @@ def enum_class_state(
       extra_validator(new_val)
     return new_val
 
-  s = State[_ET](
+  s = State[EnumType](
       name,
       default,
       help,
@@ -922,15 +920,15 @@ def string_or_object_state(
   return s
 
 
-class Flag(Generic[_T]):
+class Flag[ValueType]:
 
   __slots__ = ("_name", "value", "_update_hook")
 
   _name: str
-  value: _T
+  value: ValueType
   _update_hook: Callable[[Any], None] | None
 
-  def __init__(self, name: str, default: _T,
+  def __init__(self, name: str, default: ValueType,
                update_hook: Callable[[Any], None] | None = None):
     self._name = name
     self._update_hook = update_hook
@@ -942,7 +940,7 @@ class Flag(Generic[_T]):
         "(did you mean to use '{0}.value' instead?)".format(
             type(self).__name__))
 
-  def _set(self, value: _T) -> None:
+  def _set(self, value: ValueType) -> None:
     self.value = value
     if self._update_hook is not None:
       self._update_hook(value)
