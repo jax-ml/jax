@@ -43,6 +43,7 @@ namespace {
 
 using ::absl_testing::IsOk;
 using ::testing::_;
+using ::testing::HasSubstr;
 
 absl::Status ExecuteSync(xla::PjRtLoadedExecutable* executable) {
   std::vector<xla::PjRtBuffer*> no_buffers;
@@ -246,15 +247,17 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
   absl::SetVLogLevel("custom_call", 5);
 
   std::unique_ptr<xla::PjRtLoadedExecutable> executable;
-  ASSERT_OK_AND_ASSIGN(executable, client->CompileAndLoad(
-                                        xla::XlaComputation(module->ToProto()),
-                                        /*options=*/{}));
+  ASSERT_OK_AND_ASSIGN(
+      executable, client->CompileAndLoad(xla::XlaComputation(module->ToProto()),
+                                         /*options=*/{}));
 
   {
     absl::ScopedMockLog log;
     EXPECT_CALL(
-        log, Log(absl::LogSeverity::kInfo, _,
-                 "Allocating device memory for Mosaic GPU collective metadata"))
+        log,
+        Log(absl::LogSeverity::kInfo, _,
+            HasSubstr(
+                "Allocating device memory for Mosaic GPU collective metadata")))
         .Times(1);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());
@@ -265,8 +268,10 @@ TEST_F(CustomCallTest, MetadataAllocationNotCalledAfterWarmup) {
     // skipped.
     absl::ScopedMockLog log;
     EXPECT_CALL(
-        log, Log(absl::LogSeverity::kInfo, _,
-                 "Allocating device memory for Mosaic GPU collective metadata"))
+        log,
+        Log(absl::LogSeverity::kInfo, _,
+            HasSubstr(
+                "Allocating device memory for Mosaic GPU collective metadata")))
         .Times(0);
     log.StartCapturingLogs();
     EXPECT_THAT(ExecuteSync(executable.get()), IsOk());

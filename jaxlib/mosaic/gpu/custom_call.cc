@@ -157,7 +157,7 @@ limitations under the License.
 #include "xla/service/llvm_ir/llvm_command_line_options.h"
 #include "xla/stream_executor/cuda/compilation_provider.h"
 #include "xla/stream_executor/cuda/cuda_compute_capability.h"
-#include "xla/stream_executor/device_address_handle.h"
+#include "xla/stream_executor/device_address_allocator.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/gpu/collective_kernel_metadata.h"
 #include "xla/util.h"
@@ -975,7 +975,7 @@ struct DeviceState {
 
   // The RAII handle of the buffer on the device which stores the structure
   // above.
-  se::DeviceAddressHandle metadata_handle;
+  se::ScopedDeviceAddress<uint8_t> metadata_handle;
 
   // Pointer (CUmodule + CUfunction) to the kernel loaded on the GPU.
   std::shared_ptr<KernelHandle> kernel_handle;
@@ -1264,7 +1264,6 @@ void* SubtractOffset(void* ptrs, int64_t offset) {
   return reinterpret_cast<void*>(reinterpret_cast<uint64_t>(ptrs) - offset);
 }
 
-
 DeviceState& GetDeviceState(
     CustomCallResources* resources,
     const xla::gpu::CollectiveParams* collective_params) {
@@ -1281,6 +1280,7 @@ absl::Status MosaicGpuPrepare(
     xla::gpu::CollectiveMemoryRequests* absl_nullable
         collective_memory_requests,
     xla::gpu::CollectiveCliqueRequests* absl_nullable clique_requests,
+    se::DeviceAddressAllocator* absl_nullable allocator,
     CustomCallResources* resources, ffi::RemainingArgs inputs,
     ffi::RemainingRets results, xla::ffi::Dictionary attributes) {
   int device_ordinal = collective_params->global_device_id.value();
@@ -1306,10 +1306,10 @@ absl::Status MosaicGpuPrepare(
       << "MosaicGpuPrepare uses collective metadata";
 
   if (collective_params == nullptr || clique_requests == nullptr ||
-      collective_memory_requests == nullptr) {
+      collective_memory_requests == nullptr || allocator == nullptr) {
     return absl::InternalError(
-        "collective_params, clique_requests, and collective_memory_requests "
-        "must not be null in MosaicGpuPrepare");
+        "collective_params, clique_requests, collective_memory_requests, and "
+        "allocator must not be null in MosaicGpuPrepare");
   }
 
   ASSIGN_OR_RETURN(std::vector<ffi::AnyBuffer> buffers,
@@ -1339,11 +1339,13 @@ absl::Status MosaicGpuPrepare(
 
   const size_t metadata_size =
       GetCollectiveMetadataSize(buffers.size(), clique_key.num_devices());
-  if (device_state.metadata_handle.address().is_null()) {
-    VLOG(5) << "Allocating device memory for Mosaic GPU collective metadata";
-    device_state.metadata_handle = se::DeviceAddressHandle{
-        collective_params->executor,
-        collective_params->executor->Allocate(metadata_size)};
+  if (device_state.metadata_handle.is_null()) {
+    XLA_VLOG_DEVICE(5, device_ordinal)
+        << "Allocating device memory for Mosaic GPU collective metadata";
+    ASSIGN_OR_RETURN(
+        device_state.metadata_handle,
+        allocator->Allocate(collective_params->executor->device_ordinal(),
+                            metadata_size));
   }
 
   XLA_VLOG_DEVICE(5, device_ordinal)
@@ -1519,8 +1521,7 @@ absl::Status MosaicGpuInitialize(
               parameter_multimem_addresses.data(),
               param_to_multimem_addresses_size_bytes);
   // Copy metadata to the device.
-  se::DeviceAddressBase metadata_address =
-      device_state.metadata_handle.address();
+  se::DeviceAddressBase metadata_address = device_state.metadata_handle.cref();
   RETURN_IF_ERROR(stream->Memcpy(&metadata_address,
                                  device_state.metadata_bytes.data(),
                                  device_state.metadata_bytes.size()));
@@ -1564,7 +1565,7 @@ absl::Status MosaicGpuExecute(
         clique_key.rank(collective_params->global_device_id).value();
 
     se::DeviceAddressBase metadata_address =
-        device_state.metadata_handle.address();
+        device_state.metadata_handle.cref();
     XLA_VLOG_DEVICE(6, device_ordinal)
         << "Executing collective with metadata address: "
         << metadata_address.opaque() << " clique_key: " << clique_key;
@@ -1617,6 +1618,7 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuPrepare, MosaicGpuPrepare,
                            .Ctx<ffi::CollectiveParams>()
                            .Ctx<ffi::CollectiveMemoryRequests>()
                            .Ctx<ffi::CollectiveCliqueRequests>()
+                           .Ctx<ffi::Allocator>()
                            .Ctx<xla::ffi::State<CustomCallResources>>()
                            .RemainingArgs()
                            .RemainingRets()
