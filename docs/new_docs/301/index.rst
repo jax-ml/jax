@@ -1,6 +1,8 @@
 :orphan:
 :nosearch:
 
+.. _jax-301:
+
 JAX 301: advanced autodiff and extending JAX
 ============================================
 

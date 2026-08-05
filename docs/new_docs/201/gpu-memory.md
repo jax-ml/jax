@@ -72,7 +72,7 @@ enabled or disabled by setting
 Enabling or disabling it produces different trade-offs between compute and
 memory; the algorithm is basic, and you can often get a better trade-off
 by disabling the pass and rematerializing manually with
-[the `jax.remat` API](https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html).
+the `jax.remat` API (see {ref}`jax-301-remat`).
 
 ## Experimental allocator features
 

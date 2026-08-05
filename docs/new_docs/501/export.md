@@ -67,7 +67,7 @@ Serialization is broken down into two stages:
      `Exported` objects from TensorFlow, and to use `Exported` objects from
      TensorFlow and PyTorch.
    2. the actual serialization to a byte array using the flatbuffers format.
-     See {ref}`jax2tf` for
+     See [jax2tf](https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md) for
      an alternative serialization to TensorFlow graph that can be used
      for interoperation with TensorFlow.
 
@@ -233,7 +233,7 @@ ValueError: Cannot serialize code with custom calls whose targets have no compat
 
 ```
 
-See {ref}`export_ensuring_compat` for developer information regarding
+See {ref}`jax-501-export-ensuring-compat` for developer information regarding
 ensuring compatibility.
 
 ## Cross-platform and multi-platform export
@@ -718,7 +718,7 @@ total 32
 -rw-rw-r--@ 1 necula  wheel  2333 Jun 19 11:04 jax_ir3_jit_my_fun_export.mlir
 ```
 
-Set [`JAX_DEBUG_LOG_MODULES=jax._src.export`](https://docs.jax.dev/en/latest/config_options.html#jax_debug_log_modules) to enable extra debugging logging.
+Set `JAX_DEBUG_LOG_MODULES=jax._src.export` to enable extra debugging logging.
 
 (jax-501-export-ensuring-compat)=
 ### Ensuring forward and backward compatibility

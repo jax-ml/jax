@@ -24,7 +24,7 @@ There are two ways to define differentiation rules in JAX:
 1. using [`jax.custom_jvp`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html) and [`jax.custom_vjp`](https://docs.jax.dev/en/latest/_autosummary/jax.custom_vjp.html) to define custom differentiation rules for Python functions that are already JAX-transformable; and
 2. defining new `core.Primitive` instances along with all their transformation rules, for example to call into functions from other systems like solvers, simulators, or general numerical computing systems.
 
-This notebook is about #1. To read instead about #2, see the [notebook on adding primitives](https://docs.jax.dev/en/latest/notebooks/How_JAX_primitives_work.html).
+This notebook is about #1. To read instead about #2, see {doc}`custom-derivatives` and {doc}`hijax-types`.
 
 Hijax primitives (see {doc}`custom-derivatives`) unify these two approaches, and are the recommended path going forward: a hijax primitive carries a JAX-traceable Python implementation along with custom rules for differentiation and other transformations. The APIs here remain fully supported, and are often the most convenient for simple cases.
 
@@ -648,7 +648,7 @@ can carry rules for both modes at once.
 
 ### Working with `list` / `tuple` / `dict` containers (and other pytrees)
 
-You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any [pytrees](https://docs.jax.dev/en/latest/pytrees.html) are permissible, so long as their structures are consistent according to the type constraints. 
+You should expect standard Python containers like lists, tuples, namedtuples, and dicts to just work, along with nested versions of those. In general, any {ref}`pytrees <jax-101-pytrees>` are permissible, so long as their structures are consistent according to the type constraints. 
 
 Here's a contrived example with `jax.custom_jvp`:
 

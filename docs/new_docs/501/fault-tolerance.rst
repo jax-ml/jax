@@ -310,7 +310,7 @@ processes to execute A while others execute B.
     process raises an exception because it runs out of memory, this exception
     will not be propagated to the other processes.
 
-Recall that JAX uses `asynchronous dispatch`_. Operations like ``jnp.sum`` do
+Recall that JAX uses :ref:`asynchronous dispatch <jax-201-async-dispatch>`. Operations like ``jnp.sum`` do
 not block until the operation is complete. Instead, they return ``jax.Arrays``
 that act as futures. This asynchrony can interact with ``live_devices`` in
 unexpected ways. For example, consider the following code that performs a
@@ -1526,8 +1526,6 @@ with the failed incarnation id in its cache key.
 
 .. _NCCL: https://developer.nvidia.com/nccl
 .. _Pathways: https://docs.cloud.google.com/ai-hypercomputer/docs/workloads/pathways-on-cloud/pathways-intro
-.. _asynchronous dispatch: https://docs.jax.dev/en/latest/async_dispatch.html
 .. _linearizability: https://cs.brown.edu/~mph/HerlihyW90/p463-herlihy.pdf
 .. _many things in distributed systems: https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing
-.. _reference: https://docs.jax.dev/en/latest/config_options.html#jax_enable_recoverability
 .. _share fate: https://en.wikipedia.org/wiki/Fate-sharing

@@ -27,11 +27,10 @@ nosearch: true
 <!--* freshness: { reviewed: '2026-07-09' } *-->
 
 JAX's basic data type is the array, {class}`jax.Array`, and its basic API for
-working with arrays is {mod}`jax.numpy`, which closely mirrors NumPy. Almost
-anything that can be done with `numpy` can be done with `jax.numpy`. This page
-covers what carries over from NumPy unchanged, and the handful of differences
-that matter from day one: immutability, default dtypes, and a few indexing
-behaviors.
+working with arrays is {mod}`jax.numpy`, which closely mirrors NumPy.
+This page covers what carries over from NumPy unchanged, and the handful of
+differences that matter from day one: immutability, default dtypes, and a few
+indexing behaviors.
 
 ## From NumPy to JAX
 
@@ -75,16 +74,16 @@ print(jax.typeof(x))
 
 This compact notation appears all over JAX, and we'll meet it again when we
 look at how JAX records whole programs. JAX types can also carry more than
-shape and dtype — notably *sharding*, describing how an array is laid out
-across devices, covered in the performance and scaling docs — but shape and
-dtype are the heart of it.
+shape and dtype (notably *sharding*, describing how an array is laid out across
+devices). But when you think "JAX type" you can often think "shape and dtype".
 
 JAX arrays and NumPy arrays can often be used interchangeably: `jax.numpy`
 functions accept NumPy arrays, and most NumPy functions accept JAX arrays
 (thanks to Python's duck typing). It's common to use `np` for data loading and
-lightweight host-side manipulation and `jnp` for the computation you care
-about. As we'll see in {ref}`jax-101-transformations`, keeping both imports
-around is also a useful convention when working with JAX's transformations.
+lightweight host-side manipulation and `jnp` for number crunching on
+accelerators.
+
+But there are some important differences.
 
 ## JAX arrays are immutable
 
@@ -123,12 +122,15 @@ print(x.at[3].add(100))
 print(x.at[:3].max(5))
 ```
 
-Writing updates functionally may feel wasteful — it looks like every update
-copies the whole array. Outside of compiled code that's accurate, but inside
-{func}`jax.jit`-compiled functions the compiler can usually perform these
-updates in place. And when you genuinely want mutable arrays — for data
-plumbing, or for explicit control over memory — JAX has a first-class answer
-in refs, covered in {ref}`jax-101-refs`.
+Writing updates functionally may look wasteful, as if every update copies the
+whole array. Outside of compiled code that's accurate, but inside
+{func}`jax.jit`-compiled functions, covered in {ref}`jax-201-jit`, the
+compiler can usually perform these updates in place. Other optimizations are possible too: for example,
+intermediates might not be materialized at all. In general, functional code is
+amenable to transformation, optimization, and parallelization.
+
+For when mutable arrays are really necessary, JAX provides a distinct array
+reference type, covered in {ref}`jax-101-refs`.
 
 ## Default dtypes and precision
 
@@ -142,26 +144,20 @@ print(jnp.array([1.0, 2.0]).dtype)
 
 In fact, by default JAX disables 64-bit dtypes altogether: requesting
 `float64` produces a `float32` array (with a warning). If you need 64-bit
-precision — say, for numerical work where the extra bits matter — enable it at
-startup:
+precision, you can enable it with a config option:
 
 ```python
 import jax
 jax.config.update("jax_enable_x64", True)
 ```
 
-For the full story, including how to control default dtypes more finely, see
-{doc}`/default_dtypes`.
-
 When operations mix dtypes, JAX applies type promotion rules that are similar
-to NumPy's but not identical — in particular they're designed to avoid
+to NumPy's but not identical. In particular they're designed to avoid
 accidentally promoting everything to 64-bit:
 
 ```{code-cell}
 (jnp.arange(3) + 1.5).dtype
 ```
-
-See {doc}`/type_promotion` for the precise promotion semantics.
 
 ## Indexing differences
 
@@ -206,8 +202,8 @@ jnp.sum(jnp.array([1, 2, 3]))
 
 ## Arrays live on devices
 
-A JAX array's data lives on one or more *devices* — CPU, GPU, or TPU. The same
-JAX code runs on all of them; JAX places arrays on the default device
+A JAX array's data lives on one or more *devices*, like CPU, GPU, or TPU. The
+same JAX code runs on all of them; JAX places arrays on the default device
 (typically your accelerator, if you have one) and computations follow their
 data. An array can even be *sharded* across many devices, so that JAX programs
 can be written once and run on one chip or thousands. Every array carries a
@@ -217,9 +213,9 @@ can be written once and run on one chip or thousands. Every array carries a
 x.sharding
 ```
 
-On a single-device machine this isn't very interesting, but it's the
-foundation of JAX's approach to parallelism and scaling. That story is told in
-the performance and scaling docs; see {ref}`jax-201-sharding`.
+On a single-device machine this isn't very interesting, but it's the foundation
+of JAX's approach to parallelism and scaling. That story is told in the
+performance and scaling docs; see {ref}`jax-201-sharding`.
 
 ## Under the hood: `jax.numpy`, `jax.lax`, and XLA
 
@@ -237,13 +233,12 @@ def sin(x):
   return lax.sin(x)
 ```
 
-The `jax.numpy` layer's job is NumPy-style argument handling — accepting
-built-in Python numbers, promoting dtypes — while the computation itself
-belongs to `jax.lax`. The `jax.lax` operations in turn
-correspond closely to [XLA HLO operations](https://openxla.org/xla/operation_semantics),
-the vocabulary of [XLA](https://www.openxla.org/xla/), the compiler that
-ultimately runs JAX computations: `lax.sin` maps essentially one-to-one onto
-XLA's `Sin`.
+The `jax.numpy` layer's job is NumPy-style argument handling (accepting
+built-in Python numbers, promoting dtypes) while the computation itself belongs
+to `jax.lax`. The `jax.lax` operations in turn correspond closely to [XLA HLO
+operations](https://openxla.org/xla/operation_semantics), the vocabulary of
+[XLA](https://www.openxla.org/xla/), the compiler that ultimately runs JAX
+computations: `lax.sin` maps essentially one-to-one onto XLA's `Sin`.
 
 Being closer to the compiler, `jax.lax` skips the conveniences. For example,
 where `jax.numpy` implicitly promotes mixed types:
@@ -263,12 +258,12 @@ lax.add(1, 1.0)
 
 In exchange for the strictness, `jax.lax` exposes operations that are more
 general than NumPy's, like arbitrarily strided and dilated convolutions, and
-structured control flow. You can write a lot of JAX without touching
-`jax.lax`, but it's useful to know it's there: when you can't find a
-`jax.numpy` function for something, check {mod}`jax.lax`.
+structured control flow. You can write a lot of JAX without touching `jax.lax`,
+but it's useful to know it's there: when you can't find a `jax.numpy` function
+for something, check {mod}`jax.lax`.
 
 ## Next steps
 
-Arrays and `jax.numpy` are the vocabulary of JAX programs. The verbs — the
-things JAX can *do* with functions on arrays that NumPy can't — are the
-subject of the next page, {ref}`jax-101-transformations`.
+Arrays and `jax.numpy` are how you express numerical computation. But JAX is
+also a system for *transforming* computations, covered next in
+{ref}`jax-101-transformations`.
