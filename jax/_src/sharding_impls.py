@@ -767,7 +767,8 @@ def make_key_array_phys_sharding(aval, sharding):
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
-    return sharding.update(spec=PartitionSpec(*sharding.spec, *trailing_spec))
+    out_partitions = (*sharding.spec.partitions, *trailing_spec)
+    return sharding.update(spec=sharding.spec.update(partitions=out_partitions))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
