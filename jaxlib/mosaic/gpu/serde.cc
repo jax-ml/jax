@@ -21,6 +21,7 @@ limitations under the License.
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
@@ -43,7 +44,9 @@ constexpr llvm::StringRef kMangledDialect = "stable_mosaic_gpu.";
 constexpr llvm::StringRef kVersionAttrName = "stable_mosaic_gpu.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in Mosaic GPU lowering in a month!
-constexpr int kVersion = 6;
+// TODO(bchetioui): Update the forward-compatible version to 7 in Mosaic GPU
+// lowering after 2026-08-31.
+constexpr int kVersion = 7;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -202,6 +205,51 @@ LogicalResult nvvm_mbarrier_arrive_expect_tx_shared_upgrade(Operation* op,
   return success();
 }
 
+LogicalResult gpu_launch_upgrade(Operation* op, int version, bool& erased) {
+  // https://github.com/llvm/llvm-project/commit/056dae16f7d219f0dc943828dccd6cc3773d2674
+  if (version < 7) {
+    auto sizes_attr =
+        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
+    if (!sizes_attr) {
+      return op->emitOpError(
+          "Missing or invalid operandSegmentSizes attribute");
+    }
+    if (sizes_attr.getSize() != 11) {
+      return op->emitOpError("operandSegmentSizes attribute has wrong size");
+    }
+
+    auto new_sizes = sizes_attr.asArrayRef().vec();
+    new_sizes.push_back(0);
+    op->setAttr("operandSegmentSizes",
+                mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
+  }
+  return success();
+}
+
+LogicalResult gpu_launch_downgrade(Operation* op, int version, bool& erased) {
+  // https://github.com/llvm/llvm-project/commit/056dae16f7d219f0dc943828dccd6cc3773d2674
+  if (version < 7) {
+    auto sizes_attr =
+        op->getAttrOfType<mlir::DenseI32ArrayAttr>("operandSegmentSizes");
+    if (!sizes_attr) {
+      return op->emitOpError(
+          "Missing or invalid operandSegmentSizes attribute");
+    }
+
+    if (sizes_attr.getSize() != 12) {
+      return op->emitOpError("operandSegmentSizes attribute has wrong size");
+    }
+    auto new_sizes = sizes_attr.asArrayRef().vec();
+    if (new_sizes.back() != 0) {
+      return op->emitOpError("Can't downgrade: asyncObject operand is present");
+    }
+    new_sizes.pop_back();
+    op->setAttr("operandSegmentSizes",
+                mlir::DenseI32ArrayAttr::get(op->getContext(), new_sizes));
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("vector.extractelement"),
@@ -217,6 +265,7 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
        nvvm_mbarrier_try_wait_parity_shared_upgrade},
       {::llvm::StringLiteral("nvvm.mbarrier.arrive.expect_tx.shared"),
        nvvm_mbarrier_arrive_expect_tx_shared_upgrade},
+      {::llvm::StringLiteral("gpu.launch"), gpu_launch_upgrade},
   };
   return *rules;
 }
@@ -224,7 +273,9 @@ const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
 const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {::llvm::StringLiteral("nvvm.cp.async.bulk.tensor.global.shared.cta"),
-       nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade}};
+       nvvm_cp_async_bulk_tensor_global_shared_cta_downgrade},
+      {::llvm::StringLiteral("gpu.launch"), gpu_launch_downgrade},
+  };
   return *rules;
 }
 
