@@ -3334,25 +3334,47 @@ def _reduce_index_helper(
     ctx: LoweringRuleContext, x, axes, index_dtype, reduction_kind):
   (x_aval,) = ctx.avals_in
   (out_aval,) = ctx.avals_out
-  if x_aval.dtype != jnp.float32:
-    raise NotImplementedError("Only float32 is supported")
+  if (x_aval.dtype, index_dtype) not in (
+      (jnp.float32, jnp.int32),
+      (jnp.bfloat16, jnp.int16),
+      (jnp.bfloat16, jnp.int32),
+  ):
+    raise NotImplementedError(
+        f"Unsupported combination of input dtype ({x_aval.dtype}) and"
+        f" index_dtype ({index_dtype}) for reduce_index"
+    )
   if len(axes) != 1:
     raise NotImplementedError("Only single axis reduction supported")
-  if index_dtype != jnp.int32:
-    raise NotImplementedError("Only index_dtype=int32 is supported")
 
   axis = axes[0]
   # TODO(b/460843515): Support 1D inputs in Mosaic.
   is_1d = len(x_aval.shape) == 1
   if is_1d:
-    x_2d_aval = jax_core.ShapedArray((1, *x_aval.shape), x_aval.dtype)
-    x_2d_type = ctx.aval_to_ir_type(x_2d_aval)
-    out_aval = jax_core.ShapedArray((1, *out_aval.shape), out_aval.dtype)
-    x = vector.shape_cast(x_2d_type, x)
+    x = vector.shape_cast(
+        ctx.aval_to_ir_type(
+            jax_core.ShapedArray((1, *x_aval.shape), x_aval.dtype)
+        ),
+        x,
+    )
     axis += 1
+    out_shape = (1, *out_aval.shape)
+  else:
+    out_shape = out_aval.shape
 
-  out_type = ctx.aval_to_ir_type(out_aval)
-  result = tpu.reduce_index(out_type, x, axis, reduction_kind)
+  native_dtype = jnp.int16 if x_aval.dtype == jnp.bfloat16 else jnp.int32
+  native_out_type = ctx.aval_to_ir_type(
+      jax_core.ShapedArray(out_shape, native_dtype)
+  )
+  result = tpu.reduce_index(native_out_type, x, axis, reduction_kind)
+
+  if out_aval.dtype != native_dtype:
+    out_type = ctx.aval_to_ir_type(
+        jax_core.ShapedArray(out_shape, out_aval.dtype)
+    )
+    # To make sure jnp.argmax/argmin always return int32, we need to convert
+    # the int16 output of tpu.reduce_index to int32 when the input is bf16.
+    result = arith.extsi(out_type, result)
+
   if is_1d:
     return vector.extract(result, [], [0])
   return result

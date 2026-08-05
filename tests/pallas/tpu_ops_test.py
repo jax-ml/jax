@@ -428,6 +428,45 @@ class OpsTest(ptu.PallasTPUTest):
     np.testing.assert_array_equal(result, expected)
 
   @parameterized.product(
+      in_shape=[(2, 29, 206), (12, 28), (32, 512)],
+      reduce_func=[
+          jnp.argmax,
+          jnp.argmin,
+          functools.partial(lax.argmax, index_dtype=jnp.int16),
+          functools.partial(lax.argmin, index_dtype=jnp.int16),
+      ],
+  )
+  def test_bf16_input_reduce_index_along_lane(self, in_shape, reduce_func):
+    if not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest("Requires libtpu >= 0.0.46")
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Requires TPUv6+")
+
+    dtype = jnp.bfloat16
+    if reduce_func in (jnp.argmax, jnp.argmin):
+      index_dtype = jnp.int32
+    else:
+      index_dtype = jnp.int16
+    rank = len(in_shape)
+    axis = rank - 1
+    out_shape = list(in_shape)
+    del out_shape[axis]
+
+    def kernel(x, out):
+      out[:] = reduce_func(x[:], axis)
+
+    x = jnp.argsort(
+        jax.random.normal(jax.random.key(22), shape=in_shape),
+        axis=axis,
+    ).astype(dtype)
+    result = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, dtype=index_dtype),
+    )(x)
+
+    np.testing.assert_array_equal(result, reduce_func(x, axis))
+
+  @parameterized.product(
       shape=[(129, 129), (1, 129), (2, 129), (4, 129)],
       msk_dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
       dtype=[jnp.float32, jnp.bfloat16],

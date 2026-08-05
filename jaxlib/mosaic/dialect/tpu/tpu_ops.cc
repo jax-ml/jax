@@ -2089,14 +2089,21 @@ LogicalResult AllReduceOp::verify() {
             "Arg_max and arg_min "
             "must have the same input and output shape");
       }
-      if (!in_ty.getElementType().isF32()) {
+      if (!in_ty.getElementType().isF32() && !in_ty.getElementType().isBF16()) {
         return emitOpError(
-            "Not Implemented: Only f32 input is supported for "
-            "arg_max and arg_min");
+            "Not Implemented: Only f32 and bf16 input is supported for arg_max "
+            "and arg_min");
       }
       if (!out_ty.getElementType().isSignlessInteger(in_bitwidth)) {
         return emitOpError(absl::StrFormat(
             "Arg_max and arg_min must have i%d output", in_bitwidth));
+      }
+      if (in_ty.getShape()[getDim()] > (1LL << in_bitwidth)) {
+        return emitOpError(absl::StrFormat(
+            "Reduction dimension size (%d) exceeds 2^%d (%d), which "
+            "overflows %d-bit indices for arg_max/arg_min",
+            in_ty.getShape()[getDim()], in_bitwidth, 1LL << in_bitwidth,
+            in_bitwidth));
       }
       break;
     case ReductionKind::kFindFirstSet:
@@ -2115,10 +2122,10 @@ LogicalResult ReduceIndexOp::verify() {
   if (kind != ReductionKind::kArgMax && kind != ReductionKind::kArgMin) {
     return emitOpError("Reduction kind must be arg_max or arg_min");
   }
-  if (!in_ty.getElementType().isF32()) {
+  if (!in_ty.getElementType().isF32() && !in_ty.getElementType().isBF16()) {
     return emitOpError(
-        "Not Implemented: Only f32 input is supported for "
-        "arg_max and arg_min");
+        "Not Implemented: Only f32 and bf16 input is supported for arg_max and "
+        "arg_min");
   }
   if (!out_ty.getElementType().isSignlessInteger(bitwidth)) {
     return emitOpError(
@@ -2130,6 +2137,12 @@ LogicalResult ReduceIndexOp::verify() {
   if (axis < 0 || axis >= in_shape.size()) {
     return emitOpError("Axis must be in [0, ")
            << in_shape.size() << "), but got " << axis;
+  }
+  if (in_shape[axis] > (1LL << bitwidth)) {
+    return emitOpError(absl::StrFormat(
+        "Reduction dimension size (%d) exceeds 2^%d (%d), which overflows "
+        "%d-bit indices for arg_max/arg_min",
+        in_shape[axis], bitwidth, 1LL << bitwidth, bitwidth));
   }
 
   if (in_shape.size() < 2) {

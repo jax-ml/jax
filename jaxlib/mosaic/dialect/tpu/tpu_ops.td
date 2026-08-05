@@ -144,7 +144,7 @@ def TPU_ReduceIndexOp : TPU_Op<"reduce_index", [Pure]> {
     I32Attr:$axis,
     TPU_ReductionKindAttr:$kind
   );
-  let results = (outs VectorOfNonZeroRankOf<[I32]>:$output);
+  let results = (outs VectorOfNonZeroRankOf<[I16, I32]>:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
   let hasVerifier = 1;
 }
