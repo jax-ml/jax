@@ -1220,6 +1220,8 @@ def _mgpu_async_load_op_lowering_rule(
       gmem_transform=transforms,
       leader_tracked=leader_tracked,
       oob_mode=oob_mode,
+      # TODO(bchetioui): Clean up once jaxlib 0.11.1 is the minimum version.
+      gmem_peer_id=load_op.gmem_peer_id if hasattr(load_op, "gmem_peer_id") else None,
       **predicate,  # pyrefly: ignore[bad-argument-type]
   )
   return []

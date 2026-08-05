@@ -20,6 +20,7 @@ from collections.abc import Callable, Hashable, Sequence
 import contextlib
 import dataclasses
 import enum
+import inspect
 import itertools
 import math
 from typing import Any, Literal, assert_never, overload
@@ -1080,17 +1081,13 @@ def _copy_gmem_to_smem_lowering(
     raise NotImplementedError(
         "cp_async implementation is not supported with Warpgroup lowering"
     )
-  if "gmem_slice" not in copy_params:
+  if "gmem_slice" not in copy_params or not copy_params["gmem_slice"]:
     slice_lengths = ir.MemRefType(src.type).shape
     indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
   else:
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
   assert copy_params.get("swizzle") is None
   assert not copy_params.get("gmem_transform")
-  if copy_params.get("gmem_peer_id", None) is not None:
-    raise NotImplementedError(
-        "GMEM refs with peer ids are not supported in warpgroup lowering."
-    )
   match leader_tracked:
     case CopyPartition.REPLICATED:
       leader_tracked_attr = mgpu.dialect.CopyReplicatedAttr.get()
@@ -1114,6 +1111,18 @@ def _copy_gmem_to_smem_lowering(
   with arrive_ctx:
     mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
 
+  peer_id = copy_params.get("gmem_peer_id")
+  # TODO(bchetioui): Remove once 0.11.1 is the minimum jaxlib version.
+  if "gmem_peer_id" in inspect.signature(mgpu.dialect.async_load).parameters:
+    peer_kwarg = dict(gmem_peer_id=peer_id)
+  else:
+    if peer_id is not None:
+      raise NotImplementedError(
+          "Loading from a remote ref is only supported in jaxlib version "
+          "0.11.1 or higher under Warpgroup lowering semantics"
+      )
+    peer_kwarg = {}
+
   mgpu.dialect.async_load(
       src,
       dst,
@@ -1124,7 +1133,8 @@ def _copy_gmem_to_smem_lowering(
           [ir.IntegerAttr.get(i32, axis) for axis in collective or []]
       ),
       leader_tracked=leader_tracked_attr,
-      oob_fill_mode=ir.IntegerAttr.get(i32, oob_mode.value)
+      oob_fill_mode=ir.IntegerAttr.get(i32, oob_mode.value),
+      **peer_kwarg,
   )
   return ()
 

@@ -199,6 +199,52 @@ class PallasCallRemoteDMATest(TestCase):
     expected = x[8:] if jax.process_index() == 0 else x[:8]
     np.testing.assert_allclose(y.addressable_shards[0].data, expected)
 
+  def test_remote_dma_tma_load(self):
+    if jax.process_index() > 2:
+      return  # Only 2 processes needed.
+    def kernel(x_ref, y_ref, ready_sem, recv_sem, scratch_ref, barrier):
+      other_dev_id = 1 - lax.axis_index("x")
+      pl.semaphore_signal(ready_sem, device_id=other_dev_id)
+      pl.semaphore_wait(ready_sem)
+
+      neighbor_ptr = plgpu.remote_ref(x_ref, other_dev_id)
+      plgpu.copy_gmem_to_smem(neighbor_ptr, scratch_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      pl.semaphore_signal(recv_sem, device_id=other_dev_id)
+
+      plgpu.copy_smem_to_gmem(scratch_ref, y_ref)
+      plgpu.wait_smem_to_gmem(0)
+      # Make sure the other device's copy completed before exiting the kernel.
+      pl.semaphore_wait(recv_sem)
+
+    x = jnp.arange(2 * 8 * 128, dtype=jnp.float32).reshape((2 * 8, 128))
+    def body(x):
+      return self.kernel(
+          kernel,
+          out_type=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          scratch_types=[
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SemaphoreType.REGULAR,
+              plgpu.SMEM((8, 128), jnp.float32),
+              plgpu.Barrier(),
+          ],
+      )(x)
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ["x"])
+    y = jax.jit(
+        jax.shard_map(
+            body,
+            mesh=mesh,
+            in_specs=P("x"),
+            out_specs=P("x"),
+            check_vma=False,
+        )
+    )(x)
+
+    expected = x[8:] if jax.process_index() == 0 else x[:8]
+    np.testing.assert_allclose(y.addressable_shards[0].data, expected)
+
   def test_remote_dma_dynamic_other_device_id(self):
     # Regression test for device_collective_metadata being DCE'd under
     # WG lowering.

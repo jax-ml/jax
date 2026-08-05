@@ -375,7 +375,10 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     `CopyReplicated`, all blocks load the same data.
 
     The `predicate` allows scheduling the transfer conditionally. The async copy
-   is always scheduled by at most a single lane in the warpgroup.
+    is always scheduled by at most a single lane in the warpgroup.
+
+    The `gmem_peer_id` parameter specifies a particular device id to load from
+    in a multi-GPU setting.
   }];
 
   let arguments = (ins
@@ -385,6 +388,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     Variadic<AnyTypeOf<[I32, VectorOfRankAndType<[1], [I32, I16, I8]>]>>:$indices,
     OptionalAttr<MosaicGPU_CopyPartitionAttrInterface>:$leader_tracked,
     PtxPredicate:$predicate,
+    Optional<I32>:$gmem_peer_id,
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
