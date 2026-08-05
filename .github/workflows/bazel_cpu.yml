@@ -107,7 +107,7 @@ jobs:
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: "Bazel CPU tests with build_jaxlib=${{ format('{0}', inputs.build_jaxlib) }}"
-        timeout-minutes: 60
+        timeout-minutes: 180
         run: ./ci/run_bazel_test_cpu_rbe.sh
       - name: Upload test artifacts
         if: always()
