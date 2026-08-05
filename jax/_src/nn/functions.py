@@ -757,9 +757,9 @@ def one_hot(x: Any, num_classes: int, *,
       f"jax.nn.one_hot input should be integer-typed; got dtype={x_arr.dtype}",
       stacklevel=1)
   dtype = dtypes.default_float_dtype() if dtype is None else dtype
-  out_sharding = canonicalize_sharding(out_sharding, 'jax.nn.one_hot')
+  canon_sharding = canonicalize_sharding(out_sharding, 'jax.nn.one_hot')
   return _one_hot(x_arr, num_classes, dtype=dtype, axis=axis,
-                  out_sharding=out_sharding)
+                  out_sharding=canon_sharding)
 
 
 @custom_derivatives.custom_jvp
