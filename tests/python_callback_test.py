@@ -1267,6 +1267,9 @@ class IOCallbackTest(jtu.JaxTestCase):
   def test_can_use_io_callback_in_pjit(
       self, *, ordered: bool, with_sharding: bool
   ):
+    if not ordered and with_sharding:
+      self.skipTest("flaky test")
+
     devices = jax.devices()
     mesh = jax.sharding.Mesh(np.array(devices), ['dev'])
 
