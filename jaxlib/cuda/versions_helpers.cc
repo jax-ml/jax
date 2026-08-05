@@ -18,6 +18,8 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 
 #include "absl/base/dynamic_annotations.h"
 #include "absl/synchronization/mutex.h"
@@ -32,6 +34,34 @@ namespace jax::cuda {
 
 static bool driver_initialized = false;
 static absl::Mutex driver_initialization_mutex;
+
+#ifdef CUpti_SubscriberParams_STRUCT_SIZE
+using CuptiSubscriberParamsAbi = CUpti_SubscriberParams;
+#else
+struct CuptiSubscriberParamsAbi {
+  size_t structSize;
+  const char* subscriberName;
+  char* oldSubscriberName;
+  size_t oldSubscriberSize;
+  uint8_t allowMultipleSubscribers;
+  uint8_t padding[7];
+};
+#endif
+
+template <typename Params, typename = void>
+struct HasAllowMultipleSubscribers : std::false_type {};
+
+template <typename Params>
+struct HasAllowMultipleSubscribers<
+    Params,
+    std::void_t<decltype(std::declval<Params&>().allowMultipleSubscribers)>>
+    : std::true_type {};
+
+extern "C" {
+[[gnu::weak]] CUptiResult cuptiSubscribe_v2(
+    CUpti_SubscriberHandle* subscriber, CUpti_CallbackFunc callback,
+    void* userdata, CuptiSubscriberParamsAbi* pParams);
+}
 
 int CudaRuntimeGetVersion() {
   int version;
@@ -52,6 +82,11 @@ uint32_t CuptiGetVersion() {
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cuptiGetVersion(&version)));
   ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&version, sizeof version);
   return version;
+}
+
+bool CuptiHasMultiSubscriberV2() {
+  return cuptiSubscribe_v2 != nullptr &&
+         HasAllowMultipleSubscribers<CuptiSubscriberParamsAbi>::value;
 }
 
 int CufftGetVersion() {

@@ -40,6 +40,7 @@ NB_MODULE(_versions, m) {
   m.def("cuda_driver_get_version", &CudaDriverGetVersion);
   m.def("cudnn_get_version", &CudnnGetVersion);
   m.def("cupti_get_version", &CuptiGetVersion);
+  m.def("cupti_has_multi_subscriber_v2", &CuptiHasMultiSubscriberV2);
   m.def("cufft_get_version", &CufftGetVersion);
   m.def("cusolver_get_version", &CusolverGetVersion);
   m.def("cublas_get_version", &CublasGetVersion);

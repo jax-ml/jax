@@ -24,6 +24,7 @@ namespace jax::cuda {
 int CudaRuntimeGetVersion();
 int CudaDriverGetVersion();
 uint32_t CuptiGetVersion();
+bool CuptiHasMultiSubscriberV2();
 int CufftGetVersion();
 int CusolverGetVersion();
 int CublasGetVersion();
