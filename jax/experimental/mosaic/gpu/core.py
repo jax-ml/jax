@@ -1009,7 +1009,13 @@ def _kernel_to_module(
       )
   )
 
-  if thread_semantics == LoweringSemantics.Warpgroup and dialect is not None:
+  if thread_semantics == LoweringSemantics.Warpgroup:
+    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
+    if hasattr(dialect, "get_or_set_dump_options"):
+      dump_options = dialect.get_or_set_dump_options(module)
+    else:
+      dump_options = None
+
     # We need to run a pass that removes dead-code for which layout inference
     # does not work.
     pm = mlir.passmanager.PassManager.parse("builtin.module(canonicalize,cse)", module.context)
@@ -1017,7 +1023,22 @@ def _kernel_to_module(
 
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
+    if dump_options is not None and dump_options.mlir_passes:
+      utils.dump_to_file_or_stdout(
+          str(module),
+          f"{dump_options.module_basename}.before_layout_inference.txt",
+          dump_options.dump_path
+      )
+
     layout_inference.infer_layout(module, arch=_infer_arch())
+
+    if dump_options is not None and dump_options.mlir_passes:
+      utils.dump_to_file_or_stdout(
+          str(module),
+          f"{dump_options.module_basename}.after_layout_inference.txt",
+          dump_options.dump_path
+      )
+
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)
 
   launch_ctx.scratch.finalize_size()

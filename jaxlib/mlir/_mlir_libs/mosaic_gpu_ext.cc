@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "mlir-c/BuiltinAttributes.h"
 #include "mlir-c/IR.h"
+#include "mlir/CAPI/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/IR/Block.h"  // IWYU pragma: keep
 #include "mlir/IR/Location.h"  // IWYU pragma: keep
@@ -30,6 +31,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
+#include "jaxlib/mosaic/gpu/dump.h"
 
 namespace nb = nanobind;
 
@@ -251,6 +253,23 @@ NB_MODULE(_mosaic_gpu_ext, m) {
     mlirContextAppendDialectRegistry(context, registry);
     mlirDialectRegistryDestroy(registry);
   });
+
+  nb::class_<mosaic::gpu::DumpOptions>(m, "DumpOptions")
+      .def(nb::init<>())
+      .def_ro("mlir_passes", &mosaic::gpu::DumpOptions::mlir_passes)
+      .def_ro("ptx", &mosaic::gpu::DumpOptions::ptx)
+      .def_ro("ptxas", &mosaic::gpu::DumpOptions::ptxas)
+      .def_ro("sass", &mosaic::gpu::DumpOptions::sass)
+      .def_ro("sass_ctrl", &mosaic::gpu::DumpOptions::sass_ctrl)
+      .def_ro("dump_path", &mosaic::gpu::DumpOptions::dump_path)
+      .def_ro("module_basename", &mosaic::gpu::DumpOptions::module_basename);
+
+  m.def(
+      "get_or_set_dump_options",
+      [](MlirModule c_module) -> mosaic::gpu::DumpOptions {
+        return mosaic::gpu::GetOrSetDumpOptionsForModule(unwrap(c_module));
+      },
+      nb::arg("module"));
 
   PyBarrierType::bind(m);
   PyTileTransformAttr::bind(m);

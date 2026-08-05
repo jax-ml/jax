@@ -23,6 +23,7 @@ import inspect
 import itertools
 import logging
 import math
+import os
 from typing import Any, Literal, overload
 
 import jax
@@ -48,6 +49,29 @@ WARPS_IN_WARPGROUP: int = WARPGROUP_SIZE // WARP_SIZE
 DYNAMIC = -9223372036854775808
 DYNAMIC32 = -2147483648
 MBARRIER_BYTES = 8
+
+
+def dump_to_file_or_stdout(
+    content: str, name: str, path: str
+) -> None:
+  """Dumps content to path/name if path is non-empty, else to stdout."""
+  if not name:
+    raise ValueError("name must be non-empty")
+  if not path:
+    print(content)
+    return
+  filepath = os.path.join(path, name)
+  try:
+    with open(filepath, "w") as f:
+      f.write(content)
+      f.write("\n")
+  except OSError as e:
+    logger.error("Failed to write output to %s: %s", filepath, e)
+    # TODO(bchetioui): revisit whether this default of writing to stdout is the
+    # right one. If we change it, we will have to change the corresponding C++
+    # implementation as well.
+    logger.error("Output will be written to stdout instead.")
+    print(content)
 
 
 # TODO(bchetioui): Remove once jaxlib 0.11.0 is the minimum version.

@@ -4884,6 +4884,23 @@ class PallasCallWGTest(
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_dump_layout_inference(self):
+    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
+    if not hasattr(mgpu.dialect, "get_or_set_dump_options"):
+      self.skipTest("Test requires jaxlib >= 0.11.1")
+    x = jnp.ones((64, 64), dtype=jnp.float32)
+    @self.kernel(out_type=jax.ShapeDtypeStruct(x.shape, x.dtype))
+    def kernel(x_gmem, o_gmem):
+      o_gmem[...] = plgpu.load(x_gmem, optimized=False)
+
+    with tempfile.TemporaryDirectory() as dump_dir:
+      with jtu.set_env(MOSAIC_GPU_DUMP_TO=dump_dir):
+        jax.jit(kernel).lower(x)
+      files = os.listdir(dump_dir)
+      self.assertTrue(any(f.endswith(".before_layout_inference.txt") for f in files))
+      self.assertTrue(any(f.endswith(".after_layout_inference.txt") for f in files))
+
 
 class PallasCallSm90ATest(PallasSm90ATest):
 

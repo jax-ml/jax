@@ -183,6 +183,7 @@ nanobind_pywrap_extension(
     deps = [
         "//jaxlib:hash_util",
         "//jaxlib/mosaic/dialect/gpu:gpu_dialect_capi",
+        "//jaxlib/mosaic/gpu:dump",
         "@llvm-project//mlir:CAPIDebug",
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:CAPITransforms",

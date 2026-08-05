@@ -14,6 +14,9 @@
 # ==============================================================================
 """(Deviceless) tests for the Mosaic GPU MLIR dialect."""
 
+import os
+import tempfile
+
 from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
@@ -2710,6 +2713,32 @@ class DialectLoweringTest(MosaicGpuTest):
     tiled_strides, _ = tiled_ty.get_strides_and_offset()
     self.assertEqual(tuple(tiled_ty.shape), (16, 1, 1, 8, 8, 1, 1, 4))
     self.assertEqual(tuple(tiled_strides), (32, 512, 32, 512, 1, 8, 1, 8))
+
+  @jtu.thread_unsafe_test()  # Modifies ``os.environ``.
+  def test_dump_layout_inference(self):
+    # TODO(bchetioui): Remove this once minimum jaxlib version is 0.11.1.
+    if not hasattr(mgpu.dialect, "get_or_set_dump_options"):
+      self.skipTest("Test requires jaxlib >= 0.11.1")
+    def body(_, src, dst, scratch):
+      del scratch
+      mgpu.dialect.vector_store(mgpu.dialect.vector_load(src), dst)
+    shape = (128, 128)
+
+    with tempfile.TemporaryDirectory() as dump_dir:
+      with jtu.set_env(MOSAIC_GPU_DUMP_TO=dump_dir):
+        mgpu.as_gpu_kernel(
+            body,
+            grid=(1, 1, 1),
+            block=(128, 1, 1),
+            in_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+            out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+            smem_scratch_shape=[],
+            thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+        )
+      files = os.listdir(dump_dir)
+      self.assertTrue(any(f.endswith(".before_layout_inference.txt") for f in files))
+      self.assertTrue(any(f.endswith(".after_layout_inference.txt") for f in files))
+
 
 if hp is not None:
   @hps.composite
