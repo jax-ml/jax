@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/dump.h"
 
+#if !defined(_WIN32)
 #if defined(__APPLE__)
 // This is the fix recommended by
 // https://www.gnu.org/software/gnulib/manual/html_node/environ.html to make
@@ -25,6 +26,7 @@ limitations under the License.
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cerrno>
@@ -65,6 +67,7 @@ namespace gpu {
 
 namespace {
 
+#if !defined(_WIN32)
 class TemporaryDirectory {
  private:
   TemporaryDirectory(std::string path) : path(std::move(path)) {}
@@ -227,6 +230,7 @@ std::string FormatSassCtrl(const std::string& sass) {
   }
   return result;
 }
+#endif
 
 // The name of the attribute wrapping the module basename for dumping. See
 // `GetDumpOptionsForModule` for more details.
@@ -315,6 +319,13 @@ void DumpToFileOrStdout(std::string_view content, std::string_view name,
 
 void DumpSass(mlir::gpu::BinaryOp binary, std::string_view path,
               std::string_view basename, bool include_sass_ctrl) {
+#if defined(_WIN32)
+  static_cast<void>(binary);
+  static_cast<void>(path);
+  static_cast<void>(basename);
+  static_cast<void>(include_sass_ctrl);
+  LOG(ERROR) << "SASS dumping is not supported on Windows.";
+#else
   auto objects = binary.getObjects();
   if (objects.size() != 1) {
     std::cerr << "Multiple objects per gpu.binary unsupported" << std::endl;
@@ -360,6 +371,7 @@ void DumpSass(mlir::gpu::BinaryOp binary, std::string_view path,
     mosaic::gpu::DumpToFileOrStdout(*result, absl::StrCat(basename, ".sass"),
                                     path);
   }
+#endif
 }
 
 }  // namespace gpu
