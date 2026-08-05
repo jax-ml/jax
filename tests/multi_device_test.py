@@ -157,7 +157,29 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
     x = jax.device_put(jnp.zeros(2), device=devices[1])
     self.assert_committed_to_device(x, devices[1])
+  def test_device_put_sharded_data_loss(self):
+    devices = self.get_devices()
+    num_gpus = len(devices)
 
+    mesh = jax.make_mesh((num_gpus,), ('devices'))
+    sharded_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("devices"))
+
+    def put_sharded(x):
+        """Shard a list of num_gpus pytrees across local devices."""
+        stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *x)
+        return jax.device_put(stacked, sharded_sharding)
+
+    dim = 16
+    arrays = [(i + 1) * jnp.ones(shape=(dim,), dtype=jnp.float32) for i in range(num_gpus)]
+
+    sharded = put_sharded(arrays)
+    jax.block_until_ready(sharded)
+    gathered = jax.device_get(sharded)
+
+    for i in range(num_gpus):
+        expected = jnp.sum(arrays[i]).item()
+        observed = jnp.sum(gathered[i]).item()
+        self.assertEqual(expected, observed)  
     # device_put with device=None does not change placement
     x = jax.device_put(jnp.zeros(2))
     self.assert_uncommitted_to_device(x, devices[0])
