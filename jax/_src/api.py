@@ -32,8 +32,8 @@ import dataclasses
 import enum
 from functools import partial
 import inspect
-from typing import (Any, Literal, Optional, TypeVar, overload,
-                    cast, TYPE_CHECKING)
+from typing import (Any, Literal, Optional, TypeVar, overload, cast,
+                    TYPE_CHECKING)
 import weakref
 
 import numpy as np
@@ -175,8 +175,8 @@ class NotSpecified:
     return "<not-specified>"
 
 @overload
-def jit(
-  fun: Callable, /, *,
+def jit[**P, R](
+  fun: Callable[P, R], /, *,
   in_shardings: Any = ...,
   out_shardings: Any = ...,
   static_argnums: int | Sequence[int] | None = ...,
@@ -188,11 +188,11 @@ def jit(
   backend: str | None = ...,
   inline: bool | Inline = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> pjit.JitWrapped:
+) -> pjit.JitWrapped[P, R]:
   ...
 
 @overload
-def jit(
+def jit[**P, R](
   *,
   in_shardings: Any = ...,
   out_shardings: Any = ...,
@@ -205,11 +205,11 @@ def jit(
   backend: str | None = ...,
   inline: bool | Inline = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> Callable[[Callable], pjit.JitWrapped]:
+) -> Callable[[Callable[P, R]], pjit.JitWrapped[P, R]]:
   ...
 
-def jit(
-  fun: Callable | NotSpecified = NotSpecified(), /, *,
+def jit[**P, R](
+  fun: Callable[P, R] | NotSpecified = NotSpecified(), /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -221,7 +221,7 @@ def jit(
   backend: str | None = None,
   inline: bool | Inline = False,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
+) -> pjit.JitWrapped[P, R] | Callable[[Callable[P, R]], pjit.JitWrapped[P, R]]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
