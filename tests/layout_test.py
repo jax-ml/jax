@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import math
 import re
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import numpy as np
-
 import jax
-import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec as P
-from jax._src.sharding_impls import make_single_device_sharding
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.sharding_impls import make_single_device_sharding
 from jax._src.util import safe_zip
-from jax.experimental.layout import with_layout_constraint, Format, Layout
+from jax.experimental.layout import Format, Layout, with_layout_constraint
+import jax.numpy as jnp
+from jax.sharding import NamedSharding, PartitionSpec as P
+import numpy as np
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -837,22 +837,40 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.format.layout.major_to_minor, (1, 0))
     self.assertNotIn('all-reduce(', f.lower(arr1, arr2).compile().as_text())
 
-  def test_layout_propagation_host(self):
-    mesh = jtu.create_mesh((2,), 'x')
-    arr = jnp.ones((5, 2, 1004, 512, 36), dtype=jnp.float32)
+  def test_host_auto_layout(self):
+    mesh = jax.make_mesh(
+        (jax.device_count(),),
+        ('data',),
+        axis_types=(jax.sharding.AxisType.Auto,) * len(('data',)),
+    )
+    shape = (5, 2, 1004, 512, 36)
+    layout = Layout((0, 1, 4, 3, 2))
 
-    host_sharding = jax.NamedSharding(mesh, jax.P(), memory_kind='pinned_host')
-    host_format = Format(layout=Layout((0, 1, 4, 2, 3)),
-                          sharding=host_sharding)
+    device_sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec()
+    )
+    host_sharding = device_sharding.with_memory_kind('pinned_host')
+    host_format = Format(layout=layout, sharding=host_sharding)
 
-    @jax.jit(out_shardings=host_format)
-    def test_fun(x):
-      return with_layout_constraint(x * 2, host_format.layout)
+    @functools.partial(jax.jit, out_shardings=host_format)
+    def test_fun(y):
+      return with_layout_constraint(y * 2, host_format.layout)
 
-    compiled_text = test_fun.lower(arr).compile().as_text()
-    match = re.search(r'->\s*f32\[5,2,1004,512,36\]\{([^}]+)\}', compiled_text)
+    @functools.partial(
+        jax.jit,
+        out_shardings=Format(layout=Layout.AUTO, sharding=host_format.sharding),
+    )
+    def outer_fun(y):
+      return test_fun(y)
+
+    x = jnp.ones(shape, dtype=jnp.float32)
+    compiled = outer_fun.lower(x).compile()
+
+    hlo = compiled.as_text()
+    match = re.search(r'->\s*f32\[5,2,1004,512,36\]\{([^}]+)\}', hlo)
+    self.assertIsNotNone(match, 'Could not find output layout in HLO')
     layout_str = match.group(1)
-    self.assertIn('3,2,4,1,0', layout_str)
+    self.assertIn('2,3,4,1,0', layout_str)
     self.assertIn('S(5)', layout_str)
 
 
