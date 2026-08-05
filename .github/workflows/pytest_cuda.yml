@@ -61,6 +61,7 @@ jobs:
     # Test the oldest and newest supported CUDA versions.
     # If testing the CUDA packages from PyPI, then use the ml-build image which does not have any
     # CUDA pckages installed on the system.
+    # zizmor: ignore[unpinned-uses] - Using the latest ml-build container is intentional for this test.
     container:  ${{ !inputs.use-nvidia-pip-wheels && (contains(inputs.cuda-version, '12.1') && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build-cuda12.1-cudnn9.8:latest') ||
                 inputs.use-nvidia-pip-wheels && 'us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest'}}
     name: "${{ (contains(inputs.runner, 'h100') && 'h100') ||

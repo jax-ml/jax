@@ -102,6 +102,7 @@ jobs:
         # Explicitly set the shell to bash
         shell: bash
     runs-on: ${{ inputs.runner }}
+    # zizmor: ignore[unpinned-uses] - Using the latest ml-build container is intentional for this test.
     container: "us-docker.pkg.dev/ml-oss-artifacts-published/ml-public-container/ml-build:latest"
 
     env:
