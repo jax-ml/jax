@@ -182,7 +182,7 @@ jobs:
           python: ["3.12", "3.13", "3.14"]
           rocm: [
             {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-7.14:latest" },
-            {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"},
+            {label: "TheRock latest", wheel-version: "10", release-version: "therock-latest", manylinux-image: "ghcr.io/rocm/jax-manylinux_2_28-therock-latest:latest"},
           ]
           exclude:
             - artifact: "jax-rocm-pjrt"
@@ -216,7 +216,7 @@ jobs:
           python: ["3.12", "3.13", "3.14"]
           rocm: [
             {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
-            {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", tag: "therock-latest"},
+            {label: "TheRock latest", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
     name: "Pytest ROCm (${{ matrix.rocm.label }})"
     with:
@@ -244,7 +244,7 @@ jobs:
           python: ["3.12", "3.13", "3.14"]
           rocm: [
             {label: "TheRock 7.14.0", wheel-version: "7", release-version: "7.14.0", tag: "therock-7.14"},
-            {label: "TheRock latest", wheel-version: "7", release-version: "therock-latest", tag: "therock-latest"},
+            {label: "TheRock latest", wheel-version: "10", release-version: "therock-latest", tag: "therock-latest"},
           ]
           enable-x64: [0]
     name: "Bazel ROCm (${{ matrix.rocm.label }})"
