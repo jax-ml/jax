@@ -802,7 +802,7 @@ class BufferedRef(BufferedRefBase):
     return self
 
   def compute_slice(self, grid_indices):
-    """Compute DMA slice from grid indices."""
+    """Compute the indexers for the window at given grid indices."""
     indices = self.compute_index(*grid_indices)
     assert self.block_shape is not None
     assert len(self.block_shape) == len(indices)
@@ -812,14 +812,12 @@ class BufferedRef(BufferedRefBase):
         case None | Squeezed():
           # Dimension is squeezed out so we don't do anything.
           indexer.append(idx)
-        case Element():
-          raise ValueError(
-              "Element block dimensions are not supported."
-          )
-        case BoundedSlice():
-          raise ValueError(
-              "BoundedSlice block dimensions are not supported."
-          )
+        case Element(block_size, padding=padding):
+          if padding != (0, 0):
+            raise ValueError(f"Element with {padding=} is not supported.")
+          indexer.append(ds(idx, block_size))
+        case BoundedSlice(block_size):
+          indexer.append(ds(idx.start, block_size))
         case Blocked(block_size):
           indexer.append(ds(idx * block_size, block_size))
         case int():

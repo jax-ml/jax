@@ -512,6 +512,104 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     np.testing.assert_allclose(out, expected_out)
 
   @parameterized.product(no_pipelining=[False, True])
+  def test_compute_slice_mixed_block_dims_vmem(self, no_pipelining):
+
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...] * 2 + 1
+
+    def kernel(x_hbm_ref, o_hbm_ref, x_vmem_ref, o_vmem_ref):
+      pltpu.sync_copy(x_hbm_ref, x_vmem_ref)
+      pltpu.emit_pipeline(
+          body,
+          grid=(2, 2, 2),
+          in_specs=pl.BlockSpec(
+              (None, pl.Blocked(8), 256),
+              lambda i, j, k: (i, j, k),
+              memory_space=pltpu.VMEM,
+          ),
+          out_specs=pl.BlockSpec(
+              (pl.Squeezed(), pl.Element(8), 256),
+              lambda i, j, k: (i, j * 8, k),
+              memory_space=pltpu.VMEM,
+          ),
+          no_pipelining=no_pipelining,
+      )(x_vmem_ref, o_vmem_ref)
+      pltpu.sync_copy(o_vmem_ref, o_hbm_ref)
+
+    x = jnp.arange(2 * 16 * 512, dtype=jnp.int32).reshape(2, 16, 512)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.typeof(x),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
+        scratch_shapes=dict(
+            x_vmem_ref=pltpu.VMEM((2, 16, 512), jnp.int32),
+            o_vmem_ref=pltpu.VMEM((2, 16, 512), jnp.int32),
+        ),
+    )(x)
+
+    np.testing.assert_array_equal(out, x * 2 + 1)
+
+  @parameterized.product(no_pipelining=[False, True])
+  def test_compute_slice_bounded_slice_vmem(self, no_pipelining):
+    test_self = self
+
+    def body(x_ref, o_ref):
+      # The BoundedSlice dim of the window ref should be statically sized (but
+      # partially populated).
+      test_self.assertEqual(x_ref.shape, (6, 8, 256))
+      test_self.assertEqual(o_ref.shape, (6, 8, 256))
+      o_ref[...] = x_ref[...] + 10
+
+    def kernel(x_hbm_ref, o_hbm_ref, x_vmem_ref, o_vmem_ref):
+      pltpu.sync_copy(x_hbm_ref, x_vmem_ref)
+      pltpu.emit_pipeline(
+          body,
+          grid=(3, 2),
+          in_specs=pl.BlockSpec(
+              (pl.BoundedSlice(6), 8, 256),
+              lambda i, j: (
+                  pl.ds(i * 2, i + 3),
+                  0,
+                  j,
+              ),
+              memory_space=pltpu.VMEM,
+          ),
+          out_specs=pl.BlockSpec(
+              (pl.BoundedSlice(6), 8, 256),
+              lambda i, j: (
+                  pl.ds(i * 2, i + 3),
+                  0,
+                  j,
+              ),
+              memory_space=pltpu.VMEM,
+          ),
+          no_pipelining=no_pipelining,
+      )(x_vmem_ref, o_vmem_ref)
+      pltpu.sync_copy(o_vmem_ref, o_hbm_ref)
+
+    x = jnp.arange(16 * 8 * 512, dtype=jnp.int32).reshape(16, 8, 512)
+    y = pl.pallas_call(
+        kernel,
+        out_shape=jax.typeof(x),
+        scratch_shapes=dict(
+            x_vmem=pltpu.VMEM((16, 8, 512), jnp.int32),
+            o_vmem=pltpu.VMEM((16, 8, 512), jnp.int32),
+        ),
+    )(x)
+
+    x = np.array(x)
+    y = np.array(y)
+    for i in range(3):
+      for j in range(2):
+        start = i * 2
+        length = i + 3
+        np.testing.assert_equal(
+            y[start : start + length, :, j * 256 : (j + 1) * 256],
+            x[start : start + length, :, j * 256 : (j + 1) * 256] + 10,
+        )
+
+  @parameterized.product(no_pipelining=[False, True])
   def test_pipeline_matmul(self, no_pipelining):
     k1, k2 = jax.random.split(jax.random.key(0))
     x = jax.random.uniform(k1, (512, 512))
