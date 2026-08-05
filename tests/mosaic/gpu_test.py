@@ -3306,6 +3306,8 @@ class TCGen05Test(TestCase, jtu.CudaArchSpecificTest):
   ):
     if scale_jax_dtype == jnp.float8_e4m3fn and base_block_size != 16:
       self.skipTest("e4m3fn scale only supports block size 16.")
+    if not any(map(jtu.is_cuda_compute_capability_equal, ("10.0", "10.1", "10.3", "11.0"))):
+      self.skipTest("nvbug/6412668")
     out_jax_dtype = jnp.float32
     sparse_meta_dtype = jnp.uint2
     block_size = base_block_size * 2
