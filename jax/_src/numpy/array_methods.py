@@ -1022,7 +1022,7 @@ def _chunk_iter(x, size):
   if size > x.shape[0]:
     yield x
   else:
-    num_chunks, tail = ufuncs.divmod(x.shape[0], size)
+    num_chunks, tail = divmod(x.shape[0], size)
     for i in range(num_chunks):
       yield lax_slicing.dynamic_slice_in_dim(x, i * size, size)
     if tail:
