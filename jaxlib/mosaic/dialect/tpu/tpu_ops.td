@@ -444,6 +444,9 @@ let summary = [{
     duplicate values, then the elements of %counts at indices 0, 5, and 7 would
     be 1, 2, and 3, respectively.
 
+    For multi-dimensional vectors (rank >= 2), the scan count is performed along
+    the minormost (innermost) dimension for each slice of the outer dimensions.
+
     A mask vector, %in_mask, specifies which of the elements in the input vector
     are eligible for counting. An element in %values that has its mask set to 0
     will always have a count of 1 in %counts, regardless of the position in the
