@@ -405,6 +405,10 @@ def ppermute(x, axis_name, perm):
 def _ppermute_is_async(x, axis_name, perm, is_async=False):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
+  if not isinstance(perm, (list, tuple)):
+    raise TypeError(
+        "`perm` passed to `jax.lax.ppermute` must be a list or a tuple. Got"
+        f" perm of type {type(perm)}")
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
     prim = ppermute_start_p if is_async else ppermute_p

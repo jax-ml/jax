@@ -1004,7 +1004,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     # https://github.com/jax-ml/jax/issues/1703
     num_devices = jax.device_count()
     perm = [num_devices - 1] + list(range(num_devices - 1))
-    f = pmap(lambda x: lax.ppermute(x, "i", zip(perm, range(num_devices))), "i")
+    f = pmap(lambda x: lax.ppermute(x, "i", list(zip(perm, range(num_devices)))),
+             "i")
     result = f(jnp.arange(num_devices, dtype=jnp.float32))
     expected = jnp.asarray(perm, dtype=jnp.float32)
     self.assertAllClose(result, expected)

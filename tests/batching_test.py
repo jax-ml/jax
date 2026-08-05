@@ -1037,7 +1037,8 @@ class BatchingTest(jtu.JaxTestCase):
       perm_pairs = np.stack([np.arange(nelem), perm], axis=-1)
       rng.shuffle(perm_pairs)
       self.assertAllClose(
-        vmap(lambda x: x - lax.ppermute(x, 'i', perm_pairs), axis_name='i')(x),
+        vmap(lambda x: x - lax.ppermute(x, 'i', list(perm_pairs)),
+             axis_name='i')(x),
         x - x[np.argsort(perm)])
 
   @parameterized.named_parameters(

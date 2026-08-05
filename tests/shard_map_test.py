@@ -4493,6 +4493,19 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out_g.sharding, NamedSharding(mesh, P(None, reduced={'x'})))
     self.assertArraysEqual(out_g, jnp.ones((8,)))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_ppermute_zip_error(self, mesh):
+    arr = jax.device_put(np.arange(8), P('x'))
+    perm = unsafe_zip([0, 1], [1, 0])
+
+    @jax.shard_map(out_specs=P('x'))
+    def f(x):
+      return jax.lax.ppermute(x, 'x', perm)
+
+    with self.assertRaisesRegex(
+        TypeError, "`perm` passed to `jax.lax.ppermute` must be a list"):
+      f(arr)
+
   @parameterized.parameters([False, True])
   @jtu.with_explicit_mesh((2, 2), ('x', 'y'),
                           axis_types=(AxisType.Explicit, AxisType.Auto))
