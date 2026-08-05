@@ -959,7 +959,7 @@ def raise_lo_outs(hi_avals, lo_outs):
   return hi_outs
 
 @runtime_checkable
-class Wrapped(Protocol):
+class Wrapped[**P, R](Protocol):
   """A function ready to be traced, lowered, and compiled.
 
   This protocol reflects the output of functions such as
@@ -968,7 +968,7 @@ class Wrapped(Protocol):
   to compilation, and the result compiled prior to execution.
   """
 
-  def __call__(self, *args, **kwargs):
+  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
     """Executes the wrapped function, lowering and compiling as needed."""
     raise NotImplementedError
 
