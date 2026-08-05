@@ -341,6 +341,49 @@ class MutableArrayTest(jtu.JaxTestCase):
     jax.vmap(f, in_axes=(1, 0))(ref, jnp.ones((3, 2)))  # don't crash
     self.assertAllClose(ref[...], jnp.ones((2, 3)), check_dtypes=False)
 
+  @parameterized.parameters([True, False])
+  def test_vmap_axes_scan_closed_over_ref(self, jit):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r):
+      def body(carry, _):
+        r[0] += 1.
+        return carry + r[0], None
+      carry, _ = jax.lax.scan(body, 0., length=3)
+      return carry
+
+    def doit(ref):
+      return jax.vmap(f, in_axes=1)(ref)
+    if jit:
+      doit = jax.jit(doit)
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    out = doit(ref)
+    # Batching over axis 1 means each batch element sees ref[:, i], so the
+    # writes land in row 0 and the carry accumulates 1. + 2. + 3.
+    self.assertAllClose(ref[...], jnp.array([[3., 3., 3.], [0., 0., 0.]]),
+                        check_dtypes=False)
+    self.assertAllClose(out, jnp.full((3,), 6.), check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_vmap_axes_scan_ref_extensive_inputs(self, jit):
+    # https://github.com/jax-ml/jax/issues/39288
+    def f(r, xs):
+      def body(carry, x):
+        r[...] += x
+        return carry, None
+      jax.lax.scan(body, None, xs)
+
+    def doit(ref, xs):
+      jax.vmap(f, in_axes=(1, 0))(ref, xs)
+    if jit:
+      doit = jax.jit(doit)
+
+    ref = jax.new_ref(jnp.zeros((2, 3)))
+    xs = jnp.arange(6.).reshape(3, 2)
+    doit(ref, xs)
+    self.assertAllClose(ref[...], jnp.tile(xs.sum(axis=1), (2, 1)),
+                        check_dtypes=False)
+
   def test_vmap_extensive_inputs(self):
     def f(x_ref, val):
       x_ref[...] += val
