@@ -359,7 +359,8 @@ The following code would be legal.
 ```py
 def f():
   x = jnp.arange(...)
-  y = add_one_inplace(x)  return y
+  y = add_one_inplace(x)
+  return y
 ```
 
 However, if `x` had a separate consumer as well, the program may not execute correctly.
