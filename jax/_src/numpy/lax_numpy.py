@@ -30,7 +30,8 @@ from functools import partial
 import math
 import operator
 import os
-from typing import Any, IO, Literal, Protocol, TypeVar, Union, cast, overload
+from typing import (Any, IO, Literal, Protocol, TypeVar, Union, cast, overload,
+                    TypedDict)
 
 import numpy as np
 
@@ -55,6 +56,7 @@ from jax._src.numpy import reductions
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.numpy.reductions import Axis
 from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
 from jax._src.sharding_impls import canonicalize_sharding
@@ -1395,7 +1397,7 @@ def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   return _flip(arr, reductions._ensure_optional_axes(axis))
 
 @api.jit(static_argnames=('axis',))
-def _flip(m: Array, axis: int | tuple[int, ...] | None = None) -> Array:
+def _flip(m: Array, axis: Axis = None) -> Array:
   if axis is None:
     return lax.rev(m, list(range(len(np.shape(m)))))
   axis = _ensure_index_tuple(axis)
@@ -2329,7 +2331,7 @@ def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   return _squeeze(arr, _ensure_index_tuple(axis) if axis is not None else None)
 
 @api.jit(static_argnames=('axis',), inline=True)
-def _squeeze(a: Array, axis: tuple[int, ...]) -> Array:
+def _squeeze(a: Array, axis: tuple[int, ...] | None) -> Array:
   if axis is None:
     a_shape = np.shape(a)
     if not core.is_constant_shape(a_shape):
@@ -4149,7 +4151,7 @@ def _pad_func(array: Array, pad_width: PadValue[int], func: Callable[..., Any], 
 
 @api.jit(static_argnums=(1, 2, 4, 5, 6))
 def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
-         constant_values: ArrayLike, stat_length: PadValueLike[int],
+         constant_values: ArrayLike, stat_length: PadValueLike[int] | None,
          end_values: PadValueLike[ArrayLike], reflect_type: str):
   array = asarray(array)
   nd = np.ndim(array)
@@ -4353,7 +4355,8 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
   end_values = kwargs.get('end_values', 0)
   reflect_type = kwargs.get('reflect_type', "even")
 
-  return _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type)
+  return _pad(array, pad_width, mode, constant_values, stat_length, end_values,
+              reflect_type)
 
 ### Array-creation functions
 
@@ -4970,7 +4973,7 @@ def _atleast_nd(x: ArrayLike, n: int) -> Array:
   m = np.ndim(x)
   return lax.broadcast(x, (1,) * (n - m)) if m < n else asarray(x)
 
-def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
+def _block(xs: ArrayLike | list[Any]) -> tuple[Array, int]:
   if isinstance(xs, tuple):
     raise ValueError("jax.numpy.block does not allow tuples, got {}"
                      .format(xs))
@@ -4989,7 +4992,7 @@ def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
 
 @export
 @api.jit
-def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
+def block(arrays: ArrayLike | list[Any]) -> Array:
   """Create an array from a list of blocks.
 
   JAX implementation of :func:`numpy.block`.
@@ -9452,7 +9455,10 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False,
   if bins_arr.shape[0] == 0:
     return array_creation.zeros_like(x, dtype=np.int32)
   side = 'right' if not right else 'left'
-  kwds: dict[str, str] = {} if method is None else {'method': method}
+
+  class Kwds(TypedDict, total=False):
+    method: str
+  kwds: Kwds = {} if method is None else {'method': method}
   return where(
     bins_arr[-1] >= bins_arr[0],
     searchsorted(bins_arr, x, side=side, **kwds),

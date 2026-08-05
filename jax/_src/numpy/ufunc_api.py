@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import math
 import operator
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -178,7 +178,8 @@ class ufunc:
       raise NotImplementedError(f"out argument of {self}")
     if where is not None:
       raise NotImplementedError(f"where argument of {self}")
-    call = self.__static_props['call'] or self._call_vectorized
+    call = (self.__static_props['call']
+            or cast(Callable[..., Any], self._call_vectorized))
     return call(*args)
 
   @api.jit(static_argnames=['self'])

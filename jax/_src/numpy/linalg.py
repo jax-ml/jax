@@ -1151,7 +1151,7 @@ def inv(a: ArrayLike) -> Array:
 
 @export
 @api.jit(static_argnames=('ord', 'axis', 'keepdims'))
-def norm(x: ArrayLike, ord: int | str | None = None,
+def norm(x: ArrayLike, ord: int | str | float | None = None,
          axis: None | tuple[int, ...] | int = None,
          keepdims: bool = False) -> Array:
   """Compute the norm of a matrix or vector.
@@ -1691,7 +1691,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 
 @export
 def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, keepdims: bool = False,
-                ord: int | str = 2) -> Array:
+                ord: int | str | float = 2) -> Array:
   """Compute the vector norm of a vector or batch of vectors.
 
   JAX implementation of :func:`numpy.linalg.vector_norm`.
