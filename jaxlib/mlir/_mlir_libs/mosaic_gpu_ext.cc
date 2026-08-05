@@ -80,6 +80,34 @@ struct PyBarrierType
   }
 };
 
+struct PyB6x16P32Type
+    : public mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteType<
+          PyB6x16P32Type> {
+  static constexpr const char* pyClassName = "B6x16P32Type";
+  static bool isaFunction(MlirType t) {
+    return mlirMosaicGpuIsAB6x16P32Type(t);
+  }
+  static constexpr MlirTypeID (*getTypeIdFunction)() =
+      mlirMosaicGpuB6x16P32TypeGetTypeID;
+  using Base::Base;
+  static void bindDerived(ClassTy& cls) {
+    cls.def_static(
+        "get",
+        [](PyType elementType, DefaultingPyMlirContext ctx) {
+          return PyB6x16P32Type(
+              ctx.resolve().getRef(),
+              mlirMosaicGpuB6x16P32TypeGet(ctx.resolve().get(),
+                                           elementType.get()));
+        },
+        nb::arg("element_type"),
+        nb::arg("ctx") = nb::none());
+    cls.def_prop_ro("element_type", [](PyB6x16P32Type& self) {
+      return PyType(self.getContext(),
+                    mlirMosaicGpuB6x16P32TypeGetElementType(self.get()));
+    });
+  }
+};
+
 DEFINE_CONCRETE_ATTR(TileTransformAttr, mlirMosaicGpuIsATileTransformAttr,
                      mlirMosaicGpuTileTransformAttrGetTypeID, PyAttribute) {
   cls.def_static(
@@ -272,6 +300,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       nb::arg("module"));
 
   PyBarrierType::bind(m);
+  PyB6x16P32Type::bind(m);
   PyTileTransformAttr::bind(m);
   PySwizzleTransformAttr::bind(m);
   PyWGSplatFragLayoutAttr::bind(m);

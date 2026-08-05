@@ -145,6 +145,25 @@ class DialectTest(MosaicGpuTest):
     self.assertIsInstance(barrier_ty, mgpu.dialect.BarrierType)
     self.assertTrue(barrier_ty.orders_tensor_core)
 
+  def test_b6x16_p32_type_bindings(self):
+    # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
+    if not hasattr(mgpu.dialect, "B6x16P32Type"):
+      self.skipTest("B6x16P32Type is not supported.")
+    f6_ty = ir.Float6E2M3FNType.get()
+    b6x16p32_ty = mgpu.dialect.B6x16P32Type.get(f6_ty)
+    self.assertIsInstance(b6x16p32_ty, ir.Type)
+    self.assertIsInstance(b6x16p32_ty, mgpu.dialect.B6x16P32Type)
+    self.assertEqual(b6x16p32_ty.element_type, f6_ty)
+    self.assertEqual(mgpu_utils.bitwidth(b6x16p32_ty), 128)
+
+    parsed_ty = ir.Type.parse("!mosaic_gpu.b6x16_p32<f6E2M3FN>")
+    self.assertEqual(parsed_ty, b6x16p32_ty)
+
+    with self.assertRaisesRegex(
+        ir.MLIRError, "element type must be 6-bit wide"
+    ):
+      ir.Type.parse("!mosaic_gpu.b6x16_p32<f16>")
+
   def test_copy_partition_attr_bindings(self):
     replicated = mgpu.dialect.CopyReplicatedAttr.get()
     self.assertIsInstance(replicated, ir.Attribute)

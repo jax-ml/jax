@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/Casting.h"
@@ -306,6 +307,16 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
   return llvm::success();
 }
 }  // namespace
+
+mlir::LogicalResult B6x16P32Type::verify(
+    llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
+    Type elementType) {
+  if (elementType.isIntOrFloat() && elementType.getIntOrFloatBitWidth() == 6) {
+    return mlir::success();
+  }
+  return emitError() << "B6x16P32 element type must be 6-bit wide, got "
+                     << elementType;
+}
 
 llvm::LogicalResult AsyncLoadOp::verify() {
   auto r =
