@@ -343,6 +343,8 @@ common:ci_linux_x86_64_cuda13 --config=cuda13 --config=ci_linux_x86_64_cuda_comm
 # Linux Aarch64 CI configs
 common:ci_linux_aarch64_base --config=clang --verbose_failures=true
 common:ci_linux_aarch64_base --color=yes
+# b/543046203
+common:ci_linux_aarch64_base --define ynn_enable_arm64_neonfp8=false
 
 # This appears to help avoid a timeout in CI for linalg_test.
 common:ci_linux_aarch64_base --test_env=OMP_NUM_THREADS=8
