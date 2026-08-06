@@ -47,6 +47,8 @@ def _device_to_device_funcs():
 
   with jax.transfer_guard_host_to_device("allow"):
     device_arrays = [jnp.ones(1) for _ in range(2)]
+    device_arrays.append(  # An array on the CPU device
+      jax.jit(lambda x: x, device=jax.local_devices("cpu")[0])(1))
   return [
       # (function name, is an explicit transfer?, function)
       ("device_to_device_jax_device_put", True,
@@ -54,6 +56,9 @@ def _device_to_device_funcs():
       ("device_to_device_jax_jit", False,
        lambda: jax.jit(lambda x: x, device=jax.local_devices()[1])
        (device_arrays[1])),
+      ("cpu_device_to_device_jax_jit", False,
+       lambda: jax.jit(lambda x: x, device=jax.local_devices()[1])
+       (device_arrays[2])),
   ]
 
 
@@ -238,6 +243,62 @@ class TransferGuardTest(jtu.JaxTestCase):
       with jax_transfer_guard("disallow_explicit"):
         with self.assertDisallows(func_name):
           func()
+
+  def test_jit_call_with_constants(self):
+    const = np.arange(2, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    with jax.transfer_guard("disallow"):
+      with self.assertDisallows("jit_call_with_constants"):
+        f()
+
+  def test_cached_jit_call_with_constants(self):
+    const = np.arange(2, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    self.assertCacheMisses(lambda: f(), cpp=1)
+    self.assertCacheMisses(lambda: f(), cpp=0)
+    with jax.transfer_guard("disallow"):
+      f()  # On cached call, there are no constant transfers
+
+  def test_aot_call(self):
+    @jax.jit
+    def f(x):
+      return x + x
+
+    arg = np.ones(2, dtype=np.int32)
+    compiled = f.lower(arg).compile()
+    with jax.transfer_guard("disallow"):
+      with self.assertDisallows("aot_call"):
+        compiled(arg)
+
+  def test_aot_call_with_constants(self):
+    const = np.arange(2, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    compiled = f.lower().compile()
+    with jax.transfer_guard("disallow"):
+      with self.assertDisallows("aot_call_with_constants"):
+        compiled()
+
+  def test_cached_aot_call_with_constants(self):
+    const = np.arange(2, dtype=np.int32)
+    @jax.jit
+    def f():
+      return const
+
+    compiled = f.lower().compile()
+
+    self.assertCacheMisses(lambda: compiled(), aot_call=1)
+    self.assertCacheMisses(lambda: compiled(), aot_call=0)
+    with jax.transfer_guard("disallow"):
+      compiled()  # On cached call, there are no constant transfers
 
 
 if __name__ == "__main__":
