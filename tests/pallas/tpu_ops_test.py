@@ -429,6 +429,7 @@ class OpsTest(ptu.PallasTPUTest):
 
   @parameterized.product(
       in_shape=[(2, 29, 206), (12, 28), (32, 512)],
+      axis=[0, 1, 2],
       reduce_func=[
           jnp.argmax,
           jnp.argmin,
@@ -436,19 +437,19 @@ class OpsTest(ptu.PallasTPUTest):
           functools.partial(lax.argmin, index_dtype=jnp.int16),
       ],
   )
-  def test_bf16_input_reduce_index_along_lane(self, in_shape, reduce_func):
+  def test_bf16_input_reduce_index(self, in_shape, axis, reduce_func):
     if not jtu.is_libtpu_at_least("0.0.46"):
       self.skipTest("Requires libtpu >= 0.0.46")
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest("Requires TPUv6+")
+    if axis >= len(in_shape):
+      self.skipTest("Requires axis < rank")
 
     dtype = jnp.bfloat16
     if reduce_func in (jnp.argmax, jnp.argmin):
       index_dtype = jnp.int32
     else:
       index_dtype = jnp.int16
-    rank = len(in_shape)
-    axis = rank - 1
     out_shape = list(in_shape)
     del out_shape[axis]
 
