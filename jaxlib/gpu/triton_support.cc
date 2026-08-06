@@ -29,7 +29,7 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("triton_kernel_call", TritonKernelCall,
 
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "triton_kernel_call_ffi", "CUDA",
                          {
-                             /*instantiate=*/nullptr,
+                             /*instantiate=*/kTritonKernelCallFfiInstantiate,
                              /*prepare=*/nullptr,
                              /*initialize=*/kTritonKernelCallFfiInitialize,
                              /*execute=*/kTritonKernelCallFfi,

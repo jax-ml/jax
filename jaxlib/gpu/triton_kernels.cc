@@ -32,6 +32,8 @@ limitations under the License.
 
 #include "xla/backends/gpu/ffi.h"
 #include "xla/ffi/ffi.h"
+#include "xla/ffi/type_registry.h"
+#include "xla/stream_executor/device_description.h"
 
 // Required for absl::c_find_if.
 // NOLINTNEXTLINE(misc-include-cleaner)
@@ -41,6 +43,7 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/functional/function_ref.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -120,53 +123,8 @@ absl::StatusOr<uint32_t> MaxSharedMemoryPerBlock(gpuDevice_t device) {
   return shared_optin;
 }
 
-absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
-                                            uint32_t shared_mem_bytes,
-                                            std::string_view ptx,
-                                            int compute_capability) {
-  // Since we want an efficient key lookup, we'd have to suffer a bit.
-  using KeyType = std::tuple<std::string, uint32_t, std::string, int>;
-  using LookupKeyType =
-      std::tuple<std::string_view, uint32_t, std::string_view, int>;
-
-  struct KeyHash {
-    using is_transparent = void;
-
-    size_t operator()(const KeyType& v) const {
-      return absl::Hash<KeyType>{}(v);
-    }
-    size_t operator()(const LookupKeyType& v) const {
-      return absl::Hash<LookupKeyType>{}(v);
-    }
-  };
-
-  struct KeyEq {
-    using is_transparent = void;
-
-    bool operator()(const KeyType& a, const KeyType& b) const { return a == b; }
-    bool operator()(const KeyType& a, const LookupKeyType& b) const {
-      return a == b;
-    }
-    bool operator()(const LookupKeyType& a, const KeyType& b) const {
-      return a == b;
-    }
-  };
-
-  static absl::Mutex cached_images_mutex;
-  static auto& module_images =
-      *new absl::flat_hash_map<KeyType, std::unique_ptr<ModuleImage>, KeyHash,
-                               KeyEq>
-          ABSL_GUARDED_BY(cached_images_mutex);
-
-  auto lookup_key = LookupKeyType{std::string_view(kernel_name),
-                                  shared_mem_bytes, ptx, compute_capability};
-  {
-    // Allow threads to lookup in parallel
-    absl::ReaderMutexLock reader_lock(cached_images_mutex);
-    auto it = module_images.find(lookup_key);
-    if (it != module_images.end()) return it->second.get();
-  }
-
+absl::StatusOr<std::vector<uint8_t>> CompileModuleImage(
+    std::string_view ptx, int compute_capability) {
   std::vector<uint8_t> module_image;
 #ifdef JAX_GPU_HIP  // For HIP/ROCM just read the hsaco file
   std::string result_blob;
@@ -221,6 +179,67 @@ absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
                                /*disable_gpuasm_optimizations=*/false,
                                /*preferred_cuda_dir=*/"", ptxas_extra_flags)));
 #endif
+  return module_image;
+}
+
+// Creates, and caches, a module image with the given parameters.
+// If `pre_compiled_module_image` is not empty, it will be used instead of
+// compiling the module image.
+absl::StatusOr<ModuleImage*> GetModuleImage(
+    std::string_view kernel_name, uint32_t shared_mem_bytes,
+    std::string_view ptx, int compute_capability,
+    std::string_view pre_compiled_module_image = {}) {
+  // Since we want an efficient key lookup, we'd have to suffer a bit.
+  using KeyType = std::tuple<std::string, uint32_t, std::string, int>;
+  using LookupKeyType =
+      std::tuple<std::string_view, uint32_t, std::string_view, int>;
+
+  struct KeyHash {
+    using is_transparent = void;
+
+    size_t operator()(const KeyType& v) const {
+      return absl::Hash<KeyType>{}(v);
+    }
+    size_t operator()(const LookupKeyType& v) const {
+      return absl::Hash<LookupKeyType>{}(v);
+    }
+  };
+
+  struct KeyEq {
+    using is_transparent = void;
+
+    bool operator()(const KeyType& a, const KeyType& b) const { return a == b; }
+    bool operator()(const KeyType& a, const LookupKeyType& b) const {
+      return a == b;
+    }
+    bool operator()(const LookupKeyType& a, const KeyType& b) const {
+      return a == b;
+    }
+  };
+
+  static absl::Mutex cached_images_mutex;
+  static auto& module_images =
+      *new absl::flat_hash_map<KeyType, std::unique_ptr<ModuleImage>, KeyHash,
+                               KeyEq>
+          ABSL_GUARDED_BY(cached_images_mutex);
+
+  auto lookup_key = LookupKeyType{std::string_view(kernel_name),
+                                  shared_mem_bytes, ptx, compute_capability};
+  {
+    // Allow threads to lookup in parallel
+    absl::ReaderMutexLock reader_lock(cached_images_mutex);
+    auto it = module_images.find(lookup_key);
+    if (it != module_images.end()) return it->second.get();
+  }
+
+  std::vector<uint8_t> module_image;
+  if (pre_compiled_module_image.empty()) {
+    JAX_ASSIGN_OR_RETURN(module_image,
+                         CompileModuleImage(ptx, compute_capability));
+  } else {
+    module_image.assign(pre_compiled_module_image.begin(),
+                        pre_compiled_module_image.end());
+  }
 
   absl::MutexLock writer_lock(cached_images_mutex);
   auto key = KeyType{kernel_name, shared_mem_bytes, ptx, compute_capability};
@@ -254,8 +273,10 @@ absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
   return elapsed_ms;
 }
 
-absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
-                                          gpuStream_t stream, void** buffers) {
+// Creates, and caches, a kernel using `opaque` as the key.
+absl::StatusOr<KernelCall*> GetOrCreateKernelCall(
+    std::string_view opaque,
+    absl::FunctionRef<absl::StatusOr<KernelCall>()> create_fn) {
   if (opaque.empty()) {
     return absl::InvalidArgumentError("Opaque data is empty.");
   }
@@ -271,36 +292,43 @@ absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
                                                 absl::InternalError("Pending"));
   if (success) {
     it->second = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
-      // The opaque data is a zlib compressed protobuf.
-      JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
-
-      jax_triton::TritonAnyKernelCall proto;
-      if (!proto.ParseFromString(serialized)) {
-        return absl::InvalidArgumentError("Failed to parse serialized data.");
-      }
-
-      if (proto.has_kernel_call()) {
-        JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                             KernelCall::FromProto(proto.kernel_call()));
-        return std::make_unique<KernelCall>(std::move(kernel_call_));
-      } else if (proto.has_autotuned_kernel_call()) {
-        JAX_ASSIGN_OR_RETURN(
-            AutotunedKernelCall autotuned_call,
-            AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
-        {
-          JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                               AutotunedKernelCall::Autotune(
-                                   std::move(autotuned_call), stream, buffers));
-          return std::make_unique<KernelCall>(std::move(kernel_call_));
-        }
-      } else {
-        return absl::InvalidArgumentError("Unknown kernel call type.");
-      }
+      JAX_ASSIGN_OR_RETURN(KernelCall call, create_fn());
+      return std::make_unique<KernelCall>(std::move(call));
     }();
   }
 
   JAX_RETURN_IF_ERROR(it->second.status());
   return it->second->get();
+}
+
+// Creates a `KernelCall` from the given opaque data, and caches it for
+// subsequent calls with the same opaque data.
+absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
+                                          gpuStream_t stream, void** buffers) {
+  if (opaque.empty()) {
+    return absl::InvalidArgumentError("Opaque data is empty.");
+  }
+
+  return GetOrCreateKernelCall(opaque, [&]() -> absl::StatusOr<KernelCall> {
+    JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
+
+    jax_triton::TritonAnyKernelCall proto;
+    if (!proto.ParseFromString(serialized)) {
+      return absl::InvalidArgumentError("Failed to parse serialized data.");
+    }
+
+    if (proto.has_kernel_call()) {
+      return KernelCall::FromProto(proto.kernel_call());
+    } else if (proto.has_autotuned_kernel_call()) {
+      JAX_ASSIGN_OR_RETURN(
+          AutotunedKernelCall autotuned_call,
+          AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
+      return AutotunedKernelCall::Autotune(std::move(autotuned_call), stream,
+                                           buffers);
+    } else {
+      return absl::InvalidArgumentError("Unknown kernel call type.");
+    }
+  });
 }
 
 absl::Status AnnotateModuleLoadStatus(
@@ -351,6 +379,11 @@ class ModuleImage {
         module_image_(std::move(module_image)),
         shared_mem_bytes_(shared_mem_bytes),
         compute_capability_(compute_capability) {}
+
+  const std::string& kernel_name() const { return kernel_name_; }
+  const std::vector<uint8_t>& module_image() const { return module_image_; }
+  uint32_t shared_mem_bytes() const { return shared_mem_bytes_; }
+  int compute_capability() const { return compute_capability_; }
 
   absl::StatusOr<gpuFunction_t> GetFunctionForContext(gpuContext_t context) {
     {
@@ -438,6 +471,26 @@ class ModuleImage {
     return function;
   }
 
+  static absl::StatusOr<ModuleImage*> FromProto(
+      const jax_triton::ModuleImageProto& proto, std::string_view ptx,
+      int compute_capability) {
+    // Retrieve the ModuleImage via GetModuleImage to ensure caching and reuse
+    // across calls. Reusing the cached instance avoids repeating one-time GPU
+    // initialization work (e.g., gpuModuleLoadData and gpuModuleGetFunction)
+    // on subsequent executions of the same kernel.
+    return GetModuleImage(proto.kernel_name(), proto.shared_mem_bytes(), ptx,
+                          compute_capability, proto.object_file());
+  }
+
+  jax_triton::ModuleImageProto ToProto() const {
+    jax_triton::ModuleImageProto proto;
+    proto.set_kernel_name(kernel_name_);
+    proto.set_object_file(
+        std::string(module_image_.begin(), module_image_.end()));
+    proto.set_shared_mem_bytes(shared_mem_bytes_);
+    return proto;
+  }
+
  private:
   std::string kernel_name_;
   std::vector<uint8_t> module_image_;
@@ -450,16 +503,47 @@ class ModuleImage {
       ABSL_GUARDED_BY(mutex_);
 };
 
+// Compiles the kernel proto to machine code (e.g. CUBIN), and updates the proto
+// with the results.
+absl::Status CompileKernelProto(const stream_executor::GpuComputeCapability* cc,
+                                jax_triton::TritonKernel* kernel_proto) {
+  int compute_capability = kernel_proto->compute_capability();
+  if (cc != nullptr && cc->IsCuda() &&
+      cc->cuda_compute_capability() != nullptr) {
+    compute_capability = cc->cuda_compute_capability()->major * 10 +
+                         cc->cuda_compute_capability()->minor;
+  }
+
+  std::string_view pre_compiled =
+      kernel_proto->has_module_image()
+          ? std::string_view(kernel_proto->module_image().object_file())
+          : std::string_view();
+
+  JAX_ASSIGN_OR_RETURN(
+      ModuleImage * image,
+      GetModuleImage(kernel_proto->kernel_name(),
+                     kernel_proto->shared_mem_bytes(), kernel_proto->ptx(),
+                     compute_capability, pre_compiled));
+  if (image == nullptr) {
+    return absl::InternalError("Failed to get module image");
+  }
+
+  *kernel_proto->mutable_module_image() = image->ToProto();
+  kernel_proto->set_compute_capability(compute_capability);
+  return absl::OkStatus();
+}
+
 Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-               int compute_capability)
+               int compute_capability, ModuleImage* module_image)
     : kernel_name_(std::move(kernel_name)),
       block_dim_x_(num_warps * kNumThreadsPerWarp),
       num_ctas_(num_ctas),
       shared_mem_bytes_(shared_mem_bytes),
       ptx_(std::move(ptx)),
       ttir_(std::move(ttir)),
-      compute_capability_(compute_capability) {}
+      compute_capability_(compute_capability),
+      module_image_(module_image) {}
 
 absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
                             void** params) {
@@ -527,13 +611,21 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
 #endif
 }
 
-/*static*/ Kernel Kernel::FromProto(const jax_triton::TritonKernel& proto) {
+/*static*/ absl::StatusOr<Kernel> Kernel::FromProto(
+    const jax_triton::TritonKernel& proto) {
   // Use 1 as default value if not specified in already serialized kernels.
   int num_ctas = proto.has_num_ctas() ? proto.num_ctas() : 1;
 
+  ModuleImage* module_image = nullptr;
+  if (proto.has_module_image()) {
+    JAX_ASSIGN_OR_RETURN(
+        module_image, ModuleImage::FromProto(proto.module_image(), proto.ptx(),
+                                             proto.compute_capability()));
+  }
+
   return Kernel(proto.kernel_name(), proto.num_warps(), num_ctas,
                 proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
-                proto.compute_capability());
+                proto.compute_capability(), module_image);
 }
 
 jax_triton::TritonKernel Kernel::ToProto() const {
@@ -545,6 +637,9 @@ jax_triton::TritonKernel Kernel::ToProto() const {
   proto.set_ptx(ptx_);
   proto.set_ttir(ttir_);
   proto.set_compute_capability(compute_capability_);
+  if (module_image_ != nullptr) {
+    *proto.mutable_module_image() = module_image_->ToProto();
+  }
   return proto;
 }
 
@@ -672,9 +767,9 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
     JAX_ASSIGN_OR_RETURN(Parameter p, Parameter::FromProto(parameter));
     parameters.push_back(p);
   }
-
-  return KernelCall(Kernel::FromProto(proto.kernel()), proto.grid_0(),
-                    proto.grid_1(), proto.grid_2(), std::move(parameters));
+  JAX_ASSIGN_OR_RETURN(Kernel kernel, Kernel::FromProto(proto.kernel()));
+  return KernelCall(std::move(kernel), proto.grid_0(), proto.grid_1(),
+                    proto.grid_2(), std::move(parameters));
 }
 
 jax_triton::TritonKernelCall KernelCall::ToProto() const {
@@ -873,11 +968,20 @@ static absl::StatusOr<std::vector<void*>> CombineBuffers(
   return buffers;
 }
 
+// Finishes the compilation down to machine code if needed (e.g. for autotuned
+// kernels), and launches the kernel.
 absl::Status TritonKernelCallFfi(gpuStream_t stream,
+                                 TritonCustomCallState* state,
                                  ::xla::ffi::RemainingArgs args,
                                  ::xla::ffi::RemainingRets rets,
                                  ::xla::ffi::Dictionary attrs) {
   JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
+  if (state != nullptr && state->IsReadyForExecution()) {
+    JAX_ASSIGN_OR_RETURN(KernelCall kernel_call,
+                         KernelCall::FromProto(state->proto.kernel_call()));
+    return kernel_call.Launch(stream, buffers.data());
+  }
+
   JAX_ASSIGN_OR_RETURN(std::string_view opaque,
                        attrs.get<std::string_view>("opaque"));
   JAX_ASSIGN_OR_RETURN(KernelCall * kernel_call,
@@ -885,17 +989,67 @@ absl::Status TritonKernelCallFfi(gpuStream_t stream,
   return kernel_call->Launch(stream, buffers.data());
 }
 
-// For command buffer support, make sure that the kernel cache is populated
-// during initialization.
+// Autotunes the kernel if needed, and populates the kernel cache.
+// Because of command buffer support, we need to make sure that the kernel cache
+// is populated during initialization, and not during execution.
 absl::Status TritonKernelCallFfiInitialize(gpuStream_t stream,
+                                           TritonCustomCallState* state,
                                            ::xla::ffi::RemainingArgs args,
                                            ::xla::ffi::RemainingRets rets,
                                            ::xla::ffi::Dictionary attrs) {
+  // If we already have a fully compiled kernel, we don't need to do anything.
+  if (state != nullptr && state->IsReadyForExecution()) {
+    return absl::OkStatus();
+  }
+
   JAX_ASSIGN_OR_RETURN(std::string_view opaque,
                        attrs.get<std::string_view>("opaque"));
+  if (state != nullptr && state->NeedsAutotuning()) {
+    JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers,
+                         CombineBuffers(args, rets));
+
+    auto autotune_kernel_fn = [&]() -> absl::StatusOr<KernelCall> {
+      JAX_ASSIGN_OR_RETURN(AutotunedKernelCall autotuned_call,
+                           AutotunedKernelCall::FromProto(
+                               state->proto.autotuning_kernel_candidates()));
+      return AutotunedKernelCall::Autotune(std::move(autotuned_call), stream,
+                                           buffers.data());
+    };
+    JAX_ASSIGN_OR_RETURN(KernelCall * winning_kernel,
+                         // Use `GetOrCreateKernelCall` to avoid autotuning the
+                         // same kernel multiple times.
+                         GetOrCreateKernelCall(opaque, autotune_kernel_fn));
+
+    *state->proto.mutable_kernel_call() = winning_kernel->ToProto();
+    return absl::OkStatus();
+  }
+
+  // Fallback for JIT (i.e. non-AOT) compilation.
   JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
-  JAX_ASSIGN_OR_RETURN(KernelCall * kernel_call,
-                       GetKernelCall(opaque, stream, buffers.data()));
+  JAX_ASSIGN_OR_RETURN(
+      KernelCall * kernel_call,
+      GetOrCreateKernelCall(opaque, [&]() -> absl::StatusOr<KernelCall> {
+        JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
+        jax_triton::TritonAnyKernelCall proto;
+        if (!proto.ParseFromString(serialized)) {
+          return absl::InvalidArgumentError("Failed to parse serialized data.");
+        }
+
+        if (proto.has_kernel_call()) {
+          return KernelCall::FromProto(proto.kernel_call());
+        } else if (proto.has_autotuned_kernel_call()) {
+          if (stream == nullptr) {
+            return absl::InvalidArgumentError("Stream is null.");
+          }
+          JAX_ASSIGN_OR_RETURN(
+              AutotunedKernelCall autotuned_call,
+              AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
+          return AutotunedKernelCall::Autotune(std::move(autotuned_call),
+                                               stream, buffers.data());
+        }
+
+        return absl::InvalidArgumentError("Unknown kernel call type.");
+      }));
   static_cast<void>(kernel_call);
   return absl::OkStatus();
 }
@@ -904,6 +1058,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kTritonKernelCallFfi, TritonKernelCallFfi,
     ::xla::ffi::Ffi::Bind()
         .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
+        .Ctx<::xla::ffi::State<TritonCustomCallState>>()
         .RemainingArgs()
         .RemainingRets()
         .Attrs(),
@@ -913,9 +1068,80 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kTritonKernelCallFfiInitialize, TritonKernelCallFfiInitialize,
     ::xla::ffi::Ffi::BindInitialize()
         .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
+        .Ctx<::xla::ffi::State<TritonCustomCallState>>()
         .RemainingArgs()
         .RemainingRets()
         .Attrs(),
     {::xla::ffi::Traits::kCmdBufferCompatible});
+
+}  // namespace jax::JAX_GPU_NAMESPACE
+
+namespace xla::ffi {
+
+template <>
+struct TypeRegistry::SerDes<jax::JAX_GPU_NAMESPACE::TritonCustomCallState>
+    : public std::true_type {
+  static absl::StatusOr<std::string> Serialize(
+      const jax::JAX_GPU_NAMESPACE::TritonCustomCallState& state) {
+    return jax::JAX_GPU_NAMESPACE::TritonCustomCallState::Serialize(state);
+  }
+  static absl::StatusOr<
+      std::unique_ptr<jax::JAX_GPU_NAMESPACE::TritonCustomCallState>>
+  Deserialize(absl::string_view data) {
+    return jax::JAX_GPU_NAMESPACE::TritonCustomCallState::Deserialize(data);
+  }
+};
+
+}  // namespace xla::ffi
+
+namespace jax::JAX_GPU_NAMESPACE {
+
+// Compiles the kernel down to machine code (e.g. CUBIN) and stores it in the
+// TritonCustomCallState. In case of AutotunedKernels it compiles all the
+// candidates.
+absl::StatusOr<std::unique_ptr<TritonCustomCallState>>
+TritonKernelCallFfiInstantiate(const stream_executor::GpuComputeCapability* cc,
+                               ::xla::ffi::Dictionary attrs) {
+  JAX_ASSIGN_OR_RETURN(std::string_view opaque,
+                       attrs.get<std::string_view>("opaque"));
+  JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
+
+  jax_triton::TritonAnyKernelCall proto;
+  if (!proto.ParseFromString(serialized)) {
+    return absl::InvalidArgumentError("Failed to parse serialized data.");
+  }
+
+  auto new_state = std::make_unique<TritonCustomCallState>();
+
+  switch (proto.value_case()) {
+    case jax_triton::TritonAnyKernelCall::kKernelCall:
+      *new_state->proto.mutable_kernel_call() =
+          std::move(*proto.mutable_kernel_call());
+      JAX_RETURN_IF_ERROR(CompileKernelProto(
+          cc, new_state->proto.mutable_kernel_call()->mutable_kernel()));
+      break;
+    case jax_triton::TritonAnyKernelCall::kAutotunedKernelCall:
+      *new_state->proto.mutable_autotuning_kernel_candidates() =
+          std::move(*proto.mutable_autotuned_kernel_call());
+
+      for (jax_triton::TritonAutotunedKernelCall_Config& config :
+           *new_state->proto.mutable_autotuning_kernel_candidates()
+                ->mutable_configs()) {
+        JAX_RETURN_IF_ERROR(CompileKernelProto(
+            cc, config.mutable_kernel_call()->mutable_kernel()));
+      }
+      break;
+    default:
+      return absl::InternalError("Unknown kernel call type.");
+  }
+
+  return new_state;
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(kTritonKernelCallFfiInstantiate,
+                              TritonKernelCallFfiInstantiate,
+                              ::xla::ffi::Ffi::BindInstantiate()
+                                  .Ctx<::xla::ffi::TargetGpuComputeCapability>()
+                                  .Attrs());
 
 }  // namespace jax::JAX_GPU_NAMESPACE
