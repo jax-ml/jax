@@ -1560,7 +1560,11 @@ def _barrier_test_pp_eqn(
 jax_core.pp_eqn_rules[barrier_test_p] = _barrier_test_pp_eqn
 
 
+@lowering.register_lowering_rule(barrier_test_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(barrier_test_p, *gpu_core.LANExWARP_SEMANTICS)
+@lowering.register_lowering_rule(
+    barrier_test_p, mgpu.LoweringSemantics.Warpgroup
+)
 @lowering.register_lowering_rule(barrier_test_p, *gpu_core.WGxWARP_SEMANTICS)
 def _barrier_test_lowering(
     ctx: lowering.LoweringRuleContext,
@@ -1574,13 +1578,18 @@ def _barrier_test_lowering(
   orders_tensor_core = getattr(
       barrier_aval.inner_aval.dtype, "orders_tensor_core", False  # pyrefly: ignore[missing-attribute]
   )
+
+  if ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warp:
+    scope = mgpu_utils.ThreadSubset.WARP
+  else:
+    scope = mgpu_utils.ThreadSubset.WARPGROUP
+
   base_index = _get_barrier_base_index(barrier_aval, transforms)
   if base_index is not None:
     barrier = barrier[base_index]
-  # Ensure that all threads in the warp have converged and will not read
-  # different values from the barrier.
-  mgpu.utils.warp_barrier()
-  wait_complete = barrier.test(orders_tensor_core=orders_tensor_core)
+  wait_complete = barrier.test(
+      orders_tensor_core=orders_tensor_core, scope=scope
+  )
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
     return wait_complete
   return mgpu.FragmentedArray.splat(wait_complete, shape=(), is_signed=False)
