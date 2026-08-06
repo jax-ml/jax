@@ -1003,6 +1003,12 @@ def _copy_gmem_to_smem_lowering(
       )
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+    if (
+        ctx.module_ctx.primitive_semantics == gpu_core.PrimitiveSemantics.Warpgroup
+        and ctx.module_ctx.auto_barriers
+    ):
+      mgpu.warpgroup_barrier()  # Make sure all reads have completed.
+
     if not is_cp_async:
       assert barrier is not None
       if bytes % WARPGROUP_SIZE:
@@ -1018,8 +1024,6 @@ def _copy_gmem_to_smem_lowering(
         # arrive with the whole transfer size, while everyone else arrives with 0.
         # But we should continue using this scheme as it's likely to be faster.
         bytes //= WARPGROUP_SIZE
-        if ctx.module_ctx.auto_barriers:
-          mgpu.warpgroup_barrier()  # Make sure all reads have completed.
         if is_leader_tracked_copy:
           first_block = arith_dialect.cmpi(
               arith_dialect.CmpIPredicate.eq,
