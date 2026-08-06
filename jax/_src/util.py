@@ -23,8 +23,7 @@ import itertools as it
 import logging
 import math
 import operator
-from typing import (Any, Generic, ParamSpec, Protocol, SupportsIndex,
-                    TypeVar, overload, TYPE_CHECKING, cast)
+from typing import Any, Protocol, SupportsIndex, overload, TYPE_CHECKING, cast
 import weakref
 
 import numpy as np
@@ -41,24 +40,19 @@ Seq = Sequence
 # TODO(jakevdp): fix import cycles and import Array.
 Array = Any
 
-T = TypeVar("T")
-T1 = TypeVar("T1")
-T2 = TypeVar("T2")
-T3 = TypeVar("T3")
-
 
 if TYPE_CHECKING:
   # safe_zip cannot yet be fully annotated, so we use a strategy similar
   # to that used for builtins.zip in python/typeshed. This supports
   # return types matching input types for up to three arguments.
   @overload
-  def safe_zip(__arg1: Iterable[T1], /) -> list[tuple[T1]]:
+  def safe_zip[T1](__arg1: Iterable[T1], /) -> list[tuple[T1]]:
     ...
   @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]:
+  def safe_zip[T1, T2](__arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[tuple[T1, T2]]:
     ...
   @overload
-  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]:
+  def safe_zip[T1, T2, T3](__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[tuple[T1, T2, T3]]:
     ...
   @overload
   def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[tuple[Any, ...]]:
@@ -87,16 +81,16 @@ if TYPE_CHECKING:
   # to that used for builtins.map in python/typeshed. This supports
   # checking input types for the callable with up to three arguments.
   @overload
-  def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1], /) -> list[T]: ...
+  def safe_map[T, T1](f: Callable[[T1], T], __arg1: Iterable[T1], /) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[T]: ...
+  def safe_map[T, T1, T2](f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2], /) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[T]: ...
+  def safe_map[T, T1, T2, T3](f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> list[T]: ...
 
   @overload
-  def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[T]: ...
+  def safe_map[T](f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> list[T]: ...
 
   def safe_map(f, *args):
     args = list(map(list, args))
@@ -110,13 +104,13 @@ else:
 
 if TYPE_CHECKING:
   @overload
-  def foreach(f: Callable[[T1], Any], __arg1: Iterable[T1], /) -> None: ...
+  def foreach[T1](f: Callable[[T1], Any], __arg1: Iterable[T1], /) -> None: ...
 
   @overload
-  def foreach(f: Callable[[T1, T2], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], /) -> None: ...
+  def foreach[T1, T2](f: Callable[[T1, T2], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], /) -> None: ...
 
   @overload
-  def foreach(f: Callable[[T1, T2, T3], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> None: ...
+  def foreach[T1, T2, T3](f: Callable[[T1, T2, T3], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3], /) -> None: ...
 
   @overload
   def foreach(f: Callable[..., Any], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], /, *args) -> None: ...
@@ -129,7 +123,7 @@ else:
   foreach = jaxlib_utils.foreach
 
 
-def unzip2(xys: Iterable[tuple[T1, T2]]
+def unzip2[T1, T2](xys: Iterable[tuple[T1, T2]]
     ) -> tuple[tuple[T1, ...], tuple[T2, ...]]:
   """Unzip sequence of length-2 tuples into two tuples."""
   # Note: we deliberately don't use zip(*xys) because it is lazily evaluated,
@@ -141,7 +135,7 @@ def unzip2(xys: Iterable[tuple[T1, T2]]
     ys.append(y)
   return tuple(xs), tuple(ys)
 
-def unzip3(xyzs: Iterable[tuple[T1, T2, T3]]
+def unzip3[T1, T2, T3](xyzs: Iterable[tuple[T1, T2, T3]]
     ) -> tuple[tuple[T1, ...], tuple[T2, ...], tuple[T3, ...]]:
   """Unzip sequence of length-3 tuples into three tuples."""
   # Note: we deliberately don't use zip(*xyzs) because it is lazily evaluated,
@@ -155,14 +149,14 @@ def unzip3(xyzs: Iterable[tuple[T1, T2, T3]]
     zs.append(z)
   return tuple(xs), tuple(ys), tuple(zs)
 
-def subvals(lst: Sequence[T], replace: Iterable[tuple[int, T]]) -> tuple[T, ...]:
+def subvals[T](lst: Sequence[T], replace: Iterable[tuple[int, T]]) -> tuple[T, ...]:
   """Substitute values within a list."""
   lst = list(lst)
   for i, v in replace:
     lst[i] = v
   return tuple(lst)
 
-def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+def split_list[T](args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   """Split list into sublists of the specified sizes."""
   args = list(args)
   lists = []
@@ -172,7 +166,7 @@ def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   lists.append(args)
   return lists
 
-def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+def split_list_checked[T](args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   """Split list into sublists of the specified sizes."""
   args = list(args)
   assert sum(ns) == len(args) and all(n >= 0 for n in ns)
@@ -182,7 +176,7 @@ def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
     args = args[n:]
   return lists
 
-def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]]:
+def partition_list[T](bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]]:
   """Partition a list into two based on a mask."""
   assert len(bs) == len(l)
   lists: tuple[list[T], list[T]] = ([], [])
@@ -190,7 +184,7 @@ def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]
     lists[b].append(x)
   return lists
 
-def merge_lists(bs: Sequence[bool], l0: Sequence[T1], l1: Sequence[T2]
+def merge_lists[T1, T2](bs: Sequence[bool], l0: Sequence[T1], l1: Sequence[T2]
                 ) -> list[T1 | T2]:
   """Merge the elements of two lists based on a mask."""
   assert sum(bs) == len(l1) and len(bs) - sum(bs) == len(l0)
@@ -199,7 +193,7 @@ def merge_lists(bs: Sequence[bool], l0: Sequence[T1], l1: Sequence[T2]
   assert next(i0, sentinel := object()) is next(i1, sentinel) is sentinel
   return out
 
-def subs_list(
+def subs_list[T](
     subs: Sequence[int | None], src: Sequence[T], base: Sequence[T],
 ) -> list[T]:
   base_ = iter(base)
@@ -207,7 +201,7 @@ def subs_list(
   assert next(base_, sentinel := object()) is sentinel
   return out
 
-def subs_list2(
+def subs_list2[T](
     subs1: Sequence[int | None], subs2: Sequence[int | None],
     src1: Sequence[T], src2: Sequence[T], base: Sequence[T],
 ) -> list[T]:
@@ -218,7 +212,7 @@ def subs_list2(
   assert next(base_, sentinel := object()) is sentinel
   return out
 
-def concatenate(xs: Iterable[Sequence[T]]) -> list[T]:
+def concatenate[T](xs: Iterable[Sequence[T]]) -> list[T]:
   """Concatenates/flattens a list of lists."""
   return list(it.chain.from_iterable(xs))
 
@@ -226,7 +220,7 @@ flatten = concatenate
 
 _unflatten_done = object()
 
-def unflatten(xs: Iterable[T], ns: Sequence[int]) -> list[list[T]]:
+def unflatten[T](xs: Iterable[T], ns: Sequence[int]) -> list[list[T]]:
   """Splits `xs` into subsequences of lengths `ns`.
 
   Unlike `split_list`, the `sum(ns)` must be equal to `len(xs)`."""
@@ -289,10 +283,7 @@ memoize = cache(max_size=None)
 
 def _ignore(): return None
 
-P = ParamSpec("P")
-R = TypeVar("R", covariant=True)
-
-class WeakrefCachedFunc(Protocol, Generic[P, R]):
+class WeakrefCachedFunc[**P, R](Protocol):
   def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
   def cache_clear(self) -> None: ...
   def cache_info(self) -> lib_weakref_lru_cache.WeakrefLRUCache.WeakrefLRUCacheInfo: ...
@@ -300,18 +291,18 @@ class WeakrefCachedFunc(Protocol, Generic[P, R]):
   def evict_weakref(self, arg0: Any) -> None: ...
 
 @overload
-def weakref_lru_cache(
+def weakref_lru_cache[**P, R](
     f: Callable[P, R], /, *, maxsize: int | None = 2048,
     trace_context_in_key: bool = True, explain: Callable | None = None
 ) -> WeakrefCachedFunc[P, R]: ...
 
 @overload
-def weakref_lru_cache(
+def weakref_lru_cache[**P, R](
     f: None = None, /, *, maxsize: int | None = 2048,
     trace_context_in_key: bool = True, explain: Callable | None = None
 ) -> Callable[[Callable[P, R]], WeakrefCachedFunc[P, R]]: ...
 
-def weakref_lru_cache(
+def weakref_lru_cache[**P, R](
     f: Callable[P, R] | None = None, *, maxsize: int | None = 2048,
     trace_context_in_key: bool = True, explain: Callable | None = None
 ):
@@ -495,7 +486,7 @@ def ceil_of_ratio(x: int, y: int) -> int:
   return -(-x // y)
 
 
-def wraps(
+def wraps[T](
     wrapped: Callable,
     namestr: str | None = None,
     docstr: str | None = None,
@@ -522,15 +513,15 @@ def wraps(
     return fun
   return wrapper
 
-def tuple_insert(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
+def tuple_insert[T](t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
   assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
 
-def tuple_delete(t: tuple[T, ...], idx: int) -> tuple[T, ...]:
+def tuple_delete[T](t: tuple[T, ...], idx: int) -> tuple[T, ...]:
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
 
-def tuple_update(t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
+def tuple_update[T](t: tuple[T, ...], idx: int, val: T) -> tuple[T, ...]:
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx+1:]
 
@@ -619,7 +610,7 @@ def distributed_debug_log(*pairs):
     logger.warning("\n".join(lines))
 
 
-def stable_unique(it: Iterable[T]) -> Iterable[T]:
+def stable_unique[T](it: Iterable[T]) -> Iterable[T]:
   """Returns unique elements from `it` in the order of occurrence.
 
   The elements must be hashable.
@@ -627,30 +618,30 @@ def stable_unique(it: Iterable[T]) -> Iterable[T]:
   return dict.fromkeys(it).keys()
 
 
-class OrderedSet(Generic[T]):
-  elts_set: set[T]
-  elts_list: list[T]
+class OrderedSet[ElementType]:
+  elts_set: set[ElementType]
+  elts_list: list[ElementType]
 
   def __init__(self):
     self.elts_set = set()
     self.elts_list = []
 
-  def add(self, elt: T) -> None:
+  def add(self, elt: ElementType) -> None:
     if elt not in self.elts_set:
       self.elts_set.add(elt)
       self.elts_list.append(elt)
 
-  def update(self, elts: Seq[T]) -> None:
+  def update(self, elts: Seq[ElementType]) -> None:
     for e in elts:
       self.add(e)
 
-  def __iter__(self) -> Iterator[T]:
+  def __iter__(self) -> Iterator[ElementType]:
     return iter(self.elts_list)
 
   def __len__(self) -> int:
     return len(self.elts_list)
 
-  def __contains__(self, elt: T) -> bool:
+  def __contains__(self, elt: ElementType) -> bool:
     return elt in self.elts_set
 
 
@@ -740,7 +731,7 @@ def _original_func(f: Callable) -> Callable:
   return f
 
 
-def set_module(module: str) -> Callable[[T], T]:
+def set_module[T](module: str) -> Callable[[T], T]:
   def wrapper(func: T) -> T:
     if module is not None:
       func.__module__ = module
@@ -748,7 +739,7 @@ def set_module(module: str) -> Callable[[T], T]:
   return wrapper
 
 
-def use_cpp_class(cpp_cls: type[Any]) -> Callable[[type[T]], type[T]]:
+def use_cpp_class[T](cpp_cls: type[Any]) -> Callable[[type[T]], type[T]]:
   """A decorator replacing a Python class with its C++ version at runtime."""
 
   def wrapper(cls):
@@ -767,7 +758,7 @@ def use_cpp_class(cpp_cls: type[Any]) -> Callable[[type[T]], type[T]]:
 
   return wrapper
 
-def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
+def use_cpp_method[T](is_enabled: bool = True) -> Callable[[T], T]:
   """A decorator excluding methods from the set that are forwarded to C++ class."""
   if not isinstance(is_enabled, bool):
     raise TypeError("``is_enabled`` must be a bool")
