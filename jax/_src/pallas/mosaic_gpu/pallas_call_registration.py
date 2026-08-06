@@ -17,8 +17,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import os
 import time
+from typing import cast
 import warnings
 
 import jax
@@ -95,6 +97,18 @@ def pallas_call_lowering(
     print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")
     print(lowering_result.module.operation)
 
+  return _emit_mosaic_gpu_custom_call(
+      ctx, args, lowering_result, input_output_aliases, debug_info
+  )
+
+
+def _emit_mosaic_gpu_custom_call(
+    ctx: mlir.LoweringRuleContext,
+    args,
+    lowering_result: lowering.LoweringResult,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    debug_info,
+):
   module = lowering_result.module
   new_avals_in = list(ctx.avals_in)
   new_avals_out = list(map(_as_shaped_array, lowering_result.new_out_shapes))
@@ -143,8 +157,8 @@ def pallas_call_lowering(
           )
       except FileExistsError:
         warnings.warn(
-            f"Failed to dump profile for pallas_call {debug_info.func_src_info}, "
-            f"profile already exists at {out_file}"
+            f"Failed to dump profile for {debug_info.func_src_info}, profile"
+            f" already exists at {out_file}"
         )
     def do_callback(prof_buffer):
       jax.debug.callback(dump_profile, prof_buffer)
@@ -162,3 +176,89 @@ def _as_shaped_array(t: jax.ShapeDtypeStruct) -> jax_core.ShapedArray:
 
 
 pallas_core.register_lowering_rule(gpu_core.CompilerParams, pallas_call_lowering, "gpu")
+
+
+def mpmd_map_mgpu_lowering_rule(
+    ctx: mlir.LoweringRuleContext,
+    *args,
+    meshes,
+    jaxprs,
+    out_avals,
+    input_output_aliases,
+    compiler_params,
+    interpret,
+    debug,
+    cost_estimate,
+    metadata,
+    name,
+    external_meshes,
+):
+  del interpret, cost_estimate, metadata, name, out_avals  # Unused.
+
+  if len(jaxprs) != 1:
+    raise NotImplementedError(
+        "Lowering multiple mesh/function pairs is not supported by the Mosaic"
+        " GPU backend"
+    )
+  if external_meshes:
+    raise NotImplementedError(
+        "External meshes are not supported by the Mosaic GPU backend"
+    )
+  [jaxpr] = jaxprs
+  [mesh] = meshes
+  if not isinstance(mesh, gpu_core.Mesh):
+    raise NotImplementedError(
+        f"Mesh {mesh} is not supported by the Mosaic GPU backend"
+    )
+  # On GPU ``mpmd_map`` kernels never carry scratch operands -- scratch is
+  # handled separately by ``plgpu.kernel``. So the jaxpr invars are exactly the
+  # inputs followed by the outputs.
+  if len(jaxpr.invars) != len(args) + len(ctx.avals_out):
+    raise NotImplementedError(
+        "Scratch operands are not supported by the Mosaic GPU mpmd_map lowering"
+    )
+
+  if debug:
+    print(f"\nThe kernel jaxpr for mpmd_map {jaxpr.debug_info.func_src_info}:")
+    print(jaxpr)
+
+  mgpu.dialect.register_dialect(ctx.module_context.context)
+
+  if compiler_params is None:
+    gpu_params = gpu_core.CompilerParams()
+  else:
+    assert isinstance(compiler_params, gpu_core.CompilerParams)
+    gpu_params = compiler_params
+
+  jax_mesh = None
+  axis_context = ctx.module_context.axis_context
+  if axis_context is not None:
+    if isinstance(axis_context, sharding_impls.SPMDAxisContext):
+      jax_mesh = axis_context.mesh
+
+  # ``axis_index``/``program_id`` inside the kernel (including nested
+  # ``run_scoped`` traces during lowering) resolve mesh axes from the JAX core
+  # axis environment. The pipelined path binds them via ``grid_mapping.trace_env``;
+  # here we bind them straight from the mesh.
+  from jax._src.pallas import mpmd  # pyrefly: ignore[import-cycle]
+  with mpmd.mpmd_map_tracing_context(mesh, (*meshes, *external_meshes)):
+    lowering_result = lowering.lower_unpipelined_jaxpr_to_module(
+        mesh,
+        jax_mesh,
+        jaxpr,
+        cast(Sequence[jax_core.ShapedArray], ctx.avals_in),
+        cast(Sequence[jax_core.ShapedArray], ctx.avals_out),
+        gpu_params,
+        outer_traceback=ctx.traceback,
+    )
+  if debug:
+    print(f"\nThe Mosaic GPU module for mpmd_map {jaxpr.debug_info.func_src_info}:")
+    print(lowering_result.module.operation)
+
+  return _emit_mosaic_gpu_custom_call(
+      ctx,
+      args,
+      lowering_result,
+      tuple(input_output_aliases.items()),
+      jaxpr.debug_info,
+  )

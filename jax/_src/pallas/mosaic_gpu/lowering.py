@@ -912,6 +912,47 @@ def lower_pipelined_jaxpr_to_module(
     )
 
 
+def lower_unpipelined_jaxpr_to_module(
+    gpu_mesh: gpu_core.Mesh,
+    jax_mesh: mesh_lib.Mesh | None,
+    jaxpr: jax_core.Jaxpr,
+    in_shapes: Sequence[jax_core.ShapedArray],
+    out_shapes: Sequence[jax_core.ShapedArray],
+    params: gpu_core.CompilerParams,
+    *,
+    outer_traceback: xc.Traceback | None = None,
+) -> LoweringResult:
+  """Lowers a jaxpr that operates directly on GMEM refs, without pipelining.
+
+  Unlike ``lower_pipelined_jaxpr_to_module``, the ``jaxpr`` is expected to take
+  the GMEM refs for all inputs and outputs directly, without any block-level
+  pipelining. This is used by ``mpmd_map``, whose kernels perform their own
+  memory transfers.
+  """
+  assert len(jaxpr.outvars) == 0
+  if params.dimension_semantics is not None:
+    raise NotImplementedError(
+        "dimension_semantics= is not supported by the unpipelined lowering"
+    )
+  block = (128 * (gpu_mesh.num_threads or 1), 1, 1)
+  axis_names = _AxisNames(
+      gpu_mesh.grid_names, gpu_mesh.cluster_names, gpu_mesh.thread_name
+  )
+  return lower_jaxpr_to_module(
+      jax_mesh,
+      axis_names,
+      tuple(gpu_mesh.grid),
+      block,
+      tuple(gpu_mesh.cluster),
+      in_shapes,
+      out_shapes,
+      jaxpr,
+      params,
+      (),
+      outer_traceback=outer_traceback,
+  )
+
+
 def lower_jaxpr_to_module(
     jax_mesh: mesh_lib.Mesh | None,
     axis_names: _AxisNames,

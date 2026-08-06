@@ -608,6 +608,16 @@ def _mpmd_map_fallback_lowering(
   )
 
 
+def _mpmd_map_mgpu_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
+  try:
+    from jax._src.pallas.mosaic_gpu import pallas_call_registration  # pyrefly: ignore[missing-import]
+  except ImportError:
+    raise pallas_call._unsupported_lowering_error("cuda")
+  return pallas_call_registration.mpmd_map_mgpu_lowering_rule(
+      ctx, *in_nodes, **params
+  )
+
+
 @functools.partial(mlir.register_lowering, mpmd_map_p)
 def _mpmd_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
   platforms = ctx.module_context.platforms
@@ -617,6 +627,8 @@ def _mpmd_map_lowering(ctx: mlir.LoweringRuleContext, *in_nodes, **params):
     )
   [platform] = platforms
   match platform:
+    case "cuda" if config.jax_pallas_use_mosaic_gpu.value:
+      return _mpmd_map_mgpu_lowering(ctx, *in_nodes, **params)
     case "cpu" | "cuda" | "rocm":
       return _mpmd_map_fallback_lowering(ctx, *in_nodes, **params)
     case "tpu":
