@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <variant>
@@ -25,6 +26,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/ffi.h"
@@ -37,22 +39,63 @@ void TritonKernelCall(gpuStream_t stream, void** buffers, const char* opaque,
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInitialize);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInstantiate);
 
 class ModuleImage;
+
+struct TritonCustomCallState {
+  jax_triton::TritonKernelCall kernel_call;
+
+  // Returns true if the kernel is fully compiled down to machine code (e.g.
+  // CUBIN).
+  bool HasFullyCompiledKernel() const {
+    return kernel_call.kernel().has_module_image();
+  }
+
+  static absl::StatusOr<std::string> Serialize(
+      const TritonCustomCallState& state) {
+    jax_triton::TritonCustomCallStateProto proto;
+    proto.set_version(1);
+    *proto.mutable_kernel_call() = state.kernel_call;
+    return proto.SerializeAsString();
+  }
+
+  static absl::StatusOr<std::unique_ptr<TritonCustomCallState>> Deserialize(
+      absl::string_view data) {
+    jax_triton::TritonCustomCallStateProto proto;
+    if (!proto.ParseFromString(data)) {
+      return absl::InvalidArgumentError(
+          "Failed to parse TritonCustomCallStateProto");
+    }
+    if (proto.version() != 1) {
+      return absl::InvalidArgumentError(
+          "Unsupported TritonCustomCallStateProto version");
+    }
+    auto state = std::make_unique<TritonCustomCallState>();
+    state->kernel_call = std::move(*proto.mutable_kernel_call());
+    return state;
+  }
+};
 
 class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
          uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-         int compute_capability);
+         int compute_capability, ModuleImage* module_image = nullptr);
 
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
-  static Kernel FromProto(const jax_triton::TritonKernel& proto);
+  static absl::StatusOr<Kernel> FromProto(
+      const jax_triton::TritonKernel& proto);
   jax_triton::TritonKernel ToProto() const;
 
   // Returns true if we can launch the kernel without crashing.
   bool CanLaunchOnDevice(gpuDevice_t) const;
+
+  const std::string& kernel_name() const { return kernel_name_; }
+  uint32_t shared_mem_bytes() const { return shared_mem_bytes_; }
+  const std::string& ptx() const { return ptx_; }
+  int compute_capability() const { return compute_capability_; }
 
  private:
   std::string kernel_name_;
@@ -94,6 +137,8 @@ class KernelCall {
 
   // Returns true if we can launch the kernel without crashing.
   bool CanLaunchOnDevice(gpuDevice_t) const;
+
+  const Kernel& kernel() const { return kernel_; }
 
  private:
   Kernel kernel_;

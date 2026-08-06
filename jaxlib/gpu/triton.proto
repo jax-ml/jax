@@ -10,8 +10,16 @@ message TritonKernel {
   string ptx = 4;
   string ttir = 5;
   uint32 compute_capability = 6;
+  // Set if this kernel was compiled down to machine code (e.g. CUBIN).
+  optional ModuleImageProto module_image = 11;
 
   reserved 7, 8, 9;
+}
+
+message ModuleImageProto {
+  bytes object_file = 1;
+  string kernel_name = 2;
+  uint32 shared_mem_bytes = 3;
 }
 
 message TritonKernelCall {
@@ -64,4 +72,9 @@ message TritonAnyKernelCall {
   }
   bytes metadata = 3;
   string name = 4;  // User assigned name.
+}
+
+message TritonCustomCallStateProto {
+  int32 version = 1;
+  TritonKernelCall kernel_call = 2;
 }
