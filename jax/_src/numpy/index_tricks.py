@@ -132,7 +132,7 @@ class _Ogrid:
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
     with config.numpy_dtype_promotion('standard'):
       output = promote_dtypes(*output)
-    return meshgrid(*output, indexing='ij', sparse=True)
+    return list(meshgrid(*output, indexing='ij', sparse=True))
 
 
 ogrid = export(_Ogrid())
