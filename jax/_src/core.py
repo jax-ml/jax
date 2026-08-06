@@ -27,6 +27,7 @@ import itertools as it
 import math
 import operator
 import re
+import sys
 import threading
 import types
 from typing import (Any, ClassVar, NamedTuple, final, overload,
@@ -1608,9 +1609,55 @@ def maybe_find_leaked_tracers(trace: Trace) -> list[Tracer]:
 def leaked_tracer_error(name: str, t, tracers: list[Tracer]) -> Exception:
   assert tracers
   why = partial(_why_alive, {id(tracers)})
-  msgs = '\n\n'.join(f'{tracers[i]}{tracers[i]._origin_msg()}{why(tracers[i])}'
-                     for i in range(len(tracers)))
-  return Exception(f'Leaked {name} {t}. Leaked tracer(s):\n\n{msgs}\n')
+  msgs = []
+  for tracer in tracers:  # not a genexpr: it'd be gc-visible and self-report
+    chain = why(tracer)
+    label = f'<{type(tracer).__name__} {id(tracer)}>'
+    chain += ''.join(f'\n{label} is referred to by {h}' for h in
+                     _held_in_frame_locals(tracer, {id(tracers)}))
+    if not chain:
+      chain = (f'\n{label} has no referrers visible to the gc module; it may '
+               'be held by an object that does not cooperate with the garbage '
+               'collector, such as one implemented in a C extension')
+    msgs.append(f'{tracer}{tracer._origin_msg()}{chain}')
+  return Exception(f'Leaked {name} {t}. Leaked tracer(s):\n\n'
+                   + '\n\n'.join(msgs) + '\n')
+
+def _held_in_frame_locals(x, ignore_ids: set[int]) -> list[str]:
+  """Find live stack frames whose locals refer to (or contain) x.
+
+  On CPython 3.11+, executing functions' frames are usually not gc-tracked
+  objects, so references held by their locals are invisible to gc.get_referrers
+  and hence to _why_alive. Walk the current stack directly instead.
+  """
+  skip_codes = (leaked_tracer_error.__code__, _held_in_frame_locals.__code__)
+  holders = []
+  frame = sys._getframe(1)
+  while frame is not None:
+    if frame.f_code not in skip_codes:
+      for name, val in frame.f_locals.items():
+        if id(val) in ignore_ids:
+          continue
+        if val is x:
+          via = ''
+        elif _contains_ref(val, x):
+          via = f', a {type(val).__name__} containing it,'
+        else:
+          continue
+        code = frame.f_code
+        holders.append(f"the local variable {name!r}{via} of the frame "
+                       f"{code.co_qualname} ({code.co_filename}:{frame.f_lineno})")
+    frame = frame.f_back
+  return holders
+
+def _contains_ref(val, x, depth: int = 0) -> bool:
+  if depth >= 3:
+    return False
+  if isinstance(val, (list, tuple, set, frozenset)):
+    return any(v is x or _contains_ref(v, x, depth + 1) for v in val)
+  if isinstance(val, dict):
+    return any(v is x or _contains_ref(v, x, depth + 1) for v in val.values())
+  return False
 
 def _why_alive(ignore_ids: set[int], x: Any) -> str:
   parents = lambda x: [r for r in gc.get_referrers(x) if id(r) not in ignore_ids]
@@ -1629,11 +1676,15 @@ def _why_alive(ignore_ids: set[int], x: Any) -> str:
     # in _why_alive_container_info. See example:
     #  https://github.com/jax-ml/jax/pull/13022#discussion_r1008456599
     # To prevent this collapsing behavior, just comment out this code block.
-    if (isinstance(parent, dict) and
-        getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
-      parent = parents(parent)[0]
-    elif type(parent) is types.CellType:
-      parent = parents(parents(parent)[0])[0]
+    try:
+      if (isinstance(parent, dict) and
+          getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
+        parent = parents(parent)[0]
+      elif type(parent) is types.CellType:
+        parent = parents(parents(parent)[0])[0]
+    except IndexError:
+      pass  # a referrer list can be empty, e.g. a container held only by a
+            # live frame's local, since gc.get_referrers can't see live frames
 
     line = f'<{type(child).__name__} {id(child)}> is referred to by '
     lines.append(line + _why_alive_container_info(parent, id(child)))

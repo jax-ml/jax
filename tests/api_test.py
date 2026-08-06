@@ -4133,6 +4133,20 @@ class APITest(jtu.JaxTestCase):
       f = jax.jit(jax.remat(lambda x: x + 1))
       f(jnp.arange(3))  # doesn't crash
 
+  def test_leak_checker_avoids_false_positives_remat3_scan_transpose(self):
+    policy = jax.checkpoint_policies.save_only_these_names('block')
+
+    def body(c, w):
+      c = jax.remat(lambda h, w: h * jnp.sin(w), policy=policy)(c, w)
+      return ad_checkpoint.checkpoint_name(c, 'block'), None
+
+    def f(x, w):
+      y, _ = lax.scan(body, x, w)
+      return jnp.sum(y)
+
+    with config.remat3(True), jax.checking_leaks():
+      jax.grad(f)(jnp.ones(3), jnp.ones((2, 3)))  # doesn't crash
+
   def test_leak_checker_catches_a_sublevel_leak(self):
     with jax.checking_leaks():
       @jit
@@ -4209,6 +4223,36 @@ class APITest(jtu.JaxTestCase):
     with jax.check_tracer_leaks():
       with self.assertRaisesRegex(Exception, msg):
         jax.vmap(sketch)(x)
+
+  def test_leak_checker_reports_frame_locals(self):
+    from jax._src import source_info_util
+    from jax._src.interpreters import partial_eval as pe
+
+    def scope():
+      trace = pe.DynamicJaxprTrace(None)
+      with core.ensure_no_leaks(trace):
+        sneaky = trace.new_arg(core.ShapedArray((), np.dtype('float32')),
+                               source_info_util.current())
+        assert sneaky is not None
+        del trace
+
+    with jax.checking_leaks():
+      with self.assertRaisesRegex(
+          Exception, r"local variable 'sneaky' of the frame .*scope"):
+        scope()
+
+  def test_why_alive_ref_chain_ending_in_frame_local(self):
+    class Sentinel:
+      pass
+
+    def scope():
+      s = Sentinel()
+      lst = [s]
+      dct = {'k': lst}
+      assert dct
+      return core._why_alive(set(), s)
+
+    self.assertIn('is referred to by', scope())  # doesn't crash
 
   def test_default_backend(self):
     first_local_device = jax.local_devices()[0]
