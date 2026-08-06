@@ -1742,6 +1742,7 @@ pytype_strict_library(
         ":lax",
         ":mesh",
         ":mlir",
+        ":named_sharding",
         ":numpy",
         ":pretty_printer",
         ":sharding",
