@@ -117,8 +117,8 @@ class MpmdAsyncTest(jtu.JaxTestCase):
           scratch_types=[pltpu.SemaphoreType.DMA(())],
           name=f"sc_copy_start_{x.shape[0]}",
       )(scalar_subcore_fn)(x_ref)
-      out_ref = jax.new_ref(out)
-      sem_ref = jax.new_ref(sem)
+      out_ref = jax.new_ref(out, memory_space=pltpu.VMEM @ tc_mesh)
+      sem_ref = jax.new_ref(sem, memory_space=pltpu.SEMAPHORE @ tc_mesh)
       pl.kernel(
           mesh=tc_mesh,
           name=f"tc_copy_end_{x.shape[0]}",
