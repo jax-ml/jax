@@ -85,6 +85,15 @@ def _parse_int_list(text):
   return tuple(int(x.strip()) for x in text.split(",") if x.strip())
 
 
+def _mesh_device_count(text):
+  iota_match = re.fullmatch(
+      r"\[([0-9,\s]+)\](?:T\([0-9,\s]+\))?", text.strip()
+  )
+  if iota_match is not None:
+    return math.prod(_parse_int_list(iota_match.group(1)))
+  return len(_parse_int_list(text))
+
+
 def _normalize_collective_family(op_name):
   if op_name.endswith("-start"):
     return op_name[:-6]
@@ -109,7 +118,7 @@ def _parse_replica_group_semantics(line):
     else:
       group_size = 1
     if mesh_match.group(2):
-      total_devices = len(_parse_int_list(mesh_match.group(2)))
+      total_devices = _mesh_device_count(mesh_match.group(2))
     else:
       total_devices = math.prod(mesh_shape.values())
     num_groups = total_devices // group_size if group_size else None
