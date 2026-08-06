@@ -1017,6 +1017,22 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     x = rng(shape, dtype)
     check_grads(gather, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
+  def testGatherGradTPURegression(self):
+    # https://github.com/jax-ml/jax/issues/39025
+    B, D, K = 256, 8, 128
+    xi = jax.numpy.arange(D)
+    gather = lambda x: x[:, xi, :]
+
+    rng = jtu.rand_default(self.rng())
+    x = rng((B, D, K), jax.numpy.float32)
+    g = rng((B, D, K), jax.numpy.float32)
+
+    _, back = jax.vjp(gather, x)
+    dx_eager = back(g)[0]
+
+    # This assertion will fail on TPU in eager mode if the bug is present
+    self.assertAllClose(dx_eager, g, atol=1e-3)
+
   def testGatherTransposeCotangentDtype(self):
     # cotangents can flow in a different (e.g. higher-precision) dtype than
     # the primal; the gather and dynamic_slice transposes must follow the
