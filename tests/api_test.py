@@ -1369,6 +1369,7 @@ class JitTest(jtu.BufferDonationTestCase):
             "xla_embed_ir_in_executable": True,
             "xla_dump_max_hlo_modules": 200,
             "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
+            "xla_disable_hlo_passes": "constant_folding",
         }
     )
 
@@ -1382,6 +1383,7 @@ class JitTest(jtu.BufferDonationTestCase):
             "xla_embed_ir_in_executable": True,
             "xla_dump_max_hlo_modules": 200,
             "xla_gpu_auto_spmd_partitioning_memory_budget_ratio": 0.5,
+            "xla_disable_hlo_passes": "constant_folding",
         })(1.0)  # doesn't crash.
 
   def test_effort_level_compiler_option(self):

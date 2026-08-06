@@ -315,6 +315,9 @@ def jit(
       the inlining policy for nested jitted functions. Can be passed as a boolean
       (``True`` for ``jax.Inline.JAX_EARLY``, ``False`` for ``jax.Inline.AUTO``)
       or a :class:`jax.Inline` enum member. Default ``False`` (``jax.Inline.AUTO``).
+    compiler_options: Optional dictionary of XLA compiler options that apply to
+      the compilation of ``fun``. Keys are XLA flag names without the ``--``
+      prefix, and values are booleans, numbers, or strings.
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.

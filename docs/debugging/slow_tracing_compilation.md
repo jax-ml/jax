@@ -133,6 +133,22 @@ I0610 23:33:59.678832 deepsea_compiler_base.cc:984] END_TO_END stage duration: 1
 * **Action:** If `HLO_PASSES` is exceptionally slow, the graph likely
   contains massive unrolled loops. Inspect the `eqn_count_pprof` dump.
 
+If XLA reports that constant folding an instruction is taking more than a
+second, check whether the jitted function closes over a large array. Passing
+the array as an argument instead prevents XLA from treating it as a compile-time
+constant. If that is not practical, constant folding can be disabled for an
+individual top-level `jit`:
+
+```python
+f_jit = jax.jit(
+    f,
+    compiler_options={"xla_disable_hlo_passes": "constant_folding"},
+)
+```
+
+Disabling an optimization can reduce compilation time at the cost of runtime
+performance, so apply this option selectively.
+
 ---
 
 (debugging-slow-tracing-compilation-caching-gotchas)=
