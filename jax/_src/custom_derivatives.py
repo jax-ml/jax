@@ -32,7 +32,7 @@ from jax._src.ad_util import (
 from jax._src.api_util import (
   argnums_partial, resolve_kwargs,
   prepend_static_args, debug_info, fun_signature,
-  infer_argnums_and_argnames, fun_sourceinfo)
+  infer_argnums_and_argnames)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
@@ -764,8 +764,7 @@ class custom_vjp(Generic[ReturnValue]):
     flat_fwd, out_trees = _flatten_fwd(
         fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
         debug_fwd, in_tree, out_type)
-    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees, self.fun,
-                            self.with_logs)
+    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees, self.with_logs)
     out_flat = custom_vjp_call_p.bind(*args_flat, subfuns=(flat_fun, flat_fwd, flat_bwd),
                                       out_trees=out_trees,
                                       symbolic_zeros=self.symbolic_zeros)
@@ -931,7 +930,8 @@ def _flatten_bwd(f: Callable,
                  in_tree: PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],  # primal avals
                  out_trees: Callable[[], tuple[PyTreeDef, PyTreeDef, list[int | None]]],
-                 primal_fun, with_logs: bool, *args):
+                 with_logs: bool,
+                 *args):
   out_tree, res_tree, _ = out_trees()
   assert len(args) == res_tree.num_leaves + out_tree.num_leaves
   res, cts_out = split_list(args, [res_tree.num_leaves])
@@ -1000,9 +1000,7 @@ def _flatten_bwd(f: Callable,
           not core.typecompat(a.to_ct_aval(), a_ := core.typeof(ct))
           and not _ref_typecompat(a.to_ct_aval(), a_)
           and not _temporary_dtype_exception(a.to_ct_aval(), a_)):
-        primal_info = fun_sourceinfo(primal_fun)
-        msg = (f"Custom VJP bwd rule attached to {primal_info} must produce an "
-               "output with the same "
+        msg = ("Custom VJP bwd rule must produce an output with the same "
                "type as the args tuple of the primal function, but at "
                f"output{keystr(kp)} the bwd rule produced an output of "
                f"type {a_.str_short()} corresponding "
@@ -1288,7 +1286,6 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
       cts_out = (cts_out,)
     return cts_out
 
-  update_wrapper(wrapped_fun, fun)
   if with_logs:
     wrapped_fun.defvjp_with_logs(fwd, bwd)
   else:

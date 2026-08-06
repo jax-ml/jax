@@ -2578,7 +2578,8 @@ class ShardMapTest(jtu.JaxTestCase):
         jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
     else:
       with self.assertRaisesRegex(
-          ValueError, "must produce an output with the same type"):
+          ValueError,
+          "Custom VJP bwd rule must produce an output with the same type"):
         jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
 
   def test_repeated_psum_allowed(self):
