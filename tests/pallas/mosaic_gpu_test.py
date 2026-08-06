@@ -4878,6 +4878,7 @@ class PallasCallWGTest(
     if not hasattr(mgpu.dialect, "get_or_set_dump_options"):
       self.skipTest("Test requires jaxlib >= 0.11.1")
     x = jnp.ones((64, 64), dtype=jnp.float32)
+
     @self.kernel(out_type=jax.ShapeDtypeStruct(x.shape, x.dtype))
     def kernel(x_gmem, o_gmem):
       o_gmem[...] = plgpu.load(x_gmem, optimized=False)
@@ -4886,8 +4887,12 @@ class PallasCallWGTest(
       with jtu.set_env(MOSAIC_GPU_DUMP_TO=dump_dir):
         jax.jit(kernel).lower(x)
       files = os.listdir(dump_dir)
-      self.assertTrue(any(f.endswith(".before_layout_inference.txt") for f in files))
-      self.assertTrue(any(f.endswith(".after_layout_inference.txt") for f in files))
+      self.assertTrue(
+          any(f.endswith(".before_layout_inference.txt") for f in files)
+      )
+      self.assertTrue(
+          any(f.endswith(".after_layout_inference.txt") for f in files)
+      )
 
 
 class PallasCallSm90ATest(PallasSm90ATest):
@@ -7861,6 +7866,47 @@ class PipelineTest(PallasTest):
     kernel_fn = self.kernel(
         kernel,
         out_type=jax.ShapeDtypeStruct((1, n), dtype),
+    )
+
+    np.testing.assert_allclose(kernel_fn(x), x.sum(0, keepdims=True), rtol=1e-6)
+
+  @parameterized.parameters(2, 3, 4)
+  @run_on_sm80
+  def test_emit_in_specs_only(self, max_concurrent_steps):
+    # TODO(slebedev): Remove the skip once cp.async is supported under WG
+    # semantics.
+    self.skip_if_wg_semantics()
+
+    m, n = 16, 128
+
+    def kernel(x_gmem, o_gmem, acc_ref):
+      acc_ref[...] = jnp.zeros_like(acc_ref)
+
+      def body(_, x_smem):
+        acc_ref[...] += x_smem[...]
+
+      plgpu.emit_pipeline(
+          body,
+          in_specs=[
+              plgpu.BlockSpec(
+                  (1, n),
+                  lambda i: (i, 0),
+                  oob_fill_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+              )
+          ],
+          grid=(m,),
+          max_concurrent_steps=max_concurrent_steps,
+      )(x_gmem)
+
+      o_gmem[...] = acc_ref[...]
+
+    dtype = jnp.float32
+    x = jax.random.uniform(jax.random.key(0), (m, n)).astype(dtype)
+
+    kernel_fn = self.kernel(
+        kernel,
+        out_type=jax.ShapeDtypeStruct((1, n), dtype),
+        scratch_types=[plgpu.SMEM((1, n), dtype=jnp.float32)],
     )
 
     np.testing.assert_allclose(kernel_fn(x), x.sum(0, keepdims=True), rtol=1e-6)

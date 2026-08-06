@@ -1421,7 +1421,7 @@ class BlockSpec(pallas_core.BlockSpec):
   """
   transforms: Sequence[state_types.Transform] = ()
   delay_release: int = 0
-  collective_axes: tuple[Hashable, ...] = ()
+  collective_axes: tuple[Hashable, ...] | None = None
   oob_fill_mode: OOBFillMode = OOBFillMode.ZEROS
 
   def to_block_mapping(

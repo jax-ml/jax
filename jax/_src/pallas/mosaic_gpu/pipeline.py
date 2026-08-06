@@ -36,11 +36,15 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import core as mgpu_core
 import jax.numpy as jnp
 
 
 map = util.safe_map
 zip = util.safe_zip
+
+OOBFillMode = gpu_primitives.OOBFillMode
+
 class PipelineCallback[T](Protocol):
   """A callback that returns the same type as the input."""
   def __call__(self, arg: T, /) -> T: ...
@@ -127,13 +131,20 @@ class BufferedRef:
       return
     assert self.smem_ref is not None
     gmem_slices = self.compute_gmem_slice(grid_indices)
+    oob_mode = getattr(self.spec, "oob_fill_mode", None)
+    if barrier_ref is None:
+      barrier = None
+    else:
+      barrier = barrier_ref.at[
+          barrier_slot if barrier_slot is not None else slot
+      ]
     gpu_primitives.copy_gmem_to_smem(
         # pyrefly: ignore[bad-index]
         self.gmem_ref.at[gmem_slices],
         self.smem_ref.at[slot],
-        barrier_ref.at[barrier_slot if barrier_slot is not None else slot],
-        collective_axes=getattr(self.spec, "collective_axes", ()),
-        oob_mode=getattr(self.spec, "oob_fill_mode", None),
+        barrier,
+        collective_axes=getattr(self.spec, "collective_axes", None),
+        oob_mode=oob_mode,
     )
 
   def copy_out(self, slot, grid_indices, predicate=None):
@@ -287,6 +298,23 @@ def emit_pipeline[T](
   if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = int(num_steps)
 
+  if is_cp_async := mgpu_core._infer_arch() < (9, 0):
+    if out_specs:
+      raise NotImplementedError(
+          "emit_pipeline on pre-Hopper GPUs only supports input-only pipelines"
+      )
+    if has_dynamic_grid:
+      raise NotImplementedError(
+          "emit_pipeline on pre-Hopper GPUs requires a static grid"
+      )
+    for s in in_specs:
+      oob_mode = getattr(s, "oob_fill_mode", None)
+      if oob_mode is not OOBFillMode.PROMISE_IN_BOUNDS:
+        raise NotImplementedError(
+            "emit_pipeline on pre-Hopper GPUs requires"
+            " oob_fill_mode=OOBFillMode.PROMISE_IN_BOUNDS"
+        )
+
   def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
     in_smem_refs, out_smem_refs = util.split_list(
@@ -305,7 +333,7 @@ def emit_pipeline[T](
         ],
         [len(in_specs)],
     )
-    num_arrivals = sum(map(_in_smem, in_specs))
+    copies_per_step = sum(map(_in_smem, in_specs))
     return pl.run_scoped(
         functools.partial(
             scoped_pipeline,
@@ -315,10 +343,10 @@ def emit_pipeline[T](
         in_smem_refs=in_smem_refs,
         out_smem_refs=out_smem_refs,
         barrier_ref=None
-        if num_arrivals == 0
+        if copies_per_step == 0 or is_cp_async  # cp.async uses wait_gmem_to_smem
         else gpu_core.Barrier(
             # TODO(slebedev): Change this to arrive only once.
-            num_arrivals=num_arrivals,
+            num_arrivals=copies_per_step,
             num_barriers=max_concurrent_steps,
         ),
     )
@@ -338,6 +366,7 @@ def emit_pipeline[T](
             out_specs, out_gmem_refs, out_smem_refs
         )
     ]
+    copies_per_step = sum(_in_smem(bref.spec) for bref in in_brefs)
 
     # Initialize the pipeline.
     indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
@@ -361,13 +390,17 @@ def emit_pipeline[T](
     # In the loop body, `max_concurrent_steps` may be larger than `num_steps` in
     # the dynamic grid case. This is fine, since in that case, we will never
     # need to fetch more data anyway.
-    def loop_body(step, carry):
+    def loop_body(step, carry, *, wait_count=0):
       slot = lax.rem(step, max_concurrent_steps)
       indices, fetch_index_levels, last_store_indices, prev_body_carry = carry
 
       if barrier_ref is not None:
         # Wait for the current GMEM->SMEM copy to complete, if any.
         gpu_primitives.barrier_wait(barrier_ref.at[slot])
+      elif is_cp_async and copies_per_step > 0:
+        # Pre-Hopper: await cp.async copies. The wait-group count must be a
+        # compile-time constant, so it is threaded in via ``wait_count``.
+        gpu_primitives.wait_gmem_to_smem(wait_count)
       # Wait for the previous output SMEM->GMEM copy to complete.
       if copies_out_in_loop:
         gpu_primitives.wait_smem_to_gmem(
@@ -458,12 +491,37 @@ def emit_pipeline[T](
         else (jnp.array(-1),) * len(bref.spec.block_shape)
         for bref in out_brefs
     ]
-    last_indices, _, _, final_carry = lax.fori_loop(
-        0,
-        num_steps,
-        loop_body,
-        (indices, fetch_index_levels, last_store_indices, init_carry),
+    init_loop_carry = (
+        indices,
+        fetch_index_levels,
+        last_store_indices,
+        init_carry,
     )
+    if is_cp_async and copies_per_step > 0:
+      assert isinstance(num_steps, int)
+      # cp.async wait-group must be a compile-time constant. Drain steps are
+      # unrolled with decreasing wait counts (down to 0).
+      steady_steps = max(0, num_steps - (max_concurrent_steps - 1))
+      loop_carry = lax.fori_loop(
+          0,
+          steady_steps,
+          functools.partial(
+              loop_body,
+              wait_count=(max_concurrent_steps - 1) * copies_per_step,
+          ),
+          init_loop_carry,
+      )
+      for step in range(steady_steps, num_steps):
+        loop_carry = loop_body(
+            jnp.asarray(step, dtype=jnp.int32),
+            loop_carry,
+            wait_count=(num_steps - 1 - step) * copies_per_step,
+        )
+      last_indices, _, _, final_carry = loop_carry
+    else:
+      last_indices, _, _, final_carry = lax.fori_loop(
+          0, num_steps, loop_body, init_loop_carry,
+      )
 
     # Outputs invariant to the sequential axis are never written from inside the
     # loop. This is the only place where we store them.
@@ -625,13 +683,13 @@ def emit_pipeline_warp_specialized(
   flat_in_specs, in_specs_treedef = jax.tree.flatten(in_specs)
   flat_in_specs = tuple(map(_downcast_spec, flat_in_specs))
   for spec in flat_in_specs:
-    if len(spec.collective_axes) > 1:
+    if spec.collective_axes and len(spec.collective_axes) > 1:
       raise ValueError(
           "Only a single collective axis supported in input BlockSpecs, but"
           f" got {spec.collective_axes}"
       )
   collective_axes = tuple(frozenset(
-      a for spec in flat_in_specs for a in spec.collective_axes
+      a for spec in flat_in_specs for a in spec.collective_axes or ()
   ))
   flat_out_specs, out_specs_treedef = jax.tree.flatten(out_specs)
   flat_out_specs = tuple(map(_downcast_spec, flat_out_specs))
