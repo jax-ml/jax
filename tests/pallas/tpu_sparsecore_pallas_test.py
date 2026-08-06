@@ -222,6 +222,21 @@ class NamedLocationsTest(PallasSCTest):
 
     self.assertIn("%o_hbm_ref", get_output())
 
+  @parameterized.parameters(jnp.int4, jnp.uint4)
+  def test_subbyte_kernel_compilation(self, dtype):
+    mesh = plsc.VectorSubcoreMesh(
+        num_cores=self.sc_info.num_cores,
+        num_subcores=self.sc_info.num_subcores,
+        core_axis_name="core",
+        subcore_axis_name="subcore",
+    )
+    kernel = pl.kernel(
+        lambda x_ref, o_ref: None,
+        out_type=jax.ShapeDtypeStruct((8, 128), dtype),
+        mesh=mesh,
+    )
+    jax.jit(kernel).lower(jax.ShapeDtypeStruct((8, 128), dtype)).compile()
+
 
 @jtu.skip_under_pytest(
     "Requires pytest -s (no capture) to pass, which is not enabled in CI"
