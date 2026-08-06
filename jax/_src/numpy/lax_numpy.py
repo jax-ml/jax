@@ -6012,7 +6012,7 @@ def _arange_dynamic(
 
 @export
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
-             indexing: str = 'xy') -> list[Array]:
+             indexing: str = 'xy') -> tuple[Array, ...]:
   """Construct N-dimensional grid arrays from N 1-dimensional vectors.
 
   JAX implementation of :func:`numpy.meshgrid`.
@@ -6028,7 +6028,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
       for matrix indexing.
 
   Returns:
-    A length-N list of grid arrays.
+    A length-N tuple of grid arrays.
 
   See also:
     - :func:`jax.numpy.indices`: generate a grid of indices.
@@ -6088,7 +6088,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   output = [lax.broadcast_in_dim(a, _a_shape(i, a), (i,)) for i, a, in enumerate(args)]
   if indexing == "xy" and len(args) >= 2:
     output[0], output[1] = output[1], output[0]
-  return output
+  return tuple(output)
 
 
 @export
