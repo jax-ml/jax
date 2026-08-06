@@ -538,7 +538,10 @@ class HijaxTest(jtu.JaxTestCase):
       flat_f, out_tree = api_util.flatten_fun_nokwargs(
           lu.wrap_init(f, debug_info=dbg), in_tree
       )
-      out = core.closed_call_p.bind(*flat_x, subfuns=(flat_f,))
+      from jax._src.interpreters import partial_eval as pe
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          flat_f, [core.typeof(v) for v in flat_x])
+      out = core.closed_call_p.bind(*consts, *flat_x, call_jaxpr=jaxpr)
       return jax.tree.unflatten(out_tree(), out)
 
     res = test_fn(qx)
@@ -570,7 +573,10 @@ class HijaxTest(jtu.JaxTestCase):
     def test_fn(arr):
       dbg = api_util.debug_info('test_closed_call_low_io', f, [arr], {})
       f_wrapped = lu.wrap_init(f, debug_info=dbg)
-      (out,) = core.closed_call_p.bind(arr, subfuns=(f_wrapped,))
+      from jax._src.interpreters import partial_eval as pe
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          f_wrapped, [core.typeof(arr)])
+      (out,) = core.closed_call_p.bind(*consts, arr, call_jaxpr=jaxpr)
       return out
 
     res = test_fn(x)

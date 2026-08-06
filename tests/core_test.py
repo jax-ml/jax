@@ -42,21 +42,13 @@ __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 def call(f, *args):
   return jit(f)(*args)
 
+@util.curry
 def core_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   dbg = debug_info("core_call_test", f, args, {})
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.call_p.bind(*args, subfuns=(f,))
-  return jax.tree.unflatten(out_tree(), out)
-# call = core_call
-core_call = util.curry(core_call)
-
-@util.curry
-def core_closed_call(f, *args):
-  args, in_tree = jax.tree.flatten(args)
-  dbg = debug_info("core_closed_call_test", f, args, {})
-  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
-  out = core.closed_call_p.bind(*args, subfuns=(f,))
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(f, [core.typeof(x) for x in args])
+  out = core.eval_jaxpr_p.bind(*consts, *args, call_jaxpr=jaxpr)
   return jax.tree.unflatten(out_tree(), out)
 
 def simple_fun(x, y):
@@ -150,9 +142,6 @@ for ts in test_specs_base:
   test_specs.append(CallSpec(core_call(ts.fun), ts.args))
   test_specs.append(CallSpec(core_call(jit(ts.fun)), ts.args))
   test_specs.append(CallSpec(core_call(core_call(ts.fun)), ts.args))
-  test_specs.append(CallSpec(core_closed_call(ts.fun), ts.args))
-  test_specs.append(CallSpec(core_closed_call(jit(ts.fun)), ts.args))
-  test_specs.append(CallSpec(core_closed_call(core_closed_call(ts.fun)), ts.args))
   test_specs.append(CallSpec(partial(jvp_unlinearized, ts.fun),
                              (ts.args, ts.args)))
 

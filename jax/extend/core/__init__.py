@@ -21,7 +21,6 @@ from jax._src.abstract_arrays import (
 
 from jax._src.core import (
   AbstractToken as AbstractToken,
-  CallPrimitive as CallPrimitive,
   ClosedJaxpr as ClosedJaxpr,
   DebugInfo as DebugInfo,
   DropVar as DropVar,
@@ -36,7 +35,6 @@ from jax._src.core import (
   Token as Token,
   TraceTag as TraceTag,
   Var as Var,
-  call_impl as call_impl,
   check_jaxpr as check_jaxpr,
   concrete_or_error as concrete_or_error,
   find_top_trace as find_top_trace,
@@ -57,6 +55,12 @@ from jax._src.core import (
   unsafe_am_i_under_a_vmap as unsafe_am_i_under_a_vmap_DO_NOT_USE,  # noqa: F401
   unsafe_get_axis_names as unsafe_get_axis_names_DO_NOT_USE,  # noqa: F401
   valid_jaxtype as valid_jaxtype,
+)
+
+from jax._src.lax.eval_jaxpr import (
+  create_call_primitive as create_call_primitive,
+  eval_jaxpr_transpose as eval_jaxpr_transpose,
+  register_call_primitive_rules as register_call_primitive_rules,
 )
 
 from . import primitives as primitives

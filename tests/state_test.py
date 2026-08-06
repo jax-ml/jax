@@ -850,7 +850,9 @@ class StateDischargeTest(jtu.JaxTestCase):
       def g(x):
         y_ref[...] = x + 1.0
         return []
-      return core.call_p.bind(x, subfuns=(wrap_init(g, 1),))
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          wrap_init(g, 1), [core.typeof(x)])
+      return core.call_p.bind(*consts, x, call_jaxpr=jaxpr)
 
     y_ref_aval = shaped_array_ref((), jnp.float32)
     x_aval = core.ShapedArray((), jnp.float32)
@@ -1499,7 +1501,8 @@ class StateControlFlowTest(jtu.JaxTestCase):
       y_ref = jax.new_ref(jnp.zeros_like(x))
       g_ = partial(g, y_ref)
       sub = lu.wrap_init(g_, debug_info=api_util.debug_info("f", g, (x,), {}))
-      return prim.bind(x, subfuns=(sub,))[0]
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(sub, [core.typeof(x)])
+      return prim.bind(*consts, x, call_jaxpr=jaxpr)[0]
     out = f(4.)
     np.testing.assert_array_equal(out, jnp.exp(4.))
 

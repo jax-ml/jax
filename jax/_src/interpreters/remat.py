@@ -114,10 +114,6 @@ class RematTrace(core.Trace):
     else:
       return RematTracer(self, out_primal, out_primal2)
 
-  def process_call(self, call_primitive, f, tracers, params):
-    in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
-    raise NotImplementedError  # TODO remat_subtrace...
-
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))
     with core.set_current_trace(self.parent_trace):

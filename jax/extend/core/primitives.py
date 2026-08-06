@@ -22,9 +22,10 @@ from jax._src.ad_checkpoint import (
 
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
 
-from jax._src.core import (
-  call_p as call_p,
-  closed_call_p as closed_call_p
+from jax._src.lax.eval_jaxpr import (
+  create_call_primitive as create_call_primitive,
+  eval_jaxpr_transpose as eval_jaxpr_transpose,
+  register_call_primitive_rules as register_call_primitive_rules,
 )
 
 from jax._src.custom_derivatives import (

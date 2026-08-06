@@ -360,7 +360,7 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 
   # call_jaxpr handling
   call_jaxpr = params.pop('call_jaxpr')
-  if isinstance(call_jaxpr, core.Jaxpr):  # handle closed_call_p
+  if isinstance(call_jaxpr, core.Jaxpr):  # jaxpr with attached consts
     jaxpr, consts = call_jaxpr, call_jaxpr.consts
   else:
     jaxpr, consts = call_jaxpr, ()
@@ -667,7 +667,7 @@ def div_error_check(error, enabled_errors, x, y):
   return nan_error_check(lax.div_p, error, enabled_errors, x, y)
 error_checks[lax.div_p] = div_error_check
 
-def eval_jaxpr_error_check(error, enabled_errors, *invals, call_jaxpr):
+def eval_jaxpr_error_check(error, enabled_errors, *invals, call_jaxpr, **_):
   return checkify_jaxpr(call_jaxpr, enabled_errors, error, *invals)
 error_checks[pe.eval_jaxpr_p] = eval_jaxpr_error_check
 

@@ -6389,9 +6389,10 @@ class RematTest(jtu.JaxTestCase):
     def named_call(f):
       def named_f(*args):
         my_f = lambda: (f(*args),)
-        f_ = lu.wrap_init(
-            my_f, debug_info=api_util.debug_info("test_remat", my_f, (), {}))
-        out, = core.call_p.bind(subfuns=(f_,))
+        dbg = api_util.debug_info("test_remat", my_f, (), {})
+        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+            lu.wrap_init(my_f, debug_info=dbg), [])
+        out, = core.eval_jaxpr_p.bind(*consts, call_jaxpr=jaxpr)
         return out
       return named_f
 
@@ -6444,9 +6445,10 @@ class RematTest(jtu.JaxTestCase):
     @jax_util.curry
     def call(f, *args):
       my_f = lambda *args: [f(*args)]
-      sub = lu.wrap_init(
-        my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
-      return core.call(*args, name='foo', subfuns=(sub,))[0]
+      dbg = api_util.debug_info("test_remat", my_f, args, {})
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+          lu.wrap_init(my_f, debug_info=dbg), [core.typeof(x) for x in args])
+      return core.eval_jaxpr_p.bind(*consts, *args, call_jaxpr=jaxpr)[0]
 
     f = call(add_one)
     g = jax.remat(lambda x: add_one(f(x)))
