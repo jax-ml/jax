@@ -31,6 +31,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   window. On that date we added support to serialize shardings as NamedSharding,
   and now that is the only sharding serialization that is supported.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * The cuDNN fused attention backward pass (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) no
