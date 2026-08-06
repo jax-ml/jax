@@ -567,6 +567,14 @@ NB_MODULE(_sdy_mpmd, m) {
   mpmd_executable.def("get_raw_ptr", [](PyMpmdLoadedExecutable* self) {
     return reinterpret_cast<uintptr_t>(self);
   });
+  mpmd_executable.def("serialize", [](PyMpmdLoadedExecutable& exec) {
+    if (exec.ifrt_loaded_executable() == nullptr) {
+      throw std::runtime_error("MpmdLoadedExecutable is null");
+    }
+    auto serialized =
+        xla::ValueOrThrow(exec.ifrt_loaded_executable()->Serialize());
+    return nb::bytes(serialized.data(), serialized.size());
+  });
 }
 
 }  // namespace
