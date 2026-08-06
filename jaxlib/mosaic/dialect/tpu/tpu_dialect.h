@@ -32,7 +32,6 @@ limitations under the License.
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "jaxlib/mosaic/dialect/tpu/layout.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/tpu/stringify_util.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.h.inc"
 #include "xla/layout.h"  // IWYU pragma: keep
