@@ -56,7 +56,7 @@ g = jax.jit(f, compiler_options={"optimization_level": jax.CompilerEffortLevel.O
 ```
 
 Unrecognized keys or invalid values raise an error at compilation time, so
-typos announce themselves:
+typos surface immediately:
 
 ```python
 jax.jit(f, compiler_options={"not_a_real_flag": 1})(1.0)

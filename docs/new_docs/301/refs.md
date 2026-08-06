@@ -50,7 +50,7 @@ Autodiff can also be applied to functions that take array refs as arguments.
 The simplest case is when those ref arguments are only used for plumbing, and
 aren't involved in differentiation. For example, `jax.grad` differentiates
 with respect to its function's first argument by default, so ref arguments in
-other positions are just along for the ride. Only non-differentiated values
+other positions just pass through. Only non-differentiated values
 can be written into such plumbing refs:
 
 ```{code-cell}
@@ -114,7 +114,7 @@ returned by a fwd rule must be arguments to that fwd rule.
 
 ## Differentiating with respect to `Ref` arguments
 
-The plumbing refs above are just passengers: they carry data out of the
+The plumbing refs above just carry data out of the
 computation, but no gradients flow through them. We can also differentiate
 _with respect to_ a ref argument. Since the gradient for a `Ref`-typed input
 is itself `Ref`-typed, `jax.grad` doesn't apply here. Instead we use
@@ -288,7 +288,7 @@ print(W_bar[0])  # [1., 1., 1., 1.]
 print(x_bar)  # DidntWant()
 ```
 
-This is more than a convenience: it can save real work in the backward pass,
+This can save real work in the backward pass,
 like an eager form of dead code elimination. Transpose rules can check for
 `DontWant` and skip computing the corresponding cotangents. For example, the
 transpose of matrix multiplication usually computes two dot products, one for

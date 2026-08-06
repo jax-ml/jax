@@ -19,7 +19,7 @@ nosearch: true
 
 <!--* freshness: { reviewed: '2026-07-10' } *-->
 
-JAX's built-in currency is the array: functions you transform take arrays in
+JAX's built-in data type is the array: functions you transform take arrays in
 and produce arrays out, and every intermediate the tracing machinery sees has
 an array type like `f32[3,4]`. When you want to work with aggregate data, the
 usual tool is a
@@ -27,7 +27,7 @@ pytree ({ref}`jax-101-pytrees`): you
 bundle arrays into containers, and JAX transparently flattens the bundle
 into its array leaves at every boundary.
 
-But sometimes transparency is exactly what you don't want. Some data is best
+But sometimes you don't want transparency. Some data is best
 modeled as a new *type*, with its own identity:
 
 * it should appear in jaxprs as a single value of a single type, not as a
@@ -99,8 +99,8 @@ give up:
 
 * **Invariants.** The two components are coupled: `scale` must have the
   shape of `qvalue` minus its last axis, and `qvalue` is only meaningful
-  together with its `scale`. As a pytree, nothing stops code from crossing
-  the streams; under transformations, JAX itself sees only independent
+  together with its `scale`. As a pytree, nothing stops code from mismatching
+  values and scales; under transformations, JAX itself sees only independent
   leaves.
 * **Types in jaxprs.** As a pytree, a quantized array appears in traced
   code as two unrelated array values. We'd rather see one value, of one
@@ -182,7 +182,7 @@ The `register_hitype` call associates the value class with the type: its
 second argument computes the type of any given value, analogous to how
 `jax.typeof` maps an array to its `ShapedArray` type. (Ours reads both the
 shape and the sharding off the `qvalue` component — every array carries a
-sharding, trivial when no mesh is in play.) Indeed after registration,
+sharding, trivial when no mesh is in play.) After registration,
 `jax.typeof` works on `QArray`s, and JAX transformations accept them
 anywhere a value is expected.
 

@@ -28,7 +28,7 @@ That being said, the FFI should typically be considered a last resort option bec
 
 One point that should be taken into account when considering use of the FFI is that _JAX doesn't automatically know how to differentiate through foreign functions_.
 This means that if you want to use JAX's autodifferentiation capabilities alongside a foreign function, you'll also need to provide an implementation of the relevant differentiation rules.
-We will discuss some possible approaches below, but it is important to call this limitation out right from the start!
+We will discuss some possible approaches below, but it is important to note this limitation up front.
 
 JAX's FFI support is provided in two parts:
 
@@ -60,7 +60,7 @@ $$
 
 where $\epsilon$ is a tuning parameter used for numerical stability.
 
-This is a somewhat silly example, because it can be easily implemented using JAX as follows:
+This is an artificial example, because it can be easily implemented using JAX as follows:
 
 ```{code-cell}
 import jax
@@ -159,7 +159,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 ```
 
 Starting at the bottom, we're using the XLA-provided macro `XLA_FFI_DEFINE_HANDLER_SYMBOL` to generate some boilerplate which will expand into a function called `RmsNorm` with the appropriate signature.
-But, the important stuff here is all in the call to `ffi::Ffi::Bind()`, where we define the input and output types, and the types of any parameters.
+But the important part is the call to `ffi::Ffi::Bind()`, where we define the input and output types, and the types of any parameters.
 
 Then, in `RmsNormImpl`, we accept `ffi::Buffer` arguments which include information about the buffer shape, and pointers to the underlying data.
 In this implementation, we treat all leading dimensions of the buffer as batch dimensions, and perform RMS normalization over the last axis.
@@ -174,7 +174,7 @@ In this case, we treat all but the last axis as batch dimensions, but other fore
 Now that we have our minimal FFI wrapper implemented, we need to expose this function (`RmsNorm`) to Python.
 In this tutorial, we compile `RmsNorm` into a shared library and load it using [ctypes](https://docs.python.org/3/library/ctypes.html), but another common pattern is to use [nanobind](https://nanobind.readthedocs.io/) or [pybind11](https://pybind11.readthedocs.io/) as discussed below.
 
-To compile the shared library, we're using CMake here, but you should be able to use your favorite build system without too much trouble.
+To compile the shared library, we're using CMake here, but any build system should work.
 
 ```{code-cell}
 :tags: [hide-output]

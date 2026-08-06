@@ -144,7 +144,7 @@ But there's a numerical stability problem lurking here:
 print(grad(log1pexp)(100.))
 ```
 
-That doesn't seem right! After all, the derivative of $x \mapsto \log (1 +
+That doesn't seem right: after all, the derivative of $x \mapsto \log (1 +
 e^x)$ is $x \mapsto \frac{e^x}{1 + e^x}$, and so for large values of $x$ we'd
 expect the value to be about 1.
 
@@ -465,7 +465,7 @@ We can't apply reverse-mode automatic differentiation because of the
 `while_loop`, but it turns out we wouldn't want to anyway: instead of
 differentiating through the implementation of `fixed_point` and all its
 iterations, we can exploit the mathematical structure to do something that is
-much more memory-efficient (and FLOP-efficient in this case, too!). We can
+much more memory-efficient (and FLOP-efficient in this case, too). We can
 instead use the implicit function theorem [Prop A.25 of Bertsekas's Nonlinear
 Programming, 2nd ed.], which guarantees (under some conditions) the existence
 of the mathematical objects we're about to use. In essence, we linearize at

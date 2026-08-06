@@ -157,7 +157,8 @@ print(len(jax.tree.leaves(f_vjp)))  # 3, not 4: W1 isn't part of the saved state
 ## Restoring before the backward pass
 
 Before the VJP function can be applied, the missing values must be restored.
-Forgetting is an error that names the arguments still needing restoration:
+Calling without restoring them raises an error naming the arguments still
+needing restoration:
 
 ```{code-cell}
 try:

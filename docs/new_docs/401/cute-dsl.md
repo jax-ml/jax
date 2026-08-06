@@ -40,7 +40,7 @@ JAX provides excellent built-in GPU support through XLA, but sometimes you need 
 
 [CuTe DSL](https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/cute_dsl.html) is the Python-native interface to [CUTLASS](https://docs.nvidia.com/cutlass/latest/) 4.4+, NVIDIA's open-source library of high-performance CUDA kernels. It exposes the same CuTe abstractions (layouts, tensors, thread-to-data mappings) that power CUTLASS's C++ template library, but authored entirely in Python.
 
-Traditionally, writing custom GPU kernels meant working in C++ or CUDA — a steep learning curve for Python-focused ML engineers. CuTe DSL changes this: you define per-thread logic with `@cute.kernel`, configure launch parameters with `@cute.jit`, and the CUTLASS JIT compiler generates optimized CUDA code behind the scenes. The `cutlass.jax` integration module then lets you call these kernels from JAX as if they were native operations, with full support for `@jax.jit`, automatic differentiation plumbing, and multi-device sharding.
+Traditionally, writing custom GPU kernels meant working in C++ or CUDA — a steep learning curve for Python-focused ML engineers. With CuTe DSL, you define per-thread logic with `@cute.kernel`, configure launch parameters with `@cute.jit`, and the CUTLASS JIT compiler generates optimized CUDA code. The `cutlass.jax` integration module then lets you call these kernels from JAX as if they were native operations, with full support for `@jax.jit`, automatic differentiation plumbing, and multi-device sharding.
 
 This notebook walks through progressively more complex kernels showing the patterns you'll reuse in your own custom operations.
 
@@ -90,7 +90,7 @@ row_major = cute.make_layout((M, N), stride=(N, cutlass.Int32(1)))
 col_major = cute.make_layout((M, N), stride=(cutlass.Int32(1), M))
 ```
 
-This separation of logical structure from physical storage is what makes CuTe powerful. Algorithms operate on coordinates, while layouts decide how those coordinates map to memory. Change the stride, and you change the storage pattern — without rewriting the algorithm.
+This separation of logical structure from physical storage is CuTe's central idea. Algorithms operate on coordinates, while layouts decide how those coordinates map to memory. Change the stride, and you change the storage pattern — without rewriting the algorithm.
 
 In the following examples, you won’t see `make_layout` because the kernels operate on `cute.Tensor` objects and use CuTe’s tensor / fragment helpers (`cute.size`, `cute.make_rmem_tensor`, `cute.autovec_copy`, `Tensor[...]`) which already encode the shape, stride and indexing semantics the kernel needs. The code stays higher-level and avoids manual offset arithmetic or explicit layout construction — that’s deliberate: CuTe’s helpers are there so kernels read like algorithms, not pointer math.
 

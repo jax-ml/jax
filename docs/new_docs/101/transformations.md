@@ -478,6 +478,7 @@ is also why keeping `import numpy as np` around is useful: `np` operations on
 shapes execute immediately at trace time, cleanly separating "computations on
 static values" from "computations being traced" (`jnp`).
 
+(jax-101-grad-control-flow)=
 ### `grad` works with Python control flow
 
 If a `vmap` tracer stands for a whole batch of values, and a `jit` tracer

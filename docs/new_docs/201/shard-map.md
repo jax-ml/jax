@@ -38,7 +38,7 @@ jax.config.update('jax_num_cpu_devices', 8)  # Use 8 CPU devices
 
 ### So, let's see a `shard_map`!
 
-Without further ado, here's a toy example:
+Here's a toy example:
 
 ```{code-cell}
 from functools import partial
@@ -800,7 +800,7 @@ print('FINAL RESULT:\n', y)
 In machine learning, we often use `psum` to compute total losses or, when we
 have a `grad` inside the `shard_map`ped function body, total gradients.
 
-In the sequel, we'll see how `psum` can be implemented in terms of other
+Next, we'll see how `psum` can be implemented in terms of other
 primitives, which gives some intuition about its communication cost.
 
 ### `all_gather`
@@ -865,7 +865,7 @@ data parallelism (FSDP).
 
 ### `psum_scatter`
 
-The `jax.lax.psum_scatter` collective is a bit less intuitive. It's like
+The `jax.lax.psum_scatter` collective may be less familiar. It's like
 `psum` except each function instance gets only one shard of the result:
 
 ![Illustration of a psum_scatter computation.](../../_static/shard_map_03_illustration_of_a_psum_scatter_computation.png)
@@ -1103,14 +1103,14 @@ def device_put(x, pspec):
 #### Example 1: `all-gather` on one side
 
 Consider performing a matrix multiplication where we shard the left-hand side
-argument (can think: parameters) on its leading (non-contracting) dimension:
+argument (think: parameters) on its leading (non-contracting) dimension:
 
 ```{code-cell}
 lhs_spec = jax.P('i', None)
 lhs = device_put(jax.random.normal(jax.random.key(0), (8, 8)), lhs_spec)
 ```
 
-And we shard the right-hand side argument (can think: activations) on its
+And we shard the right-hand side argument (think: activations) on its
 contracting dimension, with a similar sharding for the output:
 
 ```{code-cell}
@@ -1136,8 +1136,8 @@ out = matmul_allgather(lhs, rhs)
 print(jnp.allclose(out, lhs @ rhs, atol=1e-3, rtol=1e-3))
 ```
 
-That's great, but we're not getting any compute/communication overlap
-here: before we can start the matmul, we need the `all_gather` to complete.
+But this version gets no compute/communication overlap: before we can start
+the matmul, we need the `all_gather` to complete.
 Here's a profile — captured and viewed with the tools described in
 {doc}`profiling` — using the same code, but on larger example shapes (`(8192,
 8192)` for `lhs` and `(8192, 1024)` for `rhs`):

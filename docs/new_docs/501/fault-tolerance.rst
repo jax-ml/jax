@@ -19,8 +19,8 @@ across multiple machines. By default, if *any* of these machines fail, then
 This article has three parts. In the first part, we'll explain the basics of
 how to write fault tolerant multi-controller JAX programs. In the second part,
 we'll show some example fault-tolerant multi-controller JAX programs. In the
-third part, we'll take a look under the covers at how multi-controller JAX
-implements fault tolerance.
+third part, we'll look at how multi-controller JAX implements fault
+tolerance.
 
 .. warning::
 
@@ -59,7 +59,7 @@ Run ``example.py`` across four processes on a VM with four GPUs by running
 the following four commands, each in a different terminal. The
 ``local_device_ids`` argument to ``jax.distributed.initialize`` ensures each
 process is assigned only one of the four GPUs. We'll explain the
-``heartbeat_timeout_seconds`` argument in just a second.
+``heartbeat_timeout_seconds`` argument shortly.
 
 .. code-block:: shell
 
@@ -68,10 +68,10 @@ process is assigned only one of the four GPUs. We'll explain the
     python example.py --i=2 --n=4  # in terminal 3
     python example.py --i=3 --n=4  # in terminal 4
 
-When you run these commands, you'll see the processes dutifully printing out
+When you run these commands, you'll see the processes printing out
 the current time every second. Next, fail the fourth process: ``pkill -9 -f
 'python example.py --i=3 --n=4'``. After about ten seconds, the other
-processes will also terminate and spit out error messages that look something
+processes will also terminate and print error messages that look something
 like this:
 
 .. code-block::

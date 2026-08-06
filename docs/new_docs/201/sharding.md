@@ -18,7 +18,7 @@ nosearch: true
 (jax-201-sharding)=
 # Distributed arrays and automatic parallelization
 
-<!--* freshness: { reviewed: '2025-12-02' } *-->
+<!--* freshness: { reviewed: '2026-08-20' } *-->
 
 JAX has three styles of multi-device distributed parallelism, which can be
 mixed and composed. They differ in how much the compiler automatically decides
@@ -37,7 +37,7 @@ versus how much is controlled explicitly in the program:
 
 +++
 
-| Mode | View? | Explicit sharding? | Explicit Collectives? |
+| Mode | View | Explicit sharding? | Explicit collectives? |
 |---|---|---|---|
 | Auto | Global | ❌ | ❌ |
 | Explicit | Global | ✅ | ❌ |
@@ -47,11 +47,6 @@ versus how much is controlled explicitly in the program:
 
 Before getting into details, here's a quick example using explicit mode.
 First, we create a `jax.Array` sharded across multiple devices:
-
-```{code-cell}
-from __future__ import annotations
-import enum
-```
 
 ```{code-cell}
 import jax
@@ -87,17 +82,21 @@ understand meshes.
 
 ## A `Mesh` is a grid of devices with named axes
 
-To describe how data and computation are distributed across devices, we first
-organize our devices into a multi-dimensional grid called a `Mesh`.
-Because communication happens along mesh axes, the mesh shape and device order
-can determine communication performance. The mesh should reflect the
-physical connection topology among the devices.
+Meshes made a first appearance in {doc}`placement`, as the unit of data
+placement: a multi-dimensional grid of devices with named axes. Here the
+mesh's structure starts to matter more: because communication happens along
+mesh axes, the mesh shape and device order can determine communication
+performance. The mesh should reflect the physical connection topology among
+the devices.
 
 We distinguish between _concrete_ and _abstract_ meshes. An abstract mesh
 comprises only a shape, axis names, and axis types reflecting the **mode** of
 each axis:
 
 ```{code-cell}
+from __future__ import annotations
+import enum
+
 class AbstractMesh:
   axis_sizes: tuple[int, ...]
   axis_names: tuple[str, ...]
@@ -127,17 +126,20 @@ class Mesh:
 
 At the top level of a program (i.e. not under a `jit`) we can create a
 concrete `Mesh` directly using the {class}`~jax.sharding.Mesh` class
-constructor,
-which lets us specify the exact device order, or using the `jax.make_mesh`
-helper, which automatically chooses a device order by taking the underlying
-hardware topology into account:
+constructor, which lets us specify the exact device order, or using the
+`jax.make_mesh` helper, which automatically chooses a device order by taking
+the underlying hardware topology into account:
 
 ```{code-cell}
 mesh = jax.make_mesh((4, 2), ('X', 'Y'))
 print(mesh)
 ```
 
-By default, all mesh axis types are `AxisType.Explicit`.
+With `jax.make_mesh`, all mesh axis types default to `AxisType.Explicit`.
+Beware that the `Mesh` constructor's default is `AxisType.Auto` instead: that's
+for historical reasons, and hard to migrate, even though `Explicit` should
+morally be the default. When using the `Mesh` constructor directly, it's best
+to pass `axis_types` explicitly.
 
 To avoid threading `mesh` throughout your program, use `jax.set_mesh` to set
 a concrete mesh globally:
@@ -178,9 +180,11 @@ A `jax.sharding.Sharding` describes distributed memory layout. That is, it
 describes how an array's entries are stored in the physical memories of
 different devices, i.e. how it's _sharded_ over devices.
 
-At the top level, every `jax.Array` has an associated `Sharding`, which
-consists of a concrete `Mesh` along with a `jax.sharding.PartitionSpec`
-(aliased to `jax.P`):
+At the top level, every `jax.Array` has an associated `Sharding`. Because we
+set a mesh above, our arrays carry a `jax.NamedSharding`: a concrete `Mesh`
+together with a `jax.sharding.PartitionSpec` (aliased to `jax.P`) describing
+the layout over it. (With no mesh set, an array's sharding is a
+`SingleDeviceSharding` instead, as seen in {doc}`placement`.)
 
 ```{code-cell}
 print(x.sharding)
@@ -208,6 +212,14 @@ Since we have a mesh in context, via the `jax.set_mesh` above, we can pass
 y = jax.device_put(x, jax.P('Y', 'X'))
 print(y.sharding)
 jax.debug.visualize_array_sharding(y)
+```
+
+`jax.reshard` spells the same relayout, and works the same way at the top
+level or under `jax.jit`:
+
+```{code-cell}
+y = jax.reshard(x, jax.P('Y', 'X'))
+print(y.sharding)
 ```
 
 ```{code-cell}
@@ -253,7 +265,7 @@ for s in y.addressable_shards:
 ```
 
 Unreduced is useful for delaying distributed reductions, especially in
-the context of autodiff. More on that later.
+the context of autodiff. More on that in {ref}`jax-301-sharding-ad`.
 
 Note that because every array has its own `Sharding` instance, and every
 `Sharding` instance has its own `Mesh` instance, arrays in scope can be
@@ -272,7 +284,7 @@ Now that we understand mesh shapes, axis names, and shardings at the top
 level, we can dive into mesh axis types and how Explicit and Auto modes
 differ.
 
-## Explicit sharding mode makes sharding queryable at trace-time
+## Explicit sharding mode makes sharding queryable at trace time
 
 In explicit sharding mode, shardings are always queryable via `jax.typeof`,
 even under a `jax.jit`:
@@ -295,22 +307,22 @@ In terms of the printed representation, the type language is roughly:
 ```
 
 Where
- * The MeshAxisName in scope are those from `jax.typeof(x).sharding.mesh`
+ * The MeshAxisNames in scope are those from `jax.typeof(x).sharding.mesh`
  * Each MeshAxisName must be of Explicit axis type
  * Each MeshAxisName can be mentioned at most once in an array type
 
-These shardings associated with JAX-level types propagate through operations.
+These shardings associated with JAX types propagate through operations.
 For example:
 
 ```{code-cell}
-arg0 = jax.device_put(np.arange(4).reshape(4, 1), jax.P("X", None))
-arg1 = jax.device_put(np.arange(8).reshape(1, 8), jax.P(None, "Y"))
+x = jax.device_put(np.arange(4).reshape(4, 1), jax.P("X", None))
+y = jax.device_put(np.arange(8).reshape(1, 8), jax.P(None, "Y"))
 
-result = arg0 + arg1
+z = x + y
 
-print(f"{jax.typeof(arg0)=!s}")
-print(f"{jax.typeof(arg1)=!s}")
-print(f"{jax.typeof(result)=!s}")
+print(f"{jax.typeof(x)=!s}")
+print(f"{jax.typeof(y)=!s}")
+print(f"{jax.typeof(z)=!s}")
 ```
 
 We can do the same type querying under a `jit`:
@@ -318,13 +330,13 @@ We can do the same type querying under a `jit`:
 ```{code-cell}
 @jax.jit
 def add_arrays(x, y):
-  ans = x + y
-  print(f"{jax.typeof(arg0)=!s}")
-  print(f"{jax.typeof(arg1)=!s}")
-  print(f"{jax.typeof(result)=!s}")
-  return ans
+  z = x + y
+  print(f"{jax.typeof(x)=!s}")
+  print(f"{jax.typeof(y)=!s}")
+  print(f"{jax.typeof(z)=!s}")
+  return z
 
-add_arrays(arg0, arg1)
+add_arrays(x, y)
 ```
 
 Given the input and output shardings, the computation itself is automatically
@@ -372,8 +384,8 @@ pattern is:
  explicit `out_sharding`).
 
 Here are some example rules:
-* nullary ops like `jnp.zeros`, `jnp.arange`: These ops create arrays out of whole
-cloth so they don’t have input shardings to propagate. Their output is
+* nullary ops like `jnp.zeros`, `jnp.arange`: These ops create arrays from
+scratch so they don’t have input shardings to propagate. Their output is
 unsharded by default unless overridden by the `out_sharding` kwarg.
 * unary elementwise ops like `sin`, `exp`: The output is sharded the same as
 the input.
@@ -412,8 +424,8 @@ print(jax.typeof(z))
 ```
 
 But there are other `jnp.dot` cases that induce communication that JAX does
-perform automatically, like `jnp.dot(x:f32[8,4], y:f32[4@x,16])` results in an
-`f32[8,16]`, likely by doing an all-gather on `y` as in FSDP.
+perform automatically. For example, `jnp.dot(x:f32[8,4], y:f32[4@X,16])`
+results in an `f32[8,16]`, likely by doing an all-gather on `y` as in FSDP.
 
 ### With `@auto_axes` the compiler chooses shardings within the decorated function
 
@@ -428,8 +440,11 @@ function's signature, so the final output sharding can be set by the caller.
 Alternatively, decorating with `@auto_axes(out_sharding=...)` specifies the
 final output sharding at the function definition site.
 
-For example, when our mesh axes are `Explicit`, we can't add two arrays with
-different shardings:
+For example, when our mesh axes are `Explicit`, operations raise an error if
+the sharding propagation rules lead to an inconsistent result sharding.
+(Adding arrays with *different* shardings is fine in general, as we saw
+above.) Here, propagation would produce a result mentioning the mesh axis `X`
+on both of its array axes:
 
 ```{code-cell}
 from jax.sharding import auto_axes, explicit_axes
@@ -530,21 +545,22 @@ x = jax.device_put(np.arange(16).reshape(4, 4), jax.P("X", "Y"))
 f(x)
 ```
 
-It's a kind of dual to `auto_axes`, where you specify `in_shardings` rather
-than `out_shardings`.
+It's a kind of dual to `auto_axes`, where you specify `in_sharding` rather
+than `out_sharding`.
 
-### Concrete array shardings can mention `Auto` mesh axis
+### Concrete array shardings can mention `Auto` mesh axes
 
 The sharding of a concrete `jax.Array` can be queried via `x.sharding`.
 This can only be done at the top-level. You might expect the result to be the
 same as the sharding associated with the value’s type, `jax.typeof(x).sharding`.
 It might not be! The concrete array sharding, `x.sharding`, describes the
 sharding along both `Explicit` and `Auto` mesh axes. It’s the sharding that the
-compiler eventually chose. Whereas the type-specificed sharding,
+compiler eventually chose. Whereas the type-specified sharding,
 `jax.typeof(x).sharding`, only describes the sharding along `Explicit` mesh axes.
 The `Auto` axes are deliberately hidden from the type because they’re the purview
-of the compiler. We can think of the concrete array sharding being consistent
-with, but more specific than, the type-specified sharding. For example:
+of the compiler. We can think of the concrete array sharding as being
+consistent with, but more specific than, the type-specified sharding. For
+example:
 
 ```{code-cell}
 jax.set_mesh(jax.make_mesh((4, 2), ('X', 'Y')))  # Explicit mode
@@ -788,3 +804,12 @@ def f(x):
 
 This is analogous to `jax.lax.with_sharding_constraint`, for constraining
 layouts rather than shardings.
+
+## Next steps
+
+The natural continuation is {doc}`shard-map`, the full tutorial for manual
+mode: per-device programming with explicit collectives, for complete control
+over how computation and communication are partitioned. And for how sharding
+interacts with automatic differentiation — including the *unreduced*
+shardings introduced above — see {ref}`jax-301-sharding-ad` in the advanced
+autodiff docs.
