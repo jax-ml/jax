@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, TypeVar
 from collections.abc import Iterator, Mapping
-
-K = TypeVar("K")
-V = TypeVar("V")
+from typing import Any
 
 
-class FrozenDict(Mapping[K, V]):
+class FrozenDict[K, V](Mapping[K, V]):
 
   def __init__(self, d: Mapping[K, V]):
     self._d = dict(d.items())
@@ -47,6 +44,3 @@ class FrozenDict(Mapping[K, V]):
 
   def __len__(self) -> int:
     return len(self._d)
-
-  def get(self, key: K) -> V | None:  # pyrefly: ignore[bad-override]
-    return self._d.get(key, None)
