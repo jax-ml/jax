@@ -1255,10 +1255,13 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
   if fun is None:
     return lambda f: custom_gradient(f, with_logs=with_logs)
 
-  @custom_vjp
   def wrapped_fun(*args, **kwargs):
     ans, _ = fun(*args, **kwargs)
     return ans
+
+  wrapped_fun.__name__ = getattr(fun, '__name__', '<unnamed>')
+  wrapped_fun.__qualname__ = getattr(fun, '__qualname__', '<unnamed>')
+  wrapped_fun = custom_vjp(wrapped_fun)
 
   def fwd(*args, **kwargs):
     ans, rule = fun(*args, **kwargs)
@@ -1288,7 +1291,6 @@ def custom_gradient(fun=None, *, with_logs: bool = False):
       cts_out = (cts_out,)
     return cts_out
 
-  update_wrapper(wrapped_fun, fun)
   if with_logs:
     wrapped_fun.defvjp_with_logs(fwd, bwd)
   else:
