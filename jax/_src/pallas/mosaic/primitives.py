@@ -549,11 +549,11 @@ def dma_start_discharge_rule(
   # If we didn't discharge everything we could we should keep writes
   # to the references that are left over.
   if not dst_discharge:
-    sp.ref_set(dst_ref, None, do_discharge_dst(dst_ref=dst_ref[...]))
+    sp.ref_set(dst_ref, (), do_discharge_dst(dst_ref=dst_ref[...]))
   if not dst_sem_discharge:
-    sp.ref_set(dst_sem, None, do_discharge_dst_sem(dst_sem=dst_sem[...]))
+    sp.ref_set(dst_sem, (), do_discharge_dst_sem(dst_sem=dst_sem[...]))
   if is_remote and not src_sem_discharge:
-    sp.ref_set(src_sem, None, do_discharge_src_sem(src_sem=src_sem[...]))
+    sp.ref_set(src_sem, (), do_discharge_src_sem(src_sem=src_sem[...]))
 
   return new_vals, []
 

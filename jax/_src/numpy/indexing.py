@@ -54,6 +54,19 @@ export = set_module('jax.numpy')
 
 # Internal utilities for parsing and validating NumPy-style indices.
 
+def _is_array_like_index_object(idx: Any) -> bool:
+  if isinstance(idx, (Array, np.ndarray)):
+    return True
+  from jax._src.state import types as state_types  # pyrefly: ignore[missing-import]
+  if isinstance(idx, state_types.TransformedRef):
+    return True
+  try:
+    aval = core.typeof(idx)
+    return isinstance(aval, (core.ShapedArray, state_types.AbstractRef))
+  except TypeError:
+    return False
+
+
 class IndexType(enum.Enum):
   """Enum for tracking the type of an index."""
   NONE = "none"
@@ -79,7 +92,7 @@ class IndexType(enum.Enum):
       return cls.INTEGER
     elif _is_boolean_index(idx):
       return cls.BOOLEAN
-    elif isinstance(idx, (Array, np.ndarray)):
+    elif _is_array_like_index_object(idx):
       if dtypes.issubdtype(idx.dtype, np.integer):
         return cls.ARRAY
       else:
@@ -1531,12 +1544,9 @@ def eliminate_deprecated_list_indexing(idx):
   return idx
 
 def _is_boolean_index(i):
-  try:
-    abstract_i = core.typeof(i)
-  except TypeError:
-    abstract_i = None
-  return (isinstance(abstract_i, core.ShapedArray) and dtypes.issubdtype(abstract_i.dtype, np.bool_)
-          or isinstance(i, list) and i and all(_is_scalar(e)
+  if _is_array_like_index_object(i):
+    return dtypes.issubdtype(i.dtype, np.bool_)
+  return (isinstance(i, list) and i and all(_is_scalar(e)
           and dtypes.issubdtype(dtypes.dtype(e), np.bool_) for e in i))
 
 

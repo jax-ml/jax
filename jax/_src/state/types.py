@@ -275,14 +275,14 @@ class RefIndexer:
     if not isinstance(slc, tuple):
       slc = (slc,)
     from jax._src.state import indexing
-    indexer = indexing.NDIndexer.from_indices_shape(slc, self.ref_or_view.shape)
+    new_transforms = indexing.get_transforms_from_indices(slc, self.ref_or_view.shape)
     if (
         isinstance(self.ref_or_view, TransformedRef)
         and not self.ref_or_view.multiref
     ):
       view = self.ref_or_view
-      return TransformedRef(view.ref, (*view.transforms, indexer))
-    return TransformedRef(self.ref_or_view, (indexer,))
+      return TransformedRef(view.ref, (*view.transforms, *new_transforms))
+    return TransformedRef(self.ref_or_view, new_transforms)
 
 
 @dataclasses.dataclass(frozen=True)
