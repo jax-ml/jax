@@ -3792,7 +3792,39 @@ def reduce_precision(operand: float | ArrayLike,
                                  mantissa_bits=mantissa_bits)
 
 def squeeze(array: ArrayLike, dimensions: Sequence[int]) -> Array:
-  """Squeeze any number of size 1 dimensions from an array."""
+  """Squeeze any number of size 1 dimensions from an array.
+
+  Args:
+    array: input array
+    dimensions: sequence of integers specifying axes to remove. If any specified axis
+      does not have a size of 1, an error is raised.
+
+  Returns:
+    Array with the specified size-1 dimensions removed.
+
+  See Also:
+    - :func:`jax.lax.expand_dims`: the inverse of ``squeeze``: add dimensions of size 1.
+    - :func:`jax.numpy.squeeze`: equivalent numpy API.
+
+  Examples:
+    >>> x = jnp.array([[[0]], [[1]], [[2]]])
+    >>> x.shape
+    (3, 1, 1)
+
+    Squeeze the specified size-1 dimensions:
+
+    >>> jax.lax.squeeze(x, dimensions=(1, 2))
+    Array([0, 1, 2], dtype=int32)
+    >>> _.shape
+    (3,)
+
+    Attempting to squeeze a non-unit axis results in an error:
+
+    >>> jax.lax.squeeze(x, dimensions=(0,)) # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    ValueError: cannot select an axis to squeeze out which has size not equal to one, got shape=(3, 1, 1) and dimensions=(0,)
+  """
   ndim = np.ndim(array)
   dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
   if not dimensions and isinstance(array, Array):
