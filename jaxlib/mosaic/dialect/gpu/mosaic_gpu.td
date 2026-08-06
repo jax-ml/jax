@@ -340,6 +340,12 @@ def MosaicGPU_B6x16P32 : MosaicGPU_Type<"B6x16P32", "b6x16_p32", [MemRefElementT
   let assemblyFormat = "`<` $element_type `>`";
   let genVerifyDecl = 1;
 }
+def MosaicGPU_P2B6 : MosaicGPU_Type<"P2B6", "p2b6", [MemRefElementTypeInterface]> {
+  let summary = "An 8-bit type that holds a 6-bit value in its low bits.";
+  let parameters = (ins "::mlir::Type":$element_type);
+  let assemblyFormat = "`<` $element_type `>`";
+  let genVerifyDecl = 1;
+}
 
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {

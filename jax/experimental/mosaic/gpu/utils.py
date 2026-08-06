@@ -587,6 +587,8 @@ def bitwidth_impl(ty: ir.Type):
   # TODO(bchetioui): remove once minimum jaxlib version is 0.11.1.
   if hasattr(dialect, "B6x16P32Type") and isinstance(ty, dialect.B6x16P32Type):
     return 128
+  if hasattr(dialect, "P2B6Type") and isinstance(ty, dialect.P2B6Type):
+    return 8
   if isinstance(ty, ir.VectorType):
     vty = ir.VectorType(ty)
     return math.prod(vty.shape) * bitwidth(vty.element_type)

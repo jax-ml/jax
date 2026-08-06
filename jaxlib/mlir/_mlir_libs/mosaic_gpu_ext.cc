@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "mlir-c/BuiltinAttributes.h"
 #include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/IR/Block.h"  // IWYU pragma: keep
@@ -104,6 +105,34 @@ struct PyB6x16P32Type
     cls.def_prop_ro("element_type", [](PyB6x16P32Type& self) {
       return PyType(self.getContext(),
                     mlirMosaicGpuB6x16P32TypeGetElementType(self.get()));
+    });
+  }
+};
+
+struct PyP2B6Type
+    : public mlir::python::MLIR_BINDINGS_PYTHON_DOMAIN::PyConcreteType<
+          PyP2B6Type> {
+  static constexpr const char* pyClassName = "P2B6Type";
+  static bool isaFunction(MlirType t) {
+    return mlirMosaicGpuIsAP2B6Type(t);
+  }
+  static constexpr MlirTypeID (*getTypeIdFunction)() =
+      mlirMosaicGpuP2B6TypeGetTypeID;
+  using Base::Base;
+  static void bindDerived(ClassTy& cls) {
+    cls.def_static(
+        "get",
+        [](PyType elementType, DefaultingPyMlirContext ctx) {
+          return PyP2B6Type(
+              ctx.resolve().getRef(),
+              mlirMosaicGpuP2B6TypeGet(ctx.resolve().get(),
+                                       elementType.get()));
+        },
+        nb::arg("element_type"),
+        nb::arg("ctx") = nb::none());
+    cls.def_prop_ro("element_type", [](PyP2B6Type& self) {
+      return PyType(self.getContext(),
+                    mlirMosaicGpuP2B6TypeGetElementType(self.get()));
     });
   }
 };
@@ -301,6 +330,7 @@ NB_MODULE(_mosaic_gpu_ext, m) {
 
   PyBarrierType::bind(m);
   PyB6x16P32Type::bind(m);
+  PyP2B6Type::bind(m);
   PyTileTransformAttr::bind(m);
   PySwizzleTransformAttr::bind(m);
   PyWGSplatFragLayoutAttr::bind(m);

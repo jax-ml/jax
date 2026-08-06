@@ -318,6 +318,16 @@ mlir::LogicalResult B6x16P32Type::verify(
                      << elementType;
 }
 
+mlir::LogicalResult P2B6Type::verify(
+    llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
+    mlir::Type elementType) {
+  if (elementType.isIntOrFloat() && elementType.getIntOrFloatBitWidth() == 6) {
+    return mlir::success();
+  }
+  return emitError() << "P2B6 element type must be 6-bit wide, got "
+                     << elementType;
+}
+
 llvm::LogicalResult AsyncLoadOp::verify() {
   auto r =
       VerifyCommonLoadStoreOp(getOperation(), getSource().getType(), "source",

@@ -78,4 +78,25 @@ MlirTypeID mlirMosaicGpuB6x16P32TypeGetTypeID() {
   return wrap(mosaic_gpu::B6x16P32Type::getTypeID());
 }
 
+//===----------------------------------------------------------------------===//
+// P2B6Type
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsAP2B6Type(MlirType type) {
+  return mlir::isa<mosaic_gpu::P2B6Type>(unwrap(type));
+}
+
+MlirType mlirMosaicGpuP2B6TypeGet(MlirContext ctx, MlirType element_type) {
+  return wrap(mosaic_gpu::P2B6Type::get(unwrap(ctx), unwrap(element_type)));
+}
+
+MlirType mlirMosaicGpuP2B6TypeGetElementType(MlirType type) {
+  return wrap(
+      mlir::cast<mosaic_gpu::P2B6Type>(unwrap(type)).getElementType());
+}
+
+MlirTypeID mlirMosaicGpuP2B6TypeGetTypeID() {
+  return wrap(mosaic_gpu::P2B6Type::getTypeID());
+}
+
 }  // extern "C"
