@@ -3141,6 +3141,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(f)((1.0, (2.0, None)))  # don't crash
 
+  @config.custom_vjp3(True)
   def test_bwd_rule_shape_mismatch(self):
     @jax.custom_vjp
     def foo(x, y):
@@ -3156,7 +3157,8 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r'output\[1\] the bwd rule produced an output of type f.*\[3\]'):
+        r'output\[1\] the bwd rule attached to foo.*produced an output of type'
+        r' f.*\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
   def test_bwd_rule_shape_mismatch_disable(self):

@@ -2574,7 +2574,8 @@ class ShardMapTest(jtu.JaxTestCase):
     if config.custom_vjp3.value:
       with self.assertRaisesRegex(
           ValueError,
-          "the bwd rule produced an output.*which doesn't match expected type"):
+          r"the bwd rule attached to f.*produced an output.*which doesn't match"
+          r' expected type'):
         jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
     else:
       with self.assertRaisesRegex(

@@ -788,7 +788,8 @@ class CustomVJPTraced(VJPHiPrimitive):
                        f"length {len(in_cts)}")
     in_cts = broadcast_prefix(in_cts, in_avals_, is_leaf=lambda x: x is None)
     in_cts = tree_unflatten(self.in_tree, map(_replace_none, self.in_avals_flat, in_cts))
-    tree_map_with_path(_vjp_bwd_aval_mismatch_err, self.in_avals, in_cts)
+    tree_map_with_path(partial(_vjp_bwd_aval_mismatch_err, self.traced._fun_sourceinfo),
+                               self.in_avals, in_cts)
     if self.symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     return (in_cts, logs) if self.with_logs else in_cts
@@ -862,7 +863,7 @@ def _vjp_fwd_aval_mismatch_err(path, primal_aval, fwd_val):
     raise TypeError(f"at {keystr(path)}, got fwd output type {ty.str_short()} "
                     f"which doesn't match primal output type {primal_aval.str_short()}")
 
-def _vjp_bwd_aval_mismatch_err(path, primal_aval, ct):
+def _vjp_bwd_aval_mismatch_err(primal_sourceinfo, path, primal_aval, ct):
   if config.disable_bwd_checks.value:
     return
   if isinstance(ct, ad_util.Zero):
@@ -876,8 +877,9 @@ def _vjp_bwd_aval_mismatch_err(path, primal_aval, ct):
       getattr(expected, 'dtype', None) is not dtypes.float0):
     result = f"at output{keystr(path)} " if path else ""
     raise ValueError(
-        f"{result}the bwd rule produced an output of type {ct_aval.str_short()}"
-        f" which doesn't match expected type {expected.str_short()}")
+        f"{result}the bwd rule attached to {primal_sourceinfo} produced an"
+        f" output of type {ct_aval.str_short()} which doesn't match expected"
+        f" type {expected.str_short()}")
 
 def _replace_none(primal_in_aval, maybe_ct):
   if maybe_ct is None:

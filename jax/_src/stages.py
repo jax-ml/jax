@@ -414,14 +414,16 @@ class Traced(Stage):
   representations via `.jaxpr` and `.lojax` properties respectively.
   """
   __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts',
-               '_lojax']
+               '_fun_sourceinfo', '_lojax']
 
-  def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts):
+  def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts,
+               fun_sourceinfo):
     self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
     self.out_tree = out_tree
     self._consts = consts
+    self._fun_sourceinfo = fun_sourceinfo
     self._lojax = None
 
   jaxpr = property(lambda self: self._params['jaxpr'])
@@ -449,7 +451,7 @@ class Traced(Stage):
           self._meta_tys_flat, self._params, self._in_tree, self.out_tree,
           (self._in_tree, self.jaxpr.in_avals),
           (self.out_tree, self.jaxpr.out_avals),
-          self._consts)
+          self._consts, self._fun_sourceinfo)
       return self._lojax
 
     # TODO(mattjj): when pmap is deleted, merge with pjit.py BUILD rule
@@ -473,7 +475,7 @@ class Traced(Stage):
         lo_meta_tys, params, in_tree, out_tree,
         (self._in_tree, hi_jaxpr.in_avals),
         (self.out_tree, hi_jaxpr.out_avals),
-        self._consts)
+        self._consts, self._fun_sourceinfo)
     return self._lojax
 
   def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
@@ -508,15 +510,16 @@ def lojax_pytree(hi_avals, tree):
 
 class LoJax:
   __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree',
-               '_consts', '_in_types', '_out_types']
+               '_consts', '_fun_sourceinfo', '_in_types', '_out_types']
 
   def __init__(self, meta_tys_flat, params, in_tree, out_tree, in_types, out_types,
-               consts):
+               consts, fun_sourceinfo):
     self._meta_tys_flat = meta_tys_flat
     self._params = params
     self._in_tree = in_tree
     self.out_tree = out_tree
     self._consts = consts
+    self._fun_sourceinfo = fun_sourceinfo
     self._in_types = in_types  # hi types
     self._out_types = out_types
 
