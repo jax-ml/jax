@@ -1115,6 +1115,36 @@ class OpsTest(PallasBaseTest):
       o_ref[...] = lax.clamp(lo_ref[...], x_ref[...], hi_ref[...])
     np.testing.assert_array_equal(kernel(lo, x, hi), lax.clamp(lo, x, hi))
 
+  @parameterized.product(
+      dtype=(jnp.float32, jnp.bfloat16),
+      exponent_bits=(4, 5, 6, 7, 8),
+      mantissa_bits=(1, 2, 3, 4, 5, 6, 7),
+  )
+  @jtu.skip_on_devices("gpu")
+  def test_reduce_precision(self, dtype, exponent_bits, mantissa_bits):
+    if not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest("Requires libtpu 0.0.46 or later")
+    if jtu.jaxlib_version() < (0, 11, 1):
+      self.skipTest("Requires jaxlib 0.11.1 or later")
+
+    shape = (64, 128)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.reduce_precision(
+          x_ref[...], exponent_bits=exponent_bits, mantissa_bits=mantissa_bits
+      )
+
+    x = random.normal(random.key(0), shape, dtype=dtype)
+    out = kernel(x)
+    expected = lax.reduce_precision(
+        x, exponent_bits=exponent_bits, mantissa_bits=mantissa_bits
+    )
+    self.assertArraysEqual(out, expected)
+
   @parameterized.named_parameters(
       (dtype.__name__, dtype)
       for dtype in (jnp.float32, jnp.float16, jnp.bfloat16)
