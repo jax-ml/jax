@@ -86,3 +86,24 @@ y = jax.device_put(np.ones((1, 3)))  # `y` has different shape than the output
 z = jax.jit(add, donate_argnums=(1,))(x, y)
 # >> UserWarning: Some donated buffers were not usable: f32[1,3]{1,0}
 ```
+
+## Debug mode limitations
+
+Buffer donation is automatically disabled when the `jax_debug_nans` configuration
+option is enabled. This is intentional behavior: debug mode needs to re-run
+computations op-by-op to locate NaN-producing operations, which requires access
+to intermediate values that would be invalidated by donation.
+
+If you have enabled donation and are not seeing the expected memory savings,
+check whether `jax_debug_nans` (or `jax_debug_infs`) is enabled:
+
+```python
+import jax
+print(jax.config.jax_debug_nans)  # Should be False for donation to work
+```
+
+Note that donation is disabled at the point when a function is compiled. If you
+compile a function while `debug_nans` is enabled, donation will remain disabled
+for that cached compilation even after `debug_nans` is turned off. Call
+`.clear_cache()` on the jitted function to force recompilation with donation
+enabled.
