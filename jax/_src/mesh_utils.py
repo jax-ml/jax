@@ -335,8 +335,8 @@ def _create_device_mesh_for_nd_torus(
           # among all axes in the candidate, then by sum of priorities
           # as a tie-breaker.
           indices = tuple(c[0] for c in candidate)
-          best_priority = min(priority_map[i] for i in indices)
-          total_priority = sum(priority_map[i] for i in indices)
+          best_priority = min(priority_map[i] for i in indices)  # type: ignore
+          total_priority = sum(priority_map[i] for i in indices)  # type: ignore
           return (best_priority, total_priority)
 
         candidates.sort(key=_candidate_priority)

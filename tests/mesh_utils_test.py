@@ -771,13 +771,13 @@ class MeshUtilsTest(jtu.JaxTestCase):
     # core) or y*z*core = 2*2*2 = 8 (with core). For v7, nd_torus applies the
     # core-axis priority automatically, so the combination including core
     # should be preferred.
-    mesh_priority, assign_priority = mesh_utils._create_device_mesh_for_nd_torus(
+    _, assignment = mesh_utils._create_device_mesh_for_nd_torus(
         physical_mesh, (2, 8)
     )
 
     # Verify FSDP (axis 1) uses core (axis 3)
-    self.assertEqual(assign_priority[3, 1], 2,
-                     f"For v7, FSDP should use core axis: {assign_priority}")
+    self.assertEqual(assignment[3, 1], 2,
+                     f"For v7, FSDP should use core axis: {assignment}")
 
 
 def int64_array(x) -> np.ndarray:
