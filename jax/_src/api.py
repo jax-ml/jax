@@ -559,7 +559,8 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
     g = vjp_py(lax_internal._one_vjp(ans))
-    g = g[0] if isinstance(argnums, int) else g
+    if isinstance(argnums, int):
+      (g,) = cast(tuple[Any], g)
     ans_aux = (ans, *maybe_aux) if has_aux else ans
     return ans_aux, g
 
@@ -1614,20 +1615,28 @@ def _temporary_dtype_exception(a, a_) -> bool:
     return a.shape == a_.shape and a_.dtype == float0
   return False
 
-@overload
-def vjp(fun: Callable[..., T],
-        *primals: Any,
-        has_aux: Literal[False] = False,
-        reduce_axes: Sequence[AxisName] = (),
-        saveable_args: Any = True) -> tuple[T, Callable]:
-  ...
 
 @overload
-def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
-        has_aux: Literal[True],
-        reduce_axes: Sequence[AxisName] = (),
-        saveable_args: Any = True) -> tuple[T, Callable, U]:
+def vjp[*Ps, T](
+    fun: Callable[[*Ps], T],
+    *primals: *tuple[*Ps],  # Work around pyrefly TypeVarTuple support.
+    has_aux: Literal[False] = ...,
+    reduce_axes: Sequence[AxisName] = ...,
+    saveable_args: Any = ...,
+) -> tuple[T, Callable[[T], tuple[*Ps]]]:
   ...
+
+
+@overload
+def vjp[*Ps, T, U](
+    fun: Callable[[*Ps], tuple[T, U]],
+    *primals: *tuple[*Ps],  # Work around pyrefly TypeVarTuple support.
+    has_aux: Literal[True],
+    reduce_axes: Sequence[AxisName] = ...,
+    saveable_args: Any = ...,
+) -> tuple[T, Callable[[T], tuple[*Ps]], U]:
+  ...
+
 
 @partial(api_boundary, repro_api_name="jax.vjp")
 def vjp(
