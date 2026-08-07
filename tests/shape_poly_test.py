@@ -385,7 +385,8 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(_bounds(-2*a + -3*b + -5*c + 20), (-np.inf, 10))
 
     # Additions
-    self.assertEqual(_bounds(bounded_ge0_le4 + bounded_le4), (-np.inf, 8))
+    # a % 5 + 5 - a = 5 - 5 * (a // 5) <= 5.
+    self.assertEqual(_bounds(bounded_ge0_le4 + bounded_le4), (-np.inf, 5))
     self.assertEqual(_bounds(bounded_ge0_le4 + bounded_ge2), (2, np.inf))
     self.assertEqual(_bounds(bounded_le4 + bounded_ge2), (-np.inf, np.inf))
 
@@ -432,6 +433,16 @@ class DimExprTest(jtu.JaxTestCase):
     # This arises in convolutions, because we use "-2 * div(-b, 2)" to get
     # the "2*ceil(b / 2)".
     self.assertGreaterEqual(-2 * ((- b) // 2), b)
+
+  def test_bounds_mod_euclidean_decomposition(self):
+    a, b = shape_poly.symbolic_shape("a, b")
+
+    self.assertGreaterEqual(b, b % 3)
+    self.assertEqual(_bounds(b - b % 3), (0, np.inf))
+
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "inconclusive"):
+      b >= b % a
 
   def test_bounds_floordiv(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -1639,6 +1650,13 @@ class ShapePolyTest(jtu.JaxTestCase):
                      arg_descriptors=[RandArg((16,), _i32)],
                      polymorphic_shapes=["a"],
                      symbolic_constraints=["a >= 8"])
+
+  def test_slice_in_dim_mod(self):
+    def f(x):  # x: i32[a]
+      return lax.slice_in_dim(x, 0, x.shape[0] % 3)
+    check_shape_poly(self, f,
+                     arg_descriptors=[RandArg((16,), _i32)],
+                     polymorphic_shapes=["a"])
 
   def test_constraints_slice_in_dim(self):
     def f(x):  # x: i32[a], with a >= 8

@@ -399,6 +399,12 @@ class _DecisionByElimination:
         self.combine_and_add_constraint(Comparator.GEQ, t_e, 0)  # m >= 0
         self.combine_and_add_constraint(Comparator.GEQ, op2 - 1, t_e)  # m <= op2 - 1
         self.combine_and_add_constraint(Comparator.GEQ, op2_b_u - 1, t_e)
+        # FLOORDIV constraints add
+        # `op1 == op2 * floordiv(op1, op2) + mod(op1, op2)`.
+        fd_e = _DimExpr._from_operation(_DimFactor.FLOORDIV, op1, op2,
+                                        scope=self.scope)
+        if isinstance(fd_e, _DimExpr):
+          self.add_implicit_constraints_expr(fd_e)
       elif op2_b_u < 0:  # negative divisor
         self.combine_and_add_constraint(Comparator.GEQ, t_e, op2 + 1)  # m >= op2 + 1
         self.combine_and_add_constraint(Comparator.GEQ, t_e, op2_b_l + 1)

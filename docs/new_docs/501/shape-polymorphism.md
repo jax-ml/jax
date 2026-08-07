@@ -375,40 +375,36 @@ b*d + b*c
 The symbolic constraints can also help to work around the
 limitations in the JAX reasoning mechanisms.
 For example, in the code below JAX will attempt to prove that
-the slice size `x.shape[0] % 3`, which is the symbolic expression
-`mod(b, 3)`, is less or equal to the axis size, which is `b`.
+the slice size `x.shape[0] % x.shape[1]`, which is the symbolic expression
+`mod(b, c)`, is less or equal to the axis size, which is `b`.
 This happens to be true for all strictly positive values of
-`b`, but it is not something JAX's symbolic comparison rules
+`b` and `c`, but it is not something JAX's symbolic comparison rules
 can prove. Hence, the following code raises an error:
 
 ```python
 from jax import lax
->>> b, = export.symbolic_shape("b")
->>> f = lambda x: lax.slice_in_dim(x, 0, x.shape[0] % 3)
+>>> b, c = export.symbolic_shape("b, c")
+>>> f = lambda x: lax.slice_in_dim(x, 0, x.shape[0] % x.shape[1])
 >>> export.export(jax.jit(f))(
-...     jax.ShapeDtypeStruct((b,), dtype=np.int32))  # doctest: +IGNORE_EXCEPTION_DETAIL
+...     jax.ShapeDtypeStruct((b, c), dtype=np.int32))  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-jax._src.export.shape_poly.InconclusiveDimensionOperation: Symbolic dimension comparison 'b' >= 'mod(b, 3)' is inconclusive.
+jax._src.export.shape_poly.InconclusiveDimensionOperation: Symbolic dimension comparison 'b' >= 'mod(b, c)' is inconclusive.
 This error arises for comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a boolean value for all values of the symbolic dimensions involved.
 
 ```
 
-One option here would be to restrict the code to work only on
-axis sizes that are multiple of `3` (by replacing
-`b` with `3*b` in the shape). Then, JAX would be able
-to simplify the modulo operation `mod(3*b, 3)` to `0`.
-Another option is to add a symbolic constraint
+One option is to add a symbolic constraint
 with the exact inconclusive inequality that JAX
 is attempting to prove:
 
 ```python
->>> b, = export.symbolic_shape("b",
-...                            constraints=["b >= mod(b, 3)"])
->>> f = lambda x: lax.slice_in_dim(x, 0, x.shape[0] % 3)
+>>> b, c = export.symbolic_shape("b, c",
+...                              constraints=["b >= mod(b, c)"])
+>>> f = lambda x: lax.slice_in_dim(x, 0, x.shape[0] % x.shape[1])
 >>> _ = export.export(jax.jit(f))(
-...     jax.ShapeDtypeStruct((b,), dtype=np.int32))
+...     jax.ShapeDtypeStruct((b, c), dtype=np.int32))
 
 ```
 
