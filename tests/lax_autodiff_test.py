@@ -1115,6 +1115,19 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     y = rng(update_shape, dtype)
     check_grads(scatter, (x, y), 2, ["fwd", "rev"], 1e-2, 1e-2, 1.)
 
+  def testScatterAddLinearizeEliminatesScatterAddWhenUpdatesConstant(self):
+    dnums = lax.ScatterDimensionNumbers(
+        update_window_dims=(), inserted_window_dims=(0,),
+        scatter_dims_to_operand_dims=(0,))
+    idxs = np.array([[1], [3]])
+    updates = np.array([10., 20.], dtype=np.float32)
+    f = lambda x: lax.scatter_add(x, idxs, updates, dnums)
+    x = np.arange(5, dtype=np.float32)
+    _, f_lin = jax.linearize(f, x)
+    jaxpr = jax.make_jaxpr(f_lin)(x)
+    prims = [eqn.primitive for eqn in jaxpr.jaxpr.eqns]
+    self.assertNotIn(lax.scatter_add_p, prims)
+
   def testScatterGradSymbolicZeroUpdate(self):
     # https://github.com/jax-ml/jax/issues/1901
     def f(x):
