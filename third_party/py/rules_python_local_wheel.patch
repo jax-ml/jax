@@ -1,8 +1,8 @@
 diff --git a/python/private/pypi/extension.bzl b/python/private/pypi/extension.bzl
-index 3927f61c..707fef59 100644
+index 4e8f9ce3..3acc5dbf 100644
 --- a/python/private/pypi/extension.bzl
 +++ b/python/private/pypi/extension.bzl
-@@ -262,6 +262,7 @@ You cannot use both the additive_build_content and additive_build_content_file a
+@@ -267,6 +267,7 @@ You cannot use both the additive_build_content and additive_build_content_file a
              builder.pip_parse(
                  module_ctx,
                  pip_attr = pip_attr,
@@ -10,7 +10,16 @@ index 3927f61c..707fef59 100644
              )
  
      # Keeps track of all the hub's whl repos across the different versions.
-@@ -631,6 +632,9 @@ hubs can be created, and each program can use its respective hub's targets.
+@@ -631,7 +632,7 @@ https://packaging.python.org/en/latest/specifications/simple-repository-api/
+         ),
+         "hub_name": attr.string(
+             mandatory = True,
+-            doc = """
++            doc = """\
+ The name of the repo pip dependencies will be accessible from.
+ 
+ This name must be unique between modules; unless your module is guaranteed to
+@@ -651,6 +652,9 @@ hubs can be created, and each program can use its respective hub's targets.
  Targets from different hubs should not be used together.
  """,
          ),
@@ -21,10 +30,10 @@ index 3927f61c..707fef59 100644
              doc = """\
  The flag allows to make use of parallel downloading feature in bazel 7.1 and above
 diff --git a/python/private/pypi/hub_builder.bzl b/python/private/pypi/hub_builder.bzl
-index 700f22e2..8e6e6840 100644
+index 48473156..9c376980 100644
 --- a/python/private/pypi/hub_builder.bzl
 +++ b/python/private/pypi/hub_builder.bzl
-@@ -102,7 +102,7 @@ def _build(self):
+@@ -147,7 +147,7 @@ def _build(self):
          whl_libraries = self._whl_libraries,
      )
  
@@ -33,15 +42,15 @@ index 700f22e2..8e6e6840 100644
      python_version = pip_attr.python_version
      if python_version in self._platforms:
          fail((
-@@ -152,6 +152,7 @@ def _pip_parse(self, module_ctx, pip_attr):
+@@ -194,6 +194,7 @@ def _pip_parse(self, module_ctx, pip_attr):
          self,
          module_ctx,
          pip_attr = pip_attr,
 +        is_root = is_root,
-         enable_pipstar = self._config.enable_pipstar or self._get_index_urls.get(pip_attr.python_version),
-         enable_pipstar_extract = self._config.enable_pipstar_extract or self._get_index_urls.get(pip_attr.python_version),
+         enable_pipstar = bool(self._config.enable_pipstar or self._get_index_urls.get(pip_attr.python_version)),
+         enable_pipstar_extract = bool(self._config.enable_pipstar_extract or self._get_index_urls.get(pip_attr.python_version)),
      )
-@@ -408,6 +409,7 @@ def _create_whl_repos(
+@@ -526,6 +527,7 @@ def _create_whl_repos(
          module_ctx,
          *,
          pip_attr,
@@ -49,15 +58,7 @@ index 700f22e2..8e6e6840 100644
          enable_pipstar = False,
          enable_pipstar_extract = False):
      """create all of the whl repositories
-@@ -416,6 +418,7 @@ def _create_whl_repos(
-         self: the builder.
-         module_ctx: {type}`module_ctx`.
-         pip_attr: {type}`struct` - the struct that comes from the tag class iteration.
-+        is_root: {type}`bool` - whether the calling module is the root workspace.
-         enable_pipstar: {type}`bool` - enable the pipstar or not.
-         enable_pipstar_extract: {type}`bool` - enable the pipstar extraction or not.
-     """
-@@ -464,7 +467,10 @@ def _create_whl_repos(
+@@ -582,7 +584,10 @@ def _create_whl_repos(
  
      interpreter = _detect_interpreter(self, pip_attr)
  
@@ -68,7 +69,7 @@ index 700f22e2..8e6e6840 100644
          whl_library_args = common_args | _whl_library_args(
              self,
              whl = whl,
-@@ -481,6 +487,7 @@ def _create_whl_repos(
+@@ -600,6 +605,7 @@ def _create_whl_repos(
                  python_version = _major_minor_version(pip_attr.python_version),
                  is_multiple_versions = whl.is_multiple_versions,
                  interpreter = interpreter,
@@ -76,7 +77,7 @@ index 700f22e2..8e6e6840 100644
                  enable_pipstar = enable_pipstar,
                  enable_pipstar_extract = enable_pipstar_extract,
              )
-@@ -559,6 +566,7 @@ def _whl_repo(
+@@ -679,6 +685,7 @@ def _whl_repo(
          python_version,
          use_downloader,
          interpreter,
@@ -84,10 +85,10 @@ index 700f22e2..8e6e6840 100644
          enable_pipstar = False,
          enable_pipstar_extract = False):
      args = dict(whl_library_args)
-@@ -622,9 +630,17 @@ def _whl_repo(
-     # targets to each hub for each extra combination and solve this more cleanly as opposed to
+@@ -745,8 +752,17 @@ def _whl_repo(
      # duplicating whl_library repositories.
      target_platforms = src.target_platforms if is_multiple_versions else []
+ 
 +    repo_name = whl_repo_name(src.filename, src.sha256, *target_platforms)
 +
 +    if local_wheel:
@@ -96,14 +97,14 @@ index 700f22e2..8e6e6840 100644
 +        args["urls"] = ["file://" + path_str]
 +        args["filename"] = local_wheel.basename
 +        args["sha256"] = ""
- 
++
      return struct(
 -        repo_name = whl_repo_name(src.filename, src.sha256, *target_platforms),
 +        repo_name = repo_name,
          args = args,
          config_setting = whl_config_setting(
              version = python_version,
-@@ -637,3 +653,61 @@ def _use_downloader(self, python_version, whl_name):
+@@ -759,3 +775,61 @@ def _use_downloader(self, python_version, whl_name):
          normalize_name(whl_name),
          self._get_index_urls.get(python_version) != None,
      )
