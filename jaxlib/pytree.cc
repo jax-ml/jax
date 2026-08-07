@@ -959,11 +959,22 @@ nb::object PyTreeDef::Unflatten(absl::Span<const nb::object> leaves) const {
 }
 
 nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
-  nb::list leaves = nb::steal<nb::list>(PyList_New(num_leaves()));
+  // A negative count (reachable by overflow in Tuple() and
+  // FromNodeDataAndChildren()) would defeat the `leaf < 0` guard below.
+  const int num_leaves = this->num_leaves();
+  if (num_leaves < 0) {
+    throw std::invalid_argument(absl::StrFormat(
+        "Malformed PyTreeDef: num_leaves is negative (%d).", num_leaves));
+  }
+  PyObject* py_leaves = PyList_New(num_leaves);
+  if (py_leaves == nullptr) {
+    throw nb::python_error();
+  }
+  nb::list leaves = nb::steal<nb::list>(py_leaves);
   std::vector<nb::object> agenda;
   agenda.push_back(nb::borrow<nb::object>(xs));
   auto it = traversal_.rbegin();
-  int leaf = num_leaves() - 1;
+  int leaf = num_leaves - 1;
   while (!agenda.empty()) {
     if (it == traversal_.rend()) {
       throw std::invalid_argument(absl::StrFormat(
@@ -1424,6 +1435,14 @@ void PyTreeDef::FromPickle(nb::object pickle) {
         break;
       case PyTreeKind::kDict:
         node.sorted_dict_keys = nb::cast<std::vector<nb::object>>(t[2]);
+        // MakeNode indexes sorted_dict_keys by [0, arity) without bounds
+        // checks.
+        if (node.arity < 0 || node.sorted_dict_keys.size() !=
+                                  static_cast<size_t>(node.arity)) {
+          throw xla::XlaRuntimeError(absl::StrCat(
+              "Malformed pickled PyTreeDef: dict with ",
+              node.sorted_dict_keys.size(), " keys has arity ", node.arity));
+        }
         break;
       case PyTreeKind::kCustom:
       case PyTreeKind::kDataclass:
@@ -1450,6 +1469,13 @@ void PyTreeDef::FromPickle(nb::object pickle) {
     }
     node.num_leaves = nb::cast<int>(t[4]);
     node.num_nodes = nb::cast<int>(t[5]);
+    // Valid cached counts are never negative (see SetNumLeavesAndNumNodes),
+    // and consumers such as FlattenUpTo are memory-unsafe if they are.
+    if (node.num_leaves < 0 || node.num_nodes < 0) {
+      throw xla::XlaRuntimeError(absl::StrCat(
+          "Malformed pickled PyTreeDef: negative num_leaves (",
+          node.num_leaves, ") or num_nodes (", node.num_nodes, ")"));
+    }
   }
 }
 
