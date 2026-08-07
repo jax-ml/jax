@@ -818,7 +818,6 @@ class ModuleContext:
   host_callbacks: list[Any]
   # Keep state for the lowering of shape polymorphism
   shape_poly_state: ShapePolyLoweringState
-  all_default_mem_kind: bool
 
   # Cached primitive lowerings.
   lowering_cache: dict[LoweringCacheKey, LoweringCacheValue]
@@ -854,7 +853,6 @@ class ModuleContext:
       cached_primitive_lowerings: None | dict[Any, Any] = None,
       traceback_caches: None | TracebackCaches = None,
       shape_poly_state = None,
-      all_default_mem_kind: bool = True,
       sharding_attr_cache: None | dict[SdyArray, sdy.TensorShardingAttr] = None,
       aval_to_ir_types_cache: None | dict[core.AbstractValue, IrTypes] = None,
       pallas_lowering_cache: None | dict[Any, Any] = None,
@@ -881,7 +879,6 @@ class ModuleContext:
     self.host_callbacks = host_callbacks
     self.shape_poly_state = (
       shape_poly_state or ShapePolyLoweringState((), tuple(platforms)))
-    self.all_default_mem_kind = all_default_mem_kind
     self.lowering_parameters = lowering_parameters
     self.sharding_attr_cache = ({} if sharding_attr_cache is None else sharding_attr_cache)
     self.aval_to_ir_types_cache = ({} if aval_to_ir_types_cache is None else aval_to_ir_types_cache)
@@ -1431,8 +1428,7 @@ def lower_jaxpr_to_module(
                       channel_iterator=channel_iter,
                       host_callbacks=host_callbacks,
                       lowering_parameters=lowering_parameters,
-                      shape_poly_state=ShapePolyLoweringState(dim_vars, platforms),
-                      all_default_mem_kind=all_default_mem_kind)
+                      shape_poly_state=ShapePolyLoweringState(dim_vars, platforms))
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
