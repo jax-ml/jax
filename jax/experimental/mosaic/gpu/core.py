@@ -539,7 +539,9 @@ def _construct_smem_reftree(
         else:
           if layout is None:
             layout = tcgen05._infer_tmem_layout(shape, collective, packing)
-          num_cols = layout.cols_in_shape(shape, utils.bitwidth(ir_dtype))
+          num_cols = layout.cols_in_shape(
+              shape, utils.bitwidth(ir_dtype, allow_non_power_of_2=True)
+          )
           tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
           def ref(addr_ref=addr_ref, shape=shape, ir_dtype=ir_dtype, layout=layout):
             addr = memref.load(addr_ref, [])

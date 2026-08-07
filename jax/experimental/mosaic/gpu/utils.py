@@ -595,9 +595,9 @@ def bitwidth_impl(ty: ir.Type):
   raise NotImplementedError(ty)
 
 
-def bitwidth(ty: ir.Type):
+def bitwidth(ty: ir.Type, allow_non_power_of_2: bool = False):
   result = bitwidth_impl(ty)
-  if result.bit_count() != 1:
+  if not allow_non_power_of_2 and result.bit_count() != 1:
     raise ValueError(f"Only power of 2 bitwidths are supported, got: {result}")
   return result
 
@@ -1861,18 +1861,33 @@ def memref_ptr(memref_arg):
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
   offset_elems = llvm.extractvalue(i64, desc, [2])
 
-  elem_bitwidth = bitwidth(memref_ty.element_type)
+  elem_bitwidth = bitwidth(memref_ty.element_type, allow_non_power_of_2=True)
   if elem_bitwidth < 8:
     *_, static_offset = memref_ty.get_strides_and_offset()
     if static_offset != ir.ShapedType.get_dynamic_stride_or_offset():
-      assert elem_bitwidth.bit_count() == 1
-      packing = 8 // elem_bitwidth
-      if static_offset % packing != 0:
-        raise ValueError(
-            f"{memref_ty} {static_offset=} is not divisible by {packing=}`"
-        )
-      offset_bytes = c(static_offset // packing, i64)
+      # Special case for 6-bit types.  We assume that they are always packed in
+      # b6x16_p32 format---i.e. offsets must be aligned to a multiple of 16
+      # elements to be tile-aligned. This should be reasonable for all practical
+      # purposes.
+      if elem_bitwidth == 6:
+        if static_offset % 16:
+          raise ValueError(
+              f"{memref_ty} {static_offset=} is not divisible by 16"
+          )
+        # We pretend that the element bitwdith is 8-bits, because we have 32
+        # bytes of padding after every 16 elements.
+        offset_bytes = c(static_offset, i64)
+      else:
+        assert elem_bitwidth.bit_count() == 1
+        packing = 8 // elem_bitwidth
+        if static_offset % packing != 0:
+          raise ValueError(
+              f"{memref_ty} {static_offset=} is not divisible by {packing=}`"
+          )
+        offset_bytes = c(static_offset // packing, i64)
     else:
+      # TODO(bchetioui): we should check is_known_divisible here, for all
+      # subbyte dtypes.
       offset_bits = llvm.mul(
           offset_elems,
           c(elem_bitwidth, i64),
