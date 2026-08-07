@@ -428,17 +428,11 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
     assert isinstance(val_aval, core.ShapedArray)
     expected_out_ty = transform_type(transforms, ref_aval.inner_aval)
     assert isinstance(expected_out_ty, core.ShapedArray)
-    if expected_out_ty.shape != val_aval.shape:
-      raise ValueError("Invalid shape for `swap`. "
-                       f"Ref shape: {ref_aval.shape}. "
-                       f"Expected shape: {expected_out_ty.shape}. "
-                       f"Value shape: {val_aval.shape}. "
-                       f"Transforms: {transforms}. ")
-    if expected_out_ty.dtype != val_aval.dtype:
+    if not core.typematch(expected_out_ty, val_aval):
       raise ValueError(
-          "Invalid dtype for `swap`. "
-          f"Ref dtype: {expected_out_ty.dtype}. "
-          f"Value dtype: {val_aval.dtype}. "
+          "Invalid type for `swap`. Expected type:"
+          f" {expected_out_ty.str_short()}, got type:"
+          f" {val_aval.str_short()}. Transforms: {transforms}"
       )
     out_aval = expected_out_ty
   else:
