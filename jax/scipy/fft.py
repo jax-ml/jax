@@ -19,5 +19,9 @@ from jax._src.scipy.fft import (
   dct as dct,
   dctn as dctn,
   idct as idct,
-  idctn as idctn
+  idctn as idctn,
+  dst as dst,
+  dstn as dstn,
+  idst as idst,
+  idstn as idstn
 )
