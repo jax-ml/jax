@@ -35,7 +35,6 @@ from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationKey
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationRequest
 from jax._src.state import indexing
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
 
 
@@ -2030,7 +2029,7 @@ def sync_warps_with_warpgroup(
   """Updates the warpgroup's warps' clocks with the warpgroup's clock"""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup, warpgroup.warp(i))
   return token
 
@@ -2043,7 +2042,7 @@ def sync_warpgroup_with_warps(
   """Updates the warpgroup's clock with the warpgroup's warps' clocks."""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup.warp(i), warpgroup)
   return token
 
