@@ -23,7 +23,6 @@ from typing import Any, Protocol, TypeVar
 
 from jax._src import ad_util
 from jax._src import api_util
-from jax._src import config
 from jax._src import core
 from jax._src import flattree as ft
 from jax._src import linear_util as lu
@@ -41,8 +40,8 @@ from jax._src.lax import slicing as lax_slicing
 from jax._src.state import indexing
 from jax._src.state.primitives import addupdate_p, get_p, swap_p, pin, unpin
 from jax._src.state.types import (
-    AbstractRef, BitcastTransform, RefEffect, ReshapeTransform, get_ref_aval_from_value,
-    uninitialized,)
+    AbstractLinVal, AbstractRef, BitcastTransform, RefEffect, ReshapeTransform,
+    get_ref_aval_from_value, uninitialized,)
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
 from jax._src.util import (foreach, safe_map, safe_zip, split_list, unzip2,
@@ -233,7 +232,7 @@ def _eval_jaxpr_discharge_state(
       if eqn.primitive is core.ref_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
-        if config.refs_to_pins.value:
+        if eqn.params['pin']:
           ans = pin(ans)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.empty_ref_p:
@@ -243,15 +242,25 @@ def _eval_jaxpr_discharge_state(
         if not isinstance(aval, core.ShapedArray):
           raise NotImplementedError  # TODO(sergei)
         ans = lax.empty(aval.shape, aval.dtype)
+        if eqn.params['pin']:
+          # TODO(mattjj,yashkatariya): switch to create_linear once the
+          # CreateBuffer custom call is implemented in the runtime
+          ans = pin(ans)
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.free_ref_p:
         [invar], [] = eqn.invars, eqn.outvars
+        val = env.read(invar)
+        if isinstance(core.typeof(val), AbstractLinVal):
+          unpin(val)  # terminate the linear chain; the value is discarded
         refs_to_discharge.remove(id(invar.aval))
         ans = ()
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
         ans = env.read(invar)
-        if config.refs_to_pins.value:
+        # A LinVal here means the ref was created with new_ref(..., pin=True)
+        # and discharged to a pinned buffer, so its final value must be
+        # unpinned.
+        if isinstance(core.typeof(ans), AbstractLinVal):
           ans = unpin(ans)
         refs_to_discharge.remove(id(invar.aval))
       elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:

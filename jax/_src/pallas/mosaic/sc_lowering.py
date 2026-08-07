@@ -720,8 +720,8 @@ def _has_indirect_offsets(
 
 
 @register_lowering_rule(jax_core.empty_ref_p)
-def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space):
-  del ty, memory_space
+def _empty_ref_lowering_rule(ctx: LoweringRuleContext, ty, memory_space, pin):
+  del ty, memory_space, pin
   [aval_out] = ctx.avals_out
   return tc_lowering._alloc_value(aval_out, ctx=ctx)
 

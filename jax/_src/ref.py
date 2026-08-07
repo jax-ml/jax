@@ -17,7 +17,8 @@ from jax._src import core
 
 
 def new_ref(
-    init_val: Any, *, memory_space: Any = None, kind: str | None = None
+    init_val: Any, *, memory_space: Any = None, kind: str | None = None,
+    pin: bool = False
 ) -> core.Ref:
   """Create a mutable array reference with initial value ``init_val``.
 
@@ -30,10 +31,11 @@ def new_ref(
     kind: An optional string indicating the mutation semantics under
       rematerialization. Currently only supports ``'no_grad_no_remat'`` or
       ``None``.
+    pin: Whether to lower the ref to a pinned buffer in HLO.
 
   Returns:
     A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return core.new_ref(init_val, memory_space=memory_space, kind=kind)
+  return core.new_ref(init_val, memory_space=memory_space, kind=kind, pin=pin)

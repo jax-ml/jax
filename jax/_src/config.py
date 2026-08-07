@@ -1955,12 +1955,6 @@ mutable_array_checks = bool_state(
     help='Enable error checks for mutable arrays that rule out aliasing.',
     include_in_trace_context=True)
 
-refs_to_pins = bool_state(
-    name='jax_refs_to_pins',
-    default=False,
-    upgrade=True,
-    help='Lower refs to pinned buffers in HLO.')
-
 # TODO(mattjj, yashkatariya): remove once we land box plumbing
 disable_bwd_checks = bool_state(
     name='jax_disable_bwd_checks',

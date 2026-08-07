@@ -1995,6 +1995,71 @@ class PinnedBuffersTest(jtu.JaxTestCase):
       y = f(x)
       self.assertAllClose(y, x)
 
+  def test_new_ref_pinned(self):
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(3.)
+    txt = f.lower(x).as_text('hlo')
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    if jtu.test_device_matches(['gpu', 'tpu']):
+      y = f(x)
+      self.assertAllClose(y, x)
+
+  def test_new_ref_unpinned_by_default(self):
+    @jax.jit
+    def f(x):
+      ref = jax.new_ref(x)
+      ref[...] = ref[...] + 1.
+      return jax.ref.freeze(ref)
+
+    x = jnp.arange(3.)
+    txt = f.lower(x).as_text('hlo')
+    self.assertNotIn("Pin", txt)
+
+    y = f(x)
+    self.assertAllClose(y, x + 1.)
+
+  def test_empty_ref_pinned(self):
+    @jax.jit
+    def f():
+      ref = jax.empty_ref(jax.ShapeDtypeStruct((3,), jnp.float32), pin=True)
+      return jax.ref.freeze(ref)
+
+    txt = f.lower().as_text('hlo')
+    self.assertIn("Pin", txt)
+    self.assertIn("Unpin", txt)
+
+    if jtu.test_device_matches(['gpu', 'tpu']):
+      y = f()  # contents are uninitialized, only check the type
+      self.assertEqual(y.shape, (3,))
+      self.assertEqual(y.dtype, jnp.float32)
+
+  def test_free_ref_pinned(self):
+    def f(x):
+      ref = jax.new_ref(x, pin=True)
+      jax.ref.free_ref(ref)
+      return x + 1.
+
+    x = jnp.arange(3.)
+    jaxpr = jax.make_jaxpr(f)(x)
+    discharged = discharge_state(jaxpr)
+    prims = [e.primitive.name for e in discharged.eqns]
+    self.assertIn('pin', prims)
+    self.assertIn('unpin', prims)
+
+    if jtu.test_device_matches(['gpu', 'tpu']):
+      y = jax.jit(f)(x)
+      self.assertAllClose(y, x + 1.)
+
+  def test_new_ref_pinned_eager_error(self):
+    with self.assertRaises(NotImplementedError):
+      jax.new_ref(jnp.arange(3.), pin=True)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
