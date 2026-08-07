@@ -2307,7 +2307,7 @@ def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
   with (core.ensure_no_leaks(trace), source_info_util.reset_name_stack(),
         TracebackScope()):
     src = source_info_util.current()
-    invals = outs = None
+    invals = outs = maybe_invals = new_invars = xs = t = None
 
     lo_avals_lol, () = lo_avals.unflatten()
     for v, xs in zip(hi_jaxpr.invars, lo_avals_lol):
@@ -2352,6 +2352,7 @@ def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
     dbg = _lower_debug_info(hi_jaxpr)
     jaxpr, consts = trace.frame.to_jaxpr(trace, list(out_tracers), dbg, src)
     del trace, env, out_tracers, tracer, read, outs, invals, eqns
+    del maybe_invals, new_invars, xs, t
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   assert not any(v.aval.is_high for v in it.chain(jaxpr.constvars, jaxpr.invars))
