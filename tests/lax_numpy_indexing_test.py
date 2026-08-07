@@ -2036,12 +2036,17 @@ class ValidateIndicesTest(jtu.JaxTestCase):
 class DSliceTest(jtu.JaxTestCase):
   @parameterized.parameters([
     ((None,), slice(None)),
+    ((None,), slice(None, None, 2), dict(stride=2)),
+    ((None, 5), Slice(0, 5, 1)),
+    ((None, 5, 2), Slice(0, 5, 2)),
     ((5,), Slice(0, 5, 1)),
     ((0, 5), Slice(0, 5, 1)),
     ((0, 5, 2), Slice(0, 5, 2)),
+    ((5,), Slice(0, 5, 3), dict(stride=3)),
+    ((0, 5), Slice(0, 5, 4), dict(stride=4)),
   ])
-  def test_dslice_construction(self, args, expected):
-    self.assertEqual(jax.ds(*args), expected)
+  def test_dslice_construction(self, args, expected, kwargs={}):
+    self.assertEqual(jax.ds(*args, **kwargs), expected)
 
 
 if __name__ == "__main__":

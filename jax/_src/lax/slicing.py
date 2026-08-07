@@ -1553,7 +1553,7 @@ def _dynamic_slice_transpose_fancy(out_ct, operand, *start_indices, slice_sizes)
     return
   if isinstance(operand, ad.RefAccum):
     assert operand.ref is not None
-    operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))
+    operand.ref.addupdate(out_ct, tuple(map(ds, start_indices, slice_sizes)))  # pyrefly: ignore[bad-argument-type]
   else:
     # use out_ct's dtype, not operand_aval's: cotangents can flow in a
     # different (e.g. higher-precision) dtype than the primal
