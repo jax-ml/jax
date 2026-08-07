@@ -49,7 +49,7 @@ def builder_linear_arith(state):
           for r_k in [1, 2, -2]:
             comb = l * l_k + r * r_k
             if not isinstance(comb, int):
-              _ = comb.leading_term  # Ensure we actually materialize
+              _ = comb._leading_term  # Ensure we actually materialize
 
 
 @benchmark.register
@@ -71,11 +71,12 @@ def load_constraints(state):
 @benchmark.register
 def inequalities_slice(state):
 
+  from jax._src import core as src_core
   a, b = export.symbolic_shape("a, b")
   while state:
     for _ in range(30):
       a.scope._clear_caches()
-      start, _, slice_size = core.canonicalize_slice(slice(2, a, 4), b)
+      start, _, slice_size = src_core.canonicalize_slice(slice(2, a, 4), b)
       _ = 0 <= slice_size <= b
       _ = start >= 0
       _ = start + slice_size <= b
