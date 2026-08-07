@@ -1616,6 +1616,7 @@ jax_multiplatform_test(
     deps = [
         "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
         "//jax/experimental:pallas",
+        "//jax/experimental:pallas_mosaic_gpu",
         "//jax/experimental:pallas_tpu",
     ] + py_deps([
         "absl/testing",

@@ -37,7 +37,6 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 from jax._src.util import (safe_zip, split_list)
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 
 
@@ -87,7 +86,7 @@ def _raise_if_unsupported_memory_space(
 
 
 def _raise_if_unsupported_collective_axes(
-    mesh: plgpu.Mesh | None,
+    mesh: mosaic_gpu_core.Mesh | None,
     is_collective_by_thread_cluster_axis: tuple[bool, ...],
 ):
   if not mesh or not mesh.thread_name:
@@ -192,9 +191,9 @@ def apply_unswizzle_and_untile(
     transforms: tuple[state_types.Transform, ...],
     aval: jax_core.AbstractValue,
 ) -> jax_core.AbstractValue:
-  if not all(isinstance(t, (mosaic_gpu_core.UnswizzleRef,
-                            mosaic_gpu_core.UntilingTransform))
-             for t in transforms):
+  if not all(
+      isinstance(t, gpu_callbacks.DROPPED_TRANSFORMS) for t in transforms
+  ):
     raise ValueError("Unsupported transforms:", transforms)
   return state_types.TransformedRef(aval, transforms).type
 
@@ -225,9 +224,9 @@ class JaxprInterpreter:
 
   cluster_dims: tuple[int, ...]
 
-  mesh: plgpu.Mesh | None
+  mesh: mosaic_gpu_core.Mesh | None
   # Only present if this interpreter is created by a core_map with a WarpMesh.
-  warp_mesh: plgpu.WarpMesh | None = dataclasses.field(default=None)
+  warp_mesh: mosaic_gpu_core.WarpMesh | None = dataclasses.field(default=None)
   device_info: DeviceInfo
   compiler_params: Mapping[str, Any]
   interpret_params: InterpretGPUParams
@@ -332,6 +331,22 @@ class JaxprInterpreter:
         thread=self.thread,
         allocation_key_as_array=invals[0],
         transforms=jax.tree.unflatten(eqn.params["tree"], invals[1:]),
+        source_info=eqn.source_info,
+    )
+
+  def _interpret_load_p(
+      self, eqn, token, source, *transforms, tree, optimized: bool
+  ):
+    del optimized
+    assert eqn.primitive is gpu_primitives.load_p
+    assert isinstance(eqn.outvars[0].aval, jax_core.ShapedArray)
+    return gpu_callbacks.call_get(
+        token=token,
+        result_shape_and_dtype=eqn.outvars[0].aval,
+        mesh_location=self.mesh_location,
+        thread=self.thread,
+        allocation_key_as_array=source,
+        transforms=jax.tree.unflatten(tree, transforms),
         source_info=eqn.source_info,
     )
 
@@ -549,7 +564,7 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is pallas_core.core_map_p
     mesh = eqn.params["mesh"]
-    if not isinstance(mesh, plgpu.WarpMesh):
+    if not isinstance(mesh, mosaic_gpu_core.WarpMesh):
       raise ValueError(
           "Only core_map over WarpMesh is supported in an MGPU kernel."
       )
@@ -580,7 +595,7 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,
@@ -603,7 +618,7 @@ class JaxprInterpreter:
       )
     mesh = meshes[0]
     jaxpr = jaxprs[0]
-    if not isinstance(mesh, plgpu.WarpMesh):
+    if not isinstance(mesh, mosaic_gpu_core.WarpMesh):
       raise ValueError(
           "Only mpmd_map over WarpMesh is supported in an MGPU kernel."
       )
@@ -632,7 +647,7 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,
@@ -742,6 +757,20 @@ class JaxprInterpreter:
   def _interpret_arithmetic_primitive(
       self, eqn, get_invals: Callable[[], Sequence[Any]]
   ):
+    # The fallback re-binds the primitive into the jaxpr the interpreter
+    # produces, which XLA then compiles. That is only meaningful for
+    # primitives XLA can lower. A primitive carrying a kernel-local effect
+    # only has meaning inside a Mosaic GPU kernel, so re-binding it would
+    # leak an unlowerable effect out of the kernel -- refuse instead of
+    # emitting something XLA cannot compile.
+    if pallas_core.kernel_local_effects.filter_in(eqn.effects):
+      raise NotImplementedError(
+          f"GPU interpret mode does not implement `{eqn.primitive}`, and"
+          " cannot fall back to evaluating it directly because it has"
+          " kernel-local effects:"
+          f" {pallas_core.kernel_local_effects.filter_in(eqn.effects)}."
+      )
+
     if self.interpret_params.skip_floating_point_ops and all(
         interpret_utils.is_float(ovar.aval.dtype) for ovar in eqn.outvars
     ):
@@ -784,8 +813,11 @@ class JaxprInterpreter:
         barrier_transforms_flat)
 
     return callback.io_callback(
-        functools.partial(gpu_callbacks.copy_gmem_to_smem,
-                          source_info=eqn.source_info),
+        functools.partial(
+            gpu_callbacks.copy_gmem_to_smem,
+            source_info=eqn.source_info,
+            oob_mode=eqn.params["oob_mode"],
+        ),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
         token=token,
         mesh_location=self.mesh_location,
@@ -1135,6 +1167,9 @@ class JaxprInterpreter:
             token, out = self._interpret_get_p(eqn, token, deferred_invals)
           case primitives.load_p:
             raise NotImplementedError("load_p is not supported on GPU yet")
+          case gpu_primitives.load_p:
+            token, out = self._interpret_load_p(
+                eqn, token, *deferred_invals(), **eqn.params)
           case state_primitives.swap_p:
             token, out = self._interpret_swap_p(eqn, token, deferred_invals)
           case primitives.swap_p:
@@ -1200,6 +1235,10 @@ class JaxprInterpreter:
                 eqn, token, deferred_invals)
           case gpu_primitives.set_max_registers_p:
             # This primitive is a no-op in GPU Interpret Mode.
+            out = []
+          case mosaic_gpu_core.layout_cast_p:
+            out = deferred_invals()[0]
+          case gpu_primitives.griddepcontrol_wait_p | gpu_primitives.griddepcontrol_launch_dependents_p:
             out = []
           case gpu_primitives.commit_smem_p:
             token, out = self._interpret_commit_smem_p(eqn, token, deferred_invals)
