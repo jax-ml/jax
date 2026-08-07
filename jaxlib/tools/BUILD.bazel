@@ -22,7 +22,9 @@ load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 
 # TODO(Intel-tf): Update `sycl` with `oneapi` when xla changes to use `oneapi`.
 load("@local_config_sycl//sycl:build_defs.bzl", "if_sycl")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_python//python:py_library.bzl", "py_library")
 load(
     "@xla//third_party/py:py_import.bzl",
     "py_import",
@@ -539,36 +541,60 @@ py_import(
     wheel_deps = if_pypi_cuda_wheel_deps([":nvidia_wheel_deps"]),
 )
 
+ROCM_LIBS = [
+    "@local_config_rocm//rocm:hip_runtime",
+    "@local_config_rocm//rocm:hipblas",
+    "@local_config_rocm//rocm:hipfft",
+    "@local_config_rocm//rocm:hiprand",
+    "@local_config_rocm//rocm:hipsolver",
+    "@local_config_rocm//rocm:hipsparse",
+    "@local_config_rocm//rocm:miopen",
+    "@local_config_rocm//rocm:rccl",
+    "@local_config_rocm//rocm:rocm_smi",
+    "@local_config_rocm//rocm:rocprofiler_sdk",
+    "@local_config_rocm//rocm:rocsolver",
+]
+
 collect_data_files(
     name = "rocm_libs_data",
-    deps = [
-        "@local_config_rocm//rocm:hip_runtime",
-        "@local_config_rocm//rocm:hipblas",
-        "@local_config_rocm//rocm:hipfft",
-        "@local_config_rocm//rocm:hiprand",
-        "@local_config_rocm//rocm:hipsolver",
-        "@local_config_rocm//rocm:miopen",
-        "@local_config_rocm//rocm:rccl",
-        "@local_config_rocm//rocm:rocm_smi",
-        "@local_config_rocm//rocm:rocprofiler_sdk",
-        "@local_config_rocm//rocm:rocsolver",
-    ],
+    deps = ROCM_LIBS,
+)
+
+# collect_data_files keeps a file only when its extension is exactly "so", so
+# the SONAME-versioned libraries the plugin links against (libamdhip64.so.7,
+# librocblas.so.5, ...) are dropped. Carry the unfiltered set as runfiles, where
+# @local_config_rocm//rocm:rocm_rpath already points.
+cc_library(
+    name = "rocm_runtime_libs",
+    deps = ROCM_LIBS,
 )
 
 py_import(
-    name = "jax_rocm_plugin_py_import",
+    name = "jax_rocm_plugin_wheel_py_import",
     wheel = ":jax_rocm_plugin_wheel",
     wheel_deps = [
         ":rocm_libs_data",
     ],
 )
 
+py_library(
+    name = "jax_rocm_plugin_py_import",
+    data = [":rocm_runtime_libs"],
+    deps = [":jax_rocm_plugin_wheel_py_import"],
+)
+
 py_import(
-    name = "jax_rocm_pjrt_py_import",
+    name = "jax_rocm_pjrt_wheel_py_import",
     wheel = ":jax_rocm_pjrt_wheel",
     wheel_deps = [
         ":rocm_libs_data",
     ],
+)
+
+py_library(
+    name = "jax_rocm_pjrt_py_import",
+    data = [":rocm_runtime_libs"],
+    deps = [":jax_rocm_pjrt_wheel_py_import"],
 )
 
 # The targets below are used for GPU tests with `--//jax:build_jaxlib=false`.

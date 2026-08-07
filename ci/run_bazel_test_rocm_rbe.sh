@@ -62,13 +62,13 @@ done
 TEST_ARTIFACTS_DIR="test-artifacts"
 mkdir -p "$TEST_ARTIFACTS_DIR"
 
-# Point ROCM_PATH and LD_LIBRARY_PATH at the local TheRock installation.
+# Point ROCM_PATH at the local TheRock installation. Tests find ROCm through
+# their runfiles, so they need no LD_LIBRARY_PATH.
 ROCM_SDK_FLAGS=()
 if command -v rocm-sdk >/dev/null 2>&1; then
     ROCM_SDK_ROOT="$(rocm-sdk path --root)"
     ROCM_SDK_FLAGS=(
         "--repo_env=ROCM_PATH=${ROCM_SDK_ROOT}"
-        "--test_env=LD_LIBRARY_PATH=${ROCM_SDK_ROOT}/lib"
     )
 fi
 echo "::endgroup::" >&2
