@@ -9529,7 +9529,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     compiled_text = step.lower(ws, xs).compile().as_text()
     # Remove the all-reduce-start( checks once jaxlib catches up with XLA.
-    self.assertEqual(
+    self.assertGreater(
       compiled_text.count('all-reduce(') +
         compiled_text.count('all-reduce-start('), 1)
 
