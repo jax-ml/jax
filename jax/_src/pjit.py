@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 import inspect
 import weakref
-from typing import NamedTuple, Any, Union
+from typing import NamedTuple, Any, Self, Union, overload
 import warnings
 
 import numpy as np
@@ -677,7 +677,8 @@ def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
   return tuple(avals)
 
 
-class JitWrapped(stages.Wrapped):
+class JitWrapped[**Parameters, ReturnType](
+    stages.Wrapped[Parameters, ReturnType]):
 
   def eval_shape(self, *args, **kwargs):
     """See ``jax.eval_shape``."""
@@ -686,12 +687,27 @@ class JitWrapped(stages.Wrapped):
   def trace(self, *args, **kwargs) -> stages.Traced:
     raise NotImplementedError
 
+  # The underlying C++ implementation is a descriptor (like a plain
+  # function), so accessing a jitted method through an instance binds it,
+  # dropping the leading `self` parameter. There's no way to express that
+  # precisely for an arbitrary ParamSpec, so the bound case falls back to
+  # `Callable[..., ReturnType]`, matching how `types.FunctionType.__get__`
+  # is typed in typeshed.
+  @overload
+  def __get__(self, instance: None, owner: type | None = None, /) -> Self: ...
+  @overload
+  def __get__(
+      self, instance: object, owner: type | None = None, /
+  ) -> Callable[..., ReturnType]: ...
+  def __get__(self, instance, owner=None):
+    raise NotImplementedError
+
 
 # in_shardings and out_shardings can't be None as the default value
 # because `None` means that the input is fully replicated.
 @partial(api_boundary, repro_api_name="pjit.pjit")
-def pjit(
-    fun: Callable,
+def pjit[**Parameters, ReturnType](
+    fun: Callable[Parameters, ReturnType],
     in_shardings: Any = UNSPECIFIED,
     out_shardings: Any = UNSPECIFIED,
     static_argnums: int | Sequence[int] | None = None,
@@ -703,7 +719,7 @@ def pjit(
     backend: str | None = None,
     inline: bool = False,
     compiler_options: dict[str, Any] | None = None,
-) -> JitWrapped:
+) -> JitWrapped[Parameters, ReturnType]:
   """`jax.experimental.pjit.pjit` has been deprecated. Please use `jax.jit`."""
   return make_jit(
       fun, in_shardings=in_shardings, out_shardings=out_shardings,
