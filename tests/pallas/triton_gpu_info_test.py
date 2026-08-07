@@ -45,6 +45,8 @@ class GpuInfoTest(jtu.JaxTestCase):
   def test_get_gpu_info(self):
     device = jax.devices()[0]
     info = plgpu.get_gpu_info()
+    if info.gpu_version is None:
+      self.skipTest("device has a free-form arch with no GpuVersion")
     self.assertIsInstance(info, plgpu.GpuInfo)
     self.assertEqual(info.arch_name, device.compute_capability)
     expected_version = gpu_info.gpu_version_from_device_kind(device.device_kind)

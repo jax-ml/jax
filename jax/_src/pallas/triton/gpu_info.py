@@ -162,6 +162,16 @@ def get_gpu_info() -> GpuInfo:
     return GpuInfo(
         gpu_version=None, arch_name=device_kind, compute_capability=0)
 
+  # generic NVIDIA GPU device without GpuVersion entry
+  if get_device_platform() == "gpu" and device_kind.startswith("NVIDIA"):
+    gpu_arch_name = _get_device_arch_name()
+    gpu_compute_capability = int(gpu_arch_name.replace(".", ""))
+    return GpuInfo(
+        gpu_version=None,
+        arch_name=gpu_arch_name,
+        compute_capability=gpu_compute_capability,
+    )
+
   if device_kind in registry:
     return registry[device_kind]()
   raise ValueError(f"Unsupported GPU device kind: {device_kind}")
@@ -178,6 +188,9 @@ def get_gpu_info_from_version(
   """
   return _get_gpu_info_impl(gpu_version)
 
+def _get_device_arch_name() -> str:
+  device = pxla.get_default_device()
+  return device.compute_capability
 
 def get_device_kind() -> str:
   device = pxla.get_default_device()
