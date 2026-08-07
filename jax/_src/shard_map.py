@@ -2165,7 +2165,9 @@ def _shard_map_discharge(
   inner_mesh = _as_manual_mesh(mesh, newly_manual_axes)
   with (_extend_axis_env(mesh, newly_manual_axes), use_abstract_mesh(inner_mesh),
         config._check_vma(check_vma)):
-    discharged_jaxpr = discharge.discharge_state(jaxpr)
+    discharged_jaxpr = discharge.discharge_state(
+        jaxpr, strip_memory_space=ctx.strip_memory_space
+    )
   if discharged_jaxpr.consts:
     raise NotImplementedError
 

@@ -955,7 +955,7 @@ batching.primitive_batchers[name_p] = name_batcher
 @discharge.register_discharge_rule(remat_p)
 def _remat_state_discharge_rule(
     ctx, *args, jaxpr, **params):
-  discharged_jaxpr = discharge.discharge_state(jaxpr)
+  discharged_jaxpr = discharge.discharge_state(jaxpr, strip_memory_space=ctx.strip_memory_space)
   if discharged_jaxpr.consts:
     raise NotImplementedError
   out_vals_ref_vals = remat_p.bind(
