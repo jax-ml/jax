@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -25,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -59,7 +61,13 @@ nb::dict Registrations() {
 NB_MODULE(_triton, m) {
   nb::class_<Kernel>(m, "TritonKernel")
       .def(nb::init<std::string, uint32_t, uint32_t, uint32_t, std::string,
-                    std::string, int>());
+                    std::string, int, std::optional<uint32_t>,
+                    std::optional<uint32_t>>(),
+           nb::arg("kernel_name"), nb::arg("num_warps"), nb::arg("num_ctas"),
+           nb::arg("shared_mem_bytes"), nb::arg("ptx"), nb::arg("ttir"),
+           nb::arg("compute_capability"),
+           nb::arg("global_scratch_size") = nb::none(),
+           nb::arg("global_scratch_align") = nb::none());
 
   nb::class_<KernelCall::Parameter>(m, "TritonParameter");
 

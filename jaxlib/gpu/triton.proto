@@ -13,6 +13,11 @@ message TritonKernel {
   // Set if this kernel was compiled down to machine code (e.g. CUBIN).
   optional ModuleImageProto module_image = 11;
 
+  // Per-CTA global scratch memory the kernel requires (e.g. for on-device
+  // construction of TMA descriptors).
+  optional uint32 global_scratch_size = 12;
+  optional uint32 global_scratch_align = 13;
+
   reserved 7, 8, 9;
 }
 

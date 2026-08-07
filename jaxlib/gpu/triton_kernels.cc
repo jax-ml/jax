@@ -22,6 +22,7 @@ limitations under the License.
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -509,7 +510,10 @@ class ModuleImage {
 
 Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-               int compute_capability, ModuleImage* module_image)
+               int compute_capability,
+               std::optional<uint32_t> global_scratch_size,
+               std::optional<uint32_t> global_scratch_align,
+               ModuleImage* module_image)
     : kernel_name_(std::move(kernel_name)),
       block_dim_x_(num_warps * kNumThreadsPerWarp),
       num_ctas_(num_ctas),
@@ -517,6 +521,8 @@ Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
       ptx_(std::move(ptx)),
       ttir_(std::move(ttir)),
       compute_capability_(compute_capability),
+      global_scratch_size_(global_scratch_size),
+      global_scratch_align_(global_scratch_align),
       module_image_(module_image) {}
 
 absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
@@ -597,9 +603,19 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
                                              proto.compute_capability()));
   }
 
+  std::optional<uint32_t> global_scratch_size;
+  if (proto.has_global_scratch_size()) {
+    global_scratch_size = proto.global_scratch_size();
+  }
+  std::optional<uint32_t> global_scratch_align;
+  if (proto.has_global_scratch_align()) {
+    global_scratch_align = proto.global_scratch_align();
+  }
+
   return Kernel(proto.kernel_name(), proto.num_warps(), num_ctas,
                 proto.shared_mem_bytes(), proto.ptx(), proto.ttir(),
-                proto.compute_capability(), module_image);
+                proto.compute_capability(), global_scratch_size,
+                global_scratch_align, module_image);
 }
 
 jax_triton::TritonKernel Kernel::ToProto() const {
@@ -611,6 +627,12 @@ jax_triton::TritonKernel Kernel::ToProto() const {
   proto.set_ptx(ptx_);
   proto.set_ttir(ttir_);
   proto.set_compute_capability(compute_capability_);
+  if (global_scratch_size_.has_value()) {
+    proto.set_global_scratch_size(*global_scratch_size_);
+  }
+  if (global_scratch_align_.has_value()) {
+    proto.set_global_scratch_align(*global_scratch_align_);
+  }
   if (module_image_ != nullptr) {
     *proto.mutable_module_image() = module_image_->ToProto();
   }
@@ -692,8 +714,7 @@ KernelCall::KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1,
 
 absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   std::vector<void*> params;
-  // We need an additional parameter for the scratchpad buffer.
-  params.reserve(parameters_.size() + 1);
+  // +2 accounts for the global scratch buffer and the profiling buffer.
   for (size_t i = 0; i < parameters_.size(); ++i) {
     const Parameter& param = parameters_[i];
     if (std::holds_alternative<Parameter::Array>(param.value)) {
@@ -719,14 +740,46 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
           param.value)));
     }
   }
-  // Triton's kernel ABI expects an additional scratchpad global memory.
-  // For now it is only used for on-device creation of TMA descriptors, which
-  // we do not use yet, so we are just replacing this argument with a null
-  // pointer.
-  // TODO: b/381242007 - Allocate a proper buffer if we want to use
-  // device-side TMA APIs.
-  void* tma_descriptor_buffer = nullptr;  // Alive until kernel_.Launch returns.
-  params.push_back(&tma_descriptor_buffer);
+  // Allocate per-CTA global scratch buffer if required by the kerne, e.g. for
+  // TMA descriptors.
+  gpuDevicePtr_t global_scratch = 0;
+  if (kernel_.global_scratch_size().has_value()) {
+    const uint32_t per_cta_scratch = kernel_.global_scratch_size().value();
+    const uint64_t grid_size =
+        static_cast<uint64_t>(grid_[0]) * grid_[1] * grid_[2];
+    const uint64_t num_ctas = kernel_.num_ctas();
+    if (ABSL_PREDICT_FALSE(grid_size != 0 && num_ctas != 0 &&
+                           per_cta_scratch >
+                               std::numeric_limits<uint64_t>::max() /
+                                   grid_size / num_ctas)) {
+      return absl::InvalidArgumentError(
+          "Triton global scratch buffer size overflow.");
+    }
+    const uint64_t alloc_size = grid_size * num_ctas * per_cta_scratch;
+    if (alloc_size > 0) {
+      GPU_RETURN_IF_ERROR(
+          gpuMemAllocAsync(&global_scratch, alloc_size, stream));
+    }
+  }
+  absl::Cleanup global_scratch_deleter = [&] {
+    if (global_scratch == 0) return;
+    absl::Status s = JAX_AS_STATUS(gpuMemFreeAsync(global_scratch, stream));
+    if (!s.ok()) {
+      LOG(WARNING) << "Failed to free Triton global scratch buffer: " << s;
+    }
+  };
+  if (global_scratch != 0 && kernel_.global_scratch_align().has_value()) {
+    const uint32_t align = *kernel_.global_scratch_align();
+    if (ABSL_PREDICT_FALSE(align > 1 &&
+                           ((uintptr_t)global_scratch % align != 0))) {
+      return absl::InternalError(absl::StrFormat(
+          "Triton global scratch buffer (%p) is not aligned to %u bytes.",
+          (void*)global_scratch, align));
+    }
+  }
+  // Alive until kernel_.Launch returns.
+  void* global_scratch_ptr = reinterpret_cast<void*>(global_scratch);
+  params.push_back(&global_scratch_ptr);
   void* profiling_buffer = nullptr;  // Alive until kernel_.Launch returns.
   params.push_back(&profiling_buffer);
 

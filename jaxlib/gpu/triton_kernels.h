@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <variant>
@@ -81,7 +82,10 @@ class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
          uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
-         int compute_capability, ModuleImage* module_image = nullptr);
+         int compute_capability,
+         std::optional<uint32_t> global_scratch_size = std::nullopt,
+         std::optional<uint32_t> global_scratch_align = std::nullopt,
+         ModuleImage* module_image = nullptr);
 
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
@@ -93,9 +97,16 @@ class Kernel {
   bool CanLaunchOnDevice(gpuDevice_t) const;
 
   const std::string& kernel_name() const { return kernel_name_; }
+  uint32_t num_ctas() const { return num_ctas_; }
   uint32_t shared_mem_bytes() const { return shared_mem_bytes_; }
   const std::string& ptx() const { return ptx_; }
   int compute_capability() const { return compute_capability_; }
+  std::optional<uint32_t> global_scratch_size() const {
+    return global_scratch_size_;
+  }
+  std::optional<uint32_t> global_scratch_align() const {
+    return global_scratch_align_;
+  }
 
  private:
   std::string kernel_name_;
@@ -105,6 +116,8 @@ class Kernel {
   std::string ptx_;
   std::string ttir_;
   int compute_capability_;
+  std::optional<uint32_t> global_scratch_size_;
+  std::optional<uint32_t> global_scratch_align_;
 
   ModuleImage* module_image_ = nullptr;
 };

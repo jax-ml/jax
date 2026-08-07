@@ -21,14 +21,15 @@ from typing import overload
 class TritonKernel:
   def __init__(
       self,
-      arg0: str,
-      arg1: int,
-      arg2: int,
-      arg3: int,
-      arg4: str,
-      arg5: str,
-      arg6: int,
-      /,
+      kernel_name: str,
+      num_warps: int,
+      num_ctas: int,
+      shared_mem_bytes: int,
+      ptx: str,
+      ttir: str,
+      compute_capability: int,
+      global_scratch_size: int | None = ...,
+      global_scratch_align: int | None = ...,
   ) -> None: ...
 
 class TritonParameter:
