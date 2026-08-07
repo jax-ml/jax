@@ -4508,8 +4508,8 @@ def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
 def _reciprocal_lowering_rule(
     ctx: LoweringRuleContext, x, *, approx, full_range
 ):
-  if not isinstance(x.type.element_type, ir.F32Type):
-    raise ValueError("Only float32 is supported.")
+  if not isinstance(x.type.element_type, (ir.F32Type, ir.BF16Type)):
+    raise ValueError("Only float32 and bfloat16 are supported.")
   if (
       TYPE_CHECKING
       or ctx.forward_compatible
