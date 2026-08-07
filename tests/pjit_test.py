@@ -5117,7 +5117,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @jtu.with_explicit_mesh((2,), 'x')
   def test_ndim_less_than_pspec_length_error(self, mesh):
-    with self.assertRaisesRegex(ValueError, "Input's ndim is less than"):
+    with self.assertRaisesRegex(ValueError, "Length of sharding.spec"):
       jax.reshard(np.zeros((8, 4, 2)), P(None, None, None, 'x'))
 
   @jtu.with_explicit_mesh((2, 2, 1), ('x', 'y', 'z'))

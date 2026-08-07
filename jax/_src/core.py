@@ -2152,14 +2152,12 @@ def _make_lengths_same(sharding, ndim):
   pspec = sharding.spec
   if ndim > len(pspec):
     return sharding.update(spec=pspec._normalized_spec_for_aval(ndim))
-  if ndim < len(pspec):
-    if not all(s is None for s in pspec.partitions[ndim:]):
-      raise ValueError(
-          "Input's ndim is less than the length of PartitionSpec which is not"
-          f" allowed. Got input ndim={ndim} and pspec={pspec}")
+  if ((sharding.mesh.empty or sharding.mesh._are_all_axes_auto_or_manual) and
+      ndim < len(pspec)):
+    assert all(s is None for s in pspec.partitions[ndim:])
     return sharding.update(spec=sharding.spec.update(
         partitions=pspec.partitions[:ndim]))
-  assert False, "unreachable"
+  return sharding
 
 def modify_spec_for_auto_manual(spec, mesh) -> P:
   new_spec: list[Any] = []
@@ -2227,8 +2225,9 @@ def get_sharding(sharding, shape):
   out_s = _maybe_modify_sharding(sharding, ndim)
   if len(out_s.spec) != ndim:
     raise ValueError(
-        "Length of sharding.spec must be equal to aval's ndim. Got"
-        f" sharding.spec {out_s.spec}, aval.ndim {ndim} and sharding {out_s}")
+        f"Length of sharding.spec ({len(out_s.spec)}) must be equal to aval's"
+        f" ndim ({ndim}). Got sharding.spec {out_s.spec}, aval.ndim {ndim} and"
+        f" sharding {out_s}")
   if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
     raise ValueError("Mesh of an aval must be an AbstractMesh. "
                      f"Got {out_s.mesh} of type {type(out_s.mesh)}")

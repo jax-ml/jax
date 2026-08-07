@@ -7,7 +7,6 @@
   :toctree: _autosummary
 
   AbstractToken
-  CallPrimitive
   ClosedJaxpr
   DebugInfo
   DropVar

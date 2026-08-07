@@ -624,8 +624,12 @@ class BlockSpec:
 
     ref_block_shape = _get_ref_block_shape(block_shape)
     if isinstance(array_aval, jax_core.ShapedArray):
+      arr_sh = array_aval.sharding
+      ref_sharding = arr_sh.update(spec=arr_sh.spec.update(
+          partitions=tuple(arr_sh.spec)[:len(ref_block_shape)]))
       block_array_aval = array_aval.update(
-          shape=ref_block_shape, memory_space=jax_core.MemorySpace.Device)
+          shape=ref_block_shape, memory_space=jax_core.MemorySpace.Device,
+          sharding=ref_sharding)
     elif isinstance(array_aval, state_types.AbstractLinVal):
       if not isinstance(array_aval.inner_aval, jax_core.ShapedArray):
         raise NotImplementedError  # TODO(mattjj,sharadmv)

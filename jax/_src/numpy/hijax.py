@@ -35,6 +35,7 @@ from jax._src.hijax import (
     vjp_from_jvp,
     VJPHiPrimitive,
 )
+from jax._src.partition_spec import PartitionSpec as P
 from jax._src.interpreters import ad
 from jax._src.lax import control_flow
 from jax._src.lax import lax
@@ -578,8 +579,9 @@ def _searchsorted_scan_impl(
   n_levels = int(np.ceil(np.log2(n + 1)))
   sa_aval = core.typeof(sorted_arr)
   vma = tuple(sa_aval.mat.varying)
-  init = (jnp.array(0, dtype=unsigned_dtype, out_sharding=sa_aval.sharding),
-          jnp.array(n, dtype=unsigned_dtype, out_sharding=sa_aval.sharding))
+  sa_scalar_sh = sa_aval.sharding.update(spec=P())
+  init = (jnp.array(0, dtype=unsigned_dtype, out_sharding=sa_scalar_sh),
+          jnp.array(n, dtype=unsigned_dtype, out_sharding=sa_scalar_sh))
   init = tuple(core.pvary(i, vma) for i in init)
   carry, _ = control_flow.scan(body_fun, init, (), length=n_levels,
                                unroll=n_levels if unrolled else 1)

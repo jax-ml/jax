@@ -83,6 +83,7 @@ MODULES_TO_SKIP = [
   "jax.core",  # internal tools, not documented.
   "jax.example_libraries",  # TODO(jakevdp): un-skip these.
   "jax.extend.backend",
+  "jax.extend.core",
   "jax.extend.core.primitives",
   "jax.extend.ifrt_programs",
   "jax.extend.mlir",
