@@ -968,14 +968,6 @@ class ConstraintSystemTest(parameterized.TestCase):
     constraint = cs.OneOf(v0, (layout,))
     self.assertEqual(cs.reduce_constraint(constraint, {}), cs.Equals(v0, layout))
 
-  def test_reduce_one_of_with_assigned_variable_reduces(self):
-    shape = (128,)
-    v0 = V(MockVariableKey(0, shape, cs.MemorySpace.REG))
-    layout1 = RL(mgpu.WGSplatFragLayout((128,)))
-    layout2 = RL(mgpu.WGMMA_LAYOUT)
-    constraint = cs.OneOf(v0, (layout2, layout1))
-    self.assertEqual(cs.reduce_constraint(constraint, {v0: layout1}), cs.AlwaysTrue())
-
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

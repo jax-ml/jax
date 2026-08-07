@@ -970,8 +970,6 @@ class OneOf(_BaseConstraint):
     return self.expr in self.allowed
 
   def canonicalize(self) -> Constraint:
-    if self._is_constant and self._constant_holds():
-      return AlwaysTrue()
     # Deduplicate while preserving insertion order.
     allowed = tuple(dict.fromkeys(self.allowed))
     if len(allowed) == 1:
