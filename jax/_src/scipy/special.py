@@ -497,7 +497,7 @@ def gammainc(a: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{gammainc}(x; a) = \frac{1}{\Gamma(a)}\int_0^x t^{a-1}e^{-t}\mathrm{d}t
+     \mathrm{gammainc}(a, x) = \frac{1}{\Gamma(a)}\int_0^x t^{a-1}e^{-t}\mathrm{d}t
 
   where :math:`\Gamma(a)` is the :func:`~jax.scipy.special.gamma` function.
 
@@ -523,7 +523,7 @@ def gammaincc(a: ArrayLike, x: ArrayLike) -> Array:
 
   .. math::
 
-     \mathrm{gammaincc}(x; a) = \frac{1}{\Gamma(a)}\int_x^\infty t^{a-1}e^{-t}\mathrm{d}t
+     \mathrm{gammaincc}(a, x) = \frac{1}{\Gamma(a)}\int_x^\infty t^{a-1}e^{-t}\mathrm{d}t
 
   where :math:`\Gamma(a)` is the :func:`~jax.scipy.special.gamma` function.
 
@@ -2337,11 +2337,11 @@ def sph_harm_y(n: Array,
     diff_n: Unsupported by JAX.
     n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
       maximum value of `n`, the results are clipped to `n_max`. For example,
-      `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
+      `sph_harm_y(n=jnp.array([10]), m=jnp.array([2]), theta=theta, phi=phi, n_max=6)`
       actually returns
-      `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
+      `sph_harm_y(n=jnp.array([6]), m=jnp.array([2]), theta=theta, phi=phi, n_max=6)`.
   Returns:
-    A 1D array containing the spherical harmonics at (m, n, theta, phi).
+    A 1D array containing the spherical harmonics at (n, m, theta, phi).
   """
   if diff_n is not None:
     raise NotImplementedError(
@@ -2353,8 +2353,8 @@ def sph_harm_y(n: Array,
   if n_max is None:
     n_max = np.max(n)
   n_max = core.concrete_or_error(
-      int, n_max, 'The `n_max` argument of `jnp.scipy.special.sph_harm` must '
-      'be statically specified to use `sph_harm` within JAX transformations.')
+      int, n_max, 'The `n_max` argument of `jax.scipy.special.sph_harm_y` must '
+      'be statically specified to use `sph_harm_y` within JAX transformations.')
 
   return _sph_harm(n, m, theta, phi, n_max)
 
@@ -3083,33 +3083,31 @@ def spence(x: Array) -> Array:
   It is defined to be:
 
   .. math::
-    \mathrm{spence}(x) = \begin{equation}
-    \int_1^x \frac{\log(t)}{1 - t}dt
-    \end{equation}
 
-  Unlike the SciPy implementation, this is only defined for positive
-  real values of `z`. For negative values, `NaN` is returned.
+    \mathrm{spence}(x) = \int_1^x \frac{\log(t)}{1 - t}\,\mathrm{d}t
+
+  Unlike the SciPy implementation, this is only defined for non-negative
+  real values of `x`. For negative values, `NaN` is returned.
 
   Args:
-    z: An array of type `float32`, `float64`.
+    x: An array of type `float32`, `float64`.
 
   Returns:
-    An array with `dtype=z.dtype`.
-    computed values of Spence's function.
+    An array with `dtype=x.dtype` containing the computed values of Spence's
+    function.
 
   Raises:
-    TypeError: if elements of array `z` are not in (float32, float64).
+    TypeError: if elements of array `x` are not in (float32, float64).
 
   Notes:
-  There is a different convention which defines Spence's function by the
-  integral:
+    There is a different convention which defines Spence's function by the
+    integral:
 
-  .. math::
-    \begin{equation}
-    -\int_0^z \frac{\log(1 - t)}{t}dt
-    \end{equation}
+    .. math::
 
-  This is our spence(1 - z).
+       -\int_0^x \frac{\log(1 - t)}{t}\mathrm{d}t
+
+    This is our spence(1 - x).
   """
   x = jnp.asarray(x)
   dtype = lax.dtype(x)
@@ -3120,15 +3118,15 @@ def spence(x: Array) -> Array:
 
 
 def bernoulli(n: int) -> Array:
-  """Generate the first N Bernoulli numbers.
+  r"""Generate the Bernoulli numbers :math:`B_0` through :math:`B_n`, inclusive.
 
   JAX implementation of :func:`scipy.special.bernoulli`.
 
   Args:
-    n: integer, the number of Bernoulli terms to generate.
+    n: integer, the index of the last Bernoulli number to generate.
 
   Returns:
-    Array containing the first ``n`` Bernoulli numbers.
+    Array containing the Bernoulli numbers :math:`B_0` through :math:`B_n`, inclusive.
 
   Notes:
     ``bernoulli`` generates numbers using the :math:`B_n^-` convention,
@@ -3857,7 +3855,7 @@ def softmax(x: ArrayLike,
   such that the elements along :code:`axis` sum to :math:`1`.
 
   .. math ::
-    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+    \mathrm{softmax}(x)_i = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
 
   Args:
     x : input array
@@ -3889,7 +3887,7 @@ def log_softmax(x: ArrayLike,
   JAX implementation of :func:`scipy.special.log_softmax`
 
   Computes the logarithm of the :code:`softmax` function, which rescales
-  elements to the range :math:`[-\infty, 0)`.
+  elements to the range :math:`(-\infty, 0]`.
 
   .. math ::
     \mathrm{log\_softmax}(x)_i = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}
