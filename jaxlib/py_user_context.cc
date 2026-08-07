@@ -26,10 +26,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
-#include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/python_ref_manager.h"
 #include "jaxlib/traceback.h"
 #include "xla/python/ifrt/user_context.h"
@@ -98,7 +98,7 @@ std::string PyUserContext::DebugString() const {
 std::optional<Traceback> GetTraceback(
     const xla::ifrt::UserContext* user_context) {
   if (const auto* py_user_context =
-          llvm::dyn_cast_or_null<PyUserContext>(user_context)) {
+          xla::ifrt::dyn_cast_or_null<PyUserContext>(user_context)) {
     return py_user_context->traceback();
   }
   return std::nullopt;

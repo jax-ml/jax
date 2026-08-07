@@ -50,7 +50,6 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
@@ -60,6 +59,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/guard_lib.h"
+#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_device.h"
@@ -124,7 +124,8 @@ namespace {
 nb::object& tracer_class = *new nb::object();
 
 xla::PjRtBuffer* GetPjrtBuffer(ifrt::Array* ifrt_array) {
-  auto* arr = llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
+  auto* arr =
+      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
   if (arr == nullptr) {
     throw xla::XlaRuntimeError(
         "This operation is implemented for a PjRt-compatible backend only.");
@@ -540,7 +541,7 @@ PyArray PyArray::MakeFromSingleDeviceArray(nb_class_ptr<PyClient> py_client,
                                            ifrt::ArrayRef ifrt_array,
                                            bool weak_type, bool committed,
                                            xla::Future<> result_status) {
-  if (!llvm::isa<ifrt::SingleDeviceSharding>(ifrt_array->sharding())) {
+  if (!xla::ifrt::isa<ifrt::SingleDeviceSharding>(ifrt_array->sharding())) {
     throw xla::XlaRuntimeError(xla::InvalidArgument(
         "Constructing single device jax.Array from non-single "
         "device ifrt array."));
@@ -735,7 +736,7 @@ nb::object PyArray::arrays() {
   // them later.
   if (ifrt_array() == nullptr || ifrt_array()->IsDeleted()) return nb::none();
 
-  if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding()) &&
+  if (xla::ifrt::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding()) &&
       ifrt_array()->sharding().devices()->devices().front()->IsAddressable()) {
     std::vector<PyArray> py_arrays;
     py_arrays.push_back(*this);
@@ -942,7 +943,7 @@ absl::StatusOr<PyArray> PyArray::AssertUnsharded(std::string_view api) {
     return xla::InvalidArgument("%s( called on deleted or donated buffer", api);
   }
 
-  if (llvm::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding())) {
+  if (xla::ifrt::isa<ifrt::SingleDeviceSharding>(&ifrt_array()->sharding())) {
     return *this;
   }
 
@@ -1134,7 +1135,7 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
       element_type, dimensions, minor_to_major);
   std::function<void()> on_delete_callback = []() {};
   auto* pjrt_device =
-      llvm::dyn_cast_or_null<ifrt::PjRtDevice>(device->device());
+      xla::ifrt::dyn_cast_or_null<ifrt::PjRtDevice>(device->device());
   if (pjrt_device == nullptr) {
     return xla::InvalidArgument(
         "This operation is implemented for a PjRt-compatible backend only.");
@@ -1147,8 +1148,8 @@ absl::StatusOr<nb::object> CudaArrayInterfaceToBuffer(
           *pjrt_device->pjrt_device()->default_memory_space(),
           on_delete_callback,
           stream <= 2 ? std::nullopt : std::make_optional(stream)));
-  auto* ifrt_client =
-      llvm::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(client->ifrt_client());
+  auto* ifrt_client = xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
+      client->ifrt_client());
   if (ifrt_client == nullptr) {
     throw xla::XlaRuntimeError(
         "This operation is implemented for a PjRt-compatible backend only.");
@@ -1650,7 +1651,7 @@ int PyArray_bf_getbuffer(PyObject* exporter, Py_buffer* view, int flags) {
       // TODO(phawkins): why is this happening?
       return xla::InvalidArgument("Array is null");
     }
-    if (!llvm::isa<ifrt::PjRtCompatibleArray>(py_array.ifrt_array())) {
+    if (!xla::ifrt::isa<ifrt::PjRtCompatibleArray>(py_array.ifrt_array())) {
       return xla::InvalidArgument("Only local arrays are supported, got %s",
                                   py_array.ifrt_array()->DebugString());
     }
@@ -1837,7 +1838,8 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
     return xla::InvalidArgument(
         "Cannot convert a token-shape buffer to a numpy array.");
   }
-  auto* arr = llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
+  auto* arr =
+      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
   if (arr != nullptr) {
     auto* pjrt_buffer = arr->pjrt_buffers().front().get();
     TF_RET_CHECK(!pjrt_buffer->IsTuple());
@@ -1988,7 +1990,8 @@ absl::Status PyHostValue::CopyToHostAsync(
     return CopyStringArrayToHostAsync(dynamic_shape_holder, ifrt_array);
   }
 
-  auto* arr = llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
+  auto* arr =
+      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(ifrt_array);
   if (arr != nullptr && !arr->pjrt_buffers().front()->IsTuple() &&
       IsZeroCopyableCpuBuffer(arr->pjrt_buffers().front().get())) {
     return absl::OkStatus();
@@ -2007,7 +2010,7 @@ absl::Status PyHostValue::CopyToHostAsync(
   // need this static approach.
   const xla::Shape* dynamic_shape;
   std::optional<xla::Shape> shape_holder;
-  if (llvm::isa<ifrt::PjRtCompatibleArray>(ifrt_array)) {
+  if (xla::ifrt::isa<ifrt::PjRtCompatibleArray>(ifrt_array)) {
     TF_ASSIGN_OR_RETURN(dynamic_shape,
                         XlaDynamicShape(ifrt_array, dynamic_shape_holder));
   } else {

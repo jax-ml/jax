@@ -31,9 +31,9 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
@@ -76,8 +76,9 @@ class PyClient {
   // Short-term escape hatch to get xla::PjRtClient from PyClient.
   // TODO(hyeontaek): Migrate all users of this method to be agnostic of PjRt.
   xla::PjRtClient* pjrt_client() const {
-    auto* pjrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
-        ifrt_client_.get());
+    auto* pjrt_client =
+        xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
+            ifrt_client_.get());
     if (pjrt_client == nullptr) {
       throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend only.");
@@ -85,8 +86,9 @@ class PyClient {
     return pjrt_client->pjrt_client();
   }
   std::shared_ptr<xla::PjRtClient> shared_ptr_pjrt_client() {
-    auto* pjrt_client = llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
-        ifrt_client_.get());
+    auto* pjrt_client =
+        xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleClient>(
+            ifrt_client_.get());
     if (pjrt_client == nullptr) {
       throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend only.");

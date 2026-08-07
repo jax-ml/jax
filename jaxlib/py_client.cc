@@ -36,7 +36,6 @@ limitations under the License.
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "mlir/Bindings/Python/IRCore.h"
 #include "mlir/CAPI/IR.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -52,6 +51,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/pprof_profile_builder.h"
 #include "jaxlib/py_array.h"
@@ -207,7 +207,7 @@ nb::typed<nb::list, PyLoadedExecutable> PyClient::LiveExecutables() {
 
 absl::Status PyClient::Defragment() {
   CHECK(PyGILState_Check());
-  if (!llvm::isa<ifrt::PjRtCompatibleClient>(ifrt_client_.get())) {
+  if (!xla::ifrt::isa<ifrt::PjRtCompatibleClient>(ifrt_client_.get())) {
     return absl::UnimplementedError(
         "Defragmentation is not supported on this runtime.");
   }
@@ -245,8 +245,8 @@ absl::Status PyClient::Defragment() {
     if (array.ifrt_array() == nullptr) {
       continue;
     }
-    auto* arr =
-        llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(array.ifrt_array());
+    auto* arr = xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(
+        array.ifrt_array());
     if (arr == nullptr) {
       throw xla::XlaRuntimeError(
           "This operation is implemented for a PjRt-compatible backend "
@@ -373,10 +373,10 @@ PyClient::CompileAndLoadIfrtProgram(
     nb_class_ptr<PyClient> client, std::unique_ptr<ifrt::Program> ifrt_program,
     std::unique_ptr<ifrt::CompileOptions> ifrt_options) {
   auto* pjrt_compatible_client =
-      llvm::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
+      xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
           client->ifrt_client_.get());
   auto* ifrt_xla_options =
-      llvm::dyn_cast_or_null<ifrt::XlaCompileOptions>(ifrt_options.get());
+      xla::ifrt::dyn_cast_or_null<ifrt::XlaCompileOptions>(ifrt_options.get());
   // For XLA programs, pass allocated device memory size to compile options for
   // pjrt compatible backends.
   if (pjrt_compatible_client != nullptr && ifrt_xla_options != nullptr) {
@@ -670,7 +670,7 @@ absl::StatusOr<nb::bytes> PyClient::HeapProfile() {
       return absl::OkStatus();
     }
     if (auto* pjrt_array =
-            llvm::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(array)) {
+            xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleArray>(array)) {
       for (int i = 0; i < addressable_devices->size(); ++i) {
         const std::shared_ptr<xla::PjRtBuffer>& pjrt_buffer =
             pjrt_array->pjrt_buffers()[i];
@@ -856,7 +856,7 @@ PyType_Slot PyClient::slots_[] = {
           "unsafe_client_pointer",
           [](PyClient& self) -> std::uintptr_t {
             if (auto* pjrt_comp =
-                    llvm::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
+                    xla::ifrt::dyn_cast_or_null<ifrt::PjRtCompatibleClient>(
                         self.ifrt_client())) {
               if (auto* pjrt_client = pjrt_comp->pjrt_client()) {
                 if (auto* c_api_client =

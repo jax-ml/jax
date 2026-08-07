@@ -36,12 +36,12 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/jax_jit.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
@@ -220,7 +220,7 @@ PyMpmdLoadedExecutable::GetMpmdCompiledMemoryStats() const {
 
 absl::StatusOr<xla::ifrt::IfrtIrProgramMemoryStats>
 PyMpmdLoadedExecutable::GetIfrtIrProgramMemoryStats() const {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetIfrtIrProgramMemoryStats();
   } else {
@@ -232,7 +232,7 @@ PyMpmdLoadedExecutable::GetIfrtIrProgramMemoryStats() const {
 
 absl::StatusOr<std::string> PyMpmdLoadedExecutable::GetIfrtIrProgramXprofUrl()
     const {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetIfrtIrProgramXprofUrl();
   } else {
@@ -250,7 +250,7 @@ PyMpmdLoadedExecutable::GetMpmdCostAnalysis() {
 
 absl::StatusOr<std::vector<xla::OpSharding>>
 PyMpmdLoadedExecutable::GetParameterShardings() {
-  auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
       ifrt_loaded_executable_.get());
   std::optional<std::vector<xla::OpSharding>> param_shardings;
   if (exec_ptr != nullptr) {
@@ -276,7 +276,7 @@ PyMpmdLoadedExecutable::GetHloModules() {
 
 absl::StatusOr<std::vector<xla::OpSharding>>
 PyMpmdLoadedExecutable::GetOutputShardings() {
-  auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
       ifrt_loaded_executable_.get());
   std::optional<std::vector<xla::OpSharding>> output_shardings;
   if (exec_ptr != nullptr) {
@@ -295,7 +295,7 @@ PyMpmdLoadedExecutable::GetOutputShardings() {
 
 absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
 PyMpmdLoadedExecutable::GetParameterLayouts() {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetParameterLayouts();
   } else {
@@ -305,7 +305,7 @@ PyMpmdLoadedExecutable::GetParameterLayouts() {
 
 absl::StatusOr<std::vector<std::shared_ptr<const xla::PjRtLayout>>>
 PyMpmdLoadedExecutable::GetOutputLayouts() {
-  if (auto* exec_ptr = llvm::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
+  if (auto* exec_ptr = xla::ifrt::dyn_cast<xla::ifrt::IfrtIrLoadedExecutable>(
           ifrt_loaded_executable_.get())) {
     return exec_ptr->GetOutputLayouts();
   } else {

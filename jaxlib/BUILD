@@ -412,6 +412,7 @@ nanobind_pywrap_extension(
         ":ffi",
         ":guard_lib",
         ":hash_util",
+        ":ifrt_rtti",
         ":jax_jit",
         ":mlir",
         ":nb_class_ptr",
@@ -687,6 +688,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":ifrt_rtti",
         ":nb_class_ptr",
         ":py_client",
         ":py_user_context",
@@ -699,7 +701,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@dlpack",
-        "@llvm-project//llvm:Support",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:shape_util",
@@ -1053,6 +1054,7 @@ cc_library(
         ":config",
         ":guard_lib",
         ":hash_util",
+        ":ifrt_rtti",
         ":nb_class_ptr",
         ":pprof_profile_builder",
         ":py_client_cpu",
@@ -1080,7 +1082,6 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:MLIRBindingsPythonNanobindHeadersAndDeps",
@@ -1190,6 +1191,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":callback",
+        ":ifrt_rtti",
         ":py_host_callback_cc_proto",
         ":python_ref_manager",
         "@com_google_absl//absl/algorithm:container",
@@ -1198,7 +1200,6 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
         "@nanobind",
         "@xla//xla:shape_util",
         "@xla//xla:status_macros",
@@ -1235,6 +1236,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":ifrt_rtti",
         ":jax_jit",
         ":nb_class_ptr",
         ":py_client",
@@ -1251,7 +1253,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/types:span",
-        "@llvm-project//llvm:Support",
         "@nanobind",
         "@xla//xla:util",
         "@xla//xla:xla_data_proto_cc",
@@ -1283,6 +1284,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":ifrt_rtti",
         ":nb_class_ptr",
         ":py_client",
         ":py_user_context",
@@ -1292,7 +1294,6 @@ cc_library(
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/time",
-        "@llvm-project//llvm:Support",
         "@nanobind",
         "@tsl//tsl/platform:casts",
         "@xla//xla:future",
@@ -1330,6 +1331,7 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/py_user_context"),
     deps = [
+        ":ifrt_rtti",
         ":python_ref_manager",
         ":traceback",
         "@com_google_absl//absl/base:core_headers",
@@ -1337,11 +1339,9 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
-        "@llvm-project//llvm:Support",
         "@nanobind",
         "@tsl//tsl/platform:random",
         "@xla//third_party/python_runtime:headers",
-        "@xla//xla/python:version",
         "@xla//xla/python/ifrt:user_context",
         "@xla//xla/service:slow_operation_alarm",
         "@xla//xla/tsl/concurrency:ref_count",
@@ -1432,6 +1432,7 @@ nanobind_pywrap_extension(
     },
     visibility = ["//jax:internal"] + jax_visibility("jaxlib/_sdy_mpmd"),
     deps = [
+        ":ifrt_rtti",
         ":nb_class_ptr",
         ":py_client",
         ":py_mpmd_loaded_executable",
@@ -1699,4 +1700,14 @@ py_test(
         "absl/testing",
         "numpy",
     ]),
+)
+
+cc_library(
+    name = "ifrt_rtti",
+    hdrs = ["ifrt_rtti.h"],
+    deps = [
+        "@llvm-project//llvm:Support",  # buildcleaner: keep (for JAX_IFRT_VERSION_NUMBER < 64)
+        "@xla//xla/python:version",
+        "@xla//xla/python/ifrt",  # buildcleaner: keep (for JAX_IFRT_VERSION_NUMBER >= 64; use a transitive dep to `ifrt/rtti.h` without breaking older versions)
+    ],
 )

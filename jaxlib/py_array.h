@@ -32,8 +32,8 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/cord.h"
 #include "absl/types/span.h"
-#include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_user_context.h"
@@ -248,8 +248,8 @@ class PyArray : public nanobind::object {
     if (ifrt_array_ptr == nullptr) {
       return 0;
     }
-    auto* arr =
-        llvm::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(ifrt_array_ptr);
+    auto* arr = xla::ifrt::dyn_cast_or_null<xla::ifrt::PjRtCompatibleArray>(
+        ifrt_array_ptr);
     if (arr == nullptr) {
       // TODO(hyeontaek): Add num_addressable_shards to ifrt.
       return num_shards();

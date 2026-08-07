@@ -48,6 +48,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/call_location.h"
 #include "jaxlib/guard_lib.h"
+#include "jaxlib/ifrt_rtti.h"
 #include "jaxlib/nb_class_ptr.h"
 #include "jaxlib/py_array.h"
 #include "jaxlib/py_client.h"
@@ -615,7 +616,7 @@ void PyLoadedExecutable::Register(nb::module_& m) {
       .def_prop_ro(
           "unsafe_executable_pointer",
           [](PyLoadedExecutable& self) -> std::uintptr_t {
-            if (auto* pjrt_comp = llvm::dyn_cast_or_null<
+            if (auto* pjrt_comp = xla::ifrt::dyn_cast_or_null<
                     ifrt::PjRtCompatibleLoadedExecutable>(
                     self.ifrt_loaded_executable())) {
               if (auto* pjrt_exec = pjrt_comp->pjrt_loaded_executable()) {
