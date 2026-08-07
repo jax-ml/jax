@@ -23,6 +23,7 @@ from jax import lax
 from jax._src import core as jax_core
 from jax._src import source_info_util
 from jax._src.pallas import primitives
+from jax._src.state import indexing
 from jax._src.util import safe_map
 import jax.numpy as jnp
 import numpy as np
@@ -282,13 +283,13 @@ class JaxprEnv:
 
 
 def _transform_slice_or_index(slice_or_idx):
-  if isinstance(slice_or_idx, int):
-    return slice_or_idx
-  else:
+  if isinstance(slice_or_idx, indexing.Slice):
     start = int(slice_or_idx.start)
     size = int(slice_or_idx.size)
     stride = int(slice_or_idx.stride)
     return slice(start, start + size * stride, stride)
+  else:
+    return int(slice_or_idx)
 
 
 def _compose_slice_or_index(slice_or_idx1, slice_or_idx2):

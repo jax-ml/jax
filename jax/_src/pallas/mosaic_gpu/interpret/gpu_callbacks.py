@@ -34,8 +34,8 @@ from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationKey
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationRequest
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
 
 
@@ -498,6 +498,20 @@ def _handle_out_of_bounds_read(
     return uninit_array
 
 
+# Transforms `to_range` can ignore, because they change neither which elements
+# an access touches nor the order it yields them in:
+# * layout transforms, since a buffer is stored in its logical shape
+# * reshapes of a ref's leading dimensions, since indexes are written against logical shape
+DROPPED_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.SwizzleTransform,
+    mosaic_gpu_core.UntilingTransform,
+    mosaic_gpu_core.TilingTransform,
+    mosaic_gpu_core.CollapseLeadingBatchDimensionsTransform,
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+
 def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
   return any(
       isinstance(idx, indexing.Slice)
@@ -506,16 +520,64 @@ def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
   )
 
 
-def _validate_transforms(transforms):
-  for transform in transforms:
-    match transform:
-      case indexing.NDIndexer():
-        if _is_dynamic(transform):
-          raise ValueError(
-              "Dynamic indexing not supported in GPU interpret mode"
+class InterpretModeTransforms:
+  """A stack of transforms converted to be handleable by interpret mode.
+
+  Interpret mode ignores some Pallas transforms and modifies others, so rather
+  than using an allocation's transforms directly, they should be used to
+  construct an instance of this class."""
+
+  # The converted transforms.
+  _transforms: tuple[Any, ...]
+  # The range accessed by the transforms.
+  range: tuple[slice | int, ...]
+
+  def __init__(self, raw_transforms: tuple[Any, ...]):
+    transforms: list[Any] = []
+    self.range = ()
+    transpose_seen = False
+    for t in raw_transforms:
+      if isinstance(t, indexing.NDIndexer):
+        if _is_dynamic(t):
+          raise ValueError("Dynamic indexing not supported in GPU interpret mode")
+        if transpose_seen:
+          # `to_range` computes the accessed range in the ref's own coordinates,
+          # so an index applied after `transpose_ref` addresses different
+          # elements than it appears to. For now, error.
+          raise NotImplementedError(
+              "GPU interpret mode does not support indexing a ref after"
+              f" transposing it. Transforms: {raw_transforms}"
           )
-      case _:
-        raise ValueError(f"Unsupported transform: {transform}")
+        transforms.append(t)
+        self.range = interpret_utils._compose_slice_or_index(
+            self.range, tuple(interpret_utils._transform_slice_or_index(i) for i in t.indices)
+        )
+      elif isinstance(t, state_types.TransposeTransform):
+        transpose_seen = True
+        transforms.append(t)
+      elif isinstance(t, DROPPED_TRANSFORMS):
+        pass
+      else:
+        raise ValueError(f"Unsupported transform: {t}")
+    self._transforms = tuple(transforms)
+
+  def apply_transforms(self, value: np.ndarray, invert: bool = False) -> np.ndarray:
+    """Applies the transforms to the given value.
+
+    When applied to a just loaded value, transforms should be applied normally.
+    When applied to an about-to-store value, transforms should be applied inverted
+    """
+    for t in reversed(self._transforms) if invert else self._transforms:
+      if isinstance(t, indexing.NDIndexer):
+        pass
+      elif isinstance(t, state_types.TransposeTransform):
+        perm = np.argsort(t.permutation) if invert else t.permutation
+        value = np.transpose(value, perm)
+      elif isinstance(t, DROPPED_TRANSFORMS):
+        pass
+      else:
+        raise ValueError(f"Unsupported transform: {t}")
+    return value
 
 
 def _get(
@@ -523,7 +585,7 @@ def _get(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread | None,
     allocation_key_as_array: jax.Array,
-    transforms,
+    raw_transforms,
     block_indices=None,
     grid_loop_idx=None,
     clock=None,
@@ -535,9 +597,7 @@ def _get(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
-  _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
+  transforms = InterpretModeTransforms(raw_transforms)
 
   if input_name is not None:
     # NOTE: input_name, block_indices, and grid_loop_idx are set only if this
@@ -550,7 +610,7 @@ def _get(
 
   shared_memory = _get_shared_memory()
 
-  read_range = interpret_utils.to_range(transforms)
+  read_range = transforms.range
   ret, (shape, dtype), clock_ = shared_memory.get_buffer_content(
       allocation_key,
       read_range,
@@ -596,6 +656,8 @@ def _get(
         grid_loop_idx,
     )
 
+  ret = transforms.apply_transforms(ret)
+
   if shared_memory.detect_races and thread is not None:
     assert clock is not None
     get_races().check_read(
@@ -640,7 +702,7 @@ def _swap(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     allocation_key_as_array: jax.Array,
-    transforms,
+    raw_transforms,
     val: np.ndarray,
     mask: jax.Array | None,
     *,
@@ -652,21 +714,23 @@ def _swap(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
-  _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
+  transforms = InterpretModeTransforms(raw_transforms)
+
+  val_arr = transforms.apply_transforms(np.array(val), invert=True)
+  mask_arr = None
 
   if mask is not None:
     assert mask.shape == val.shape
+    mask_arr = transforms.apply_transforms(np.array(mask), invert=True)
 
   shared_memory = _get_shared_memory()
 
-  read_write_range = interpret_utils.to_range(transforms)
+  read_write_range = transforms.range
   ret, (shape, _), clock_ = shared_memory.swap_buffer_content(
       allocation_key,
       read_write_range,
-      np.array(val),
-      np.array(mask) if mask is not None else None,
+      val_arr,
+      mask_arr,
       thread,
       increment_clock=increment_clock,
       logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
@@ -687,6 +751,8 @@ def _swap(
           f"Out-of-bounds masked swap of {allocation_key}: swapping"
           f" [{read_write_range}] but buffer has shape {shape} . "
       )
+
+  ret = transforms.apply_transforms(ret)
 
   if shared_memory.detect_races:
     assert clock is not None
@@ -1083,13 +1149,13 @@ class AsyncCopyTask:
   # The pseudo-thread being used to execute the memory transfer.
   tma_thread_id: int
 
-  # Allocation key and transforms for the source buffer.
+  # Allocation key and validated transforms for the source buffer.
   src_allocation_key: HostAllocationKey
-  src_transforms: tuple[Any, ...]
+  src_transforms: InterpretModeTransforms
 
-  # Allocation key and transforms for the destination buffer.
+  # Allocation key and validated transforms for the destination buffer.
   dst_allocation_key: HostAllocationKey
-  dst_transforms: tuple[Any, ...]
+  dst_transforms: InterpretModeTransforms
 
   source_info: source_info_util.SourceInfo | None = None
 
@@ -1101,9 +1167,9 @@ class AsyncCopyTask:
       mesh_location: memory.MeshLocation,
       thread: memory.Thread,
       src_allocation_key: HostAllocationKey,
-      src_transforms: tuple[Any, ...],
+      src_transforms: InterpretModeTransforms,
       dst_allocation_key: HostAllocationKey,
-      dst_transforms: tuple[Any, ...],
+      dst_transforms: InterpretModeTransforms,
       source_info: source_info_util.SourceInfo | None = None,
   ):
     self.mesh_location = mesh_location
@@ -1124,17 +1190,20 @@ class AsyncCopyTask:
 
     val, _, _ = shared_memory.get_buffer_content(
         self.src_allocation_key,
-        interpret_utils.to_range(self.src_transforms),
+        self.src_transforms.range,
         self.thread,
         logging_info=self.logging_info,
     )
     assert val is not None
+    val = self.src_transforms.apply_transforms(val)
 
     self.post_read(tma_thread_id, shared_memory)
 
+    val = self.dst_transforms.apply_transforms(val, invert=True)
+
     shared_memory.store_buffer_content(
         self.dst_allocation_key,
-        interpret_utils.to_range(self.dst_transforms),
+        self.dst_transforms.range,
         val,
         self.thread,
         logging_info=self.logging_info,
@@ -1165,9 +1234,9 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
         mesh_location: memory.MeshLocation,
         thread: memory.Thread,
         src_allocation_key: HostAllocationKey,
-        src_transforms: tuple[Any, ...],
+        src_transforms: InterpretModeTransforms,
         dst_allocation_key: HostAllocationKey,
-        dst_transforms: tuple[Any, ...],
+        dst_transforms: InterpretModeTransforms,
         barrier_allocation_key: HostAllocationKey,
         source_info: source_info_util.SourceInfo | None,
         clock: VectorClock | None = None,
@@ -1195,7 +1264,7 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
           self.thread,
           self.clock.generic_clock.copy(),
           self.src_allocation_key,
-          interpret_utils.to_range(self.src_transforms),
+          self.src_transforms.range,
           source_info=self.source_info,
       )
 
@@ -1208,7 +1277,7 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
-          interpret_utils.to_range(self.dst_transforms),
+          self.dst_transforms.range,
           source_info=self.source_info,
       )
 
@@ -1234,9 +1303,9 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       mesh_location: memory.MeshLocation,
       thread: memory.Thread,
       src_allocation_key: HostAllocationKey,
-      src_transforms: tuple[Any, ...],
+      src_transforms: InterpretModeTransforms,
       dst_allocation_key: HostAllocationKey,
-      dst_transforms: tuple[Any, ...],
+      dst_transforms: InterpretModeTransforms,
       source_info: source_info_util.SourceInfo | None,
       clock: VectorClock | None = None,
   ):
@@ -1259,7 +1328,7 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.src_allocation_key,
-          interpret_utils.to_range(self.src_transforms),
+          self.src_transforms.range,
           source_info=self.source_info,
       )
 
@@ -1272,7 +1341,7 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
           self.thread,
           self.clock.async_smem_clock.copy(),
           self.dst_allocation_key,
-          interpret_utils.to_range(self.dst_transforms),
+          self.dst_transforms.range,
           source_info=self.source_info,
       )
 
@@ -1287,32 +1356,18 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       )
 
 
-NOOP_TRANSFORMS = (
-    mosaic_gpu_core.UnswizzleRef,
-    mosaic_gpu_core.UntilingTransform,
-)
-
-
-def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
-  # TODO(jburnim): Instead of just filtering out these transforms, should we
-  # check that every access of a buffer uses untiling and/or unswizzling
-  # transforms that match how the buffer was allocated?
-  return tuple(itertools.dropwhile(lambda t: isinstance(t, NOOP_TRANSFORMS),
-                                   transforms))
-
-
 def wgmma(
     *,
     token: jax.Array,
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     acc_allocation_key_as_array: jax.Array,
-    acc_transforms: tuple[Any, ...],
+    raw_acc_transforms: tuple[Any, ...],
     acc_dtype: jnp.dtype,
     a_allocation_key_as_array: jax.Array,
-    a_transforms: tuple[Any, ...],
+    raw_a_transforms: tuple[Any, ...],
     b_allocation_key_as_array: jax.Array,
-    b_transforms: tuple[Any, ...],
+    raw_b_transforms: tuple[Any, ...],
     source_info: source_info_util.SourceInfo | None = None,
 ):
   # TODO(jburnim): Vector clocks.
@@ -1321,36 +1376,42 @@ def wgmma(
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
+  a_transforms = InterpretModeTransforms(raw_a_transforms)
+  b_transforms = InterpretModeTransforms(raw_b_transforms)
+  acc_transforms = InterpretModeTransforms(raw_acc_transforms)
 
   shared_memory = _get_shared_memory()
 
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
   a, _, _ = shared_memory.get_buffer_content(
       a_allocation_key,
-      interpret_utils.to_range(a_transforms),
-      thread,
-      logging_info=logging_info,
-  )
-  b, _, _ = shared_memory.get_buffer_content(
-      b_allocation_key,
-      interpret_utils.to_range(b_transforms),
+      a_transforms.range,
       thread,
       logging_info=logging_info,
   )
   assert a is not None
+  a = a_transforms.apply_transforms(a)
+  b, _, _ = shared_memory.get_buffer_content(
+      b_allocation_key,
+      b_transforms.range,
+      thread,
+      logging_info=logging_info,
+  )
   assert b is not None
-  acc_range = interpret_utils.to_range(acc_transforms)
+  b = b_transforms.apply_transforms(b)
+  acc_range = acc_transforms.range
   acc, _, _ = shared_memory.get_buffer_content(
       acc_allocation_key,
       acc_range,
       thread,
       logging_info=logging_info,
   )
+  assert acc is not None
+  acc = acc_transforms.apply_transforms(acc)
 
   res = acc + np.matmul(a, b, dtype=acc_dtype)
+
+  res = acc_transforms.apply_transforms(res, invert=True)
 
   shared_memory.store_buffer_content(
       acc_allocation_key,
@@ -1392,9 +1453,9 @@ def copy_smem_to_gmem(
     mesh_location: memory.MeshLocation,
     thread: memory.Warpgroup,
     src_allocation_key_as_array: jax.Array,
-    src_transforms: tuple[Any, ...],
+    raw_src_transforms: tuple[Any, ...],
     dst_allocation_key_as_array: jax.Array,
-    dst_transforms: tuple[Any, ...],
+    raw_dst_transforms: tuple[Any, ...],
     predicate: jax.Array | None,
     source_info: source_info_util.SourceInfo,
     commit_group: bool,
@@ -1403,9 +1464,9 @@ def copy_smem_to_gmem(
   # TODO(jburnim,paulbib): Implement commit_group.
   del commit_group
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = InterpretModeTransforms(raw_src_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = InterpretModeTransforms(raw_dst_transforms)
 
   if predicate is not None:
     raise NotImplementedError("predicate not supported")
@@ -1456,15 +1517,15 @@ def copy_gmem_to_smem(
     mesh_location: memory.MeshLocation,
     thread: memory.Warpgroup,
     src_allocation_key_as_array: jax.Array,
-    src_transforms: tuple[Any, ...],
+    raw_src_transforms: tuple[Any, ...],
     dst_allocation_key_as_array: jax.Array,
-    dst_transforms: tuple[Any, ...],
+    raw_dst_transforms: tuple[Any, ...],
     barrier_allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ):
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = InterpretModeTransforms(raw_src_transforms)
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = InterpretModeTransforms(raw_dst_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
   barrier_allocation_key = HostAllocationKey.from_array(
       barrier_allocation_key_as_array
@@ -1513,20 +1574,20 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
   mesh_location: memory.MeshLocation
   thread: memory.Thread
   acc_key: HostAllocationKey
-  acc_transforms: tuple[Any, ...]
+  acc_transforms: InterpretModeTransforms
   acc_dtype: jnp.dtype
   a_key: HostAllocationKey
-  a_transforms: tuple[Any, ...]
+  a_transforms: InterpretModeTransforms
   b_key: HostAllocationKey
-  b_transforms: tuple[Any, ...]
+  b_transforms: InterpretModeTransforms
   accumulate: bool
   barrier_key: HostAllocationKey | None = None
   a_scale_key: HostAllocationKey | None = None
-  a_scale_transforms: tuple[Any, ...] | None = None
+  a_scale_transforms: InterpretModeTransforms | None = None
   b_scale_key: HostAllocationKey | None = None
-  b_scale_transforms: tuple[Any, ...] | None = None
+  b_scale_transforms: InterpretModeTransforms | None = None
   a_sparse_metadata_key: HostAllocationKey | None = None
-  a_sparse_metadata_transforms: tuple[Any, ...] | None = None
+  a_sparse_metadata_transforms: InterpretModeTransforms | None = None
   collective_axis: str | None = None
   source_info: source_info_util.SourceInfo | None = None
 
@@ -1536,8 +1597,8 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
       # count, and dtype must match
       return (
           parent.acc_key == self.acc_key
-          and interpret_utils.to_range(parent.acc_transforms)
-          == interpret_utils.to_range(self.acc_transforms)
+          and parent.acc_transforms.range
+          == self.acc_transforms.range
           and parent.acc_dtype == self.acc_dtype
           and parent.collective_axis == self.collective_axis
       )
@@ -1563,18 +1624,20 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
     )
     a, _, _ = shared_memory.get_buffer_content(
         self.a_key,
-        interpret_utils.to_range(self.a_transforms),
-        self.thread,
-        logging_info=logging_info,
-    )
-    b, _, _ = shared_memory.get_buffer_content(
-        self.b_key,
-        interpret_utils.to_range(self.b_transforms),
+        self.a_transforms.range,
         self.thread,
         logging_info=logging_info,
     )
     assert a is not None
+    a = self.a_transforms.apply_transforms(a)
+    b, _, _ = shared_memory.get_buffer_content(
+        self.b_key,
+        self.b_transforms.range,
+        self.thread,
+        logging_info=logging_info,
+    )
     assert b is not None
+    b = self.b_transforms.apply_transforms(b)
 
     clock = None
     if shared_memory.detect_races:
@@ -1597,18 +1660,18 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
           self.thread,
           a_clock,
           self.a_key,
-          interpret_utils.to_range(self.a_transforms),
+          self.a_transforms.range,
           source_info=self.source_info,
       )
       get_races().check_read(
           self.thread,
           clock.async_smem_clock,
           self.b_key,
-          interpret_utils.to_range(self.b_transforms),
+          self.b_transforms.range,
           source_info=self.source_info,
       )
 
-    acc_range = interpret_utils.to_range(self.acc_transforms)
+    acc_range = self.acc_transforms.range
 
     if self.accumulate:
       acc, _, _ = shared_memory.get_buffer_content(
@@ -1618,10 +1681,12 @@ class TcGen05Mma(memory.PipelineableAsyncTask):
           logging_info=logging_info,
       )
       assert acc is not None
+      acc = self.acc_transforms.apply_transforms(acc)
       res = acc + np.matmul(a, b, dtype=self.acc_dtype)
     else:
       res = np.matmul(a, b, dtype=self.acc_dtype)
 
+    res = self.acc_transforms.apply_transforms(res, invert=True)
     shared_memory.store_buffer_content(
         self.acc_key,
         acc_range,
@@ -1665,20 +1730,20 @@ def tcgen05_mma(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     acc_allocation_key_as_array: jax.Array,
-    acc_transforms: tuple[Any, ...],
+    raw_acc_transforms: tuple[Any, ...],
     acc_dtype: jnp.dtype,
     a_allocation_key_as_array: jax.Array,
-    a_transforms: tuple[Any, ...],
+    raw_a_transforms: tuple[Any, ...],
     b_allocation_key_as_array: jax.Array,
-    b_transforms: tuple[Any, ...],
+    raw_b_transforms: tuple[Any, ...],
     accumulate: jax.Array,
     barrier_allocation_key_as_array: jax.Array | None = None,
     a_scale_allocation_key_as_array: jax.Array | None = None,
-    a_scale_transforms: tuple[Any, ...] | None = None,
+    raw_a_scale_transforms: tuple[Any, ...] | None = None,
     b_scale_allocation_key_as_array: jax.Array | None = None,
-    b_scale_transforms: tuple[Any, ...] | None = None,
+    raw_b_scale_transforms: tuple[Any, ...] | None = None,
     a_sparse_metadata_allocation_key_as_array: jax.Array | None = None,
-    a_sparse_metadata_transforms: tuple[Any, ...] | None = None,
+    raw_a_sparse_metadata_transforms: tuple[Any, ...] | None = None,
     collective_axis: str | None = None,
     source_info: source_info_util.SourceInfo | None = None,
 ):
@@ -1695,21 +1760,20 @@ def tcgen05_mma(
       a_sparse_metadata_allocation_key_as_array
   )
 
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
-  if a_scale_transforms is not None:
-    a_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_scale_transforms)
-    )
-  if b_scale_transforms is not None:
-    b_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(b_scale_transforms)
-    )
-  if a_sparse_metadata_transforms is not None:
-    a_sparse_metadata_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_sparse_metadata_transforms)
-    )
+  acc_transforms = InterpretModeTransforms(raw_acc_transforms)
+  a_transforms = InterpretModeTransforms(raw_a_transforms)
+  b_transforms = InterpretModeTransforms(raw_b_transforms)
+
+  a_scale_transforms = None
+  if raw_a_scale_transforms is not None:
+    a_scale_transforms = InterpretModeTransforms(raw_a_scale_transforms)
+  b_scale_transforms = None
+  if raw_b_scale_transforms is not None:
+    b_scale_transforms = InterpretModeTransforms(raw_b_scale_transforms)
+  a_sparse_metadata_transforms = None
+  if raw_a_sparse_metadata_transforms is not None:
+    a_sparse_metadata_transforms = InterpretModeTransforms(raw_a_sparse_metadata_transforms)
+
   accumulate: bool = bool(accumulate)  # pyrefly: ignore[redefinition]
 
   barrier_key = _maybe_key(barrier_allocation_key_as_array)
@@ -1751,9 +1815,9 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
   mesh_location: memory.MeshLocation
   thread: memory.Thread
   smem_key: HostAllocationKey
-  smem_transforms: tuple[Any, ...]
+  smem_transforms: InterpretModeTransforms
   tmem_key: HostAllocationKey
-  tmem_transforms: tuple[Any, ...]
+  tmem_transforms: InterpretModeTransforms
   collective_axis: str | None = None
   source_info: source_info_util.SourceInfo | None = None
 
@@ -1776,11 +1840,12 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
     )
     smem, _, _ = shared_memory.get_buffer_content(
         self.smem_key,
-        interpret_utils.to_range(self.smem_transforms),
+        self.smem_transforms.range,
         self.thread,
         logging_info=logging_info,
     )
     assert smem is not None
+    smem = self.smem_transforms.apply_transforms(smem)
 
     clock = None
     if shared_memory.detect_races:
@@ -1795,12 +1860,13 @@ class TcGen05Copy(memory.PipelineableAsyncTask):
           self.thread,
           clock.async_smem_clock,
           self.smem_key,
-          interpret_utils.to_range(self.smem_transforms),
+          self.smem_transforms.range,
           source_info=self.source_info,
       )
 
-    tmem_range = interpret_utils.to_range(self.tmem_transforms)
+    tmem_range = self.tmem_transforms.range
 
+    smem = self.tmem_transforms.apply_transforms(smem, invert=True)
     shared_memory.store_buffer_content(
         self.tmem_key,
         tmem_range,
@@ -1829,9 +1895,9 @@ def async_copy_smem_to_tmem(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     smem_allocation_key_as_array: jax.Array,
-    smem_transforms: tuple[Any, ...],
+    raw_smem_transforms: tuple[Any, ...],
     tmem_allocation_key_as_array: jax.Array,
-    tmem_transforms: tuple[Any, ...],
+    raw_tmem_transforms: tuple[Any, ...],
     collective_axis: str | None = None,
     source_info: source_info_util.SourceInfo | None = None,
 ):
@@ -1841,8 +1907,8 @@ def async_copy_smem_to_tmem(
   tmem_allocation_key = HostAllocationKey.from_array(
       tmem_allocation_key_as_array
   )
-  smem_transforms = jax.tree.map(int, _remove_noop_transforms(smem_transforms))
-  tmem_transforms = jax.tree.map(int, _remove_noop_transforms(tmem_transforms))
+  smem_transforms = InterpretModeTransforms(raw_smem_transforms)
+  tmem_transforms = InterpretModeTransforms(raw_tmem_transforms)
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
@@ -1918,19 +1984,21 @@ def async_store_tmem(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     dst_allocation_key_as_array: jax.Array,
-    dst_transforms: tuple[Any, ...],
+    raw_dst_transforms: tuple[Any, ...],
     vals: np.ndarray,
     source_info: source_info_util.SourceInfo | None = None,
 ):
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = InterpretModeTransforms(raw_dst_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
     shared_memory = _get_shared_memory()
+    nonlocal vals
+    vals = dst_transforms.apply_transforms(vals, invert=True)
     shared_memory.store_buffer_content(
         dst_allocation_key,
-        interpret_utils.to_range(dst_transforms),
+        dst_transforms.range,
         vals,
         thread,
         increment_clock=False,
@@ -1944,7 +2012,7 @@ def async_store_tmem(
           thread,
           clock.generic_clock,
           dst_allocation_key,
-          interpret_utils.to_range(dst_transforms),
+          dst_transforms.range,
           source_info=source_info,
       )
       shared_memory.add_store_tmem_clock(thread, clock)
@@ -1960,11 +2028,11 @@ def async_load_tmem(
     mesh_location: memory.MeshLocation,
     thread: memory.Thread,
     src_allocation_key_as_array: jax.Array,
-    src_transforms: tuple[Any, ...],
+    raw_src_transforms: tuple[Any, ...],
     source_info: source_info_util.SourceInfo | None = None,
 ):
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = InterpretModeTransforms(raw_src_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
@@ -1972,10 +2040,12 @@ def async_load_tmem(
 
     val, _, _ = shared_memory.get_buffer_content(
         src_allocation_key,
-        interpret_utils.to_range(src_transforms),
+        src_transforms.range,
         None,
         logging_info=logging_info,
     )
+    assert val is not None
+    val = src_transforms.apply_transforms(val)
 
     if shared_memory.detect_races:
       clock = shared_memory.get_clock(thread)
@@ -1985,7 +2055,7 @@ def async_load_tmem(
           thread,
           clock.generic_clock,
           src_allocation_key,
-          interpret_utils.to_range(src_transforms),
+          src_transforms.range,
           source_info=source_info,
       )
       shared_memory.add_load_tmem_clock(thread, clock)
@@ -2030,7 +2100,7 @@ def sync_warps_with_warpgroup(
   """Updates the warpgroup's warps' clocks with the warpgroup's clock"""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup, warpgroup.warp(i))
   return token
 
@@ -2043,7 +2113,7 @@ def sync_warpgroup_with_warps(
   """Updates the warpgroup's clock with the warpgroup's warps' clocks."""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup.warp(i), warpgroup)
   return token
 
