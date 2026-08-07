@@ -2572,6 +2572,19 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
 
   a_shape = a.shape
   q_orig = q
+
+  if squash_nans and core.definitely_equal(a_shape[axis], 0):
+    # For an empty reduction axis, return NaNs with the reduced input shape.
+    if keepdims and keepdim:
+      result_shape = keepdim
+    else:
+      result_shape = list(a_shape)
+      if keepdims:
+        result_shape[axis] = 1
+      else:
+        result_shape.pop(axis)
+    return lax.full(tuple(result_shape), np.nan, dtype=a.dtype)
+
   if squash_nans:
     a = _where(lax._isnan(a), np.nan, a) # Ensure nans are positive so they sort to the end.
     if weights is not None:
