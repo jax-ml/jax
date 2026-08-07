@@ -592,9 +592,11 @@ class PallasCallPipelineTest(jtu.JaxTestCase):
     y = pl.pallas_call(
         kernel,
         out_shape=jax.typeof(x),
+        in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
+        out_specs=pl.BlockSpec(memory_space=pl.ANY),
         scratch_shapes=dict(
-            x_vmem=pltpu.VMEM((16, 8, 512), jnp.int32),
-            o_vmem=pltpu.VMEM((16, 8, 512), jnp.int32),
+            x_vmem_ref=pltpu.VMEM((16, 8, 512), jnp.int32),
+            o_vmem_ref=pltpu.VMEM((16, 8, 512), jnp.int32),
         ),
     )(x)
 
