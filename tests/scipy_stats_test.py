@@ -1422,6 +1422,26 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=5e-4)
 
+  def testMultinomialLogPmfBatched(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/38605
+    # logpmf summed `x` over every axis (not just the category axis) when
+    # checking each row's count against `n`, so every row of a batched input
+    # was incorrectly forced to -inf even when each row individually summed
+    # to n.
+    p = np.array([0.2, 0.3, 0.5])
+    x = np.array([[2, 3, 5], [1, 4, 5]])
+    n = 10
+    result = lsp_stats.multinomial.logpmf(x, n, p)
+    expected = osp_stats.multinomial.logpmf(x, n, p)
+    self.assertAllClose(result, expected, check_dtypes=False, rtol=1e-5)
+    self.assertTrue(np.all(np.isfinite(result)))
+
+    # A row that does NOT sum to n must still be rejected with -inf.
+    x_invalid = np.array([[2, 3, 5], [1, 4, 4]])  # second row sums to 9, not 10
+    result_invalid = lsp_stats.multinomial.logpmf(x_invalid, n, p)
+    self.assertTrue(np.isfinite(result_invalid[0]))
+    self.assertEqual(float(result_invalid[1]), -np.inf)
+
   @jtu.sample_product(
     [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
       for x_shape, mean_shape, cov_shape in [
