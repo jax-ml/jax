@@ -33,7 +33,6 @@ from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic.interpret import vector_clock
 from jax._src.pallas.mosaic_gpu import core as mosaic_gpu_core
 from jax._src.pallas.mosaic_gpu.interpret import params as params
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -504,7 +503,7 @@ class GPUSharedMemory(
       all_concurrent_threads.append(Warpgroup(device, 0, block, warpgroup))
       # Insert the warp-level version of a thread (for core_map with a WarpMesh)
       # alongside the warpgroup-level version.
-      for warp in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+      for warp in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
         all_concurrent_threads.append(Warp(device, 0, block, warpgroup, warp))
     self.all_concurrent_threads = {
         thread: i for i, thread in enumerate(all_concurrent_threads)
@@ -654,13 +653,15 @@ class GPUSharedMemory(
 
     return barrier, clock
 
-  def get_barrier(self, key: MemKey) -> Barrier:
+  def get_barrier(self, key: MemKey) -> Barrier | ClusterBarrier:
     with self.lock:
       barrier = self.mem[key]
-    if not isinstance(barrier, Barrier):
+    if not isinstance(barrier, Barrier) and not isinstance(
+        barrier, ClusterBarrier
+    ):
       raise ValueError(
           f"Attempting to get barrier from allocation with {key} that is not a"
-          " `Barrier`."
+          " `Barrier` or `ClusterBarrier`."
       )
     return barrier
 
@@ -706,6 +707,8 @@ class GPUSharedMemory(
       is_axis_collective: tuple[bool, ...],
       ref_count: int,
       num_arrivals: int,
+      orders_tensor_core: bool = False,
+      leader_tracked: bool = False,
       logging_info: GPULoggingInfo | None = None,
   ):
     """Allocates a cluster barrier with the given key unless it already exists."""
@@ -717,6 +720,8 @@ class GPUSharedMemory(
             is_axis_collective=is_axis_collective,
             ref_count=ref_count,
             num_arrivals=num_arrivals,
+            orders_tensor_core=orders_tensor_core,
+            leader_tracked=leader_tracked,
             enable_logging=(
                 self.logging_mode is not None
                 and params.LoggingMode.BARRIER in self.logging_mode
@@ -1141,6 +1146,12 @@ class Barrier(memory.Allocation):
           self.clock = clock.copy()
         else:
           self.clock.update(clock)
+        #   if not self.orders_tensor_core:
+        #     self.clock.async_smem_clock.clock.fill(0)
+        # else:
+        #   self.clock.generic_clock.update(clock.generic_clock)
+        #   if self.orders_tensor_core:
+        #     self.clock.async_smem_clock.update(clock.async_smem_clock)
 
   def wait(
       self,
@@ -1174,11 +1185,11 @@ class Barrier(memory.Allocation):
       if isinstance(thread, Warpgroup):
         active_warps = [
             (i, self.last_observed_phase_by_thread[thread.warp(i)])
-            for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP)
+            for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP)
             if thread.warp(i) in self.last_observed_phase_by_thread
         ]
         if len(active_warps) != 0:
-          if len(active_warps) != plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP:
+          if len(active_warps) != mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP:
             raise ValueError(
                 f"Warpgroup-thread {thread} is waiting at barrier {id(self)},"
                 f" but only {len(active_warps)} of its constituent warps have"
@@ -1244,7 +1255,7 @@ class Barrier(memory.Allocation):
       # 2) its parent warpgroup, if a warp thread
       self.last_observed_phase_by_thread[thread] = last_observed_phase + 1
       if isinstance(thread, Warpgroup):
-        for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+        for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
           self.last_observed_phase_by_thread[thread.warp(i)] = (
               last_observed_phase + 1
           )
@@ -1252,10 +1263,10 @@ class Barrier(memory.Allocation):
         warpgroup = thread.warpgroup()
         warp_observed_phases = [
             self.last_observed_phase_by_thread[warpgroup.warp(i)]
-            for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP)
+            for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP)
             if warpgroup.warp(i) in self.last_observed_phase_by_thread
         ]
-        if len(warp_observed_phases) == plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP:
+        if len(warp_observed_phases) == mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP:
           observed_phase = min(warp_observed_phases)
           self.last_observed_phase_by_thread[warpgroup] = observed_phase
 
@@ -1267,7 +1278,10 @@ class Barrier(memory.Allocation):
       # Ensure that threads that wait on the barrier can see tensor core
       # operations (outstanding or complete) from threads that arrived at the
       # barrier.
-      pipelineable_async_tasks = set(self.pipelineable_async_tasks)
+      if self.orders_tensor_core:
+        pipelineable_async_tasks = set(self.pipelineable_async_tasks)
+      else:
+        pipelineable_async_tasks = set()
 
     # Note that this block cannot be nested under the `with self.cv` block
     # immediately above since this would violate the invariant that
@@ -1281,11 +1295,17 @@ class Barrier(memory.Allocation):
       if self.detect_races:
         assert clock is not None
         self.shared_memory.clocks[thread].update(clock)
+        # if self.orders_tensor_core:
+        #   self.shared_memory.clocks[thread].async_smem_clock.update(
+        #       clock.async_smem_clock
+        #   )
 
 
 class ClusterBarrier(memory.Allocation):
 
   VectorClock = GPUSharedMemory.VectorClock
+  orders_tensor_core: bool = False
+  leader_tracked: bool = False
 
   def __init__(
       self,
@@ -1295,6 +1315,8 @@ class ClusterBarrier(memory.Allocation):
       is_axis_collective: tuple[bool, ...],
       ref_count: int,
       num_arrivals: int,
+      orders_tensor_core: bool = False,
+      leader_tracked: bool = False,
       enable_logging: bool = False,
   ):
     """Initializes the ClusterBarrier.
@@ -1309,12 +1331,16 @@ class ClusterBarrier(memory.Allocation):
         typically the number of CPU threads among which the cluster barrier is
         shared.
       num_arrivals: Number of arrivals expected per thread block.
+      orders_tensor_core: Whether this barrier orders tensor core operations.
+      leader_tracked: Whether completions are tracked only by leader block.
       enable_logging: Whether to enable logging of cluster barrier operations.
     """
     self.axes_dims = axes_dims
     self.is_axis_collective = is_axis_collective
     self.ref_count = ref_count  # protected by `self.lock`
     self.num_arrivals = num_arrivals
+    self.orders_tensor_core = orders_tensor_core
+    self.leader_tracked = leader_tracked
     self.enable_logging = enable_logging
 
     self.lock = threading.Lock()
@@ -1344,7 +1370,7 @@ class ClusterBarrier(memory.Allocation):
             # the underlying barriers.
             ref_count=1,
             num_arrivals=num_arrivals * num_blocks_for_arrival,
-            orders_tensor_core=False,
+            orders_tensor_core=orders_tensor_core,
             enable_logging=enable_logging,
         )
         for _ in range(num_blocks_in_cluster)
