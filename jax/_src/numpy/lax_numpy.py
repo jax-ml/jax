@@ -3045,7 +3045,7 @@ def broadcast_shapes(*shapes):
 
 
 @export
-def broadcast_arrays(*args: ArrayLike) -> list[Array]:
+def broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]:
   """Broadcast arrays to a common shape.
 
   JAX implementation of :func:`numpy.broadcast_arrays`. JAX uses NumPy-style
@@ -3066,7 +3066,7 @@ def broadcast_arrays(*args: ArrayLike) -> list[Array]:
     >>> x = jnp.arange(3)
     >>> y = jnp.int32(1)
     >>> jnp.broadcast_arrays(x, y)
-    [Array([0, 1, 2], dtype=int32), Array([1, 1, 1], dtype=int32)]
+    (Array([0, 1, 2], dtype=int32), Array([1, 1, 1], dtype=int32))
 
     >>> x = jnp.array([[1, 2, 3]])
     >>> y = jnp.array([[10],
