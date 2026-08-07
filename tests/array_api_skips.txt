@@ -47,9 +47,6 @@ array_api_tests/test_statistical_functions.py::test_cumulative_prod
 
 # TODO(jakevdp): fix the following failures:
 
-# Returns list rather than tuple
-array_api_tests/test_data_type_functions.py::test_broadcast_arrays
-
 # Returns NaN rather than inf
 array_api_tests/test_special_cases.py::test_binary[floor_divide(x1_i is +infinity and isfinite(x2_i) and x2_i < 0) -> -infinity]
 array_api_tests/test_special_cases.py::test_binary[floor_divide(x1_i is -infinity and isfinite(x2_i) and x2_i > 0) -> -infinity]
