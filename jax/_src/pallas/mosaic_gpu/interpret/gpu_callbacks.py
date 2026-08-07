@@ -34,8 +34,8 @@ from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationKey
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationRequest
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
 
 
@@ -498,6 +498,20 @@ def _handle_out_of_bounds_read(
     return uninit_array
 
 
+# Transforms `to_range` can ignore, because they change neither which elements
+# an access touches nor the order it yields them in:
+# * layout transforms, since a buffer is stored in its logical shape
+# * reshapes of a ref's leading dimensions, since indexes are written against logical shape
+DROPPED_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.SwizzleTransform,
+    mosaic_gpu_core.UntilingTransform,
+    mosaic_gpu_core.TilingTransform,
+    mosaic_gpu_core.CollapseLeadingBatchDimensionsTransform,
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+
 def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
   return any(
       isinstance(idx, indexing.Slice)
@@ -506,16 +520,55 @@ def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
   )
 
 
-def _validate_transforms(transforms):
-  for transform in transforms:
-    match transform:
-      case indexing.NDIndexer():
-        if _is_dynamic(transform):
-          raise ValueError(
-              "Dynamic indexing not supported in GPU interpret mode"
-          )
-      case _:
-        raise ValueError(f"Unsupported transform: {transform}")
+def _validate_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
+  """Validates that `transforms` is handleable by interpret mode and
+  filters/modifies transforms to be later useable with _apply_transforms."""
+  # TODO(jburnim): Instead of just filtering out these transforms, should we
+  # check that every access of a buffer uses untiling and/or unswizzling
+  # transforms that match how the buffer was allocated?
+  out = []
+  transpose_seen = None
+  for t in transforms:
+    if isinstance(t, indexing.NDIndexer):
+      if _is_dynamic(t):
+        raise ValueError("Dynamic indexing not supported in GPU interpret mode")
+      if transpose_seen:
+        # `to_range` computes the accessed range in the ref's own coordinates,
+        # so an index applied after `transpose_ref` addresses different
+        # elements than it appears to. Refuse rather than compute it.
+        raise NotImplementedError(
+            "GPU interpret mode does not support indexing a ref after"
+            f" transposing it. Transforms: {transforms}"
+        )
+      out.append(t)
+    elif isinstance(t, state_types.TransposeTransform):
+      transpose_seen = True
+      out.append(t)
+    elif isinstance(t, DROPPED_TRANSFORMS):
+      pass
+    else:
+      raise ValueError(f"Unsupported transform: {t}")
+  return tuple(out)
+
+
+def _apply_transforms(
+    value: np.ndarray,
+    transforms: tuple[Any, ...],
+    *,
+    invert: bool = False,
+) -> np.ndarray:
+  """Applies or undoes a sequence of transforms."""
+  for t in reversed(transforms) if invert else transforms:
+    if isinstance(t, indexing.NDIndexer):
+      pass
+    elif isinstance(t, state_types.TransposeTransform):
+      perm = np.argsort(t.permutation) if invert else t.permutation
+      value = np.transpose(value, perm)
+    elif isinstance(t, DROPPED_TRANSFORMS):
+      pass
+    else:
+      raise ValueError(f"Unsupported transform: {t}")
+  return value
 
 
 def _get(
@@ -535,9 +588,7 @@ def _get(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
-  _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
+  transforms = _validate_transforms(transforms)
 
   if input_name is not None:
     # NOTE: input_name, block_indices, and grid_loop_idx are set only if this
@@ -596,6 +647,8 @@ def _get(
         grid_loop_idx,
     )
 
+  ret = _apply_transforms(ret, transforms)
+
   if shared_memory.detect_races and thread is not None:
     assert clock is not None
     get_races().check_read(
@@ -652,12 +705,14 @@ def _swap(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
-  _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
+  transforms = _validate_transforms(transforms)
+
+  val_arr = _apply_transforms(np.array(val), transforms, invert=True)
+  mask_arr = None
 
   if mask is not None:
     assert mask.shape == val.shape
+    mask_arr = _apply_transforms(np.array(mask), transforms, invert=True)
 
   shared_memory = _get_shared_memory()
 
@@ -665,8 +720,8 @@ def _swap(
   ret, (shape, _), clock_ = shared_memory.swap_buffer_content(
       allocation_key,
       read_write_range,
-      np.array(val),
-      np.array(mask) if mask is not None else None,
+      val_arr,
+      mask_arr,
       thread,
       increment_clock=increment_clock,
       logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
@@ -687,6 +742,8 @@ def _swap(
           f"Out-of-bounds masked swap of {allocation_key}: swapping"
           f" [{read_write_range}] but buffer has shape {shape} . "
       )
+
+  ret = _apply_transforms(ret, transforms)
 
   if shared_memory.detect_races:
     assert clock is not None
@@ -1287,20 +1344,6 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       )
 
 
-NOOP_TRANSFORMS = (
-    mosaic_gpu_core.UnswizzleRef,
-    mosaic_gpu_core.UntilingTransform,
-)
-
-
-def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
-  # TODO(jburnim): Instead of just filtering out these transforms, should we
-  # check that every access of a buffer uses untiling and/or unswizzling
-  # transforms that match how the buffer was allocated?
-  return tuple(itertools.dropwhile(lambda t: isinstance(t, NOOP_TRANSFORMS),
-                                   transforms))
-
-
 def wgmma(
     *,
     token: jax.Array,
@@ -1321,9 +1364,9 @@ def wgmma(
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
+  a_transforms = _validate_transforms(a_transforms)
+  b_transforms = _validate_transforms(b_transforms)
+  acc_transforms = _validate_transforms(acc_transforms)
 
   shared_memory = _get_shared_memory()
 
@@ -1403,9 +1446,9 @@ def copy_smem_to_gmem(
   # TODO(jburnim,paulbib): Implement commit_group.
   del commit_group
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = _validate_transforms(src_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = _validate_transforms(dst_transforms)
 
   if predicate is not None:
     raise NotImplementedError("predicate not supported")
@@ -1462,9 +1505,9 @@ def copy_gmem_to_smem(
     barrier_allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
 ):
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = _validate_transforms(src_transforms)
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = _validate_transforms(dst_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
   barrier_allocation_key = HostAllocationKey.from_array(
       barrier_allocation_key_as_array
@@ -1695,21 +1738,16 @@ def tcgen05_mma(
       a_sparse_metadata_allocation_key_as_array
   )
 
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
+  acc_transforms = _validate_transforms(acc_transforms)
+  a_transforms = _validate_transforms(a_transforms)
+  b_transforms = _validate_transforms(b_transforms)
   if a_scale_transforms is not None:
-    a_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_scale_transforms)
-    )
+    a_scale_transforms = _validate_transforms(a_scale_transforms)
   if b_scale_transforms is not None:
-    b_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(b_scale_transforms)
-    )
+    b_scale_transforms = _validate_transforms(b_scale_transforms)
   if a_sparse_metadata_transforms is not None:
-    a_sparse_metadata_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_sparse_metadata_transforms)
-    )
+    a_sparse_metadata_transforms = _validate_transforms(a_sparse_metadata_transforms)
+
   accumulate: bool = bool(accumulate)  # pyrefly: ignore[redefinition]
 
   barrier_key = _maybe_key(barrier_allocation_key_as_array)
@@ -1841,8 +1879,8 @@ def async_copy_smem_to_tmem(
   tmem_allocation_key = HostAllocationKey.from_array(
       tmem_allocation_key_as_array
   )
-  smem_transforms = jax.tree.map(int, _remove_noop_transforms(smem_transforms))
-  tmem_transforms = jax.tree.map(int, _remove_noop_transforms(tmem_transforms))
+  smem_transforms = _validate_transforms(smem_transforms)
+  tmem_transforms = _validate_transforms(tmem_transforms)
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
@@ -1923,7 +1961,7 @@ def async_store_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = _validate_transforms(dst_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
@@ -1964,7 +2002,7 @@ def async_load_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = _validate_transforms(src_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
@@ -2030,7 +2068,7 @@ def sync_warps_with_warpgroup(
   """Updates the warpgroup's warps' clocks with the warpgroup's clock"""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup, warpgroup.warp(i))
   return token
 
@@ -2043,7 +2081,7 @@ def sync_warpgroup_with_warps(
   """Updates the warpgroup's clock with the warpgroup's warps' clocks."""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup.warp(i), warpgroup)
   return token
 
