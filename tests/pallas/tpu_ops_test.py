@@ -601,17 +601,31 @@ class OpsTest(ptu.PallasTPUTest):
   @parameterized.product(
       idx_shape=[(8, 128), (2, 32, 256)],
       axis=[-2, -1],
+      dtype=[jnp.int32, jnp.int16, jnp.int8],
       mode=["promise_in_bounds", None],
   )
-  def test_dynamic_gather_along_axis(self, idx_shape, axis, mode):
+  def test_dynamic_gather_along_axis(self, idx_shape, axis, dtype, mode):
     if (axis == -2 and not jtu.is_device_tpu_at_least(version=5)) or (
         axis == -1 and not jtu.is_device_tpu_at_least(version=4)
     ):
       self.skipTest("Requires TPUv5+ for axis=-2 and TPUv4+ for axis=-1")
-    dtype = jnp.int32
+    if dtype != jnp.int32:
+      if not jtu.is_libtpu_at_least("0.0.46"):
+        self.skipTest("Requires libtpu >= 0.0.46")
+      if mode is None:
+        self.skipTest(
+            "Under None mode, jnp.take_along_axis will cast indices to int32"
+            " causing a type mismatch for dynamic gather"
+        )
+      if (
+          dtype == jnp.int16 or (dtype == jnp.int8 and axis == -2)
+      ) and not jtu.is_device_tpu_at_least(version=6):
+        self.skipTest("Requires TPUv6+")
+
     x_shape = list(idx_shape)
     # Only a single vreg along the gather axis is supported
-    x_shape[axis] = (8, 128)[axis]
+    bitwidth = dtypes.itemsize_bits(dtype)
+    x_shape[axis] = (8 * 32 // bitwidth, 128)[axis]
 
     def kernel(x, indices, out):
       out[...] = jnp.take_along_axis(x[...], indices[...], axis, mode=mode)
@@ -622,7 +636,7 @@ class OpsTest(ptu.PallasTPUTest):
         shape=idx_shape,
         minval=0,
         maxval=x_shape[axis],
-        dtype=jnp.int32,
+        dtype=dtype,
     )
     actual = self.pallas_call(
         kernel, out_shape=jax.ShapeDtypeStruct(idx_shape, dtype)
