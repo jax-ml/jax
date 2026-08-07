@@ -1179,7 +1179,8 @@ def copy_gmem_to_smem(
   Args:
     src: The source Ref. Must be in GMEM.
     dst: The destination Ref. Must be in SMEM.
-    barrier: The barrier to use for tracking completion of the copy. Must be
+    barrier: The barrier to use for tracking completion of the copy. Required on
+      Hopper and newer GPUs, which use the TMA implementation, and must be
       omitted on pre-Hopper GPUs, which use the ``cp.async`` implementation.
       When omitted, completion of the copy has to be awaited with
       :func:`jax.experimental.pallas.mosaic_gpu.wait_gmem_to_smem` instead of
