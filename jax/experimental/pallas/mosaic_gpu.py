@@ -49,6 +49,9 @@ from jax._src.pallas.mosaic_gpu.helpers import nd_loop as nd_loop
 from jax._src.pallas.mosaic_gpu.helpers import NDLoopInfo as NDLoopInfo
 from jax._src.pallas.mosaic_gpu.helpers import planar_snake as planar_snake
 from jax._src.pallas.mosaic_gpu.helpers import warp_map as warp_map
+from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode as force_interpret_mode
+from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
+from jax._src.pallas.mosaic_gpu.interpret.params import set_gpu_interpret_mode as set_interpret_mode
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline_warp_specialized as emit_pipeline_warp_specialized
 from jax._src.pallas.mosaic_gpu.pipeline import PipelinePipeline as PipelinePipeline
