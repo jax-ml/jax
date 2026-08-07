@@ -193,6 +193,7 @@ Continuing the previous examples:
 loss_value, Wb_grad = jax.value_and_grad(loss, (0, 1))(W, b)
 print('loss value', loss_value)
 print('loss value', loss(W, b))
+print('Wb_grad', Wb_grad)
 ```
 
 (automatic-differentiation-checking-against-numerical-differences)=
