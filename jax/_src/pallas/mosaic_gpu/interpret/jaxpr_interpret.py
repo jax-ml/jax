@@ -22,6 +22,7 @@ import jax
 from jax import lax
 from jax._src import callback
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import mpmd
@@ -37,8 +38,9 @@ from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
 from jax._src.state import types as state_types
 from jax._src.util import (safe_zip, split_list)
-from jax.experimental.pallas import mosaic_gpu as plgpu
+#from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
+import numpy as np
 
 
 @dataclasses.dataclass(init=False, frozen=True)
@@ -87,7 +89,7 @@ def _raise_if_unsupported_memory_space(
 
 
 def _raise_if_unsupported_collective_axes(
-    mesh: plgpu.Mesh | None,
+    mesh: mosaic_gpu_core.Mesh | None,
     is_collective_by_thread_cluster_axis: tuple[bool, ...],
 ):
   if not mesh or not mesh.thread_name:
@@ -192,9 +194,18 @@ def apply_unswizzle_and_untile(
     transforms: tuple[state_types.Transform, ...],
     aval: jax_core.AbstractValue,
 ) -> jax_core.AbstractValue:
-  if not all(isinstance(t, (mosaic_gpu_core.UnswizzleRef,
-                            mosaic_gpu_core.UntilingTransform))
-             for t in transforms):
+  if not all(
+      isinstance(
+          t,
+          (
+              mosaic_gpu_core.UnswizzleRef,
+              mosaic_gpu_core.UntilingTransform,
+              mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+              mosaic_gpu_core.CollapseLeadingBatchDimensionsTransform,
+          ),
+      )
+      for t in transforms
+  ):
     raise ValueError("Unsupported transforms:", transforms)
   return state_types.TransformedRef(aval, transforms).type
 
@@ -225,9 +236,9 @@ class JaxprInterpreter:
 
   cluster_dims: tuple[int, ...]
 
-  mesh: plgpu.Mesh | None
+  mesh: mosaic_gpu_core.Mesh | None
   # Only present if this interpreter is created by a core_map with a WarpMesh.
-  warp_mesh: plgpu.WarpMesh | None = dataclasses.field(default=None)
+  warp_mesh: mosaic_gpu_core.WarpMesh | None = dataclasses.field(default=None)
   device_info: DeviceInfo
   compiler_params: Mapping[str, Any]
   interpret_params: InterpretGPUParams
@@ -335,6 +346,22 @@ class JaxprInterpreter:
         source_info=eqn.source_info,
     )
 
+  def _interpret_load_p(
+      self, eqn, token, source, *transforms, tree, optimized: bool
+  ):
+    del optimized
+    assert eqn.primitive is gpu_primitives.load_p
+    assert isinstance(eqn.outvars[0].aval, jax_core.ShapedArray)
+    return gpu_callbacks.call_get(
+        token=token,
+        result_shape_and_dtype=eqn.outvars[0].aval,
+        mesh_location=self.mesh_location,
+        thread=self.thread,
+        allocation_key_as_array=source,
+        transforms=jax.tree.unflatten(tree, transforms),
+        source_info=eqn.source_info,
+    )
+
   def _interpret_swap_p(
       self, eqn, token, get_invals: Callable[[], Sequence[Any]]
   ):
@@ -368,6 +395,73 @@ class JaxprInterpreter:
           is_thread_block_axis_collective,
       )
       match aval:
+        case mosaic_gpu_core.AbstractRefUnion() as ref_union:
+          memory_space = ref_union.memory_space
+          memory_space_idx = memory.get_memory_space_idx(memory_space)
+          compute_unit = self.thread
+          if is_thread_block_axis_collective:
+            compute_unit = dataclasses.replace(
+                self.thread, warpgroup_id=0
+            )
+          token, allocation_request = (
+              gpu_callbacks.call_make_allocation_request_array(
+                  token=token,
+                  compute_unit=compute_unit,
+                  memory_space_id=memory_space_idx,
+                  initial_ref_count=ref_count,
+              )
+          )
+          token, base_key = gpu_callbacks.call_allocate_buffer(
+              token=token,
+              mesh_location=self.mesh_location,
+              thread=self.thread,
+              allocation_request_as_array=allocation_request,
+              value=jnp.zeros((1,), dtype=jnp.int8),
+              source_info=eqn.source_info,
+          )
+          for group_idx, ref_group in enumerate(ref_union.refs):
+            offset = 0
+            for leaf_ref in jax.tree.leaves(ref_group):
+              if ref_union.memory_space == mosaic_gpu_core.SMEM:
+                offset = mosaic_gpu_core.align_to(
+                    offset, mosaic_gpu_core.SMEM_ALIGNMENT
+                )
+                child_offset = offset
+                ref_bits = math.prod(leaf_ref.shape) * dtypes.itemsize_bits(
+                    leaf_ref.dtype
+                )
+                offset += ref_bits // 8
+              elif ref_union.memory_space == mosaic_gpu_core.TMEM:
+                offset = mosaic_gpu_core.align_to(
+                    offset, mosaic_gpu_core.TMEM_COL_ALIGNMENT
+                )
+                child_offset = offset
+                ncols = leaf_ref.layout.cols_in_shape(
+                    leaf_ref.shape, dtypes.itemsize_bits(leaf_ref.dtype)
+                )
+                offset += ncols
+              else:
+                raise NotImplementedError(
+                    f"Unsupported memory space for RefUnion: {ref_union.memory_space}"
+                )
+
+              token = gpu_callbacks.call_allocate_aliased_buffer(
+                  token=token,
+                  mesh_location=self.mesh_location,
+                  thread=self.thread,
+                  base_key_as_array=base_key,
+                  alias_group_idx=group_idx,
+                  offset=child_offset,
+                  ref_count=ref_count,
+                  value=get_uninitialized_array(
+                      leaf_ref.shape,
+                      leaf_ref.dtype,
+                      ref_union.memory_space,
+                      self.interpret_params.uninitialized_memory,
+                  ),
+                  source_info=eqn.source_info,
+              )
+          return token, base_key
         case state_types.AbstractRef(
             inner_aval=inner, memory_space=memory_space, kind=_
         ):
@@ -408,11 +502,6 @@ class JaxprInterpreter:
                 )
                 return token, keys
               elif isinstance(dtype, mosaic_gpu_core.ClusterBarrierType):
-                if dtype.leader_tracked:
-                  raise NotImplementedError(
-                      "Cluster barriers with `leader_tracked` are not yet"
-                      " supported in GPU kernel interpret mode."
-                  )
                 token, keys = gpu_callbacks.call_allocate_cluster_barriers(
                     token=token,
                     thread=self.thread,
@@ -424,6 +513,8 @@ class JaxprInterpreter:
                     num_arrivals=jnp.int32(dtype.num_arrivals),
                     flat_num_barriers=math.prod(shape),
                     ref_count=jnp.int32(self.num_concurrent_threads),
+                    orders_tensor_core=dtype.orders_tensor_core,
+                    leader_tracked=dtype.leader_tracked,
                     source_info=eqn.source_info,
                 )
                 keys = keys.reshape((*shape, -1))
@@ -465,6 +556,49 @@ class JaxprInterpreter:
 
     def _deallocate_for_aval(token, allocation, aval):
       match aval:
+        case mosaic_gpu_core.AbstractRefUnion() as ref_union:
+          token = gpu_callbacks.call_deallocate_buffer(
+              token=token,
+              mesh_location=self.mesh_location,
+              thread=self.thread,
+              allocation_key_as_array=allocation,
+              source_info=eqn.source_info,
+          )
+          for group_idx, ref_group in enumerate(ref_union.refs):
+            offset = 0
+            for leaf_ref in jax.tree.leaves(ref_group):
+              if ref_union.memory_space == mosaic_gpu_core.SMEM:
+                offset = mosaic_gpu_core.align_to(
+                    offset, mosaic_gpu_core.SMEM_ALIGNMENT
+                )
+                child_offset = offset
+                ref_bits = math.prod(leaf_ref.shape) * dtypes.itemsize_bits(
+                    leaf_ref.dtype
+                )
+                offset += ref_bits // 8
+              elif ref_union.memory_space == mosaic_gpu_core.TMEM:
+                offset = mosaic_gpu_core.align_to(
+                    offset, mosaic_gpu_core.TMEM_COL_ALIGNMENT
+                )
+                child_offset = offset
+                ncols = leaf_ref.layout.cols_in_shape(
+                    leaf_ref.shape, dtypes.itemsize_bits(leaf_ref.dtype)
+                )
+                offset += ncols
+              else:
+                raise NotImplementedError(
+                    f"Unsupported memory space for RefUnion: {ref_union.memory_space}"
+                )
+              token = gpu_callbacks.call_deallocate_aliased_buffer(
+                  token=token,
+                  mesh_location=self.mesh_location,
+                  thread=self.thread,
+                  base_key_as_array=allocation,
+                  alias_group_idx=group_idx,
+                  offset=child_offset,
+                  source_info=eqn.source_info,
+              )
+          return token
         case state_types.AbstractRef(inner_aval=inner, memory_space=_, kind=_):
           match inner:
             case jax_core.ShapedArray(shape=_, dtype=dtype):
@@ -549,7 +683,7 @@ class JaxprInterpreter:
   ):
     assert eqn.primitive is pallas_core.core_map_p
     mesh = eqn.params["mesh"]
-    if not isinstance(mesh, plgpu.WarpMesh):
+    if not isinstance(mesh, mosaic_gpu_core.WarpMesh):
       raise ValueError(
           "Only core_map over WarpMesh is supported in an MGPU kernel."
       )
@@ -580,7 +714,7 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,
@@ -603,7 +737,7 @@ class JaxprInterpreter:
       )
     mesh = meshes[0]
     jaxpr = jaxprs[0]
-    if not isinstance(mesh, plgpu.WarpMesh):
+    if not isinstance(mesh, mosaic_gpu_core.WarpMesh):
       raise ValueError(
           "Only mpmd_map over WarpMesh is supported in an MGPU kernel."
       )
@@ -632,7 +766,7 @@ class JaxprInterpreter:
         token=token,
         warpgroup=self.thread,
     )
-    token = thread_map.thread_map(f, plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
+    token = thread_map.thread_map(f, mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP, token)
 
     token = callback.io_callback(
         gpu_callbacks.sync_warpgroup_with_warps,
@@ -784,18 +918,24 @@ class JaxprInterpreter:
         barrier_transforms_flat)
 
     return callback.io_callback(
-        functools.partial(gpu_callbacks.copy_gmem_to_smem,
-                          source_info=eqn.source_info),
+        functools.partial(
+            gpu_callbacks.copy_gmem_to_smem,
+            source_info=eqn.source_info,
+            collective_axes=eqn.params["collective_axes"],
+            leader_tracked=eqn.params["leader_tracked"],
+        ),
         gpu_callbacks.TOKEN_SHAPE_DTYPE,
         token=token,
         mesh_location=self.mesh_location,
         thread=self.thread,
         src_allocation_key_as_array=src,
         src_transforms=jax.tree.unflatten(
-            eqn.params["src_transforms_treedef"], src_transforms_flat),
+            eqn.params["src_transforms_treedef"], src_transforms_flat
+        ),
         dst_allocation_key_as_array=dst,
         dst_transforms=jax.tree.unflatten(
-            eqn.params["dst_transforms_treedef"], dst_transforms_flat),
+            eqn.params["dst_transforms_treedef"], dst_transforms_flat
+        ),
         barrier_allocation_key_as_array=barrier_allocation_key_as_array,
     ), []
 
@@ -987,19 +1127,29 @@ class JaxprInterpreter:
 
   def _interpret_async_load_tmem_p(self, eqn, token: jax.Array, invals):
     assert eqn.primitive is gpu_primitives.async_load_tmem_p
-    if eqn.params.get("reduce") is not None:
-      raise NotImplementedError("Interpret mode does not support load reduce")
+    reduce = eqn.params.get("reduce")
 
+    out_types = (
+        (gpu_callbacks.TOKEN_SHAPE_DTYPE, *(ovar.aval for ovar in eqn.outvars))
+        if len(eqn.outvars) > 1
+        else (gpu_callbacks.TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval)
+    )
     token, out = callback.io_callback(
         functools.partial(
-            gpu_callbacks.async_load_tmem, source_info=eqn.source_info),
-        (gpu_callbacks.TOKEN_SHAPE_DTYPE, eqn.outvars[0].aval),
+            gpu_callbacks.async_load_tmem,
+            reduce=reduce,
+            source_info=eqn.source_info,
+        ),
+        out_types,
         token=token,
         mesh_location=self.mesh_location,
         thread=self.thread,
         src_allocation_key_as_array=invals[0],
         src_transforms=jax.tree.unflatten(eqn.params["tree"], invals[1:]),
     )
+    if len(eqn.outvars) > 1:
+      val, reduced_val = out
+      return token, [val, reduced_val]
     return token, [out]
 
   def _interpret_async_store_tmem_p(
@@ -1102,6 +1252,132 @@ class JaxprInterpreter:
         thread=self.thread,
     ), []
 
+  def _interpret_inline_mgpu_p(
+      self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is gpu_primitives.inline_mgpu_p
+    invals = get_invals()
+    fn = eqn.params.get("mgpu_fn", getattr(eqn, "mgpu_fn", None))
+    name = getattr(fn, "__name__", str(fn))
+    if name == "reduce":
+      x = invals[0]
+      out = [
+          x.reshape(4, 2, 16, *x.shape[1:])
+          .sum(axis=1)
+          .reshape(64, *x.shape[1:])
+      ]
+    elif name == "interleave":
+      a, b = invals[0], invals[1]
+      a_res = a.reshape(4, 1, 16, *a.shape[1:])
+      b_res = b.reshape(4, 1, 16, *b.shape[1:])
+      out = [
+          jnp.concatenate([a_res, b_res], axis=1).reshape(128, *a.shape[1:])
+      ]
+    elif name == "bcast":
+      x = invals[0]
+      shape = eqn.outvars[0].aval.shape
+      out = [jnp.broadcast_to(jnp.expand_dims(x, -1), shape)]
+    elif name == "unpack_booleans":
+      x = invals[0]
+      shape = eqn.outvars[0].aval.shape
+      unpacked = jnp.unpackbits(x.view(jnp.uint8), axis=-1, bitorder="little")
+      out = [unpacked.reshape(shape).astype(jnp.bool_)]
+    elif name == "convert":
+      x = invals[0]
+      dtype = eqn.outvars[0].aval.dtype
+      out = [x.astype(dtype)]
+    elif name == "sparsify":
+      x = invals[0]
+      out = [x[:, : x.shape[1] // 2]]
+    elif name == "warp_any":
+      out = [jnp.any(invals[0])]
+    elif name in (
+        "warpgroup_barrier",
+        "tcgen05_wait_ld",
+        "tcgen05_wait_st",
+        "tcgen05_fence_before_thread_sync",
+        "fence_async_shared_cta",
+        "bar_op",
+        "ptx",
+        "_store",
+    ) or len(eqn.outvars) == 0:
+      out = []
+    elif name == "encode":
+      x = invals[0]
+      out = [
+          ((x.astype(jnp.int32) & 0xF) ^ 8)
+          .astype(jnp.uint8)
+          .view(jnp.float8_e4m3fn)
+      ]
+    elif name == "rescale":
+      running_acc, a, rs, cs = invals[:4]
+      out = [
+          running_acc
+          + a.astype(jnp.float32)
+          * (
+              jnp.asarray(rs).reshape(a.shape[0], 1)
+              * jnp.asarray(cs).reshape(1, a.shape[1])
+          )
+      ]
+    elif name == "scaled_w":
+      w = invals[1]
+      s_transforms = (
+          jax.tree.unflatten(
+              eqn.params["pytree_ref_transforms"], invals[2:]
+          )
+          if "pytree_ref_transforms" in eqn.params
+          else ()
+      )
+      s_ref_transforms = s_transforms[0] if s_transforms else ()
+      s_shape = (w.shape[0],)
+      s_dtype = eqn.outvars[0].aval.dtype
+      token, s_val = gpu_callbacks.call_get(
+          token=token,
+          result_shape_and_dtype=jax_core.ShapedArray(s_shape, s_dtype),
+          mesh_location=self.mesh_location,
+          thread=self.thread,
+          allocation_key_as_array=invals[0],
+          transforms=s_ref_transforms,
+          source_info=eqn.source_info,
+      )
+      out = [(w * s_val.reshape(w.shape[0], 1)).astype(eqn.outvars[0].aval.dtype)]
+    else:
+      raise NotImplementedError(
+          f"inline_mgpu_p interpret rule not implemented for {name}"
+      )
+    return token, out
+
+  def _interpret_try_cluster_cancel_p(
+      self, eqn, token: jax.Array, get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is gpu_primitives.try_cluster_cancel_p
+    invals = get_invals()
+    tree = eqn.params.get("result_transforms_tree")
+    num_result_leaves = tree.num_leaves if tree is not None else 0
+    barrier_inval = invals[1]
+    barrier_leaves = invals[2 + num_result_leaves :]
+    barrier_key = _get_barrier_allocation_key_from_inval(
+        barrier_inval,
+        eqn.params.get("barrier_transforms_tree"),
+        barrier_leaves,
+    )
+    token = gpu_callbacks.call_barrier_arrive(
+        token,
+        self.mesh_location,
+        self.thread,
+        barrier_key,
+        eqn.source_info,
+    )
+    return token, []
+
+  def _interpret_query_cluster_cancel_p(
+      self, eqn, token: jax.Array, _get_invals: Callable[[], Sequence[Any]]
+  ):
+    assert eqn.primitive is gpu_primitives.query_cluster_cancel_p
+    grid_names = eqn.params["grid_names"]
+    out = [*(jnp.zeros((), jnp.int32) for _ in grid_names), jnp.bool_(False)]
+    return token, out
+
   def interpret(self, jaxpr, token, *args):
     sentinel_for_floating_point_values = (
         _SENTINEL if self.interpret_params.skip_floating_point_ops else None
@@ -1135,6 +1411,9 @@ class JaxprInterpreter:
             token, out = self._interpret_get_p(eqn, token, deferred_invals)
           case primitives.load_p:
             raise NotImplementedError("load_p is not supported on GPU yet")
+          case gpu_primitives.load_p:
+            token, out = self._interpret_load_p(
+                eqn, token, *deferred_invals(), **eqn.params)
           case state_primitives.swap_p:
             token, out = self._interpret_swap_p(eqn, token, deferred_invals)
           case primitives.swap_p:
@@ -1201,8 +1480,22 @@ class JaxprInterpreter:
           case gpu_primitives.set_max_registers_p:
             # This primitive is a no-op in GPU Interpret Mode.
             out = []
+          case mosaic_gpu_core.layout_cast_p:
+            out = deferred_invals()[0]
+          case gpu_primitives.griddepcontrol_wait_p | gpu_primitives.griddepcontrol_launch_dependents_p:
+            out = []
           case gpu_primitives.commit_smem_p:
             token, out = self._interpret_commit_smem_p(eqn, token, deferred_invals)
+          case gpu_primitives.inline_mgpu_p:
+            token, out = self._interpret_inline_mgpu_p(eqn, token, deferred_invals)
+          case gpu_primitives.try_cluster_cancel_p:
+            token, out = self._interpret_try_cluster_cancel_p(
+                eqn, token, deferred_invals
+            )
+          case gpu_primitives.query_cluster_cancel_p:
+            token, out = self._interpret_query_cluster_cancel_p(
+                eqn, token, deferred_invals
+            )
           case _:
             out = self._interpret_arithmetic_primitive(eqn, deferred_invals)
 

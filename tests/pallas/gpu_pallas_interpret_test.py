@@ -26,6 +26,7 @@ from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
+from jax.extend import backend
 import jax.numpy as jnp
 import numpy as np
 
@@ -2425,6 +2426,154 @@ def matmul2(a, b, config: TuningConfig):
   )
   return f(a, b)
 
+def matmul6(a, b, config: TuningConfig):
+  dtype = a.dtype
+  m, k = a.shape
+  _, n = b.shape
+  tile_m, tile_n, tile_k = config.tile_m, config.tile_n, config.tile_k
+  swizzle = plgpu.find_swizzle(tile_k * jnp.dtype(dtype).itemsize * 8)
+  swizzle_elems = swizzle // jnp.dtype(dtype).itemsize
+  transforms = (
+      plgpu.TilingTransform((8, swizzle_elems)), plgpu.SwizzleTransform(swizzle)
+  )
+  if m % tile_m != 0:
+    raise ValueError(f"{m=} must be divisible by {tile_m=}")
+  if n % tile_n != 0:
+    raise ValueError(f"{n=} must be divisible by {tile_n=}")
+  if k % tile_k != 0:
+    raise ValueError(f"{k=} must be divisible by {tile_k=}")
+  cluster_tile_m = 2 * tile_m
+  cluster_tile_n = 2 * tile_n
+  m_iters = m // cluster_tile_m
+  n_iters = n // cluster_tile_n
+  k_iters = k // tile_k
+  max_concurrent_steps = config.max_concurrent_steps
+
+  def kernel(a_gmem, b_gmem, out_gmem,
+             a_smem, b_smem, acc_tmem, acc_smem,
+             load_barriers, consumed_barriers, mma_done_barrier, store_done_barrier):
+    wg_idx = jax.lax.axis_index("wg")
+    is_lead_block = jax.lax.axis_index("cluster") == 0
+
+    @plgpu.nd_loop((m_iters * n_iters,), collective_axes="cluster_grid")
+    def _mn_loop(loop_info: plgpu.NDLoopInfo):
+      (lin_idx,) = loop_info.index
+      m_index, n_index = plgpu.planar_snake(
+          lin_idx,
+          (m_iters, n_iters),
+          config.grid_minor_dim,
+          config.grid_tile_width,
+      )
+      m_slice = pl.ds(m_index * cluster_tile_m, cluster_tile_m)
+      n_slice = pl.ds(n_index * cluster_tile_n, cluster_tile_n)
+      acc_slot = jax.lax.rem(loop_info.local_index, jnp.int32(2))
+      mn_acc_tmem = acc_tmem.at[:, pl.ds(acc_slot * cluster_tile_n, cluster_tile_n)]
+
+      @pl.when(wg_idx == 0)
+      def _compute_wg():
+        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
+        def _per_warp():
+          warp_id = jax.lax.axis_index("warp")
+
+          @pl.when(warp_id == 0)
+          def _memory():
+            def _loop_body(ki, _):
+              slot = jax.lax.rem(ki, max_concurrent_steps)
+              @pl.when(jnp.logical_or(ki >= max_concurrent_steps, loop_info.local_index > 0))
+              def _():  # Make sure the data has been consumed before overwriting.
+                plgpu.barrier_wait(consumed_barriers.at[slot])
+              k_slice = pl.ds(ki * tile_k, tile_k)
+              plgpu.copy_gmem_to_smem(
+                  a_gmem.at[m_slice, k_slice], a_smem.at[slot], load_barriers.at[slot],
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(0)
+              )
+              plgpu.copy_gmem_to_smem(
+                  b_gmem.at[k_slice, n_slice], b_smem.at[slot], load_barriers.at[slot],
+                  collective_axes="cluster", leader_tracked=plgpu.CopyPartition.PARTITIONED(1)
+              )
+
+            jax.lax.fori_loop(0, k_iters, _loop_body, None)
+
+          # Wait for store to complete (except for the first two steps).
+          @pl.when(jnp.logical_and(warp_id == 1, loop_info.local_index >= 2))
+          def _wait_store():
+            plgpu.barrier_wait(store_done_barrier.at[acc_slot])
+          @pl.when(jnp.logical_and(warp_id == 1, is_lead_block))
+          def _compute():
+            def _loop_body(ki, _):
+              slot = jax.lax.rem(ki, max_concurrent_steps)
+              plgpu.barrier_wait(load_barriers.at[slot])  # Wait for data to arrive.
+              plgpu.tcgen05_mma(
+                  mn_acc_tmem,
+                  a_smem.at[slot],
+                  b_smem.at[slot],
+                  consumed_barriers.at[slot],
+                  accumulate=(ki > 0),
+                  collective_axis="cluster",
+              )
+            jax.lax.fori_loop(0, k_iters, _loop_body, None)
+            plgpu.tcgen05_commit_arrive(
+                mma_done_barrier.at[acc_slot],
+                collective_axis="cluster",
+            )
+
+      @pl.when(wg_idx == 1)
+      def _store_wg():
+        # Ensure that copies from the previous mn step have completed.
+        plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+        plgpu.barrier_wait(mma_done_barrier.at[acc_slot])
+        out_m_index = m_index * 2 + jax.lax.axis_index("cluster")
+        out_m_slice = pl.ds(out_m_index * tile_m, tile_m)
+        out_gmem_window = out_gmem.at[out_m_slice, n_slice]
+        for ni in range(cluster_tile_n // config.epilogue_tile_n):
+          acc_smem_ni = acc_smem.at[ni % 2]
+          ni_slice = pl.ds(ni * config.epilogue_tile_n, config.epilogue_tile_n)
+          # Make sure that previous copy is done before we overwrite.
+          plgpu.wait_smem_to_gmem(1, wait_read_only=True)
+          acc_smem_ni[...] = plgpu.async_load_tmem(mn_acc_tmem.at[:, ni_slice]).astype(dtype)
+          plgpu.commit_smem()
+          plgpu.copy_smem_to_gmem(acc_smem_ni, out_gmem_window.at[:, ni_slice])
+        plgpu.wait_load_tmem()  # Load must complete before we signal.
+        plgpu.barrier_arrive(store_done_barrier.at[acc_slot])
+    plgpu.wait_smem_to_gmem(0, wait_read_only=True)
+
+  device = backend.get_default_device()
+  num_sms = getattr(device, 'core_count', getattr(device, 'num_cores', 8))
+  f = plgpu.kernel(
+      kernel,
+      out_type=jax.ShapeDtypeStruct((m, n), dtype),
+      grid=(num_sms // 2,),
+      grid_names=("cluster_grid",),
+      cluster=(2,),
+      cluster_names=("cluster",),
+      num_threads=2,
+      thread_name="wg",
+      scratch_types=dict(
+          a_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_m, tile_k), dtype, transforms=transforms
+          ),
+          b_smem=plgpu.SMEM(
+              (max_concurrent_steps, tile_k, tile_n), dtype, transforms=transforms
+          ),
+          acc_tmem=plgpu.TMEM((tile_m, 2 * cluster_tile_n), jnp.float32, collective=True),
+          acc_smem=plgpu.SMEM((2, tile_m, config.epilogue_tile_n), dtype, transforms=transforms),
+          load_barriers=plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+          consumed_barriers=plgpu.Barrier(
+              num_arrivals=1,
+              num_barriers=max_concurrent_steps,
+              orders_tensor_core=True,
+          ),
+          mma_done_barrier=plgpu.Barrier(num_arrivals=1, num_barriers=2, orders_tensor_core=True),
+          store_done_barrier=plgpu.ClusterBarrier(
+              collective_axes=("cluster",),
+              num_arrivals=1,
+              num_barriers=2,
+              orders_tensor_core=True,
+          ),
+      )
+  )
+  return f(a, b)
+
 
 # TODO(nrink): Figure out how to safely run different instance of GPU
 # interpret mode in parallel, and then remove this decorator.
@@ -2531,6 +2680,35 @@ class BlackwellExampleMatmulTest(jtu.JaxTestCase):
         force_gpu_interpret_mode(InterpretParams(detect_races=detect_races)),
     ):
       res = matmul2(a, b, example_config).block_until_ready()
+
+    expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
+    np.testing.assert_allclose(res, expected, rtol=1e-3)
+
+  @jtu.parameterized.product(
+      detect_races=[False, True],
+  )
+  def test_matmul6(self, detect_races: bool):
+    example_config = TuningConfig(
+        tile_m=128, tile_n=128, tile_k=64, max_concurrent_steps=4,
+        grid_minor_dim=0, grid_tile_width=6,
+    )
+    m, n, k = 256, 256, 256
+    k1, k2 = jax.random.split(jax.random.key(0))
+    a = jax.random.uniform(k1, (m, k), jnp.float16)
+    b = jax.random.uniform(k2, (k, n), jnp.float16)
+
+    device = jax.sharding.AbstractDevice(
+        device_kind='NVIDIA B200',
+        platform='gpu',
+        num_cores=8,
+    )
+    with (
+        jax.sharding.use_abstract_mesh(
+            jax.sharding.AbstractMesh((), (), abstract_device=device)
+        ),
+        force_gpu_interpret_mode(InterpretParams(detect_races=detect_races)),
+    ):
+      res = matmul6(a, b, example_config).block_until_ready()
 
     expected = jnp.dot(a, b, preferred_element_type=jnp.float32)
     np.testing.assert_allclose(res, expected, rtol=1e-3)

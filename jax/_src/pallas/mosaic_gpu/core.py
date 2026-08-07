@@ -1813,6 +1813,7 @@ class MemoryEffect(jax_core.Effect):
 
 pallas_core.kernel_local_effects.add_type(MemoryEffect)
 effects.control_flow_allowed_effects.add_type(MemoryEffect)
+effects.lowerable_effects.add_type(MemoryEffect)
 _memory_effect = MemoryEffect()
 
 
@@ -1822,6 +1823,7 @@ class _WGMMAPipelineEffect(effects.Effect):
 
 pallas_core.kernel_local_effects.add_type(_WGMMAPipelineEffect)
 effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
+effects.lowerable_effects.add_type(_WGMMAPipelineEffect)
 _wgmma_pipeline_effect = _WGMMAPipelineEffect()
 
 
@@ -1838,6 +1840,7 @@ class PdlEffect(jax_core.Effect):
 
 pallas_core.kernel_local_effects.add_type(PdlEffect)
 effects.control_flow_allowed_effects.add_type(PdlEffect)
+effects.lowerable_effects.add_type(PdlEffect)
 _pdl_effect = PdlEffect()
 
 

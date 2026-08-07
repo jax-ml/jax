@@ -209,6 +209,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, acc_tmem, a_smem, b_smem, src_smem, barrier_ref):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      src_smem[...] = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
+      plgpu.commit_smem()
       out_ref[...] = plgpu.async_load_tmem(acc_tmem)
       if wait:
         plgpu.wait_load_tmem()
@@ -290,6 +294,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, acc_tmem, a_smem, b_smem, barrier_ref):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.tcgen05_mma(
           acc_tmem,
           a_smem,
@@ -325,6 +332,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, acc_tmem, a_smem, b_smem, barrier_ref):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
       plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, barrier_ref)
       plgpu.barrier_wait(barrier_ref)
@@ -353,6 +363,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     def _kernel(
         out_ref, acc1_tmem, acc2_tmem, a_smem, b_smem, barrier1, barrier2
     ):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.tcgen05_mma(acc1_tmem, a_smem, b_smem, accumulate=False)
       plgpu.tcgen05_commit_arrive(barrier1)
       plgpu.tcgen05_mma(acc2_tmem, a_smem, b_smem, accumulate=False)
@@ -387,6 +400,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, acc_tmem, a_smem, b_smem, barrier_ref):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, barrier_ref, accumulate=False)
       if wait:
         plgpu.barrier_wait(barrier_ref)
@@ -433,6 +449,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
 
         @pl.when(tid == 0)
         def _():
+          a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+          b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+          plgpu.commit_smem()
           if use_barrier_in_mma:
             plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, thread_barrier, accumulate=False)
           else:
@@ -485,6 +504,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
 
         @pl.when(tid == 0)
         def _():
+          a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+          b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+          plgpu.commit_smem()
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
           plgpu.barrier_arrive(thread_barrier)
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier0)
@@ -519,6 +541,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, acc_tmem, a_smem, b_smem, barrier_ref):
+      b_smem[...] = jnp.ones(RHS_SHAPE, jnp.float16)
+      plgpu.commit_smem()
       a_smem[...] = jnp.ones(LHS_SHAPE, jnp.float16)
       if commit:
         plgpu.commit_smem()
@@ -551,6 +575,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     def _kernel(
         _out_ref, acc_tmem, a_smem, b_smem, gmem_ref, mma_barrier, tma_barrier
     ):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier, accumulate=False)
       if wait:
         plgpu.barrier_wait(mma_barrier)
@@ -584,6 +611,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(_out_ref, acc_tmem, lhs_tmem, b_smem, barrier_ref):
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.tcgen05_mma(
           acc_tmem, lhs_tmem, b_smem, barrier_ref, accumulate=False
       )
@@ -616,6 +645,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(_out_ref, tmem_ref, src_smem, barrier_ref):
+      src_smem[...] = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
+      plgpu.commit_smem()
       plgpu.async_copy_smem_to_tmem(src_smem, tmem_ref)
       if wait:
         plgpu.tcgen05_commit_arrive(barrier_ref)
@@ -650,6 +681,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, acc_tmem, lhs_tmem, a_smem, b_smem, barrier_ref):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.async_copy_smem_to_tmem(a_smem, lhs_tmem)
       plgpu.tcgen05_mma(
           acc_tmem, lhs_tmem, b_smem, barrier_ref, accumulate=False
@@ -677,6 +711,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(out_ref, tmem_ref, src_smem, barrier_ref):
+      src_smem[...] = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
+      plgpu.commit_smem()
       plgpu.async_copy_smem_to_tmem(src_smem, tmem_ref)
       if wait:
         plgpu.tcgen05_commit_arrive(barrier_ref)
@@ -708,6 +744,8 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         interpret=InterpretParams(detect_races=True),
     )
     def _kernel(_out_ref, tmem_ref, src_smem, barrier_ref):
+      src_smem[...] = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
+      plgpu.commit_smem()
       plgpu.async_copy_smem_to_tmem(src_smem, tmem_ref)
       if second_op == 'store':
         plgpu.async_store_tmem(tmem_ref, jnp.zeros(ACC_SHAPE, jnp.float32))
@@ -743,6 +781,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     def _kernel(
         _out_ref, acc_tmem, a_smem, b_smem, src_smem, barrier1, barrier2
     ):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      src_smem[...] = jnp.full(ACC_SHAPE, 1.0, jnp.float32)
+      plgpu.commit_smem()
       plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
       if wait:
         plgpu.tcgen05_commit_arrive(barrier1)
@@ -862,6 +904,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
 
         @pl.when(tid == 0)
         def _():
+          a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+          b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+          plgpu.commit_smem()
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
           plgpu.barrier_arrive(thread_barrier)
           plgpu.tcgen05_commit_arrive(producer_barrier)
@@ -911,6 +956,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
 
         @pl.when(tid == 0)
         def _():
+          a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+          b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+          plgpu.commit_smem()
           plgpu.async_copy_smem_to_tmem(a_smem, lhs_tmem)
           plgpu.barrier_arrive(thread_barrier)
 
@@ -953,6 +1001,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
 
         @pl.when(tid == 0)
         def _():
+          a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+          b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+          plgpu.commit_smem()
           plgpu.tcgen05_mma(
               acc_tmem, a_smem, b_smem, mma_barrier, accumulate=False
           )
@@ -989,6 +1040,9 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     def _kernel(
         out_ref, acc_tmem, a_smem, b_smem, data_smem, gmem_ref, barrier_ref
     ):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+      plgpu.commit_smem()
       plgpu.copy_gmem_to_smem(gmem_ref, data_smem, barrier_ref)
       plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, barrier_ref, accumulate=False)
       # This wait may be satisfied by the TMA's arrival instead of the MMA's.
@@ -1009,6 +1063,206 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
       flagged = True
     self.assertTrue(flagged)
 
+  # ----------------------------------------------------------------------
+  # Collective (2-CTA) MMA
+  # ----------------------------------------------------------------------
+
+  @jtu.parameterized.product(
+      wait=[False, True],
+  )
+  def test_collective_mma_read_requires_commit_arrive_and_wait(self, wait):
+    # A collective MMA writes the TMEM of both CTAs in the pair. Each CTA may
+    # only read its half of the accumulator after a collective
+    # tcgen05_commit_arrive multicast the completion to its barrier and the
+    # barrier was awaited.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((2 * M, N), jnp.float32),
+        scratch_types=dict(
+            acc_tmem=plgpu.TMEM(ACC_SHAPE, jnp.float32, collective=True),
+            a_smem=plgpu.SMEM(LHS_SHAPE, jnp.float16),
+            b_smem=plgpu.SMEM((K, N // 2), jnp.float16),
+            barrier_ref=plgpu.Barrier(orders_tensor_core=True),
+        ),
+        interpret=InterpretParams(detect_races=True),
+        cluster=(2,),
+        cluster_names=('x',),
+    )
+    def _kernel(out_ref, acc_tmem, a_smem, b_smem, barrier_ref):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full((K, N // 2), 1.0, jnp.float16)
+      plgpu.commit_smem()
+      plgpu.tcgen05_mma(
+          acc_tmem, a_smem, b_smem, accumulate=False, collective_axis='x'
+      )
+      if wait:
+        plgpu.tcgen05_commit_arrive(barrier_ref, collective_axis='x')
+        plgpu.barrier_wait(barrier_ref)
+      idx = jax.lax.axis_index('x')
+      out_ref[pl.ds(idx * M, M), :] = plgpu.async_load_tmem(acc_tmem)
+      if not wait:
+        plgpu.tcgen05_commit_arrive(barrier_ref, collective_axis='x')
+        plgpu.barrier_wait(barrier_ref)
+
+    _kernel()
+    correct = wait
+    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+
+  @jtu.parameterized.product(
+      wait=[False, True],
+  )
+  def test_overwriting_smem_operand_of_collective_mma(self, wait):
+    # A collective MMA reads the B operand from the SMEM of *both* CTAs in
+    # the pair, so neither CTA may overwrite its B tile until the MMA
+    # completion was observed. (The barrier passed to tcgen05_mma is
+    # multicast to both CTAs in collective mode.)
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((2 * M, N), jnp.float32),
+        scratch_types=dict(
+            acc_tmem=plgpu.TMEM(ACC_SHAPE, jnp.float32, collective=True),
+            a_smem=plgpu.SMEM(LHS_SHAPE, jnp.float16),
+            b_smem=plgpu.SMEM((K, N // 2), jnp.float16),
+            barrier_ref=plgpu.Barrier(orders_tensor_core=True),
+        ),
+        interpret=InterpretParams(detect_races=True),
+        cluster=(2,),
+        cluster_names=('x',),
+    )
+    def _kernel(_out_ref, acc_tmem, a_smem, b_smem, barrier_ref):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full((K, N // 2), 1.0, jnp.float16)
+      plgpu.commit_smem()
+      plgpu.tcgen05_mma(
+          acc_tmem,
+          a_smem,
+          b_smem,
+          barrier_ref,
+          accumulate=False,
+          collective_axis='x',
+      )
+      if wait:
+        plgpu.barrier_wait(barrier_ref)
+      b_smem[...] = jnp.zeros((K, N // 2), jnp.float16)
+      if not wait:
+        plgpu.barrier_wait(barrier_ref)
+
+    _kernel()
+    correct = wait
+    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+
+  @jtu.parameterized.product(
+      cluster_sync=[False, True],
+  )
+  def test_collective_tmem_reuse_requires_cluster_barrier(self, cluster_sync):
+    # Reusing the accumulator of a collective MMA requires *both* CTAs to
+    # have finished reading it. Each CTA's wait_load_tmem only covers its own
+    # loads, so without a ClusterBarrier handshake the next collective MMA
+    # can overwrite the peer CTA's half while its load is still in flight.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((2 * M, N), jnp.float32),
+        scratch_types=dict(
+            acc_tmem=plgpu.TMEM(ACC_SHAPE, jnp.float32, collective=True),
+            a_smem=plgpu.SMEM(LHS_SHAPE, jnp.float16),
+            b_smem=plgpu.SMEM((K, N // 2), jnp.float16),
+            mma_barrier1=plgpu.Barrier(orders_tensor_core=True),
+            mma_barrier2=plgpu.Barrier(orders_tensor_core=True),
+            cluster_barrier=plgpu.ClusterBarrier(
+                collective_axes=('x',), orders_tensor_core=True
+            ),
+        ),
+        interpret=InterpretParams(detect_races=True),
+        cluster=(2,),
+        cluster_names=('x',),
+    )
+    def _kernel(
+        out_ref,
+        acc_tmem,
+        a_smem,
+        b_smem,
+        mma_barrier1,
+        mma_barrier2,
+        cluster_barrier,
+    ):
+      a_smem[...] = jnp.full(LHS_SHAPE, 1.0, jnp.float16)
+      b_smem[...] = jnp.full((K, N // 2), 1.0, jnp.float16)
+      plgpu.commit_smem()
+      plgpu.tcgen05_mma(
+          acc_tmem,
+          a_smem,
+          b_smem,
+          mma_barrier1,
+          accumulate=False,
+          collective_axis='x',
+      )
+      plgpu.barrier_wait(mma_barrier1)
+      idx = jax.lax.axis_index('x')
+      out_ref[pl.ds(idx * M, M), :] = plgpu.async_load_tmem(acc_tmem)
+      plgpu.wait_load_tmem()
+      if cluster_sync:
+        plgpu.barrier_arrive(cluster_barrier)
+        plgpu.barrier_wait(cluster_barrier)
+      plgpu.tcgen05_mma(
+          acc_tmem,
+          a_smem,
+          b_smem,
+          mma_barrier2,
+          accumulate=False,
+          collective_axis='x',
+      )
+      plgpu.barrier_wait(mma_barrier2)
+
+    _kernel()
+    correct = cluster_sync
+    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+
+  @jtu.parameterized.product(
+      orders_tensor_core=[False, True],
+  )
+  def test_tmem_commit_not_visible_across_threads_without_orders_tensor_core(
+      self, orders_tensor_core
+  ):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct(ACC_SHAPE, jnp.float32),
+        scratch_types=dict(
+            acc_tmem=plgpu.TMEM(ACC_SHAPE, jnp.float32),
+            a_tmem=plgpu.TMEM(LHS_SHAPE, jnp.float16, packed=True),
+            b_smem=plgpu.SMEM(RHS_SHAPE, jnp.float16),
+            thread_barrier=plgpu.Barrier(orders_tensor_core=orders_tensor_core),
+            mma_barrier=plgpu.Barrier(orders_tensor_core=True),
+        ),
+        interpret=InterpretParams(detect_races=True),
+        num_threads=2,
+        thread_name='t',
+    )
+    def _kernel(_out_ref, acc_tmem, a_tmem, b_smem, thread_barrier, mma_barrier):
+      tid = jax.lax.axis_index('t')
+
+      @pl.when(tid == 0)
+      def _():
+        b_smem[...] = jnp.full(RHS_SHAPE, 1.0, jnp.float16)
+        plgpu.commit_smem()
+        plgpu.async_store_tmem(a_tmem, jnp.full(LHS_SHAPE, 1.0, jnp.float16))
+        plgpu.commit_tmem()
+        plgpu.barrier_arrive(thread_barrier)
+
+      @pl.when(tid == 1)
+      def _():
+        plgpu.barrier_wait(thread_barrier)
+        plgpu.tcgen05_mma(
+            acc_tmem, a_tmem, b_smem, accumulate=False, barrier=mma_barrier
+        )
+        plgpu.barrier_wait(mma_barrier)
+
+    _kernel()
+    correct = orders_tensor_core
+    self.assertEqual(mosaic_interpret.get_races().races_found, not correct)
+
+  # ----------------------------------------------------------------------
+  # Misc
+  # ----------------------------------------------------------------------
   @jtu.parameterized.product(wait_on=[0, 1, 2])
   def test_can_commit_mma_to_multiple_barriers(self, wait_on):
     # The completion of an MMA can be used to satisfy the arrival condition of
