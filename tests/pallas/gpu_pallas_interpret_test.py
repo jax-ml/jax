@@ -20,6 +20,7 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
+from jax._src.pallas.mosaic.interpret import utils as interpret_utils
 from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
 from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
 from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode
@@ -151,6 +152,89 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_equal(jax.jit(_kernel)(), np.arange(num_threads))
     self.assertFalse(mosaic_interpret.get_races().races_found)
 
+  def test_layout_cast(self):
+    # the layout_cast is a no-op in interpret mode
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref):
+      o_ref[...] = plgpu.layout_cast(x_ref[...], plgpu.Layout.WGMMA)
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    np.testing.assert_array_equal(_kernel(x), x)
+
+  def test_griddepcontrol(self):
+    # Programmatic dependent launch orders whole kernel launches, and the
+    # interpret mode runs one kernel at a time, so both primitives are no-ops.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref):
+      plgpu.griddepcontrol_wait()
+      o_ref[...] = x_ref[...] + 1
+      plgpu.griddepcontrol_launch_dependents()
+
+    x = jnp.arange(8, dtype=jnp.int32)
+    np.testing.assert_array_equal(_kernel(x), x + 1)
+
+  def test_load(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      smem[...] = plgpu.load(x_ref)
+      o_ref[...] = plgpu.load(smem) * 2
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    np.testing.assert_array_equal(_kernel(x), x * 2)
+
+  def test_load_participates_in_race_detection(self):
+    def _kernel(x_ref, o_ref, smem):
+      thread_idx = jax.lax.axis_index('t')
+
+      @pl.when(thread_idx == 0)
+      def _():
+        smem[...] = x_ref[...]
+
+      @pl.when(thread_idx == 1)
+      def _():
+        o_ref[...] = plgpu.load(smem)
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
+        scratch_types=dict(smem=plgpu.SMEM((8,), jnp.int32)),
+        num_threads=2,
+        thread_name='t',
+        interpret=InterpretParams(detect_races=True),
+    )
+
+    kernel(jnp.arange(8, dtype=jnp.int32))
+    self.assertTrue(mosaic_interpret.get_races().races_found)
+
+  def test_primitive_with_kernel_local_effects_is_refused(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref):
+      pl.delay(100)
+      o_ref[...] = x_ref[...]
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        r'does not implement `delay`.*kernel-local effects',
+    ):
+      _kernel(jnp.arange(8, dtype=jnp.int32))
+
   def test_tiling_and_swizzle_transforms(self):
 
     @jax.jit
@@ -218,6 +302,58 @@ class InterpretTest(jtu.JaxTestCase):
       )()
 
     np.testing.assert_equal(run(), np.full((128, 128), 45.0, jnp.float16))
+    
+  def test_transpose_ref(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      # Write through the transposed view, read back through the plain ref.
+      plgpu.transpose_ref(smem, (1, 0))[...] = x_ref[...].T
+      o_ref[...] = smem[...]
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    np.testing.assert_array_equal(_kernel(x), x)
+
+  def test_indexing_a_transposed_ref_is_unsupported(self):
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128,), jnp.float32),
+        scratch_types=dict(smem=plgpu.SMEM((128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(x_ref, o_ref, smem):
+      smem[...] = x_ref[...]
+      o_ref[...] = plgpu.transpose_ref(smem, (1, 0))[0, :]
+
+    x = jnp.arange(128 * 64, dtype=jnp.float32).reshape(128, 64)
+    with self.assertRaisesRegex(
+        Exception, r'does not support indexing a ref after transposing it'
+    ):
+      _kernel(x)
+
+  def test_tmem_ref_with_leading_batch_dimensions(self):
+    # A TMEM ref of rank > 2 carries an implicit collapse of its leading
+    # dimensions. Indexing is written against the ref's declared shape, so the
+    # reshape does not move the accessed elements and can be ignored.
+    @functools.partial(
+        plgpu.kernel,
+        out_type=jax.ShapeDtypeStruct((128, 64), jnp.float32),
+        scratch_types=dict(tmem=plgpu.TMEM((2, 128, 64), jnp.float32)),
+        interpret=InterpretParams(),
+    )
+    def _kernel(o_ref, tmem):
+      plgpu.async_store_tmem(tmem.at[0], jnp.full((128, 64), 1.0, jnp.float32))
+      plgpu.async_store_tmem(tmem.at[1], jnp.full((128, 64), 3.0, jnp.float32))
+      plgpu.commit_tmem()
+      o_ref[...] = plgpu.async_load_tmem(tmem.at[1])
+
+    np.testing.assert_array_equal(
+        _kernel(), np.full((128, 64), 3.0, np.float32)
+    )
 
   def test_skip_floating_point_ops(self):
     def matmul_kernel(x_ref, y_ref, z_ref):
@@ -1425,6 +1561,61 @@ class InterpretTest(jtu.JaxTestCase):
       self.assertFalse(mosaic_interpret.get_races().races_found)
       np.testing.assert_array_equal(z, x + y)
 
+  @jtu.parameterized.named_parameters(
+      # `copy_gmem_to_smem` resolves `None` to `ZEROS` on the TMA
+      # implementation, which is the one interpret mode models.
+      ('default', None),
+      ('zeros', plgpu.OOBFillMode.ZEROS),
+      ('undefined', plgpu.OOBFillMode.UNDEFINED),
+      ('promise_in_bounds', plgpu.OOBFillMode.PROMISE_IN_BOUNDS),
+  )
+  def test_copy_gmem_to_smem_out_of_bounds(self, oob_mode):
+    # A TMA copy may name a window extending past the end of its source --
+    # kernels rely on this to handle a trailing partial tile -- and `oob_mode`
+    # says what the hardware supplies for the part that is out of bounds.
+    x = jnp.arange(6, dtype=jnp.int32).reshape((3, 2))
+
+    def _kernel(in_gmem, out_gmem, barrier, smem):
+      plgpu.copy_gmem_to_smem(
+          in_gmem.at[pl.ds(0, 4)], smem, barrier, oob_mode=oob_mode
+      )
+      plgpu.barrier_wait(barrier)
+      out_gmem[...] = smem[...]
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct((4, 2), jnp.int32),
+        interpret=InterpretParams(uninitialized_memory='nan'),
+        scratch_types=dict(
+            barrier=plgpu.Barrier(), smem=plgpu.SMEM((4, 2), jnp.int32)
+        ),
+    )
+
+    if oob_mode == plgpu.OOBFillMode.PROMISE_IN_BOUNDS:
+      with self.assertRaisesRegex(
+          Exception, r'but the copy promised to stay in bounds'
+      ):
+        kernel(x)
+      return
+
+    y = np.asarray(kernel(x))
+    np.testing.assert_array_equal(y[:3], x)
+    if oob_mode == plgpu.OOBFillMode.UNDEFINED:
+      # The hardware leaves these elements unspecified, so the interpreter
+      # supplies its pattern for uninitialized memory.
+      np.testing.assert_array_equal(
+          y[3],
+          np.full(
+              (2,),
+              interpret_utils.get_uninitialized_value(np.dtype(np.int32),
+                                                      'nan'),
+              np.int32,
+          ),
+      )
+    else:
+      np.testing.assert_array_equal(y[3], np.zeros((2,), np.int32))
+
+
   def test_copy_smem_to_gmem(self):
     def _kernel(out_gmem, smem_ref):
       tid = jax.lax.axis_index('t')
@@ -2083,6 +2274,38 @@ class InterpretTest(jtu.JaxTestCase):
     a = jnp.full((128,128), 42, dtype=jnp.int32)
     output = kernel(a)
     self.assertArraysEqual(output, a)
+
+  @jtu.parameterized.product(grid=[(4,), (2, 3)])
+  def test_dynamic_scheduling_loop(self, grid):
+    # `dynamic_scheduling_loop` lets a block claim a not-yet-launched block's
+    # work. The interpreter enumerates the whole grid itself, so there is never
+    # unlaunched work to claim: every cancellation attempt fails -- a legal
+    # hardware outcome -- and each block runs exactly its own grid index.
+    grid_names = tuple(f'g{i}' for i in range(len(grid)))
+
+    def _kernel(o_ref):
+      block = tuple(jax.lax.axis_index(name) for name in grid_names)
+
+      @plgpu.dynamic_scheduling_loop(grid_names, thread_axis='wg')
+      def _(loop_info: plgpu.NDLoopInfo):
+        o_ref[loop_info.index] = jnp.int32(
+            sum(b * s for b, s in zip(block, (*grid[1:], 1)))
+        )
+
+    kernel = plgpu.kernel(
+        _kernel,
+        out_type=jax.ShapeDtypeStruct(grid, jnp.int32),
+        grid=grid,
+        grid_names=grid_names,
+        num_threads=1,
+        thread_name='wg',
+        interpret=InterpretParams(),
+    )
+
+    np.testing.assert_array_equal(
+        kernel(), np.arange(math.prod(grid), dtype=np.int32).reshape(grid)
+    )
+
 
 
 @dataclasses.dataclass(frozen=True)
