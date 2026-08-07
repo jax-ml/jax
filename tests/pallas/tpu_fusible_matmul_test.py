@@ -1277,6 +1277,23 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     ):
       fused_fn(x, w)
 
+  @parameterized.product(impl=list(KernelImpl))
+  def test_matmul_with_dynamic_update_slice_raises(self, impl):
+    k0, k1 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k0, (512, 512), jnp.float32)
+    y = jax.random.normal(k1, (512, 512), jnp.float32)
+
+    @jax.jit
+    @fuser.fuse
+    def matmul_dynamic_update_slice(x, y):
+      z = jnp.zeros((512, 512), jnp.float32)
+      ret_slice = fusible_matmul(x[:128, :], y, impl=impl)
+      return jax.lax.dynamic_update_slice(z, ret_slice, (0, 0))
+
+    with self.assertRaisesRegex(ValueError, 'Stateful primitives .* are not'
+                                ' supported in get_fusion_values'):
+      matmul_dynamic_update_slice(x, y)
+
 def dot_ref(x, y, *, bm=128, bk=128, bn=128):
   # Meant to precisely mimic the numerics of the kernel
   out_dtype = jnp.float32
