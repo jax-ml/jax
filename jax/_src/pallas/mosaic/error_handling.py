@@ -78,6 +78,12 @@ def _handle_xla_runtime_error(
 compiler.register_xla_runtime_error_handler(_handle_xla_runtime_error)
 
 
+def _traceback_from_location(loc: ir.Location) -> types.TracebackType:
+  """Extracts traceback from ir.Location if it has callsite info."""
+  _, frames = parse_location_string(str(loc.attr))
+  return traceback_from_raw_frames(frames)
+
+
 def mlir_error_to_verification_error(
     base_err: ir.MLIRError,
 ) -> VerificationError:
@@ -89,8 +95,7 @@ def mlir_error_to_verification_error(
       current_msg += "\n " + _get_diagnostic_message(d)
     return current_msg
 
-  _, frames = parse_location_string(str(diagnostic.location.attr))
-  new_tb = traceback_from_raw_frames(frames)
+  new_tb = _traceback_from_location(diagnostic.location)
   new_error = VerificationError(_get_diagnostic_message(diagnostic))
   new_error.__traceback__ = traceback_util.filter_traceback(new_tb)
   return new_error
