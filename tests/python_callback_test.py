@@ -16,6 +16,7 @@ import collections
 import contextlib
 import functools
 import logging
+import threading
 import time
 import unittest
 
@@ -1271,9 +1272,16 @@ class IOCallbackTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.array(devices), ['dev'])
 
     _collected: list[int] = []
+    # Unordered io_callbacks (ordered=False) do not return sequence tokens, meaning
+    # jax.effects_barrier() does not track or wait for them. We use a condition
+    # variable to safely await completion of background FFI callback CPU threads.
+    cond = threading.Condition()
+
     def _cb(x):
       nonlocal _collected
-      _collected.append(int(x.sum()))
+      with cond:
+        _collected.append(int(x.sum()))
+        cond.notify_all()
 
     io_callback_kwargs = dict(ordered=ordered)
     callback_device = devices[0]
@@ -1305,6 +1313,10 @@ class IOCallbackTest(jtu.JaxTestCase):
     if ordered:
       self.assertAllClose(_collected, expected)
     else:
+      # Await background FFI CPU threads before asserting, as jax.effects_barrier()
+      # only synchronizes ordered callbacks that emit effect tokens.
+      with cond:
+        cond.wait_for(lambda: len(_collected) >= len(expected), timeout=10)
       self.assertEqual(len(_collected), len(expected))
       for v in expected:
         self.assertIn(v, _collected)
