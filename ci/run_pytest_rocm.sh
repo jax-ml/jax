@@ -26,15 +26,6 @@ set -exu -o history -o allexport
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
-# Point PATH and LD_LIBRARY_PATH at the local TheRock installation.
-if command -v rocm-sdk >/dev/null 2>&1; then
-  sdk_root="$(rocm-sdk path --root)"
-  if [[ -n "$sdk_root" ]]; then
-    export PATH="$sdk_root/bin:$PATH"
-    export LD_LIBRARY_PATH="$sdk_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-  fi
-fi
-
 # Install jaxlib and ROCm plugin wheels inside the $JAXCI_OUTPUT_DIR directory
 echo "Installing wheels locally..."
 source ./ci/utilities/install_wheels_locally.sh
