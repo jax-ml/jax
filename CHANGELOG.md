@@ -40,6 +40,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     ({jax-issue}`#34685`).
 
 * Bug fixes
+  * `jax.test_util.check_grads` (and `check_jvp`/`check_vjp`) now pick a
+    dtype-appropriate default finite-difference step. Previously the 1e-4
+    default step was below machine epsilon for dtypes lower-precision than
+    float32 (such as `float16` and `bfloat16`), so at typical magnitudes the
+    perturbed inputs rounded back to the original values, the numerical
+    derivative was identically zero, and the check failed for perfectly
+    correct gradients. The default step for float32 and wider dtypes is
+    unchanged, as is any explicitly passed `eps`. Gradient mismatch messages
+    now also state which side is computed by JAX and which is the numerical
+    estimate ({jax-issue}`#7742`).
   * The batching rules of the cuDNN fused attention primitives (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) now
     support operands that do not carry the vmap axis, including a shared

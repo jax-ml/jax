@@ -2253,6 +2253,15 @@ jax_py_test(
 )
 
 jax_py_test(
+    name = "public_test_util_test",
+    srcs = ["public_test_util_test.py"],
+    deps = [
+        "//jax",
+        "//jax/_src:test_util",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_py_test(
     name = "source_mapper_test",
     srcs = ["source_mapper_test.py"],
     deps = [

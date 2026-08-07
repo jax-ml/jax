@@ -19,7 +19,7 @@ from typing import Any, TypeAlias
 from jax._src import api
 from jax._src import config
 from jax._src import dtypes as _dtypes
-from jax._src.tree_util import tree_map, tree_reduce
+from jax._src.tree_util import tree_leaves, tree_map, tree_reduce
 
 import numpy as np
 
@@ -229,7 +229,24 @@ def rand_like(rng, x):
   return result.item() if is_python_scalar(x) else result
 
 
-def numerical_jvp(f, primals, tangents, eps=EPS):
+def _default_eps(primals):
+  # cbrt(machine eps) balances truncation and rounding error for central
+  # differences; rounded to a power of two so scaling by eps is lossless.
+  eps = EPS
+  f32_eps = float(np.finfo(np.float32).eps)
+  for leaf in tree_leaves(primals):
+    dt = _dtype(leaf)
+    if not _dtypes.issubdtype(dt, np.inexact):
+      continue
+    machine_eps = float(_dtypes.finfo(dt).eps)
+    if machine_eps > f32_eps:
+      eps = max(eps, 2.0 ** np.floor(np.log2(machine_eps ** (1 / 3))))
+  return float(eps)
+
+
+def numerical_jvp(f, primals, tangents, eps=None):
+  if eps is None:
+    eps = _default_eps(primals)
   delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
   f_neg = f(*sub(primals, delta))
@@ -247,7 +264,12 @@ def _merge_tolerance(tol, default):
   return out
 
 
-def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
+def _labeled_err_msg(err_msg, part, explanation):
+  base = f'{err_msg} {part}' if err_msg else part
+  return f'{base} ({explanation})'
+
+
+def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=None, err_msg=''):
   """Check a JVP from automatic differentiation against finite differences.
 
   Gradients are only checked in a single randomly chosen direction, which
@@ -261,7 +283,12 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
     args: tuple of argument values.
     atol: absolute tolerance for gradient equality.
     rtol: relative tolerance for gradient equality.
-    eps: step size used for finite differences.
+    eps: step size used for finite differences. If None (default), the step is
+      chosen based on the dtypes of ``args``: 1e-4 for float32 and wider
+      dtypes, and a larger dtype-appropriate step for lower-precision dtypes
+      such as float16 and bfloat16, for which perturbing by 1e-4 rounds away
+      at typical magnitudes. With mixed-precision arguments, the step of the
+      lowest-precision leaf is used for all leaves.
     err_msg: additional error message to include if checks fail.
 
   Raises:
@@ -280,12 +307,18 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   # but due to nondeterminism especially on GPU (e.g., due to convolution
   # autotuning) we only require "close".
   check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
-              err_msg=f'{err_msg} primal' if err_msg else 'primal')
+              err_msg=_labeled_err_msg(
+                  err_msg, 'primal',
+                  'ACTUAL is the primal output of the JVP function, DESIRED '
+                  'is the function evaluated directly'))
   check_close(t_out, t_out_expected, atol=atol, rtol=rtol,
-              err_msg=f'{err_msg} tangent' if err_msg else 'tangent')
+              err_msg=_labeled_err_msg(
+                  err_msg, 'tangent',
+                  'ACTUAL is the JVP computed by JAX, DESIRED is the '
+                  'numerical estimate from finite differences'))
 
 
-def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
+def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=None, err_msg=''):
   """Check a VJP from automatic differentiation against finite differences.
 
   Gradients are only checked in a single randomly chosen direction, which
@@ -299,7 +332,12 @@ def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
     args: tuple of argument values.
     atol: absolute tolerance for gradient equality.
     rtol: relative tolerance for gradient equality.
-    eps: step size used for finite differences.
+    eps: step size used for finite differences. If None (default), the step is
+      chosen based on the dtypes of ``args``: 1e-4 for float32 and wider
+      dtypes, and a larger dtype-appropriate step for lower-precision dtypes
+      such as float16 and bfloat16, for which perturbing by 1e-4 rounds away
+      at typical magnitudes. With mixed-precision arguments, the step of the
+      lowest-precision leaf is used for all leaves.
     err_msg: additional error message to include if checks fail.
 
   Raises:
@@ -311,7 +349,10 @@ def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   v_out, vjpfun = f_vjp(*args)
   v_out_expected = f(*args)
   check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
-              err_msg=f'{err_msg} primal' if err_msg else 'primal')
+              err_msg=_labeled_err_msg(
+                  err_msg, 'primal',
+                  'ACTUAL is the primal output of the VJP function, DESIRED '
+                  'is the function evaluated directly'))
   tangent = tree_map(_rand_like, args)
   tangent_out = numerical_jvp(f, args, tangent, eps=eps)
   cotangent = tree_map(_rand_like, v_out)
@@ -319,8 +360,10 @@ def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   ip = inner_prod(tangent, cotangent_out)
   ip_expected = inner_prod(tangent_out, cotangent)
   check_close(ip, ip_expected, atol=atol, rtol=rtol,
-              err_msg=(f'{err_msg} cotangent projection'
-                       if err_msg else 'cotangent projection'))
+              err_msg=_labeled_err_msg(
+                  err_msg, 'cotangent projection',
+                  'ACTUAL is computed with the VJP from JAX, DESIRED with '
+                  'the numerical JVP from finite differences'))
 
 
 def check_grads(f, args, order,
@@ -338,13 +381,20 @@ def check_grads(f, args, order,
     modes: lists of gradient modes to check ('fwd' and/or 'rev').
     atol: absolute tolerance for gradient equality.
     rtol: relative tolerance for gradient equality.
-    eps: step size used for finite differences.
+    eps: step size used for finite differences. If None (default), the step is
+      chosen based on the dtypes of ``args``: 1e-4 for float32 and wider
+      dtypes, and a larger dtype-appropriate step for lower-precision dtypes
+      such as float16 and bfloat16, for which perturbing by 1e-4 rounds away
+      at typical magnitudes. With mixed-precision arguments, the step of the
+      lowest-precision leaf is used for all leaves.
+      Note that checks of ``order > 1`` in low-precision dtypes may need
+      explicit ``atol``/``rtol``: nested numerical differentiation there can
+      exceed the default tolerances even for correct gradients.
 
   Raises:
     AssertionError: if gradients do not match.
   """
   args = tuple(args)
-  eps = eps or EPS
 
   _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
   _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
