@@ -53,7 +53,7 @@ static int GetXCR0EAX() { return _xgetbv(0); }
 
 // Otherwise use gcc-format assembler to implement the underlying instructions.
 #define GETCPUID(a, b, c, d, a_inp, c_inp) \
-  asm("mov %%rbx, %%rdi\n"                 \
+  __asm__("mov %%rbx, %%rdi\n"                 \
       "cpuid\n"                            \
       "xchg %%rdi, %%rbx\n"                \
       : "=a"(a), "=D"(b), "=c"(c), "=d"(d) \
@@ -61,7 +61,7 @@ static int GetXCR0EAX() { return _xgetbv(0); }
 
 static int GetXCR0EAX() {
   int eax, edx;
-  asm("XGETBV" : "=a"(eax), "=d"(edx) : "c"(0));
+  __asm__("XGETBV" : "=a"(eax), "=d"(edx) : "c"(0));
   return eax;
 }
 
