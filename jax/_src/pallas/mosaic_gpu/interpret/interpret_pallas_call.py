@@ -33,7 +33,6 @@ from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.state import types as state_types
 from jax._src.typing import Array
 from jax._src.util import (safe_zip, split_list)
-from jax.experimental.pallas import mosaic_gpu as plgpu
 
 
 def get_races() -> gpu_callbacks.RaceDetectionState:
@@ -59,13 +58,13 @@ def _get_grid_bounds(grid_mapping: pallas_core.GridMapping) -> tuple[int, ...]:
 
 
 def _get_grid_and_cluster_dims_and_num_threads(
-    grid_mapping: pallas_core.GridMapping, mesh: plgpu.Mesh | None
+    grid_mapping: pallas_core.GridMapping, mesh: mosaic_gpu_core.Mesh | None
 ) -> tuple[tuple[int, ...], tuple[int, ...], int]:
   if not mesh:
     num_threads = 1
     cluster_dims = ()
     grid_dims = _get_grid_bounds(grid_mapping)
-  elif isinstance(mesh, plgpu.Mesh):
+  elif isinstance(mesh, mosaic_gpu_core.Mesh):
     num_threads = int(mesh.num_threads or 1)
     cluster_dims = tuple(mesh.cluster) if mesh.cluster is not None else ()
     grid_dims = tuple(mesh.grid)
@@ -363,7 +362,7 @@ def interpret_pallas_call(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
-    mesh: plgpu.Mesh | None,
+    mesh: mosaic_gpu_core.Mesh | None,
     compiler_params: Mapping[str, Any],
     cost_estimate: pallas_core.CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
