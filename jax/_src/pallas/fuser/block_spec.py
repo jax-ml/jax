@@ -1592,7 +1592,7 @@ def _get_eval_rule(ctx: KernelEvalContext, ref, *idx, tree):
       case pallas_core.Squeezed() | None:
         return i
       case _:
-        raise NotImplementedError('get not supported yet')
+        raise NotImplementedError(f'get not supported yet for block shape {b}')
 
   if (
       ref_block_spec is pallas_core.no_block_spec
@@ -1835,6 +1835,8 @@ def _split_pull_rule(
   assert isinstance(aval_in, core.ShapedArray)
   assert all(isinstance(aval, core.ShapedArray) for aval in ctx.avals_out)
 
+  # turn numpy ints into ints
+  sizes = [int(s) for s in sizes]
   n = sum(sizes)
   if n != aval_in.shape[axis]:
     raise NotImplementedError(
