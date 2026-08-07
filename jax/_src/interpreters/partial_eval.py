@@ -2070,6 +2070,10 @@ def trace_to_jaxpr_nocache(
         TracebackScope()):
     source_info = source_info_util.current()
     if requires_low:
+      if debug_info.arg_names is not None:
+        debug_info = debug_info._replace(arg_names=tuple(
+            name for aval, name in zip(in_avals, debug_info.arg_names)
+            for _ in aval.lo_ty()))
       def new_arg(aval):
         lo_tracers = [trace.new_arg(lo_aval, source_info=source_info) for lo_aval in aval.lo_ty()]  # noqa: F821
         return aval.raise_val(*lo_tracers)
@@ -2103,6 +2107,11 @@ def trace_to_jaxpr_nocache(
       flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
                           for aval, hi_val in zip(out_avals, ans)
                           for x in aval.lower_val(hi_val)]
+      debug_info = debug_info.resolve_result_paths()
+      if debug_info.result_paths is not None:
+        debug_info = debug_info._replace(result_paths=tuple(
+            path for aval, path in zip(out_avals, debug_info.result_paths)
+            for _ in aval.lo_ty()))
     else:
       flat_out_tracers = [trace.to_jaxpr_tracer(x, source_info=source_info)
                           for x in ans]
@@ -2357,6 +2366,23 @@ def lower_jaxpr(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   assert not any(v.aval.is_high for v in it.chain(jaxpr.constvars, jaxpr.invars))
   return jaxpr.with_consts(consts), out_avals
+
+@weakref_lru_cache
+def lower_jaxpr_reference(hi_jaxpr: Jaxpr, lo_avals) -> tuple[Jaxpr, ft.FlatTree]:
+  """Reference implementation of lower_jaxpr, for testing and debugging.
+
+  Swap it in with `pe.lower_jaxpr = pe.lower_jaxpr_reference`; all call sites
+  look the name up at call time.
+  """
+  dbg = _lower_debug_info(hi_jaxpr)
+  return trace_to_jaxpr(partial(_lower_traceable, hi_jaxpr), lo_avals, dbg,
+                        requires_low=True, fun_returns_flat_tree=True)
+
+def _lower_traceable(jaxpr, *lo_args):
+  hi_args = [a.raise_val(*xs) for a, xs in zip(jaxpr.in_avals, lo_args)]
+  hi_outs = core.jaxpr_as_fun(jaxpr)(*hi_args)
+  lo_outs = [a.lower_val2(y) for a, y in zip(jaxpr.out_avals, hi_outs)]
+  return ft.pack(tuple(lo_outs))
 
 # vestigial hijax helpers
 def raise_lo_outs(hi_avals, lo_outs):
