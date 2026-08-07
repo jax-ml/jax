@@ -34,8 +34,8 @@ from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationKey
 from jax._src.pallas.mosaic_gpu.interpret.shared_memory import HostAllocationRequest
 from jax._src.state import indexing
+from jax._src.state import types as state_types
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.pallas import mosaic_gpu as plgpu
 import numpy as np
 
 
@@ -448,6 +448,31 @@ def call_deallocate_buffer(
   )
 
 
+def _window_shape(
+    rnge: tuple[slice | int, ...], shape: Sequence[int]
+) -> tuple[int, ...]:
+  """Returns the shape of the window `rnge` selects from an array of `shape`.
+
+  A range may be shorter than the array's rank, in which case the trailing
+  dimensions are taken in full. Integer entries index a dimension away, so
+  they do not contribute; slice entries contribute their length. The result
+  describes the window that was *asked for*, which for a TMA copy may extend
+  past the end of the array.
+  """
+  window = []
+  for dim, idx in itertools.zip_longest(shape, rnge, fillvalue=None):
+    if idx is None:  # Dimension not indexed, so taken in full.
+      window.append(dim)
+    elif isinstance(idx, (int, np.integer)):
+      continue
+    else:
+      start = 0 if idx.start is None else int(idx.start)
+      step = 1 if idx.step is None else int(idx.step)
+      stop = dim if idx.stop is None else int(idx.stop)
+      window.append((stop - start + step - 1) // step)
+  return tuple(window)
+
+
 def _handle_out_of_bounds_read(
     ret: np.ndarray | None,
     full_read_shape: tuple[int, ...],
@@ -498,6 +523,20 @@ def _handle_out_of_bounds_read(
     return uninit_array
 
 
+# Transforms `to_range` can ignore, because they change neither which elements
+# an access touches nor the order it yields them in:
+# * layout transforms, since a buffer is stored in its logical shape
+# * reshapes of a ref's leading dimensions, since indexes are written against logical shape
+DROPPED_TRANSFORMS = (
+    mosaic_gpu_core.UnswizzleRef,
+    mosaic_gpu_core.SwizzleTransform,
+    mosaic_gpu_core.UntilingTransform,
+    mosaic_gpu_core.TilingTransform,
+    mosaic_gpu_core.CollapseLeadingBatchDimensionsTransform,
+    mosaic_gpu_core.ExpandLeadingBatchDimensionsTransform,
+)
+
+
 def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
   return any(
       isinstance(idx, indexing.Slice)
@@ -506,16 +545,55 @@ def _is_dynamic(indexer: indexing.NDIndexer) -> bool:
   )
 
 
-def _validate_transforms(transforms):
-  for transform in transforms:
-    match transform:
-      case indexing.NDIndexer():
-        if _is_dynamic(transform):
-          raise ValueError(
-              "Dynamic indexing not supported in GPU interpret mode"
-          )
-      case _:
-        raise ValueError(f"Unsupported transform: {transform}")
+def _validate_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
+  """Validates that `transforms` is handleable by interpret mode and
+  filters/modifies transforms to be later useable with _apply_transforms."""
+  # TODO(jburnim): Instead of just filtering out these transforms, should we
+  # check that every access of a buffer uses untiling and/or unswizzling
+  # transforms that match how the buffer was allocated?
+  out = []
+  transpose_seen = None
+  for t in transforms:
+    if isinstance(t, indexing.NDIndexer):
+      if _is_dynamic(t):
+        raise ValueError("Dynamic indexing not supported in GPU interpret mode")
+      if transpose_seen:
+        # `to_range` computes the accessed range in the ref's own coordinates,
+        # so an index applied after `transpose_ref` addresses different
+        # elements than it appears to. Refuse rather than compute it.
+        raise NotImplementedError(
+            "GPU interpret mode does not support indexing a ref after"
+            f" transposing it. Transforms: {transforms}"
+        )
+      out.append(t)
+    elif isinstance(t, state_types.TransposeTransform):
+      transpose_seen = True
+      out.append(t)
+    elif isinstance(t, DROPPED_TRANSFORMS):
+      pass
+    else:
+      raise ValueError(f"Unsupported transform: {t}")
+  return tuple(out)
+
+
+def _apply_transforms(
+    transforms: tuple[Any, ...],
+    value: np.ndarray,
+    *,
+    invert: bool = False,
+) -> np.ndarray:
+  """Applies or undoes a sequence of transforms."""
+  for t in reversed(transforms) if invert else transforms:
+    if isinstance(t, indexing.NDIndexer):
+      pass
+    elif isinstance(t, state_types.TransposeTransform):
+      perm = np.argsort(t.permutation) if invert else t.permutation
+      value = np.transpose(value, perm)
+    elif isinstance(t, DROPPED_TRANSFORMS):
+      pass
+    else:
+      raise ValueError(f"Unsupported transform: {t}")
+  return value
 
 
 def _get(
@@ -535,9 +613,9 @@ def _get(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
   _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
+  transforms = _validate_transforms(transforms)
+  #transforms = jax.tree.map(int, transforms)
 
   if input_name is not None:
     # NOTE: input_name, block_indices, and grid_loop_idx are set only if this
@@ -596,6 +674,8 @@ def _get(
         grid_loop_idx,
     )
 
+  ret = _apply_transforms(ret, transforms)
+
   if shared_memory.detect_races and thread is not None:
     assert clock is not None
     get_races().check_read(
@@ -652,12 +732,16 @@ def _swap(
   allocation_key = HostAllocationKey.from_array(allocation_key_as_array)
   del allocation_key_as_array
 
-  transforms = _remove_noop_transforms(transforms)
   _validate_transforms(transforms)
-  transforms = jax.tree.map(int, transforms)
+  transforms = _validate_transforms(transforms)
+  # transforms = jax.tree.map(int, transforms)
+
+  val_arr = _apply_transforms(np.array(val), transforms, invert=True)
+  mask_arr = None
 
   if mask is not None:
     assert mask.shape == val.shape
+    mask_arr = _apply_transforms(np.array(mask), transforms, invert=True)
 
   shared_memory = _get_shared_memory()
 
@@ -665,8 +749,8 @@ def _swap(
   ret, (shape, _), clock_ = shared_memory.swap_buffer_content(
       allocation_key,
       read_write_range,
-      np.array(val),
-      np.array(mask) if mask is not None else None,
+      val_arr,
+      mask_arr,
       thread,
       increment_clock=increment_clock,
       logging_info=memory.GPULoggingInfo(mesh_location, thread, source_info),
@@ -687,6 +771,8 @@ def _swap(
           f"Out-of-bounds masked swap of {allocation_key}: swapping"
           f" [{read_write_range}] but buffer has shape {shape} . "
       )
+
+  ret = _apply_transforms(ret, transforms)
 
   if shared_memory.detect_races:
     assert clock is not None
@@ -1122,11 +1208,15 @@ class AsyncCopyTask:
 
     self.pre_read(tma_thread_id, shared_memory)
 
-    val, _, _ = shared_memory.get_buffer_content(
+    src_range = interpret_utils.to_range(self.src_transforms)
+    val, (src_shape, src_dtype), _ = shared_memory.get_buffer_content(
         self.src_allocation_key,
-        interpret_utils.to_range(self.src_transforms),
+        src_range,
         self.thread,
         logging_info=self.logging_info,
+    )
+    val = self.fill_out_of_bounds(
+        val, src_range, src_shape, src_dtype, shared_memory
     )
     assert val is not None
 
@@ -1141,6 +1231,18 @@ class AsyncCopyTask:
     )
 
     self.post_write(tma_thread_id, shared_memory)
+
+  def fill_out_of_bounds(
+      self,
+      val: np.ndarray | None,
+      src_range: tuple[slice | int, ...],
+      src_shape: Sequence[int],
+      src_dtype: np.dtype,
+      shared_memory: memory.GPUSharedMemory,
+  ) -> np.ndarray | None:
+    """Pads a copy that reads past the end of its source."""
+    del src_range, src_shape, src_dtype, shared_memory
+    return val
 
   def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     pass
@@ -1159,18 +1261,20 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
 
   barrier: memory.Barrier
   clock: VectorClock | None = None
+  oob_mode: mgpu.OOBFillMode | None = None
 
   def __init__(
       self,
-        mesh_location: memory.MeshLocation,
-        thread: memory.Thread,
-        src_allocation_key: HostAllocationKey,
-        src_transforms: tuple[Any, ...],
-        dst_allocation_key: HostAllocationKey,
-        dst_transforms: tuple[Any, ...],
-        barrier_allocation_key: HostAllocationKey,
-        source_info: source_info_util.SourceInfo | None,
-        clock: VectorClock | None = None,
+      mesh_location: memory.MeshLocation,
+      thread: memory.Thread,
+      src_allocation_key: HostAllocationKey,
+      src_transforms: tuple[Any, ...],
+      dst_allocation_key: HostAllocationKey,
+      dst_transforms: tuple[Any, ...],
+      barrier_allocation_key: HostAllocationKey,
+      source_info: source_info_util.SourceInfo | None,
+      clock: VectorClock | None = None,
+      oob_mode: mgpu.OOBFillMode | None = None,
   ):
     super().__init__(
         mesh_location=mesh_location,
@@ -1183,6 +1287,45 @@ class AsyncCopyGmemToSmemTask(AsyncCopyTask):
     shared_memory = _get_shared_memory()
     self.barrier = shared_memory.get_barrier(barrier_allocation_key)
     self.clock = clock
+    self.oob_mode = oob_mode
+
+  def fill_out_of_bounds(
+      self, val, src_range, src_shape, src_dtype, shared_memory
+  ):
+    """Fills the part of the window that lies past the end of the GMEM array."""
+    # Note that this is allowed behavior for TMA copies and the user specifies
+    # what they want the extra data padded with. This is separate from interpret
+    # mode filling uninitialized memory with a fixed value to detect bugs.
+    window_shape = _window_shape(src_range, src_shape)
+    if val is not None and val.shape == window_shape:
+      return val
+
+    # match default behavior of plgpu.copy_gmem_to_smem
+    oob_mode = (
+        mgpu.OOBFillMode.ZEROS if self.oob_mode is None else self.oob_mode
+    )
+    if oob_mode == mgpu.OOBFillMode.PROMISE_IN_BOUNDS:
+      raise IndexError(
+          f"Out-of-bounds copy from {self.src_allocation_key}: reading"
+          f" [{src_range}] of a buffer with shape {tuple(src_shape)}, but the"
+          " copy promised to stay in bounds"
+          " (`oob_mode=OOBFillMode.PROMISE_IN_BOUNDS`)."
+      )
+    if oob_mode == mgpu.OOBFillMode.ZEROS:
+      fill = np.zeros(window_shape, dtype=src_dtype)
+    else:
+      # `OOBFillMode.UNDEFINED`: the hardware leaves these elements
+      # unspecified, so use the preconfigured interpret mode uninit memory value
+      fill = np.full(
+          window_shape,
+          interpret_utils.get_uninitialized_value(
+              src_dtype, shared_memory.uninitialized_memory
+          ),
+          dtype=src_dtype,
+      )
+    if val is not None:
+      fill[tuple(slice(s) for s in val.shape)] = val
+    return fill
 
   def pre_read(self, tma_thread_id: int, shared_memory: memory.GPUSharedMemory):
     # TODO(paulbib): GMEM updates are only visible to the async proxy (TMA)
@@ -1287,20 +1430,6 @@ class AsyncCopySmemToGmemTask(AsyncCopyTask):
       )
 
 
-NOOP_TRANSFORMS = (
-    mosaic_gpu_core.UnswizzleRef,
-    mosaic_gpu_core.UntilingTransform,
-)
-
-
-def _remove_noop_transforms(transforms: tuple[Any, ...]) -> tuple[Any, ...]:
-  # TODO(jburnim): Instead of just filtering out these transforms, should we
-  # check that every access of a buffer uses untiling and/or unswizzling
-  # transforms that match how the buffer was allocated?
-  return tuple(itertools.dropwhile(lambda t: isinstance(t, NOOP_TRANSFORMS),
-                                   transforms))
-
-
 def wgmma(
     *,
     token: jax.Array,
@@ -1321,9 +1450,9 @@ def wgmma(
   acc_allocation_key = HostAllocationKey.from_array(acc_allocation_key_as_array)
   a_allocation_key = HostAllocationKey.from_array(a_allocation_key_as_array)
   b_allocation_key = HostAllocationKey.from_array(b_allocation_key_as_array)
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
+  a_transforms = _validate_transforms(a_transforms)
+  b_transforms = _validate_transforms(b_transforms)
+  acc_transforms = _validate_transforms(acc_transforms)
 
   shared_memory = _get_shared_memory()
 
@@ -1403,9 +1532,9 @@ def copy_smem_to_gmem(
   # TODO(jburnim,paulbib): Implement commit_group.
   del commit_group
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = _validate_transforms(src_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = _validate_transforms(dst_transforms)
 
   if predicate is not None:
     raise NotImplementedError("predicate not supported")
@@ -1461,10 +1590,11 @@ def copy_gmem_to_smem(
     dst_transforms: tuple[Any, ...],
     barrier_allocation_key_as_array: jax.Array,
     source_info: source_info_util.SourceInfo | None = None,
+    oob_mode: mgpu.OOBFillMode | None = None,
 ):
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = _validate_transforms(src_transforms)
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = _validate_transforms(dst_transforms)
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
   barrier_allocation_key = HostAllocationKey.from_array(
       barrier_allocation_key_as_array
@@ -1486,6 +1616,7 @@ def copy_gmem_to_smem(
       barrier_allocation_key=barrier_allocation_key,
       source_info=source_info,
       clock=clock,
+      oob_mode=oob_mode,
   )
 
   shared_memory = _get_shared_memory()
@@ -1695,21 +1826,16 @@ def tcgen05_mma(
       a_sparse_metadata_allocation_key_as_array
   )
 
-  acc_transforms = jax.tree.map(int, _remove_noop_transforms(acc_transforms))
-  a_transforms = jax.tree.map(int, _remove_noop_transforms(a_transforms))
-  b_transforms = jax.tree.map(int, _remove_noop_transforms(b_transforms))
+  acc_transforms = _validate_transforms(acc_transforms)
+  a_transforms = _validate_transforms(a_transforms)
+  b_transforms = _validate_transforms(b_transforms)
   if a_scale_transforms is not None:
-    a_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_scale_transforms)
-    )
+    a_scale_transforms = _validate_transforms(a_scale_transforms)
   if b_scale_transforms is not None:
-    b_scale_transforms = jax.tree.map(
-        int, _remove_noop_transforms(b_scale_transforms)
-    )
+    b_scale_transforms = _validate_transforms(b_scale_transforms)
   if a_sparse_metadata_transforms is not None:
-    a_sparse_metadata_transforms = jax.tree.map(
-        int, _remove_noop_transforms(a_sparse_metadata_transforms)
-    )
+    a_sparse_metadata_transforms = _validate_transforms(a_sparse_metadata_transforms)
+
   accumulate: bool = bool(accumulate)  # pyrefly: ignore[redefinition]
 
   barrier_key = _maybe_key(barrier_allocation_key_as_array)
@@ -1841,8 +1967,8 @@ def async_copy_smem_to_tmem(
   tmem_allocation_key = HostAllocationKey.from_array(
       tmem_allocation_key_as_array
   )
-  smem_transforms = jax.tree.map(int, _remove_noop_transforms(smem_transforms))
-  tmem_transforms = jax.tree.map(int, _remove_noop_transforms(tmem_transforms))
+  smem_transforms = _validate_transforms(smem_transforms)
+  tmem_transforms = _validate_transforms(tmem_transforms)
 
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
@@ -1923,7 +2049,7 @@ def async_store_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   dst_allocation_key = HostAllocationKey.from_array(dst_allocation_key_as_array)
-  dst_transforms = jax.tree.map(int, _remove_noop_transforms(dst_transforms))
+  dst_transforms = _validate_transforms(dst_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
@@ -1964,7 +2090,7 @@ def async_load_tmem(
     source_info: source_info_util.SourceInfo | None = None,
 ):
   src_allocation_key = HostAllocationKey.from_array(src_allocation_key_as_array)
-  src_transforms = jax.tree.map(int, _remove_noop_transforms(src_transforms))
+  src_transforms = _validate_transforms(src_transforms)
   logging_info = memory.GPULoggingInfo(mesh_location, thread, source_info)
 
   def f(tma_thread_id: int):
@@ -2030,7 +2156,7 @@ def sync_warps_with_warpgroup(
   """Updates the warpgroup's warps' clocks with the warpgroup's clock"""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup, warpgroup.warp(i))
   return token
 
@@ -2043,7 +2169,7 @@ def sync_warpgroup_with_warps(
   """Updates the warpgroup's clock with the warpgroup's warps' clocks."""
   shared_memory = _get_shared_memory()
   if shared_memory.detect_races:
-    for i in range(plgpu.WarpMesh._NUM_WARPS_PER_WARPGROUP):
+    for i in range(mosaic_gpu_core.WarpMesh._NUM_WARPS_PER_WARPGROUP):
       shared_memory.update_clock(warpgroup.warp(i), warpgroup)
   return token
 

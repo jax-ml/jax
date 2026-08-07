@@ -449,6 +449,8 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic_gpu:pipeline",
         "//jax/_src/pallas/mosaic_gpu:primitives",
         "//jax/_src/pallas/mosaic_gpu:torch",
+        "//jax/_src/pallas/mosaic_gpu/interpret:interpret_pallas_call",
+        "//jax/_src/pallas/mosaic_gpu/interpret:params",
     ],
 )
 
