@@ -80,6 +80,32 @@ class PyTreeTest(parameterized.TestCase):
     with self.assertRaises(ValueError):
       self.roundtrip_proto({"a": ExampleType2(field0=o, field1=o)})
 
+  def testDeserializeMalformedProtoIsRejected(self):
+    # Malformed PyTreeDefProto inputs must be rejected with a Python
+    # exception, not crash the interpreter. Each payload is a hand-built
+    # PyTreeDefProto that the legitimate flatten path could never produce
+    # (e.g. a single non-leaf node with no children to absorb).
+    cases = {
+        # Single node with arity=1, type=PY_TREE_KIND_LIST.
+        # Pre-fix this triggered an empty-vector dereference in
+        # SetNumLeavesAndNumNodes.
+        "single_list_arity_1": bytes.fromhex("0a0408011002"),
+        # Single node with arity=2, also inconsistent with the empty
+        # subtree stack at that point.
+        "single_list_arity_2": bytes.fromhex("0a0408021002"),
+        # Two leaves followed by a list claiming arity=3 (only 2 leaves
+        # are available to absorb).
+        "two_leaves_then_list_arity_3": bytes.fromhex(
+            "0a021001"     # leaf
+            "0a021001"     # leaf
+            "0a0408031002" # list, arity=3
+        ),
+    }
+    for name, blob in cases.items():
+      with self.subTest(name=name):
+        with self.assertRaises(ValueError):
+          pytree.PyTreeDef.deserialize_using_proto(registry, blob)
+
   def roundtrip_node_data(self, example):
     original = registry.flatten(example)[1]
     restored = pytree.PyTreeDef.from_node_data_and_children(
