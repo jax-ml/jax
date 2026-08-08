@@ -5200,8 +5200,6 @@ class RaggedTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["tpu"]):
       raise unittest.SkipTest("Test only runs on TPU")
 
-
-
     m, k, n = (8, 8, 8)
     num_groups = 2
     group_size = m // num_groups
@@ -5533,6 +5531,55 @@ class RaggedTest(jtu.JaxTestCase):
       self.assertArraysAllClose(
           batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
       )
+
+  @parameterized.product(
+      batch_size=[3, 5],
+      m=[128, 256],
+      k=[128, 256],
+      n=[128, 256],
+      num_groups=[2, 4],
+  )
+  def test_ragged_dot_general_vmap_tpu(
+      self, batch_size: int, m: int, k: int, n: int, num_groups: int
+  ):
+    if not jtu.test_device_matches(["tpu"]):
+      raise SkipTest("This test is TPU-specific")
+
+    lhs_shape = (batch_size, m, k)
+    rhs_shape = (batch_size, num_groups, k, n)
+    dtype = jnp.float32
+
+    def make_group_sizes(m, num_groups):
+      ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
+      ends = jnp.concatenate(
+          [ends_no_final, jnp.array([m], dtype=ends_no_final.dtype)]
+      )
+      starts = jnp.concatenate(
+          [jnp.zeros(1, dtype=ends_no_final.dtype), ends_no_final]
+      )
+      return ends - starts
+
+    rng = jtu.rand_small(self.rng())
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
+    group_sizes = make_group_sizes(m, num_groups)
+
+    out_dtype = jnp.float32
+    precision = jax.lax.Precision.HIGHEST
+    ragged_dot = partial(
+        jax.lax.ragged_dot,
+        preferred_element_type=out_dtype,
+        precision=precision,
+    )
+    tol = 1e-5
+
+    # Keep the group sizes unbatched.
+    batch_res = jax.vmap(ragged_dot, in_axes=(0, 0, None))(
+        lhs, rhs, group_sizes
+    )
+    for i in range(batch_size):
+      ref_res = ragged_dot(lhs[i], rhs[i], group_sizes)
+      self.assertArraysAllClose(batch_res[i], ref_res, rtol=tol, atol=tol)
 
   @jtu.with_explicit_mesh((1,), ("x",))
   def test_ragged_dot_out_sharding(self, mesh):
