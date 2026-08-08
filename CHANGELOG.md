@@ -24,6 +24,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     Added a configuration flag `--jax_export_deserialize_expired_versions` to
     temporarily bypass the error check.
     See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
+  * {func}`jax.numpy.fill_diagonal` now supports `wrap=True`, matching the
+    NumPy behavior of wrapping the diagonal for tall matrices.
 
 * Breaking changes
   * JAX does not support anymore deserialization of Exported modules from
