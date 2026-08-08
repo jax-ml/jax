@@ -81,7 +81,9 @@ package_group(
 package_group(
     name = "serialize_executable_users",
     includes = ["//jax:internal"],
-    packages = serialize_executable_internal_users,
+    packages = serialize_executable_internal_users + [
+        "//jaxite/...",
+    ],
 )
 
 pytype_strict_library(
