@@ -25,8 +25,19 @@ Device = _jax.Device
 
 
 class TopologyDescription:
+
   def __init__(self, devices: list[Device]):
     self.devices: list[Device] = devices
+
+  @classmethod
+  def deserialize(
+      cls, serialized: bytes, platform: str = "tpu"
+  ) -> TopologyDescription:
+    """Deserializes a PJRt C API topology from a protobuf byte string."""
+    device_topology = xb.make_pjrt_topology(
+        platform, serialized_topology=serialized
+    )
+    return cls(device_topology._make_compile_only_devices())
 
 
 def get_attached_topology(platform=None) -> TopologyDescription:

@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
+#include "xla/python/ifrt/serdes.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/ifrt/user_context_status_util.h"
@@ -586,6 +587,36 @@ void PyLoadedExecutable::Register(nb::module_& m) {
                  xla::ValueOrThrow(exec.ifrt_loaded_executable()->Serialize());
              return nb::bytes(serialized.data(), serialized.size());
            })
+      .def(
+          "get_executable_version",
+          [](const PyLoadedExecutable& exec) -> nb::object {
+            // Standard PJRT backends (e.g., GPU, TPU) currently do not track
+            // XLA executable versions and may return an error or null. We
+            // gracefully degrade to None (nb::none()) here.
+            // TODO(b/477624817): Remove this graceful degradation once PJRT
+            // fully supports ABI version tracking.
+            if (exec.ifrt_loaded_executable() == nullptr) {
+              return nb::none();
+            }
+            auto version = exec.ifrt_loaded_executable()->executable_version();
+            if (!version.ok()) {
+              if (version.status().code() == absl::StatusCode::kUnimplemented ||
+                  version.status().code() == absl::StatusCode::kNotFound) {
+                return nb::none();
+              }
+              xla::ThrowIfError(version.status());
+            }
+            if (!*version) {
+              return nb::none();
+            }
+            auto serialized =
+                xla::ValueOrThrow(xla::ifrt::Serialize(**version, nullptr));
+            std::string serialized_str;
+            if (!serialized.SerializeToString(&serialized_str)) {
+              throw nb::value_error("Failed to serialize ExecutableVersion");
+            }
+            return nb::bytes(serialized_str.data(), serialized_str.size());
+          })
       .def("size_of_generated_code_in_bytes",
            &PyLoadedExecutable::SizeOfGeneratedCodeInBytes)
       .def(

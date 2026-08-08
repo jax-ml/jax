@@ -62,6 +62,7 @@ limitations under the License.
 #include "xla/pjrt/distributed/protocol.pb.h"
 #include "xla/pjrt/distributed/service.h"
 #include "xla/pjrt/pjrt_compiler.h"
+#include "xla/pjrt/pjrt_topology_description_registry.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
@@ -573,9 +574,14 @@ NB_MODULE(_jax, m) {
         [](nb::capsule c_api, std::string topology_name,
            const absl::flat_hash_map<std::string, xla::PjRtValueType>& options)
             -> std::shared_ptr<xla::ifrt::Topology> {
-          if (std::string_view(c_api.name()) != "pjrt_c_api") {
+          if (c_api.name() == nullptr ||
+              std::string_view(c_api.name()) != "pjrt_c_api") {
             throw nb::value_error(
                 "Argument to get_c_api_topology was not a pjrt_c_api capsule.");
+          }
+          if (c_api.data() == nullptr) {
+            throw nb::value_error(
+                "Argument to get_c_api_topology contained a null pointer.");
           }
           return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
               xla::GetCApiTopology(static_cast<const PJRT_Api*>(c_api.data()),
@@ -998,6 +1004,42 @@ NB_MODULE(_jax, m) {
                             topology))
                  ->Devices();
            })
+      .def(
+          "serialize",
+          [](const xla::ifrt::Topology& topology) -> nb::bytes {
+            const auto* pjrt_topology =
+                llvm::dyn_cast<xla::ifrt::PjRtTopology>(&topology);
+            if (pjrt_topology == nullptr) {
+              throw xla::XlaRuntimeError(
+                  "Only PjRtTopologies can be serialized.");
+            }
+            const auto& description = pjrt_topology->description();
+            if (description == nullptr) {
+              throw xla::XlaRuntimeError(
+                  "Topology description is null; cannot serialize.");
+            }
+            auto proto = xla::ValueOrThrow(description->ToProto());
+            std::string serialized = proto.SerializeAsString();
+            return nb::bytes(serialized.data(), serialized.size());
+          },
+          "Serializes the DeviceTopology to a PjRtTopologyDescriptionProto "
+          "bytes payload.")
+      .def_static(
+          "deserialize",
+          [](nb::bytes serialized) -> std::shared_ptr<xla::ifrt::Topology> {
+            xla::PjRtTopologyDescriptionProto proto;
+            if (!proto.ParseFromArray(serialized.data(),
+                                      static_cast<int>(serialized.size()))) {
+              throw nb::value_error(
+                  "Failed to parse PjRtTopologyDescriptionProto from "
+                  "serialized bytes.");
+            }
+            return std::make_shared<xla::ifrt::PjRtTopology>(xla::ValueOrThrow(
+                xla::PjRtTopologyDescriptionFromProto(proto)));
+          },
+          nb::arg("serialized"),
+          "Deserializes a DeviceTopology from a PjRtTopologyDescriptionProto "
+          "bytes payload.")
       .def_prop_ro("platform",
                    [](xla::ifrt::Topology& topology) {
                      return topology.platform_name();
