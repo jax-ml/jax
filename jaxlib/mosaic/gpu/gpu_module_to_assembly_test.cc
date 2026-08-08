@@ -233,4 +233,30 @@ TEST_F(GpuModuleToAssemblyTest,
               Not(HasSubstr("extern .func")));
 }
 
+TEST_F(GpuModuleToAssemblyTest,
+       FixInlineAsmLocInfoInPTXRemovesLocDirectivesInsideInlineAsm) {
+  constexpr llvm::StringLiteral kInputPtx = R"(
+    .loc 1 10 0
+    // begin inline asm
+      .loc	1 11 0
+      bar.sync 0;
+      .loc	1 12 0
+      mov.u32 %r0, %r1;
+    // end inline asm
+    .loc 1 13 0
+    )";
+
+  constexpr llvm::StringLiteral kExpectedPtx = R"(
+    .loc 1 10 0
+    // begin inline asm
+      bar.sync 0;
+      mov.u32 %r0, %r1;
+    // end inline asm
+    .loc 1 13 0
+    )";
+
+  EXPECT_EQ(mosaic::gpu::internal::FixInlineAsmLocInfoInPTX(kInputPtx),
+            kExpectedPtx);
+}
+
 }  // anonymous namespace
