@@ -3074,9 +3074,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, axis=axis, num_sections=num_sections)
       for shape, axis, num_sections in [
-          ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((3,), 0, [-1]),
-          ((12, 4), 1, 2), ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3),
-          ((12, 4), 0, [2, -2])]
+          ((3,), 0, 3), ((12,), 0, 3), ((12, 4), 0, 4), ((12, 4), 1, 2),
+          ((2, 3, 4), -1, 2), ((2, 3, 4), -2, 3)]
     ],
     dtype=default_dtypes,
   )
@@ -3093,8 +3092,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       # All testcases split the specified axis unequally
       for shape, axis, num_sections in [
           ((3,), 0, 2), ((12,), 0, 5), ((12, 4), 0, 7), ((12, 4), 1, 3),
-          ((2, 3, 5), -1, 2), ((2, 4, 4), -2, 3), ((7, 2, 2), 0, 3),
-          ((12,), 0, [2, -1])]
+          ((2, 3, 5), -1, 2), ((2, 4, 4), -2, 3), ((7, 2, 2), 0, 3)]
     ],
     dtype=default_dtypes,
   )
@@ -3102,6 +3100,43 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda x: np.array_split(x, num_sections, axis=axis)
     jnp_fun = lambda x: jnp.array_split(x, num_sections, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis, indices=indices)
+      # Includes negative and out-of-bound indices, which numpy resolves
+      # relative to the axis size and then clips to [0, size].
+      for shape, axis, indices in [
+          ((3,), 0, [-1]), ((12,), 0, [2, -1]), ((12, 4), 0, [2, -2]),
+          ((12, 4), 1, [-3, -1]), ((2, 3, 4), -1, [1, -1]),
+          ((2, 3, 4), -2, [-2]), ((3,), 0, [-5]), ((3,), 0, [5]),
+          ((3,), 0, [-5, 5]), ((12,), 0, [0, 12]), ((12,), 0, [20, 30])]
+    ],
+    dtype=default_dtypes,
+  )
+  def testSplitIndices(self, shape, indices, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x: np.split(x, indices, axis=axis)
+    jnp_fun = lambda x: jnp.split(x, indices, axis=axis)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis, indices=indices)
+      for shape, axis, indices in [
+          ((3,), 0, [-1]), ((12,), 0, [5, -2]), ((12, 4), 0, [7, -3]),
+          ((12, 4), 1, [-1]), ((2, 3, 5), -1, [1, -1]), ((7, 2, 2), 0, [-5]),
+          ((3,), 0, [-5]), ((3,), 0, [5])]
+    ],
+    dtype=default_dtypes,
+  )
+  def testArraySplitIndices(self, shape, indices, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    np_fun = lambda x: np.array_split(x, indices, axis=axis)
+    jnp_fun = lambda x: jnp.array_split(x, indices, axis=axis)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
@@ -3223,8 +3258,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     [dict(shape=shape, axis=axis, num_sections=num_sections)
       for shape, axis, num_sections in [
           ((12, 4), 0, 4), ((12,), 1, 2),
-          ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2),
-          ((12, 4), 0, [1, -2]), ((12, 4), 1, [-1]), ((2, 3, 4), 2, [-2])]],
+          ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2)]],
     dtype=default_dtypes,
   )
   def testHVDSplit(self, shape, num_sections, axis, dtype):
@@ -3240,6 +3274,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     np_fun = lambda x: fn(np, axis)(x, num_sections)
     jnp_fun = lambda x: fn(jnp, axis)(x, num_sections)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis, indices=indices)
+      for shape, axis, indices in [
+          ((12, 4), 0, [1, -2]), ((12, 4), 1, [-1]), ((2, 3, 4), 2, [-2]),
+          ((4, 3, 4), 0, [-1, 5])]],
+    dtype=default_dtypes,
+  )
+  def testHVDSplitIndices(self, shape, indices, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    def fn(module, axis):
+      if axis == 0:
+        return module.vsplit
+      elif axis == 1:
+        return module.hsplit
+      else:
+        assert axis == 2
+        return module.dsplit
+
+    np_fun = lambda x: fn(np, axis)(x, indices)
+    jnp_fun = lambda x: fn(jnp, axis)(x, indices)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
