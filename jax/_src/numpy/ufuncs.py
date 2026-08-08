@@ -1132,6 +1132,24 @@ def arctanh(x: ArrayLike, /) -> Array:
   return out
 
 
+@custom_jvp
+def _complex_sqrt(x: Array) -> Array:
+  out = lax.sqrt(x)
+  imag = lax.imag(x)
+  out_imag = lax.imag(out)
+  return lax.complex(
+      lax.real(out),
+      _where(imag == 0, copysign(out_imag, imag), out_imag))
+
+
+@_complex_sqrt.defjvp
+def _complex_sqrt_jvp(primals, tangents):
+  x, = primals
+  tangent, = tangents
+  out = _complex_sqrt(x)
+  return out, lax.mul(tangent, lax.div(_lax_const(x, 0.5), out))
+
+
 @export
 @jit(inline=True)
 def sqrt(x: ArrayLike, /) -> Array:
@@ -1162,7 +1180,11 @@ def sqrt(x: ArrayLike, /) -> Array:
     >>> jnp.sqrt(-1)
     Array(nan, dtype=float32, weak_type=True)
   """
-  out = lax.sqrt(*promote_args_inexact('sqrt', x))
+  x, = promote_args_inexact('sqrt', x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    out = _complex_sqrt(x)
+  else:
+    out = lax.sqrt(x)
   jnp_error._set_error_if_nan(out)
   return out
 
