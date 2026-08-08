@@ -130,3 +130,39 @@ def pairwise(f, xs):
 Suppose `xs` is a matrix whose M rows are each N-dimensional points, and that
 `dist(x, y)` computes the distance between two N-dimensional vectors. Then
 `pairwise(dist, xs)` is the M-by-M matrix of pairwise distances among `xs`.
+
+## Named axes and collectives
+
+`vmap` supports named axes via the `axis_name` argument. This allows
+collective operations such as `lax.psum` to operate across the mapped axis.
+
+```{code-cell}
+def normalize(x):
+  total = jax.lax.psum(x, axis_name='i')
+  return x / total
+
+xs = jnp.arange(4.)
+
+jax.vmap(normalize, axis_name='i')(xs)
+```
+
+Other collectives such as {func}`jax.lax.pmean`, {func}`jax.lax.pmax`, and {func}`jax.lax.pmin`
+can also be used with named axes under {func}`jax.vmap`.
+
+```{code-cell}
+xs = jnp.array([1., 2., 3., 4.])
+
+def centered(x):
+  mean = jax.lax.pmean(x, axis_name='i')
+  max_val = jax.lax.pmax(x, axis_name='i')
+  min_val = jax.lax.pmin(x, axis_name='i')
+  return {
+      'value': x,
+      'mean': mean,
+      'max': max_val,
+      'min': min_val,
+      'centered': x - mean,
+  }
+
+jax.vmap(centered, axis_name='i')(xs)
+```
