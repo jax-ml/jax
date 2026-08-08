@@ -117,6 +117,9 @@ cc_library(
 cc_test(
     name = "mosaic_gpu_test",
     srcs = ["mosaic_gpu_test.cc"],
+    # With -fvisibility=hidden (.bazelrc, posix) the dynamic-mode .so deps
+    # export no symbols, so the default linkstatic = 0 fails to link.
+    linkstatic = True,
     deps = [
         ":mosaic_gpu",
         "@com_google_absl//absl/container:flat_hash_set",

@@ -93,6 +93,9 @@ cc_library(
 cc_test(
     name = "dump_test",
     srcs = ["dump_test.cc"],
+    # With -fvisibility=hidden (.bazelrc, posix) the dynamic-mode .so deps
+    # export no symbols, so the default linkstatic = 0 fails to link.
+    linkstatic = True,
     deps = [
         ":dump",
         "@com_google_googletest//:gtest_main",
@@ -103,6 +106,7 @@ cc_test(
 cc_test(
     name = "gpu_module_to_assembly_test",
     srcs = ["gpu_module_to_assembly_test.cc"],
+    linkstatic = True,  # See dump_test.
     deps = [
         ":passes",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
@@ -392,6 +396,7 @@ cc_test(
     name = "custom_call_test",
     srcs = ["custom_call_test.cc"],
     args = ["--heap_check="],  # TODO(b/452513034): Enable heapcheck once the bug is fixed.
+    linkstatic = True,  # See dump_test.
     local_defines = [
         "ABSL_DEFINE_UNQUALIFIED_STATUS_MACROS=1",
     ],
