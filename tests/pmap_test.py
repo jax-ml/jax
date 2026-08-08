@@ -745,21 +745,22 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
     # test that we can handle device movement on dispatch
-    bufs = y._arrays[::-1]
-    devices = [list(b.devices())[0] for b in bufs]
-    mesh = jax.sharding.Mesh(devices, 'i')
-    sharding = jax.sharding.NamedSharding(mesh, y.sharding.spec)
-    f = pmap(inner_f, axis_name='i', devices=devices)
-    y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
-    z = f(y)
-    self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
+    if jtu.device_under_test() != 'gpu':
+      bufs = y._arrays[::-1]
+      devices = [list(b.devices())[0] for b in bufs]
+      mesh = jax.sharding.Mesh(devices, 'i')
+      sharding = jax.sharding.NamedSharding(mesh, y.sharding.spec)
+      f = pmap(inner_f, axis_name='i', devices=devices)
+      y = jax.make_array_from_single_device_arrays(y.shape, sharding, bufs)
+      z = f(y)
+      self.assertAllClose(z, 2 * 2 * x[::-1], check_dtypes=False)
 
-    # test that the repr doesn't crash
-    repr(z)
+      # test that the repr doesn't crash
+      repr(z)
 
-    # test that we can lexically capture a sda as a constant.
-    g = jit(lambda z: z + y)
-    self.assertAllClose(g(7), y + 7)
+      # test that we can lexically capture a sda as a constant.
+      g = jit(lambda z: z + y)
+      self.assertAllClose(g(7), y + 7)
 
   # Tests edge cases in lax._reshape_sharded_device_array
   @parameterized.named_parameters(
@@ -2495,6 +2496,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_array, inp_data)
 
   def test_pmap_array_devices_mismatch(self):
+    if jtu.device_under_test() == 'gpu':
+      raise SkipTest("XLA:GPU does not support non-IOTA device assignment.")
     if jax.device_count() <= 1:
       raise unittest.SkipTest('Skipping because this test needs more than '
                               '1 device.')
