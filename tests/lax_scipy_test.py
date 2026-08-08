@@ -173,6 +173,31 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
 
+  def testLogSumExpZeroBGrad(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/37633:
+    # the jacobian with respect to `b` was zero at positions where `b == 0`
+    # because the implementation substituted `a -> -inf` at those positions,
+    # which killed gradient flow.
+    a = jnp.zeros(3)
+    b = jnp.array([2.0, 0.0, 5.0])
+    # When `a == 0`, `logsumexp(a, b=b) == log(sum(b))`, so the jacobian with
+    # respect to each entry of `b` is `1 / sum(b)`, regardless of whether that
+    # entry is zero.
+    expected = jnp.full((3,), 1.0 / b.sum())
+    actual_fwd = jax.jacfwd(lambda x: lsp_special.logsumexp(a, b=x))(b)
+    actual_rev = jax.jacrev(lambda x: lsp_special.logsumexp(a, b=x))(b)
+    self.assertAllClose(actual_fwd, expected)
+    self.assertAllClose(actual_rev, expected)
+
+  def testLogSumExpPreservesNaN(self):
+    # Companion to testLogSumExpZeroBGrad: the NaN mask introduced for the
+    # `0 * inf` corner at `b == 0` positions must NOT swallow legitimate NaN
+    # values arising from NaN inputs at `b != 0` positions.
+    self.assertTrue(jnp.isnan(lsp_special.logsumexp(
+        jnp.array([jnp.nan, 0.0]), b=jnp.array([1.0, 1.0]))))
+    self.assertTrue(jnp.isnan(lsp_special.logsumexp(
+        jnp.array([0.0, 0.0]), b=jnp.array([1.0, jnp.nan]))))
+
   def testLogSumExpOnes(self):
     # Regression test for https://github.com/jax-ml/jax/issues/7390
     args_maker = lambda: [np.ones(4, dtype='float32')]

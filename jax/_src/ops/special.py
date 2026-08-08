@@ -78,18 +78,37 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
     a = jnp.where(where, a, 0)
   if b is not None:
     a_arr, b_arr = promote_args_inexact("logsumexp", a, b)
-    a_arr = jnp.where(b_arr != 0, a_arr, -np.inf)
+    # Mask `a` to `-inf` at positions where `b == 0` for the `amax` computation
+    # only. We must NOT propagate the substitution into the `exp(a - amax)` step
+    # used for the sum: doing so kills the gradient with respect to `b` at
+    # `b == 0` positions (the substituted `a` looks like a constant to autodiff,
+    # so `exp_a` becomes 0 there, and `d/db (exp_a * b) = exp_a = 0` instead of
+    # the correct `exp(a - amax)`). See #37633.
+    a_for_amax = jnp.where(b_arr != 0, a_arr, -np.inf)
   else:
     a_arr, = promote_args_inexact("logsumexp", a)
     b_arr = a_arr  # for type checking
+    a_for_amax = a_arr
   pos_dims, dims = _reduction_dims(a_arr, axis)
-  amax = reductions.max(a_arr.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
+  amax = reductions.max(a_for_amax.real, axis=dims, keepdims=keepdims, where=where, initial=-np.inf)
   amax = lax.stop_gradient(lax.select(ufuncs.isfinite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
 
   exp_a = lax.exp(lax.sub(a_arr, amax_with_dims.astype(a_arr.dtype)))
   if b is not None:
+    # `b * exp(a - amax)` is `0` at `b == 0` positions and finite-`a`, but is
+    # `0 * inf = NaN` at `b == 0`, `a == +inf` positions. Mask those NaNs back
+    # to 0 (the mathematically intended contribution) after the multiplication
+    # so that the gradient with respect to `b` at `b == 0`, finite-`a` positions
+    # passes through correctly (the NaN mask does not trigger there). Scope the
+    # mask to `b == 0` positions so legitimate NaNs that arise from NaN inputs
+    # in `a` or `b` (at `b != 0` positions) are preserved as NaN.
     exp_a = lax.mul(exp_a, b_arr)
+    exp_a = lax.select(
+        lax.bitwise_and(lax.eq(b_arr, lax.full_like(b_arr, 0)), ufuncs.isnan(exp_a)),
+        lax.full_like(exp_a, 0),
+        exp_a,
+    )
   sumexp = exp_a.sum(axis=dims, keepdims=keepdims, where=where)
   sign = lax.sign(sumexp)
   if return_sign or not np.issubdtype(a_arr.dtype, np.complexfloating):
