@@ -615,9 +615,9 @@ def _apply_mask_and_soft_cap(
   masks = []
   if mask_ref is not None:
     if k_in_lanes:
-      mask = mask_ref[:, k_slice]
+      mask = mask_ref[:, k_slice].astype(jnp.bool_)
     else:
-      mask = mask_ref[k_slice, :]
+      mask = mask_ref[k_slice, :].astype(jnp.bool_)
 
     masks.append(
         jnp.bitwise_or(mask, jnp.broadcast_to(should_not_mask, mask.shape))
@@ -932,10 +932,12 @@ def _splash_attention_forward(
   partial_mask_blocks = fwd_mask_info.partial_mask_blocks
   if (
       partial_mask_blocks is not None
-      and jnp.dtype(partial_mask_blocks.dtype) != np.bool_
+      and
+      (jnp.dtype(partial_mask_blocks.dtype) != np.bool_
+      and jnp.dtype(partial_mask_blocks.dtype) != jnp.int8)
   ):
     raise ValueError(
-        "partial_mask_blocks must be of type np.bool_ but got"
+        "partial_mask_blocks must be of type np.bool_ or np.int8 but got"
         f" {partial_mask_blocks.dtype}"
     )
 
