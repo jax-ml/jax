@@ -888,6 +888,54 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(fun, (operand,), gradient_order, ["fwd", "rev"], tol, tol,
                 eps)
 
+  def testReduceWindowVariadicJVPIntegerOperand(self):
+    dims = (1, 2)
+    strides = (1, 2)
+    padding = ((0, 0), (0, 0))
+    init_values = (np.asarray(0, dtype=np.int32),
+                   np.array(-np.inf, dtype=np.float32))
+
+    def reducer(xs, ys):
+      x1, x2 = xs
+      y1, y2 = ys
+      which = x2 >= y2
+      return (lax.select(which, x1, y1), lax.select(which, x2, y2))
+
+    def fun(operand):
+      indices = lax.broadcasted_iota(np.int32, operand.shape, 1)
+      return lax.reduce_window((indices, operand), init_values, reducer, dims,
+                               strides, padding)
+
+    operand = np.array([[3., 1., 4., 1.], [5., 9., 2., 6.]], dtype=np.float32)
+    (indices, values), (indices_dot, values_dot) = jax.jvp(
+        fun, (operand,), (np.ones_like(operand),))
+    self.assertArraysEqual(indices, np.array([[0, 2], [1, 3]], dtype=np.int32))
+    self.assertAllClose(values, np.array([[3., 4.], [9., 6.]], dtype=np.float32))
+    self.assertArraysEqual(indices_dot,
+                           np.zeros(indices.shape, dtype=dtypes.float0))
+    self.assertAllClose(values_dot, np.ones_like(values))
+
+  def testReduceWindowVariadicJVPSymbolicZeroOperand(self):
+    dims = (2,)
+    strides = (2,)
+    padding = ((0, 0),)
+    init_values = (np.asarray(0, dtype=np.float32),
+                   np.array(-np.inf, dtype=np.float32))
+    const = np.array([10., 20., 30., 40.], dtype=np.float32)
+
+    def reducer(xs, ys):
+      x1, x2 = xs
+      y1, y2 = ys
+      which = x2 >= y2
+      return (lax.select(which, x1 + x2, y1 + y2), lax.select(which, x2, y2))
+
+    def fun(operand):
+      return lax.reduce_window((const, operand), init_values, reducer, dims,
+                               strides, padding)
+
+    operand = np.array([3., 1., 4., 1.], dtype=np.float32)
+    check_grads(fun, (operand,), 1, ["fwd"], eps=1e-2)
+
   @jtu.sample_product(
     [dict(op=op, dtype=dtype)
       for op, types in [
