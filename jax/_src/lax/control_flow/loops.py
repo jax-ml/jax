@@ -1218,6 +1218,15 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
                         ft_in, ft_out, unroll):
   orig_batched = [d is not None for d in dims]
   const_batched, init_batched, xs_batched = ft_in.update(orig_batched).unpack()
+  consts, init, xs = ft_in.update(args).unpack()
+  consts_bdims, init_bdims, xs_bdims = ft_in.update(dims).unpack()
+
+  # A batched const which is a Ref can't have its batch dimension moved to the
+  # front, since that would require transposing the underlying mutable memory.
+  # Instead we batch the body jaxpr along the dimension the ref already has.
+  const_axes = [d if d is not None and isinstance(typeof(x), AbstractRef)
+                else 0 if b else None
+                for x, d, b in zip(consts, consts_bdims, const_batched)]
 
   # Fixpoint computation of which carry are batched: either
   # batched from init, or the carry out is batched. Each iteration promotes
@@ -1226,10 +1235,13 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   # carry_batched.
   carry_batched = init_batched
   for _ in range(1 + len(carry_batched)):
-    batched = list(ft.pack((const_batched, carry_batched, xs_batched)))
-    jaxpr_batched, batched_out = batching.batch_jaxpr(
-        jaxpr, axis_data, batched,
-        instantiate=list(carry_batched) + [False] * len(ft_out.unpack()[1]))
+    in_axes = (const_axes + [0 if b else None for b in carry_batched]
+               + [0 if b else None for b in xs_batched])
+    instantiate = list(carry_batched) + [False] * len(ft_out.unpack()[1])
+    out_axes_dest = [0 if inst else batching.zero_if_mapped
+                     for inst in instantiate]
+    jaxpr_batched, batched_out = batching.batch_jaxpr_axes(
+        jaxpr, axis_data, in_axes, out_axes_dest)
     carry_batched_out, ys_batched = ft_out.update(batched_out).unpack()
     if list(carry_batched_out) == list(carry_batched):
       break
@@ -1238,10 +1250,8 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   else:
     assert False, "Fixpoint not reached"
 
-  consts, init, xs = ft_in.update(args).unpack()
-  consts_bdims, init_bdims, xs_bdims = ft_in.update(dims).unpack()
-  new_consts = [batching.moveaxis(x, d, 0) if d is not None and d != 0
-                else x for x, d in zip(consts, consts_bdims)]
+  new_consts = [batching.moveaxis(x, d, 0) if a == 0 and d != 0 else x
+                for x, d, a in zip(consts, consts_bdims, const_axes)]
   new_init = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
               if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
