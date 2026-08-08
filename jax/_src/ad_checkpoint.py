@@ -1099,28 +1099,34 @@ class RematTraced(VJPHiPrimitive):
   def expand(self, *args):
     return pe._call_jaxpr(self.jaxpr, args)
 
-  def vjp_fwd(self, _nzs_in, *primals):
+  def vjp_fwd(self, nzs_in, *primals):
     # TODO eval_jaxpr_p trace time
     self._check_differentiable()
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
+    in_nzs = tuple(tree_leaves(nzs_in))
+    out_nzs_cell = []
+    def make_vjp(*xs):
+      _, f_vjp = api.vjp(fwd2, *xs, in_nzs=in_nzs)
+      out_nzs_cell.append(f_vjp.out_nzs)  # pyrefly: ignore[missing-attribute]
+      return f_vjp
     with config.mutable_array_checks(False):
-      traced_vjp = api.jit(lambda *xs: api.vjp(fwd2, *xs)[1]).trace(*primals)
+      traced_vjp = api.jit(make_vjp).trace(*primals)
     used, rem = dce(traced_vjp, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
     if isinstance(self.prevent_cse, bool):
       prevent_cse = self.prevent_cse
     else:
       prevent_cse = tuple(f for f, u in zip(self.prevent_cse, used) if u)
-    # TODO(mattjj): propagate symbolic zeros more generally
-    nzs_out = [getattr(a.to_tangent_aval(), 'dtype', None) is not dtypes.float0
-               for a in self.out_aval]
-    return primals_out, (primals_, Static(prevent_cse), rem), nzs_out
+    out_nzs, = out_nzs_cell
+    return primals_out, (primals_, Static(prevent_cse), rem), list(out_nzs)
 
   def vjp_bwd(self, primals_rem, outgrad, *arg_accums):
     primals, prevent_cse, rem = primals_rem
     prevent_cse = prevent_cse.val
+    outgrad = tree_map(ad_util.instantiate, outgrad,
+                       is_leaf=lambda x: isinstance(x, ad_util.Zero))
     if prevent_cse is not False:
       which = ([True] * len(primals) if prevent_cse is True else
                list(prevent_cse))
@@ -1148,18 +1154,26 @@ class RematTraced(VJPHiPrimitive):
     traced = core.jaxpr_as_fun(self.jaxpr)
     primals_out, fwd2 = remat_transform(self.policy, traced, *primals,
                                         custom_vjp_rules=True)
+    in_nzs = tuple(tree_leaves(nzs_in))
+    out_nzs_cell = []
+    def make_lin(*xs):
+      _, f_jvp = api.linearize(fwd2, *xs, in_nzs=in_nzs)
+      out_nzs_cell.append(f_jvp.out_nzs)  # pyrefly: ignore[missing-attribute]
+      return f_jvp
     with config.mutable_array_checks(False):
-      traced_lin = api.jit(
-          lambda *xs: api.linearize(fwd2, *xs)[1]).trace(*primals)
+      traced_lin = api.jit(make_lin).trace(*primals)
     used, rem = dce(traced_lin, self.policy)
     primals_ = [x for x, u in zip(tree_leaves(primals), used) if u]
-    return primals_out, (primals_, rem)
+    out_nzs, = out_nzs_cell
+    return primals_out, (primals_, rem, tuple(out_nzs)), list(out_nzs)
 
   def linearized(self, primals_rem, *tangents):  # pyrefly: ignore[bad-param-name-override]
-    primals, rem = primals_rem
+    primals, rem, out_nzs = primals_rem
     lin = rem(*lax_internal.optimization_barrier(primals))
     tangents = map(ad_util.instantiate, tangents)  # TODO
-    return lin(*tangents)
+    outs = lin(*tangents)
+    return [o if nz else ad_util.Zero(typeof(o))
+            for o, nz in zip(outs, out_nzs)]
 
   def batch(self, axis_data, args, dims):
     jaxpr_batched, out_batched = batching.batch_jaxpr_axes(

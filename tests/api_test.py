@@ -4147,6 +4147,25 @@ class APITest(jtu.JaxTestCase):
     with config.remat3(True), jax.checking_leaks():
       jax.grad(f)(jnp.ones(3), jnp.ones((2, 3)))  # doesn't crash
 
+  def test_leak_checker_remat3_zero_tangent_output_stays_concrete(self):
+    def f(x):
+      y, aux = jax.remat(lambda x: (jnp.sin(x), lax.stop_gradient(x) * 2.0))(x)
+      self.assertNotIsInstance(aux, core.Tracer)
+      return y
+
+    with config.remat3(True), jax.checking_leaks():
+      jax.value_and_grad(f)(3.0)  # doesn't crash
+
+  def test_leak_checker_remat3_linearize_zero_tangent_output(self):
+    def f(x):
+      y, aux = jax.remat(lambda x: (jnp.sin(x), lax.stop_gradient(x) * 2.0))(x)
+      self.assertNotIsInstance(aux, core.Tracer)
+      return y
+
+    with config.remat3(True), jax.checking_leaks():
+      _, f_jvp = jax.linearize(f, 3.0)
+    self.assertAllClose(f_jvp(1.0), jnp.cos(3.0))
+
   def test_leak_checker_catches_a_sublevel_leak(self):
     with jax.checking_leaks():
       @jit
@@ -4240,6 +4259,17 @@ class APITest(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           Exception, r"local variable 'sneaky' of the frame .*scope"):
         scope()
+
+  def test_leak_checker_catches_linearize_tracer_escape(self):
+    sneaky = None
+    def f(x):
+      nonlocal sneaky
+      sneaky = jnp.sin(x)
+      return sneaky * 2.0
+
+    with jax.checking_leaks():
+      with self.assertRaisesRegex(Exception, r"Leaked trace LinearizeTrace"):
+        jax.value_and_grad(f)(1.0)
 
   def test_why_alive_ref_chain_ending_in_frame_local(self):
     class Sentinel:
