@@ -29,7 +29,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import hijax
-from jax._src import numpy as jnp
 from jax._src import state
 from jax._src import flattree as ft
 from jax._src import tree_util
@@ -385,48 +384,39 @@ def _mpmd_map_batching_rule(
             " inputs instead."
         )
 
-  if axis_data.size != 1:
-    raise NotImplementedError(
-        "mpmd_map only supports batching with a batch dimension of 1, got"
-        f" {axis_data.size}"
-    )
+  # Move the batch dimension to axis 0 for all batched args.
+  moved_args = [
+      batching.moveaxis(arg, dim, 0) if dim is not None else arg
+      for arg, dim in zip(args, dims)
+  ]
 
-  squeezed_args = []
-  for arg, dim in zip(args, dims):
-    if dim is None:
-      squeezed_args.append(arg)
-    elif isinstance(arg_aval := jax_core.typeof(arg), state.AbstractRef):
-      # This is a bit of a hack. We rely on the fact that JAX does not have
-      # true mutable refs, and thus it is effectively free to squeeze-copy
-      # the underlying array like we do below.
-      #
-      # TODO(slebedev): Add first class support for ``TransformedRef``s to
-      # ``mpmd_map`` and get rid of this.
-      squeezed_args.append(
-          jax_core.new_ref(
-              jnp.squeeze(arg[...], dim),
-              memory_space=arg_aval.memory_space,
-          )
-      )
-    else:
-      squeezed_args.append(jnp.squeeze(arg, dim))
+  # Batch each jaxpr
+  batched_jaxprs = []
+  all_meshes = (*meshes, *params.get("external_meshes", ()))
+  for mesh, jaxpr in zip(meshes, jaxprs):
+    in_axes = (
+        tuple(0 if d is not None else None for d in dims)
+        + (0,) * (len(jaxpr.invars) - len(args))  # out + scratch
+    )
+    with mpmd_map_tracing_context(mesh, all_meshes):
+      batching._batch_jaxpr2.cache_clear()
+      batched_jaxpr, _ = batching.batch_jaxpr2(jaxpr, axis_data, in_axes)
+    batched_jaxprs.append(batched_jaxpr)
+
+  # Update out_avals to include the batch dimension at axis 0.
+  out_avals = tree_util.tree_map(
+      lambda a: a.update(shape=(axis_data.size, *a.shape)), out_avals)
 
   outs = mpmd_map_p.bind(
-      *squeezed_args,
-      jaxprs=jaxprs,
+      *moved_args,
+      jaxprs=tuple(batched_jaxprs),
       meshes=meshes,
       out_avals=out_avals,
       input_output_aliases=input_output_aliases,
       **params,
   )
 
-  for arg, squeezed_arg, dim in zip(args, squeezed_args, dims):
-    if dim is None:
-      continue
-    if isinstance(jax_core.typeof(arg), state.AbstractRef):
-      arg[...] = jnp.expand_dims(jax_core.freeze(squeezed_arg), dim)
-
-  return [jnp.expand_dims(out, 0) for out in outs], (0,) * len(outs)
+  return outs, (0,) * len(outs)
 
 
 batching.fancy_primitive_batchers[mpmd_map_p] = _mpmd_map_batching_rule

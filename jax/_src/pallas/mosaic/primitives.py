@@ -561,6 +561,25 @@ def dma_start_discharge_rule(
 state_discharge.register_discharge_rule(dma_start_p)(dma_start_discharge_rule)
 
 
+def _dma_batch_args(args, tree):
+  src_ref, dst_ref, dst_sem, src_sem, device_id = _dma_unflatten(tree, args)
+  if dst_sem is not None and dst_sem.ndim > 0:
+    dst_sem = dst_sem.at[0]
+  if src_sem is not None and src_sem.ndim > 0:
+    src_sem = src_sem.at[0]
+  return _dma_flatten(src_ref, dst_ref, dst_sem, src_sem, device_id)
+
+
+def _dma_start_batch_rule(args, dims, *, tree, **params):
+  del dims
+  flat_args, new_tree = _dma_batch_args(args, tree)
+  dma_start_p.bind(*flat_args, tree=new_tree, **params)
+  return [], ()
+
+
+batching.primitive_batchers[dma_start_p] = _dma_start_batch_rule
+
+
 dma_wait_p = jax_core.Primitive('dma_wait')
 dma_wait_p.multiple_results = True
 
@@ -686,6 +705,16 @@ def dma_wait_discharge_rule(
   new_vals += (None,) * len(tree_util.tree_leaves(device_id_aval)) # device_id
   return new_vals, []
 state_discharge.register_discharge_rule(dma_wait_p)(dma_wait_discharge_rule)
+
+
+def _dma_wait_batch_rule(args, dims, *, tree, **params):
+  del dims
+  flat_args, new_tree = _dma_batch_args(args, tree)
+  dma_wait_p.bind(*flat_args, tree=new_tree, **params)
+  return [], ()
+
+
+batching.primitive_batchers[dma_wait_p] = _dma_wait_batch_rule
 
 def _get_ref_and_transforms(ref):
   if isinstance(ref, state.TransformedRef):
