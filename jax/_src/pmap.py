@@ -171,7 +171,7 @@ def pmap(
       arguments will not be donated.
 
       For more details on buffer donation see the
-      `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
+      `FAQ <https://docs.jax.dev/en/latest/buffer_donation.html>`_.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
