@@ -2876,7 +2876,8 @@ effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 effects.remat_allowed_effects.add_type(InternalMutableArrayEffect)
 
 
-def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
+def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None,
+            pin: bool = False):
   """Create a mutable array reference with initial value ``init_val``.
 
   For more discussion, see the `Ref guide`_.
@@ -2887,20 +2888,21 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None):
     memory_space: An optional memory space attribute for the Ref.
     kind: An optional string indicating the mutation semantics under
       rematerialization.
+    pin: Whether to lower the ref to a pinned buffer in HLO.
 
   Returns:
     A :class:`jax.ref.Ref` containing a reference to a mutable buffer.
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return ref_p.bind(init_val, memory_space=memory_space, kind=kind)
+  return ref_p.bind(init_val, memory_space=memory_space, kind=kind, pin=pin)
 ref_p = Primitive('new_ref')
 ref_p.is_effectful = lambda params: True
 ref_p.ref_primitive = True
 ref_p.ref_allocating = True
 
-ref_p.is_high = lambda aval, *, memory_space, kind: aval.is_high
-def _ref_to_lojax(init_val, *, memory_space, kind):
+ref_p.is_high = lambda aval, *, memory_space, kind, pin: aval.is_high
+def _ref_to_lojax(init_val, *, memory_space, kind, pin):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   val_ty = typeof(init_val)
   hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))
@@ -2908,7 +2910,7 @@ def _ref_to_lojax(init_val, *, memory_space, kind):
 ref_p.to_lojax = _ref_to_lojax
 
 @ref_p.def_effectful_abstract_eval
-def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
+def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any, pin: bool):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   # If no memory space is specified, use the memory space of the initial value
   # but we make sure to reset it to Device because the Ref owns the memory space
@@ -2921,35 +2923,39 @@ def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any):
           {internal_mutable_array_effect})
 
 @ref_p.def_impl
-def _ref_impl(init_val, *, memory_space: Any, kind: Any):
+def _ref_impl(init_val, *, memory_space: Any, kind: Any, pin: bool):
   if memory_space is not None:
     raise NotImplementedError(
         "array ref with memory space only works inside of a `jit`.")
+  if pin:
+    raise NotImplementedError(
+        "pinned array ref only works inside of a `jit`.")
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   from jax._src.lax.lax import _array_copy  # pyrefly: ignore[missing-import]
   aval = AbstractRef(typeof(init_val), kind=kind)
   return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
 
 # TODO(mattjj,dougalm): merge with ref_p
-def empty_ref(ty, memory_space=None):
+def empty_ref(ty, memory_space=None, pin=False):
   aval = shaped_abstractify(ty)
-  return empty_ref_p.bind(ty=aval, memory_space=memory_space)
+  return empty_ref_p.bind(ty=aval, memory_space=memory_space, pin=pin)
 empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
 empty_ref_p.is_effectful = lambda _: True
 empty_ref_p.ref_allocating = True
-empty_ref_p.is_high = lambda *, ty, memory_space: ty.is_high
+empty_ref_p.is_high = lambda *, ty, memory_space, pin: ty.is_high
 
-def _empty_ref_to_lojax(*, ty, memory_space):
+def _empty_ref_to_lojax(*, ty, memory_space, pin):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
+  n = len(ty.lo_ty())
   hival_of_refs = ty.raise_val(
-      *map(empty_ref, ty.lo_ty(), [memory_space] * len(ty.lo_ty())))
+      *map(empty_ref, ty.lo_ty(), [memory_space] * n, [pin] * n))
   return Ref(AbstractRef(ty), hival_of_refs)
 empty_ref_p.to_lojax = _empty_ref_to_lojax
 
 
 @empty_ref_p.def_effectful_abstract_eval
-def _empty_ref_abstract_eval(*, ty, memory_space):
+def _empty_ref_abstract_eval(*, ty, memory_space, pin):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   return (AbstractRef(ty, memory_space=memory_space),
           {internal_mutable_array_effect})

@@ -656,16 +656,18 @@ def _array_ref_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     return eqn, eqn, [False], [True], res  # full remat
 pe.partial_eval_jaxpr_custom_rules[core.ref_p] = _array_ref_partial_eval_custom
 
-def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind):
+def _array_ref_batched(axis_data, vals_in, dims_in, memory_space, kind, pin):
   val, = vals_in
   dim, = dims_in
   if dim is None:
     # We defensively batch the ref, b/c it could later be hit with a batched val
     val2 = batching.broadcast(val, axis_data.size, 0,
                               axis_data.explicit_mesh_axis)
-    return core.ref_p.bind(val2, memory_space=memory_space, kind=kind), 0
+    return core.ref_p.bind(val2, memory_space=memory_space, kind=kind,
+                           pin=pin), 0
   else:
-    return core.ref_p.bind(val, memory_space=memory_space, kind=kind), dim
+    return core.ref_p.bind(val, memory_space=memory_space, kind=kind,
+                           pin=pin), dim
 batching.fancy_primitive_batchers[core.ref_p] = _array_ref_batched
 
 def _freeze_batched(axis_data, vals_in, dims_in):
@@ -1119,25 +1121,28 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-def _ref_jvp(primals, tangents, *, memory_space, kind):
+def _ref_jvp(primals, tangents, *, memory_space, kind, pin):
   (init_val,), (init_dot,) = primals, tangents
-  primal_out = core.ref_p.bind(init_val, memory_space=memory_space, kind=kind)
+  primal_out = core.ref_p.bind(init_val, memory_space=memory_space, kind=kind,
+                               pin=pin)
   if type(init_dot) is ad_util.Zero:
     zero = ad_util.zeros_like_aval(init_dot.aval)
-    tangent_out = core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
+    tangent_out = core.ref_p.bind(zero, memory_space=memory_space, kind=kind,
+                                  pin=pin)
   else:
-    tangent_out = core.ref_p.bind(init_dot, memory_space=memory_space, kind=kind)
+    tangent_out = core.ref_p.bind(init_dot, memory_space=memory_space,
+                                  kind=kind, pin=pin)
   return primal_out, tangent_out
 
-def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind):
+def _ref_lin(_is_vjp, nzs, x, *, memory_space, kind, pin):
   nz, = nzs
-  x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind)
+  x_ref = core.ref_p.bind(x, memory_space=memory_space, kind=kind, pin=pin)
   def mut_lin(_, __, x_dot):
     if kind == 'no_grad_no_remat':
       aval = x_dot.aval if type(x_dot) is ad.Zero else core.typeof(x_dot)
       return ad.Zero(AbstractRef(aval))
     zero = ad_util.instantiate(x_dot)
-    return core.ref_p.bind(zero, memory_space=memory_space, kind=kind)
+    return core.ref_p.bind(zero, memory_space=memory_space, kind=kind, pin=pin)
   return x_ref, kind != 'no_grad_no_remat', None, None, mut_lin
 
 ad.primitive_jvps[core.ref_p] = _ref_jvp
@@ -1147,18 +1152,18 @@ ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
 ad.defjvp(core.accum_grad_in_ref_p, lambda g, _: core.accum_grad_in_ref_p.bind(g))
 
 
-def _empty_ref_jvp(primals, tangents, *, ty, memory_space):
-  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space)
+def _empty_ref_jvp(primals, tangents, *, ty, memory_space, pin):
+  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space, pin=pin)
   tangent_ref = core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
-                                      memory_space=memory_space)
+                                      memory_space=memory_space, pin=pin)
   return primal_ref, tangent_ref
 ad.primitive_jvps[core.empty_ref_p] = _empty_ref_jvp
 
-def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space):
-  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space)
+def _empty_ref_lin(_is_vjp, nzs_in, *, ty, memory_space, pin):
+  primal_ref = core.empty_ref_p.bind(ty=ty, memory_space=memory_space, pin=pin)
   def lin(_, __):
     return core.empty_ref_p.bind(ty=ty.to_tangent_aval(),
-                                 memory_space=memory_space)
+                                 memory_space=memory_space, pin=pin)
   return primal_ref, True, None, None, lin
 ad.primitive_linearizations[core.empty_ref_p] = _empty_ref_lin
 
@@ -1181,7 +1186,8 @@ def _create_linear_abstract_eval(*, ty, memory_space):
   if not isinstance(ty, core.ShapedArray): raise NotImplementedError(ty)
   return AbstractLinVal(ty, memory_space)
 
-def _lower_create_linear(ctx):
+def _lower_create_linear(ctx, *, ty, memory_space):
+  del ty, memory_space
   out_aval, = ctx.avals_out
   flat_res_types, _ = mlir.ir_tree_registry.flatten(mlir.aval_to_ir_types(ctx.module_context, out_aval))
   return mlir.custom_call(
