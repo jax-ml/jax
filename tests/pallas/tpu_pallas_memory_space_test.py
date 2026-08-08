@@ -64,6 +64,55 @@ def _json_value_pattern(value):
   return re.escape(json.dumps(value, separators=(',', ':')))
 
 
+class PallasCallHBMInputLoweringTest(jtu.JaxTestCase):
+
+  def test_hbm_inputs_are_constrained_at_custom_call_boundary(self):
+    source_shape = (2, 256)
+    unused_shape = (16, 128)
+    out_shape = (1, 256)
+
+    def kernel(source_hbm, unused_hbm, out_hbm, staging):
+      del unused_hbm
+      pltpu.sync_copy(source_hbm.at[pl.ds(0, 1), :], staging)
+      pltpu.sync_copy(staging, out_hbm)
+
+    def hbm(shape):
+      return pl.BlockSpec(shape, memory_space=pltpu.HBM)
+
+    copy_first_row = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+        in_specs=[hbm(source_shape), hbm(unused_shape)],
+        out_specs=hbm(out_shape),
+        scratch_shapes=[pltpu.VMEM(out_shape, jnp.float32)],
+        grid=(1,),
+    )
+
+    def run(source):
+      return copy_first_row(source, jnp.ones(unused_shape, jnp.float32))
+
+    exported = jax.export.export(jax.jit(run), platforms=("tpu",))(
+        jax.ShapeDtypeStruct(source_shape, jnp.float32)
+    )
+    matches = re.findall(
+        r'backend_config = "(.*?)"', str(exported.mlir_module())
+    )
+    self.assertLen(matches, 1)
+    backend_config = json.loads(matches[0].replace(r'\22', '"'))
+    self.assertEqual(
+        backend_config["custom_call_config"]["input_memory_space_colors"],
+        [
+            {"operand_index": 0, "color": 0},
+            {"operand_index": 1, "color": 0},
+        ],
+    )
+    if jtu.test_device_matches(["tpu"]):
+      source = jnp.arange(np.prod(source_shape), dtype=jnp.float32).reshape(
+          source_shape
+      )
+      self.assertArraysEqual(jax.jit(run)(source), source[:1])
+
+
 class TPUPallasCallMemorySpaceTest(jtu.JaxTestCase):
 
   def setUp(self):
