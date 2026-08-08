@@ -3198,6 +3198,33 @@ class PallasTpuSparseCoreLoweringErrorTest(jtu.JaxTestCase):
       ):
         run_mpmd.lower(x).compile()
 
+  def test_array_indexing_of_ref(self):
+    abstract_mesh = jax.sharding.AbstractMesh(
+        (), (), abstract_device=jax.sharding.AbstractDevice("TPU v6e", 1, "tpu")
+    )
+    with jax.sharding.use_abstract_mesh(abstract_mesh):
+      mesh = plsc.VectorSubcoreMesh(
+          core_axis_name="core", subcore_axis_name="subcore", num_cores=1
+      )
+
+      @pl.kernel(
+          out_type=jax.ShapeDtypeStruct((8,), jnp.int32),
+          mesh=mesh,
+          scratch_types=dict(
+              x_ref=pltpu.VMEM((8, 128), jnp.int32),
+              i_ref=pltpu.VMEM((8,), jnp.int32),
+              o_ref=pltpu.VMEM((8,), jnp.int32),
+          ),
+      )
+      def kernel(o_hbm_ref, *, x_ref, i_ref, o_ref):
+        o_ref[...] = x_ref[i_ref[...], i_ref[...]]
+        pltpu.sync_copy(o_ref, o_hbm_ref)
+
+      with self.assertRaisesRegex(
+          ValueError, r"Can only use \(\)-shaped and slice indexing"
+      ):
+        jax.jit(kernel).trace().lower(lowering_platforms=("tpu",))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
