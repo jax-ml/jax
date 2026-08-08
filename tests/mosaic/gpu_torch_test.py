@@ -13,8 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-import unittest
-
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -56,7 +54,9 @@ class TorchTest(parameterized.TestCase):
     self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
     if torch is None:
-      raise unittest.SkipTest("Test requires PyTorch")
+      self.skipTest("Test requires PyTorch")
+    if not torch.cuda.is_available():
+      self.skipTest("Test requires torch with CUDA support")
 
   def test_basic(self):
     def kernel(ctx, i_gmem, o_gmem, _):

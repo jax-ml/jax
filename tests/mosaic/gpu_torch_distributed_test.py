@@ -47,10 +47,10 @@ class TorchTest(parameterized.TestCase):
       raise unittest.SkipTest("Test requires torch")
     if jtu.test_device_matches(["rocm"]):
       raise unittest.SkipTest("Mosaic GPU is not supported on ROCm.")
-    torch.cuda.set_device("cuda:0")
-    torch.set_default_device("cuda")
     if not torch.cuda.is_available():
       raise unittest.SkipTest("Test requires torch with CUDA support")
+    torch.cuda.set_device("cuda:0")
+    torch.set_default_device("cuda")
     if (not jtu.test_device_matches(["cuda"]) or
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       raise unittest.SkipTest("Only works on GPU with capability >= sm90")
