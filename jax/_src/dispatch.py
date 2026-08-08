@@ -735,13 +735,12 @@ def _device_put_batcher(batched_args, batch_dims, **params):
 batching.primitive_batchers[device_put_p] = _device_put_batcher
 
 def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
-  # TODO(yashkatariya): Maybe we should add the custom calls anyways if it's
-  # being used inside jit? Atleast for now, this preserves the old behavior.
-  if ctx.module_context.all_default_mem_kind:
-    return xs
   def lower(x, device, aval, out_aval):
     if ((isinstance(device, Sharding) and device.memory_kind is not None) or
         isinstance(device, core.MemorySpace)):
+      if (aval.memory_space is core.MemorySpace.Device and
+          out_aval.memory_space is core.MemorySpace.Device):
+        return x
       if isinstance(device, Sharding):
         if config.use_shardy_partitioner.value:
           x = mlir.wrap_with_sharding_op(
