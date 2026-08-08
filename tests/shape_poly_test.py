@@ -444,6 +444,16 @@ class DimExprTest(jtu.JaxTestCase):
                                 "inconclusive"):
       b >= b % a
 
+  def test_bounds_mod_residue_parity(self):
+    # `mod(b, 2) + b` and `3 * b + mod(b, 2)` are even, so both
+    # remainders modulo 2 are zero.
+    b, = shape_poly.symbolic_shape("b")
+    self.assertEqual(_bounds((b % 2 + b) % 2), (0, 0))
+    # `_DimExpr.__eq__` is syntactic and never invokes the decision procedure.
+    self.assertGreaterEqual(0, (b % 2 + b) % 2)
+    b2, = shape_poly.symbolic_shape("b")
+    self.assertEqual(_bounds((3 * b2 + b2 % 2) % 2), (0, 0))
+
   def test_bounds_floordiv(self):
     a, b = shape_poly.symbolic_shape("a, b")
     self.assertEqual(_bounds((a + 4) // 2), (2, np.inf))
@@ -1108,6 +1118,48 @@ class DimExprTest(jtu.JaxTestCase):
 
     self.assertGreaterEqual(b, b // 4)
     self.assertGreaterEqual(b, 3 * (b // 4))
+
+  def test_constraints_eq_mod_residue(self):
+    # `m ≡ 0 (mod 6)` implies `m ≡ 0 (mod 3)` and `m ≡ 0 (mod 2)`.
+    m, = shape_poly.symbolic_shape("m", constraints=("mod(m, 6) == 0",))
+    self.assertEqual(_bounds(m % 3), (0, 0))
+    self.assertGreaterEqual(0, m % 3)
+    self.assertEqual(_bounds(m % 2), (0, 0))
+
+    # `m ≡ 4 (mod 6)` implies `m ≡ 1 (mod 3)`.
+    m4, = shape_poly.symbolic_shape("m", constraints=("mod(m, 6) == 4",))
+    self.assertEqual(_bounds(m4 % 3), (1, 1))
+
+    # `m ≡ 0 (mod 5)` does not determine `m mod 3`.
+    m5, = shape_poly.symbolic_shape("m", constraints=("mod(m, 5) == 0",))
+    self.assertEqual(_bounds(m5 % 3), (0, 2))
+
+    # `m ≡ 0 (mod 6)` permits both 0 and 2 as `m mod 4`.
+    m6, = shape_poly.symbolic_shape("m", constraints=("mod(m, 6) == 0",))
+    self.assertEqual(_bounds(m6 % 4), (0, 3))
+
+  def test_constraints_eq_mod_residue_crt(self):
+    # `m ≡ 1 (mod 4)` and `m ≡ 3 (mod 6)` imply `m ≡ 9 (mod 12)`.
+    m, = shape_poly.symbolic_shape(
+        "m", constraints=("mod(m, 4) == 1", "mod(m, 6) == 3"))
+    self.assertEqual(_bounds(m % 12), (9, 9))
+
+    # `m ≡ 0 (mod 12)` implies `m ≡ 0 (mod 4)`.
+    m2, = shape_poly.symbolic_shape(
+        "m", constraints=("mod(m, 12) == 0", "mod(m, 4) == 0"))
+    self.assertEqual(_bounds(m2 % 12), (0, 0))
+    self.assertEqual(_bounds(m2 % 4), (0, 0))
+
+    # `m ≡ 1 (mod 4)` and `m ≡ 0 (mod 6)` are incompatible.
+    m3, = shape_poly.symbolic_shape(
+        "m", constraints=("mod(m, 4) == 1", "mod(m, 6) == 0"))
+    with self.assertRaisesRegex(ValueError, "Unsatisfiable"):
+      _bounds(m3 % 12)
+
+  def test_constraints_eq_mod_residue_signed(self):
+    # `6 * c == b + 2` implies `b ≡ 4 (mod 6)`.
+    b, c = shape_poly.symbolic_shape("b, c", constraints=("6*c == b + 2",))
+    self.assertEqual(_bounds(b % 6), (4, 4))
 
   def test_constraints_eq_a_minus_4d(self):
     # simulates d = div(a, 4) and m = mod(a, 4)
