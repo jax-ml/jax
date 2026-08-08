@@ -3485,6 +3485,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda a: jnp.split(a, (2,)),
                 arg_descriptors=[RandArg((16,), _f32)],
                 polymorphic_shapes=["b + 4"]),
+    PolyHarness("jnp_split", "idx_tuple_ct_negative",
+                # The indices are a tuple with negative constants
+                lambda a: jnp.split(a, (-2,)),
+                arg_descriptors=[RandArg((16,), _f32)],
+                polymorphic_shapes=["b + 4"]),
     PolyHarness("jnp_split", "idx_tuple_poly",
                 # The indices are a tuple with poly expressions
                 lambda a: jnp.split(a, (a.shape[0] - 2,), axis=0),
