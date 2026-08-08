@@ -266,17 +266,6 @@ class JetTrace(core.Trace):
     else:
       return [JetTracer(self, p, ts) for p, ts in zip(primal_out, terms_out)]
 
-  def process_call(self, call_primitive, f, tracers, params, /):
-    primals_in, series_in = unzip2(map(self.to_primal_terms_pair, tracers))
-    primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
-    f_jet, out_tree_def = traceable(jet_subtrace(f, self.main), in_tree_def)
-    update_params = call_param_updaters.get(call_primitive)
-    new_params = (update_params(params, len(primals_and_series))
-                  if update_params else params)
-    result = call_primitive.bind(f_jet, *primals_and_series, **new_params)
-    primals_out, series_out = tree_unflatten(out_tree_def(), result)
-    return [JetTracer(self, p, ts) for p, ts in zip(primals_out, series_out)]
-
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
     # TODO(mattjj): don't just ignore custom jvp rules?

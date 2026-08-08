@@ -338,17 +338,6 @@ class SparseTrace(core.Trace):
     out_tracers = tuple(SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues)
     return out_tracers if primitive.multiple_results else out_tracers[0]
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params, /):
-    assert False
-    spvalues = tuple(t._spvalue for t in tracers)
-    in_bufs = self.spenv._buffers
-    fun, out_spvalues = sparsify_subtrace(f, self.main, spvalues)
-    if any(params['donated_invars']):
-      raise NotImplementedError("sparsify does not support donated_invars")
-    params = dict(params, donated_invars=tuple(False for buf in in_bufs))
-    _bufs_out = call_primitive.bind(fun, *in_bufs, **params)
-    return [SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues()]
-
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *, symbolic_zeros):
     # TODO(jakevdp): handle the jvp here
     del primitive, jvp, symbolic_zeros
