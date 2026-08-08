@@ -677,7 +677,7 @@ def _infer_input_type(fun: Callable, dbg_fn: Callable[[], core.DebugInfo],
   return tuple(avals)
 
 
-class JitWrapped(stages.Wrapped):
+class JitWrapped[**P, R](stages.Wrapped[P, R]):
 
   def eval_shape(self, *args, **kwargs):
     """See ``jax.eval_shape``."""
@@ -690,8 +690,8 @@ class JitWrapped(stages.Wrapped):
 # in_shardings and out_shardings can't be None as the default value
 # because `None` means that the input is fully replicated.
 @partial(api_boundary, repro_api_name="pjit.pjit")
-def pjit(
-    fun: Callable,
+def pjit[**P, R](
+    fun: Callable[P, R],
     in_shardings: Any = UNSPECIFIED,
     out_shardings: Any = UNSPECIFIED,
     static_argnums: int | Sequence[int] | None = None,
@@ -703,7 +703,7 @@ def pjit(
     backend: str | None = None,
     inline: bool = False,
     compiler_options: dict[str, Any] | None = None,
-) -> JitWrapped:
+) -> JitWrapped[P, R]:
   """`jax.experimental.pjit.pjit` has been deprecated. Please use `jax.jit`."""
   return make_jit(
       fun, in_shardings=in_shardings, out_shardings=out_shardings,
