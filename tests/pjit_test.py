@@ -9529,15 +9529,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     compiled_text = step.lower(ws, xs).compile().as_text()
     if jtu.test_device_matches(['gpu']):
-      if ifrt_version >= 65:
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-      else:
-        self.assertEqual(
-            compiled_text.count('all-reduce(')
-            + compiled_text.count('all-reduce-start('),
-            1,
-        )
+      self.assertEqual(compiled_text.count('all-reduce-start('), 1)
+      self.assertEqual(compiled_text.count('all-reduce-done('), 1)
     else:
       self.assertEqual(compiled_text.count('all-reduce('), 1)
 
@@ -9624,15 +9617,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     compiled_text = step.lower(stacked_ws, xs).compile().as_text()
     if jtu.test_device_matches(['gpu']):
-      if ifrt_version >= 65:
-        self.assertEqual(compiled_text.count('all-reduce-start('), 1)
-        self.assertEqual(compiled_text.count('all-reduce-done('), 1)
-      else:
-        self.assertEqual(
-            compiled_text.count('all-reduce(')
-            + compiled_text.count('all-reduce-start('),
-            1,
-        )
+      self.assertEqual(compiled_text.count('all-reduce-start('), 1)
+      self.assertEqual(compiled_text.count('all-reduce-done('), 1)
     else:
       self.assertEqual(compiled_text.count('all-reduce('), 1)
 
