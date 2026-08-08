@@ -223,38 +223,43 @@ def _strip_tracer(tracer_type, tag, x):
    else:
      return x
 
-def linearize(traceable, primals_ft, has_aux=False, is_vjp=False):
+def linearize(traceable, primals_ft, has_aux=False, is_vjp=False, in_nzs=None):
   dbg = debug_info("linearize", traceable, primals_ft, {})
   tag = core.TraceTag()
+  in_nzs = [True] * len(primals_ft) if in_nzs is None else list(in_nzs)
+  assert len(in_nzs) == len(primals_ft)
   with core.take_current_trace() as parent_trace:
     source_info = source_info_util.current()
     tangent_trace = pe.DynamicJaxprTrace(dbg, auto_dce=True)
     tangent_trace.tag = tag
     lin_trace = LinearizeTrace(parent_trace, tangent_trace, is_vjp)
-    def make_tracer(_lin_trace, p):
-      t = tangent_trace.new_arg(typeof(p).to_tangent_aval(), source_info)
-      if (not isinstance(t, Zero)
-          and isinstance(typeof(t), core.ShapedArray)
-          and dtype(t) == float0):
-        t = p2tz(t)
-      return LinearizeTracer(_lin_trace, p, t).full_lower()
-    tracers = primals_ft.map(partial(make_tracer, lin_trace))
+    with core.ensure_no_leaks(lin_trace):
+      def make_tracer(_lin_trace, p, nz):
+        t = tangent_trace.new_arg(typeof(p).to_tangent_aval(), source_info)
+        if (not nz
+            or (not isinstance(t, Zero)
+                and isinstance(typeof(t), core.ShapedArray)
+                and dtype(t) == float0)):
+          t = p2tz(p)
+        return LinearizeTracer(_lin_trace, p, t).full_lower()
+      tracers = primals_ft.map2(in_nzs, partial(make_tracer, lin_trace))
 
-    with (core.set_current_trace(lin_trace),
-          source_info_util.transform_name_stack('jvp')):
-      ans = traceable(*tracers.unflatten())
-      if has_aux:
-        if not isinstance(ans, (list, tuple)) or len(ans) != 2:
-          raise TypeError("expected function with aux output to return a two-element "
-                          f"tuple, but got type {type(ans)} with value {ans!r}")
-        ans, aux = ans
-        auxs = ft.flatten(aux).map(partial(_strip_tracer, LinearizeTracer, tag)),
-      else:
-        auxs = ()
-      out_primals, out_tangents = ft.flatten(ans).map(
-          lin_trace.to_primal_tangent_pair).unzip2()
-      structured_residuals = lin_trace.structured_residuals
-      del lin_trace, ans, tracers
+      with (core.set_current_trace(lin_trace),
+            source_info_util.transform_name_stack('jvp')):
+        ans = traceable(*tracers.unflatten())
+        aux = None
+        if has_aux:
+          if not isinstance(ans, (list, tuple)) or len(ans) != 2:
+            raise TypeError("expected function with aux output to return a two-element "
+                            f"tuple, but got type {type(ans)} with value {ans!r}")
+          ans, aux = ans
+          auxs = ft.flatten(aux).map(partial(_strip_tracer, LinearizeTracer, tag)),
+        else:
+          auxs = ()
+        out_primals, out_tangents = ft.flatten(ans).map(
+            lin_trace.to_primal_tangent_pair).unzip2()
+        structured_residuals = lin_trace.structured_residuals
+        del lin_trace, ans, tracers, aux
   out_nzs = [type(t) is not Zero for t in out_tangents]
   out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
   out_nz_tangents = map(partial(tangent_trace.to_jaxpr_tracer,

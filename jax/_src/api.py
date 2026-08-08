@@ -1479,17 +1479,18 @@ def _jvp(fun: Callable, primals, tangents, has_aux=False):
   return out_primals.unflatten(), out_tangents.unflatten(), *aux
 
 @overload
-def linearize(fun: Callable, *primals, has_aux: Literal[False] = False
-              ) -> tuple[Any, Callable]:
+def linearize(fun: Callable, *primals, has_aux: Literal[False] = False,
+              in_nzs: Any = None) -> tuple[Any, Callable]:
   ...
 
 @overload
-def linearize(fun: Callable, *primals, has_aux: Literal[True]
-              ) -> tuple[Any, Callable, Any]:
+def linearize(fun: Callable, *primals, has_aux: Literal[True],
+              in_nzs: Any = None) -> tuple[Any, Callable, Any]:
   ...
 
 @partial(api_boundary, repro_api_name="jax.linearize")
-def linearize(fun: Callable, *primals, has_aux: bool = False
+def linearize(fun: Callable, *primals, has_aux: bool = False,
+              in_nzs: Any = None
               ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Produces a linear approximation to ``fun`` using :py:func:`jvp` and partial eval.
 
@@ -1504,6 +1505,12 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the first
       element is considered the output of the mathematical function to be linearized,
       and the second is auxiliary data. Default False.
+    in_nzs: Optional, a tuple-tree of bools (see ``in_nzs`` on :func:`jax.vjp`),
+      by default ``None`` meaning all-True. Declares which primal inputs have
+      (possibly) nonzero tangents; a False-marked input's tangent is treated as
+      symbolically zero during linearization. The resulting per-output nonzeros
+      pattern is available as the ``out_nzs`` attribute of the returned
+      linearized function (though not preserved across pytree flattening).
 
   Returns:
     If ``has_aux`` is ``False``, returns a pair where the first element is the value of
@@ -1558,17 +1565,20 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   """
   check_callable(fun)
   primals_ft = ft.flatten(primals)
-  out_primals_ft, out_known, jaxpr, consts, structured_residuals, *maybe_aux = \
-      ad.linearize(fun, primals_ft, has_aux=has_aux)
+  in_nzs_flat = None if in_nzs is None else tuptree_flags(
+      in_nzs, primals_ft.tree, 'in_nzs', 'the in_nzs argument to jax.linearize')
+  out_primals_ft, out_zeros, jaxpr, consts, structured_residuals, *maybe_aux = \
+      ad.linearize(fun, primals_ft, has_aux=has_aux, in_nzs=in_nzs_flat)
   in_avals = primals_ft.map(core.typeof)
   out_avals = out_primals_ft.map(core.typeof)
   lifted_jvp = Partial(
-      partial(_lift_linearized, jaxpr, in_avals, out_avals, out_known),
+      partial(_lift_linearized, jaxpr, in_avals, out_avals, out_zeros),
       consts, structured_residuals)
+  lifted_jvp.out_nzs = tuple(not z for z in out_zeros)  # pyrefly: ignore[missing-attribute]
   return out_primals_ft.unflatten(), lifted_jvp, *maybe_aux
 
 
-def _lift_linearized(jaxpr, in_avals, out_avals, out_known, consts,
+def _lift_linearized(jaxpr, in_avals, out_avals, out_zeros, consts,
                      structured_residuals, *tangents):
   tangents_ft = ft.flatten(tangents)
   if tangents_ft.tree != in_avals.tree:
@@ -1604,7 +1614,7 @@ def _lift_linearized(jaxpr, in_avals, out_avals, out_known, consts,
   tangents_out = eval_jaxpr(jaxpr, consts, *tangents_ft, *sres_flat)
   tangents_out_ = iter(tangents_out)
   full_out = [a2tz(aval).instantiate() if known else next(tangents_out_)
-              for aval, known in zip(out_avals, out_known)]
+              for aval, known in zip(out_avals, out_zeros)]
   assert next(tangents_out_, None) is None
   return out_avals.update(full_out).unflatten()
 
@@ -1619,20 +1629,22 @@ def vjp(fun: Callable[..., T],
         *primals: Any,
         has_aux: Literal[False] = False,
         reduce_axes: Sequence[AxisName] = (),
-        saveable_args: Any = True) -> tuple[T, Callable]:
+        saveable_args: Any = True,
+        in_nzs: Any = None) -> tuple[T, Callable]:
   ...
 
 @overload
 def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
         reduce_axes: Sequence[AxisName] = (),
-        saveable_args: Any = True) -> tuple[T, Callable, U]:
+        saveable_args: Any = True,
+        in_nzs: Any = None) -> tuple[T, Callable, U]:
   ...
 
 @partial(api_boundary, repro_api_name="jax.vjp")
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=(),
-    saveable_args: Any = True,
+    saveable_args: Any = True, in_nzs: Any = None,
   ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
@@ -1662,6 +1674,13 @@ def vjp(
       must restore them (e.g. by assigning to ``vjpfun.args_res``) before
       applying ``vjpfun``. Only argument values saved verbatim are affected;
       residuals computed from the arguments are saved as usual.
+    in_nzs: Optional, a tuple-tree of bools like ``saveable_args``, by default
+      ``None`` meaning all-True. Declares which primal inputs have (possibly)
+      nonzero tangents. Where a False entry applies, that input's tangent is
+      treated as symbolically zero during linearization, which can make more
+      outputs' tangents symbolically zero; the resulting per-output nonzeros
+      pattern is available as the ``out_nzs`` attribute of ``vjpfun``, and
+      ``vjpfun`` returns a zero cotangent for any False-marked input.
 
   Returns:
     If ``has_aux`` is ``False``, returns a ``(primals_out, vjpfun)`` pair, where
@@ -1694,8 +1713,11 @@ def vjp(
   primals_ft = ft.flatten(primals).map(canon)
   primals_ft.map(dispatch.check_arg)
   saveable = _saveable_args_flags(saveable_args, primals_ft.tree)
-  out_primals_ft, out_known, jaxpr, residuals, structured_residuals, *maybe_aux = \
-      ad.linearize(fun, primals_ft, is_vjp=True, has_aux=has_aux)
+  in_nzs_flat = None if in_nzs is None else tuptree_flags(
+      in_nzs, primals_ft.tree, 'in_nzs', 'the in_nzs argument to jax.vjp')
+  out_primals_ft, out_zeros, jaxpr, residuals, structured_residuals, *maybe_aux = \
+      ad.linearize(fun, primals_ft, is_vjp=True, has_aux=has_aux,
+                   in_nzs=in_nzs_flat)
 
   id_map = {id(x): i for i, x in enumerate(primals_ft)}
   used, opaque_residuals = set(), []
@@ -1705,12 +1727,12 @@ def vjp(
   keep = lambda x, s: ((x if s else NotSaveable()) if id(x) in used else NotNeeded())
   args_res = tuptree_map(keep, primals_ft.tree, primals_ft, saveable)
   out_primal_avals = list(out_primals_ft.map(typeof))
-  f_vjp = VJP(partial(_vjp3_callable, spec, out_known, jaxpr, out_primal_avals),
+  f_vjp = VJP(partial(_vjp3_callable, spec, out_zeros, jaxpr, out_primal_avals),
               primals_ft.tree, out_primals_ft.tree, list(args_res),
               opaque_residuals, structured_residuals)
   return out_primals_ft.unflatten(), f_vjp, *maybe_aux
 
-def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
+def _vjp3_callable(spec, out_zeros, jaxpr, out_primal_avals, in_tree, out_tree,
                    args_res, opaque_res, structured_res, want_logs,
                    *maybe_ct_refs):
   explicit_refs = bool(maybe_ct_refs)
@@ -1729,7 +1751,7 @@ def _vjp3_callable(spec, out_known, jaxpr, out_primal_avals, in_tree, out_tree,
   arg_invars = jaxpr.invars[len(spec):]  # skip the residual invars
   maybe_accums = [_vjp_accum(jaxpr, in_tree, explicit_refs, idx, v, x)
                   for idx, (v, x) in enumerate(unsafe_zip(arg_invars, maybe_ct_refs_flat))]
-  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_known, jaxpr,
+  return Partial(partial(_vjp3_bwd, in_tree, out_tree, out_zeros, jaxpr,
                          out_primal_avals, want_logs), residuals, structured_res,
                  maybe_accums)
 
@@ -1819,13 +1841,13 @@ def check_accum(aval, acc):
     raise ValueError(f"Accumulator aval mismatch: expected {aval}, got {acc.aval}")
   return acc
 
-def _vjp3_bwd(in_tree, out_tree, out_known, jaxpr, out_primal_avals, want_logs,
+def _vjp3_bwd(in_tree, out_tree, out_zeros, jaxpr, out_primal_avals, want_logs,
               residuals, structured_res, maybe_accums, out_ct):
   cts_flat, out_tree_ = tree_flatten(out_ct, is_leaf=lambda x: isinstance(x, ad.Zero))
   if out_tree != out_tree_:
     _vjp_ct_tree_error(jaxpr, out_tree, out_tree_)
   _vjp_check_ct_avals(cts_flat, out_primal_avals)
-  cts_flat = [ct for ct, k in zip(cts_flat, out_known) if not k]
+  cts_flat = [ct for ct, k in zip(cts_flat, out_zeros) if not k]
   primals_in = [*maybe_accums, *tree_leaves(structured_res)]
   logs = ad.backward_pass3(jaxpr, True, residuals, primals_in, cts_flat)
   arg_cts = [x.freeze() if isinstance(x, ad.ValAccum) else
@@ -2004,6 +2026,7 @@ class VJP:
   structured_residuals: list[Any]
   want_logs: bool = False
   jaxpr = property(lambda self: self.fun.args[2])
+  out_nzs = property(lambda self: tuple(not z for z in self.fun.args[1]))
 
   def __call__(self, out_ct, *extra_args):
     if extra_args:
