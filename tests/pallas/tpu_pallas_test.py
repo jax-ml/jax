@@ -1175,6 +1175,23 @@ class PallasCallDMATest(ptu.PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
 
+  def test_can_arrive_wait_on_barrier(self):
+    def kernel(y_ref):
+      def body(sem):
+        pl.barrier_arrive(sem, 42)
+        val = pl.barrier_wait(sem)
+        y_ref[...] = jnp.full_like(y_ref, val)
+
+      pl.run_scoped(body, pltpu.SemaphoreType.BARRIER)
+
+    res = jax.block_until_ready(
+        self.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        )()
+    )
+    self.assertEqual(res[0, 0], 42)
+
   def test_can_wait_on_semaphore_array(self):
     def kernel(y_ref):
       def body(sems):

@@ -34,7 +34,8 @@ def TPU_Vmask : VectorOfRankAndType<[2, 3], [I1]>;
 
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
-def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
+def TPU_BarrierType : TPU_Type<"Barrier", "barrier", [MemRefElementTypeInterface]>;
+def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType, TPU_BarrierType], "semaphore or barrier">;
 
 // All indices/sizes are in element-space.
 // Note that the implementation will require statically provable tile alignment.
@@ -1226,14 +1227,14 @@ def TPU_SubcoreIdOp : TPU_Op<"subcore_id", [Pure]> {
 }
 
 def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
-  let arguments = (ins MemRefOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>:$semaphore);
+  let arguments = (ins MemRefOf<[TPU_SomeSemaphoreType]>:$semaphore);
   let results = (outs I32:$result);
   let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
 }
 
 def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
   let arguments = (ins
-    MemRefOf<[TPU_SemaphoreType]>:$semaphore,
+    MemRefOf<[TPU_SomeSemaphoreType]>:$semaphore,
     I32:$amount
   );
   let results = (outs);
@@ -1247,16 +1248,29 @@ def TPU_AllocaSemaphoreOp : TPU_Op<"sem_alloc"> {
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
+def TPU_BarrierWaitOp : TPU_Op<"barrier_wait"> {
+  let arguments = (ins MemRefOf<[TPU_SomeSemaphoreType]>:$barrier);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ $barrier attr-dict `:` type($barrier) `->` type($result)}];
+  let hasVerifier = 1;
+}
+
+def TPU_AllocaBarrierOp : TPU_Op<"barrier_alloc"> {
+  let arguments = (ins);
+  let results = (outs MemRefOf<[TPU_SomeSemaphoreType]>:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
 def TPU_GetBarrierSemaphoreOp : TPU_Op<"sem_barrier"> {
   let arguments = (ins);
-  let results = (outs MemRefOf<[TPU_SemaphoreType]>:$semaphore);
+  let results = (outs MemRefOf<[TPU_SomeSemaphoreType]>:$semaphore);
   let assemblyFormat = [{ attr-dict `:` type($semaphore) }];
   let hasVerifier = 1;
 }
 
 def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
   let arguments = (ins
-    MemRefOf<[TPU_SemaphoreType]>:$semaphore,
+    MemRefOf<[TPU_SomeSemaphoreType]>:$semaphore,
     I32:$amount,
     Optional<I32>:$device_id, // For remote DMAs
     Optional<I32>:$core_id,
@@ -1272,6 +1286,30 @@ let assemblyFormat = [{
   let builders = [
     // A backward-compatible builder that sets `subcore_id` to nullptr.
     OpBuilder<(ins "Value":$semaphore, "Value":$amount, "Value":$device_id, "Value":$core_id)>,
+  ];
+}
+
+def TPU_BarrierArriveOp : TPU_Op<"barrier_arrive", [AttrSizedOperandSegments]> {
+  let summary = [{Sends a value across a barrier locally or remotely.}];
+  let description = [{
+    Signals arrival at `$barrier` locally or remotely, optionally writing `$value`.
+  }];
+  let arguments = (ins
+    MemRefOf<[TPU_SomeSemaphoreType]>:$barrier,
+    I32:$value,
+    Optional<I32>:$device_id,
+    Optional<I32>:$core_id,
+    Optional<I32>:$subcore_id
+  );
+  let assemblyFormat = [{
+    $barrier `,` $value (`device_id` $device_id^)? (`core_id` $core_id^)? (`subcore_id` $subcore_id^)? attr-dict `:` type($barrier)
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    mlir::tpu::CoreType getTargetCoreType();
+  }];
+  let builders = [
+    OpBuilder<(ins "Value":$barrier, "Value":$value, "Value":$device_id, "Value":$core_id)>,
   ];
 }
 

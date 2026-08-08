@@ -24,6 +24,7 @@ import math
 import string
 from typing import Any
 
+import jax
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -1196,6 +1197,135 @@ def _semaphore_wait_discharge_rule(ctx,
 state_discharge.register_discharge_rule(semaphore_wait_p)(
     _semaphore_wait_discharge_rule
 )
+
+
+barrier_arrive_p = jax_core.Primitive("barrier_arrive")
+barrier_arrive_p.multiple_results = True
+
+
+def barrier_arrive(
+    sem_or_view,
+    value: Any,
+    *,
+    device_id: DeviceId = None,
+    device_id_type: DeviceIdType = DeviceIdType.MESH,
+    core_index: int | jax_typing.Array | None = None,
+):
+  """Sends a value across a barrier."""
+  ref, transforms = _get_ref_and_transforms(sem_or_view)
+  value = jnp.asarray(value, dtype=jnp.int32)
+  args = [ref, transforms, value, device_id, core_index]
+  flat_args, args_tree = tree_util.tree_flatten(args)
+  barrier_arrive_p.bind(
+      *flat_args,
+      args_tree=args_tree,
+      device_id_type=device_id_type,
+  )
+
+
+@barrier_arrive_p.def_effectful_abstract_eval
+def _barrier_arrive_abstract_eval(
+    *avals,
+    args_tree,
+    device_id_type: DeviceIdType,
+):
+  (
+      sem_aval,
+      sem_transforms_avals,
+      value_aval,
+      device_id_aval,
+      core_index_aval,
+  ) = tree_util.tree_unflatten(args_tree, avals)
+  check_sem_avals(sem_aval, sem_transforms_avals, "arrive")
+  if value_aval.dtype != jnp.dtype("int32"):
+    raise ValueError(f"Must send an int32 value, but got {value_aval.dtype}")
+  effs: set[effects.Effect] = {sem_effect}
+  if device_id_aval is not None:
+    device_id_flat_avals = tree_util.tree_leaves(device_id_aval)
+    for aval in device_id_flat_avals:
+      if aval.dtype != jnp.dtype("int32"):
+        raise ValueError(
+            f"`device_id`s must be an int32 value, but got {aval.dtype}"
+        )
+    if device_id_type is DeviceIdType.MESH and isinstance(device_id_aval, dict):
+      for k in device_id_aval:
+        if not isinstance(k, tuple):
+          k = (k,)
+        for k_ in k:
+          effs.add(jax_core.NamedAxisEffect(k_))
+    else:
+      effs.add(pallas_core.comms_effect)
+  return [], effs
+
+
+def _barrier_arrive_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  invars = eqn.invars
+  tree = eqn.params["args_tree"]
+  (
+      sem,
+      sem_transforms,
+      value,
+      device_ids,
+      _,
+  ) = tree_util.tree_unflatten(tree, invars)
+  out = pp.concat([
+      pp.text("barrier_arrive"),
+      pp.text(" "),
+      sp.pp_ref_transforms(context, sem, sem_transforms),
+      pp.text(" "),
+      jax_core.pp_var(value, context),
+  ])
+  if device_ids is not None:
+    flat_device_ids = tree_util.tree_leaves(device_ids)
+    if not flat_device_ids:
+      return out
+    out = pp.concat([out, pp.text(" "), _pp_device_id(device_ids, context)])
+  return out
+
+
+jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
+
+
+barrier_wait_p = jax_core.Primitive("barrier_wait")
+
+
+def barrier_wait(sem_or_view) -> jax.Array:
+  """Blocks execution until a barrier receives a value and returns it."""
+  ref, transforms = _get_ref_and_transforms(sem_or_view)
+  args = [ref, transforms]
+  flat_args, args_tree = tree_util.tree_flatten(args)
+  return barrier_wait_p.bind(*flat_args, args_tree=args_tree)
+
+
+@barrier_wait_p.def_effectful_abstract_eval
+def _barrier_wait_abstract_eval(*avals, args_tree):
+  sem_aval, sem_transforms_avals = tree_util.tree_unflatten(args_tree, avals)
+  check_sem_avals(sem_aval, sem_transforms_avals, "wait")
+  return jax_core.ShapedArray((), jnp.int32), {sem_effect}
+
+
+def _barrier_wait_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  invars = eqn.invars
+  tree = eqn.params["args_tree"]
+  sem, sem_transforms = tree_util.tree_unflatten(tree, invars)
+  return pp.concat([
+      pp.text("barrier_wait"),
+      pp.text(" "),
+      sp.pp_ref_transforms(context, sem, sem_transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[barrier_wait_p] = _barrier_wait_pp_eqn
 
 
 def _device_id_dict_to_mesh(mesh_context: pallas_utils.MeshInfo | None, device_id_dict, get_axis_index):

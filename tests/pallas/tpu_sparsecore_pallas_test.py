@@ -2088,6 +2088,25 @@ class VectorSubcoreTest(PallasSCTest):
     expected = jnp.broadcast_to(expected[:, None], (mesh.num_subcores, vec_dim))
     np.testing.assert_array_equal(kernel(), expected)
 
+  def test_barrier_arrive_wait(self):
+    mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
+
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct(shape=(1,), dtype=jnp.int32),
+        mesh=mesh,
+        scratch_types=[pltpu.SMEM((1,), jnp.int32)],
+    )
+    def kernel(o_ref, smem_ref):
+      def body(sem):
+        pl.barrier_arrive(sem, 42)
+        val = pl.barrier_wait(sem)
+        smem_ref[0] = val
+
+      pl.run_scoped(body, pltpu.SemaphoreType.BARRIER)
+      pltpu.sync_copy(smem_ref, o_ref)
+
+    self.assertEqual(kernel()[0], 42)
+
   @parameterized.parameters(jnp.int32, jnp.float32)
   def test_gather_add(self, dtype):
     self.skip_if_tc_tiling()
