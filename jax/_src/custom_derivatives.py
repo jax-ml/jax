@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import dataclasses
 from functools import update_wrapper, reduce, partial, wraps
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from jax._src import config
 from jax._src import core
@@ -81,10 +81,9 @@ def _flatten_fun_nokwargs(f: Callable,
 
 
 ### JVPs
-ReturnValue = TypeVar('ReturnValue')
 
 @custom_api_util.register_custom_decorator_type
-class custom_jvp(Generic[ReturnValue]):
+class custom_jvp[ReturnValue]:
   """Set up a JAX-transformable function for a custom JVP rule definition.
 
   This class is meant to be used as a function decorator. Instances are
@@ -522,7 +521,7 @@ core.pp_eqn_rules[custom_jvp_call_p] = _custom_jvp_call_pp_rule
 ### VJPs
 
 @custom_api_util.register_custom_decorator_type
-class custom_vjp(Generic[ReturnValue]):
+class custom_vjp[ReturnValue]:
   """Set up a JAX-transformable function for a custom VJP rule definition.
 
   This class is meant to be used as a function decorator. Instances are
@@ -1710,7 +1709,7 @@ custom_jvp_call_jaxpr_p = core.Primitive("custom_jvp_call_jaxpr")
 # it is written in "initial-style" so it doesn't support eager mode. This was
 # a reasonable compromise when written because it made the implementation
 # simpler, but it would be worth revisiting this.
-def optimize_remat_of_custom_vjp_fwd(
+def optimize_remat_of_custom_vjp_fwd[ReturnValue](
     fun: Callable[..., ReturnValue],
     debug_fun: core.DebugInfo,
     fwd: Callable[..., tuple[ReturnValue, Any]],
