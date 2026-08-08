@@ -57,6 +57,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     overwriting it, so HLO passes disabled via
     `XLA_FLAGS=--xla_disable_hlo_passes=...` stay disabled
     ({jax-issue}`#37391`).
+  * Fixed a bug where {func}`jax.numpy.linalg.cond` returned NaN instead of
+    infinity for singular matrices when `p` is `None` or `2`, matching NumPy
+    and the other norms.
 
 ## JAX 0.11.0 (July 16, 2026)
 

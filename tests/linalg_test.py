@@ -988,6 +988,21 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @jtu.sample_product(
+    pnorm=[jnp.inf, -jnp.inf, 1, -1, 2, -2, 'fro', None],
+    dtype=float_types + complex_types,
+  )
+  def testCondSingular(self, pnorm, dtype):
+    # Singular matrices have an infinite condition number for every norm.
+    singular = np.zeros((2, 2), dtype=dtype)
+    batched = np.stack([singular, np.eye(2, dtype=dtype)])
+    for x in [singular, batched]:
+      args_maker = lambda x=x: [x, pnorm]
+      self._CheckAgainstNumpy(np.linalg.cond, jnp.linalg.cond, args_maker,
+                              check_dtypes=False)
+      partial_cond = partial(jnp.linalg.cond, p=pnorm)
+      self._CompileAndCheck(partial_cond, lambda x=x: [x], check_dtypes=False)
+
+  @jtu.sample_product(
     shape=[(1, 1), (4, 4), (6, 2, 3), (3, 4, 2, 6)],
     dtype=float_types + complex_types,
   )
