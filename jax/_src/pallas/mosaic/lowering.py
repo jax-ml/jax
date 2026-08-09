@@ -53,6 +53,7 @@ from jax._src.lax import control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import BranchesPlatforms
 from jax._src.lib import jax_mlir_ext
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -1461,7 +1462,13 @@ def lower_jaxpr_into_unpipelined_module(
       f"#tpu.core_type<{pallas_mesh.core_type}>"
   )
   module.body.append(func_op)
-  assert name not in sym_tab, f"Function name {name} already exists in symbol table."
+  if name in sym_tab:
+    orig_name = name
+    i = 0
+    while name in sym_tab:
+      name = f"{orig_name}_{pallas_mesh.core_type.name}_{i}"
+      i += 1
+    func_op.attributes["sym_name"] = ir.StringAttr.get(name)
   sym_tab.insert(func_op)
   grid = tuple(m[1] for m in mesh_shape)
   func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(grid)
@@ -4858,6 +4865,62 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
   tpu.sem_wait(sem, value)
   return []
+
+
+@register_lowering_rule(
+    primitives.barrier_arrive_p, kernel_types=[*tpu_core.CoreType]
+)
+def _barrier_arrive_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+    device_id_type: primitives.DeviceIdType,
+):
+  sem_aval, _, _, device_id_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
+      args_tree, args
+  )
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
+  kernel_type = ctx.lowering_context.kernel_type
+  if isinstance(sem_aval.memory_space, pallas_core.CoreMemorySpace):
+    dest_mesh = sem_aval.memory_space.mesh
+    dest_kernel_type = dest_mesh.core_type
+  else:
+    dest_mesh = None
+    dest_kernel_type = kernel_type
+  subcore_index = None
+  if device_id is not None or dest_kernel_type != kernel_type:
+    # TODO(rdyro): Unify the `core_index` argument to use core meshes instead.
+    with ctx.lowering_context.grid_name_context():
+      device_id, core_id, subcore_index = _device_id_to_logical(
+          ctx, device_id, device_id_type, device_id_aval,
+          dest_mesh=dest_mesh
+      )
+    if core_id is not None:
+      if core_index is not None:
+        raise ValueError(
+            "Cannot specify both `core_index` and the core axis in `device_id`."
+        )
+      core_index = core_id
+  if jaxlib_extension_version < 462:
+    assert subcore_index is None, (
+        "`subcore_index` is not supported in this version of jaxlib."
+    )
+    tpu.barrier_arrive(sem, value=value, device_id=device_id, core_id=core_index)  # pyrefly: ignore[bad-argument-count]
+  else:
+    tpu.barrier_arrive(sem, value=value, device_id=device_id, core_id=core_index,
+                     subcore_id=subcore_index)  # pyrefly: ignore[unexpected-keyword, bad-argument-count]
+  return []
+
+
+@register_lowering_rule(
+    primitives.barrier_wait_p, kernel_types=[*tpu_core.CoreType]
+)
+def _barrier_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
+  sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _transform_ref(sem, sem_aval, sem_aval.shape, transforms)
+  return tpu.barrier_wait(sem)
 
 
 @register_lowering_rule(tpu_primitives.dma_start_p)

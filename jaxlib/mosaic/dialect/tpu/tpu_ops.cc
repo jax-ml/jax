@@ -205,8 +205,8 @@ LogicalResult MemRefSliceOp::verify() {
   auto source_shape = source_type.getShape();
   bool is_semaphore =
       HasMemorySpace(source_type, tpu::MemorySpace::kSemaphoreMem);
-  if (is_semaphore &&
-      !isa<SemaphoreType, DMASemaphoreType>(source_type.getElementType())) {
+  if (is_semaphore && !isa<SemaphoreType, DMASemaphoreType, BarrierType>(
+                          source_type.getElementType())) {
     return emitOpError(
         "References to semaphore memory space must have a semaphore element "
         "type.");
@@ -1338,6 +1338,13 @@ void SemaphoreSignalOp::build(OpBuilder& builder, OperationState& state,
         /*subcore_id=*/nullptr);
 }
 
+void BarrierArriveOp::build(OpBuilder& builder, OperationState& state,
+                            Value barrier, Value value, Value device_id,
+                            Value core_id) {
+  build(builder, state, barrier, value, device_id, core_id,
+        /*subcore_id=*/nullptr);
+}
+
 mlir::tpu::CoreType SemaphoreSignalOp::getTargetCoreType() {
   return getRefCoreType(getSemaphore()).value_or(GetCoreTypeOfParentOp(**this));
 }
@@ -1374,6 +1381,26 @@ LogicalResult SemaphoreWaitOp::verify() {
   MemRefType sem_type = getSemaphore().getType();
   if (sem_type.getRank() != 0) {
     return emitOpError("Semaphore reference must be rank 0");
+  }
+  return success();
+}
+
+mlir::tpu::CoreType BarrierArriveOp::getTargetCoreType() {
+  return getRefCoreType(getBarrier()).value_or(GetCoreTypeOfParentOp(**this));
+}
+
+LogicalResult BarrierArriveOp::verify() {
+  MemRefType bar_type = getBarrier().getType();
+  if (bar_type.getRank() != 0) {
+    return emitOpError("Barrier reference must be rank 0");
+  }
+  return success();
+}
+
+LogicalResult BarrierWaitOp::verify() {
+  MemRefType bar_type = getBarrier().getType();
+  if (bar_type.getRank() != 0) {
+    return emitOpError("Barrier reference must be rank 0");
   }
   return success();
 }
@@ -1469,7 +1496,7 @@ LogicalResult EnqueueDMAOp::verify() {
         "Strict ordering is only supported on the SC scalar and vector "
         "subcores");
   }
-  if (isa<SemaphoreType>(target_sem_elem_type)) {
+  if (isa<SemaphoreType, BarrierType>(target_sem_elem_type)) {
     if (HasMemorySpace(source_ty, MemorySpace::kSmem, CoreType::kTc) ||
         HasMemorySpace(target_ty, MemorySpace::kSmem, CoreType::kTc)) {
       return emitOpError(
