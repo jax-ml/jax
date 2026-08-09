@@ -439,6 +439,28 @@ class EinsumTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, msg):
       jnp.einsum('ij,ik,il->jkl', *arrs, optimize=[(0, 1, 2)])
 
+  def test_reduce_fn_single_operand(self):
+    r = self.rng()
+    x = r.randn(3, 4, 5).astype('float32')
+
+    def max_reduce(x, axes):
+      return jnp.max(x, axis=axes)
+
+    result = jnp.einsum('ijk->j', x, _dot_general=(lax.dot_general, max_reduce))
+    expected = jnp.max(x, axis=(0, 2))
+    self.assertAllClose(result, expected)
+
+  def test_reduce_fn_identity(self):
+    r = self.rng()
+    x = r.randn(3, 4, 5).astype('float32')
+
+    def sum_reduce(x, axes):
+      return jnp.sum(x, axis=axes)
+
+    result = jnp.einsum('ijk->j', x, _dot_general=(lax.dot_general, sum_reduce))
+    expected = jnp.einsum('ijk->j', x)
+    self.assertAllClose(result, expected)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
