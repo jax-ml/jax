@@ -370,7 +370,7 @@ class ArrayImpl(basearray.Array):
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
-      elif not self.sharding.has_addressable_devices:
+      elif not self.sharding.has_addressable_devices or self.nbytes >= 1 << 20:
         s = f"shape={self.shape}"
       else:
         s = np.array2string(self._value, prefix=prefix, suffix=',',
@@ -387,7 +387,7 @@ class ArrayImpl(basearray.Array):
     if isinstance(self.sharding, NamedSharding) and self.sharding.spec.unreduced:
       return repr(self)
     elif (self.is_fully_addressable or self.is_fully_replicated and
-          self.sharding.has_addressable_devices):
+          self.sharding.has_addressable_devices) and self.nbytes < 1 << 20:
       return str(self._value)  # doesn't print Array(...)
     else:
       return repr(self)

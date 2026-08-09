@@ -251,6 +251,17 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.empty(shape, dtype)
     self.assertEqual(repr(x), f"Array([], shape={shape}, dtype={dtype})")
 
+  def test_large_array_repr(self):
+    small = jnp.arange(10, dtype=jnp.int32)
+    self.assertEqual(small.nbytes, 40)
+    self.assertEqual(repr(small), 'Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], dtype=int32)')
+    self.assertEqual(str(small), '[0 1 2 3 4 5 6 7 8 9]')
+
+    large = jnp.arange(2 ** 20, dtype=jnp.int8)
+    self.assertEqual(large.nbytes, 2 ** 20)
+    self.assertEqual(repr(large), 'Array(shape=(1048576,), dtype=int8)')
+    self.assertEqual(str(large), 'Array(shape=(1048576,), dtype=int8)')
+
   def test_jnp_array(self):
     arr = jnp.array([1, 2, 3])
     self.assertIsInstance(arr, array.ArrayImpl)
