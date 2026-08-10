@@ -229,6 +229,7 @@ class CustomCallBackendConfig:
           "builtin.module(mosaic-serde{serialize=false},mosaic-serde{serialize=true"
           f" target-version={version}}})",
       )
+      pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(module.operation)
       bytecode_buffer = io.BytesIO()
       module.operation.write_bytecode(bytecode_buffer, desired_version=0)
@@ -502,6 +503,7 @@ def _lower_mosaic_module_to_asm(
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
       )
+      pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
@@ -991,6 +993,7 @@ def lowered_as_tpu_kernel(
           "builtin.module(mosaic-serde{serialize=true"
           f" target-version={current_ir_version}}})"
       )
+      pipeline.enable_verifier(bool(config.enable_checks.value))
       pipeline.run(module_op)
     finally:
       ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
@@ -1004,7 +1007,7 @@ def lowered_as_tpu_kernel(
         if not has_side_effects
         else TpuSideEffectType.DATAFLOW_SIDE_EFFECTING
     )
-  config = _lowered_to_custom_call_config(
+  custom_call_config = _lowered_to_custom_call_config(
       lowered_module_asm,
       lowered_module_asm_version=current_ir_version,
       vmem_limit_bytes=vmem_limit_bytes,
@@ -1027,7 +1030,7 @@ def lowered_as_tpu_kernel(
       kernel_name=kernel_name,
   )
   return _as_jax_callable(
-      config,
+      custom_call_config,
       has_side_effects,
       out_type,
       kernel_name=kernel_name,
