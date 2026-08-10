@@ -61,6 +61,8 @@ def dot(a: ArrayLike, b: ArrayLike, *,
     preferred_element_type: either ``None`` (default), which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     An array containing the dot product of the inputs.  Unlike :func:`matmul`,
@@ -154,6 +156,8 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
     preferred_element_type: either ``None`` (default), which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     array containing the matrix product of the inputs. Shape is ``a.shape[:-1]``
@@ -417,20 +421,20 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
   JAX implementation of :func:`numpy.vecdot`.
 
   Args:
-    a: left-hand side array.
-    b: right-hand side array. Size of ``b[axis]`` must match size of ``a[axis]``,
-      and remaining dimensions must be broadcast-compatible.
+    x1: left-hand side array.
+    x2: right-hand side array. Size of ``x2[axis]`` must match size of
+      ``x1[axis]``, and remaining dimensions must be broadcast-compatible.
     axis: axis along which to compute the dot product (default: -1)
     precision: either ``None`` (default), which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      such values indicating precision of ``a`` and ``b``.
+      such values indicating precision of ``x1`` and ``x2``.
     preferred_element_type: either ``None`` (default), which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
 
   Returns:
-    array containing the conjugate dot product of ``a`` and ``b`` along ``axis``.
+    array containing the conjugate dot product of ``x1`` and ``x2`` along ``axis``.
     The non-contracted dimensions are broadcast together.
 
   See Also:
@@ -444,7 +448,7 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
 
     >>> a = jnp.array([1j, 2j, 3j])
     >>> b = jnp.array([4., 5., 6.])
-    >>> jnp.linalg.vecdot(a, b)
+    >>> jnp.vecdot(a, b)
     Array(0.-32.j, dtype=complex64)
 
     Batched vector dot product of two 2D arrays:
@@ -452,7 +456,7 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
     >>> a = jnp.array([[1, 2, 3],
     ...                [4, 5, 6]])
     >>> b = jnp.array([[2, 3, 4]])
-    >>> jnp.linalg.vecdot(a, b, axis=-1)
+    >>> jnp.vecdot(a, b, axis=-1)
     Array([20, 47], dtype=int32)
   """
   from jax._src.numpy.lax_numpy import moveaxis
@@ -490,6 +494,8 @@ def tensordot(a: ArrayLike, b: ArrayLike,
     preferred_element_type: either ``None`` (default), which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     array containing the tensor dot product of the inputs

@@ -222,6 +222,9 @@ def full(shape: Any, fill_value: ArrayLike,
       fill value.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
+    out_sharding: optional :class:`~jax.sharding.PartitionSpec` or
+      :class:`~jax.NamedSharding` specifying the sharding of the output array.
+      Cannot be used together with ``device``.
 
   Returns:
     Array of the specified shape and dtype, on the specified device if specified.
@@ -279,6 +282,9 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
     dtype: optionally override the dtype of the created array.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
+    out_sharding: optional :class:`~jax.sharding.PartitionSpec` or
+      :class:`~jax.NamedSharding` specifying the sharding of the output array.
+      Cannot be used together with ``device``.
 
   Returns:
     Array of the specified shape and dtype, on the specified device if specified.
@@ -329,6 +335,9 @@ def ones_like(a: ArrayLike | DuckTypedArray,
     dtype: optionally override the dtype of the created array.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
+    out_sharding: optional :class:`~jax.sharding.PartitionSpec` or
+      :class:`~jax.NamedSharding` specifying the sharding of the output array.
+      Cannot be used together with ``device``.
 
   Returns:
     Array of the specified shape and dtype, on the specified device if specified.
@@ -430,6 +439,9 @@ def full_like(a: ArrayLike | DuckTypedArray,
     dtype: optionally override the dtype of the created array.
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
+    out_sharding: optional :class:`~jax.sharding.PartitionSpec` or
+      :class:`~jax.NamedSharding` specifying the sharding of the output array.
+      Cannot be used together with ``device``.
 
   Returns:
     Array of the specified shape and dtype, on the specified device if specified.
@@ -522,6 +534,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
       If False, then exclude the ``stop`` value.
     retstep: If True, then return a ``(result, step)`` tuple, where ``step`` is the
       interval between adjacent values in ``result``.
+    dtype: optional. Specifies the dtype of the output.
     axis: integer axis along which to generate the linspace. Defaults to zero.
     device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
