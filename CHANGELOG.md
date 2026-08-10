@@ -24,6 +24,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     Added a configuration flag `--jax_export_deserialize_expired_versions` to
     temporarily bypass the error check.
     See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees.
+  * Added {func}`jax.numpy.top_k`, which implements {func}`numpy.top_k`, added in
+    in NumPy v2.6.0 ({jax-issue}`#39729`)
 
 * Breaking changes
   * JAX does not support anymore deserialization of Exported modules from
@@ -43,6 +45,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     a boolean `mask`, whose gradient no caller can request. Bias gradients
     for an explicit `bias` or a non-boolean `mask` are unchanged
     ({jax-issue}`#34685`).
+  * {func}`jax.numpy.meshgrid`, {obj}`jax.numpy.ogrid`, and
+    {func}`jax.numpy.broadcast_arrays` now return tuples rather than lists
+    in order to align with NumPy>2.0 and the Array API specification.
+    ({jax-issue}`#39783`, {jax-issue}`#39789`, {jax-issue}`#39802`)
 
 * Bug fixes
   * The batching rules of the cuDNN fused attention primitives (used by
