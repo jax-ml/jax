@@ -31,6 +31,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   window. On that date we added support to serialize shardings as NamedSharding,
   and now that is the only sharding serialization that is supported.
 
+* Deprecations
+  * The fields `in_shardings_hlo` and `out_shardings_hlo` of
+  `jax.export.Exported` have been deprecated for a while. Now accessing them
+   raises a warning. Use `in_shardings_jax` and `out_shardings_jax` instead.
+
 * Changes
   * The cuDNN fused attention backward pass (used by
     {func}`jax.nn.dot_product_attention` with `implementation='cudnn'`) no
