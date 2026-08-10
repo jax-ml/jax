@@ -31,7 +31,6 @@ from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic import sc_core
 from jax._src.pallas.mosaic import tpu_info
-from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas import tpu_sc as plsc
@@ -1807,20 +1806,20 @@ class VectorSubcoreTest(PallasSCTest):
     mesh = plsc.VectorSubcoreMesh(
         core_axis_name="core", subcore_axis_name="subcore", num_cores=1
     )
-    def stateful(refs):
-      def body(x_ref, o_ref):
-        def with_scratch(scratch_ref):
-          pltpu.sync_copy(x_ref, scratch_ref)
-          scratch_ref[...] = scratch_ref[...] + 1
-          effectful_op(scratch_ref[...])
-          pltpu.sync_copy(scratch_ref, o_ref)
-        pl.run_scoped(with_scratch, pltpu.VMEM(x.shape, x.dtype))
-      pl.core_map(
-          mesh, compiler_params=pltpu.CompilerParams(needs_layout_passes=False)
-      )(lambda: body(*refs))
 
-    _, out = jax.jit(state_discharge.run_state(stateful))(
-        (x, jnp.empty_like(x)))
+    @pl.kernel(
+        mesh=mesh,
+        out_type=x,
+        scratch_types=[pltpu.VMEM(x.shape, x.dtype)],
+        compiler_params=pltpu.CompilerParams(needs_layout_passes=False),
+    )
+    def body(x_ref, o_ref, scratch_ref):
+      pltpu.sync_copy(x_ref, scratch_ref)
+      scratch_ref[...] = scratch_ref[...] + 1
+      effectful_op(scratch_ref[...])
+      pltpu.sync_copy(scratch_ref, o_ref)
+
+    out = jax.jit(body)(x)
     np.testing.assert_array_equal(out, x + 1)
 
   def test_parallel_loop_effects(self):
@@ -2697,14 +2696,13 @@ class ScalarSubcoreTest(PallasSCTest):
       x_device = pltpu.with_memory_space_constraint(x, pltpu.HOST)
       x_ref = jax.new_ref(x_device, memory_space=pltpu.HOST)
 
-      @pl.core_map(
+      pl.kernel(
+          lambda: pltpu.sync_copy(x_ref, y_ref),
           mesh=sc_mesh,
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=self.USE_TC_TILING,
           ),
-      )
-      def _():
-        pltpu.sync_copy(x_ref, y_ref)
+      )()
 
       return y_ref[...]
 
@@ -2725,19 +2723,19 @@ class ScalarSubcoreTest(PallasSCTest):
     def foo(x):
       sc_mesh = plsc.ScalarSubcoreMesh(axis_name="core", num_cores=1)
 
-      y_ref = pl.empty_ref_like(pl.MemoryRef(jax.core.ShapedArray(x.shape, x.dtype), pl.HOST))
-      x_ref = jax.new_ref(x, memory_space=pltpu.HBM)
-
-      @pl.core_map(
+      @pl.kernel(
           mesh=sc_mesh,
+          out_type=pl.MemoryRef(
+              jax.core.ShapedArray(x.shape, x.dtype), pl.HOST
+          ),
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=self.USE_TC_TILING,
           ),
       )
-      def _():
+      def kernel(x_ref, y_ref):
         pltpu.sync_copy(x_ref, y_ref)
 
-      return pltpu.with_memory_space_constraint(y_ref[...], pltpu.HOST)
+      return pltpu.with_memory_space_constraint(kernel(x), pltpu.HOST)
 
     o = jax.block_until_ready(foo(x))
     np.testing.assert_array_equal(o, x)
@@ -3063,20 +3061,21 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       y_ref = pl.empty_ref_like(pltpu.HBM(x.shape, x.dtype))
       x_ref = jax.new_ref(x)
 
-      run_kernel = pl.core_map(
+      pl.kernel(
+          lambda: pltpu.make_async_copy(x_ref, y_ref, sem_ref).start(),
           mesh=sc_mesh,
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=self.USE_TC_TILING,
           ),
-      )
+      )()
 
-      @run_kernel
-      def _():
-        pltpu.make_async_copy(x_ref, y_ref, sem_ref).start()
-
-      @run_kernel
-      def _():
-        pltpu.make_async_copy(x_ref, y_ref, sem_ref).wait()
+      pl.kernel(
+          lambda: pltpu.make_async_copy(x_ref, y_ref, sem_ref).wait(),
+          mesh=sc_mesh,
+          compiler_params=pltpu.CompilerParams(
+              use_tc_tiling_on_sc=self.USE_TC_TILING,
+          ),
+      )()
 
       return y_ref[...]
 
@@ -3100,17 +3099,19 @@ class PallasSparsecoreAsyncTest(PallasSCTest):
       )()
       sem_ref = jax.new_ref(sem, memory_space=pltpu.SEMAPHORE)
 
-      @pl.core_map(mesh)
+      @pl.kernel(mesh=mesh)
       def dma1():
         pltpu.async_copy(x_ref.at[index_ref[0]], y_ref, sem_ref).wait()
+      dma1()
       index_ref[0] += 1  # TODO(b/487587946): unable to put this inside dma1
 
       y1 = jax.freeze(y_ref)
       y_ref = jax.new_ref(y1)
 
-      @pl.core_map(mesh)
+      @pl.kernel(mesh=mesh)
       def dma2():
         pltpu.async_copy(x_ref.at[index_ref[0]], y_ref, sem_ref).wait()
+      dma2()
 
       y2 = jax.freeze(y_ref)
       # Transpose tests jnp op on result of core_map, verifying we don't leak

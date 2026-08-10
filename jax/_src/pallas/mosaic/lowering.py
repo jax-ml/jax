@@ -356,7 +356,12 @@ class UnpipelinedLoweringContext(LoweringContext):
   ):
     mesh_size = tuple(mesh_shape[i][1] for i in range(len(mesh_shape)))
     mesh_names = tuple(mesh_shape[i][0] for i in range(len(mesh_shape)))
-    arg_block_shapes = tuple(v.aval.shape for v in jaxpr.invars)  # pyrefly: ignore[missing-attribute]
+    arg_block_shapes = tuple(
+        _maybe_physicalize_block_shape(
+            v.aval, v.aval.shape  # pyrefly: ignore[missing-attribute]
+        )
+        for v in jaxpr.invars
+    )
     jax_mesh_context = (
         pallas_utils.MeshInfo.from_mesh(jax_mesh)
         if jax_mesh is not None

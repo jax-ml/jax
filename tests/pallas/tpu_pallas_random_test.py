@@ -217,25 +217,24 @@ class PRNGTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Fails on TPU <= v3")
 
-    def main(refs):
-      key_hbm, o_ref = refs
-      @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'))
-      def _():
-        @functools.partial(pl.run_scoped,
-                          key_smem=pltpu.SMEM((), key_hbm.dtype),
-                          o_vmem=pltpu.VMEM(o_ref.shape, o_ref.dtype))
-        def _scoped(key_smem, o_vmem):
-          pltpu.sync_copy(key_hbm, key_smem)
-          o_vmem[...] = jax_random.uniform(
-              key_smem[...], shape=o_ref.shape, minval=0.0, maxval=1.0
-          )
-          pltpu.sync_copy(o_vmem, o_ref)
-
     @jax.jit
     def f(rng_key):
-      y = jnp.zeros((8, 128), dtype=jnp.float32)
-      _, y = pl.run_state(main)((rng_key, y))
-      return y
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name="core"),
+          out_type=jax.ShapeDtypeStruct((8, 128), dtype=jnp.float32),
+          scratch_types=[
+              pltpu.SMEM((), rng_key.dtype),
+              pltpu.VMEM((8, 128), jnp.float32),
+          ],
+      )
+      def kernel(key_hbm, o_ref, key_smem, o_vmem):
+        pltpu.sync_copy(key_hbm, key_smem)
+        o_vmem[...] = jax_random.uniform(
+            key_smem[...], shape=o_ref.shape, minval=0.0, maxval=1.0
+        )
+        pltpu.sync_copy(o_vmem, o_ref)
+
+      return kernel(rng_key)
 
     key = pltpu.to_pallas_key(jax_random.key(0, impl="rbg"))
     y = f(key)

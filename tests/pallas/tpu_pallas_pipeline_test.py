@@ -1020,10 +1020,10 @@ class PallasCallMultipleBufferedPipelineTest(jtu.JaxTestCase):
       y_ref = jax.new_ref(y)
       o_ref = jax.empty_ref(jax.ShapeDtypeStruct(x.shape, jnp.float32))
       mesh = pltpu.TensorCoreMesh(axis_name='core')
-
-      @pl.core_map(mesh)
-      def _():
-        matmul_kernel(x_ref, y_ref, o_ref)
+      pl.kernel(
+          lambda: matmul_kernel(x_ref, y_ref, o_ref),
+          mesh=mesh,
+      )()
 
       return jax.freeze(o_ref)
 
@@ -1263,9 +1263,10 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
       y_ref = jax.empty_ref(jax.ShapeDtypeStruct.like(x))
       mesh = pltpu.TensorCoreMesh(axis_name='core')
 
-      @pl.core_map(mesh)
-      def _():
-        mul_kernel(i, x_ref, y_ref)
+      pl.kernel(
+          lambda: mul_kernel(i, x_ref, y_ref),
+          mesh=mesh,
+      )()
 
       return jax.freeze(y_ref)
 
@@ -1360,19 +1361,23 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
           jax.ShapeDtypeStruct((num_cores, 8, 128), jnp.int32)
       )
       mesh = pltpu.TensorCoreMesh(axis_name='core')
-      @pl.core_map(mesh)
-      def _():
-        def run(o_vmem_ref):
-          o_vmem_ref[...] = jnp.zeros_like(o_vmem_ref)
-          if dynamic_grid_index is None:
-            grid = grid_vals
-          else:
-            grid = list(grid_vals)
-            grid[dynamic_grid_index] = args[0]
-            grid = tuple(grid)
-          mul_kernel(grid, o_vmem_ref)
-          pltpu.sync_copy(o_vmem_ref, o_ref.at[jax.lax.axis_index('core')])
-        pl.run_scoped(run, pltpu.VMEM((8, 128), jnp.int32))
+
+      def run(o_vmem_ref):
+        o_vmem_ref[...] = jnp.zeros_like(o_vmem_ref)
+        if dynamic_grid_index is None:
+          grid = grid_vals
+        else:
+          grid = list(grid_vals)
+          grid[dynamic_grid_index] = args[0]
+          grid = tuple(grid)
+        mul_kernel(grid, o_vmem_ref)
+        pltpu.sync_copy(o_vmem_ref, o_ref.at[jax.lax.axis_index('core')])
+
+      pl.kernel(
+          lambda o_vmem_ref: run(o_vmem_ref),
+          mesh=mesh,
+          scratch_types=[pltpu.VMEM((8, 128), jnp.int32)],
+      )()
       return jax.freeze(o_ref)
 
     if dynamic_grid_index is not None:
@@ -1443,9 +1448,10 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
       y_ref = jax.empty_ref(jax.ShapeDtypeStruct.like(x))
       mesh = pltpu.TensorCoreMesh(axis_name='core')
 
-      @pl.core_map(mesh)
-      def _():
-        matmul_kernel(x_ref, y_ref)
+      pl.kernel(
+          lambda: matmul_kernel(x_ref, y_ref),
+          mesh=mesh,
+      )()
 
       return jax.freeze(y_ref)
 
@@ -1492,9 +1498,10 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
       o_ref = jax.empty_ref(jax.ShapeDtypeStruct((m, n), jnp.float32))
       mesh = pltpu.TensorCoreMesh(axis_name='core')
 
-      @pl.core_map(mesh)
-      def _():
-        matmul_kernel(x_ref, y_ref, o_ref, bm=bm, bk=bk, bn=bn)
+      pl.kernel(
+          lambda: matmul_kernel(x_ref, y_ref, o_ref, bm=bm, bk=bk, bn=bn),
+          mesh=mesh,
+      )()
 
       return jax.freeze(o_ref)
 
@@ -1527,9 +1534,10 @@ class PallasCallMegacoreTest(jtu.JaxTestCase):
     @jax.jit
     def func():
       o_ref = jax.empty_ref(jax.ShapeDtypeStruct((grid_size, 128), jnp.int32))
-      @pl.core_map(mesh)
-      def _():
-        kernel(o_ref)
+      pl.kernel(
+          lambda: kernel(o_ref),
+          mesh=mesh,
+      )()
       return jax.freeze(o_ref)
 
     out = func()
@@ -1654,11 +1662,13 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
-    def main(refs):
-      x_ref, y_ref = refs
-
-      @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'))
-      def _():
+    @jax.jit
+    def f(x):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=jax.ShapeDtypeStruct((8, 8, 128), jnp.int32),
+      )
+      def kernel_fn(x_ref, y_ref):
         pltpu.emit_pipeline(
             kernel,
             grid=(1,),
@@ -1674,11 +1684,8 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
             ),
         )(x_ref, y_ref)
 
-    @jax.jit
-    def f(x):
-      y = jnp.ones((8, 8, 128), dtype=jnp.int32)
-      _, y = pl.run_state(main)((x, y))
-      return y
+      return kernel_fn(x)
+
     with self.assertRaisesRegex(
         ValueError,
         'Must return a (pl\\.)?ds from the index_map for a BoundedSlice'
@@ -1696,11 +1703,15 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
-    def main(refs):
-      x_ref, y_ref = refs
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
 
-      @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'))
-      def _():
+    @jax.jit
+    def f(x):
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=jax.ShapeDtypeStruct((8, 8, 128), jnp.int32),
+      )
+      def kernel_fn(x_ref, y_ref):
         pltpu.emit_pipeline(
             kernel,
             grid=(1,),
@@ -1716,13 +1727,7 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
             ),
         )(x_ref, y_ref)
 
-    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
-
-    @jax.jit
-    def f(x):
-      y = jnp.ones((8, 8, 128), dtype=jnp.int32)
-      _, y = pl.run_state(main)((x, y))
-      return y
+      return kernel_fn(x)
 
     out = f(x)
     np.testing.assert_allclose(out, x[4:12])
@@ -1741,41 +1746,37 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
-    def main(refs):
-      x_ref, y_ref, slices_ref = refs
-
-      @pl.core_map(pltpu.TensorCoreMesh(axis_name='core'))
-      def _():
-
-        @functools.partial(
-            pl.run_scoped, slices_smem=pltpu.SMEM(slices.shape, slices.dtype)
-        )
-        def _(slices_smem):
-          pltpu.sync_copy(slices_ref, slices_smem)
-          def index_map(i):
-            return (
-                pl.ds(slices_smem[i, 0], slices_smem[i, 1] - slices_smem[i, 0]),
-                0,
-                0,
-            )
-          block_spec = pl.BlockSpec(
-              (pl.BoundedSlice(16), 8, 128),
-              index_map,
-          )
-          pltpu.emit_pipeline(
-              kernel,
-              grid=(slices.shape[0],),
-              in_specs=(block_spec,),
-              out_specs=block_spec,
-          )(x_ref, y_ref)
-
     x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
 
     @jax.jit
     def f(x, slices):
-      y = pl.empty_like(x)
-      _, y, _ = pl.run_state(main)((x, y, slices))
-      return y
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name='core'),
+          out_type=x,
+          scratch_types=[pltpu.SMEM(slices.shape, slices.dtype)],
+      )
+      def kernel_fn(x_ref, slices_ref, y_ref, slices_smem):
+        pltpu.sync_copy(slices_ref, slices_smem)
+
+        def index_map(i):
+          return (
+              pl.ds(slices_smem[i, 0], slices_smem[i, 1] - slices_smem[i, 0]),
+              0,
+              0,
+          )
+
+        block_spec = pl.BlockSpec(
+            (pl.BoundedSlice(16), 8, 128),
+            index_map,
+        )
+        pltpu.emit_pipeline(
+            kernel,
+            grid=(slices.shape[0],),
+            in_specs=(block_spec,),
+            out_specs=block_spec,
+        )(x_ref, y_ref)
+
+      return kernel_fn(x, slices)
 
     out = f(x, slices)
     np.testing.assert_allclose(out, x)

@@ -312,18 +312,19 @@ class CoreMapTest(jtu.JaxTestCase):
   def test_can_signal_cores(self):
     @jax.jit
     def f(x):
-      x_ref = jax.new_ref(x)
-      y_ref = jax.new_ref(jnp.empty_like(x))
-      @pl.core_map(pltpu.TensorCoreMesh(axis_name="x"))
-      def _():
-        @functools.partial(pl.run_scoped, sem=pltpu.SemaphoreType.REGULAR)
-        def inner(sem):
-          s = jax.lax.axis_size("x")
-          for i in range(s):
-            pl.semaphore_signal(sem, device_id={"x": i})
-          pl.semaphore_wait(sem, s)
-          pltpu.sync_copy(x_ref, y_ref)
-      return jax.freeze(y_ref)
+      @pl.kernel(
+          mesh=pltpu.TensorCoreMesh(axis_name="x"),
+          out_type=x,
+          scratch_types=[pltpu.SemaphoreType.REGULAR],
+      )
+      def kernel(x_ref, y_ref, sem):
+        s = jax.lax.axis_size("x")
+        for i in range(s):
+          pl.semaphore_signal(sem, device_id={"x": i})
+        pl.semaphore_wait(sem, s)
+        pltpu.sync_copy(x_ref, y_ref)
+
+      return kernel(x)
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     np.testing.assert_array_equal(f(x), x)
 

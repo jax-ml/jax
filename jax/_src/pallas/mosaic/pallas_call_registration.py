@@ -635,6 +635,21 @@ def mpmd_map_tpu_lowering_rule(
             raise NotImplementedError(
                 "mpmd_map does not support TC kernels yet."
             )
+          if mesh.num_cores > 1:
+            actual_invars = (
+                jaxpr.invars[:-num_scratch]
+                if num_scratch > 0
+                else jaxpr.invars
+            )
+            if any(
+                pallas_core.get_memory_space_aval(v.aval)
+                == tpu_core.MemorySpace.VMEM
+                for v in actual_invars
+            ):
+              raise NotImplementedError(
+                  "TensorCoreMesh does not support VMEM inputs/outputs when there"
+                  " are >1 cores. Use HBM or ANY instead."
+              )
         case (
             tpu_core.CoreType.SC_SCALAR_SUBCORE
             | tpu_core.CoreType.SC_VECTOR_SUBCORE
