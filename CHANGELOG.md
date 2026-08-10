@@ -68,6 +68,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     overwriting it, so HLO passes disabled via
     `XLA_FLAGS=--xla_disable_hlo_passes=...` stay disabled
     ({jax-issue}`#37391`).
+  * {func}`jax.numpy.split`, {func}`jax.numpy.array_split`, and the
+    `hsplit`/`vsplit`/`dsplit` variants once again accept negative entries in
+    `indices_or_sections`, resolving them against the axis size as NumPy does
+    ({jax-issue}`#6599`). Out-of-bound indices are now clipped to the axis
+    bounds and produce empty sections, also matching NumPy, instead of raising
+    `ValueError: Sizes passed to split must be nonnegative`.
 
 ## JAX 0.11.0 (July 16, 2026)
 
