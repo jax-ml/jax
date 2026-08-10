@@ -71,7 +71,8 @@ std::string_view PyDevice::platform() const {
   // expect "gpu". Migrate users and remove this
   // code.
   absl::string_view platform_name = device_->PlatformName();
-  if (platform_name == "cuda" || platform_name == "rocm") {
+  if (platform_name == "cuda" || platform_name == "rocm" ||
+      platform_name == "oneapi") {
     return std::string_view("gpu");
   } else {
     return platform_name;
