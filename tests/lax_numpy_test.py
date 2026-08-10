@@ -3104,6 +3104,35 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(
+    [dict(op=op, shape=shape, axis=axis, indices=indices)
+      # Includes negative and out-of-bound indices, which numpy resolves
+      # relative to the axis size and then clips to [0, size].
+      for op, shape, axis, indices in [
+          ('split', (3,), 0, [-1]), ('split', (12,), 0, [2, -1]),
+          ('split', (12, 4), 0, [2, -2]), ('split', (12, 4), 1, [-3, -1]),
+          ('split', (2, 3, 4), -1, [1, -1]), ('split', (2, 3, 4), -2, [-2]),
+          ('split', (3,), 0, [-5]), ('split', (3,), 0, [5]),
+          ('split', (3,), 0, [-5, 5]), ('split', (12,), 0, [0, 12]),
+          ('split', (12,), 0, [20, 30]),
+          ('array_split', (12,), 0, [5, -2]),
+          ('array_split', (2, 3, 5), -1, [1, -1]),
+          ('array_split', (7, 2, 2), 0, [-5]),
+          ('vsplit', (12, 4), 0, [1, -2]), ('hsplit', (12, 4), 1, [-1]),
+          ('dsplit', (2, 3, 4), 2, [-2]), ('vsplit', (4, 3, 4), 0, [-1, 5])]
+    ],
+    dtype=default_dtypes,
+  )
+  def testSplitIndices(self, op, shape, indices, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    # vsplit, hsplit and dsplit split along a fixed axis, so take no axis arg.
+    kwds = {} if op in ['vsplit', 'hsplit', 'dsplit'] else {'axis': axis}
+    np_fun = lambda x: getattr(np, op)(x, indices, **kwds)
+    jnp_fun = lambda x: getattr(jnp, op)(x, indices, **kwds)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   def testSplitTypeError(self):
     # If we pass an ndarray for indices_or_sections -> no error
     self.assertEqual(3, len(jnp.split(jnp.zeros(3), jnp.array([1, 2]))))
