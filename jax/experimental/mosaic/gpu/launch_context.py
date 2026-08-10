@@ -1574,7 +1574,7 @@ class LaunchContext:
       if smem_ref is not src_ref and arrive:
         assert barrier is not None
         arrive_predicate = utils.single_thread_predicate(utils.ThreadSubset.WARPGROUP)
-        utils.nvvm_mbarrier_arrive_expect_tx(
+        nvvm.mbarrier_arrive_expect_tx(
             barrier.get_ptr(),
             transfer_bytes,
             predicate=arrive_predicate,
@@ -1781,7 +1781,7 @@ class LaunchContext:
         assert barrier is not None
         barrier_ptr = barrier.get_ptr()
         if arrive:
-          utils.nvvm_mbarrier_arrive_expect_tx(
+          nvvm.mbarrier_arrive_expect_tx(
               barrier_ptr, clamped_transfer_bytes, predicate=predicate
           )
         else:
@@ -1839,7 +1839,7 @@ class LaunchContext:
               arith.CmpIPredicate.eq, utils.cluster_idx(collective), c(0, index),
           )
           arrive_predicate = arith.andi(predicate, first_block)
-          utils.nvvm_mbarrier_arrive_expect_tx(
+          nvvm.mbarrier_arrive_expect_tx(
               barrier_ptr, transfer_bytes, predicate=arrive_predicate
           )
         rank = len(slice_shape)
@@ -1872,7 +1872,7 @@ class LaunchContext:
         )
       else:
         if arrive:
-          utils.nvvm_mbarrier_arrive_expect_tx(
+          nvvm.mbarrier_arrive_expect_tx(
               barrier_ptr, transfer_bytes, predicate=predicate
           )
         if collective_size > 1:

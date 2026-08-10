@@ -564,17 +564,12 @@ class ModuleContext:
           mgpu_utils.dtype_to_ir_type(struct.dtype),
           memory_space=mgpu_utils.tmem(),
       )
-      slice_op = mgpu.dialect.SliceTmemOp(
+      tmem_ref = mgpu.dialect.slice_tmem(
           type,
           self.tmem_base,
           self.tmem_used_cols,
+          alias_id=self.next_tmem_allocation_id(),
       )
-      # TODO(allanrenucci): Pass alias_id directly to SliceTmemOp after jaxlib
-      # v0.11.0 release.
-      alias_id = self.next_tmem_allocation_id()
-      i64 = ir.IntegerType.get_signless(64)
-      slice_op.attributes["alias_id"] = ir.IntegerAttr.get(i64, alias_id)
-      tmem_ref = slice_op.result
       layout_attr = mgpu.to_layout_attr(layout)
       tmem_ref = mgpu.dialect.tmem_layout_cast(tmem_ref, layout_attr)
     cols_used = layout.cols_in_shape(
@@ -1664,11 +1659,10 @@ def _extract_aliased_ref(
           ref_ty = ir.MemRefType.get(
               transformed_shape, mlir_dtype, memory_space=mgpu_utils.tmem()
           )
-          # TODO(allanrenucci): Use alias_id directly from SliceTmemOp after
-          # jaxlib v0.11.0 release.
-          alloc_id = ir.IntegerAttr(source_slice_op.attributes["alias_id"]).value
+          alloc_id = source_slice_op.alias_id
+          assert alloc_id is not None
           # TODO(bchetioui): Use a scheme resilient to hash collisions.
-          alias_id = hash((offset, alloc_id, alias_group_idx))
+          alias_id = hash((offset, alloc_id.value, alias_group_idx))
           slice_op = mgpu.dialect.SliceTmemOp(
               ref_ty, source_slice_op.source, total_offset
           )
@@ -2462,12 +2456,10 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
   return mgpu.concatenate(arrays, axis=dimension)
 
 
-# TODO(allanrenucci): Remove guard after jaxlib v0.11.0 release.
-if hasattr(mgpu.dialect, "vector_concat"):
-  @register_lowering_rule(lax.concatenate_p, mgpu.LoweringSemantics.Warpgroup)
-  def _concatenate_lowering_rule_wg(ctx: LoweringRuleContext, *args, dimension):
-    operands = [_ensure_ir_value(x, a.dtype) for x, a in zip(args, ctx.avals_in)]
-    return mgpu.dialect.vector_concat(operands, dimension)
+@register_lowering_rule(lax.concatenate_p, mgpu.LoweringSemantics.Warpgroup)
+def _concatenate_lowering_rule_wg(ctx: LoweringRuleContext, *args, dimension):
+  operands = [_ensure_ir_value(x, a.dtype) for x, a in zip(args, ctx.avals_in)]
+  return mgpu.dialect.vector_concat(operands, dimension)
 
 
 @register_lowering_rule(lax.select_n_p, mgpu.LoweringSemantics.Lane)
