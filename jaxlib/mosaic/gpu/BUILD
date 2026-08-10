@@ -438,6 +438,7 @@ nanobind_extension(
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/strings",
         "@nanobind",
+        "@xla//xla/tsl/cuda:cupti",
         "@xla//xla/tsl/cuda:cudart",
     ],
 )

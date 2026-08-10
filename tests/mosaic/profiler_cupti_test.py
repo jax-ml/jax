@@ -13,21 +13,50 @@
 # limitations under the License.
 # ==============================================================================
 
+import pathlib
+import tempfile
+
 from absl.testing import absltest, parameterized
+import jax
+import jax.profiler
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 try:
-  import jax._src.lib.mosaic_gpu  # noqa: F401
+  from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
   HAS_MOSAIC_GPU = True
 except ImportError:
   HAS_MOSAIC_GPU = False
+  mosaic_gpu_lib = None
 else:
   from jax.experimental.mosaic.gpu import profiler
 
 # ruff: noqa: F405
 config.parse_flags_with_absl()
 
+
+def _assert_trace_has_device_events(testcase, trace_dir):
+  profile_paths = list(pathlib.Path(trace_dir).glob("**/*.xplane.pb"))
+  testcase.assertTrue(profile_paths, "No XPlane profile files written")
+  event_count = 0
+  for profile_path in profile_paths:
+    profile = jax.profiler.ProfileData.from_serialized_xspace(
+        profile_path.read_bytes())
+    event_count += sum(
+        len(list(line.events))
+        for plane in profile.planes
+        if plane.name.startswith("/device:")
+        for line in plane.lines)
+  testcase.assertGreater(event_count, 0, "No device events found in XPlane")
+
+
+def _cupti_v2_available():
+  return bool(
+      mosaic_gpu_lib is not None and
+      mosaic_gpu_lib._mosaic_gpu_ext._cupti_v2_available())
+
+
+@jtu.thread_unsafe_test_class()
 class ProfilerCuptiTest(parameterized.TestCase):
 
   def setUp(self):
@@ -60,6 +89,60 @@ class ProfilerCuptiTest(parameterized.TestCase):
     timings = [f_profiled(self.x)[1] for _ in range(n)]
     for item in timings:
       self.assertIsInstance(item, float)
+
+  def test_tokamax_cupti_xprof_ordering(self):
+    """Covers the TokaMax CUPTI/XProf ordering regression."""
+    if not _cupti_v2_available():
+      self.skipTest("CUPTI V2 multi-subscriber APIs are unavailable")
+
+    f = jax.jit(lambda x: jnp.sin(x) ** 2 + 10.0)
+    x = jnp.ones((512, 512), dtype=jnp.float32)
+    timer = profiler.Cupti(finalize=False).measure(f)
+
+    def run_mosaic():
+      result, runtime_ms = timer(x)
+      jax.block_until_ready(result)
+      self.assertIsInstance(runtime_ms, float)
+      self.assertGreater(runtime_ms, 0.0)
+
+    run_mosaic()
+    run_mosaic()
+    with tempfile.TemporaryDirectory() as trace_dir:
+      with jax.profiler.trace(trace_dir):
+        jax.block_until_ready(f(x))
+      _assert_trace_has_device_events(self, trace_dir)
+    run_mosaic()
+    run_mosaic()
+
+  def test_default_mosaic_cupti_then_jax_trace_uses_v2(self):
+    if not _cupti_v2_available():
+      self.skipTest("CUPTI V2 multi-subscriber APIs are unavailable")
+
+    f = jax.jit(lambda x: jnp.sin(x) ** 2 + 10.0)
+    x = jnp.ones((512, 512), dtype=jnp.float32)
+    result, runtime_ms = profiler.Cupti(finalize=True).measure(f)(x)
+    jax.block_until_ready(result)
+    self.assertIsInstance(runtime_ms, float)
+    self.assertGreater(runtime_ms, 0.0)
+
+    with tempfile.TemporaryDirectory() as trace_dir:
+      with jax.profiler.trace(trace_dir):
+        jax.block_until_ready(f(x))
+      _assert_trace_has_device_events(self, trace_dir)
+
+  def test_mosaic_cupti_inside_jax_trace_uses_v2(self):
+    if not _cupti_v2_available():
+      self.skipTest("CUPTI V2 multi-subscriber APIs are unavailable")
+
+    f = jax.jit(lambda x: x @ x)
+    x = jnp.ones((512, 512), dtype=jnp.float32)
+    with tempfile.TemporaryDirectory() as trace_dir:
+      with jax.profiler.trace(trace_dir):
+        result, runtime_ms = profiler.Cupti(finalize=False).measure(f)(x)
+        jax.block_until_ready(result)
+      _assert_trace_has_device_events(self, trace_dir)
+    self.assertIsInstance(runtime_ms, float)
+    self.assertGreater(runtime_ms, 0.0)
 
   def test_measure_repeated_interleaved(self):
     # test that kernels run outside of measure() are not captured
