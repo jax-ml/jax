@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/gpu_module_to_assembly.h"
 
 #include <cassert>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -103,8 +104,8 @@ FailureOr<SmallVector<char, 0>> ModuleToAssembly::moduleToObject(
     return getOperation().emitError() << "Failed translating the module"
                                          "to PTX.";
   }
-
-  return SmallVector<char, 0>(ptx->begin(), ptx->end());
+  std::string fixed_ptx = internal::FixInlineAsmLocInfoInPTX(*ptx);
+  return SmallVector<char, 0>(fixed_ptx.begin(), fixed_ptx.end());
 }
 
 std::optional<SmallVector<std::unique_ptr<llvm::Module>>>
@@ -180,6 +181,47 @@ LogicalResult LowerGpuModuleToAssembly(
       builder.getArrayAttr(SmallVector<Attribute>{object}));
   gpu_module->erase();
   return mlir::success();
+}
+
+// Mosaic GPU outputs a lot of multi-line inline assembly. Each such block
+// should be mapped to exactly one line from the original python source.
+//
+// However, NVPTXAsmPrinter::emitInlineAsm increments the `.loc` on every line
+// of the inline asm block, incorrectly producing a lot of `.loc` directives
+// inside the asm block pointing to wrong consecutive lines in the source
+// file.
+//
+// This function removes all `.loc` directive in inline asm blocks.
+std::string FixInlineAsmLocInfoInPTX(llvm::StringRef ptx) {
+  std::string result;
+  result.reserve(ptx.size());
+
+  size_t pos = 0;
+  bool in_inline_asm = false;
+  while ((pos = ptx.find('\n')) != llvm::StringRef::npos) {
+    llvm::StringRef line = ptx.substr(0, pos + 1);
+    ptx = ptx.substr(pos + 1);
+
+    llvm::StringRef trimmed = line.trim();
+
+    if (in_inline_asm) {
+      if (trimmed.starts_with(".loc\t")) {
+          continue;
+      }
+      if (trimmed == "// end inline asm") {
+        in_inline_asm = false;
+      }
+    } else if (trimmed == "// begin inline asm") {
+      in_inline_asm = true;
+    }
+    result.append(line);
+  }
+
+  // Add the last line (if the string doesn't end with a newline)
+  if (!ptx.empty()) {
+    result.append(ptx);
+  }
+  return result;
 }
 
 }  // namespace internal
