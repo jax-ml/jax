@@ -40,8 +40,10 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import linalg
-from jax._src.lib import xla_client
 from jax._src.lib import _jax
+from jax._src.lib import jax_mlir_ext
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect, sdy
@@ -212,15 +214,39 @@ class Exported:
   uses_global_constants: bool
 
   _get_vjp: Callable[[Exported], Exported] | None
+  _mlir_module: ir.Module | None = dataclasses.field(
+      default=None, compare=False, hash=False, repr=False
+  )
 
   def mlir_module(self, serialized: bool = True) -> Any:
     """A string or Module representation of the ``mlir_module_serialized``."""
     if serialized:
+      if self._mlir_module is not None:
+        return mlir.module_to_string(self._mlir_module)
       with mlir.make_ir_context():
-        module = _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+        module = _jax.mlir.deserialize_portable_artifact(
+            self.mlir_module_serialized
+        )
         return mlir.module_to_string(module)
-    else:
-      return _jax.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+
+    try:
+      context = ir.Context.current
+    except ValueError:
+      context = None
+
+    if jaxlib_extension_version >= 480 and self._mlir_module is not None:
+      if context is None or context == self._mlir_module.context:
+        return jax_mlir_ext.clone_module(self._mlir_module)
+
+      return jax_mlir_ext.parse_module_bytecode(
+          mlir.module_to_bytecode(self._mlir_module),
+          context=context,
+          verify=False,
+      )
+
+    return _jax.mlir.deserialize_portable_artifact(
+        self.mlir_module_serialized, context=context
+    )
 
   def __str__(self):
     # This is called to make a MLIR source location when we call an Exported, and we
@@ -743,9 +769,13 @@ def _export_lowered(
 
   # Make a copy of mlir module as we should not mutate it
   # because it may be cached
-  context = mlir.make_ir_context()
-  with context, ir.Location.unknown(context):
-    mlir_module = ir.Module.parse(mlir.module_to_bytecode(mlir_module))
+  if jaxlib_extension_version >= 480:
+    mlir_module = jax_mlir_ext.clone_module(mlir_module)
+  else:
+    with mlir_module.context, ir.Location.unknown(mlir_module.context):
+      mlir_module = ir.Module.parse(
+          mlir.module_to_bytecode(mlir_module), context=mlir_module.context
+      )
   if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
       or lowering.compile_args.get("ordered_effects", [])):
     mlir_module = _wrap_main_func(
@@ -861,7 +891,8 @@ def _export_lowered(
       module_kept_var_idx=module_kept_var_idx,
       uses_global_constants=shape_poly_state.uses_dim_vars,
       calling_convention_version=version,
-      _get_vjp=_get_exported_vjp)
+      _get_vjp=_get_exported_vjp,
+      _mlir_module=mlir_module)
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
   # `target_version` is used to manage situations when a StableHLO producer
@@ -1059,6 +1090,7 @@ def _wrap_main_func(
     symbol_table.set_symbol_name(new_main_op, "main")
     pipeline = passmanager.PassManager.parse(
         'builtin.module(symbol-dce)')
+    pipeline.enable_verifier(False)
     pipeline.run(wrapped_module.operation)
 
   return wrapped_module
@@ -1544,11 +1576,13 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       with submodule.context:
         pipeline = passmanager.PassManager.parse(
             'builtin.module(xla-sdy-round-trip-import-shardy-attrs)')
+        pipeline.enable_verifier(False)
         pipeline.run(submodule.operation)
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
         'builtin.module(sdy-lift-inlined-meshes)')
+    pipeline.enable_verifier(False)
     pipeline.run(submodule.operation)
 
   axis_context = ctx.module_context.axis_context
