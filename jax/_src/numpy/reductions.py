@@ -2740,6 +2740,8 @@ def percentile(a: ArrayLike, q: ArrayLike,
       Values with higher weights contribute more to the percentile calculation.
       The weights array must be broadcastable to the shape of `a` along the specified axis.
       Currently, weighted percentiles are only supported when `method="inverted_cdf"`.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     An array containing the specified percentiles along the specified axes.

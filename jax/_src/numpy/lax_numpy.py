@@ -1921,6 +1921,8 @@ def reshape(
       JAX does not support ``order="A"``.
     copy: unused by JAX; JAX always returns a copy, though under JIT the compiler
       may optimize such copies away.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     reshaped copy of input array with the specified shape.
@@ -2002,6 +2004,8 @@ def ravel(a: ArrayLike, order: str = "C", *, out_sharding=None) -> Array:
     order: ``'F'`` or ``'C'``, specifies whether the reshape should apply column-major
       (fortran-style, ``"F"``) or row-major (C-style, ``"C"``) order; default is ``"C"``.
       JAX does not support `order="A"` or `order="K"`.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     flattened copy of input array.
@@ -3096,6 +3100,8 @@ def broadcast_to(array: ArrayLike, shape: DimSize | Shape,
   Args:
     array: array to be broadcast.
     shape: shape to which the array will be broadcast.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     a copy of array broadcast to the specified shape.
@@ -4819,8 +4825,6 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
       Input arrays will be promoted to at least rank 2. If a single array is given
       it will be treated equivalently to `tup = unstack(tup)`, but the implementation
       will avoid explicit unstacking.
-    dtype: optional dtype of the resulting array. If not specified, the dtype
-      will be determined via type promotion rules described in :ref:`type-promotion`.
 
   Returns:
     the stacked result.
@@ -6280,6 +6284,8 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
       If ``sum(repeats)`` is larger than the specified ``total_repeat_length``,
       the remaining values will be discarded. If ``sum(repeats)`` is smaller
       than ``total_repeat_length``, the final value will be repeated.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     an array constructed from repeated values of ``a``.

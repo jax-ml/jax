@@ -3563,6 +3563,7 @@ def isposinf(x, /, out=None):
 
   Args:
     x: input array or scalar. ``complex`` dtype are not supported.
+    out: unsupported by JAX.
 
   Returns:
     A boolean array of same shape as ``x`` containing ``True`` where ``x`` is
@@ -3598,6 +3599,7 @@ def isneginf(x, /, out=None):
 
   Args:
     x: input array or scalar. ``complex`` dtype are not supported.
+    out: unsupported by JAX.
 
   Returns:
     A boolean array of same shape as ``x`` containing ``True`` where ``x`` is

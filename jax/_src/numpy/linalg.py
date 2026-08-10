@@ -1892,6 +1892,8 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
     preferred_element_type: either ``None`` (default), which means the default
       accumulation type for the input types, or a datatype, indicating to
       accumulate results to and return a result with that datatype.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     array containing the tensor dot product of the inputs

@@ -199,7 +199,7 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
     b: right-hand-side of linear system. Array of shape ``(N,)`` (for a
       1-dimensional right-hand-side) or ``(..., N, M)`` (for a batched
       2-dimensional right-hand-side).
-    overwrite_a: unused by JAX
+    overwrite_b: unused by JAX
     check_finite: unused by JAX
 
   Returns:
@@ -2082,7 +2082,6 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
       If ``side`` is ``"right"`` then :math:`a = up`. If ``side`` is ``"left"``
       then :math:`a = pu`. The default is ``"right"``.
     method: Determines the algorithm used, as described above.
-    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
     eps: The final result will satisfy
       :math:`\left|x_k - x_{k-1}\right| < \left|x_k\right| (4\epsilon)^{\frac{1}{3}}`,
       where :math:`x_k` are the QDWH iterates. Ignored if ``method`` is not

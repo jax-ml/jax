@@ -103,6 +103,8 @@ def einsum(
     out: unsupported by JAX
     _dot_general: optionally override the ``dot_general`` callable used by ``einsum``.
       This parameter is experimental, and may be removed without warning at any time.
+    out_sharding: optional sharding specification for the output. If not specified,
+      it will be determined automatically by the compiler.
 
   Returns:
     array containing the result of the einstein summation.

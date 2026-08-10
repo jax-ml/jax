@@ -628,6 +628,7 @@ def take(
     indices: N-dimensional array of integer indices of values to take from the array.
     axis: the axis along which to take values. If not specified, the array will
       be flattened before indexing is applied.
+    out: unsupported by JAX.
     mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
       ``mode="fill"`` returns invalid values (e.g. NaN) for out-of bounds indices;
       the ``fill_value`` argument gives control over this value. For more discussion
@@ -784,10 +785,10 @@ def take_along_axis(
   in the case of out-of-bound indices; see the ``mode`` parameter below.
 
   Args:
-    a: array from which to take values.
+    arr: array from which to take values.
     indices: array of integer indices. If ``axis`` is ``None``, must be
-      one-dimensional. If ``axis`` is not None, must have ``a.ndim ==
-      indices.ndim``, and ``a`` must be broadcast-compatible with ``indices``
+      one-dimensional. If ``axis`` is not None, must have ``arr.ndim ==
+      indices.ndim``, and ``arr`` must be broadcast-compatible with ``indices``
       along dimensions other than ``axis``.
     axis: the axis along which to take values. If not specified, the array will
       be flattened before indexing is applied.
@@ -795,13 +796,15 @@ def take_along_axis(
       default ``mode="fill"`` returns invalid values (e.g. NaN) for out-of
       bounds indices. For more discussion of ``mode`` options, see
       :attr:`jax.numpy.ndarray.at`.
+    fill_value: The fill value to return for out-of-bounds indices when
+      ``mode="fill"``. Ignored otherwise.
     wrap_negative_indices: Whether to wrap negative indices to positive like
       Numpy. If unset, defaults to a legacy behavior (wrapping unless the
       indexing mode is 'promise_in_bounds'), but this will likely be removed and
       the default changed to True in the future, so do not depend on it.
 
   Returns:
-    Array of values extracted from ``a``.
+    Array of values extracted from ``arr``.
 
   See also:
     - :attr:`jax.numpy.ndarray.at`: take values via indexing syntax.
