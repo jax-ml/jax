@@ -358,7 +358,7 @@ Another common pattern is to use `static_argnums` to mark the `self` argument as
 
 ```{code-cell} ipython3
 class CustomClass:
-  def __init__(self, x: jnp.ndarray, mul: bool):
+  def __init__(self, x: float, mul: bool):
     self.x = x
     self.mul = mul
 
@@ -390,7 +390,7 @@ You can partially address this by defining an appropriate `__hash__` and `__eq__
 
 ```{code-cell} ipython3
 class CustomClass:
-  def __init__(self, x: jnp.ndarray, mul: bool):
+  def __init__(self, x: float, mul: bool):
     self.x = x
     self.mul = mul
 
@@ -410,6 +410,8 @@ class CustomClass:
 
 (see the [`object.__hash__`](https://docs.python.org/3/reference/datamodel.html#object.__hash__) documentation for more discussion of the requirements
 when overriding `__hash__`).
+
+Note that for this strategy to work, every attribute used in `__hash__` and `__eq__` must be hashable and must compare with a plain boolean result. JAX and NumPy arrays satisfy neither requirement, which is why `x` is annotated as a `float` here: with an array-valued `x`, `hash((self.x, self.mul))` would raise `TypeError: unhashable type`, and the tuple comparison in `__eq__` would fail as well. Array-valued attributes should not be marked static anyway, because static values are baked into the compiled program as constants, so each new array value would trigger a re-compilation even if hashing worked. If your class stores arrays, use Strategy 1 or Strategy 3 instead.
 
 This should work correctly with JIT and other transforms **so long as you never mutate your object**. Mutations of objects used as hash keys lead to several subtle problems, which is why for example mutable Python containers (e.g. [`dict`](https://docs.python.org/3/library/stdtypes.html#dict), [`list`](https://docs.python.org/3/library/stdtypes.html#list)) don't define `__hash__`, while their immutable counterparts (e.g. [`tuple`](https://docs.python.org/3/library/stdtypes.html#tuple)) do.
 
