@@ -48,13 +48,6 @@ config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 
 
-abstract_mesh = jax.sharding.AbstractMesh(
-    (), (), (), abstract_device=jax.sharding.AbstractDevice(
-        device_kind="TPU v6e", num_cores=1, platform="tpu"
-    )
-)
-
-
 def matmul_kernel(x_ref, y_ref, o_ref):
   # x shape: (m, l), y shape (l, n), o shape: (m ,n)
   block_m, block_l = x_ref.shape
@@ -143,10 +136,9 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     self.assertAllClose(res, x1)
 
     w, h = export.symbolic_shape("w, h")
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      exp = export.export(jax.jit(f), platforms=["tpu"])(
-          jax.ShapeDtypeStruct((w, h), jnp.int32)
-      )
+    exp = export.export(jax.jit(f), platforms=["tpu"])(
+        jax.ShapeDtypeStruct((w, h), jnp.int32)
+    )
 
     if jtu.test_device_matches(["tpu"]):
       res_exp_1 = exp.call(x1)
@@ -184,10 +176,9 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     with self.assertRaisesRegex(
         ValueError,
         "shape polymorphism for Pallas does not support dynamically-shaped blocks"):
-      with jax.sharding.use_abstract_mesh(abstract_mesh):
-        export.export(
-            jax.jit(f),
-            platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
+      export.export(
+          jax.jit(f),
+          platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
 
   def test_block_sizes_must_be_static(self):
     def f(x, *, eager=False):  # x: f32[w, h]
@@ -212,10 +203,9 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
         ValueError,
         "shape polymorphism for Pallas does not support dynamically-shaped blocks"):
 
-      with jax.sharding.use_abstract_mesh(abstract_mesh):
-        export.export(
-            jax.jit(f),
-            platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
+      export.export(
+          jax.jit(f),
+          platforms=["tpu"])(jax.ShapeDtypeStruct((w, h), jnp.int32))
 
   @jtu.run_on_devices("tpu")
   def test_matmul(self):
@@ -234,11 +224,10 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
                                     constraints=["mod(m, 128) == 0",
                                                  "mod(n, 128) == 0",
                                                  "mod(l, 128) == 0"])
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      exp = export.export(matmul, platforms=["tpu"])(
-          jax.ShapeDtypeStruct((m, l), jnp.float32),
-          jax.ShapeDtypeStruct((l, n), jnp.float32),
-      )
+    exp = export.export(matmul, platforms=["tpu"])(
+        jax.ShapeDtypeStruct((m, l), jnp.float32),
+        jax.ShapeDtypeStruct((l, n), jnp.float32),
+    )
     if jtu.test_device_matches(["tpu"]):
       res_exp = exp.call(x, y)
       self.assertAllClose(res_exp, x @ y, atol=1e-4)
@@ -296,15 +285,14 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
 
     dummy_d = jax.ShapeDtypeStruct((d, e), jax.numpy.float32)
 
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      exported_module = pl.lower_as_mlir(
-          jax.jit(sym_matmul),
-          x,
-          y,
-          dummy_d,
-          dynamic_shapes=True,
-          platforms=["tpu"],
-      )
+    exported_module = pl.lower_as_mlir(
+        jax.jit(sym_matmul),
+        x,
+        y,
+        dummy_d,
+        dynamic_shapes=True,
+        platforms=["tpu"],
+    )
     assert exported_module is not None
     self.assertIn(
         "%arg0: tensor<?x?xf32> loc(unknown), %arg1: tensor<?x?xf32>"
@@ -314,15 +302,14 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     x = jax.ShapeDtypeStruct((128, 1024), jax.numpy.float32)
     y = jax.ShapeDtypeStruct((1024, 512), jax.numpy.float32)
     dummy_d = jax.ShapeDtypeStruct((1, 1), jax.numpy.float32)
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      exported_module = pl.lower_as_mlir(
-          jax.jit(sym_matmul),
-          x,
-          y,
-          dummy_d,
-          dynamic_shapes=False,
-          platforms=["tpu"],
-      )
+    exported_module = pl.lower_as_mlir(
+        jax.jit(sym_matmul),
+        x,
+        y,
+        dummy_d,
+        dynamic_shapes=False,
+        platforms=["tpu"],
+    )
     assert exported_module is not None
     self.assertIn(
         "call @sym_matmul(%arg0, %arg1)",
@@ -343,18 +330,16 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     x1_shape = jax.ShapeDtypeStruct(
         jax.export.symbolic_shape("b1, 8, 128"), jnp.float32
     )
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      exported_module1 = pl.lower_as_mlir(
-          jax.jit(f), x1_shape, dynamic_shapes=True
-      )
+    exported_module1 = pl.lower_as_mlir(
+        jax.jit(f), x1_shape, dynamic_shapes=True
+    )
     self.assertIn("(b1, 8, 128)", str(exported_module1))
     x2_shape = jax.ShapeDtypeStruct(
         jax.export.symbolic_shape("b2, 8, 128"), jnp.float32
     )
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      exported_module2 = pl.lower_as_mlir(
-          jax.jit(f), x2_shape, dynamic_shapes=True
-      )
+    exported_module2 = pl.lower_as_mlir(
+        jax.jit(f), x2_shape, dynamic_shapes=True
+    )
     self.assertIn("(b2, 8, 128)", str(exported_module2))
 
   def test_cdiv(self):
@@ -367,13 +352,11 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     (m,) = jax.export.symbolic_shape("m")
     x_shape = jax.ShapeDtypeStruct((m, 128), jnp.float32)
     y_shape = jax.ShapeDtypeStruct(((m + 1) // 2, 128), jnp.float32)
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      f = pl.pallas_call(kernel, out_shape=y_shape)
+    f = pl.pallas_call(kernel, out_shape=y_shape)
 
-      exported_module = pl.lower_as_mlir(
-          jax.jit(f), x_shape, dynamic_shapes=True,
-          platforms=["tpu"]
-      )
+    exported_module = pl.lower_as_mlir(
+        jax.jit(f), x_shape, dynamic_shapes=True, platforms=["tpu"]
+    )
     self.assertIn("(m, 128)", str(exported_module))
 
   def test_dynamic_shapes_export(self):
@@ -427,8 +410,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     f_j = jax.jit(add_vectors)
     f_e = jax.export.export(f_j, platforms=["tpu"])
 
-    with (jax.sharding.use_abstract_mesh(abstract_mesh),
-          core.pallas_export_experimental(dynamic_shapes=True)):
+    with core.pallas_export_experimental(dynamic_shapes=True):
       f_k = f_e(x_shape, y_shape)
 
     self.assertRegex(
@@ -459,8 +441,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
     m, n = jax.export.symbolic_shape("m,n")
     x_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
 
-    with jax.sharding.use_abstract_mesh(abstract_mesh):
-      f_e = jax.export.export(jax.jit(add_vectors), platforms=["tpu"])
+    f_e = jax.export.export(jax.jit(add_vectors), platforms=["tpu"])
 
     with self.assertRaisesRegex(ValueError, "pallas_export_experimental"):
       f_e(x_shape, x_shape)
@@ -492,8 +473,7 @@ class ShapePolyTest(jtu.JaxTestCase, parameterized.TestCase):
         jax.jit(jax.vmap(add_vectors)), platforms=["tpu"]
     )
 
-    with (jax.sharding.use_abstract_mesh(abstract_mesh),
-          core.pallas_export_experimental(dynamic_shapes=True)):
+    with core.pallas_export_experimental(dynamic_shapes=True):
       exp = exporter(x_info, x_info)  # No crash
 
     if jtu.device_under_test() == "tpu":
