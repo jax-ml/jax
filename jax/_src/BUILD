@@ -1668,6 +1668,7 @@ pytype_strict_library(
         "clusters/k8s_cluster.py",
         "clusters/mpi4py_cluster.py",
         "clusters/ompi_cluster.py",
+        "clusters/prrte_cluster.py",
         "clusters/slurm_cluster.py",
         "distributed.py",
         "xla_bridge.py",

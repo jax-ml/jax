@@ -21,6 +21,7 @@ from .cluster import ClusterEnv as ClusterEnv
 # to :func:`jax.distributed.initialize`, the first
 # available one from the list will be picked.
 from .ompi_cluster import OmpiCluster as OmpiCluster
+from .prrte_cluster import PrrteCluster as PrrteCluster
 from .slurm_cluster import SlurmCluster as SlurmCluster
 from .mpi4py_cluster import Mpi4pyCluster as Mpi4pyCluster
 from .cloud_tpu_cluster import GkeTpuCluster as GkeTpuCluster
