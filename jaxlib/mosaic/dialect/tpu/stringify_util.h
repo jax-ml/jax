@@ -16,23 +16,6 @@ limitations under the License.
 #ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_STRINGIFY_UTIL_H_
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_STRINGIFY_UTIL_H_
 
-#include <type_traits>  // IWYU pragma: keep
-
-#include "llvm/ADT/StringRef.h"  // IWYU pragma: keep
-
-// Defines an AbslStringify overload for MLIR enums in the enclosing namespace.
-//
-// IMPORTANT: This macro must be invoked inside the namespace of the enum types
-// you want to stringify, because Abseil uses ADL to find AbslStringify.
-#define DEFINE_ABSL_STRINGIFY_FOR_ENUMS()                                 \
-  template <typename Sink, typename EnumT>                                \
-  std::enable_if_t<std::is_enum_v<EnumT> &&                               \
-                       std::is_convertible_v<decltype(stringifyEnum(      \
-                                                 std::declval<EnumT>())), \
-                                             llvm::StringRef>,            \
-                   void>                                                  \
-  AbslStringify(Sink& sink, EnumT value) {                                \
-    sink.Append(stringifyEnum(value).str());                              \
-  }
+#include "xla/mosaic/dialect/tpu/stringify_util.h"
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_STRINGIFY_UTIL_H_

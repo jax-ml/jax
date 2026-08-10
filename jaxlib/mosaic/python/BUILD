@@ -59,6 +59,7 @@ gentbl_filegroup(
     deps = [
         "//jaxlib/mosaic:tpu_td_files",
         "@llvm-project//mlir:OpBaseTdFiles",
+        "@xla//xla/mosaic:tpu_td_files",
     ],
 )
 
