@@ -151,9 +151,8 @@ def matmul1(a, b, config: TuningConfig):
     m_slice = pl.ds(m_index * tile_m, tile_m)
     n_slice = pl.ds(n_index * tile_n, tile_n)
 
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+    @plgpu.warp_map
+    def _per_warp(warp_id):
 
       @pl.when(warp_id == 0)
       def _memory():
@@ -255,9 +254,8 @@ def matmul2(a, b, config: TuningConfig):
     m_slice = pl.ds(m_index * tile_m, tile_m)
     n_slice = pl.ds(n_index * tile_n, tile_n)
 
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+    @plgpu.warp_map
+    def _per_warp(warp_id):
 
       @pl.when(warp_id == 0)
       def _memory():
@@ -360,9 +358,8 @@ def matmul3(a, b, config: TuningConfig):
     m_slice = pl.ds(m_index * cluster_tile_m, cluster_tile_m)
     n_slice = pl.ds(n_index * cluster_tile_n, cluster_tile_n)
 
-    @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-    def _per_warp():
-      warp_id = lax.axis_index("warp")
+    @plgpu.warp_map
+    def _per_warp(warp_id):
 
       @pl.when(warp_id == 0)
       def _memory():
@@ -474,9 +471,8 @@ def matmul4(a, b, config: TuningConfig):
       m_slice = pl.ds(m_index * cluster_tile_m, cluster_tile_m)
       n_slice = pl.ds(n_index * cluster_tile_n, cluster_tile_n)
 
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _per_warp():
-        warp_id = lax.axis_index("warp")
+      @pl.warp_map
+      def _per_warp(warp_id):
 
         @pl.when(warp_id == 0)
         def _memory():
@@ -600,9 +596,8 @@ def matmul5(a, b, config: TuningConfig):
 
       @pl.when(wg_idx == 0)
       def _compute_wg():
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _per_warp():
-          warp_id = lax.axis_index("warp")
+        @pl.warp_map
+        def _per_warp(warp_id):
 
           @pl.when(warp_id == 0)
           def _memory():
@@ -748,9 +743,8 @@ def matmul6(a, b, config: TuningConfig):
 
       @pl.when(wg_idx == 0)
       def _compute_wg():
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _per_warp():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _per_warp(warp_id):
 
           @pl.when(warp_id == 0)
           def _memory():

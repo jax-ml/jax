@@ -1005,31 +1005,23 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       x_ref = jax.new_ref(x, memory_space=plgpu.GMEM)
       o_ref = jax.new_ref(jnp.zeros(128, dtype=dtype), memory_space=plgpu.GMEM)
 
-      # TODO(slebedev): Switch to ``self.kernel`` once it uses ``mpmd_map``.
-      @pl.core_map(
-          plgpu.Mesh(),
-          compiler_params=plgpu.CompilerParams(
-              lowering_semantics=self.LOWERING_SEMANTICS,
-          ),
-      )
-      def _():
-        def body(scratch_ref):
-          def pipeline_body(_, x_smem):
-            scratch_ref[...] = x_smem[...]
-            plgpu.commit_smem()
-            plgpu.copy_smem_to_gmem(
-                scratch_ref.at[...], o_ref.at[...], reduction_op="add"
-            )
-            plgpu.wait_smem_to_gmem(0)
+      @self.kernel(scratch_types=[plgpu.SMEM((128,), dtype)])
+      def kernel(scratch_ref):
+        def pipeline_body(_, x_smem):
+          scratch_ref[...] = x_smem[...]
+          plgpu.commit_smem()
+          plgpu.copy_smem_to_gmem(
+              scratch_ref.at[...], o_ref.at[...], reduction_op="add"
+          )
+          plgpu.wait_smem_to_gmem(0)
 
-          plgpu.emit_pipeline(
-              pipeline_body,
-              in_specs=[pl.BlockSpec((128,), lambda i: (i,))],
-              grid=(200,),
-          )(x_ref)
+        plgpu.emit_pipeline(
+            pipeline_body,
+            in_specs=[pl.BlockSpec((128,), lambda i: (i,))],
+            grid=(200,),
+        )(x_ref)
 
-        pl.run_scoped(body, plgpu.SMEM((128,), dtype))
-
+      kernel()
       return jax.freeze(o_ref)
 
     x = jnp.ones(200 * 128).astype(dtype)
@@ -4375,18 +4367,16 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     @jax.jit
     def f(x):
       def kernel_a(x_ref, out_ref):
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _(warp_id):
           out_ref[warp_id] = x_ref[warp_id] + 1.0
           @pl.when(warp_id == 0)
           def _():
             plgpu.griddepcontrol_launch_dependents()
 
       def kernel_b(in_ref, out_ref):
-        @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-        def _():
-          warp_id = lax.axis_index("warp")
+        @plgpu.warp_map
+        def _(warp_id):
           @pl.when(warp_id == 0)
           def _():
             plgpu.griddepcontrol_wait()
@@ -8111,6 +8101,7 @@ class PipelineTest(PallasTest):
   def test_emit_with_element_dim(self):
     shape = (20, 256)
 
+    @self.kernel()
     def kernel(x_gmem, o_gmem):
       index_map = lambda i: (10 * i + 1, 0)
 
@@ -8129,19 +8120,11 @@ class PipelineTest(PallasTest):
       pipeline(x_gmem, o_gmem)
 
     x = jnp.arange(np.prod(shape), dtype=jnp.int32).reshape(*shape)
-    compiler_params = plgpu.CompilerParams(
-        lowering_semantics=self.LOWERING_SEMANTICS,
-    )
 
     @jax.jit
     def run(x):
       x_ref = jax.new_ref(x, memory_space=plgpu.GMEM)
-
-      # TODO(slebedev): Switch to ``self.kernel`` once it uses ``mpmd_map``.
-      @pl.core_map(plgpu.Mesh(), compiler_params=compiler_params)
-      def _():
-        kernel(x_ref, x_ref)
-
+      kernel(x_ref, x_ref)
       return jax.freeze(x_ref)
 
     active_rows = ((jnp.arange(shape[0]) - 1) % 10 < 8).astype(x.dtype)

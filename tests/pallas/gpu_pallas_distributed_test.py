@@ -751,14 +751,13 @@ class PallasCallRemoteDMATest(TestCase):
     def kernel(y_ref, sem_out_ref, sem):
       dev_idx = jax.lax.axis_index("x")
 
-      @pl.core_map(plgpu.WarpMesh(axis_name="warp"))
-      def _per_warp():
-        warp_idx = jax.lax.axis_index("warp")
+      @plgpu.warp_map
+      def _per_warp(warp_id):
 
-        @pl.when(warp_idx == dev_idx)
+        @pl.when(warp_id == dev_idx)
         def _():
           # One warp on each device signals. In total, both semaphores get signaled once.
-          plgpu.semaphore_signal_multicast(sem.at[warp_idx], collective_axes="x")
+          plgpu.semaphore_signal_multicast(sem.at[warp_id], collective_axes="x")
 
           y_ref[0, 0] = 1.0
 
