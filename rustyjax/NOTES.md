@@ -105,3 +105,35 @@ Applied "parameter types describe the contract, glue enforces it" everywhere:
   `finish` are now FFI-free pure IR code. ~15 lines net deleted. Good evidence
   for the is-Rust-clearer question: the boundary is 2 conversion decls, not
   inline dispatch in every function.
+
+### 2026-08-10 (later) — XLA backend running
+
+`traced.compile().eval(args)` now goes through real XLA (CPU), bypassing the
+Rust interpreter entirely. Division of labor per design B:
+
+- **Rust: lowering is interpreter #3.** `Prim::stablehlo()` rule + a
+  `Jaxpr::to_stablehlo()` pass emitting StableHLO MLIR *text* (~30 lines).
+  Literals materialize as `stablehlo.constant` at use sites; `Aval::Int` ↦
+  `tensor<i64>`. Text-not-bytecode is fine at this scale and easy to eyeball.
+- **Python shim: the XLA session** via jaxlib's bundled CPU PJRT client — no
+  need for Rust XLA bindings (xla-rs / PJRT-C-API route deferred; would matter
+  for the speed story, not for semantics).
+
+The painful part was jaxlib's private API drift (~5 iterations, each error
+shallow but undocumented; grepping jax's own source for usage was the way):
+
+- `client.compile(mlir_text)` → now `compile_and_load(mlir_text,
+  executable_devices=DeviceList(...), compile_options=CompileOptions())`.
+- `buffer_from_pyval` is gone; array creation is `xc.batched_device_put(aval,
+  sharding, [np_array], [device], enable_x64=True)` (without `enable_x64` it
+  wants jax's config state: "enable_x64_state is not set").
+- The C++ `SingleDeviceSharding` must be *subclassed in Python* to add
+  `memory_kind` and `_to_xla_hlo_sharding` — normally jax's subclass does this.
+- Takeaway for the report: xla_client is an internal API and behaves like one;
+  a real rustyjax should target the PJRT C API directly instead.
+
+Maturin gotcha: python-source files are *copied* into the venv at install; must
+reinstall after editing the shim too (or use `uv pip install -e .`).
+
+Verified: original test (12), two-arg fn, constant-output jaxpr, and Rust
+interpreter agreement with XLA on the same jaxpr.

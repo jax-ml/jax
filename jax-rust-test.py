@@ -6,8 +6,10 @@ def foo(x):
 # trace to a jaxpr
 traced = jax.trace(foo, (jax.int_type,))
 
+compiled = traced.compile()
+
 # run interpreter
-ans = jax.eval(traced, (2,))
+ans = compiled.eval((2,))
 print(ans)  # should print `12`
 
 

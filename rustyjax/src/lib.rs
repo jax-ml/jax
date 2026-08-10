@@ -29,6 +29,14 @@ impl Prim {
     fn abstract_eval(self, _ins: [Aval; 2]) -> Aval {
         Aval::Int
     }
+
+    // The XLA lowering rule: StableHLO op mnemonic.
+    fn stablehlo(self) -> &'static str {
+        match self {
+            Prim::Add => "stablehlo.add",
+            Prim::Mul => "stablehlo.multiply",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -219,8 +227,43 @@ fn atom_str(x: Atom) -> String {
     }
 }
 
+// SSA name of an atom in the emitted MLIR, materializing literals as
+// stablehlo.constant ops. Invars are %arg0..; everything else is %t0..
+fn atom_ssa(x: Atom, names: &[String], body: &mut String, tmp: &mut u32) -> String {
+    match x {
+        Atom::Var(v) => names[v as usize].clone(),
+        Atom::Lit(l) => {
+            let n = format!("%t{}", *tmp);
+            *tmp += 1;
+            body.push_str(&format!("    {n} = stablehlo.constant dense<{l}> : tensor<i64>\n"));
+            n
+        }
+    }
+}
+
 #[pymethods]
 impl Jaxpr {
+    // Lower to StableHLO MLIR text. (Aval::Int ↦ tensor<i64>; the only case.)
+    fn to_stablehlo(&self) -> String {
+        let mut names: Vec<String> = (0..self.n_invars).map(|i| format!("%arg{i}")).collect();
+        let (mut body, mut tmp) = (String::new(), 0);
+        for eqn in &self.eqns {
+            let a = atom_ssa(eqn.inputs[0], &names, &mut body, &mut tmp);
+            let b = atom_ssa(eqn.inputs[1], &names, &mut body, &mut tmp);
+            let out = format!("%t{tmp}");
+            tmp += 1;
+            body.push_str(&format!("    {out} = {} {a}, {b} : tensor<i64>\n", eqn.prim.stablehlo()));
+            debug_assert_eq!(eqn.out as usize, names.len());
+            names.push(out);
+        }
+        let ret = atom_ssa(self.outvar, &names, &mut body, &mut tmp);
+        let args: Vec<String> = (0..self.n_invars).map(|i| format!("%arg{i}: tensor<i64>")).collect();
+        format!(
+            "module @rustyjax {{\n  func.func @main({}) -> tensor<i64> {{\n{body}    return {ret} : tensor<i64>\n  }}\n}}\n",
+            args.join(", ")
+        )
+    }
+
     fn __repr__(&self) -> String {
         let invars: Vec<String> = (0..self.n_invars).map(var_name).collect();
         let eqns: Vec<String> = self
