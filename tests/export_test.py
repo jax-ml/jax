@@ -113,7 +113,7 @@ mlir.register_lowering(testing_primitive_with_effect_p,
                        lowering_testing_primitive_with_effect)
 
 ## Setup for multi-platform lowering
-_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5.)
+_testing_multi_platform_to_add = dict(cpu=2., tpu=3., cuda=4., rocm=5., oneapi=6.)
 
 def _testing_multi_platform_func(x, *,
                                  effect_class_name: str | None = None):
@@ -130,6 +130,7 @@ def _testing_multi_platform_func(x, *,
     tpu=lambda: for_platform("tpu"),
     cuda=lambda: for_platform("cuda"),
     rocm=lambda: for_platform("rocm"),
+    oneapi=lambda: for_platform("oneapi"),
     default=lambda: for_platform("cpu"),
   )
 
@@ -564,7 +565,12 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_default_export_platform(self):
     test_platform = jtu.device_under_test()
     if test_platform == "gpu":
-      test_platform = "rocm" if jtu.is_device_rocm() else "cuda"
+      if jtu.is_device_rocm():
+        test_platform = "rocm"
+      elif jtu.is_device_oneapi():
+        test_platform = "oneapi"
+      else:
+        test_platform = "cuda"
     self.assertEqual(export.default_export_platform(), test_platform)
     exp = export.export(jnp.sin)(1.)
     self.assertEqual(exp.platforms, (export.default_export_platform(),))
@@ -1545,7 +1551,7 @@ class JaxExportTest(jtu.JaxTestCase):
     a = jax.device_put(np.ones((2, 3), dtype=np.float32), shd)
     f = jax.jit(lambda x: x)
 
-    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))(a)
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm", "oneapi"))(a)
     self.assertEqual(exported.in_avals[0].memory_space, core.MemorySpace.Host)
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
 
@@ -1572,7 +1578,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f = jax.jit(lambda: jnp.ones((2, 2), dtype=np.float32),
                 out_shardings=shd)
 
-    exported = get_exported(f, platforms=("tpu", "cuda", "rocm"))()
+    exported = get_exported(f, platforms=("tpu", "cuda", "rocm", "oneapi"))()
     self.assertEqual(exported.out_avals[0].memory_space, core.MemorySpace.Host)
     empty_mesh = jax.sharding.AbstractMesh((), ())
     shd_ns = jax.sharding.NamedSharding(empty_mesh, P(None, None),
@@ -1893,8 +1899,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       platforms=("tpu", "cpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
+                       platforms=("tpu", "cpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm", "oneapi"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
@@ -1916,14 +1922,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(lambda x: _testing_multi_platform_func(jnp.sin(x))),
-                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
+                       platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm", "oneapi"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(jax.jit(exp.call),
-                        platforms=("cpu", "cuda", "rocm"))(x)
+                        platforms=("cpu", "cuda", "rocm", "oneapi"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1942,8 +1948,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       platforms=("cpu", "tpu", "cuda", "rocm"))(x)
-    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
+                       platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(x)
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm", "oneapi"))
 
     # Now serialize the call for the current platform.
     exp2 = get_exported(jax.jit(exp.call))(x)
@@ -1979,6 +1985,8 @@ class JaxExportTest(jtu.JaxTestCase):
                            "rocm")
     mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
                            "cuda")
+    mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
+                           "oneapi")
 
     times_4 = core.Primitive("__testing_times_4")  # x4 for tpu
     times_4.def_abstract_eval(lambda x: x)
@@ -1997,13 +2005,16 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir.register_lowering(times_2_or_3,
                            mlir.lower_fun(times_3.bind,
                                           multiple_results=False), "cuda")
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_3.bind,
+                                          multiple_results=False), "oneapi")
 
     times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda and rocm, x4 for tpu
     times_2_or_3_or_4.def_abstract_eval(lambda x: x)
     times_2_or_3_or_4_lowering_cpu_gpu = mlir.lower_fun(times_2_or_3.bind,
                                                          multiple_results=False)
 
-    for platform in ["cpu", "cuda", "rocm"]:
+    for platform in ["cpu", "cuda", "rocm", "oneapi"]:
       mlir.register_lowering(times_2_or_3_or_4,
                              times_2_or_3_or_4_lowering_cpu_gpu,
                              platform)
@@ -2015,7 +2026,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(x):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
-    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu"])(x)
+    exp = export.export(f, platforms=["cpu", "cuda", "rocm", "tpu", "oneapi"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
@@ -2071,7 +2082,7 @@ class JaxExportTest(jtu.JaxTestCase):
       return b * 2.
 
     res_native = f_jax(a)
-    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm"))(a)
+    exp = get_exported(f_jax, platforms=("cpu", "tpu", "cuda", "rocm", "oneapi"))(a)
 
     # Call with argument placed on different platforms
     for platform in self.platforms:
