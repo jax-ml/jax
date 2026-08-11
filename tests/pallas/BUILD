@@ -284,6 +284,7 @@ jax_multiplatform_test(
     ],
     enable_backends = [],
     enable_configs = [
+        "gpu_a100",
         "gpu_a100_x32",
         "gpu_h100_x32",
         "gpu_h100",
