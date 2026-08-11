@@ -23,8 +23,8 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax._src import dtypes
-from jax._src.pallas import core as pallas_core
 from jax._src.pallas import helpers as pallas_helpers
+from jax._src.pallas import mpmd
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
@@ -457,7 +457,7 @@ def inline_ptx(asm: str):
   ptx()
 
 
-def warp_map[T](f: Callable[[jax.Array], T], /) -> T:
+def warp_map(f: Callable[[jax.Array], None], /) -> None:
   """Runs a function with single warp semantics, passing it the warp ID."""
   mesh = gpu_core.WarpMesh(axis_name=object())
-  return pallas_core.core_map(mesh)(lambda: f(lax.axis_index(mesh.axis_name)))
+  mpmd.mpmd_map([(mesh, lambda: f(lax.axis_index(mesh.axis_name)))])()
