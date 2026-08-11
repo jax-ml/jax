@@ -272,8 +272,8 @@ class OverlapTest(jtu.JaxTestCase):
   def test_unrolled_fsdp_pipeline_grad_program_order_async_decomp(self, mesh):
     if ifrt_version < 63:
       self.skipTest("Requires ifrt_version >= 63")
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45+")
+    if not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest("Requires libtpu 0.0.46+")
 
     if not jtu.is_device_tpu_at_least(6):
       self.skipTest("Requires TPU >= 6")
@@ -354,8 +354,8 @@ class AsyncCollectivesTest(jtu.JaxTestCase):
   def setUp(self):
     if ifrt_version < 63:
       self.skipTest("Requires ifrt_version >= 63")
-    if not jtu.is_libtpu_at_least("0.0.45"):
-      self.skipTest("Requires libtpu 0.0.45+")
+    if not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest("Requires libtpu 0.0.46+")
 
   @jtu.with_explicit_mesh((2,), ('i',))
   def test_lower_async_all_gather(self, mesh):
