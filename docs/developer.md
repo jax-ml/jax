@@ -263,11 +263,7 @@ Alternatively, if you need more control, you may run the bazel command
 directly (the two commands are equivalent):
 
 ```
-# Regular Python
 bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12
-
-# Free-threaded Python
-bazel run //build:requirements_ft.update --repo_env=HERMETIC_PYTHON_VERSION=3.14-ft
 ```
 
 Note, since it is still `pip` and `pip-compile` tools used under the hood, so

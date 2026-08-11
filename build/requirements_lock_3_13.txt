@@ -801,7 +801,7 @@ numpy==2.1.3 ; python_full_version < '3.14' \
     --hash=sha256:f653490b33e9c3a4c1c01d41bc2aef08f9475af51146e4a7710c450cf9761598 \
     --hash=sha256:fa2d1337dc61c8dc417fbccf20f6d1e139896a30721b7f1e832b2bb6ef4eb6c4
     # via
-    #   -r build/nonfreethreading-requirements.txt
+    #   -r build/requirements.in
     #   contourpy
     #   h5py
     #   jaxlib
@@ -859,7 +859,7 @@ numpy==2.5.1 ; python_full_version >= '3.14' \
     --hash=sha256:f7d60026c0bdb1380e83bfa7a0419c4577ee4b9a08880afcb6dadeb74c649fa2 \
     --hash=sha256:f7feb014281029e628ba2d5a007407443b06e418b6fe451d1e2adcbc8eba0107
     # via
-    #   -r build/nonfreethreading-requirements.txt
+    #   -r build/requirements.in
     #   contourpy
     #   jaxlib
     #   matplotlib
@@ -1419,7 +1419,7 @@ tensorflow==2.21.0 ; python_full_version < '3.14' \
     --hash=sha256:b07d15737406533898e36c7ef7944b1be18e9028dc521b9229952c537bbc5552 \
     --hash=sha256:b3b95643c4e70eb925839938fb35cbe142f317ec84af6844ee61513713bb13c0 \
     --hash=sha256:e9d8da8dcab9650efb45f032ba70af2f016f907e6e0c6bda29dd101bba945406
-    # via -r build/nonfreethreading-requirements.txt
+    # via -r build/requirements.in
 tensorstore==0.1.84 \
     --hash=sha256:028455cccdc05c31f194048cf459a26669b26d38f0516caf9213e7219b1ee79a \
     --hash=sha256:08e7ec5b35db5d4c4b6a867be8500448f9bd4e0c9d5a52d7f0b460650622baf6 \
@@ -1446,7 +1446,7 @@ tensorstore==0.1.84 \
     --hash=sha256:98edbc57d453ba8ebcf0d19bc28e4de6de95922bee2eca0805955b0833b8ce26 \
     --hash=sha256:d7d01775985fcaa2b0f100349766a953c5086e92e746bf395e936151d4d8f9ac \
     --hash=sha256:fe9bf1c7fef69884a91222179550f9b5ba6c1454f9534429221824d9b15c00ec
-    # via -r build/nonfreethreading-requirements.txt
+    # via -r build/requirements.in
 termcolor==3.3.0 ; python_full_version < '3.14' \
     --hash=sha256:348871ca648ec6a9a983a13ab626c0acce02f515b9e1983332b17af7979521c5 \
     --hash=sha256:cf642efadaf0a8ebbbf4bc7a31cec2f9b5f21a9f726f4ccbb08192c9c26f43a5
@@ -1665,4 +1665,4 @@ zstandard==0.25.0 ; python_full_version < '3.14' \
     --hash=sha256:f67e8f1a324a900e75b5e28ffb152bcac9fbed1cc7b43f99cd90f395c4375344 \
     --hash=sha256:fd7a5004eb1980d3cefe26b2685bcb0b17989901a70a1040d1ac86f1d898c551 \
     --hash=sha256:ffef5a74088f1e09947aecf91011136665152e0b4b359c42be3373897fb39b01
-    # via -r build/nonfreethreading-requirements.txt
+    # via -r build/requirements.in

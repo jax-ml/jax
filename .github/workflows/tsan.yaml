@@ -38,7 +38,7 @@ jobs:
       - name: Get pinned NumPy version
         id: numpy-version
         run: |
-          NUMPY_VER=$(grep -m1 -E '^numpy==' jax/build/requirements_lock_3_14_ft.txt | cut -d'=' -f3 | cut -d' ' -f1 | tr -d ' \n\r')
+          NUMPY_VER=$(grep -m1 -E '^numpy==' jax/build/requirements_lock_3_14.txt | cut -d'=' -f3 | cut -d' ' -f1 | tr -d ' \n\r')
           echo "version=v${NUMPY_VER}" >> "$GITHUB_OUTPUT"
           echo "Targeting NumPy release tag: v${NUMPY_VER}"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
