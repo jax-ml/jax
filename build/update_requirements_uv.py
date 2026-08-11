@@ -19,15 +19,15 @@
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 
-# Define the mapping of Python versions to their lock files and configurations
+# Define the mapping of Python versions to their lock files
 PYTHON_VERSIONS = {
-    "3.12": {"ft": False, "dest": "build/requirements_lock_3_12.txt"},
-    "3.13": {"ft": False, "dest": "build/requirements_lock_3_13.txt"},
-    "3.14": {"ft": False, "dest": "build/requirements_lock_3_14.txt"},
-    "3.14-ft": {"ft": True, "dest": "build/requirements_lock_3_14_ft.txt"},
+    "3.12": "build/requirements_lock_3_12.txt",
+    "3.13": "build/requirements_lock_3_13.txt",
+    "3.14": "build/requirements_lock_3_14.txt",
 }
 
 COMMON_SRCS = [
@@ -43,16 +43,10 @@ def update_requirements(
         print(f"Error: Unsupported Python version {py_ver}")
         sys.exit(1)
 
-    config = PYTHON_VERSIONS[py_ver]
-    dest = config["dest"]
-    is_ft = config["ft"]
+    dest = PYTHON_VERSIONS[py_ver]
 
     # 1. Determine input files
     srcs = list(COMMON_SRCS)
-    if is_ft:
-        srcs.append("build/freethreading-requirements.txt")
-    else:
-        srcs.append("build/nonfreethreading-requirements.txt")
 
     # Verify inputs exist
     for src in srcs:
@@ -67,9 +61,8 @@ def update_requirements(
     cmd.extend(srcs)
     cmd.extend(["-o", dest])
 
-    # Target Python version for resolution (e.g., "3.13-ft" -> "3.13")
-    uv_py_ver = py_ver.split("-")[0]
-    cmd.extend(["--python-version", uv_py_ver])
+    # Target Python version for resolution
+    cmd.extend(["--python-version", py_ver])
 
     # 3. Apply flag logic matching BUILD.bazel
     if nightly:
@@ -159,6 +152,12 @@ def main():
             upgrade=args.upgrade,
             upgrade_package=args.upgrade_package,
             dry_run=args.dry_run,
+        )
+
+    if not args.dry_run:
+        shutil.copyfile(
+            "build/requirements_lock_3_14.txt",
+            "build/requirements_lock_3_14_ft.txt",
         )
 
 if __name__ == "__main__":

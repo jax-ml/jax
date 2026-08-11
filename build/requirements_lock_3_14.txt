@@ -564,7 +564,7 @@ numpy==2.5.1 \
     --hash=sha256:f7d60026c0bdb1380e83bfa7a0419c4577ee4b9a08880afcb6dadeb74c649fa2 \
     --hash=sha256:f7feb014281029e628ba2d5a007407443b06e418b6fe451d1e2adcbc8eba0107
     # via
-    #   -r build/nonfreethreading-requirements.txt
+    #   -r build/requirements.in
     #   contourpy
     #   jaxlib
     #   matplotlib
@@ -1003,7 +1003,7 @@ tensorstore==0.1.84 \
     --hash=sha256:98edbc57d453ba8ebcf0d19bc28e4de6de95922bee2eca0805955b0833b8ce26 \
     --hash=sha256:d7d01775985fcaa2b0f100349766a953c5086e92e746bf395e936151d4d8f9ac \
     --hash=sha256:fe9bf1c7fef69884a91222179550f9b5ba6c1454f9534429221824d9b15c00ec
-    # via -r build/nonfreethreading-requirements.txt
+    # via -r build/requirements.in
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
