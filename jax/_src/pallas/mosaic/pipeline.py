@@ -126,11 +126,13 @@ def _create_bounded_slice(slice_start: jax.Array | int,
   if tiling is None:
     return ds(slice_start, slice_size)
 
-  # If we are out of bound, we need to round the slice size down to the nearest
-  # multiple of the tiling.
+  # If we are out of bounds, we need to clamp the slice size to the remaining
+  # elements in the dimension. In all cases, we must round the size up to the
+  # nearest multiple of the tiling.
   is_oob = slice_start + slice_size > dim_size
   remaining = dim_size - slice_start
-  rounded_size = jnp.where(is_oob, align_to(remaining, tiling), slice_size)
+  rounded_size = jnp.where(is_oob, remaining, slice_size)
+  rounded_size = align_to(rounded_size, tiling)
   rounded_size = multiple_of(rounded_size, tiling)
   return ds(slice_start, rounded_size)
 

@@ -1732,16 +1732,32 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
     out = f(x)
     np.testing.assert_allclose(out, x[4:12])
 
-  def test_block_spec_bounded_slice_dynamic(self):
+  @parameterized.parameters(0, 1, 2)
+  def test_block_spec_bounded_slice_dynamic(self, axis: int):
     if not jtu.is_device_tpu():
       self.skipTest('Only works on TPU.')
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works on TPU v4+')
-    shape = (16, 8, 128)
 
-    slices = jnp.array([[0, 3], [3, 8], [8, 11], [11, 16]], dtype=jnp.int32)[
-        ::-1
-    ]
+    if axis == 0:
+      shape = (16, 8, 128)
+      block_shape = (pl.BoundedSlice(16), 8, 128)
+      slices = jnp.array([[0, 3], [3, 8], [8, 11], [11, 16]], dtype=jnp.int32)[
+          ::-1
+      ]
+      offset_alignment = None
+    elif axis == 1:
+      shape = (2, 64, 128)
+      block_shape = (2, pl.BoundedSlice(24), 128)
+      slices = jnp.array([[0, 3], [8, 17], [32, 48]], dtype=jnp.int32)[::-1]
+      offset_alignment = 8
+    elif axis == 2:
+      shape = (16, 8, 512)
+      block_shape = (16, 8, pl.BoundedSlice(256))
+      slices = jnp.array([[0, 254], [256, 456]], dtype=jnp.int32)[::-1]
+      offset_alignment = 128
+    else:
+      raise ValueError(f'Unsupported axis: {axis}')
 
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
@@ -1759,14 +1775,16 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
         pltpu.sync_copy(slices_ref, slices_smem)
 
         def index_map(i):
-          return (
-              pl.ds(slices_smem[i, 0], slices_smem[i, 1] - slices_smem[i, 0]),
-              0,
-              0,
-          )
+          start = slices_smem[i, 0]
+          if offset_alignment is not None and offset_alignment > 1:
+            start = pl.multiple_of(start, offset_alignment)
+          size = slices_smem[i, 1] - slices_smem[i, 0]
+          indices = [0, 0, 0]
+          indices[axis] = pl.ds(start, size)
+          return tuple(indices)
 
         block_spec = pl.BlockSpec(
-            (pl.BoundedSlice(16), 8, 128),
+            block_shape,
             index_map,
         )
         pltpu.emit_pipeline(
@@ -1779,7 +1797,10 @@ class PallasCallBoundedSliceIndexingTest(jtu.JaxTestCase):
       return kernel_fn(x, slices)
 
     out = f(x, slices)
-    np.testing.assert_allclose(out, x)
+    for start, end in np.array(slices):
+      idx = [slice(None), slice(None), slice(None)]
+      idx[axis] = slice(start, end)
+      np.testing.assert_allclose(out[tuple(idx)], x[tuple(idx)])
 
 
 class PipelineHijaxTest(jtu.JaxTestCase):
