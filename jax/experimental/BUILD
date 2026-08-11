@@ -286,6 +286,7 @@ py_library_providing_imports_info(
         "//jax/_src:mlir",
         "//jax/_src:sharding_impls",
         "//jax/_src:stages",
+        "//jax/_src:traceback_util",
         "//jax/_src:util",
         "//jax/_src/lib",
         "//jax/_src/pallas/mosaic:error_handling",

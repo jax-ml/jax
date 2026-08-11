@@ -84,6 +84,10 @@ def _traceback_from_location(loc: ir.Location) -> types.TracebackType:
   return traceback_from_raw_frames(frames)
 
 
+def traceback_from_op(op: ir.Operation | ir.Value) -> types.TracebackType:
+  return _traceback_from_location(op.location)
+
+
 def mlir_error_to_verification_error(
     base_err: ir.MLIRError,
 ) -> VerificationError:
