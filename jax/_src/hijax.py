@@ -345,7 +345,8 @@ class VmapOf(VJPHiPrimitive):
     fix = lambda d, d_: d if (d is None or d_ is None) else d - (d_ < d)
     in_dims_ = tree_map(fix, in_dims, self.in_dims, is_leaf=lambda x: x is None)
     out_dim = self.prim.batch_dim_rule(axis_data, in_dims_)  # pyrefly: ignore[missing-attribute]
-    return tree_map(lambda d, d_: d + (d_ < d), out_dim, self.out_dim)
+    unfix = lambda d, d_: d if (d is None or d_ is None) else d + (d_ < d)
+    return tree_map(unfix, out_dim, self.out_dim, is_leaf=lambda x: x is None)
 
 @contextmanager
 def _explain_overbatched_member(prim, member_name):
