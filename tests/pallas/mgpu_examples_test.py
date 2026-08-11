@@ -471,7 +471,7 @@ def matmul4(a, b, config: TuningConfig):
       m_slice = pl.ds(m_index * cluster_tile_m, cluster_tile_m)
       n_slice = pl.ds(n_index * cluster_tile_n, cluster_tile_n)
 
-      @pl.warp_map
+      @plgpu.warp_map
       def _per_warp(warp_id):
 
         @pl.when(warp_id == 0)
@@ -596,7 +596,8 @@ def matmul5(a, b, config: TuningConfig):
 
       @pl.when(wg_idx == 0)
       def _compute_wg():
-        @pl.warp_map
+
+        @plgpu.warp_map
         def _per_warp(warp_id):
 
           @pl.when(warp_id == 0)
