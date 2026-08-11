@@ -3017,6 +3017,7 @@ def _reshape_push_rule(
     if last_block_dim % last_dim != 0:
       raise NotImplementedError(
           'reshape with non-divisible block size on lanes not supported yet'
+          f' {block_shape=}, {last_dim=}, {last_block_dim=}, {aval_out.shape=}'
       )
     num_last_dim_blocks = last_block_dim // last_dim
     new_block_shape = block_shape[:1] + (num_last_dim_blocks, last_dim)
