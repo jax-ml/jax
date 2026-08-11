@@ -116,6 +116,7 @@ single_version_override(
     patch_strip = 1,
     patches = [
         "//third_party/absl:btree.patch",
+        "//third_party/absl:raw_hash_set.patch",
     ],
     version = "20260526.0",
 )
