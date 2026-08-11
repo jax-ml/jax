@@ -34,6 +34,22 @@ message TritonKernelCall {
       uint64 ptr_divisibility = 2;
     }
 
+    message TensorDescriptor {
+      message Nvidia {
+        uint32 elem_type = 1;    // CUtensorMapDataType enum value.
+        uint32 elem_size_bytes = 2;
+        uint32 swizzle = 3;      // CUtensorMapSwizzle enum value.
+        repeated uint64 shape = 4;
+        repeated uint64 strides = 5;
+        repeated uint32 block_shape = 6;
+        uint32 oob_fill = 7;     // CUtensorMapFloatOOBfill enum value.
+      }
+
+      oneof backend {
+        Nvidia nvidia = 1;
+      }
+    }
+
     oneof value {
       Array array = 1;
       bool bool_ = 2;
@@ -43,6 +59,7 @@ message TritonKernelCall {
       uint64 u64 = 6;
       float f32 = 7;
       double f64 = 8;
+      TensorDescriptor tensor_descriptor = 9;
     }
   }
 

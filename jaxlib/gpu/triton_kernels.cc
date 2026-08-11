@@ -20,6 +20,7 @@ limitations under the License.
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -670,6 +671,24 @@ KernelCall::Parameter::FromProto(
     case TritonKernelCall_Parameter::kF64:
       param.value = proto.f64();
       break;
+    case TritonKernelCall_Parameter::kTensorDescriptor: {
+      const auto& td = proto.tensor_descriptor();
+      if (!td.has_nvidia()) {
+        return absl::UnimplementedError(
+            "Only NVIDIA TMA tensor descriptors are supported.");
+      }
+      const auto& d = td.nvidia();
+      Parameter::TmaDescriptor desc;
+      desc.elem_type = d.elem_type();
+      desc.elem_size_bytes = d.elem_size_bytes();
+      desc.swizzle = d.swizzle();
+      desc.shape.assign(d.shape().begin(), d.shape().end());
+      desc.strides.assign(d.strides().begin(), d.strides().end());
+      desc.block_shape.assign(d.block_shape().begin(), d.block_shape().end());
+      desc.oob_fill = d.oob_fill();
+      param.value = std::move(desc);
+      break;
+    }
     default:
       return absl::InvalidArgumentError("Unknown scalar parameter type.");
   }
@@ -699,9 +718,20 @@ jax_triton::TritonKernelCall_Parameter KernelCall::Parameter::ToProto() const {
     proto.set_u64(std::get<uint64_t>(value));
   } else if (std::holds_alternative<float>(value)) {
     proto.set_f32(std::get<float>(value));
-  } else {
-    CHECK(std::holds_alternative<double>(value));
+  } else if (std::holds_alternative<double>(value)) {
     proto.set_f64(std::get<double>(value));
+  } else {
+    CHECK(std::holds_alternative<TmaDescriptor>(value));
+    const auto& desc = std::get<TmaDescriptor>(value);
+    auto* d = proto.mutable_tensor_descriptor()->mutable_nvidia();
+    d->set_elem_type(desc.elem_type);
+    d->set_elem_size_bytes(desc.elem_size_bytes);
+    d->set_swizzle(desc.swizzle);
+    d->mutable_shape()->Assign(desc.shape.begin(), desc.shape.end());
+    d->mutable_strides()->Assign(desc.strides.begin(), desc.strides.end());
+    d->mutable_block_shape()->Assign(desc.block_shape.begin(),
+                                     desc.block_shape.end());
+    d->set_oob_fill(desc.oob_fill);
   }
   return proto;
 }
@@ -712,8 +742,77 @@ KernelCall::KernelCall(Kernel kernel, uint32_t grid_0, uint32_t grid_1,
       grid_{grid_0, grid_1, grid_2},
       parameters_(std::move(parameters)) {}
 
+namespace {
+
+#if defined(JAX_GPU_CUDA)
+absl::Status EncodeTmaDescriptorTiled(
+    const KernelCall::Parameter::TmaDescriptor& desc, void* global_address,
+    CUtensorMap* out) {
+  const int rank = static_cast<int>(desc.block_shape.size());
+  if (rank < 1 || rank > 5) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "TMA descriptor rank %d is out of range [1, 5].", rank));
+  }
+  const uint32_t elem_size = desc.elem_size_bytes;
+
+  uint32_t block_size[5];
+  uint64_t shape[5];
+  uint64_t strides[5] = {0, 0, 0, 0, 0};
+  for (int i = 0; i < rank; ++i) {
+    block_size[rank - i - 1] = desc.block_shape[i];
+    shape[rank - i - 1] = desc.shape[i];
+  }
+  for (int i = 0; i + 1 < rank; ++i) {
+    strides[rank - i - 2] = elem_size * desc.strides[i];
+  }
+  strides[rank - 1] =
+      shape[rank - 1] * (rank == 1 ? elem_size : strides[rank - 2]);
+
+  CUtensorMapFloatOOBfill fill =
+      (desc.oob_fill == 1) ? CU_TENSOR_MAP_FLOAT_OOB_FILL_NAN_REQUEST_ZERO_FMA
+                           : CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
+  uint32_t element_strides[5] = {1, 1, 1, 1, 1};
+
+  CUresult res = cuTensorMapEncodeTiled(
+      out, static_cast<CUtensorMapDataType>(desc.elem_type), rank,
+      global_address, shape, strides, block_size, element_strides,
+      CU_TENSOR_MAP_INTERLEAVE_NONE,
+      static_cast<CUtensorMapSwizzle>(desc.swizzle),
+      CU_TENSOR_MAP_L2_PROMOTION_L2_128B, fill);
+  if (res != CUDA_SUCCESS) {
+    const char* str = nullptr;
+    cuGetErrorString(res, &str);
+    return absl::InternalError(absl::StrCat("Failed to encode TMA descriptor: ",
+                                            str ? str : "unknown error"));
+  }
+
+  // Follow the CUTLASS change for the driver version check
+  // https://github.com/NVIDIA/cutlass/commit/b7ecaa605dd70326900433695e11ebfec407edd2#diff-1dfcaf77b33258ff3175540718d9caff1cd471215f741ba42943ef00770e6d04
+  if (int driver_version = 0;
+      cuDriverGetVersion(&driver_version) == CUDA_SUCCESS &&
+      driver_version <= 13010) {
+    uint64_t max_byte_index = 0;
+    for (int i = 0; i < rank; ++i) {
+      uint64_t bytes_stride = i == 0 ? elem_size : strides[i - 1];
+      max_byte_index += (shape[i] - 1) * bytes_stride;
+    }
+    if (max_byte_index + 1 < 128 * 1024) {
+      uint64_t* desc_u64 = reinterpret_cast<uint64_t*>(out);
+      desc_u64[1] &= ~(1ull << 21);
+    }
+  }
+  return absl::OkStatus();
+}
+#endif  // defined(JAX_GPU_CUDA)
+
+}  // namespace
+
 absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
   std::vector<void*> params;
+#if defined(JAX_GPU_CUDA)
+  // params holds pointers into this container; deque guarantees stability.
+  std::deque<CUtensorMap> tma_maps;
+#endif
   // +2 accounts for the global scratch buffer and the profiling buffer.
   for (size_t i = 0; i < parameters_.size(); ++i) {
     const Parameter& param = parameters_[i];
@@ -734,13 +833,25 @@ absl::Status KernelCall::Launch(gpuStream_t stream, void** buffers) {
             gpuMemsetD8Async(cu_ptr, 0, array.bytes_to_zero, stream));
       }
       params.push_back(&ptr);
+    } else if (std::holds_alternative<Parameter::TmaDescriptor>(param.value)) {
+      void* base_ptr = *(buffers++);
+#if defined(JAX_GPU_CUDA)
+      const auto& desc = std::get<Parameter::TmaDescriptor>(param.value);
+      CUtensorMap& map = tma_maps.emplace_back();
+      TF_RETURN_IF_ERROR(EncodeTmaDescriptorTiled(desc, base_ptr, &map));
+      params.push_back(&map);
+#else
+      (void)base_ptr;
+      return absl::UnimplementedError(
+          "Host-side TMA descriptors are only supported on NVIDIA GPUs.");
+#endif  // defined(JAX_GPU_CUDA)
     } else {
       params.push_back(const_cast<void*>(std::visit(
           [](auto&& arg) { return reinterpret_cast<const void*>(&arg); },
           param.value)));
     }
   }
-  // Allocate per-CTA global scratch buffer if required by the kerne, e.g. for
+  // Allocate per-CTA global scratch buffer if required by the kernel, e.g. for
   // TMA descriptors.
   gpuDevicePtr_t global_scratch = 0;
   if (kernel_.global_scratch_size().has_value()) {

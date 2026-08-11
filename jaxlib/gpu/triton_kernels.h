@@ -130,12 +130,24 @@ class KernelCall {
       size_t ptr_divisibility;
     };
 
+    // Fields are row-major (Triton convention); EncodeTmaDescriptorTiled
+    // reverses them to column-major for CUDA.
+    struct TmaDescriptor {
+      uint32_t elem_type;   // CUtensorMapDataType enum value.
+      uint32_t elem_size_bytes;
+      uint32_t swizzle;     // CUtensorMapSwizzle enum value.
+      std::vector<uint64_t> shape;
+      std::vector<uint64_t> strides;       // Element strides.
+      std::vector<uint32_t> block_shape;
+      uint32_t oob_fill;    // 0 = none, 1 = NaN-request-zero-FMA.
+    };
+
     static absl::StatusOr<Parameter> FromProto(
         const jax_triton::TritonKernelCall_Parameter& proto);
     jax_triton::TritonKernelCall_Parameter ToProto() const;
 
     std::variant<Array, bool, int32_t, uint32_t, int64_t, uint64_t, float,
-                 double>
+                 double, TmaDescriptor>
         value;
   };
 

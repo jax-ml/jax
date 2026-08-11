@@ -77,6 +77,20 @@ NB_MODULE(_triton, m) {
               KernelCall::Parameter::Array{bytes_to_zero, ptr_divisibility}};
         });
 
+  m.def(
+      "create_tma_descriptor_parameter",
+      [](uint32_t elem_type, uint32_t elem_size_bytes, uint32_t swizzle,
+         std::vector<uint64_t> shape,
+         std::vector<uint64_t> strides, std::vector<uint32_t> block_shape,
+         uint32_t oob_fill) {
+        return KernelCall::Parameter{KernelCall::Parameter::TmaDescriptor{
+            elem_type, elem_size_bytes, swizzle, std::move(shape),
+            std::move(strides), std::move(block_shape), oob_fill}};
+      },
+      nb::arg("elem_type"), nb::arg("elem_size_bytes"), nb::arg("swizzle"),
+      nb::arg("shape"), nb::arg("strides"),
+      nb::arg("block_shape"), nb::arg("oob_fill"));
+
   m.def("create_scalar_parameter",
         ValueOrThrowWrapper([](bool value, std::string_view dtype)
                                 -> absl::StatusOr<KernelCall::Parameter> {
