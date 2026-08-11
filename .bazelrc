@@ -31,6 +31,7 @@ common --enable_platform_specific_config
 common --experimental_cc_shared_library
 
 common --incompatible_enable_cc_toolchain_resolution
+common --incompatible_default_to_explicit_init_py
 common --repo_env USE_HERMETIC_CC_TOOLCHAIN=1
 
 # Increase the timeout scaling factor
