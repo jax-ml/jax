@@ -5376,7 +5376,7 @@ def _convert_elt_type_folding_rule(consts, params, out_avals):
   out_aval, = out_avals
   new_dtype = params['new_dtype']
   if (type(c) in _foldable_types and isinstance(out_aval, ShapedArray)
-      and not np.shape(c)
+      and not out_aval.shape
       and not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.asarray(c)
     if (dtypes.issubdtype(out.dtype, np.complexfloating) and
