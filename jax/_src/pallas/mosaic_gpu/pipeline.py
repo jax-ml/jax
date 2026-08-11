@@ -513,7 +513,7 @@ def emit_pipeline[T](
       )
       for step in range(steady_steps, num_steps):
         loop_carry = loop_body(
-            jnp.asarray(step, dtype=jnp.int32),
+            step,
             loop_carry,
             wait_count=(num_steps - 1 - step) * copies_per_step,
         )
