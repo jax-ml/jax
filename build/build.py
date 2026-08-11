@@ -448,14 +448,15 @@ async def main():
         "Please use python_version to set hermetic python version instead of "
         "setting --repo_env=HERMETIC_PYTHON_VERSION=<python version> bazel option"
       )
-    logging.debug("Hermetic Python version: %s", args.python_version)
+    python_version = args.python_version.removesuffix("-ft")
+    logging.debug("Hermetic Python version: %s", python_version)
     bazel_command_base.append(
-        f"--repo_env=HERMETIC_PYTHON_VERSION={args.python_version}"
+        f"--repo_env=HERMETIC_PYTHON_VERSION={python_version}"
     )
     # Let's interpret X.YY-ft version as free-threading python and set rules_python config flag:
     if args.python_version.endswith("-ft"):
       bazel_command_base.append(
-        "--@rules_python//python/config_settings:py_freethreaded=\"yes\""
+          '--@rules_python//python/config_settings:py_freethreaded="yes"'
       )
 
   # Enable verbose failures.

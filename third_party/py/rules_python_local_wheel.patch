@@ -85,7 +85,7 @@ index 7717f367..7b820871 100644
 +    if local_wheel:
 +        repo_name += "_local_override"
 +        path_str = local_wheel._path if hasattr(local_wheel, "_path") else str(local_wheel)
-+        args["urls"] = ["file://" + path_str]
++        args["urls"] = ["file:///" + path_str.lstrip("/")]
 +        args["filename"] = local_wheel.basename
 +        args["sha256"] = ""
  
@@ -158,3 +158,16 @@ index 7717f367..7b820871 100644
 +    else:
 +        return name == pattern
 +
+diff --git a/python/private/pypi/urllib.bzl b/python/private/pypi/urllib.bzl
+index e833fbb1..6de0aef7 100644
+--- a/python/private/pypi/urllib.bzl
++++ b/python/private/pypi/urllib.bzl
+@@ -66,7 +66,7 @@ def _strip_empty_path_segments(url):
+         If the url had no scheme it is returned unchanged.
+     """
+     scheme, _, rest = url.partition("://")
+-    if rest == "":
++    if rest == "" or scheme == "file":
+         return url
+     stripped = "/".join([p for p in rest.split("/") if p])
+     if url.endswith("/"):

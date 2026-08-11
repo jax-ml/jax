@@ -13,12 +13,24 @@
 # limitations under the License.
 # ==============================================================================
 
-load("@python_version_repo//:py_version.bzl", "REQUIREMENTS")
+load(
+    "@python_version_repo//:py_version.bzl",
+    "HERMETIC_PYTHON_VERSION",
+    "REQUIREMENTS",
+)
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("//jaxlib:jax.bzl", "all_py_deps")
 
 licenses(["notice"])
+
+REQUIREMENTS_TXT = (
+    "requirements_lock_{}.txt".format(
+        HERMETIC_PYTHON_VERSION.replace(".", "_").replace("-", "_")
+    )
+    if REQUIREMENTS == "//:requirements.txt"
+    else REQUIREMENTS
+)
 
 REQUIREMENTS_SRCS = [
     "requirements.in",
@@ -44,7 +56,7 @@ compile_pip_requirements(
         "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
     ],
     generate_hashes = True,
-    requirements_txt = REQUIREMENTS,
+    requirements_txt = REQUIREMENTS_TXT,
 )
 
 compile_pip_requirements(
@@ -59,7 +71,7 @@ compile_pip_requirements(
         "--upgrade",
     ],
     generate_hashes = False,
-    requirements_txt = REQUIREMENTS,
+    requirements_txt = REQUIREMENTS_TXT,
 )
 
 compile_pip_requirements(
@@ -73,7 +85,7 @@ compile_pip_requirements(
         "--index-url=https://us-python.pkg.dev/ml-oss-artifacts-published/pypi-mirror/simple",
     ],
     generate_hashes = False,
-    requirements_txt = REQUIREMENTS,
+    requirements_txt = REQUIREMENTS_TXT,
 )
 
 py_library(
