@@ -181,3 +181,10 @@ if TYPE_CHECKING:
   assert_type(jnp.average(vals), jax.Array)
   assert_type(jnp.average(vals, returned=False), jax.Array)
   assert_type(jnp.average(vals, returned=True), tuple[jax.Array, jax.Array])
+
+  # jax.jit: methods patched onto the wrapped function at runtime are declared
+  # on the JitWrapped return type.
+  jitted = jax.jit(lambda x: x)
+  assert_type(jitted.clear_cache(), None)
+  assert_type(jitted.trace(vals), jax.stages.Traced)
+  assert_type(jitted.lower(vals), jax.stages.Lowered)
