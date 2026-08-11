@@ -776,7 +776,7 @@ def take_along_axis(
     mode: str | slicing.GatherScatterMode | None = None,
     fill_value: StaticScalar | None = None,
     *,
-    wrap_negative_indices: bool | None = None,
+    wrap_negative_indices: bool = True,
 ) -> Array:
   """Take elements from an array.
 
@@ -799,9 +799,7 @@ def take_along_axis(
     fill_value: The fill value to return for out-of-bounds indices when
       ``mode="fill"``. Ignored otherwise.
     wrap_negative_indices: Whether to wrap negative indices to positive like
-      Numpy. If unset, defaults to a legacy behavior (wrapping unless the
-      indexing mode is 'promise_in_bounds'), but this will likely be removed and
-      the default changed to True in the future, so do not depend on it.
+      Numpy.
 
   Returns:
     Array of values extracted from ``arr``.
@@ -886,11 +884,6 @@ def take_along_axis(
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
   if axis_size == 0:
     return lax.full(out_shape, 0, a.dtype)
-
-  # Legacy behavior - should eventually be removed, since wrap_negative_indices
-  # should be independent of indexing mode.
-  if wrap_negative_indices is None:
-    wrap_negative_indices = mode != "promise_in_bounds"
 
   index_dtype = lax_utils.index_dtype_for_axis_size(
       dtypes.dtype(indices), axis_size, wrap_negative_indices

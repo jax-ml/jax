@@ -32,6 +32,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   before January 15th, 2026 because they are beyond the backwards compatibility
   window. On that date we added support to serialize shardings as NamedSharding,
   and now that is the only sharding serialization that is supported.
+  * jnp.take_along_axis now always defaults wrap_negative_indices to True.
+    It used to default to False for mode=promise_in_bounds and True otherwise.
+    (This also means None is no longer a valid value for wrap_negative_indices.)
 
 * Deprecations
   * The fields `in_shardings_hlo` and `out_shardings_hlo` of
