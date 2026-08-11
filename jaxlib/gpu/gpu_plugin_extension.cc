@@ -104,18 +104,26 @@ absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api,
   PJRT_Gpu_Register_Custom_Call* register_custom_call =
       custom_call_ext->custom_call;
 
-  if (traits != 0) {
+  bool handles_traits =
+      custom_call_ext->base.struct_size >=
+          PJRT_STRUCT_SIZE(PJRT_Gpu_Custom_Call, custom_call_handles_traits) &&
+      custom_call_ext->custom_call_handles_traits;
+
+  if (traits != 0 && !handles_traits) {
     return xla::Unimplemented(
         "The plugin does not support custom call traits.");
   }
 
-  PJRT_Gpu_Register_Custom_Call_Args args;
+  PJRT_Gpu_Register_Custom_Call_Args args = {};
   args.struct_size = PJRT_Gpu_Register_Custom_Call_Args_STRUCT_SIZE;
   args.function_name = fn_name_c_str;
   args.function_name_size = fn_name_size;
 
 #if PJRT_API_GPU_EXTENSION_VERSION >= 1
   args.api_version = api_version;
+#endif
+#if PJRT_API_GPU_EXTENSION_VERSION >= 3
+  args.traits = traits;
 #endif
 
   auto as_capsule = [](nb::object obj) -> absl::StatusOr<nb::capsule> {
