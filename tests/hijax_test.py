@@ -1267,6 +1267,69 @@ class HijaxTest(jtu.JaxTestCase):
     f = jax.vmap(f, in_axes=(2, None), out_axes=2)
     self.assertAllClose(f(x, y), x * y[None, :, None])
 
+  def test_newstyle_hiprimitive_nested_vmap_unmapped_axis(self):
+    class Id(VJPHiPrimitive):
+      def __init__(self, aval):
+        self.in_avals = aval,
+        self.out_aval = aval
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x):
+        return x
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        return in_dims[0]
+
+    def ident(x): return Id(typeof(x))(x)
+
+    x = jnp.arange(3.0, dtype='float32')
+    f = jax.vmap(jax.vmap(ident), in_axes=None, axis_size=2)
+    self.assertAllClose(f(x), jnp.tile(x, (2, 1)))
+
+    g = jax.vmap(jax.vmap(ident, in_axes=None, axis_size=2))
+    self.assertAllClose(g(x), jnp.tile(x[:, None], (1, 2)))
+
+    # multiple args and a tuple output, so that None dims appear inside the
+    # in_dims/out_dim pytrees (mixed with ints) at each level of nesting
+    class AddSnd(VJPHiPrimitive):
+      def __init__(self, x_aval, y_aval):
+        self.in_avals = (x_aval, y_aval)
+        self.out_aval = (x_aval, y_aval)
+        self.params = {}
+        super().__init__()
+
+      def expand(self, x, y):
+        return x + y, y
+
+      def batch_dim_rule(self, axis_data, in_dims):
+        d = in_dims[0] if in_dims[0] is not None else in_dims[1]
+        return (d, in_dims[1])
+
+    def addsnd(x, y):
+      return AddSnd(typeof(x), typeof(y))(x, y)
+
+    y = jnp.arange(2.0, dtype='float32')
+
+    # outer maps x only, inner maps y only
+    f = jax.vmap(jax.vmap(addsnd, in_axes=(None, 0)), in_axes=(0, None))
+    s, t = f(x, y)
+    self.assertAllClose(s, x[:, None] + y[None, :])
+    self.assertAllClose(t, jnp.tile(y, (3, 1)))
+
+    # outer maps y only, inner maps x only
+    g = jax.vmap(jax.vmap(addsnd, in_axes=(0, None)), in_axes=(None, 0))
+    s, t = g(x, y)
+    self.assertAllClose(s, y[:, None] + x[None, :])
+    self.assertAllClose(t, jnp.tile(y[:, None], (1, 3)))
+
+    # inner maps nothing (axis_size only), outer maps x only
+    h = jax.vmap(jax.vmap(addsnd, in_axes=(None, None), axis_size=2),
+                 in_axes=(0, None))
+    s, t = h(x, jnp.float32(5.0))
+    self.assertAllClose(s, jnp.tile((x + 5.0)[:, None], (1, 2)))
+    self.assertAllClose(t, jnp.full((3, 2), jnp.float32(5.0)))
+
   def test_newstyle_hiprimitive_vmap_jvp_symbolic_zero_tangent(self):
 
     class Mul(VJPHiPrimitive):
