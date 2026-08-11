@@ -1217,16 +1217,15 @@ def _transpose_scan_jaxpr_fancy(
 def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
                         ft_in, ft_out, unroll):
   orig_batched = [d is not None for d in dims]
-  const_batched, init_batched, xs_batched = ft_in.update(orig_batched).unpack()
+  _, init_batched, xs_batched = ft_in.update(orig_batched).unpack()
   consts, init, xs = ft_in.update(args).unpack()
   consts_bdims, init_bdims, xs_bdims = ft_in.update(dims).unpack()
 
-  # A batched const which is a Ref can't have its batch dimension moved to the
-  # front, since that would require transposing the underlying mutable memory.
-  # Instead we batch the body jaxpr along the dimension the ref already has.
-  const_axes = [d if d is not None and isinstance(typeof(x), AbstractRef)
-                else 0 if b else None
-                for x, d, b in zip(consts, consts_bdims, const_batched)]
+  # Batch the body jaxpr along whichever dimension each const already has,
+  # rather than moving them all to the front, the same way
+  # _while_loop_batching_rule does. A const which is a Ref could not be moved
+  # anyway, since that would mean transposing the underlying mutable memory.
+  const_axes = list(consts_bdims)
 
   # Fixpoint computation of which carry are batched: either
   # batched from init, or the carry out is batched. Each iteration promotes
@@ -1250,8 +1249,7 @@ def _scan_batching_rule(axis_data, args, dims, reverse, length, jaxpr,
   else:
     assert False, "Fixpoint not reached"
 
-  new_consts = [batching.moveaxis(x, d, 0) if a == 0 and d != 0 else x
-                for x, d, a in zip(consts, consts_bdims, const_axes)]
+  new_consts = list(consts)
   new_init = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
               if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
