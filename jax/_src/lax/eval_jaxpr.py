@@ -47,13 +47,9 @@ def _eval_jaxpr_jvp(prim, primals, tangents, *, call_jaxpr, **params):
   return primals_out, tangents_out
 
 def _eval_jaxpr_batch(prim, axis_data, args, dims, *, call_jaxpr, **params):
-  batched = [d is not None for d in dims]
-  new_jaxpr, out_batched = batching.batch_jaxpr(call_jaxpr, axis_data, batched, False)
-  new_args = [batching.moveaxis(x, d, 0) if d is not None and d != 0 else x
-              for x, d in zip(args, dims)]
-  outs = prim.bind(*new_args, call_jaxpr=new_jaxpr, **params)
-  out_dims = [0 if b else None for b in out_batched]
-  return outs, out_dims
+  new_jaxpr, out_dims = batching.batch_jaxpr2(call_jaxpr, axis_data, tuple(dims))
+  outs = prim.bind(*args, call_jaxpr=new_jaxpr, **params)
+  return outs, list(out_dims)
 
 def _eval_jaxpr_linearize(prim, is_vjp, nzs, *primals_in, call_jaxpr, **params):
   primal_jaxpr, out_tree, nzs_out, in_fwd_res, tangent_jaxpr = \
