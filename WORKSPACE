@@ -46,9 +46,7 @@ register_toolchains("@rules_ml_toolchain//cc:linux_aarch64_linux_aarch64_cuda")
 load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
 
 python_init_rules(
-    extra_patches = [
-        "@//third_party/py:rules_python_site_init_retry.patch",
-    ],
+    extra_patches = [],
 )
 
 load("@rules_ml_toolchain//py:python_init_repositories.bzl", "python_init_repositories")

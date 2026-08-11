@@ -23,8 +23,7 @@ def repo():
         strip_prefix = "xla-{commit}".format(commit = XLA_COMMIT),
         urls = tf_mirror_urls("https://github.com/openxla/xla/archive/{commit}.tar.gz".format(commit = XLA_COMMIT)),
         patch_file = [
-            # Add any patch files here.
-            # "//third_party/xla:temporary.patch
+            "//third_party/xla:rules_python_220.patch",
         ],
     )
 
