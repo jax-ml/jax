@@ -38,23 +38,20 @@ htu.setup_hypothesis()
 @jax.jit(static_argnames=["equation", "sizes"])
 def _einshape_kernel(x, equation, sizes):
   sizes = dict(sizes)
-  x_ref = jax.new_ref(x)
   fn = functools.partial(pltpu.einshape, equation, **sizes)
-  out_ref = jax.new_ref(jnp.empty_like(jax.eval_shape(fn, x)))
+  out_shape = jax.eval_shape(fn, x)
 
-  @pl.core_map(mesh=pltpu.TensorCoreMesh(axis_name="x", num_cores=1))
-  def _():
-    @pl.with_scoped(
-        pltpu.VMEM(x_ref.shape, x_ref.dtype),
-        pltpu.VMEM(out_ref.shape, out_ref.dtype),
-    )
-    def inner(x_vmem_ref, out_vmem_ref):
-      pltpu.sync_copy(x_ref, x_vmem_ref)
-      out_vmem_ref[...] = pltpu.einshape(equation, x_vmem_ref[...], **sizes)
-      pltpu.sync_copy(out_vmem_ref, out_ref)
-    inner()
+  @pl.kernel(
+      mesh=pltpu.TensorCoreMesh(axis_name="x", num_cores=1),
+      out_type=out_shape,
+      scratch_types=(pltpu.VMEM.like(x), pltpu.VMEM.like(out_shape)),
+  )
+  def kernel(x_ref, out_ref, x_vmem_ref, out_vmem_ref):
+    pltpu.sync_copy(x_ref, x_vmem_ref)
+    out_vmem_ref[...] = pltpu.einshape(equation, x_vmem_ref[...], **sizes)
+    pltpu.sync_copy(out_vmem_ref, out_ref)
 
-  return out_ref[...]
+  return kernel(x)
 
 
 def _einshape_kernel_fwd(x, equation, sizes):
@@ -64,29 +61,27 @@ def _einshape_kernel_fwd(x, equation, sizes):
 @jax.jit(static_argnames=["equation", "sizes"])
 def _einshape_bwd_kernel(x, g, equation, sizes):
   sizes_dict = dict(sizes)
-  x_ref = jax.new_ref(x)
-  g_ref = jax.new_ref(g)
-  out_ref = jax.new_ref(jnp.empty_like(x))
 
-  @pl.core_map(mesh=pltpu.TensorCoreMesh(axis_name="x", num_cores=1))
-  def _():
-    @pl.with_scoped(
-        pltpu.VMEM(x_ref.shape, x_ref.dtype),
-        pltpu.VMEM(g_ref.shape, g_ref.dtype),
-        pltpu.VMEM(out_ref.shape, out_ref.dtype),
+  @pl.kernel(
+      mesh=pltpu.TensorCoreMesh(axis_name="x", num_cores=1),
+      out_type=jax.ShapeDtypeStruct(x.shape, x.dtype),
+      scratch_types=(
+          pltpu.VMEM.like(x),
+          pltpu.VMEM.like(g),
+          pltpu.VMEM.like(x),
+      ),
+  )
+  def kernel(x_ref, g_ref, out_ref, x_vmem_ref, g_vmem_ref, out_vmem_ref):
+    pltpu.sync_copy(x_ref, x_vmem_ref)
+    pltpu.sync_copy(g_ref, g_vmem_ref)
+    _, vjp_fn = jax.vjp(
+        lambda arr: pltpu.einshape(equation, arr, **sizes_dict),
+        x_vmem_ref[...],
     )
-    def inner(x_vmem_ref, g_vmem_ref, out_vmem_ref):
-      pltpu.sync_copy(x_ref, x_vmem_ref)
-      pltpu.sync_copy(g_ref, g_vmem_ref)
-      _, vjp_fn = jax.vjp(
-          lambda arr: pltpu.einshape(equation, arr, **sizes_dict),
-          x_vmem_ref[...],
-      )
-      out_vmem_ref[...] = vjp_fn(g_vmem_ref[...])[0]
-      pltpu.sync_copy(out_vmem_ref, out_ref)
-    inner()
+    out_vmem_ref[...] = vjp_fn(g_vmem_ref[...])[0]
+    pltpu.sync_copy(out_vmem_ref, out_ref)
 
-  return out_ref[...]
+  return kernel(x, g)
 
 
 def _einshape_kernel_bwd(equation, sizes, res, g):

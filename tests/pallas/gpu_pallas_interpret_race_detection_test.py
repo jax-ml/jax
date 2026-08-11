@@ -30,7 +30,6 @@ class WarpSpecializeHelper:
   Helper for making multi-threaded kernels generic over whether they're
   warp-specialized or not.
   """
-  WARP_AXIS_NAME = 'warp'
 
   def __init__(self, warp_specialize: bool):
     self.warp_specialize = warp_specialize
@@ -40,17 +39,13 @@ class WarpSpecializeHelper:
       raise ValueError(f'A warp only has 4 threads, but got {n}')
     return 1 if self.warp_specialize else n
 
-  def maybe_warp_specialize(self):
+  def maybe_warp_specialize(self, *, thread_name):
     if self.warp_specialize:
-      return pl.core_map(plgpu.WarpMesh(axis_name=self.WARP_AXIS_NAME))
+      return plgpu.warp_map
     else:
-      return pl.when(True)
-
-  def axis_index(self, axis_name):
-    if self.warp_specialize:
-      return jax.lax.axis_index(self.WARP_AXIS_NAME)
-    else:
-      return jax.lax.axis_index(axis_name)
+      def decorator(f):
+        f(jax.lax.axis_index(thread_name))
+      return decorator
 
 
 @jtu.thread_unsafe_test_class()
@@ -180,9 +175,9 @@ class InterpretTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(in_ref, out_ref, smem_ref, thread_barrier, copy_barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        @pl.when(warp_specialize.axis_index('t') == 0)
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
+        @pl.when(warp_id == 0)
         def _():
           if a: plgpu.commit_smem()
           smem_ref[...] = 100
@@ -191,7 +186,7 @@ class InterpretTest(jtu.JaxTestCase):
           if c: plgpu.commit_smem()
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(warp_specialize.axis_index('t') == 1)
+        @pl.when(warp_id == 1)
         def _():
           if d: plgpu.commit_smem()
           plgpu.barrier_wait(thread_barrier)
@@ -229,16 +224,16 @@ class InterpretTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(in_ref, out_ref, smem_ref, thread_barrier, copy_barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        @pl.when(warp_specialize.axis_index('t') == 0)
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
+        @pl.when(warp_id == 0)
         def _():
           if a: plgpu.commit_smem()
           smem_ref[...] = 100
           if b: plgpu.commit_smem()
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(warp_specialize.axis_index('t') == 1)
+        @pl.when(warp_id == 1)
         def _():
           if c: plgpu.commit_smem()
           plgpu.barrier_wait(thread_barrier)
@@ -399,16 +394,16 @@ class InterpretTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(out_ref, smem, barrier, cleanup_barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        @pl.when(warp_specialize.axis_index('t') == 0)
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
+        @pl.when(warp_id == 0)
         def _():
           plgpu.copy_smem_to_gmem(smem, out_ref)
           plgpu.barrier_arrive(barrier)
           plgpu.barrier_wait(cleanup_barrier)
           plgpu.wait_smem_to_gmem(0)
 
-        @pl.when(warp_specialize.axis_index('t') == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(barrier)
           plgpu.wait_smem_to_gmem(0)
@@ -438,16 +433,16 @@ class InterpretTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(out_ref, smem_ref, gmem_ref, barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        @pl.when(warp_specialize.axis_index('t') == 0)
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
+        @pl.when(warp_id == 0)
         def _():
           smem_ref[...] = 42
           plgpu.commit_smem()
           plgpu.copy_smem_to_gmem(smem_ref, gmem_ref)
           plgpu.wait_smem_to_gmem(0)
           plgpu.barrier_arrive(barrier)
-        @pl.when(warp_specialize.axis_index('t') == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(barrier)
           out_ref[...] = gmem_ref[...]

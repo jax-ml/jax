@@ -36,7 +36,6 @@ class WarpSpecializeHelper:
   Helper for making multi-threaded kernels generic over whether they're
   warp-specialized or not.
   """
-  WARP_AXIS_NAME = 'warp'
 
   def __init__(self, warp_specialize: bool):
     self.warp_specialize = warp_specialize
@@ -46,17 +45,13 @@ class WarpSpecializeHelper:
       raise ValueError(f'A warp only has 4 threads, but got {n}')
     return 1 if self.warp_specialize else n
 
-  def maybe_warp_specialize(self):
+  def maybe_warp_specialize(self, *, thread_name):
     if self.warp_specialize:
-      return pl.core_map(plgpu.WarpMesh(axis_name=self.WARP_AXIS_NAME))
+      return plgpu.warp_map
     else:
-      return pl.when(True)
-
-  def axis_index(self, axis_name):
-    if self.warp_specialize:
-      return jax.lax.axis_index(self.WARP_AXIS_NAME)
-    else:
-      return jax.lax.axis_index(axis_name)
+      def decorator(f):
+        f(jax.lax.axis_index(thread_name))
+      return decorator
 
 
 
@@ -427,11 +422,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         mma_barrier0,
         thread_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           if use_barrier_in_mma:
             plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, thread_barrier, accumulate=False)
@@ -439,7 +433,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
             plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
             plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier0)
@@ -479,18 +473,17 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         mma_barrier1,
         thread_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
           plgpu.barrier_arrive(thread_barrier)
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier0)
           plgpu.barrier_wait(mma_barrier0)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, mma_barrier1)
@@ -785,11 +778,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(out_ref, tmem_ref, thread_barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           if producer_op == 'store':
             plgpu.async_store_tmem(
@@ -803,7 +795,7 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
               plgpu.wait_load_tmem()
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           if consumer_waits:
@@ -856,18 +848,17 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         mma_barrier,
         producer_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.tcgen05_mma(acc_tmem, a_smem, b_smem, accumulate=False)
           plgpu.barrier_arrive(thread_barrier)
           plgpu.tcgen05_commit_arrive(producer_barrier)
           plgpu.barrier_wait(producer_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           # This produces a vacuous arrival, but does not observe completion of
@@ -905,16 +896,15 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
     def _kernel(
         out_ref, acc_tmem, lhs_tmem, a_smem, b_smem, thread_barrier, mma_barrier
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.async_copy_smem_to_tmem(a_smem, lhs_tmem)
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(thread_barrier)
           plgpu.tcgen05_mma(
@@ -947,17 +937,16 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         thread_name='t',
     )
     def _kernel(out_ref, acc_tmem, a_smem, b_smem, mma_barrier):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           plgpu.tcgen05_mma(
               acc_tmem, a_smem, b_smem, mma_barrier, accumulate=False
           )
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           plgpu.barrier_wait(mma_barrier)
           out_ref[...] = plgpu.async_load_tmem(acc_tmem)
@@ -1126,11 +1115,10 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
         thread_barrier,
         mma_barrier,
     ):
-      @warp_specialize.maybe_warp_specialize()
-      def _():
-        tid = warp_specialize.axis_index('t')
+      @warp_specialize.maybe_warp_specialize(thread_name='t')
+      def _(warp_id):
 
-        @pl.when(tid == 0)
+        @pl.when(warp_id == 0)
         def _():
           a_smem[...] = a[...]
           plgpu.commit_smem()
@@ -1138,14 +1126,14 @@ class TCGen05RaceDetectionTest(jtu.JaxTestCase):
           a[...] = jnp.zeros(LHS_SHAPE, jnp.float16)
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 1)
+        @pl.when(warp_id == 1)
         def _():
           acc_smem[...] = acc_init[...]
           plgpu.commit_smem()
           plgpu.async_copy_smem_to_tmem(acc_smem, acc_tmem)
           plgpu.barrier_arrive(thread_barrier)
 
-        @pl.when(tid == 2)
+        @pl.when(warp_id == 2)
         def _():
           plgpu.barrier_wait(thread_barrier)
           b_smem[...] = b[...]
