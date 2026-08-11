@@ -9921,7 +9921,6 @@ def optimization_barrier(operand, /):
   flat_args, treedef = tree_util.tree_flatten(operand)
   is_ref = [isinstance(core.typeof(x), AbstractRef) for x in flat_args]
   vals, refs = util.partition_list(is_ref, flat_args)
-  vals = core.auto_insert_reshard(*vals)
   out = optimization_barrier_p.bind(*util.merge_lists(is_ref, vals, refs))
   return tree_util.tree_unflatten(treedef, util.merge_lists(is_ref, out, refs))
 
@@ -9934,7 +9933,6 @@ optimization_barrier_p.def_impl(
 def _optimization_barrier_abstract_eval(*args):
   is_ref = [isinstance(a, AbstractRef) for a in args]
   vals = [a for a, r in zip(args, is_ref) if not r]
-  core.standard_vma_rule('optimization_barrier', *vals)
   effects = {WriteEffect(i) for i, r in enumerate(is_ref) if r}
   return vals, effects
 optimization_barrier_p.def_effectful_abstract_eval(

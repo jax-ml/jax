@@ -2425,6 +2425,20 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(lambda x: bar(x).sum()))(jnp.arange(8.))  # doesn't crash
 
+  def test_optimization_barrier_varying_manual_axes(self):
+    mesh = Mesh(jax.devices(), ['x'])
+    def f(a, b):
+      a_out, b_out = jax.lax.optimization_barrier((a, b))
+      return a_out, b_out
+
+    a = jnp.arange(float(len(jax.devices())))
+    b = jnp.arange(1.)
+    out_a, out_b = shard_map(
+        f, mesh=mesh, in_specs=(P('x'), P(None)), out_specs=(P('x'), P(None))
+    )(a, b)
+    self.assertAllClose(out_a, a)
+    self.assertAllClose(out_b, b)
+
   @parameterized.parameters(it.product([True, False], repeat=2))
   def test_res_forwarding_optimization(self, jit, remat):
     mesh = jtu.create_mesh((4,), ('i',))
