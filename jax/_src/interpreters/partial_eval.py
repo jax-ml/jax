@@ -2124,23 +2124,8 @@ def trace_to_jaxpr_nocache(
   return jaxpr.with_consts(consts), out_avals
 
 
-@weakref_lru_cache(maxsize=None, explain=explain)
-def trace_to_jaxpr(
-    fun: Callable,
-    in_avals: ft.FlatTree,  # (args, kwargs) pair
-    debug_info: core.DebugInfo,
-    fun_takes_flat_tree_arg=False,
-    fun_returns_flat_tree=False,
-    requires_low=False,
-) -> tuple[Jaxpr, ft.FlatTree]:
-  return trace_to_jaxpr_nocache(
-      fun,
-      in_avals,
-      debug_info,
-      fun_takes_flat_tree_arg=fun_takes_flat_tree_arg,
-      fun_returns_flat_tree=fun_returns_flat_tree,
-      requires_low=requires_low,
-  )
+trace_to_jaxpr = weakref_lru_cache(maxsize=None, explain=explain)(
+    trace_to_jaxpr_nocache)
 
 
 # TODO(dougalm): remove in favor of `trace_to_jaxpr`
@@ -2437,11 +2422,6 @@ def _lower_and_eval(prim, jaxpr: Jaxpr, args: Sequence[Any], **params):
              for t in jaxpr.out_avals]
   assert next(lo_outs_, None) is None
   return hi_outs
-
-def _call_jaxpr(jaxpr: Jaxpr, args: Sequence[Any]):
-  if not jaxpr.is_high:
-    return eval_jaxpr_p.bind(*args, call_jaxpr=jaxpr)
-  return _lower_and_eval(eval_jaxpr_p, jaxpr, args)
 
 def _eval_jaxpr_to_lojax(prim, *hi_args, call_jaxpr: Jaxpr, **params):
   return _lower_and_eval(prim, call_jaxpr, hi_args, **params)

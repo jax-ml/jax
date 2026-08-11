@@ -1097,7 +1097,7 @@ class RematTraced(VJPHiPrimitive):
 
   @source_info_util.extend_name_stack('checkpoint')
   def expand(self, *args):
-    return pe._call_jaxpr(self.jaxpr, args)
+    return core.eval_jaxpr_p.bind(*args, call_jaxpr=self.jaxpr)
 
   def vjp_fwd(self, nzs_in, *primals):
     # TODO eval_jaxpr_p trace time

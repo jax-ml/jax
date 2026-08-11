@@ -733,6 +733,22 @@ class CustomVJPTraced(VJPHiPrimitive):
     args = [x for x in args if not isinstance(x, Static)]
     return self.traced(*args)
 
+  def lin(self, nzs_in, *primals):
+    out, res, *rest = self.vjp_fwd(nzs_in, *primals)
+    nzs_out = rest[0] if rest else True
+    nzs_out_flat = broadcast_prefix(nzs_out, out)
+    return out, (res, tuple(nzs_out_flat)), nzs_out
+
+  def linearized(self, residuals, *tangents):  # pyrefly: ignore[bad-param-name-override]
+    res, nz_out_flat = residuals
+    tangents_flat, in_tree = tracing_registry.flatten(
+        tangents, lambda x: isinstance(x, ad_util.Zero))
+    assert in_tree == self.in_tree
+    nz_in_flat = [not isinstance(t, ad_util.Zero) for t in tangents_flat]
+    outs_flat = fake_linear_op(self, nz_in_flat, list(nz_out_flat), res, None,
+                               *tangents_flat)
+    return tree_unflatten(self.out_tree, outs_flat)
+
   def vjp_fwd(self, in_nzs, *args):
     if self.symbolic_zeros:
       args = tree_map(CustomVJPPrimal, args, in_nzs)  # tree_map skips Statics
@@ -905,14 +921,12 @@ class custom_vjp3:
     self.bwd = bwd
     self.symz = symbolic_zeros
     self.opt_remat = optimize_remat
-    return self
 
   def defvjp_with_logs(self, fwd, bwd, *, symbolic_zeros=False,
                        optimize_remat=False):
     self.defvjp(fwd, bwd, symbolic_zeros=symbolic_zeros,
                 optimize_remat=optimize_remat)
     self.with_logs = True
-    return self
 
   def __call__(self, *args, **kwargs):
     if not self.fwd or not self.bwd:

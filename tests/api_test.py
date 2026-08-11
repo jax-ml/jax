@@ -9247,7 +9247,7 @@ class TracebackTest(jtu.JaxTestCase):
     self.assertEqual(self.cur_depth() - init_depth - 1, expected_depth)
 
   def test_scan_traceback(self):
-    expected_depth = 6
+    expected_depth = 5
     init_depth = self.cur_depth()
 
     def f(c, x):
@@ -9260,7 +9260,7 @@ class TracebackTest(jtu.JaxTestCase):
     if sys.version_info < (3, 13):
       # Fails because 3.11 adds an extra stack frame due to a list comprehension
       self.skipTest("Expected failure.")
-    expected_depth = 5
+    expected_depth = 4
     init_depth = self.cur_depth()
 
     def f():
@@ -9270,7 +9270,7 @@ class TracebackTest(jtu.JaxTestCase):
 
   def test_jit_traceback(self):
     # TODO(dougalm): shoud be able to get this down to 2 or 3
-    expected_depth = 7
+    expected_depth = 6
     init_depth = self.cur_depth()
     @jit
     def foo(x):

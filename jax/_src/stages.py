@@ -438,7 +438,7 @@ class Traced(Stage):
 
   def __call__(self, *args, **kwargs):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
-    out_flat = pe._call_jaxpr(self.jaxpr, args_flat)
+    out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)
     return tree_unflatten(self.out_tree, out_flat)
 
   @property
