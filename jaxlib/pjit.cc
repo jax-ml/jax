@@ -1107,6 +1107,27 @@ PjitFunction* AsPjitFunction(nb::handle handle) {
   return PjitFunction::AsPjitFunctionUnchecked(handle);
 }
 
+// The JaxRuntimeError Python type, stashed by BuildPjitSubmodule. Its lifetime
+// is tied to the module that registered it.
+nb::handle jax_runtime_error_type;
+
+// Sets the Python error to a JaxRuntimeError built from `status`. Needed
+// because nanobind's exception translation does not run in raw type slots.
+void SetPyErrFromStatus(const absl::Status& status) {
+  std::string message = status.ToString();
+  if (!jax_runtime_error_type.is_valid()) {
+    PyErr_SetString(PyExc_RuntimeError, message.c_str());
+    return;
+  }
+  try {
+    nb::object exc_inst = jax_runtime_error_type(
+        message, static_cast<int>(status.code()));
+    PyErr_SetObject(jax_runtime_error_type.ptr(), exc_inst.ptr());
+  } catch (nb::python_error& e) {
+    e.restore();
+  }
+}
+
 extern "C" {
 
 PyObject* PjitFunction_tp_vectorcall(PyObject* callable, PyObject* const* args,
@@ -1119,7 +1140,7 @@ PyObject* PjitFunction_tp_vectorcall(PyObject* callable, PyObject* const* args,
     absl::StatusOr<nb::object> out =
         o->fun.Call(callable, args, nargs, kwnames);
     if (!out.ok()) {
-      PyErr_SetString(PyExc_ValueError, out.status().ToString().c_str());
+      SetPyErrFromStatus(out.status());
       return nullptr;
     }
     return out.value().release().ptr();
@@ -1568,6 +1589,10 @@ class NumpyHandler : public ShardArgsHandler {
 }  // namespace
 
 void BuildPjitSubmodule(nb::module_& m) {
+  // Registered by register_runtime_error_bindings before this runs; the
+  // module keeps the type alive.
+  jax_runtime_error_type = m.attr("JaxRuntimeError");
+
   m.attr("_PyTreeRegistry") = m.attr("pytree").attr("PyTreeRegistry");
 
   nb::class_<PjitFunctionCache> cache(m, "PjitFunctionCache");
