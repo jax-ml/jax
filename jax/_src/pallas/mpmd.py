@@ -34,6 +34,7 @@ from jax._src import state
 from jax._src import flattree as ft
 from jax._src import tree_util
 from jax._src import util
+from jax._src import xla_metadata
 from jax._src.mesh import get_abstract_mesh
 from jax._src.frozen_dict import FrozenDict
 from jax._src.interpreters import batching
@@ -69,6 +70,7 @@ def mpmd_map_tracing_context(
       mesh.tracing_context(),
       jax_core.extend_axis_env_nd(super_mesh_shape.items()),
       config._check_vma(False),
+      xla_metadata.clear_xla_metadata(),
   ):
     yield
 

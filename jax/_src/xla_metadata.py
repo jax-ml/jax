@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Mapping
+import contextlib
 from functools import partial, wraps
 from typing import Any
 
@@ -93,6 +94,16 @@ class XlaMetadataContextManager:
 
   def __call__(self, f):
     return _XlaMetadataWrapper(f, self)
+
+
+@contextlib.contextmanager
+def clear_xla_metadata():
+  """Internal context manager to temporarily clear ambient XLA metadata."""
+  prev = config.xla_metadata_context_manager.swap_local(None)
+  try:
+    yield
+  finally:
+    config.xla_metadata_context_manager.set_local(prev)
 
 
 def set_xla_metadata(x=None, **kwargs):

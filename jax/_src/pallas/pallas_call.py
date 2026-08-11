@@ -49,6 +49,7 @@ from jax._src.shard_map import P, _as_manual_mesh, shard_map
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.traceback_util import api_boundary
+from jax._src import xla_metadata
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -795,15 +796,19 @@ def _trace_kernel_to_jaxpr(
   fun_with_transforms = primitives.wrap_with_transforms(
       fun, kernel_in_transforms)
 
-  with grid_mapping.trace_env(), config._check_vma(False):
-    with config.mutable_array_checks(False):
-      closed_jaxpr, out_avals = pe.trace_to_jaxpr(
-          fun_with_transforms, kernel_avals,
-          debug_info)
-      consts = closed_jaxpr.consts
-      jaxpr, _ = pe.dce_jaxpr(closed_jaxpr,
-                              used_outputs=[True] * len(closed_jaxpr.outvars),
-                              instantiate=True)
+  with (
+      grid_mapping.trace_env(),
+      config._check_vma(False),
+      config.mutable_array_checks(False),
+      xla_metadata.clear_xla_metadata(),
+  ):
+    closed_jaxpr, out_avals = pe.trace_to_jaxpr(
+        fun_with_transforms, kernel_avals,
+        debug_info)
+    consts = closed_jaxpr.consts
+    jaxpr, _ = pe.dce_jaxpr(closed_jaxpr,
+                            used_outputs=[True] * len(closed_jaxpr.outvars),
+                            instantiate=True)
     if consts:
       consts_avals = [
           aval

@@ -28,6 +28,7 @@ from jax._src import frozen_dict
 from jax._src import sharding_impls
 from jax._src import state
 from jax._src import tpu_custom_call
+from jax._src import xla_metadata
 from jax._src import flattree as ft
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -426,7 +427,11 @@ def pallas_call_tpu_lowering_rule(
   mlir_ctx = ctx.module_context.context
   tpu.register_dialect(mlir_ctx)
 
-  with mlir_ctx, ir.Location.unknown(mlir_ctx):
+  with (
+      mlir_ctx,
+      ir.Location.unknown(mlir_ctx),
+      xla_metadata.clear_xla_metadata(),
+  ):
     mosaic_module = lowering.lower_jaxpr_to_pipelined_module(
         ctx,
         grid_mapping,
