@@ -240,6 +240,10 @@ iniconfig==2.3.0 \
     --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
     --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
     # via pytest
+jax==0.11.0 \
+    --hash=sha256:a2feb7cfa48bb35d36b8ecec16a4ec24044dec01935f779b28b017213697b195 \
+    --hash=sha256:b31ed66c4321d5c9e48b861f51a72ed5f7960c93514296202d2041cbb9ac45bf
+    # via -r build/requirements.in
 jax-cuda12-pjrt==0.11.0 ; sys_platform == 'linux' \
     --hash=sha256:242df99c90827a2937df1c444983d4076173f9836dc0bc1d20df86960144f35a \
     --hash=sha256:67ec5915e7e494775d5dc0d73d1e33cb74a47b6a6bb1089eef7b517e4e873e33
@@ -288,7 +292,9 @@ jaxlib==0.11.0 \
     --hash=sha256:88b349aa95e452caa30a6723320e93ec7bd1ab249e9f0bf29000da1b5efae733 \
     --hash=sha256:aced7b1ca4e338b5248821a397d2d53008894672be6fee762f391cfdd7272e1e \
     --hash=sha256:f5bf0b3bfc2ef4778580047389dacb51ae000e50c6b3b6f98d10788927066c97
-    # via -r build/requirements.in
+    # via
+    #   -r build/requirements.in
+    #   jax
 kiwisolver==1.5.0 \
     --hash=sha256:012b1eb16e28718fa782b5e61dc6f2da1f0792ca73bd05d54de6cb9561665fc9 \
     --hash=sha256:01808c6d15f4c3e8559595d6d1fe6411c68e4a3822b4b9972b44473b24f4e679 \
@@ -513,6 +519,7 @@ ml-dtypes==0.5.4 \
     --hash=sha256:f21c9219ef48ca5ee78402d5cc831bd58ea27ce89beda894428bc67a52da5328
     # via
     #   -r build/requirements.in
+    #   jax
     #   jaxlib
     #   tensorstore
 mpmath==1.4.1 \
@@ -589,6 +596,7 @@ numpy==2.5.2 \
     # via
     #   -r build/requirements.in
     #   contourpy
+    #   jax
     #   jaxlib
     #   matplotlib
     #   ml-dtypes
@@ -722,13 +730,13 @@ nvidia-cusparse-cu12==12.5.10.65 ; sys_platform == 'linux' \
     # via
     #   -r build/nvidia-requirements.txt
     #   nvidia-cusolver-cu12
-nvidia-nccl-cu12==2.30.7 ; sys_platform == 'linux' \
-    --hash=sha256:03ecd776fd1d58fd2c9a0a687dcf8db9ecd0057382dba646fa3d65786d4a9ea1 \
-    --hash=sha256:8ce1b8213f61f2bfac132e6df890af6450b77cbd140c6ce4e98cb0c2d8e678c9
+nvidia-nccl-cu12==2.31.2 ; sys_platform == 'linux' \
+    --hash=sha256:f208de397e431631eab0eca946444404a495d43a007535baa333d7de9e510ca2 \
+    --hash=sha256:f9b1dc3c2a7e20176054144ebb3b32fea83b40402ee5d7ac7045cd11ecc956c0
     # via -r build/nvidia-requirements.txt
-nvidia-nccl-cu13==2.30.7 ; sys_platform == 'linux' \
-    --hash=sha256:ca786ffa5a647c75d4d1f5cc72a6c4f537947e2ba8823d7c8aaf768e7a7b9f77 \
-    --hash=sha256:cefa7fdb9710efd0f39c5f1be1d61ff6fc9a996c451265bd7fbdcf9455ed4b50
+nvidia-nccl-cu13==2.31.2 ; sys_platform == 'linux' \
+    --hash=sha256:0bcaf0308854cb55fcc35af72e2c83143f3b71e65a4e865e2c586b1cdcdb5ae0 \
+    --hash=sha256:b5563f8e2534f363d93ace022670ba016d3717e190ac4eba564d05fbbe8495b1
     # via -r build/nvidia-requirements.txt
 nvidia-nvjitlink==13.3.33 ; sys_platform == 'linux' \
     --hash=sha256:26a6de7fb4c8fdaa7703d3dad720d6d427ddfea5c48a528fd97c11733ad830e5 \
@@ -766,7 +774,9 @@ nvidia-nvvm==13.3.73 ; sys_platform == 'linux' \
 opt-einsum==3.4.0 \
     --hash=sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd \
     --hash=sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac
-    # via -r build/requirements.in
+    # via
+    #   -r build/requirements.in
+    #   jax
 optype[numpy]==0.18.0 \
     --hash=sha256:91822ed8516e7a4f225ba53d30f291776c35f31553fb952d7cda98286679c5a6 \
     --hash=sha256:ea10dee61b15ca299ed0d97025d362585c4dfc5481159bb999a1d0d414bbcb04
@@ -982,6 +992,7 @@ scipy==1.18.0 \
     --hash=sha256:f351e0dd702687d12a402b867a1b4146a256923e1c38317cbc472f6372b94707
     # via
     #   -r build/requirements.in
+    #   jax
     #   jaxlib
 scipy-stubs==1.18.0.1 \
     --hash=sha256:704408c5f03a33924c9fed6dc9e25926dc331ed508d52f1beece0188525cebad \
@@ -1030,9 +1041,9 @@ typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
     # via etils
-wheel==0.47.0 \
-    --hash=sha256:212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced \
-    --hash=sha256:cc72bd1009ba0cf63922e28f94d9d83b920aa2bb28f798a31d0691b02fa3c9b3
+wheel==0.48.0 \
+    --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab \
+    --hash=sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322
     # via -r build/requirements.in
 zipp==4.1.0 \
     --hash=sha256:25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f \

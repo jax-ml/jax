@@ -51,15 +51,22 @@ if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
   bazel_output_base="--output_base=C:\actions-runner\_work\bazel_output_base"
 fi
 
-if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t ]]; then
-  JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+if [[ "$JAXCI_HERMETIC_PYTHON_VERSION" == *t || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-ft || "$JAXCI_HERMETIC_PYTHON_VERSION" == *-nogil ]]; then
+  if [[ "${JAXCI_ENABLE_BZLMOD:-1}" == "1" ]]; then
+    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}
+    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-ft}
+    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}
+  else
+    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%t}-ft
+    JAXCI_HERMETIC_PYTHON_VERSION=${JAXCI_HERMETIC_PYTHON_VERSION%-nogil}-ft
+  fi
   FREETHREADED_FLAG_VALUE="yes"
 else
   FREETHREADED_FLAG_VALUE="no"
 fi
 
-BZLMOD_CONFIG=""
-if [[ "${JAXCI_ENABLE_BZLMOD:-0}" == "1" ]]; then
+BZLMOD_CONFIG="--config=no_bzlmod"
+if [[ "${JAXCI_ENABLE_BZLMOD:-1}" == "1" ]]; then
   BZLMOD_CONFIG="--config=bzlmod"
 fi
 

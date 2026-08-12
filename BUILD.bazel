@@ -174,7 +174,7 @@ py_import(
 py_import(
     name = "jax_wheel_with_internal_test_util",
     testonly = True,
-    wheel = "@pypi_jax//:whl",
+    wheel = "@pypi//jax:whl",
     zip_deps = [":wheel_additives"],
 )
 

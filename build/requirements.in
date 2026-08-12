@@ -27,6 +27,7 @@ wheel
 # JAX's own libraries. We include these in the requirements so you can
 # bazel test without building jaxlib and without manually updating the
 # the requirements files.
+jax
 jaxlib
 
 jax-cuda12-plugin; sys_platform == "linux"

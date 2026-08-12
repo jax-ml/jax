@@ -79,9 +79,9 @@ jobs:
               runner: "linux-arm64-c4a-16"
             - python: "3.12"
               runner: "windows-x86-n2-16"
-            # TODO: Just test against Python 3.12 with Bzlmod to avoid adding too much CI load.
+            # TODO: Just test against Python 3.12 without Bzlmod to avoid adding too much CI load.
             - python: "3.14"
-              enable-bzlmod: 1
+              enable-bzlmod: 0
     name: "${{ (contains(matrix.runner, 'linux-x86') && 'Test' || 'Build') }}"
 # End Presubmit Naming Check github-cpu-presubmits
     with:

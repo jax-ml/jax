@@ -33,7 +33,7 @@ on:
       enable-bzlmod:
         description: "Should Bzlmod be enabled?"
         type: string
-        default: "0"
+        default: "1"
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
         type: string
