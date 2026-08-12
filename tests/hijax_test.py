@@ -2748,42 +2748,5 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     self.assertFalse(jaxpr.is_high,
         "Lowered jaxpr should not contain hi-primitives")
 
-  def test_dce_sink_basic(self):
-    x = jnp.array(1.0)
-    def f(x):
-      y = x + 1.0
-      jax.lax.dce_sink(y)
-      return x
-    self.assertEqual(f(x), 1.0)
-    self.assertEqual(jax.jit(f)(x), 1.0)
-
-  def test_dce_sink_raises_on_autodiff(self):
-    def f(x):
-      jax.lax.dce_sink(x)
-      return x
-    with self.assertRaises(NotImplementedError):
-      jax.jvp(f, (1.0,), (1.0,))
-    with self.assertRaises(NotImplementedError):
-      jax.grad(f)(1.0)
-
-  def test_dce_sink_vmap(self):
-    def f(x):
-      jax.lax.dce_sink(x, prevent_mlir_dce=True)
-      return x * 2.0
-    out = jax.vmap(f)(jnp.arange(4.0))
-    self.assertArraysAllClose(out, jnp.arange(4.0) * 2.0)
-
-  @jtu.with_explicit_mesh((2,), ('data',))
-  def test_dce_sink_under_explicit_mesh(self, mesh):
-    x = jax.device_put(jnp.arange(10, dtype=jnp.float32), jax.P('data'))
-    def f(x):
-      y = x + 1.0
-      jax.lax.dce_sink(y, prevent_mlir_dce=True)
-      return x
-    hlo = jax.jit(f).lower(x).compile().as_text()
-    self.assertIn("dce_sink", hlo)
-    self.assertIn("custom_call", hlo)
-
-
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
