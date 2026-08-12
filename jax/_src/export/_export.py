@@ -701,7 +701,10 @@ def to_named_sharding_with_abstract_mesh(
               f"Cannot convert GSPMDSharding {s} into NamedSharding.")
         axis_sizes = tuple(s._hlo_sharding.get_axis_sizes())
         axis_names = tuple(f'_axis_{i}' for i in range(len(axis_sizes)))
-        mesh = mesh_lib.AbstractMesh(axis_sizes, axis_names)
+        mesh = mesh_lib.AbstractMesh(
+            axis_sizes, axis_names,
+            abstract_device=mesh_lib.abstract_device_from(
+                s._device_assignment[0]))
         return sharding_impls._gspmd_to_named_sharding_via_mesh(s, mesh)
       else:
         raise TypeError(

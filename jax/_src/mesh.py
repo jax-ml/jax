@@ -408,21 +408,9 @@ class Mesh(BaseMesh, contextlib.ContextDecorator):
   def abstract_mesh(self):
     if len(self.axis_names) == 0:
       return empty_abstract_mesh
-    d = self.devices.flat[0]
-    if d is None:
-      abstract_device = None
-    else:
-      if d.platform == 'tpu':
-        num_cores = getattr(d, 'num_cores', None)
-      elif d.platform == 'gpu':
-        num_cores = getattr(d, 'core_count', None)
-      else:
-        num_cores = None
-      abstract_device = AbstractDevice(
-          device_kind=d.device_kind, num_cores=num_cores, platform=d.platform)
     return AbstractMesh(
         self.axis_sizes, self.axis_names, axis_types=self.axis_types,
-        abstract_device=abstract_device)
+        abstract_device=abstract_device_from(self.devices.flat[0]))
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -448,6 +436,19 @@ class AbstractDevice:
   def _repr(self):
     return (f"device_kind={self.device_kind}, num_cores={self.num_cores}, "
             f"platform={self.platform}")
+
+
+def abstract_device_from(d) -> AbstractDevice | None:
+  if d is None:
+    return None
+  if d.platform == 'tpu':
+    num_cores = getattr(d, 'num_cores', None)
+  elif d.platform == 'gpu':
+    num_cores = getattr(d, 'core_count', None)
+  else:
+    num_cores = None
+  return AbstractDevice(device_kind=d.device_kind, num_cores=num_cores,
+                        platform=d.platform)
 
 
 @immutable
