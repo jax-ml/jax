@@ -912,9 +912,9 @@ class custom_vjp3:
   with_logs: bool = False
 
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
-    self.f = f
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
     update_wrapper(self, f)
+    self.f = f
 
   def defvjp(self, fwd, bwd, *, symbolic_zeros=False, optimize_remat=False):
     self.fwd = fwd
@@ -1159,9 +1159,9 @@ class custom_jvp3:
   symz: bool = False
 
   def __init__(self, f, nondiff_argnums=(), nondiff_argnames=()):
-    self.f = f
     self.static_argnums = _set_up_nondiff(f, nondiff_argnums, nondiff_argnames)
     update_wrapper(self, f)
+    self.f = f
 
   def defjvp(self, jvp, symbolic_zeros=False):
     self.jvp_fun = jvp
