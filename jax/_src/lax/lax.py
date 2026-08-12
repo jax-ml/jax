@@ -38,7 +38,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import ffi
-from jax._src import hijax
 from jax._src import literals
 from jax._src import pjit
 from jax._src import pretty_printer as pp
@@ -9382,6 +9381,7 @@ mlir.register_lowering(copy_p, _copy_lowering)
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 batching.defvectorized(copy_p)
 
+
 class NoDCEEffect(effects.Effect):
   # we don't inherit these from `object` due to serialization.py
   def __hash__(self): return hash(type(self))
@@ -9391,42 +9391,36 @@ effects.control_flow_allowed_effects.add_type(NoDCEEffect)
 effects.lowerable_effects.add_type(NoDCEEffect)
 effects.custom_derivatives_allowed_effects.add_type(NoDCEEffect)
 
-
-class DceSink(hijax.VJPHiPrimitive):
-  prevent_mlir_dce: bool
-
-  def __init__(self, in_aval: core.AbstractValue, *, prevent_mlir_dce: bool = False):
-    self.in_avals = (in_aval,)
-    self.out_aval = ()
-    self.params = dict(prevent_mlir_dce=prevent_mlir_dce)
-    self.effects = frozenset([no_dce_effect])
-    super().__init__()
-
-  def expand(self, x):  # type: ignore
-    if not self.prevent_mlir_dce:
-      return ()
-    mesh = get_abstract_mesh()
-    if mesh.are_all_axes_explicit:
-      from jax._src.shard_map import shard_map
-      return shard_map(
-          lambda x: ffi.ffi_call("dce_sink", (), has_side_effect=True)(x),
-          out_specs=())(x)
-    else:
-      return ffi.ffi_call("dce_sink", (), has_side_effect=True)(x)
-
-  def batch(self, axis_data, args, dims):
-    (x,) = args
-    dce_sink(x, prevent_mlir_dce=self.prevent_mlir_dce)
-    return (), ()
-
-  def dce(self, used_outs):
-    return True, True, self
-
 # The dce_sink_p primitive marks a value as "used" from the perspective of DCE
 # so the computation producing it won't be eliminated.
 def dce_sink(val, *, prevent_mlir_dce: bool = False):
-  sink = lambda x: DceSink(core.typeof(x), prevent_mlir_dce=prevent_mlir_dce)(x)
+  mesh = get_abstract_mesh()
+  def sink(x):
+    if mesh.are_all_axes_explicit:
+      from jax._src.shard_map import shard_map
+      shard_map(lambda x: dce_sink_p.bind(x, prevent_mlir_dce=prevent_mlir_dce),
+                out_specs=[])(x)
+    else:
+      dce_sink_p.bind(x, prevent_mlir_dce=prevent_mlir_dce)
   tree_util.tree_map(sink, val)
+
+dce_sink_p = core.Primitive('dce_sink')
+dce_sink_p.def_impl(lambda _, **__: [])
+dce_sink_p.multiple_results = True
+dce_sink_p.def_effectful_abstract_eval(lambda _, **__: ([], {no_dce_effect}))
+ad.deflinear(dce_sink_p, lambda _, **__: [])
+def _dce_sink_batcher(batched_args, batch_dims, **params):
+  (x,) = batched_args
+  dce_sink_p.bind(x, **params)
+  return [], []
+batching.primitive_batchers[dce_sink_p] = _dce_sink_batcher
+
+@partial(mlir.register_lowering, dce_sink_p)
+def _dce_sink_lowering(ctx, x, *, prevent_mlir_dce):
+  if not prevent_mlir_dce:
+    return []
+  rule = ffi.ffi_lowering("dce_sink", has_side_effect=True)
+  return rule(ctx, x)
 
 
 def rng_bit_generator(key, shape, dtype=np.uint32,

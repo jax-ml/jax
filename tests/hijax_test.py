@@ -2757,14 +2757,15 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     self.assertEqual(f(x), 1.0)
     self.assertEqual(jax.jit(f)(x), 1.0)
 
-  def test_dce_sink_raises_on_autodiff(self):
+  def test_dce_sink_autodiff(self):
     def f(x):
-      jax.lax.dce_sink(x)
-      return x
-    with self.assertRaises(NotImplementedError):
-      jax.jvp(f, (1.0,), (1.0,))
-    with self.assertRaises(NotImplementedError):
-      jax.grad(f)(1.0)
+      y = x * 2.0
+      jax.lax.dce_sink(y)
+      return y * 3.0
+    self.assertEqual(jax.jvp(f, (2.0,), (1.0,)), (12.0, 6.0))
+    self.assertEqual(jax.grad(f)(2.0), 6.0)
+    _, f_lin = jax.linearize(f, 2.0)
+    self.assertEqual(f_lin(1.0), 6.0)
 
   def test_dce_sink_vmap(self):
     def f(x):
@@ -2773,9 +2774,9 @@ class HijaxTransformCoverageTest(jtu.JaxTestCase):
     out = jax.vmap(f)(jnp.arange(4.0))
     self.assertArraysAllClose(out, jnp.arange(4.0) * 2.0)
 
-  @jtu.with_explicit_mesh((2,), ('data',))
+  @jtu.with_explicit_mesh((2,), ('x',))
   def test_dce_sink_under_explicit_mesh(self, mesh):
-    x = jax.device_put(jnp.arange(10, dtype=jnp.float32), jax.P('data'))
+    x = jax.device_put(jnp.arange(10, dtype=jnp.float32), jax.P('x'))
     def f(x):
       y = x + 1.0
       jax.lax.dce_sink(y, prevent_mlir_dce=True)
