@@ -4372,6 +4372,12 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   return jaxpr_subcomp(lowering_context, jaxpr, *args)
 
 
+@register_lowering_rule(jax_core.eval_jaxpr_p, kernel_types=[*tpu_core.CoreType])
+def _eval_jaxpr_lowering_rule(ctx: LoweringRuleContext, *args, call_jaxpr, **_):
+  lowering_context = ctx.lowering_context.replace(block_shapes=ctx.block_shapes)
+  return jaxpr_subcomp(lowering_context, call_jaxpr, *args)
+
+
 @register_lowering_rule(pjit.reshard_p, kernel_types=[*tpu_core.CoreType])
 def _reshard_lowering_rule(ctx: LoweringRuleContext, x, *, dst_sharding,
                            concrete_mesh):
