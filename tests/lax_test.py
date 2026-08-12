@@ -173,6 +173,14 @@ class LaxTest(jtu.JaxTestCase):
         actual, expected, atol=jtu.default_tolerance()[np.dtype(np.float32)], rtol=0.0
     )
 
+  def testTanhSecondGrad(self):
+    x = np.array([1e-30, 1e-20, 1e-10, 1e-5, 1e-3, 0.1, 0.5, 1.0, 2.0],
+                 dtype=np.float32)
+    t = np.tanh(x.astype(np.float64))
+    expected = (-2 * t * (1 - t * t)).astype(np.float32)
+    actual = jax.vmap(jax.grad(jax.grad(lax.tanh)))(jnp.asarray(x))
+    self.assertAllClose(actual, expected, rtol=1e-5, atol=0.0)
+
   # TODO test shift_left, shift_right_arithmetic, shift_right_logical
 
   @jtu.sample_product(

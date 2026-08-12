@@ -6155,8 +6155,12 @@ def _i0(x):
 
 @_i0.defjvp
 def _i0_jvp(primals, tangents):
-  primal_out, tangent_out = api.jvp(_i0.fun, primals, tangents)
-  return primal_out, where(primals[0] == 0, 0.0, tangent_out)
+  x, = primals
+  x_dot, = tangents
+  abs_x = lax.abs(x)
+  i1 = lax.mul(lax.sign(x),
+               lax.mul(lax.exp(abs_x), lax_special.bessel_i1e(abs_x)))
+  return _i0.fun(x), lax.mul(x_dot, i1)
 
 @export
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
