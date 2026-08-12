@@ -797,11 +797,11 @@ def emit_python_callback(
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for python_callback")
   platform = ctx.module_context.platforms[0]
-  if platform not in {"cpu", "cuda", "rocm", "tpu"}:
+  if platform not in {"cpu", "cuda", "rocm", "tpu", "oneapi"}:
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")
   if partitioned:
-    if platform not in {"cpu", "cuda", "rocm"}:
+    if platform not in {"cpu", "cuda", "rocm", "oneapi"}:
       raise NotImplementedError(
           f"Partitioned callback not implemented on {platform} backend.")
     if result_avals:
@@ -860,7 +860,7 @@ def emit_python_callback(
         for result_aval in result_avals]
     return outputs, token, None
 
-  device = "gpu" if platform in {"cuda", "rocm"} else "cpu"
+  device = "gpu" if platform in {"cuda", "rocm", "oneapi"} else "cpu"
   partition = "_partitioned" if partitioned else ""
   call_target_name = f"xla_ffi{partition}_python_{device}_callback"
   if token:
