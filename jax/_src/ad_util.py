@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import types
-from typing import Any, TypeVar
+from typing import Any
 
 from jax._src import core
 from jax._src.core import typeof
@@ -26,8 +26,6 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map
 
 traceback_util.register_exclusion(__file__)
-
-T = TypeVar('T')
 
 map = safe_map
 
@@ -96,7 +94,7 @@ def a2tz(primal_aval):
   return Zero(primal_aval.to_tangent_aval())
 
 
-def _stop_gradient_impl(x: T) -> T:
+def _stop_gradient_impl[T](x: T) -> T:
   if not core.valid_jaxtype(x):
     raise TypeError("stop_gradient only works on valid JAX arrays, but "
                     f"input argument is: {x}")

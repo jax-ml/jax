@@ -24,7 +24,7 @@ import re
 import sysconfig
 import threading
 import types
-from typing import Any, NamedTuple, TypeVar, cast
+from typing import Any, NamedTuple, cast
 
 from jax._src.lib import xla_client
 
@@ -266,9 +266,6 @@ def current_name_stack() -> NameStack:
   return _source_info_context.context.name_stack
 
 
-_F = TypeVar('_F', bound=Callable[..., Any])
-
-
 class ExtendNameStackContextManager:
   __slots__ = ['name', 'prev']
 
@@ -284,12 +281,12 @@ class ExtendNameStackContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
-  def __call__(self, func: _F) -> _F:
+  def __call__[F: Callable[..., Any]](self, func: F) -> F:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with ExtendNameStackContextManager(self.name):
         return func(*args, **kwargs)
-    return cast(_F, wrapper)
+    return cast(F, wrapper)
 
 extend_name_stack = ExtendNameStackContextManager
 
@@ -307,12 +304,12 @@ class SetNameStackContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
-  def __call__(self, func: _F) -> _F:
+  def __call__[F: Callable[..., Any]](self, func: F) -> F:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with SetNameStackContextManager(self.name_stack):
         return func(*args, **kwargs)
-    return cast(_F, wrapper)
+    return cast(F, wrapper)
 
 
 set_name_stack = SetNameStackContextManager
@@ -343,11 +340,11 @@ class TransformNameStackContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     _source_info_context.context = self.prev
 
-  def __call__(self, func: _F) -> _F:
+  def __call__[F: Callable[..., Any]](self, func: F) -> F:
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
       with TransformNameStackContextManager(self.name):
         return func(*args, **kwargs)
-    return cast(_F, wrapper)
+    return cast(F, wrapper)
 
 transform_name_stack = TransformNameStackContextManager
