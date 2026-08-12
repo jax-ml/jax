@@ -108,10 +108,7 @@ def _parse_replica_group_semantics(line):
       group_size = math.prod(mesh_shape[axis] for axis in selected_axes)
     else:
       group_size = 1
-    if mesh_match.group(2):
-      total_devices = len(_parse_int_list(mesh_match.group(2)))
-    else:
-      total_devices = math.prod(mesh_shape.values())
+    total_devices = math.prod(mesh_shape.values())
     num_groups = total_devices // group_size if group_size else None
     return group_size, num_groups, total_devices
 
