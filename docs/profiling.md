@@ -305,21 +305,25 @@ jax.profiler.stop_trace()
     `3`: Includes level 2 traces plus more verbose, low-level program execution
     details such as cheap XLA operations.
 
-2. `device_tracer_level`: Controls whether device tracing is enabled.
-
-    Supported Values:
-
-    `0`: Disables device tracing.
-
-    `1`: Enables device tracing (default).
-
-3.  `python_tracer_level`: Controls whether Python tracing is enabled.
+2. `python_tracer_level`: Controls whether Python tracing is enabled.
 
     Supported Values:
 
     `0`: Disables Python function call tracing (default).
 
     `1`: Enables Python tracing.
+
+3. `raise_error_on_start_failure`: Controls whether profiler startup failures
+   are raised. The default is `False`, which allows the available collectors to
+   continue if another collector fails to start. Set this to `True` when
+   diagnosing a missing device trace so that a device collector startup failure
+   is not hidden by a host-only trace.
+
+Device tracing is enabled by default. Although `device_tracer_level` is part of
+the underlying profiler protocol, it is not currently exposed as a writable
+field of the Python `ProfileOptions` API. Assigning
+`options.device_tracer_level` creates an unused Python attribute and does not
+change the profiler configuration.
 
 #### Advanced configuration options
 
