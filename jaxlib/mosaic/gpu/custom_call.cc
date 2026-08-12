@@ -1430,16 +1430,19 @@ absl::Status MosaicGpuInitialize(
             clique_key.ToString()));
       }
 
-      ASSIGN_OR_RETURN(se::DeviceAddressBase multimem_address,
-                       symmetric_memory->multimem_addr());
+      auto multimem_address_or = symmetric_memory->multimem_addr();
+      void* multimem_opaque = nullptr;
+      if (multimem_address_or.ok()) {
+        multimem_opaque = multimem_address_or.value().opaque();
+      }
 
       XLA_VLOG_DEVICE(6, device_ordinal)
           << "MosaicGpuInitialize buffer: " << i << " device_address: ("
           << device_address.opaque() << ", size: " << device_address.size()
-          << ") found multimem_address: (" << multimem_address.opaque()
+          << ") found multimem_address: (" << multimem_opaque
           << ", offset: " << offset << ")";
 
-      parameter_multimem_addresses[i] = multimem_address.opaque();
+      parameter_multimem_addresses[i] = multimem_opaque;
 
       // Use the allocated memory allocation instead to correctly calculate
       // the offset of the multimem parameter.
