@@ -44,6 +44,7 @@ limitations under the License.
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/functional/function_ref.h"
 #include "absl/hash/hash.h"
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -273,12 +274,10 @@ absl::StatusOr<float> Benchmark(gpuStream_t stream, KernelCall& kernel_call,
   return elapsed_ms;
 }
 
-// Creates a `KernelCall` from the given opaque data, and caches it for
-// subsequent calls with the same opaque data.
-// To create an autotuned kernel call, `stream` needs to be set. If it isn't
-// set, returns a null pointer for autotuned kernel calls.
-absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
-                                          gpuStream_t stream, void** buffers) {
+// Creates, and caches, a kernel using `opaque` as the key.
+absl::StatusOr<KernelCall*> GetOrCreateKernelCall(
+    std::string_view opaque,
+    absl::FunctionRef<absl::StatusOr<KernelCall>()> create_fn) {
   if (opaque.empty()) {
     return absl::InvalidArgumentError("Opaque data is empty.");
   }
@@ -294,46 +293,39 @@ absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
                                                 absl::InternalError("Pending"));
   if (success) {
     it->second = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
-      // The opaque data is a zlib compressed protobuf.
-      JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
-
-      jax_triton::TritonAnyKernelCall proto;
-      if (!proto.ParseFromString(serialized)) {
-        return absl::InvalidArgumentError("Failed to parse serialized data.");
-      }
-
-      if (proto.has_kernel_call()) {
-        JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                             KernelCall::FromProto(proto.kernel_call()));
-        return std::make_unique<KernelCall>(std::move(kernel_call_));
-      } else if (proto.has_autotuned_kernel_call()) {
-        if (stream == nullptr) {
-          return nullptr;
-        }
-        JAX_ASSIGN_OR_RETURN(
-            AutotunedKernelCall autotuned_call,
-            AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
-        {
-          JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                               AutotunedKernelCall::Autotune(
-                                   std::move(autotuned_call), stream, buffers));
-          return std::make_unique<KernelCall>(std::move(kernel_call_));
-        }
-      } else {
-        return absl::InvalidArgumentError("Unknown kernel call type.");
-      }
+      JAX_ASSIGN_OR_RETURN(KernelCall call, create_fn());
+      return std::make_unique<KernelCall>(std::move(call));
     }();
   }
 
   JAX_RETURN_IF_ERROR(it->second.status());
-  if (*it->second == nullptr) {
-    // If we failed to create a kernel call, because it was an autotuned kernel
-    // call and the stream was null, remove the entry from the cache so that
-    // it can be retried later.
-    kernel_calls.erase(it);
-    return nullptr;
-  }
   return it->second->get();
+}
+
+// Creates a `KernelCall` from the given opaque data, and caches it for
+// subsequent calls with the same opaque data.
+absl::StatusOr<KernelCall*> GetKernelCall(std::string_view opaque,
+                                          gpuStream_t stream, void** buffers) {
+  return GetOrCreateKernelCall(opaque, [&]() -> absl::StatusOr<KernelCall> {
+    JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
+
+    jax_triton::TritonAnyKernelCall proto;
+    if (!proto.ParseFromString(serialized)) {
+      return absl::InvalidArgumentError("Failed to parse serialized data.");
+    }
+
+    if (proto.has_kernel_call()) {
+      return KernelCall::FromProto(proto.kernel_call());
+    } else if (proto.has_autotuned_kernel_call()) {
+      JAX_ASSIGN_OR_RETURN(
+          AutotunedKernelCall autotuned_call,
+          AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
+      return AutotunedKernelCall::Autotune(std::move(autotuned_call), stream,
+                                           buffers);
+    } else {
+      return absl::InvalidArgumentError("Unknown kernel call type.");
+    }
+  });
 }
 
 absl::Status AnnotateModuleLoadStatus(
@@ -507,6 +499,36 @@ class ModuleImage {
   absl::flat_hash_map<gpuContext_t, gpuFunction_t> functions_
       ABSL_GUARDED_BY(mutex_);
 };
+
+// Compiles the kernel proto to machine code (e.g. CUBIN), and updates the proto
+// with the results.
+absl::Status CompileKernelProto(const stream_executor::GpuComputeCapability* cc,
+                                jax_triton::TritonKernel* kernel_proto) {
+  int compute_capability = kernel_proto->compute_capability();
+  if (cc != nullptr && cc->IsCuda() &&
+      cc->cuda_compute_capability() != nullptr) {
+    compute_capability = cc->cuda_compute_capability()->major * 10 +
+                         cc->cuda_compute_capability()->minor;
+  }
+
+  std::string_view pre_compiled =
+      kernel_proto->has_module_image()
+          ? std::string_view(kernel_proto->module_image().object_file())
+          : std::string_view();
+
+  JAX_ASSIGN_OR_RETURN(
+      ModuleImage * image,
+      GetModuleImage(kernel_proto->kernel_name(),
+                     kernel_proto->shared_mem_bytes(), kernel_proto->ptx(),
+                     compute_capability, pre_compiled));
+  if (image == nullptr) {
+    return absl::InternalError("Failed to get module image");
+  }
+
+  *kernel_proto->mutable_module_image() = image->ToProto();
+  kernel_proto->set_compute_capability(compute_capability);
+  return absl::OkStatus();
+}
 
 Kernel::Kernel(std::string kernel_name, uint32_t num_warps, uint32_t num_ctas,
                uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
@@ -995,55 +1017,75 @@ static absl::StatusOr<std::vector<void*>> CombineBuffers(
   return buffers;
 }
 
-// Finishes the compilation down to machine code if needed (e.g. for autotuned
-// kernels), and launches the kernel.
-absl::Status TritonKernelCallFfi(gpuStream_t stream,
-                                 TritonCustomCallState* state,
-                                 ::xla::ffi::RemainingArgs args,
-                                 ::xla::ffi::RemainingRets rets,
-                                 ::xla::ffi::Dictionary attrs) {
-  JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
-  if (state != nullptr && state->HasFullyCompiledKernel()) {
-    JAX_ASSIGN_OR_RETURN(KernelCall kernel_call,
-                         KernelCall::FromProto(state->kernel_call));
-    return kernel_call.Launch(stream, buffers.data());
+// Launches the kernel call previously compiled and cached.
+absl::Status TritonKernelCallFfi(
+    gpuStream_t stream, TritonKernelInitializeResult* initialized_kernel_call,
+    ::xla::ffi::RemainingArgs args, ::xla::ffi::RemainingRets rets,
+    ::xla::ffi::Dictionary attrs) {
+  // The state should always be non-null and have a valid kernel call, but just
+  // in case.
+  if (initialized_kernel_call == nullptr) {
+    return absl::InvalidArgumentError("Initialized kernel call is null.");
+  }
+  if (initialized_kernel_call->kernel_call == nullptr) {
+    return absl::InvalidArgumentError("Kernel call is null.");
   }
 
-  JAX_ASSIGN_OR_RETURN(std::string_view opaque,
-                       attrs.get<std::string_view>("opaque"));
-  JAX_ASSIGN_OR_RETURN(KernelCall * kernel_call,
-                       GetKernelCall(opaque, stream, buffers.data()));
-  return kernel_call->Launch(stream, buffers.data());
+  JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
+  return initialized_kernel_call->kernel_call->Launch(stream, buffers.data());
 }
 
 // Autotunes the kernel if needed, and populates the kernel cache.
-// Because of command buffer support, we need to make sure that the kernel cache
-// is populated during initialization, and not during execution.
-absl::Status TritonKernelCallFfiInitialize(gpuStream_t stream,
-                                           TritonCustomCallState* state,
-                                           ::xla::ffi::RemainingArgs args,
-                                           ::xla::ffi::RemainingRets rets,
-                                           ::xla::ffi::Dictionary attrs) {
-  // During instantiate we compiled non-autotuned kernels, in those cases we
-  // don't need to do anything here.
-  if (state != nullptr && state->HasFullyCompiledKernel()) {
-    return absl::OkStatus();
+// Because of command buffer support, we need to make sure that the kernel
+// cache is populated during initialization, and not during execution.
+absl::StatusOr<std::unique_ptr<TritonKernelInitializeResult>>
+TritonKernelCallFfiInitialize(gpuStream_t stream,
+                              TritonKernelInstantiateResult* instantiate_result,
+                              ::xla::ffi::RemainingArgs args,
+                              ::xla::ffi::RemainingRets rets,
+                              ::xla::ffi::Dictionary attrs) {
+  // Instantiate always runs before initialize, so this should never be null.
+  if (instantiate_result == nullptr) {
+    return absl::InvalidArgumentError("State is null.");
   }
 
+  // Creates the KernelCall using GetOrCreateKernelCall so that results are
+  // cached.
+  auto create_kernel_call = [&]() -> absl::StatusOr<KernelCall> {
+    switch (instantiate_result->proto.call_case()) {
+      case jax_triton::TritonCustomCallStateProto::kKernelCall: {
+        return KernelCall::FromProto(instantiate_result->proto.kernel_call());
+      }
+      case jax_triton::TritonCustomCallStateProto::
+          kAutotuningKernelCandidates: {
+        JAX_ASSIGN_OR_RETURN(
+            AutotunedKernelCall autotuned_call,
+            AutotunedKernelCall::FromProto(
+                instantiate_result->proto.autotuning_kernel_candidates()));
+        JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers,
+                             CombineBuffers(args, rets));
+        // The returned KernelCall is fully compiled down to machine code, and
+        // thus ready to be executed.
+        return AutotunedKernelCall::Autotune(std::move(autotuned_call), stream,
+                                             buffers.data());
+      }
+      default:
+        return absl::InvalidArgumentError("Unknown kernel call type.");
+    }
+  };
+  // We only use opaque as a key for the kernel call cache.
   JAX_ASSIGN_OR_RETURN(std::string_view opaque,
                        attrs.get<std::string_view>("opaque"));
-  JAX_ASSIGN_OR_RETURN(std::vector<void*> buffers, CombineBuffers(args, rets));
   JAX_ASSIGN_OR_RETURN(KernelCall * kernel_call,
-                       GetKernelCall(opaque, stream, buffers.data()));
-  static_cast<void>(kernel_call);
-  return absl::OkStatus();
+                       GetOrCreateKernelCall(opaque, create_kernel_call));
+  return std::make_unique<TritonKernelInitializeResult>(kernel_call);
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kTritonKernelCallFfi, TritonKernelCallFfi,
     ::xla::ffi::Ffi::Bind()
         .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
-        .Ctx<::xla::ffi::State<TritonCustomCallState>>()
+        .Ctx<::xla::ffi::Initialized<TritonKernelInitializeResult>>()
         .RemainingArgs()
         .RemainingRets()
         .Attrs(),
@@ -1053,7 +1095,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
     kTritonKernelCallFfiInitialize, TritonKernelCallFfiInitialize,
     ::xla::ffi::Ffi::BindInitialize()
         .Ctx<::xla::ffi::PlatformStream<gpuStream_t>>()
-        .Ctx<::xla::ffi::State<TritonCustomCallState>>()
+        .Ctx<::xla::ffi::State<TritonKernelInstantiateResult>>()
         .RemainingArgs()
         .RemainingRets()
         .Attrs(),
@@ -1064,16 +1106,20 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
 namespace xla::ffi {
 
 template <>
-struct TypeRegistry::SerDes<jax::JAX_GPU_NAMESPACE::TritonCustomCallState>
+struct TypeRegistry::SerDes<
+    jax::JAX_GPU_NAMESPACE::TritonKernelInstantiateResult>
     : public std::true_type {
   static absl::StatusOr<std::string> Serialize(
-      const jax::JAX_GPU_NAMESPACE::TritonCustomCallState& state) {
-    return jax::JAX_GPU_NAMESPACE::TritonCustomCallState::Serialize(state);
+      const jax::JAX_GPU_NAMESPACE::TritonKernelInstantiateResult&
+          instantiate_result) {
+    return jax::JAX_GPU_NAMESPACE::TritonKernelInstantiateResult::Serialize(
+        instantiate_result);
   }
   static absl::StatusOr<
-      std::unique_ptr<jax::JAX_GPU_NAMESPACE::TritonCustomCallState>>
+      std::unique_ptr<jax::JAX_GPU_NAMESPACE::TritonKernelInstantiateResult>>
   Deserialize(absl::string_view data) {
-    return jax::JAX_GPU_NAMESPACE::TritonCustomCallState::Deserialize(data);
+    return jax::JAX_GPU_NAMESPACE::TritonKernelInstantiateResult::Deserialize(
+        data);
   }
 };
 
@@ -1082,46 +1128,46 @@ struct TypeRegistry::SerDes<jax::JAX_GPU_NAMESPACE::TritonCustomCallState>
 namespace jax::JAX_GPU_NAMESPACE {
 
 // Compiles the kernel down to machine code (e.g. CUBIN) and stores it in the
-// TritonCustomCallState.
-// This is currently only possible for non-autotuned kernels.
-absl::StatusOr<std::unique_ptr<TritonCustomCallState>>
+// TritonKernelInstantiateResult. In case of AutotunedKernels it compiles all
+// the candidates.
+absl::StatusOr<std::unique_ptr<TritonKernelInstantiateResult>>
 TritonKernelCallFfiInstantiate(const stream_executor::GpuComputeCapability* cc,
                                ::xla::ffi::Dictionary attrs) {
   JAX_ASSIGN_OR_RETURN(std::string_view opaque,
                        attrs.get<std::string_view>("opaque"));
+  JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
 
-  JAX_ASSIGN_OR_RETURN(
-      KernelCall * kernel_call,
-      GetKernelCall(opaque, /*stream=*/nullptr, /*buffers=*/nullptr));
-  // We don't support compiling autotuned kernels during instantiation yet, so
-  // return an empty state so that its compiled during initialize.
-  if (kernel_call == nullptr) {
-    return std::make_unique<TritonCustomCallState>();
-  }
-  const Kernel& kernel = kernel_call->kernel();
-
-  int compute_capability = kernel.compute_capability();
-  if (cc != nullptr && cc->IsCuda() &&
-      cc->cuda_compute_capability() != nullptr) {
-    compute_capability = cc->cuda_compute_capability()->major * 10 +
-                         cc->cuda_compute_capability()->minor;
+  jax_triton::TritonAnyKernelCall proto;
+  if (!proto.ParseFromString(serialized)) {
+    return absl::InvalidArgumentError("Failed to parse serialized data.");
   }
 
-  JAX_ASSIGN_OR_RETURN(
-      ModuleImage * image,
-      GetModuleImage(kernel.kernel_name(), kernel.shared_mem_bytes(),
-                     kernel.ptx(), compute_capability));
-  if (image == nullptr) {
-    return absl::InternalError("Failed to get module image");
+  auto instantiate_result = std::make_unique<TritonKernelInstantiateResult>();
+
+  switch (proto.value_case()) {
+    case jax_triton::TritonAnyKernelCall::kKernelCall:
+      *instantiate_result->proto.mutable_kernel_call() =
+          std::move(*proto.mutable_kernel_call());
+      JAX_RETURN_IF_ERROR(CompileKernelProto(
+          cc,
+          instantiate_result->proto.mutable_kernel_call()->mutable_kernel()));
+      break;
+    case jax_triton::TritonAnyKernelCall::kAutotunedKernelCall:
+      *instantiate_result->proto.mutable_autotuning_kernel_candidates() =
+          std::move(*proto.mutable_autotuned_kernel_call());
+
+      for (jax_triton::TritonAutotunedKernelCall::Config& config :
+           *instantiate_result->proto.mutable_autotuning_kernel_candidates()
+                ->mutable_configs()) {
+        JAX_RETURN_IF_ERROR(CompileKernelProto(
+            cc, config.mutable_kernel_call()->mutable_kernel()));
+      }
+      break;
+    default:
+      return absl::InvalidArgumentError("Unknown kernel call type.");
   }
 
-  auto new_state = std::make_unique<TritonCustomCallState>();
-  new_state->kernel_call = kernel_call->ToProto();
-  *new_state->kernel_call.mutable_kernel()->mutable_module_image() =
-      image->ToProto();
-  new_state->kernel_call.mutable_kernel()->set_compute_capability(
-      compute_capability);
-  return new_state;
+  return instantiate_result;
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(kTritonKernelCallFfiInstantiate,

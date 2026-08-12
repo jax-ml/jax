@@ -43,39 +43,50 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInitialize);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kTritonKernelCallFfiInstantiate);
 
 class ModuleImage;
+class KernelCall;
 
-struct TritonCustomCallState {
-  jax_triton::TritonKernelCall kernel_call;
+// The result of the instantiate function in FFI, containing the fully compiled
+// kernel down to machine code (e.g. CUBIN).
+// For autotuned kernels, all candidates are compiled down to machine code.
+//
+// This is the structure that is serialized during AOT compilation in XLA.
+struct TritonKernelInstantiateResult {
+  jax_triton::TritonCustomCallStateProto proto;
 
-  // Returns true if the kernel is fully compiled down to machine code (e.g.
-  // CUBIN).
-  bool HasFullyCompiledKernel() const {
-    return kernel_call.kernel().has_module_image();
-  }
+  TritonKernelInstantiateResult() { proto.set_version(2); }
 
   static absl::StatusOr<std::string> Serialize(
-      const TritonCustomCallState& state) {
-    jax_triton::TritonCustomCallStateProto proto;
-    proto.set_version(1);
-    *proto.mutable_kernel_call() = state.kernel_call;
-    return proto.SerializeAsString();
+      const TritonKernelInstantiateResult& instantiate_result) {
+    return instantiate_result.proto.SerializeAsString();
   }
 
-  static absl::StatusOr<std::unique_ptr<TritonCustomCallState>> Deserialize(
-      absl::string_view data) {
-    jax_triton::TritonCustomCallStateProto proto;
-    if (!proto.ParseFromString(data)) {
+  static absl::StatusOr<std::unique_ptr<TritonKernelInstantiateResult>>
+  Deserialize(absl::string_view data) {
+    auto instantiate_result = std::make_unique<TritonKernelInstantiateResult>();
+    if (!instantiate_result->proto.ParseFromString(data)) {
       return absl::InvalidArgumentError(
           "Failed to parse TritonCustomCallStateProto");
     }
-    if (proto.version() != 1) {
+    if (instantiate_result->proto.version() != 2) {
       return absl::InvalidArgumentError(
           "Unsupported TritonCustomCallStateProto version");
     }
-    auto state = std::make_unique<TritonCustomCallState>();
-    state->kernel_call = std::move(*proto.mutable_kernel_call());
-    return state;
+    return instantiate_result;
   }
+};
+
+// A thin wrapper around a `KernelCall` that is ready to be executed, needed
+// since we can't use the bare pointer as a state in FFI.
+//
+// Unlike TritonKernelInstantiateResult, this structure doesn't need to be
+// serialized.
+struct TritonKernelInitializeResult {
+  explicit TritonKernelInitializeResult(KernelCall* kernel_call = nullptr)
+      : kernel_call(kernel_call) {}
+
+  // The actual kernel call is owned by an static cache within
+  // triton_kernels.cc.
+  KernelCall* kernel_call = nullptr;
 };
 
 class Kernel {

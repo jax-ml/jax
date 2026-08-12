@@ -81,5 +81,11 @@ message TritonAnyKernelCall {
 
 message TritonCustomCallStateProto {
   int32 version = 1;
-  TritonKernelCall kernel_call = 2;
+  oneof call {
+    // If set, the kernel call is fully compiled down to machine code (e.g.
+    // CUBIN), and can be launched directly.
+    TritonKernelCall kernel_call = 2;
+    // If set, the kernel call needs to be autotuned before execution.
+    TritonAutotunedKernelCall autotuning_kernel_candidates = 3;
+  }
 }
