@@ -1849,12 +1849,12 @@ layout_cast_p = jax_core.Primitive("layout_cast")
 @layout_cast_p.def_abstract_eval
 def _layout_cast_abstract_eval(x, new_layout):
   del new_layout  # Unused.
-  return x
+  return [x]
 
 
 def layout_cast(x: Any, new_layout: SomeLayout):
   """Casts the layout of the given array."""
-  return layout_cast_p.bind(x, new_layout=new_layout)
+  return layout_cast_p.bind1(x, new_layout=new_layout)
 
 
 class SomeLayout:

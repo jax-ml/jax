@@ -179,7 +179,7 @@ class DischargeRule(Protocol):
       ctx: DischargeContext,
       *args: Any,
       **params: Any,
-  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
+  ) -> tuple[Sequence[Any | None], Sequence[Any]]:
     """Discharge rule for a primitive.
 
     See :func:`discharge_state` for an explanation of what discharge means.
@@ -194,8 +194,7 @@ class DischargeRule(Protocol):
 
       * ``new_invals`` contains updated values for discharged ``Ref`` inputs,
         or ``None`` if the input is not a ``Ref`` or was not updated.
-      * ``new_outvals`` is the primitive's output. A sequence if the primitive
-        has multiple results, otherwise a single value.
+      * ``new_outvals`` is the sequence of the primitive's output values.
     """
 
 
@@ -231,9 +230,10 @@ def _eval_jaxpr_discharge_state(
       should_discharge = [id(v.aval) in refs_to_discharge for v in eqn.invars]
       if eqn.primitive is core.ref_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
-        ans = env.read(invar)
+        val = env.read(invar)
         if eqn.params['pin']:
-          ans = pin(ans)
+          val = pin(val)
+        ans = [val]
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.empty_ref_p:
         [], [outvar] = eqn.invars, eqn.outvars
@@ -241,11 +241,12 @@ def _eval_jaxpr_discharge_state(
         aval = outvar.aval.inner_aval
         if not isinstance(aval, core.ShapedArray):
           raise NotImplementedError  # TODO(sergei)
-        ans = lax.empty(aval.shape, aval.dtype)
+        val = lax.empty(aval.shape, aval.dtype)
         if eqn.params['pin']:
           # TODO(mattjj,yashkatariya): switch to create_linear once the
           # CreateBuffer custom call is implemented in the runtime
-          ans = pin(ans)
+          val = pin(val)
+        ans = [val]
         refs_to_discharge.add(id(outvar.aval))
       elif eqn.primitive is core.free_ref_p:
         [invar], [] = eqn.invars, eqn.outvars
@@ -253,15 +254,16 @@ def _eval_jaxpr_discharge_state(
         if isinstance(core.typeof(val), AbstractLinVal):
           unpin(val)  # terminate the linear chain; the value is discarded
         refs_to_discharge.remove(id(invar.aval))
-        ans = ()
+        ans = []
       elif eqn.primitive is core.freeze_p:
         [invar], [outvar] = eqn.invars, eqn.outvars
-        ans = env.read(invar)
+        val = env.read(invar)
         # A LinVal here means the ref was created with new_ref(..., pin=True)
         # and discharged to a pinned buffer, so its final value must be
         # unpinned.
-        if isinstance(core.typeof(ans), AbstractLinVal):
-          ans = unpin(ans)
+        if isinstance(core.typeof(val), AbstractLinVal):
+          val = unpin(val)
+        ans = [val]
         refs_to_discharge.remove(id(invar.aval))
       elif any(should_discharge) or core.internal_mutable_array_effect in eqn.effects:
         if eqn.primitive in _discharge_rules:
@@ -291,10 +293,7 @@ def _eval_jaxpr_discharge_state(
         # stateful.
         bind_params = eqn.primitive.get_bind_params(eqn.params)
         ans = eqn.primitive.bind(*map(env.read, eqn.invars), **bind_params)
-    if eqn.primitive.multiple_results:
-      foreach(env.write, eqn.outvars, ans)
-    else:
-      env.write(eqn.outvars[0], ans)
+    foreach(env.write, eqn.outvars, ans)
   # By convention, we return the outputs of the jaxpr first and then the final
   # values of the `Ref`s. Callers to this function should be able to split
   # them up by looking at `len(jaxpr.outvars)`.
@@ -472,7 +471,7 @@ def _get_discharge_rule(
     tree):
   del ctx
   y = _get_discharge(x, idx, tree)
-  return (None,) * (len(idx) + 1), y
+  return (None,) * (len(idx) + 1), [y]
 
 
 def _index_array(x, indexer: indexing.NDIndexer):
@@ -603,7 +602,7 @@ def _swap_discharge_rule(
     tree):
   del ctx
   z, x_new = _swap_discharge(x, val, idx, tree)
-  return (x_new, None) + (None,) * len(idx), z
+  return (x_new, None) + (None,) * len(idx), [z]
 
 def _swap_discharge(x, val, idx, tree):
   transforms = tree_util.tree_unflatten(tree, idx)
@@ -685,7 +684,6 @@ register_discharge_rule(pe.eval_jaxpr_p)(partial(_eval_jaxpr_discharge_rule, pe.
 # # `run_state`
 
 run_state_p = core.Primitive("run_state")
-run_state_p.multiple_results = True
 
 def _run_state_is_high(*_, jaxpr, **__):
   return jaxpr.is_high

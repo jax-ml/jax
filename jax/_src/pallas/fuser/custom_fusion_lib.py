@@ -34,7 +34,6 @@ from jax._src.pallas.fuser import block_spec as block_spec_lib
 
 
 custom_fusion_p = core.Primitive('custom_fusion')
-custom_fusion_p.multiple_results = True
 
 CustomPullBlockSpecRuleFn = Callable[[tuple[block_spec_lib.BlockIndexTransform, ...]],
                                      Sequence[block_spec_lib.BlockIndexTransform]]

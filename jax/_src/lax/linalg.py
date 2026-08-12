@@ -110,7 +110,7 @@ def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
   """
   if symmetrize_input:
     x = symmetrize(x)
-  return _tril(cholesky_p.bind(x))
+  return _tril(cholesky_p.bind1(x))
 
 
 def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
@@ -129,7 +129,7 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
     of :math:`A + w \, w^T`.
   """
   r_matrix, w_vector = core.auto_insert_reshard(r_matrix, w_vector)
-  return cholesky_update_p.bind(r_matrix, w_vector)
+  return cholesky_update_p.bind1(r_matrix, w_vector)
 
 
 class EigImplementation(enum.Enum):
@@ -329,7 +329,7 @@ def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
     containing the products of the elementary Householder reflectors.
   """
   a, taus = core.auto_insert_reshard(a, taus)
-  return householder_product_p.bind(a, taus)
+  return householder_product_p.bind1(a, taus)
 
 
 def lu(x: ArrayLike) -> tuple[Array, Array, Array]:
@@ -378,7 +378,7 @@ def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
   Returns:
     An int32 array of shape (..., permutation_size).
   """
-  return lu_pivots_to_permutation_p.bind(
+  return lu_pivots_to_permutation_p.bind1(
       pivots, permutation_size=permutation_size)
 
 @overload
@@ -608,7 +608,7 @@ def symmetric_product(
     transpose of the lower triangle, and the whole matrix is valid.
   """
   a_matrix, c_matrix = core.auto_insert_reshard(a_matrix, c_matrix)
-  result = symmetric_product_p.bind(a_matrix, c_matrix, alpha=alpha, beta=beta)
+  result = symmetric_product_p.bind1(a_matrix, c_matrix, alpha=alpha, beta=beta)
   if symmetrize_output:
     upper_half = lax.transpose(
         _tril(result, k=-1),
@@ -666,7 +666,7 @@ def triangular_solve(
   if singleton:
     b = lax.expand_dims(b, (-1 if left_side else -2,))
   a, b = core.auto_insert_reshard(a, b)
-  out = triangular_solve_p.bind(
+  out = triangular_solve_p.bind1(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
   if singleton:
@@ -736,7 +736,7 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array, *,
     Solution ``X`` of tridiagonal system.
   """
   dl, d, du, b = core.auto_insert_reshard(dl, d, du, b)
-  return tridiagonal_solve_p.bind(
+  return tridiagonal_solve_p.bind1(
     dl, d, du, b, perturb_singular=perturb_singular)
 
 
@@ -834,7 +834,6 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
         linalg_sharding_rule, multiple_results, shape_rule, ranks, name)
   vma_rule = partial(linalg_vma_rule, multiple_results, shape_rule, name)
   prim = core.Primitive(name)
-  prim.multiple_results = multiple_results
   prim.def_impl(partial(dispatch.apply_primitive, prim))
   if multiple_results:
     prim.def_abstract_eval(
@@ -868,7 +867,7 @@ def _cholesky_shape_rule(shape):
 def _cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
-  L = _tril(cholesky_p.bind(x))
+  L = _tril(cholesky_p.bind1(x))
 
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   def phi(X):
@@ -882,7 +881,7 @@ def _cholesky_jvp_rule(primals, tangents):
   L_dot = lax.batch_matmul(L, phi(triangular_solve(
       L, tmp, left_side=True, transpose_a=False, lower=True)),
       precision=lax.Precision.HIGHEST)
-  return L, L_dot
+  return [L], [L_dot]
 
 
 def _cholesky_lowering(ctx, x):
@@ -1518,7 +1517,7 @@ def ormqr(a: ArrayLike, taus: ArrayLike, c: ArrayLike, *,
       Q @ C or C @ Q from a matrix ``a`` directly.
   """
   a, taus, c = core.auto_insert_reshard(a, taus, c)
-  return ormqr_p.bind(a, taus, c, left=left, transpose=transpose)
+  return ormqr_p.bind1(a, taus, c, left=left, transpose=transpose)
 
 
 def _ormqr_shape_rule(a_shape, taus_shape, c_shape, *, left, transpose):
@@ -2712,10 +2711,11 @@ def _triangular_solve_jvp_rule_a(
       return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
 def _triangular_solve_transpose_rule(
-    cotangent, a, b, *, left_side, lower, transpose_a, conjugate_a,
+    cotangents, a, b, *, left_side, lower, transpose_a, conjugate_a,
     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
+  cotangent, = cotangents
   assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
   if type(cotangent) is ad_util.Zero:
     cotangent_b = ad_util.Zero(b.aval)
@@ -2735,7 +2735,7 @@ def _triangular_solve_batching_rule(
     out = triangular_solve(x, y, left_side=left_side, lower=lower,
                            transpose_a=transpose_a, conjugate_a=conjugate_a,
                            unit_diagonal=unit_diagonal)
-    return out, None
+    return [out], [None]
   if bx is None:
     if left_side:
       y = batching.moveaxis(y, by, -1)
@@ -2749,13 +2749,13 @@ def _triangular_solve_batching_rule(
         x, y_flat, left_side=left_side, lower=lower,
         transpose_a=transpose_a, conjugate_a=conjugate_a,
         unit_diagonal=unit_diagonal)
-    return out_flat.reshape(y.shape), bdim_out
+    return [out_flat.reshape(y.shape)], [bdim_out]
   else:
     x = batching.bdim_at_front(x, bx, axis_data.size, axis_data.explicit_mesh_axis)
     y = batching.bdim_at_front(y, by, axis_data.size, axis_data.explicit_mesh_axis)
-    return triangular_solve(x, y, left_side=left_side, lower=lower,
-                            transpose_a=transpose_a, conjugate_a=conjugate_a,
-                            unit_diagonal=unit_diagonal), 0
+    return [triangular_solve(x, y, left_side=left_side, lower=lower,
+                             transpose_a=transpose_a, conjugate_a=conjugate_a,
+                             unit_diagonal=unit_diagonal)], [0]
 
 def _triangular_solve_lowering(
     ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
@@ -2946,21 +2946,22 @@ def _tridiagonal_product(dl, d, du, b):
 def _tridiagonal_solve_jvp_rule(primals, tangents, *, perturb_singular):
   *diags, _ = primals
   *diags_dot, b_dot = tangents
-  ans = tridiagonal_solve_p.bind(*primals, perturb_singular=perturb_singular)
+  ans = tridiagonal_solve_p.bind1(*primals, perturb_singular=perturb_singular)
   if all(type(p) is ad_util.Zero for p in diags_dot):
     rhs = b_dot
   else:
     # pyrefly: ignore[bad-argument-count]  # pyrefly#2468
     matvec_dot = _tridiagonal_product(*map(ad.instantiate_zeros, diags_dot), ans)
     rhs = ad.add_tangents(b_dot, -matvec_dot)
-  ans_dot = tridiagonal_solve_p.bind(
+  ans_dot = tridiagonal_solve_p.bind1(
     *diags, rhs, perturb_singular=perturb_singular)
-  return ans, ans_dot
+  return [ans], [ans_dot]
 
 def _tridiagonal_solve_transpose_rule(
-    cotangent, dl, d, du, b, *, perturb_singular):
+    cotangents, dl, d, du, b, *, perturb_singular):
   # Tridiagonal solve is nonlinear in the tridiagonal arguments and linear
   # otherwise.
+  cotangent, = cotangents
   assert not (ad.is_undefined_primal(dl) or ad.is_undefined_primal(d) or
               ad.is_undefined_primal(du)) and ad.is_undefined_primal(b)
   if type(cotangent) is ad_util.Zero:
@@ -2987,7 +2988,7 @@ def _tridiagonal_solve_batching_rule(
     bdim_out = b.ndim - 2
     out_flat = tridiagonal_solve(dl, d, du, b_flat,
                                  perturb_singular=perturb_singular)
-    return out_flat.reshape(b.shape), bdim_out
+    return [out_flat.reshape(b.shape)], [bdim_out]
   else:
     size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
                 if i is not None)
@@ -2995,7 +2996,8 @@ def _tridiagonal_solve_batching_rule(
     d = batching.bdim_at_front(d, bd, size)
     du = batching.bdim_at_front(du, bdu, size)
     b = batching.bdim_at_front(b, bb, size)
-    return tridiagonal_solve(dl, d, du, b, perturb_singular=perturb_singular), 0
+    return [tridiagonal_solve(dl, d, du, b,
+                              perturb_singular=perturb_singular)], [0]
 
 def _tridiagonal_solve_jax_impl(dl, d, du, b):
   def fwd(carry, args):

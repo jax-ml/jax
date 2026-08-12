@@ -2831,15 +2831,15 @@ hijax.register_hitype(
 
 index_p = jax_core.Primitive('index_p')
 index_p.is_high = lambda *_: True
-index_p.def_abstract_eval(lambda xt: jax_core.ShapedArray(xt.shape, xt.dtype))
+index_p.def_abstract_eval(lambda xt: [jax_core.ShapedArray(xt.shape, xt.dtype)])
 
 
-def index_to_lojax(xt: jax.Ref) -> jax.Array:
+def index_to_lojax(xt: jax.Ref) -> list[jax.Array]:
   assert isinstance(xt, jax.Ref)
   x_ref = xt._refs.x
   s_ref = xt._refs.s
   s = s_ref[0]
-  return x_ref[s]
+  return [x_ref[s]]
 index_p.to_lojax = index_to_lojax
 
 
@@ -2871,7 +2871,7 @@ class PallasHiJaxTest(ptu.PallasTest):
     )
 
     def kernel(xs_ref, o_ref):
-      x = index_p.bind(xs_ref)
+      x = index_p.bind1(xs_ref)
       o_ref[...] = x
 
     o = self.pallas_call(

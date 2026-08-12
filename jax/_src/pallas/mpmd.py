@@ -76,7 +76,6 @@ def mpmd_map_tracing_context(
 
 
 mpmd_map_p = hijax.HiPrimitive("mpmd_map")
-mpmd_map_p.multiple_results = True
 
 
 @mpmd_map_p.def_impl
@@ -223,7 +222,7 @@ def _mpmd_map_discharge_rule(
       default_memory_space if m is None else m for m in in_memory_spaces
   ]
   args = tuple(
-      pallas_core.with_memory_space_constraint_p.bind(
+      pallas_core.with_memory_space_constraint_p.bind1(
           arg, memory_space=memory_space
       )
       if memory_space is not default_memory_space

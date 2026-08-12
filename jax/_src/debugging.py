@@ -77,7 +77,6 @@ effects.partial_eval_kept_effects.add_type(OrderedDebugEffect)
 
 # `debug_callback_p` is the main primitive for staging out Python callbacks.
 debug_callback_p = core.Primitive('debug_callback')
-debug_callback_p.multiple_results = True
 
 map, unsafe_map = util.safe_map, map
 
@@ -307,7 +306,6 @@ def _make_flat_callback(in_tree, callback, static_args):
 
 
 debug_print_p = core.Primitive("debug_print")
-debug_print_p.multiple_results = True
 
 
 @debug_print_p.def_impl
@@ -689,7 +687,6 @@ debug_log = partial(debug_print, _use_logging=True)
 # Sharding visualization
 
 inspect_sharding_p = core.Primitive("inspect_sharding")
-inspect_sharding_p.multiple_results = True
 dispatch.prim_requires_devices_during_lowering.add(inspect_sharding_p)
 
 def _inspect_sharding_impl(value, *, callback):

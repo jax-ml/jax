@@ -656,7 +656,6 @@ def batched_device_put_impl(
 
 
 device_put_p = core.Primitive('device_put')
-device_put_p.multiple_results = True
 device_put_p.def_impl(batched_device_put_impl)
 
 

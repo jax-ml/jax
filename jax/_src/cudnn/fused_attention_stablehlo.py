@@ -1186,7 +1186,6 @@ def _dot_product_attention_bwd_partition(
 
 # Create dot_product_attention_fwd_p for forward operation.
 _dot_product_attention_fwd_p = core.Primitive("dot_product_attention_fwd")
-_dot_product_attention_fwd_p.multiple_results = True
 _dot_product_attention_fwd_p.def_impl(
     functools.partial(dispatch.apply_primitive, _dot_product_attention_fwd_p)
 )
@@ -1203,7 +1202,6 @@ mlir.register_lowering(
 _dot_product_attention_fwd_p_wrapper = core.Primitive(
     "dot_product_attention_fwd_wrapper"
 )
-_dot_product_attention_fwd_p_wrapper.multiple_results = True
 _dot_product_attention_fwd_p_wrapper.def_impl(_dot_product_attention_fwd_impl)
 _dot_product_attention_fwd_p_wrapper.def_abstract_eval(
     _dot_product_attention_fwd_abstract
@@ -1211,7 +1209,6 @@ _dot_product_attention_fwd_p_wrapper.def_abstract_eval(
 
 # Create dot_product_attention_bwd_p for backward operation.
 _dot_product_attention_bwd_p = core.Primitive("dot_product_attention_bwd")
-_dot_product_attention_bwd_p.multiple_results = True
 _dot_product_attention_bwd_p.def_impl(
     functools.partial(dispatch.apply_primitive, _dot_product_attention_bwd_p)
 )
@@ -1228,7 +1225,6 @@ mlir.register_lowering(
 _dot_product_attention_bwd_p_wrapper = core.Primitive(
     "dot_product_attention_bwd_wrapper"
 )
-_dot_product_attention_bwd_p_wrapper.multiple_results = True
 _dot_product_attention_bwd_p_wrapper.def_impl(_dot_product_attention_bwd_impl)
 _dot_product_attention_bwd_p_wrapper.def_abstract_eval(
     _dot_product_attention_bwd_abstract
@@ -1803,7 +1799,6 @@ def _dot_product_attention_fp8_bwd_partition(
 
 # Create dot_product_attention_fp8_fwd_p for forward operation.
 _dot_product_attention_fp8_fwd_p = core.Primitive("dot_product_attention_fp8_fwd")
-_dot_product_attention_fp8_fwd_p.multiple_results = True
 _dot_product_attention_fp8_fwd_p.def_impl(
     functools.partial(dispatch.apply_primitive, _dot_product_attention_fp8_fwd_p)
 )
@@ -1820,7 +1815,6 @@ mlir.register_lowering(
 _dot_product_attention_fp8_fwd_p_wrapper = core.Primitive(
     "dot_product_attention_fp8_fwd_wrapper"
 )
-_dot_product_attention_fp8_fwd_p_wrapper.multiple_results = True
 _dot_product_attention_fp8_fwd_p_wrapper.def_impl(_dot_product_attention_fp8_fwd_impl)
 _dot_product_attention_fp8_fwd_p_wrapper.def_abstract_eval(
     _dot_product_attention_fp8_fwd_abstract
@@ -1828,7 +1822,6 @@ _dot_product_attention_fp8_fwd_p_wrapper.def_abstract_eval(
 
 # Create dot_product_attention_bwd_p for backward operation.
 _dot_product_attention_fp8_bwd_p = core.Primitive("dot_product_attention_fp8_bwd")
-_dot_product_attention_fp8_bwd_p.multiple_results = True
 _dot_product_attention_fp8_bwd_p.def_impl(
     functools.partial(dispatch.apply_primitive, _dot_product_attention_fp8_bwd_p)
 )
@@ -1845,7 +1838,6 @@ mlir.register_lowering(
 _dot_product_attention_fp8_bwd_p_wrapper = core.Primitive(
     "dot_product_attention_fp8_bwd_wrapper"
 )
-_dot_product_attention_fp8_bwd_p_wrapper.multiple_results = True
 _dot_product_attention_fp8_bwd_p_wrapper.def_impl(_dot_product_attention_fp8_bwd_impl)
 _dot_product_attention_fp8_bwd_p_wrapper.def_abstract_eval(
     _dot_product_attention_fp8_bwd_abstract

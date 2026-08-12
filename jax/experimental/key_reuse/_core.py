@@ -240,8 +240,8 @@ def key_reuse_signature_from_primitive(prim, *args, **params):
 
 consume_effect = Effect()
 consume_p = core.Primitive("consume")
-consume_p.def_impl(lambda x: x)
-consume_p.def_effectful_abstract_eval(lambda x: (x, {consume_effect}))
+consume_p.def_impl(lambda x: [x])
+consume_p.def_effectful_abstract_eval(lambda x: ([x], {consume_effect}))
 batching.defvectorized(consume_p)
 mlir.register_lowering(
     consume_p,
@@ -249,13 +249,13 @@ mlir.register_lowering(
 
 def consume(key):
   """Consume the key and return a consumed copy."""
-  return consume_p.bind(key)
+  return consume_p.bind1(key)
 
 assert_effect = Effect()
 
 assert_consumed_value_p = core.Primitive("assert_consumed_value")
-assert_consumed_value_p.def_impl(lambda x, *, value: x)
-assert_consumed_value_p.def_effectful_abstract_eval(lambda x, *, value: (x, {assert_effect}))
+assert_consumed_value_p.def_impl(lambda x, *, value: [x])
+assert_consumed_value_p.def_effectful_abstract_eval(lambda x, *, value: ([x], {assert_effect}))
 batching.defvectorized(assert_consumed_value_p)
 mlir.register_lowering(
     assert_consumed_value_p,
@@ -263,11 +263,11 @@ mlir.register_lowering(
 
 def assert_unconsumed(key):
   """Assert that a key is unconsumed"""
-  assert_consumed_value_p.bind(key, value=HashableArray(False))
+  assert_consumed_value_p.bind1(key, value=HashableArray(False))
 
 def assert_consumed(key, value=True):
   """Assert that a key is consumed"""
-  assert_consumed_value_p.bind(key, value=HashableArray(value))
+  assert_consumed_value_p.bind1(key, value=HashableArray(value))
 
 
 def _check_consumed_value(eqn, consumed):
@@ -596,5 +596,5 @@ def call_impl_with_key_reuse_checks(prim: core.Primitive, raw_impl: Callable[...
   consts = kwargs['jaxpr'].consts if prim == pjit.jit_p else []
   signature.check_signature(*args, *consts, funcname=funcname)
   result = raw_impl(*args, **kwargs)
-  signature.update_consumption([*args, *consts], result if prim.multiple_results else [result])
+  signature.update_consumption([*args, *consts], result)
   return result

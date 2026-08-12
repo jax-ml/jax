@@ -109,10 +109,7 @@ class RematTrace(core.Trace):
         out_primal = prim.bind(*in_vals, **params)
       with core.set_current_trace(self.jaxpr_trace):
         out_primal2 = prim.bind(*in_vals2, **params)
-    if prim.multiple_results:
-      return map(partial(RematTracer, self), out_primal, out_primal2)
-    else:
-      return RematTracer(self, out_primal, out_primal2)
+    return map(partial(RematTracer, self), out_primal, out_primal2)
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, /, *, symbolic_zeros):
     in_vals, in_vals2 = unzip2(map(self.to_val_tracer_pair, tracers))

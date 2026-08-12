@@ -560,7 +560,6 @@ def print_saved_residuals(f, *args, **kwargs):
 ### Implementation
 
 remat_p = core.Primitive('remat2')
-remat_p.multiple_results = True
 
 def _remat_bind(*args, jaxpr, prevent_cse, differentiated, policy):
   assert isinstance(prevent_cse, bool) or len(prevent_cse) == len(args)
@@ -934,21 +933,21 @@ def checkpoint_name(x, name):
   """
   if config.remat3.value:
     return tree_map(lambda x: checkpoint_name3(name, x), x)
-  return tree_map(partial(name_p.bind, name=name), x)
+  return tree_map(partial(name_p.bind1, name=name), x)
 
-name_p.def_impl(lambda x, *, name: x)
-name_p.def_abstract_eval(lambda x, *, name: x)
+name_p.def_impl(lambda x, *, name: [x])
+name_p.def_abstract_eval(lambda x, *, name: [x])
 
 def name_jvp(primals, tangents, *, name):
   (x,), (xdot,) = primals, tangents
-  return name_p.bind(x, name=name), xdot  # don't name the tangent value
+  return [name_p.bind1(x, name=name)], [xdot]  # don't name the tangent value
 ad.primitive_jvps[name_p] = name_jvp
 
 mlir.register_lowering(name_p, lambda ctx, x, *, name: [x])
 
 def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims
-  return name_p.bind(x, name=name), d
+  return [name_p.bind1(x, name=name)], [d]
 batching.primitive_batchers[name_p] = name_batcher
 
 

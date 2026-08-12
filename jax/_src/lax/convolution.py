@@ -177,7 +177,7 @@ def conv_general_dilated(
       )
   )
   lhs, rhs = core.auto_insert_reshard(lhs, rhs)
-  return conv_general_dilated_p.bind(
+  return conv_general_dilated_p.bind1(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
       dimension_numbers=dnums,
@@ -609,7 +609,7 @@ def _conv_general_dilated_batch_rule(
   lhs_bdim, rhs_bdim = batch_dims
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   if lhs_bdim is None and rhs_bdim is None:
-    out = conv_general_dilated_p.bind(
+    out = conv_general_dilated_p.bind1(
         lhs, rhs, window_strides=window_strides, padding=padding,
         lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
         dimension_numbers=dimension_numbers,
@@ -617,7 +617,7 @@ def _conv_general_dilated_batch_rule(
         batch_group_count=batch_group_count, precision=precision,
         preferred_element_type=preferred_element_type,
         out_sharding=out_sharding, **unused_kwargs)
-    return out, None
+    return [out], [None]
 
   assert batch_group_count == 1 or feature_group_count == 1
 
@@ -640,11 +640,11 @@ def _conv_general_dilated_batch_rule(
       batch_group_count=batch_group_count)
     if out_sharding is not None:
       out_sharding = batching.get_sharding_for_vmap(axis_data, out_sharding, 0)
-    return lax.full(
+    return [lax.full(
       (0,) + shape, 0,
       dtype=lhs.dtype if preferred_element_type is None
             else preferred_element_type,
-            sharding=out_sharding), 0
+            sharding=out_sharding)], [0]
 
   def get_out_sharding(axis):
     if out_sharding is None:
@@ -674,7 +674,7 @@ def _conv_general_dilated_batch_rule(
       preferred_element_type=preferred_element_type,
       out_sharding=get_out_sharding(out_spec[1]))
     out = _reshape_axis_out_of(out_spec[1], lhs.shape[lhs_bdim], out)
-    return out, out_spec[1]
+    return [out], [out_spec[1]]
 
   elif lhs_bdim is not None:
     if batch_group_count == 1:
@@ -685,7 +685,7 @@ def _conv_general_dilated_batch_rule(
                                  preferred_element_type=preferred_element_type,
                                  out_sharding=get_out_sharding(out_spec[0]))
       out = _reshape_axis_out_of(out_spec[0], lhs.shape[lhs_bdim], out)
-      return out, out_spec[0]
+      return [out], [out_spec[0]]
     else:
       new_lhs = _reshape_axis_out_of(lhs_spec[0] + int(lhs_bdim <= lhs_spec[0]),
                                      batch_group_count, lhs)
@@ -700,7 +700,7 @@ def _conv_general_dilated_batch_rule(
                                  preferred_element_type=preferred_element_type,
                                  out_sharding=get_out_sharding(out_spec[0]))
       out = _reshape_axis_out_of(out_spec[0], lhs.shape[lhs_bdim], out)
-      return out, out_spec[0]
+      return [out], [out_spec[0]]
 
   elif rhs_bdim is not None:
     if feature_group_count == 1 and batch_group_count == 1:
@@ -712,7 +712,7 @@ def _conv_general_dilated_batch_rule(
                                  preferred_element_type=preferred_element_type,
                                  out_sharding=get_out_sharding(out_spec[1]))
       out = _reshape_axis_out_of(out_spec[1], rhs.shape[rhs_bdim], out)
-      return out, out_spec[1]
+      return [out], [out_spec[1]]
     else:
       if out_sharding is not None:
         raise NotImplementedError
@@ -737,7 +737,7 @@ def _conv_general_dilated_batch_rule(
       out = _reshape_axis_out_of(out_spec[1], group_count, out)
       out = _reshape_axis_out_of(out_spec[1] + 1, rhs.shape[rhs_bdim], out)
       out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
-      return out, out_spec[1]
+      return [out], [out_spec[1]]
 
 conv_general_dilated_p = lax.standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,

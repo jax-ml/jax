@@ -259,7 +259,7 @@ def host_local_array_to_global_array_impl(
         'jax.sharding.PartitionSpec() if you wanted to replicate your input.')
   # If the Array is not fully addressable i.e. not host local, return it.
   if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
-    return arr
+    return [arr]
   if (isinstance(arr, array.ArrayImpl) and not hasattr(arr, 'shape')):
     arr = np.array(arr)
   if arr.dtype == dtypes.float0:
@@ -289,8 +289,8 @@ def host_local_array_to_global_array_impl(
       global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
       arrays, list(global_mesh.local_mesh.devices.flat))
   if is_prng_key_array:
-    return prng.PRNGKeyArray(dtype._impl, out)
-  return out
+    return [prng.PRNGKeyArray(dtype._impl, out)]
+  return [out]
 
 
 def host_local_array_to_global_array(
@@ -376,8 +376,8 @@ def host_local_array_to_global_array(
   in_pspecs = _flatten_pspecs('input pspecs', in_tree,
                               pjit_lib.hashable_pytree(pspecs))
   out_flat = [
-      host_local_array_to_global_array_p.bind(inp, global_mesh=global_mesh,
-                                              pspec=in_spec)
+      host_local_array_to_global_array_p.bind1(inp, global_mesh=global_mesh,
+                                               pspec=in_spec)
       for inp, in_spec in safe_zip(flat_inps, in_pspecs)
   ]
   return tree_unflatten(in_tree, out_flat)
@@ -386,13 +386,13 @@ host_local_array_to_global_array_p = core.Primitive('host_local_array_to_global_
 host_local_array_to_global_array_p.def_impl(host_local_array_to_global_array_impl)
 
 def ltg_abstract_eval(arr, *, global_mesh, pspec):
-  return _local_to_global_aval(
-      core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
+  return [_local_to_global_aval(
+      core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)]
 host_local_array_to_global_array_p.def_abstract_eval(ltg_abstract_eval)
 
 ad.deflinear2(host_local_array_to_global_array_p,
-              lambda ct, _, **params: (
-                  host_local_array_to_global_array_p.bind(ct, **params),))
+              lambda cts, _, **params: (
+                  host_local_array_to_global_array_p.bind1(cts[0], **params),))
 
 def ltg_batcher(insert_axis, axis_data, vals_in, dims_in, global_mesh, pspec):
   del insert_axis
@@ -403,9 +403,9 @@ def ltg_batcher(insert_axis, axis_data, vals_in, dims_in, global_mesh, pspec):
   if d is not None:
     new_pspec.insert(d, new_parts)
   new_pspec = P(*new_pspec)
-  y = host_local_array_to_global_array_p.bind(
+  y = host_local_array_to_global_array_p.bind1(
       x, global_mesh=global_mesh, pspec=new_pspec)
-  return y, d
+  return [y], [d]
 batching.fancy_primitive_batchers[host_local_array_to_global_array_p] = partial(
     ltg_batcher, False)
 
@@ -422,7 +422,7 @@ def global_array_to_host_local_array_impl(
         'jax.sharding.PartitionSpec() if you wanted to replicate your input.')
   # If the Array is already fully addressable i.e. host local, return it.
   if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
-    return arr
+    return [arr]
   if not hasattr(arr, 'shape'):
     arr = np.array(arr)
   if arr.dtype == dtypes.float0:
@@ -444,17 +444,17 @@ def global_array_to_host_local_array_impl(
       arrays = resharded_array._arrays
     out = array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
     if is_prng_key_array:
-      return prng.PRNGKeyArray(dtype._impl, out)
-    return out
+      return [prng.PRNGKeyArray(dtype._impl, out)]
+    return [out]
   else:
     # numpy array can show up here during AD.
     arr = dtypes.canonicalize_value(arr)
     arrays = [
         arr[i] for i in local_sharding.devices_indices_map(arr.shape).values()
     ]
-  return pxla.batched_device_put(
+  return [pxla.batched_device_put(
       local_aval, local_sharding, arrays,
-      list(global_mesh.local_mesh.devices.flat))
+      list(global_mesh.local_mesh.devices.flat))]
 
 
 def global_array_to_host_local_array(
@@ -494,8 +494,8 @@ def global_array_to_host_local_array(
   out_pspecs = _flatten_pspecs('output pspecs', out_tree,
                                pjit_lib.hashable_pytree(pspecs))
   out_flat = [
-      global_array_to_host_local_array_p.bind(inp, global_mesh=global_mesh,
-                                              pspec=o)
+      global_array_to_host_local_array_p.bind1(inp, global_mesh=global_mesh,
+                                               pspec=o)
       for inp, o in safe_zip(flat_inps, out_pspecs)
   ]
   return tree_unflatten(out_tree, out_flat)
@@ -504,13 +504,13 @@ global_array_to_host_local_array_p = core.Primitive('global_array_to_host_local_
 global_array_to_host_local_array_p.def_impl(global_array_to_host_local_array_impl)
 
 def gtl_abstract_eval(arr, *, global_mesh, pspec):
-  return _global_to_local_aval(
-      core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)
+  return [_global_to_local_aval(
+      core.ShapedArray(arr.shape, arr.dtype), global_mesh, pspec)]
 global_array_to_host_local_array_p.def_abstract_eval(gtl_abstract_eval)
 
 ad.deflinear2(global_array_to_host_local_array_p,
-              lambda ct, _, **params: (
-                  global_array_to_host_local_array_p.bind(ct, **params),))
+              lambda cts, _, **params: (
+                  global_array_to_host_local_array_p.bind1(cts[0], **params),))
 batching.defvectorized(global_array_to_host_local_array_p)
 
 def _gtl_lowering(ctx, x, *, global_mesh, pspec):

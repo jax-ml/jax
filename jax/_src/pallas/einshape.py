@@ -322,7 +322,7 @@ einshape_lo_p = jax_core.Primitive("einshape_lo")
 def einshape_lo(
     equation: str, x: jax_typing.Array, assert_is_tile_preserving: bool, **sizes: int
 ) -> jax_typing.Array:
-  return einshape_lo_p.bind(
+  return einshape_lo_p.bind1(
       x,
       equation=equation,
       sizes=tuple(sizes.items()),
@@ -342,7 +342,7 @@ def _einshape_lo_abstract_eval(
   out_sds = api.eval_shape(
       functools.partial(_einshape, equation, **dict(sizes)), x_aval
   )
-  return x_aval.update(shape=out_sds.shape, dtype=out_sds.dtype)
+  return [x_aval.update(shape=out_sds.shape, dtype=out_sds.dtype)]
 
 
 def _einshape_lo_lowering(

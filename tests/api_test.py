@@ -1839,7 +1839,7 @@ class APITest(jtu.JaxTestCase):
   def test_unimplemented_interpreter_rules(self):
     foo_p = core.Primitive('foo')
     def foo(x):
-      return foo_p.bind(x)
+      return foo_p.bind1(x)
 
     jtu.check_raises(lambda: foo(1.0), NotImplementedError,
                      "Evaluation rule for 'foo' not implemented")
@@ -1850,12 +1850,12 @@ class APITest(jtu.JaxTestCase):
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
                      "Differentiation rule for 'foo' not implemented")
 
-    foo_p.def_abstract_eval(lambda x: x)
+    foo_p.def_abstract_eval(lambda x: [x])
 
     jtu.check_raises_regexp(lambda: jit(foo)(1.0), NotImplementedError,
                      ".* rule for primitive 'foo' not found.*")
 
-    foo_p.def_impl(lambda x: x)
+    foo_p.def_impl(lambda x: [x])
     ad.defjvp(foo_p, lambda g, x: foo(g))
 
     jtu.check_raises(lambda: grad(foo)(1.0), NotImplementedError,
@@ -1865,23 +1865,12 @@ class APITest(jtu.JaxTestCase):
     foo_p = core.Primitive('foo')
     def foo(x):
       return foo_p.bind(x)
-    foo_p.def_abstract_eval(lambda x: [x]) # Shouldn't return a list.
+    foo_p.def_abstract_eval(lambda x: x)  # Should return a list.
 
-    foo_p.def_impl(lambda x: x)
+    foo_p.def_impl(lambda x: [x])
     jitted = jit(lambda x: foo(x))
     jtu.check_raises(lambda: jitted(1.0), ValueError,
                      "foo.abstract_eval() method should return a tuple or")
-
-    foo2_p = core.Primitive('foo2')
-    foo2_p.multiple_results = True
-    def foo2(x):
-      return foo2_p.bind(x),
-
-    foo2_p.def_abstract_eval(lambda x: x) # Should return a list.
-    foo2_p.def_impl(lambda x: [x])
-    jitted = jit(lambda x: foo2(x))
-    jtu.check_raises(lambda: jitted(1.0), ValueError,
-                     "foo2.abstract_eval() method should return a tuple or")
 
   def test_is_subclass(self):
     self.assertFalse(issubclass(np.ndarray, jax.Array))
@@ -4016,13 +4005,13 @@ class APITest(jtu.JaxTestCase):
     # https://github.com/jax-ml/jax/issues/5463
     tokentest_p = core.Primitive("tokentest")
     tokentest_p.def_impl(partial(dispatch.apply_primitive, tokentest_p))
-    tokentest_p.def_abstract_eval(lambda x, y: x)
+    tokentest_p.def_abstract_eval(lambda x, y: [x])
     mlir.register_lowering(tokentest_p, lambda ctx, x, y: [x])
     ad.defjvp(tokentest_p, (lambda g, x, token: x), None)
 
     token = jax.lax.create_token(123)
     arr = jnp.ones((3, 2))
-    res, vjp_fun = jax.vjp(lambda x: tokentest_p.bind(x, token), arr)
+    res, vjp_fun = jax.vjp(lambda x: tokentest_p.bind1(x, token), arr)
     # Should not crash.
     vjp_fun(arr)
 
@@ -5428,16 +5417,16 @@ class APITest(jtu.JaxTestCase):
   def test_deferred_primal_with_direct_linearize(self):
     def my_sin_lin(_is_vjp, nzs, x):
       nz, = nzs
-      return (my_sin_p.bind(x, accuracy=None), nz, x, None,
-              lambda x, _, t: lax.mul(t, lax.cos(x)))
+      return ([my_sin_p.bind1(x, accuracy=None)], [nz], x, None,
+              lambda x, _, t: [lax.mul(t, lax.cos(x))])
 
     my_sin_p = core.Primitive("my_sin_p")
-    my_sin_p.def_impl(lax.sin)
-    my_sin_p.def_abstract_eval(lambda x: x)
+    my_sin_p.def_impl(lambda *args, **kw: [lax.sin(*args, **kw)])
+    my_sin_p.def_abstract_eval(lambda x: [x])
     ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
 
     with config.use_direct_linearize(True):
-      jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
+      jax.grad(my_sin_p.bind1)(1.0)  # doesn't crash
 
   def test_structured_residuals_deduped_by_jit(self):
     # Structured residuals can refer to the same value in multiple tree
@@ -5446,17 +5435,17 @@ class APITest(jtu.JaxTestCase):
     def my_sin_lin(_is_vjp, nzs, x):
       nz, = nzs
       c = lax.cos(x)
-      return (my_sin_p.bind(x), nz, (), {'a': c, 'b': c},
-              lambda _, sres, t: lax.mul(t, sres['b']))
+      return ([my_sin_p.bind1(x)], [nz], (), {'a': c, 'b': c},
+              lambda _, sres, t: [lax.mul(t, sres['b'])])
 
     my_sin_p = core.Primitive("my_sin_p")
-    my_sin_p.def_impl(lax.sin)
-    my_sin_p.def_abstract_eval(lambda x: x)
+    my_sin_p.def_impl(lambda *args, **kw: [lax.sin(*args, **kw)])
+    my_sin_p.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(my_sin_p,
                            mlir.lower_fun(lax.sin, multiple_results=False))
     ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
 
-    f = jax.jit(my_sin_p.bind)
+    f = jax.jit(my_sin_p.bind1)
     with config.use_direct_linearize(True):
       y, f_vjp = jax.vjp(f, 1.0)
       x_ct, = f_vjp(1.0)
@@ -5477,19 +5466,19 @@ class APITest(jtu.JaxTestCase):
     def my_sin_lin(_is_vjp, nzs, x):
       nz, = nzs
       c = lax.cos(x)
-      return (my_sin_p.bind(x), nz, (), {'a': c, 'b': c},
-              lambda _, sres, t: lax.mul(t, sres['b']))
+      return ([my_sin_p.bind1(x)], [nz], (), {'a': c, 'b': c},
+              lambda _, sres, t: [lax.mul(t, sres['b'])])
 
     my_sin_p = core.Primitive("my_sin_p")
-    my_sin_p.def_impl(lax.sin)
-    my_sin_p.def_abstract_eval(lambda x: x)
+    my_sin_p.def_impl(lambda *args, **kw: [lax.sin(*args, **kw)])
+    my_sin_p.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(my_sin_p,
                            mlir.lower_fun(lax.sin, multiple_results=False))
     ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
 
     def f(xs):
       def body(c, x):
-        y = my_sin_p.bind(x)
+        y = my_sin_p.bind1(x)
         return c + y, y * 2.
       c_out, ys = jax.lax.scan(body, 0., xs)
       return c_out + ys.sum()
@@ -5515,18 +5504,18 @@ class APITest(jtu.JaxTestCase):
     def my_sin_lin(_is_vjp, nzs, x):
       nz, = nzs
       c = lax.cos(x)
-      return (my_sin_p.bind(x), nz, (), {'a': c, 'b': c},
-              lambda _, sres, t: lax.mul(t, sres['b']))
+      return ([my_sin_p.bind1(x)], [nz], (), {'a': c, 'b': c},
+              lambda _, sres, t: [lax.mul(t, sres['b'])])
 
     my_sin_p = core.Primitive("my_sin_p")
-    my_sin_p.def_impl(lax.sin)
-    my_sin_p.def_abstract_eval(lambda x: x)
+    my_sin_p.def_impl(lambda *args, **kw: [lax.sin(*args, **kw)])
+    my_sin_p.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(my_sin_p,
                            mlir.lower_fun(lax.sin, multiple_results=False))
     ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:1]), ('i',))
-    g = jax.shard_map(my_sin_p.bind, mesh=mesh, in_specs=P('i'),
+    g = jax.shard_map(my_sin_p.bind1, mesh=mesh, in_specs=P('i'),
                       out_specs=P('i'))
     f = lambda xs: g(xs).sum()
 
@@ -5552,17 +5541,17 @@ class APITest(jtu.JaxTestCase):
     # jit fwd call; it's restored from the caller's argument.
     def my_sin_lin(_is_vjp, nzs, x):
       nz, = nzs
-      return (my_sin_p.bind(x), nz, (), {'x': x},
-              lambda _, sres, t: lax.mul(t, lax.cos(sres['x'])))
+      return ([my_sin_p.bind1(x)], [nz], (), {'x': x},
+              lambda _, sres, t: [lax.mul(t, lax.cos(sres['x']))])
 
     my_sin_p = core.Primitive("my_sin_p")
-    my_sin_p.def_impl(lax.sin)
-    my_sin_p.def_abstract_eval(lambda x: x)
+    my_sin_p.def_impl(lambda *args, **kw: [lax.sin(*args, **kw)])
+    my_sin_p.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(my_sin_p,
                            mlir.lower_fun(lax.sin, multiple_results=False))
     ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
 
-    f = jax.jit(my_sin_p.bind)
+    f = jax.jit(my_sin_p.bind1)
     with config.use_direct_linearize(True):
       _, f_vjp = jax.vjp(f, 1.0)
       x_ct, = f_vjp(1.0)
@@ -5578,19 +5567,19 @@ class APITest(jtu.JaxTestCase):
     # the caller's argument. (Consts and carries can't be forwarded this way.)
     def my_sin_lin(_is_vjp, nzs, x):
       nz, = nzs
-      return (my_sin_p.bind(x), nz, (), {'x': x},
-              lambda _, sres, t: lax.mul(t, lax.cos(sres['x'])))
+      return ([my_sin_p.bind1(x)], [nz], (), {'x': x},
+              lambda _, sres, t: [lax.mul(t, lax.cos(sres['x']))])
 
     my_sin_p = core.Primitive("my_sin_p")
-    my_sin_p.def_impl(lax.sin)
-    my_sin_p.def_abstract_eval(lambda x: x)
+    my_sin_p.def_impl(lambda *args, **kw: [lax.sin(*args, **kw)])
+    my_sin_p.def_abstract_eval(lambda x: [x])
     mlir.register_lowering(my_sin_p,
                            mlir.lower_fun(lax.sin, multiple_results=False))
     ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
 
     def f(xs):
       def body(c, x):
-        return c + my_sin_p.bind(x), c
+        return c + my_sin_p.bind1(x), c
       c_out, ys = jax.lax.scan(body, 0., xs)
       return c_out
 
@@ -6178,13 +6167,13 @@ class RematTest(jtu.JaxTestCase):
 
     # Make sure that introducing constants in vmap works.
     constant_introducing_p = core.Primitive('introduce_constant')
-    constant_introducing_p.def_abstract_eval(lambda x: x)
+    constant_introducing_p.def_abstract_eval(lambda x: [x])
     def _constant_introducing_batcher(xs, ds):
       (x,), (d,) = xs, ds
-      return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
+      return [x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)], [d]
     batching.primitive_batchers[constant_introducing_p] = _constant_introducing_batcher
 
-    api.vmap(remat(constant_introducing_p.bind))(jnp.ones(20))
+    api.vmap(remat(constant_introducing_p.bind1))(jnp.ones(20))
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -6481,7 +6470,7 @@ class RematTest(jtu.JaxTestCase):
   def test_remat_eval_counter(self):
     # https://github.com/jax-ml/jax/issues/2737
     add_one_p = core.Primitive('add_one')
-    add_one = add_one_p.bind
+    add_one = add_one_p.bind1
 
     num_evals = 0
 
@@ -6494,15 +6483,15 @@ class RematTest(jtu.JaxTestCase):
     def add_one_impl(x):
       nonlocal num_evals
       num_evals += 1
-      return x + 1
+      return [x + 1]
     add_one_p.def_impl(add_one_impl)
 
     def add_one_jvp(pin, tin):
       pout = add_one(pin[0])
-      return pout, pout * tin[0]
+      return [pout], [pout * tin[0]]
     ad.primitive_jvps[add_one_p] = add_one_jvp
 
-    add_one_p.def_abstract_eval(lambda x: x)
+    add_one_p.def_abstract_eval(lambda x: [x])
 
     v = np.zeros((1,))
 
@@ -6541,13 +6530,13 @@ class RematTest(jtu.JaxTestCase):
     def add_one_impl(x):
       nonlocal num_evals
       num_evals += 1
-      return x + 1
+      return [x + 1]
     add_one_p.def_impl(add_one_impl)
-    add_one_p.def_abstract_eval(lambda x: x)
+    add_one_p.def_abstract_eval(lambda x: [x])
 
     def add_one_jvp(pin, tin):
-      pout = add_one_p.bind(pin[0])
-      return pout, pout * tin[0]
+      pout = add_one_p.bind1(pin[0])
+      return [pout], [pout * tin[0]]
     ad.primitive_jvps[add_one_p] = add_one_jvp
 
     def recursive_checkpoint(funs):
@@ -6562,7 +6551,7 @@ class RematTest(jtu.JaxTestCase):
         return lambda x: f1(jax.checkpoint(f2)(x))
 
     for n, expected_bwd_evals in [(4, 2), (8, 8), (16, 24)]:
-      f = recursive_checkpoint([add_one_p.bind] * n)
+      f = recursive_checkpoint([add_one_p.bind1] * n)
       num_evals = 0
       _, vjp = jax.vjp(f, np.ones(()))
       self.assertEqual(num_evals, n)
@@ -8146,7 +8135,7 @@ class Remat3Test(RematTest):
   def test_remat_eval_counter(self):
     # https://github.com/jax-ml/jax/issues/2737
     add_one_p = core.Primitive('add_one')
-    add_one = add_one_p.bind
+    add_one = add_one_p.bind1
 
     num_evals = 0
 
@@ -8159,15 +8148,15 @@ class Remat3Test(RematTest):
     def add_one_impl(x):
       nonlocal num_evals
       num_evals += 1
-      return x + 1
+      return [x + 1]
     add_one_p.def_impl(add_one_impl)
 
     def add_one_jvp(pin, tin):
       pout = add_one(pin[0])
-      return pout, pout * tin[0]
+      return [pout], [pout * tin[0]]
     ad.primitive_jvps[add_one_p] = add_one_jvp
 
-    add_one_p.def_abstract_eval(lambda x: x)
+    add_one_p.def_abstract_eval(lambda x: [x])
 
     v = np.zeros((1,))
 

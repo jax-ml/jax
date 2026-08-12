@@ -56,16 +56,15 @@ pack_dtype_p = core.Primitive("pack_dtype")
 @pack_dtype_p.def_abstract_eval
 def pack_dtype_abstract_eval(*xs, dtype):
   if dtypes.issubdtype(dtype, FusibleElementDType):
-    return dtype.abstract_pack(*xs)
+    return [dtype.abstract_pack(*xs)]
   raise ValueError("Attempted to pack non-fusion dtype: {dtype}")
 
 
 def pack(*xs, dtype):
-  return pack_dtype_p.bind(*xs, dtype=dtype)
+  return pack_dtype_p.bind1(*xs, dtype=dtype)
 
 
 unpack_dtype_p = core.Primitive("unpack_dtype")
-unpack_dtype_p.multiple_results = True
 
 
 @unpack_dtype_p.def_abstract_eval
@@ -251,11 +250,12 @@ def physicalize_interp(
         bind_params = eqn.primitive.get_bind_params(eqn.params)
         outvals = eqn.primitive.bind(*invals, **bind_params)
 
-    if eqn.primitive.multiple_results:
-      assert len(outvals) == len(eqn.outvars), eqn
-      foreach(write_env, eqn.outvars, outvals)
-    else:
-      write_env(eqn.outvars[0], outvals)
+    # Physicalize rules (and bind) return a sequence with one entry per
+    # outvar. Note that a single entry may itself be a tuple of physical
+    # values when the corresponding outvar has a fusion dtype.
+    assert isinstance(outvals, (list, tuple)), eqn
+    assert len(outvals) == len(eqn.outvars), eqn
+    foreach(write_env, eqn.outvars, outvals)
 
   return map(read_env, jaxpr.outvars)
 
@@ -485,7 +485,9 @@ _physicalize_rules[jax.lax.while_p] = _while_rule
 
 def _pack_rule(_, *args, dtype):
   del dtype
-  return args
+  # The packed value is represented by the tuple of its physical components,
+  # stored under the single output variable.
+  return [args]
 
 
 _physicalize_rules[pack_dtype_p] = _pack_rule
@@ -502,7 +504,7 @@ def _swap_rule(ctx: Context, ref, val, *args, tree):
   ref_aval, *_ = ctx.avals_in
   if not _is_fusion_type(ref_aval):
     return state_primitives.swap_p.bind(ref, val, *args, tree=tree)
-  return ref_aval.dtype.swap(ref, val, *args, tree=tree)
+  return [ref_aval.dtype.swap(ref, val, *args, tree=tree)]
 
 
 _physicalize_rules[state_primitives.swap_p] = _swap_rule
@@ -512,7 +514,7 @@ def _get_rule(ctx: Context, ref, *args, tree):
   ref_aval, *_ = ctx.avals_in
   if not _is_fusion_type(ref_aval):
     return state_primitives.get_p.bind(ref, *args, tree=tree)
-  return ref_aval.dtype.get(ref, *args, tree=tree)
+  return [ref_aval.dtype.get(ref, *args, tree=tree)]
 
 
 _physicalize_rules[state_primitives.get_p] = _get_rule
@@ -526,12 +528,13 @@ def _pack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args, dtype):
 @block_spec.register_pull_block_spec_rule(pack_dtype_p)
 def _pack_dtype_pull_rule(
     ctx: block_spec.PullRuleContext,
-    block_spec: pallas_core.BlockSpec,
+    block_specs: Sequence[pallas_core.BlockSpec],
     *,
     dtype: FusionDType,
 ):
+  block_spec_, = block_specs
   aval_out = ctx.avals_out[0]
-  return dtype.pull_block_spec_one_step(aval_out, block_spec)
+  return dtype.pull_block_spec_one_step(aval_out, block_spec_)
 
 
 @block_spec.register_push_block_spec_rule(unpack_dtype_p)

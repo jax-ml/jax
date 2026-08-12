@@ -80,7 +80,7 @@ class QArrayTy(HiType):
   def ref_get_abstract_eval(self, ref_aval, *args, tree):
     arr_aval = core.ShapedArray(self.shape, jnp.dtype('float32'))
     updated_ref = ref_aval.update(inner_aval=arr_aval)
-    out, effects = state_primitives.get_p.abstract_eval(
+    (out,), effects = state_primitives.get_p.abstract_eval(
         updated_ref, *args, tree=tree
     )
     assert isinstance(out, core.ShapedArray)
@@ -90,7 +90,7 @@ class QArrayTy(HiType):
     arr_aval = core.ShapedArray(self.shape, jnp.dtype('float32'))
     val_arr_aval = core.ShapedArray(val_aval.shape, jnp.dtype('float32'))
     updated_ref = ref_aval.update(inner_aval=arr_aval)
-    out_aval, effects = state_primitives.swap_p.abstract_eval(
+    (out_aval,), effects = state_primitives.swap_p.abstract_eval(
         updated_ref, val_arr_aval,*args, tree=tree
     )
     assert isinstance(out_aval, core.ShapedArray)
@@ -134,40 +134,42 @@ class QArrayTy(HiType):
 register_hitype(QArray, lambda q: QArrayTy(q.arr.shape))
 
 def to_qarray(x):
-  return to_qarray_p.bind(x)
+  return to_qarray_p.bind1(x)
 
 def from_qarray(x):
-  return from_qarray_p.bind(x)
+  return from_qarray_p.bind1(x)
 
 class ToQ(HiPrimitive):
   def abstract_eval(_, lo_aval):
-    return QArrayTy(lo_aval.shape), set()
+    return [QArrayTy(lo_aval.shape)], set()
 
   def to_lojax(_, lo_val):
     m, _ = lo_val.shape
     scale = lo_val.max(1) / 32.
-    return QArray((lo_val / scale[:, None]).astype('int8'), scale)
+    return [QArray((lo_val / scale[:, None]).astype('int8'), scale)]
 
   def jvp(_, primals, tangents):
     (x,), (xdot,) = primals, tangents
-    return to_qarray(x), to_qarray(xdot)
+    return [to_qarray(x)], [to_qarray(xdot)]
 
-  def transpose(_, out_bar, __):
+  def transpose(_, out_bars, __):
+    out_bar, = out_bars
     return [from_qarray(out_bar)]
 to_qarray_p = ToQ('to_q')
 
 class FromQ(HiPrimitive):
   def abstract_eval(_, hi_aval):
-    return ShapedArray(hi_aval.shape, jnp.dtype('float32')), set()
+    return [ShapedArray(hi_aval.shape, jnp.dtype('float32'))], set()
 
   def to_lojax(_, hi_val):
-    return hi_val.arr.astype('float32') * hi_val.scale[:, None]
+    return [hi_val.arr.astype('float32') * hi_val.scale[:, None]]
 
   def jvp(_, primals, tangents):
     (x,), (xdot,) = primals, tangents
-    return from_qarray(x), from_qarray(xdot)
+    return [from_qarray(x)], [from_qarray(xdot)]
 
-  def transpose(_, out_bar, __):
+  def transpose(_, out_bars, __):
+    out_bar, = out_bars
     return [to_qarray(out_bar)]
 from_qarray_p = FromQ('from_q')
 
@@ -406,17 +408,18 @@ class ImmutBoxNew(HiPrimitive):
     return True
 
   def abstract_eval(self, *leaves, leaf_avals, treedef):
-    return ImmutBoxTy(leaf_avals, treedef), set()
+    return [ImmutBoxTy(leaf_avals, treedef)], set()
 
   def to_lojax(self, *leaves, leaf_avals, treedef):
     val = jax.tree.unflatten(treedef, leaves)
-    return ImmutBox(val)
+    return [ImmutBox(val)]
 
   def jvp(self, primals, tangents, *, leaf_avals, treedef):
     return (immutbox_new_p.bind(*primals, leaf_avals=leaf_avals, treedef=treedef),
             immutbox_new_p.bind(*tangents, leaf_avals=leaf_avals, treedef=treedef))
 
-  def transpose(self, out_bar, *leaves, leaf_avals, treedef):
+  def transpose(self, out_bars, *leaves, leaf_avals, treedef):
+    out_bar, = out_bars
     val = out_bar._val
     leaves, _ = jax.tree.flatten(val, is_leaf=_is_zero)
     return leaves
@@ -427,11 +430,9 @@ def immutbox_new(val):
   leaves, treedef = jax.tree.flatten(val, is_leaf=_is_zero)
   leaf_avals = tuple(map(_get_aval, leaves))
   leaves = [ad.instantiate_zeros(leaf) for leaf in leaves]
-  return immutbox_new_p.bind(*leaves, leaf_avals=leaf_avals, treedef=treedef)
+  return immutbox_new_p.bind1(*leaves, leaf_avals=leaf_avals, treedef=treedef)
 
 class ImmutBoxGet(HiPrimitive):
-  multiple_results = True
-
   def is_high(self, box_aval) -> bool:
     return True
 
@@ -441,11 +442,11 @@ class ImmutBoxGet(HiPrimitive):
 
   def to_lojax(self, box):
     leaves, _ = jax.tree.flatten(box._val, is_leaf=_is_zero)
-    return tuple(leaves)
+    return list(leaves)
 
   def jvp(self, primals, tangents):
     (box,), (box_dot,) = primals, tangents
-    return immutbox_get(box), immutbox_get(box_dot)
+    return immutbox_get_p.bind(box), immutbox_get_p.bind(box_dot)
 
   def transpose(self, out_bars, box):
     box_aval = core.typeof(box) if not ad.is_undefined_primal(box) else box.aval
@@ -670,58 +671,61 @@ class HijaxTest(jtu.JaxTestCase):
       def is_high(self, _): return True
 
       def abstract_eval(_, lo_aval):
-        return MyTy(), set()
+        return [MyTy()], set()
 
       def to_lojax(_, lo):
-        return MyArray(lo)
+        return [MyArray(lo)]
 
       def jvp(_, primals, tangents):
         x, x_dot = *primals, *tangents
-        return to(x), to(x_dot)
+        return [to(x)], [to(x_dot)]
 
-      def transpose(self, out_bar, _):
+      def transpose(self, out_bars, _):
+        out_bar, = out_bars
         return from_(out_bar),
 
     class FromMy(HiPrimitive):
       def is_high(self, _): return True
 
       def abstract_eval(_, hi_aval):
-        return hi_aval.lo_ty()[0], set()
+        return [hi_aval.lo_ty()[0]], set()
 
       def to_lojax(_, hi):
-        return hi.arr
+        return [hi.arr]
 
       def jvp(_, primals, tangents):
         x, x_dot = *primals, *tangents
-        return from_(x), from_(x_dot)
+        return [from_(x)], [from_(x_dot)]
 
-      def transpose(self, out_bar, _):
+      def transpose(self, out_bars, _):
+        out_bar, = out_bars
         return to(out_bar),
 
-    def to(x): return to_p.bind(x)
+    def to(x): return to_p.bind1(x)
     to_p = ToMy('to_my')
 
-    def from_(x): return from_p.bind(x)
+    def from_(x): return from_p.bind1(x)
     from_p = FromMy('from_my')
 
-    def mul(x, y): return mul_p.bind(x, y)
-    def add(x, y): return add_p.bind(x, y)
+    def mul(x, y): return mul_p.bind1(x, y)
+    def add(x, y): return add_p.bind1(x, y)
 
     class MyMul(HiPrimitive):
       def is_high(self, *_): return True
 
       def abstract_eval(_, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
-        return hi_x, set()
+        return [hi_x], set()
 
       def to_lojax(_, hi_x, hi_y):
-        return MyArray(hi_x.arr * hi_y.arr)
+        return [MyArray(hi_x.arr * hi_y.arr)]
 
       def jvp(_, primals, tangents):
         (x, y), (x_dot, y_dot) = primals, tangents
-        return mul(x, y), add(mul(x, y_dot), mul(x_dot, y))
+        return [mul(x, y)], [add(mul(x, y_dot), mul(x_dot, y))]
 
-      def transpose(self, out_bar, x, y):
+      def transpose(self, out_bars, x, y):
+        out_bar, = out_bars
         assert ad.is_undefined_primal(x) ^ ad.is_undefined_primal(y)
         if ad.is_undefined_primal(x):
           return mul(out_bar, y), None
@@ -733,15 +737,16 @@ class HijaxTest(jtu.JaxTestCase):
 
       def abstract_eval(_, hi_x, hi_y):
         if hi_x != hi_y: raise Exception
-        return hi_x, set()
+        return [hi_x], set()
 
       def to_lojax(_, hi_x, hi_y):
-        return MyArray(hi_x.arr + hi_y.arr)
+        return [MyArray(hi_x.arr + hi_y.arr)]
 
       def jvp(_, primals, tangents):
         assert False  # TODO
 
-      def transpose(self, out_bar, x, y):
+      def transpose(self, out_bars, x, y):
+        out_bar, = out_bars
         return out_bar, out_bar
 
     mul_p = MyMul('my_mul')
@@ -1996,17 +2001,18 @@ class HijaxTest(jtu.JaxTestCase):
       jax.vjp(lambda x: Bad(jax.typeof(x))(x), 3.0)[1](1.0)
 
     bad_id_p = core.Primitive('bad_id')
-    bad_id_p.def_impl(lambda x: x)
-    bad_id_p.def_abstract_eval(lambda a: a)
-    ad.defjvp(bad_id_p, lambda g, x: bad_id_p.bind(g))
-    def bad_transpose(ct, x):
+    bad_id_p.def_impl(lambda x: [x])
+    bad_id_p.def_abstract_eval(lambda a: [a])
+    ad.defjvp(bad_id_p, lambda g, x: bad_id_p.bind1(g))
+    def bad_transpose(cts, x):
+      ct, = cts
       if isinstance(x, ad.ValAccum):
         x.accum(ct)
       return [ct]  # not a dict
     ad.fancy_transposes[bad_id_p] = bad_transpose
 
     with self.assertRaisesRegex(TypeError, "backward-pass log"):
-      jax.vjp(lambda x: bad_id_p.bind(x) * 2., 3.0)[1](1.0)
+      jax.vjp(lambda x: bad_id_p.bind1(x) * 2., 3.0)[1](1.0)
 
   def test_backward_pass_logging_with_refs(self):
     class Square(VJPHiPrimitive):
@@ -2129,18 +2135,19 @@ class HijaxTest(jtu.JaxTestCase):
     from jax.experimental.scheduling_groups import scheduling_group
 
     log_id_p = core.Primitive('log_id')
-    log_id_p.def_impl(lambda x: x)
-    log_id_p.def_abstract_eval(lambda a: a)
-    ad.defjvp(log_id_p, lambda g, x: log_id_p.bind(g))
+    log_id_p.def_impl(lambda x: [x])
+    log_id_p.def_abstract_eval(lambda a: [a])
+    ad.defjvp(log_id_p, lambda g, x: log_id_p.bind1(g))
     mlir.register_lowering(log_id_p, lambda ctx, x: [x])
-    def _log_id_transpose(ct, x):
+    def _log_id_transpose(cts, x):
+      ct, = cts
       if isinstance(x, ad.ValAccum):
         x.accum(ct)
       return {'canary': ct}
     ad.fancy_transposes[log_id_p] = _log_id_transpose
 
     def f(x):
-      return log_id_p.bind(jnp.sin(x)) * 2.
+      return log_id_p.bind1(jnp.sin(x)) * 2.
 
     dbg = api_util.debug_info('test', f, (1.0,), {})
     args_ft = ft.flatten(((1.0,), {}))

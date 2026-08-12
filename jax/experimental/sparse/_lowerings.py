@@ -73,9 +73,9 @@ def _coo_spmv_abstract_eval(data, row, col, x, *, transpose, shape):
   assert len(shape) == 2
   assert x.shape[0] == (shape[0] if transpose else shape[1])
 
-  return core.ShapedArray(
+  return [core.ShapedArray(
     shape=shape[1:] if transpose else shape[:1],
-    dtype=x.dtype)
+    dtype=x.dtype)]
 
 def _coo_spmv_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
                            target_name_prefix):
@@ -123,9 +123,9 @@ def _coo_spmm_abstract_eval(data, row, col, x, *, transpose, shape):
   assert len(shape) == 2
   assert x.shape[0] == (shape[0] if transpose else shape[1])
 
-  return core.ShapedArray(
+  return [core.ShapedArray(
     shape=(shape[1] if transpose else shape[0], x.shape[1]),
-    dtype=x.dtype)
+    dtype=x.dtype)]
 
 def _coo_spmm_gpu_lowering(ctx, data, row, col, x, *, transpose, shape,
                            target_name_prefix):
@@ -193,9 +193,9 @@ def _csr_spmv_abstract_eval(data, indices, indptr, x, *, transpose, shape):
   assert len(shape) == 2
   assert x.shape[0] == (shape[0] if transpose else shape[1])
 
-  return core.ShapedArray(
+  return [core.ShapedArray(
     shape=shape[1:] if transpose else shape[:1],
-    dtype=x.dtype)
+    dtype=x.dtype)]
 
 def _csr_spmv_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
                            target_name_prefix):
@@ -242,9 +242,9 @@ def _csr_spmm_abstract_eval(data, indices, indptr, x, *, transpose, shape):
   assert len(shape) == 2
   assert x.shape[0] == (shape[0] if transpose else shape[1])
 
-  return core.ShapedArray(
+  return [core.ShapedArray(
     shape=(shape[1] if transpose else shape[0], x.shape[1]),
-    dtype=x.dtype)
+    dtype=x.dtype)]
 
 def _csr_spmm_gpu_lowering(ctx, data, indices, indptr, x, *, transpose, shape,
                            target_name_prefix):

@@ -205,7 +205,7 @@ def _reduce_window_sum(operand: Array, window_dimensions: core.Shape,
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
     window_dilation = (1,) * len(window_dimensions)
-  return reduce_window_sum_p.bind(
+  return reduce_window_sum_p.bind1(
       operand, window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
       base_dilation=tuple(base_dilation),
@@ -239,7 +239,7 @@ def _reduce_window_max(operand: Array, window_dimensions: core.Shape,
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
     window_dilation = (1,) * len(window_dimensions)
-  return reduce_window_max_p.bind(
+  return reduce_window_max_p.bind1(
       operand, window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
       base_dilation=tuple(base_dilation),
@@ -254,7 +254,7 @@ def _reduce_window_min(operand: Array, window_dimensions: core.Shape,
     base_dilation = (1,) * len(window_dimensions)
   if window_dilation is None:
     window_dilation = (1,) * len(window_dimensions)
-  return reduce_window_min_p.bind(
+  return reduce_window_min_p.bind1(
       operand, window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
       base_dilation=tuple(base_dilation),
@@ -291,7 +291,7 @@ def _select_and_scatter(operand: Array, select: Callable,
     scatter, core.typeof(init_value))
   operand, source, init_value = core.auto_insert_reshard(
       operand, source, init_value)
-  return select_and_scatter_p.bind(
+  return select_and_scatter_p.bind1(
       operand, source, init_value, select_jaxpr=select_jaxpr,
       select_consts=select_consts, scatter_jaxpr=scatter_jaxpr,
       scatter_consts=scatter_consts, window_dimensions=tuple(window_dimensions),
@@ -303,7 +303,7 @@ def _select_and_scatter_add(source: Array, operand: Array,
                             window_strides: Sequence[int],
                             padding: Sequence[tuple[int, int]]) -> Array:
   source, operand = core.auto_insert_reshard(source, operand)
-  return select_and_scatter_add_p.bind(
+  return select_and_scatter_add_p.bind1(
       source, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding))
@@ -339,7 +339,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
     of the reduction of `operand` fin each window.
   """
   tangents, operand = core.auto_insert_reshard(tangents, operand)
-  return select_and_gather_add_p.bind(
+  return select_and_gather_add_p.bind1(
       tangents, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
       window_strides=tuple(window_strides), padding=tuple(padding),
@@ -466,7 +466,6 @@ def reduce_window_jvp(
   return [*primals], [*tangents]
 
 ad.primitive_jvps[reduce_window_p] = reduce_window_jvp
-reduce_window_p.multiple_results = True
 reduce_window_p.def_impl(partial(dispatch.apply_primitive, reduce_window_p))
 reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
@@ -524,9 +523,10 @@ def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
                                           window_strides, padding,
                                           base_dilation, window_dilation)
 
-def _reduce_window_sum_transpose_rule(cotangent, operand, *, window_dimensions,
+def _reduce_window_sum_transpose_rule(cts, operand, *, window_dimensions,
                                       window_strides, padding, base_dilation,
                                       window_dilation):
+  cotangent, = cts
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
   pads = convolution._conv_general_vjp_lhs_padding(
@@ -559,7 +559,7 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
 
   operand = reduce_window(operand, window_dimensions, window_strides, padding,
                           base_dilation, window_dilation)
-  return operand, bdim
+  return [operand], [bdim]
 
 def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
                                 padding, base_dilation, window_dilation):
@@ -800,11 +800,12 @@ def _select_and_scatter_add_jvp(
     tangent_out = _select_and_scatter_add(
         g_source, operand, select_prim, window_dimensions,
         window_strides, padding)
-  return val_out, tangent_out
+  return [val_out], [tangent_out]
 
 def _select_and_scatter_add_transpose(
-    t, source, operand, *, select_prim, window_dimensions, window_strides,
+    cts, source, operand, *, select_prim, window_dimensions, window_strides,
     padding):
+  t, = cts
   assert ad.is_undefined_primal(source) and not ad.is_undefined_primal(operand)
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(source.aval), None]
@@ -828,7 +829,7 @@ def _select_and_scatter_add_batch_rule(
   padding = ((0, 0),) + padding
   out = _select_and_scatter_add(source, operand, select_prim, window_dimensions,
                                 window_strides, padding)
-  return out, 0
+  return [out], [0]
 
 select_and_scatter_add_p = lax.standard_primitive(
     _select_and_scatter_add_shape_rule, lax.input_dtype,
@@ -846,7 +847,7 @@ def _select_and_scatter_add_impl(source, operand, *,
                                  select_prim, window_dimensions, window_strides,
                                  padding, expand_padding):
   dtype = source.dtype
-  select = lambda x, y: select_prim.bind(x, y)
+  select = lambda x, y: select_prim.bind1(x, y)
   scatter = lax.bitwise_or if dtype == np.bool_ else lax.add
   original_padding = padding
   operand_shape = operand.shape
@@ -1030,7 +1031,7 @@ def _select_and_gather_add_using_variadic_reducewindow(
   def reducer(x, y):
     kx, vx = x
     ky, vy = y
-    which = select_prim.bind(kx, ky)
+    which = select_prim.bind1(kx, ky)
     return (lax.select(which, kx, ky), lax.select(which, vx, vy))
 
   assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
@@ -1057,11 +1058,12 @@ def _select_and_gather_add_jvp(
     tangent_out = _select_and_gather_add(
         g_source, operand, select_prim, window_dimensions,
         window_strides, padding, base_dilation, window_dilation)
-  return val_out, tangent_out
+  return [val_out], [tangent_out]
 
 def _select_and_gather_add_transpose(
-    t, tangents, operand, *, select_prim, window_dimensions, window_strides,
+    cts, tangents, operand, *, select_prim, window_dimensions, window_strides,
     padding, base_dilation, window_dilation):
+  t, = cts
   assert select_prim in (lax.le_p, lax.ge_p)
   assert (ad.is_undefined_primal(tangents) and
           not ad.is_undefined_primal(operand))
@@ -1101,7 +1103,7 @@ def _select_and_gather_add_batching_rule(
   out = _select_and_gather_add(t, x, select_prim, window_dimensions,
                                window_strides, padding, base_dilation,
                                window_dilation)
-  return (out, 0)
+  return [out], [0]
 
 
 select_and_gather_add_p = lax.standard_primitive(

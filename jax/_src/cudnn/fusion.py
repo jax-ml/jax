@@ -34,7 +34,6 @@ def _custom_abstract_eval(*args, jaxpr, **unused_kwargs):
 
 
 cudnn_fusion_p = jax_core.Primitive("cudnn_fusion")
-cudnn_fusion_p.multiple_results = True
 cudnn_fusion_p.def_abstract_eval(_custom_abstract_eval)
 cudnn_fusion_p.def_impl(_cudnn_fusion_impl)
 

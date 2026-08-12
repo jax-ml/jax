@@ -168,7 +168,6 @@ def _bcoo_to_bcsr(indices: Array, *, shape: Sequence[int],
 #--------------------------------------------------------------------
 # bcsr_fromdense
 bcsr_fromdense_p = core.Primitive('bcsr_fromdense')
-bcsr_fromdense_p.multiple_results = True
 
 
 _TRACED_NSE_ERROR = """
@@ -282,8 +281,8 @@ def _bcsr_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype
   return primals_out, tangents_out
 
 
-def _bcsr_fromdense_transpose(ct, M, *, nse, n_batch, n_dense, index_dtype):
-  data, indices, indptr = ct
+def _bcsr_fromdense_transpose(cts, M, *, nse, n_batch, n_dense, index_dtype):
+  data, indices, indptr = cts
   n_sparse = M.ndim - n_batch - n_dense
   assert data.shape == M.shape[:n_batch] + (nse,) + M.shape[n_batch + n_sparse:]
   assert indices.shape == M.shape[:n_batch] + (n_sparse, nse)
@@ -293,7 +292,7 @@ def _bcsr_fromdense_transpose(ct, M, *, nse, n_batch, n_dense, index_dtype):
   if isinstance(indices, ad.Zero) or isinstance(indptr, ad.Zero):
     raise ValueError("Cannot transpose with respect to sparse indices")
   assert ad.is_undefined_primal(M)
-  return _bcsr_todense(data, indices, indptr, spinfo=SparseInfo(M.aval.shape))
+  return [_bcsr_todense(data, indices, indptr, spinfo=SparseInfo(M.aval.shape))]
 
 
 ad.primitive_jvps[bcsr_fromdense_p] = _bcsr_fromdense_jvp
@@ -335,27 +334,28 @@ def _bcsr_todense(data: ArrayLike, indices: ArrayLike, indptr: ArrayLike, *,
   Returns:
     mat : array with specified shape and dtype matching ``data``
   """
-  return bcsr_todense_p.bind(jnp.asarray(data), jnp.asarray(indices),
-                             jnp.asarray(indptr), spinfo=spinfo)
+  return bcsr_todense_p.bind1(jnp.asarray(data), jnp.asarray(indices),
+                              jnp.asarray(indptr), spinfo=spinfo)
 
 
-@bcsr_todense_p.def_impl
 def _bcsr_todense_impl(data, indices, indptr, *, spinfo):
   shape = spinfo.shape
   bcoo_indices = _bcsr_to_bcoo(indices, indptr, shape=shape)
   return (bcoo.BCOO((data, bcoo_indices), shape=shape)).todense()
+
+bcsr_todense_p.def_impl(lambda *args, **kwds: [_bcsr_todense_impl(*args, **kwds)])
 
 
 @bcsr_todense_p.def_abstract_eval
 def _bcsr_todense_abstract_eval(data, indices, indptr, *, spinfo):
   shape = spinfo.shape
   _validate_bcsr(data, indices, indptr, shape)
-  return core.ShapedArray(shape, data.dtype)
+  return [core.ShapedArray(shape, data.dtype)]
 
 
 def _bcsr_todense_batching_rule(batched_args, batch_dims, *, spinfo):
   data, indices, indptr, spinfo = _bcsr_batch_dims_to_front(batched_args, batch_dims, spinfo)
-  return _bcsr_todense(data, indices, indptr, spinfo=spinfo), 0
+  return [_bcsr_todense(data, indices, indptr, spinfo=spinfo)], [0]
 
 
 def _bcsr_todense_jvp(data_dot, data, indices, indptr, *, spinfo):
@@ -363,7 +363,8 @@ def _bcsr_todense_jvp(data_dot, data, indices, indptr, *, spinfo):
   return _bcsr_todense(data_dot, indices, indptr, spinfo=spinfo)
 
 
-def _bcsr_todense_transpose(ct, data, indices, indptr, *, spinfo):
+def _bcsr_todense_transpose(cts, data, indices, indptr, *, spinfo):
+  ct, = cts
   shape = spinfo.shape
   assert ad.is_undefined_primal(data)
   if ad.is_undefined_primal(indices) or ad.is_undefined_primal(indptr):
@@ -396,21 +397,22 @@ def bcsr_extract(indices: ArrayLike, indptr: ArrayLike, mat: ArrayLike) -> Array
   Returns:
     An ndarray; see BCSR data.
   """
-  return bcsr_extract_p.bind(indices, indptr, mat)
+  return bcsr_extract_p.bind1(indices, indptr, mat)
 
 
-@bcsr_extract_p.def_impl
 def _bcsr_extract_impl(indices, indptr, mat):
   mat = jnp.asarray(mat)
   bcoo_indices = _bcsr_to_bcoo(indices, indptr, shape=mat.shape)
   return bcoo._bcoo_extract(bcoo_indices, mat)
+
+bcsr_extract_p.def_impl(lambda *args, **kwds: [_bcsr_extract_impl(*args, **kwds)])
 
 
 @bcsr_extract_p.def_abstract_eval
 def _bcsr_extract_abstract_eval(indices, indptr, mat):
   n_batch, n_dense, nse = _validate_bcsr_indices(indices, indptr, mat.shape)
   out_shape = mat.shape[:n_batch] + (nse,) + mat.shape[mat.ndim - n_dense:]
-  return core.ShapedArray(out_shape, mat.dtype)
+  return [core.ShapedArray(out_shape, mat.dtype)]
 
 
 def _bcsr_extract_jvp(arr_dot, indices, indptr, arr):
@@ -418,7 +420,8 @@ def _bcsr_extract_jvp(arr_dot, indices, indptr, arr):
   return bcsr_extract(indices, indptr, arr_dot)
 
 
-def _bcsr_extract_transpose(ct, indices, indptr, arr):
+def _bcsr_extract_transpose(cts, indices, indptr, arr):
+  ct, = cts
   assert ad.is_undefined_primal(arr)
   if ad.is_undefined_primal(indices) or ad.is_undefined_primal(indptr):
     raise ValueError("Cannot transpose with respect to sparse indices")
@@ -445,7 +448,7 @@ def _bcsr_extract_batching_rule(batched_args, batch_dims):
   n_batch = indices.ndim - 1
   if bdim >= n_batch:
     raise ValueError(f"{batch_dims=} out of range for indices with {n_batch=}")
-  return bcsr_extract(indices, indptr, arr), bdim
+  return [bcsr_extract(indices, indptr, arr)], [bdim]
 
 ad.defjvp(bcsr_extract_p, None, None, _bcsr_extract_jvp)
 ad.primitive_transposes[bcsr_extract_p] = _bcsr_extract_transpose
@@ -509,12 +512,12 @@ def _bcsr_dot_general(lhs_data: jax.Array, lhs_indices: jax.Array,
            api_util._ensure_index_tuple(rhs_contract))
   bdims = (api_util._ensure_index_tuple(lhs_batch),
            api_util._ensure_index_tuple(rhs_batch))
-  return bcsr_dot_general_p.bind(jnp.asarray(lhs_data),
-                                 jnp.asarray(lhs_indices),
-                                 jnp.asarray(lhs_indptr), jnp.asarray(rhs),
-                                 dimension_numbers=(cdims, bdims),
-                                 preferred_element_type=preferred_element_type,
-                                 lhs_spinfo=lhs_spinfo)
+  return bcsr_dot_general_p.bind1(jnp.asarray(lhs_data),
+                                  jnp.asarray(lhs_indices),
+                                  jnp.asarray(lhs_indptr), jnp.asarray(rhs),
+                                  dimension_numbers=(cdims, bdims),
+                                  preferred_element_type=preferred_element_type,
+                                  lhs_spinfo=lhs_spinfo)
 
 
 def _bcsr_dot_general_impl(lhs_data, lhs_indices, lhs_indptr, rhs, *,
@@ -552,7 +555,7 @@ def _bcsr_dot_general_abstract_eval(lhs_data, lhs_indices, lhs_indptr, rhs, *,
   if any(d >= props.n_batch + 2 for d in lhs_contracting):
     raise NotImplementedError("bcsr_dot_general: contracting over dense dimensions.")
 
-  return core.ShapedArray(out_aval.shape, out_aval.dtype)
+  return [core.ShapedArray(out_aval.shape, out_aval.dtype)]
 
 
 def _bcsr_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, lhs_indptr, rhs, *,
@@ -573,13 +576,13 @@ def _bcsr_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, lhs_indptr, rhs, *
                            lhs_spinfo=lhs_spinfo)
 
 
-def _bcsr_dot_general_transpose(ct, lhs_data, lhs_indices, lhs_indptr, rhs, *,
+def _bcsr_dot_general_transpose(cts, lhs_data, lhs_indices, lhs_indptr, rhs, *,
                                  dimension_numbers, preferred_element_type, lhs_spinfo):
   # TODO(jakevdp): implement this in terms of bcsr_dot_general
   lhs_bcoo_indices = _bcsr_to_bcoo(
     lhs_indices, lhs_indptr, shape=lhs_spinfo.shape)
   data_out, _, rhs_out = bcoo._bcoo_dot_general_transpose(
-      ct, lhs_data, lhs_bcoo_indices, rhs, dimension_numbers=dimension_numbers,
+      cts, lhs_data, lhs_bcoo_indices, rhs, dimension_numbers=dimension_numbers,
       preferred_element_type=preferred_element_type, lhs_spinfo=lhs_spinfo)
   return data_out, lhs_indices, lhs_indptr, rhs_out
 
@@ -597,7 +600,7 @@ def _bcsr_dot_general_batch_rule(batched_args, batch_dims, *,
   batched_out = _bcsr_dot_general(new_data, new_indices, new_indptr, rhs, lhs_spinfo=new_lhs_spinfo,
                                   dimension_numbers=new_dimension_numbers,
                                   preferred_element_type=preferred_element_type)
-  return batched_out, result_batch_dim
+  return [batched_out], [result_batch_dim]
 
 
 ad.defjvp(bcsr_dot_general_p, _bcsr_dot_general_jvp_lhs, None, None,

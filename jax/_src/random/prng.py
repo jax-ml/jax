@@ -560,7 +560,7 @@ def random_seed(seeds: int | typing.ArrayLike, impl: PRNGImpl) -> PRNGKeyArray:
     seeds_arr = jnp.asarray(seeds)
   if config.random_seed_offset.value:
     seeds_arr += config.random_seed_offset.value
-  return random_seed_p.bind(seeds_arr, impl=impl)
+  return random_seed_p.bind1(seeds_arr, impl=impl)
 
 random_seed_p = core.Primitive('random_seed')
 ad.defjvp_zero(random_seed_p)
@@ -568,13 +568,13 @@ batching.defvectorized(random_seed_p)
 
 @random_seed_p.def_abstract_eval
 def random_seed_abstract_eval(seeds_aval, *, impl):
-  return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding,
-                           seeds_aval.mat)
+  return [keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding,
+                            seeds_aval.mat)]
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
   base_arr = random_seed_impl_base(seeds, impl=impl)
-  return PRNGKeyArray(impl, base_arr)
+  return [PRNGKeyArray(impl, base_arr)]
 
 def random_seed_impl_base(seeds, *, impl):
   seed = iterated_vmap_unary(np.ndim(seeds), impl.seed)
@@ -592,7 +592,7 @@ mlir.register_lowering(random_seed_p, random_seed_lowering)
 
 
 def random_split(keys, shape: Shape):
-  return random_split_p.bind(keys, shape=shape)
+  return random_split_p.bind1(keys, shape=shape)
 
 random_split_p = core.Primitive('random_split')
 ad.defjvp_zero(random_split_p)
@@ -607,14 +607,14 @@ def random_split_abstract_eval(keys_aval, *, shape):
   else:
     new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
     out_sharding = keys_aval.sharding.update(spec=new_spec)
-  return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           out_sharding, keys_aval.mat)
+  return [keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
+                            out_sharding, keys_aval.mat)]
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
   base_arr = random_split_impl_base(
       keys._impl, keys._base_array, keys.ndim, shape=shape)
-  return PRNGKeyArray(keys._impl, base_arr)
+  return [PRNGKeyArray(keys._impl, base_arr)]
 
 def random_split_impl_base(impl, base_arr, keys_ndim, *, shape):
   split = iterated_vmap_unary(keys_ndim, lambda k: impl.split(k, shape))
@@ -636,7 +636,7 @@ mlir.register_lowering(random_split_p, random_split_lowering)
 def random_fold_in(keys, msgs):
   msgs = jnp.asarray(msgs)
   keys, msgs = core.auto_insert_reshard(keys, msgs)
-  return random_fold_in_p.bind(keys, msgs)
+  return random_fold_in_p.bind1(keys, msgs)
 
 random_fold_in_p = core.Primitive('random_fold_in')
 ad.defjvp_zero(random_fold_in_p)
@@ -650,14 +650,14 @@ def random_fold_in_abstract_eval(keys_aval, msgs_aval):
       'random_fold_in', keys_aval, msgs_aval)
   vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
   out_mat = core.ManualAxisType(varying=vma)
-  return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding,
-                          manual_axis_type=out_mat)
+  return [core.ShapedArray(shape, keys_aval.dtype, sharding=sharding,
+                           manual_axis_type=out_mat)]
 
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
   base_arr = random_fold_in_impl_base(
       keys._impl, keys._base_array, msgs, keys.shape)
-  return PRNGKeyArray(keys._impl, base_arr)
+  return [PRNGKeyArray(keys._impl, base_arr)]
 
 def random_fold_in_impl_base(impl, base_arr, msgs, keys_shape):
   fold_in = iterated_vmap_binary_bcast(
@@ -679,7 +679,7 @@ mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
 
 
 def random_bits(keys, bit_width, shape):
-  return random_bits_p.bind(keys, bit_width=bit_width, shape=shape)
+  return random_bits_p.bind1(keys, bit_width=bit_width, shape=shape)
 
 random_bits_p = core.Primitive('random_bits')
 ad.defjvp_zero(random_bits_p)
@@ -695,13 +695,13 @@ def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   else:
     new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
     out_sharding = keys_aval.sharding.update(spec=new_spec)
-  return core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
-                          manual_axis_type=keys_aval.mat)
+  return [core.ShapedArray(out_shape, out_dtype, sharding=out_sharding,
+                           manual_axis_type=keys_aval.mat)]
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
-  return random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
-                               bit_width=bit_width, shape=shape)
+  return [random_bits_impl_base(keys._impl, keys._base_array, keys.ndim,
+                                bit_width=bit_width, shape=shape)]
 
 def random_bits_impl_base(impl, base_arr, keys_ndim, *, bit_width, shape):
   bits = iterated_vmap_unary(
@@ -744,7 +744,7 @@ mlir.register_lowering(random_bits_p, random_bits_lowering)
 
 def random_wrap(base_arr, *, impl):
   _check_prng_key_data(impl, base_arr)
-  return random_wrap_p.bind(base_arr, impl=impl)
+  return random_wrap_p.bind1(base_arr, impl=impl)
 
 random_wrap_p = core.Primitive('random_wrap')
 ad.defjvp_zero(random_wrap_p)
@@ -753,11 +753,11 @@ ad.defjvp_zero(random_wrap_p)
 def random_wrap_abstract_eval(base_arr_aval, *, impl):
   shape = base_arr_shape_to_keys_shape(impl, base_arr_aval.shape)
   sharding = logical_sharding(shape, KeyTy(impl), base_arr_aval.sharding)
-  return keys_shaped_array(impl, shape, sharding, base_arr_aval.mat)
+  return [keys_shaped_array(impl, shape, sharding, base_arr_aval.mat)]
 
 @random_wrap_p.def_impl
 def random_wrap_impl(base_arr, *, impl):
-  return PRNGKeyArray(impl, base_arr)
+  return [PRNGKeyArray(impl, base_arr)]
 
 def random_wrap_lowering(ctx, base_arr, *, impl):
   return [base_arr]
@@ -766,7 +766,7 @@ def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
   x, = batched_args
   d, = batch_dims
   x = batching.bdim_at_front(x, d, 1)
-  return random_wrap(x, impl=impl), 0
+  return [random_wrap(x, impl=impl)], [0]
 
 mlir.register_lowering(random_wrap_p, random_wrap_lowering)
 batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
@@ -775,7 +775,7 @@ batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
 def random_unwrap(keys):
   if not dtypes.issubdtype(keys.dtype, dtypes.prng_key):
     raise TypeError(f'random_unwrap takes key array operand, got {keys.dtype=}')
-  return random_unwrap_p.bind(keys)
+  return random_unwrap_p.bind1(keys)
 
 random_unwrap_p = core.Primitive('random_unwrap')
 ad.defjvp_zero(random_unwrap_p)
@@ -783,11 +783,11 @@ batching.defvectorized(random_unwrap_p)
 
 @random_unwrap_p.def_abstract_eval
 def random_unwrap_abstract_eval(keys_aval):
-  return core.physical_aval(keys_aval)
+  return [core.physical_aval(keys_aval)]
 
 @random_unwrap_p.def_impl
 def random_unwrap_impl(keys):
-  return keys._base_array
+  return [keys._base_array]
 
 def random_unwrap_lowering(ctx, keys):
   return [keys]
@@ -847,7 +847,6 @@ def iota_2x32_shape(shape):
   return iota_2x32_shape_p.bind(shape=shape)
 
 iota_2x32_shape_p = core.Primitive('iota_2x32_shape')
-iota_2x32_shape_p.multiple_results = True
 iota_2x32_shape_p.def_impl(partial(dispatch.apply_primitive, iota_2x32_shape_p))
 
 @iota_2x32_shape_p.def_abstract_eval

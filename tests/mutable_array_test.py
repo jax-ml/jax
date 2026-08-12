@@ -1263,7 +1263,7 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     @bjp_p.def_abstract_eval
     def _(aval):
-      return aval
+      return [aval]
 
     def lowering(x):
       x_ref = jax.new_ref(x)
@@ -1275,7 +1275,7 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      return bjp_p.bind(x)
+      return bjp_p.bind1(x)
 
     f(3.)  # don't crash
 

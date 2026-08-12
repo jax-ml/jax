@@ -63,7 +63,7 @@ def _zeros_like_pytree(x):
 
 _stop_gradient = partial(
     tree_map,
-    lambda x: stop_gradient_p.bind(x) if isinstance(x, core.Tracer) else x,
+    lambda x: stop_gradient_p.bind1(x) if isinstance(x, core.Tracer) else x,
 )
 
 
@@ -379,7 +379,6 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
   return primals_out + tangents_out
 
 class CustomJVPCallPrimitive(core.Primitive):
-  multiple_results = True
   skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, avals, params, /):
@@ -1026,7 +1025,6 @@ def _temporary_dtype_exception(a, a_) -> bool:
 
 
 class CustomVJPCallPrimitive(core.Primitive):
-  multiple_results = True
   skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, avals, params, /):
@@ -1631,7 +1629,6 @@ def _linear_call_abstract_eval(*args, **kwargs):
   return kwargs['callee'].out_avals
 
 linear_call_p = core.Primitive('linear_call')
-linear_call_p.multiple_results = True
 linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
 ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
@@ -1642,7 +1639,6 @@ mlir.register_lowering(linear_call_p, mlir.lower_fun(
 
 # A stageable primitive that fails when evaluated
 unreachable_p: core.Primitive = core.Primitive('unreachable')
-unreachable_p.multiple_results = True
 
 def unreachable_impl(*_, out_avals, exc_type, message):
   del out_avals
@@ -1930,7 +1926,6 @@ def _remat_opt_to_lojax(*hi_args, fwd_jaxpr: core.Jaxpr, num_consts, **params):
   return pe._lower_and_eval(pe.eval_jaxpr_p, fwd_jaxpr, hi_args)
 
 remat_opt_p = core.Primitive("remat_opt")
-remat_opt_p.multiple_results = True
 remat_opt_p.is_high = lambda *_, fwd_jaxpr, **__: fwd_jaxpr.is_high
 remat_opt_p.to_lojax = _remat_opt_to_lojax
 remat_opt_p.def_impl(_remat_opt_impl)

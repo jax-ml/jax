@@ -43,7 +43,6 @@ def fused(*, out_spaces):
   return wrap
 
 fused_p = core.Primitive('fused_call')
-fused_p.multiple_results = True
 
 @fused_p.def_abstract_eval
 def _fused_abstract_eval(*in_avals, out_spaces, jaxpr):

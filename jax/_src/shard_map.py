@@ -712,7 +712,6 @@ JaxType = Any
 MaybeTracer = Union[JaxType, Tracer]
 
 class ShardMapPrimitive(core.Primitive):
-  multiple_results = True
   skip_canonicalization = True
 
   def bind_with_trace(self, trace, args, avals, params, /):
@@ -1400,11 +1399,9 @@ class ShardMapTrace(core.Trace):
             sharding_impls._internal_use_concrete_mesh(self.mesh)):
         out_vals = api.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
-    if prim.multiple_results:
-      out_mat = (out_mat if isinstance(out_mat, (list, tuple))
-                else [out_mat] * len(out_vals))
-      return map(partial(ShardMapTracer, self), out_mat, out_vals)
-    return ShardMapTracer(self, out_mat, out_vals)
+    out_mat = (out_mat if isinstance(out_mat, (list, tuple))
+               else [out_mat] * len(out_vals))
+    return map(partial(ShardMapTracer, self), out_mat, out_vals)
 
   def process_shard_map(self, prim, fun, args, mesh, in_specs,
                         check_vma, newly_manual_axes, debug_info):

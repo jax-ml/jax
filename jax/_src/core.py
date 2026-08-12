@@ -658,10 +658,6 @@ Atom = Union[Var, Literal]
 
 class Primitive:
   name: str
-  # set for multi-output primitives.
-  multiple_results: bool = False
-  # set for call primitives processed in final style.
-  call_primitive: bool = False
   # set for ref primitives
   ref_primitive: bool = False
   # set for primitives that can skip canonicalization of values
@@ -724,6 +720,10 @@ class Primitive:
       return self.bind_with_trace(prev_trace, args, avals, params)
     finally:
       trace_ctx.set_trace(prev_trace)
+
+  def bind1(self, *args, **params):
+    out, = self.bind(*args, **params)
+    return out
 
   def bind_with_trace(self, trace, args, avals, params, /):
     if self.is_high(*avals, **params) and trace.requires_low:
@@ -812,10 +812,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     with (source_info_util.user_context(traceback, name_stack=name_stack),
           eqn.ctx.manager):
       ans = eqn.primitive.bind(*map(read, eqn.invars), **bind_params)
-    if eqn.primitive.multiple_results:
-      foreach(write, eqn.outvars, ans)
-    else:
-      write(eqn.outvars[0], ans)
+    foreach(write, eqn.outvars, ans)
     clean_up_dead_vars(eqn, env, lu)
   return map(read, jaxpr.outvars)
 
@@ -1292,7 +1289,8 @@ class EvalTrace(Trace):
   def stage_value(self, val):
     if isinstance(val, Array):
       return val
-    return self.process_primitive(stage_p, [val], {})
+    out, = self.process_primitive(stage_p, [val], {})
+    return out
 
   def process_primitive(self, primitive, args, params, /):
     with set_current_trace(self):
@@ -2683,7 +2681,7 @@ def pvary(x, axis_name):
     new_axes = tuple(i for i in new_axes if cur_mesh.shape[i] != 1)
     if not new_axes:
       return x
-  return tree_map(lambda leaf: pvary_p.bind(leaf, axes=new_axes), x)
+  return tree_map(lambda leaf: pvary_p.bind1(leaf, axes=new_axes), x)
 
 pvary_p = Primitive('pvary')
 
@@ -2700,7 +2698,7 @@ def reduced_vary_cast(x, axis_name):
   new_axes = axes if cur_mesh.empty else order_wrt_mesh(cur_mesh, axes)
   assert set(new_axes) == set(axes)
   del axes
-  return tree_map(lambda leaf: reduced_vary_cast_p.bind(leaf, axes=new_axes), x)
+  return tree_map(lambda leaf: reduced_vary_cast_p.bind1(leaf, axes=new_axes), x)
 
 reduced_vary_cast_p = Primitive('reduced_vary_cast_p')
 
@@ -2898,7 +2896,7 @@ def new_ref(init_val: Any, *, memory_space: Any = None, kind: Any = None,
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return ref_p.bind(init_val, memory_space=memory_space, kind=kind, pin=pin)
+  return ref_p.bind1(init_val, memory_space=memory_space, kind=kind, pin=pin)
 ref_p = Primitive('new_ref')
 ref_p.is_effectful = lambda params: True
 ref_p.ref_primitive = True
@@ -2909,7 +2907,7 @@ def _ref_to_lojax(init_val, *, memory_space, kind, pin):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   val_ty = typeof(init_val)
   hival_of_refs = val_ty.raise_val(*map(new_ref, val_ty.lower_val(init_val)))
-  return Ref(AbstractRef(val_ty), hival_of_refs)
+  return [Ref(AbstractRef(val_ty), hival_of_refs)]
 ref_p.to_lojax = _ref_to_lojax
 
 @ref_p.def_effectful_abstract_eval
@@ -2922,7 +2920,7 @@ def _ref_abstract_eval(init_aval, *, memory_space: Any, kind: Any, pin: bool):
     if init_aval.memory_space is not MemorySpace.Device:
       memory_space = init_aval.memory_space
     init_aval = init_aval.update(memory_space=MemorySpace.Device)
-  return (AbstractRef(init_aval, memory_space=memory_space, kind=kind),
+  return ([AbstractRef(init_aval, memory_space=memory_space, kind=kind)],
           {internal_mutable_array_effect})
 
 @ref_p.def_impl
@@ -2936,12 +2934,12 @@ def _ref_impl(init_val, *, memory_space: Any, kind: Any, pin: bool):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
   from jax._src.lax.lax import _array_copy  # pyrefly: ignore[missing-import]
   aval = AbstractRef(typeof(init_val), kind=kind)
-  return Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))
+  return [Ref(aval, ArrayRefImpl(aval, _array_copy(init_val)))]
 
 # TODO(mattjj,dougalm): merge with ref_p
 def empty_ref(ty, memory_space=None, pin=False):
   aval = shaped_abstractify(ty)
-  return empty_ref_p.bind(ty=aval, memory_space=memory_space, pin=pin)
+  return empty_ref_p.bind1(ty=aval, memory_space=memory_space, pin=pin)
 empty_ref_p = Primitive('empty_ref')
 empty_ref_p.ref_primitive = True
 empty_ref_p.is_effectful = lambda _: True
@@ -2953,14 +2951,14 @@ def _empty_ref_to_lojax(*, ty, memory_space, pin):
   n = len(ty.lo_ty())
   hival_of_refs = ty.raise_val(
       *map(empty_ref, ty.lo_ty(), [memory_space] * n, [pin] * n))
-  return Ref(AbstractRef(ty), hival_of_refs)
+  return [Ref(AbstractRef(ty), hival_of_refs)]
 empty_ref_p.to_lojax = _empty_ref_to_lojax
 
 
 @empty_ref_p.def_effectful_abstract_eval
 def _empty_ref_abstract_eval(*, ty, memory_space, pin):
   from jax._src.state.types import AbstractRef  # pyrefly: ignore[missing-import]
-  return (AbstractRef(ty, memory_space=memory_space),
+  return ([AbstractRef(ty, memory_space=memory_space)],
           {internal_mutable_array_effect})
 
 
@@ -2971,7 +2969,6 @@ def free_ref(ref: Ref):
   return ()
 
 free_ref_p = Primitive('free_ref')
-free_ref_p.multiple_results = True
 free_ref_p.is_effectful = lambda _: True
 free_ref_p.ref_primitive = True
 
@@ -3011,7 +3008,7 @@ def freeze(ref: Ref) -> Array:
 
   .. _Ref guide: https://docs.jax.dev/en/latest/array_refs.html
   """
-  return freeze_p.bind(ref)
+  return freeze_p.bind1(ref)
 freeze_p = Primitive('freeze')
 freeze_p.is_effectful = lambda params: True
 freeze_p.ref_primitive = True
@@ -3020,25 +3017,25 @@ def _freeze_to_lojax(ref):
   aval = typeof(ref._refs)
   lovals = aval.lower_val(ref._refs)
   vals = [freeze(loval) for loval in lovals]
-  return aval.raise_val(*vals)
+  return [aval.raise_val(*vals)]
 freeze_p.to_lojax = _freeze_to_lojax
 
 @freeze_p.def_effectful_abstract_eval
 def freeze_abstract_eval(ref_aval):
-  return ref_aval.inner_aval, {internal_mutable_array_effect}
+  return [ref_aval.inner_aval], {internal_mutable_array_effect}
 
 @freeze_p.def_impl
 def _freeze_impl(ref):
-  return ref[()]
+  return [ref[()]]
 
 def accum_grad_in_ref(x):
-  return accum_grad_in_ref_p.bind(x)
+  return accum_grad_in_ref_p.bind1(x)
 
 accum_grad_in_ref_p = Primitive('accum_grad_in_ref')
 accum_grad_in_ref_p.is_high = lambda *_: True
-accum_grad_in_ref_p.to_lojax = lambda x: x
-accum_grad_in_ref_p.def_abstract_eval(lambda x: x)
-accum_grad_in_ref_p.def_impl(lambda x: x)
+accum_grad_in_ref_p.to_lojax = lambda x: [x]
+accum_grad_in_ref_p.def_abstract_eval(lambda x: [x])
+accum_grad_in_ref_p.def_impl(lambda x: [x])
 
 
 class AbstractToken(AbstractValue):
@@ -3378,7 +3375,6 @@ def dim_value_aval() -> AbstractValue:
 # emitting a single eqn that keeps its identity under retracing. Its
 # transformation rules live in partial_eval.py and lax/eval_jaxpr.py.
 eval_jaxpr_p = Primitive('eval_jaxpr')
-eval_jaxpr_p.multiple_results = True
 eval_jaxpr_p.def_impl(lambda *args, call_jaxpr, **_: jaxpr_as_fun(call_jaxpr)(*args))
 eval_jaxpr_p.def_effectful_abstract_eval(
     lambda *_, call_jaxpr, **__: (call_jaxpr.out_avals, positional_effects(call_jaxpr)))
@@ -3776,8 +3772,10 @@ def check_eqn(prim, in_avals, params):
     check_jaxpr(jaxpr)
 
   out_avals, effects = prim.abstract_eval(*in_avals, **params)
-  if not prim.multiple_results:
-    out_avals = [out_avals]
+  if not isinstance(out_avals, (tuple, list)):
+    raise JaxprTypeError(
+        f"{prim}.abstract_eval() method should return a tuple or a list of "
+        f"avals, got {out_avals}")
   return out_avals, effects
 
 def _check_call(ctx_factory, prim, in_atoms, params):

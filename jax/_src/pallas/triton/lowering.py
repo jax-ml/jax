@@ -444,11 +444,12 @@ def lower_jaxpr_to_triton_ir(
           f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}\n"
           f"msg={e}"
       ) from e
-    if eqn.primitive.multiple_results:
+    if isinstance(outvals, (list, tuple)):
       if len(eqn.outvars) != len(outvals):
         raise ValueError(
-            f"Primitive {eqn.primitive.name} has multiple results, but "
-            f"{len(eqn.outvars)} outvars do not match {len(outvals)} outvals."
+            f"Lowering rule for {eqn.primitive.name} returned "
+            f"{len(outvals)} outvals, but the primitive has "
+            f"{len(eqn.outvars)} outvars."
         )
       foreach(write_env, eqn.outvars, outvals)
     else:
@@ -2294,7 +2295,7 @@ def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not _is_triton_pointer_type(ptr.type):
     assert len(indexers) == 0
-    return ptr
+    return []  # addupdate_p has no outputs.
   if len(indexers) > 1:
     raise NotImplementedError("No support for multiple indexers yet.")
   indexer = indexers[0]

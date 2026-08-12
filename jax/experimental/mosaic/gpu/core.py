@@ -163,7 +163,6 @@ def is_single_process_multi_device_topology():
 
 
 mosaic_gpu_p = jax_core.Primitive("mosaic_gpu_p")
-mosaic_gpu_p.multiple_results = True
 
 
 @mosaic_gpu_p.def_abstract_eval

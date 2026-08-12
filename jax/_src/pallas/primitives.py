@@ -71,13 +71,13 @@ def program_id(axis: int) -> jax_typing.Array:
   Args:
     axis: the axis of the grid along which to count the program.
   """
-  return program_id_p.bind(axis=axis)
+  return program_id_p.bind1(axis=axis)
 
 def program_id_bind_with_trace(trace, _, avals, params):
   axis = params.pop("axis")
   grid_env = pallas_core.current_grid_env()
   if grid_env:
-    return grid_env[axis].index
+    return [grid_env[axis].index]
   frame = pallas_core.axis_frame()
   # Query the size of the axis to make sure it's a valid axis (and error
   # otherwise).
@@ -89,36 +89,36 @@ program_id_p.def_bind_with_trace(program_id_bind_with_trace)
 
 @program_id_p.def_abstract_eval
 def _program_id_abstract_eval(**_):
-  return jax_core.ShapedArray((), jnp.int32)
+  return [jax_core.ShapedArray((), jnp.int32)]
 
 num_programs_p = jax_core.Primitive("num_programs")
 
 def num_programs(axis: int) -> int | jax_typing.Array:
   """Returns the size of the grid along the given axis."""
-  return num_programs_p.bind(axis=axis)
+  return num_programs_p.bind1(axis=axis)
 
 def _num_programs_bind_with_trace(trace, _, avals, params):
   axis = params.pop("axis")
   # We might be using a local grid env
   grid_env = pallas_core.current_grid_env()
   if grid_env:
-    return grid_env[axis].size
+    return [grid_env[axis].size]
   # Otherwise, we look up the size of the grid in the axis env
   frame = pallas_core.axis_frame()
   size = frame.size(axis)
   if size is pallas_core.dynamic_grid_dim:
     return jax_core.Primitive.bind_with_trace(num_programs_p, trace, (), avals,
                                               dict(axis=axis))
-  return size
+  return [size]
 num_programs_p.def_bind_with_trace(_num_programs_bind_with_trace)
 
 @num_programs_p.def_abstract_eval
 def _num_programs_abstract_eval(**_):
-  return jax_core.ShapedArray((), jnp.int32)
+  return [jax_core.ShapedArray((), jnp.int32)]
 
 multiple_of_p = jax_core.Primitive("multiple_of")
 
-multiple_of_p.def_impl(lambda x, **_: x)
+multiple_of_p.def_impl(lambda x, **_: [x])
 mlir.register_lowering(multiple_of_p, lambda _, x, **__: [x])
 
 def multiple_of(x: jax_typing.Array, values: Sequence[int] | int) -> jax_typing.Array:
@@ -135,11 +135,11 @@ def multiple_of(x: jax_typing.Array, values: Sequence[int] | int) -> jax_typing.
     A copy of ``x``.
   """
   values = (values,) if isinstance(values, int) else tuple(values)
-  return multiple_of_p.bind(x, values=values)
+  return multiple_of_p.bind1(x, values=values)
 
 @multiple_of_p.def_abstract_eval
 def _multiple_of_abstract_eval(aval, **_):
-  return aval
+  return [aval]
 
 load_p = jax_core.Primitive('masked_load')
 
@@ -159,7 +159,7 @@ def _load_abstract_eval(*avals_flat, args_tree, **_):
           f" {transformed_ref.shape}"
       )
   return (
-      jax_core.ShapedArray(transformed_ref.shape, transformed_ref.dtype),
+      [jax_core.ShapedArray(transformed_ref.shape, transformed_ref.dtype)],
       {state.ReadEffect(0)},
   )
 
@@ -299,7 +299,7 @@ def _load_discharge_rule(ctx, *args_flat, args_tree, **_):
     raise NotImplementedError
   if mask is not None and other is not None:
     out = jnp.where(mask, out, other)
-  return (None,) * len(ctx.in_avals), out
+  return (None,) * len(ctx.in_avals), [out]
 
 
 swap_p = jax_core.Primitive('masked_swap')
@@ -323,7 +323,7 @@ def _swap_abstract_eval(*avals_flat, args_tree, **_):
         f"Value dtype: {val.dtype}. "
     )
   return (
-      jax_core.ShapedArray(expected_output_shape, expected_output_dtype),
+      [jax_core.ShapedArray(expected_output_shape, expected_output_dtype)],
       {state.WriteEffect(0)},
   )
 
@@ -430,7 +430,7 @@ def _swap_discharge_rule(ctx, *args_flat, args_tree, **_):
     x_new = ref.at[idx.indices].set(val)
   else:
     raise NotImplementedError
-  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), out
+  return (x_new,) + (None,) * (len(ctx.in_avals) - 1), [out]
 
 
 def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
@@ -455,7 +455,7 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
   args_flat, args_tree = tree_util.tree_flatten(
       (x_ref, transforms, mask, other)
   )
-  return load_p.bind(
+  return load_p.bind1(
       *args_flat,
       args_tree=args_tree,
       cache_modifier=cache_modifier,
@@ -476,7 +476,7 @@ def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
       x_ref_or_view, idx, _function_name
   )
   args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
-  return swap_p.bind(
+  return swap_p.bind1(
       *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
   )
 
@@ -559,13 +559,13 @@ def reciprocal(x, *, approx=False, full_range=True):
   Returns:
     The reciprocal of the array.
   """
-  return reciprocal_p.bind(x, approx=approx, full_range=full_range)
+  return reciprocal_p.bind1(x, approx=approx, full_range=full_range)
 
 
 @reciprocal_p.def_abstract_eval
 def _reciprocal_abstract_eval(x, *, approx, full_range):
   del approx, full_range
-  return x
+  return [x]
 
 
 def _reciprocal_lowering_rule(
@@ -661,7 +661,6 @@ def wrap_with_transforms(
 
 
 run_scoped_p = jax_core.Primitive("run_scoped")
-run_scoped_p.multiple_results = True
 
 def _run_scoped_is_high(*avals, jaxpr, **params):
   del avals, params
@@ -824,7 +823,6 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr, collective_axes, **_):
 
 
 get_global_p = jax_core.Primitive("get_global")
-get_global_p.multiple_results = False
 get_global_p.ref_primitive = True
 get_global_p.ref_allocating = True
 
@@ -845,12 +843,12 @@ def get_global(what: pallas_core.ScratchShape) -> jax_typing.Array:
     pl.semaphore_wait(sem_ref)
   """
   ref_aval = what.get_ref_aval()
-  return get_global_p.bind(what=ref_aval)
+  return get_global_p.bind1(what=ref_aval)
 
 
 @get_global_p.def_abstract_eval
 def _get_global_abstract_eval(*, what):
-  return what
+  return [what]
 
 
 def _get_global_discharge_rule(ctx, *, what):
@@ -918,7 +916,6 @@ def _transform_semaphore(ref_value, transforms, ref_aval):
 
 
 semaphore_read_p = jax_core.Primitive("semaphore_read")
-semaphore_read_p.multiple_results = False
 
 
 def semaphore_read(sem_or_view) -> jax_typing.Array:
@@ -933,7 +930,7 @@ def semaphore_read(sem_or_view) -> jax_typing.Array:
   ref, transforms = _get_ref_and_transforms(sem_or_view)
   args = [ref, transforms]
   flat_args, args_tree = tree_util.tree_flatten(args)
-  return semaphore_read_p.bind(*flat_args, args_tree=args_tree)
+  return semaphore_read_p.bind1(*flat_args, args_tree=args_tree)
 
 @semaphore_read_p.def_abstract_eval
 def _semaphore_read_abstract_eval(
@@ -941,7 +938,7 @@ def _semaphore_read_abstract_eval(
     args_tree,
 ):
   del avals, args_tree
-  return jax_core.ShapedArray((), jnp.dtype("int32"))
+  return [jax_core.ShapedArray((), jnp.dtype("int32"))]
 
 def _semaphore_read_discharge_rule(ctx,
                                    *flat_args,
@@ -949,7 +946,7 @@ def _semaphore_read_discharge_rule(ctx,
   [ref, transforms] = args_tree.unflatten(flat_args)
   sem_value = _transform_semaphore(ref, transforms, ctx.in_avals[0])
   sem_value = sem_value.astype(jnp.int32)
-  return (None,) * len(ctx.in_avals), sem_value
+  return (None,) * len(ctx.in_avals), [sem_value]
 state_discharge.register_discharge_rule(semaphore_read_p)(
     _semaphore_read_discharge_rule
 )
@@ -972,7 +969,6 @@ pallas_core.kernel_local_effects.add_type(SemaphoreEffect)
 
 
 semaphore_signal_p = jax_core.Primitive('semaphore_signal')
-semaphore_signal_p.multiple_results = True
 
 
 def semaphore_signal(
@@ -1124,7 +1120,6 @@ state_discharge.register_discharge_rule(semaphore_signal_p)(
 
 
 semaphore_wait_p = jax_core.Primitive('semaphore_wait')
-semaphore_wait_p.multiple_results = True
 
 
 def semaphore_wait(
@@ -1294,7 +1289,6 @@ def device_id_to_logical(
 
 
 delay_p = jax_core.Primitive("delay")
-delay_p.multiple_results = True
 
 
 class DelayEffect(effects.Effect):
@@ -1316,7 +1310,6 @@ def delay(nanos: int | jax_typing.Array) -> None:
 
 
 jaxpr_call_p = jax_core.Primitive("jaxpr_call")
-jaxpr_call_p.multiple_results = True
 
 
 @jaxpr_call_p.def_effectful_abstract_eval

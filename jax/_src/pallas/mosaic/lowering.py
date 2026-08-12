@@ -496,7 +496,7 @@ def _emit_pallas_lowering_rule_as_fun(
 
     outs = rule(sub_ctx, *rule_args, **params)
 
-    flat_outs = list(outs) if primitive.multiple_results else [outs]
+    flat_outs = list(outs) if isinstance(outs, (list, tuple)) else [outs]
     flat_outs = [_ensure_valid_argument(x, aval)
                  for x, aval in zip(flat_outs, rule_context.avals_out)]
 
@@ -1875,7 +1875,7 @@ def jaxpr_subcomp(
           outs = jax_mlir_ext.inlined_func_call(
             cache_entry.operation, call_args)
 
-          ans = outs if eqn.primitive.multiple_results else outs[0]
+          ans = list(outs)
         else:
           try:
             assert rule_context is not None
@@ -1903,10 +1903,8 @@ def jaxpr_subcomp(
             f" {ctx.kernel_type}: {eqn.primitive.name}. Please file an issue at"
             " https://github.com/jax-ml/jax/issues/new/choose."
         )
-      if eqn.primitive.multiple_results:
-        foreach(write_env, eqn.outvars, cast(Any, ans))
-      else:
-        write_env(eqn.outvars[0], ans)
+      flat_ans = list(ans) if isinstance(ans, (list, tuple)) else [ans]
+      foreach(write_env, eqn.outvars, cast(Any, flat_ans))
 
   # Drain the name stack at the end of a jaxpr and insert trace_stop ops.
   popped, pushed = _compute_name_stack_updates(
@@ -3176,10 +3174,10 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
     if dimension != 0:
       raise ValueError("Dimension must be 0 for 1D iota.")
     def _1d_iota_helper():
-      iota_2d = lax.iota_p.bind(dtype=dtype,
-                                shape=(1,) + shape,
-                                dimension=1,
-                                sharding=sharding)
+      iota_2d = lax.iota_p.bind1(dtype=dtype,
+                                 shape=(1,) + shape,
+                                 dimension=1,
+                                 sharding=sharding)
       return iota_2d[0]
     return lower_fun(_1d_iota_helper)(ctx)
   out_type = ctx.aval_to_ir_type(ctx.avals_out[0])
@@ -4102,7 +4100,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       args = _run_body(
           ir_constant(i, mlir_type=_dtype_to_ir_type(jnp.int32)), args
       )
-    return args
+    return list(args)
 
   lbd = _ensure_mlir_value(start, pallas_core.index_map_grid_aval)
   remainder = 0
@@ -4192,7 +4190,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       scf.yield_(inner_out)
     args = rem_for_op.results
 
-  return args
+  return list(args)
 
 
 @register_lowering_rule(
@@ -4363,7 +4361,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, **params):
   with ir.InsertionPoint(if_op.else_block):
     out = jaxpr_subcomp(lowering_context, branches[0], *args)
     scf.yield_(out)
-  return if_op.results
+  return list(if_op.results)
 
 
 @register_lowering_rule(pjit.jit_p, kernel_types=[*tpu_core.CoreType])
@@ -4740,7 +4738,7 @@ def _run_scoped_lowering_rule(
     out = jaxpr_subcomp(lowering_ctx, jaxpr, *consts, *args)
     tpu.yield_(out)
   ctx.lowering_context.accumulator_offsets = old_accumulator_offsets
-  return region.results
+  return list(region.results)
 
 
 @register_lowering_rule(jax_core.empty_ref_p)
@@ -5089,7 +5087,7 @@ def _select_to_ifop(f, prev_refs, rest_refs, idx, options):
     else:
       out = _lower_transformed_refs(f, prev_refs, [options[1]] + rest_refs)
     scf.yield_(out)
-  return if_op.results
+  return list(if_op.results)
 
 
 @register_lowering_rule(lax.axis_index_p, kernel_types=[*tpu_core.CoreType])

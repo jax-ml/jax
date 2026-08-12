@@ -246,11 +246,8 @@ class JetTrace(core.Trace):
 
     if all(t is zero_series for t in series_in):
       avals = tuple(core.typeof(x) for x in primals_in)
-      primal_out = primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)
-      if primitive.multiple_results:
-        return [JetTracer(self, p, zero_series) for p in primal_out]
-      else:
-        return JetTracer(self, primal_out, zero_series)
+      primals_out = primitive.bind_with_trace(self.parent_trace, primals_in, avals, params)
+      return [JetTracer(self, p, zero_series) for p in primals_out]
 
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
@@ -261,10 +258,12 @@ class JetTrace(core.Trace):
                    for x, series in zip(primals_in, series_in)]
       rule = jet_rules[primitive]
       primal_out, terms_out = rule(primals_in, series_in, **params)
-    if not primitive.multiple_results:
-      return JetTracer(self, primal_out, terms_out)
-    else:
+    # Rules for single-result primitives return a single primal value (never a
+    # list or tuple); rules for multiple-results primitives return a sequence.
+    if isinstance(primal_out, (list, tuple)):
       return [JetTracer(self, p, ts) for p, ts in zip(primal_out, terms_out)]
+    else:
+      return [JetTracer(self, primal_out, terms_out)]
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, /, *,
                               symbolic_zeros):
@@ -297,8 +296,8 @@ def defzero(prim):
   jet_rules[prim] = partial(zero_prop, prim)
 
 def zero_prop(prim, primals_in, series_in, **params):
-  primal_out = prim.bind(*primals_in, **params)
-  return primal_out, zero_series
+  primals_out = prim.bind(*primals_in, **params)
+  return primals_out, [zero_series] * len(primals_out)
 
 defzero(lax.le_p)
 defzero(lax.lt_p)
@@ -326,11 +325,9 @@ def deflinear(prim):
   jet_rules[prim] = partial(linear_prop, prim)
 
 def linear_prop(prim, primals_in, series_in, **params):
-  primal_out = prim.bind(*primals_in, **params)
+  primals_out = prim.bind(*primals_in, **params)
   series_out = [prim.bind(*terms_in, **params) for terms_in in zip(*series_in)]
-  if prim.multiple_results:
-    series_out = safe_zip(*series_out)
-  return primal_out, series_out
+  return primals_out, safe_zip(*series_out)
 
 deflinear(lax.neg_p)
 deflinear(lax.real_p)
@@ -361,8 +358,8 @@ deflinear(pjit.reshard_p)
 
 def _dynamic_slice_jet_rule(primals_in, series_in, **params):
   operand, *start_indices = primals_in
-  primal_out = lax.dynamic_slice_p.bind(operand, *start_indices, **params)
-  series_out = [lax.dynamic_slice_p.bind(terms_in[0], *start_indices, **params)
+  primal_out = lax.dynamic_slice_p.bind1(operand, *start_indices, **params)
+  series_out = [lax.dynamic_slice_p.bind1(terms_in[0], *start_indices, **params)
                 for terms_in in zip(*series_in)]
   return primal_out, series_out
 
@@ -370,8 +367,8 @@ jet_rules[lax.dynamic_slice_p] = _dynamic_slice_jet_rule
 
 def _dynamic_update_slice_jet_rule(primals_in, series_in, **params):
   operand, update, *start_indices = primals_in
-  primal_out = lax.dynamic_update_slice_p.bind(operand, update, *start_indices)
-  series_out = [lax.dynamic_update_slice_p.bind(*terms_in[:2], *start_indices, **params)
+  primal_out = lax.dynamic_update_slice_p.bind1(operand, update, *start_indices)
+  series_out = [lax.dynamic_update_slice_p.bind1(*terms_in[:2], *start_indices, **params)
                 for terms_in in zip(*series_in)]
   return primal_out, series_out
 
@@ -405,7 +402,7 @@ def def_deriv(prim, deriv):
 def deriv_prop(prim, deriv, primals_in, series_in):
   x, = primals_in
   series, = series_in
-  primal_out = prim.bind(x)
+  primal_out = prim.bind1(x)
   c0, cs = jet2(deriv, primals_in, series_in)
   c = [c0] + cs
   u = [x] + series
@@ -623,7 +620,7 @@ def _bilinear_taylor_rule(prim, primals_in, series_in, **params):
   u = [x] + x_terms
   w = [y] + y_terms
   v: list[Any] = [None] * len(u)
-  op = partial(prim.bind, **params)
+  op = partial(prim.bind1, **params)
   for k in range(0, len(v)):
     v[k] = sum(op(u[j], w[k-j]) for j in range(0, k+1))
   primal_out, *series_out = v
@@ -635,8 +632,8 @@ jet_rules[lax.conv_general_dilated_p] = partial(_bilinear_taylor_rule, lax.conv_
 def _gather_taylor_rule(primals_in, series_in, **params):
   operand, start_indices = primals_in
   gs, _ = series_in
-  primal_out = lax.gather_p.bind(operand, start_indices, **params)
-  series_out = [lax.gather_p.bind(g, start_indices, **params) for g in gs]
+  primal_out = lax.gather_p.bind1(operand, start_indices, **params)
+  series_out = [lax.gather_p.bind1(g, start_indices, **params) for g in gs]
   return primal_out, series_out
 jet_rules[lax.gather_p] = _gather_taylor_rule
 
@@ -667,7 +664,7 @@ jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(
 def _abs_taylor_rule(x, series_in, **params):
   x, = x
   zero = lax.full_like(x, 0, shape=())
-  primal_out = lax.abs_p.bind(x, **params)
+  primal_out = lax.abs_p.bind1(x, **params)
   negs = lax.select(lax.lt(x, zero), lax.full_like(x, -1), lax.full_like(x, 1.0))
   fix_sign = lambda y: negs * y
   series_out = [fix_sign(*terms_in, **params) for terms_in in zip(*series_in)]
@@ -718,7 +715,7 @@ jet_rules[lax.min_p] = _lax_min_taylor_rule
 def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
                       dimension_numbers, indices_are_sorted, unique_indices,
                       mode):
-  bind = partial(lax.scatter_add_p.bind, update_jaxpr=update_jaxpr,
+  bind = partial(lax.scatter_add_p.bind1, update_jaxpr=update_jaxpr,
                  update_consts=update_consts, dimension_numbers=dimension_numbers,
                  indices_are_sorted=indices_are_sorted,
                  unique_indices=unique_indices, mode=mode)

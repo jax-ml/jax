@@ -223,7 +223,6 @@ def _custom_partitioning_infer_sharding_from_operands(arg_shapes, arg_shardings,
 
 
 custom_partitioning_p = core.Primitive("custom_partitioning")
-custom_partitioning_p.multiple_results = True
 dispatch.prim_requires_devices_during_lowering.add(custom_partitioning_p)
 
 

@@ -36,14 +36,13 @@ config.parse_flags_with_absl()
 jtu.request_cpu_devices(2)
 
 effect_p = core.Primitive('effect')
-effect_p.multiple_results = True
 
 @effect_p.def_effectful_abstract_eval
 def _(*avals, effect):
-  return avals, {effect}
+  return list(avals), {effect}
 
 def effect_jvp_rule(primals, tangents, effect):
-  return effect_p.bind(*primals, effect=effect), tangents
+  return effect_p.bind(*primals, effect=effect), list(tangents)
 ad.primitive_jvps[effect_p] = effect_jvp_rule
 
 class BasicEffect(effects.Effect):
@@ -87,7 +86,6 @@ def function_effect_lowering(ctx, *, effect):
   return []
 
 callback_p = core.Primitive('callback')
-callback_p.multiple_results = True
 
 @callback_p.def_impl
 def _(*args, callback, out_avals, effect):
@@ -98,7 +96,7 @@ def _(*args, callback, out_avals, effect):
 @callback_p.def_effectful_abstract_eval
 def _(*avals, callback, out_avals, effect):
   del avals, callback
-  return out_avals, {effect}
+  return list(out_avals), {effect}
 
 def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out_avals, effect):
   del out_avals
@@ -906,7 +904,6 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
 
 
 input_effect_p = core.Primitive('input_effect')
-input_effect_p.multiple_results = True
 input_effect = input_effect_p.bind
 
 def _input_effect_abstract_eval(*avals, index):

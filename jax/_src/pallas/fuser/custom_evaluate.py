@@ -74,9 +74,6 @@ def _custom_evaluate_jaxpr(
       ans = eqn.primitive.bind(
           *util.safe_map(read, eqn.invars), **bind_params
       )
-    if eqn.primitive.multiple_results:
-      util.safe_map(write, eqn.outvars, ans)
-    else:
-      write(eqn.outvars[0], ans)
+    util.safe_map(write, eqn.outvars, ans)
     core.clean_up_dead_vars(eqn, env, lu)
   return util.safe_map(read, jaxpr.outvars)

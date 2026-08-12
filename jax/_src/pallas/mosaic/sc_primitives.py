@@ -67,7 +67,8 @@ def _load_abstract_eval(ref, *args, has_mask, tree):
     if mask.shape != tref.shape:
       raise ValueError(f"Mask must have shape {tref.shape}, got {mask.shape}")
   return (
-      jax_core.ShapedArray(tref.shape, ref.dtype), {state_types.ReadEffect(0)})
+      [jax_core.ShapedArray(tref.shape, ref.dtype)],
+      {state_types.ReadEffect(0)})
 
 
 @sc_lowering.register_lowering_rule(load_p)
@@ -108,7 +109,7 @@ def load_expanded(ref: Ref, *, mask: jax.Array) -> jax.Array:
     ref = ref.at[...]  # pyrefly: ignore[bad-index]
   assert isinstance(ref, TransformedRef)
   flat_transforms, tree = jax.tree.flatten(ref.transforms)
-  return load_p.bind(ref.ref, *flat_transforms, mask, has_mask=True, tree=tree)
+  return load_p.bind1(ref.ref, *flat_transforms, mask, has_mask=True, tree=tree)
 
 
 swap_p = jax_core.Primitive("swap")
@@ -135,7 +136,7 @@ def _swap_abstract_eval(ref, x, *args, has_mask, tree, add):
   effects: set[jax_core.Effect] = {state_types.WriteEffect(0)}
   if add:
     effects.add(state_types.ReadEffect(0))
-  return x, effects
+  return [x], effects
 
 
 @sc_lowering.register_lowering_rule(swap_p)
@@ -259,7 +260,7 @@ def _gather_abstract_eval(*flat_args, tree):
       )
     if mask.dtype != jnp.bool:
       raise TypeError(f"Mask must be a boolean array, got {mask.dtype}")
-  return out_aval, {state_types.ReadEffect(0)}
+  return [out_aval], {state_types.ReadEffect(0)}
 
 
 @sc_lowering.register_lowering_rule(gather_p)
@@ -307,12 +308,11 @@ def load_gather(
       ref, None, "load_gather"
   )
   flat_args, tree = jax.tree.flatten((ref, transforms, indices, mask))
-  return gather_p.bind(*flat_args, tree=tree)
+  return gather_p.bind1(*flat_args, tree=tree)
 
 
 scatter_p = jax_core.Primitive("scatter")
 scatter_p.is_effectful = lambda params: True
-scatter_p.multiple_results = True
 
 
 @scatter_p.def_effectful_abstract_eval
@@ -436,7 +436,7 @@ def _bitcast_abstract_eval(x, dtype):
   old_bitwidth = dtypes.itemsize_bits(x.dtype)
   new_bitwidth = dtypes.itemsize_bits(dtype)
   if old_bitwidth == new_bitwidth:
-    return jax_core.ShapedArray(x.shape, dtype)
+    return [jax_core.ShapedArray(x.shape, dtype)]
   if x.ndim == 0:
     raise ValueError(
         "Cannot bitcast a ()-shaped array to a dtype with a different bitwidth:"
@@ -449,7 +449,7 @@ def _bitcast_abstract_eval(x, dtype):
         f" {dtype} ({new_bitwidth} bits), because {x.shape[-1]=} *"
         f" {old_bitwidth} is not divisible by {new_bitwidth}"
     )
-  return jax_core.ShapedArray((*x.shape[:-1], new_last_dim), dtype)
+  return [jax_core.ShapedArray((*x.shape[:-1], new_last_dim), dtype)]
 
 
 @sc_lowering.register_lowering_rule(bitcast_p)
@@ -479,7 +479,7 @@ def bitcast(x: jax.Array, dtype: jax.typing.DTypeLike) -> jax.Array:
   """
   if x.dtype == dtype:
     return x
-  return bitcast_p.bind(x, dtype=jnp.dtype(dtype))
+  return bitcast_p.bind1(x, dtype=jnp.dtype(dtype))
 
 
 class MemoryEffect(jax_core.Effect):
@@ -491,7 +491,6 @@ effects.lowerable_effects.add_type(MemoryEffect)
 _memory_effect = MemoryEffect()
 
 barrier_p = jax_core.Primitive("barrier")
-barrier_p.multiple_results = True
 
 @barrier_p.def_effectful_abstract_eval
 def _barrier_abstract_eval():
@@ -515,7 +514,6 @@ def subcore_barrier():
 
 
 scan_count_p = jax_core.Primitive("scan_count")
-scan_count_p.multiple_results = True
 
 
 @scan_count_p.def_abstract_eval
@@ -534,7 +532,7 @@ def _scan_count_abstract_eval(x, mask):
 def _scan_count_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask):
   del ctx  # Unused.
   # Reverse, because the MLIR op returns the mask first.
-  return tpu.scan_count(mask, x)[::-1]
+  return list(tpu.scan_count(mask, x))[::-1]
 
 
 def scan_count(
@@ -558,13 +556,10 @@ def scan_count(
 
 
 masked_cummax_p = jax_core.Primitive("masked_cummax")
-masked_cummax_p.multiple_results = False
 
 masked_cummin_p = jax_core.Primitive("masked_cummin")
-masked_cummin_p.multiple_results = False
 
 masked_cumsum_p = jax_core.Primitive("masked_cumsum")
-masked_cumsum_p.multiple_results = False
 
 
 @masked_cummax_p.def_abstract_eval
@@ -578,7 +573,7 @@ def _masked_cummax_abstract_eval(x, mask):
     raise TypeError(f"mask.dtype={mask.dtype} is not a boolean dtype")
   if x.shape != mask.shape:
     raise ValueError(f"x.shape={x.shape} != mask.shape={mask.shape}")
-  return x
+  return [x]
 
 
 def _masked_cumop_lowering_rule(ctx: sc_lowering.LoweringRuleContext, x, mask,
@@ -650,7 +645,7 @@ def cummax(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
     raise NotImplementedError(f"cummax: x={x.aval} must be rank 1")
   if mask is None:
     mask = lax.full(x.shape, True)
-  return masked_cummax_p.bind(x, mask)
+  return masked_cummax_p.bind1(x, mask)
 
 
 def cummin(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
@@ -670,7 +665,7 @@ def cummin(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
     raise NotImplementedError(f"cummin: x={x.aval} must be rank 1")
   if mask is None:
     mask = lax.full(x.shape, True)
-  return masked_cummin_p.bind(x, mask)
+  return masked_cummin_p.bind1(x, mask)
 
 
 @sc_lowering.register_lowering_rule(lax.cumsum_p)
@@ -703,11 +698,10 @@ def cumsum(x: jax.Array, *, mask: jax.Array | None = None) -> jax.Array:
     raise NotImplementedError(f"cumsum: x={x.aval} must be rank 1")
   if mask is None:
     mask = lax.full(x.shape, True)
-  return masked_cumsum_p.bind(x, mask)
+  return masked_cumsum_p.bind1(x, mask)
 
 
 masked_sort_p = jax_core.Primitive("masked_sort")
-masked_sort_p.multiple_results = True
 
 @masked_sort_p.def_abstract_eval
 def _masked_sort_abstract_eval(keys, values, *maybe_mask, descending):
@@ -806,7 +800,6 @@ def sort_key_val(
 
 parallel_loop_p = jax_core.Primitive("parallel_loop")
 parallel_loop_p.is_effectful = lambda params: bool(params["jaxpr"].effects)
-parallel_loop_p.multiple_results = True
 
 
 @parallel_loop_p.def_effectful_abstract_eval
@@ -857,7 +850,7 @@ def _parallel_loop_lowering_rule(
         *for_op.inner_iter_args,
     )
     scf.yield_(carry_out)
-  return for_op.results
+  return list(for_op.results)
 
 
 @overload
@@ -1046,7 +1039,7 @@ def _pack_abstract_eval(a, b, *, format, preferred_element_type):
       packed_shape = (a.size, 2)
     case _:
       raise TypeError(f"Unexpected format: {format}")
-  return jax_core.ShapedArray(packed_shape, packed_dtype)
+  return [jax_core.ShapedArray(packed_shape, packed_dtype)]
 
 
 @sc_lowering.register_lowering_rule(pack_p)
@@ -1093,13 +1086,12 @@ def pack(
   """
   if preferred_element_type is not None:
     preferred_element_type = jnp.dtype(preferred_element_type)
-  return pack_p.bind(
+  return pack_p.bind1(
       a, b, format=format, preferred_element_type=preferred_element_type
   )
 
 
 unpack_p = jax_core.Primitive("unpack")
-unpack_p.multiple_results = True
 
 
 @unpack_p.def_abstract_eval
@@ -1194,7 +1186,7 @@ def _mask_all_reduce_abstract_eval(x, *, reduce):
         raise ValueError(
             f"{reduce=} must divide the dimension size {minor_dim}"
         )
-      return jax_core.ShapedArray((minor_dim // reduce,), jnp.int32)
+      return [jax_core.ShapedArray((minor_dim // reduce,), jnp.int32)]
     case _:
       raise ValueError("Mask all-reduce only supports 1D arrays")
 
@@ -1233,7 +1225,7 @@ def all_reduce_population_count(x: jax.Array, *, reduce: int = 1) -> jax.Array:
   Returns:
     An array with each element containing the number of true elements in ``x``.
   """
-  return all_reduce_population_count_p.bind(x, reduce=reduce)
+  return all_reduce_population_count_p.bind1(x, reduce=reduce)
 
 
 all_reduce_ffs_p = jax_core.Primitive("all_reduce_ffs")
@@ -1254,11 +1246,10 @@ def all_reduce_ffs(x: jax.Array, *, reduce: int = 1) -> jax.Array:
     An array with each element containing the index of the first true element in
     ``x`` or ``x.size`` if there are no true elements.
   """
-  return all_reduce_ffs_p.bind(x, reduce=reduce)
+  return all_reduce_ffs_p.bind1(x, reduce=reduce)
 
 
 fetch_and_add_p = jax_core.Primitive("sc_fetch_and_add")
-fetch_and_add_p.multiple_results = False
 
 
 @fetch_and_add_p.def_effectful_abstract_eval
@@ -1285,7 +1276,7 @@ def _fetch_and_add_abstract_eval(*args):
     raise ValueError(
         f"subcore_id= must be a scalar of type int32, but got {subcore_id}."
     )
-  return value, {state_types.ReadEffect(0), state_types.WriteEffect(0)}
+  return [value], {state_types.ReadEffect(0), state_types.WriteEffect(0)}
 
 
 @sc_lowering.register_lowering_rule(fetch_and_add_p)
@@ -1336,4 +1327,4 @@ def fetch_and_add(
           "fetch_and_add requires a scalar ref with a single non-slice"
           f" indexer, but got {transforms}"
       )
-  return fetch_and_add_p.bind(x_ref, value, *indices, subcore_id)
+  return fetch_and_add_p.bind1(x_ref, value, *indices, subcore_id)

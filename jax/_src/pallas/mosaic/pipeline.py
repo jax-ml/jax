@@ -2103,7 +2103,6 @@ def emit_pipeline(
 
 
 emit_pipeline_p = core.Primitive("emit_pipeline")
-emit_pipeline_p.multiple_results = True
 
 @emit_pipeline_p.def_effectful_abstract_eval
 def _emit_pipeline_effectful_abstract_eval(
@@ -2170,7 +2169,6 @@ def _emit_pipeline_effectful_abstract_eval(
 # was traced "generically" with Refs. However, the emit_pipeline is allowed to
 # pass in TransformedRefs as arguments to the body.
 pipeline_body_p = core.Primitive("pipeline_body")
-pipeline_body_p.multiple_results = True
 
 @pipeline_body_p.def_effectful_abstract_eval
 def _pipeline_body_effectful_abstract_eval(

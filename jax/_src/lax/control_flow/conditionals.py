@@ -475,7 +475,7 @@ def _cond_batching_rule(axis_data, args, dims, *, branches, **params):
   if "branches_platforms" in params and (index_dim is not None):
     # If we end up with a mapped index for a platform_dependent cond, we can
     # replace the index with a fresh call to platform_index. See #29329.
-    index = platform_index_p.bind(platforms=params["branches_platforms"])
+    index = platform_index_p.bind1(platforms=params["branches_platforms"])
     index_dim = None
 
   if index_dim is not None:
@@ -1026,7 +1026,6 @@ BranchesPlatforms = tuple[tuple[str, ...] | None, ...]
 # The index argument of a `platform_dependent` cond is always a
 # `platform_index` primitive.
 cond_p = core.Primitive('cond')
-cond_p.multiple_results = True
 cond_p.skip_canonicalization = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
@@ -1249,7 +1248,7 @@ def platform_dependent(*args: Any,
                       "be a callable.")
     branches = branches + (default,)
     branches_platforms = branches_platforms + (None,)
-  platform_index = platform_index_p.bind(platforms=branches_platforms)
+  platform_index = platform_index_p.bind1(platforms=branches_platforms)
 
   if core.is_concrete(platform_index):
     return branches[int(platform_index)](*args)
@@ -1263,13 +1262,12 @@ def platform_dependent(*args: Any,
 #     platform is in one of the inner tuples returns the index of that inner
 #     tuple in the outer tuple.
 platform_index_p = core.Primitive("platform_index")
-platform_index_p.multiple_results = False
 platform_index_p.def_impl(functools.partial(dispatch.apply_primitive,
                                             platform_index_p))
 
 @platform_index_p.def_abstract_eval
 def _platform_index_aval(*_, **__):
-  return core.ShapedArray((), np.int32)
+  return [core.ShapedArray((), np.int32)]
 
 def _platform_index_lowering(ctx: mlir.LoweringRuleContext,
                              *,

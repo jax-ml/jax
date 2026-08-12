@@ -112,7 +112,7 @@ def set_xla_metadata(x=None, **kwargs):
   else:
     hashable_metadata = tuple(sorted(kwargs.items()))
     return tree_util.tree_map(
-        lambda v: xla_metadata_value_p.bind(
+        lambda v: xla_metadata_value_p.bind1(
             v, xla_metadata_kvs=hashable_metadata
         ),
         x,
@@ -125,10 +125,11 @@ xla_metadata_value_p = core.Primitive("xla_metadata_value")
 xla_metadata_value_p.def_impl(
     partial(dispatch.apply_primitive, xla_metadata_value_p)
 )
-xla_metadata_value_p.def_abstract_eval(lambda aval, *, xla_metadata_kvs: aval)
+xla_metadata_value_p.def_abstract_eval(
+    lambda aval, *, xla_metadata_kvs: [aval])
 batching.defvectorized(xla_metadata_value_p)
 # TODO(nbasile): Implement tagging gradient ops with metadata.
-ad.deflinear2(xla_metadata_value_p, lambda ct, _, **kwargs: (ct,))
+ad.deflinear2(xla_metadata_value_p, lambda cts, _, **kwargs: (cts[0],))
 
 
 def _xla_metadata_value_lowering_rule(
@@ -298,7 +299,6 @@ def _xla_metadata_call(fun, metadata, ad_metadata):
   return wrapped
 
 xla_metadata_call_p = core.Primitive('xla_metadata_call')
-xla_metadata_call_p.multiple_results = True
 dispatch.simple_impl(xla_metadata_call_p)
 
 

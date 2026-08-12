@@ -176,7 +176,6 @@ def buffer_callback(
 
 
 buffer_callback_p = core.Primitive("buffer_callback")
-buffer_callback_p.multiple_results = True
 dispatch.simple_impl(buffer_callback_p)
 
 

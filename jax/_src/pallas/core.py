@@ -1502,7 +1502,6 @@ def _get_sds(aval: jax_core.AbstractValue):
 
 
 core_map_p = jax_core.Primitive("core_map")
-core_map_p.multiple_results = True
 
 def _core_map_is_high(*avals, jaxpr, **params):
   del avals, params
@@ -1727,7 +1726,7 @@ def with_memory_space_constraint_abstract_eval(x, *, memory_space):
   if not isinstance(x, jax_core.ShapedArray):
     raise NotImplementedError("with_memory_space_constraint only supports "
                               "arrays.")
-  return x.update(memory_space=memory_space)
+  return [x.update(memory_space=memory_space)]
 
 def with_memory_space_constraint_lowering_rule(ctx, x, *, memory_space):
   del ctx, memory_space
@@ -1771,7 +1770,7 @@ def default_mesh_discharge_rule(
       default_memory_space if m is None else m for m in in_memory_spaces
   ]
   args = [
-      with_memory_space_constraint_p.bind(arg, memory_space=memory_space)
+      with_memory_space_constraint_p.bind1(arg, memory_space=memory_space)
       if memory_space is not default_memory_space else arg
       for arg, memory_space in zip(args, in_memory_spaces)
   ]

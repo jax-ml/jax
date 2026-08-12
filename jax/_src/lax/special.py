@@ -60,35 +60,35 @@ def _up_and_broadcast(doit):
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete beta integral."""
   a, b, x = core.auto_insert_reshard(a, b, x)
-  return regularized_incomplete_beta_p.bind(a, b, x)
+  return regularized_incomplete_beta_p.bind1(a, b, x)
 
 def lgamma(x: ArrayLike) -> Array:
   r"""Elementwise log gamma: :math:`\mathrm{log}(\Gamma(x))`."""
-  return lgamma_p.bind(x)
+  return lgamma_p.bind1(x)
 
 def digamma(x: ArrayLike) -> Array:
   r"""Elementwise digamma: :math:`\psi(x)`."""
-  return digamma_p.bind(x)
+  return digamma_p.bind1(x)
 
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
   m, x = core.auto_insert_reshard(m, x)
-  return polygamma_p.bind(m, x)
+  return polygamma_p.bind1(m, x)
 
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
   a, x = core.auto_insert_reshard(a, x)
-  return igamma_p.bind(a, x)
+  return igamma_p.bind1(a, x)
 
 def igammac(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise complementary regularized incomplete gamma function."""
   a, x = core.auto_insert_reshard(a, x)
-  return igammac_p.bind(a, x)
+  return igammac_p.bind1(a, x)
 
 def igamma_grad_a(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
   a, x = core.auto_insert_reshard(a, x)
-  return igamma_grad_a_p.bind(a, x)
+  return igamma_grad_a_p.bind1(a, x)
 
 @_up_and_broadcast
 def random_gamma_grad(a: ArrayLike, x: ArrayLike, *, dtype) -> Array:
@@ -99,32 +99,32 @@ def random_gamma_grad(a: ArrayLike, x: ArrayLike, *, dtype) -> Array:
 def zeta(x: ArrayLike, q: ArrayLike) -> Array:
   r"""Elementwise Hurwitz zeta function: :math:`\zeta(x, q)`"""
   x, q = core.auto_insert_reshard(x, q)
-  return zeta_p.bind(x, q)
+  return zeta_p.bind1(x, q)
 
 def bessel_i0e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified Bessel function of order 0:
   :math:`\mathrm{i0e}(x) = e^{-|x|} \mathrm{i0}(x)`
   """
-  return bessel_i0e_p.bind(x)
+  return bessel_i0e_p.bind1(x)
 
 def bessel_i1e(x: ArrayLike) -> Array:
   r"""Exponentially scaled modified Bessel function of order 1:
   :math:`\mathrm{i1e}(x) = e^{-|x|} \mathrm{i1}(x)`
   """
-  return bessel_i1e_p.bind(x)
+  return bessel_i1e_p.bind1(x)
 
 def erf(x: ArrayLike) -> Array:
   r"""Elementwise error function: :math:`\mathrm{erf}(x)`."""
-  return erf_p.bind(x)
+  return erf_p.bind1(x)
 
 def erfc(x: ArrayLike) -> Array:
   r"""Elementwise complementary error function:
     :math:`\mathrm{erfc}(x) = 1 - \mathrm{erf}(x)`."""
-  return erfc_p.bind(x)
+  return erfc_p.bind1(x)
 
 def erf_inv(x: ArrayLike) -> Array:
   r"""Elementwise inverse error function: :math:`\mathrm{erf}^{-1}(x)`."""
-  return erf_inv_p.bind(x)
+  return erf_inv_p.bind1(x)
 
 def ndtr(x: Array) -> Array:
   r"""Elementwise cumulative distribution function of the standard normal.

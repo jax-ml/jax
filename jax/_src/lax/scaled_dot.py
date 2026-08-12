@@ -160,7 +160,7 @@ def _scaled_dot_abstract_eval(
   else:
     output_dtype = dtypes.bfloat16
 
-  return core.ShapedArray(output_shape, output_dtype)
+  return [core.ShapedArray(output_shape, output_dtype)]
 
 
 def _scale_broadcast(
@@ -280,7 +280,7 @@ def _scaled_dot_batching_rule(
 
   # Bind the primitive with the batched operands and updated dimension numbers.
   # This creates the batched scaled_dot operation in the jaxpr.
-  result = scaled_dot_p.bind(
+  result = scaled_dot_p.bind1(
       lhs,
       rhs,
       lhs_scale,
@@ -290,7 +290,7 @@ def _scaled_dot_batching_rule(
   )
 
   # Return the result and the index of the batch dimension in the result (0).
-  return result, 0
+  return [result], [0]
 
 
 batching.primitive_batchers[scaled_dot_p] = _scaled_dot_batching_rule
@@ -409,7 +409,7 @@ def scaled_dot(
   element_type = dtypes.check_and_canonicalize_user_dtype(
       element_type, "scaled_dot"
   )
-  return scaled_dot_p.bind(
+  return scaled_dot_p.bind1(
       lhs,
       rhs,
       lhs_scale,

@@ -206,10 +206,10 @@ The following example shows how to disable the check for a specific custom call:
 >>> from jax._src.interpreters import mlir
 >>> # Define a new primitive backed by a custom call
 >>> new_prim = core.Primitive("new_prim")
->>> _ = new_prim.def_abstract_eval(lambda x: x)
+>>> _ = new_prim.def_abstract_eval(lambda x: [x])
 >>> _ = mlir.register_lowering(new_prim, lambda ctx, o: mlir.custom_call("my_new_prim", operands=[o], result_types=[o.type]).results)
->>> print(jax.jit(new_prim.bind).lower(1.).compiler_ir())
-module @jit_bind attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
+>>> print(jax.jit(new_prim.bind1).lower(1.).compiler_ir())
+module @jit_bind1 attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
   func.func public @main(%arg0: tensor<f32>) -> (tensor<f32> {jax.result_info = "result"}) {
     %0 = stablehlo.custom_call @my_new_prim(%arg0) {api_version = 2 : i32, backend_config = ""} : (tensor<f32>) -> tensor<f32>
     return %0 : tensor<f32>
@@ -217,13 +217,13 @@ module @jit_bind attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 
 }
 
 >>> # If we try to export, we get an error
->>> export.export(jax.jit(new_prim.bind))(1.)  # doctest: +IGNORE_EXCEPTION_DETAIL
+>>> export.export(jax.jit(new_prim.bind1))(1.)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
 ValueError: Cannot serialize code with custom calls whose targets have no compatibility guarantees: my_new_bind
 
 >>> # We can avoid the error if we pass a `DisabledSafetyCheck.custom_call`
 >>> exp = export.export(
-...    jax.jit(new_prim.bind),
+...    jax.jit(new_prim.bind1),
 ...    disabled_checks=[export.DisabledSafetyCheck.custom_call("my_new_prim")])(1.)
 
 ```

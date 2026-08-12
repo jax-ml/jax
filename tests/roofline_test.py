@@ -79,16 +79,16 @@ fake_jax_primitive_p = core.Primitive("fake_jax_primitive")
 
 @fake_jax_primitive_p.def_impl
 def _fake_jax_primitive_impl(x):
-  return x
+  return [x]
 
 
 @fake_jax_primitive_p.def_abstract_eval
 def _fake_jax_primitive_abstract_eval(x):
-  return core.ShapedArray(x.shape, x.dtype)
+  return [core.ShapedArray(x.shape, x.dtype)]
 
 
 def fake_jax_primitive_function(x):
-  return fake_jax_primitive_p.bind(x)
+  return fake_jax_primitive_p.bind1(x)
 
 
 class DummyDotHiPrimitive(hijax.VJPHiPrimitive):

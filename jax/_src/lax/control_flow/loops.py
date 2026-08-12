@@ -1552,7 +1552,6 @@ def _scan_remat(trace, *args, jaxpr, ft_in, ft_out, **params):
 
 scan_p = core.Primitive("scan")
 scan_p.is_effectful = lambda params: bool(params['jaxpr'].effects)
-scan_p.multiple_results = True
 scan_p.skip_canonicalization = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
@@ -2440,7 +2439,6 @@ def _while_discharge_rule(ctx, *args,
   return invals_out, carry_out
 
 while_p = core.Primitive('while')
-while_p.multiple_results = True
 while_p.skip_canonicalization = True
 while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
@@ -3034,23 +3032,23 @@ def _cumred_gpu_lowering(
 
 def cumsum(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative sum along `axis`."""
-  return cumsum_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumsum_p.bind1(operand, axis=int(axis), reverse=bool(reverse))
 
 def cumprod(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative product along `axis`."""
-  return cumprod_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumprod_p.bind1(operand, axis=int(axis), reverse=bool(reverse))
 
 def cummax(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative maximum along `axis`."""
-  return cummax_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cummax_p.bind1(operand, axis=int(axis), reverse=bool(reverse))
 
 def cummin(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative minimum along `axis`."""
-  return cummin_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cummin_p.bind1(operand, axis=int(axis), reverse=bool(reverse))
 
 def cumlogsumexp(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative logsumexp along `axis`."""
-  return cumlogsumexp_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+  return cumlogsumexp_p.bind1(operand, axis=int(axis), reverse=bool(reverse))
 
 def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   if axis < 0:
@@ -3067,7 +3065,8 @@ def _cumred_sharding_rule(x, *, axis: int, reverse: bool):
         f' type={x} and {axis=}')
   return x.sharding
 
-def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
+def _cumsum_transpose_rule(cts, operand, *, axis: int, reverse: bool):
+  t, = cts
   return [cumsum(t, axis=axis, reverse=not reverse)]
 
 
@@ -3089,7 +3088,7 @@ def _cumred_batch_rule(prim, batched_args, batch_dims, *, axis: int,
   operand, = batched_args
   bdim, = batch_dims
   axis = axis if axis < bdim else axis + 1
-  return prim.bind(operand, axis=axis, reverse=reverse), bdim
+  return prim.bind(operand, axis=axis, reverse=reverse), [bdim]
 
 def _cumred_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
@@ -3139,9 +3138,10 @@ def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,
   # Irrespective of backend, we always use the parallel prefix scan
   # implementation when differentiating because reduce_window is not
   # arbitrarily differentiable.
-  return api.jvp(partial(associative_scan, combine_fn, axis=axis,
-                         reverse=reverse),
-                 primals, tangents)
+  primal_out, tangent_out = api.jvp(
+      partial(associative_scan, combine_fn, axis=axis, reverse=reverse),
+      primals, tangents)
+  return [primal_out], [tangent_out]
 
 ad.primitive_jvps[cumlogsumexp_p] = partial(_cumulative_jvp_rule, combine_fn=logaddexp)
 ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)

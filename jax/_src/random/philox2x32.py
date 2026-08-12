@@ -104,7 +104,6 @@ def _philox2x32_abstract_eval(*args):
 
 
 philox2x32_p = core.Primitive("philox2x32")
-philox2x32_p.multiple_results = True
 philox2x32_p.def_impl(functools.partial(dispatch.apply_primitive, philox2x32_p))
 philox2x32_p.def_abstract_eval(_philox2x32_abstract_eval)
 batching.defbroadcasting(philox2x32_p)

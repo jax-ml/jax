@@ -538,7 +538,7 @@ class cuSparseTest(sptu.SparseTestCase):
     data = mat[row, col]
 
     expected = (mat.T if transpose else mat) @ vec
-    actual = _lowerings.coo_spmv_p.bind(
+    actual = _lowerings.coo_spmv_p.bind1(
         data, row.astype('int32'), col.astype('int32'), vec,
         transpose=transpose,
         shape=mat.shape)
@@ -561,7 +561,7 @@ class cuSparseTest(sptu.SparseTestCase):
     data = mat[row, col]
 
     expected = (mat.T if transpose else mat) @ vec
-    actual = _lowerings.coo_spmm_p.bind(
+    actual = _lowerings.coo_spmm_p.bind1(
         data, row.astype('int32'), col.astype('int32'), vec,
         transpose=transpose,
         shape=mat.shape)
@@ -588,7 +588,7 @@ class cuSparseTest(sptu.SparseTestCase):
     vec = rng_dense(shape[0] if transpose else shape[1], dtype)
 
     expected = (mat.T if transpose else mat) @ vec
-    actual = _lowerings.csr_spmv_p.bind(
+    actual = _lowerings.csr_spmv_p.bind1(
         data, indices.astype('int32'), indptr.astype('int32'), vec,
         transpose=transpose,
         shape=mat.shape)
@@ -612,7 +612,7 @@ class cuSparseTest(sptu.SparseTestCase):
     vec = rng_dense((shape[0] if transpose else shape[1], 3), dtype)
 
     expected = (mat.T if transpose else mat) @ vec
-    actual = _lowerings.csr_spmm_p.bind(
+    actual = _lowerings.csr_spmm_p.bind1(
         data, indices.astype('int32'), indptr.astype('int32'), vec,
         transpose=transpose,
         shape=mat.shape)
@@ -995,8 +995,8 @@ class SparseObjectTest(sptu.SparseTestCase):
     M = M_dense if Obj is jnp.array else Obj.fromdense(M_dense)
     bufs, tree = jax.tree.flatten(M)
     jac = jnp.eye(M.shape[0], dtype=M.dtype)
-    jac1 = jax.jacfwd(lambda *bufs: sparse.todense_p.bind(*bufs, tree=tree))(*bufs)
-    jac2 = jax.jacrev(lambda *bufs: sparse.todense_p.bind(*bufs, tree=tree))(*bufs)
+    jac1 = jax.jacfwd(lambda *bufs: sparse.todense_p.bind1(*bufs, tree=tree))(*bufs)
+    jac2 = jax.jacrev(lambda *bufs: sparse.todense_p.bind1(*bufs, tree=tree))(*bufs)
     self.assertArraysEqual(jac1, jac2)
     self.assertArraysEqual(jac, jac2)
 

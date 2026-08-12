@@ -1076,16 +1076,15 @@ hijax.register_hitype(
 
 unpack_p = hijax.HiPrimitive("unpack")
 unpack = unpack_p.bind
-unpack_p.multiple_results = True
 unpack_p.is_high = lambda *_: True
 unpack_p.def_abstract_eval(lambda x: [x.x0_aval, x.x1_aval])
 unpack_p.to_lojax = lambda x: [x.x0, x.x1]
 
 pack_p = hijax.HiPrimitive("pack")
-pack = pack_p.bind
+pack = pack_p.bind1
 pack_p.is_high = lambda *_: True
-pack_p.def_abstract_eval(lambda x0, x1: WeirdTupleTy(x0, x1))
-pack_p.to_lojax = lambda x0, x1: WeirdTuple(x0, x1)
+pack_p.def_abstract_eval(lambda x0, x1: [WeirdTupleTy(x0, x1)])
+pack_p.to_lojax = lambda x0, x1: [WeirdTuple(x0, x1)]
 
 
 # TODO(rdyro): A temporary workaround to avoid flakiness.

@@ -261,12 +261,8 @@ class BatchTrace(Trace):
         val_out, dim_out = fancy_primitive_batchers[p](
             self.axis_data, vals_in, dims_in, **params)
         src = source_info_util.current()
-        if p.multiple_results:
-          return [BatchTracer(self, x, d, src) if d is not None else x
-                  for x, d in zip(val_out, dim_out)]
-        else:
-          return (BatchTracer(self, val_out, dim_out, src)
-                  if dim_out is not None else val_out)
+        return [BatchTracer(self, x, d, src) if d is not None else x
+                for x, d in zip(val_out, dim_out)]
     elif unmapped_args:  # Not all primitives have batching rules defined
       avals = tuple(core.typeof(x) for x in vals_in)
       return p.bind_with_trace(self.parent_trace, tuple(vals_in), avals,
@@ -599,7 +595,7 @@ class PrimitiveBatchersProxy:
       del axis_data
       if all(d is None for d in dims):
         o = prim.bind(*vals, **params)
-        return (o, [None] * len(o)) if prim.multiple_results else (o, None)
+        return o, [None] * len(o)
       return batcher(vals, dims, **params)
     fancy_primitive_batchers[prim] = wrapped
 
@@ -611,11 +607,10 @@ def defvectorized(prim):
   fancy_primitive_batchers[prim] = partial(vectorized_batcher, prim)
 
 def vectorized_batcher(prim, axis_data, batched_args, batch_dims, **params):
-  assert not prim.multiple_results
   if all(d is None for d in batch_dims):
-    return prim.bind(*batched_args, **params), None
+    return prim.bind(*batched_args, **params), [None]
   assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
-  return prim.bind(*batched_args, **params), batch_dims[0]
+  return prim.bind(*batched_args, **params), [batch_dims[0]]
 
 def defbroadcasting(prim):
   fancy_primitive_batchers[prim] = partial(broadcast_batcher, prim)
@@ -624,7 +619,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
   assert len(args) > 1
   if all(d is None for d in dims):
     o = prim.bind(*args, **params)
-    return (o, [None] * len(o)) if prim.multiple_results else (o, None)
+    return o, [None] * len(o)
   shape, dim = next((x.shape, d) for x, d in zip(args, dims)
                     if d is not None)
   if all(core.definitely_equal_shape(shape, x.shape) and d == dim
@@ -632,7 +627,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
     # if there's only agreeing batch dims and scalars, just call the primitive
     args = spmd_names_insert_pvary(*args)
     out = prim.bind(*args, **params)
-    return (out, (dim,) * len(out)) if prim.multiple_results else (out, dim)
+    return out, (dim,) * len(out)
   else:
     # We pass size of 1 here because (1) at least one argument has a real batch
     # dimension and (2) all unmapped axes can have a singleton axis inserted and
@@ -642,7 +637,7 @@ def broadcast_batcher(prim, axis_data, args, dims, **params):
     ndim = max(np.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
     out = prim.bind(*args, **params)
-    return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
+    return out, (0,) * len(out)
 
 def _handle_scalar_broadcasting(nd, x, d):
   # Callers of this utility, via broadcast_batcher() or defbroadcasting(),
@@ -657,7 +652,7 @@ def defreducer(prim):
 def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
                     **params):
   if all(d is None for d in batch_dims):
-    return prim.bind(*batched_args, axes=axes, **params), None
+    return prim.bind(*batched_args, axes=axes, **params), [None]
   def out_axis(axes, axis):
     return int(list(np.delete(np.arange(operand.ndim), axes)).index(axis))
   operand, = batched_args
@@ -672,7 +667,7 @@ def reducer_batcher(prim, axis_data, batched_args, batch_dims, axes,
       if out_s is not None:
         params = dict(params,
                       out_sharding=get_sharding_for_vmap(axis_data, out_s, bdim_out))
-    return prim.bind(operand, axes=axes, **params), bdim_out
+    return prim.bind(operand, axes=axes, **params), [bdim_out]
   else:
     assert False
 
@@ -683,7 +678,7 @@ def expand_dims_batcher(prim, args, dims, **params):
   size, = {x.shape[bd] for x, bd in zip(args, dims) if bd is not None}
   args = [bdim_at_front(x, bd, size) for x, bd in zip(args, dims)]
   out = prim.bind(*args, **params)
-  return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
+  return out, (0,) * len(out)
 
 ### general utilities for manipulating axes on jaxpr types (not vmappables)
 
@@ -758,19 +753,19 @@ def add_batched(axis_data, batched_args, batch_dims):
   bdx, bdy = batch_dims
   x, y = batched_args
   if bdx is None and bdy is None:
-    return add_jaxvals(x, y), None
+    return [add_jaxvals(x, y)], [None]
   mesh_axis = axis_data.explicit_mesh_axis
   if bdx == bdy:
-    return add_jaxvals(x, y), bdx
+    return [add_jaxvals(x, y)], [bdx]
   elif bdx is None:
     x = broadcast(x, y.shape[bdy], bdy, mesh_axis=mesh_axis)
-    return add_jaxvals(x, y), bdy
+    return [add_jaxvals(x, y)], [bdy]
   elif bdy is None:
     y = broadcast(y, x.shape[bdx], bdx, mesh_axis=mesh_axis)
-    return add_jaxvals(x, y), bdx
+    return [add_jaxvals(x, y)], [bdx]
   else:
     x = moveaxis(x, bdx, bdy)
-    return add_jaxvals(x, y), bdy
+    return [add_jaxvals(x, y)], [bdy]
 
 fancy_primitive_batchers[add_jaxvals_p] = add_batched
 

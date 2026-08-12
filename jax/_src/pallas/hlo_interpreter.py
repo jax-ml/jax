@@ -218,10 +218,7 @@ def eval_jaxpr_recursive(
       else:
         bind_params = eqn.primitive.get_bind_params(eqn.params)
         ans = eqn.primitive.bind(*in_vals, **bind_params)
-    if eqn.primitive.multiple_results:
-      foreach(write, eqn.outvars, ans)
-    else:
-      write(eqn.outvars[0], ans)
+    foreach(write, eqn.outvars, ans)
     jax_core.clean_up_dead_vars(eqn, env, lu)
   return map(read, jaxpr.outvars)
 
