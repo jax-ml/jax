@@ -414,7 +414,7 @@ class Traced(Stage):
   representations via `.jaxpr` and `.lojax` properties respectively.
   """
   __slots__ = ['_meta_tys_flat', '_params', '_in_tree', 'out_tree', '_consts',
-               '_fun_sourceinfo', '_lojax']
+               '_fun_sourceinfo', '_lojax', '_closure_converted']
 
   def __init__(self, meta_tys_flat, params, in_tree, out_tree, consts,
                fun_sourceinfo):
@@ -425,6 +425,7 @@ class Traced(Stage):
     self._consts = consts
     self._fun_sourceinfo = fun_sourceinfo
     self._lojax = None
+    self._closure_converted = None
 
   jaxpr = property(lambda self: self._params['jaxpr'])
   fun_name = property(lambda self: self._params['name'])
@@ -440,6 +441,56 @@ class Traced(Stage):
     args_flat = tree_util.tree_leaves_checked(self.in_tree, (args, kwargs))
     out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=self.jaxpr)
     return tree_unflatten(self.out_tree, out_flat)
+
+  def closure_convert(self):
+    """Closure conversion: makes this Traced's captured constants explicit.
+
+    Returns a pair ``(consts, fun)``, where ``consts`` are the values this
+    Traced captured from its function's closure during tracing (not Python
+    ``__closure__`` cells: any values encountered during tracing that
+    determine the output), and ``fun`` is a closed function such that
+    ``fun(consts, *args, **kwargs)`` computes the same results as this Traced
+    applied to ``args`` and ``kwargs``. The environment ``consts`` is passed
+    as a single leading argument, and may be replaced by any pytree of values
+    of the same types.
+    """
+    if self._closure_converted is None:
+      consts = [*self.jaxpr.consts, *self._consts]
+      _, consts_tree = tree_util.tracing_registry.flatten(consts)
+      jaxpr = self.jaxpr.replace(consts=None)
+      in_tree = tree_util.treedef_tuple_tracing_registry(
+          (consts_tree, *self.in_tree.children()))
+      out_tree = self.out_tree
+      def fun(consts, *args, **kwargs):
+        args_flat = tree_util.tree_leaves_checked(in_tree, (consts, args, kwargs))
+        out_flat = core.eval_jaxpr_p.bind(*args_flat, call_jaxpr=jaxpr)
+        return tree_unflatten(out_tree, out_flat)
+      self._closure_converted = (consts, fun)
+    return self._closure_converted
+
+  def with_consts_as_arg(self) -> tuple[list[Any], Traced]:
+    """Returns consts and an equivalent Traced taking them as one leading argument.
+
+    Built on ``closure_convert``: the converted function is re-traced with the
+    consts environment as a single leading argument, so that the tracing
+    machinery reconstructs all per-argument bookkeeping consistently. The
+    non-const argument types are taken from this Traced. The retrace stages a
+    single call eqn, not a re-trace of the original function.
+    """
+    from jax._src.api import jit  # type: ignore
+    consts, fun = self.closure_convert()
+    arg_avals = self.jaxpr.in_avals[len(self._consts):]
+    args, kwargs = tree_unflatten(self.in_tree, arg_avals)
+    traced = jit(fun).trace(consts, *args, **kwargs)
+    jaxpr = traced.jaxpr
+    if (not jaxpr.consts and len(jaxpr.eqns) == 1 and
+        (eqn := jaxpr.eqns[0]).primitive is core.eval_jaxpr_p and
+        list(eqn.invars) == list(jaxpr.invars) and
+        list(eqn.outvars) == list(jaxpr.outvars)):
+      traced._params = dict(traced._params, jaxpr=eqn.params['call_jaxpr'])
+    traced._params = dict(traced._params, name=self.fun_name)
+    traced._fun_sourceinfo = self._fun_sourceinfo
+    return consts, traced
 
   @property
   def lojax(self) -> LoJax:

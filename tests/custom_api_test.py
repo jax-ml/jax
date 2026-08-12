@@ -3622,7 +3622,7 @@ class CustomVJP3Test(CustomVJPTest):
         """).strip()
     self.assertEqual(actual, expected)
 
-  # vmap closure: don't support anymore, but raise good errors
+  # vmap closure: supported by promoting closed-over tracers to explicit args
   def test_closed_over_vmap_tracer(self):
     def outer(x):
       @jax.custom_vjp
@@ -3639,8 +3639,9 @@ class CustomVJP3Test(CustomVJPTest):
     def g(x):
       return outer(x)(3.)
 
-    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
-      g(np.arange(3.))
+    ans = g(np.arange(3.))
+    expected = np.arange(3.) * 3
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_closed_over_tracer3(self):
     def outer(x):
@@ -3659,8 +3660,32 @@ class CustomVJP3Test(CustomVJPTest):
     def g(x):
       return outer(x)(3.)
 
-    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
-      g(np.arange(3.))
+    ans = g(np.arange(3.))
+    expected = np.cos(3.) * np.arange(3.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_closed_over_tracer_grad_error(self):
+    def outer(c, x):
+      @jax.custom_vjp
+      def f(y):
+        return c * y
+      f.defvjp(lambda y: (c * y, (y,)), lambda res, g: (c * g,))
+      return f(x)
+
+    with self.assertRaisesRegex(Exception, "closed-over value"):
+      api.vmap(api.grad(outer, argnums=0))(jnp.arange(3.) + 1., jnp.arange(3.))
+
+  def test_closed_over_vmap_tracer_remat(self):
+    def outer(c, x):
+      @jax.custom_vjp
+      def f(y):
+        return c * y
+      f.defvjp(lambda y: (c * y, (y,)), lambda res, g: (c * g,))
+      return jax.remat(f)(x)
+
+    ans = api.vmap(api.grad(outer, argnums=1))(jnp.arange(3.) + 1.,
+                                               jnp.arange(3.))
+    self.assertAllClose(ans, jnp.arange(3.) + 1., check_dtypes=False)
 
   def test_closure_with_vmap2(self):
     # https://github.com/jax-ml/jax/issues/8783
@@ -3681,7 +3706,10 @@ class CustomVJP3Test(CustomVJPTest):
 
       return jax.vmap(f)(jnp.arange(3., dtype='float32')).sum()
 
-    with self.assertRaisesRegex(UnexpectedTracerError, "can't close over"):
+    # Closing over a vmap tracer in the fwd rule, with vmap inside grad, isn't
+    # supported: the fwd rule's residuals capture the tracer, which is out of
+    # scope by the time the backward pass runs.
+    with self.assertRaisesRegex(UnexpectedTracerError, "unexpected tracer"):
       jtu.check_grads(h, (jnp.float32(3.14),), order=1, modes=['rev'])
 
   def test_overbatched_fwd_rule_error(self):

@@ -750,6 +750,8 @@ class CustomVJPTraced(VJPHiPrimitive):
     return tree_unflatten(self.out_tree, outs_flat)
 
   def vjp_fwd(self, in_nzs, *args):
+    if any(tree_leaves(in_nzs[0])):
+      raise ad.CustomVJPException()
     if self.symbolic_zeros:
       args = tree_map(CustomVJPPrimal, args, in_nzs)  # tree_map skips Statics
     args_ = tuple(x.val if isinstance(x, Static) else x for x in args)
@@ -799,6 +801,7 @@ class CustomVJPTraced(VJPHiPrimitive):
     if not isinstance(in_cts, tuple):
       raise TypeError(f"Custom VJP bwd rule {self.bwd} must produce a tuple "
                       f"but got {type(in_cts)}.")
+    in_cts = (None, *in_cts)  # zero cotangent for the promoted-consts argument
     if len(in_cts) != len(self.in_tree.children()) - len(self.static_argnums):
       raise ValueError(f"Custom VJP bwd rule {self.bwd} must produce a tuple "
                        "of length equal to the primal args tuple, but got "
@@ -806,7 +809,7 @@ class CustomVJPTraced(VJPHiPrimitive):
     in_cts = broadcast_prefix(in_cts, in_avals_, is_leaf=lambda x: x is None)
     in_cts = tree_unflatten(self.in_tree, map(_replace_none, self.in_avals_flat, in_cts))
     tree_map_with_path(partial(_vjp_bwd_aval_mismatch_err, self.traced._fun_sourceinfo),
-                               self.in_avals, in_cts)
+                               self.in_avals[1:], in_cts[1:])
     if self.symbolic_zeros:
       in_cts = tree_map(ad_util.replace_rule_output_symbolic_zeros, in_cts)
     return (in_cts, logs) if self.with_logs else in_cts
@@ -814,12 +817,14 @@ class CustomVJPTraced(VJPHiPrimitive):
   def jvp(self, primals, tangents):
     if self.symbolic_zeros: ad.raise_custom_vjp_error_on_jvp()
     zero = lambda x: isinstance(x, ad_util.Zero)
+    nzs_in = tuple(tree_map(lambda t: not isinstance(t, ad_util.Zero), t,
+                            is_leaf=zero) for t in tangents)
     tangents = tree_map(ad_util.instantiate, tangents, is_leaf=zero)
     if self.opt_remat:
-      fwd_traced = api.jit(partial(self.vjp_fwd, (True,) * len(primals))).trace(*primals)
+      fwd_traced = api.jit(partial(self.vjp_fwd, nzs_in)).trace(*primals)
       primals_out, residuals = OptRemat(self, fwd_traced)(*primals)
     else:
-      primals_out, residuals, *_ = self.vjp_fwd((True,) * len(primals), *primals)
+      primals_out, residuals, *_ = self.vjp_fwd(nzs_in, *primals)
     nzs_in_flat = [True] * len(self.in_avals_flat)
     nzs_out_flat = [True] * len(self.out_avals_flat)
     tangents_flat = tree_leaves_checked(self.in_tree, tangents)
@@ -934,7 +939,8 @@ class custom_vjp3:
       raise AttributeError(msg)
 
     args = resolve_kwargs(self.f, args, kwargs)
-    if any(isinstance(args[i], core.Tracer) for i in self.static_argnums):
+    if any(isinstance(l, core.Tracer) for i in self.static_argnums
+           for l in tree_leaves(args[i])):
       raise UnexpectedTracerError("custom_vjp inputs marked with nondiff_argnums "
                                   "must be static, not Tracers")
     if all(is_hashable(args[i]) for i in self.static_argnums):
@@ -947,17 +953,14 @@ class custom_vjp3:
       f = dyn_args_fun(self.f, self.static_argnums,
                        tuple(map(WrapHashably, static_args)), len(args))
       traced = api.jit(f).trace(*dyn_args)
-    if any(isinstance(x, core.Tracer) for x in traced._consts):
-      t = next(x for x in traced._consts if isinstance(x, core.Tracer))
-      raise UnexpectedTracerError(
-          f"custom_vjp-decorated function {self.f} closed over a {type(t).__name__} "
-          f"of type {t.aval.str_short()}, but custom_vjp functions can't close "
-          f"over Tracers. Rewrite {self.f} to take it as an explicit input.")
     args = tuple(Static(x) if i in self.static_argnums else x for i, x in enumerate(args))
-    in_avals = tree_map(typeof, args)
-    prim = CustomVJPTraced(traced, self.fwd, self.bwd, in_avals, self.symz,
-                           self.static_argnums, self.opt_remat, self.with_logs)
-    return prim(*args)
+    consts, traced = traced.with_consts_as_arg()
+    fwd_ = update_wrapper(lambda _, *args: self.fwd(*args), self.fwd)
+    static_argnums = frozenset(i + 1 for i in self.static_argnums)
+    in_avals = tree_map(typeof, (consts, *args))
+    prim = CustomVJPTraced(traced, fwd_, self.bwd, in_avals, self.symz,
+                           static_argnums, self.opt_remat, self.with_logs)
+    return prim(consts, *args)
 
   def def_vmap(self, rule, /): return self.f.def_vmap(rule)
   def def_transpose(self, rule, /): return self.f.def_transpose(rule)
