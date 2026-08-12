@@ -346,6 +346,20 @@ llvm::LogicalResult AsyncLoadOp::verify() {
       }
   }
 
+  if (!getBarrier()) {
+    if (!getCollective().empty()) {
+      return emitOpError("`collective` requires a `barrier`.");
+    }
+    if (getLeaderTracked()) {
+      return emitOpError("`leader_tracked` requires a `barrier`.");
+    }
+    if (getOobFillMode() != OOBFillMode::kPromiseInBounds) {
+      return emitOpError(
+          "Only the `promise_in_bounds` out-of-bounds fill mode is supported "
+          "without a `barrier`.");
+    }
+  }
+
   return llvm::success();
 }
 

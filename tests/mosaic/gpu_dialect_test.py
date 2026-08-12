@@ -244,9 +244,9 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
           slice_lengths=[4, 8],
+          barrier=barrier,
           collective=ir.ArrayAttr.get([]),
       )
 
@@ -268,9 +268,9 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
           slice_lengths=[-2, 8],
+          barrier=barrier,
           collective=ir.ArrayAttr.get([]),
       )
 
@@ -293,9 +293,9 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
           slice_lengths=[-1, 4, 8],
+          barrier=barrier,
           collective=ir.ArrayAttr.get([]),
       )
 
@@ -316,8 +316,8 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
+          barrier=barrier,
           slice_lengths=[4, 8],
           collective=ir.ArrayAttr.get([]),
       )
@@ -339,9 +339,9 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
           slice_lengths=[4, 8],
+          barrier=barrier,
           collective=ir.ArrayAttr.get([]),
       )
 
@@ -363,9 +363,9 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
           slice_lengths=[4],
+          barrier=barrier,
           collective=ir.ArrayAttr.get([
               ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
               ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
@@ -391,8 +391,8 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
+          barrier=barrier,
           slice_lengths=[4, 8],
           collective=ir.ArrayAttr.get([]),
       )
@@ -416,9 +416,9 @@ class DialectTest(MosaicGpuTest):
       mgpu.dialect.async_load(
           source,
           destination,
-          barrier,
           indices,
           slice_lengths=[4, 4],
+          barrier=barrier,
           collective=ir.ArrayAttr.get([]),
       )
 

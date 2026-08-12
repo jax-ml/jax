@@ -1161,6 +1161,7 @@ def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
+  assert load_op.barrier is not None
   barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
 
   [transforms_attr] = inference_utils.in_transforms(load_op)
