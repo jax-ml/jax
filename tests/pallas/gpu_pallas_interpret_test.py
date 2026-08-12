@@ -21,8 +21,8 @@ import jax
 from jax._src import test_util as jtu
 from jax._src.pallas import mpmd
 from jax._src.pallas.mosaic_gpu.interpret import interpret_pallas_call as mosaic_interpret
-from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
 from jax._src.pallas.mosaic_gpu.interpret.params import force_gpu_interpret_mode
+from jax._src.pallas.mosaic_gpu.interpret.params import InterpretGPUParams as InterpretParams
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 from jax.experimental.pallas.ops.gpu import hopper_matmul_mgpu
@@ -46,6 +46,12 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message='jax.experimental.pallas.core_map is deprecated',
+        )
+    )
     mosaic_interpret.gpu_callbacks.reset_gpu_interpret_mode_state()
 
     if not jtu.test_device_matches(['cpu']):

@@ -16,9 +16,11 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
 
   * Pallas Triton ops in {mod}`jax.experimental.pallas.ops.gpu` are deprecated.
-  Please use [`tokamax`](https://github.com/openxla/tokamax) for equivalent
-  implementations if available, e.g., `tokamax.layer_norm`,
-  `tokamax.dot_product_attention`.
+    Please use [`tokamax`](https://github.com/openxla/tokamax) for equivalent
+    implementations if available, e.g., `tokamax.layer_norm`,
+    `tokamax.dot_product_attention`.
+  * {func}`jax.experimental.pallas.core_map` is deprecated. Please migrate to
+    {func}`jax.experimental.pallas.kernel`.
 
 ### Mosaic GPU
 

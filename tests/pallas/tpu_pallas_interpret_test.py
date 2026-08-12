@@ -36,6 +36,7 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
+
 jax.config.update('jax_threefry_partitionable', True)
 
 
@@ -106,6 +107,12 @@ class InterpretTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message='jax.experimental.pallas.core_map is deprecated',
+        )
+    )
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')
@@ -453,7 +460,6 @@ class InterpretTest(jtu.JaxTestCase):
         with self.assertRaisesRegex(Exception, 'Out-of-bounds write'):
           run().block_until_ready()
         pltpu.reset_tpu_interpret_mode_state()
-
 
   def test_masked_store(self):
     def kernel(i_ref, j_ref, x_ref, mask_ref, o_ref):

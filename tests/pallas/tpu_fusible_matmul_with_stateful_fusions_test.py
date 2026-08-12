@@ -399,6 +399,12 @@ class FusibleMatmulTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('Only works with TPU v4+')
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message='jax.experimental.pallas.core_map is deprecated',
+        )
+    )
 
   @parameterized.product(dtype=['float32', 'bfloat16'], impl=list(KernelImpl))
   def test_matmul_with_bias_and_read_only_refs(self, dtype, impl):

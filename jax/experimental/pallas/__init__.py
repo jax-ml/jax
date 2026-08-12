@@ -25,7 +25,7 @@ from jax._src.pallas.core import BlockSpec as BlockSpec
 from jax._src.pallas.core import BoundedSlice as BoundedSlice
 from jax._src.pallas.core import Buffered as Buffered
 from jax._src.pallas.core import CompilerParams as CompilerParams
-from jax._src.pallas.core import core_map as core_map
+from jax._src.pallas.core import core_map as _deprecated_core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
 from jax._src.pallas.core import debug_check as debug_check
 from jax._src.pallas.core import debug_checks_enabled as _deprecated_debug_checks_enabled
@@ -82,6 +82,14 @@ ANY = MemorySpace.ANY
 HOST = _jax_core.MemorySpace.Host
 
 _deprecations = {
+    # Added August 11th, 2026
+    "core_map": (
+        (
+            "jax.experimental.pallas.core_map is deprecated, use"
+            " jax.experimental.pallas.kernel instead."
+        ),
+        _deprecated_core_map,
+    ),
     # Added June 4, 2026
     "dot": (
         (
@@ -105,6 +113,7 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
+  core_map = _deprecated_core_map
   debug_checks_enabled = _deprecated_debug_checks_enabled
   dot = _deprecated_dot
 else:

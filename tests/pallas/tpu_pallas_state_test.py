@@ -270,6 +270,12 @@ class CoreMapTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message="jax.experimental.pallas.core_map is deprecated",
+        )
+    )
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Only supported on TPU v4+")
 

@@ -33,6 +33,7 @@ import jax.numpy as jnp
 import numpy as np
 
 jax.config.parse_flags_with_absl()
+
 jtu.request_cpu_devices(8)
 
 P = jax.sharding.PartitionSpec
@@ -44,6 +45,12 @@ P = jax.sharding.PartitionSpec
 class InterpretDistributedTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
+    self.enter_context(
+        jtu.ignore_warning(
+            category=DeprecationWarning,
+            message='jax.experimental.pallas.core_map is deprecated',
+        )
+    )
 
     if not jtu.test_device_matches(['cpu']):
       self.skipTest('CPU-only test')
