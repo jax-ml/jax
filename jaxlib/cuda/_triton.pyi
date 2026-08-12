@@ -36,6 +36,14 @@ class TritonParameter:
   pass
 
 def create_array_parameter(arg0: int, arg1: int, /) -> TritonParameter: ...
+def create_tma_descriptor_parameter(
+    elem_type: int,
+    swizzle: int,
+    shape: Sequence[int],
+    strides: Sequence[int],
+    block_shape: Sequence[int],
+    oob_fill: int,
+) -> TritonParameter: ...
 @overload
 def create_scalar_parameter(arg0: bool, arg1: str, /) -> TritonParameter: ...
 @overload
