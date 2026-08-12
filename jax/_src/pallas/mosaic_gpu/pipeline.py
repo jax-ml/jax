@@ -77,6 +77,41 @@ def _get_block_shape(spec: pallas_core.BlockSpec, ref_shape: tuple[int, ...]):
   return block_shape
 
 
+def _is_fully_in_bounds(
+    spec: pallas_core.BlockSpec, operand_shape: tuple[int, ...]
+) -> bool:
+  """Returns whether all windowed accesses into an operand stay in bounds."""
+  if spec.block_shape is None:
+    return True
+  for bd, dim in zip(spec.block_shape, operand_shape):
+    match bd:
+      case int() | pl.Blocked():
+        if dim % _get_block_size(bd) != 0:
+          return False
+      case pl.Element():
+        # Addresses arbitrary offsets.
+        return False
+      case None | pl.Squeezed():
+        continue
+      case _:
+        raise ValueError(f"Unsupported block dimension type: {type(bd)}")
+  return True
+
+
+def _maybe_promise_in_bounds(
+    spec: gpu_core.BlockSpec, operand_shape: tuple[int, ...]
+) -> gpu_core.BlockSpec:
+  """Upgrades to ``OOBFillMode.PROMISE_IN_BOUNDS`` if provably in bounds."""
+  if (
+      spec.oob_fill_mode is not OOBFillMode.PROMISE_IN_BOUNDS
+      and _is_fully_in_bounds(spec, operand_shape)
+  ):
+    return dataclasses.replace(
+        spec, oob_fill_mode=OOBFillMode.PROMISE_IN_BOUNDS
+    )
+  return spec
+
+
 map_brefs = functools.partial(
     jax.tree.map, is_leaf=lambda x: isinstance(x, BufferedRef)
 )
@@ -267,16 +302,13 @@ def emit_pipeline[T](
         f"All elements in the grid must be strictly positive, but got {grid=}"
     )
 
-  in_specs = tuple(map(_downcast_spec, in_specs))
-  out_specs = tuple(map(_downcast_spec, out_specs))
-  for spec in in_specs:
-    if isinstance(spec, gpu_core.BlockSpec) and spec.collective_axes:
+  in_specs: tuple[gpu_core.BlockSpec, ...] = tuple(map(_downcast_spec, in_specs))
+  out_specs: tuple[gpu_core.BlockSpec, ...] = tuple(map(_downcast_spec, out_specs))
+  for spec in it.chain(in_specs, out_specs):
+    if spec.collective_axes:
       raise NotImplementedError(
-          "BlockSpecs with collective_axes are not supported in emit_pipeline"
+          "pl.BlockSpec with collective_axes= is not supported"
       )
-  for spec in out_specs:
-    if isinstance(spec, gpu_core.BlockSpec) and spec.collective_axes:
-      raise ValueError("Output BlockSpecs cannot have collective_axes")
   # TODO(justinfu): Factor out common code between warp-specialized and
   # normal pipelines.
   delay_release_levels = sorted(
@@ -307,16 +339,22 @@ def emit_pipeline[T](
       raise NotImplementedError(
           "emit_pipeline on pre-Hopper GPUs requires a static grid"
       )
-    for s in in_specs:
-      oob_mode = getattr(s, "oob_fill_mode", None)
-      if oob_mode is not OOBFillMode.PROMISE_IN_BOUNDS:
-        raise NotImplementedError(
-            "emit_pipeline on pre-Hopper GPUs requires"
-            " oob_fill_mode=OOBFillMode.PROMISE_IN_BOUNDS"
-        )
 
   def pipeline(*gmem_refs: state.AbstractRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
+    effective_in_specs = in_specs
+    if is_cp_async:
+      effective_in_specs = tuple(
+          _maybe_promise_in_bounds(spec, ref.shape)
+          for spec, ref in zip(in_specs, in_gmem_refs)
+      )
+      for spec in effective_in_specs:
+        if spec.oob_fill_mode is not OOBFillMode.PROMISE_IN_BOUNDS:
+          raise NotImplementedError(
+              "emit_pipeline on pre-Hopper GPUs requires input accesses to be"
+              " provably in bounds, or oob_fill_mode="
+              "OOBFillMode.PROMISE_IN_BOUNDS to be set explicitly"
+          )
     in_smem_refs, out_smem_refs = util.split_list(
         [
             gpu_core.SMEM(
@@ -329,7 +367,9 @@ def emit_pipeline[T](
             )
             if _in_smem(spec)
             else None
-            for spec, ref in zip(it.chain(in_specs, out_specs), gmem_refs)
+            for spec, ref in zip(
+                it.chain(effective_in_specs, out_specs), gmem_refs
+            )
         ],
         [len(in_specs)],
     )
@@ -337,13 +377,15 @@ def emit_pipeline[T](
     return pl.run_scoped(
         functools.partial(
             scoped_pipeline,
+            in_specs=effective_in_specs,
             in_gmem_refs=in_gmem_refs,
             out_gmem_refs=out_gmem_refs,
         ),
         in_smem_refs=in_smem_refs,
         out_smem_refs=out_smem_refs,
         barrier_ref=None
-        if copies_per_step == 0 or is_cp_async  # cp.async uses wait_gmem_to_smem
+        if copies_per_step == 0
+        or is_cp_async  # cp.async uses wait_gmem_to_smem
         else gpu_core.Barrier(
             # TODO(slebedev): Change this to arrive only once.
             num_arrivals=copies_per_step,
@@ -352,7 +394,13 @@ def emit_pipeline[T](
     )
 
   def scoped_pipeline(
-      *, in_gmem_refs, out_gmem_refs, in_smem_refs, out_smem_refs, barrier_ref
+      *,
+      in_specs,
+      in_gmem_refs,
+      out_gmem_refs,
+      in_smem_refs,
+      out_smem_refs,
+      barrier_ref,
   ):
     in_brefs: Sequence[BufferedRef] = [
         BufferedRef(spec, _is_index_invariant(spec, grid), gmem_ref, smem_ref)

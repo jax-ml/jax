@@ -7889,15 +7889,23 @@ class PipelineTest(PallasTest):
 
     np.testing.assert_allclose(kernel_fn(x), x.sum(0, keepdims=True), rtol=1e-6)
 
-  @parameterized.parameters(2, 3, 4)
+  @parameterized.product(
+      max_concurrent_steps=[2, 3, 4],
+      oob_fill_mode=[plgpu.OOBFillMode.PROMISE_IN_BOUNDS, plgpu.OOBFillMode.ZEROS],
+  )
   @run_on_sm80
-  def test_emit_in_specs_only(self, max_concurrent_steps):
+  def test_emit_in_specs_only(self, max_concurrent_steps, oob_fill_mode):
     # TODO(slebedev): Remove the skip once cp.async is supported under WG
     # semantics.
     self.skip_if_wg_semantics()
 
     m, n = 16, 128
+    dtype = jnp.float32
 
+    @self.kernel(
+        out_type=jax.ShapeDtypeStruct((1, n), dtype),
+        scratch_types=[plgpu.SMEM((1, n), dtype=jnp.float32)],
+    )
     def kernel(x_gmem, o_gmem, acc_ref):
       acc_ref[...] = jnp.zeros_like(acc_ref)
 
@@ -7908,9 +7916,7 @@ class PipelineTest(PallasTest):
           body,
           in_specs=[
               plgpu.BlockSpec(
-                  (1, n),
-                  lambda i: (i, 0),
-                  oob_fill_mode=plgpu.OOBFillMode.PROMISE_IN_BOUNDS,
+                  (1, n), lambda i: (i, 0), oob_fill_mode=oob_fill_mode,
               )
           ],
           grid=(m,),
@@ -7919,16 +7925,32 @@ class PipelineTest(PallasTest):
 
       o_gmem[...] = acc_ref[...]
 
-    dtype = jnp.float32
     x = jax.random.uniform(jax.random.key(0), (m, n)).astype(dtype)
+    np.testing.assert_allclose(kernel(x), x.sum(0, keepdims=True), rtol=1e-6)
 
-    kernel_fn = self.kernel(
-        kernel,
-        out_type=jax.ShapeDtypeStruct((1, n), dtype),
-        scratch_types=[plgpu.SMEM((1, n), dtype=jnp.float32)],
-    )
+  @run_on_sm80
+  def test_emit_in_specs_only_requires_in_bounds(self):
+    # TODO(slebedev): Remove the skip once cp.async is supported under WG
+    # semantics.
+    self.skip_if_wg_semantics()
 
-    np.testing.assert_allclose(kernel_fn(x), x.sum(0, keepdims=True), rtol=1e-6)
+    if jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("cp.async OOB constraint is pre-Hopper only")
+
+    n = 128
+
+    @self.kernel()
+    def kernel(x_gmem):
+      plgpu.emit_pipeline(
+          lambda _, x_smem: None,
+          in_specs=[plgpu.BlockSpec((4, n), lambda i: (i, 0))],
+          grid=(2,),
+      )(x_gmem)
+
+    x = jnp.zeros((6, n), dtype=jnp.float32)
+
+    with self.assertRaisesRegex(NotImplementedError, "provably in bounds"):
+      kernel(x)
 
   def test_pipeline_oob_mode(self):
     # This test crashes with the default OOB fill mode of ZEROS because
