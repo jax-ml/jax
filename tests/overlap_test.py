@@ -348,6 +348,25 @@ class OverlapTest(jtu.JaxTestCase):
 
     jax.block_until_ready(g(x, w1s, w2s))
 
+  @jtu.with_explicit_mesh((2,), 'x')
+  def test_simple_program_order(self, mesh):
+    x = jax.device_put(jnp.arange(8), P('x'))
+    y = jax.device_put(jnp.arange(8), P('x'))
+
+    @jax.jit
+    @program_order(enforce=True)
+    def f(x, y):
+      x1 = jax.reshard(x, P())
+      x2 = jnp.sin(x1)
+      y1 = jax.reshard(y, P())
+      y2 = jnp.cos(y1)
+      return x2, y2
+
+    jaxpr = f.trace(x, y).jaxpr
+    self.assertEqual(str(jaxpr).count('optimization_barrier'), 5)
+
+    f(x, y)  # doesn't crash
+
 
 class AsyncCollectivesTest(jtu.JaxTestCase):
 

@@ -2559,7 +2559,7 @@ def _program_order(fun, *, enforce):
   return wrapped
 
 def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
-  from jax._src.lax.lax import create_token, optimization_barrier  # type: ignore
+  from jax._src.lax.lax import optimization_barrier  # type: ignore
 
   def read(v) -> Any:
     return v.val if isinstance(v, core.Literal) else env[v]
@@ -2569,12 +2569,18 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
       assert core.typecheck(v.aval, val), (v.aval, typeof(val), val)
     env[v] = val
 
-  token = create_token()
+  def eqn_write(eqn, ans):
+    if eqn.primitive.multiple_results:
+      foreach(write, eqn.outvars, ans)
+    else:
+      ans = ans[0] if isinstance(ans, list) else ans
+      write(eqn.outvars[0], ans)
 
   env = {}
   foreach(write, jaxpr.constvars, consts)
   foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
+  prev_eqn = None
   for eqn in jaxpr.eqns:
     bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
@@ -2582,16 +2588,16 @@ def eval_jaxpr_program_order(jaxpr, consts, *args) -> list[Any]:
     with (source_info_util.user_context(traceback, name_stack=name_stack),
           eqn.ctx.manager):
       cur_inps = map(read, eqn.invars)
-      token, cur_inps = optimization_barrier((token, cur_inps))
+      if prev_eqn is not None:
+        prev_outs = map(read, prev_eqn.outvars)
+        # TODO(yashkatariya): Maybe dedup prev_outs and cur_inps.
+        prev_outs, cur_inps = optimization_barrier((prev_outs, cur_inps))
+        eqn_write(prev_eqn, prev_outs)
       ans = eqn.primitive.bind(*cur_inps, **bind_params)
-    token, ans = optimization_barrier((token, ans))
-    if eqn.primitive.multiple_results:
-      foreach(write, eqn.outvars, ans)
-    else:
-      write(eqn.outvars[0], ans)
+    eqn_write(eqn, ans)
+    prev_eqn = eqn
     core.clean_up_dead_vars(eqn, env, last_used)
   outvals = map(read, jaxpr.outvars)
-  _, outvals = optimization_barrier((token, outvals))
   return outvals
 
 # -------------------- helpers --------------------
