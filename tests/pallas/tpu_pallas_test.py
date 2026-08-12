@@ -21,6 +21,7 @@ import gc
 import itertools
 import json
 import math
+import operator
 import re
 from typing import Any, NamedTuple
 
@@ -2566,6 +2567,52 @@ class PallasCallTest(ptu.PallasTPUTest):
 
     for name in ['%x_ref', '%y_ref', '%o_ref']:
       self.assertIn(name, get_output())
+
+  @parameterized.product(
+      op=[
+          operator.gt,
+          operator.ge,
+          operator.lt,
+          operator.le,
+          operator.eq,
+          operator.ne,
+      ],
+      dtype=[jnp.int4, jnp.uint4],
+  )
+  def test_int4_cmpi_pallas_kernel(self, op, dtype):
+    if not jtu.is_libtpu_at_least('0.0.46'):
+      self.skipTest(
+          '4-bit integer boolean mask comparisons require libtpu >= 0.0.46'
+      )
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('i4 is not supported on TPU generations < 4')
+
+    def kernel(x_ref, y_ref, o_ref):
+      # this is to avoid needing `.astype(o_ref.dtype)` for this test
+      o_ref[...] = jnp.where(
+          op(x_ref[...], y_ref[...]),
+          jnp.array(1, dtype=o_ref.dtype),
+          jnp.array(0, dtype=o_ref.dtype),
+      )
+
+    shape = (128, 2048)
+    iinfo = jnp.iinfo(dtype)
+    np_dtype = np.int8 if iinfo.min < 0 else np.uint8
+    x_np = np.random.randint(
+        int(iinfo.min), int(iinfo.max) + 1, size=shape
+    ).astype(np_dtype)
+    y_np = np.random.randint(
+        int(iinfo.min), int(iinfo.max) + 1, size=shape
+    ).astype(np_dtype)
+    expected = op(x_np, y_np).astype(np_dtype)
+    x = jnp.asarray(x_np, dtype=dtype)
+    y = jnp.asarray(y_np, dtype=dtype)
+
+    res = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+    )(x, y)
+    np.testing.assert_array_equal(res, expected)
 
 
 @jtu.with_config(jax_pallas_poison_buffers=True)
