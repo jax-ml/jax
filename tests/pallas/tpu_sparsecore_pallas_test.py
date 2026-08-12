@@ -223,6 +223,8 @@ class NamedLocationsTest(PallasSCTest):
 
   @parameterized.parameters(jnp.int4, jnp.uint4)
   def test_subbyte_kernel_compilation(self, dtype):
+    if not jtu.is_libtpu_at_least("0.0.46"):
+      self.skipTest("Requires libtpu >= 0.0.46")
     mesh = plsc.VectorSubcoreMesh(
         num_cores=self.sc_info.num_cores,
         num_subcores=self.sc_info.num_subcores,
